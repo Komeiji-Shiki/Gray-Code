@@ -141,16 +141,6 @@ The following are pinned files...
 # Project Title
 ...`,
     requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
-  },
-  {
-    id: 'USER_REQUEST',
-    name: '当前回合用户需求',
-    description: '占位符，由系统自动填充当前回合的用户输入内容，建议放在模板末尾',
-    example: `====
-
-USER REQUEST
-
-帮我写一个 Hello World 程序`
   }
 ]
 
@@ -182,7 +172,7 @@ GUIDELINES
 - Do not omit any code.`
 
 // 默认动态上下文模板
-const DEFAULT_DYNAMIC_TEMPLATE = `The following are the current turn's context variables for your reference:
+const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.
 
 {{$WORKSPACE_FILES}}
 
@@ -192,9 +182,7 @@ const DEFAULT_DYNAMIC_TEMPLATE = `The following are the current turn's context v
 
 {{$DIAGNOSTICS}}
 
-{{$PINNED_FILES}}
-
-{{$USER_REQUEST}}`
+{{$PINNED_FILES}}`
 
 // 配置状态
 const config = reactive<SystemPromptConfig>({

@@ -1086,10 +1086,6 @@ const en: LanguageMessages = {
                         description: 'Shows complete content of user-pinned files',
                         requiresConfig: 'Need to add files in the pinned files button next to input box'
                     },
-                    USER_REQUEST: {
-                        name: 'Current Turn User Request',
-                        description: 'Placeholder, automatically filled with the current turn user input, recommended to place at the end of template'
-                    },
                     TOOLS: {
                         name: 'Tool Definitions',
                         description: 'Generate tool definitions in XML or Function Call format based on channel configuration (this variable is automatically filled by the system)'
@@ -1210,7 +1206,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.40',
+                    version: 'Version: 1.0.41',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

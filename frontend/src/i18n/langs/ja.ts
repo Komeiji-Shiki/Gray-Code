@@ -1086,10 +1086,6 @@ const ja: LanguageMessages = {
                         description: 'ユーザーがピン留めしたファイルの完全な内容を表示します',
                         requiresConfig: '入力ボックス横のピン留めファイルボタンでファイルを追加する必要があります'
                     },
-                    USER_REQUEST: {
-                        name: '現在のターンのユーザーリクエスト',
-                        description: 'プレースホルダー、現在のターンのユーザー入力で自動的に入力されます、テンプレートの末尾に配置することをお勧めします'
-                    },
                     TOOLS: {
                         name: 'ツール定義',
                         description: 'チャンネル設定に基づいて XML または Function Call 形式でツール定義を生成します（この変数はシステムによって自動的に入力されます）'
@@ -1210,7 +1206,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.40',
+                    version: 'バージョン：1.0.41',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

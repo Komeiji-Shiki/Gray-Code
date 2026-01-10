@@ -538,7 +538,6 @@ export interface SystemPromptConfig {
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
      * - {{$DIAGNOSTICS}} - 诊断信息
      * - {{$PINNED_FILES}} - 固定文件内容
-     * - {{$USER_REQUEST}} - 当前回合用户需求（占位符）
      *
      * 每次请求时动态生成，不存储到历史记录中
      */
@@ -1487,7 +1486,7 @@ GUIDELINES
 /**
  * 默认动态上下文模板
  */
-export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `The following are the current turn's context variables for your reference:
+export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.
 
 {{$WORKSPACE_FILES}}
 
@@ -1497,9 +1496,8 @@ export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `The following are the current t
 
 {{$DIAGNOSTICS}}
 
-{{$PINNED_FILES}}
+{{$PINNED_FILES}}`;
 
-{{$USER_REQUEST}}`;
 
 /**
  * 默认系统提示词配置

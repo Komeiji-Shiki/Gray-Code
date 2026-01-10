@@ -109,6 +109,20 @@ export class ToolIterationLoopService {
     setPromptManager(promptManager: PromptManager): void {
         this.promptManager = promptManager;
     }
+    
+    /**
+     * 清除指定会话的裁剪状态
+     * 
+     * 在以下情况下应调用：
+     * - 删除消息
+     * - 回退到检查点
+     * - 编辑消息
+     * 
+     * @param conversationId 会话 ID
+     */
+    async clearTrimState(conversationId: string): Promise<void> {
+        await this.contextTrimService.clearTrimState(conversationId);
+    }
 
     /**
      * 运行工具迭代循环（流式）

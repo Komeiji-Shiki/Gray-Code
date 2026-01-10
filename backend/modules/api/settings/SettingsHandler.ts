@@ -925,7 +925,6 @@ export class SettingsHandler {
             const content = fs.readFileSync(changelogPath, 'utf-8');
             
             // 解析所有版本及其内容
-            // 匹配模式: ## [1.0.40] - 2026-01-10
             const versionBlockRegex = /## \[(\d+\.\d+\.\d+)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
             const versions: { version: string; content: string }[] = [];
             

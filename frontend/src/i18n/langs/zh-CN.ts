@@ -1086,10 +1086,6 @@ const zhCN: LanguageMessages = {
                         description: '显示用户固定的文件的完整内容',
                         requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
                     },
-                    USER_REQUEST: {
-                        name: '当前回合用户需求',
-                        description: '占位符，由系统自动填充当前回合的用户输入内容，建议放在模板末尾'
-                    },
                     TOOLS: {
                         name: '工具定义',
                         description: '根据渠道配置生成 XML 或 Function Call 格式的工具定义（此变量由系统自动填充）'
@@ -1210,7 +1206,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.40',
+                    version: '版本：1.0.41',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

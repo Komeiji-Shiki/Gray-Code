@@ -1231,10 +1231,6 @@ export interface LanguageMessages {
                         description: string;
                         requiresConfig: string;
                     };
-                    USER_REQUEST: {
-                        name: string;
-                        description: string;
-                    };
                     TOOLS: {
                         name: string;
                         description: string;

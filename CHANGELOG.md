@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.41] - 2026-01-10
+
+### Improved
+  - 优化了提示词，由于提示词更新，所以尽量去前端提示词面板里**重置系统和动态提示词**
+  - 优化了裁剪上下文的逻辑
+
 ## [1.0.40] - 2026-01-10
 
 ### Improved

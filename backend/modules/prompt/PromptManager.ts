@@ -169,7 +169,6 @@ export class PromptManager {
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
      * - {{$DIAGNOSTICS}} - 诊断信息
      * - {{$PINNED_FILES}} - 固定文件内容
-     * - {{$USER_REQUEST}} - 当前回合用户需求（占位符，由外部填充）
      */
     private generateDynamicFromTemplate(template: string, contextConfig: any): string {
         const settingsManager = getGlobalSettingsManager()
@@ -180,9 +179,7 @@ export class PromptManager {
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
             'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            // 当前回合用户需求由外部在发送前填充，这里返回占位符
-            'USER_REQUEST': '{{$USER_REQUEST}}'
+            'PINNED_FILES': ''
         }
         
         // 工作区文件树
@@ -320,7 +317,6 @@ export class PromptManager {
      * 输出格式：
      * - 前缀说明："这是当前可以使用的全局变量信息，如不需要请忽略"
      * - 中间：动态上下文内容（文件树、标签页、诊断等）
-     * - 末尾：{{$USER_REQUEST}} 占位符（当前回合用户需求）
      * 
      * @returns 动态上下文消息数组（一条 user 消息）
      */
@@ -352,7 +348,7 @@ export class PromptManager {
         const sections: string[] = []
         
         // 前缀说明
-        sections.push('这是当前可以使用的全局变量信息，如不需要请忽略')
+        sections.push('This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.')
         
         // 当前时间
         const now = new Date()
@@ -402,9 +398,6 @@ export class PromptManager {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
         }
-        
-        // 末尾添加当前回合用户需求占位符
-        sections.push(this.wrapSection('USER REQUEST', '{{$USER_REQUEST}}'))
         
         // 返回单个动态上下文消息（清理多余空行）
         const content = this.cleanupEmptyLines(sections.join('\n\n'))
