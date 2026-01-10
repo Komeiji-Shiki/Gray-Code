@@ -11,6 +11,11 @@
  * - 使用累加的单条消息 token 数，而不是 API 返回的累计值，避免上下文振荡
  * - 保证历史以 user 消息开始（Gemini API 要求）
  * - 总结消息之前的历史会被过滤
+ *
+ * Token 计算包含：
+ * - 系统提示词（静态模板）
+ * - 动态上下文（文件树、诊断信息、固定文件等实际填充内容）
+ * - 对话历史消息
  */
 
 import type { Content } from '../../../conversation/types';
@@ -240,10 +245,21 @@ export class ContextTrimService {
             systemPromptTokens = await this.tokenEstimationService.countSystemPromptTokens(systemPrompt, channelType);
         }
         
+        // 计算动态上下文（末尾部分提示词）的 token 数
+        // 动态上下文包含文件树、诊断信息、固定文件等实际填充的内容
+        const dynamicContextText = this.promptManager.getDynamicContextText();
+        let dynamicContextTokens = 0;
+        if (dynamicContextText) {
+            dynamicContextTokens = await this.tokenEstimationService.countSystemPromptTokens(dynamicContextText, channelType);
+        }
+        
+        // 系统提示词和动态上下文的总 token 数
+        const promptTokens = systemPromptTokens + dynamicContextTokens;
+        
         // 计算从 effectiveStartIndex 开始的消息 token 数
         // 这是解决上下文振荡问题的关键：使用累加的单条消息 token 数，而不是 API 返回的累计值
-        let estimatedTotalTokens = systemPromptTokens;  // 从系统提示词开始
-        let hasEstimatedTokens = systemPromptTokens > 0;
+        let estimatedTotalTokens = promptTokens;  // 从系统提示词 + 动态上下文开始
+        let hasEstimatedTokens = promptTokens > 0;
         
         // 用于记录每个回合结束时的累计 token 数（基于自计算的累加值）
         const roundTokenInfos: RoundTokenInfo[] = [];
@@ -303,7 +319,7 @@ export class ContextTrimService {
             sendHistoryThoughtSignatures,
             sendCurrentThoughts,
             sendCurrentThoughtSignatures,
-            systemPromptTokens
+            promptTokens  // 使用系统提示词 + 动态上下文的总 token 数
         );
         
         estimatedTotalTokens = tokenAccumulationResult.estimatedTotalTokens;
@@ -347,7 +363,7 @@ export class ContextTrimService {
             historyOptions,
             effectiveStartIndex,
             estimatedTotalTokens,
-            systemPromptTokens,
+            promptTokens,  // 系统提示词 + 动态上下文的总 token 数
             roundsAfterStart,
             threshold,
             maxContextTokens
@@ -357,6 +373,7 @@ export class ContextTrimService {
     /**
      * 累加消息的 token 数
      * 
+     * @param promptTokens 系统提示词 + 动态上下文的总 token 数
      * @returns 累加结果
      */
     private accumulateTokens(
@@ -369,10 +386,10 @@ export class ContextTrimService {
         sendHistoryThoughtSignatures: boolean,
         sendCurrentThoughts: boolean,
         sendCurrentThoughtSignatures: boolean,
-        systemPromptTokens: number
+        promptTokens: number  // 系统提示词 + 动态上下文的总 token 数
     ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[] } {
-        let estimatedTotalTokens = systemPromptTokens;
-        let hasEstimatedTokens = systemPromptTokens > 0;
+        let estimatedTotalTokens = promptTokens;
+        let hasEstimatedTokens = promptTokens > 0;
         const roundTokenInfos: RoundTokenInfo[] = [];
         let currentRoundStartIndex = -1;
         
@@ -447,6 +464,8 @@ export class ContextTrimService {
 
     /**
      * 执行上下文裁剪
+     * 
+     * @param promptTokens 系统提示词 + 动态上下文的总 token 数
      */
     private async performContextTrim(
         conversationId: string,
@@ -454,7 +473,7 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         effectiveStartIndex: number,
         estimatedTotalTokens: number,
-        systemPromptTokens: number,
+        promptTokens: number,  // 系统提示词 + 动态上下文的总 token 数
         roundsAfterStart: RoundTokenInfo[],
         threshold: number,
         maxContextTokens: number
@@ -480,7 +499,7 @@ export class ContextTrimService {
         
         // 从 k=1 开始尝试，k 表示要跳过的回合数（从第 k 个回合开始保留）
         for (let k = 1; k < roundsAfterStart.length; k++) {
-            const skippedTokens = roundsAfterStart[k - 1].cumulativeTokens - systemPromptTokens;
+            const skippedTokens = roundsAfterStart[k - 1].cumulativeTokens - promptTokens;
             const remainingTokens = estimatedTotalTokens - skippedTokens;
             
             if (remainingTokens <= targetTokens) {

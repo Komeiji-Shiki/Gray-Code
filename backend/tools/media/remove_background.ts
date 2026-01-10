@@ -356,7 +356,7 @@ CRITICAL REQUIREMENTS:
     }
 
     const requestBody = {
-        contents: [{ parts }],
+        contents: [{ role: 'user', parts }],
         generationConfig: {
             responseModalities: ['IMAGE'],
             ...(Object.keys(imageConfig).length > 0 ? { imageConfig } : {})

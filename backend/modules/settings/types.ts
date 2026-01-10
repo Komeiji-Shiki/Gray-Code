@@ -519,6 +519,31 @@ export interface SystemPromptConfig {
      */
     customSuffix: string;
     
+    /**
+     * 是否启用动态上下文模板
+     *
+     * 当启用时，会将动态上下文（文件树、诊断、固定文件等）作为消息发送给 AI
+     * 当禁用时，不发送动态上下文消息
+     *
+     * 默认: true
+     */
+    dynamicTemplateEnabled: boolean;
+    
+    /**
+     * 动态上下文模板
+     *
+     * 支持以下模块占位符（使用 {{$xxx}} 格式）：
+     * - {{$WORKSPACE_FILES}} - 工作区文件树
+     * - {{$OPEN_TABS}} - 打开的标签页
+     * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
+     * - {{$DIAGNOSTICS}} - 诊断信息
+     * - {{$PINNED_FILES}} - 固定文件内容
+     * - {{$USER_REQUEST}} - 当前回合用户需求（占位符）
+     *
+     * 每次请求时动态生成，不存储到历史记录中
+     */
+    dynamicTemplate: string;
+    
     [key: string]: unknown;
 }
 
@@ -972,6 +997,13 @@ export interface GlobalSettings {
         /** 语言设置 */
         language?: string;
     };
+    
+    /**
+     * 用户上次查看的公告版本
+     * 
+     * 用于判断是否需要显示新版本的更新公告
+     */
+    lastReadAnnouncementVersion?: string;
     
     /**
      * 最后更新时间戳
@@ -1430,21 +1462,11 @@ export const DEFAULT_DIAGNOSTICS_CONFIG: DiagnosticsConfig = {
 };
 
 /**
- * 默认系统提示词模板
+ * 默认静态系统提示词模板
  */
 export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
-
-{{$WORKSPACE_FILES}}
-
-{{$OPEN_TABS}}
-
-{{$ACTIVE_EDITOR}}
-
-{{$DIAGNOSTICS}}
-
-{{$PINNED_FILES}}
 
 {{$TOOLS}}
 
@@ -1463,10 +1485,29 @@ GUIDELINES
 - Do not omit any code.`;
 
 /**
+ * 默认动态上下文模板
+ */
+export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `The following are the current turn's context variables for your reference:
+
+{{$WORKSPACE_FILES}}
+
+{{$OPEN_TABS}}
+
+{{$ACTIVE_EDITOR}}
+
+{{$DIAGNOSTICS}}
+
+{{$PINNED_FILES}}
+
+{{$USER_REQUEST}}`;
+
+/**
  * 默认系统提示词配置
  */
 export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     template: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     customPrefix: '',
     customSuffix: ''
 };

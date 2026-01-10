@@ -66,13 +66,13 @@ export class AnthropicFormatter extends BaseFormatter {
         config: AnthropicConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         const toolMode = (config as any).toolMode || 'function_call';
         
         // 处理系统指令
         let systemInstruction = (config as any).systemInstruction || '';
         
-        // 追加动态系统提示词（环境信息、文件树等）
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             systemInstruction = systemInstruction
                 ? `${systemInstruction}\n\n${request.dynamicSystemPrompt}`
@@ -113,7 +113,32 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         // 转换思考签名格式
-        const processedHistory = this.convertThoughtSignatures(history);
+        let processedHistory = this.convertThoughtSignatures(history);
+        
+        // 插入动态上下文消息（直接追加到历史末尾）
+        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
+        // 这些内容不存储到后端历史，仅在发送时临时插入
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            // 获取最后一条真正的 user 消息的内容，用于替换 {{$USER_REQUEST}}
+            const lastUserMessage = this.getLastUserMessageText(history);
+            
+            // 替换动态上下文中的 {{$USER_REQUEST}} 占位符
+            const processedDynamicMessages = dynamicContextMessages.map(msg => ({
+                ...msg,
+                parts: msg.parts.map(part => {
+                    if ('text' in part && typeof part.text === 'string') {
+                        const replacedText = part.text.replace(
+                            /\{\{\$USER_REQUEST\}\}/g,
+                            lastUserMessage ? this.wrapUserRequestSection(lastUserMessage) : ''
+                        );
+                        return { ...part, text: replacedText };
+                    }
+                    return part;
+                })
+            }));
+            
+            processedHistory = [...processedHistory, ...processedDynamicMessages];
+        }
         
         // 转换历史消息为 Anthropic 格式
         const messages = this.convertToAnthropicMessages(processedHistory, toolMode);
@@ -939,5 +964,34 @@ export class AnthropicFormatter extends BaseFormatter {
             description: tool.description,
             input_schema: tool.parameters
         }));
+    }
+    
+    /**
+     * 获取历史中最后一条真正的 user 消息的文本内容（排除 isFunctionResponse 的消息）
+     */
+    private getLastUserMessageText(history: Content[]): string | null {
+        // 从后往前查找最后一条真正的 user 消息（排除函数响应）
+        for (let i = history.length - 1; i >= 0; i--) {
+            const msg = history[i];
+            // 跳过 isFunctionResponse 为 true 的消息，这些是工具响应而不是用户输入
+            if (msg.role === 'user' && !msg.isFunctionResponse) {
+                // 提取所有文本 parts
+                const textParts = msg.parts
+                    .filter(part => 'text' in part && typeof part.text === 'string')
+                    .map(part => (part as { text: string }).text);
+                
+                if (textParts.length > 0) {
+                    return textParts.join('\n');
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * 将用户请求包装为带标题的段落
+     */
+    private wrapUserRequestSection(content: string): string {
+        return `====\n\nUSER REQUEST\n\n${content}`;
     }
 }

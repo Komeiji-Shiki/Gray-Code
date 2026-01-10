@@ -32,20 +32,44 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         config: OpenAIResponsesConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         
         // 准备系统指令 (instructions)
         let instructions = config.systemInstruction;
         
-        // 追加动态系统提示词
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             instructions = instructions
                 ? `${instructions}\n\n${request.dynamicSystemPrompt}`
                 : request.dynamicSystemPrompt;
         }
 
+        // 插入动态上下文消息（直接追加到历史末尾）
+        let processedHistory = history;
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            // 获取最后一条真正的 user 消息的内容，用于替换 {{$USER_REQUEST}}
+            const lastUserMessage = this.getLastUserMessageText(history);
+            
+            // 替换动态上下文中的 {{$USER_REQUEST}} 占位符
+            const processedDynamicMessages = dynamicContextMessages.map(msg => ({
+                ...msg,
+                parts: msg.parts.map(part => {
+                    if ('text' in part && typeof part.text === 'string') {
+                        const replacedText = part.text.replace(
+                            /\{\{\$USER_REQUEST\}\}/g,
+                            lastUserMessage ? this.wrapUserRequestSection(lastUserMessage) : ''
+                        );
+                        return { ...part, text: replacedText };
+                    }
+                    return part;
+                })
+            }));
+            
+            processedHistory = [...processedHistory, ...processedDynamicMessages];
+        }
+
         // 转换历史消息为 OpenAI Responses input 格式
-        const input = this.convertToResponsesInput(history);
+        const input = this.convertToResponsesInput(processedHistory);
 
         // 构建请求体
         const body: any = {
@@ -552,5 +576,34 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      */
     getSupportedType(): string {
         return 'openai-responses';
+    }
+    
+    /**
+     * 获取历史中最后一条真正的 user 消息的文本内容（排除 isFunctionResponse 的消息）
+     */
+    private getLastUserMessageText(history: Content[]): string | null {
+        // 从后往前查找最后一条真正的 user 消息（排除函数响应）
+        for (let i = history.length - 1; i >= 0; i--) {
+            const msg = history[i];
+            // 跳过 isFunctionResponse 为 true 的消息，这些是工具响应而不是用户输入
+            if (msg.role === 'user' && !msg.isFunctionResponse) {
+                // 提取所有文本 parts
+                const textParts = msg.parts
+                    .filter(part => 'text' in part && typeof part.text === 'string')
+                    .map(part => (part as { text: string }).text);
+                
+                if (textParts.length > 0) {
+                    return textParts.join('\n');
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * 将用户请求包装为带标题的段落
+     */
+    private wrapUserRequestSection(content: string): string {
+        return `====\n\nUSER REQUEST\n\n${content}`;
     }
 }
