@@ -453,6 +453,48 @@ export interface PinnedFilesConfig {
 }
 
 /**
+ * Skills 配置项
+ */
+export interface SkillConfigItem {
+    /**
+     * Skill ID
+     */
+    id: string;
+    
+    /**
+     * Skill 名称
+     */
+    name: string;
+    
+    /**
+     * Skill 描述
+     */
+    description: string;
+    
+    /**
+     * 是否在当前对话中启用
+     */
+    enabled: boolean;
+    
+    /**
+     * 是否发送具体内容给 AI
+     */
+    sendContent: boolean;
+}
+
+/**
+ * Skills 配置
+ */
+export interface SkillsConfig {
+    /**
+     * Skills 配置列表
+     */
+    skills: SkillConfigItem[];
+    
+    [key: string]: unknown;
+}
+
+/**
  * 系统提示词模块定义
  *
  * 描述一个可用的提示词模块
@@ -837,6 +879,7 @@ export interface ToolsConfig {
     rotate_image?: RotateImageToolConfig;
     context_awareness?: ContextAwarenessConfig;
     pinned_files?: PinnedFilesConfig;
+    skills?: SkillsConfig;
     system_prompt?: SystemPromptConfig;
     token_count?: TokenCountConfig;
     [toolName: string]: Record<string, unknown> | undefined;
@@ -1326,6 +1369,13 @@ export const DEFAULT_PINNED_FILES_CONFIG: PinnedFilesConfig = {
 };
 
 /**
+ * 默认 Skills 配置
+ */
+export const DEFAULT_SKILLS_CONFIG: SkillsConfig = {
+    skills: []
+};
+
+/**
  * 可用的提示词模块列表
  *
  * 注意：name、description、requiresConfig 等字段将在前端通过 i18n 翻译键显示
@@ -1486,7 +1536,7 @@ GUIDELINES
 /**
  * 默认动态上下文模板
  */
-export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.
+export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.
 
 {{$WORKSPACE_FILES}}
 

@@ -355,6 +355,14 @@ export interface BackendLanguageMessages {
             cancelTaskFailed: string;
             toolAlreadyExists: string;
         };
+        
+        /** Skills 工具 */
+        skills: {
+            description: string;
+            errors: {
+                managerNotInitialized: string;
+            };
+        };
     };
     
     /** 工作区相关 */

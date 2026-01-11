@@ -31,6 +31,9 @@ import './lsp/get_symbols'
 import './lsp/goto_definition'
 import './lsp/find_references'
 
+// Skills 工具
+import './skills/toggle_skills'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 
