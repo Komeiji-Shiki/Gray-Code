@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.44] - 2026-01-14
+
+### Improved
+  - 优化了动态提示词的插入算法，改为插入到回合之前，避免破坏回合完整性
+
 ## [1.0.43] - 2026-01-11
 
 ### Improved
