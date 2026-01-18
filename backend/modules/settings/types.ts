@@ -1681,7 +1681,7 @@ GUIDELINES
 /**
  * 默认动态上下文模板
  */
-export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.
+export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
 
 {{$WORKSPACE_FILES}}
 

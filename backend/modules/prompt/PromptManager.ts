@@ -358,7 +358,7 @@ export class PromptManager {
         const sections: string[] = []
         
         // 前缀说明
-        sections.push('This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.')
+        sections.push('This is the current turn\'s dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.')
         
         // 当前时间
         const now = new Date()
@@ -668,8 +668,20 @@ export class PromptManager {
             }
         }
         
+        // 即使没有任何诊断信息，也返回一段提示，告诉 AI 当前“所选严重程度”下没有报错/警告等。
+        // 这样在 {{$DIAGNOSTICS}} 占位符处不会完全空白，AI 也能明确知道：
+        // - 诊断功能已启用
+        // - 当前过滤条件下没有发现问题
+        const selectedSeverities = (diagnosticsConfig.includeSeverities || [])
+            .map(s => severityLabels[s] || s)
+            .join(', ')
+
         if (fileResults.length === 0) {
-            return ''
+            const scopeDesc = diagnosticsConfig.openFilesOnly
+                ? 'open files only'
+                : (diagnosticsConfig.workspaceOnly ? 'workspace files only' : 'all files')
+
+            return `No diagnostics were found in the workspace (scope: ${scopeDesc}, severities: ${selectedSeverities || 'none'}).`
         }
         
         return `The following diagnostics were found in the workspace:\n\n${fileResults.join('\n\n')}`

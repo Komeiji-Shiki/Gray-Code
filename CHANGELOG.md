@@ -3,6 +3,16 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.50] - 2026-01-19
+
+### Fixed
+  - 修复总结上下文总是带全部历史的问题
+  - 发送时过滤掉空的thought块，以格式更正确
+  - 修复了发送消息时的token重复计数问题
+
+### Improved
+  - 优化了默认的动态提示词，请务必去设置-提示词页签里**重置一下动态提示词**
+
 ## [1.0.49] - 2026-01-18
 
 ### Added

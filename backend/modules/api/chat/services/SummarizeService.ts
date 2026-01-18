@@ -128,7 +128,9 @@ export class SummarizeService {
             // 4. 获取对话历史
             const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
-            // 5. 找到最后一个总结消息的位置，从该位置之后开始识别回合
+            // 5. 找到最后一个总结消息的位置
+            // - 回合识别从最后一个总结消息之后开始（避免反复把旧对话算进“新回合”）
+            // - 但真正发给 AI 做“合并总结”的内容，需要包含最后一个总结消息本身（用于承接之前的总结）
             const lastSummaryIndex = this.contextTrimService.findLastSummaryIndex(fullHistory);
             const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex + 1 : 0;
 
@@ -165,8 +167,21 @@ export class SummarizeService {
                 : rounds[roundsToSummarize].startIndex;
             const summarizeEndIndex = historyStartIndex + summarizeEndIndexRelative;
 
-            // 提取需要总结的消息
-            const messagesToSummarize = fullHistory.slice(0, summarizeEndIndex);
+            // 提取需要总结的消息：
+            // - 如果存在旧总结，则用“旧总结 + 总结之后的新消息”作为输入，避免每次都把最早的原始对话重新发给 AI。
+            // - 如果不存在旧总结，则从 0 开始。
+            const summarizeInputStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
+            const messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, summarizeEndIndex);
+
+            // 计算“本次总结后，累计覆盖了多少条原始消息”
+            const previousSummarizedCount = lastSummaryIndex >= 0
+                ? (typeof fullHistory[lastSummaryIndex]?.summarizedMessageCount === 'number'
+                    ? (fullHistory[lastSummaryIndex].summarizedMessageCount as number)
+                    : lastSummaryIndex)
+                : 0;
+            // 这次新纳入总结的消息数量（不包含旧 summary 本身）
+            const newlySummarizedCount = summarizeEndIndex - historyStartIndex;
+            const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
 
             if (messagesToSummarize.length === 0) {
                 return {
@@ -262,31 +277,17 @@ export class SummarizeService {
                 };
             }
 
-            // 11. 删除已存在的旧总结消息
-            let insertIndex = summarizeEndIndex;
-            const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
-
-            const summaryIndicesToDelete: number[] = [];
-            for (let i = 0; i < summarizeEndIndex; i++) {
-                if (currentHistory[i]?.isSummary) {
-                    summaryIndicesToDelete.push(i);
-                }
-            }
-
-            if (summaryIndicesToDelete.length > 0) {
-                for (let i = summaryIndicesToDelete.length - 1; i >= 0; i--) {
-                    const indexToDelete = summaryIndicesToDelete[i];
-                    await this.conversationManager.deleteMessage(conversationId, indexToDelete);
-                }
-                insertIndex = summarizeEndIndex - summaryIndicesToDelete.length;
-            }
+            // 11. 插入新的总结消息
+            // 注意：这里不删除旧的总结消息。
+            // 这样用户可以保留每一次总结的历史记录；同时后续上下文裁剪/下一次总结都会自动使用“最后一个总结消息”。
+            const insertIndex = summarizeEndIndex;
 
             // 12. 创建总结消息并添加到历史
             const summaryContent: Content = {
                 role: 'user',
                 parts: [{ text: `${t('modules.api.chat.prompts.summaryPrefix')}\n\n${summaryText}` }],
                 isSummary: true,
-                summarizedMessageCount: messagesToSummarize.length,
+                summarizedMessageCount: totalSummarizedCount,
                 usageMetadata: {
                     promptTokenCount: beforeTokenCount,
                     candidatesTokenCount: afterTokenCount
@@ -298,7 +299,7 @@ export class SummarizeService {
             return {
                 success: true,
                 summaryContent,
-                summarizedMessageCount: messagesToSummarize.length,
+                summarizedMessageCount: totalSummarizedCount,
                 beforeTokenCount,
                 afterTokenCount
             };

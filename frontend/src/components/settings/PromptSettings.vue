@@ -203,7 +203,7 @@ GUIDELINES
 - Do not omit any code.`
 
 // 默认动态上下文模板
-const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.
+const DEFAULT_DYNAMIC_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
 
 {{$WORKSPACE_FILES}}
 

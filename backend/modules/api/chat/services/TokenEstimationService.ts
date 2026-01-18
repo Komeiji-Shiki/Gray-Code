@@ -203,47 +203,58 @@ export class TokenEstimationService {
             
             const results = await Promise.all(countPromises);
             
-            // 并行更新消息
-            const updatePromises = messagesToCount.map(async ({ index, message }, i) => {
+            // 批量更新消息（一次读写，避免并行 updateMessage 覆盖写）
+            const batchUpdates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
+
+            for (let i = 0; i < messagesToCount.length; i++) {
+                const { index, message } = messagesToCount[i];
                 const result = results[i];
+
                 let tokenCount: number;
-                
                 if (result.success && result.totalTokens !== undefined) {
                     tokenCount = result.totalTokens;
                 } else {
                     // API 失败，使用估算
                     tokenCount = this.estimateMessageTokens(message);
                 }
-                
-                const tokenCountByChannel: ChannelTokenCounts = message.tokenCountByChannel || {};
+
+                const tokenCountByChannel: ChannelTokenCounts = { ...(message.tokenCountByChannel || {}) };
                 if (channelType) {
                     tokenCountByChannel[channelType] = tokenCount;
                 }
-                
-                await this.conversationManager.updateMessage(conversationId, index, {
-                    tokenCountByChannel,
-                    estimatedTokenCount: tokenCount
+
+                batchUpdates.push({
+                    messageIndex: index,
+                    updates: {
+                        tokenCountByChannel,
+                        estimatedTokenCount: tokenCount
+                    }
                 });
-            });
-            
-            await Promise.all(updatePromises);
+            }
+
+            await this.conversationManager.updateMessagesBatch(conversationId, batchUpdates);
         } else {
-            // 不使用 API，直接估算并并行更新
-            const updatePromises = messagesToCount.map(async ({ index, message }) => {
+            // 不使用 API，直接估算并批量更新（一次读写，避免并行 updateMessage 覆盖写）
+            const batchUpdates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
+
+            for (const { index, message } of messagesToCount) {
                 const tokenCount = this.estimateMessageTokens(message);
-                
-                const tokenCountByChannel: ChannelTokenCounts = message.tokenCountByChannel || {};
+
+                const tokenCountByChannel: ChannelTokenCounts = { ...(message.tokenCountByChannel || {}) };
                 if (channelType) {
                     tokenCountByChannel[channelType] = tokenCount;
                 }
-                
-                await this.conversationManager.updateMessage(conversationId, index, {
-                    tokenCountByChannel,
-                    estimatedTokenCount: tokenCount
+
+                batchUpdates.push({
+                    messageIndex: index,
+                    updates: {
+                        tokenCountByChannel,
+                        estimatedTokenCount: tokenCount
+                    }
                 });
-            });
-            
-            await Promise.all(updatePromises);
+            }
+
+            await this.conversationManager.updateMessagesBatch(conversationId, batchUpdates);
         }
     }
     

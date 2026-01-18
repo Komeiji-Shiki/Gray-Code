@@ -346,6 +346,34 @@ export class ConversationManager {
     }
 
     /**
+     * 批量更新多条消息（一次读写，避免并发 updateMessage 导致的覆盖写入）
+     *
+     * 典型场景：Token 预计算会并行更新多条 user 消息的 tokenCountByChannel。
+     * 如果对每条消息单独 load+save，并行执行会出现“后写覆盖先写”，导致大量 token 结果丢失，
+     * 进而在下一次请求里又重复对同一批消息进行 token 计数。
+     */
+    async updateMessagesBatch(
+        conversationId: string,
+        updates: Array<{ messageIndex: number; updates: Partial<Content> }>
+    ): Promise<void> {
+        if (updates.length === 0) {
+            return;
+        }
+
+        const history = await this.loadHistory(conversationId);
+
+        for (const item of updates) {
+            const { messageIndex, updates: patch } = item;
+            if (messageIndex < 0 || messageIndex >= history.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+            }
+            Object.assign(history[messageIndex], patch);
+        }
+
+        await this.storage.saveHistory(conversationId, history);
+    }
+
+    /**
      * 删除消息
      */
     async deleteMessage(conversationId: string, messageIndex: number): Promise<void> {
@@ -1047,7 +1075,18 @@ export class ConversationManager {
                 .map(part => cleanInlineData(part, isFunctionResponse, isHistoryMessage))
                 .map(part => part ? cleanFunctionCall(part) : part)
                 .map(part => part ? processFunctionResponse(part) : part)
-                .filter((part): part is ContentPart => part !== null && Object.keys(part).length > 0);
+                // 过滤空 part：
+                // - null（被 cleanInlineData 等过滤）
+                // - 空对象
+                // - 仅包含 thought: true 的“空 thought 块”（常见于：原本只有 thoughtSignatures，后续又被配置过滤掉签名）
+                //   这类 part 在不同模型/渠道下可能导致兼容性问题。
+                .filter((part): part is ContentPart => {
+                    if (part === null) return false;
+                    const keys = Object.keys(part);
+                    if (keys.length === 0) return false;
+                    if (keys.length === 1 && keys[0] === 'thought' && (part as any).thought === true) return false;
+                    return true;
+                });
             
             if (parts.length === 0) {
                 return null;
