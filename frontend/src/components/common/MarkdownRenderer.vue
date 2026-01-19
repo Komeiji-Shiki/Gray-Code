@@ -19,7 +19,16 @@ import type Renderer from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import hljs from 'highlight.js'
 import katex from 'katex'
+import mermaid from 'mermaid'
 import { sendToExtension } from '@/utils/vscode'
+
+// 初始化 Mermaid
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark', // 默认为暗色，后续可根据 VS Code 主题动态调整
+  securityLevel: 'loose',
+  fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
+})
 
 // 插件导入
 import footnote from 'markdown-it-footnote'
@@ -39,6 +48,124 @@ const containerRef = ref<HTMLElement | null>(null)
 // 复制按钮状态计时器存储
 const copyTimers = new Map<HTMLButtonElement, number>()
 
+// Mermaid 渲染锁定
+let isMermaidRendering = false
+
+// 放大查看状态
+const isZoomModalVisible = ref(false)
+const zoomedContent = ref('')
+const zoomTitle = ref('')
+
+// 缩放与平移状态
+const zoomScale = ref(1)
+const panOffset = ref({ x: 0, y: 0 })
+const isDragging = ref(false)
+const startPos = ref({ x: 0, y: 0 })
+
+/**
+ * 缩放控制
+ */
+function handleZoomIn() {
+  zoomScale.value = Math.min(zoomScale.value + 0.2, 5)
+}
+
+function handleZoomOut() {
+  zoomScale.value = Math.max(zoomScale.value - 0.2, 0.2)
+}
+
+function resetZoom() {
+  zoomScale.value = 1
+  panOffset.value = { x: 0, y: 0 }
+}
+
+/**
+ * 滚轮缩放
+ */
+function handleWheel(event: WheelEvent) {
+  event.preventDefault()
+  const delta = event.deltaY > 0 ? -0.1 : 0.1
+  const newScale = Math.min(Math.max(zoomScale.value + delta, 0.1), 10)
+  zoomScale.value = newScale
+}
+
+/**
+ * 鼠标拖拽平移
+ */
+function handleMouseDown(event: MouseEvent) {
+  if (event.button !== 0) return // 仅左键拖拽
+  isDragging.value = true
+  startPos.value = { x: event.clientX - panOffset.value.x, y: event.clientY - panOffset.value.y }
+  
+  // 防止文本选中
+  event.preventDefault()
+}
+
+function handleMouseMove(event: MouseEvent) {
+  if (!isDragging.value) return
+  panOffset.value = {
+    x: event.clientX - startPos.value.x,
+    y: event.clientY - startPos.value.y
+  }
+}
+
+function handleMouseUp() {
+  isDragging.value = false
+}
+
+// 监听全局鼠标松开，防止在外部松开后还在拖拽
+onMounted(() => {
+  window.addEventListener('mouseup', handleMouseUp)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mouseup', handleMouseUp)
+})
+
+/**
+ * 渲染 Mermaid 图表
+ */
+async function renderMermaid() {
+  if (!containerRef.value || isMermaidRendering) return
+  
+  const mermaidElements = containerRef.value.querySelectorAll('.mermaid')
+  if (mermaidElements.length === 0) return
+
+  isMermaidRendering = true
+  // 检查当前主题
+  const isDark = document.body.classList.contains('vscode-dark') || 
+                 document.body.classList.contains('vscode-high-contrast')
+  
+  try {
+    // 重新初始化以应用可能的颜色变化
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isDark ? 'dark' : 'default',
+      themeVariables: isDark ? {
+        background: 'transparent',
+        mainBkg: '#2d2d30',
+        sequenceNumberColor: '#fff',
+        lineColor: '#858585',
+        textColor: '#cccccc',
+      } : {},
+      flowchart: {
+        htmlLabels: true,
+        curve: 'basis',
+        useMaxWidth: true
+      },
+      securityLevel: 'loose',
+      fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
+    })
+
+    await mermaid.run({
+      nodes: Array.from(mermaidElements) as HTMLElement[]
+    })
+  } catch (error) {
+    console.error('Mermaid 渲染失败:', error)
+  } finally {
+    isMermaidRendering = false
+  }
+}
+
 // 图片加载状态
 const imageCache = new Map<string, string>()
 
@@ -53,6 +180,13 @@ function createMarkdownIt() {
     linkify: true,        // 自动检测链接
     typographer: true,    // 启用智能引号等排版功能
     highlight: function (str: string, lang: string) {
+      // Mermaid 图表支持
+      if (lang === 'mermaid') {
+        const encodedCode = btoa(encodeURIComponent(str))
+        // 使用 pre 包装以防止 markdown-it 对其进行转义
+        return `<pre class="mermaid-wrapper"><div class="mermaid">${str}</div><button class="code-copy-btn" data-code="${encodedCode}" title="复制 Mermaid 代码"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></pre>`
+      }
+
       // 代码高亮
       let highlighted: string
       let langClass = ''
@@ -341,6 +475,9 @@ function handleCopyClick(event: Event) {
   
   if (!button) return
   
+  // 阻止冒泡，避免触发放大查看
+  event.stopPropagation()
+  
   const encodedCode = button.getAttribute('data-code')
   if (!encodedCode) return
   
@@ -427,22 +564,51 @@ async function handleImageClick(event: Event) {
   }
 }
 
+/**
+ * 处理 Mermaid 图表点击放大
+ */
+function handleMermaidClick(event: Event) {
+  const target = event.target as HTMLElement
+  const wrapper = target.closest('.mermaid-wrapper')
+  
+  // 如果点击的是复制按钮，不触发放大
+  if (target.closest('.code-copy-btn')) return
+  
+  if (wrapper) {
+    const mermaidDiv = wrapper.querySelector('.mermaid')
+    if (mermaidDiv) {
+      zoomedContent.value = mermaidDiv.innerHTML
+      zoomTitle.value = 'Mermaid 图表'
+      resetZoom() // 每次打开重置缩放状态
+      isZoomModalVisible.value = true
+    }
+  }
+}
+
 onMounted(() => {
   if (containerRef.value) {
     containerRef.value.addEventListener('click', handleCopyClick)
     containerRef.value.addEventListener('click', handleImageClick)
+    containerRef.value.addEventListener('click', handleMermaidClick)
   }
-  nextTick(() => loadWorkspaceImages())
+  nextTick(async () => {
+    await loadWorkspaceImages()
+    await renderMermaid()
+  })
 })
 
 watch(() => props.content, () => {
-  nextTick(() => loadWorkspaceImages())
+  nextTick(async () => {
+    await loadWorkspaceImages()
+    await renderMermaid()
+  })
 })
 
-onUnmounted(() => {
+onUnmounted(()=> {
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleCopyClick)
     containerRef.value.removeEventListener('click', handleImageClick)
+    containerRef.value.removeEventListener('click', handleMermaidClick)
   }
   copyTimers.forEach((timer) => {
     window.clearTimeout(timer)
@@ -453,6 +619,59 @@ onUnmounted(() => {
 
 <template>
   <div ref="containerRef" class="markdown-content" v-html="renderedContent"></div>
+
+  <!-- 沉浸式全屏查看 -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="isZoomModalVisible" class="mermaid-zoom-overlay">
+        <!-- 悬浮关闭按钮 -->
+        <button class="zoom-floating-close" @click="isZoomModalVisible = false" title="关闭预览">
+          <i class="codicon codicon-close"></i>
+        </button>
+
+        <!-- 内容区 -->
+        <div 
+          class="zoom-body" 
+          @wheel="handleWheel"
+          @mousedown="handleMouseDown"
+          @mousemove="handleMouseMove"
+          :style="{ cursor: isDragging ? 'grabbing' : 'grab' }"
+        >
+          <div 
+            class="zoomed-mermaid-content" 
+            v-html="zoomedContent" 
+            :style="{ 
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`
+            }"
+          ></div>
+        </div>
+
+        <!-- 悬浮控制栏 -->
+        <div class="zoom-controls">
+          <div class="zoom-actions">
+            <div class="zoom-btn-group">
+              <button class="zoom-action-btn icon-only" @click="handleZoomOut" title="缩小">
+                <i class="codicon codicon-zoom-out"></i>
+              </button>
+              <button class="zoom-action-btn text-btn" @click="resetZoom" title="重置缩放">
+                {{ Math.round(zoomScale * 100) }}%
+              </button>
+              <button class="zoom-action-btn icon-only" @click="handleZoomIn" title="放大">
+                <i class="codicon codicon-zoom-in"></i>
+              </button>
+            </div>
+            <div class="zoom-divider"></div>
+            <span class="zoom-status-tip">滚轮缩放，左键拖拽</span>
+            <div class="zoom-divider"></div>
+            <button class="zoom-action-btn close-btn" @click="isZoomModalVisible = false">
+              <i class="codicon codicon-close"></i>
+              关闭预览
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -788,6 +1007,46 @@ onUnmounted(() => {
   text-align: center;
 }
 
+/* Mermaid 图表 */
+.markdown-content :deep(.mermaid-wrapper) {
+  position: relative;
+  margin: 1em 0;
+  padding: 16px;
+  background: var(--vscode-textBlockQuote-background);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+}
+
+.markdown-content :deep(.mermaid) {
+  background: transparent;
+  line-height: normal;
+  cursor: zoom-in;
+}
+
+.markdown-content :deep(.mermaid-wrapper) {
+  cursor: zoom-in;
+}
+
+.markdown-content :deep(.mermaid-wrapper .code-copy-btn) {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.markdown-content :deep(.mermaid-wrapper:hover .code-copy-btn) {
+  opacity: 0.6;
+}
+
+.markdown-content :deep(.mermaid-wrapper .code-copy-btn:hover) {
+  opacity: 1 !important;
+}
+
+.markdown-content :deep(.mermaid svg) {
+  max-width: 100%;
+  height: auto;
+}
+
 .markdown-content :deep(.katex) {
   font-family: 'Times New Roman', Times, serif;
   font-size: 1.1em;
@@ -799,6 +1058,201 @@ onUnmounted(() => {
   background: var(--vscode-inputValidation-errorBackground);
   padding: 2px 4px;
   border-radius: 2px;
+}
+
+/* 沉浸式全屏查看样式 */
+.mermaid-zoom-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: var(--vscode-editor-background);
+  display: flex;
+  flex-direction: column;
+}
+
+.zoom-floating-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(128, 128, 128, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--vscode-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10001;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s;
+}
+
+.zoom-floating-close:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  transform: rotate(90deg);
+}
+
+.zoom-body {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden; /* 拖拽模式不需要原生滚动条 */
+  position: relative;
+  user-select: none;
+}
+
+.zoomed-mermaid-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.05s linear; /* 缩放和平移需要平滑感 */
+  pointer-events: none; /* 让事件透传给 zoom-body 处理 */
+}
+
+.zoomed-mermaid-content :deep(svg) {
+  max-width: none !important;
+  max-height: none !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+.zoom-controls {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  pointer-events: none;
+}
+
+.zoom-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 6px 6px 16px;
+  border-radius: 30px;
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-panel-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+
+.zoom-btn-group {
+  display: flex;
+  align-items: center;
+  background: var(--vscode-editor-background);
+  border-radius: 20px;
+  border: 1px solid var(--vscode-panel-border);
+  overflow: hidden;
+}
+
+.zoom-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--vscode-panel-border);
+}
+
+.zoom-status-tip {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  padding-right: 12px;
+}
+
+.zoom-action-btn {
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.zoom-action-btn.icon-only {
+  width: 36px;
+}
+
+.zoom-action-btn.text-btn {
+  padding: 0 10px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  min-width: 50px;
+  border-left: 1px solid var(--vscode-panel-border);
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+.zoom-action-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.zoom-action-btn.close-btn {
+  padding: 0 16px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-radius: 16px;
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.zoom-action-btn.close-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.zoom-action-btn.close-btn i {
+  font-size: 14px;
+}
+
+/* 过渡动画 */
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+
+/* 增加 Mermaid 文字对比度：强制白字黑边 (Meme 字体风格)，确保任何背景色下都清晰 */
+.markdown-content :deep(.mermaid text),
+.markdown-content :deep(.mermaid span),
+.zoomed-mermaid-content :deep(text),
+.zoomed-mermaid-content :deep(span) {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  text-shadow: 
+    -1px -1px 0 #000,  
+     1px -1px 0 #000,
+    -1px  1px 0 #000,
+     1px  1px 0 #000,
+     0px  0px 4px rgba(0,0,0,0.8) !important;
+}
+
+/* 节点样式微调 */
+.markdown-content :deep(.mermaid .node),
+.zoomed-mermaid-content :deep(.node) {
+  stroke-width: 1.5px !important;
+}
+
+/* 连线文字处理 */
+.markdown-content :deep(.mermaid .edgeLabel),
+.zoomed-mermaid-content :deep(.edgeLabel) {
+  background-color: transparent !important;
+  padding: 0 4px;
+}
+
+.mermaid-zoom-overlay {
+  background: var(--vscode-editor-background);
+  background-image: radial-gradient(var(--vscode-panel-border) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
 /* 图片 */
