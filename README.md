@@ -58,6 +58,9 @@
 
 ## 📦 安装
 
+### 从插件商店下载
+1.搜索`LimCode`进行安装
+
 ### 从 VSIX 安装
 1. 下载最新的 `limcode-x.x.x.vsix` 文件
 2. 在 VS Code 中打开命令面板 (`Ctrl+Shift+P`)
@@ -71,16 +74,13 @@ git clone https://github.com/limcode/limcode.git
 cd limcode
 
 # 安装依赖
-pnpm install
+npm install
 
-# 构建前端
-cd frontend && pnpm install && pnpm build && cd ..
-
-# 编译后端
-pnpm compile
+# 构建前后端
+npm install && npm build
 
 # 打包
-npx vsce package
+npx @vscode/vsce package
 ```
 
 ## 🚀 快速开始
