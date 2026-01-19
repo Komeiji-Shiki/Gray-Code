@@ -157,35 +157,35 @@ const highlightedPaths = computed(() => {
 })
 
 // 键盘事件处理
-function handleKeydown(e: KeyboardEvent) {
+function handleKeydown(e: KeyboardEvent | { key: string, preventDefault?: Function, stopPropagation?: Function }) {
   if (!props.visible) return
   
   switch (e.key) {
     case 'ArrowDown':
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault?.()
+      e.stopPropagation?.()
       selectedIndex.value = Math.min(selectedIndex.value + 1, files.value.length - 1)
       scrollToSelected()
       break
     case 'ArrowUp':
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault?.()
+      e.stopPropagation?.()
       selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
       scrollToSelected()
       break
     case 'Enter':
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault?.()
+      e.stopPropagation?.()
       selectCurrent()
       break
     case 'Escape':
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault?.()
+      e.stopPropagation?.()
       emit('close')
       break
     case 'Tab':
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault?.()
+      e.stopPropagation?.()
       selectCurrent()
       break
   }
@@ -199,7 +199,7 @@ function scrollToSelected() {
     
     const selectedItem = container.querySelector('.file-item.selected') as HTMLElement
     if (selectedItem) {
-      selectedItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      selectedItem.scrollIntoView({ block: 'nearest', behavior: 'auto' })
     }
   })
 }

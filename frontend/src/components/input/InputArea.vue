@@ -287,6 +287,9 @@ function handleAtQueryChange(query: string) {
 function handleCloseAtPicker() {
   showFilePicker.value = false
   filePickerQuery.value = ''
+  if (inputBoxRef.value) {
+    inputBoxRef.value.closeAtPicker()
+  }
 }
 
 // 处理选择文件
@@ -303,9 +306,9 @@ function handleAtPickerKeydown(key: string) {
   if (!showFilePicker.value || !filePickerRef.value) return
   
   if (key === 'ArrowUp') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {} } as KeyboardEvent)
+    filePickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
   } else if (key === 'ArrowDown') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent)
+    filePickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
   } else if (key === 'Enter') {
     filePickerRef.value.selectCurrent()
   }

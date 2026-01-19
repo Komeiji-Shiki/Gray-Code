@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.54] - 2026-01-19
+
+### Fixed
+  - 修复了"@"菜单里使用↑↓按键无作用的问题
+
 ## [1.0.53] - 2026-01-19
 
 ### Added
