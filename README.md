@@ -75,9 +75,10 @@ cd limcode
 
 # 安装依赖
 npm install
+cd frontend && npm install
 
 # 构建前后端
-npm install && npm build
+npm run build
 
 # 打包
 npx @vscode/vsce package
