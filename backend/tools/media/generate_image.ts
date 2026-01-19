@@ -425,7 +425,7 @@ function extractFromResponse(response: GeminiImageResponse): {
 /**
  * 保存图片到文件
  */
-async function saveImage(base64Data: string, outputPath: string): Promise<void> {
+async function saveImage(buffer: Buffer, outputPath: string): Promise<void> {
     const uri = resolveUri(outputPath);
     if (!uri) {
         throw new Error('No workspace folder open');
@@ -440,20 +440,45 @@ async function saveImage(base64Data: string, outputPath: string): Promise<void> 
     }
 
     // 写入文件
-    const buffer = Buffer.from(base64Data, 'base64');
     await vscode.workspace.fs.writeFile(uri, buffer);
 }
 
 /**
  * 获取文件扩展名
  */
-function getExtensionFromMimeType(mimeType: string): string {
+/**
+ * 根据 Buffer 嗅探图片真实后缀名，如果嗅探失败则回退到 mimeType
+ */
+function detectExtension(buffer: Buffer, mimeType?: string): string {
+    // 嗅探 Magic Number
+    if (buffer.length > 4) {
+        // JPEG: FF D8
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8) return '.jpg';
+        // PNG: 89 50 4E 47
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return '.png';
+        // GIF: 47 49 46 (GIF87a 或 GIF89a)
+        if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return '.gif';
+        // WebP: RIFF .... WEBP
+        if (buffer.length >= 12 && 
+            buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 && 
+            buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+            return '.webp';
+        }
+    }
+
+    // 回退到基于 MIME 类型的映射
     const mimeToExt: Record<string, string> = {
         'image/png': '.png',
         'image/jpeg': '.jpg',
-        'image/webp': '.webp'
+        'image/jpg': '.jpg',
+        'image/webp': '.webp',
+        'image/gif': '.gif',
+        'image/x-icon': '.ico',
+        'image/heic': '.heic',
+        'image/heif': '.heif'
     };
-    return mimeToExt[mimeType] || '.png';
+    
+    return (mimeType ? mimeToExt[mimeType] : null) || '.png';
 }
 
 /**
@@ -583,19 +608,38 @@ async function executeImageTask(
 
         for (let i = 0; i < limitedImages.length; i++) {
             const img = limitedImages[i];
-            const ext = getExtensionFromMimeType(img.mimeType);
+            const buffer = Buffer.from(img.data, 'base64');
+            const ext = detectExtension(buffer, img.mimeType);
             
             // 确定输出路径
             let finalOutputPath: string;
             if (i === 0) {
-                finalOutputPath = output_path;
+                const currentExt = path.extname(output_path).toLowerCase();
+                const targetExt = ext.toLowerCase();
+                
+                // 定义同义后缀组，防止不必要的更正
+                const areSynonyms = (ext1: string, ext2: string) => {
+                    const jpegExts = ['.jpg', '.jpeg', '.jfif'];
+                    return jpegExts.includes(ext1) && jpegExts.includes(ext2);
+                };
+
+                if (currentExt !== targetExt && !areSynonyms(currentExt, targetExt)) {
+                    // 仅在后缀名完全不匹配且不是同义词时更正
+                    const dirName = path.dirname(output_path);
+                    const baseNameWithoutExt = path.basename(output_path, currentExt);
+                    
+                    const newFileName = baseNameWithoutExt + targetExt;
+                    finalOutputPath = dirName === '.' ? newFileName : path.join(dirName, newFileName);
+                } else {
+                    finalOutputPath = output_path;
+                }
             } else {
                 const baseName = output_path.replace(/\.[^.]+$/, '');
                 finalOutputPath = `${baseName}_${i}${ext}`;
             }
 
             // 保存图片
-            await saveImage(img.data, finalOutputPath);
+            await saveImage(buffer, finalOutputPath);
             savedPaths.push(finalOutputPath);
 
             // 收集尺寸信息

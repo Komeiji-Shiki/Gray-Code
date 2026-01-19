@@ -70,8 +70,8 @@
 ### 从源码构建
 ```bash
 # 克隆仓库
-git clone https://github.com/limcode/limcode.git
-cd limcode
+git clone https://github.com/Lianues/Lim-Code.git
+cd Lim-Code
 
 # 安装依赖
 npm install
