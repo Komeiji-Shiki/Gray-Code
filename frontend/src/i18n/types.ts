@@ -193,6 +193,8 @@ export interface LanguageMessages {
                 copied: string;
                 imageLoadFailed: string;
             };
+            scrollToTop: string;
+            scrollToBottom: string;
         };
 
         /** header 目录 */

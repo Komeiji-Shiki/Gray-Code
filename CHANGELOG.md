@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.53] - 2026-01-19
+
+### Added
+  - 添加了快速回顶/回底按钮，添加了滚动动画
+
+### Fixed
+  - 修复了获取模型列表时没有走设置的网络代理的问题
+
 ## [1.0.52] - 2026-01-19
 
 ### Added

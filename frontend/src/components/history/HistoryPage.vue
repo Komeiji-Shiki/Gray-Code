@@ -140,7 +140,11 @@ async function handleDelete(id: string) {
     </div>
 
     <!-- 对话列表 -->
-    <CustomScrollbar ref="scrollbarRef" class="page-content">
+    <CustomScrollbar 
+      ref="scrollbarRef" 
+      class="page-content"
+      show-jump-buttons
+    >
       <!-- 搜索无结果提示 -->
       <div v-if="filteredConversations.length === 0 && searchKeyword && !chatStore.isLoadingConversations" class="no-results">
         <i class="codicon codicon-search"></i>

@@ -6,6 +6,7 @@
 
 import { t } from '../../i18n';
 import type { ChannelConfig } from '../config/types';
+import { createProxyFetch } from './proxyFetch';
 
 /**
  * 模型信息
@@ -30,7 +31,7 @@ export interface ModelInfo {
 /**
  * 获取 Gemini 模型列表
  */
-export async function getGeminiModels(config: ChannelConfig): Promise<ModelInfo[]> {
+export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   const apiKey = (config as any).apiKey;
   const url = (config as any).url || 'https://generativelanguage.googleapis.com/v1beta';
   
@@ -39,7 +40,8 @@ export async function getGeminiModels(config: ChannelConfig): Promise<ModelInfo[
   }
   
   try {
-    const response = await fetch(`${url}/models?key=${apiKey}`);
+    const proxyFetch = createProxyFetch(proxyUrl);
+    const response = await proxyFetch(`${url}/models?key=${apiKey}`);
     
     if (!response.ok) {
       throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
@@ -69,7 +71,7 @@ export async function getGeminiModels(config: ChannelConfig): Promise<ModelInfo[
 /**
  * 获取 OpenAI 兼容模型列表
  */
-export async function getOpenAIModels(config: ChannelConfig): Promise<ModelInfo[]> {
+export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   const apiKey = (config as any).apiKey;
   let url = (config as any).url || 'https://api.openai.com/v1';
   
@@ -87,7 +89,8 @@ export async function getOpenAIModels(config: ChannelConfig): Promise<ModelInfo[
   }
   
   try {
-    const response = await fetch(`${url}/models`, {
+    const proxyFetch = createProxyFetch(proxyUrl);
+    const response = await proxyFetch(`${url}/models`, {
       headers: {
         'Authorization': `Bearer ${apiKey}`
       }
@@ -125,16 +128,16 @@ export async function getClaudeModels(config: ChannelConfig): Promise<ModelInfo[
 /**
  * 根据配置类型获取模型列表
  */
-export async function getModels(config: ChannelConfig): Promise<ModelInfo[]> {
+export async function getModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   switch (config.type) {
     case 'gemini':
-      return getGeminiModels(config);
+      return getGeminiModels(config, proxyUrl);
     
     case 'openai':
-      return getOpenAIModels(config);
+      return getOpenAIModels(config, proxyUrl);
     
     case 'openai-responses':
-      return getOpenAIModels(config);
+      return getOpenAIModels(config, proxyUrl);
     
     case 'anthropic':
       return getClaudeModels(config);

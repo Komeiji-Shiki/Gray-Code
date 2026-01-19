@@ -203,7 +203,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.chatHandler.setDiffStorageManager(this.diffStorageManager);
         
         // 18. 初始化模型管理处理器
-        this.modelsHandler = new ModelsHandler(this.configManager);
+        this.modelsHandler = new ModelsHandler(this.configManager, this.settingsManager);
         
         // 19. 初始化设置处理器（传入工具注册器）
         this.settingsHandler = new SettingsHandler(this.settingsManager, toolRegistry);

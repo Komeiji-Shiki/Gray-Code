@@ -170,7 +170,9 @@ const ja: LanguageMessages = {
                 copyCode: 'コードをコピー',
                 copied: 'コピーしました',
                 imageLoadFailed: '画像の読み込みに失敗しました'
-            }
+            },
+            scrollToTop: 'トップへ戻る',
+            scrollToBottom: '一番下へ戻る'
         },
 
         header: {
@@ -1312,7 +1314,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.52',
+                    version: 'バージョン：1.0.53',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

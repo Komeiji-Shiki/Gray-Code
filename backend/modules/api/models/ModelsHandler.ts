@@ -4,6 +4,7 @@
 
 import { t } from '../../../i18n';
 import type { ConfigManager } from '../../config/ConfigManager';
+import type { SettingsManager } from '../../settings/SettingsManager';
 import { getModels, type ModelInfo } from '../../channel/modelList';
 import type {
     GetModelsRequest,
@@ -18,7 +19,8 @@ import type {
 
 export class ModelsHandler {
     constructor(
-        private configManager: ConfigManager
+        private configManager: ConfigManager,
+        private settingsManager: SettingsManager
     ) {}
 
     /**
@@ -34,7 +36,8 @@ export class ModelsHandler {
                 };
             }
 
-            const models = await getModels(config);
+            const proxyUrl = this.settingsManager.getEffectiveProxyUrl();
+            const models = await getModels(config, proxyUrl);
             
             return {
                 success: true,

@@ -170,7 +170,9 @@ const en: LanguageMessages = {
                 copyCode: 'Copy code',
                 copied: 'Copied',
                 imageLoadFailed: 'Failed to load image'
-            }
+            },
+            scrollToTop: 'Scroll to top',
+            scrollToBottom: 'Scroll to bottom'
         },
 
         header: {
@@ -1312,7 +1314,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.52',
+                    version: 'Version: 1.0.53',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
