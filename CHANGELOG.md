@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.57] - 2026-01-20
+
+### Fixed
+  - 修复ctrl+s保存后diff状态清除不完全的问题
+  - 修复Latex公式显示问题
+
 ## [1.0.56] - 2026-01-20
 
 ### Improved
