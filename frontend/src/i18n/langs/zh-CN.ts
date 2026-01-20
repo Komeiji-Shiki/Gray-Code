@@ -171,6 +171,17 @@ const zhCN: LanguageMessages = {
                 copied: '已复制',
                 imageLoadFailed: '图片加载失败'
             },
+            markdownRenderer: {
+                mermaid: {
+                    title: 'Mermaid 图表',
+                    copyCode: '复制 Mermaid 代码',
+                    zoomIn: '放大',
+                    zoomOut: '缩小',
+                    resetZoom: '重置缩放',
+                    tip: '滚轮缩放，左键拖拽',
+                    closePreview: '关闭预览'
+                }
+            },
             scrollToTop: '回到顶部',
             scrollToBottom: '回到最下'
         },

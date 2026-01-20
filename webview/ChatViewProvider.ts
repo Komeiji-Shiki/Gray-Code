@@ -675,7 +675,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="app"></div>
-    <script src="${scriptUri}"></script>
+    <script type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
     }
