@@ -256,7 +256,7 @@ export interface ToolCall {
   id: string
   name: string
   args: Record<string, unknown>
-  status?: 'pending' | 'running' | 'success' | 'error'
+  status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
 }
 
 /**
@@ -280,7 +280,18 @@ export interface ToolUsage {
   result?: Record<string, unknown>
   error?: string
   duration?: number
-  status?: 'pending' | 'running' | 'success' | 'error' | 'warning'
+  /**
+   * 工具状态（统一状态机）
+   * - streaming: AI 正在输出/拼接工具调用（参数可能仍是 partial）
+   * - queued: 已拿到完整工具调用，等待轮到它执行（前置工具未完成）
+   * - awaiting_approval: 等待用户批准后才可执行
+   * - executing: 正在执行（工具 handler 运行中，可能持续较久）
+   * - awaiting_apply: 已生成变更，等待用户审阅/应用（如 diff）
+   * - success/error/warning: 最终结果
+   */
+  status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
+  
+  /** @deprecated 使用 status = awaiting_approval 代替 */
   awaitingConfirmation?: boolean
 }
 
@@ -444,7 +455,16 @@ export interface PendingToolCall {
  * 前端接收的流式消息格式
  */
 export interface StreamChunk {
-  type: 'chunk' | 'complete' | 'error' | 'toolIteration' | 'cancelled' | 'checkpoints' | 'awaitingConfirmation' | 'toolsExecuting'
+  type:
+    | 'chunk'
+    | 'complete'
+    | 'error'
+    | 'toolIteration'
+    | 'cancelled'
+    | 'checkpoints'
+    | 'awaitingConfirmation'
+    | 'toolsExecuting'
+    | 'toolStatus'
   conversationId: string
   chunk?: BackendStreamChunk
   content?: Content
@@ -459,6 +479,15 @@ export interface StreamChunk {
   pendingToolCalls?: PendingToolCall[]
   /** 标记工具即将开始执行（用于在工具执行前先发送计时信息） */
   toolsExecuting?: boolean
+
+  /** 工具状态更新（用于实时排队推进） */
+  toolStatus?: boolean
+  tool?: {
+    id: string
+    name: string
+    status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
+    result?: Record<string, unknown>
+  }
 }
 
 // ============ 错误类型 ============

@@ -28,15 +28,17 @@ import type {
     ChatStreamCheckpointsData,
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
+    ChatStreamToolStatusData,
     PendingToolCall
 } from '../types';
 
 import { StreamResponseProcessor, isAsyncGenerator, type ProcessedChunkData } from '../handlers/StreamResponseProcessor';
+import type { FunctionCallInfo } from '../utils';
 import type { ToolCallParserService } from './ToolCallParserService';
 import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { ContextTrimService } from './ContextTrimService';
-import type { ToolExecutionService, ToolExecutionFullResult } from './ToolExecutionService';
+import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 
 /**
  * 工具迭代循环配置
@@ -70,7 +72,8 @@ export type ToolIterationLoopOutput =
     | ChatStreamToolIterationData
     | ChatStreamCheckpointsData
     | ChatStreamToolConfirmationData
-    | ChatStreamToolsExecutingData;
+    | ChatStreamToolsExecutingData
+    | ChatStreamToolStatusData;
 
 /**
  * 非流式工具循环结果
@@ -279,80 +282,136 @@ export class ToolIterationLoopService {
                 return;
             }
 
-            // 12. 有工具调用，检查是否需要确认
-            const toolsNeedingConfirmation = this.toolExecutionService.getToolsNeedingConfirmation(functionCalls);
+            // 12. 有工具调用：按 AI 输出顺序依次处理。
+            // 规则：执行到第一个“需要用户批准”的工具时暂停；后续工具必须等待前置工具完成。
 
-            if (toolsNeedingConfirmation.length > 0) {
-                // 有工具需要确认，发送确认请求到前端
-                const pendingToolCalls: PendingToolCall[] = toolsNeedingConfirmation.map(call => ({
-                    id: call.id,
-                    name: call.name,
-                    args: call.args
-                }));
+            // 找到第一个需要确认的工具（按顺序），并只自动执行它之前的前缀工具。
+            const autoPrefix: FunctionCallInfo[] = [];
+            let firstConfirmTool: FunctionCallInfo | null = null;
 
+            for (const call of functionCalls) {
+                if (this.toolExecutionService.toolNeedsConfirmation(call.name)) {
+                    firstConfirmTool = call;
+                    break;
+                }
+                autoPrefix.push(call);
+            }
+
+            let executionResult: ToolExecutionFullResult | undefined;
+
+            if (autoPrefix.length > 0) {
+                const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
+                const messageIndex = currentHistory.length - 1;
+
+                // 执行工具调用（按顺序），并实时发送每个工具的开始/结束状态
+                const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
+                    autoPrefix,
+                    conversationId,
+                    messageIndex,
+                    config,
+                    abortSignal
+                );
+
+                while (true) {
+                    const { value, done } = await gen.next();
+                    if (done) {
+                        executionResult = value as ToolExecutionFullResult;
+                        break;
+                    }
+
+                    const event = value as ToolExecutionProgressEvent;
+
+                    if (event.type === 'start') {
+                        // 工具执行前先发送计时信息（让前端立即显示）
+                        yield {
+                            conversationId,
+                            content: finalContent,
+                            toolsExecuting: true as const,
+                            pendingToolCalls: [{
+                                id: event.call.id,
+                                name: event.call.name,
+                                args: event.call.args
+                            }]
+                        } satisfies ChatStreamToolsExecutingData;
+                        continue;
+                    }
+
+                    if (event.type === 'end') {
+                        const r = event.toolResult.result as any;
+                        let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+                        if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+                            status = 'error';
+                        } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+                            status = 'warning';
+                        }
+
+                        yield {
+                            conversationId,
+                            toolStatus: true as const,
+                            tool: {
+                                id: event.call.id,
+                                name: event.call.name,
+                                status,
+                                result: event.toolResult.result
+                            }
+                        } satisfies ChatStreamToolStatusData;
+                    }
+                }
+
+                // 检查是否已取消
+                if (abortSignal?.aborted) {
+                    yield {
+                        conversationId,
+                        cancelled: true as const
+                    } as any;
+                    return;
+                }
+
+                // 将函数响应添加到历史
+                const functionResponseParts = executionResult.multimodalAttachments
+                    ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
+                    : executionResult.responseParts;
+
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: functionResponseParts,
+                    isFunctionResponse: true
+                });
+            }
+
+            // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
+            if (firstConfirmTool) {
                 yield {
                     conversationId,
-                    pendingToolCalls,
+                    pendingToolCalls: [{
+                        id: firstConfirmTool.id,
+                        name: firstConfirmTool.name,
+                        args: firstConfirmTool.args
+                    }],
                     content: finalContent,
-                    awaitingConfirmation: true as const
+                    awaitingConfirmation: true as const,
+                    // 把已自动执行的前缀结果同步给前端（用于刷新工具状态/结果展示）
+                    toolResults: executionResult?.toolResults,
+                    checkpoints: executionResult?.checkpoints
                 };
 
-                // 暂停执行，等待前端调用 handleToolConfirmation
                 return;
             }
 
-            // 12. 不需要确认，直接执行工具
-            const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
-            const messageIndex = currentHistory.length - 1;
+            // 14. 没有需要确认的工具，说明所有工具均已自动执行完成
+            if (executionResult) {
+                const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
+                if (hasCancelled) {
+                    yield {
+                        conversationId,
+                        content: finalContent,
+                        toolIteration: true as const,
+                        toolResults: executionResult.toolResults,
+                        checkpoints: executionResult.checkpoints
+                    };
+                    return;
+                }
 
-            // 工具执行前先发送计时信息（让前端立即显示）
-            yield {
-                conversationId,
-                content: finalContent,
-                toolsExecuting: true as const,
-                pendingToolCalls: functionCalls.map(call => ({
-                    id: call.id,
-                    name: call.name,
-                    args: call.args
-                }))
-            };
-
-            // 13. 执行工具调用
-            const executionResult = await this.toolExecutionService.executeFunctionCallsWithResults(
-                functionCalls,
-                conversationId,
-                messageIndex,
-                config,
-                abortSignal
-            );
-            
-            // 13.5 检查是否已取消（可能在工具执行期间被用户删除消息）
-            if (abortSignal?.aborted) {
-                yield {
-                    conversationId,
-                    cancelled: true as const
-                } as any;
-                return;
-            }
-
-            // 14. 将函数响应添加到历史
-            const functionResponseParts = executionResult.multimodalAttachments
-                ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
-                : executionResult.responseParts;
-
-            await this.conversationManager.addContent(conversationId, {
-                role: 'user',
-                parts: functionResponseParts,
-                isFunctionResponse: true
-            });
-            
-            // 注：工具响应消息的 token 计数将在下一次循环的 getHistoryWithContextTrimInfo 中
-            // 与系统提示词、动态上下文一起并行计算
-
-            // 16. 检查是否有工具被取消
-            const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
-            if (hasCancelled) {
-                // 有工具被取消，发送最终的 toolIteration 后结束
                 yield {
                     conversationId,
                     content: finalContent,
@@ -360,17 +419,7 @@ export class ToolIterationLoopService {
                     toolResults: executionResult.toolResults,
                     checkpoints: executionResult.checkpoints
                 };
-                return;
             }
-
-            // 17. 发送 toolIteration 信号
-            yield {
-                conversationId,
-                content: finalContent,
-                toolIteration: true as const,
-                toolResults: executionResult.toolResults,
-                checkpoints: executionResult.checkpoints
-            };
 
             // 继续循环，让 AI 处理函数结果
         }

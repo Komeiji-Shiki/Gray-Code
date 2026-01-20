@@ -276,82 +276,41 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       const error = tool.error || (response as any).error
       let success = (response as any).success !== false && !error
       
-      // 检查是否是待审阅状态
       const data = (response as any).data
-      const isPending = data?.status === 'pending'
-      
+
+      // 根据工具响应确定最终状态
+      let status: ToolUsage['status'] = success ? 'success' : 'error'
+
+      // 兼容：少数工具可能在 response.data.status 里返回 pending（一般用于“等待应用/审阅”）
+      if (data?.status === 'pending') {
+        status = 'awaiting_apply'
+      }
+
       // 检查是否为部分成功 (针对 apply_diff 等工具)
-      let status: 'success' | 'error' | 'warning' | 'pending' = success ? 'success' : 'error'
-      let awaitingConfirmation = isPending
-
-      if (isPending) {
-        // 检查是否是支持 diff 的工具
-        const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
-        
-        // 对于 search_in_files，只有替换模式才需要确认
-        let isSearchReplaceMode = true
-        if (tool.name === 'search_in_files') {
-          const args = tool.args as Record<string, unknown>
-          const mode = args?.mode as string
-          isSearchReplaceMode = mode === 'replace'
-        }
-        
-        if (isDiffTool && isSearchReplaceMode) {
-          if (!toolIdToPendingId.value.has(tool.id)) {
-            // 不在活跃列表：可能是“刚保存/刚接受，最终结果还没回到前端”的短暂空窗。
-            // 给一个宽限期，避免先显示 error 再变 success。
-            const now = Date.now()
-            const existed = pendingDiffOrphanedAt.value.get(tool.id)
-            const since = existed ?? now
-            if (!existed) {
-              pendingDiffOrphanedAt.value.set(tool.id, now)
-              pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
-            }
-
-            if (now - since < DIFF_ORPHAN_GRACE_MS) {
-              status = 'pending'
-              awaitingConfirmation = false
-            } else {
-              status = 'error' // 显示为错误/已取消状态
-              awaitingConfirmation = false
-            }
-          } else {
-            // 仍在活跃列表，清理 orphan 记录
-            if (pendingDiffOrphanedAt.value.has(tool.id)) {
-              pendingDiffOrphanedAt.value.delete(tool.id)
-              pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
-            }
-
-            status = 'pending'
-            // diff 工具有专用的操作栏，不显示通用的确认按钮
-            awaitingConfirmation = false
-          }
-        } else {
-          status = 'pending'
-        }
-      } else if (success && data && data.appliedCount > 0 && data.failedCount > 0) {
+      if (success && data && data.appliedCount > 0 && data.failedCount > 0) {
         status = 'warning'
       }
-      
-      return { 
-        ...tool, 
+
+      return {
+        ...tool,
         result: response || undefined,
-        error, 
-        status, 
-        awaitingConfirmation 
+        error,
+        status,
+        // 向后兼容字段：尽量不用它来驱动 UI
+        awaitingConfirmation: false
       }
     }
     
-    // 如果正在处理确认，显示 running 状态
+    // 如果正在处理确认/执行中的过渡态
     if (processingToolIds.value.has(tool.id)) {
-      return { ...tool, status: 'running' as const, awaitingConfirmation: false }
+      return { ...tool, status: 'executing' as const, awaitingConfirmation: false }
     }
     
-    // 检查是否等待确认：后端发送 awaitingConfirmation 时会设置 status = 'pending'
-    const awaitingConfirm = tool.status === 'pending'
+    // 等待用户批准
+    const awaitingConfirm = tool.status === 'awaiting_approval'
 
     // 没有找到响应，使用当前状态
-    const effectiveStatus = tool.status || 'running'
+    const effectiveStatus: ToolUsage['status'] = tool.status || 'queued'
 
     // 重要：diff 工具在后端被 cancel/reject 后，可能不会立刻返回 functionResponse（例如流被中断）。
     // 此时如果我们已经“见过”这个 diff 工具进入 pendingDiffs 列表，但现在列表里没有它，
@@ -369,7 +328,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       isDiffApplicable &&
       seenDiffToolIds.value.has(tool.id) &&
       !toolIdToPendingId.value.has(tool.id) &&
-      (effectiveStatus === 'running' || effectiveStatus === 'pending')
+      (effectiveStatus === 'executing' || effectiveStatus === 'awaiting_apply')
     ) {
       const now = Date.now()
       const existed = pendingDiffOrphanedAt.value.get(tool.id)
@@ -392,10 +351,15 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       }
     }
 
-    // 非 pending/running 场景，清理 orphan 记录
-    if (pendingDiffOrphanedAt.value.has(tool.id) && effectiveStatus !== 'running' && effectiveStatus !== 'pending') {
+    // 非 executing/awaiting_apply 场景，清理 orphan 记录
+    if (pendingDiffOrphanedAt.value.has(tool.id) && effectiveStatus !== 'executing' && effectiveStatus !== 'awaiting_apply') {
       pendingDiffOrphanedAt.value.delete(tool.id)
       pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
+    }
+
+    // diff 工具：如果 diff 处于 pending（等待应用/审阅），将状态映射为 awaiting_apply
+    if (isDiffToolPending(tool)) {
+      return { ...tool, status: 'awaiting_apply' as const, awaitingConfirmation: false }
     }
 
     return { ...tool, status: effectiveStatus, awaitingConfirmation: awaitingConfirm }
@@ -406,85 +370,42 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 // eslint-disable-next-line no-undef
 const processingToolIds = ref<Set<string>>(new Set())
 
-// 用户决定状态：记录每个工具的用户决定（true=确认，false=拒绝，undefined=未决定）
-// eslint-disable-next-line no-undef
-const userDecisions = ref<Map<string, boolean>>(new Map())
+// 当后端把工具从 awaiting_approval 推进到 executing/success/error 后，清理本地“处理中”标记
+watchEffect(() => {
+  if (processingToolIds.value.size === 0) return
 
-// 计算等待确认的工具 ID 列表
-const pendingToolIds = computed(() => {
-  return enhancedTools.value
-    .filter(tool => tool.awaitingConfirmation)
-    .map(tool => tool.id)
-})
+  const current = new Set(processingToolIds.value)
+  let changed = false
 
-// 计算是否所有等待确认的工具都已有用户决定
-const allDecisionsMade = computed(() => {
-  if (pendingToolIds.value.length === 0) return false
-  return pendingToolIds.value.every(id => userDecisions.value.has(id))
-})
-
-// 确认工具执行（只更新本地状态）
-function confirmToolExecution(toolId: string, _toolName: string) {
-  userDecisions.value.set(toolId, true)
-  // 触发响应式更新
-  userDecisions.value = new Map(userDecisions.value)
-  
-  // 检查是否所有决定都已做出，自动提交
-  if (allDecisionsMade.value) {
-    submitAllDecisions()
-  }
-}
-
-// 拒绝工具执行（只更新本地状态）
-function rejectToolExecution(toolId: string, _toolName: string) {
-  userDecisions.value.set(toolId, false)
-  // 触发响应式更新
-  userDecisions.value = new Map(userDecisions.value)
-  
-  // 检查是否所有决定都已做出，自动提交
-  if (allDecisionsMade.value) {
-    submitAllDecisions()
-  }
-}
-
-// 获取工具的用户决定状态
-function getToolDecision(toolId: string): boolean | undefined {
-  return userDecisions.value.get(toolId)
-}
-
-// 检查工具是否已有用户决定
-function hasUserDecision(toolId: string): boolean {
-  return userDecisions.value.has(toolId)
-}
-
-// 提交所有用户决定到后端
-async function submitAllDecisions() {
-  const toolResponses: Array<{ id: string; name: string; confirmed: boolean }> = []
-
-  for (const tool of enhancedTools.value) {
-    if (tool.awaitingConfirmation) {
-      const decision = userDecisions.value.get(tool.id)
-      // 如果用户没有做出决定，默认为拒绝
-      const confirmed = decision === true
-
-      toolResponses.push({
-        id: tool.id,
-        name: tool.name,
-        confirmed
-      })
-
-      // 标记为正在处理
-      processingToolIds.value.add(tool.id)
+  for (const id of current) {
+    const t = enhancedTools.value.find(x => x.id === id)
+    if (!t || t.status !== 'awaiting_approval') {
+      current.delete(id)
+      changed = true
     }
   }
 
-  if (toolResponses.length === 0) return
+  if (changed) {
+    processingToolIds.value = current
+  }
+})
 
-  // 获取输入栏的批注内容
+// 确认工具执行（立即提交到后端）
+async function confirmToolExecution(toolId: string, toolName: string) {
+  await submitToolDecision(toolId, toolName, true)
+}
+
+// 拒绝工具执行（立即提交到后端）
+async function rejectToolExecution(toolId: string, toolName: string) {
+  await submitToolDecision(toolId, toolName, false)
+}
+
+async function submitToolDecision(toolId: string, toolName: string, confirmed: boolean) {
+  // 标记为正在处理（注意：Set 变更需替换引用才能触发响应式更新）
+  processingToolIds.value = new Set(processingToolIds.value).add(toolId)
+
+  // 获取输入栏的批注内容（可选）
   const annotation = chatStore.inputValue.trim()
-
-  // 清空用户决定状态
-  userDecisions.value.clear()
 
   // 清空输入栏
   if (annotation) {
@@ -501,8 +422,10 @@ async function submitAllDecisions() {
     chatStore.allMessages.push(userMessage)
   }
 
-  // 发送到后端（带批注）
-  await sendToolConfirmation(toolResponses, annotation)
+  await sendToolConfirmation(
+    [{ id: toolId, name: toolName, confirmed }],
+    annotation
+  )
 }
 
 // 发送工具确认响应到后端
@@ -619,17 +542,24 @@ async function openDiffPreview(tool: ToolUsage) {
 
 // 获取状态图标
 function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string {
-  if (awaitingConfirmation) {
+  // 向后兼容：awaitingConfirmation 逐步迁移到 status = awaiting_approval
+  if (awaitingConfirmation || status === 'awaiting_approval') {
     return 'codicon-shield'
   }
+
   switch (status) {
-    case 'pending':
-      return 'codicon-clock'
-    case 'running':
+    case 'streaming':
       return 'codicon-loading'
+    case 'queued':
+      return 'codicon-clock'
+    case 'executing':
+      return 'codicon-loading'
+    case 'awaiting_apply':
+      return 'codicon-diff'
     case 'success':
-    case 'warning':
       return 'codicon-check'
+    case 'warning':
+      return 'codicon-warning'
     case 'error':
       return 'codicon-error'
     default:
@@ -639,9 +569,10 @@ function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string 
 
 // 获取状态类名
 function getStatusClass(status?: string, awaitingConfirmation?: boolean): string {
-  if (awaitingConfirmation) {
+  if (awaitingConfirmation || status === 'awaiting_approval') {
     return 'status-warning'
   }
+
   switch (status) {
     case 'success':
       return 'status-success'
@@ -649,9 +580,11 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
       return 'status-error'
     case 'warning':
       return 'status-warning'
-    case 'running':
+    case 'executing':
+    case 'streaming':
       return 'status-running'
-    case 'pending':
+    case 'queued':
+    case 'awaiting_apply':
       return 'status-pending'
     default:
       return ''
@@ -751,9 +684,9 @@ function renderToolContent(tool: ToolUsage) {
           </div>
           
           <div class="tool-action-buttons">
-            <!-- 确认按钮：当工具等待确认且未做决定时显示 -->
+            <!-- 确认按钮：当工具等待用户批准时显示 -->
             <button
-              v-if="tool.awaitingConfirmation && !hasUserDecision(tool.id)"
+              v-if="tool.status === 'awaiting_approval'"
               class="confirm-btn"
               :title="t('components.message.tool.confirmExecution')"
               @click.stop="confirmToolExecution(tool.id, tool.name)"
@@ -762,9 +695,9 @@ function renderToolContent(tool: ToolUsage) {
               <span class="confirm-btn-text">{{ t('components.message.tool.confirm') }}</span>
             </button>
             
-            <!-- 拒绝按钮：当工具等待确认且未做决定时显示 -->
+            <!-- 拒绝按钮：当工具等待用户批准时显示 -->
             <button
-              v-if="tool.awaitingConfirmation && !hasUserDecision(tool.id)"
+              v-if="tool.status === 'awaiting_approval'"
               class="reject-btn"
               :title="t('components.message.tool.reject')"
               @click.stop="rejectToolExecution(tool.id, tool.name)"
@@ -772,28 +705,6 @@ function renderToolContent(tool: ToolUsage) {
               <span class="reject-btn-icon codicon codicon-close"></span>
               <span class="reject-btn-text">{{ t('components.message.tool.reject') }}</span>
             </button>
-            
-            <!-- 已确认标记 -->
-            <span
-              v-if="tool.awaitingConfirmation && getToolDecision(tool.id) === true"
-              class="decision-badge decision-confirmed"
-              :title="t('components.message.tool.confirmed')"
-              @click.stop="confirmToolExecution(tool.id, tool.name)"
-            >
-              <span class="codicon codicon-check"></span>
-              <span class="decision-text">{{ t('components.message.tool.confirmed') }}</span>
-            </span>
-            
-            <!-- 已拒绝标记 -->
-            <span
-              v-if="tool.awaitingConfirmation && getToolDecision(tool.id) === false"
-              class="decision-badge decision-rejected"
-              :title="t('components.message.tool.rejected')"
-              @click.stop="rejectToolExecution(tool.id, tool.name)"
-            >
-              <span class="codicon codicon-close"></span>
-              <span class="decision-text">{{ t('components.message.tool.rejected') }}</span>
-            </span>
             
             <!-- diff 预览按钮 -->
             <button

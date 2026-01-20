@@ -18,6 +18,17 @@ import type { CheckpointService } from './CheckpointService';
 /**
  * 工具执行完整结果
  */
+export type ToolExecutionProgressEvent =
+    | {
+          type: 'start';
+          call: FunctionCallInfo;
+      }
+    | {
+          type: 'end';
+          call: FunctionCallInfo;
+          toolResult: ToolExecutionResult;
+      };
+
 export interface ToolExecutionFullResult {
     /** 函数响应 parts（用于添加到历史） */
     responseParts: ContentPart[];
@@ -238,6 +249,161 @@ export class ToolExecutionService {
                     id: call.id
                 }
             });
+        }
+
+        // 在所有工具执行后创建一个检查点
+        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+            const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+                conversationId,
+                messageIndex,
+                toolNameForCheckpoint,
+                'after'
+            );
+            if (afterCheckpoint) {
+                checkpoints.push(afterCheckpoint);
+            }
+        }
+
+        return {
+            responseParts,
+            toolResults,
+            checkpoints,
+            multimodalAttachments: multimodalAttachments.length > 0 ? multimodalAttachments : undefined
+        };
+    }
+
+    /**
+     * 执行函数调用（带进度事件）
+     *
+     * 用于：前端“实时排队推进”展示。
+     *
+     * - 在每个工具开始前 yield {type:'start'}
+     * - 在每个工具结束后 yield {type:'end'}（包含该工具的 ToolExecutionResult）
+     * - 最终通过 generator return 返回完整 ToolExecutionFullResult（供调用方持久化 / 后续流程使用）
+     */
+    async *executeFunctionCallsWithProgress(
+        calls: FunctionCallInfo[],
+        conversationId?: string,
+        messageIndex?: number,
+        config?: BaseChannelConfig,
+        abortSignal?: AbortSignal
+    ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
+        const responseParts: ContentPart[] = [];
+        const toolResults: ToolExecutionResult[] = [];
+        const checkpoints: CheckpointRecord[] = [];
+        const multimodalAttachments: ContentPart[] = [];
+
+        // 获取工具调用模式
+        const toolMode = config?.toolMode || 'function_call';
+        const isPromptMode = toolMode === 'xml' || toolMode === 'json';
+
+        // 处理 subagents 调用数量限制
+        const processedCalls = this.applySubagentsLimit(calls);
+
+        const toolNameForCheckpoint = processedCalls.allowed.length === 1 ? processedCalls.allowed[0].name : 'tool_batch';
+
+        // 在所有工具执行前创建一个检查点
+        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+            const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+                conversationId,
+                messageIndex,
+                toolNameForCheckpoint,
+                'before'
+            );
+            if (beforeCheckpoint) {
+                checkpoints.push(beforeCheckpoint);
+            }
+        }
+
+        // 处理被限制的 subagents 调用（直接返回拒绝结果）
+        for (const call of processedCalls.rejected) {
+            const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
+            const response: Record<string, unknown> = {
+                success: false,
+                error: `Exceeded maximum concurrent sub-agents limit (${maxConcurrent}). This call was automatically rejected.`,
+                rejected: true
+            };
+
+            const tr: ToolExecutionResult = {
+                id: call.id,
+                name: call.name,
+                result: response
+            };
+
+            toolResults.push(tr);
+            responseParts.push({
+                functionResponse: {
+                    id: call.id,
+                    name: call.name,
+                    response
+                }
+            });
+
+            // 对于被自动拒绝的工具，直接给一个 end 事件（不发 start，避免 UI 把它当作“执行中”）
+            yield { type: 'end', call, toolResult: tr };
+        }
+
+        // 执行允许的工具
+        for (const call of processedCalls.allowed) {
+            if (abortSignal?.aborted) {
+                break;
+            }
+
+            yield { type: 'start', call };
+
+            let response: Record<string, unknown>;
+
+            try {
+                if (call.name.startsWith('mcp__') && this.mcpManager) {
+                    response = await this.executeMcpTool(call);
+                } else {
+                    response = await this.executeBuiltinTool(call, config, abortSignal);
+                }
+            } catch (error) {
+                const err = error as Error;
+                response = {
+                    success: false,
+                    error: err.message || t('modules.api.chat.errors.toolExecutionFailed')
+                };
+            }
+
+            const toolResult: ToolExecutionResult = {
+                id: call.id,
+                name: call.name,
+                // 深拷贝：保留完整数据供前端显示
+                result: JSON.parse(JSON.stringify(response))
+            };
+            toolResults.push(toolResult);
+
+            // 处理多模态数据
+            const multimodalData = (response as any).multimodal as Array<{
+                mimeType: string;
+                data: string;
+                name?: string;
+            }> | undefined;
+
+            if (multimodalData && multimodalData.length > 0) {
+                this.processMultimodalData(
+                    multimodalData,
+                    response,
+                    call,
+                    config,
+                    toolMode,
+                    isPromptMode,
+                    responseParts,
+                    multimodalAttachments
+                );
+            } else {
+                responseParts.push({
+                    functionResponse: {
+                        name: call.name,
+                        response,
+                        id: call.id
+                    }
+                });
+            }
+
+            yield { type: 'end', call, toolResult };
         }
 
         // 在所有工具执行后创建一个检查点

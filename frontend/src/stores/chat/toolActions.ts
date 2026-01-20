@@ -389,8 +389,9 @@ export async function rejectPendingToolsWithAnnotation(
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       const updatedTools = message.tools?.map(tool => {
-        if (tool.status === 'pending') {
-          return { ...tool, status: 'running' as const }
+        if (tool.status === 'awaiting_approval') {
+          // 已提交确认（这里是批量拒绝），进入“处理中”状态
+          return { ...tool, status: 'executing' as const }
         }
         return tool
       })

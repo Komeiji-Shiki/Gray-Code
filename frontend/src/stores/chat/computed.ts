@@ -96,8 +96,8 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
       const msg = state.allMessages.value[i]
       if (msg.role === 'assistant' && msg.tools && msg.tools.length > 0) {
-        // 检查是否有 pending 状态的工具
-        return msg.tools.some(tool => tool.status === 'pending')
+        // 检查是否有 awaiting_approval 状态的工具
+        return msg.tools.some(tool => tool.status === 'awaiting_approval')
       }
     }
     return false
@@ -113,7 +113,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
       const msg = state.allMessages.value[i]
       if (msg.role === 'assistant' && msg.tools && msg.tools.length > 0) {
-        return msg.tools.filter(tool => tool.status === 'pending')
+        return msg.tools.filter(tool => tool.status === 'awaiting_approval')
       }
     }
     return []

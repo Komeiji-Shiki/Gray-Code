@@ -12,6 +12,7 @@ import type { ChatStoreState, CheckpointRecord } from './types'
 import {
   handleChunkType,
   handleToolsExecuting,
+  handleToolStatus,
   handleAwaitingConfirmation,
   handleToolIteration,
   handleComplete,
@@ -62,9 +63,13 @@ export function handleStreamChunk(
     case 'toolsExecuting':
       handleToolsExecuting(chunk, state)
       break
+
+    case 'toolStatus':
+      handleToolStatus(chunk, state)
+      break
       
     case 'awaitingConfirmation':
-      handleAwaitingConfirmation(chunk, state)
+      handleAwaitingConfirmation(chunk, state, addCheckpoint)
       break
       
     case 'toolIteration':

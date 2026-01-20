@@ -34,6 +34,7 @@ import type {
     ChatStreamCheckpointsData,
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
+    ChatStreamToolStatusData,
     ToolConfirmationResponseData,
     PendingToolCall,
     RetryRequestData,
@@ -280,7 +281,14 @@ export class ChatHandler {
     async *handleChatStream(
         request: ChatRequestData
     ): AsyncGenerator<
-        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamCheckpointsData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleChatStream(request)) {
@@ -314,7 +322,14 @@ export class ChatHandler {
     async *handleToolConfirmation(
         request: ToolConfirmationResponseData
     ): AsyncGenerator<
-        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamCheckpointsData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
     > {
         // 新实现：委托给 ChatFlowService 处理完整流程，保留统一的错误处理逻辑
         try {
@@ -392,7 +407,13 @@ export class ChatHandler {
     async *handleRetryStream(
         request: RetryRequestData
     ): AsyncGenerator<
-        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleRetryStream(request)) {
@@ -447,7 +468,14 @@ export class ChatHandler {
     async *handleEditAndRetryStream(
         request: EditAndRetryRequestData
     ): AsyncGenerator<
-        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamCheckpointsData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleEditAndRetryStream(request)) {

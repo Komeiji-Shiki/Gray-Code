@@ -36,7 +36,8 @@ export function addFunctionCallToMessage(
     id: call.id,
     name: call.name,
     args: call.args,
-    status: 'running'
+    // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
+    status: 'streaming'
   })
   
   // 更新 parts（用于渲染）

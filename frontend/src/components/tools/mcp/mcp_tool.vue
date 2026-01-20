@@ -70,7 +70,10 @@ const responseJson = computed(() => {
     </div>
 
     <!-- 等待响应状态 -->
-    <div v-else-if="status === 'running'" class="loading-section">
+    <div
+      v-else-if="status === 'executing' || status === 'queued' || status === 'streaming' || status === 'awaiting_approval'"
+      class="loading-section"
+    >
       <span class="loading-icon codicon codicon-loading"></span>
       <span class="loading-text">{{ t('components.tools.mcp.mcpToolPanel.waitingResponse') }}</span>
     </div>

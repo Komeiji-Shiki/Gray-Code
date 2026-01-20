@@ -120,15 +120,23 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       delete updatedMessage.metadata.thinkingStartTime
     }
 
-    // 标记工具为 running 状态
+    // 标记工具为 executing/queued 状态（后一个工具必须等待前一个完成，因此同一批次只把队首标为 executing）
     if (updatedMessage.tools) {
-      const pendingIds = new Set((chunk.pendingToolCalls || []).map((t: any) => t.id))
+      const pending = (chunk.pendingToolCalls || []) as Array<{ id: string }>
+      const executingId = pending[0]?.id
+      const queuedIds = new Set(pending.slice(1).map(t => t.id))
 
       updatedMessage.tools = updatedMessage.tools.map(tool => {
-        if (pendingIds.has(tool.id)) {
-          return { ...tool, status: 'running' as const }
+        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued
+        const baseStatus = tool.status === 'streaming' ? 'queued' : tool.status
+
+        if (executingId && tool.id === executingId) {
+          return { ...tool, status: 'executing' as const }
         }
-        return tool
+        if (queuedIds.has(tool.id)) {
+          return { ...tool, status: 'queued' as const }
+        }
+        return { ...tool, status: baseStatus as any }
       })
     }
 
@@ -143,9 +151,71 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
 }
 
 /**
+ * 处理 toolStatus 类型（用于实时排队推进）
+ */
+export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): void {
+  if (!chunk.toolStatus || !chunk.tool) return
+
+  const toolUpdate = chunk.tool
+  const all = state.allMessages.value
+
+  // 1) 优先更新当前 streamingMessageId 对应的消息（通常就是包含工具调用的 assistant 消息）
+  let messageIndex = -1
+  if (state.streamingMessageId.value) {
+    const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+    if (idx !== -1) {
+      const m = all[idx]
+      if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
+        messageIndex = idx
+      }
+    }
+  }
+
+  // 2) fallback：从后往前找最近一条包含该 toolId 的 assistant 消息
+  if (messageIndex === -1) {
+    for (let i = all.length - 1; i >= 0; i--) {
+      const m = all[i]
+      if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
+        messageIndex = i
+        break
+      }
+    }
+  }
+
+  if (messageIndex === -1) return
+
+  const message = all[messageIndex]
+  const updatedTools = message.tools?.map(t => {
+    if (t.id !== toolUpdate.id) return t
+
+    return {
+      ...t,
+      status: toolUpdate.status as any,
+      // 允许后端在 end 事件里携带结果，让前端即时展示（不影响历史索引）
+      result: (toolUpdate.result as any) ?? t.result
+    }
+  })
+
+  const updatedMessage: Message = {
+    ...message,
+    tools: updatedTools
+  }
+
+  state.allMessages.value = [
+    ...all.slice(0, messageIndex),
+    updatedMessage,
+    ...all.slice(messageIndex + 1)
+  ]
+}
+
+/**
  * 处理 awaitingConfirmation 类型
  */
-export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreState): void {
+export function handleAwaitingConfirmation(
+  chunk: StreamChunk,
+  state: ChatStoreState,
+  addCheckpoint: (checkpoint: CheckpointRecord) => void
+): void {
   // 等待用户确认工具执行
   const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
   if (messageIndex !== -1 && chunk.content) {
@@ -190,16 +260,32 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
       delete updatedMessage.metadata.thinkingStartTime
     }
 
-    // 标记工具为等待确认状态
+    // 标记工具为等待确认状态，并同步已有的工具结果
     if (updatedMessage.tools) {
       const pendingIds = new Set((chunk.pendingToolCalls || []).map((t: any) => t.id))
+      const toolResults = chunk.toolResults || []
+      const toolResultMap = new Map(toolResults.map(r => [r.id, r]))
 
       // 使用 map 创建新数组
       updatedMessage.tools = updatedMessage.tools.map(tool => {
+        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued
+        const baseStatus = tool.status === 'streaming' ? 'queued' : tool.status
+
         if (pendingIds.has(tool.id)) {
-          return { ...tool, status: 'pending' as const }
+          // 轮到该工具，等待用户批准
+          return { ...tool, status: 'awaiting_approval' as const }
         }
-        return tool
+        
+        // 如果有自动执行的结果，更新状态为 success
+        if (toolResultMap.has(tool.id)) {
+          const result = toolResultMap.get(tool.id)!.result as any
+          const status = (result.cancelled || result.rejected)
+            ? ('error' as const)
+            : ('success' as const)
+          return { ...tool, status, result }
+        }
+        
+        return { ...tool, status: baseStatus as any }
       })
     }
 
@@ -209,6 +295,50 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
       updatedMessage,
       ...state.allMessages.value.slice(messageIndex + 1)
     ]
+  }
+
+  // 将 toolResults 也同步为一个隐藏的 functionResponse 消息（保持与 toolIteration 行为一致），
+  // 这样 getToolResponseById / hasToolResponse 等逻辑可以正常工作。
+  if (chunk.toolResults && chunk.toolResults.length > 0) {
+    const existingResponseIds = new Set<string>()
+    for (const m of state.allMessages.value) {
+      if (m.isFunctionResponse && m.parts) {
+        for (const p of m.parts) {
+          if (p.functionResponse?.id) {
+            existingResponseIds.add(p.functionResponse.id)
+          }
+        }
+      }
+    }
+
+    const newParts = chunk.toolResults
+      .filter(r => r.id && !existingResponseIds.has(r.id))
+      .map(r => ({
+        functionResponse: {
+          name: r.name,
+          response: r.result,
+          id: r.id
+        }
+      }))
+
+    if (newParts.length > 0) {
+      const responseMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: '',
+        timestamp: Date.now(),
+        isFunctionResponse: true,
+        parts: newParts
+      }
+      state.allMessages.value.push(responseMessage)
+    }
+  }
+
+  // 处理可能包含的检查点
+  if (chunk.checkpoints && chunk.checkpoints.length > 0) {
+    for (const cp of chunk.checkpoints) {
+      addCheckpoint(cp)
+    }
   }
 
   // 注意：不结束 streaming 状态的等待标志，因为需要等用户确认
@@ -292,22 +422,41 @@ export function handleToolIteration(
   }
   
   // 添加 functionResponse 消息（标记为隐藏）
+  // 注意：在“自动执行 + 等待批准”混合场景下，部分 toolResults 可能已在 awaitingConfirmation 阶段被同步过。
+  // 这里做一次去重，避免重复插入。
   if (chunk.toolResults && chunk.toolResults.length > 0) {
-    const responseMessage: Message = {
-      id: generateId(),
-      role: 'user',
-      content: '',
-      timestamp: Date.now(),
-      isFunctionResponse: true,
-      parts: chunk.toolResults.map(r => ({
+    const existingResponseIds = new Set<string>()
+    for (const m of state.allMessages.value) {
+      if (m.isFunctionResponse && m.parts) {
+        for (const p of m.parts) {
+          if (p.functionResponse?.id) {
+            existingResponseIds.add(p.functionResponse.id)
+          }
+        }
+      }
+    }
+
+    const parts = chunk.toolResults
+      .filter(r => r.id && !existingResponseIds.has(r.id))
+      .map(r => ({
         functionResponse: {
           name: r.name,
           response: r.result,
           id: r.id
         }
       }))
+
+    if (parts.length > 0) {
+      const responseMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: '',
+        timestamp: Date.now(),
+        isFunctionResponse: true,
+        parts
+      }
+      state.allMessages.value.push(responseMessage)
     }
-    state.allMessages.value.push(responseMessage)
   }
   
   // 处理新创建的检查点
@@ -467,7 +616,14 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
       
       // 更新工具状态
       const updatedTools = message.tools?.map(tool => {
-        if (tool.status === 'running' || tool.status === 'pending') {
+        // 取消时，将所有非最终态工具标记为 error
+        if (
+          tool.status === 'streaming' ||
+          tool.status === 'queued' ||
+          tool.status === 'awaiting_approval' ||
+          tool.status === 'executing' ||
+          tool.status === 'awaiting_apply'
+        ) {
           return { ...tool, status: 'error' as const }
         }
         return tool

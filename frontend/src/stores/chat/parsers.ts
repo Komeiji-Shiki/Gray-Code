@@ -103,7 +103,9 @@ export function contentToMessage(content: Content, id?: string): Message {
         id: part.functionCall.id || generateId(),
         name: part.functionCall.name,
         args: part.functionCall.args,
-        status: 'success'  // 已完成的响应
+        // functionCall 表示“工具调用已完整出现”，但尚未开始执行。
+        // 后续状态由 toolsExecuting / awaitingConfirmation / toolIteration / diff 状态等更新。
+        status: 'queued'
       })
     }
   }
@@ -159,7 +161,7 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
         id: part.functionCall.id || generateId(),
         name: part.functionCall.name,
         args: part.functionCall.args,
-        status: isRejected ? 'error' : 'pending'  // 被拒绝的工具显示为 error
+        status: isRejected ? 'error' : 'queued'  // 默认视为已排队
       })
     }
     

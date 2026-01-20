@@ -256,6 +256,46 @@ export interface ChatStreamToolConfirmationData {
     
     /** 标记需要用户确认 */
     awaitingConfirmation: true;
+    
+    /** 已自动执行的工具结果（可选） */
+    toolResults?: Array<{
+        /** 工具调用 ID */
+        id?: string;
+        /** 工具名称 */
+        name: string;
+        /** 执行结果 */
+        result: Record<string, unknown>;
+    }>;
+    
+    /** 创建的检查点（如果有） */
+    checkpoints?: CheckpointRecord[];
+}
+
+/**
+ * 工具开始执行数据（用于在工具执行前先发送计时信息）
+ *
+ * 这样前端可以在工具执行期间就显示 AI 响应的计时信息（思考时间、响应时间等）
+ */
+/**
+ * 工具状态更新数据（用于前端实时展示工具队列推进）
+ */
+export interface ChatStreamToolStatusData {
+    /** 对话 ID */
+    conversationId: string;
+
+    /** 标记为工具状态更新 */
+    toolStatus: true;
+
+    tool: {
+        /** 工具调用 ID */
+        id: string;
+        /** 工具名称 */
+        name: string;
+        /** 工具状态 */
+        status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning';
+        /** 可选：本次工具的执行结果（用于前端即时展示，不建议用于持久化） */
+        result?: Record<string, unknown>;
+    };
 }
 
 /**

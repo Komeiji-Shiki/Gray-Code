@@ -32,10 +32,18 @@ export class StreamChunkProcessor {
         pendingToolCalls: chunk.pendingToolCalls,
         toolsExecuting: true
       });
+    } else if ('toolStatus' in chunk && chunk.toolStatus) {
+      this.sendMessage('toolStatus', {
+        tool: chunk.tool,
+        toolStatus: true
+      });
     } else if ('awaitingConfirmation' in chunk && chunk.awaitingConfirmation) {
       this.sendMessage('awaitingConfirmation', {
         content: chunk.content,
-        pendingToolCalls: chunk.pendingToolCalls
+        pendingToolCalls: chunk.pendingToolCalls,
+        // 允许后端在等待确认时同步已自动执行工具的结果/检查点
+        toolResults: chunk.toolResults,
+        checkpoints: chunk.checkpoints
       });
     } else if ('toolIteration' in chunk && chunk.toolIteration) {
       this.sendMessage('toolIteration', {

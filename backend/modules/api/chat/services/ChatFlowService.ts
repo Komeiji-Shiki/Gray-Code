@@ -15,7 +15,7 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { ChannelError, ErrorType } from '../../../channel/types';
-import type { ContentPart } from '../../../conversation/types';
+import type { Content, ContentPart } from '../../../conversation/types';
 import type { CheckpointRecord } from '../../../checkpoint';
 
 import type {
@@ -35,6 +35,7 @@ import type {
   ChatStreamCheckpointsData,
   ChatStreamToolConfirmationData,
   ChatStreamToolsExecutingData,
+  ChatStreamToolStatusData,
 } from '../types';
 
 import type { MessageBuilderService } from './MessageBuilderService';
@@ -43,7 +44,7 @@ import type { ToolIterationLoopService } from './ToolIterationLoopService';
 import type { CheckpointService } from './CheckpointService';
 import type { DiffInterruptService } from './DiffInterruptService';
 import type { OrphanedToolCallService } from './OrphanedToolCallService';
-import type { ToolExecutionService } from './ToolExecutionService';
+import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { ToolCallParserService } from './ToolCallParserService';
 
 export type ChatStreamOutput =
@@ -53,7 +54,8 @@ export type ChatStreamOutput =
   | ChatStreamToolIterationData
   | ChatStreamCheckpointsData
   | ChatStreamToolConfirmationData
-  | ChatStreamToolsExecutingData;
+  | ChatStreamToolsExecutingData
+  | ChatStreamToolStatusData;
 
 export class ChatFlowService {
   constructor(
@@ -649,7 +651,7 @@ export class ChatFlowService {
       return;
     }
 
-    // 3. 获取历史中最后一条 model 消息的函数调用
+    // 3. 寻找最后一条包含工具调用的 model 消息及其索引
     const history = await this.conversationManager.getHistoryRef(conversationId);
     if (history.length === 0) {
       yield {
@@ -662,8 +664,22 @@ export class ChatFlowService {
       return;
     }
 
-    const lastMessage = history[history.length - 1];
-    if (lastMessage.role !== 'model') {
+    // 从后往前找最近的一个 model 消息，它必须包含函数调用
+    let modelMessageIndex = -1;
+    let lastMessage: Content | undefined;
+
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === 'model') {
+        const calls = this.toolCallParserService.extractFunctionCalls(history[i]);
+        if (calls.length > 0) {
+          modelMessageIndex = i;
+          lastMessage = history[i];
+          break;
+        }
+      }
+    }
+
+    if (!lastMessage || modelMessageIndex === -1) {
       yield {
         conversationId,
         error: {
@@ -674,105 +690,258 @@ export class ChatFlowService {
       return;
     }
 
-    const functionCalls = this.toolCallParserService.extractFunctionCalls(lastMessage);
-    if (functionCalls.length === 0) {
+    const allFunctionCalls = this.toolCallParserService.extractFunctionCalls(lastMessage);
+    
+    // 收集所有已经存在的函数响应 ID
+    const respondedToolIds = new Set<string>();
+    for (let i = modelMessageIndex + 1; i < history.length; i++) {
+      const msg = history[i];
+      if (msg.parts) {
+        for (const part of msg.parts) {
+          if (part.functionResponse?.id) {
+            respondedToolIds.add(part.functionResponse.id);
+          }
+        }
+      }
+    }
+
+    // 过滤掉已经有响应的工具调用（比如已经自动执行过的）
+    const pendingCalls = allFunctionCalls.filter(call => !respondedToolIds.has(call.id));
+
+    if (pendingCalls.length === 0) {
+      // 如果没有待确认的工具，可能是已经被其他操作处理了，直接继续循环
+      for await (const output of this.toolIterationLoopService.runToolLoop({
+        conversationId,
+        configId,
+        config,
+        abortSignal: request.abortSignal,
+        isFirstMessage: false,
+        maxIterations: this.getMaxToolIterations(),
+        createBeforeModelCheckpoint: false,
+      })) {
+        yield output as ChatStreamOutput;
+      }
+      return;
+    }
+
+    // 4. 按“队列顺序”处理工具：一次只允许推进到下一个需要批准的工具。
+    // 目标：工具之间解耦，但严格保证顺序（后一个必须等前一个成功/失败后才开始）。
+
+    const messageIndex = modelMessageIndex;
+
+    // 队首待处理工具（按 AI 输出顺序）
+    const nextCall = allFunctionCalls.find(call => !respondedToolIds.has(call.id));
+    if (!nextCall) {
+      // 理论上不会发生，但为了健壮性，直接继续循环
+      for await (const output of this.toolIterationLoopService.runToolLoop({
+        conversationId,
+        configId,
+        config,
+        abortSignal: request.abortSignal,
+        isFirstMessage: false,
+        maxIterations: this.getMaxToolIterations(),
+        createBeforeModelCheckpoint: false,
+      })) {
+        yield output as ChatStreamOutput;
+      }
+      return;
+    }
+
+    const nextDecision = toolResponses.find(r => r.id === nextCall.id);
+    if (!nextDecision) {
       yield {
         conversationId,
         error: {
-          code: 'NO_FUNCTION_CALLS',
-          message: t('modules.api.chat.errors.noFunctionCalls'),
+          code: 'INVALID_TOOL_CONFIRMATION',
+          message: `Invalid tool confirmation. Expected toolId=${nextCall.id}, got=${toolResponses.map(r => r.id).join(',')}`,
         },
       };
       return;
     }
 
-    // 4. 分离确认和拒绝的工具调用
-    const confirmedCalls = functionCalls.filter(call => {
-      const response = toolResponses.find(r => r.id === call.id);
-      return response?.confirmed;
-    });
-    const rejectedCalls = functionCalls.filter(call => {
-      const response = toolResponses.find(r => r.id === call.id);
-      return !response?.confirmed;
-    });
+    const toolResultsThisTurn: Array<{ id: string; name: string; result: Record<string, unknown> }> = [];
+    const checkpointsThisTurn: CheckpointRecord[] = [];
 
-    const messageIndex = history.length - 1;
+    let responseParts: ContentPart[] = [];
+    let multimodalAttachments: ContentPart[] = [];
 
-    // 5. 执行确认的工具调用
-    let confirmedResult: {
-      responseParts: ContentPart[];
-      toolResults: Array<{ id: string; name: string; result: Record<string, unknown> }>;
-      checkpoints: CheckpointRecord[];
-      multimodalAttachments?: ContentPart[];
-    } = {
-      responseParts: [],
-      toolResults: [],
-      checkpoints: [],
+    const mergeExecutionResult = (res: ToolExecutionFullResult) => {
+      toolResultsThisTurn.push(...res.toolResults);
+      checkpointsThisTurn.push(...res.checkpoints);
+      responseParts.push(...res.responseParts);
+      if (res.multimodalAttachments && res.multimodalAttachments.length > 0) {
+        multimodalAttachments.push(...res.multimodalAttachments);
+      }
     };
 
-    if (confirmedCalls.length > 0) {
-      // 工具执行前先发送计时信息（让前端立即显示）
-      yield {
-        conversationId,
-        content: lastMessage,
-        toolsExecuting: true as const,
-        pendingToolCalls: confirmedCalls.map(call => ({
-          id: call.id,
-          name: call.name,
-          args: call.args,
-        })),
-      } satisfies ChatStreamToolsExecutingData;
+    const resolvedIdsThisTurn = new Set<string>();
 
-      confirmedResult = await this.toolExecutionService.executeFunctionCallsWithResults(
-        confirmedCalls,
+    // 4.1 先处理队首工具（该工具一定是“当前等待批准”的那个）
+    if (nextDecision.confirmed) {
+      const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
+        [nextCall],
         conversationId,
         messageIndex,
         config,
         request.abortSignal,
       );
+
+      while (true) {
+        const { value, done } = await gen.next();
+        if (done) {
+          mergeExecutionResult(value as ToolExecutionFullResult);
+          break;
+        }
+
+        const event = value as ToolExecutionProgressEvent;
+
+        if (event.type === 'start') {
+          yield {
+            conversationId,
+            content: lastMessage,
+            toolsExecuting: true as const,
+            pendingToolCalls: [{
+              id: event.call.id,
+              name: event.call.name,
+              args: event.call.args,
+            }],
+          } satisfies ChatStreamToolsExecutingData;
+          continue;
+        }
+
+        if (event.type === 'end') {
+          const r = event.toolResult.result as any;
+          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+            status = 'error';
+          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+            status = 'warning';
+          }
+
+          yield {
+            conversationId,
+            toolStatus: true as const,
+            tool: {
+              id: event.call.id,
+              name: event.call.name,
+              status,
+              result: event.toolResult.result,
+            },
+          } satisfies ChatStreamToolStatusData;
+        }
+      }
+
+      resolvedIdsThisTurn.add(nextCall.id);
+    } else {
+      await this.conversationManager.rejectToolCalls(conversationId, messageIndex, [nextCall.id]);
+
+      const rejectedResult = {
+        success: false,
+        error: t('modules.api.chat.errors.userRejectedTool'),
+        rejected: true,
+      };
+
+      toolResultsThisTurn.push({
+        id: nextCall.id,
+        name: nextCall.name,
+        result: rejectedResult,
+      });
+
+      yield {
+        conversationId,
+        toolStatus: true as const,
+        tool: {
+          id: nextCall.id,
+          name: nextCall.name,
+          status: 'error',
+          result: rejectedResult,
+        },
+      } satisfies ChatStreamToolStatusData;
+
+      resolvedIdsThisTurn.add(nextCall.id);
     }
 
-    // 6. 处理拒绝的工具调用（标记 rejected 并添加 functionResponse）
-    const rejectedResults: Array<{ id: string; name: string; result: Record<string, unknown> }> = [];
+    // 4.2 继续自动执行“紧随其后、且无需批准”的工具，直到遇到下一个需要批准的工具
+    const nextIndex = allFunctionCalls.findIndex(c => c.id === nextCall.id);
+    const autoSuffix: typeof allFunctionCalls = [];
+    let nextConfirmTool: (typeof allFunctionCalls)[number] | null = null;
 
-    if (rejectedCalls.length > 0) {
-      // 使用 rejectToolCalls 标记 rejected 并添加 functionResponse
-      const rejectedIds = rejectedCalls.map(call => call.id);
-      await this.conversationManager.rejectToolCalls(conversationId, messageIndex, rejectedIds);
-      
-      // 构建拒绝结果用于前端显示
-      for (const call of rejectedCalls) {
-        rejectedResults.push({
-          id: call.id,
-          name: call.name,
-          result: {
-            success: false,
-            error: t('modules.api.chat.errors.userRejectedTool'),
-            rejected: true,
-          },
-        });
+    for (let i = nextIndex + 1; i < allFunctionCalls.length; i++) {
+      const c = allFunctionCalls[i];
+      if (respondedToolIds.has(c.id) || resolvedIdsThisTurn.has(c.id)) {
+        continue;
+      }
+      if (this.toolExecutionService.toolNeedsConfirmation(c.name)) {
+        nextConfirmTool = c;
+        break;
+      }
+      autoSuffix.push(c);
+    }
+
+    if (autoSuffix.length > 0) {
+      const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
+        autoSuffix,
+        conversationId,
+        messageIndex,
+        config,
+        request.abortSignal,
+      );
+
+      while (true) {
+        const { value, done } = await gen.next();
+        if (done) {
+          mergeExecutionResult(value as ToolExecutionFullResult);
+          break;
+        }
+
+        const event = value as ToolExecutionProgressEvent;
+
+        if (event.type === 'start') {
+          yield {
+            conversationId,
+            content: lastMessage,
+            toolsExecuting: true as const,
+            pendingToolCalls: [{
+              id: event.call.id,
+              name: event.call.name,
+              args: event.call.args,
+            }],
+          } satisfies ChatStreamToolsExecutingData;
+          continue;
+        }
+
+        if (event.type === 'end') {
+          const r = event.toolResult.result as any;
+          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+            status = 'error';
+          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+            status = 'warning';
+          }
+
+          yield {
+            conversationId,
+            toolStatus: true as const,
+            tool: {
+              id: event.call.id,
+              name: event.call.name,
+              status,
+              result: event.toolResult.result,
+            },
+          } satisfies ChatStreamToolStatusData;
+        }
+      }
+
+      for (const c of autoSuffix) {
+        resolvedIdsThisTurn.add(c.id);
       }
     }
 
-    // 7. 合并结果
-    const allToolResults = [...confirmedResult.toolResults, ...rejectedResults];
-    const allCheckpoints = confirmedResult.checkpoints;
-
-    // 8. 发送工具执行结果
-    yield {
-      conversationId,
-      content: lastMessage,
-      toolIteration: true as const,
-      toolResults: allToolResults,
-      checkpoints: allCheckpoints,
-    } satisfies ChatStreamToolIterationData;
-
-    // 9. 将确认的函数响应添加到历史（拒绝的已由 rejectToolCalls 添加）
-    if (confirmedResult.responseParts.length > 0) {
-      const confirmFunctionResponseParts =
-        confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
-          ? [...confirmedResult.multimodalAttachments, ...confirmedResult.responseParts]
-          : confirmedResult.responseParts;
+    // 5. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
+    if (responseParts.length > 0 || multimodalAttachments.length > 0) {
+      const confirmFunctionResponseParts = multimodalAttachments.length > 0
+        ? [...multimodalAttachments, ...responseParts]
+        : responseParts;
 
       await this.conversationManager.addContent(conversationId, {
         role: 'user',
@@ -781,18 +950,57 @@ export class ChatFlowService {
       });
     }
 
-    // 9.5 如果有用户批注，添加为新的用户消息
+    // 5.5 如果有用户批注，添加为新的用户消息
     if (request.annotation && request.annotation.trim()) {
       await this.conversationManager.addContent(conversationId, {
         role: 'user',
         parts: [{ text: request.annotation.trim() }],
       });
     }
-    
+
+    // 如果本轮存在 cancelled，则不再继续推进，也不再等待下一次确认
+    const hasCancelledTools = toolResultsThisTurn.some(r => (r.result as any).cancelled);
+    if (hasCancelledTools) {
+      yield {
+        conversationId,
+        content: lastMessage,
+        toolIteration: true as const,
+        toolResults: toolResultsThisTurn,
+        checkpoints: checkpointsThisTurn,
+      } satisfies ChatStreamToolIterationData;
+      return;
+    }
+
+    // 6. 如果还有需要批准的工具，进入等待确认阶段（不触发 toolIteration，也不继续 AI）
+    if (nextConfirmTool) {
+      yield {
+        conversationId,
+        pendingToolCalls: [{
+          id: nextConfirmTool.id,
+          name: nextConfirmTool.name,
+          args: nextConfirmTool.args,
+        }],
+        content: lastMessage,
+        awaitingConfirmation: true as const,
+        toolResults: toolResultsThisTurn,
+        checkpoints: checkpointsThisTurn,
+      } satisfies ChatStreamToolConfirmationData;
+      return;
+    }
+
+    // 7. 工具队列已全部完成，发送 toolIteration，并继续 AI 对话
+    yield {
+      conversationId,
+      content: lastMessage,
+      toolIteration: true as const,
+      toolResults: toolResultsThisTurn,
+      checkpoints: checkpointsThisTurn,
+    } satisfies ChatStreamToolIterationData;
+
     // 注：工具响应和批注消息的 token 计数将在 getHistoryWithContextTrimInfo 中
     // 与系统提示词、动态上下文一起并行计算
 
-    // 10. 继续 AI 对话（让 AI 处理工具结果）
+    // 8. 继续 AI 对话（让 AI 处理工具结果）
     const maxToolIterations = this.getMaxToolIterations();
 
     for await (const output of this.toolIterationLoopService.runToolLoop({

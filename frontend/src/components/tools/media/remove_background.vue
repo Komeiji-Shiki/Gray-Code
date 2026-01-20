@@ -53,7 +53,7 @@ const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
-  status?: 'pending' | 'running' | 'success' | 'error'
+  status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
   toolId?: string
 }>()
 
@@ -148,7 +148,12 @@ const isRunning = computed(() => {
   if (props.error) return false
   if (isFailed.value) return false
   if (isCancelled.value) return false
-  if (props.status === 'running' || props.status === 'pending') return true
+  if (
+    props.status === 'streaming' ||
+    props.status === 'queued' ||
+    props.status === 'awaiting_approval' ||
+    props.status === 'executing'
+  ) return true
   return false
 })
 
