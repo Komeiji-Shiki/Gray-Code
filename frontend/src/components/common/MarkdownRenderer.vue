@@ -280,41 +280,6 @@ function createMarkdownIt() {
 const md = createMarkdownIt()
 
 /**
- * 处理 LaTeX 公式
- */
-function processLatex(text: string): string {
-  // 先处理块级公式 $$...$$
-  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_match, formula) => {
-    try {
-      return `<div class="katex-block">${katex.renderToString(formula.trim(), {
-        displayMode: true,
-        throwOnError: false,
-        output: 'html'
-      })}</div>`
-    } catch (e) {
-      console.warn('KaTeX block render error:', e)
-      return `<div class="katex-error">$$${escapeHtml(formula)}$$</div>`
-    }
-  })
-  
-  // 再处理行内公式 $...$（排除已处理的块级公式）
-  text = text.replace(/(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g, (_match, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        displayMode: false,
-        throwOnError: false,
-        output: 'html'
-      })
-    } catch (e) {
-      console.warn('KaTeX inline render error:', e)
-      return `<span class="katex-error">$${escapeHtml(formula)}$</span>`
-    }
-  })
-  
-  return text
-}
-
-/**
  * 仅渲染 LaTeX（保留原始文本格式）
  * 用于用户消息：保持原始文本，只渲染 LaTeX 公式，保留换行和空格
  */
@@ -327,7 +292,7 @@ function renderLatexOnly(content: string): string {
   
   // 提取并渲染块级公式 $$...$$
   processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
-    const placeholder = `___LATEX_BLOCK_${formulas.length}___`
+    const placeholder = `MS_LATEX_BLOCK_${formulas.length}`
     try {
       formulas.push({
         placeholder,
@@ -349,7 +314,7 @@ function renderLatexOnly(content: string): string {
   
   // 提取并渲染行内公式 $...$
   processed = processed.replace(/(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g, (match, formula) => {
-    const placeholder = `___LATEX_INLINE_${formulas.length}___`
+    const placeholder = `MS_LATEX_INLINE_${formulas.length}`
     try {
       formulas.push({
         placeholder,
@@ -419,33 +384,72 @@ function renderContent(content: string, latexOnly: boolean): string {
   const codeBlocks: string[] = []
   let processed = content.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match)
-    return `___CODE_BLOCK_${codeBlocks.length - 1}___`
+    return `MS_CODE_BLOCK_${codeBlocks.length - 1}`
   })
   
   // 2. 提取行内代码
   const inlineCodes: string[] = []
   processed = processed.replace(/`[^`\n]+`/g, (match) => {
     inlineCodes.push(match)
-    return `___INLINE_CODE_${inlineCodes.length - 1}___`
+    return `MS_INLINE_CODE_${inlineCodes.length - 1}`
   })
   
-  // 3. 处理 LaTeX
-  processed = processLatex(processed)
+  // 3. 提取并渲染 LaTeX，使用占位符保护，避免 markdown-it 二次渲染
+  const latexFormulas: string[] = []
   
-  // 4. 还原行内代码
-  processed = processed.replace(/___INLINE_CODE_(\d+)___/g, (_, index) => {
+  // 先处理块级公式 $$...$$
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+    try {
+      const rendered = `<div class="katex-block">${katex.renderToString(formula.trim(), {
+        displayMode: true,
+        throwOnError: false
+      })}</div>`
+      latexFormulas.push(rendered)
+      // 使用 div 包裹占位符，强制 markdown-it 将其识别为 HTML 块，避免包裹 <p>
+      return `\n<div class="katex-placeholder">MS_LATEX_FORMULA_${latexFormulas.length - 1}</div>\n`
+    } catch (e) {
+      latexFormulas.push(`<div class="katex-error">${escapeHtml(match)}</div>`)
+      return `\n<div class="katex-placeholder">MS_LATEX_FORMULA_${latexFormulas.length - 1}</div>\n`
+    }
+  })
+  
+  // 再处理行内公式 $...$
+  processed = processed.replace(/(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g, (match, formula) => {
+    try {
+      const rendered = katex.renderToString(formula.trim(), {
+        displayMode: false,
+        throwOnError: false
+      })
+      latexFormulas.push(rendered)
+      return `MS_LATEX_FORMULA_${latexFormulas.length - 1}`
+    } catch (e) {
+      latexFormulas.push(`<span class="katex-error">${escapeHtml(match)}</span>`)
+      return `MS_LATEX_FORMULA_${latexFormulas.length - 1}`
+    }
+  })
+  
+  // 4. 使用 markdown-it 渲染
+  let html = md.render(processed)
+  
+  // 5. 还原 LaTeX 公式
+  html = html.replace(/<div class="katex-placeholder">MS_LATEX_FORMULA_(\d+)<\/div>/g, (_, index) => {
+    return latexFormulas[parseInt(index)]
+  })
+  html = html.replace(/MS_LATEX_FORMULA_(\d+)/g, (_, index) => {
+    return latexFormulas[parseInt(index)]
+  })
+  
+  // 6. 还原行内代码
+  html = html.replace(/MS_INLINE_CODE_(\d+)/g, (_, index) => {
     return inlineCodes[parseInt(index)]
   })
   
-  // 5. 还原代码块
-  processed = processed.replace(/___CODE_BLOCK_(\d+)___/g, (_, index) => {
+  // 7. 还原代码块
+  html = html.replace(/MS_CODE_BLOCK_(\d+)/g, (_, index) => {
     return codeBlocks[parseInt(index)]
   })
   
-  // 6. 使用 markdown-it 渲染
-  let html = md.render(processed)
-  
-  // 7. 保留多个连续空格（在段落内容中）
+  // 8. 保留多个连续空格（在段落内容中）
   html = html.replace(/(<(?:p|li|td|th|dd|dt)[^>]*>)([\s\S]*?)(<\/(?:p|li|td|th|dd|dt)>)/g,
     (_match: string, openTag: string, content: string, closeTag: string) => {
       let processedContent = content.replace(/(<br\s*\/?>)( +)/g, (_m: string, br: string, spaces: string) => {
