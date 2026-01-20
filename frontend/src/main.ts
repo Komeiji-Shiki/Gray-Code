@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
+import 'katex/dist/katex.min.css';
 import './style.css';
 
 // 导入工具注册
