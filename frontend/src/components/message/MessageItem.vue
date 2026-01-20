@@ -977,6 +977,16 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 思考块样式 - 使用灰色调、斜体，保持简洁 */
 .thought-block {
+  /*
+   * 思考内容（MarkdownRenderer）样式覆写：
+   * - 以前通过 .thought-text（父组件 scoped）控制，但 scoped CSS 不会作用到子组件根节点
+   * - 改为用 CSS 变量传递给 MarkdownRenderer（变量可跨组件继承）
+   */
+  --lim-md-font-size: 12px;
+  --lim-md-line-height: 1.5;
+  --lim-md-color: var(--vscode-descriptionForeground);
+  --lim-md-font-style: italic;
+
   margin: 8px 0;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
@@ -1072,18 +1082,16 @@ function handleRestoreAndRetry(checkpointId: string) {
   border-top: 1px solid var(--vscode-panel-border);
 }
 
-.thought-text {
-  font-size: 12px;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-  line-height: 1.5;
-}
-
-.thought-text :deep(p) {
+/*
+ * 注意：.thought-text 是挂在 MarkdownRenderer 根节点上的 class。
+ * 由于本文件是 scoped CSS，如需影响子组件内容，需要使用 :deep。
+ * 这里保留段落间距微调。
+ */
+.thought-block :deep(.thought-text p) {
   margin: 0.5em 0;
 }
 
-.thought-text :deep(p:first-child) {
+.thought-block :deep(.thought-text p:first-child) {
   margin-top: 0.75em;
 }
 

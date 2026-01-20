@@ -680,9 +680,15 @@ onUnmounted(()=> {
 <style scoped>
 /* 基础样式 */
 .markdown-content {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--vscode-foreground);
+  /*
+   * 允许外部通过 CSS 变量覆写，以便在“思考内容”等场景使用不同的颜色/斜体/字号。
+   * 默认值保持与原先一致。
+   */
+  font-size: var(--lim-md-font-size, 13px);
+  line-height: var(--lim-md-line-height, 1.6);
+  color: var(--lim-md-color, var(--vscode-foreground));
+  font-style: var(--lim-md-font-style, normal);
+
   word-break: break-word;
 }
 
@@ -856,6 +862,15 @@ onUnmounted(()=> {
   border-radius: 3px;
   font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
   font-size: 0.9em;
+  font-style: normal; /* 避免外层（如思考块）设置斜体后影响代码 */
+}
+
+/* 代码块/键盘按键等保持非斜体 */
+.markdown-content :deep(pre),
+.markdown-content :deep(code),
+.markdown-content :deep(kbd),
+.markdown-content :deep(samp) {
+  font-style: normal;
 }
 
 /* 链接 */

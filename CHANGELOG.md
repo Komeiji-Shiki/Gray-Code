@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.56] - 2026-01-20
+
+### Improved
+  - 重构了工具的状态和执行逻辑
+
+### Fixed
+  - 修复了思考内容的字体显示问题
+
 ## [1.0.55] - 2026-01-20
 
 ### Added
