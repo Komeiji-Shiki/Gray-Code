@@ -171,6 +171,17 @@ const ja: LanguageMessages = {
                 copied: 'コピーしました',
                 imageLoadFailed: '画像の読み込みに失敗しました'
             },
+            markdownRenderer: {
+                mermaid: {
+                    title: 'Mermaid 図',
+                    copyCode: 'Mermaid コードをコピー',
+                    zoomIn: '拡大',
+                    zoomOut: '縮小',
+                    resetZoom: 'ズームをリセット',
+                    tip: 'ホイールでズーム、ドラッグで移動',
+                    closePreview: 'プレビューを閉じる'
+                }
+            },
             scrollToTop: 'トップへ戻る',
             scrollToBottom: '一番下へ戻る'
         },

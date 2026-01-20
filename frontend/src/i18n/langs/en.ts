@@ -171,6 +171,17 @@ const en: LanguageMessages = {
                 copied: 'Copied',
                 imageLoadFailed: 'Failed to load image'
             },
+            markdownRenderer: {
+                mermaid: {
+                    title: 'Mermaid Diagram',
+                    copyCode: 'Copy Mermaid code',
+                    zoomIn: 'Zoom in',
+                    zoomOut: 'Zoom out',
+                    resetZoom: 'Reset zoom',
+                    tip: 'Scroll to zoom, drag to pan',
+                    closePreview: 'Close preview'
+                }
+            },
             scrollToTop: 'Scroll to top',
             scrollToBottom: 'Scroll to bottom'
         },

@@ -21,6 +21,7 @@ import hljs from 'highlight.js'
 import katex from 'katex'
 import mermaid from 'mermaid'
 import { sendToExtension } from '@/utils/vscode'
+import { useI18n } from '@/i18n'
 
 // 初始化 Mermaid
 mermaid.initialize({
@@ -41,6 +42,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   latexOnly: false
 })
+
+const { t } = useI18n()
 
 // 容器引用
 const containerRef = ref<HTMLElement | null>(null)
@@ -184,7 +187,7 @@ function createMarkdownIt() {
       if (lang === 'mermaid') {
         const encodedCode = btoa(encodeURIComponent(str))
         // 使用 pre 包装以防止 markdown-it 对其进行转义
-        return `<pre class="mermaid-wrapper"><div class="mermaid">${str}</div><button class="code-copy-btn" data-code="${encodedCode}" title="复制 Mermaid 代码"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></pre>`
+        return `<pre class="mermaid-wrapper"><div class="mermaid">${str}</div><button class="code-copy-btn" data-code="${encodedCode}" title="${t('components.common.markdownRenderer.mermaid.copyCode')}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></pre>`
       }
 
       // 代码高亮
@@ -578,7 +581,7 @@ function handleMermaidClick(event: Event) {
     const mermaidDiv = wrapper.querySelector('.mermaid')
     if (mermaidDiv) {
       zoomedContent.value = mermaidDiv.innerHTML
-      zoomTitle.value = 'Mermaid 图表'
+      zoomTitle.value = t('components.common.markdownRenderer.mermaid.title')
       resetZoom() // 每次打开重置缩放状态
       isZoomModalVisible.value = true
     }
@@ -625,7 +628,7 @@ onUnmounted(()=> {
     <Transition name="fade">
       <div v-if="isZoomModalVisible" class="mermaid-zoom-overlay">
         <!-- 悬浮关闭按钮 -->
-        <button class="zoom-floating-close" @click="isZoomModalVisible = false" title="关闭预览">
+        <button class="zoom-floating-close" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
           <i class="codicon codicon-close"></i>
         </button>
 
@@ -650,22 +653,22 @@ onUnmounted(()=> {
         <div class="zoom-controls">
           <div class="zoom-actions">
             <div class="zoom-btn-group">
-              <button class="zoom-action-btn icon-only" @click="handleZoomOut" title="缩小">
+              <button class="zoom-action-btn icon-only" @click="handleZoomOut" :title="t('components.common.markdownRenderer.mermaid.zoomOut')">
                 <i class="codicon codicon-zoom-out"></i>
               </button>
-              <button class="zoom-action-btn text-btn" @click="resetZoom" title="重置缩放">
+              <button class="zoom-action-btn text-btn" @click="resetZoom" :title="t('components.common.markdownRenderer.mermaid.resetZoom')">
                 {{ Math.round(zoomScale * 100) }}%
               </button>
-              <button class="zoom-action-btn icon-only" @click="handleZoomIn" title="放大">
+              <button class="zoom-action-btn icon-only" @click="handleZoomIn" :title="t('components.common.markdownRenderer.mermaid.zoomIn')">
                 <i class="codicon codicon-zoom-in"></i>
               </button>
             </div>
             <div class="zoom-divider"></div>
-            <span class="zoom-status-tip">滚轮缩放，左键拖拽</span>
+            <span class="zoom-status-tip">{{ t('components.common.markdownRenderer.mermaid.tip') }}</span>
             <div class="zoom-divider"></div>
-            <button class="zoom-action-btn close-btn" @click="isZoomModalVisible = false">
+            <button class="zoom-action-btn close-btn" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
               <i class="codicon codicon-close"></i>
-              关闭预览
+              {{ t('components.common.markdownRenderer.mermaid.closePreview') }}
             </button>
           </div>
         </div>
@@ -1202,6 +1205,12 @@ onUnmounted(()=> {
   border-radius: 16px;
   font-weight: 500;
   margin-left: 4px;
+
+  /* 保证“关闭预览”始终单行显示 */
+  white-space: nowrap;
+  word-break: keep-all;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .zoom-action-btn.close-btn:hover {

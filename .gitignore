@@ -1,2 +1,5 @@
 node_modules
 dist
+
+# lock files (project uses npm)
+pnpm-lock.yaml

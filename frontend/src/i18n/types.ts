@@ -193,6 +193,17 @@ export interface LanguageMessages {
                 copied: string;
                 imageLoadFailed: string;
             };
+            markdownRenderer: {
+                mermaid: {
+                    title: string;
+                    copyCode: string;
+                    zoomIn: string;
+                    zoomOut: string;
+                    resetZoom: string;
+                    tip: string;
+                    closePreview: string;
+                };
+            };
             scrollToTop: string;
             scrollToBottom: string;
         };
