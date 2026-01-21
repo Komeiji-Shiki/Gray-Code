@@ -740,3 +740,7 @@ export type CreateMcpServerInput = Omit<McpServerConfig, 'id' | 'createdAt' | 'u
  * 更新 MCP 服务器输入
  */
 export type UpdateMcpServerInput = Partial<Omit<McpServerConfig, 'id' | 'createdAt' | 'updatedAt'>>
+
+// ============ 编辑器节点类型 ============
+
+export * from './editorNode'

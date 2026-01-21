@@ -2,14 +2,17 @@
 /**
  * 编辑对话框组件
  * 提供编辑、回档并编辑选项
- * 支持附件管理
+ * 支持附件管理和提示词上下文管理（内联徽章）
  */
 
 import { ref, computed, watch, nextTick } from 'vue'
 import type { CheckpointRecord, Attachment } from '../../types'
+import type { PromptContextItem } from '../../types/promptContext'
+import { parseMessageContexts } from '../../types/contextParser'
 import { useAttachments } from '../../composables/useAttachments'
 import { MessageAttachments } from '../message'
 import { sendToExtension } from '../../utils/vscode'
+import { getFileIcon } from '../../utils/fileIcons'
 import { t } from '../../i18n'
 
 interface Props {
@@ -71,10 +74,17 @@ const allAttachments = computed(() => [
   ...newAttachments.value
 ])
 
-// 当对话框打开时，初始化编辑内容和附件
+// 提示词上下文项
+const promptContextItems = ref<PromptContextItem[]>([])
+
+// 当对话框打开时，初始化编辑内容、附件和上下文
 watch(visible, (newValue) => {
   if (newValue) {
-    editContent.value = props.originalContent
+    // 解析原始内容中的上下文块
+    const parsed = parseMessageContexts(props.originalContent)
+    promptContextItems.value = parsed.contexts
+    editContent.value = parsed.userContent
+    
     clearAttachments() // 清除之前的新附件
     removedOriginalAttachmentIds.value = new Set() // 重置已删除的原有附件
     nextTick(() => {
@@ -141,8 +151,180 @@ function adjustTextareaHeight() {
 function handleCancel() {
   visible.value = false
   clearAttachments()
+  promptContextItems.value = []
   emit('cancel')
 }
+
+// 聚焦 textarea
+function focusTextarea() {
+  textareaRef.value?.focus()
+}
+
+// 获取上下文徽章图标配置
+function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: boolean } {
+  // 文件类型：根据文件路径获取对应图标
+  if (ctx.type === 'file' && ctx.filePath) {
+    return { class: getFileIcon(ctx.filePath), isFileIcon: true }
+  }
+  // 其他类型使用 codicon
+  switch (ctx.type) {
+    case 'snippet':
+      return { class: 'codicon codicon-code', isFileIcon: false }
+    case 'text':
+    default:
+      return { class: 'codicon codicon-note', isFileIcon: false }
+  }
+}
+
+// 移除上下文徽章
+function handleRemoveContext(id: string) {
+  promptContextItems.value = promptContextItems.value.filter(i => i.id !== id)
+
+  // If the removed chip is being previewed/hovered, close the preview immediately.
+  if (previewContext.value?.id === id) {
+    previewContext.value = null
+  }
+  if (hoveredContextId.value === id) {
+    hoveredContextId.value = null
+  }
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+}
+
+// 悬浮预览状态
+const hoveredContextId = ref<string | null>(null)
+const previewContext = ref<PromptContextItem | null>(null)
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleContextMouseEnter(ctx: PromptContextItem) {
+  hoveredContextId.value = ctx.id
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => {
+    previewContext.value = ctx
+  }, 300)
+}
+
+function handleContextMouseLeave() {
+  hoveredContextId.value = null
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+  setTimeout(() => {
+    if (!hoveredContextId.value) {
+      previewContext.value = null
+    }
+  }, 100)
+}
+
+watch(promptContextItems, () => {
+  // If the previewed/hovered context no longer exists, close the preview.
+  if (previewContext.value) {
+    const stillExists = promptContextItems.value.some(i => i.id === previewContext.value!.id)
+    if (!stillExists) {
+      previewContext.value = null
+    }
+  }
+  if (hoveredContextId.value) {
+    const stillHoveredExists = promptContextItems.value.some(i => i.id === hoveredContextId.value)
+    if (!stillHoveredExists) {
+      hoveredContextId.value = null
+    }
+  }
+}, { deep: true })
+
+function truncatePreview(content: string, maxLines = 10, maxChars = 500): string {
+  const lines = content.split('\n').slice(0, maxLines)
+  let result = lines.join('\n')
+  if (result.length > maxChars) {
+    result = result.slice(0, maxChars) + '...'
+  } else if (content.split('\n').length > maxLines) {
+    result += '\n...'
+  }
+  return result
+}
+
+// 从文件路径推断语言
+function getLanguageFromPath(path?: string): string {
+  if (!path) return 'plaintext'
+  
+  const ext = path.split('.').pop()?.toLowerCase()
+  const langMap: Record<string, string> = {
+    'ts': 'typescript',
+    'tsx': 'typescriptreact',
+    'js': 'javascript',
+    'jsx': 'javascriptreact',
+    'vue': 'vue',
+    'py': 'python',
+    'rs': 'rust',
+    'go': 'go',
+    'java': 'java',
+    'kt': 'kotlin',
+    'swift': 'swift',
+    'c': 'c',
+    'cpp': 'cpp',
+    'h': 'c',
+    'hpp': 'cpp',
+    'cs': 'csharp',
+    'rb': 'ruby',
+    'php': 'php',
+    'html': 'html',
+    'css': 'css',
+    'scss': 'scss',
+    'less': 'less',
+    'json': 'json',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'xml': 'xml',
+    'md': 'markdown',
+    'sql': 'sql',
+    'sh': 'shellscript',
+    'bash': 'shellscript',
+    'zsh': 'shellscript',
+    'ps1': 'powershell'
+  }
+  
+  return langMap[ext || ''] || 'plaintext'
+}
+
+// 点击徽章打开预览页签
+async function handleContextClick(ctx: PromptContextItem) {
+  try {
+    await sendToExtension('showContextContent', {
+      title: ctx.title,
+      content: ctx.content,
+      language: ctx.language || getLanguageFromPath(ctx.filePath)
+    })
+  } catch (error) {
+    console.error('Failed to show context content:', error)
+  }
+}
+
+// 处理键盘事件：支持 Backspace 删除徽章
+function handleKeydown(e: KeyboardEvent) {
+  // Backspace 删除徽章：当光标在最前面且有徽章时，删除最后一个徽章
+  if (e.key === 'Backspace' && !e.ctrlKey && !e.altKey) {
+    const textarea = textareaRef.value
+    if (textarea && textarea.selectionStart === 0 && textarea.selectionEnd === 0) {
+      if (promptContextItems.value.length > 0) {
+        e.preventDefault()
+        // 删除最后一个徽章
+        promptContextItems.value = promptContextItems.value.slice(0, -1)
+        return
+      }
+    }
+  }
+}
+
+// 编辑框占位符
+const editPlaceholder = computed(() => {
+  const hasContexts = promptContextItems.value.length > 0
+  const hasText = editContent.value.length > 0
+  if (hasContexts || hasText) return ''
+  return t('components.common.editDialog.placeholder')
+})
 
 // 将附件转换为纯对象（移除 Vue 响应式代理，确保可以通过 postMessage 序列化）
 function serializeAttachments(attachments: Attachment[]): Attachment[] {
@@ -158,21 +340,52 @@ function serializeAttachments(attachments: Attachment[]): Attachment[] {
   }))
 }
 
+// 格式化提示词上下文为 XML 格式
+function formatPromptContexts(): string {
+  const enabledItems = promptContextItems.value.filter(item => item.enabled)
+  if (enabledItems.length === 0) return ''
+  
+  return enabledItems.map(item => {
+    const attrs: string[] = [`type="${item.type}"`]
+    if (item.filePath) attrs.push(`path="${item.filePath}"`)
+    if (item.title) attrs.push(`title="${item.title}"`)
+    if (item.language) attrs.push(`language="${item.language}"`)
+    
+    // 使用 lim-context 标签避免和用户内容冲突
+    return `<lim-context ${attrs.join(' ')}>${item.content}</lim-context>`
+  }).join('\n\n')
+}
+
+// 获取最终内容（包含上下文块）
+function getFinalContent(): string {
+  const contextPart = formatPromptContexts()
+  const userContent = editContent.value.trim()
+  
+  if (contextPart) {
+    return `${contextPart}\n\n${userContent}`
+  }
+  return userContent
+}
+
 function handleEdit() {
-  if (editContent.value.trim() || allAttachments.value.length > 0) {
+  const finalContent = getFinalContent()
+  if (finalContent || allAttachments.value.length > 0) {
     visible.value = false
     // 将附件转换为纯对象以确保可序列化
-    emit('edit', editContent.value.trim(), serializeAttachments(allAttachments.value))
+    emit('edit', finalContent, serializeAttachments(allAttachments.value))
     clearAttachments()
+    promptContextItems.value = []
   }
 }
 
 function handleRestoreAndEdit() {
-  if (latestCheckpoint.value && (editContent.value.trim() || allAttachments.value.length > 0)) {
+  const finalContent = getFinalContent()
+  if (latestCheckpoint.value && (finalContent || allAttachments.value.length > 0)) {
     visible.value = false
     // 将附件转换为纯对象以确保可序列化
-    emit('restoreAndEdit', editContent.value.trim(), serializeAttachments(allAttachments.value), latestCheckpoint.value.id)
+    emit('restoreAndEdit', finalContent, serializeAttachments(allAttachments.value), latestCheckpoint.value.id)
     clearAttachments()
+    promptContextItems.value = []
   }
 }
 
@@ -325,17 +538,15 @@ async function handleDrop(e: DragEvent) {
   }
 }
 
-// 从 URI 列表插入文件路径
+// 从 URI 列表添加文件为徽章
 async function insertFilePathsFromUris(uris: string[]) {
-  const relativePaths: string[] = []
-  
   for (const uri of uris) {
     try {
-      const result = await sendToExtension<{ relativePath: string }>('getRelativePath', {
+      const result = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
         absolutePath: uri.trim()
       })
-      if (result.relativePath) {
-        relativePaths.push(result.relativePath)
+      if (result.relativePath && !result.isDirectory) {
+        await addFileContextByPath(result.relativePath)
       }
     } catch (err) {
       console.error('获取相对路径失败:', err)
@@ -344,75 +555,61 @@ async function insertFilePathsFromUris(uris: string[]) {
         const pathName = decodeURIComponent(url.pathname)
         const fileName = pathName.split('/').pop()
         if (fileName) {
-          relativePaths.push(fileName)
+          await addFileContextByPath(fileName)
         }
       } catch {
         // 忽略无效 URI
       }
     }
   }
-  
-  if (relativePaths.length > 0) {
-    insertPathsToTextarea(relativePaths)
-  }
 }
 
-// 从本地路径插入文件路径
+// 从本地路径添加文件为徽章
 async function insertFilePathsFromPaths(paths: string[]) {
-  const relativePaths: string[] = []
-  
   for (const absolutePath of paths) {
     try {
-      const result = await sendToExtension<{ relativePath: string }>('getRelativePath', {
+      const result = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
         absolutePath
       })
-      if (result.relativePath) {
-        relativePaths.push(result.relativePath)
+      if (result.relativePath && !result.isDirectory) {
+        await addFileContextByPath(result.relativePath)
       }
     } catch (err) {
       console.error('获取相对路径失败:', err)
       const fileName = absolutePath.split(/[/\\]/).pop()
       if (fileName) {
-        relativePaths.push(fileName)
+        await addFileContextByPath(fileName)
       }
     }
   }
-  
-  if (relativePaths.length > 0) {
-    insertPathsToTextarea(relativePaths)
-  }
 }
 
-// 在光标位置插入文件路径
-function insertPathsToTextarea(paths: string[]) {
-  if (!textareaRef.value) return
+// 通过路径添加文件上下文
+async function addFileContextByPath(path: string) {
+  // 检查是否已存在
+  const exists = promptContextItems.value.some(item => item.filePath === path)
+  if (exists) return
   
-  const textarea = textareaRef.value
-  const start = textarea.selectionStart
-  const end = textarea.selectionEnd
-  const text = editContent.value
-  
-  // 格式化路径为 @path 格式，前后都加空格方便继续输入
-  const pathText = paths.map(p => `@${p}`).join(' ')
-  
-  // 在光标位置插入路径
-  const beforeCursor = text.substring(0, start)
-  const afterCursor = text.substring(end)
-  
-  // 前后都加空格，方便用户编辑
-  const insertText = ' ' + pathText + ' '
-  
-  editContent.value = beforeCursor + insertText + afterCursor
-  
-  // 设置光标位置到插入内容之后（包括末尾的空格）
-  nextTick(() => {
-    if (textareaRef.value) {
-      const newCursorPos = start + insertText.length
-      textareaRef.value.setSelectionRange(newCursorPos, newCursorPos)
-      textareaRef.value.focus()
-      adjustTextareaHeight()
+  try {
+    const result = await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
+      'readWorkspaceTextFile',
+      { path }
+    )
+    
+    if (result?.success) {
+      promptContextItems.value.push({
+        id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: 'file',
+        title: result.path,
+        content: result.content,
+        filePath: result.path,
+        enabled: true,
+        addedAt: Date.now()
+      })
     }
-  })
+  } catch (error) {
+    console.error('Failed to add file context:', error)
+  }
 }
 </script>
 
@@ -426,20 +623,68 @@ function insertPathsToTextarea(paths: string[]) {
             <span class="dialog-title">{{ t('components.common.editDialog.title') }}</span>
           </div>
           <div class="dialog-body">
-            <textarea
-              ref="textareaRef"
-              v-model="editContent"
-              class="edit-textarea"
-              :class="{ 'drag-over': isDragOver }"
-              :placeholder="t('components.common.editDialog.placeholder')"
-              @input="adjustTextareaHeight"
-              @keydown.esc="handleCancel"
-              @paste="handlePaste"
-              @dragenter="handleDragEnter"
-              @dragleave="handleDragLeave"
-              @dragover="handleDragOver"
-              @drop="handleDrop"
-            />
+            <!-- 输入区域（内联徽章 + textarea） -->
+            <div class="edit-input-wrapper">
+              <div
+                class="edit-input-surface"
+                :class="{ 'drag-over': isDragOver }"
+                @click="focusTextarea"
+              >
+                <!-- 内联上下文徽章 -->
+                <template v-for="ctx in promptContextItems" :key="ctx.id">
+                  <span
+                    class="context-chip"
+                    :class="{ hovered: hoveredContextId === ctx.id }"
+                    @click.stop="handleContextClick(ctx)"
+                    @mouseenter="handleContextMouseEnter(ctx)"
+                    @mouseleave="handleContextMouseLeave"
+                  >
+                    <i :class="getContextIcon(ctx).class"></i>
+                    <span class="context-chip__text">{{ ctx.title }}</span>
+                    <button
+                      class="context-chip__remove"
+                      type="button"
+                      @click.stop="handleRemoveContext(ctx.id)"
+                      aria-label="Remove"
+                    >
+                      <i class="codicon codicon-close"></i>
+                    </button>
+                  </span>
+                </template>
+
+                <!-- 文本输入框 -->
+                <textarea
+                  ref="textareaRef"
+                  v-model="editContent"
+                  class="edit-textarea"
+                  :placeholder="editPlaceholder"
+                  @input="adjustTextareaHeight"
+                  @keydown="handleKeydown"
+                  @keydown.esc="handleCancel"
+                  @paste="handlePaste"
+                  @dragenter="handleDragEnter"
+                  @dragleave="handleDragLeave"
+                  @dragover="handleDragOver"
+                  @drop="handleDrop"
+                />
+              </div>
+
+              <!-- 悬浮预览弹窗（不占用布局） -->
+              <Transition name="fade">
+                <div
+                  v-if="previewContext"
+                  class="context-preview"
+                  @mouseenter="hoveredContextId = previewContext.id"
+                  @mouseleave="handleContextMouseLeave"
+                >
+                  <div class="preview-header">
+                    <i :class="getContextIcon(previewContext).class"></i>
+                    <span class="preview-title">{{ previewContext.title }}</span>
+                  </div>
+                  <pre class="preview-content">{{ truncatePreview(previewContext.content) }}</pre>
+                </div>
+              </Transition>
+            </div>
             
             <!-- 附件区域 -->
             <div class="attachment-section">
@@ -559,7 +804,13 @@ function insertPathsToTextarea(paths: string[]) {
   padding: 16px;
 }
 
-.edit-textarea {
+/* 输入外壳：包含徽章和 textarea */
+.edit-input-wrapper {
+  position: relative;
+}
+
+/* 输入外壳：包含徽章和 textarea */
+.edit-input-surface {
   width: 100%;
   min-height: 100px;
   max-height: 300px;
@@ -571,19 +822,112 @@ function insertPathsToTextarea(paths: string[]) {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
+  transition: border-color 0.15s;
+  overflow-y: auto;
+  cursor: text;
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.edit-input-surface:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
+
+.edit-input-surface.drag-over {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* 文本输入区（无边框，融入 input-surface） */
+.edit-textarea {
+  flex: 1;
+  min-width: 120px;
+  min-height: 60px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  border: none;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
   resize: none;
   outline: none;
   overflow-y: auto;
-  transition: border-color 0.15s;
 }
 
-.edit-textarea:focus {
-  border-color: var(--vscode-focusBorder);
+.edit-textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground);
 }
 
-.edit-textarea.drag-over {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-hoverBackground);
+/* 内联徽章样式：浅蓝色背景 */
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 200px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 122, 204, 0.16);
+  border: 1px solid rgba(0, 122, 204, 0.28);
+  color: var(--vscode-foreground);
+  user-select: none;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.context-chip:hover {
+  background: rgba(0, 122, 204, 0.24);
+  border-color: rgba(0, 122, 204, 0.4);
+}
+
+.context-chip .codicon {
+  font-size: 12px;
+  color: var(--vscode-textLink-foreground);
+  flex-shrink: 0;
+}
+
+.context-chip__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.context-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.context-chip:hover .context-chip__remove,
+.context-chip.hovered .context-chip__remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.context-chip__remove:hover {
+  color: var(--vscode-errorForeground);
+}
+
+.context-chip__remove .codicon {
+  font-size: 10px;
 }
 
 /* 附件区域 */
@@ -712,5 +1056,70 @@ function insertPathsToTextarea(paths: string[]) {
 .dialog-fade-enter-from .dialog,
 .dialog-fade-leave-to .dialog {
   transform: scale(0.95);
+}
+
+/* 悬浮预览弹窗 */
+.context-preview {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  max-height: 240px;
+  overflow: hidden;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+}
+
+.preview-header .codicon {
+  font-size: 14px;
+  color: var(--vscode-textLink-foreground);
+}
+
+.preview-title {
+  flex: 1;
+  font-weight: 500;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-content {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family);
+  line-height: 1.5;
+  overflow-y: auto;
+  max-height: 140px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--vscode-foreground);
+  background: var(--vscode-textBlockQuote-background);
+}
+
+/* 淡入淡出动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 </style>

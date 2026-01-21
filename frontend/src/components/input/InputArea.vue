@@ -4,7 +4,7 @@
  * 扁平化设计，底部栏布局：左侧附件按钮，右侧发送按钮
  */
 
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
@@ -16,7 +16,11 @@ import { useChatStore, useSettingsStore } from '../../stores'
 import { sendToExtension, showNotification } from '../../utils/vscode'
 import { formatFileSize } from '../../utils/file'
 import { formatNumber } from '../../utils/format'
+import { getFileIcon } from '../../utils/fileIcons'
 import type { Attachment } from '../../types'
+import type { PromptContextItem } from '../../types/promptContext'
+import type { EditorNode } from '../../types/editorNode'
+import { createTextNode, createContextNode, getPlainText, getContexts, serializeNodes, normalizeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
@@ -69,11 +73,22 @@ const emit = defineEmits<{
 
 const isComposing = ref(false)
 
-// 使用 store 中的 inputValue（跨视图保持）
-const inputValue = computed({
-  get: () => chatStore.inputValue,
-  set: (value: string) => chatStore.setInputValue(value)
-})
+// 编辑器节点数组（文本和上下文徽章混合）
+const editorNodes = ref<EditorNode[]>([])
+
+// 从 store 的 inputValue 初始化
+watch(() => chatStore.inputValue, (val) => {
+  // 如果 store 有值且 editorNodes 为空，进行初始化
+  if (val && editorNodes.value.length === 0) {
+    editorNodes.value = [createTextNode(val)]
+  }
+}, { immediate: true })
+
+// 同步 editorNodes 到 store
+watch(editorNodes, (nodes) => {
+  const plainText = getPlainText(nodes)
+  chatStore.setInputValue(plainText)
+}, { deep: true })
 
 // 配置选项（用于 ChannelSelector）- 只显示已启用的配置
 const channelOptions = computed<ChannelOption[]>(() =>
@@ -192,7 +207,9 @@ const hasAttachments = computed(() =>
 // 是否可以发送 - 只在等待响应或上传时禁用发送
 // 例外：当有待确认工具时允许发送（用于带批注拒绝）
 const canSend = computed(() => {
-  const hasContent = inputValue.value.trim().length > 0 ||
+  const plainText = getPlainText(editorNodes.value).trim()
+  const hasContexts = getContexts(editorNodes.value).length > 0
+  const hasContent = plainText.length > 0 || hasContexts ||
     (props.attachments && props.attachments.length > 0)
 
   // 如果有待确认的工具，允许发送（作为批注拒绝）
@@ -207,11 +224,16 @@ const canSend = computed(() => {
 function handleSend() {
   if (!canSend.value) return
   
-  const content = inputValue.value.trim()
+  // 序列化节点为发送格式
+  const content = serializeNodes(editorNodes.value).trim()
+  
   const attachments = props.attachments || []
   
   emit('send', content, attachments)
-  chatStore.clearInputValue()  // 使用 store 方法清空
+  
+  // 清空输入
+  editorNodes.value = []
+  chatStore.clearInputValue()
 }
 
 // 处理取消
@@ -219,9 +241,9 @@ function handleCancel() {
   emit('cancel')
 }
 
-// 处理输入变化
-function handleInput(value: string) {
-  chatStore.setInputValue(value)  // 使用 store 方法更新
+// 处理节点更新
+function handleNodesUpdate(nodes: EditorNode[]) {
+  editorNodes.value = nodes
 }
 
 // 处理附件
@@ -292,13 +314,59 @@ function handleCloseAtPicker() {
   }
 }
 
-// 处理选择文件
-function handleSelectFile(path: string) {
-  if (inputBoxRef.value) {
-    inputBoxRef.value.insertFilePath(path)
-  }
+// 处理选择文件：@ 选中文件后，默认转为输入框内联徽章
+// Ctrl+Click: insert plain " @path " text instead of adding a badge.
+async function handleSelectFile(path: string, asText: boolean = false) {
+  // 先关闭面板
   showFilePicker.value = false
   filePickerQuery.value = ''
+
+  // Ctrl 模式：直接替换 @query 为 " @path "
+  if (asText) {
+    inputBoxRef.value?.replaceAtTriggerWithText(` @${path} `)
+    nextTick(() => {
+      inputBoxRef.value?.focus()
+    })
+    return
+  }
+
+  // 清理输入框中已经输入的 @query
+  if (inputBoxRef.value) {
+    inputBoxRef.value.replaceAtTriggerWithText('')
+  }
+
+  // 尝试读取文件内容并加入上下文
+  try {
+    const result = await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
+      'readWorkspaceTextFile',
+      { path }
+    )
+
+    if (result?.success) {
+      // 创建上下文徽章节点
+      const contextItem: PromptContextItem = {
+        id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: 'file',
+        title: result.path,
+        content: result.content,
+        filePath: result.path,
+        enabled: true,
+        addedAt: Date.now()
+      }
+      // 在当前位置插入徽章节点
+      editorNodes.value = normalizeNodes([...editorNodes.value, createContextNode(contextItem)])
+      
+      // 聚焦输入框
+      nextTick(() => {
+        inputBoxRef.value?.focus()
+      })
+    } else {
+      await showNotification(result?.error || t('components.input.promptContext.readFailed'), 'error')
+    }
+  } catch (error: any) {
+    console.error('Failed to add context from @ file:', error)
+    await showNotification(t('components.input.promptContext.addFailed', { error: error.message || t('common.unknownError') }), 'error')
+  }
 }
 
 // 处理文件选择器键盘事件
@@ -355,6 +423,14 @@ function getAttachmentIconClass(type: string): string {
   if (type === 'audio') return 'codicon-unmute'
   if (type === 'code') return 'codicon-file-code'
   return 'codicon-file'
+}
+
+// 获取固定文件图标类名
+function getPinnedFileIcon(file: PinnedFileItem): string {
+  if (file.exists === false) {
+    return 'codicon codicon-warning'
+  }
+  return getFileIcon(file.path)
 }
 
 // 判断附件是否有预览
@@ -816,6 +892,65 @@ const enabledSkillsCount = computed(() => {
   return skills.value.filter(s => s.enabled && s.exists !== false).length
 })
 
+// ========== 编辑器节点操作 ==========
+
+// 处理移除上下文徽章
+function handleRemovePromptContextItem(id: string) {
+  editorNodes.value = editorNodes.value.filter(node => {
+    if (node.type === 'context' && node.context.id === id) {
+      return false
+    }
+    return true
+  })
+}
+
+// 处理拖拽添加文件上下文（从 InputBox 拖拽文件时调用）
+async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[]) {
+  const newNodes: EditorNode[] = []
+  
+  for (const file of files) {
+    // 跳过文件夹
+    if (file.isDirectory) continue
+    
+    // 检查是否已存在
+    const exists = getContexts(editorNodes.value).some(ctx => ctx.filePath === file.path)
+    if (exists) continue
+    
+    try {
+      const result = await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
+        'readWorkspaceTextFile',
+        { path: file.path }
+      )
+      
+      if (result?.success) {
+        const contextItem: PromptContextItem = {
+          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          type: 'file',
+          title: result.path,
+          content: result.content,
+          filePath: result.path,
+          enabled: true,
+          addedAt: Date.now()
+        }
+        newNodes.push(createContextNode(contextItem))
+      } else {
+        await showNotification(result?.error || t('components.input.promptContext.readFailed'), 'error')
+      }
+    } catch (error: any) {
+      console.error('Failed to add file context:', error)
+      await showNotification(t('components.input.promptContext.addFailed', { error: error.message || t('common.unknownError') }), 'error')
+    }
+  }
+  
+  if (newNodes.length > 0) {
+    editorNodes.value = normalizeNodes([...editorNodes.value, ...newNodes])
+    // 聚焦输入框
+    nextTick(() => {
+      inputBoxRef.value?.focus()
+    })
+  }
+}
+
 // 初始化加载配置
 onMounted(() => {
   loadConfigs()
@@ -917,14 +1052,16 @@ watch(() => settingsStore.promptModesVersion, () => {
       <!-- 输入框 -->
       <InputBox
         ref="inputBoxRef"
-        :value="inputValue"
+        :nodes="editorNodes"
         :disabled="false"
         :placeholder="placeholder"
-        @update:value="handleInput"
+        @update:nodes="handleNodesUpdate"
+        @remove-context="handleRemovePromptContextItem"
         @send="handleSend"
         @composition-start="handleCompositionStart"
         @composition-end="handleCompositionEnd"
         @paste="handlePasteFiles"
+        @add-file-contexts="handleAddFileContexts"
         @trigger-at-picker="handleTriggerAtPicker"
         @close-at-picker="handleCloseAtPicker"
         @at-query-change="handleAtQueryChange"
@@ -979,7 +1116,7 @@ watch(() => settingsStore.promptModesVersion, () => {
               class="pinned-file-checkbox"
               :disabled="file.exists === false"
             />
-            <i :class="['codicon', file.exists === false ? 'codicon-warning' : 'codicon-file-text']"></i>
+            <i :class="getPinnedFileIcon(file)"></i>
             <span class="pinned-file-path" :title="file.exists === false ? `${t('components.input.fileNotExists')}: ${file.path}` : file.path">
               {{ file.path }}
             </span>
@@ -1659,7 +1796,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   accent-color: var(--vscode-checkbox-foreground);
 }
 
-.pinned-file-item .codicon-file-text {
+.pinned-file-item .icon,
+.pinned-file-item .codicon {
   font-size: 14px;
   opacity: 0.7;
   flex-shrink: 0;

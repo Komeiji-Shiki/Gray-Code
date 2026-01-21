@@ -265,6 +265,9 @@ export interface LanguageMessages {
                 thinking: string;
                 thoughtProcess: string;
             };
+            contextBlocks: {
+                clickToView: string;
+            };
             summary: {
                 title: string;
                 compressed: string;
@@ -375,6 +378,24 @@ export interface LanguageMessages {
                 hint: string;
                 openDirectory: string;
             };
+            promptContext: {
+                title: string;
+                description: string;
+                empty: string;
+                emptyHint: string;
+                addText: string;
+                addFile: string;
+                titlePlaceholder: string;
+                contentPlaceholder: string;
+                typeFile: string;
+                typeText: string;
+                typeSnippet: string;
+                hint: string;
+                dropHint: string;
+                fileAdded: string;
+                readFailed: string;
+                addFailed: string;
+            };
             filePicker: {
                 title: string;
                 subtitle: string;
@@ -383,6 +404,7 @@ export interface LanguageMessages {
                 navigate: string;
                 select: string;
                 close: string;
+                ctrlClickHint: string;
             };
             notifications: {
                 summarizeFailed: string;

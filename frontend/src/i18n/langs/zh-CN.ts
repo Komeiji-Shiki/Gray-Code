@@ -227,7 +227,7 @@ const zhCN: LanguageMessages = {
 
         input: {
             placeholder: '输入消息...',
-            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径)',
+            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径，Ctrl+Shift+拖拽插入 @path 文本)',
             send: '发送消息',
             stopGenerating: '停止生成',
             attachFile: '添加附件',
@@ -278,6 +278,24 @@ const zhCN: LanguageMessages = {
                 hint: 'AI 也可以通过 toggle_skills 工具来决定是否发送某个 Skill 内容',
                 openDirectory: '打开 Skills 存储目录'
             },
+            promptContext: {
+                title: '提示词上下文',
+                description: '这些内容会以 XML 格式附加到您的消息前面，为 AI 提供额外上下文',
+                empty: '暂无上下文内容',
+                emptyHint: '拖拽文件到此处，或点击 + 添加自定义文本',
+                addText: '添加自定义文本',
+                addFile: '添加文件内容',
+                titlePlaceholder: '输入标题...',
+                contentPlaceholder: '输入内容...',
+                typeFile: '文件',
+                typeText: '文本',
+                typeSnippet: '代码片段',
+                hint: '内容将以 <context> 标签包裹发送给 AI',
+                dropHint: '释放鼠标添加文件内容',
+                fileAdded: '已添加文件内容: {path}',
+                readFailed: '读取文件失败',
+                addFailed: '添加失败: {error}'
+            },
             filePicker: {
                 title: '选择文件',
                 subtitle: '在 @ 后输入文字筛选路径',
@@ -285,7 +303,8 @@ const zhCN: LanguageMessages = {
                 empty: '未找到匹配的文件',
                 navigate: '导航',
                 select: '选择',
-                close: '关闭'
+                close: '关闭',
+                ctrlClickHint: '插入为 @path 文本'
             },
             notifications: {
                 summarizeFailed: '总结失败: {error}',
@@ -316,6 +335,9 @@ const zhCN: LanguageMessages = {
             thought: {
                 thinking: '正在思考...',
                 thoughtProcess: '思考过程'
+            },
+            contextBlocks: {
+                clickToView: '点击查看完整内容'
             },
             summary: {
                 title: '上下文总结',

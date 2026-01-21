@@ -418,6 +418,7 @@ export interface BackendLanguageMessages {
             fileNotInWorkspace: string;
             fileNotInAnyWorkspace: string;
             fileInOtherWorkspace: string;
+            readFileFailed: string;
             conversationFileNotExists: string;
             cannotRevealInExplorer: string;
             

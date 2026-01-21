@@ -397,6 +397,7 @@ const zhCN: BackendLanguageMessages = {
             fileNotInWorkspace: '文件不在当前工作区内',
             fileNotInAnyWorkspace: '文件不在任何打开的工作区内',
             fileInOtherWorkspace: '文件属于其他工作区: {workspaceName}',
+            readFileFailed: '读取文件失败',
             conversationFileNotExists: '对话文件不存在',
             cannotRevealInExplorer: '无法在文件管理器中显示',
             

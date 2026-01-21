@@ -9,8 +9,10 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import MessageActions from './MessageActions.vue'
 import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
+import InlineContextMessage from './InlineContextMessage.vue'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
+import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -57,6 +59,7 @@ const isSummary = computed(() => props.message.isSummary === true)
 
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
+
 
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
@@ -541,6 +544,9 @@ function handleRestoreAndRetry(checkpointId: string) {
       
       <!-- 普通消息显示 -->
       <template v-else>
+        <!-- 用户消息的上下文块显示 -->
+        <!-- 用户消息现在支持将 <lim-context> 以内联徽章的形式渲染在正文中 -->
+        
         <!-- 用户消息的附件显示 -->
         <MessageAttachments
           v-if="isUser && message.attachments && message.attachments.length > 0"
@@ -579,6 +585,12 @@ function handleRestoreAndRetry(checkpointId: string) {
             
             <!-- 文本块：使用 MarkdownRenderer 渲染 -->
             <!-- 用户消息仅渲染 LaTeX，助手消息渲染完整 Markdown -->
+            <!-- 用户消息如果有上下文块，使用解析后的内容 -->
+            <InlineContextMessage
+              v-else-if="block.type === 'text' && isUser && hasContextBlocks(block.text || '')"
+              :content="block.text || ''"
+            />
+
             <MarkdownRenderer
               v-else-if="block.type === 'text'"
               :content="block.text || ''"
@@ -595,7 +607,12 @@ function handleRestoreAndRetry(checkpointId: string) {
         </template>
         
         <!-- 无 parts 但有 content 时：直接渲染 content -->
-        <!-- 用户消息仅渲染 LaTeX -->
+        <!-- 用户消息仅渲染 LaTeX，如果有上下文块则使用解析后的内容 -->
+        <InlineContextMessage
+          v-else-if="isUser && message.content && hasContextBlocks(message.content)"
+          :content="message.content"
+        />
+
         <MarkdownRenderer
           v-else-if="message.content"
           :content="message.content"

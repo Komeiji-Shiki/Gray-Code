@@ -397,6 +397,7 @@ const ja: BackendLanguageMessages = {
             fileNotInWorkspace: 'ファイルが現在のワークスペースにありません',
             fileNotInAnyWorkspace: 'ファイルが開いているワークスペースにありません',
             fileInOtherWorkspace: 'ファイルは別のワークスペースに属しています: {workspaceName}',
+            readFileFailed: 'ファイルの読み取りに失敗しました',
             conversationFileNotExists: '会話ファイルが存在しません',
             cannotRevealInExplorer: 'エクスプローラーで表示できません',
             

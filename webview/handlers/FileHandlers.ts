@@ -168,6 +168,159 @@ export const validatePinnedFile: MessageHandler = async (data, requestId, ctx) =
   }
 };
 
+// ========== 提示词上下文文件读取 ==========
+
+export const readFileForContext: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { uri } = data;
+    
+    if (!uri) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.invalidFileUri')
+      });
+      return;
+    }
+    
+    // 解析 URI
+    let fileUri: vscode.Uri;
+    try {
+      fileUri = vscode.Uri.parse(uri);
+    } catch {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.invalidFileUri')
+      });
+      return;
+    }
+    
+    // 获取相对路径
+    const relativePath = getRelativePathFromAbsolute(fileUri.fsPath);
+    if (!relativePath) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.fileNotInWorkspace')
+      });
+      return;
+    }
+    
+    // 读取文件内容
+    const content = await vscode.workspace.fs.readFile(fileUri);
+    const textContent = Buffer.from(content).toString('utf-8');
+    
+    ctx.sendResponse(requestId, {
+      success: true,
+      path: relativePath,
+      content: textContent
+    });
+  } catch (error: any) {
+    ctx.sendResponse(requestId, {
+      success: false,
+      error: error.message || t('webview.errors.readFileFailed')
+    });
+  }
+};
+
+// 通过相对路径读取工作区内文件内容（用于 @ 选择文件后生成徽章）
+export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: relativePath } = data;
+
+    if (!relativePath || typeof relativePath !== 'string') {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.invalidFileUri') });
+      return;
+    }
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.noWorkspaceOpen') });
+      return;
+    }
+
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
+    const content = await vscode.workspace.fs.readFile(fileUri);
+    const textContent = Buffer.from(content).toString('utf-8');
+
+    ctx.sendResponse(requestId, {
+      success: true,
+      path: relativePath,
+      content: textContent
+    });
+  } catch (error: any) {
+    ctx.sendResponse(requestId, {
+      success: false,
+      error: error.message || t('webview.errors.readFileFailed')
+    });
+  }
+};
+
+// 在 VSCode 中显示上下文内容（使用临时文件）
+let contextPreviewDoc: vscode.TextDocument | null = null;
+
+export const showContextContent: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { title, content, language } = data;
+    
+    // 创建临时文件来显示内容
+    const tempDir = path.join(os.tmpdir(), 'limcode-context-preview');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    // 根据语言确定扩展名
+    const extMap: Record<string, string> = {
+      'typescript': '.ts',
+      'typescriptreact': '.tsx',
+      'javascript': '.js',
+      'javascriptreact': '.jsx',
+      'python': '.py',
+      'vue': '.vue',
+      'html': '.html',
+      'css': '.css',
+      'json': '.json',
+      'markdown': '.md',
+      'yaml': '.yaml',
+      'xml': '.xml',
+      'rust': '.rs',
+      'go': '.go',
+      'java': '.java',
+      'csharp': '.cs',
+      'cpp': '.cpp',
+      'c': '.c',
+      'ruby': '.rb',
+      'php': '.php',
+      'swift': '.swift',
+      'kotlin': '.kt',
+      'sql': '.sql',
+      'shellscript': '.sh'
+    };
+    const ext = extMap[language || ''] || '.txt';
+    
+    // 使用固定文件名，这样每次都会复用同一个文件
+    const safeTitle = (title || 'context').replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
+    const tempFilePath = path.join(tempDir, `preview_${safeTitle}${ext}`);
+    
+    // 写入内容
+    fs.writeFileSync(tempFilePath, content, 'utf-8');
+    
+    const uri = vscode.Uri.file(tempFilePath);
+    
+    // 打开文档，使用 preview 模式（单击预览，再次点击同一文件会复用）
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc, {
+      preview: true,           // 预览模式，不会持久占用标签
+      preserveFocus: true      // 保持焦点在原来的编辑器
+    });
+    
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendResponse(requestId, {
+      success: false,
+      error: error.message || 'Failed to show context content'
+    });
+  }
+};
+
 // ========== 附件和图片处理 ==========
 
 export const previewAttachment: MessageHandler = async (data, requestId, ctx) => {
@@ -556,6 +709,11 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('removePinnedFile', removePinnedFile);
   registry.set('setPinnedFileEnabled', setPinnedFileEnabled);
   registry.set('validatePinnedFile', validatePinnedFile);
+  
+  // 提示词上下文
+  registry.set('readFileForContext', readFileForContext);
+  registry.set('readWorkspaceTextFile', readWorkspaceTextFile);
+  registry.set('showContextContent', showContextContent);
   
   // 附件和图片
   registry.set('previewAttachment', previewAttachment);

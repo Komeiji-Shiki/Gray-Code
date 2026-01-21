@@ -7,6 +7,7 @@
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
+import { getFileIcon as getFileIconClass } from '../../utils/fileIcons'
 import CustomScrollbar from '../common/CustomScrollbar.vue'
 
 const { t } = useI18n()
@@ -24,7 +25,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'select': [path: string]
+  'select': [path: string, asText?: boolean]
   'close': []
   'update:query': [query: string]
   'navigate': [direction: 'up' | 'down']
@@ -84,10 +85,12 @@ function debouncedSearch(query: string) {
 }
 
 // 选择文件
-function selectFile(file: FileItem) {
+function selectFile(file: FileItem, e?: MouseEvent) {
   // 文件夹末尾添加 /
   const path = file.isDirectory ? `${file.path}/` : file.path
-  emit('select', path)
+  // Ctrl+Click: insert as plain "@path" text instead of creating a context chip.
+  const asText = !!e?.ctrlKey
+  emit('select', path, asText)
 }
 
 // 选择当前高亮的文件
@@ -97,60 +100,14 @@ function selectCurrent() {
   }
 }
 
-// 获取文件图标
+// 获取文件图标类名
 function getFileIcon(file: FileItem): string {
   if (file.isDirectory) {
-    return 'codicon-folder'
+    return 'codicon codicon-folder'
   }
   
-  // 根据扩展名返回不同图标
-  const ext = file.name.split('.').pop()?.toLowerCase() || ''
-  
-  const iconMap: Record<string, string> = {
-    // 代码文件
-    'ts': 'codicon-file-code',
-    'tsx': 'codicon-file-code',
-    'js': 'codicon-file-code',
-    'jsx': 'codicon-file-code',
-    'vue': 'codicon-file-code',
-    'py': 'codicon-file-code',
-    'go': 'codicon-file-code',
-    'rs': 'codicon-file-code',
-    'java': 'codicon-file-code',
-    'c': 'codicon-file-code',
-    'cpp': 'codicon-file-code',
-    'h': 'codicon-file-code',
-    'hpp': 'codicon-file-code',
-    'cs': 'codicon-file-code',
-    'rb': 'codicon-file-code',
-    'php': 'codicon-file-code',
-    'swift': 'codicon-file-code',
-    'kt': 'codicon-file-code',
-    // 配置文件
-    'json': 'codicon-json',
-    'yaml': 'codicon-file-code',
-    'yml': 'codicon-file-code',
-    'toml': 'codicon-file-code',
-    'xml': 'codicon-file-code',
-    // 样式文件
-    'css': 'codicon-file-code',
-    'scss': 'codicon-file-code',
-    'less': 'codicon-file-code',
-    'sass': 'codicon-file-code',
-    // 文档
-    'md': 'codicon-markdown',
-    'markdown': 'codicon-markdown',
-    'txt': 'codicon-file-text',
-    // 图片
-    'png': 'codicon-file-media',
-    'jpg': 'codicon-file-media',
-    'jpeg': 'codicon-file-media',
-    'gif': 'codicon-file-media',
-    'svg': 'codicon-file-media',
-    'webp': 'codicon-file-media',
-  }
-  
-  return iconMap[ext] || 'codicon-file'
+  // 使用 file-icons-js 获取文件图标
+  return getFileIconClass(file.name)
 }
 
 // 高亮匹配文本
@@ -294,10 +251,10 @@ defineExpose({
           :key="file.path"
           class="file-item"
           :class="{ selected: index === selectedIndex, 'is-open': file.isOpen }"
-          @click="selectFile(file)"
+          @click="selectFile(file, $event)"
           @mouseenter="selectedIndex = index"
         >
-          <i :class="['codicon', getFileIcon(file)]"></i>
+          <i :class="getFileIcon(file)"></i>
           <span class="file-path" v-html="file.highlightedPath"></span>
           <span v-if="file.isOpen" class="open-badge">•</span>
         </div>
@@ -309,6 +266,7 @@ defineExpose({
           <kbd>↑</kbd><kbd>↓</kbd> {{ t('components.input.filePicker.navigate') }}
           <kbd>Enter</kbd> {{ t('components.input.filePicker.select') }}
           <kbd>Esc</kbd> {{ t('components.input.filePicker.close') }}
+          <kbd>Ctrl</kbd>+Click {{ t('components.input.filePicker.ctrlClickHint') }}
         </span>
       </div>
     </div>

@@ -227,7 +227,7 @@ const en: LanguageMessages = {
 
         input: {
             placeholder: 'Type a message...',
-            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths)',
+            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths, Ctrl+Shift+drag to insert @path text)',
             send: 'Send message',
             stopGenerating: 'Stop generating',
             attachFile: 'Attach file',
@@ -278,6 +278,24 @@ const en: LanguageMessages = {
                 hint: 'AI can also decide whether to send skill content via toggle_skills tool',
                 openDirectory: 'Open Skills Directory'
             },
+            promptContext: {
+                title: 'Prompt Context',
+                description: 'These contents will be attached before your message in XML format to provide extra context for AI',
+                empty: 'No context content',
+                emptyHint: 'Drag files here, or click + to add custom text',
+                addText: 'Add Custom Text',
+                addFile: 'Add File Content',
+                titlePlaceholder: 'Enter title...',
+                contentPlaceholder: 'Enter content...',
+                typeFile: 'File',
+                typeText: 'Text',
+                typeSnippet: 'Snippet',
+                hint: 'Content will be sent to AI wrapped in <context> tags',
+                dropHint: 'Release to add file content',
+                fileAdded: 'Added file content: {path}',
+                readFailed: 'Failed to read file',
+                addFailed: 'Add failed: {error}'
+            },
             filePicker: {
                 title: 'Select File',
                 subtitle: 'Type after @ to filter paths',
@@ -285,7 +303,8 @@ const en: LanguageMessages = {
                 empty: 'No matching files found',
                 navigate: 'navigate',
                 select: 'select',
-                close: 'close'
+                close: 'close',
+                ctrlClickHint: 'Insert as @path text'
             },
             notifications: {
                 summarizeFailed: 'Summarize failed: {error}',
@@ -316,6 +335,9 @@ const en: LanguageMessages = {
             thought: {
                 thinking: 'Thinking...',
                 thoughtProcess: 'Thought Process'
+            },
+            contextBlocks: {
+                clickToView: 'Click to view full content'
             },
             summary: {
                 title: 'Context Summary',

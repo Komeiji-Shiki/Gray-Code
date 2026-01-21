@@ -227,7 +227,7 @@ const ja: LanguageMessages = {
 
         input: {
             placeholder: 'メッセージを入力...',
-            placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加）',
+            placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加、Ctrl+Shift+ドラッグで @path を挿入）',
             send: 'メッセージを送信',
             stopGenerating: '生成を停止',
             attachFile: 'ファイルを添付',
@@ -278,6 +278,24 @@ const ja: LanguageMessages = {
                 hint: 'AI も toggle_skills ツールで Skill 内容を送信するかどうかを決定できます',
                 openDirectory: 'Skills ディレクトリを開く'
             },
+            promptContext: {
+                title: 'プロンプトコンテキスト',
+                description: 'これらの内容は XML 形式でメッセージの前に付加され、AI に追加コンテキストを提供します',
+                empty: 'コンテキスト内容がありません',
+                emptyHint: 'ファイルをここにドラッグするか、+ をクリックしてカスタムテキストを追加',
+                addText: 'カスタムテキストを追加',
+                addFile: 'ファイル内容を追加',
+                titlePlaceholder: 'タイトルを入力...',
+                contentPlaceholder: '内容を入力...',
+                typeFile: 'ファイル',
+                typeText: 'テキスト',
+                typeSnippet: 'スニペット',
+                hint: '内容は <context> タグで囲まれて AI に送信されます',
+                dropHint: 'ファイル内容を追加するにはマウスを離してください',
+                fileAdded: 'ファイル内容を追加しました: {path}',
+                readFailed: 'ファイルの読み取りに失敗しました',
+                addFailed: '追加に失敗しました: {error}'
+            },
             filePicker: {
                 title: 'ファイルを選択',
                 subtitle: '@ の後に入力してパスをフィルタリング',
@@ -285,7 +303,8 @@ const ja: LanguageMessages = {
                 empty: '一致するファイルが見つかりません',
                 navigate: 'ナビゲート',
                 select: '選択',
-                close: '閉じる'
+                close: '閉じる',
+                ctrlClickHint: '@path テキストとして挿入'
             },
             notifications: {
                 summarizeFailed: '要約に失敗しました: {error}',
@@ -316,6 +335,9 @@ const ja: LanguageMessages = {
             thought: {
                 thinking: '考え中...',
                 thoughtProcess: '思考プロセス'
+            },
+            contextBlocks: {
+                clickToView: 'クリックして完全な内容を表示'
             },
             summary: {
                 title: 'コンテキスト要約',

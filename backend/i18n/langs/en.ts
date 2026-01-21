@@ -397,6 +397,7 @@ Requirements:
             fileNotInWorkspace: 'File is not in current workspace',
             fileNotInAnyWorkspace: 'File is not in any open workspace',
             fileInOtherWorkspace: 'File belongs to another workspace: {workspaceName}',
+            readFileFailed: 'Failed to read file',
             conversationFileNotExists: 'Conversation file does not exist',
             cannotRevealInExplorer: 'Cannot reveal in explorer',
             
