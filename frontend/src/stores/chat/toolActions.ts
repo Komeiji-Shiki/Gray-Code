@@ -100,6 +100,52 @@ function stopStreamingMessage(state: ChatStoreState, messageId?: string | null):
   ]
 }
 
+/**
+ * 删除“完全为空”的 assistant 占位消息。
+ *
+ * 背景：用户点击中断时，前端会先 stopStreamingMessage()，如果后端没有持久化该条消息，
+ * 该占位消息会变成一个空的 assistant，并可能导致后续 delete/retry 使用错误索引。
+ */
+function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: string | null): void {
+  const all = state.allMessages.value
+
+  // 1) 优先用 messageId 定位
+  let targetIndex = -1
+  if (messageId) {
+    const idx = all.findIndex(m => m.id === messageId)
+    if (idx !== -1) targetIndex = idx
+  }
+
+  // 2) fallback：找最近一条“刚刚生成、已停止 streaming 的 assistant 空消息”
+  if (targetIndex === -1) {
+    const now = Date.now()
+    for (let i = all.length - 1; i >= 0; i--) {
+      const msg = all[i]
+      if (msg.role !== 'assistant') continue
+      if (msg.streaming === true) continue
+      if (now - (msg.timestamp || 0) > 10_000) continue
+      targetIndex = i
+      break
+    }
+  }
+
+  if (targetIndex === -1) return
+
+  const msg = all[targetIndex]
+  if (msg.role !== 'assistant') return
+
+  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall)
+  const hasTools = !!(msg.tools && msg.tools.length > 0)
+  const hasContent = !!(msg.content && msg.content.trim())
+
+  if (!hasContent && !hasTools && !hasPartsContent) {
+    state.allMessages.value = [
+      ...all.slice(0, targetIndex),
+      ...all.slice(targetIndex + 1)
+    ]
+  }
+}
+
 function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | null): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
@@ -241,6 +287,8 @@ export async function cancelStreamAndRejectTools(
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
   stopStreamingMessage(state, state.streamingMessageId.value)
+  // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
+  removeEmptyAssistantPlaceholder(state, state.streamingMessageId.value)
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -312,6 +360,8 @@ export async function cancelStream(
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
   stopStreamingMessage(state, currentStreamingId)
+  // 如果是“完全空”的占位消息，立即删除，避免残留空消息导致索引越界
+  removeEmptyAssistantPlaceholder(state, currentStreamingId)
   
   // 等待工具确认状态（包括 diff 工具等待用户操作）
   if (!state.isStreaming.value) {

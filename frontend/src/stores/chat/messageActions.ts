@@ -31,6 +31,19 @@ export function calculateBackendIndex(_messages: Message[], frontendIndex: numbe
   return frontendIndex
 }
 
+function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
+  if (!msg) return false
+  if (msg.role !== 'assistant') return false
+  const hasContent = !!(msg.content && msg.content.trim())
+  const hasTools = !!(msg.tools && msg.tools.length > 0)
+  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall)
+  return !hasContent && !hasTools && !hasPartsContent
+}
+
+function isLocalOnlyAssistant(msg: Message | undefined): boolean {
+  return !!msg && msg.role === 'assistant' && msg.localOnly === true
+}
+
 /**
  * 发送消息
  */
@@ -73,6 +86,7 @@ export async function sendMessage(
       content: '',
       timestamp: Date.now(),
       streaming: true,
+      localOnly: true,
       metadata: {
         modelVersion: computed.currentModelName.value
       }
@@ -161,6 +175,57 @@ export async function retryFromMessage(
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
+
+  // 如果目标是“本地空占位 assistant”（后端并不存在），不要调用 deleteMessage 到后端，
+  // 否则会触发 messageIndexOutOfBounds。这里直接本地清理并走 retryStream。
+  const target = state.allMessages.value[messageIndex]
+  if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
+    state.error.value = null
+    state.isLoading.value = true
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
+
+    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    clearCheckpointsFromIndex(state, messageIndex)
+
+    state.toolCallBuffer.value = ''
+    state.inToolCall.value = null
+
+    const assistantMessageId = generateId()
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true,
+      localOnly: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
+    }
+    state.allMessages.value.push(assistantMessage)
+    state.streamingMessageId.value = assistantMessageId
+
+    try {
+      await sendToExtension('retryStream', {
+        conversationId: state.currentConversationId.value,
+        configId: state.configId.value
+      })
+    } catch (err: any) {
+      if (state.isStreaming.value) {
+        state.error.value = {
+          code: err.code || 'RETRY_ERROR',
+          message: err.message || 'Retry failed'
+        }
+        state.streamingMessageId.value = null
+        state.isStreaming.value = false
+        state.isWaitingForResponse.value = false
+      }
+    } finally {
+      state.isLoading.value = false
+    }
+    return
+  }
   
   state.error.value = null
   state.isLoading.value = true
@@ -217,6 +282,7 @@ export async function retryFromMessage(
     content: '',
     timestamp: Date.now(),
     streaming: true,
+    localOnly: true,
     metadata: {
       modelVersion: computed.currentModelName.value
     }
@@ -269,6 +335,7 @@ export async function retryAfterError(
     content: '',
     timestamp: Date.now(),
     streaming: true,
+    localOnly: true,
     metadata: {
       modelVersion: computed.currentModelName.value
     }
@@ -397,6 +464,20 @@ export async function deleteMessage(
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
+  }
+
+  // 如果删除目标是“本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
+  const target = state.allMessages.value[targetIndex]
+  if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
+    const msgId = state.allMessages.value[targetIndex]?.id
+    state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+    clearCheckpointsFromIndex(state, targetIndex)
+    if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
+      state.streamingMessageId.value = null
+    }
+    state.isStreaming.value = false
+    state.isWaitingForResponse.value = false
+    return
   }
   
   // 计算后端实际索引

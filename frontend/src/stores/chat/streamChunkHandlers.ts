@@ -109,6 +109,8 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       ...message,
       ...finalMessage,
       streaming: false,
+      // toolsExecuting 阶段的 content 已写入后端历史（模型消息已持久化）
+      localOnly: false,
       tools: mergedTools.length > 0 ? mergedTools : undefined
     }
 
@@ -245,6 +247,8 @@ export function handleAwaitingConfirmation(
       ...message,
       ...finalMessage,
       streaming: false,
+      // awaitingConfirmation 阶段的 content 已写入后端历史（模型消息已持久化）
+      localOnly: false,
       tools: mergedTools.length > 0 ? mergedTools : undefined
     }
 
@@ -410,6 +414,8 @@ export function handleToolIteration(
       ...message,
       ...finalMessage,
       streaming: false,
+      // toolIteration 阶段的 content 已写入后端历史（模型消息已持久化）
+      localOnly: false,
       tools: restoredTools
     }
     
@@ -482,6 +488,7 @@ export function handleToolIteration(
     content: '',
     timestamp: Date.now(),
     streaming: true,
+    localOnly: true,
     metadata: {
       modelVersion: currentModelName()
     }
@@ -523,7 +530,9 @@ export function handleComplete(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
-      streaming: false
+      streaming: false,
+      // complete 代表后端已持久化该模型消息
+      localOnly: false
     }
     
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
@@ -633,6 +642,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
       const updatedMessage: Message = {
         ...message,
         streaming: false,
+        // cancelled 场景：若消息非空，后端通常已持久化 partial（用户取消）。
+        // 即使极端情况下未持久化，localOnly=false 也只会影响“是否走后端索引”的分支，
+        // 但非空消息的 retry/delete 仍可由 error/reload 兜底。
+        localOnly: false,
         metadata: newMetadata,
         tools: updatedTools
       }
@@ -660,11 +673,12 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   }
   
   if (state.streamingMessageId.value) {
-    // 只删除正在流式处理的空消息
     const messageToRemove = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
     
-    // 只删除空的流式消息
-    if (messageToRemove && messageToRemove.streaming && !messageToRemove.content && !messageToRemove.tools) {
+    // 删除空的占位消息（不依赖 streaming 标记；网络中断等场景可能已被提前置为非 streaming）
+    // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
+    const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall)
+    if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
       state.allMessages.value = state.allMessages.value.filter(m => m.id !== state.streamingMessageId.value)
     }
     state.streamingMessageId.value = null

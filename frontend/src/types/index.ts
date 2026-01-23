@@ -170,6 +170,14 @@ export interface Message {
   attachments?: Attachment[]
   metadata?: MessageMetadata
   streaming?: boolean
+  /**
+   * 是否为仅前端临时存在的消息（后端历史未必包含）
+   *
+   * 典型场景：发送请求时创建的 assistant 占位消息；若网络中断/代理断开导致后端未持久化，
+   * 则该消息会一直处于 localOnly 状态。对这类消息进行 retry/delete 时必须避免把
+   * allMessages 的数组下标当作后端索引，否则会触发 messageIndexOutOfBounds。
+   */
+  localOnly?: boolean
   parts?: ContentPart[]  // 保留原始 Gemini 格式
   toolCalls?: ToolCall[]  // 工具调用列表
   toolResults?: ToolResult[]  // 工具执行结果

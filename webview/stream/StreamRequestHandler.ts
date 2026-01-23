@@ -27,6 +27,25 @@ export interface StreamHandlerDeps {
 export class StreamRequestHandler {
   constructor(private deps: StreamHandlerDeps) {}
 
+  private isAbortError(error: any): boolean {
+    const name = error?.name
+    const message = typeof error?.message === 'string' ? error.message : ''
+    return name === 'AbortError' || message.toLowerCase().includes('aborted')
+  }
+
+  private reportCancelled(processor: StreamChunkProcessor): void {
+    // 确保前端一定能收到 cancelled 事件以清理占位消息
+    processor.processChunk({ cancelled: true })
+  }
+
+  private reportNetworkAbort(error: any, processor: StreamChunkProcessor, requestId: string): void {
+    const details = typeof error?.message === 'string' && error.message.trim() ? `: ${error.message}` : ''
+    const message = `${t('errors.networkError')}${details}`
+    processor.sendError('NETWORK_ERROR', message)
+    // 确保请求侧也有响应（即使前端已收到 started:true，这里也安全）
+    this.deps.sendError(requestId, 'NETWORK_ERROR', message)
+  }
+
   /**
    * 处理普通聊天流
    */
@@ -53,6 +72,16 @@ export class StreamRequestHandler {
         if (isError) break;
       }
     } catch (error: any) {
+      // AbortError 可能来自：用户点击中断 / 网络抖动 / 上游直接抛 abort
+      // 关键：无论哪种情况，都必须给前端一个明确的 stream 结尾事件，避免残留空占位消息。
+      if (controller.signal.aborted) {
+        this.reportCancelled(processor)
+        return
+      }
+      if (this.isAbortError(error)) {
+        this.reportNetworkAbort(error, processor, requestId)
+        return
+      }
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
@@ -83,6 +112,14 @@ export class StreamRequestHandler {
         if (isError) break;
       }
     } catch (error: any) {
+      if (controller.signal.aborted) {
+        this.reportCancelled(processor)
+        return
+      }
+      if (this.isAbortError(error)) {
+        this.reportNetworkAbort(error, processor, requestId)
+        return
+      }
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
@@ -116,6 +153,14 @@ export class StreamRequestHandler {
         if (isError) break;
       }
     } catch (error: any) {
+      if (controller.signal.aborted) {
+        this.reportCancelled(processor)
+        return
+      }
+      if (this.isAbortError(error)) {
+        this.reportNetworkAbort(error, processor, requestId)
+        return
+      }
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
@@ -148,6 +193,14 @@ export class StreamRequestHandler {
         if (isError) break;
       }
     } catch (error: any) {
+      if (controller.signal.aborted) {
+        this.reportCancelled(processor)
+        return
+      }
+      if (this.isAbortError(error)) {
+        this.reportNetworkAbort(error, processor, requestId)
+        return
+      }
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
@@ -183,13 +236,8 @@ export class StreamRequestHandler {
    * 处理流式错误
    */
   private handleStreamError(error: any, processor: StreamChunkProcessor, requestId: string): void {
-    if (error.name === 'AbortError' || error.message?.includes('aborted')) {
-      // 被用户取消，不需要发送错误
-      return;
-    }
-    
-    const errorMessage = error.message || t('webview.errors.streamFailed');
-    processor.sendError('STREAM_ERROR', errorMessage);
+    const errorMessage = error?.message || t('errors.unknown');
+    processor.sendError('STREAM_ERROR', t('core.channel.errors.streamRequestFailed', { error: errorMessage }));
     
     // 同时发送请求错误响应，确保前端 await sendToExtension 能够返回
     this.deps.sendError(requestId, 'STREAM_ERROR', errorMessage);

@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.63] - 2026-01-24
+
+### Fixed
+  - 修复换行视图上移问题
+  - 修复中断报错时的前端索引问题
+
 ## [1.0.62] - 2026-01-22
 
 ### Fixed
