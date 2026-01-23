@@ -18,6 +18,7 @@ import {
   inferMimeType
 } from '../utils/file'
 import { generateId } from '../utils/format'
+import { showNotification } from '../utils/vscode'
 import { useI18n } from './useI18n'
 
 export function useAttachments() {
@@ -56,7 +57,9 @@ export function useAttachments() {
     // 验证文件
     const validation = validateFile(file)
     if (!validation.valid) {
-      console.error(t('composables.useAttachments.errors.validationFailed'), validation.error)
+      const errorMessage = validation.error || t('composables.useAttachments.errors.validationFailed')
+      console.error(t('composables.useAttachments.errors.validationFailed'), errorMessage)
+      await showNotification(errorMessage, 'error')
       return null
     }
 
@@ -120,6 +123,7 @@ export function useAttachments() {
       attachment.data = base64
     } catch (error) {
       console.error(t('composables.useAttachments.errors.readFileFailed'), error)
+      await showNotification(t('composables.useAttachments.errors.readFileFailed'), 'error')
       return null
     }
 

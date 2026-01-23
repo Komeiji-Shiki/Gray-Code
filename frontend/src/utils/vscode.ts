@@ -40,11 +40,20 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
     })
     
     // 发送消息
-    vscode.postMessage({
-      type,
-      requestId,
-      data
-    } as VSCodeRequest)
+    try {
+      vscode.postMessage({
+        type,
+        requestId,
+        data
+      } as VSCodeRequest)
+    } catch (err: any) {
+      // 例如：payload 过大导致 structured clone / postMessage 失败
+      messageHandlers.delete(requestId)
+      const msg = typeof err?.message === 'string' && err.message.trim()
+        ? err.message
+        : 'Failed to post message to VS Code extension'
+      reject(new Error(msg))
+    }
   })
 }
 

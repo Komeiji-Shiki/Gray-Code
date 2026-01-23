@@ -532,7 +532,8 @@ export type AttachmentValidator = (file: File) => boolean | string
 
 // ============ 常量 ============
 
-export const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024 // 10MB
+// 附件大小上限（实质无限制）。注意：实际仍可能受 VS Code webview 消息体积/内存、以及模型接口上限影响。
+export const MAX_ATTACHMENT_SIZE = Number.MAX_SAFE_INTEGER
 export const MAX_MESSAGE_LENGTH = 10000
 export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 export const SUPPORTED_VIDEO_TYPES = ['video/mp4', 'video/webm']
