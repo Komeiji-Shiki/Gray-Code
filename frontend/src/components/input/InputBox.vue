@@ -100,6 +100,54 @@ let isInputting = false
 
 // ========== height + overlay scrollbar ==========
 
+function ensureCaretVisible(editor: HTMLElement, paddingPx: number = 8) {
+  // Only adjust scroll when the editor is actively focused; avoid surprising jumps.
+  if (document.activeElement !== editor) return
+
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  if (!range.collapsed) return
+  if (!editor.contains(range.startContainer)) return
+
+  // If the editor doesn't overflow, nothing to do.
+  if (editor.scrollHeight <= editor.clientHeight) return
+
+  let caretRect = range.getBoundingClientRect()
+  // Some browsers may return an empty rect for a collapsed range; fall back to client rects.
+  if (
+    caretRect.width === 0 &&
+    caretRect.height === 0 &&
+    caretRect.top === 0 &&
+    caretRect.left === 0
+  ) {
+    const rects = range.getClientRects()
+    if (rects.length === 0) return
+    caretRect = rects[0]
+  }
+
+  const editorRect = editor.getBoundingClientRect()
+  const visibleTop = editorRect.top + paddingPx
+  const visibleBottom = editorRect.bottom - paddingPx
+
+  let nextScrollTop = editor.scrollTop
+  if (caretRect.top < visibleTop) {
+    nextScrollTop -= (visibleTop - caretRect.top)
+  } else if (caretRect.bottom > visibleBottom) {
+    nextScrollTop += (caretRect.bottom - visibleBottom)
+  } else {
+    return
+  }
+
+  const maxScrollTop = Math.max(0, editor.scrollHeight - editor.clientHeight)
+  nextScrollTop = Math.min(Math.max(0, nextScrollTop), maxScrollTop)
+
+  if (Math.abs(nextScrollTop - editor.scrollTop) >= 1) {
+    editor.scrollTop = nextScrollTop
+  }
+}
+
 function adjustHeight() {
   if (!editorRef.value) return
 
@@ -114,7 +162,14 @@ function adjustHeight() {
   const lineHeight = cachedLineHeight.value
   const minHeight = minRows * lineHeight
 
+  const prevScrollTop = editor.scrollTop
+  const prevWasAtBottom = editor.scrollTop + editor.clientHeight >= editor.scrollHeight - 2
+
   if (editor.scrollHeight === lastScrollHeight.value && lastScrollHeight.value !== 0) {
+    nextTick(() => {
+      updateScrollbar()
+      ensureCaretVisible(editor)
+    })
     return
   }
 
@@ -135,7 +190,19 @@ function adjustHeight() {
   }
 
   lastScrollHeight.value = contentHeight
-  nextTick(() => updateScrollbar())
+  // Preserve internal scroll position; without this, changing height can reset scrollTop and make
+  // the caret appear to jump upward when the editor is overflowing (maxRows reached).
+  const maxScrollTop = Math.max(0, editor.scrollHeight - editor.clientHeight)
+  if (prevWasAtBottom) {
+    editor.scrollTop = editor.scrollHeight
+  } else {
+    editor.scrollTop = Math.min(prevScrollTop, maxScrollTop)
+  }
+
+  nextTick(() => {
+    updateScrollbar()
+    ensureCaretVisible(editor)
+  })
 }
 
 function updateScrollbar() {
@@ -371,7 +438,11 @@ function handlePaste(e: ClipboardEvent) {
   const text = e.clipboardData?.getData('text/plain')
   if (text && editorRef.value) {
     e.preventDefault()
-    insertPlainTextWithLineBreaksAtCaret(editorRef.value, text)
+    // Copying from our own contenteditable may include ZWSP (\u200B). If we paste them back,
+    // it can make a line break require two backspaces (first removes the invisible char).
+    // Strip them at the boundary so pasted content behaves like normal plain text.
+    const cleaned = text.replace(/\u200B/g, '')
+    insertPlainTextWithLineBreaksAtCaret(editorRef.value, cleaned)
     handleInput()
   }
 }
