@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.64] - 2026-01-24
+
+### Improved
+  - 优化前端显示历史消息，变得更流畅，避免全量加载
+
 ## [1.0.63] - 2026-01-24
 
 ### Improved

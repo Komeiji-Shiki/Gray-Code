@@ -8,11 +8,16 @@ import type { ChatStoreState, Conversation, CheckpointRecord } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content } from '../../types'
+import { perfLog, perfMeasureAsync } from '../../utils/perf'
+import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
 
 // ============ 对话列表分页加载配置 ============
 
 /** 每次分页加载的对话数量 */
 export const CONVERSATIONS_PAGE_SIZE = 30
+
+/** 当前对话消息分页大小（窗口初始加载 / 上拉加载） */
+export const MESSAGES_PAGE_SIZE = 120
 
 /** 拉取元数据时的并发数（避免一次性打爆 IPC / IO） */
 const METADATA_FETCH_CONCURRENCY = 30
@@ -80,6 +85,11 @@ export async function createNewConversation(
   
   state.currentConversationId.value = null
   state.allMessages.value = []  // 清空消息
+  state.windowStartIndex.value = 0
+  state.totalMessages.value = 0
+  state.isLoadingMoreMessages.value = false
+  state.historyFolded.value = false
+  state.foldedMessageCount.value = 0
   state.checkpoints.value = []  // 清空检查点
   state.error.value = null
   
@@ -252,19 +262,93 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
   if (!state.currentConversationId.value) return
   
   try {
-    const history = await sendToExtension<Content[]>('conversation.getMessages', {
-      conversationId: state.currentConversationId.value
-    })
-    
-    // 转换所有消息，包括 functionResponse 消息
-    state.allMessages.value = history.map(content =>
-      contentToMessageEnhanced(content)
+    // 重置折叠提示（重新加载最后一页）
+    state.historyFolded.value = false
+    state.foldedMessageCount.value = 0
+
+    const result = await perfMeasureAsync('conversation.loadHistoryPaged', () =>
+      sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+        conversationId: state.currentConversationId.value,
+        limit: MESSAGES_PAGE_SIZE
+      })
     )
+
+    const page = result?.messages || []
+    state.totalMessages.value = result?.total ?? page.length
+
+    // 转换所有消息，包括 functionResponse 消息
+    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+    state.windowStartIndex.value = page[0]?.index ?? 0
+    syncTotalMessagesFromWindow(state)
+
+    perfLog('conversation.window', {
+      start: state.windowStartIndex.value,
+      count: state.allMessages.value.length,
+      total: state.totalMessages.value
+    })
   } catch (err: any) {
     state.error.value = {
       code: err.code || 'LOAD_ERROR',
       message: err.message || 'Failed to load history'
     }
+  }
+}
+
+/**
+ * 上拉加载更早消息（在当前窗口前追加一页）
+ */
+export async function loadOlderMessagesPage(
+  state: ChatStoreState,
+  options: { pageSize?: number } = {}
+): Promise<boolean> {
+  if (!state.currentConversationId.value) return false
+  if (state.isLoadingMoreMessages.value) return false
+
+  // 已经到头
+  if (state.windowStartIndex.value <= 0) return false
+
+  const pageSize = options.pageSize ?? MESSAGES_PAGE_SIZE
+  state.isLoadingMoreMessages.value = true
+
+  try {
+    const beforeIndex = state.windowStartIndex.value
+    const result = await perfMeasureAsync('conversation.loadOlderMessagesPage', () =>
+      sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+        conversationId: state.currentConversationId.value,
+        beforeIndex,
+        limit: pageSize
+      })
+    )
+
+    const older = result?.messages || []
+    if (older.length === 0) {
+      state.windowStartIndex.value = 0
+      state.totalMessages.value = result?.total ?? state.totalMessages.value
+      return false
+    }
+
+    const olderMsgs = older.map(c => contentToMessageEnhanced(c))
+    // 追加到窗口顶部
+    state.allMessages.value = [...olderMsgs, ...state.allMessages.value]
+
+    state.totalMessages.value = result?.total ?? state.totalMessages.value
+    state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
+
+    // 超过窗口上限则裁剪（释放资源）
+    trimWindowFromTop(state)
+
+    perfLog('conversation.window', {
+      start: state.windowStartIndex.value,
+      count: state.allMessages.value.length,
+      total: state.totalMessages.value
+    })
+
+    return true
+  } catch (err) {
+    console.error('[conversationActions] loadOlderMessagesPage failed:', err)
+    return false
+  } finally {
+    state.isLoadingMoreMessages.value = false
   }
 }
 
@@ -316,6 +400,11 @@ export async function switchConversation(
   // 清除状态
   state.currentConversationId.value = id
   state.allMessages.value = []
+  state.windowStartIndex.value = 0
+  state.totalMessages.value = 0
+  state.isLoadingMoreMessages.value = false
+  state.historyFolded.value = false
+  state.foldedMessageCount.value = 0
   state.checkpoints.value = []
   state.error.value = null
   state.isLoading.value = false
@@ -329,7 +418,7 @@ export async function switchConversation(
     await loadCheckpoints(state)
     
     // 更新对话的消息数量（在加载后才有准确数据）
-    conv.messageCount = state.allMessages.value.length
+    conv.messageCount = state.totalMessages.value || state.allMessages.value.length
   }
 }
 
@@ -415,7 +504,12 @@ export async function updateConversationAfterMessage(state: ChatStoreState): Pro
   if (!conv) return
   
   const now = Date.now()
-  const messageCount = state.allMessages.value.length
+  // windowStartIndex 是绝对索引，windowStartIndex + window.length 近似代表“当前已知的总消息数”
+  const messageCount = Math.max(
+    state.totalMessages.value,
+    state.windowStartIndex.value + state.allMessages.value.length
+  )
+  state.totalMessages.value = messageCount
   
   try {
     // 更新对话的updatedAt时间戳

@@ -167,6 +167,13 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   timestamp: number
+  /**
+   * 该消息在后端历史中的绝对索引（Content.index）
+   *
+   * - 从后端加载的历史消息：应当有值
+   * - 流式阶段的本地占位消息：可能暂时为空（localOnly=true），等后端落库并回传后再补齐
+   */
+  backendIndex?: number
   attachments?: Attachment[]
   metadata?: MessageMetadata
   streaming?: boolean

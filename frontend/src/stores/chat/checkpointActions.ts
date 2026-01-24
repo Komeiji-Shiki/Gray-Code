@@ -9,6 +9,7 @@ import type { ChatStoreState, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
+import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
 /**
  * 根据消息索引获取关联的检查点
@@ -34,8 +35,9 @@ export function addCheckpoint(state: ChatStoreState, checkpoint: CheckpointRecor
 /**
  * 清理指定索引及之后的检查点
  */
-export function clearCheckpointsFromIndex(state: ChatStoreState, fromIndex: number): void {
-  state.checkpoints.value = state.checkpoints.value.filter(cp => cp.messageIndex < fromIndex)
+export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendIndex: number): void {
+  // CheckpointRecord.messageIndex 是后端历史中的绝对索引
+  state.checkpoints.value = state.checkpoints.value.filter(cp => cp.messageIndex < fromBackendIndex)
 }
 
 /**
@@ -105,11 +107,12 @@ export async function restoreAndRetry(
     }
     
     // 2. 计算后端索引（在删除本地消息之前）
-    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-    clearCheckpointsFromIndex(state, messageIndex)
+    clearCheckpointsFromIndex(state, backendIndex)
+    setTotalMessagesFromWindow(state)
     
     // 4. 删除后端的消息
     try {
@@ -138,12 +141,16 @@ export async function restoreAndRetry(
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
+      backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
       streaming: true,
+      localOnly: true,
       metadata: {
         modelVersion: currentModelName
       }
     }
     state.allMessages.value.push(assistantMessage)
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
     
     // 6. 调用后端重试
@@ -206,11 +213,12 @@ export async function restoreAndDelete(
     }
     
     // 2. 计算后端索引（在删除本地消息之前）
-    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-    clearCheckpointsFromIndex(state, messageIndex)
+    clearCheckpointsFromIndex(state, backendIndex)
+    setTotalMessagesFromWindow(state)
     
     // 4. 删除后端的消息
     try {
@@ -272,7 +280,7 @@ export async function restoreAndEdit(
   state.isLoading.value = true
   
   // 计算后端索引（在修改数组之前）
-  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   try {
     // 1. 先恢复检查点
@@ -294,7 +302,8 @@ export async function restoreAndEdit(
     
     // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
-    clearCheckpointsFromIndex(state, messageIndex)
+    clearCheckpointsFromIndex(state, backendMessageIndex)
+    setTotalMessagesFromWindow(state)
     
     // 4. 重置工具调用缓冲区
     state.toolCallBuffer.value = ''
@@ -310,12 +319,16 @@ export async function restoreAndEdit(
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
+      backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
       streaming: true,
+      localOnly: true,
       metadata: {
         modelVersion: currentModelName
       }
     }
     state.allMessages.value.push(assistantMessage)
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
     
     // 6. 准备附件数据（序列化为纯对象）

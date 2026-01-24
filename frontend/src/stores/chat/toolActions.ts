@@ -9,6 +9,7 @@ import type { ChatStoreState, ChatStoreComputed } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
+import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
 /**
  * 根据工具调用 ID 获取工具响应
@@ -249,11 +250,13 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
     return
   }
 
+  const responseBackendIndex = state.windowStartIndex.value + info.messageIndex + 1
   const responseMessage: Message = {
     id: generateId(),
     role: 'user',
     content: '',
     timestamp: Date.now(),
+    backendIndex: responseBackendIndex,
     isFunctionResponse: true,
     parts: missingCalls.map(call => ({
       functionResponse: {
@@ -273,6 +276,9 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
     responseMessage,
     ...all.slice(info.messageIndex + 1)
   ]
+
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
 
 }
 
@@ -310,7 +316,7 @@ export async function cancelStreamAndRejectTools(
       ensureFunctionResponseMessageForRejectedTools(state, info)
       
       // 计算后端索引
-      const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+      const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
       if (backendIndex !== -1 && incompleteToolIds.length > 0) {
         try {
           await sendToExtension('conversation.rejectToolCalls', {
@@ -465,9 +471,12 @@ export async function rejectPendingToolsWithAnnotation(
       role: 'user',
       content: trimmedAnnotation,
       timestamp: Date.now(),
+      backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
       parts: [{ text: trimmedAnnotation }]
     }
     state.allMessages.value.push(userMessage)
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
   }
 
   try {

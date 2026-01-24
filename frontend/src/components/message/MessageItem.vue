@@ -595,6 +595,7 @@ function handleRestoreAndRetry(checkpointId: string) {
               v-else-if="block.type === 'text'"
               :content="block.text || ''"
               :latex-only="isUser"
+              :is-streaming="isStreaming"
               class="content-text"
             />
             
@@ -617,6 +618,7 @@ function handleRestoreAndRetry(checkpointId: string) {
           v-else-if="message.content"
           :content="message.content"
           :latex-only="isUser"
+          :is-streaming="isStreaming"
           class="content-text"
         />
         

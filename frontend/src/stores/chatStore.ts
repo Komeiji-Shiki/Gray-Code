@@ -41,6 +41,7 @@ import {
   loadConversations as loadConvsAction,
   loadMoreConversations as loadMoreConvsAction,
   loadHistory,
+  loadOlderMessagesPage as loadOlderMessagesPageAction,
   loadCheckpoints,
   switchConversation as switchConvAction,
   deleteConversation as deleteConvAction,
@@ -140,6 +141,7 @@ export const useChatStore = defineStore('chat', () => {
   const createNewConversation = () => createNewConvAction(state, cancelStreamAndRejectTools)
   const loadConversations = () => loadConvsAction(state)
   const loadMoreConversations = () => loadMoreConvsAction(state)
+  const loadOlderMessagesPage = (options?: { pageSize?: number }) => loadOlderMessagesPageAction(state, options)
   const switchConversation = (id: string) => switchConvAction(state, id, cancelStreamAndRejectTools)
   const deleteConversation = (id: string) => deleteConvAction(
     state,
@@ -207,6 +209,11 @@ export const useChatStore = defineStore('chat', () => {
     
     state.currentConversationId.value = null
     state.allMessages.value = []
+    state.windowStartIndex.value = 0
+    state.totalMessages.value = 0
+    state.isLoadingMoreMessages.value = false
+    state.historyFolded.value = false
+    state.foldedMessageCount.value = 0
   }
 
   // ============ 返回 ============
@@ -216,6 +223,11 @@ export const useChatStore = defineStore('chat', () => {
     conversations: state.conversations,
     currentConversationId: state.currentConversationId,
     allMessages: state.allMessages,
+    windowStartIndex: state.windowStartIndex,
+    totalMessages: state.totalMessages,
+    isLoadingMoreMessages: state.isLoadingMoreMessages,
+    historyFolded: state.historyFolded,
+    foldedMessageCount: state.foldedMessageCount,
     messages: computed.messages,
     configId: state.configId,
     currentConfig: state.currentConfig,
@@ -252,6 +264,7 @@ export const useChatStore = defineStore('chat', () => {
     
     // 消息管理
     loadHistory: () => loadHistory(state),
+    loadOlderMessagesPage,
     sendMessage,
     retryLastMessage,
     retryFromMessage,

@@ -11,7 +11,7 @@
  * - LaTeX 数学公式
  */
 
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Options } from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
@@ -39,8 +39,15 @@ import taskLists from 'markdown-it-task-lists'
 const props = withDefaults(defineProps<{
   content: string
   latexOnly?: boolean  // 仅渲染 LaTeX，不渲染 Markdown（用于用户消息）
+  /**
+   * 是否处于流式更新中
+   *
+   * 用于节流渲染并跳过重操作（Mermaid/工作区图片），但仍保持实时 Markdown/LaTeX 输出。
+   */
+  isStreaming?: boolean
 }>(), {
-  latexOnly: false
+  latexOnly: false,
+  isStreaming: false
 })
 
 const { t } = useI18n()
@@ -531,10 +538,38 @@ function renderContent(content: string, latexOnly: boolean): string {
   return html
 }
 
-// 渲染结果
-const renderedContent = computed(() => {
-  return renderContent(props.content, props.latexOnly)
-})
+// ===================== 渲染节流（流式性能优化） =====================
+
+// 渲染结果（用 ref 而不是 computed，便于在流式阶段节流）
+const renderedContent = shallowRef('')
+
+const STREAM_RENDER_DEBOUNCE_MS = 120
+let renderTimer: number | null = null
+
+function clearRenderTimer() {
+  if (renderTimer !== null) {
+    window.clearTimeout(renderTimer)
+    renderTimer = null
+  }
+}
+
+function scheduleRender() {
+  const delay = props.isStreaming ? STREAM_RENDER_DEBOUNCE_MS : 0
+  clearRenderTimer()
+
+  renderTimer = window.setTimeout(async () => {
+    renderedContent.value = renderContent(props.content, props.latexOnly)
+
+    // Mermaid / workspace images 需要基于最新 DOM 执行
+    await nextTick()
+
+    // 流式阶段跳过重操作（仍保留 Markdown/LaTeX 实时渲染）
+    if (props.isStreaming) return
+
+    await loadWorkspaceImages()
+    await renderMermaid()
+  }, delay)
+}
 
 /**
  * 处理复制按钮点击
@@ -661,20 +696,19 @@ onMounted(() => {
     containerRef.value.addEventListener('click', handleImageClick)
     containerRef.value.addEventListener('click', handleMermaidClick)
   }
-  nextTick(async () => {
-    await loadWorkspaceImages()
-    await renderMermaid()
-  })
+  scheduleRender()
 })
 
-watch(() => props.content, () => {
-  nextTick(async () => {
-    await loadWorkspaceImages()
-    await renderMermaid()
-  })
-})
+watch(
+  () => [props.content, props.latexOnly, props.isStreaming] as const,
+  () => {
+    scheduleRender()
+  },
+  { immediate: true }
+)
 
 onUnmounted(()=> {
+  clearRenderTimer()
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleCopyClick)
     containerRef.value.removeEventListener('click', handleImageClick)

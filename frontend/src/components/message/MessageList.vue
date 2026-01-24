@@ -19,17 +19,24 @@ const props = defineProps<{
   messages: Message[]
 }>()
 
+// 从 store 读取等待状态
+const chatStore = useChatStore()
+
 // 消息分页显示逻辑：解决消息过多导致的输入卡顿
 const VISIBLE_INCREMENT = 40
 const visibleCount = ref(VISIBLE_INCREMENT)
 
-// 是否还有更多历史消息
-const hasMore = computed(() => props.messages.length > visibleCount.value)
+// 是否还有更多“已加载但未展示”的消息
+const hasMoreVisible = computed(() => props.messages.length > visibleCount.value)
+// 是否还有更多“未加载到窗口”的历史消息（真分页）
+const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
+// 顶部加载指示器：任一维度有更多都显示
+const hasMore = computed(() => hasMoreVisible.value || hasMoreHistory.value)
 
 // 增强的消息对象接口
 interface EnhancedMessage {
   message: Message
-  actualIndex: number
+  backendIndex: number
   beforeCheckpoints: CheckpointRecord[]
   afterCheckpoints: CheckpointRecord[]
 }
@@ -42,12 +49,6 @@ const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
   
   // 仅对可见的消息进行切片
   const visibleSlice = props.messages.slice(startIndex)
-  
-  // 预先建立 ID 到 allMessages 索引的映射，提高 getActualIndex 效率
-  const idToActualIndex = new Map<string, number>()
-  chatStore.allMessages.forEach((m, idx) => {
-    idToActualIndex.set(m.id, idx)
-  })
 
   // 预先按消息索引对检查点进行分组
   const checkpointsByMsgIndex = new Map<number, { before: CheckpointRecord[], after: CheckpointRecord[] }>()
@@ -61,12 +62,12 @@ const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
   })
 
   return visibleSlice.map(message => {
-    const actualIndex = idToActualIndex.get(message.id) ?? -1
-    const cpGroup = actualIndex !== -1 ? checkpointsByMsgIndex.get(actualIndex) : null
+    const backendIndex = typeof message.backendIndex === 'number' ? message.backendIndex : -1
+    const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.get(backendIndex) : null
     
     return {
       message,
-      actualIndex,
+      backendIndex,
       beforeCheckpoints: cpGroup?.before || [],
       afterCheckpoints: cpGroup?.after || []
     }
@@ -76,8 +77,8 @@ const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
 // 是否正在加载更多（用于节流）
 const isLoadingMore = ref(false)
 
-// 加载更多历史消息
-function loadMore() {
+// 加载更多历史消息（先展示已加载的，再按需从后端拉更早一页）
+async function loadMore() {
   if (isLoadingMore.value || !hasMore.value) return
   if (!scrollbarRef.value) return
   const container = scrollbarRef.value.getContainer()
@@ -86,16 +87,30 @@ function loadMore() {
   isLoadingMore.value = true
   const oldScrollHeight = container.scrollHeight
   const oldScrollTop = container.scrollTop
-
-  visibleCount.value += VISIBLE_INCREMENT
-
-  // 保持滚动位置：加载更多后，滚动条位置会因为顶部插入内容而跳动，这里手动修正
-  nextTick(() => {
+  
+  try {
+    if (hasMoreVisible.value) {
+      // 仅展示更多“已加载到窗口”的消息
+      visibleCount.value += VISIBLE_INCREMENT
+      await nextTick()
+    } else if (hasMoreHistory.value) {
+      // 窗口已经展示到头了：向后端拉取更早一页
+      const prevLen = props.messages.length
+      await chatStore.loadOlderMessagesPage()
+      await nextTick()
+      const added = props.messages.length - prevLen
+      if (added > 0) {
+        // 让新拉取到的更早消息立刻可见
+        visibleCount.value += added
+        await nextTick()
+      }
+    }
+  } finally {
+    // 保持滚动位置：顶部插入内容会导致滚动跳动，这里手动修正
     const newScrollHeight = container.scrollHeight
     container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
-    // 恢复加载状态
     isLoadingMore.value = false
-  })
+  }
 }
 
 // 滚动事件处理：实现自动加载
@@ -108,9 +123,6 @@ function handleScroll(e: Event) {
     loadMore()
   }
 }
-
-// 从 store 读取等待状态
-const chatStore = useChatStore()
 
 // CustomScrollbar 引用
 const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
@@ -213,6 +225,7 @@ const emit = defineEmits<{
 // 删除确认对话框状态
 const showDeleteConfirm = ref(false)
 const pendingDeleteMessageId = ref<string | null>(null)
+const pendingDeleteBackendIndex = ref<number | null>(null)
 
 // 恢复检查点确认对话框状态
 const showRestoreConfirm = ref(false)
@@ -221,10 +234,12 @@ const pendingCheckpoint = ref<CheckpointRecord | null>(null)
 
 // 计算要删除的消息数量（使用 allMessages）
 const deleteCount = computed(() => {
-  if (!pendingDeleteMessageId.value) return 0
-  const index = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
-  if (index === -1) return 0
-  return chatStore.allMessages.length - index
+  if (pendingDeleteBackendIndex.value === null) return 0
+  // backendIndex 为绝对索引：删除数量 = total - index
+  const total = chatStore.totalMessages || 0
+  const idx = pendingDeleteBackendIndex.value
+  if (idx < 0) return 0
+  return Math.max(0, total - idx)
 })
 
 
@@ -236,33 +251,34 @@ function handleEdit(messageId: string, newContent: string, attachments: Attachme
 // 处理删除 - 显示确认对话框
 function handleDelete(messageId: string) {
   pendingDeleteMessageId.value = messageId
+  const msg = chatStore.allMessages.find(m => m.id === messageId)
+  pendingDeleteBackendIndex.value = typeof msg?.backendIndex === 'number' ? msg.backendIndex : null
   showDeleteConfirm.value = true
 }
 
 // 确认删除 - 使用 allMessages 中的真实索引
 function confirmDelete() {
-  if (pendingDeleteMessageId.value) {
-    const actualIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
-    if (actualIndex !== -1) {
-      chatStore.deleteMessage(actualIndex)
-    }
-    pendingDeleteMessageId.value = null
+  if (!pendingDeleteMessageId.value) return
+  const actualIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
+  if (actualIndex !== -1) {
+    chatStore.deleteMessage(actualIndex)
   }
+  pendingDeleteMessageId.value = null
+  pendingDeleteBackendIndex.value = null
 }
 
 // 取消删除
 function cancelDelete() {
   pendingDeleteMessageId.value = null
+  pendingDeleteBackendIndex.value = null
 }
 
 // 获取用于删除消息的最新检查点
 // 返回该消息及之前所有消息的 before 阶段检查点
 // 与重试使用相同的策略
 const deleteCheckpoints = computed<CheckpointRecord[]>(() => {
-  if (!pendingDeleteMessageId.value) return []
-  
-  const messageIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
-  if (messageIndex === -1) return []
+  if (pendingDeleteBackendIndex.value === null) return []
+  const messageIndex = pendingDeleteBackendIndex.value
   
   // 返回所有 messageIndex <= 当前消息 且 phase === 'before' 的检查点
   return chatStore.checkpoints
@@ -279,14 +295,13 @@ async function handleRestoreAndDelete(checkpointId: string) {
   // 调用 restoreAndDelete 方法
   await chatStore.restoreAndDelete(actualIndex, checkpointId)
   pendingDeleteMessageId.value = null
+  pendingDeleteBackendIndex.value = null
 }
 
 // 处理重试 - 直接调用 store 方法（确认已在 MessageItem 的 RetryDialog 中完成）
 function handleRetry(messageId: string) {
   const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
-  if (actualIndex !== -1) {
-    chatStore.retryFromMessage(actualIndex)
-  }
+  if (actualIndex !== -1) chatStore.retryFromMessage(actualIndex)
 }
 
 // 处理复制
@@ -437,6 +452,9 @@ function formatCheckpointTime(timestamp: number): string {
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
+          <span v-if="chatStore.historyFolded" class="load-more-text">
+            更早消息已折叠（已丢弃 {{ chatStore.foldedMessageCount }} 条），继续上拉可加载
+          </span>
         </div>
 
         <template v-for="item in enhancedVisibleMessages" :key="item.message.id">
@@ -446,14 +464,14 @@ function formatCheckpointTime(timestamp: number): string {
               v-for="cp in item.beforeCheckpoints"
               :key="cp.id"
               class="checkpoint-bar"
-              :class="shouldMergeForTool(item.actualIndex, cp.toolName) ? 'checkpoint-merged' : 'checkpoint-before'"
+              :class="shouldMergeForTool(item.backendIndex, cp.toolName) ? 'checkpoint-merged' : 'checkpoint-before'"
             >
               <div class="checkpoint-icon">
-                <i class="codicon" :class="shouldMergeForTool(item.actualIndex, cp.toolName) ? 'codicon-check' : 'codicon-archive'"></i>
+                <i class="codicon" :class="shouldMergeForTool(item.backendIndex, cp.toolName) ? 'codicon-check' : 'codicon-archive'"></i>
               </div>
               <div class="checkpoint-info">
                 <span class="checkpoint-label">
-                  {{ shouldMergeForTool(item.actualIndex, cp.toolName) ? getMergedLabel(cp) : getCheckpointLabel(cp, 'before') }}
+                  {{ shouldMergeForTool(item.backendIndex, cp.toolName) ? getMergedLabel(cp) : getCheckpointLabel(cp, 'before') }}
                 </span>
                 <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
               </div>
@@ -470,14 +488,14 @@ function formatCheckpointTime(timestamp: number): string {
           <SummaryMessage
             v-if="item.message.isSummary"
             :message="item.message"
-            :message-index="item.actualIndex"
+          :message-index="item.backendIndex"
           />
           
           <!-- 普通消息使用 MessageItem -->
           <MessageItem
             v-else
             :message="item.message"
-            :message-index="item.actualIndex"
+          :message-index="item.backendIndex"
             @edit="handleEdit"
             @delete="handleDelete"
             @retry="handleRetry"
@@ -492,7 +510,7 @@ function formatCheckpointTime(timestamp: number): string {
             <template v-for="cp in item.afterCheckpoints" :key="cp.id">
               <!-- 只有当该工具没有被合并时才显示 after 检查点 -->
               <div
-                v-if="!shouldMergeForTool(item.actualIndex, cp.toolName)"
+                v-if="!shouldMergeForTool(item.backendIndex, cp.toolName)"
                 class="checkpoint-bar checkpoint-after"
               >
                 <div class="checkpoint-icon">
@@ -594,6 +612,8 @@ function formatCheckpointTime(timestamp: number): string {
 .load-more-container {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 8px;
   padding: 12px;
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
@@ -601,6 +621,14 @@ function formatCheckpointTime(timestamp: number): string {
 
 .load-more-container .codicon {
   font-size: 16px;
+}
+
+.load-more-text {
+  font-size: 11px;
+  line-height: 1.3;
+  max-width: 90%;
+  text-align: center;
+  white-space: normal;
 }
 
 /* 错误提示 - 扁平化设计，类似重试面板样式 */

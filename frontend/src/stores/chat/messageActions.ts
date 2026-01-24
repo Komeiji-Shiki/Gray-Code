@@ -8,9 +8,10 @@ import type { Message, Attachment, Content } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
-import { createAndPersistConversation } from './conversationActions'
+import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints } from './conversationActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
+import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
 /**
  * 取消流式的回调类型
@@ -27,8 +28,16 @@ export type CancelStreamCallback = () => Promise<void>
  *
  * 注意：如果未来再次调整为“前端不存 functionResponse”，才需要在这里做映射。
  */
-export function calculateBackendIndex(_messages: Message[], frontendIndex: number): number {
-  return frontendIndex
+export function calculateBackendIndex(messages: Message[], frontendIndex: number, windowStartIndex = 0): number {
+  const msg = messages[frontendIndex]
+  if (!msg) return -1
+  if (typeof msg.backendIndex === 'number') return msg.backendIndex
+  // 本地占位消息可能还没有 backendIndex：用窗口起点 + 本地偏移推导
+  return windowStartIndex + frontendIndex
+}
+
+function getNextBackendIndex(state: ChatStoreState): number {
+  return state.windowStartIndex.value + state.allMessages.value.length
 }
 
 function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
@@ -75,6 +84,7 @@ export async function sendMessage(
       role: 'user',
       content: messageText,
       timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
       attachments: attachments && attachments.length > 0 ? attachments : undefined
     }
     state.allMessages.value.push(userMessage)
@@ -85,6 +95,7 @@ export async function sendMessage(
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
       streaming: true,
       localOnly: true,
       metadata: {
@@ -93,11 +104,16 @@ export async function sendMessage(
     }
     state.allMessages.value.push(assistantMessage)
     state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
     
     const conv = state.conversations.value.find(c => c.id === state.currentConversationId.value)
     if (conv) {
       conv.updatedAt = Date.now()
-      conv.messageCount = state.allMessages.value.length
+      // 使用窗口推导的“已知总数”，避免窗口化后 messageCount 变小
+      const knownTotal = Math.max(state.totalMessages.value, state.windowStartIndex.value + state.allMessages.value.length)
+      state.totalMessages.value = knownTotal
+      conv.messageCount = knownTotal
       conv.preview = messageText.slice(0, 50)
     }
     
@@ -185,8 +201,10 @@ export async function retryFromMessage(
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
 
+    const backendFrom = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-    clearCheckpointsFromIndex(state, messageIndex)
+    clearCheckpointsFromIndex(state, backendFrom)
+    setTotalMessagesFromWindow(state)
 
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
@@ -197,6 +215,7 @@ export async function retryFromMessage(
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
       streaming: true,
       localOnly: true,
       metadata: {
@@ -205,6 +224,8 @@ export async function retryFromMessage(
     }
     state.allMessages.value.push(assistantMessage)
     state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
 
     try {
       await sendToExtension('retryStream', {
@@ -233,10 +254,11 @@ export async function retryFromMessage(
   state.isWaitingForResponse.value = true
   
   // 计算后端索引（在修改数组之前）
-  const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+  const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-  clearCheckpointsFromIndex(state, messageIndex)
+  clearCheckpointsFromIndex(state, backendIndex)
+  setTotalMessagesFromWindow(state)
   
   try {
     const resp = await sendToExtension<any>('deleteMessage', {
@@ -252,12 +274,16 @@ export async function retryFromMessage(
         message: err?.message || 'Failed to delete messages in backend'
       }
 
-      // 尝试回滚：重新从后端拉取历史，避免前端与后端状态错位
+      // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
       try {
-        const history = await sendToExtension<Content[]>('conversation.getMessages', {
-          conversationId: state.currentConversationId.value
+        const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+          conversationId: state.currentConversationId.value,
+          limit: MESSAGES_PAGE_SIZE
         })
-        state.allMessages.value = history.map(content => contentToMessageEnhanced(content))
+        const page = result?.messages || []
+        state.totalMessages.value = result?.total ?? page.length
+        state.windowStartIndex.value = page[0]?.index ?? 0
+        state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
       } catch (reloadErr) {
         console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
       }
@@ -281,6 +307,7 @@ export async function retryFromMessage(
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
     streaming: true,
     localOnly: true,
     metadata: {
@@ -289,6 +316,8 @@ export async function retryFromMessage(
   }
   state.allMessages.value.push(assistantMessage)
   state.streamingMessageId.value = assistantMessageId
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
   
   try {
     await sendToExtension('retryStream', {
@@ -334,6 +363,7 @@ export async function retryAfterError(
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
     streaming: true,
     localOnly: true,
     metadata: {
@@ -342,6 +372,8 @@ export async function retryAfterError(
   }
   state.allMessages.value.push(assistantMessage)
   state.streamingMessageId.value = assistantMessageId
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
   
   try {
     await sendToExtension('retryStream', {
@@ -388,7 +420,7 @@ export async function editAndRetry(
   state.isWaitingForResponse.value = true
   
   // 计算后端索引（在修改数组之前）
-  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   const targetMessage = state.allMessages.value[messageIndex]
   targetMessage.content = newMessage
@@ -396,7 +428,8 @@ export async function editAndRetry(
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
   
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
-  clearCheckpointsFromIndex(state, messageIndex)
+  clearCheckpointsFromIndex(state, backendMessageIndex)
+  setTotalMessagesFromWindow(state)
   
   state.toolCallBuffer.value = ''
   state.inToolCall.value = null
@@ -407,13 +440,17 @@ export async function editAndRetry(
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
     streaming: true,
+    localOnly: true,
     metadata: {
       modelVersion: computed.currentModelName.value
     }
   }
   state.allMessages.value.push(assistantMessage)
   state.streamingMessageId.value = assistantMessageId
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
   
   const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
     ? attachments.map(att => ({
@@ -470,8 +507,10 @@ export async function deleteMessage(
   const target = state.allMessages.value[targetIndex]
   if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
     const msgId = state.allMessages.value[targetIndex]?.id
+    const backendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
-    clearCheckpointsFromIndex(state, targetIndex)
+    clearCheckpointsFromIndex(state, backendFrom)
+    setTotalMessagesFromWindow(state)
     if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
       state.streamingMessageId.value = null
     }
@@ -481,7 +520,7 @@ export async function deleteMessage(
   }
   
   // 计算后端实际索引
-  const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex)
+  const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
   
   try {
     const response = await sendToExtension<any>('deleteMessage', {
@@ -491,7 +530,8 @@ export async function deleteMessage(
 
     if (response?.success) {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
-      clearCheckpointsFromIndex(state, targetIndex)
+      clearCheckpointsFromIndex(state, backendIndex)
+      setTotalMessagesFromWindow(state)
     } else {
       const err = response?.error
       state.error.value = {
@@ -517,7 +557,10 @@ export async function deleteSingleMessage(
   cancelStream: CancelStreamCallback
 ): Promise<void> {
   if (!state.currentConversationId.value) return
-  if (targetIndex < 0 || targetIndex >= state.allMessages.value.length) return
+  // 注意：deleteSingleMessage 会导致后续消息索引整体前移。
+  // 因此这里把 targetIndex 视为“后端绝对索引（backendIndex）”，并在成功后重新加载窗口，避免索引错位。
+  const backendIndex = targetIndex
+  if (backendIndex < 0) return
   
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -527,14 +570,25 @@ export async function deleteSingleMessage(
   try {
     const response = await sendToExtension<{ success: boolean }>('deleteSingleMessage', {
       conversationId: state.currentConversationId.value,
-      targetIndex
+      targetIndex: backendIndex
     })
     
     if (response.success) {
-      state.allMessages.value = [
-        ...state.allMessages.value.slice(0, targetIndex),
-        ...state.allMessages.value.slice(targetIndex + 1)
-      ]
+      // 重新加载最后一页，确保 backendIndex 与 checkpoints 的 messageIndex 不错位
+      const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+        conversationId: state.currentConversationId.value,
+        limit: MESSAGES_PAGE_SIZE
+      })
+      const page = result?.messages || []
+      state.totalMessages.value = result?.total ?? page.length
+      state.windowStartIndex.value = page[0]?.index ?? 0
+      state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+
+      state.isLoadingMoreMessages.value = false
+      state.historyFolded.value = false
+      state.foldedMessageCount.value = 0
+
+      await loadCheckpoints(state)
     }
   } catch (err: any) {
     state.error.value = {
@@ -549,6 +603,11 @@ export async function deleteSingleMessage(
  */
 export function clearMessages(state: ChatStoreState): void {
   state.allMessages.value = []
+  state.windowStartIndex.value = 0
+  state.totalMessages.value = 0
+  state.isLoadingMoreMessages.value = false
+  state.historyFolded.value = false
+  state.foldedMessageCount.value = 0
   state.error.value = null
   state.streamingMessageId.value = null
   state.isWaitingForResponse.value = false

@@ -37,11 +37,27 @@ export function createChatState(): ChatStoreState {
   const currentConversationId = ref<string | null>(null)
   
   /**
-   * 当前对话的所有消息列表（包括 functionResponse 消息）
+   * 当前对话的消息窗口（包括 functionResponse 消息）
    *
-   * 这是完整的消息列表，与后端索引一一对应
+   * 注意：为降低超长历史带来的卡顿，前端只保留一个“窗口”。
+   * 每条消息的绝对索引通过 Message.backendIndex 对齐后端历史。
    */
   const allMessages = ref<Message[]>([])
+
+  /** 当前窗口的起始绝对索引（对应 allMessages[0].backendIndex） */
+  const windowStartIndex = ref(0)
+
+  /** 后端该对话的总消息数（用于判断是否还能加载更早消息） */
+  const totalMessages = ref(0)
+
+  /** 是否正在上拉加载更早消息页 */
+  const isLoadingMoreMessages = ref(false)
+
+  /** 是否发生过“窗口折叠”（用于 UI 提示） */
+  const historyFolded = ref(false)
+
+  /** 已折叠丢弃的消息条数（包含 functionResponse） */
+  const foldedMessageCount = ref(0)
   
   /** 配置ID */
   const configId = ref('gemini-pro')
@@ -101,6 +117,11 @@ export function createChatState(): ChatStoreState {
     isLoadingMoreConversations,
     currentConversationId,
     allMessages,
+    windowStartIndex,
+    totalMessages,
+    isLoadingMoreMessages,
+    historyFolded,
+    foldedMessageCount,
     configId,
     currentConfig,
     isLoading,

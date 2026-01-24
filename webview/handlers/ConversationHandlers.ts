@@ -72,6 +72,15 @@ export const getMessages: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /**
+ * 分页获取对话消息
+ */
+export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId, beforeIndex, offset, limit } = data || {};
+  const result = await ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit });
+  ctx.sendResponse(requestId, result);
+};
+
+/**
  * 拒绝工具调用
  */
 export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
@@ -95,5 +104,6 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.setCustomMetadata', setCustomMetadata);
   registry.set('conversation.deleteConversation', deleteConversation);
   registry.set('conversation.getMessages', getMessages);
+  registry.set('conversation.getMessagesPaged', getMessagesPaged);
   registry.set('conversation.rejectToolCalls', rejectToolCalls);
 }

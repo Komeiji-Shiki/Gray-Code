@@ -87,8 +87,23 @@ export interface ChatStoreState {
 
   /** 当前对话ID */
   currentConversationId: Ref<string | null>
-  /** 当前对话的所有消息列表（包括 functionResponse 消息） */
+  /**
+   * 当前对话的消息窗口（包括 functionResponse 消息）
+   *
+   * 注意：这是“窗口化”的消息列表，不保证从 0 开始，也不保证包含全量历史。
+   * `Message.backendIndex`（绝对索引）用于与后端对齐。
+   */
   allMessages: Ref<Message[]>
+  /** 当前窗口的起始绝对索引（等于 allMessages[0].backendIndex） */
+  windowStartIndex: Ref<number>
+  /** 后端该对话的总消息数（绝对长度） */
+  totalMessages: Ref<number>
+  /** 是否正在上拉加载更早消息页 */
+  isLoadingMoreMessages: Ref<boolean>
+  /** 是否发生过“窗口折叠”（从顶部丢弃旧消息以释放资源） */
+  historyFolded: Ref<boolean>
+  /** 已折叠丢弃的消息条数（包含 functionResponse） */
+  foldedMessageCount: Ref<number>
   /** 配置ID */
   configId: Ref<string>
   /** 当前配置详情 */

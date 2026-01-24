@@ -14,6 +14,11 @@ import {
   flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
+import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+
+function getNextBackendIndex(state: ChatStoreState): number {
+  return state.windowStartIndex.value + state.allMessages.value.length
+}
 
 /**
  * 处理 chunk 类型
@@ -331,10 +336,13 @@ export function handleAwaitingConfirmation(
         role: 'user',
         content: '',
         timestamp: Date.now(),
+        backendIndex: getNextBackendIndex(state),
         isFunctionResponse: true,
         parts: newParts
       }
       state.allMessages.value.push(responseMessage)
+      syncTotalMessagesFromWindow(state)
+      trimWindowFromTop(state)
     }
   }
 
@@ -458,10 +466,13 @@ export function handleToolIteration(
         role: 'user',
         content: '',
         timestamp: Date.now(),
+        backendIndex: getNextBackendIndex(state),
         isFunctionResponse: true,
         parts
       }
       state.allMessages.value.push(responseMessage)
+      syncTotalMessagesFromWindow(state)
+      trimWindowFromTop(state)
     }
   }
   
@@ -487,6 +498,7 @@ export function handleToolIteration(
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
     streaming: true,
     localOnly: true,
     metadata: {
@@ -494,6 +506,8 @@ export function handleToolIteration(
     }
   }
   state.allMessages.value.push(newAssistantMessage)
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
   state.streamingMessageId.value = newAssistantMessageId
   
   // 确保状态正确设置，这样用户可以在后续 AI 响应期间点击取消按钮

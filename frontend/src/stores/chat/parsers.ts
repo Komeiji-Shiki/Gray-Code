@@ -113,7 +113,7 @@ export function contentToMessage(content: Content, id?: string): Message {
   // 确定消息角色：有工具调用时角色仍为 assistant
   const role = content.role === 'model' ? 'assistant' : 'user'
   
-  return {
+  const msg: Message = {
     id: id || generateId(),
     role,
     content: text,
@@ -136,6 +136,10 @@ export function contentToMessage(content: Content, id?: string): Message {
       candidatesTokenCount: content.usageMetadata?.candidatesTokenCount ?? content.candidatesTokenCount
     }
   }
+  if (typeof content.index === 'number') {
+    msg.backendIndex = content.index
+  }
+  return msg
 }
 
 /**
@@ -202,7 +206,7 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
   // 这样可以正确处理包含多模态附件的函数响应消息
   const isFunctionResponse = content.isFunctionResponse === true || isOnlyFunctionResponse(content)
   
-  return {
+  const msg: Message = {
     id: id || generateId(),
     role,
     content: text,
@@ -228,4 +232,8 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
       candidatesTokenCount: content.usageMetadata?.candidatesTokenCount ?? content.candidatesTokenCount
     }
   }
+  if (typeof content.index === 'number') {
+    msg.backendIndex = content.index
+  }
+  return msg
 }

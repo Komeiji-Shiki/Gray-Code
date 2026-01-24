@@ -105,6 +105,80 @@ export interface GetHistoryOptions {
 export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
 
+    /**
+     * 规范化历史：补齐未响应的工具调用（rejected + functionResponse 插入），并在必要时写回存储。
+     *
+     * 注意：此过程会改变 history 的长度，从而改变消息 index。
+     * 前端依赖 index 进行删除/重试等操作，因此必须在返回前完成该规范化。
+     */
+    private async normalizeHistoryForDisplay(conversationId: string, history: ConversationHistory): Promise<ConversationHistory> {
+        // 收集所有 functionResponse 的 ID
+        const respondedToolCallIds = new Set<string>();
+        for (const message of history) {
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionResponse?.id) {
+                        respondedToolCallIds.add(part.functionResponse.id);
+                    }
+                }
+            }
+        }
+
+        // 收集未响应的工具调用，记录它们所在的消息索引
+        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionCall && part.functionCall.id) {
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                            part.functionCall.rejected = true;
+                            const calls = unresolvedCallsByIndex.get(i) || [];
+                            calls.push({
+                                id: part.functionCall.id,
+                                name: part.functionCall.name || 'unknown'
+                            });
+                            unresolvedCallsByIndex.set(i, calls);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+        // 从后往前插入以避免索引偏移问题
+        if (unresolvedCallsByIndex.size > 0) {
+            const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
+
+            for (const messageIndex of sortedIndices) {
+                const calls = unresolvedCallsByIndex.get(messageIndex)!;
+                const rejectedResponseParts: ContentPart[] = calls.map(call => ({
+                    functionResponse: {
+                        name: call.name,
+                        id: call.id,
+                        response: {
+                            success: false,
+                            error: t('modules.api.chat.errors.userRejectedTool'),
+                            rejected: true
+                        }
+                    }
+                }));
+
+                // 在工具调用消息的紧接后面插入
+                history.splice(messageIndex + 1, 0, {
+                    role: 'user',
+                    parts: rejectedResponseParts,
+                    isFunctionResponse: true
+                });
+            }
+
+            await this.storage.saveHistory(conversationId, history);
+        }
+
+        return history;
+    }
+
     // ==================== 对话管理 ====================
 
     /**
@@ -243,79 +317,61 @@ export class ConversationManager {
      * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
     async getMessages(conversationId: string): Promise<Content[]> {
-        const history = await this.loadHistory(conversationId);
-        
-        // 收集所有 functionResponse 的 ID
-        const respondedToolCallIds = new Set<string>();
-        for (const message of history) {
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionResponse?.id) {
-                        respondedToolCallIds.add(part.functionResponse.id);
-                    }
-                }
-            }
-        }
-        
-        // 收集未响应的工具调用，记录它们所在的消息索引
-        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-        for (let i = 0; i < history.length; i++) {
-            const message = history[i];
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionCall && part.functionCall.id) {
-                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                            part.functionCall.rejected = true;
-                            const calls = unresolvedCallsByIndex.get(i) || [];
-                            calls.push({
-                                id: part.functionCall.id,
-                                name: part.functionCall.name || 'unknown'
-                            });
-                            unresolvedCallsByIndex.set(i, calls);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
-        // 从后往前插入以避免索引偏移问题
-        if (unresolvedCallsByIndex.size > 0) {
-            const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
-            
-            for (const messageIndex of sortedIndices) {
-                const calls = unresolvedCallsByIndex.get(messageIndex)!;
-                const rejectedResponseParts: ContentPart[] = calls.map(call => ({
-                    functionResponse: {
-                        name: call.name,
-                        id: call.id,
-                        response: {
-                            success: false,
-                            error: t('modules.api.chat.errors.userRejectedTool'),
-                            rejected: true
-                        }
-                    }
-                }));
-                
-                // 在工具调用消息的紧接后面插入
-                history.splice(messageIndex + 1, 0, {
-                    role: 'user',
-                    parts: rejectedResponseParts,
-                    isFunctionResponse: true
-                });
-            }
-            
-            await this.storage.saveHistory(conversationId, history);
-        }
-        
-        // 为每条消息添加 index 字段
+        let history = await this.loadHistory(conversationId);
+        history = await this.normalizeHistoryForDisplay(conversationId, history);
+
+        // 为每条消息添加 index 字段（绝对索引）
         return history.map((message, index) => {
             return {
                 ...JSON.parse(JSON.stringify(message)),
                 index
             };
         });
+    }
+
+    /**
+     * 分页获取对话消息（仅返回一个窗口，避免一次性向 Webview 发送全量历史）
+     *
+     * - beforeIndex: 取 [0, beforeIndex) 区间内的最后 limit 条（用于上拉加载更早消息）
+     * - offset/limit: 取 [offset, offset+limit) 区间（用于任意分页）
+     *
+     * 返回的 messages 中每条都包含绝对 index（即后端历史索引）。
+     */
+    async getMessagesPaged(
+        conversationId: string,
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+    ): Promise<{ total: number; messages: Content[] }> {
+        let history = await this.loadHistory(conversationId);
+        history = await this.normalizeHistoryForDisplay(conversationId, history);
+
+        const total = history.length;
+        const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
+
+        let start = 0;
+        let endExclusive = total;
+
+        if (typeof options.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)) {
+            endExclusive = Math.max(0, Math.min(total, Math.floor(options.beforeIndex)));
+            start = Math.max(0, endExclusive - limit);
+        } else if (typeof options.offset === 'number' && Number.isFinite(options.offset)) {
+            start = Math.max(0, Math.min(total, Math.floor(options.offset)));
+            endExclusive = Math.max(start, Math.min(total, start + limit));
+        } else {
+            // 默认：取最后 limit 条
+            start = Math.max(0, total - limit);
+            endExclusive = total;
+        }
+
+        const slice = history.slice(start, endExclusive);
+        const messages = slice.map((message, i) => {
+            const index = start + i;
+            return {
+                ...JSON.parse(JSON.stringify(message)),
+                index
+            } as Content;
+        });
+
+        return { total, messages };
     }
 
     /**
