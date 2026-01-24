@@ -11,7 +11,7 @@
  * - LaTeX 数学公式
  */
 
-import { computed, ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Options } from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
@@ -55,8 +55,70 @@ const { t } = useI18n()
 // 容器引用
 const containerRef = ref<HTMLElement | null>(null)
 
+// 代码块换行状态（同一条消息内尽量保持；key 为 data-block-id）
+const codeWrapOverrides = new Map<string, boolean>() // true => nowrap
+
 // 复制按钮状态计时器存储
 const copyTimers = new Map<HTMLButtonElement, number>()
+
+/**
+ * 将 highlight.js 的 HTML 按“原始换行”安全拆成行，避免拆坏跨行的 <span>
+ *
+ * highlight.js 的输出主要由文本与 <span ...></span> 组成，且包含换行字符。
+ * 我们在遇到换行时：临时关闭所有已打开的 span，结束该行，再在下一行重新打开这些 span。
+ */
+function splitHighlightedHtmlByNewline(highlightedHtml: string): string[] {
+  const html = highlightedHtml.replace(/\r\n/g, '\n')
+  const lines: string[] = []
+
+  // 记录“当前打开的 <span ...> 标签”，用于跨行时重开
+  const openSpanTags: string[] = []
+  let buf = ''
+
+  for (let i = 0; i < html.length; i++) {
+    const ch = html[i]
+
+    // 解析标签
+    if (ch === '<') {
+      const end = html.indexOf('>', i)
+      if (end === -1) {
+        buf += ch
+        continue
+      }
+
+      const tag = html.slice(i, end + 1)
+      buf += tag
+
+      // 仅处理 span（highlight.js 输出基本只用 span）
+      if (tag.startsWith('<span')) {
+        openSpanTags.push(tag)
+      } else if (tag.startsWith('</span')) {
+        openSpanTags.pop()
+      }
+
+      i = end
+      continue
+    }
+
+    // 换行：关闭当前行未闭合的 span，并在下一行重新打开
+    if (ch === '\n') {
+      for (let k = openSpanTags.length - 1; k >= 0; k--) {
+        buf += '</span>'
+      }
+      lines.push(buf)
+      buf = ''
+      for (let k = 0; k < openSpanTags.length; k++) {
+        buf += openSpanTags[k]
+      }
+      continue
+    }
+
+    buf += ch
+  }
+
+  lines.push(buf)
+  return lines
+}
 
 // Mermaid 渲染锁定
 let isMermaidRendering = false
@@ -189,35 +251,6 @@ function createMarkdownIt() {
     breaks: true,         // 换行转 <br>
     linkify: true,        // 自动检测链接
     typographer: true,    // 启用智能引号等排版功能
-    highlight: function (str: string, lang: string) {
-      // Mermaid 图表支持
-      if (lang === 'mermaid') {
-        const encodedCode = btoa(encodeURIComponent(str))
-        // 使用 pre 包装以防止 markdown-it 对其进行转义
-        return `<pre class="mermaid-wrapper"><div class="mermaid">${str}</div><button class="code-copy-btn" data-code="${encodedCode}" title="${t('components.common.markdownRenderer.mermaid.copyCode')}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></pre>`
-      }
-
-      // 代码高亮
-      let highlighted: string
-      let langClass = ''
-      
-      if (lang && hljs.getLanguage(lang)) {
-        try {
-          highlighted = hljs.highlight(str, { language: lang }).value
-          langClass = `language-${lang}`
-        } catch (e) {
-          highlighted = hljs.highlightAuto(str).value
-        }
-      } else {
-        highlighted = hljs.highlightAuto(str).value
-      }
-      
-      // 对原始代码进行 base64 编码以便复制时解码
-      const encodedCode = btoa(encodeURIComponent(str))
-      
-      // 返回以 <pre 开头的字符串，避免 markdown-it 额外包裹
-      return `<pre class="hljs code-block-wrapper"><button class="code-copy-btn" data-code="${encodedCode}" title="复制代码"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button><code class="${langClass}">${highlighted}</code></pre>`
-    }
   })
   
   // 加载插件
@@ -280,6 +313,57 @@ function createMarkdownIt() {
       const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
       return `<img class="workspace-image" data-path="${encodedPath}" alt="${escapeHtml(alt)}"${titleAttr} src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" loading="lazy">`
     }
+  }
+
+  // 自定义代码块渲染：工具栏（复制/换行）放在滚动容器外，避免随内容滚动
+  md.renderer.rules.fence = function(tokens: Token[], idx: number, _options: Options, env: any, _self: Renderer) {
+    const token = tokens[idx]
+    const info = (token.info || '').trim()
+    const lang = info ? info.split(/\s+/g)[0] : ''
+    const code = token.content || ''
+
+    // 为同一次 render 分配稳定序号（相同内容的多次渲染：顺序不变则 id 不变）
+    if (!env.__limCode) env.__limCode = { codeBlockSeq: 0 }
+    env.__limCode.codeBlockSeq = (env.__limCode.codeBlockSeq || 0) + 1
+    const blockId = String(env.__limCode.codeBlockSeq)
+
+    // Mermaid：保留 .mermaid-wrapper/.mermaid 结构，继续支持点击放大与 mermaid.run()
+    if (lang === 'mermaid') {
+      const encodedCode = btoa(encodeURIComponent(code))
+      const titleCopy = t('components.common.markdownRenderer.mermaid.copyCode')
+      return `<div class="mermaid-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">mermaid</span><div class="code-block-toolbar"><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><div class="mermaid-wrapper"><div class="mermaid">${code}</div></div></div>`
+    }
+
+    // 代码高亮
+    let highlighted: string
+    let langClass = ''
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        highlighted = hljs.highlight(code, { language: lang }).value
+        langClass = `language-${lang}`
+      } catch {
+        highlighted = hljs.highlightAuto(code).value
+      }
+    } else {
+      highlighted = hljs.highlightAuto(code).value
+    }
+
+    const encodedCode = btoa(encodeURIComponent(code))
+    const titleCopy = t('components.common.markdown.copyCode')
+    const titleWrapEnable = t('components.common.markdown.wrapEnable')    // 自动换行
+    const titleWrapDisable = t('components.common.markdown.wrapDisable')  // 不换行
+
+    // 行号：只反映“原始换行”，用于区分软换行/真实换行（软换行不会增加行号）
+    const highlightedLines = splitHighlightedHtmlByNewline(highlighted)
+    const linesHtml = highlightedLines.map((line, i) => {
+      const lineHtml = line === '' ? '&nbsp;' : line
+      return `<span class="code-line"><span class="code-line-number">${i + 1}</span><span class="code-line-content">${lineHtml}</span></span>`
+    }).join('')
+
+    const titleLabel = escapeHtml(lang || 'code')
+
+    // 默认：自动换行；按钮 title 表示“点击后要切换到的模式”
+    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">${titleLabel}</span><div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}">${linesHtml}</code></pre></div>`
   }
   
   return md
@@ -517,7 +601,8 @@ function renderContent(content: string, latexOnly: boolean): string {
   }
   
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
-  let html = md.render(content)
+  // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
+  let html = md.render(content, {})
   
   // 保留多个连续空格（在段落内容中）
   html = html.replace(/(<(?:p|li|td|th|dd|dt)[^>]*>)([\s\S]*?)(<\/(?:p|li|td|th|dd|dt)>)/g,
@@ -563,6 +648,9 @@ function scheduleRender() {
     // Mermaid / workspace images 需要基于最新 DOM 执行
     await nextTick()
 
+    // 回填代码块换行状态（流式阶段也需要保持）
+    applyCodeBlockWrapStates()
+
     // 流式阶段跳过重操作（仍保留 Markdown/LaTeX 实时渲染）
     if (props.isStreaming) return
 
@@ -572,36 +660,80 @@ function scheduleRender() {
 }
 
 /**
- * 处理复制按钮点击
+ * 回填代码块的换行状态与按钮提示
  */
-function handleCopyClick(event: Event) {
+function applyCodeBlockWrapStates() {
+  if (!containerRef.value) return
+
+  const blocks = containerRef.value.querySelectorAll<HTMLElement>('.code-block-container[data-block-id]')
+  blocks.forEach((block) => {
+    const blockId = block.getAttribute('data-block-id') || ''
+    const isNoWrap = codeWrapOverrides.get(blockId) === true
+
+    block.classList.toggle('is-nowrap', isNoWrap)
+
+    const wrapBtn = block.querySelector<HTMLButtonElement>('.code-wrap-btn')
+    if (wrapBtn) {
+      const titleNoWrap = wrapBtn.getAttribute('data-title-wrap') || ''
+      const titleWrap = wrapBtn.getAttribute('data-title-nowrap') || ''
+
+      // title 表示“点击后将切换到的模式”
+      wrapBtn.title = isNoWrap ? titleWrap : titleNoWrap
+      wrapBtn.setAttribute('aria-pressed', String(isNoWrap))
+    }
+  })
+}
+
+/**
+ * 处理代码块工具栏点击（复制 / 换行切换）
+ */
+function handleCodeToolbarClick(event: Event) {
   const target = event.target as HTMLElement
-  const button = target.closest('.code-copy-btn') as HTMLButtonElement
-  
-  if (!button) return
-  
-  // 阻止冒泡，避免触发放大查看
+
+  const wrapBtn = target.closest('.code-wrap-btn') as HTMLButtonElement | null
+  if (wrapBtn) {
+    event.stopPropagation()
+
+    const block = wrapBtn.closest('.code-block-container') as HTMLElement | null
+    const blockId = block?.getAttribute('data-block-id') || ''
+    if (!block || !blockId) return
+
+    const currentlyNoWrap = block.classList.contains('is-nowrap')
+    if (currentlyNoWrap) {
+      codeWrapOverrides.delete(blockId)
+    } else {
+      codeWrapOverrides.set(blockId, true)
+    }
+
+    applyCodeBlockWrapStates()
+    return
+  }
+
+  const copyBtn = target.closest('.code-copy-btn') as HTMLButtonElement | null
+  if (!copyBtn) return
+
+  // 阻止冒泡，避免触发 Mermaid 放大等
   event.stopPropagation()
-  
-  const encodedCode = button.getAttribute('data-code')
+
+  const encodedCode = copyBtn.getAttribute('data-code')
   if (!encodedCode) return
-  
+
   const code = decodeURIComponent(atob(encodedCode))
-  
+
   navigator.clipboard.writeText(code).then(() => {
-    const existingTimer = copyTimers.get(button)
+    const existingTimer = copyTimers.get(copyBtn)
     if (existingTimer) {
       window.clearTimeout(existingTimer)
     }
-    
-    button.classList.add('copied')
-    
+
+    copyBtn.classList.add('copied')
+
     const timer = window.setTimeout(() => {
-      button.classList.remove('copied')
-      copyTimers.delete(button)
+      copyBtn.classList.remove('copied')
+      copyTimers.delete(copyBtn)
     }, 1000)
-    
-    copyTimers.set(button, timer)
+
+    copyTimers.set(copyBtn, timer)
   }).catch(err => {
     console.error('复制失败:', err)
   })
@@ -692,7 +824,7 @@ function handleMermaidClick(event: Event) {
 
 onMounted(() => {
   if (containerRef.value) {
-    containerRef.value.addEventListener('click', handleCopyClick)
+    containerRef.value.addEventListener('click', handleCodeToolbarClick)
     containerRef.value.addEventListener('click', handleImageClick)
     containerRef.value.addEventListener('click', handleMermaidClick)
   }
@@ -710,7 +842,7 @@ watch(
 onUnmounted(()=> {
   clearRenderTimer()
   if (containerRef.value) {
-    containerRef.value.removeEventListener('click', handleCopyClick)
+    containerRef.value.removeEventListener('click', handleCodeToolbarClick)
     containerRef.value.removeEventListener('click', handleImageClick)
     containerRef.value.removeEventListener('click', handleMermaidClick)
   }
@@ -808,8 +940,10 @@ onUnmounted(()=> {
 }
 
 /* 代码块前后的段落减少间距 */
-.markdown-content :deep(p + .code-block-wrapper),
-.markdown-content :deep(.code-block-wrapper + p) {
+.markdown-content :deep(p + .code-block-container),
+.markdown-content :deep(.code-block-container + p),
+.markdown-content :deep(p + .mermaid-block-container),
+.markdown-content :deep(.mermaid-block-container + p) {
   margin-top: 0;
 }
 
@@ -882,46 +1016,91 @@ onUnmounted(()=> {
   margin-bottom: 0.5em;
 }
 
-/* 代码块容器 - 现在是 pre.code-block-wrapper */
-.markdown-content :deep(pre.code-block-wrapper) {
+/* 代码块外层容器（工具栏固定在右上角） */
+.markdown-content :deep(.code-block-container) {
   position: relative;
   margin: 0.5em 0;
-  padding: 12px;
-  background: var(--vscode-textCodeBlock-background);
-  border-radius: 4px;
-  overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4)) transparent;
 }
 
-/* 复制按钮 */
-.markdown-content :deep(.code-copy-btn) {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+.markdown-content :deep(.mermaid-block-container) {
+  position: relative;
+  margin: 1em 0;
+}
+
+/* 标题栏：区分标题区/内容区（标题栏更“白”一点） */
+.markdown-content :deep(.code-block-header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.markdown-content :deep(.code-block-title) {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--vscode-foreground);
+  opacity: 0.9;
+  text-transform: none;
+}
+
+/* 工具栏：放在标题栏内，避免随内容滚动 */
+.markdown-content :deep(.code-block-toolbar) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+
+.markdown-content :deep(.code-block-container:hover .code-block-toolbar),
+.markdown-content :deep(.mermaid-block-container:hover .code-block-toolbar),
+.markdown-content :deep(.code-block-toolbar:hover) {
+  opacity: 1 !important;
+}
+
+/* 工具栏按钮（复制 / 换行） */
+.markdown-content :deep(.code-tool-btn) {
   width: 26px;
   height: 26px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s;
-  z-index: 10;
   padding: 0;
+  color: var(--vscode-foreground);
 }
 
-.markdown-content :deep(.code-block-wrapper:hover .code-copy-btn) {
-  opacity: 0.6;
+.markdown-content :deep(.code-tool-btn:hover) {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
 }
 
-.markdown-content :deep(.code-copy-btn:hover) {
-  opacity: 1 !important;
+/* 换行按钮图标：默认（自动换行）显示“切到不换行”；不换行时显示“切到自动换行” */
+.markdown-content :deep(.code-wrap-btn .wrap-icon),
+.markdown-content :deep(.code-wrap-btn .nowrap-icon) {
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+}
+
+.markdown-content :deep(.code-wrap-btn .wrap-icon) {
+  display: none;
+}
+
+.markdown-content :deep(.code-block-container.is-nowrap .code-wrap-btn .wrap-icon) {
+  display: inline-block;
+}
+
+.markdown-content :deep(.code-block-container.is-nowrap .code-wrap-btn .nowrap-icon) {
+  display: none;
 }
 
 .markdown-content :deep(.code-copy-btn .copy-icon) {
@@ -948,12 +1127,63 @@ onUnmounted(()=> {
   display: block;
 }
 
+/* 代码块内的 pre（滚动容器） */
+.markdown-content :deep(.code-block-container pre.code-block-wrapper) {
+  margin: 0;
+  padding: 12px;
+  background: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: hidden; /* 默认：自动换行，避免横向滚动条 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4)) transparent;
+}
+
+.markdown-content :deep(.code-block-container.is-nowrap pre.code-block-wrapper) {
+  overflow-x: auto; /* 不换行时开启横向滚动 */
+}
+
 /* 代码块内的 code */
-.markdown-content :deep(pre.code-block-wrapper code) {
+.markdown-content :deep(.code-block-container pre.code-block-wrapper code) {
   font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
   font-size: 12px;
   line-height: 1.5;
   display: block;
+}
+
+/* 行号布局：每个“原始行”一行号；软换行在同一行号内折行 */
+.markdown-content :deep(.code-with-lines) {
+  counter-reset: none;
+}
+
+.markdown-content :deep(.code-with-lines .code-line) {
+  display: flex;
+  align-items: flex-start;
+}
+
+.markdown-content :deep(.code-with-lines .code-line-number) {
+  width: 44px;
+  padding-right: 10px;
+  text-align: right;
+  user-select: none;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+  flex: 0 0 auto;
+}
+
+.markdown-content :deep(.code-with-lines .code-line-content) {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap; /* 默认：自动换行 */
+  overflow-wrap: anywhere;
+}
+
+.markdown-content :deep(.code-block-container.is-nowrap .code-with-lines .code-line-content) {
+  white-space: pre; /* 不换行 */
+  overflow-wrap: normal;
 }
 
 /* 行内代码 */
@@ -1129,13 +1359,14 @@ onUnmounted(()=> {
 /* Mermaid 图表 */
 .markdown-content :deep(.mermaid-wrapper) {
   position: relative;
-  margin: 1em 0;
+  margin: 0;
   padding: 16px;
   background: var(--vscode-textBlockQuote-background);
   border-radius: 4px;
   overflow: hidden;
   display: flex;
   justify-content: center;
+  cursor: zoom-in;
 }
 
 .markdown-content :deep(.mermaid) {
@@ -1144,22 +1375,7 @@ onUnmounted(()=> {
   cursor: zoom-in;
 }
 
-.markdown-content :deep(.mermaid-wrapper) {
-  cursor: zoom-in;
-}
-
-.markdown-content :deep(.mermaid-wrapper .code-copy-btn) {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.markdown-content :deep(.mermaid-wrapper:hover .code-copy-btn) {
-  opacity: 0.6;
-}
-
-.markdown-content :deep(.mermaid-wrapper .code-copy-btn:hover) {
-  opacity: 1 !important;
-}
+/* Mermaid 工具栏 hover 已由 .mermaid-block-container 的 .code-block-toolbar 统一处理 */
 
 .markdown-content :deep(.mermaid svg) {
   max-width: 100%;

@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.65] - 2026-01-24
+
+### Added
+  - 添加了代码块自动换行显示的功能
+
 ## [1.0.64] - 2026-01-24
 
 ### Improved

@@ -190,6 +190,8 @@ export interface LanguageMessages {
             };
             markdown: {
                 copyCode: string;
+                wrapEnable: string;
+                wrapDisable: string;
                 copied: string;
                 imageLoadFailed: string;
             };

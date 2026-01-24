@@ -168,6 +168,8 @@ const en: LanguageMessages = {
             },
             markdown: {
                 copyCode: 'Copy code',
+                wrapEnable: 'Wrap lines',
+                wrapDisable: 'No wrap',
                 copied: 'Copied',
                 imageLoadFailed: 'Failed to load image'
             },
@@ -1347,7 +1349,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.64',
+                    version: 'Version: 1.0.65',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

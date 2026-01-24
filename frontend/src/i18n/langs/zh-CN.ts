@@ -168,6 +168,8 @@ const zhCN: LanguageMessages = {
             },
             markdown: {
                 copyCode: '复制代码',
+                wrapEnable: '自动换行',
+                wrapDisable: '不换行',
                 copied: '已复制',
                 imageLoadFailed: '图片加载失败'
             },
@@ -1347,7 +1349,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.64',
+                    version: '版本：1.0.65',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
