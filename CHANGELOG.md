@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.66] - 2026-01-24
+
+### Fixed
+  - 修复拖选添加文件时路径问题报错导致的添加失败
+
 ## [1.0.65] - 2026-01-24
 
 ### Added

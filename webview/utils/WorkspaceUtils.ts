@@ -45,7 +45,7 @@ export function getCurrentWorkspaceUri(): string | null {
 
 /**
  * 将绝对路径或 URI 转换为相对路径
- * 支持 file:// 和 vscode-remote:// URI 格式
+ * 支持 file://, vscode-remote:// URI 格式以及 Windows 绝对路径格式
  */
 export function getRelativePathFromAbsolute(absolutePath: string): string {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -54,33 +54,58 @@ export function getRelativePathFromAbsolute(absolutePath: string): string {
   }
   
   let filePath = absolutePath;
+  let isRemote = false;
   
   // 支持 file:// 和 vscode-remote:// URI 格式
   if (absolutePath.startsWith('file://') || absolutePath.startsWith('vscode-remote://')) {
     try {
       const uri = vscode.Uri.parse(absolutePath);
-      // 使用 uri.path 而不是 uri.fsPath，因为远程 URI 的 fsPath 可能不正确
-      filePath = uri.path;
+      isRemote = absolutePath.startsWith('vscode-remote://');
+      // 对于本地文件使用 fsPath，对于远程文件使用 path
+      filePath = isRemote ? uri.path : uri.fsPath;
+    } catch {
+      // 解析失败，保持原始路径
+    }
+  } else if (/^[a-zA-Z]:[/\\]/.test(absolutePath)) {
+    // 处理 Windows 绝对路径格式 (如 f:\path 或 F:/path)
+    try {
+      const uri = vscode.Uri.file(absolutePath);
+      filePath = uri.fsPath;
     } catch {
       // 解析失败，保持原始路径
     }
   }
   
-  // 获取工作区路径（使用 uri.path 以支持远程工作区）
-  const workspaceRoot = workspaceFolder.uri.path;
+  // 对于远程工作区，使用 uri.path 进行比较
+  if (isRemote) {
+    const workspaceRoot = workspaceFolder.uri.path;
+    if (filePath.startsWith(workspaceRoot + '/')) {
+      return filePath.substring(workspaceRoot.length + 1);
+    } else if (filePath === workspaceRoot) {
+      return '';
+    }
+  }
+  
+  // 对于本地工作区，使用 fsPath 进行比较
+  const workspaceFsPath = workspaceFolder.uri.fsPath;
+  
+  // 规范化路径以便比较（Windows 不区分大小写）
+  const normalizedFilePath = filePath.replace(/\\/g, '/').toLowerCase();
+  const normalizedWorkspacePath = workspaceFsPath.replace(/\\/g, '/').toLowerCase();
   
   // 计算相对路径
-  if (filePath.startsWith(workspaceRoot + '/')) {
-    return filePath.substring(workspaceRoot.length + 1);
-  } else if (filePath === workspaceRoot) {
+  if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')) {
+    return filePath.substring(workspaceFsPath.length + 1).replace(/\\/g, '/');
+  } else if (normalizedFilePath === normalizedWorkspacePath) {
     return '';
   }
   
   // 回退到 node 的 path.relative（仅适用于本地路径）
-  const relativePath = path.relative(workspaceFolder.uri.fsPath, filePath);
+  const relativePath = path.relative(workspaceFsPath, filePath);
   
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return filePath;
+    // 文件不在工作区内，抛出错误防止调用方误用
+    throw new Error(t('webview.errors.fileNotInAnyWorkspace'));
   }
   
   return relativePath.replace(/\\/g, '/');
