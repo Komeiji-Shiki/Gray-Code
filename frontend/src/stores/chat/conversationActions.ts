@@ -118,6 +118,37 @@ export async function refreshCurrentConversationBuildSession(state: ChatStoreSta
   state.activeBuild.value = await loadConversationBuildSession(conversationId)
 }
 
+export async function syncConversationWorkspaceUri(
+  state: ChatStoreState,
+  conversationId: string
+): Promise<void> {
+  let workspaceUri = state.currentWorkspaceUri.value
+  try {
+    const latestWorkspaceUri = await sendToExtension<string | null>('getWorkspaceUri', {})
+    if (latestWorkspaceUri) {
+      workspaceUri = latestWorkspaceUri
+      state.currentWorkspaceUri.value = latestWorkspaceUri
+    }
+  } catch {
+    // ignore and fallback to store value
+  }
+  if (!workspaceUri) return
+
+  const conv = state.conversations.value.find(c => c.id === conversationId)
+  if (!conv || !conv.isPersisted) return
+  if (conv.workspaceUri === workspaceUri) return
+
+  try {
+    await sendToExtension('conversation.setWorkspaceUri', {
+      conversationId,
+      workspaceUri
+    })
+    conv.workspaceUri = workspaceUri
+  } catch (error) {
+    console.warn('[conversationActions] Failed to sync conversation workspace URI:', error)
+  }
+}
+
 /**
  * 创建新对话（仅清空消息，不创建对话记录）
  *
@@ -275,7 +306,8 @@ export async function loadMoreConversations(
             messageCount: metadata?.custom?.messageCount || 0,
             preview: metadata?.custom?.preview,
             isPersisted: true,
-            workspaceUri: metadata?.workspaceUri
+            workspaceUri: metadata?.workspaceUri,
+            integrityStatus: metadata?.integrityStatus
           } as Conversation
         } catch {
           return {
@@ -470,7 +502,10 @@ export async function switchConversation(
   state.isWaitingForResponse.value = false
   
   // 如果是已持久化的对话，从后端加载历史和检查点
-  if (conv.isPersisted) {
+  try {
+    if (conv.isPersisted) {
+      state.isLoading.value = true
+      await syncConversationWorkspaceUri(state, id)
     // 恢复该对话保存的渠道/模型选择（若无则回落到当前配置）
     await applyConversationModelConfig(state, id)
 
@@ -485,8 +520,17 @@ export async function switchConversation(
 
     // 恢复该对话的 Build 会话（用于重进应用后显示顶部 Build 卡片）
     state.activeBuild.value = await loadConversationBuildSession(id)
-  } else {
-    state.activeBuild.value = null
+    } else {
+      state.activeBuild.value = null
+    }
+  } catch (err: any) {
+    console.error('[conversationActions] Failed to switch conversation:', err)
+    state.error.value = {
+      code: err?.code || 'SWITCH_CONVERSATION_ERROR',
+      message: err?.message || 'Failed to switch conversation'
+    }
+  } finally {
+    state.isLoading.value = false
   }
 }
 

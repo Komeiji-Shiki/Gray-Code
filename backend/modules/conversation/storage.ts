@@ -14,6 +14,25 @@
 
 import { ConversationHistory, ConversationMetadata, HistorySnapshot } from './types';
 
+export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error';
+
+export interface StorageReadResult<T> {
+    value: T | null;
+    errorCode?: StorageReadErrorCode;
+    errorMessage?: string;
+}
+
+export interface ConversationStorageIntegrity {
+    historyExists: boolean;
+    metadataExists: boolean;
+    historyReadable: boolean;
+    metadataReadable: boolean;
+    historyErrorCode?: StorageReadErrorCode;
+    metadataErrorCode?: StorageReadErrorCode;
+    historyErrorMessage?: string;
+    metadataErrorMessage?: string;
+}
+
 /**
  * 存储适配器接口
  * 
@@ -35,6 +54,7 @@ export interface IStorageAdapter {
      * @returns Gemini 格式的历史记录
      */
     loadHistory(conversationId: string): Promise<ConversationHistory | null>;
+    loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>>;
     
     /**
      * 删除对话历史
@@ -58,6 +78,8 @@ export interface IStorageAdapter {
      * @param conversationId 对话 ID
      */
     loadMetadata(conversationId: string): Promise<ConversationMetadata | null>;
+    loadMetadataWithStatus(conversationId: string): Promise<StorageReadResult<ConversationMetadata>>;
+    getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity>;
     
     /**
      * 保存快照
@@ -102,6 +124,14 @@ export class MemoryStorageAdapter implements IStorageAdapter {
         return history ? JSON.parse(JSON.stringify(history)) : null;
     }
 
+    async loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
+        const value = await this.loadHistory(conversationId);
+        if (!value) {
+            return { value: null, errorCode: 'not_found' };
+        }
+        return { value };
+    }
+
     async deleteHistory(conversationId: string): Promise<void> {
         this.histories.delete(conversationId);
         this.metadata.delete(conversationId);
@@ -118,6 +148,27 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     async loadMetadata(conversationId: string): Promise<ConversationMetadata | null> {
         const meta = this.metadata.get(conversationId);
         return meta ? JSON.parse(JSON.stringify(meta)) : null;
+    }
+
+    async loadMetadataWithStatus(conversationId: string): Promise<StorageReadResult<ConversationMetadata>> {
+        const value = await this.loadMetadata(conversationId);
+        if (!value) {
+            return { value: null, errorCode: 'not_found' };
+        }
+        return { value };
+    }
+
+    async getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity> {
+        const historyExists = this.histories.has(conversationId);
+        const metadataExists = this.metadata.has(conversationId);
+        return {
+            historyExists,
+            metadataExists,
+            historyReadable: historyExists,
+            metadataReadable: metadataExists,
+            historyErrorCode: historyExists ? undefined : 'not_found',
+            metadataErrorCode: metadataExists ? undefined : 'not_found',
+        };
     }
 
     async saveSnapshot(snapshot: HistorySnapshot): Promise<void> {
@@ -177,6 +228,14 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         return (this.context.globalState.get(key) as ConversationHistory | undefined) || null;
     }
 
+    async loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
+        const value = await this.loadHistory(conversationId);
+        if (!value) {
+            return { value: null, errorCode: 'not_found' };
+        }
+        return { value };
+    }
+
     async deleteHistory(conversationId: string): Promise<void> {
         const historyKey = `limcode.history.${conversationId}`;
         const metaKey = `limcode.meta.${conversationId}`;
@@ -199,6 +258,31 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
     async loadMetadata(conversationId: string): Promise<ConversationMetadata | null> {
         const key = `limcode.meta.${conversationId}`;
         return (this.context.globalState.get(key) as ConversationMetadata | undefined) || null;
+    }
+
+    async loadMetadataWithStatus(conversationId: string): Promise<StorageReadResult<ConversationMetadata>> {
+        const value = await this.loadMetadata(conversationId);
+        if (!value) {
+            return { value: null, errorCode: 'not_found' };
+        }
+        return { value };
+    }
+
+    async getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity> {
+        const history = await this.loadHistoryWithStatus(conversationId);
+        const metadata = await this.loadMetadataWithStatus(conversationId);
+        const historyExists = history.value !== null || history.errorCode !== 'not_found';
+        const metadataExists = metadata.value !== null || metadata.errorCode !== 'not_found';
+        return {
+            historyExists,
+            metadataExists,
+            historyReadable: history.value !== null,
+            metadataReadable: metadata.value !== null,
+            historyErrorCode: history.errorCode,
+            metadataErrorCode: metadata.errorCode,
+            historyErrorMessage: history.errorMessage,
+            metadataErrorMessage: metadata.errorMessage,
+        };
     }
 
     async saveSnapshot(snapshot: HistorySnapshot): Promise<void> {
@@ -269,6 +353,52 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
+    private isNotFoundError(error: any): boolean {
+        const code = String(error?.code || '');
+        if (code === 'FileNotFound' || code === 'EntryNotFound' || code === 'ENOENT') {
+            return true;
+        }
+        const name = String(error?.name || '');
+        if (name.includes('EntryNotFound')) {
+            return true;
+        }
+        const message = String(error?.message || '').toLowerCase();
+        return (
+            message.includes('entrynotfound') ||
+            message.includes('enoent') ||
+            message.includes('file not found')
+        );
+    }
+
+    private async readJsonFile<T>(uri: any): Promise<StorageReadResult<T>> {
+        try {
+            const content = await this.vscode.workspace.fs.readFile(uri);
+            const text = Buffer.from(content).toString('utf8');
+            try {
+                return { value: JSON.parse(text) as T };
+            } catch (parseError: any) {
+                return {
+                    value: null,
+                    errorCode: 'parse_error',
+                    errorMessage: parseError?.message || 'Failed to parse JSON',
+                };
+            }
+        } catch (error: any) {
+            if (this.isNotFoundError(error)) {
+                return {
+                    value: null,
+                    errorCode: 'not_found',
+                    errorMessage: error?.message,
+                };
+            }
+            return {
+                value: null,
+                errorCode: 'io_error',
+                errorMessage: error?.message || String(error),
+            };
+        }
+    }
+
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         const uri = this.getHistoryPath(conversationId);
         const content = JSON.stringify(history, null, 2);
@@ -287,13 +417,13 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadHistory(conversationId: string): Promise<ConversationHistory | null> {
-        try {
-            const uri = this.getHistoryPath(conversationId);
-            const content = await this.vscode.workspace.fs.readFile(uri);
-            return JSON.parse(Buffer.from(content).toString('utf8'));
-        } catch {
-            return null;
-        }
+        const result = await this.loadHistoryWithStatus(conversationId);
+        return result.value;
+    }
+
+    async loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
+        const uri = this.getHistoryPath(conversationId);
+        return await this.readJsonFile<ConversationHistory>(uri);
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
@@ -331,13 +461,32 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadMetadata(conversationId: string): Promise<ConversationMetadata | null> {
-        try {
-            const uri = this.getMetadataPath(conversationId);
-            const content = await this.vscode.workspace.fs.readFile(uri);
-            return JSON.parse(Buffer.from(content).toString('utf8'));
-        } catch {
-            return null;
-        }
+        const result = await this.loadMetadataWithStatus(conversationId);
+        return result.value;
+    }
+
+    async loadMetadataWithStatus(conversationId: string): Promise<StorageReadResult<ConversationMetadata>> {
+        const uri = this.getMetadataPath(conversationId);
+        return await this.readJsonFile<ConversationMetadata>(uri);
+    }
+
+    async getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity> {
+        const [history, metadata] = await Promise.all([
+            this.loadHistoryWithStatus(conversationId),
+            this.loadMetadataWithStatus(conversationId),
+        ]);
+        const historyExists = history.value !== null || history.errorCode !== 'not_found';
+        const metadataExists = metadata.value !== null || metadata.errorCode !== 'not_found';
+        return {
+            historyExists,
+            metadataExists,
+            historyReadable: history.value !== null,
+            metadataReadable: metadata.value !== null,
+            historyErrorCode: history.errorCode,
+            metadataErrorCode: metadata.errorCode,
+            historyErrorMessage: history.errorMessage,
+            metadataErrorMessage: metadata.errorMessage,
+        };
     }
 
     async saveSnapshot(snapshot: HistorySnapshot): Promise<void> {

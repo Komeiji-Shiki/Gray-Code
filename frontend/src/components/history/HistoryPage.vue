@@ -87,8 +87,13 @@ function handleFilterChange(value: string) {
 
 // 处理选择对话
 async function handleSelect(id: string) {
-  await chatStore.switchConversation(id)
-  settingsStore.showChat()
+  try {
+    await chatStore.switchConversation(id)
+  } catch (error) {
+    console.error('Failed to switch conversation from history page:', error)
+  } finally {
+    settingsStore.showChat()
+  }
 }
 
 // 处理删除对话

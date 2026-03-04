@@ -15,6 +15,7 @@ import { MarkdownRenderer, RetryDialog, EditDialog, JsonViewerDialog } from '../
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
+import { isPerfEnabled } from '../../utils/perf'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
@@ -81,6 +82,7 @@ const isThoughtExpanded = ref(false)
 
 const todoDebugPrinted = new Set<string>()
 function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (!isPerfEnabled()) return
   if (todoDebugPrinted.has(key)) return
   todoDebugPrinted.add(key)
   console.debug('[todo-debug][MessageItem]', data)

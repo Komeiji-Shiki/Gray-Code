@@ -9,7 +9,13 @@ import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } fro
 import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
-import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
+import {
+  createAndPersistConversation,
+  MESSAGES_PAGE_SIZE,
+  loadCheckpoints,
+  refreshCurrentConversationBuildSession,
+  syncConversationWorkspaceUri
+} from './conversationActions'
 import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
@@ -286,6 +292,9 @@ export async function sendMessage(
     
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
+    if (state.currentConversationId.value) {
+      await syncConversationWorkspaceUri(state, state.currentConversationId.value)
+    }
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
     state.activeStreamId.value = streamId

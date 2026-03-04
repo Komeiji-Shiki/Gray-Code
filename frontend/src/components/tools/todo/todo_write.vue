@@ -14,6 +14,7 @@ import {
   type TodoStatus,
   type TodoItem
 } from '../../../utils/todoList'
+import { isPerfEnabled } from '../../../utils/perf'
 import { useI18n } from '../../../i18n'
 
 const props = defineProps<{
@@ -37,6 +38,7 @@ let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 const todoDebugPrinted = new Set<string>()
 function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (!isPerfEnabled()) return
   if (todoDebugPrinted.has(key)) return
   todoDebugPrinted.add(key)
   console.debug('[todo-debug][todo_write.vue]', data)
@@ -145,7 +147,9 @@ watchEffect(() => {
   })
 
   if (!toolId) {
-    console.warn('[todo-debug][todo_write.vue] Missing toolId for todo panel', { toolName: props.toolName || null })
+    if (isPerfEnabled()) {
+      console.warn('[todo-debug][todo_write.vue] Missing toolId for todo panel', { toolName: props.toolName || null })
+    }
   }
 })
 

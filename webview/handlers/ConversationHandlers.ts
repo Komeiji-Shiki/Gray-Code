@@ -41,6 +41,12 @@ export const setTitle: MessageHandler = async (data, requestId, ctx) => {
   ctx.sendResponse(requestId, { success: true });
 };
 
+export const setWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId, workspaceUri } = data;
+  await ctx.conversationManager.setWorkspaceUri(conversationId, workspaceUri);
+  ctx.sendResponse(requestId, { success: true });
+};
+
 /**
  * 设置自定义元数据
  */
@@ -101,6 +107,7 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.listConversations', listConversations);
   registry.set('conversation.getConversationMetadata', getConversationMetadata);
   registry.set('conversation.setTitle', setTitle);
+  registry.set('conversation.setWorkspaceUri', setWorkspaceUri);
   registry.set('conversation.setCustomMetadata', setCustomMetadata);
   registry.set('conversation.deleteConversation', deleteConversation);
   registry.set('conversation.getMessages', getMessages);

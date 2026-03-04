@@ -51,6 +51,21 @@ async function handleRevealInExplorer(id: string) {
     console.error('Failed to reveal in explorer:', error)
   }
 }
+
+function hasIntegrityIssue(conversation: Conversation): boolean {
+  return !!conversation.integrityStatus && conversation.integrityStatus !== 'ok'
+}
+
+function getIntegrityTooltip(conversation: Conversation): string {
+  const status = conversation.integrityStatus
+  if (!status || status === 'ok') return ''
+
+  if (status === 'meta_missing') return 'Metadata file is missing'
+  if (status === 'meta_corrupt') return 'Metadata file is corrupted'
+  if (status === 'history_missing') return 'Conversation history file is missing'
+  if (status === 'history_corrupt') return 'Conversation history file is corrupted'
+  return `Storage issue: ${status}`
+}
 </script>
 
 <template>
@@ -76,7 +91,14 @@ async function handleRevealInExplorer(id: string) {
         @mouseleave="hoverItemId = null"
       >
         <div class="item-content">
-          <div class="item-title">{{ conversation.title }}</div>
+          <div class="item-title">
+            <span class="item-title-text">{{ conversation.title }}</span>
+            <i
+              v-if="hasIntegrityIssue(conversation)"
+              class="codicon codicon-warning item-integrity-icon"
+              :title="getIntegrityTooltip(conversation)"
+            ></i>
+          </div>
           <div class="item-meta">
             <span class="item-time">{{ formatTime(conversation.updatedAt) }}</span>
             <span v-if="conversation.messageCount > 0" class="item-count">
@@ -211,9 +233,22 @@ async function handleRevealInExplorer(id: string) {
   font-size: 13px;
   font-weight: 500;
   color: var(--vscode-foreground);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.item-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.item-integrity-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--vscode-errorForeground);
+  overflow: hidden;
 }
 
 .item-meta {

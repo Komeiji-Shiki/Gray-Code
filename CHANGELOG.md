@@ -3,6 +3,13 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.99] - 2026-03-04
+
+### Fixed
+  - 修复点击工具执行的状态问题
+  - 修复对话文件的工作区路径无法变更问题
+  - 修复长历史对话的全量重载问题
+
 ## [1.0.98] - 2026-03-01
 
 ### Fixed

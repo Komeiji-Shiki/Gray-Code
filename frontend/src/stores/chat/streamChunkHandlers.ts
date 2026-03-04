@@ -21,6 +21,16 @@ function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
 }
 
+function replaceMessageAt(state: ChatStoreState, messageIndex: number, nextMessage: Message): void {
+  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
+  state.allMessages.value[messageIndex] = nextMessage
+}
+
+function removeMessageAt(state: ChatStoreState, messageIndex: number): void {
+  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
+  state.allMessages.value.splice(messageIndex, 1)
+}
+
 /**
  * 合并工具列表：以 incoming（按 AI 输出顺序）为基准，尽量保留 existing 中的运行态字段。
  *
@@ -237,11 +247,7 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     }
 
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
-    state.allMessages.value = [
-      ...state.allMessages.value.slice(0, messageIndex),
-      updatedMessage,
-      ...state.allMessages.value.slice(messageIndex + 1)
-    ]
+    replaceMessageAt(state, messageIndex, updatedMessage)
   }
   // 注意：不改变 streaming 状态，工具还在执行中
 }
@@ -297,11 +303,7 @@ export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): voi
     tools: updatedTools
   }
 
-  state.allMessages.value = [
-    ...all.slice(0, messageIndex),
-    updatedMessage,
-    ...all.slice(messageIndex + 1)
-  ]
+  replaceMessageAt(state, messageIndex, updatedMessage)
 }
 
 /**
@@ -354,10 +356,9 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
 
   if (updatesByMessageIndex.size === 0) return
 
-  // 一次性构建新的 allMessages 数组
-  const newAll = [...all]
   for (const [msgIdx, toolUpdates] of updatesByMessageIndex) {
-    const message = newAll[msgIdx]
+    const message = state.allMessages.value[msgIdx]
+    if (!message) continue
     const updatedTools = message.tools?.map(t => {
       const update = toolUpdates.get(t.id)
       if (!update) return t
@@ -367,9 +368,8 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
         result: (update.result as any) ?? t.result
       }
     })
-    newAll[msgIdx] = { ...message, tools: updatedTools }
+    replaceMessageAt(state, msgIdx, { ...message, tools: updatedTools })
   }
-  state.allMessages.value = newAll
 }
 
 /**
@@ -455,11 +455,7 @@ export function handleAwaitingConfirmation(
     }
 
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
-    state.allMessages.value = [
-      ...state.allMessages.value.slice(0, messageIndex),
-      updatedMessage,
-      ...state.allMessages.value.slice(messageIndex + 1)
-    ]
+    replaceMessageAt(state, messageIndex, updatedMessage)
   }
 
   // 将 toolResults 也同步为一个隐藏的 functionResponse 消息（保持与 toolIteration 行为一致），
@@ -613,11 +609,7 @@ export function handleToolIteration(
     }
     
     // 用新对象替换数组中的旧对象
-    state.allMessages.value = [
-      ...state.allMessages.value.slice(0, messageIndex),
-      updatedMessage,
-      ...state.allMessages.value.slice(messageIndex + 1)
-    ]
+    replaceMessageAt(state, messageIndex, updatedMessage)
   }
   
   // 添加 functionResponse 消息（标记为隐藏）
@@ -769,11 +761,7 @@ export function handleComplete(
     }
     
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
-    state.allMessages.value = [
-      ...state.allMessages.value.slice(0, messageIndex),
-      updatedMessage,
-      ...state.allMessages.value.slice(messageIndex + 1)
-    ]
+    replaceMessageAt(state, messageIndex, updatedMessage)
   }
   
   // 处理新创建的检查点
@@ -889,11 +877,7 @@ export function handleAutoSummary(
     state.allMessages.value.length
   )
 
-  state.allMessages.value = [
-    ...state.allMessages.value.slice(0, localInsertIndex),
-    summaryMessage,
-    ...state.allMessages.value.slice(localInsertIndex)
-  ]
+  state.allMessages.value.splice(localInsertIndex, 0, summaryMessage)
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -920,11 +904,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     if (oldMsgIndex !== -1) {
       const msg = state.allMessages.value[oldMsgIndex]
       if (msg.streaming) {
-        state.allMessages.value = [
-          ...state.allMessages.value.slice(0, oldMsgIndex),
-          { ...msg, streaming: false },
-          ...state.allMessages.value.slice(oldMsgIndex + 1)
-        ]
+        replaceMessageAt(state, oldMsgIndex, { ...msg, streaming: false })
       }
     }
     state._lastCancelledStreamId.value = null
@@ -952,7 +932,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
     const hasPartsContent = message.parts && message.parts.some(p => p.text || p.functionCall)
     if (!message.content && !message.tools && !hasPartsContent) {
-      state.allMessages.value = state.allMessages.value.filter((_, i) => i !== messageIndex)
+      removeMessageAt(state, messageIndex)
     } else {
       // 构建新的 metadata 对象
       const newMetadata = message.metadata ? { ...message.metadata } : {}
@@ -1004,11 +984,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
       }
       
       // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
-      state.allMessages.value = [
-        ...state.allMessages.value.slice(0, messageIndex),
-        updatedMessage,
-        ...state.allMessages.value.slice(messageIndex + 1)
-      ]
+      replaceMessageAt(state, messageIndex, updatedMessage)
     }
   }
   state.streamingMessageId.value = null
@@ -1051,7 +1027,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
     const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall)
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
-      state.allMessages.value = state.allMessages.value.filter(m => m.id !== state.streamingMessageId.value)
+      const removeIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+      removeMessageAt(state, removeIndex)
     }
     state.streamingMessageId.value = null
   }

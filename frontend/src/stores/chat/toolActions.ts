@@ -9,6 +9,7 @@ import type { ChatStoreState, ChatStoreComputed } from './types'
 import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
+import { isPerfEnabled } from '../../utils/perf'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
@@ -45,10 +46,12 @@ export function getToolResponseById(
   }
   if (matchCount > 1 && !duplicateFunctionResponseWarned.has(toolCallId)) {
     duplicateFunctionResponseWarned.add(toolCallId)
-    console.warn('[todo-debug][toolActions] duplicate functionResponse id detected', {
-      toolCallId,
-      matchCount
-    })
+    if (isPerfEnabled()) {
+      console.warn('[todo-debug][toolActions] duplicate functionResponse id detected', {
+        toolCallId,
+        matchCount
+      })
+    }
   }
 
   // 3) 回填缓存（包括 null，避免重复扫描）

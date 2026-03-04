@@ -23,6 +23,8 @@ export interface Conversation {
   isPersisted: boolean
   /** 工作区 URI */
   workspaceUri?: string
+  /** Storage integrity status from backend metadata */
+  integrityStatus?: 'ok' | 'meta_missing' | 'meta_corrupt' | 'history_missing' | 'history_corrupt'
 }
 
 /**

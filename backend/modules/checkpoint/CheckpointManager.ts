@@ -679,6 +679,50 @@ export class CheckpointManager {
         
         return chain;
     }
+
+    private async backupDirectoryExists(backupDir: string): Promise<boolean> {
+        try {
+            const backupPath = path.join(this.checkpointsDir, backupDir);
+            await fs.access(backupPath);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async pruneMissingBackupCheckpointRecords(
+        conversationId: string,
+        checkpoints: CheckpointRecord[]
+    ): Promise<{ checkpoints: CheckpointRecord[]; missingBackupDirs: string[]; prunedCount: number }> {
+        if (checkpoints.length === 0) {
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
+        }
+
+        const existing: CheckpointRecord[] = [];
+        const missingBackupDirs: string[] = [];
+
+        for (const checkpoint of checkpoints) {
+            if (await this.backupDirectoryExists(checkpoint.backupDir)) {
+                existing.push(checkpoint);
+            } else {
+                missingBackupDirs.push(checkpoint.backupDir);
+            }
+        }
+
+        const uniqueMissing = Array.from(new Set(missingBackupDirs));
+        if (uniqueMissing.length === 0) {
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
+        }
+
+        const prunedCount = checkpoints.length - existing.length;
+        try {
+            await this.conversationManager.setCustomMetadata(conversationId, 'checkpoints', existing);
+            return { checkpoints: existing, missingBackupDirs: uniqueMissing, prunedCount };
+        } catch (err) {
+            console.warn('[CheckpointManager] Failed to prune checkpoint metadata:', err);
+            return { checkpoints, missingBackupDirs: uniqueMissing, prunedCount: 0 };
+        }
+    }
     
     /**
      * 恢复到指定检查点
@@ -691,7 +735,15 @@ export class CheckpointManager {
     async restoreCheckpoint(
         conversationId: string,
         checkpointId: string
-    ): Promise<{ success: boolean; restored: number; deleted: number; skipped: number; error?: string }> {
+    ): Promise<{
+        success: boolean;
+        restored: number;
+        deleted: number;
+        skipped: number;
+        error?: string;
+        missingBackupDirs?: string[];
+        autoPrunedCheckpointCount?: number;
+    }> {
         const workspaceRoot = this.getWorkspaceRoot();
         if (!workspaceRoot) {
             return { success: false, restored: 0, deleted: 0, skipped: 0, error: 'No workspace root' };
@@ -699,11 +751,27 @@ export class CheckpointManager {
         
         try {
             // 查找检查点
-            const checkpoints = await this.getCheckpoints(conversationId);
+            let checkpoints = await this.getCheckpoints(conversationId);
+            let missingBackupDirs: string[] = [];
+            let autoPrunedCheckpointCount = 0;
+
+            const pruneResult = await this.pruneMissingBackupCheckpointRecords(conversationId, checkpoints);
+            checkpoints = pruneResult.checkpoints;
+            missingBackupDirs = pruneResult.missingBackupDirs;
+            autoPrunedCheckpointCount = pruneResult.prunedCount;
+
             const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
             
             if (!checkpoint) {
-                return { success: false, restored: 0, deleted: 0, skipped: 0, error: 'Checkpoint not found' };
+                return {
+                    success: false,
+                    restored: 0,
+                    deleted: 0,
+                    skipped: 0,
+                    error: 'Checkpoint not found',
+                    missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
+                    autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
+                };
             }
             
             // 在恢复前，取消所有 pending diffs（因为恢复后它们将无效）
@@ -726,23 +794,58 @@ export class CheckpointManager {
             
             // 如果没有 fileHashes（旧版本检查点），回退到原来的逻辑
             if (!targetHashes) {
-                return this.restoreCheckpointLegacy(conversationId, checkpointId, checkpoint);
+                const legacyResult = await this.restoreCheckpointLegacy(conversationId, checkpointId, checkpoint);
+                return {
+                    ...legacyResult,
+                    missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
+                    autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
+                };
             }
             
             // 获取增量链（从基准点到目标点）
             const chain = this.getIncrementalChain(checkpoints, checkpoint);
             if (chain.length === 0) {
-                return { success: false, restored: 0, deleted: 0, skipped: 0, error: 'Cannot build checkpoint chain' };
+                return {
+                    success: false,
+                    restored: 0,
+                    deleted: 0,
+                    skipped: 0,
+                    error: 'Cannot build checkpoint chain',
+                    missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
+                    autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
+                };
             }
             
             // 验证链的完整性（确保所有备份目录都存在）
+            const chainMissingBackupDirs: string[] = [];
             for (const cp of chain) {
-                const backupPath = path.join(this.checkpointsDir, cp.backupDir);
-                try {
-                    await fs.access(backupPath);
-                } catch {
-                    return { success: false, restored: 0, deleted: 0, skipped: 0, error: `Backup directory not found: ${cp.backupDir}` };
+                if (!(await this.backupDirectoryExists(cp.backupDir))) {
+                    chainMissingBackupDirs.push(cp.backupDir);
                 }
+            }
+            if (chainMissingBackupDirs.length > 0) {
+                const chainMissingSet = new Set(chainMissingBackupDirs);
+                const remained = checkpoints.filter(cp => !chainMissingSet.has(cp.backupDir));
+                if (remained.length !== checkpoints.length) {
+                    try {
+                        await this.conversationManager.setCustomMetadata(conversationId, 'checkpoints', remained);
+                        autoPrunedCheckpointCount += checkpoints.length - remained.length;
+                    } catch (err) {
+                        console.warn('[CheckpointManager] Failed to prune missing chain checkpoints:', err);
+                    }
+                }
+                const allMissingBackupDirs = Array.from(
+                    new Set([...missingBackupDirs, ...chainMissingBackupDirs])
+                );
+                return {
+                    success: false,
+                    restored: 0,
+                    deleted: 0,
+                    skipped: 0,
+                    error: `Backup directory not found: ${allMissingBackupDirs.join(', ')}`,
+                    missingBackupDirs: allMissingBackupDirs,
+                    autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
+                };
             }
             
             const ignorePatterns = await this.loadAllGitignorePatterns(workspaceRoot.fsPath);
@@ -845,7 +948,14 @@ export class CheckpointManager {
             
             console.log(`[CheckpointManager] Restore from chain: ${chain.length} checkpoints, restored=${restored}, deleted=${deleted}, skipped=${skipped}`);
             
-            return { success: true, restored, deleted, skipped };
+            return {
+                success: true,
+                restored,
+                deleted,
+                skipped,
+                missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
+                autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
+            };
             
         } catch (err) {
             const error = err instanceof Error ? err.message : 'Unknown error';

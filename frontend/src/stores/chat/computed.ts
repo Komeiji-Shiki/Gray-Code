@@ -25,7 +25,10 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
       return sortedConversations.value
     }
     // 筛选当前工作区的对话
-    return sortedConversations.value.filter(c => c.workspaceUri === state.currentWorkspaceUri.value)
+    return sortedConversations.value.filter(c => {
+      if (c.workspaceUri === state.currentWorkspaceUri.value) return true
+      return !!c.integrityStatus && c.integrityStatus !== 'ok'
+    })
   })
   
   /**

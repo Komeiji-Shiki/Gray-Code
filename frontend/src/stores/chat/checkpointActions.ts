@@ -10,7 +10,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { refreshCurrentConversationBuildSession } from './conversationActions'
+import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
@@ -53,13 +53,29 @@ export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendInde
 export async function restoreCheckpoint(
   state: ChatStoreState,
   checkpointId: string
-): Promise<{ success: boolean; restored: number; deleted?: number; error?: string }> {
+): Promise<{
+  success: boolean
+  restored: number
+  deleted?: number
+  skipped?: number
+  error?: string
+  missingBackupDirs?: string[]
+  autoPrunedCheckpointCount?: number
+}> {
   if (!state.currentConversationId.value) {
     return { success: false, restored: 0, error: 'No conversation selected' }
   }
   
   try {
-    const result = await sendToExtension<{ success: boolean; restored: number; deleted?: number; error?: string }>(
+    const result = await sendToExtension<{
+      success: boolean
+      restored: number
+      deleted?: number
+      skipped?: number
+      error?: string
+      missingBackupDirs?: string[]
+      autoPrunedCheckpointCount?: number
+    }>(
       'checkpoint.restore',
       {
         conversationId: state.currentConversationId.value,
@@ -68,6 +84,13 @@ export async function restoreCheckpoint(
     )
     
     const normalized = result || { success: false, restored: 0, error: 'Unknown error' }
+    if ((normalized.autoPrunedCheckpointCount || 0) > 0) {
+      try {
+        await loadCheckpoints(state)
+      } catch (error) {
+        console.error('[checkpointActions] Failed to refresh checkpoints after auto prune:', error)
+      }
+    }
     if (normalized.success) {
       // 回退后同步会话元数据（activeBuild/todoList）到前端，避免继续显示旧的 Build 壳。
       await refreshCurrentConversationBuildSession(state)

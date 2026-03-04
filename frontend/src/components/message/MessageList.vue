@@ -15,8 +15,6 @@ import type { Message, CheckpointRecord, Attachment } from '../../types'
 import { extractTodosFromPlan } from '../../utils/taskCards'
 import {
   normalizeTodoStatus,
-  replayTodoStateFromMessages,
-
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
 
@@ -40,9 +38,7 @@ const isBuildExpanded = ref(false)
 
 
 const replayedBuildTodoState = computed(() => {
-  return replayTodoStateFromMessages(chatStore.allMessages, {
-    resolveToolResponseById: (toolCallId) => chatStore.getToolResponseById(toolCallId)
-  })
+  return chatStore.todoSnapshot
 })
 
 const replayedBuildTodoList = computed(() => {
@@ -94,13 +90,69 @@ function isTodoInitToolForSticky(tool: any): boolean {
   return false
 }
 
-const hasTodoInitTool = computed(() => {
-  return chatStore.allMessages.some(msg =>
-    msg.role === 'assistant' &&
-    Array.isArray(msg.tools) &&
-    msg.tools.some(tool => isTodoInitToolForSticky(tool))
-  )
+const allMessageIndexBounds = computed(() => {
+  let firstIndexed: number | null = null
+  let lastIndexed: number | null = null
+
+  for (const message of chatStore.allMessages) {
+    if (typeof message.backendIndex !== 'number' || !Number.isFinite(message.backendIndex)) continue
+    if (firstIndexed === null) firstIndexed = message.backendIndex
+    lastIndexed = message.backendIndex
+  }
+
+  return {
+    firstIndexed,
+    lastIndexed,
+    nextFallbackIndex: chatStore.windowStartIndex + chatStore.allMessages.length
+  }
 })
+
+const todoStickyMeta = computed(() => {
+  const fallbackName = t('components.message.tool.todoWrite.label')
+
+  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
+    const msg = chatStore.allMessages[i]
+    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
+    const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
+    if (!initTool) continue
+
+    let panelName = fallbackName
+    if (initTool.name === 'create_plan') {
+      const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
+      if (title) {
+        panelName = title
+      } else {
+        const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
+        if (path) {
+          const normalized = path.replace(/\\/g, '/')
+          const name = normalized.split('/').filter(Boolean).pop() || path
+          panelName = name.replace(/\.md$/i, '')
+        } else {
+          panelName = t('components.message.tool.createPlan.fallbackTitle')
+        }
+      }
+    }
+
+    const anchorBackendIndex =
+      typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)
+        ? msg.backendIndex + 1
+        : null
+
+    return {
+      hasTodoInitTool: true,
+      anchorBackendIndex,
+      panelName
+    }
+  }
+
+  return {
+    hasTodoInitTool: false,
+    anchorBackendIndex: null,
+    panelName: fallbackName
+  }
+})
+
+const hasTodoInitTool = computed(() => todoStickyMeta.value.hasTodoInitTool)
 
 // 仅保留一个会话级 TODO 条；有 activeBuild 时沿用 Build 条展示，避免双条重叠。
 const showTodoBar = computed(() => {
@@ -111,22 +163,7 @@ const showTodoBar = computed(() => {
   )
 })
 
-const todoInitAnchorBackendIndex = computed<number | null>(() => {
-  // 使用“最新一次初始化（create_plan / todo_write）”作为锚点，
-  // 避免新建 TODO 列表时仍覆盖在旧锚点位置。
-  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
-    const msg = chatStore.allMessages[i]
-    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const hasInitTool = msg.tools.some(tool => isTodoInitToolForSticky(tool))
-    if (!hasInitTool) continue
-
-    if (typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)) {
-      return msg.backendIndex + 1
-    }
-  }
-
-  return null
-})
+const todoInitAnchorBackendIndex = computed<number | null>(() => todoStickyMeta.value.anchorBackendIndex)
 
 const todoAnchorBackendIndex = computed<number | null>(() => {
   if (!showTodoBar.value) return null
@@ -138,40 +175,18 @@ const todoAnchorBackendIndex = computed<number | null>(() => {
   const anchor = replayedBuildTodoState.value.anchorBackendIndex
   if (typeof anchor === 'number' && Number.isFinite(anchor)) return anchor
 
-  const firstIndexed = chatStore.allMessages.find(m => typeof m.backendIndex === 'number')
-  if (typeof firstIndexed?.backendIndex === 'number') return firstIndexed.backendIndex
-
-  const lastIndexed = [...chatStore.allMessages].reverse().find(m => typeof m.backendIndex === 'number')
-  if (typeof lastIndexed?.backendIndex === 'number') return lastIndexed.backendIndex + 1
-
-  return chatStore.windowStartIndex + chatStore.allMessages.length
-})
-
-const todoPanelName = computed(() => {
-  // 名称跟随“最新一次初始化工具”
-  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
-    const msg = chatStore.allMessages[i]
-    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
-    if (!initTool) continue
-
-    if (initTool.name === 'create_plan') {
-      const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
-      if (title) return title
-      const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
-      if (path) {
-        const normalized = path.replace(/\\/g, '/')
-        const name = normalized.split('/').filter(Boolean).pop() || path
-        return name.replace(/\.md$/i, '')
-      }
-      return t('components.message.tool.createPlan.fallbackTitle')
-    }
-
-    return t('components.message.tool.todoWrite.label')
+  if (allMessageIndexBounds.value.firstIndexed !== null) {
+    return allMessageIndexBounds.value.firstIndexed
   }
 
-  return t('components.message.tool.todoWrite.label')
+  if (allMessageIndexBounds.value.lastIndexed !== null) {
+    return allMessageIndexBounds.value.lastIndexed + 1
+  }
+
+  return allMessageIndexBounds.value.nextFallbackIndex
 })
+
+const todoPanelName = computed(() => todoStickyMeta.value.panelName)
 
 const todoTotal = computed(() => todoBarItems.value.filter(t => t.status !== 'cancelled').length)
 const todoCompleted = computed(() => todoBarItems.value.filter(t => t.status === 'completed').length)
@@ -237,9 +252,10 @@ const buildAnchorBackendIndex = computed<number | null>(() => {
   )
   if (typeof firstAfterStart?.backendIndex === 'number') return firstAfterStart.backendIndex
 
-  const lastIndexed = [...chatStore.allMessages].reverse().find(m => typeof m.backendIndex === 'number')
-  if (typeof lastIndexed?.backendIndex === 'number') return lastIndexed.backendIndex + 1
-  return chatStore.windowStartIndex + chatStore.allMessages.length
+  if (allMessageIndexBounds.value.lastIndexed !== null) {
+    return allMessageIndexBounds.value.lastIndexed + 1
+  }
+  return allMessageIndexBounds.value.nextFallbackIndex
 })
 
 const buildPanelLabel = computed(() => 'Build')
@@ -326,6 +342,29 @@ interface EnhancedMessage {
 }
 
 // 预计算可见消息的增强信息，避免在模板中进行昂贵的计算
+const checkpointsByMsgIndex = computed(() => chatStore.checkpointsByMessageIndex)
+
+const mergeableCheckpointKeys = computed(() => {
+  const keys = new Set<string>()
+  if (!chatStore.mergeUnchangedCheckpoints) return keys
+
+  for (const [messageIndex, group] of checkpointsByMsgIndex.value.entries()) {
+    if (!group.before.length || !group.after.length) continue
+    const beforeHashes = new Map<string, string>()
+    for (const cp of group.before) {
+      if (cp.contentHash) beforeHashes.set(cp.toolName, cp.contentHash)
+    }
+    for (const cp of group.after) {
+      const beforeHash = beforeHashes.get(cp.toolName)
+      if (beforeHash && cp.contentHash && beforeHash === cp.contentHash) {
+        keys.add(`${messageIndex}:${cp.toolName}`)
+      }
+    }
+  }
+
+  return keys
+})
+
 const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
   const count = visibleCount.value
   const total = props.messages.length
@@ -335,19 +374,9 @@ const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
   const visibleSlice = props.messages.slice(startIndex)
 
   // 预先按消息索引对检查点进行分组
-  const checkpointsByMsgIndex = new Map<number, { before: CheckpointRecord[], after: CheckpointRecord[] }>()
-  chatStore.checkpoints.forEach(cp => {
-    if (!checkpointsByMsgIndex.has(cp.messageIndex)) {
-      checkpointsByMsgIndex.set(cp.messageIndex, { before: [], after: [] })
-    }
-    const group = checkpointsByMsgIndex.get(cp.messageIndex)!
-    if (cp.phase === 'before') group.before.push(cp)
-    else group.after.push(cp)
-  })
-
   return visibleSlice.map(message => {
     const backendIndex = typeof message.backendIndex === 'number' ? message.backendIndex : -1
-    const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.get(backendIndex) : null
+    const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.value.get(backendIndex) : null
     
     return {
       message,
@@ -404,6 +433,30 @@ const messageRenderRows = computed<RenderRow[]>(() => {
 })
 
 // 是否正在加载更多（用于节流）
+const VIRTUALIZATION_ROW_THRESHOLD = 180
+const ESTIMATED_ROW_HEIGHT = 112
+const VIRTUAL_OVERSCAN = 10
+const viewportHeight = ref(0)
+const scrollTop = ref(0)
+
+const virtualRows = computed(() => {
+  const rows = messageRenderRows.value
+  if (rows.length <= VIRTUALIZATION_ROW_THRESHOLD) {
+    return { rows, topPadding: 0, bottomPadding: 0 }
+  }
+
+  const safeViewportHeight = viewportHeight.value > 0 ? viewportHeight.value : 800
+  const visibleRows = Math.ceil(safeViewportHeight / ESTIMATED_ROW_HEIGHT)
+  const startIndex = Math.max(0, Math.floor(scrollTop.value / ESTIMATED_ROW_HEIGHT) - VIRTUAL_OVERSCAN)
+  const endIndex = Math.min(rows.length, startIndex + visibleRows + VIRTUAL_OVERSCAN * 2)
+
+  return {
+    rows: rows.slice(startIndex, endIndex),
+    topPadding: startIndex * ESTIMATED_ROW_HEIGHT,
+    bottomPadding: Math.max(0, (rows.length - endIndex) * ESTIMATED_ROW_HEIGHT)
+  }
+})
+
 const isLoadingMore = ref(false)
 
 // 加载更多历史消息（先展示已加载的，再按需从后端拉更早一页）
@@ -446,6 +499,10 @@ async function loadMore() {
 function handleScroll(e: Event) {
   const container = e.target as HTMLElement
   if (!container) return
+  scrollTop.value = container.scrollTop
+  if (viewportHeight.value !== container.clientHeight) {
+    viewportHeight.value = container.clientHeight
+  }
   
   // 当滚动到距离顶部 100px 以内时自动加载
   if (hasMore.value && !isLoadingMore.value && container.scrollTop < 100) {
@@ -522,11 +579,16 @@ onMounted(() => {
     if (!container) return
     
     // 添加滚动事件监听以支持自动加载
+    viewportHeight.value = container.clientHeight
+    scrollTop.value = container.scrollTop
     container.addEventListener('scroll', handleScroll, { passive: true })
     
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { height } = entry.contentRect
+        if (height > 0) {
+          viewportHeight.value = height
+        }
         
         // 当容器从 0 高度变为有高度时，尝试滚动
         if (height > 0 && needsScrollToBottom.value) {
@@ -698,23 +760,8 @@ async function handleRestoreAndEdit(messageId: string, newContent: string, attac
 
 // 检查特定工具的检查点是否需要合并显示（前后内容一致时合并）
 function shouldMergeForTool(messageIndex: number, toolName: string): boolean {
-  // 如果设置为不合并，直接返回 false（从 chatStore 读取配置）
-  if (!chatStore.mergeUnchangedCheckpoints) {
-    return false
-  }
-  
-  // 查找该工具名称的 before 和 after 检查点
-  const beforeCp = chatStore.checkpoints.find(cp =>
-    cp.messageIndex === messageIndex && cp.phase === 'before' && cp.toolName === toolName
-  )
-  const afterCp = chatStore.checkpoints.find(cp =>
-    cp.messageIndex === messageIndex && cp.phase === 'after' && cp.toolName === toolName
-  )
-  
-  // 必须同时存在 before 和 after 才能合并
-  if (!beforeCp || !afterCp) return false
-  
-  return Boolean(beforeCp.contentHash && afterCp.contentHash && beforeCp.contentHash === afterCp.contentHash)
+  if (!chatStore.mergeUnchangedCheckpoints) return false
+  return mergeableCheckpointKeys.value.has(`${messageIndex}:${toolName}`)
 }
 
 // 恢复检查点 - 显示确认对话框
@@ -807,7 +854,13 @@ function formatCheckpointTime(timestamp: number): string {
           </span>
         </div>
 
-        <template v-for="row in messageRenderRows" :key="row.key">
+        <div
+          v-if="virtualRows.topPadding > 0"
+          class="virtual-spacer"
+          :style="{ height: `${virtualRows.topPadding}px` }"
+        ></div>
+
+        <template v-for="row in virtualRows.rows" :key="row.key">
           <div v-if="row.kind === 'build'" class="build-sticky-shell">
             <div class="build-bar" :class="{ expanded: isBuildExpanded }">
               <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
@@ -975,6 +1028,12 @@ function formatCheckpointTime(timestamp: number): string {
             </div>
           </div>
         </template>
+
+        <div
+          v-if="virtualRows.bottomPadding > 0"
+          class="virtual-spacer"
+          :style="{ height: `${virtualRows.bottomPadding}px` }"
+        ></div>
         
         <!-- 继续对话提示 - 当最后一条是工具响应时显示 -->
         <div v-if="chatStore.needsContinueButton" class="continue-message">
@@ -1255,6 +1314,11 @@ function formatCheckpointTime(timestamp: number): string {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+}
+
+.virtual-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 /* 加载更多指示器 */

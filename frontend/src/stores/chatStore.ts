@@ -27,9 +27,10 @@
 
 import { defineStore } from 'pinia'
 import { computed as vueComputed } from 'vue'
-import type { Attachment, StreamChunk } from '../types'
+import type { Attachment, CheckpointRecord, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
+import { replayTodoStateFromMessages } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
@@ -46,6 +47,7 @@ import {
   loadOlderMessagesPage as loadOlderMessagesPageAction,
   loadCheckpoints,
   switchConversation as switchConvAction,
+  syncConversationWorkspaceUri as syncConversationWorkspaceUriAction,
   deleteConversation as deleteConvAction,
   isDeletingConversation,
   updateConversationAfterMessage
@@ -131,6 +133,45 @@ export const useChatStore = defineStore('chat', () => {
   
   // ============ 工具操作 ============
   
+  const checkpointsByMessageIndex = vueComputed(() => {
+    const grouped = new Map<number, { before: CheckpointRecord[]; after: CheckpointRecord[] }>()
+    for (const checkpoint of state.checkpoints.value) {
+      let bucket = grouped.get(checkpoint.messageIndex)
+      if (!bucket) {
+        bucket = { before: [], after: [] }
+        grouped.set(checkpoint.messageIndex, bucket)
+      }
+      if (checkpoint.phase === 'before') {
+        bucket.before.push(checkpoint)
+      } else {
+        bucket.after.push(checkpoint)
+      }
+    }
+    return grouped
+  })
+
+  const todoSnapshot = vueComputed(() => {
+    const responseMap = new Map<string, unknown>()
+
+    for (const [toolId, response] of state.toolResponseCache.value.entries()) {
+      responseMap.set(toolId, response)
+    }
+
+    for (const message of state.allMessages.value) {
+      if (!message.isFunctionResponse || !Array.isArray(message.parts)) continue
+      for (const part of message.parts) {
+        const toolId = part.functionResponse?.id
+        const response = part.functionResponse?.response
+        if (typeof toolId !== 'string' || response === undefined || responseMap.has(toolId)) continue
+        responseMap.set(toolId, response)
+      }
+    }
+
+    return replayTodoStateFromMessages(state.allMessages.value, {
+      resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
+    })
+  })
+
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)
   const hasToolResponse = (toolCallId: string) => hasToolResponseFn(state, toolCallId)
   const getActualIndex = (displayIndex: number) => getActualIndexFn(state, computed, displayIndex)
@@ -200,11 +241,13 @@ export const useChatStore = defineStore('chat', () => {
     if (existingTab) {
       // 直接切换到已打开的标签页
       switchTabWrapped(existingTab.id)
+      await syncConversationWorkspaceUriAction(state, id)
       return
     }
 
     // 在当前标签页中加载该对话
     await switchConvAction(state, id, cancelStreamAndRejectTools)
+    await syncConversationWorkspaceUriAction(state, id)
 
     // 更新当前标签页的信息
     if (state.activeTabId.value) {
@@ -564,6 +607,8 @@ export const useChatStore = defineStore('chat', () => {
     needsContinueButton: computed.needsContinueButton,
     hasPendingToolConfirmation: computed.hasPendingToolConfirmation,
     pendingToolCalls: computed.pendingToolCalls,
+    todoSnapshot,
+    checkpointsByMessageIndex,
 
     // 对话管理
     createNewConversation,

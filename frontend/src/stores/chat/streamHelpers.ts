@@ -15,10 +15,12 @@ import {
   JSON_TOOL_END
 } from './types'
 import { parseXMLToolCall, parseJSONToolCall } from './parsers'
+import { isPerfEnabled } from '../../utils/perf'
 
 
 const todoDebugPrinted = new Set<string>()
 function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (!isPerfEnabled()) return
   if (todoDebugPrinted.has(key)) return
   todoDebugPrinted.add(key)
   console.debug('[todo-debug][streamHelpers]', data)

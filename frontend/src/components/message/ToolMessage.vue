@@ -18,6 +18,7 @@ import { useChatStore } from '../../stores'
 import { sendToExtension, onExtensionCommand } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
+import { isPerfEnabled } from '../../utils/perf'
 
 const { t } = useI18n()
 
@@ -31,6 +32,7 @@ const chatStore = useChatStore()
 
 const todoDebugPrinted = new Set<string>()
 function debugToolOnce(key: string, data: Record<string, unknown>) {
+  if (!isPerfEnabled()) return
   if (todoDebugPrinted.has(key)) return
   todoDebugPrinted.add(key)
   console.debug('[todo-debug][ToolMessage]', data)
@@ -367,10 +369,12 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       toolNames: props.tools.map(t => t.name),
       toolStatuses: props.tools.map(t => t.status || null)
     })
-    console.warn('[todo-debug][ToolMessage] duplicate tool ids in props.tools', {
-      duplicateToolIds,
-      tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status }))
-    })
+    if (isPerfEnabled()) {
+      console.warn('[todo-debug][ToolMessage] duplicate tool ids in props.tools', {
+        duplicateToolIds,
+        tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status }))
+      })
+    }
   }
 
   debugToolOnce(`tools-${props.tools.map(t => `${t.id}:${t.name}`).join('|')}`, {
@@ -486,6 +490,20 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 // eslint-disable-next-line no-undef
 const processingToolIds = ref<Set<string>>(new Set())
 
+function addProcessingToolId(toolId: string) {
+  if (!toolId || processingToolIds.value.has(toolId)) return
+  const next = new Set(processingToolIds.value)
+  next.add(toolId)
+  processingToolIds.value = next
+}
+
+function removeProcessingToolId(toolId: string) {
+  if (!toolId || !processingToolIds.value.has(toolId)) return
+  const next = new Set(processingToolIds.value)
+  next.delete(toolId)
+  processingToolIds.value = next
+}
+
 // 当后端把工具从 awaiting_approval 推进到 executing/success/error 后，清理本地“处理中”标记
 watchEffect(() => {
   if (processingToolIds.value.size === 0) return
@@ -494,8 +512,12 @@ watchEffect(() => {
   let changed = false
 
   for (const id of current) {
-    const t = enhancedTools.value.find(x => x.id === id)
-    if (!t || t.status !== 'awaiting_approval') {
+    // 这里读取“原始工具状态”（props.tools），避免被 enhancedTools 的乐观 executing 状态误清理
+    const rawTool = props.tools.find(x => x.id === id)
+    const hasResponse = Boolean(rawTool?.result || rawTool?.error || chatStore.getToolResponseById(id))
+    const stillAwaitingApproval = rawTool?.status === 'awaiting_approval'
+
+    if (!rawTool || !stillAwaitingApproval || hasResponse) {
       current.delete(id)
       changed = true
     }
@@ -517,8 +539,12 @@ async function rejectToolExecution(toolId: string, toolName: string) {
 }
 
 async function submitToolDecision(toolId: string, toolName: string, confirmed: boolean) {
+  if (!toolId || processingToolIds.value.has(toolId)) return
+  const currentTool = props.tools.find(t => t.id === toolId)
+  if (!currentTool || currentTool.status !== 'awaiting_approval') return
+
   // 标记为正在处理（注意：Set 变更需替换引用才能触发响应式更新）
-  processingToolIds.value = new Set(processingToolIds.value).add(toolId)
+  addProcessingToolId(toolId)
 
   // 获取输入栏的批注内容（可选）
   const annotation = chatStore.inputValue.trim()
@@ -538,21 +564,27 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
     chatStore.allMessages.push(userMessage)
   }
 
-  await sendToolConfirmation(
+  const sent = await sendToolConfirmation(
     [{ id: toolId, name: toolName, confirmed }],
     annotation
   )
+  if (!sent) {
+    removeProcessingToolId(toolId)
+  }
 }
 
 // 发送工具确认响应到后端
-async function sendToolConfirmation(toolResponses: Array<{ id: string; name: string; confirmed: boolean }>, annotation?: string) {
+async function sendToolConfirmation(
+  toolResponses: Array<{ id: string; name: string; confirmed: boolean }>,
+  annotation?: string
+): Promise<boolean> {
   try {
     const currentConversationId = chatStore.currentConversationId
     const currentConfig = chatStore.currentConfig
 
     if (!currentConversationId || !currentConfig?.id) {
       console.error('No conversation or config ID')
-      return
+      return false
     }
 
     // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
@@ -569,12 +601,14 @@ async function sendToolConfirmation(toolResponses: Array<{ id: string; name: str
       streamId,
       promptModeId: chatStore.currentPromptModeId
     })
+    return true
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)
 
     // 请求未发出时回滚 stream 绑定，避免阻塞后续有效流
     chatStore.activeStreamId = null
     chatStore.isWaitingForResponse = false
+    return false
   }
 }
 
@@ -895,9 +929,10 @@ function renderToolContent(tool: ToolUsage) {
           <div class="tool-action-buttons">
             <!-- 确认按钮：当工具等待用户批准时显示 -->
             <button
-              v-if="tool.status === 'awaiting_approval'"
+              v-if="tool.status === 'awaiting_approval' && !processingToolIds.has(tool.id)"
               class="confirm-btn"
               :title="t('components.message.tool.confirmExecution')"
+              :disabled="processingToolIds.has(tool.id)"
               @click.stop="confirmToolExecution(tool.id, tool.name)"
             >
               <span class="confirm-btn-icon codicon codicon-check"></span>
@@ -906,9 +941,10 @@ function renderToolContent(tool: ToolUsage) {
             
             <!-- 拒绝按钮：当工具等待用户批准时显示 -->
             <button
-              v-if="tool.status === 'awaiting_approval'"
+              v-if="tool.status === 'awaiting_approval' && !processingToolIds.has(tool.id)"
               class="reject-btn"
               :title="t('components.message.tool.reject')"
+              :disabled="processingToolIds.has(tool.id)"
               @click.stop="rejectToolExecution(tool.id, tool.name)"
             >
               <span class="reject-btn-icon codicon codicon-close"></span>
@@ -1130,6 +1166,11 @@ function renderToolContent(tool: ToolUsage) {
   background: rgba(128, 128, 128, 0.2);
 }
 
+.confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .confirm-btn-icon {
   font-size: 12px;
 }
@@ -1162,6 +1203,11 @@ function renderToolContent(tool: ToolUsage) {
 
 .reject-btn:active {
   background: rgba(128, 128, 128, 0.15);
+}
+
+.reject-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .reject-btn-icon {
