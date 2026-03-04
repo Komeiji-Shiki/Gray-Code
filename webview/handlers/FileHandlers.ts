@@ -784,6 +784,7 @@ export const openWorkspaceFileAt: MessageHandler = async (data, requestId, ctx) 
     }
 
     const highlight = data?.highlight !== false;
+    const preview = data?.preview !== false;
     const highlightDurationMs = toPositiveInt(data?.highlightDurationMs) ?? 3200;
 
     const startLineInput = toPositiveInt(data?.startLine);
@@ -837,7 +838,7 @@ export const openWorkspaceFileAt: MessageHandler = async (data, requestId, ctx) 
       const highlightRange = new vscode.Range(startLine0, 0, endLine0, endLineText.length);
 
       const editor = await vscode.window.showTextDocument(doc, {
-        preview: true,
+        preview,
         preserveFocus: false,
         selection
       });
@@ -850,7 +851,7 @@ export const openWorkspaceFileAt: MessageHandler = async (data, requestId, ctx) 
     } else {
       // 无行号：仅打开文件
       await vscode.window.showTextDocument(doc, {
-        preview: true,
+        preview,
         preserveFocus: false
       });
     }

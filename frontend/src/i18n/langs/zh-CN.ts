@@ -464,9 +464,11 @@ const zhCN: LanguageMessages = {
                     executed: '已执行',
                     executing: '执行中...',
                     executePlan: '执行计划',
+                    openFile: '打开文件',
                     loadChannelsFailed: '加载渠道失败',
                     loadModelsFailed: '加载模型失败',
                     executePlanFailed: '执行计划失败',
+                    openFileFailed: '打开文件失败',
                     promptPrefix: '请按照以下计划执行：\n\n{plan}'
                 }
             },
@@ -1463,7 +1465,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.99',
+                    version: '版本：1.0.100',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

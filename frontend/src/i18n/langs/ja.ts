@@ -464,9 +464,11 @@ const ja: LanguageMessages = {
                     executed: '実行済み',
                     executing: '実行中...',
                     executePlan: 'プランを実行',
+                    openFile: 'ファイルを開く',
                     loadChannelsFailed: 'チャンネルの読み込みに失敗しました',
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     executePlanFailed: 'プランの実行に失敗しました',
+                    openFileFailed: 'ファイルを開くのに失敗しました',
                     promptPrefix: '以下のプランに従って実行してください:\n\n{plan}'
                 }
             },
@@ -1463,7 +1465,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.99',
+                    version: 'バージョン：1.0.100',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

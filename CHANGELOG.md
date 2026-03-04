@@ -3,6 +3,15 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.100] - 2026-03-05
+
+### Added
+  - 添加了Plan卡片消息的标签页打开功能
+
+### Improved
+  - 优化了Plan卡片的显示，不再截断内容
+  - 交换了Plan文件里正文和todolist的顺序
+
 ## [1.0.99] - 2026-03-04
 
 ### Fixed

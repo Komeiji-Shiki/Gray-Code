@@ -12,7 +12,7 @@ import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
 import ModelSelector from '../input/ModelSelector.vue'
 import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
-import { extractPreviewText, isPlanDocPath } from '../../utils/taskCards'
+import { isPlanDocPath } from '../../utils/taskCards'
 import { generateId } from '../../utils/format'
 import { useChatStore, useSettingsStore } from '@/stores'
 import * as configService from '@/services/config'
@@ -191,6 +191,19 @@ function togglePlanExpand(key: string) {
 
 function isPlanExpanded(key: string): boolean {
   return expandedPlans.value.has(key)
+}
+
+async function openPlanFile(card: PlanCardItem) {
+  if (!card?.path) return
+  try {
+    await sendToExtension('openWorkspaceFileAt', {
+      path: card.path,
+      highlight: false,
+      preview: false
+    })
+  } catch (error) {
+    console.error(t('components.message.tool.planCard.openFileFailed'), error)
+  }
 }
 
 function getPlanTitle(planContent: string, planPath?: string): string {
@@ -464,6 +477,14 @@ const hasAny = computed(() => planCards.value.length > 0)
         <div class="plan-actions">
           <button
             class="action-btn"
+            :title="t('components.message.tool.planCard.openFile')"
+            :disabled="!c.path"
+            @click="openPlanFile(c)"
+          >
+            <span class="codicon codicon-go-to-file"></span>
+          </button>
+          <button
+            class="action-btn"
             :title="isPlanExpanded(c.key) ? t('common.collapse') : t('common.expand')"
             @click="togglePlanExpand(c.key)"
           >
@@ -477,7 +498,7 @@ const hasAny = computed(() => planCards.value.length > 0)
       <div class="plan-content">
         <CustomScrollbar :max-height="isPlanExpanded(c.key) ? 500 : 200">
           <div class="plan-preview">
-            <MarkdownRenderer :content="isPlanExpanded(c.key) ? c.content : extractPreviewText(c.content, { maxLines: 12, maxChars: 1600 })" />
+            <MarkdownRenderer :content="c.content" />
           </div>
         </CustomScrollbar>
       </div>
@@ -600,6 +621,16 @@ const hasAny = computed(() => planCards.value.length > 0)
 .action-btn:hover {
   background: var(--vscode-toolbar-hoverBackground);
   color: var(--vscode-foreground);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
 }
 
 .plan-path {

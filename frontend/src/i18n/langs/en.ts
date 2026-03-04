@@ -464,9 +464,11 @@ const en: LanguageMessages = {
                     executed: 'Executed',
                     executing: 'Executing...',
                     executePlan: 'Execute Plan',
+                    openFile: 'Open File',
                     loadChannelsFailed: 'Failed to load channels',
                     loadModelsFailed: 'Failed to load models',
                     executePlanFailed: 'Failed to execute plan',
+                    openFileFailed: 'Failed to open file',
                     promptPrefix: 'Please execute the following plan:\n\n{plan}'
                 }
             },
@@ -1463,7 +1465,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.99',
+                    version: 'Version: 1.0.100',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

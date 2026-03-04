@@ -385,9 +385,11 @@ export interface LanguageMessages {
                     executed: string;
                     executing: string;
                     executePlan: string;
+                    openFile: string;
                     loadChannelsFailed: string;
                     loadModelsFailed: string;
                     executePlanFailed: string;
+                    openFileFailed: string;
                     promptPrefix: string;
                 };
             };

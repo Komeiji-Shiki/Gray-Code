@@ -108,7 +108,7 @@ export function appendPlanTodoListSection(planContent: string, todosInput: unkno
   const todoSection = renderPlanTodoListSection(todos);
 
   const finalContent = base
-    ? `${base}\n\n${todoSection}\n`
+    ? `${todoSection}\n\n${base}\n`
     : `${todoSection}\n`;
 
   return {
