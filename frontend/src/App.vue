@@ -319,6 +319,22 @@ function handleShowHistory() {
 }
 
 // 加载语言设置
+function resolveSelectionContextEnabled(appearance: any): boolean {
+  if (!appearance) return true
+  if (typeof appearance.selectionContextEnabled === 'boolean') {
+    return appearance.selectionContextEnabled
+  }
+
+  const hasLegacy =
+    typeof appearance.selectionContextHoverEnabled === 'boolean' ||
+    typeof appearance.selectionContextCodeActionEnabled === 'boolean'
+
+  if (!hasLegacy) return true
+
+  return (appearance.selectionContextHoverEnabled ?? true) ||
+    (appearance.selectionContextCodeActionEnabled ?? true)
+}
+
 async function loadLanguageSettings() {
   try {
     const response = await sendToExtension<any>('getSettings', {})
@@ -329,7 +345,9 @@ async function loadLanguageSettings() {
 
     // 加载外观设置
     if (response?.settings?.ui?.appearance) {
-      settingsStore.setAppearanceLoadingText(response.settings.ui.appearance.loadingText || '')
+      const appearance = response.settings.ui.appearance
+      settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
+      settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
     }
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）

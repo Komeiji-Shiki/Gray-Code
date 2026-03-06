@@ -26,6 +26,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 外观设置：流式 Loading 文本（为空表示使用默认值）
   const appearanceLoadingText = ref<string>('')
+
+  // 外观设置：选中内容入口开关
+  const selectionContextEnabled = ref(true)
   
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
@@ -70,6 +73,10 @@ export const useSettingsStore = defineStore('settings', () => {
   function setAppearanceLoadingText(text: string) {
     appearanceLoadingText.value = text
   }
+
+  function setSelectionContextEnabled(enabled: boolean) {
+    selectionContextEnabled.value = enabled
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -83,6 +90,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeTab,
     language,
     appearanceLoadingText,
+    selectionContextEnabled,
     promptModesVersion,
 
     // 方法
@@ -93,6 +101,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setActiveTab,
     setLanguage,
     setAppearanceLoadingText,
+    setSelectionContextEnabled,
     refreshPromptModes
   }
 })

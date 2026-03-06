@@ -14,17 +14,38 @@ const saveMessageType = ref<'success' | 'error'>('success')
 
 // 为空表示使用默认值（通常来自 i18n）
 const loadingText = ref<string>('')
+const selectionContextEnabled = ref(true)
 
 const defaultLoadingText = computed(() => t('common.loading'))
+
+function resolveSelectionContextEnabled(appearance: any): boolean {
+  if (!appearance) return true
+  if (typeof appearance.selectionContextEnabled === 'boolean') {
+    return appearance.selectionContextEnabled
+  }
+
+  const hasLegacy =
+    typeof appearance.selectionContextHoverEnabled === 'boolean' ||
+    typeof appearance.selectionContextCodeActionEnabled === 'boolean'
+
+  if (!hasLegacy) return true
+
+  return (appearance.selectionContextHoverEnabled ?? true) ||
+    (appearance.selectionContextCodeActionEnabled ?? true)
+}
 
 async function loadConfig() {
   isLoading.value = true
   try {
     const response = await sendToExtension<any>('getSettings', {})
-    const saved = response?.settings?.ui?.appearance?.loadingText ?? ''
+    const appearance = response?.settings?.ui?.appearance
+    const saved = appearance?.loadingText ?? ''
+    const savedSelectionContextEnabled = resolveSelectionContextEnabled(appearance)
 
     loadingText.value = saved
+    selectionContextEnabled.value = savedSelectionContextEnabled
     settingsStore.setAppearanceLoadingText(saved)
+    settingsStore.setSelectionContextEnabled(savedSelectionContextEnabled)
   } catch (error) {
     console.error('Failed to load appearance settings:', error)
   } finally {
@@ -43,13 +64,15 @@ async function saveConfig() {
       ui: {
         appearance: {
           // 空字符串表示使用默认值
-          loadingText: normalized
+          loadingText: normalized,
+          selectionContextEnabled: selectionContextEnabled.value
         }
       }
     })
 
     // 同步到前端状态，确保立即生效
     settingsStore.setAppearanceLoadingText(normalized)
+    settingsStore.setSelectionContextEnabled(selectionContextEnabled.value)
 
     saveMessage.value = t('components.settings.appearanceSettings.saveSuccess')
     saveMessageType.value = 'success'
@@ -68,6 +91,7 @@ async function saveConfig() {
 
 async function resetToDefault() {
   loadingText.value = ''
+  selectionContextEnabled.value = true
   await saveConfig()
 }
 
@@ -98,6 +122,29 @@ onMounted(() => {
           :placeholder="t('components.settings.appearanceSettings.loadingText.placeholder')"
         />
         <p class="field-hint">{{ t('components.settings.appearanceSettings.loadingText.defaultHint', { text: defaultLoadingText }) }}</p>
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <div class="toggle-content">
+            <label class="group-label">
+              <i class="codicon codicon-link-external"></i>
+              {{ t('components.settings.appearanceSettings.selectionContext.title') }}
+            </label>
+            <p class="field-description">
+              {{ t('components.settings.appearanceSettings.selectionContext.description') }}
+            </p>
+          </div>
+
+          <label class="toggle-switch">
+            <input
+              v-model="selectionContextEnabled"
+              type="checkbox"
+              :disabled="isSaving"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="actions">
@@ -144,6 +191,20 @@ onMounted(() => {
   border-radius: 6px;
 }
 
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.toggle-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .group-label {
   display: flex;
   align-items: center;
@@ -157,7 +218,7 @@ onMounted(() => {
 }
 
 .field-description {
-  margin: 0 0 8px 0;
+  margin: 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
@@ -182,6 +243,60 @@ onMounted(() => {
   margin: 0;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 10px;
+  transition: 0.2s;
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--vscode-foreground);
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background-color: var(--vscode-button-foreground);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+  border-color: var(--vscode-focusBorder);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.6;
 }
 
 .actions {

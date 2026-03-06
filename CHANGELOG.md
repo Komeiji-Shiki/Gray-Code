@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.1] - 2026-03-06
+
+### Added
+  - 添加了外观配置：是否显示添加内容到输入框
+
 ## [1.1.0] - 2026-03-05
 
 ### Added

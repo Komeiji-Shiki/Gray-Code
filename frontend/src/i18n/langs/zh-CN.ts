@@ -1465,7 +1465,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.1.0',
+                    version: '版本：1.1.1',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1725,6 +1725,10 @@ const zhCN: LanguageMessages = {
                     description: '在 AI 流式输出时，消息底部的逐字波动指示器显示的文本。',
                     placeholder: '例如：思考中…',
                     defaultHint: '留空使用默认值：{text}'
+                },
+                selectionContext: {
+                    title: '选中内容入口',
+                    description: '统一控制“添加选中内容到输入框”是否显示在选中文本悬浮和长按 Ctrl / 代码操作中。'
                 },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'

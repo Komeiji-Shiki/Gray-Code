@@ -1465,7 +1465,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.1.0',
+                    version: 'バージョン：1.1.1',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1725,6 +1725,10 @@ const ja: LanguageMessages = {
                     description: 'AI がストリーミング出力中に、メッセージ下部のアニメーション指示器に表示されるテキストです。',
                     placeholder: '例：考え中…',
                     defaultHint: '空欄の場合は既定値を使用：{text}'
+                },
+                selectionContext: {
+                    title: '選択内容の入口',
+                    description: '「選択内容を入力欄に追加」を、選択ホバーと Ctrl / コードアクションの両方で表示するかをまとめて制御します。'
                 },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'

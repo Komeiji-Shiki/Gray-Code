@@ -1768,6 +1768,10 @@ export interface LanguageMessages {
                     placeholder: string;
                     defaultHint: string;
                 };
+                selectionContext: {
+                    title: string;
+                    description: string;
+                };
                 saveSuccess: string;
                 saveFailed: string;
             };

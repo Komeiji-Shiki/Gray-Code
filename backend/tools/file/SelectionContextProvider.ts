@@ -17,6 +17,12 @@ export interface SelectionContextCommandArgs {
   };
 }
 
+interface SelectionContextAppearanceSettings {
+  selectionContextEnabled?: boolean;
+  selectionContextHoverEnabled?: boolean;
+  selectionContextCodeActionEnabled?: boolean;
+}
+
 export class SelectionContextProvider implements vscode.HoverProvider, vscode.CodeActionProvider {
   private static instance: SelectionContextProvider | null = null;
 
@@ -31,11 +37,37 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
     return SelectionContextProvider.instance;
   }
 
+  private isSelectionContextEnabled(): boolean {
+    // Read the latest setting at runtime so changes take effect without re-registering providers.
+    const ui = vscode.workspace.getConfiguration('limcode').get<{
+      appearance?: SelectionContextAppearanceSettings;
+    }>('ui');
+    const appearance = ui?.appearance;
+
+    if (typeof appearance?.selectionContextEnabled === 'boolean') {
+      return appearance.selectionContextEnabled;
+    }
+
+    const hasLegacy =
+      typeof appearance?.selectionContextHoverEnabled === 'boolean' ||
+      typeof appearance?.selectionContextCodeActionEnabled === 'boolean';
+
+    if (!hasLegacy) {
+      return true;
+    }
+
+    // Prefer keeping the merged toggle enabled if either legacy entry was enabled.
+    return (appearance?.selectionContextHoverEnabled ?? true) ||
+      (appearance?.selectionContextCodeActionEnabled ?? true);
+  }
+
   public provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
     _token: vscode.CancellationToken
   ): vscode.Hover | undefined {
+    if (!this.isSelectionContextEnabled()) return undefined;
+
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document !== document) return undefined;
 
@@ -66,6 +98,8 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
     _context: vscode.CodeActionContext,
     _token: vscode.CancellationToken
   ): vscode.CodeAction[] | undefined {
+    if (!this.isSelectionContextEnabled()) return undefined;
+
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document !== document) return undefined;
 

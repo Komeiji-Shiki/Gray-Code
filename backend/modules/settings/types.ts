@@ -1368,6 +1368,26 @@ export interface GlobalSettings {
              * - 为空或未设置时：前端使用默认值
              */
             loadingText?: string;
+
+            /**
+             * 是否启用选中内容入口
+             *
+             * - true: 显示“添加选中内容到输入框”的悬浮链接和 Code Action
+             * - false: 不显示上述入口
+             */
+            selectionContextEnabled?: boolean;
+
+            /**
+             * 兼容旧版：是否启用选中文本悬浮入口
+             * @deprecated 请改用 selectionContextEnabled
+             */
+            selectionContextHoverEnabled?: boolean;
+
+            /**
+             * 兼容旧版：是否启用选中文本 Code Action 入口
+             * @deprecated 请改用 selectionContextEnabled
+             */
+            selectionContextCodeActionEnabled?: boolean;
         };
 
         /**
@@ -2254,7 +2274,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         language: 'zh-CN',
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
-            loadingText: ''
+            loadingText: '',
+            selectionContextEnabled: true
         },
         sound: {
             enabled: false,

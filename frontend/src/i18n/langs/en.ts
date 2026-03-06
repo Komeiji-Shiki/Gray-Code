@@ -1465,7 +1465,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.1.0',
+                    version: 'Version: 1.1.1',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1725,6 +1725,10 @@ const en: LanguageMessages = {
                     description: 'Text displayed in the animated indicator at the bottom of a message while the AI is streaming output.',
                     placeholder: 'e.g. Thinking...',
                     defaultHint: 'Leave empty to use default: {text}'
+                },
+                selectionContext: {
+                    title: 'Selection Entry',
+                    description: 'Controls whether "Add selection to input" appears in both the selection hover and Ctrl / code action entry points.'
                 },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
