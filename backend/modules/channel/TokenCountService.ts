@@ -41,6 +41,55 @@ export class TokenCountService {
     setProxyUrl(proxyUrl?: string) {
         this.proxyUrl = proxyUrl;
     }
+
+    /**
+     * 构建 OpenAI Responses input_tokens 端点
+     *
+     * 兼容以下输入：
+     * - https://api.openai.com/v1
+     * - https://api.openai.com/v1/responses
+     * - https://api.openai.com/v1/responses/input_tokens
+     */
+    private buildOpenAIResponsesCountUrl(rawUrl: string): string {
+        const normalizedUrl = rawUrl.trim().replace(/\/+$/, '');
+
+        if (/\/responses\/input_tokens$/i.test(normalizedUrl)) {
+            return normalizedUrl;
+        }
+
+        if (/\/v1\/responses$/i.test(normalizedUrl) || /\/responses$/i.test(normalizedUrl)) {
+            return `${normalizedUrl}/input_tokens`;
+        }
+
+        if (/\/v1$/i.test(normalizedUrl)) {
+            return `${normalizedUrl}/responses/input_tokens`;
+        }
+
+        return `${normalizedUrl}/v1/responses/input_tokens`;
+    }
+
+    /**
+     * 构建 Anthropic count_tokens 端点
+     */
+    private buildAnthropicCountUrl(rawUrl?: string): string {
+        if (!rawUrl) {
+            return 'https://api.anthropic.com/v1/messages/count_tokens';
+        }
+
+        let normalizedUrl = rawUrl.trim().replace(/\/+$/, '');
+        normalizedUrl = normalizedUrl
+            .replace(/\/v1\/models$/i, '/v1')
+            .replace(/\/v1\/complete$/i, '/v1')
+            .replace(/\/complete$/i, '');
+
+        if (/\/v1\/messages\/count_tokens$/i.test(normalizedUrl) || /\/messages\/count_tokens$/i.test(normalizedUrl)) {
+            return normalizedUrl;
+        }
+        if (/\/v1\/messages$/i.test(normalizedUrl) || /\/messages$/i.test(normalizedUrl)) {
+            return `${normalizedUrl}/count_tokens`;
+        }
+        return /\/v1$/i.test(normalizedUrl) ? `${normalizedUrl}/messages/count_tokens` : `${normalizedUrl}/v1/messages/count_tokens`;
+    }
     
     /**
      * 计算内容的 token 数（使用全局配置）
@@ -423,14 +472,7 @@ export class TokenCountService {
             };
         }
 
-        // 构建请求端点
-        let countUrl = url;
-        if (countUrl.endsWith('/responses')) {
-            countUrl = countUrl + '/input_tokens';
-        } else if (!countUrl.includes('/responses/input_tokens')) {
-            const baseUrl = countUrl.replace(/\/$/, '');
-            countUrl = `${baseUrl}/v1/responses/input_tokens`;
-        }
+        const countUrl = this.buildOpenAIResponsesCountUrl(url);
         
         // 转换内容格式
         // 对于 Responses API，我们将所有内容转换为 input 数组
@@ -532,20 +574,7 @@ export class TokenCountService {
             };
         }
         
-        // 构建 count_tokens URL
-        let countUrl: string;
-        if (baseUrl) {
-            if (baseUrl.includes('/messages/count_tokens')) {
-                countUrl = baseUrl;
-            } else if (baseUrl.includes('/messages')) {
-                countUrl = baseUrl.replace('/messages', '/messages/count_tokens');
-            } else {
-                const cleanUrl = baseUrl.replace(/\/$/, '');
-                countUrl = `${cleanUrl}/v1/messages/count_tokens`;
-            }
-        } else {
-            countUrl = 'https://api.anthropic.com/v1/messages/count_tokens';
-        }
+        const countUrl = this.buildAnthropicCountUrl(baseUrl);
         
         // 转换内容格式
         const messages = contents.map(content => {
@@ -795,14 +824,7 @@ export class TokenCountService {
             };
         }
 
-        // 构建 URL
-        let url = config.baseUrl;
-        if (url.endsWith('/responses')) {
-            url = url + '/input_tokens';
-        } else if (!url.includes('/responses/input_tokens')) {
-            const baseUrl = url.replace(/\/$/, '');
-            url = `${baseUrl}/v1/responses/input_tokens`;
-        }
+        const url = this.buildOpenAIResponsesCountUrl(config.baseUrl);
         
         // 转换内容格式
         let instructions = '';

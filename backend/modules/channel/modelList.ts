@@ -30,6 +30,32 @@ export interface ModelInfo {
 }
 
 /**
+ * 规范化 Anthropic 模型列表基础 URL
+ *
+ * 兼容以下输入：
+ * - https://api.anthropic.com
+ * - https://api.anthropic.com/v1
+ * - https://api.anthropic.com/v1/messages
+ * - https://api.anthropic.com/v1/models
+ */
+function normalizeAnthropicModelsBaseUrl(rawUrl?: string): string {
+  let normalizedUrl = (rawUrl || 'https://api.anthropic.com/v1').trim().replace(/\/+$/, '');
+
+  normalizedUrl = normalizedUrl
+    .replace(/\/v1\/models$/i, '/v1')
+    .replace(/\/v1\/messages(?:\/count_tokens)?$/i, '/v1')
+    .replace(/\/v1\/complete$/i, '/v1')
+    .replace(/\/messages(?:\/count_tokens)?$/i, '')
+    .replace(/\/complete$/i, '');
+
+  if (/\/v1$/i.test(normalizedUrl)) {
+    return normalizedUrl;
+  }
+
+  return `${normalizedUrl}/v1`;
+}
+
+/**
  * 获取 Gemini 模型列表
  * Gemini API 支持 pageSize 和 pageToken 分页参数
  */
@@ -86,7 +112,7 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
 
 /**
  * 获取 OpenAI 兼容模型列表
- * 很多第三方中转站会对 /models 接口做分页限制（默认可能只返回 50 条）
+ * 很多第三方中转站会对 /models 接口做分页限制（默认可能只返回 500 条）
  * 通过传递较大的 limit 参数并支持分页遍历来获取所有模型
  */
 export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
@@ -111,6 +137,9 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
     const allModels: any[] = [];
     let hasMore = true;
     let afterCursor: string | undefined;
+    const seenCursors = new Set<string>();
+    const MAX_PAGES = 500;
+    let pageCount = 0;
 
     // 循环获取所有分页数据
     // OpenAI 官方 API 不分页，但第三方中转站可能支持 limit/after 分页
@@ -119,6 +148,8 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
       if (afterCursor) {
         params.set('after', afterCursor);
       }
+
+      pageCount += 1;
 
       const response = await proxyFetch(`${url}/models?${params.toString()}`, {
         headers: {
@@ -134,18 +165,43 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
       const models = data.data || [];
       allModels.push(...models);
 
+      if (models.length === 0) {
+        break;
+      }
+
       // 检查是否还有更多数据（OpenAI list API 支持 has_more 字段）
-      if (data.has_more && models.length > 0) {
-        afterCursor = models[models.length - 1].id;
+      if (data.has_more) {
+        const nextCursor = models[models.length - 1]?.id;
+        if (!nextCursor) {
+          hasMore = false;
+        } else if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
+          console.warn('[modelList] OpenAI models pagination stopped: repeated cursor', nextCursor);
+          hasMore = false;
+        } else if (pageCount >= MAX_PAGES) {
+          console.warn('[modelList] OpenAI models pagination stopped: reached max pages', MAX_PAGES);
+          hasMore = false;
+        } else {
+          seenCursors.add(nextCursor);
+          afterCursor = nextCursor;
+          hasMore = true;
+        }
       } else {
         hasMore = false;
       }
     } while (hasMore);
 
-    return allModels.map((m: any) => ({
+    const uniqueModels = Array.from(
+      new Map(
+        allModels
+          .filter((m: any) => m?.id)
+          .map((m: any) => [m.id, m])
+      ).values()
+    );
+
+    return uniqueModels.map((m: any) => ({
       id: m.id,
       name: m.id,
-      description: `Created: ${new Date(m.created * 1000).toLocaleDateString()}`
+      description: m.created ? `Created: ${new Date(m.created * 1000).toLocaleDateString()}` : undefined
     }));
   } catch (error) {
     console.error('Failed to get OpenAI models:', error);
@@ -159,14 +215,7 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
  */
 export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   const apiKey = (config as any).apiKey;
-  let url = (config as any).url || 'https://api.anthropic.com';
-
-  if (url.endsWith('/')) {
-    url = url.slice(0, -1);
-  }
-
-  // 移除末尾的 /v1/messages 等路径，只保留基础 URL
-  url = url.replace(/\/v1\/(messages|complete)$/i, '');
+  const baseUrl = normalizeAnthropicModelsBaseUrl((config as any).url);
 
   if (!apiKey) {
     throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
@@ -176,6 +225,9 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
     const proxyFetch = createProxyFetch(proxyUrl);
     const allModels: any[] = [];
     let afterId: string | undefined;
+    const seenAfterIds = new Set<string>();
+    const MAX_PAGES = 500;
+    let pageCount = 0;
 
     // 循环获取所有分页数据
     do {
@@ -184,7 +236,9 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
         params.set('after_id', afterId);
       }
 
-      const response = await proxyFetch(`${url}/v1/models?${params.toString()}`, {
+      pageCount += 1;
+
+      const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
         headers: {
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01'
@@ -199,15 +253,39 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
       const models = data.data || [];
       allModels.push(...models);
 
+      if (models.length === 0) {
+        break;
+      }
+
       // Anthropic API 返回 has_more 和 last_id 用于分页
-      if (data.has_more && data.last_id) {
-        afterId = data.last_id;
+      if (data.has_more) {
+        const nextAfterId = data.last_id || models[models.length - 1]?.id;
+        if (!nextAfterId) {
+          afterId = undefined;
+        } else if (nextAfterId === afterId || seenAfterIds.has(nextAfterId)) {
+          console.warn('[modelList] Anthropic models pagination stopped: repeated after_id', nextAfterId);
+          afterId = undefined;
+        } else if (pageCount >= MAX_PAGES) {
+          console.warn('[modelList] Anthropic models pagination stopped: reached max pages', MAX_PAGES);
+          afterId = undefined;
+        } else {
+          seenAfterIds.add(nextAfterId);
+          afterId = nextAfterId;
+        }
       } else {
         afterId = undefined;
       }
     } while (afterId);
 
-    return allModels.map((m: any) => ({
+    const uniqueModels = Array.from(
+      new Map(
+        allModels
+          .filter((m: any) => m?.id)
+          .map((m: any) => [m.id, m])
+      ).values()
+    );
+
+    return uniqueModels.map((m: any) => ({
       id: m.id,
       name: m.display_name || m.id,
       description: m.display_name ? m.id : undefined,

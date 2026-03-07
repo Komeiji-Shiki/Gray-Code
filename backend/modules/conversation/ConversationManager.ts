@@ -879,7 +879,7 @@ export class ConversationManager {
         const sendHistoryThoughtSignatures = opts.sendHistoryThoughtSignatures ?? false;
         // 褰撳墠杞閰嶇疆锛氬鏋滄病鏈変紶锛孉nthropic 榛樿鍏ㄤ紶锛孏emini/OpenAI 榛樿涓嶄紶鏂囨湰鍐呭
         const sendCurrentThoughts = opts.sendCurrentThoughts ?? (opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
-        const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'openai-responses');
+        const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
         const channelType = opts.channelType;
         // 鍘嗗彶鎬濊€冨洖鍚堟暟锛岄粯璁?-1 琛ㄧず鍏ㄩ儴
         const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
