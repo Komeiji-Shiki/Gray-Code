@@ -40,6 +40,9 @@ export class StreamAccumulator {
     
     /** 完整的 Token 使用统计 */
     private usageMetadata?: UsageMetadata;
+
+    /** 是否收到过渠道原生的 totalTokenCount */
+    private hasProviderTotalTokenCount: boolean = false;
     
     /** 结束原因 */
     private finishReason?: string;
@@ -100,6 +103,51 @@ export class StreamAccumulator {
         
         return 'function_call';
     }
+
+    /**
+     * 合并增量 usage 信息
+     *
+     * 某些渠道（如 Anthropic）会把输入/输出 token 分别放在不同事件里，
+     * 这里需要做增量合并，避免后到达的字段覆盖先到达的字段。
+     */
+    private mergeUsageMetadata(usage: StreamUsageMetadata): void {
+        const previous = this.usageMetadata;
+
+        if (usage.totalTokenCount !== undefined) {
+            this.hasProviderTotalTokenCount = true;
+        }
+
+        const merged: UsageMetadata = {
+            promptTokenCount: usage.promptTokenCount ?? previous?.promptTokenCount,
+            candidatesTokenCount: usage.candidatesTokenCount ?? previous?.candidatesTokenCount,
+            totalTokenCount: usage.totalTokenCount ?? previous?.totalTokenCount,
+            thoughtsTokenCount: usage.thoughtsTokenCount ?? previous?.thoughtsTokenCount,
+            promptTokensDetails: usage.promptTokensDetails ?? previous?.promptTokensDetails,
+            candidatesTokensDetails: usage.candidatesTokensDetails ?? previous?.candidatesTokensDetails
+        };
+
+        const hasAnyTokenField = merged.promptTokenCount !== undefined ||
+            merged.candidatesTokenCount !== undefined ||
+            merged.thoughtsTokenCount !== undefined;
+
+        // 某些流式渠道（如 Anthropic）不会直接给 totalTokenCount。
+        // 当未收到过渠道原生 total 时，每次合并后都用已知字段重算，
+        // 避免出现先收到 prompt，后收到 candidates 时 total 仍停留在 prompt 的问题。
+        if (hasAnyTokenField) {
+            const prompt = merged.promptTokenCount ?? 0;
+            const candidates = merged.candidatesTokenCount ?? 0;
+            const thoughts = merged.thoughtsTokenCount ?? 0;
+
+            if (!this.hasProviderTotalTokenCount) {
+                merged.totalTokenCount = prompt + candidates + thoughts;
+            } else if (merged.totalTokenCount === undefined) {
+                // 理论上有原生 total 时不应进入此分支，但为稳健性保底。
+                merged.totalTokenCount = prompt + candidates + thoughts;
+            }
+        }
+
+        this.usageMetadata = merged;
+    }
     
     /**
      * 添加流式响应块
@@ -140,14 +188,7 @@ export class StreamAccumulator {
         // 保存完整的 token 使用统计（包括多模态详情）
         // 这个可能在第一个 done chunk 中，也可能在后续的 usage chunk 中
         if (chunk.usage) {
-            this.usageMetadata = {
-                promptTokenCount: chunk.usage.promptTokenCount,
-                candidatesTokenCount: chunk.usage.candidatesTokenCount,
-                totalTokenCount: chunk.usage.totalTokenCount,
-                thoughtsTokenCount: chunk.usage.thoughtsTokenCount,
-                promptTokensDetails: chunk.usage.promptTokensDetails,
-                candidatesTokensDetails: chunk.usage.candidatesTokensDetails
-            };
+            this.mergeUsageMetadata(chunk.usage);
         }
         
         // 保存结束原因（如果有）
@@ -683,6 +724,7 @@ export class StreamAccumulator {
         this.parts = [];
         this.isDone = false;
         this.usageMetadata = undefined;
+        this.hasProviderTotalTokenCount = false;
         this.finishReason = undefined;
         this.modelVersion = undefined;
         this.thoughtSignatures = {};

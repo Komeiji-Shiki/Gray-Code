@@ -1,16 +1,16 @@
-﻿/**
- * LimCode - 瀵硅瘽鍘嗗彶绠＄悊鍣?
+/**
+ * LimCode - 对话历史管理器
  *
- * 鏍稿績鑱岃矗:
- * - 绠＄悊 Gemini 鏍煎紡鐨勫璇濆巻鍙?
- * - 鎻愪緵绫诲瀷瀹夊叏鐨勬搷浣?API
- * - 缁存姢瀵硅瘽鍏冩暟鎹?
- * - 鏀寔鎸佷箙鍖栧瓨鍌?
+ * 核心职责:
+ * - 管理 Gemini 格式的对话历史
+ * - 提供类型安全的操作 API
+ * - 维护对话元数据
+ * - 支持持久化存储
  *
- * 瀛樺偍鏍煎紡:
- * - 鍘嗗彶: 瀹屾暣鐨?Gemini Content[] 鏁扮粍
- * - 鍏冩暟鎹? 瀵硅瘽鏍囬銆佸垱寤烘椂闂寸瓑
- * - 蹇収: 鍘嗗彶鐨勬椂闂寸偣鍓湰
+ * 存储格式:
+ * - 历史: 完整的 Gemini Content[] 数组
+ * - 元数据: 对话标题、创建时间等
+ * - 快照: 历史的时间点副本
  */
 
 import { t } from '../../i18n';
@@ -28,79 +28,79 @@ import type { ConversationStorageIntegrity, IStorageAdapter } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
 
 /**
- * 澶氭ā鎬佽兘鍔涳紙鐢ㄤ簬杩囨护鍘嗗彶涓殑澶氭ā鎬佹暟鎹級
+ * 多模态能力（用于过滤历史中的多模态数据）
  */
 export interface MultimodalCapability {
-    /** 鏄惁鏀寔鍥剧墖 */
+    /** 是否支持图片 */
     supportsImages: boolean;
-    /** 鏄惁鏀寔鏂囨。锛圥DF锛?*/
+    /** 是否支持文档（PDF） */
     supportsDocuments: boolean;
-    /** 鏄惁鏀寔鍥炰紶澶氭ā鎬佹暟鎹埌鍘嗗彶璁板綍 */
+    /** 是否支持回传多模态数据到历史记录 */
     supportsHistoryMultimodal: boolean;
 }
 
 /**
- * 鑾峰彇鍘嗗彶鐨勯€夐」
+ * 获取历史的选项
  */
 export interface GetHistoryOptions {
-    /** 鏄惁鍖呭惈褰撳墠杞鐨勬€濊€冨唴瀹癸紙榛樿 false锛?*/
+    /** 是否包含当前轮次的思考内容（默认 false） */
     includeThoughts?: boolean;
     
-    /** 鏄惁鍙戦€佸巻鍙叉€濊€冨唴瀹癸紙榛樿 false锛?*/
+    /** 是否发送历史思考内容（默认 false） */
     sendHistoryThoughts?: boolean;
     
-    /** 鏄惁鍙戦€佸巻鍙叉€濊€冪鍚嶏紙榛樿 false锛?*/
+    /** 是否发送历史思考签名（默认 false） */
     sendHistoryThoughtSignatures?: boolean;
 
-    /** 鏄惁鍙戦€佸綋鍓嶈疆娆＄殑鎬濊€冨唴瀹癸紙榛樿鏍规嵁娓犻亾鍐冲畾锛?*/
+    /** 是否发送当前轮次的思考内容（默认根据渠道决定） */
     sendCurrentThoughts?: boolean;
 
-    /** 鏄惁鍙戦€佸綋鍓嶈疆娆＄殑鎬濊€冪鍚嶏紙榛樿鏍规嵁娓犻亾鍐冲畾锛?*/
+    /** 是否发送当前轮次的思考签名（默认根据渠道决定） */
     sendCurrentThoughtSignatures?: boolean;
     
-    /** 娓犻亾绫诲瀷锛岀敤浜庨€夋嫨瀵瑰簲鏍煎紡鐨勭鍚?*/
+    /** 渠道类型，用于选择对应格式的签名 */
     channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     
     /**
-     * 澶氭ā鎬佽兘鍔涳紙鍙€夛級
+     * 多模态能力（可选）
      *
-     * 濡傛灉鎻愪緵锛屽皢鏍规嵁鑳藉姏杩囨护鍘嗗彶涓殑澶氭ā鎬佹暟鎹細
-     * - 濡傛灉涓嶆敮鎸?supportsHistoryMultimodal锛屽垯杩囨护鎵€鏈夊巻鍙蹭腑鐨?inlineData
-     * - 濡傛灉涓嶆敮鎸?supportsDocuments锛屽垯杩囨护鏂囨。绫诲瀷鐨?inlineData
-     * - 濡傛灉涓嶆敮鎸?supportsImages锛屽垯杩囨护鍥剧墖绫诲瀷鐨?inlineData
+     * 如果提供，将根据能力过滤历史中的多模态数据：
+     * - 如果不支持 supportsHistoryMultimodal，则过滤所有历史中的 inlineData
+     * - 如果不支持 supportsDocuments，则过滤文档类型的 inlineData
+     * - 如果不支持 supportsImages，则过滤图片类型的 inlineData
      */
     multimodalCapability?: MultimodalCapability;
     
     /**
-     * 鍘嗗彶鎬濊€冨洖鍚堟暟
+     * 历史思考回合数
      *
-     * 鎺у埗鍙戦€佸灏戣疆闈炴渶鏂板洖鍚堢殑鍘嗗彶瀵硅瘽鎬濊€冿細
-     * - `-1`: 鍙戦€佸叏閮ㄥ巻鍙插洖鍚堢殑鎬濊€冿紙榛樿鍊硷級
-     * - `0`: 涓嶅彂閫佷换浣曞巻鍙插洖鍚堢殑鎬濊€?
-     * - 姝ｆ暟 `n`: 鍙戦€佹渶杩?n 杞潪鏈€鏂板洖鍚堢殑鎬濊€冿紙濡?1 琛ㄧず鍙彂閫佸€掓暟绗簩鍥炲悎锛?
+     * 控制发送多少轮非最新回合的历史对话思考：
+     * - `-1`: 发送全部历史回合的思考（默认值）
+     * - `0`: 不发送任何历史回合的思考
+     * - 正数 `n`: 发送最近 n 轮非最新回合的思考（如 1 表示只发送倒数第二回合）
      *
-     * 浠呭湪 sendHistoryThoughts 鎴?sendHistoryThoughtSignatures 涓?true 鏃剁敓鏁?
+     * 仅在 sendHistoryThoughts 或 sendHistoryThoughtSignatures 为 true 时生效
      */
     historyThinkingRounds?: number;
     
     /**
-     * 璧峰绱㈠紩锛堝彲閫夛級
+     * 起始索引（可选）
      *
-     * 浠庢寚瀹氱储寮曞紑濮嬭幏鍙栧巻鍙诧紝鐢ㄤ簬涓婁笅鏂囪鍓€?
-     * 榛樿涓?0锛堜粠澶村紑濮嬶級銆?
+     * 从指定索引开始获取历史，用于上下文裁剪。
+     * 默认为 0（从头开始）。
      */
     startIndex?: number;
 }
 
 /**
- * 瀵硅瘽绠＄悊鍣?
+ * 对话管理器
  *
- * 鐗圭偣:
- * - 瀹屾暣鏀寔 Gemini 鏍煎紡鐨勬墍鏈夌壒鎬?
- * - 鑷姩缁存姢鍏冩暟鎹?
- * - 鏀寔鎬濊€冪鍚嶃€佸嚱鏁拌皟鐢ㄧ瓑楂樼骇鐗规€?
- * - 鍙洿鎺ュ皢鍘嗗彶鍙戦€佺粰 Gemini API
- * - 鏃犲唴瀛樼紦瀛橈紝姣忔鎿嶄綔鐩存帴璇诲啓瀛樺偍锛岀‘淇濇暟鎹竴鑷存€?
+ * 特点:
+ * - 完整支持 Gemini 格式的所有特性
+ * - 自动维护元数据
+ * - 支持思考签名、函数调用等高级特性
+ * - 可直接将历史发送给 Gemini API
+ * - 无内存缓存，每次操作直接读写存储，确保数据一致性
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
@@ -150,13 +150,13 @@ export class ConversationManager {
     }
 
     /**
-     * 瑙勮寖鍖栧巻鍙诧細琛ラ綈鏈搷搴旂殑宸ュ叿璋冪敤锛坮ejected + functionResponse 鎻掑叆锛夛紝骞跺湪蹇呰鏃跺啓鍥炲瓨鍌ㄣ€?
+     * 规范化历史：补齐未响应的工具调用（rejected + functionResponse 插入），并在必要时写回存储。
      *
-     * 娉ㄦ剰锛氭杩囩▼浼氭敼鍙?history 鐨勯暱搴︼紝浠庤€屾敼鍙樻秷鎭?index銆?
-     * 鍓嶇渚濊禆 index 杩涜鍒犻櫎/閲嶈瘯绛夋搷浣滐紝鍥犳蹇呴』鍦ㄨ繑鍥炲墠瀹屾垚璇ヨ鑼冨寲銆?
+     * 注意：此过程会改变 history 的长度，从而改变消息 index。
+     * 前端依赖 index 进行删除/重试等操作，因此必须在返回前完成该规范化。
      */
     private async normalizeHistoryForDisplay(conversationId: string, history: ConversationHistory): Promise<ConversationHistory> {
-        // 鏀堕泦鎵€鏈?functionResponse 鐨?ID
+        // 收集所有 functionResponse 的 ID
         const respondedToolCallIds = new Set<string>();
         for (const message of history) {
             if (message.parts) {
@@ -168,14 +168,14 @@ export class ConversationManager {
             }
         }
 
-        // 鏀堕泦鏈搷搴旂殑宸ュ叿璋冪敤锛岃褰曞畠浠墍鍦ㄧ殑娑堟伅绱㈠紩
+        // 收集未响应的工具调用，记录它们所在的消息索引
         const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
             if (message.parts) {
                 for (const part of message.parts) {
                     if (part.functionCall && part.functionCall.id) {
-                        // 濡傛灉宸ュ叿璋冪敤娌℃湁瀵瑰簲鐨勫搷搴旓紝涓旇繕娌℃湁琚爣璁颁负 rejected
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
                         if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
                             part.functionCall.rejected = true;
                             const calls = unresolvedCallsByIndex.get(i) || [];
@@ -190,8 +190,8 @@ export class ConversationManager {
             }
         }
 
-        // 濡傛灉鏈夋湭鍝嶅簲鐨勫伐鍏疯皟鐢紝鍦ㄥ伐鍏疯皟鐢ㄦ秷鎭揣鎺ュ悗闈㈡彃鍏?functionResponse
-        // 浠庡悗寰€鍓嶆彃鍏ヤ互閬垮厤绱㈠紩鍋忕Щ闂
+        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+        // 从后往前插入以避免索引偏移问题
         if (unresolvedCallsByIndex.size > 0) {
             const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
 
@@ -209,7 +209,7 @@ export class ConversationManager {
                     }
                 }));
 
-                // 鍦ㄥ伐鍏疯皟鐢ㄦ秷鎭殑绱ф帴鍚庨潰鎻掑叆
+                // 在工具调用消息的紧接后面插入
                 history.splice(messageIndex + 1, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,
@@ -223,16 +223,16 @@ export class ConversationManager {
         return history;
     }
 
-    // ==================== 瀵硅瘽绠＄悊 ====================
+    // ==================== 对话管理 ====================
 
     /**
-     * 鍒涘缓鏂板璇?
-     * @param conversationId 瀵硅瘽 ID
-     * @param title 瀵硅瘽鏍囬
-     * @param workspaceUri 宸ヤ綔鍖?URI锛堝彲閫夛級
+     * 创建新对话
+     * @param conversationId 对话 ID
+     * @param title 对话标题
+     * @param workspaceUri 工作区 URI（可选）
      */
     async createConversation(conversationId: string, title?: string, workspaceUri?: string): Promise<void> {
-        // 妫€鏌ュ瓨鍌ㄤ腑鏄惁宸插瓨鍦?
+        // 检查存储中是否已存在
         const existing = await this.storage.loadHistoryWithStatus(conversationId);
         if (existing.value) {
             throw new Error(t('modules.conversation.errors.conversationExists', { conversationId }));
@@ -258,21 +258,21 @@ export class ConversationManager {
     }
 
     /**
-     * 鍒犻櫎瀵硅瘽
+     * 删除对话
      */
     async deleteConversation(conversationId: string): Promise<void> {
         await this.storage.deleteHistory(conversationId);
     }
 
     /**
-     * 鍒楀嚭鎵€鏈夊璇?
+     * 列出所有对话
      */
     async listConversations(): Promise<string[]> {
         return await this.storage.listConversations();
     }
 
     /**
-     * 鍔犺浇瀵硅瘽鍘嗗彶锛堢洿鎺ヤ粠瀛樺偍璇诲彇锛?
+     * 加载对话历史（直接从存储读取）
      */
     private async loadHistory(conversationId: string): Promise<ConversationHistory> {
         const result = await this.storage.loadHistoryWithStatus(conversationId);
@@ -289,7 +289,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇瀵硅瘽鍘嗗彶鐨勫彧璇诲壇鏈?
+     * 获取对话历史的只读副本
      */
     async getHistory(conversationId: string): Promise<Readonly<ConversationHistory>> {
         const history = await this.loadHistory(conversationId);
@@ -297,22 +297,22 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇瀵硅瘽鍘嗗彶鐨勫紩鐢紙鐢ㄤ簬鐩存帴鍙戦€佺粰 API锛?
-     * 娉ㄦ剰: 姣忔璋冪敤閮戒粠瀛樺偍璇诲彇鏈€鏂版暟鎹?
+     * 获取对话历史的引用（用于直接发送给 API）
+     * 注意: 每次调用都从存储读取最新数据
      */
     async getHistoryRef(conversationId: string): Promise<ConversationHistory> {
         return await this.loadHistory(conversationId);
     }
 
-    // ==================== 娑堟伅鎿嶄綔 ====================
+    // ==================== 消息操作 ====================
 
     /**
-     * 娣诲姞娑堟伅锛圙emini 鏍煎紡锛?
+     * 添加消息（Gemini 格式）
      * 
-     * @param conversationId 瀵硅瘽 ID
-     * @param role 瑙掕壊
-     * @param parts 娑堟伅鍐呭
-     * @param metadata 鍙€夌殑鍏冩暟鎹紙濡?isUserInput锛?
+     * @param conversationId 对话 ID
+     * @param role 角色
+     * @param parts 消息内容
+     * @param metadata 可选的元数据（如 isUserInput）
      */
     async addMessage(
         conversationId: string,
@@ -324,19 +324,19 @@ export class ConversationManager {
         history.push({
             role,
             parts: JSON.parse(JSON.stringify(parts)),
-            timestamp: Date.now(),  // 鑷姩娣诲姞鏃堕棿鎴?
-            ...metadata  // 鍚堝苟鍙€夊厓鏁版嵁
+            timestamp: Date.now(),  // 自动添加时间
+            ...metadata  // 合并可选元数据
         });
         await this.storage.saveHistory(conversationId, history);
     }
 
     /**
-     * 娣诲姞瀹屾暣鐨?Content 瀵硅薄
+     * 添加完整的 Content 对象
      */
     async addContent(conversationId: string, content: Content): Promise<void> {
         const history = await this.loadHistory(conversationId);
         const contentCopy = JSON.parse(JSON.stringify(content));
-        // 濡傛灉娌℃湁鏃堕棿鎴筹紝鑷姩娣诲姞
+        // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
@@ -345,13 +345,13 @@ export class ConversationManager {
     }
 
     /**
-     * 鎵归噺娣诲姞娑堟伅
+     * 批量添加消息
      */
     async addBatch(conversationId: string, contents: Content[]): Promise<void> {
         const history = await this.loadHistory(conversationId);
         const now = Date.now();
         const contentsCopy = JSON.parse(JSON.stringify(contents)).map((content: Content, index: number) => {
-            // 濡傛灉娌℃湁鏃堕棿鎴筹紝鑷姩娣诲姞锛堝悓涓€鎵规鐨勬秷鎭椂闂存埑閫掑锛?
+            // 如果没有时间戳，自动添加（同一批次的消息时间戳递增）
             if (!content.timestamp) {
                 content.timestamp = now + index;
             }
@@ -362,20 +362,20 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇鎵€鏈夋秷鎭?
+     * 获取所有消息
      *
-     * 杩斿洖鐨勬瘡鏉℃秷鎭兘鍖呭惈 index 瀛楁锛岀敤浜庡墠绔湪鍒犻櫎/閲嶈瘯鏃剁洿鎺ヤ娇鐢?
-     * 姣忔璋冪敤閮戒粠瀛樺偍璇诲彇鏈€鏂版暟鎹?
+     * 返回的每条消息都包含 index 字段，用于前端在删除/重试时直接使用
+     * 每次调用都从存储读取最新数据
      * 
-     * 娉ㄦ剰锛氬浜庢病鏈夊搷搴旂殑 pending 宸ュ叿璋冪敤锛屼細鑷姩鏍囪涓?rejected 骞舵坊鍔?functionResponse
+     * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
     async getMessages(conversationId: string): Promise<Content[]> {
         let history = await this.loadHistory(conversationId);
         history = await this.normalizeHistoryForDisplay(conversationId, history);
 
-        // 涓烘瘡鏉℃秷鎭坊鍔?index 瀛楁锛堢粷瀵圭储寮曪級
+        // 为每条消息添加 index 字段（绝对索引）
         return history.map((message, index) => {
-            // 杩囨护鍚庣鍐呴儴瀛楁锛坱urnDynamicContext 鏁版嵁閲忓ぇ涓斿墠绔棤闇€浣跨敤锛?
+            // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
             const { turnDynamicContext, ...rest } = message;
             return {
                 ...JSON.parse(JSON.stringify(rest)),
@@ -385,12 +385,12 @@ export class ConversationManager {
     }
 
     /**
-     * 鍒嗛〉鑾峰彇瀵硅瘽娑堟伅锛堜粎杩斿洖涓€涓獥鍙ｏ紝閬垮厤涓€娆℃€у悜 Webview 鍙戦€佸叏閲忓巻鍙诧級
+     * 分页获取对话消息（仅返回一个窗口，避免一次性向 Webview 发送全量历史）
      *
-     * - beforeIndex: 鍙?[0, beforeIndex) 鍖洪棿鍐呯殑鏈€鍚?limit 鏉★紙鐢ㄤ簬涓婃媺鍔犺浇鏇存棭娑堟伅锛?
-     * - offset/limit: 鍙?[offset, offset+limit) 鍖洪棿锛堢敤浜庝换鎰忓垎椤碉級
+     * - beforeIndex: 取 [0, beforeIndex) 区间内的最后 limit 条（用于上拉加载更早消息）
+     * - offset/limit: 取 [offset, offset+limit) 区间（用于任意分页）
      *
-     * 杩斿洖鐨?messages 涓瘡鏉￠兘鍖呭惈缁濆 index锛堝嵆鍚庣鍘嗗彶绱㈠紩锛夈€?
+     * 返回的 messages 中每条都包含绝对 index（即后端历史索引）。
      */
     async getMessagesPaged(
         conversationId: string,
@@ -412,7 +412,7 @@ export class ConversationManager {
             start = Math.max(0, Math.min(total, Math.floor(options.offset)));
             endExclusive = Math.max(start, Math.min(total, start + limit));
         } else {
-            // 榛樿锛氬彇鏈€鍚?limit 鏉?
+            // 默认：取最后 limit 条
             start = Math.max(0, total - limit);
             endExclusive = total;
         }
@@ -420,7 +420,7 @@ export class ConversationManager {
         const slice = history.slice(start, endExclusive);
         const messages = slice.map((message, i) => {
             const index = start + i;
-            // 娣辨嫹璐濆苟杩囨护鍚庣鍐呴儴瀛楁锛坱urnDynamicContext 鏁版嵁閲忓ぇ涓斿墠绔棤闇€浣跨敤锛?
+            // 深拷贝并过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
             const { turnDynamicContext, ...rest } = message;
             return {
                 ...JSON.parse(JSON.stringify(rest)),
@@ -432,7 +432,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇鎸囧畾绱㈠紩鐨勬秷鎭?
+     * 获取指定索引的消息
      */
     async getMessage(conversationId: string, index: number): Promise<Content | undefined> {
         const history = await this.loadHistory(conversationId);
@@ -443,7 +443,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鏇存柊娑堟伅
+     * 更新消息
      */
     async updateMessage(
         conversationId: string,
@@ -459,11 +459,11 @@ export class ConversationManager {
     }
 
     /**
-     * 鎵归噺鏇存柊澶氭潯娑堟伅锛堜竴娆¤鍐欙紝閬垮厤骞跺彂 updateMessage 瀵艰嚧鐨勮鐩栧啓鍏ワ級
+     * 批量更新多条消息（一次读写，避免并发 updateMessage 导致的覆盖写入）
      *
-     * 鍏稿瀷鍦烘櫙锛歍oken 棰勮绠椾細骞惰鏇存柊澶氭潯 user 娑堟伅鐨?tokenCountByChannel銆?
-     * 濡傛灉瀵规瘡鏉℃秷鎭崟鐙?load+save锛屽苟琛屾墽琛屼細鍑虹幇鈥滃悗鍐欒鐩栧厛鍐欌€濓紝瀵艰嚧澶ч噺 token 缁撴灉涓㈠け锛?
-     * 杩涜€屽湪涓嬩竴娆¤姹傞噷鍙堥噸澶嶅鍚屼竴鎵规秷鎭繘琛?token 璁℃暟銆?
+     * 典型场景：Token 预计算会并行更新多条 user 消息的 tokenCountByChannel。
+     * 如果对每条消息单独 load+save，并行执行会出现“后写覆盖先写”，导致大量 token 结果丢失，
+     * 进而在下一次请求里又重复对同一批消息进行 token 计数。
      */
     async updateMessagesBatch(
         conversationId: string,
@@ -487,7 +487,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鍒犻櫎娑堟伅
+     * 删除消息
      */
     async deleteMessage(conversationId: string, messageIndex: number): Promise<void> {
         const history = await this.loadHistory(conversationId);
@@ -499,7 +499,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鎻掑叆娑堟伅
+     * 插入消息
      */
     async insertMessage(
         conversationId: string,
@@ -512,13 +512,13 @@ export class ConversationManager {
         history.splice(index, 0, {
             role,
             parts: JSON.parse(JSON.stringify(parts)),
-            timestamp: Date.now()  // 鑷姩娣诲姞鏃堕棿鎴?
+            timestamp: Date.now()  // 自动添加时间
         });
         await this.storage.saveHistory(conversationId, history);
     }
 
     /**
-     * 鍦ㄦ寚瀹氫綅缃彃鍏ュ畬鏁寸殑 Content 瀵硅薄
+     * 在指定位置插入完整的 Content 对象
      */
     async insertContent(
         conversationId: string,
@@ -528,7 +528,7 @@ export class ConversationManager {
         const history = await this.loadHistory(conversationId);
         const index = Math.max(0, Math.min(position, history.length));
         const contentCopy = JSON.parse(JSON.stringify(content));
-        // 濡傛灉娌℃湁鏃堕棿鎴筹紝鑷姩娣诲姞
+        // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
@@ -536,10 +536,10 @@ export class ConversationManager {
         await this.storage.saveHistory(conversationId, history);
     }
 
-    // ==================== 鎵归噺鎿嶄綔 ====================
+    // ==================== 批量操作 ====================
 
     /**
-     * 鍒犻櫎鎸囧畾鑼冨洿鐨勬秷鎭?
+     * 删除指定范围的消息
      */
     async deleteMessagesInRange(
         conversationId: string,
@@ -554,18 +554,18 @@ export class ConversationManager {
     }
 
     /**
-     * 鍒犻櫎鍒版寚瀹氭秷鎭紙浠庡悗寰€鍓嶅垹闄わ級
+     * 删除到指定消息（从后往前删除）
      *
-     * @param conversationId 瀵硅瘽 ID
-     * @param targetIndex 鐩爣娑堟伅绱㈠紩锛堝垹闄ゅ埌杩欎釜绱㈠紩涓烘锛屽寘鎷娑堟伅锛?
-     * @returns 鍒犻櫎鐨勬秷鎭暟閲?
+     * @param conversationId 对话 ID
+     * @param targetIndex 目标消息索引（删除到这个索引为止，包括该消息）
+     * @returns 删除的消息数量
      *
      * @example
-     * // 鍒犻櫎鏈€鍚?3 鏉℃秷鎭紙鍋囪鍘嗗彶鏈?10 鏉★級
-     * await manager.deleteToMessage('chat-001', 7); // 鍒犻櫎绱㈠紩 7, 8, 9
+     * // 删除最后 3 条消息（假设历史有 10 条）
+     * await manager.deleteToMessage('chat-001', 7); // 删除索引 7, 8, 9
      *
-     * 娉ㄦ剰锛氬垹闄ゅ悗鍙兘鐣欎笅瀛ょ珛鐨?functionCall锛堟病鏈夊搴旂殑 functionResponse锛?
-     * ChatHandler 鍦ㄩ噸璇曟椂浼氭娴嬪苟閲嶆柊鎵ц杩欎簺瀛ょ珛鐨勫嚱鏁拌皟鐢?
+     * 注意：删除后可能留下孤立的 functionCall（没有对应的 functionResponse）
+     * ChatHandler 在重试时会检测并重新执行这些孤立的函数调用
      */
     async deleteToMessage(
         conversationId: string,
@@ -577,7 +577,7 @@ export class ConversationManager {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
         }
         
-        // 浠庡悗寰€鍓嶅垹闄わ紝鐩村埌鍒犻櫎鍒扮洰鏍囩储寮曪紙鍖呮嫭鐩爣绱㈠紩锛?
+        // 从后往前删除，直到删除到目标索引（包括目标索引）
         const deleteCount = history.length - targetIndex;
         history.splice(targetIndex, deleteCount);
         
@@ -586,16 +586,16 @@ export class ConversationManager {
     }
 
     /**
-     * 娓呯┖瀵硅瘽鍘嗗彶
+     * 清空对话历史
      */
     async clearHistory(conversationId: string): Promise<void> {
         await this.storage.saveHistory(conversationId, []);
     }
 
-    // ==================== 鏌ヨ鍜岃繃婊?====================
+    // ==================== 查询和过滤 ====================
 
     /**
-     * 鏌ユ壘娑堟伅
+     * 查找消息
      */
     async findMessages(
         conversationId: string,
@@ -651,7 +651,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇鎸囧畾瑙掕壊鐨勬墍鏈夋秷鎭?
+     * 获取指定角色的所有消息
      */
     async getMessagesByRole(
         conversationId: string,
@@ -663,10 +663,10 @@ export class ConversationManager {
             .map(msg => JSON.parse(JSON.stringify(msg)));
     }
 
-    // ==================== 蹇収绠＄悊 ====================
+    // ==================== 快照管理 ====================
 
     /**
-     * 鍒涘缓蹇収
+     * 创建快照
      */
     async createSnapshot(
         conversationId: string,
@@ -687,7 +687,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鎭㈠蹇収
+     * 恢复快照
      */
     async restoreSnapshot(conversationId: string, snapshotId: string): Promise<void> {
         const snapshot = await this.storage.loadSnapshot(snapshotId);
@@ -702,23 +702,23 @@ export class ConversationManager {
     }
 
     /**
-     * 鍒犻櫎蹇収
+     * 删除快照
      */
     async deleteSnapshot(snapshotId: string): Promise<void> {
         await this.storage.deleteSnapshot(snapshotId);
     }
 
     /**
-     * 鍒楀嚭瀵硅瘽鐨勬墍鏈夊揩鐓?
+     * 列出对话的所有快照
      */
     async listSnapshots(conversationId: string): Promise<string[]> {
         return await this.storage.listSnapshots(conversationId);
     }
 
-    // ==================== 缁熻淇℃伅 ====================
+    // ==================== 统计信息 ====================
 
     /**
-     * 鑾峰彇缁熻淇℃伅
+     * 获取统计信息
      */
     async getStats(conversationId: string): Promise<ConversationStats> {
         const history = await this.loadHistory(conversationId);
@@ -738,7 +738,7 @@ export class ConversationManager {
             documents: 0
         };
         
-        // Token 缁熻
+        // Token 统计
         let totalThoughtsTokens = 0;
         let totalCandidatesTokens = 0;
         let messagesWithThoughtsTokens = 0;
@@ -751,7 +751,7 @@ export class ConversationManager {
                 modelMessages++;
             }
             
-            // 缁熻 token锛堜紭鍏堜娇鐢?usageMetadata锛屽悜鍚庡吋瀹规棫鏍煎紡锛?
+            // 统计 token（优先使用 usageMetadata，向后兼容旧格式）
             const thoughtsTokens = message.usageMetadata?.thoughtsTokenCount ?? message.thoughtsTokenCount;
             const candidatesTokens = message.usageMetadata?.candidatesTokenCount ?? message.candidatesTokenCount;
             
@@ -765,35 +765,35 @@ export class ConversationManager {
             }
 
             for (const part of message.parts) {
-                // 鍑芥暟璋冪敤
+                // 函数调用
                 if (part.functionCall) {
                     functionCalls++;
                 }
                 
-                // 妫€鏌ユ€濊€冪鍚?
+                // 检查思考签名
                 if (part.thoughtSignatures) {
                     hasThoughtSignatures = true;
                 }
                 
-                // 妫€鏌ユ€濊€冨唴瀹?
+                // 检查思考内容
                 if (part.thought === true) {
                     hasThoughts = true;
                 }
                 
-                // 妫€鏌ユ枃浠舵暟鎹?
+                // 检查文件数据
                 if (part.fileData) {
                     hasFileData = true;
                 }
                 
-                // 妫€鏌ュ唴宓屾暟鎹?
+                // 检查内嵌数据
                 if (part.inlineData) {
                     hasInlineData = true;
                     
-                    // 璁＄畻 Base64 鏁版嵁澶у皬锛堢害涓哄師濮嬫暟鎹殑 4/3锛?
+                    // 计算 Base64 数据大小（约为原始数据的 4/3）
                     const base64Length = part.inlineData.data.length;
                     inlineDataSize += Math.ceil((base64Length * 3) / 4);
                     
-                    // 缁熻澶氭ā鎬佺被鍨?
+                    // 统计多模态类型
                     const mimeType = part.inlineData.mimeType;
                     if (mimeType.startsWith('image/')) {
                         multimedia.images++;
@@ -830,27 +830,27 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇閫傚悎 API 璋冪敤鐨勫璇濆巻鍙?
+     * 获取适合 API 调用的对话历史
      *
-     * 姝ゆ柟娉曡繑鍥炴牸寮忓寲鐨勫巻鍙茶褰曪紝绉婚櫎鍐呴儴瀛楁锛堝 token 璁℃暟锛?
+     * 此方法返回格式化的历史记录，移除内部字段（如 token 计数）
      *
-     * 鎬濊€冨唴瀹硅繃婊ょ瓥鐣ワ細
-     * - 榛樿鎯呭喌涓嬶紝鍙繚鐣欐渶鍚庝竴涓潪鍑芥暟鍝嶅簲 user 娑堟伅鍙婁箣鍚庣殑鎬濊€冨唴瀹瑰拰绛惧悕
-     * - 濡傛灉鍚敤 sendHistoryThoughts锛屽垯淇濈暀鎵€鏈夊巻鍙叉€濊€冨唴瀹?
-     * - 濡傛灉鍚敤 sendHistoryThoughtSignatures锛屽垯淇濈暀鎵€鏈夊巻鍙叉€濊€冪鍚嶏紙鎸夋笭閬撶被鍨嬭繃婊わ級
+     * 思考内容过滤策略：
+     * - 默认情况下，只保留最后一个非函数响应 user 消息及之后的思考内容和签名
+     * - 如果启用 sendHistoryThoughts，则保留所有历史思考内容
+     * - 如果启用 sendHistoryThoughtSignatures，则保留所有历史思考签名（按渠道类型过滤）
      *
-     * @param conversationId 瀵硅瘽 ID
-     * @param options 閫夐」瀵硅薄锛堝悜鍚庡吋瀹癸細濡傛灉浼犲叆 boolean锛岃涓?includeThoughts锛?
-     * @returns 鏍煎紡鍖栫殑瀵硅瘽鍘嗗彶锛岀Щ闄や簡 token 璁℃暟瀛楁
+     * @param conversationId 对话 ID
+     * @param options 选项对象（向后兼容：如果传入 boolean，视为 includeThoughts）
+     * @returns 格式化的对话历史，移除了 token 计数字段
      *
      * @example
-     * // 涓嶅惈鎬濊€冿紙鐢ㄤ簬甯歌 API 璋冪敤锛?
+     * // 不含思考（用于常规 API 调用）
      * const history = await manager.getHistoryForAPI('chat-001');
      *
-     * // 鍚€濊€冿紙鐢ㄤ簬甯︽€濊€冪殑 API 璋冪敤锛屽 Gemini 3锛?
+     * // 含思考（用于带思考的 API 调用，如 Gemini 3）
      * const historyWithThoughts = await manager.getHistoryForAPI('chat-001', { includeThoughts: true });
      *
-     * // 鍙戦€佹墍鏈夊巻鍙叉€濊€冪鍚嶏紙Gemini 鏍煎紡锛?
+     * // 发送所有历史思考签名（Gemini 格式）
      * const historyWithSignatures = await manager.getHistoryForAPI('chat-001', {
      *     includeThoughts: true,
      *     sendHistoryThoughtSignatures: true,
@@ -863,12 +863,12 @@ export class ConversationManager {
     ): Promise<ConversationHistory> {
         let history = await this.loadHistory(conversationId);
         
-        // 鍚戝悗鍏煎锛氬鏋滀紶鍏?boolean锛岃涓?includeThoughts
+        // 向后兼容：如果传入 boolean，视为 includeThoughts
         const opts: GetHistoryOptions = typeof options === 'boolean'
             ? { includeThoughts: options }
             : options;
         
-        // 搴旂敤璧峰绱㈠紩锛堢敤浜庝笂涓嬫枃瑁佸壀锛?
+        // 应用起始索引（用于上下文裁剪）
         const startIndex = opts.startIndex ?? 0;
         if (startIndex > 0 && startIndex < history.length) {
             history = history.slice(startIndex);
@@ -877,14 +877,14 @@ export class ConversationManager {
         const includeThoughts = opts.includeThoughts ?? false;
         const sendHistoryThoughts = opts.sendHistoryThoughts ?? false;
         const sendHistoryThoughtSignatures = opts.sendHistoryThoughtSignatures ?? false;
-        // 褰撳墠杞閰嶇疆锛氬鏋滄病鏈変紶锛孉nthropic 榛樿鍏ㄤ紶锛孏emini/OpenAI 榛樿涓嶄紶鏂囨湰鍐呭
+        // 当前轮次配置：如果没有传，Anthropic 默认全传，Gemini/OpenAI 默认不传文本内容
         const sendCurrentThoughts = opts.sendCurrentThoughts ?? (opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
         const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
         const channelType = opts.channelType;
-        // 鍘嗗彶鎬濊€冨洖鍚堟暟锛岄粯璁?-1 琛ㄧず鍏ㄩ儴
+        // 历史思考回合数，默认 -1 表示全部
         const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
         
-        // 鎵惧埌鏈€鍚庝竴涓潪鍑芥暟鍝嶅簲鐨?user 娑堟伅鐨勭储寮?
+        // 找到最后一个非函数响应的 user 消息的索引
         let lastNonFunctionResponseUserIndex = -1;
         for (let i = history.length - 1; i >= 0; i--) {
             const message = history[i];
@@ -894,8 +894,8 @@ export class ConversationManager {
             }
         }
         
-        // 璇嗗埆鎵€鏈夊洖鍚堝苟璁＄畻鍝簺鍥炲悎闇€瑕佸彂閫佸巻鍙叉€濊€?
-        // 鍥炲悎瀹氫箟锛氫粠涓€涓潪鍑芥暟鍝嶅簲鐨?user 娑堟伅寮€濮嬶紝鍒颁笅涓€涓潪鍑芥暟鍝嶅簲鐨?user 娑堟伅涔嬪墠缁撴潫
+        // 识别所有回合并计算哪些回合需要发送历史思考
+        // 回合定义：从一个非函数响应的 user 消息开始，到下一个非函数响应的 user 消息之前结束
         const roundStartIndices: number[] = [];
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
@@ -904,66 +904,66 @@ export class ConversationManager {
             }
         }
         
-        // 璁＄畻闇€瑕佸彂閫佸巻鍙叉€濊€冪殑娑堟伅绱㈠紩鑼冨洿
-        // historyThinkingRounds 鎺у埗鍙戦€佸灏戣疆闈炴渶鏂板洖鍚堢殑鎬濊€?
-        let historyThoughtMinIndex = 0;  // 鏈€灏忕储寮曪紙鍖呭惈锛?
-        let historyThoughtMaxIndex = lastNonFunctionResponseUserIndex;  // 鏈€澶х储寮曪紙涓嶅寘鍚紝鍥犱负鏈€鏂板洖鍚堢敱 sendCurrentThoughts 鎺у埗锛?
+        // 计算需要发送历史思考的消息索引范围
+        // historyThinkingRounds 控制发送多少轮非最新回合的思考
+        let historyThoughtMinIndex = 0;  // 最小索引（包含）
+        let historyThoughtMaxIndex = lastNonFunctionResponseUserIndex;  // 最大索引（不包含，由 sendCurrentThoughts 控制）
         
         if (historyThinkingRounds === 0) {
-            // 0 琛ㄧず涓嶅彂閫佷换浣曞巻鍙插洖鍚堢殑鎬濊€?
-            // 璁剧疆 min > max 浣胯寖鍥存棤鏁?
+            // 0 表示不发送任何历史回合的思考
+            // 设置 min > max 使范围无效
             historyThoughtMinIndex = history.length;
             historyThoughtMaxIndex = -1;
         } else if (historyThinkingRounds > 0) {
-            // 姝ｆ暟 n 琛ㄧず鍙戦€佹渶杩?n 杞潪鏈€鏂板洖鍚堢殑鎬濊€?
-            // 渚嬪 historyThinkingRounds=1锛屾€诲叡鏈?5 涓洖鍚堬紙绱㈠紩 0-4锛夛紝鏈€鏂板洖鍚堟槸 4
-            // 閭ｄ箞鍙彂閫佸洖鍚?3锛堝€掓暟绗簩鍥炲悎锛夌殑鎬濊€?
+            // 正数 n 表示发送最近 n 轮非最新回合的思考
+            // 例如 historyThinkingRounds=1，总共有 5 个回合（索引 0-4），最新回合是 4
+            // 那么只发送回合 3（倒数第二回合）的思考
             const totalRounds = roundStartIndices.length;
             
             if (totalRounds > 1) {
-                // 闇€瑕佽烦杩囩殑鍥炲悎鏁?= 鎬诲洖鍚堟暟 - 1锛堟渶鏂板洖鍚堬級 - historyThinkingRounds
+                // 需要跳过的回合数 = 总回合数 - 1（最新回合） - historyThinkingRounds
                 const roundsToSkip = Math.max(0, totalRounds - 1 - historyThinkingRounds);
                 
                 if (roundsToSkip > 0 && roundsToSkip < totalRounds) {
-                    // 浠?roundsToSkip 鍥炲悎寮€濮嬪彂閫?
+                    // 从 roundsToSkip 回合开始发送
                     historyThoughtMinIndex = roundStartIndices[roundsToSkip];
                 }
             }
         }
-        // historyThinkingRounds === -1 鏃朵繚鎸侀粯璁ゅ€硷紝鍙戦€佹墍鏈夊巻鍙插洖鍚堢殑鎬濊€?
+        // historyThinkingRounds === -1 时保持默认值，发送所有历史回合的思考
         
         /**
-         * 澶勭悊鍗曚釜 part 鐨勬€濊€冪鍚?
-         * 鏍规嵁閰嶇疆鍐冲畾鏄惁淇濈暀绛惧悕锛屽苟鎸夋笭閬撶被鍨嬭繃婊?
+         * 处理单个 part 的思考签名
+         * 根据配置决定是否保留签名，并按渠道类型过滤
          *
-         * 娉ㄦ剰锛氭€濊€冪鍚嶅彂閫佷笉渚濊禆浜?includeThoughts锛堟笭閬撴槸鍚︽敮鎸佹€濊€冿級
-         * 杩欐槸鍥犱负鍘嗗彶涓殑绛惧悕鍙兘鏉ヨ嚜浠讳綍娓犻亾锛堝 Gemini锛夛紝鑰屽綋鍓嶄娇鐢ㄥ叾浠栨笭閬撶户缁璇?
-         * 鐢ㄦ埛鍙兘甯屾湜灏?Gemini 浜х敓鐨勭鍚嶅彂閫佺粰鍏朵粬娓犻亾
+         * 注意：思考签名发送不依赖于 includeThoughts（渠道是否支持思考）
+         * 这是因为历史中的签名可能来自任何渠道（如 Gemini），而当前使用其他渠道继续对话
+         * 用户可能希望将 Gemini 产生的签名发送给其他渠道
          *
-         * @param part 瑕佸鐞嗙殑 part
-         * @param isHistoryPart 鏄惁鏄巻鍙叉秷鎭腑鐨?part
-         * @param messageIndex 娑堟伅鍦ㄥ巻鍙蹭腑鐨勭储寮?
+         * @param part 要处理的 part
+         * @param isHistoryPart 是否是历史消息中的 part
+         * @param messageIndex 消息在历史中的索引
          */
         const processThoughtSignatures = (
             part: ContentPart,
             isHistoryPart: boolean,
             messageIndex: number
         ): ContentPart => {
-            // 1. 澶勭悊鍘嗗彶娑堟伅鐨勭鍚?
+            // 1. 处理历史消息的签名
             if (isHistoryPart) {
                 if (!sendHistoryThoughtSignatures) {
                     const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
                     return rest;
                 }
-                // 妫€鏌ユ槸鍚﹀湪鍏佽鐨勫巻鍙叉€濊€冨洖鍚堣寖鍥村唴
+                // 检查是否在允许的历史思考回合范围内
                 const isInHistoryThoughtRange = messageIndex >= historyThoughtMinIndex && messageIndex < historyThoughtMaxIndex;
                 if (!isInHistoryThoughtRange) {
                     const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
                     return rest;
                 }
             } else {
-                // 2. 澶勭悊褰撳墠杞鐨勭鍚?
-                // 褰撳墠杞鐨勭鍚嶅彂閫佺敱 sendCurrentThoughtSignatures 鐙珛鎺у埗
+                // 2. 处理当前轮次的签名
+                // 当前轮次的签名发送由 sendCurrentThoughtSignatures 独立控制
                 if (!sendCurrentThoughtSignatures) {
                     const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
                     return rest;
@@ -974,7 +974,7 @@ export class ConversationManager {
                 return part;
             }
             
-            // 3. 濡傛灉鎸囧畾浜嗘笭閬撶被鍨嬶紝鍙繚鐣欏搴旀牸寮忕殑绛惧悕
+            // 3. 如果指定了渠道类型，只保留对应格式的签名
             if (channelType && part.thoughtSignatures[channelType]) {
                 return {
                     ...part,
@@ -984,86 +984,86 @@ export class ConversationManager {
                 };
             }
             
-            // 濡傛灉娌℃湁鎸囧畾娓犻亾绫诲瀷鎴栨病鏈夊搴旀牸寮忕殑绛惧悕锛屼繚鐣欏師鏍?
+            // 如果没有指定渠道类型或没有对应格式的签名，保留原样
             return part;
         };
         
         /**
-         * 鏀寔鐨勫浘鐗?MIME 绫诲瀷
+         * 支持的图片 MIME 类型
          */
         const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
         
         /**
-         * 鏀寔鐨勬枃妗?MIME 绫诲瀷
+         * 支持的文档 MIME 类型
          */
         const DOCUMENT_MIME_TYPES = ['application/pdf', 'text/plain'];
         
         /**
-         * 娓呯悊 inlineData 涓殑鍏冩暟鎹瓧娈?
+         * 清理 inlineData 中的元数据字段
          *
-         * 鏍规嵁娓犻亾绫诲瀷鍐冲畾淇濈暀鍝簺瀛楁锛?
-         * - Gemini: 淇濈暀 mimeType, data, displayName锛圙emini API 鏀寔 displayName锛?
-         * - OpenAI/Anthropic: 鍙繚鐣?mimeType, data锛堜笉鏀寔 displayName锛?
+         * 根据渠道类型决定保留哪些字段：
+         * - Gemini: 保留 mimeType, data, displayName（Gemini API 支持 displayName）
+         * - OpenAI/Anthropic: 只保留 mimeType, data（不支持 displayName）
          *
-         * id 鍜?name 瀛楁浠呯敤浜庡瓨鍌ㄥ拰鍓嶇鏄剧ず锛屽缁堜笉鍙戦€佺粰 AI
+         * id 和 name 字段仅用于存储和前端显示，始终不发送给 AI
          *
-         * 澶氭ā鎬佽兘鍔涜繃婊ょ瓥鐣ワ細
-         * - 鐢ㄦ埛涓诲姩鎻愪氦鐨勯檮浠朵笉鍙楀妯℃€佸伐鍏烽厤缃奖鍝?
-         * - 瀵逛簬宸ュ叿鍝嶅簲娑堟伅锛?
-         *   - 濡傛灉娓犻亾涓嶆敮鎸佸妯℃€侊紙濡?OpenAI function_call锛夛紝濮嬬粓杩囨护
-         *   - 濡傛灉娓犻亾鏀寔浣嗕笉鏀寔鍘嗗彶澶氭ā鎬侊紝鍙繃婊ゅ巻鍙蹭腑鐨勫妯℃€佹暟鎹?
-         *   - 鍚﹀垯淇濈暀澶氭ā鎬佹暟鎹?
+         * 多模态能力过滤策略：
+         * - 用户主动提交的附件不受多模态工具配置影响
+         * - 对于工具响应消息：
+         *   - 如果渠道不支持多模态（如 OpenAI function_call），始终过滤
+         *   - 如果渠道支持但不支持历史多模态，只过滤历史中的多模态数据
+         *   - 否则保留多模态数据
          *
-         * @param part 瑕佸鐞嗙殑 ContentPart
-         * @param isFunctionResponse 鏄惁鏄伐鍏峰搷搴旀秷鎭?
-         * @param isHistoryMessage 鏄惁鏄巻鍙叉秷鎭紙褰撳墠杞涔嬪墠鐨勬秷鎭級
+         * @param part 要处理的 ContentPart
+         * @param isFunctionResponse 是否是工具响应消息
+         * @param isHistoryMessage 是否是历史消息（当前轮次之前的消息）
          */
         const cleanInlineData = (part: ContentPart, isFunctionResponse: boolean, isHistoryMessage: boolean): ContentPart | null => {
             if (!part.inlineData) {
                 return part;
             }
             
-            // 鑾峰彇澶氭ā鎬佽兘鍔涢厤缃?
+            // 获取多模态能力配置
             const capability = opts.multimodalCapability;
             
-            // 澶氭ā鎬佽兘鍔涜繃婊ょ瓥鐣ワ紙浠呭宸ュ叿鍝嶅簲娑堟伅鐢熸晥锛夛細
-            // 鐢ㄦ埛涓诲姩鎻愪氦鐨勯檮浠朵笉鍙楀妯℃€佸伐鍏烽厤缃奖鍝?
+            // 多模态能力过滤策略（仅对工具响应消息生效）：
+            // 用户主动提交的附件不受多模态工具配置影响
             if (capability && isFunctionResponse) {
                 const mimeType = part.inlineData.mimeType;
                 
-                // 棣栧厛妫€鏌ユ笭閬撴槸鍚︽敮鎸佹绫诲瀷鐨勫妯℃€?
-                // 濡傛灉涓嶆敮鎸侊紝鍗充娇鏄綋鍓嶈疆娆′篃瑕佽繃婊わ紙濡?OpenAI function_call 妯″紡锛?
+                // 首先检查渠道是否支持此类型的多模态
+                // 如果不支持，即使是当前轮次也要过滤（如 OpenAI function_call 模式）
                 const isImage = IMAGE_MIME_TYPES.includes(mimeType);
                 const isDocument = DOCUMENT_MIME_TYPES.includes(mimeType);
                 
                 if (isImage && !capability.supportsImages) {
-                    // 娓犻亾涓嶆敮鎸佸浘鐗囷紙濡?OpenAI function_call锛夛紝濮嬬粓杩囨护
+                    // 渠道不支持图片（如 OpenAI function_call），始终过滤
                     return null;
                 }
                 
                 if (isDocument && !capability.supportsDocuments) {
-                    // 娓犻亾涓嶆敮鎸佹枃妗ｏ紝濮嬬粓杩囨护
+                    // 渠道不支持文档，始终过滤
                     return null;
                 }
                 
-                // 娓犻亾鏀寔姝ょ被鍨嬶紝浣嗛渶瑕佹鏌ユ槸鍚︽敮鎸佸巻鍙插妯℃€?
-                // 濡傛灉鏄巻鍙叉秷鎭笖涓嶆敮鎸佸巻鍙插妯℃€侊紝鍒欒繃婊?
+                // 渠道支持此类型，但需要检查是否支持历史多模态
+                // 如果是历史消息且不支持历史多模态，则过滤
                 if (isHistoryMessage && !capability.supportsHistoryMultimodal) {
                     return null;
                 }
             }
             
-            // 鏍规嵁娓犻亾绫诲瀷鍐冲畾鏄惁淇濈暀 displayName
-            // Gemini 鏀寔 displayName锛孫penAI/Anthropic 涓嶆敮鎸?
+            // 根据渠道类型决定是否保留 displayName
+            // Gemini 支持 displayName，OpenAI/Anthropic 不支持
             if (channelType === 'gemini') {
-                // Gemini: 淇濈暀 displayName锛岀Щ闄?id 鍜?name
+                // Gemini: 保留 displayName，移除 id 和 name
                 const { id, name, ...cleanedInlineData } = part.inlineData;
                 return {
                     ...part,
                     inlineData: cleanedInlineData
                 };
             } else {
-                // OpenAI/Anthropic/Custom: 绉婚櫎 id, name, displayName
+                // OpenAI/Anthropic/Custom: 移除 id, name, displayName
                 const { id, name, displayName, ...cleanedInlineData } = part.inlineData;
                 return {
                     ...part,
@@ -1072,7 +1072,7 @@ export class ConversationManager {
             }
         };
         
-        // 棣栧厛鏀堕泦鎵€鏈夎鎷掔粷鐨勫伐鍏疯皟鐢?ID
+        // 首先收集所有被拒绝的工具调用 ID
         const rejectedToolCallIds = new Set<string>();
         for (const message of history) {
             for (const part of message.parts) {
@@ -1083,17 +1083,17 @@ export class ConversationManager {
         }
         
         /**
-         * 娓呯悊 functionCall 涓殑鍐呴儴瀛楁
+         * 清理 functionCall 中的内部字段
          *
-         * rejected 瀛楁鏄唴閮ㄤ娇鐢ㄧ殑锛岀敤浜庢爣璁扮敤鎴锋嫆缁濇墽琛岀殑宸ュ叿
-         * 涓嶅簲璇ュ彂閫佺粰 AI API锛屽洜涓?API 涓嶈瘑鍒瀛楁
+         * rejected 字段是内部使用的，用于标记用户拒绝执行的工具
+         * 不应该发送给 AI API，因为 API 不识别此字段
          */
         const cleanFunctionCall = (part: ContentPart): ContentPart => {
             if (!part.functionCall) {
                 return part;
             }
             
-            // 绉婚櫎 rejected 瀛楁
+            // 移除 rejected 字段
             const { rejected, ...cleanedFunctionCall } = part.functionCall;
             return {
                 ...part,
@@ -1102,22 +1102,22 @@ export class ConversationManager {
         };
         
         /**
-         * 澶勭悊 functionResponse
+         * 处理 functionResponse
          *
-         * 濡傛灉瀵瑰簲鐨?functionCall 琚爣璁颁负 rejected锛?
-         * 闇€瑕佸皢 response 淇敼涓鸿〃绀鸿鎷掔粷鐨勭姸鎬侊紝
-         * 杩欐牱 AI 鎵嶈兘鐭ラ亾宸ュ叿娌℃湁琚墽琛?
+         * 如果对应的 functionCall 被标记为 rejected，
+         * 需要将 response 修改为表示被拒绝的状态，
+         * 这样 AI 才能知道工具没有被执行
          *
-         * 鍚屾椂娓呯悊涓嶅簲鍙戦€佺粰 AI 鐨勫唴閮ㄥ瓧娈碉紙濡?diffContentId锛?
+         * 同时清理不应发送给 AI 的内部字段（如 diffContentId）
          */
         const processFunctionResponse = (part: ContentPart): ContentPart => {
             if (!part.functionResponse) {
                 return part;
             }
             
-            // 妫€鏌ュ搴旂殑 functionCall 鏄惁琚嫆缁?
+            // 检查对应的 functionCall 是否被拒绝
             if (part.functionResponse.id && rejectedToolCallIds.has(part.functionResponse.id)) {
-                // 淇敼 response 涓鸿〃绀鸿鎷掔粷鐨勭姸鎬?
+                // 修改 response 为表示被拒绝的状态
                 return {
                     ...part,
                     functionResponse: {
@@ -1131,7 +1131,7 @@ export class ConversationManager {
                 };
             }
             
-            // 娓呯悊涓嶅簲鍙戦€佺粰 AI 鐨勫唴閮ㄥ瓧娈碉紙浣跨敤鍏变韩鍑芥暟纭繚涓€鑷存€э級
+            // 清理不应发送给 AI 的内部字段（使用共享函数确保一致性）
             const cleanedResponse = cleanFunctionResponseForAPI(
                 part.functionResponse.response as Record<string, unknown>
             );
@@ -1146,53 +1146,53 @@ export class ConversationManager {
         };
         
         /**
-         * 澶勭悊鍗曟潯娑堟伅
+         * 处理单条消息
          */
         const processMessage = (message: Content, index: number): Content | null => {
             const isHistoryMessage = index < lastNonFunctionResponseUserIndex;
-            // 妫€鏌ユ秷鎭槸鍚︽槸宸ュ叿鍝嶅簲锛堢敤浜庡喅瀹氭槸鍚﹀簲鐢ㄥ妯℃€佽兘鍔涜繃婊わ級
+            // 检查消息是否是工具响应（用于决定是否应用多模态能力过滤）
             const isFunctionResponse = !!message.isFunctionResponse;
             
             let parts = message.parts;
             
-            // 澶勭悊鎬濊€冨唴瀹?(Thought Text/Reasoning Content)
-            // 娉ㄦ剰锛氭€濊€冨彂閫佷笉渚濊禆浜?includeThoughts锛堟笭閬撴槸鍚︽敮鎸佹€濊€冿級
-            // 杩欐槸鍥犱负鍘嗗彶涓殑鎬濊€冨唴瀹瑰彲鑳芥潵鑷换浣曟笭閬擄紙濡?Gemini锛夛紝鑰屽綋鍓嶄娇鐢ㄥ叾浠栨笭閬撶户缁璇?
-            // 鐢ㄦ埛鍙兘甯屾湜灏?Gemini 浜х敓鐨勬€濊€冨唴瀹瑰彂閫佺粰 OpenAI/Anthropic 娓犻亾
+            // 处理思考内容 (Thought Text/Reasoning Content)
+            // 注意：思考发送不依赖于 includeThoughts（渠道是否支持思考）
+            // 这是因为历史中的思考内容可能来自任何渠道（如 Gemini），而当前使用其他渠道继续对话
+            // 用户可能希望将 Gemini 产生的思考内容发送给 OpenAI/Anthropic 渠道
             if (isHistoryMessage) {
-                // 鍘嗗彶娑堟伅锛氭牴鎹?sendHistoryThoughts 閰嶇疆鍜?historyThinkingRounds 鍐冲畾
+                // 历史消息：根据 sendHistoryThoughts 配置和 historyThinkingRounds 决定
                 if (!sendHistoryThoughts) {
-                    // 浠呰繃婊ゆ帀绾€濊€冨唴瀹癸紝淇濈暀鍖呭惈绛惧悕鐨?Part
+                    // 仅过滤掉纯思考内容，保留包含签名的 Part
                     parts = parts.filter(part => !part.thought || part.thoughtSignatures);
                 } else {
-                    // 妫€鏌ュ綋鍓嶆秷鎭槸鍚﹀湪鍏佽鐨勫巻鍙叉€濊€冨洖鍚堣寖鍥村唴
+                    // 检查当前消息是否在允许的历史思考回合范围内
                     const isInHistoryThoughtRange = index >= historyThoughtMinIndex && index < historyThoughtMaxIndex;
                     if (!isInHistoryThoughtRange) {
                         parts = parts.filter(part => !part.thought);
                     }
                 }
             } else {
-                // 褰撳墠杞 (Latest Round)
-                // 褰撳墠杞鐨勬€濊€冨彂閫佺敱 sendCurrentThoughts 鐙珛鎺у埗
+                // 当前轮次 (Latest Round)
+                // 当前轮次的思考发送由 sendCurrentThoughts 独立控制
                 if (!sendCurrentThoughts) {
-                    // 浠呰繃婊ゆ帀绾€濊€冨唴瀹癸紝淇濈暀鍖呭惈绛惧悕鐨?Part
+                    // 仅过滤掉纯思考内容，保留包含签名的 Part
                     parts = parts.filter(part => !part.thought || part.thoughtSignatures);
                 }
             }
             
-            // 澶勭悊鎬濊€冪鍚嶃€佹竻鐞?inlineData 鍏冩暟鎹€佹竻鐞?functionCall 鍐呴儴瀛楁銆佸鐞嗚鎷掔粷鐨勫伐鍏峰搷搴?
-            // 娉ㄦ剰锛氬彧鏈夊巻鍙蹭腑鐨勫伐鍏峰搷搴旀秷鎭墠浼氬簲鐢?supportsHistoryMultimodal 杩囨护
-            // 褰撳墠杞鐨勫伐鍏峰搷搴斿缁堜繚鐣欏妯℃€佹暟鎹?
+            // 处理思考签名、清理 inlineData 元数据、清理 functionCall 内部字段、处理被拒绝的工具响应
+            // 注意：只有历史中的工具响应消息才会应用 supportsHistoryMultimodal 过滤
+            // 当前轮次的工具响应始终保留多模态数据
             parts = parts
                 .map(part => processThoughtSignatures(part, isHistoryMessage, index))
                 .map(part => cleanInlineData(part, isFunctionResponse, isHistoryMessage))
                 .map(part => part ? cleanFunctionCall(part) : part)
                 .map(part => part ? processFunctionResponse(part) : part)
-                // 杩囨护绌?part锛?
-                // - null锛堣 cleanInlineData 绛夎繃婊わ級
-                // - 绌哄璞?
-                // - 浠呭寘鍚?thought: true 鐨勨€滅┖ thought 鍧椻€濓紙甯歌浜庯細鍘熸湰鍙湁 thoughtSignatures锛屽悗缁張琚厤缃繃婊ゆ帀绛惧悕锛?
-                //   杩欑被 part 鍦ㄤ笉鍚屾ā鍨?娓犻亾涓嬪彲鑳藉鑷村吋瀹规€ч棶棰樸€?
+                // 过滤空 part：
+                // - null（被 cleanInlineData 等过滤）
+                // - 空对象
+                // - 仅包含 thought: true 的“空 thought 块”（常见于：原本只有 thoughtSignatures，后续又被配置过滤掉签名）
+                //   这类 part 在不同模型/渠道下可能导致兼容性问题。
                 .filter((part): part is ContentPart => {
                     if (part === null) return false;
                     const keys = Object.keys(part);
@@ -1205,13 +1205,13 @@ export class ConversationManager {
                 return null;
             }
             
-            // 淇濈暀蹇呰鐨勫厓鏁版嵁瀛楁
+            // 保留必要的元数据字段
             const result: Content = {
                 role: message.role,
                 parts
             };
             
-            // 淇濈暀 isUserInput 鏍囪锛堢敤浜庣‘瀹氬姩鎬佹彁绀鸿瘝鎻掑叆浣嶇疆锛?
+            // 保留 isUserInput 标记（用于确定动态提示词插入位置）
             if (message.isUserInput) {
                 result.isUserInput = true;
             }
@@ -1219,16 +1219,16 @@ export class ConversationManager {
             return result;
         };
         
-        // 澶勭悊鎵€鏈夋秷鎭?
+        // 处理所有消息
         return history
             .map((message, index) => processMessage(message, index))
             .filter((message): message is Content => message !== null);
     }
 
-    // ==================== 鍏冩暟鎹鐞?====================
+    // ==================== 元数据管理 ====================
 
     /**
-     * 璁剧疆瀵硅瘽鏍囬
+     * 设置对话标题
      */
     async setTitle(conversationId: string, title: string): Promise<void> {
         let meta = await this.loadMetadataForWrite(conversationId);
@@ -1248,7 +1248,7 @@ export class ConversationManager {
     }
 
     /**
-     * 璁剧疆宸ヤ綔鍖?URI
+     * 设置工作区 URI
      */
     async setWorkspaceUri(conversationId: string, workspaceUri: string): Promise<void> {
         let meta = await this.loadMetadataForWrite(conversationId);
@@ -1269,7 +1269,7 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇瀵硅瘽鍏冩暟鎹?
+     * 获取对话元数据
      */
     async getMetadata(conversationId: string): Promise<ConversationMetadata | null> {
         const [metadataResult, historyResult, integrity] = await Promise.all([
@@ -1300,7 +1300,7 @@ export class ConversationManager {
     }
 
     /**
-     * 璁剧疆鑷畾涔夊厓鏁版嵁
+     * 设置自定义元数据
      */
     async setCustomMetadata(
         conversationId: string,
@@ -1328,24 +1328,24 @@ export class ConversationManager {
     }
 
     /**
-     * 鑾峰彇鑷畾涔夊厓鏁版嵁
+     * 获取自定义元数据
      */
     async getCustomMetadata(conversationId: string, key: string): Promise<unknown> {
         const meta = await this.getMetadata(conversationId);
         return meta?.custom?.[key];
     }
 
-    // ==================== 宸ュ叿璋冪敤绠＄悊 ====================
+    // ==================== 工具调用管理 ====================
 
     /**
-     * 鏍囪鎸囧畾娑堟伅涓殑宸ュ叿璋冪敤涓烘嫆缁濈姸鎬?
+     * 标记指定消息中的工具调用为拒绝状态
      *
-     * 褰撶敤鎴峰湪绛夊緟宸ュ叿纭鏃剁偣鍑荤粓姝㈡寜閽紝闇€瑕佸皢绛夊緟涓殑宸ュ叿鏍囪涓烘嫆缁?
-     * 鍚屾椂娣诲姞瀵瑰簲鐨?functionResponse锛岃繖鏍?API 鎵嶄笉浼氭姤閿?
+     * 当用户在等待工具确认时点击终止按钮，需要将等待中的工具标记为拒绝
+     * 同时添加对应的 functionResponse，这样 API 才不会报错
      *
-     * @param conversationId 瀵硅瘽 ID
-     * @param messageIndex 娑堟伅绱㈠紩
-     * @param toolCallIds 瑕佹爣璁颁负鎷掔粷鐨勫伐鍏疯皟鐢?ID 鍒楄〃锛堝鏋滀负绌猴紝鍒欐爣璁版墍鏈夋湭鎵ц鐨勫伐鍏凤級
+     * @param conversationId 对话 ID
+     * @param messageIndex 消息索引
+     * @param toolCallIds 要标记为拒绝的工具调用 ID 列表（如果为空，则标记所有未执行的工具）
      */
     async rejectToolCalls(
         conversationId: string,
@@ -1361,7 +1361,7 @@ export class ConversationManager {
         const message = history[messageIndex];
         let modified = false;
         
-        // 鏀堕泦鎵€鏈夊凡鏈夊搷搴旂殑宸ュ叿 ID
+        // 收集所有已有响应的工具 ID
         const respondedToolIds = new Set<string>();
         for (let i = messageIndex + 1; i < history.length; i++) {
             const msg = history[i];
@@ -1372,13 +1372,13 @@ export class ConversationManager {
             }
         }
         
-        // 鏀堕泦闇€瑕佹嫆缁濈殑宸ュ叿璋冪敤
+        // 收集需要拒绝的工具调用
         const rejectedCalls: Array<{ id: string; name: string }> = [];
         
-        // 鏍囪宸ュ叿涓烘嫆缁濈姸鎬?
+        // 标记工具为拒绝状态
         for (const part of message.parts) {
             if (part.functionCall && part.functionCall.id) {
-                // 妫€鏌ユ槸鍚﹂渶瑕佹爣璁版宸ュ叿
+                // 检查是否需要标记此工具
                 const shouldReject = toolCallIds
                     ? toolCallIds.includes(part.functionCall.id)
                     : !respondedToolIds.has(part.functionCall.id);
@@ -1387,7 +1387,7 @@ export class ConversationManager {
                     part.functionCall.rejected = true;
                     modified = true;
                     
-                    // 鏀堕泦琚嫆缁濈殑宸ュ叿淇℃伅
+                    // 收集被拒绝的工具信息
                     rejectedCalls.push({
                         id: part.functionCall.id,
                         name: part.functionCall.name || 'unknown'
@@ -1396,7 +1396,7 @@ export class ConversationManager {
             }
         }
         
-        // 涓鸿鎷掔粷鐨勫伐鍏锋坊鍔?functionResponse
+        // 为被拒绝的工具添加 functionResponse
         if (rejectedCalls.length > 0) {
             const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
                 functionResponse: {
@@ -1410,7 +1410,7 @@ export class ConversationManager {
                 }
             }));
             
-            // 鍦ㄥ伐鍏疯皟鐢ㄦ秷鎭殑绱ф帴鍚庨潰鎻掑叆 functionResponse
+            // 在工具调用消息的紧接后面插入 functionResponse
             history.splice(messageIndex + 1, 0, {
                 role: 'user',
                 parts: rejectedResponseParts,
@@ -1425,18 +1425,18 @@ export class ConversationManager {
     }
     
     /**
-     * 鎷掔粷鎵€鏈夋湭鍝嶅簲鐨勫伐鍏疯皟鐢?
+     * 拒绝所有未响应的工具调用
      * 
-     * 鐢ㄤ簬鐢ㄦ埛涓柇鎿嶄綔锛堝垹闄ゆ秷鎭€佸垏鎹㈠璇濈瓑锛夋椂锛屽皢鎵€鏈?pending 鐨勫伐鍏疯皟鐢ㄦ爣璁颁负 rejected
-     * 骞跺湪宸ュ叿璋冪敤娑堟伅绱ф帴鍚庨潰鎻掑叆 functionResponse
+     * 用于用户中断操作（删除消息、切换对话等）时，将所有 pending 的工具调用标记为 rejected
+     * 并在工具调用消息紧接后面插入 functionResponse
      * 
-     * @param conversationId 瀵硅瘽 ID
+     * @param conversationId 对话 ID
      */
     async rejectAllPendingToolCalls(conversationId: string): Promise<void> {
         const history = await this.loadHistory(conversationId);
         if (history.length === 0) return;
         
-        // 鏀堕泦鎵€鏈?functionResponse 鐨?ID
+        // 收集所有 functionResponse 的 ID
         const respondedToolCallIds = new Set<string>();
         for (const message of history) {
             if (message.parts) {
@@ -1448,14 +1448,14 @@ export class ConversationManager {
             }
         }
         
-        // 鏀堕泦鏈搷搴旂殑宸ュ叿璋冪敤锛岃褰曞畠浠墍鍦ㄧ殑娑堟伅绱㈠紩
+        // 收集未响应的工具调用，记录它们所在的消息索引
         const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
             if (message.parts) {
                 for (const part of message.parts) {
                     if (part.functionCall && part.functionCall.id) {
-                        // 濡傛灉宸ュ叿璋冪敤娌℃湁瀵瑰簲鐨勫搷搴旓紝涓旇繕娌℃湁琚爣璁颁负 rejected
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
                         if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
                             part.functionCall.rejected = true;
                             const calls = unresolvedCallsByIndex.get(i) || [];
@@ -1470,8 +1470,8 @@ export class ConversationManager {
             }
         }
         
-        // 濡傛灉鏈夋湭鍝嶅簲鐨勫伐鍏疯皟鐢紝鍦ㄥ伐鍏疯皟鐢ㄦ秷鎭揣鎺ュ悗闈㈡彃鍏?functionResponse
-        // 浠庡悗寰€鍓嶆彃鍏ヤ互閬垮厤绱㈠紩鍋忕Щ闂
+        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+        // 从后往前插入以避免索引偏移问题
         if (unresolvedCallsByIndex.size > 0) {
             const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
             
@@ -1489,7 +1489,7 @@ export class ConversationManager {
                     }
                 }));
                 
-                // 鍦ㄥ伐鍏疯皟鐢ㄦ秷鎭殑绱ф帴鍚庨潰鎻掑叆
+                // 在工具调用消息的紧接后面插入
                 history.splice(messageIndex + 1, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,

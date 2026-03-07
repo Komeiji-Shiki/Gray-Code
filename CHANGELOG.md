@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.3] - 2026-03-07
+
+### Fixed
+  - 修复两个源代码里的注释编码问题
+  - 修复Anthropic格式下input token，total token记录问题
+
 ## [1.1.2] - 2026-03-07
 
 ### Fixed
