@@ -334,12 +334,15 @@ export function bufferBackgroundChunk(
       case 'cancelled':
         snapshot.isStreaming = false
         snapshot.isWaitingForResponse = false
-        snapshot.activeStreamId = null
+        // 注意：不清除 activeStreamId！
+        // 1) updateTabStreamingStatus 需要它来验证 chunk 属于当前流
+        // 2) 切换标签页后回放缓冲 chunk 时需要它通过 streamId 校验
+        // 3) 回放时 handleComplete/handleCancelled/handleError 会自然清除
         break
       case 'awaitingConfirmation':
         snapshot.isStreaming = false
         snapshot.isWaitingForResponse = true
-        snapshot.activeStreamId = null
+        // 同上：不清除 activeStreamId，回放时 handleAwaitingConfirmation 会自然清除
         break
       case 'chunk':
       case 'toolsExecuting':
