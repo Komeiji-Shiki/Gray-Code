@@ -1244,7 +1244,19 @@ export class ChatFlowService {
       }
     }
 
-    // 5. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
+    // 5. 检查是否已被中断
+    // cancelStream 会先触发 abort 信号再调用 rejectAllPendingToolCalls，
+    // 后者可能已经为尚未返回结果的工具调用插入了 rejected functionResponse。
+    // 此处跳过持久化以避免同一 tool_use_id 出现重复的 functionResponse。
+    if (request.abortSignal?.aborted) {
+      yield {
+        conversationId,
+        cancelled: true as const,
+      } as any;
+      return;
+    }
+
+    // 6. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
     if (responseParts.length > 0 || multimodalAttachments.length > 0) {
       const confirmFunctionResponseParts = multimodalAttachments.length > 0
         ? [...multimodalAttachments, ...responseParts]

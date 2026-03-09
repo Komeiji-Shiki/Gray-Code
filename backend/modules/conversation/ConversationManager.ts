@@ -331,7 +331,7 @@ export class ConversationManager {
     }
 
     /**
-     * 添加完整的 Content 对象
+     * 添加完整的 Content 对象（对 functionResponse 自动去重）
      */
     async addContent(conversationId: string, content: Content): Promise<void> {
         const history = await this.loadHistory(conversationId);
@@ -340,6 +340,31 @@ export class ConversationManager {
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
+
+        // 去重：如果本次添加的是 functionResponse 消息，过滤掉历史中已有响应的 tool call ID。
+        // 这是一道安全网，防止 cancelStream→rejectAllPendingToolCalls 与工具执行循环之间的
+        // 竞态条件导致同一 tool_use_id 出现多条 functionResponse（会触发 API 400 错误）。
+        if (contentCopy.isFunctionResponse && contentCopy.parts) {
+            const existingResponseIds = new Set<string>();
+            for (const msg of history) {
+                if (msg.parts) {
+                    for (const part of msg.parts) {
+                        if (part.functionResponse?.id) {
+                            existingResponseIds.add(part.functionResponse.id);
+                        }
+                    }
+                }
+            }
+
+            contentCopy.parts = contentCopy.parts.filter((part: any) =>
+                !(part.functionResponse?.id && existingResponseIds.has(part.functionResponse.id))
+            );
+
+            if (contentCopy.parts.length === 0) {
+                return; // 所有 parts 均已有响应，无需添加空消息
+            }
+        }
+
         history.push(contentCopy);
         await this.storage.saveHistory(conversationId, history);
     }
