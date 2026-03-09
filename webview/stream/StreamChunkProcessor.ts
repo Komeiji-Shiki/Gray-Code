@@ -105,12 +105,20 @@ export class StreamChunkProcessor {
       // 终结事件立即刷新，确保前端立即收到完成信号
       this.flush();
     } else if ('cancelled' in chunk && chunk.cancelled) {
+      // 先 flush 缓冲的 chunk，确保前端先收到已有内容，
+      // 避免 cancelled 与 chunk 合并到同一 batch 导致空消息被误删
+      if (this.messageBuffer.length > 0) {
+        this.flush();
+      }
       this.enqueue('cancelled', { content: chunk.content });
-      // 终结事件立即刷新
       this.flush();
     } else if ('error' in chunk && chunk.error) {
+      // 先 flush 缓冲的 chunk，确保前端先收到已有内容，
+      // 避免 error 与 chunk 合并到同一 batch 导致空消息被误删
+      if (this.messageBuffer.length > 0) {
+        this.flush();
+      }
       this.enqueue('error', { error: chunk.error });
-      // 错误消息立即刷新，确保调用方可以安全 break
       this.flush();
       return true;
     }
@@ -122,6 +130,10 @@ export class StreamChunkProcessor {
    * 发送错误消息（立即刷新）
    */
   sendError(code: string, message: string): void {
+    // 先 flush 缓冲的 chunk，确保前端先收到已有内容
+    if (this.messageBuffer.length > 0) {
+      this.flush();
+    }
     this.enqueue('error', {
       error: { code, message }
     });

@@ -134,8 +134,8 @@ export function handleStreamChunk(
  * 批量处理多条流式响应（性能优化）。
  *
  * 优化策略：
- * 1. 如果 batch 中包含终结事件（complete/toolsExecuting/toolIteration/awaitingConfirmation/cancelled/error），
- *    跳过终结事件之前的所有 chunk 类型消息（因为终结事件会用后端权威数据覆盖前端流式状态），
+ * 1. 如果 batch 中包含携带替代内容的终结事件（complete/toolsExecuting/toolIteration/awaitingConfirmation），
+ *    跳过该终结事件之前的所有 chunk 类型消息（因为终结事件会用后端权威数据覆盖前端流式状态），
  *    避免对即将被覆盖的 partialArgs 做无意义的 JSON.parse。
  * 2. 将连续的 toolStatus chunk 合并为一次 allMessages 替换。
  * 3. 整个批量在同一同步上下文中完成，
@@ -159,7 +159,11 @@ export function handleStreamChunkBatch(
   // 查找 batch 中最后一个终结事件的位置
   // 终结事件会用后端权威数据完整覆盖前端流式状态，
   // 所以终结事件之前的 chunk 类型消息可以全部跳过
-  const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation', 'cancelled', 'error'])
+  // 注意：仅包含"携带替代内容"的终结事件（它们通过 contentToMessage 替换消息）。
+  // error/cancelled 不在此列，因为它们不携带替代内容，
+  // 其处理器依赖消息已有的内容来决定是否删除消息——
+  // 如果跳过前面的 chunk，消息会被误判为空并删除，导致内容闪现后消失。
+  const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation'])
   let lastTerminalIndex = -1
   for (let k = chunks.length - 1; k >= 0; k--) {
     const candidate = chunks[k]
