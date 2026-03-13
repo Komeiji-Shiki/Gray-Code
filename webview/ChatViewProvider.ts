@@ -109,6 +109,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // 初始化状态
     private initPromise: Promise<void>;
 
+    // 消息处理队列，用于确保消息按顺序处理（解决技能切换与对话请求的竞态问题）
+    private messageHandlingQueue: Promise<void> = Promise.resolve();
+
     // 本地开发模式：前端 Vite 开发服务器地址（仅在 ExtensionMode.Development 生效）
     private readonly webviewDevServerUrl?: string;
 
@@ -256,6 +259,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 19. 初始化设置处理器（传入工具注册器）
         this.settingsHandler = new SettingsHandler(this.settingsManager, toolRegistry);
+        this.settingsHandler.setConversationManager(this.conversationManager);
         
         // 20. 订阅终端输出事件
         this.terminalOutputUnsubscribe = onTerminalOutput((event) => {
@@ -514,7 +518,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 监听来自 webview 的消息
         webviewView.webview.onDidReceiveMessage(
             async (message) => {
-                await this.handleMessage(message);
+                // 将消息处理包装在队列中，确保按顺序执行
+                this.messageHandlingQueue = this.messageHandlingQueue.then(() => 
+                    this.handleMessage(message)
+                ).catch(err => {
+                    console.error('[ChatViewProvider] Error in message handling queue:', err);
+                });
             },
             undefined,
             this.context.subscriptions

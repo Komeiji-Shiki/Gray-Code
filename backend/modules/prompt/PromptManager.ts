@@ -24,7 +24,7 @@ import type { PinnedFileItem, SkillConfigItem } from '../settings/types'
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
 
-type DynamicRuntimeContext = {
+export type DynamicRuntimeContext = {
     /** ConversationMetadata.custom['todoList'] */
     todoList?: unknown
 
@@ -197,7 +197,7 @@ export class PromptManager {
     /**
      * 获取系统提示词（使用缓存）
      */
-    getSystemPrompt(forceRefresh: boolean = false): string {
+    getSystemPrompt(forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
         const now = Date.now()
         
         // 检查缓存是否有效
@@ -208,7 +208,7 @@ export class PromptManager {
         }
         
         // 生成新的提示词
-        this.cachedPrompt = this.generatePrompt()
+        this.cachedPrompt = this.generatePrompt(runtime)
         this.lastGeneratedAt = now
         
         return this.cachedPrompt
@@ -222,8 +222,8 @@ export class PromptManager {
      * - 用户删除首条消息后重新发送
      * - 用户编辑首条消息后重试
      */
-    refreshAndGetPrompt(): string {
-        return this.getSystemPrompt(true)
+    refreshAndGetPrompt(runtime?: DynamicRuntimeContext): string {
+        return this.getSystemPrompt(true, runtime)
     }
     
     /**
@@ -233,13 +233,13 @@ export class PromptManager {
      * 用户可以通过设置自定义模板内容
      * 根据当前模式使用对应的模板
      */
-    private generatePrompt(): string {
+    private generatePrompt(runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         
         // 获取当前模式的模板（SettingsManager 会根据 currentModeId 返回正确的模板）
         const template = settingsManager?.getSystemPromptTemplate() || promptConfig?.template || ''
-        return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '')
+        return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
     }
     
     /**
@@ -253,7 +253,7 @@ export class PromptManager {
      * 
      * 动态内容（时间、文件树、标签页等）由 getDynamicContextMessages() 方法生成
      */
-    private generateFromTemplate(template: string, customPrefix: string, customSuffix: string): string {
+    private generateFromTemplate(template: string, customPrefix: string, customSuffix: string, runtime?: DynamicRuntimeContext): string {
         // 静态模块（不会频繁变化）
         const modules: Record<string, string> = {
             'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),

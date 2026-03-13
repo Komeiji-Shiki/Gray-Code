@@ -255,6 +255,7 @@ export class ToolIterationLoopService {
         // 缓存存储在回合起始用户消息的 turnDynamicContext 字段上，确保每个回合独立
         let dynamicContextMessages: Content[];
         let dynamicContextText: string;
+        let runtimeContext: any = undefined;
 
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
@@ -262,7 +263,7 @@ export class ToolIterationLoopService {
 
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
-            const runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
             dynamicContextMessages = this.promptManager.getDynamicContextMessages(runtimeContext);
             dynamicContextText = this.promptManager.getDynamicContextText(runtimeContext);
 
@@ -279,6 +280,8 @@ export class ToolIterationLoopService {
                 role: 'user' as const,
                 parts: [{ text: dynamicContextText }]
             }];
+            // 加载 runtime 以便解析系统提示词
+            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
         }
 
         // -1 表示无限制
@@ -415,8 +418,8 @@ export class ToolIterationLoopService {
             // 4. 获取静态系统提示词（可被 API provider 缓存）
             // 静态部分包含：操作系统、时区、用户语言、工作区路径、工具定义
             const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
-                ? this.promptManager.refreshAndGetPrompt()
-                : this.promptManager.getSystemPrompt();  // 静态内容不需要强制刷新
+                ? this.promptManager.refreshAndGetPrompt(runtimeContext)
+                : this.promptManager.getSystemPrompt(false, runtimeContext);
 
             // 5. 记录请求开始时间
             const requestStartTime = Date.now();
@@ -757,7 +760,7 @@ export class ToolIterationLoopService {
             const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
-            const dynamicSystemPrompt = this.promptManager.getSystemPrompt();
+            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(false, runtimeContext);
 
             // 调用 AI（非流式）
             const response = await this.channelManager.generate({

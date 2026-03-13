@@ -102,7 +102,7 @@ export class ContextTrimService {
      * 保存裁剪状态到持久化存储
      */
     private async saveTrimState(conversationId: string, state: PersistedTrimState): Promise<void> {
-        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
+     await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
     }
     
     /**
@@ -439,24 +439,29 @@ export class ContextTrimService {
             savedState = null;
         }
         
+        // 加载 runtime 元数据以便正确生成系统提示词和动态上下文
+        const [todoList, pinnedFiles, skills] = await Promise.all([
+            this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
+        ]);
+
+        const runtime = {
+            todoList,
+            pinnedFiles,
+            skills
+        };
+
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
-        const systemPrompt = this.promptManager.getSystemPrompt();
+        // 传入 runtime 以便正确解析模板中的变量
+        const systemPrompt = this.promptManager.getSystemPrompt(false, runtime);
         
         // 使用预生成的动态上下文文本（如果传入），否则内部生成
         let dynamicContextText: string;
         if (precomputedDynamicContextText !== undefined) {
             dynamicContextText = precomputedDynamicContextText;
         } else {
-            const [todoList, pinnedFiles, skills] = await Promise.all([
-                this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
-                this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
-                this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
-            ]);
-            dynamicContextText = this.promptManager.getDynamicContextText({
-                todoList,
-                pinnedFiles,
-                skills
-            });
+            dynamicContextText = this.promptManager.getDynamicContextText(runtime);
         }
         
         // 查找缺失 token 数的用户消息
