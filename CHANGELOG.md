@@ -3,10 +3,16 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.6] - 2026-03-13
+
+### Fixed
+  - 提高了设置页面中 Token 统计的准确性，并增强了消息处理管道的稳定性
+
 ## [1.1.5] - 2026-03-10
 
 ### Fixed
   - 修复了切换模型时，发送为gemini格式时，思考签名导致的空括号问题
+  - 提高了设置页面中 Token 统计的准确性，并增强了消息处理管道的稳定性
 
 ## [1.1.4] - 2026-03-09
 
