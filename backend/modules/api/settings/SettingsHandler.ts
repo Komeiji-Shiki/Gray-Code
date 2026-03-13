@@ -9,6 +9,7 @@ import type { SettingsManager } from '../../settings/SettingsManager';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
 import { TokenCountService } from '../../channel/TokenCountService';
 import { getPromptManager } from '../../prompt/PromptManager';
+import type { ConversationManager } from '../../conversation/ConversationManager';
 import type {
     GetSettingsRequest,
     GetSettingsResponse,
@@ -43,6 +44,7 @@ import type {
  */
 export class SettingsHandler {
     private tokenCountService: TokenCountService;
+    private conversationManager?: ConversationManager;
     
     constructor(
         private settingsManager: SettingsManager,
@@ -52,6 +54,10 @@ export class SettingsHandler {
         this.tokenCountService = new TokenCountService(
             proxySettings?.enabled ? proxySettings.url : undefined
         );
+    }
+
+    setConversationManager(manager: ConversationManager) {
+        this.conversationManager = manager;
     }
     
     /**
@@ -730,6 +736,7 @@ export class SettingsHandler {
     async countSystemPromptTokensSeparate(request: {
         staticText: string;
         channelType: 'gemini' | 'openai' | 'anthropic';
+        conversationId?: string;
     }): Promise<{
         success: boolean;
         staticTokens?: number;
@@ -737,7 +744,7 @@ export class SettingsHandler {
         error?: { code: string; message: string };
     }> {
         try {
-            const { channelType } = request;
+            const { channelType, conversationId } = request;
             
             // 获取 token 计数配置
             const tokenCountConfig = this.settingsManager.getTokenCountConfig();
@@ -748,12 +755,25 @@ export class SettingsHandler {
                 proxySettings?.enabled ? proxySettings.url : undefined
             );
             
+            // 尝试获取会话级的运行时数据
+            let runtime: any = undefined;
+            if (conversationId && this.conversationManager) {
+                const meta = await this.conversationManager.getMetadata(conversationId);
+                if (meta?.custom) {
+                    runtime = {
+                        todoList: meta.custom.todoList,
+                        pinnedFiles: meta.custom.inputPinnedFiles,
+                        skills: meta.custom.inputSkills
+                    };
+                }
+            }
+
             // 使用 PromptManager 生成实际的系统提示词（替换占位符后的内容）
             const promptManager = getPromptManager();
-            const actualSystemPrompt = promptManager.refreshAndGetPrompt();
+            const actualSystemPrompt = promptManager.refreshAndGetPrompt(runtime);
             
             // 获取实际的动态上下文内容
-            const dynamicText = promptManager.getDynamicContextText();
+            const dynamicText = promptManager.getDynamicContextText(runtime);
             
             // 准备静态模板的 token 计数请求
             const staticContents = [{

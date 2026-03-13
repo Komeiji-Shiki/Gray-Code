@@ -2,11 +2,12 @@
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
-import { useSettingsStore } from '@/stores'
+import { useSettingsStore, useChatStore } from '@/stores'
 import { CustomSelect, InputDialog, ConfirmDialog, type SelectOption } from '../common'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const chatStore = useChatStore()
 
 // 渠道类型
 type ChannelType = 'gemini' | 'openai' | 'anthropic'
@@ -653,7 +654,7 @@ async function saveConfig() {
     const baseMode: PromptMode = currentMode || {
       id: selectedModeId.value,
       name: '默认模式',
-      icon: 'symbol-method',
+     icon: 'symbol-method',
       template: DEFAULT_TEMPLATE,
       dynamicTemplateEnabled: true,
       dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
@@ -697,7 +698,7 @@ async function saveConfig() {
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
     saveMessage.value = t('components.settings.promptSettings.saveFailed')
-  } finally{
+  } finally {
     isSaving.value = false
   }
 }
@@ -721,7 +722,8 @@ async function countTokens() {
       error?: string
     }>('countSystemPromptTokens', {
       staticText: config.template,
-      channelType: selectedChannel.value
+      channelType: selectedChannel.value,
+      conversationId: chatStore.currentConversationId
     })
     
     if (result?.success) {

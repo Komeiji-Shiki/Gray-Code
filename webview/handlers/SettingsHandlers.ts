@@ -213,8 +213,12 @@ export const deletePromptMode: MessageHandler = async (data, requestId, ctx) => 
  */
 export const countSystemPromptTokens: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { staticText, channelType } = data;
-    const result = await ctx.settingsHandler.countSystemPromptTokensSeparate({ staticText, channelType });
+    const { staticText, channelType, conversationId } = data;
+    const result = await ctx.settingsHandler.countSystemPromptTokensSeparate({ 
+      staticText, 
+      channelType,
+      conversationId 
+    });
     if (result.success) {
       ctx.sendResponse(requestId, { 
         success: true, 
