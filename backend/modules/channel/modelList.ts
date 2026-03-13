@@ -90,16 +90,26 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
 
     // 循环获取所有分页数据
     do {
-      const params = new URLSearchParams({ key: apiKey, pageSize: '1000' });
+      const params = new URLSearchParams({ pageSize: '1000' });
+      // 未启用 useAuthorizationHeader 时，将 apiKey 放入 query parameter
+      if (!(config as any).useAuthorizationHeader) {
+        params.set('key', apiKey);
+      }
       if (pageToken) {
         params.set('pageToken', pageToken);
       }
 
       const headers: Record<string, string> = {};
+      // 启用 useAuthorizationHeader 时，使用 Authorization Bearer 格式
+      if ((config as any).useAuthorizationHeader) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        headers['x-goog-api-key'] = apiKey;
+      }
       // 应用自定义标头
       applyCustomHeaders(headers, config);
 
-      const response = await proxyFetch(`${url}/models?${params.toString()}`, Object.keys(headers).length > 0 ? { headers } : undefined);
+      const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
 
       if (!response.ok) {
         throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
@@ -263,9 +273,14 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
       pageCount += 1;
 
       const headers: Record<string, string> = {
-        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       };
+      // 根据 useAuthorizationHeader 选项决定认证方式
+      if ((config as any).useAuthorizationHeader) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        headers['x-api-key'] = apiKey;
+      }
       // 应用自定义标头
       applyCustomHeaders(headers, config);
 
