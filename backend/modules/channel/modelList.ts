@@ -7,6 +7,7 @@
 
 import { t } from '../../i18n';
 import type { ChannelConfig } from '../config/types';
+import type { CustomHeader } from '../config/configs/base';
 import { createProxyFetch } from './proxyFetch';
 
 /**
@@ -27,6 +28,21 @@ export interface ModelInfo {
   
   /** 最大输出token */
   maxOutputTokens?: number;
+}
+
+/**
+ * 从渠道配置中提取已启用的自定义标头，合并到已有的 headers 对象中
+ */
+function applyCustomHeaders(headers: Record<string, string>, config: ChannelConfig): void {
+  const cfg = config as any;
+  if (cfg.customHeadersEnabled && cfg.customHeaders) {
+    for (const header of cfg.customHeaders as CustomHeader[]) {
+      // 只添加启用的、有键名的标头
+      if (header.enabled && header.key && header.key.trim()) {
+        headers[header.key.trim()] = header.value || '';
+      }
+    }
+  }
 }
 
 /**
@@ -79,7 +95,11 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
         params.set('pageToken', pageToken);
       }
 
-      const response = await proxyFetch(`${url}/models?${params.toString()}`);
+      const headers: Record<string, string> = {};
+      // 应用自定义标头
+      applyCustomHeaders(headers, config);
+
+      const response = await proxyFetch(`${url}/models?${params.toString()}`, Object.keys(headers).length > 0 ? { headers } : undefined);
 
       if (!response.ok) {
         throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
@@ -151,10 +171,14 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
 
       pageCount += 1;
 
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`
+      };
+      // 应用自定义标头
+      applyCustomHeaders(headers, config);
+
       const response = await proxyFetch(`${url}/models?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
+        headers
       });
 
       if (!response.ok) {
@@ -238,11 +262,15 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
 
       pageCount += 1;
 
+      const headers: Record<string, string> = {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      };
+      // 应用自定义标头
+      applyCustomHeaders(headers, config);
+
       const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        }
+        headers
       });
 
       if (!response.ok) {

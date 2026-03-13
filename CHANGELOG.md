@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.7] - 2026-03-13
+
+### Fixed
+  - 修复了获取模型时，自定义标头不起作用的问题
+
 ## [1.1.6] - 2026-03-13
 
 ### Fixed
