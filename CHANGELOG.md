@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.8] - 2026-03-16
+
+### Improved
+  - 重构前端回复查看器并统一查看回复入口命名
+
 ## [1.1.7] - 2026-03-13
 
 ### Fixed
