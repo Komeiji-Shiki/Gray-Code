@@ -176,6 +176,13 @@ export interface StreamChunk {
     
     /** 模型版本（仅最后一个块包含） */
     modelVersion?: string;
+
+    /**
+     * 当前已经归一化的内容快照
+     *
+     * 当流式内容发生结构改写时（如工具调用参数补全），后端会附带该快照。
+     */
+    contentSnapshot?: Content;
     
     /**
      * 思考开始时间戳（毫秒）

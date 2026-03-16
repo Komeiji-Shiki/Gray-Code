@@ -9,7 +9,7 @@ import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../
 import type { StreamChunk, StreamUsageMetadata } from './types';
 import type { ToolMode } from '../config/configs/base';
 import { parseXMLToolCalls } from '../../tools/xmlFormatter';
-import { getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
+import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
 
 // JSON 工具调用边界标记
 const TOOL_CALL_START = '<<<TOOL_CALL>>>';
@@ -76,32 +76,33 @@ export class StreamAccumulator {
     
     /** 请求开始时间戳（毫秒） - 由外部设置 */
     private requestStartTime?: number;
+
+    /** 当前请求的工具模式 */
+    private readonly toolMode: ToolMode;
+
+    /** 当前请求的工具调用 ID 工厂 */
+    private readonly createToolCallId: () => string;
+
+    /** Prompt 模式下的增量工具解析器 */
+    private promptToolParser?: IncrementalPromptToolParser;
     
+    constructor(
+        toolMode: ToolMode = 'function_call',
+        createToolCallId: () => string = () => `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+    ) {
+        this.toolMode = toolMode;
+        this.createToolCallId = createToolCallId;
+
+        if (toolMode === 'json' || toolMode === 'xml') {
+            this.promptToolParser = new IncrementalPromptToolParser(toolMode);
+        }
+    }
+
     /**
      * 获取工具模式
-     * 优先使用当前激活渠道的 toolMode，否则使用全局默认
      */
     private getToolMode(): ToolMode {
-        const settingsManager = getGlobalSettingsManager();
-        const configManager = getGlobalConfigManager();
-        
-        if (settingsManager && configManager) {
-            const activeChannelId = settingsManager.getActiveChannelId();
-            if (activeChannelId) {
-                // 同步获取配置（配置已在缓存中）
-                // 注意：getConfig 是异步的，但这里我们需要同步获取
-                // 使用内部缓存直接访问
-                const configCache = (configManager as any).configCache as Map<string, any>;
-                const config = configCache?.get(activeChannelId);
-                if (config?.toolMode) {
-                    return config.toolMode;
-                }
-            }
-            // 使用全局默认工具模式
-            return settingsManager.getDefaultToolMode();
-        }
-        
-        return 'function_call';
+        return this.toolMode;
     }
 
     /**
@@ -163,8 +164,9 @@ export class StreamAccumulator {
      *
      * @param chunk 流式响应块
      */
-    add(chunk: StreamChunk): void {
+    add(chunk: StreamChunk): ContentPart[] {
         const now = Date.now();
+        const visibleDelta: ContentPart[] = [];
         
         // 增加块计数
         this.chunkCount++;
@@ -181,7 +183,14 @@ export class StreamAccumulator {
         // 即使已经 done，也要处理 delta（虽然通常 done 后 delta 为空）
         if (chunk.delta && chunk.delta.length > 0) {
             for (const part of chunk.delta) {
-                this.addPart(part);
+                this.addPart(part, { visibleDelta });
+            }
+        }
+
+        if (chunk.done && this.promptToolParser) {
+            const trailingParts = this.promptToolParser.flushIncompleteAsText();
+            for (const part of trailingParts) {
+                this.addPart(part, { skipPromptParser: true, visibleDelta });
             }
         }
         
@@ -205,6 +214,8 @@ export class StreamAccumulator {
         if (chunk.done) {
             this.isDone = true;
         }
+
+        return visibleDelta;
     }
     
     /**
@@ -229,7 +240,34 @@ export class StreamAccumulator {
      * - 文本 part：尝试与相同类型的最后一个 part 合并
      * - 非文本 part（functionCall、thoughtSignature 等）：直接添加，保持原始结构
      */
-    private addPart(part: ContentPart): void {
+    private addPart(
+        part: ContentPart,
+        options?: {
+            skipPromptParser?: boolean;
+            visibleDelta?: ContentPart[];
+        }
+    ): void {
+        if (!options?.skipPromptParser && this.promptToolParser && part.text && !part.thought) {
+            const parsedParts = this.promptToolParser.appendText(part.text);
+            for (const parsedPart of parsedParts) {
+                this.addPart(parsedPart, {
+                    skipPromptParser: true,
+                    visibleDelta: options?.visibleDelta
+                });
+            }
+            return;
+        }
+
+        if (part.functionCall && !(part.functionCall as any).id) {
+            (part.functionCall as any).id = this.createToolCallId();
+        }
+
+        if (options?.visibleDelta && part.text !== undefined) {
+            options.visibleDelta.push(part.thought ? { text: part.text, thought: true } : { text: part.text });
+        } else if (options?.visibleDelta && part.functionCall) {
+            options.visibleDelta.push({ functionCall: { ...(part.functionCall as any) } });
+        }
+
         // 提取 thoughtSignature 用于内部追踪
         if ((part as any).thoughtSignature) {
             this.thoughtSignatures[this.providerType] = (part as any).thoughtSignature;
@@ -242,8 +280,17 @@ export class StreamAccumulator {
         
         // 处理非文本 part
         if (!('text' in part)) {
+            if (part.functionCall && this.thinkingStartTime !== undefined && !this.hasReceivedNormalText) {
+                this.hasReceivedNormalText = true;
+                this.thinkingDuration = Date.now() - this.thinkingStartTime;
+            }
+
             if (part.functionCall) {
                 const fc = part.functionCall as any;
+
+                if (!fc.id) {
+                    fc.id = this.createToolCallId();
+                }
                 
                 // 倒序搜索现有的 parts，寻找可以合并的工具调用块
                 // 解决并行调用或中间穿插其他消息导致的 lastPart 匹配失败问题
@@ -465,7 +512,7 @@ export class StreamAccumulator {
                                 functionCall: {
                                     name: toolCall.tool,
                                     args: toolCall.parameters,
-                                    id: `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+                                    id: this.createToolCallId()
                                 }
                             });
                         } else {
@@ -503,7 +550,7 @@ export class StreamAccumulator {
                                     functionCall: {
                                         name: xmlCall.name,
                                         args: xmlCall.args,
-                                        id: `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+                                        id: this.createToolCallId()
                                     }
                                 });
                             }
@@ -735,6 +782,10 @@ export class StreamAccumulator {
         this.firstChunkTime = undefined;
         this.lastChunkTime = undefined;
         this.requestStartTime = undefined;
+
+        if (this.promptToolParser) {
+            this.promptToolParser.reset();
+        }
     }
     
     /**

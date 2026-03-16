@@ -162,10 +162,6 @@ export async function restoreAndRetry(
       console.error('Failed to delete messages from backend:', err)
     }
     
-    // 4. 重置工具调用缓冲区
-    state.toolCallBuffer.value = ''
-    state.inToolCall.value = null
-    
     // 5. 开始流式重试
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
@@ -349,11 +345,7 @@ export async function restoreAndEdit(
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
     clearCheckpointsFromIndex(state, backendMessageIndex)
     setTotalMessagesFromWindow(state)
-    
-    // 4. 重置工具调用缓冲区
-    state.toolCallBuffer.value = ''
-    state.inToolCall.value = null
-    
+
     // 5. 开始流式编辑重试
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true

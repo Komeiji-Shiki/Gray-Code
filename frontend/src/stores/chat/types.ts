@@ -171,10 +171,6 @@ export interface ChatStoreState {
   retryStatus: Ref<RetryStatus | null>
   /** 自动总结状态（用于显示“自动总结中”提示） */
   autoSummaryStatus: Ref<AutoSummaryStatus | null>
-  /** 工具调用缓冲区 */
-  toolCallBuffer: Ref<string>
-  /** 当前是否在工具调用标记内 */
-  inToolCall: Ref<'xml' | 'json' | null>
   /** 当前对话的检查点列表 */
   checkpoints: Ref<CheckpointRecord[]>
   /** 存档点配置：是否合并无变更的存档点 */
@@ -304,10 +300,6 @@ export interface ConversationSessionSnapshot {
   historyFolded: boolean
   /** 折叠消息数 */
   foldedMessageCount: number
-  /** 工具调用缓冲区 */
-  toolCallBuffer: string
-  /** 工具调用标记 */
-  inToolCall: 'xml' | 'json' | null
   /** 输入框内容 */
   inputValue: string
   /** 模型覆盖 */
@@ -335,14 +327,3 @@ export interface TabInfo {
   /** 是否正在流式响应中 */
   isStreaming: boolean
 }
-
-// ============ 常量 ============
-
-/** XML 工具调用开始标记 */
-export const XML_TOOL_START = '<tool_use>'
-/** XML 工具调用结束标记 */
-export const XML_TOOL_END = '</tool_use>'
-/** JSON 工具调用开始标记 */
-export const JSON_TOOL_START = '<<<TOOL_CALL>>>'
-/** JSON 工具调用结束标记 */
-export const JSON_TOOL_END = '<<<END_TOOL_CALL>>>'

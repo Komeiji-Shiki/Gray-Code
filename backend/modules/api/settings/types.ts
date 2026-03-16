@@ -57,7 +57,7 @@ export interface SetToolsEnabledRequest {
  */
 export interface SetDefaultToolModeRequest {
     /** 工具模式 */
-    mode: 'function_call' | 'xml';
+    mode: 'function_call' | 'xml' | 'json';
 }
 
 /**

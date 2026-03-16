@@ -884,14 +884,14 @@ export class SettingsManager {
     /**
      * 获取默认工具模式
      */
-    getDefaultToolMode(): 'function_call' | 'xml' {
+    getDefaultToolMode(): 'function_call' | 'xml' | 'json' {
         return this.settings.defaultToolMode || 'function_call';
     }
     
     /**
      * 设置默认工具模式
      */
-    async setDefaultToolMode(mode: 'function_call' | 'xml'): Promise<void> {
+    async setDefaultToolMode(mode: 'function_call' | 'xml' | 'json'): Promise<void> {
         const oldValue = this.settings.defaultToolMode;
         this.settings.defaultToolMode = mode;
         this.settings.lastUpdated = Date.now();

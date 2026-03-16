@@ -220,7 +220,8 @@
           "default": "function_call",
           "enum": [
             "function_call",
-            "xml"
+            "xml",
+            "json"
           ],
           "description": "默认工具模式（可同步）"
         },

@@ -37,6 +37,10 @@ import {
     TOOL_CALL_START,
     TOOL_CALL_END
 } from '../../../tools/jsonFormatter';
+import {
+    detectPromptToolMode,
+    extractPromptToolParts
+} from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
 import type {
     GenerateRequest,
@@ -659,22 +663,17 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         const contentText = message.content as string;
-        
-        // 检测 JSON 边界标记
-        if (contentText.includes(TOOL_CALL_START)) {
-            return this.extractJSONToolCallsFromContent(contentText, parts);
+
+        const promptMode = detectPromptToolMode(contentText);
+        if (!promptMode) {
+            if (contentText.trim()) {
+                parts.push({ text: contentText });
+            }
+            return parts;
         }
-        
-        // 检测 XML 工具调用
-        if (contentText.includes('<tool_use>')) {
-            return this.extractXMLToolCallsFromContent(contentText, parts);
-        }
-        
-        // 无工具调用，作为纯文本
-        if (contentText.trim()) {
-            parts.push({ text: contentText });
-        }
-        return parts;
+
+        const extracted = extractPromptToolParts(contentText, promptMode, { flushIncompleteTailAsText: true });
+        return [...parts, ...extracted.parts];
     }
     
     /**

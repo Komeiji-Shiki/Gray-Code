@@ -1339,7 +1339,7 @@ export interface GlobalSettings {
      *
      * 当渠道配置未指定时使用
      */
-    defaultToolMode?: 'function_call' | 'xml';
+    defaultToolMode?: 'function_call' | 'xml' | 'json';
     
     /**
      * 代理配置

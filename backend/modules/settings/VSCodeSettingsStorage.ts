@@ -134,7 +134,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             settings.maxToolIterations = config.get('maxToolIterations');
             
             const defaultToolMode = config.get('defaultToolMode');
-            if (defaultToolMode === 'function_call' || defaultToolMode === 'xml') {
+            if (defaultToolMode === 'function_call' || defaultToolMode === 'xml' || defaultToolMode === 'json') {
                 settings.defaultToolMode = defaultToolMode;
             }
 

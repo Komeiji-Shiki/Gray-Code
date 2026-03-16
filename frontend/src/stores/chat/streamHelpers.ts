@@ -8,13 +8,6 @@
 import type { Message } from '../../types'
 import type { ChatStoreState } from './types'
 import { generateId } from '../../utils/format'
-import {
-  XML_TOOL_START,
-  XML_TOOL_END,
-  JSON_TOOL_START,
-  JSON_TOOL_END
-} from './types'
-import { parseXMLToolCall, parseJSONToolCall } from './parsers'
 import { isPerfEnabled } from '../../utils/perf'
 
 
@@ -97,120 +90,24 @@ export function addTextToMessage(message: Message, text: string, isThought: bool
 }
 
 /**
- * 处理流式文本，检测 XML/JSON 工具调用标记
+ * 处理流式文本
+ *
+ * Prompt 模式工具调用现在以后端解析结果为准。
+ * 前端这里只负责把可见文本追加到消息中。
  */
 export function processStreamingText(
   message: Message,
   text: string,
-  state: ChatStoreState
+  _state: ChatStoreState
 ): void {
-  let remainingText = text
-  
-  while (remainingText.length > 0) {
-    if (state.inToolCall.value === null) {
-      // 不在工具调用中，检测开始标记
-      const xmlStartIdx = remainingText.indexOf(XML_TOOL_START)
-      const jsonStartIdx = remainingText.indexOf(JSON_TOOL_START)
-      
-      let startIdx = -1
-      let startType: 'xml' | 'json' | null = null
-      let startMarker = ''
-      
-      if (xmlStartIdx !== -1 && (jsonStartIdx === -1 || xmlStartIdx < jsonStartIdx)) {
-        startIdx = xmlStartIdx
-        startType = 'xml'
-        startMarker = XML_TOOL_START
-      } else if (jsonStartIdx !== -1) {
-        startIdx = jsonStartIdx
-        startType = 'json'
-        startMarker = JSON_TOOL_START
-      }
-      
-      if (startIdx !== -1 && startType) {
-        // 找到开始标记，输出标记前的文本
-        const textBefore = remainingText.substring(0, startIdx)
-        if (textBefore) {
-          addTextToMessage(message, textBefore)
-        }
-        
-        // 进入工具调用状态
-        state.inToolCall.value = startType
-        state.toolCallBuffer.value = startMarker
-        remainingText = remainingText.substring(startIdx + startMarker.length)
-      } else {
-        // 没有找到开始标记，检查是否有部分匹配
-        // 为了简化，如果文本末尾可能是开始标记的前缀，暂存
-        const possiblePrefixes = [
-          XML_TOOL_START.substring(0, Math.min(remainingText.length, XML_TOOL_START.length - 1)),
-          JSON_TOOL_START.substring(0, Math.min(remainingText.length, JSON_TOOL_START.length - 1))
-        ]
-        
-        let foundPartial = false
-        for (const prefix of possiblePrefixes) {
-          if (prefix && remainingText.endsWith(prefix.substring(0, remainingText.length))) {
-            // 可能是部分匹配，但为简化处理，直接输出全部文本
-            // 完整的部分匹配检测会很复杂
-          }
-        }
-        
-        if (!foundPartial) {
-          // 输出全部文本
-          addTextToMessage(message, remainingText)
-          remainingText = ''
-        }
-      }
-    } else {
-      // 在工具调用中，查找结束标记
-      const endMarker = state.inToolCall.value === 'xml' ? XML_TOOL_END : JSON_TOOL_END
-      state.toolCallBuffer.value += remainingText
-      
-      const endIdx = state.toolCallBuffer.value.indexOf(endMarker)
-      if (endIdx !== -1) {
-        // 找到结束标记，解析工具调用
-        const toolContent = state.toolCallBuffer.value.substring(
-          state.inToolCall.value === 'xml' ? XML_TOOL_START.length : JSON_TOOL_START.length,
-          endIdx
-        )
-        
-        const parsed = state.inToolCall.value === 'xml'
-          ? parseXMLToolCall(toolContent)
-          : parseJSONToolCall(toolContent)
-        
-        if (parsed) {
-          // 成功解析，添加 functionCall
-          addFunctionCallToMessage(message, {
-            id: generateId(),
-            name: parsed.name,
-            args: parsed.args
-          })
-        } else {
-          // 解析失败，作为普通文本输出
-          addTextToMessage(message, state.toolCallBuffer.value.substring(0, endIdx + endMarker.length))
-        }
-        
-        // 重置状态，处理剩余文本
-        const afterEnd = state.toolCallBuffer.value.substring(endIdx + endMarker.length)
-        state.inToolCall.value = null
-        state.toolCallBuffer.value = ''
-        remainingText = afterEnd
-      } else {
-        // 未找到结束标记，继续累积
-        remainingText = ''
-      }
-    }
-  }
+  addTextToMessage(message, text)
 }
 
 /**
- * 完成流式时清理工具调用缓冲区
+ * 兼容旧调用链。
+ * Prompt 模式工具缓冲现在位于后端，此处不再需要额外处理。
  */
-export function flushToolCallBuffer(message: Message, state: ChatStoreState): void {
-  if (state.toolCallBuffer.value) {
-    // 如果有未完成的工具调用内容，作为普通文本输出
-    addTextToMessage(message, state.toolCallBuffer.value)
-    state.toolCallBuffer.value = ''
-    state.inToolCall.value = null
-  }
+export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): void {
 }
 
 /**

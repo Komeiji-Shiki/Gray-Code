@@ -12,6 +12,8 @@ import type { Content, ContentPart } from '../../../conversation/types';
 import type { StreamChunk, GenerateResponse } from '../../../channel/types';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import { ChannelError, ErrorType } from '../../../channel/types';
+import type { ToolMode } from '../../../config/configs/base';
+import { generateToolCallId } from '../utils';
 
 /**
  * 流式处理配置
@@ -21,6 +23,8 @@ export interface StreamProcessorConfig {
     requestStartTime: number;
     /** 渠道类型 */
     providerType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+    /** 当前请求的工具模式 */
+    toolMode: ToolMode;
     /** 取消信号 */
     abortSignal?: AbortSignal;
     /** 对话 ID */
@@ -62,12 +66,12 @@ export interface CancelledData {
 export class StreamResponseProcessor {
     private accumulator: StreamAccumulator;
     private config: StreamProcessorConfig;
-    private lastPartsLength: number = 0;
     private cancelled: boolean = false;
+    private previousContent?: Content;
 
     constructor(config: StreamProcessorConfig) {
         this.config = config;
-        this.accumulator = new StreamAccumulator();
+        this.accumulator = new StreamAccumulator(config.toolMode, generateToolCallId);
         this.accumulator.setRequestStartTime(config.requestStartTime);
         this.accumulator.setProviderType(config.providerType);
     }
@@ -91,27 +95,29 @@ export class StreamResponseProcessor {
                     break;
                 }
 
-                this.accumulator.add(chunk);
+                const normalizedDelta = this.accumulator.add(chunk);
 
                 // 获取累加器处理后的 parts（实时转换工具调用标记）
                 const currentContent = this.accumulator.getContent();
-                const currentParts = currentContent.parts;
-
-                // 计算增量 delta
-                const newDelta = currentParts.slice(this.lastPartsLength);
-                this.lastPartsLength = currentParts.length;
+                const shouldSendSnapshot = this.shouldSendContentSnapshot(this.previousContent, currentContent);
 
                 // 构建处理后的 chunk
                 const processedChunk: StreamChunk & { thinkingStartTime?: number } = {
                     ...chunk,
-                    delta: newDelta.length > 0 ? newDelta : chunk.delta
+                    delta: normalizedDelta
                 };
+
+                if (shouldSendSnapshot) {
+                    processedChunk.contentSnapshot = currentContent;
+                }
 
                 // 如果有思考开始时间，添加到 chunk
                 const thinkingStartTime = currentContent.thinkingStartTime;
                 if (thinkingStartTime !== undefined) {
                     processedChunk.thinkingStartTime = thinkingStartTime;
                 }
+
+                this.previousContent = currentContent;
 
                 yield {
                     conversationId: this.config.conversationId,
@@ -197,6 +203,64 @@ export class StreamResponseProcessor {
         };
 
         return { content, chunkData };
+    }
+
+    private shouldSendContentSnapshot(previousContent: Content | undefined, currentContent: Content): boolean {
+        if (!previousContent) {
+            return false;
+        }
+
+        const previousParts = previousContent.parts || [];
+        const currentParts = currentContent.parts || [];
+
+        if (currentParts.length < previousParts.length) {
+            return true;
+        }
+
+        for (let i = 0; i < previousParts.length; i++) {
+            const previousPart = previousParts[i];
+            const currentPart = currentParts[i];
+
+            if (!currentPart) {
+                return true;
+            }
+
+            if (this.arePartsEqual(previousPart, currentPart)) {
+                continue;
+            }
+
+            if (i !== previousParts.length - 1) {
+                return true;
+            }
+
+            if (this.isSafeTextAppend(previousPart, currentPart)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private isSafeTextAppend(previousPart: ContentPart, currentPart: ContentPart): boolean {
+        if (!('text' in previousPart) || !('text' in currentPart)) {
+            return false;
+        }
+        if (previousPart.functionCall || currentPart.functionCall) {
+            return false;
+        }
+        if (previousPart.thought !== currentPart.thought) {
+            return false;
+        }
+        if (typeof previousPart.text !== 'string' || typeof currentPart.text !== 'string') {
+            return false;
+        }
+        return currentPart.text.startsWith(previousPart.text);
+    }
+
+    private arePartsEqual(a: ContentPart, b: ContentPart): boolean {
+        return JSON.stringify(a) === JSON.stringify(b);
     }
 }
 

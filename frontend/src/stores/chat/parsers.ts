@@ -93,19 +93,19 @@ export function isOnlyFunctionResponse(content: Content): boolean {
  */
 export function contentToMessage(content: Content, id?: string): Message {
   const textParts = content.parts.filter(p => p.text && !p.thought)
-  const text = textParts.map(p => p.text).join('\n')
+  const text = textParts.map(p => p.text).join('')
   
   // 提取工具调用信息
   const toolUsages: import('../../types').ToolUsage[] = []
   for (const part of content.parts) {
     if (part.functionCall) {
+      const partialArgs = part.functionCall.partialArgs
       toolUsages.push({
         id: part.functionCall.id || generateId(),
         name: part.functionCall.name,
         args: part.functionCall.args,
-        // functionCall 表示“工具调用已完整出现”，但尚未开始执行。
-        // 后续状态由 toolsExecuting / awaitingConfirmation / toolIteration / diff 状态等更新。
-        status: 'queued'
+        partialArgs,
+        status: typeof partialArgs === 'string' ? 'streaming' : 'queued'
       })
     }
   }
@@ -153,7 +153,7 @@ export function contentToMessage(content: Content, id?: string): Message {
  */
 export function contentToMessageEnhanced(content: Content, id?: string): Message {
   const textParts = content.parts.filter(p => p.text && !p.thought)
-  const text = textParts.map(p => p.text).join('\n')
+  const text = textParts.map(p => p.text).join('')
   
   // 提取工具调用信息（不预先匹配响应）
   const toolUsages: import('../../types').ToolUsage[] = []
@@ -163,12 +163,14 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
   for (const part of content.parts) {
     if (part.functionCall) {
       // 检查是否被拒绝（用户在等待确认时点击了终止按钮）
+      const partialArgs = part.functionCall.partialArgs
       const isRejected = part.functionCall.rejected === true
       toolUsages.push({
         id: part.functionCall.id || generateId(),
         name: part.functionCall.name,
         args: part.functionCall.args,
-        status: isRejected ? 'error' : 'queued'  // 默认视为已排队
+        partialArgs,
+        status: isRejected ? 'error' : (typeof partialArgs === 'string' ? 'streaming' : 'queued')
       })
     }
     
