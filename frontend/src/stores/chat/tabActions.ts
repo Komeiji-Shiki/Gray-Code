@@ -41,8 +41,6 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     autoSummaryStatus: state.autoSummaryStatus.value ? { ...state.autoSummaryStatus.value } : null,
     historyFolded: state.historyFolded.value,
     foldedMessageCount: state.foldedMessageCount.value,
-    toolCallBuffer: state.toolCallBuffer.value,
-    inToolCall: state.inToolCall.value,
     inputValue: state.inputValue.value,
     pendingModelOverride: state.pendingModelOverride.value,
     editorNodes: [...state.editorNodes.value],
@@ -78,8 +76,6 @@ export function restoreSessionFromSnapshot(
   state.autoSummaryStatus.value = snapshot.autoSummaryStatus ? { ...snapshot.autoSummaryStatus } : null
   state.historyFolded.value = snapshot.historyFolded
   state.foldedMessageCount.value = snapshot.foldedMessageCount
-  state.toolCallBuffer.value = snapshot.toolCallBuffer
-  state.inToolCall.value = snapshot.inToolCall
   state.inputValue.value = snapshot.inputValue
   state.pendingModelOverride.value = snapshot.pendingModelOverride
   state.editorNodes.value = [...snapshot.editorNodes]
@@ -111,8 +107,6 @@ export function resetConversationState(state: ChatStoreState): void {
   state.autoSummaryStatus.value = null
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
-  state.toolCallBuffer.value = ''
-  state.inToolCall.value = null
   state.inputValue.value = ''
   state.pendingModelOverride.value = null
   state.selectedModelId.value = state.currentConfig.value?.model || ''

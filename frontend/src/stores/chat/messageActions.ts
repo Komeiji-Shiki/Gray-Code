@@ -289,9 +289,7 @@ export async function sendMessage(
         conv.preview = messageText.slice(0, 50)
       }
     }
-    
-    state.toolCallBuffer.value = ''
-    state.inToolCall.value = null
+
     if (state.currentConversationId.value) {
       await syncConversationWorkspaceUri(state, state.currentConversationId.value)
     }
@@ -395,9 +393,6 @@ export async function retryFromMessage(
     clearCheckpointsFromIndex(state, backendFrom)
     setTotalMessagesFromWindow(state)
 
-    state.toolCallBuffer.value = ''
-    state.inToolCall.value = null
-
     const assistantMessageId = generateId()
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -495,9 +490,7 @@ export async function retryFromMessage(
   } catch (err) {
     console.error('Failed to delete messages from backend:', err)
   }
-  
-  state.toolCallBuffer.value = ''
-  state.inToolCall.value = null
+
   
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
@@ -562,9 +555,7 @@ export async function retryAfterError(
   state.isLoading.value = true
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
-  
-  state.toolCallBuffer.value = ''
-  state.inToolCall.value = null
+
   
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
@@ -650,9 +641,7 @@ export async function editAndRetry(
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
   clearCheckpointsFromIndex(state, backendMessageIndex)
   setTotalMessagesFromWindow(state)
-  
-  state.toolCallBuffer.value = ''
-  state.inToolCall.value = null
+
   
   const assistantMessageId = generateId()
   const assistantMessage: Message = {

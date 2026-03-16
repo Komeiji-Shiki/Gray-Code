@@ -133,10 +133,6 @@ interface FunctionResponseMatch {
   sourceBackendIndex?: number
 }
 
-const TOOL_CALL_START = '<<<TOOL_CALL>>>'
-const TOOL_CALL_END = '<<<END_TOOL_CALL>>>'
-const XML_TOOL_START = '<tool_use>'
-const XML_TOOL_END = '</tool_use>'
 const MAX_PREVIEW_LENGTH = 220
 const MAX_SAFE_STRING = 12_000
 const MAX_SAFE_DEPTH = 6
@@ -235,7 +231,7 @@ export function buildResponseViewerData(
 }
 
 function extractAnswerText(message: Message): string {
-  const fromContent = filterToolCallMarkers(message.content || '').trim()
+  const fromContent = (message.content || '').trim()
   if (fromContent) {
     return fromContent
   }
@@ -245,7 +241,7 @@ function extractAnswerText(message: Message): string {
     .map(part => part.text || '')
     .join('')
 
-  return filterToolCallMarkers(fromParts).trim()
+  return fromParts.trim()
 }
 
 function extractThoughtText(parts?: ContentPart[]): string {
@@ -371,7 +367,7 @@ function buildPartPreviews(
       return {
         index,
         type: 'text',
-        preview: summarizeText(filterToolCallMarkers(part.text), MAX_PREVIEW_LENGTH),
+        preview: summarizeText(part.text, MAX_PREVIEW_LENGTH),
         text: part.text,
         raw: sanitizeForViewer(part)
       }
@@ -705,42 +701,6 @@ function extractErrorMessage(result: unknown): string | undefined {
   }
 
   return undefined
-}
-
-function filterToolCallMarkers(text: string): string {
-  let result = text
-
-  if (result.includes(TOOL_CALL_START)) {
-    const jsonRegex = new RegExp(
-      TOOL_CALL_START.replace(/[<>]/g, '\\$&') +
-      '[\\s\\S]*?' +
-      TOOL_CALL_END.replace(/[<>]/g, '\\$&'),
-      'g'
-    )
-    result = result.replace(jsonRegex, '')
-
-    const jsonStartIdx = result.indexOf(TOOL_CALL_START)
-    if (jsonStartIdx !== -1) {
-      result = result.substring(0, jsonStartIdx)
-    }
-  }
-
-  if (result.includes(XML_TOOL_START)) {
-    const xmlRegex = new RegExp(
-      XML_TOOL_START.replace(/[<>]/g, '\\$&') +
-      '[\\s\\S]*?' +
-      XML_TOOL_END.replace(/[<>]/g, '\\$&'),
-      'g'
-    )
-    result = result.replace(xmlRegex, '')
-
-    const xmlStartIdx = result.indexOf(XML_TOOL_START)
-    if (xmlStartIdx !== -1) {
-      result = result.substring(0, xmlStartIdx)
-    }
-  }
-
-  return result.trim()
 }
 
 function isLargeValue(value: unknown): boolean {

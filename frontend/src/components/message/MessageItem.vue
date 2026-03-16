@@ -133,62 +133,6 @@ onUnmounted(() => {
   stopThinkingTimer()
 })
 
-// JSON 工具调用边界标记
-const TOOL_CALL_START = '<<<TOOL_CALL>>>'
-const TOOL_CALL_END = '<<<END_TOOL_CALL>>>'
-
-// XML 工具调用标记
-const XML_TOOL_START = '<tool_use>'
-const XML_TOOL_END = '</tool_use>'
-
-/**
- * 过滤掉文本中的工具调用标记
- * 支持 JSON 格式（<<<TOOL_CALL>>>...<<<END_TOOL_CALL>>>）
- * 和 XML 格式（<tool_use>...</tool_use>）
- * 流式响应时，这些标记可能先显示，等完成后才转换为 functionCall
- */
-function filterToolCallMarkers(text: string): string {
-  let result = text
-  
-  // 1. 处理 JSON 格式
-  if (result.includes(TOOL_CALL_START)) {
-    // 移除完整的工具调用块
-    const jsonRegex = new RegExp(
-      TOOL_CALL_START.replace(/[<>]/g, '\\$&') +
-      '[\\s\\S]*?' +
-      TOOL_CALL_END.replace(/[<>]/g, '\\$&'),
-      'g'
-    )
-    result = result.replace(jsonRegex, '')
-    
-    // 移除不完整的开始标记（流式时可能只有开头）
-    const jsonStartIdx = result.indexOf(TOOL_CALL_START)
-    if (jsonStartIdx !== -1) {
-      result = result.substring(0, jsonStartIdx)
-    }
-  }
-  
-  // 2. 处理 XML 格式
-  if (result.includes(XML_TOOL_START)) {
-    // 移除完整的工具调用块
-    const xmlRegex = new RegExp(
-      XML_TOOL_START.replace(/[<>]/g, '\\$&') +
-      '[\\s\\S]*?' +
-      XML_TOOL_END.replace(/[<>]/g, '\\$&'),
-      'g'
-    )
-    result = result.replace(xmlRegex, '')
-    
-    // 移除不完整的开始标记（流式时可能只有开头）
-    const xmlStartIdx = result.indexOf(XML_TOOL_START)
-    if (xmlStartIdx !== -1) {
-      result = result.substring(0, xmlStartIdx)
-    }
-  }
-  
-  return result.trim()
-}
-
 /**
  * 将 parts 转换为渲染块，保持原始顺序
  *
@@ -219,8 +163,8 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   // 辅助函数：刷新文本块
   const flushText = () => {
     if (currentTextBlock.length > 0) {
-      const text = filterToolCallMarkers(currentTextBlock.join(''))
-      if (text) {
+      const text = currentTextBlock.join('')
+      if (text.trim()) {
         blocks.push({ type: 'text', text })
       }
       currentTextBlock = []

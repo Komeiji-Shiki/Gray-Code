@@ -454,6 +454,7 @@ export interface BackendStreamChunk {
   done: boolean
   usage?: UsageMetadata
   finishReason?: string
+  contentSnapshot?: Content
   /** 模型版本（仅最后一个块包含） */
   modelVersion?: string
 }

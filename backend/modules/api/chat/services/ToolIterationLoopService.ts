@@ -443,6 +443,7 @@ export class ToolIterationLoopService {
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
                     providerType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+                    toolMode: config.toolMode || 'function_call',
                     abortSignal,
                     conversationId
                 });
@@ -469,6 +470,7 @@ export class ToolIterationLoopService {
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
                     providerType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+                    toolMode: config.toolMode || 'function_call',
                     abortSignal,
                     conversationId
                 });
@@ -479,7 +481,7 @@ export class ToolIterationLoopService {
             }
 
             // 9. 转换工具调用格式
-            this.toolCallParserService.convertXMLToolCallsToFunctionCalls(finalContent);
+            this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
 
             // 10. 保存 AI 响应到历史
@@ -488,7 +490,7 @@ export class ToolIterationLoopService {
             }
 
             // 11. 检查是否有工具调用
-            const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent);
+            const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent, config.toolMode || 'function_call');
 
             if (functionCalls.length === 0) {
                 // 没有工具调用，创建模型消息后的检查点并返回完成数据
@@ -781,7 +783,7 @@ export class ToolIterationLoopService {
             const finalContent = generateResponse.content;
 
             // 转换 XML 工具调用为 functionCall 格式（如果有）
-            this.toolCallParserService.convertXMLToolCallsToFunctionCalls(finalContent);
+            this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             // 为没有 id 的 functionCall 添加唯一 id（Gemini 格式不返回 id）
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
 
@@ -791,7 +793,7 @@ export class ToolIterationLoopService {
             }
 
             // 检查是否有工具调用
-            const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent);
+            const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent, config.toolMode || 'function_call');
 
             if (functionCalls.length === 0) {
                 // 没有工具调用，结束循环并返回

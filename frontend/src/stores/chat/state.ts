@@ -103,12 +103,6 @@ export function createChatState(): ChatStoreState {
   /** 自动总结状态（用于显示“自动总结中”提示） */
   const autoSummaryStatus = ref<AutoSummaryStatus | null>(null)
   
-  /** 工具调用缓冲区（用于检测流式中的 XML/JSON 工具调用） */
-  const toolCallBuffer = ref('')
-  
-  /** 当前是否在工具调用标记内 */
-  const inToolCall = ref<'xml' | 'json' | null>(null)
-  
   /** 当前对话的检查点列表 */
   const checkpoints = ref<CheckpointRecord[]>([])
   
@@ -189,8 +183,6 @@ export function createChatState(): ChatStoreState {
     isWaitingForResponse,
     retryStatus,
     autoSummaryStatus,
-    toolCallBuffer,
-    inToolCall,
     checkpoints,
     mergeUnchangedCheckpoints,
     deletingConversationIds,

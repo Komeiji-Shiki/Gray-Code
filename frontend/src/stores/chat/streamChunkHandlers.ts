@@ -58,16 +58,27 @@ function mergeToolsPreferExisting(
       merged.push(t)
       continue
     }
+
+    const incomingHasArgs = !!(t.args && Object.keys(t.args).length > 0)
+    const partialArgs = typeof t.partialArgs === 'string'
+      ? (typeof e.partialArgs === 'string' && e.partialArgs.length > t.partialArgs.length ? e.partialArgs : t.partialArgs)
+      : (incomingHasArgs ? undefined : e.partialArgs)
+
+    let status = e.status ?? t.status
+    if (!partialArgs && incomingHasArgs && status === 'streaming') {
+      status = 'queued'
+    }
+
     // incoming 提供更完整的 name/args；existing 提供更可信的 status/result/error/duration
     merged.push({
       ...e,
       ...t,
-      status: e.status ?? t.status,
+      status,
       result: e.result ?? t.result,
       error: e.error ?? t.error,
       duration: e.duration ?? t.duration,
       awaitingConfirmation: e.awaitingConfirmation ?? t.awaitingConfirmation,
-      partialArgs: e.partialArgs ?? t.partialArgs
+      partialArgs
     })
     byId.delete(t.id)
   }
@@ -82,6 +93,33 @@ function mergeToolsPreferExisting(
 
 function normalizeStreamingToQueued(status?: ToolUsage['status']): ToolUsage['status'] | undefined {
   return status === 'streaming' ? 'queued' : status
+}
+
+function buildMessageFromContentSnapshot(currentMessage: Message, snapshotContent: NonNullable<StreamChunk['chunk']>['contentSnapshot']): Message {
+  const existingModelVersion = currentMessage.metadata?.modelVersion
+  const snapshotMessage = contentToMessageEnhanced(snapshotContent!, currentMessage.id)
+  const mergedTools = mergeToolsPreferExisting(currentMessage.tools, snapshotMessage.tools)
+
+  const updatedMessage: Message = {
+    ...currentMessage,
+    ...snapshotMessage,
+    id: currentMessage.id,
+    timestamp: currentMessage.timestamp,
+    backendIndex: currentMessage.backendIndex,
+    localOnly: currentMessage.localOnly,
+    streaming: currentMessage.streaming,
+    tools: mergedTools && mergedTools.length > 0 ? mergedTools : snapshotMessage.tools
+  }
+
+  if (!updatedMessage.metadata) {
+    updatedMessage.metadata = {}
+  }
+
+  if (existingModelVersion) {
+    updatedMessage.metadata.modelVersion = existingModelVersion
+  }
+
+  return updatedMessage
 }
 
 /**
@@ -114,29 +152,39 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
-  const message = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
-  if (message && chunk.chunk?.delta) {
+  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  if (messageIndex === -1 || !chunk.chunk) {
+    return
+  }
+
+  const snapshotContent = chunk.chunk.contentSnapshot
+  if (snapshotContent) {
+    const updatedMessage = buildMessageFromContentSnapshot(state.allMessages.value[messageIndex], snapshotContent)
+    replaceMessageAt(state, messageIndex, updatedMessage)
+  }
+
+  const message = state.allMessages.value[messageIndex]
+  if (chunk.chunk.delta) {
     // 初始化 parts（如果不存在）
     if (!message.parts) {
       message.parts = []
     }
     
-    // chunk.chunk 是 BackendStreamChunk，包含 delta 数组
-    // delta 是 ContentPart 数组，每个元素可能包含 text 或 functionCall
-    for (const part of chunk.chunk.delta) {
-      if (part.text) {
-        if (part.thought) {
-          // 思考内容：直接添加，不检测工具调用
-          addTextToMessage(message, part.text, true)
-        } else {
-          // 普通文本：处理文本，检测 XML/JSON 工具调用标记
-          processStreamingText(message, part.text, state)
+    // 没有快照时，按增量追加；有快照时，以快照为准，跳过旧的本地文本猜测逻辑
+    if (!snapshotContent) {
+      for (const part of chunk.chunk.delta) {
+        if (part.text) {
+          if (part.thought) {
+            addTextToMessage(message, part.text, true)
+          } else {
+            processStreamingText(message, part.text, state)
+          }
         }
-      }
-      
-      // 处理工具调用（原生 function call format）
-      if (part.functionCall) {
-        handleFunctionCallPart(part, message)
+
+        // 处理工具调用（原生 function call format）
+        if (part.functionCall) {
+          handleFunctionCallPart(part, message)
+        }
       }
     }
     

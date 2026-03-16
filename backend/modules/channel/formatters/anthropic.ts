@@ -39,6 +39,11 @@ import {
     TOOL_CALL_START,
     TOOL_CALL_END
 } from '../../../tools/jsonFormatter';
+import {
+    detectPromptToolMode,
+    extractPromptToolParts,
+    IncrementalPromptToolParser
+} from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
 import type {
     GenerateRequest,
@@ -616,17 +621,31 @@ export class AnthropicFormatter extends BaseFormatter {
         // 如果没有原生工具调用，尝试从文本中检测
         const hasToolUse = response.content.some((b: any) => b.type === 'tool_use');
         if (!hasToolUse) {
-            const textContent = parts
-                .filter(p => 'text' in p && !p.thought)
-                .map(p => p.text)
-                .join('\n');
-            
-            if (textContent) {
-                // 保留思考内容和签名，只对普通文本进行工具调用检测
-                        const thoughtParts = parts.filter(p => p.thought || p.thoughtSignatures);
-                const detectedParts = this.parseResponseAutoDetect(textContent);
-                parts = [...thoughtParts, ...detectedParts];
+            const normalizedParts: ContentPart[] = [];
+            let promptMode: 'json' | 'xml' | null = null;
+            let promptParser: IncrementalPromptToolParser | undefined;
+
+            for (const part of parts) {
+                if (!part.text || part.thought) {
+                    normalizedParts.push(part);
+                    continue;
+                }
+
+                if (!promptMode) {
+                    promptMode = detectPromptToolMode(part.text);
+                    if (promptMode) {
+                        promptParser = new IncrementalPromptToolParser(promptMode);
+                    }
+                }
+
+                if (promptParser) {
+                    normalizedParts.push(...promptParser.appendText(part.text));
+                } else {
+                    normalizedParts.push(part);
+                }
             }
+
+            parts = promptParser ? [...normalizedParts, ...promptParser.flushIncompleteAsText()] : normalizedParts;
         }
         
         // 构建完整的 Content
@@ -660,23 +679,19 @@ export class AnthropicFormatter extends BaseFormatter {
      * 自动检测模式解析响应
      */
     private parseResponseAutoDetect(contentText: string): ContentPart[] {
-        const parts: ContentPart[] = [];
-        
-        // 检测 JSON 边界标记
-        if (contentText.includes(TOOL_CALL_START)) {
-            return this.extractJSONToolCallsFromContent(contentText, parts);
+        const promptMode = detectPromptToolMode(contentText);
+        if (!promptMode) {
+            const parts: ContentPart[] = [];
+            if (contentText.trim()) {
+                parts.push({ text: contentText });
+            }
+            return parts;
         }
-        
-        // 检测 XML 工具调用
-        if (contentText.includes('<tool_use>')) {
-            return this.extractXMLToolCallsFromContent(contentText, parts);
-        }
-        
-        // 无工具调用，作为纯文本
-        if (contentText.trim()) {
-            parts.push({ text: contentText });
-        }
-        return parts;
+
+        const extracted = extractPromptToolParts(contentText, promptMode, {
+            flushIncompleteTailAsText: true
+        });
+        return extracted.parts;
     }
     
     /**
