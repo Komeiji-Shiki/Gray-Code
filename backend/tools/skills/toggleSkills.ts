@@ -9,6 +9,44 @@ import type { Tool, ToolDeclaration, ToolResult, ToolRegistration } from '../typ
 import { getSkillsManager } from '../../modules/skills';
 
 /**
+ * 将技能名清洗为 Claude API 兼容的参数名
+ * 
+ * Claude API 要求工具名和参数名匹配 ^[a-zA-Z0-9_-]{1,64}$
+ * 对于包含非 ASCII 字符的技能名（如中文），需要转换为安全的 ASCII 标识符
+ * 
+ * @param name 原始技能名
+ * @returns 清洗后的 ASCII 安全参数名
+ */
+function sanitizeParamName(name: string): string {
+    // 如果已经是合法的 ASCII 参数名，直接返回
+    if (/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return name;
+    }
+    
+    // 将非 ASCII 字符替换为下划线，合并连续下划线，去除首尾下划线
+    let sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
+    
+    // 如果清洗后为空（全是非 ASCII 字符），使用 skill_ 前缀加哈希
+    if (!sanitized) {
+        // 简单哈希：将每个字符的 charCode 求和取模
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+            hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+        }
+        sanitized = `skill_${Math.abs(hash).toString(36)}`;
+    }
+    
+    // 确保以字母开头（JSON Schema 属性名最佳实践）
+    if (/^[0-9]/.test(sanitized)) {
+        sanitized = `s_${sanitized}`;
+    }
+    
+    return sanitized;
+}
+
+/**
  * Dynamically generate skills tool declaration
  *
  * Generate tool parameters based on currently enabled skills
@@ -23,7 +61,10 @@ export function generateSkillsToolDeclaration(): ToolDeclaration {
         const enabledSkills = skillsManager.getEnabledSkills();
         
         for (const skill of enabledSkills) {
-            properties[skill.name] = {
+            // 清洗参数名以确保 Claude API 兼容性
+            // 非 ASCII 字符（如中文技能名）会被转换为安全的 ASCII 标识符
+            const paramName = sanitizeParamName(skill.name);
+            properties[paramName] = {
                 type: 'boolean',
                 description: skill.description
             };
@@ -58,16 +99,21 @@ async function handleToggleSkills(args: Record<string, boolean>): Promise<ToolRe
     // Track not found skills
     const notFound: string[] = [];
     
-    // Get name to ID mapping for all skills
+    // 构建双向映射：sanitized name -> skill id, original name -> skill id
+    // 这样无论 AI 使用原始名还是清洗后的名称调用，都能正确找到技能
     const skills = skillsManager.getAllSkills();
-    const nameToId: Record<string, string> = {};
+    const paramToId: Record<string, string> = {};
     for (const skill of skills) {
-        nameToId[skill.name] = skill.id;
+        // 用清洗后的名称作为主键（与 tool declaration 中一致）
+        const paramName = sanitizeParamName(skill.name);
+        paramToId[paramName] = skill.id;
+        // 同时保留原始名称映射，增强容错
+        paramToId[skill.name] = skill.id;
     }
     
     // Process each argument
     for (const [name, shouldSend] of Object.entries(args)) {
-        const skillId = nameToId[name];
+        const skillId = paramToId[name];
         
         if (!skillId) {
             notFound.push(name);
