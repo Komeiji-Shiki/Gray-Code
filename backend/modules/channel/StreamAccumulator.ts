@@ -258,9 +258,8 @@ export class StreamAccumulator {
             return;
         }
 
-        if (part.functionCall && !(part.functionCall as any).id) {
-            (part.functionCall as any).id = this.createToolCallId();
-        }
+        // 注意：不在此处为 functionCall 生成 id。
+        // id 的生成推迟到合并逻辑确认无法合并、需要作为新 Part 推入时再执行（见下方 newPart 构建处）。
 
         if (options?.visibleDelta && part.text !== undefined) {
             options.visibleDelta.push(part.thought ? { text: part.text, thought: true } : { text: part.text });
@@ -288,10 +287,7 @@ export class StreamAccumulator {
             if (part.functionCall) {
                 const fc = part.functionCall as any;
 
-                if (!fc.id) {
-                    fc.id = this.createToolCallId();
-                }
-                
+                // 注意：不在此处为 fc 生成 id，否则会破坏下方"纯增量模式"（!fc.id）的合并判断
                 // 倒序搜索现有的 parts，寻找可以合并的工具调用块
                 // 解决并行调用或中间穿插其他消息导致的 lastPart 匹配失败问题
                 for (let i = this.parts.length - 1; i >= 0; i--) {
@@ -373,6 +369,10 @@ export class StreamAccumulator {
                 const newPart: ContentPart = { ...restPart };
                 // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
+                // 只在作为新 Part 推入时才生成 id（避免在合并路径中过早赋值破坏合并逻辑）
+                if (!newPart.functionCall.id) {
+                    (newPart.functionCall as any).id = this.createToolCallId();
+                }
                 if (fc.args) newPart.functionCall.args = { ...fc.args };
                 
                 // 如果有 API 原始格式的 thoughtSignature，转换为 thoughtSignatures 格式

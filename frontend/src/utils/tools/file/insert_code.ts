@@ -21,7 +21,7 @@ registerTool('insert_code', {
   // 描述生成器 - 显示文件路径列表（每行一个）
   descriptionFormatter: (args) => {
     const files = args.files as InsertEntry[] | undefined
-    if (!files || files.length === 0) return '无文件'
+    if (!files || !Array.isArray(files) || files.length === 0) return '无文件'
     return files.map(f => `${f.path} (第 ${f.line ?? '?'} 行前)`).join('\n')
   },
   
@@ -34,7 +34,7 @@ registerTool('insert_code', {
   // 获取所有插入的文件路径
   getDiffFilePath: (args) => {
     const files = args.files as InsertEntry[] | undefined
-    if (!files || files.length === 0) return []
+    if (!files || !Array.isArray(files) || files.length === 0) return []
     return files.map(f => f.path)
   }
 })

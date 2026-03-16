@@ -245,7 +245,6 @@ export function createDeleteCodeTool(): Tool {
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const fileList = args.files as DeleteCodeEntry[] | undefined;
-
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
             }

@@ -21,7 +21,7 @@ registerTool('delete_code', {
   // 描述生成器 - 显示文件路径列表（每行一个）
   descriptionFormatter: (args) => {
     const files = args.files as DeleteEntry[] | undefined
-    if (!files || files.length === 0) return '无文件'
+    if (!files || !Array.isArray(files) || files.length === 0) return '无文件'
     return files.map(f => `${f.path} (第 ${f.start_line ?? '?'}~${f.end_line ?? '?'} 行)`).join('\n')
   },
   
@@ -34,7 +34,7 @@ registerTool('delete_code', {
   // 获取所有删除的文件路径
   getDiffFilePath: (args) => {
     const files = args.files as DeleteEntry[] | undefined
-    if (!files || files.length === 0) return []
+    if (!files || !Array.isArray(files) || files.length === 0) return []
     return files.map(f => f.path)
   }
 })

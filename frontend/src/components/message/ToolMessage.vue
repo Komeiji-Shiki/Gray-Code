@@ -655,13 +655,21 @@ function getToolDescription(tool: ToolUsage): string {
   if (tool.status === 'streaming') {
     const hasArgs = tool.args && Object.keys(tool.args).length > 0
     if (hasArgs && config?.descriptionFormatter) {
-      return config.descriptionFormatter(tool.args)
+      try {
+        return config.descriptionFormatter(tool.args)
+      } catch {
+        // formatter 崩溃时降级显示，避免整个工具块渲染失败
+      }
     }
     return t('components.message.tool.streamingArgs')
   }
 
   if (config?.descriptionFormatter) {
-    return config.descriptionFormatter(tool.args)
+    try {
+      return config.descriptionFormatter(tool.args)
+    } catch {
+      // formatter 崩溃时降级到默认描述
+    }
   }
   // 默认描述：显示参数数量
   const argCount = Object.keys(tool.args || {}).length

@@ -98,7 +98,7 @@ function normalizeStreamingToQueued(status?: ToolUsage['status']): ToolUsage['st
 function buildMessageFromContentSnapshot(currentMessage: Message, snapshotContent: NonNullable<StreamChunk['chunk']>['contentSnapshot']): Message {
   const existingModelVersion = currentMessage.metadata?.modelVersion
   const snapshotMessage = contentToMessageEnhanced(snapshotContent!, currentMessage.id)
-  const mergedTools = mergeToolsPreferExisting(currentMessage.tools, snapshotMessage.tools)
+  let mergedTools = mergeToolsPreferExisting(currentMessage.tools, snapshotMessage.tools)
 
   const updatedMessage: Message = {
     ...currentMessage,
@@ -108,7 +108,11 @@ function buildMessageFromContentSnapshot(currentMessage: Message, snapshotConten
     backendIndex: currentMessage.backendIndex,
     localOnly: currentMessage.localOnly,
     streaming: currentMessage.streaming,
-    tools: mergedTools && mergedTools.length > 0 ? mergedTools : snapshotMessage.tools
+    // 三级 fallback：合并结果 > snapshot 提取的 tools > 已有的 tools
+    // 确保 snapshot 重建不会因为 merge 结果为空而丢失工具信息
+    tools: (mergedTools && mergedTools.length > 0)
+      ? mergedTools
+      : (snapshotMessage.tools && snapshotMessage.tools.length > 0 ? snapshotMessage.tools : currentMessage.tools)
   }
 
   if (!updatedMessage.metadata) {
@@ -251,6 +255,10 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
 
     const finalMessage = contentToMessage(chunk.content, message.id)
 
+    // 诊断日志
+    const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
+    console.debug(`[handleToolsExecuting] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+
     // 合并 tools：以 finalMessage.tools 的顺序为基准，保留 existingTools 的运行态字段
     const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools) || []
 
@@ -261,7 +269,8 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       streaming: false,
       // toolsExecuting 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
-      tools: mergedTools.length > 0 ? mergedTools : undefined
+      // 优先使用合并结果，其次回退到已有 tools，避免 batch 跳过 chunk 导致 tools 丢失
+      tools: mergedTools.length > 0 ? mergedTools : (existingTools || undefined)
     }
 
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
@@ -612,6 +621,10 @@ export function handleToolIteration(
     
     const finalMessage = contentToMessage(chunk.content!, message.id)
     
+    // 诊断日志
+    const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
+    console.debug(`[handleToolIteration] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
     if (finalMessage.metadata) {
       if (existingModelVersion) {
@@ -647,13 +660,20 @@ export function handleToolIteration(
     }
     
     // 创建更新后的消息对象（确保 Vue 响应式更新）
+    // 保护 parts：如果 finalMessage.parts 缺少 functionCall 但 restoredTools 存在，
+    // 保留原始 parts 以确保渲染工具块
+    const safePartsForToolIteration = (restoredTools && restoredTools.length > 0 &&
+      finalMessage.parts && !finalMessage.parts.some(p => p.functionCall))
+      ? message.parts
+      : finalMessage.parts
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
       streaming: false,
       // toolIteration 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
-      tools: restoredTools
+      tools: restoredTools,
+      parts: safePartsForToolIteration
     }
     
     // 用新对象替换数组中的旧对象
@@ -790,12 +810,22 @@ export function handleComplete(
     
     const finalMessage = contentToMessage(chunk.content!, message.id)
     
+    // 诊断日志
+    const fcCountComplete = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
+    console.debug(`[handleComplete] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCountComplete}`)
+
     // 恢复原有的 modelVersion
     if (existingModelVersion && finalMessage.metadata) {
       finalMessage.metadata.modelVersion = existingModelVersion
     }
     
     // 创建更新后的消息对象
+    // 保护 parts：如果 finalMessage.parts 不含 functionCall 但旧消息有 tools，
+    // 说明 complete 的 content 可能来自后续迭代（只有文本），不应覆盖工具调用的 parts
+    const safePartsForComplete = (existingTools && existingTools.length > 0 &&
+      finalMessage.parts && !finalMessage.parts.some(p => p.functionCall))
+      ? message.parts
+      : finalMessage.parts
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
@@ -805,7 +835,8 @@ export function handleComplete(
       // 保留已有的 tools（finalMessage.tools 通常为 undefined，会覆盖已积累的工具信息）
       tools: finalMessage.tools && finalMessage.tools.length > 0
         ? finalMessage.tools
-        : existingTools
+        : existingTools,
+      parts: safePartsForComplete
     }
     
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
