@@ -35,6 +35,7 @@ export * from './subagents';
 export * from './todo';
 export * from './design';
 export * from './plan';
+export * from './review';
 export * from './history';
 
 // 导出工具辅助函数
@@ -70,6 +71,7 @@ export function getAllTools(): Tool[] {
     const { getTodoToolRegistrations } = require('./todo');
     const { getDesignToolRegistrations } = require('./design');
     const { getPlanToolRegistrations } = require('./plan');
+    const { getReviewToolRegistrations } = require('./review');
     const { getHistoryToolRegistrations } = require('./history');
     
     const registrations = [
@@ -81,6 +83,7 @@ export function getAllTools(): Tool[] {
         ...getTodoToolRegistrations(),
         ...getDesignToolRegistrations(),
         ...getPlanToolRegistrations(),
+        ...getReviewToolRegistrations(),
         ...getHistoryToolRegistrations()
     ];
     

@@ -49,6 +49,12 @@ import './design/create_design'
 // Plan 工具
 import './plan/create_plan'
 
+// Review 工具
+import './review/create_review'
+import './review/record_review_milestone'
+import './review/finalize_review'
+import './review/validate_review_document'
+
 // History 工具
 import './history/history_search'
 

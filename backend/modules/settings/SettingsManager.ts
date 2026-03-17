@@ -63,10 +63,12 @@ import {
     DEFAULT_SYSTEM_PROMPT_CONFIG,
     DEFAULT_MODE_ID,
     DESIGN_MODE_ID,
+    REVIEW_MODE_ID,
     CODE_PROMPT_MODE,
     DESIGN_PROMPT_MODE,
     PLAN_PROMPT_MODE,
     ASK_PROMPT_MODE,
+    REVIEW_PROMPT_MODE,
     DEFAULT_MAX_TOOL_ITERATIONS,
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
@@ -1579,8 +1581,8 @@ export class SettingsManager {
      * 获取系统提示词配置
      * 
      * 版本迁移：
-     * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式 + 计划模式 + 询问模式
-     * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（design/plan/ask）
+     * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式 + 计划模式 + 询问模式 + 审查模式
+     * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（design/plan/ask/review）
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
@@ -1600,7 +1602,8 @@ export class SettingsManager {
                     },
                     [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
                     'plan': PLAN_PROMPT_MODE,
-                    'ask': ASK_PROMPT_MODE
+                    'ask': ASK_PROMPT_MODE,
+                    [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
                 }
             };
         }
@@ -1644,6 +1647,18 @@ export class SettingsManager {
             modes['ask'] = {
                 ...modes['ask'],
                 toolPolicy: ASK_PROMPT_MODE.toolPolicy
+            };
+            needsUpdate = true;
+        }
+
+        // 补齐或更新 review 模式（强制同步 toolPolicy）
+        if (!modes[REVIEW_MODE_ID]) {
+            modes[REVIEW_MODE_ID] = REVIEW_PROMPT_MODE;
+            needsUpdate = true;
+        } else if (!this.arraysEqual(modes[REVIEW_MODE_ID].toolPolicy, REVIEW_PROMPT_MODE.toolPolicy)) {
+            modes[REVIEW_MODE_ID] = {
+                ...modes[REVIEW_MODE_ID],
+                toolPolicy: REVIEW_PROMPT_MODE.toolPolicy
             };
             needsUpdate = true;
         }
