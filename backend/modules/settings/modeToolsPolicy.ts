@@ -95,6 +95,24 @@ export function isDesignPathAllowed(path: string): boolean {
 }
 
 /**
+ * 检查路径是否允许在 Review 模式下写入
+ *
+ * 允许的路径：
+ * - .limcode/review/xxx.md
+ * - .limcode/review/sub/xxx.md
+ *
+ * 拒绝的路径：
+ * - 不在 .limcode/review/ 下的路径
+ * - 绝对路径
+ * - 包含路径穿越（..）的路径
+ * - 非 .md 扩展名的文件
+ * - 空字符串或目录路径
+ */
+export function isReviewPathAllowed(path: string): boolean {
+    return isScopedMarkdownPathAllowed(path, '.limcode/review/');
+}
+
+/**
  * 获取只读模式下被认为是危险的工具集合
  * 
  * @returns 危险工具名称的 Set

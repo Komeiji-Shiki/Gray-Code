@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * MessageTaskCards - 在消息正文里显示 Design / Plan 文档卡片
+ * MessageTaskCards - 在消息正文里显示 Design / Plan / Review 卡片
  *
- * 第一版复用现有 Plan 卡片结构，同时承载 design 与 plan 的文档交互。
+ * 当前同时承载 design、plan 与 review 的结果摘要展示。
  */
 import { computed, ref, onMounted, watch } from 'vue'
 import { sendToExtension, loadState, saveState } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
+import ReviewTaskCard from './ReviewTaskCard.vue'
 import { MarkdownRenderer, CustomScrollbar } from '../common'
 import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
@@ -15,6 +16,12 @@ import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
 import { isDesignDocPath, isPlanDocPath } from '../../utils/taskCards'
 import { getPlanExecutionPrompt, getPlanGenerationPrompt } from '../../utils/toolContinuations'
 import { generateId } from '../../utils/format'
+import {
+  extractReviewCardData,
+  formatReviewToolFallbackContent,
+  isReviewToolName,
+  type ReviewCardData
+} from '../../utils/reviewCards'
 import { useChatStore, useSettingsStore } from '@/stores'
 import * as configService from '@/services/config'
 import { useI18n } from '../../i18n'
@@ -30,7 +37,7 @@ const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 type CardStatus = 'pending' | 'running' | 'success' | 'error'
-type TaskCardKind = 'design' | 'plan'
+type TaskCardKind = 'design' | 'plan' | 'review'
 
 type TaskEntry = {
   kind: TaskCardKind
@@ -38,6 +45,7 @@ type TaskEntry = {
   content: string
   success?: boolean
   continuationPrompt?: string
+  reviewCardData?: ReviewCardData
 }
 
 type TaskCardItem = {
@@ -50,6 +58,7 @@ type TaskCardItem = {
   toolId: string
   toolName: string
   isActionCompleted: boolean
+  reviewCardData?: ReviewCardData
 }
 
 const PLAN_EXECUTION_MODE_STATE_KEY = 'planExecution.preferredModeId'
@@ -234,9 +243,9 @@ function isCardExpanded(key: string): boolean {
 }
 
 function getCreateFallbackTitle(kind: TaskCardKind): string {
-  return kind === 'plan'
-    ? t('components.message.tool.createPlan.fallbackTitle')
-    : t('components.message.tool.createDesign.fallbackTitle')
+  if (kind === 'plan') return t('components.message.tool.createPlan.fallbackTitle')
+  if (kind === 'design') return t('components.message.tool.createDesign.fallbackTitle')
+  return t('components.message.tool.createReview.fallbackTitle')
 }
 
 function getDocumentTitle(docContent: string, docPath: string, kind: TaskCardKind): string {
@@ -473,6 +482,7 @@ function handleCardAction(card: TaskCardItem) {
 async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
   for (const card of cards) {
     if (!card?.path) continue
+    if (card.kind === 'review') continue
     if (card.isActionCompleted) continue
     if (card.status === 'error') continue
     if (autoOpenedCardKeys.value.has(card.key)) continue
@@ -628,10 +638,31 @@ function getCreateDesignEntries(tool: ToolUsage): TaskEntry[] {
   }]
 }
 
+function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
+  if (!isReviewToolName(tool.name)) return []
+
+  const args = (tool.args || {}) as Record<string, unknown>
+  const result = getToolResult(tool)
+  if (!result || typeof result !== 'object') return []
+  const reviewResult = result as Record<string, unknown>
+
+  const reviewCardData = extractReviewCardData(tool.name, args, reviewResult)
+  if (!reviewCardData) return []
+
+  return [{
+    kind: 'review',
+    path: reviewCardData.path || '',
+    content: formatReviewToolFallbackContent(tool.name, args, reviewResult),
+    success: typeof reviewResult.success === 'boolean' ? reviewResult.success : undefined,
+    reviewCardData
+  }]
+}
+
 function getTaskEntries(tool: ToolUsage): TaskEntry[] {
   if (tool.name === 'write_file') return getWriteFileTaskEntries(tool)
   if (tool.name === 'create_plan') return getCreatePlanEntries(tool)
   if (tool.name === 'create_design') return getCreateDesignEntries(tool)
+  if (isReviewToolName(tool.name)) return getReviewTaskEntries(tool)
   return []
 }
 
@@ -649,16 +680,21 @@ const taskCards = computed<TaskCardItem[]>(() => {
           ? (entry.success ? 'success' : 'error')
           : mapToolStatus(tool)
 
+      const title = entry.kind === 'review'
+        ? (entry.reviewCardData?.title || getDocumentTitle(entry.content, entry.path, entry.kind))
+        : getDocumentTitle(entry.content, entry.path, entry.kind)
+
       cards.push({
-        key: `${entry.kind}:${tool.id}:${entry.path}`,
+        key: `${entry.kind}:${tool.id}:${entry.path || title}`,
         kind: entry.kind,
         status,
-        title: getDocumentTitle(entry.content, entry.path, entry.kind),
+        title,
         path: entry.path,
         content: entry.content,
         toolId: tool.id,
         toolName: tool.name,
-        isActionCompleted: !!entry.continuationPrompt
+        isActionCompleted: entry.kind === 'review' ? false : !!entry.continuationPrompt,
+        reviewCardData: entry.reviewCardData
       })
     }
   }
@@ -678,7 +714,14 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
 <template>
   <div v-if="hasAny" class="message-taskcards">
-    <div v-for="c in taskCards" :key="c.key" class="task-panel">
+    <template v-for="c in taskCards" :key="c.key">
+      <ReviewTaskCard
+        v-if="c.kind === 'review' && c.reviewCardData"
+        :card="c.reviewCardData"
+        :content="c.content"
+        :status="c.status"
+      />
+      <div v-else class="task-panel">
       <div class="task-header">
         <div class="task-info">
           <span
@@ -764,7 +807,8 @@ const hasAny = computed(() => taskCards.value.length > 0)
           <span class="btn-text">{{ getActionText(c) }}</span>
         </button>
       </div>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 

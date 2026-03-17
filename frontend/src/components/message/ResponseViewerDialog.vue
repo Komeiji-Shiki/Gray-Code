@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { JsonViewerDialog, MarkdownRenderer, Modal } from '../common'
+import ReviewTaskCard from './ReviewTaskCard.vue'
 import { useI18n } from '../../i18n'
 import { copyToClipboard, formatTime } from '../../utils/format'
 import { showNotification } from '../../utils/vscode'
@@ -372,6 +373,24 @@ function getToolStatusClass(status?: ResponseViewerToolPreview['status']): strin
   return status ? `status-${status}` : 'status-unknown'
 }
 
+function getReviewCardStatus(status?: ResponseViewerToolPreview['status']): 'pending' | 'running' | 'success' | 'error' {
+  switch (status) {
+    case 'streaming':
+    case 'queued':
+    case 'awaiting_approval':
+    case 'executing':
+    case 'awaiting_apply':
+      return 'running'
+    case 'error':
+      return 'error'
+    case 'success':
+    case 'warning':
+      return 'success'
+    default:
+      return 'pending'
+  }
+}
+
 function getResultSourceLabel(
   source?: ResponseViewerToolPreview['resultSource'] | ResponseViewerResolvedFunctionResponse['source']
 ): string {
@@ -554,40 +573,75 @@ function formatJsonInline(value: unknown): string {
             <div
               v-for="(tool, index) in tools"
               :key="tool.id || `${tool.name}-${index}`"
-              class="tool-card"
+              class="tool-entry"
             >
-              <div class="tool-card-header">
-                <div class="tool-name">{{ tool.name }}</div>
-                <span class="status-badge" :class="getToolStatusClass(tool.status)">
-                  {{ getToolStatusLabel(tool.status) }}
-                </span>
-              </div>
+              <div v-if="tool.reviewCardData" class="response-viewer-review-block">
+                <ReviewTaskCard
+                  class="response-viewer-review-card"
+                  :card="tool.reviewCardData"
+                  :content="tool.reviewFallbackContent"
+                  :status="getReviewCardStatus(tool.status)"
+                />
 
-              <div v-if="tool.argsSummary" class="tool-summary-row">
-                <span class="summary-label">{{ t('components.message.tool.parameters') }}</span>
-                <span class="summary-value">{{ tool.argsSummary }}</span>
-              </div>
+                <div v-if="tool.argsSummary || (tool.resultSource && tool.resultSource !== 'tool') || tool.error" class="response-viewer-review-meta">
+                  <div v-if="tool.argsSummary" class="tool-summary-row">
+                    <span class="summary-label">{{ t('components.message.tool.parameters') }}</span>
+                    <span class="summary-value">{{ tool.argsSummary }}</span>
+                  </div>
 
-              <div v-if="tool.resultSource && tool.resultSource !== 'tool'" class="tool-summary-row">
-                <span class="summary-label">{{ t('components.message.responseViewer.responseSource') }}</span>
-                <span class="summary-value">{{ getResultSourceLabel(tool.resultSource) }}</span>
-              </div>
+                  <div v-if="tool.resultSource && tool.resultSource !== 'tool'" class="tool-summary-row">
+                    <span class="summary-label">{{ t('components.message.responseViewer.responseSource') }}</span>
+                    <span class="summary-value">{{ getResultSourceLabel(tool.resultSource) }}</span>
+                  </div>
 
-              <div
-                v-if="tool.resultSource === 'hiddenFunctionResponse' && (tool.sourceMessageId || typeof tool.sourceBackendIndex === 'number')"
-                class="tool-summary-row"
-              >
-                <span class="summary-label">{{ t('components.message.responseViewer.sourceMessage') }}</span>
-                <span class="summary-value">{{ formatSourceMessage(tool.sourceMessageId, tool.sourceBackendIndex) }}</span>
-              </div>
+                  <div
+                    v-if="tool.resultSource === 'hiddenFunctionResponse' && (tool.sourceMessageId || typeof tool.sourceBackendIndex === 'number')"
+                    class="tool-summary-row"
+                  >
+                    <span class="summary-label">{{ t('components.message.responseViewer.sourceMessage') }}</span>
+                    <span class="summary-value">{{ formatSourceMessage(tool.sourceMessageId, tool.sourceBackendIndex) }}</span>
+                  </div>
 
-              <div v-if="tool.error" class="tool-summary-row error-row">
-                <span class="summary-label">{{ t('components.message.tool.error') }}</span>
-                <span class="summary-value">{{ tool.error }}</span>
+                  <div v-if="tool.error" class="tool-summary-row error-row">
+                    <span class="summary-label">{{ t('components.message.tool.error') }}</span>
+                    <span class="summary-value">{{ tool.error }}</span>
+                  </div>
+                </div>
               </div>
-              <div v-else-if="tool.resultSummary" class="tool-summary-row">
-                <span class="summary-label">{{ t('components.message.tool.result') }}</span>
-                <span class="summary-value">{{ tool.resultSummary }}</span>
+              <div v-else class="tool-card">
+                <div class="tool-card-header">
+                  <div class="tool-name">{{ tool.name }}</div>
+                  <span class="status-badge" :class="getToolStatusClass(tool.status)">
+                    {{ getToolStatusLabel(tool.status) }}
+                  </span>
+                </div>
+
+                <div v-if="tool.argsSummary" class="tool-summary-row">
+                  <span class="summary-label">{{ t('components.message.tool.parameters') }}</span>
+                  <span class="summary-value">{{ tool.argsSummary }}</span>
+                </div>
+
+                <div v-if="tool.resultSource && tool.resultSource !== 'tool'" class="tool-summary-row">
+                  <span class="summary-label">{{ t('components.message.responseViewer.responseSource') }}</span>
+                  <span class="summary-value">{{ getResultSourceLabel(tool.resultSource) }}</span>
+                </div>
+
+                <div
+                  v-if="tool.resultSource === 'hiddenFunctionResponse' && (tool.sourceMessageId || typeof tool.sourceBackendIndex === 'number')"
+                  class="tool-summary-row"
+                >
+                  <span class="summary-label">{{ t('components.message.responseViewer.sourceMessage') }}</span>
+                  <span class="summary-value">{{ formatSourceMessage(tool.sourceMessageId, tool.sourceBackendIndex) }}</span>
+                </div>
+
+                <div v-if="tool.error" class="tool-summary-row error-row">
+                  <span class="summary-label">{{ t('components.message.tool.error') }}</span>
+                  <span class="summary-value">{{ tool.error }}</span>
+                </div>
+                <div v-else-if="tool.resultSummary" class="tool-summary-row">
+                  <span class="summary-label">{{ t('components.message.tool.result') }}</span>
+                  <span class="summary-value">{{ tool.resultSummary }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -811,6 +865,15 @@ function formatJsonInline(value: unknown): string {
               </summary>
 
               <div class="detail-body">
+                <ReviewTaskCard
+                  v-if="tool.reviewCardData"
+                  class="response-viewer-review-card embedded"
+                  :card="tool.reviewCardData"
+                  :content="tool.reviewFallbackContent"
+                  :status="getReviewCardStatus(tool.status)"
+                  :show-raw-result="false"
+                />
+
                 <div class="info-grid compact-grid">
                   <div class="info-item">
                     <div class="info-label">{{ t('components.message.responseViewer.name') }}</div>
@@ -1172,6 +1235,26 @@ function formatJsonInline(value: unknown): string {
   flex-direction: column;
   gap: 14px;
   padding: 16px 18px;
+}
+
+.tool-entry,
+.response-viewer-review-block,
+.response-viewer-review-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.response-viewer-review-card {
+  width: 100%;
+}
+
+.response-viewer-review-card.embedded {
+  margin-bottom: 14px;
+}
+
+.response-viewer-review-meta {
+  padding: 0 2px;
 }
 
 .tool-card {

@@ -451,6 +451,22 @@ export interface LanguageMessages {
                     label: string;
                     fallbackTitle: string;
                 };
+                createReview: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                validateReviewDocument: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                finalizeReview: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                recordReviewMilestone: {
+                    label: string;
+                    fallbackTitle: string;
+                };
                 todoPanel: {
                     title: string;
                     modePlan: string;
@@ -495,6 +511,46 @@ export interface LanguageMessages {
                     loadModelsFailed: string;
                     generatePlanFailed: string;
                     openFileFailed: string;
+                };
+                reviewCard: {
+                    sourceCreate: string;
+                    sourceMilestone: string;
+                    sourceFinalize: string;
+                    sourceValidate: string;
+                    statusCompleted: string;
+                    statusInProgress: string;
+                    decisionAccepted: string;
+                    decisionConditionallyAccepted: string;
+                    decisionRejected: string;
+                    decisionNeedsFollowUp: string;
+                    validationAutoUpgrade: string;
+                    validationInvalid: string;
+                    validationWarning: string;
+                    validationValid: string;
+                    issueError: string;
+                    issueWarning: string;
+                    milestonesChip: string;
+                    findingsChip: string;
+                    modulesChip: string;
+                    formatChip: string;
+                    status: string;
+                    decision: string;
+                    milestones: string;
+                    findings: string;
+                    format: string;
+                    latestConclusion: string;
+                    recommendedNextAction: string;
+                    validation: string;
+                    progress: string;
+                    modules: string;
+                    noIssues: string;
+                    issueSummary: string;
+                    openFile: string;
+                    openFileFailed: string;
+                    copyFailed: string;
+                    copyPath: string;
+                    copied: string;
+                    rawResult: string;
                 };
             };
             attachment: {

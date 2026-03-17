@@ -90,6 +90,14 @@ export function isDesignDocPath(path: string): boolean {
   return isScopedMarkdownDocPath(path, '.limcode/design/')
 }
 
+/**
+ * Whether a path looks like a review doc under .limcode/review and ends with .md
+ * (supports multi-root prefix like "workspace/.limcode/review/x.md").
+ */
+export function isReviewDocPath(path: string): boolean {
+  return isScopedMarkdownDocPath(path, '.limcode/review/')
+}
+
 export interface PlanTodoItem {
   text: string
   completed: boolean

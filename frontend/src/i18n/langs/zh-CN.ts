@@ -530,6 +530,22 @@ const zhCN: LanguageMessages = {
                     label: '创建设计',
                     fallbackTitle: '设计'
                 },
+                createReview: {
+                    label: '创建审查文档',
+                    fallbackTitle: '审查'
+                },
+                validateReviewDocument: {
+                    label: '校验审查文档',
+                    fallbackTitle: '审查校验'
+                },
+                finalizeReview: {
+                    label: '完成审查',
+                    fallbackTitle: '审查结论'
+                },
+                recordReviewMilestone: {
+                    label: '记录审查里程碑',
+                    fallbackTitle: '审查里程碑'
+                },
                 todoPanel: {
                     title: 'TODO 列表',
                     modePlan: '计划',
@@ -574,6 +590,46 @@ const zhCN: LanguageMessages = {
                     loadModelsFailed: '加载模型失败',
                     generatePlanFailed: '生成计划失败',
                     openFileFailed: '打开文件失败'
+                },
+                reviewCard: {
+                    sourceCreate: '创建',
+                    sourceMilestone: '里程碑',
+                    sourceFinalize: '完成',
+                    sourceValidate: '校验',
+                    statusCompleted: '已完成',
+                    statusInProgress: '进行中',
+                    decisionAccepted: '通过',
+                    decisionConditionallyAccepted: '有条件通过',
+                    decisionRejected: '不通过',
+                    decisionNeedsFollowUp: '需继续跟进',
+                    validationAutoUpgrade: '可升级旧文档',
+                    validationInvalid: '无效',
+                    validationWarning: '有警告',
+                    validationValid: '正常',
+                    issueError: '错误',
+                    issueWarning: '警告',
+                    milestonesChip: '{completed}/{total} 里程碑',
+                    findingsChip: '问题 {total} · 高{high} 中{medium} 低{low}',
+                    modulesChip: '模块 {count}',
+                    formatChip: '格式 {format}',
+                    status: '状态',
+                    decision: '结论',
+                    milestones: '里程碑',
+                    findings: '问题',
+                    format: '格式',
+                    latestConclusion: '最新结论',
+                    recommendedNextAction: '下一步建议',
+                    validation: '校验信息',
+                    progress: '进度',
+                    modules: '已审模块',
+                    noIssues: '没有问题',
+                    issueSummary: '{count} 个问题 · 错误 {errors} · 警告 {warnings}',
+                    openFile: '打开文档',
+                    openFileFailed: '打开审查文档失败',
+                    copyFailed: '复制路径失败',
+                    copyPath: '复制路径',
+                    copied: '已复制',
+                    rawResult: '完整结果'
                 }
             },
             attachment: {
