@@ -3,6 +3,16 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.9] - 2026-03-17
+
+# Added
+  - 补齐 design 文档产出与 design 到 plan 联动链路
+
+### Fix
+  - 修复由于ai输出工具调用结构不齐导致的前端渲染崩溃
+  - 修复非function call格式的解析
+  - 修复skill不支持claude api的问题
+
 ## [1.1.8] - 2026-03-16
 
 ### Improved

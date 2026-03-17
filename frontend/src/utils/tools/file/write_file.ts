@@ -14,7 +14,7 @@ registerTool('write_file', {
   // 描述生成器 - 显示文件路径（每行一个）
   descriptionFormatter: (args) => {
     const files = args.files as Array<{ path: string; content: string }> | undefined
-    if (!files || files.length === 0) return '无文件'
+    if (!files || !Array.isArray(files) || files.length === 0) return '无文件'
     // 每行一个路径
     return files.map(f => f.path).join('\n')
   },
@@ -28,7 +28,7 @@ registerTool('write_file', {
   // 获取所有写入的文件路径
   getDiffFilePath: (args) => {
     const files = args.files as Array<{ path: string; content: string }> | undefined
-    if (!files || files.length === 0) return []
+    if (!files || !Array.isArray(files) || files.length === 0) return []
     return files.map(f => f.path)
   }
 })

@@ -19,7 +19,6 @@ import { t } from '../i18n';
 export function normalizeLineEndingsToLF(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
-
 // ==================== 多工作区支持 ====================
 
 /**

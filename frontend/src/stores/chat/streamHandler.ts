@@ -184,6 +184,18 @@ export function handleStreamChunkBatch(
   let skipChunksBefore = 0
   if (lastTerminalIndex > 0) {
     skipChunksBefore = lastTerminalIndex
+
+    // 诊断日志：记录被跳过的 chunk 事件信息，方便排查工具调用消失等问题
+    if (typeof console !== 'undefined' && console.debug) {
+      const skippedChunks = chunks.slice(0, skipChunksBefore).filter(c => c.type === 'chunk')
+      if (skippedChunks.length > 0) {
+        const terminalType = chunks[lastTerminalIndex]?.type
+        const hasFunctionCall = skippedChunks.some(c =>
+          c.chunk?.delta?.some((p: any) => p.functionCall)
+        )
+        console.debug(`[streamHandler] batch skip: ${skippedChunks.length} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
+      }
+    }
   }
 
   let i = 0

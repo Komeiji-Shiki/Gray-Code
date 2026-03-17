@@ -235,7 +235,6 @@ export function createInsertCodeTool(): Tool {
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const fileList = args.files as InsertCodeEntry[] | undefined;
-
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
             }
