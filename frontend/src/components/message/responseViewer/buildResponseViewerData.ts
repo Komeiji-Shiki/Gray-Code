@@ -6,6 +6,12 @@ import type {
   ToolUsage,
   UsageMetadata
 } from '../../../types'
+import {
+  extractReviewCardData,
+  formatReviewToolFallbackContent,
+  isReviewToolName,
+  type ReviewCardData
+} from '../../../utils/reviewCards'
 import { isAwaitingToolUserConfirmation } from '../../../utils/toolContinuations'
 
 export type ResponseViewerMode = 'common' | 'advanced'
@@ -51,6 +57,8 @@ export interface ResponseViewerToolPreview {
   duration?: number
   hasLargeArgs: boolean
   hasLargeResult: boolean
+  reviewCardData?: ReviewCardData
+  reviewFallbackContent?: string
 }
 
 export interface ResponseViewerAttachmentPreview {
@@ -275,6 +283,7 @@ function buildToolPreviews(
       const argsSummary = typeof displayedArgs === 'string'
         ? summarizeText(displayedArgs, MAX_PREVIEW_LENGTH)
         : summarizeValue(displayedArgs, MAX_PREVIEW_LENGTH)
+      const reviewExtras = buildReviewToolPreviewExtras(tool.name, tool.args || {}, resolvedResult.result)
 
       return {
         id: tool.id,
@@ -291,7 +300,9 @@ function buildToolPreviews(
         error: resolvedError,
         duration: tool.duration,
         hasLargeArgs: isLargeValue(displayedArgs),
-        hasLargeResult: isLargeValue(resolvedError || resolvedResult.result)
+        hasLargeResult: isLargeValue(resolvedError || resolvedResult.result),
+        reviewCardData: reviewExtras.reviewCardData,
+        reviewFallbackContent: reviewExtras.reviewFallbackContent
       }
     })
   }
@@ -310,6 +321,7 @@ function buildToolPreviews(
       const argsSummary = typeof displayedArgs === 'string'
         ? summarizeText(displayedArgs, MAX_PREVIEW_LENGTH)
         : summarizeValue(displayedArgs, MAX_PREVIEW_LENGTH)
+      const reviewExtras = buildReviewToolPreviewExtras(functionCall.name, functionCall.args || {}, resolvedResult.result)
 
       return {
         id: functionCall.id || `${functionCall.name}-${index}`,
@@ -326,7 +338,9 @@ function buildToolPreviews(
         error: resolvedError,
         duration: undefined,
         hasLargeArgs: isLargeValue(displayedArgs),
-        hasLargeResult: isLargeValue(resolvedError || resolvedResult.result)
+        hasLargeResult: isLargeValue(resolvedError || resolvedResult.result),
+        reviewCardData: reviewExtras.reviewCardData,
+        reviewFallbackContent: reviewExtras.reviewFallbackContent
       }
     })
 }
@@ -440,6 +454,27 @@ function buildPartPreviews(
       raw: sanitizeForViewer(part)
     }
   })
+}
+
+function buildReviewToolPreviewExtras(
+  toolName: string,
+  args: Record<string, unknown>,
+  result?: unknown
+): Pick<ResponseViewerToolPreview, 'reviewCardData' | 'reviewFallbackContent'> {
+  if (!isReviewToolName(toolName)) {
+    return {}
+  }
+
+  const resultRecord = result && typeof result === 'object'
+    ? result as Record<string, unknown>
+    : undefined
+
+  const reviewFallbackContent = formatReviewToolFallbackContent(toolName, args || {}, resultRecord).trim()
+
+  return {
+    reviewCardData: extractReviewCardData(toolName, args || {}, resultRecord) || undefined,
+    reviewFallbackContent: reviewFallbackContent || undefined
+  }
 }
 
 function collectPartFunctionResponseMatches(parts?: ContentPart[]): Map<string, FunctionResponseMatch> {

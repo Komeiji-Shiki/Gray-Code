@@ -1991,6 +1991,11 @@ export const PLAN_MODE_ID = 'plan';
 export const ASK_MODE_ID = 'ask';
 
 /**
+ * 审查模式 ID
+ */
+export const REVIEW_MODE_ID = 'review';
+
+/**
  * 代码模式系统提示词模板
  */
 export const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
@@ -2132,6 +2137,42 @@ ASK MODE
 - Always maintain code readability and maintainability in your responses.`;
 
 /**
+ * 审查模式系统提示词模板
+ */
+export const REVIEW_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+REVIEW MODE
+
+**IMPORTANT: You are in REVIEW MODE. Follow these principles:**
+
+- Review the current workspace end-to-end using the provided read and analysis tools, but do the work incrementally instead of reading everything first and writing the review only at the end.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- At the start of each complete review run, use create_review to create exactly one review document under .limcode/review/**.md.
+- Record the date in the review document header. The filename does not need to contain the date.
+- In V3, the review document metadata is the single source of truth. Keep the visible review sections aligned with that metadata-driven lifecycle.
+- Track progress by milestones only. Do not use TODO comments or TODO lists as the review progress model.
+- Do not postpone review writing until after you have read the entire target area or the entire workspace.
+- Work step by step: after you finish reviewing one meaningful module-level or system-level review unit, immediately use record_review_milestone to append a new milestone to the same review document before moving on.
+- Keep the review document synchronized with the actual investigation sequence. Do not batch many completed modules into one delayed update.
+- Do not create milestone noise for very small observations, small functions, or isolated style details.
+- Review mode is read-only for code. You may read and analyze the workspace, but you must not modify business code.
+- You may only write review documents under .limcode/review/**.md.
+- One complete review run must correspond to one review document.
+- You can use subagents for focused review work, but stay within the allowed tools and keep the workflow read-only for code.
+- Use validate_review_document when you need to diagnose review document consistency without modifying the file.
+- When the review is complete, use finalize_review to write the final conclusion and stop. After finalization, do not record more milestones.`;
+
+/**
  * 代码模式（默认模式）
  */
 export const CODE_PROMPT_MODE: PromptMode = {
@@ -2213,6 +2254,32 @@ export const ASK_PROMPT_MODE: PromptMode = {
 };
 
 /**
+ * 审查模式
+ */
+export const REVIEW_PROMPT_MODE: PromptMode = {
+    id: REVIEW_MODE_ID,
+    name: 'Review',
+    icon: 'eye',
+    template: REVIEW_MODE_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    toolPolicy: [
+        'read_file',
+        'list_files',
+        'find_files',
+        'search_in_files',
+        'goto_definition',
+        'find_references',
+        'get_symbols',
+        'subagents',
+        'create_review',
+        'validate_review_document',
+        'record_review_milestone',
+        'finalize_review'
+    ]
+};
+
+/**
  * 默认提示词模式（向后兼容）
  */
 export const DEFAULT_PROMPT_MODE = CODE_PROMPT_MODE;
@@ -2226,7 +2293,8 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
         [DEFAULT_MODE_ID]: CODE_PROMPT_MODE,
         [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
         [PLAN_MODE_ID]: PLAN_PROMPT_MODE,
-        [ASK_MODE_ID]: ASK_PROMPT_MODE
+        [ASK_MODE_ID]: ASK_PROMPT_MODE,
+        [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
     },
     template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,

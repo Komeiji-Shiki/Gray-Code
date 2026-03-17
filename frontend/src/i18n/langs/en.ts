@@ -530,6 +530,22 @@ const en: LanguageMessages = {
                     label: 'Create Design',
                     fallbackTitle: 'Design'
                 },
+                createReview: {
+                    label: 'Create Review',
+                    fallbackTitle: 'Review'
+                },
+                validateReviewDocument: {
+                    label: 'Validate Review Document',
+                    fallbackTitle: 'Review Validation'
+                },
+                finalizeReview: {
+                    label: 'Finalize Review',
+                    fallbackTitle: 'Review Conclusion'
+                },
+                recordReviewMilestone: {
+                    label: 'Record Review Milestone',
+                    fallbackTitle: 'Review Milestone'
+                },
                 todoPanel: {
                     title: 'TODO List',
                     modePlan: 'plan',
@@ -574,6 +590,46 @@ const en: LanguageMessages = {
                     loadModelsFailed: 'Failed to load models',
                     generatePlanFailed: 'Failed to generate plan',
                     openFileFailed: 'Failed to open file'
+                },
+                reviewCard: {
+                    sourceCreate: 'Create',
+                    sourceMilestone: 'Milestone',
+                    sourceFinalize: 'Finalize',
+                    sourceValidate: 'Validate',
+                    statusCompleted: 'Completed',
+                    statusInProgress: 'In Progress',
+                    decisionAccepted: 'Accepted',
+                    decisionConditionallyAccepted: 'Conditionally Accepted',
+                    decisionRejected: 'Rejected',
+                    decisionNeedsFollowUp: 'Needs Follow-Up',
+                    validationAutoUpgrade: 'Upgradeable Legacy Doc',
+                    validationInvalid: 'Invalid',
+                    validationWarning: 'Warnings',
+                    validationValid: 'Valid',
+                    issueError: 'Error',
+                    issueWarning: 'Warning',
+                    milestonesChip: '{completed}/{total} milestones',
+                    findingsChip: '{total} findings · H{high} M{medium} L{low}',
+                    modulesChip: '{count} modules',
+                    formatChip: 'Format {format}',
+                    status: 'Status',
+                    decision: 'Decision',
+                    milestones: 'Milestones',
+                    findings: 'Findings',
+                    format: 'Format',
+                    latestConclusion: 'Latest Conclusion',
+                    recommendedNextAction: 'Recommended Next Action',
+                    validation: 'Validation',
+                    progress: 'Progress',
+                    modules: 'Reviewed Modules',
+                    noIssues: 'No issues',
+                    issueSummary: '{count} issues · {errors} errors · {warnings} warnings',
+                    openFile: 'Open Document',
+                    openFileFailed: 'Failed to open review document',
+                    copyFailed: 'Failed to copy path',
+                    copyPath: 'Copy Path',
+                    copied: 'Copied',
+                    rawResult: 'Full Result'
                 }
             },
             attachment: {

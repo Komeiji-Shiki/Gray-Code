@@ -530,6 +530,22 @@ const ja: LanguageMessages = {
                     label: '設計を作成',
                     fallbackTitle: '設計'
                 },
+                createReview: {
+                    label: 'レビュー文書を作成',
+                    fallbackTitle: 'レビュー'
+                },
+                validateReviewDocument: {
+                    label: 'レビュー文書を検証',
+                    fallbackTitle: 'レビュー検証'
+                },
+                finalizeReview: {
+                    label: 'レビューを完了',
+                    fallbackTitle: 'レビュー結論'
+                },
+                recordReviewMilestone: {
+                    label: 'レビューのマイルストーンを記録',
+                    fallbackTitle: 'レビューマイルストーン'
+                },
                 todoPanel: {
                     title: 'TODO リスト',
                     modePlan: 'プラン',
@@ -574,6 +590,46 @@ const ja: LanguageMessages = {
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     generatePlanFailed: 'プランの生成に失敗しました',
                     openFileFailed: 'ファイルを開くのに失敗しました'
+                },
+                reviewCard: {
+                    sourceCreate: '作成',
+                    sourceMilestone: 'マイルストーン',
+                    sourceFinalize: '完了',
+                    sourceValidate: '検証',
+                    statusCompleted: '完了',
+                    statusInProgress: '進行中',
+                    decisionAccepted: '承認',
+                    decisionConditionallyAccepted: '条件付き承認',
+                    decisionRejected: '却下',
+                    decisionNeedsFollowUp: '追加フォローが必要',
+                    validationAutoUpgrade: '旧文書をアップグレード可能',
+                    validationInvalid: '無効',
+                    validationWarning: '警告あり',
+                    validationValid: '正常',
+                    issueError: 'エラー',
+                    issueWarning: '警告',
+                    milestonesChip: '{completed}/{total} マイルストーン',
+                    findingsChip: '問題 {total} · 高{high} 中{medium} 低{low}',
+                    modulesChip: 'モジュール {count}',
+                    formatChip: '形式 {format}',
+                    status: '状態',
+                    decision: '結論',
+                    milestones: 'マイルストーン',
+                    findings: '指摘',
+                    format: '形式',
+                    latestConclusion: '最新の結論',
+                    recommendedNextAction: '次の対応',
+                    validation: '検証情報',
+                    progress: '進捗',
+                    modules: 'レビュー済みモジュール',
+                    noIssues: '問題なし',
+                    issueSummary: '{count} 件の問題 · エラー {errors} · 警告 {warnings}',
+                    openFile: '文書を開く',
+                    openFileFailed: 'レビュー文書を開けませんでした',
+                    copyFailed: 'パスのコピーに失敗しました',
+                    copyPath: 'パスをコピー',
+                    copied: 'コピー済み',
+                    rawResult: '完全な結果'
                 }
             },
             attachment: {
