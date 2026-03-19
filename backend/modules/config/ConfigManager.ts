@@ -20,7 +20,7 @@ import type {
     OpenAIConfig
 } from './types';
 import type { ConfigStorageAdapter } from './storage';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
 
 /**
  * 配置管理器
@@ -211,7 +211,7 @@ export class ConfigManager {
         await this.ensureLoaded();
         
         // 生成唯一 ID
-        const id = nanoid();
+        const id = randomBytes(16).toString('hex');
         const now = Date.now();
         
         // 获取默认配置并与输入合并
