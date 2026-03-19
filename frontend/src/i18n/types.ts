@@ -1681,6 +1681,10 @@ export interface LanguageMessages {
                         description: string;
                         requiresConfig: string;
                     };
+                    TODO_LIST: {
+                        name: string;
+                        description: string;
+                    };
                 };
                 exampleOutput: string;
                 requiresConfigLabel: string;
