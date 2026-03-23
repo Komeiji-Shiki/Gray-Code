@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.13] - 2026-03-19
+
+### Fixed
+  - 修复了sub-agent不能正常调用的bug
+
 ## [1.1.12] - 2026-03-19
 
 ### Fixed
