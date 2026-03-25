@@ -1992,6 +1992,11 @@ const en: LanguageMessages = {
                     effortMedium: 'Medium',
                     effortLow: 'Low',
                     effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: 'Enable Prompt Caching (manual cache breakpoints)',
+                    hint: 'Automatically adds cache markers on key content blocks of system, tools, and messages to leverage Anthropic Prompt Caching for cost and latency reduction'
                 }
             },
             gemini: {

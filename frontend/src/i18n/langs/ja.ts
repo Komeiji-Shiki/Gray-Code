@@ -1992,6 +1992,11 @@ const ja: LanguageMessages = {
                     effortMedium: '中',
                     effortLow: '低',
                     effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: 'Prompt Caching を有効化（手動キャッシュブレークポイント）',
+                    hint: 'system、tools、messages のキーコンテンツブロックにキャッシュマーカーを自動追加し、Anthropic の Prompt Caching でコストとレイテンシを削減'
                 }
             },
             gemini: {

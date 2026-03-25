@@ -1992,6 +1992,11 @@ const zhCN: LanguageMessages = {
                     effortMedium: '中等努力',
                     effortLow: '低努力',
                     effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: '启用 Prompt Caching（手动缓存断点）',
+                    hint: '在 system、tools、messages 的关键内容块上自动添加缓存标记，利用 Anthropic 的 Prompt Caching 降低成本和延迟'
                 }
             },
             gemini: {

@@ -2039,6 +2039,11 @@ export interface LanguageMessages {
                     effortLow: string;
                     effortHint: string;
                 };
+                promptCaching: {
+                    title: string;
+                    enable: string;
+                    hint: string;
+                };
             };
             
             /** Gemini 专属 */
