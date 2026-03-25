@@ -1,6 +1,12 @@
 # LimCode
 
 <p align="center">
+  <a href="https://discord.gg/FJxTrsZRPQ">
+    <img src="https://img.shields.io/badge/Join%20in-Discord-5865F2?logo=discord&logoColor=white" alt="Join in Discord">
+  </a>
+</p>
+
+<p align="center">
   <img src="resources/icon.png" alt="LimCode Logo" width="128">
 </p>
 
