@@ -617,7 +617,6 @@ export interface LanguageMessages {
                 empty: string;
                 notExists: string;
                 enableTooltip: string;
-                sendContentTooltip: string;
                 hint: string;
                 openDirectory: string;
                 refresh: string;
