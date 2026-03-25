@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.14] - 2026-03-25
+
+### Added
+  - 增加Anthropic格式下缓存创建开关
+
+### Improved
+  - 优化skill实现逻辑
+
 ## [1.1.13] - 2026-03-19
 
 ### Fixed
