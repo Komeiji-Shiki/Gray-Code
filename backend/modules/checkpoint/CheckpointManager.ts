@@ -137,19 +137,6 @@ export class CheckpointManager {
     ): Promise<{ files: string[]; dirs: string[] }> {
         return this.createIgnoreResolver(rootDir, includeCustomPatterns).collectEntries();
     }
-
-    /**
-     * 清理某个根目录下所有未被忽略的空目录。
-     *
-     * restore 过程中删除文件后会留下空目录，这里通过 resolver 统一清理，
-     * 保证创建、恢复、清理三条路径遵循同一套忽略边界。
-     */
-    private async cleanupSnapshotEmptyDirs(
-        rootDir: string,
-        includeCustomPatterns: boolean = true
-    ): Promise<void> {
-        await this.createIgnoreResolver(rootDir, includeCustomPatterns).removeEmptyDirectories();
-    }
     
     /**
      * 创建检查点
