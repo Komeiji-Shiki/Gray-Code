@@ -146,6 +146,9 @@ export interface StreamUsageMetadata {
     /** 总 token 数量 */
     totalTokenCount?: number;
     
+    /** 缓存内容的 token 数量（写入缓存 + 命中缓存） */
+    cachedContentTokenCount?: number;
+    
     /** 思考部分的 token 数量 */
     thoughtsTokenCount?: number;
     

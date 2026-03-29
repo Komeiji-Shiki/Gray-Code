@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.17] - 2026-03-30
+
+### Fixed
+  - 添加遵循.gitignore，并修复Windows 系统下的路径规范化问题
+  - 修复不同格式下，对于缓存命中token信息的显示和存储问题，使用⚡显示缓存命中token数
+
 ## [1.1.16] - 2026-03-25
 
 ### Fixed

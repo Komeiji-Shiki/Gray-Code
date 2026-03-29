@@ -122,6 +122,7 @@ export class StreamAccumulator {
             promptTokenCount: usage.promptTokenCount ?? previous?.promptTokenCount,
             candidatesTokenCount: usage.candidatesTokenCount ?? previous?.candidatesTokenCount,
             totalTokenCount: usage.totalTokenCount ?? previous?.totalTokenCount,
+            cachedContentTokenCount: usage.cachedContentTokenCount ?? previous?.cachedContentTokenCount,
             thoughtsTokenCount: usage.thoughtsTokenCount ?? previous?.thoughtsTokenCount,
             promptTokensDetails: usage.promptTokensDetails ?? previous?.promptTokensDetails,
             candidatesTokensDetails: usage.candidatesTokensDetails ?? previous?.candidatesTokensDetails

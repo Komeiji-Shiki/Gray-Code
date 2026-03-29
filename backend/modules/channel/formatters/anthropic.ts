@@ -715,10 +715,17 @@ export class AnthropicFormatter extends BaseFormatter {
         
         // 存储 usageMetadata
         if (response.usage) {
+            const inputBase = response.usage.input_tokens ?? 0;
+            const cacheCreation = response.usage.cache_creation_input_tokens ?? 0;
+            const cacheRead = response.usage.cache_read_input_tokens ?? 0;
+            const promptTotal = inputBase + cacheCreation + cacheRead;
+            const cachedTotal = cacheCreation + cacheRead;
+
             content.usageMetadata = {
-                promptTokenCount: response.usage.input_tokens,
+                promptTokenCount: promptTotal,
                 candidatesTokenCount: response.usage.output_tokens,
-                totalTokenCount: (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0)
+                totalTokenCount: promptTotal + (response.usage.output_tokens || 0),
+                ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
             };
         }
         
@@ -947,8 +954,14 @@ export class AnthropicFormatter extends BaseFormatter {
         } else if (chunk.type === 'message_start') {
             // 消息开始，可能包含 usage 信息
             if (chunk.message?.usage) {
+                const u = chunk.message.usage;
+                const inputBase = u.input_tokens ?? 0;
+                const cacheCreation = u.cache_creation_input_tokens ?? 0;
+                const cacheRead = u.cache_read_input_tokens ?? 0;
+                const cachedTotal = cacheCreation + cacheRead;
                 usage = {
-                    promptTokenCount: chunk.message.usage.input_tokens
+                    promptTokenCount: inputBase + cachedTotal,
+                    ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
                 };
             }
         }

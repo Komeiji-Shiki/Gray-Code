@@ -363,11 +363,13 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             const outputTokens = usage.output_tokens || 0;
             const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
             const candidatesTokenCount = outputTokens - reasoningTokens;
+            const cachedTokens = usage.input_tokens_details?.cached_tokens || 0;
             content.usageMetadata = {
                 promptTokenCount: usage.input_tokens,
                 candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
+                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
+                ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
             };
         }
 
@@ -469,11 +471,13 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     const outputTokens = u.output_tokens || 0;
                     const reasoningTokens = u.output_tokens_details?.reasoning_tokens || 0;
                     const candidatesTokenCount = outputTokens - reasoningTokens;
+                    const cachedTokens = u.input_tokens_details?.cached_tokens || 0;
                     usage = {
                         promptTokenCount: u.input_tokens,
                         candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                         totalTokenCount: u.total_tokens,
-                        thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
+                        thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
+                        ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
                     };
                 }
                 

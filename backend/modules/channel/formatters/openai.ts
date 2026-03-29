@@ -595,12 +595,14 @@ export class OpenAIFormatter extends BaseFormatter {
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
             const candidatesTokenCount = completionTokens - reasoningTokens;
+            const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             content.usageMetadata = {
                 promptTokenCount: usage.prompt_tokens,
                 candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
+                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
+                ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
             };
         }
         
@@ -859,12 +861,14 @@ export class OpenAIFormatter extends BaseFormatter {
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
             const candidatesTokenCount = completionTokens - reasoningTokens;
+            const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             streamChunk.usage = {
                 promptTokenCount: usage.prompt_tokens,
                 candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
+                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
+                ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
             };
         }
         

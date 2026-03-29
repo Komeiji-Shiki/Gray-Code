@@ -291,6 +291,7 @@ export class GeminiFormatter extends BaseFormatter {
                 promptTokenCount: response.usageMetadata.promptTokenCount,
                 candidatesTokenCount: response.usageMetadata.candidatesTokenCount,
                 totalTokenCount: response.usageMetadata.totalTokenCount,
+                cachedContentTokenCount: response.usageMetadata.cachedContentTokenCount,
                 thoughtsTokenCount: response.usageMetadata.thoughtsTokenCount,
                 promptTokensDetails: response.usageMetadata.promptTokensDetails,
                 candidatesTokensDetails: response.usageMetadata.candidatesTokensDetails
@@ -370,6 +371,7 @@ export class GeminiFormatter extends BaseFormatter {
                     promptTokenCount: chunk.usageMetadata.promptTokenCount,
                     candidatesTokenCount: chunk.usageMetadata.candidatesTokenCount,
                     totalTokenCount: chunk.usageMetadata.totalTokenCount,
+                    cachedContentTokenCount: chunk.usageMetadata.cachedContentTokenCount,
                     thoughtsTokenCount: chunk.usageMetadata.thoughtsTokenCount,
                     promptTokensDetails: chunk.usageMetadata.promptTokensDetails,
                     candidatesTokensDetails: chunk.usageMetadata.candidatesTokensDetails

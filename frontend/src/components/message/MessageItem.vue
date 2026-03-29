@@ -737,6 +737,9 @@ function handleRestoreAndRetry(checkpointId: string) {
             <span v-if="usageMetadata?.promptTokenCount" class="token-item token-prompt">
               <span class="token-arrow">↑</span>{{ usageMetadata.promptTokenCount }}
             </span>
+            <span v-if="usageMetadata?.cachedContentTokenCount" class="token-item token-cached">
+              <span class="token-arrow">⚡</span>{{ usageMetadata.cachedContentTokenCount }}
+            </span>
             <span v-if="usageMetadata?.candidatesTokenCount" class="token-item token-candidates">
               <span class="token-arrow">↓</span>{{ usageMetadata.candidatesTokenCount }}
             </span>
@@ -1011,6 +1014,10 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .token-candidates .token-arrow {
   color: var(--vscode-charts-blue, #75beff);
+}
+
+.token-cached .token-arrow {
+  color: var(--vscode-charts-yellow, #e2c08d);
 }
 
 /* 编辑模式 - 扁平化 */
