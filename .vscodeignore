@@ -50,3 +50,4 @@ node_modules/**
 !node_modules/nanoid/**
 !node_modules/strnum/**
 !node_modules/tree-kill/**
+!node_modules/ignore/**

@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.18] - 2026-03-30
+
+### Fixed
+  - 修复ignore模块未被打包导致启动失败的问题
+
 ## [1.1.17] - 2026-03-30
 
 ### Fixed
