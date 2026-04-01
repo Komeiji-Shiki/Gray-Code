@@ -150,10 +150,12 @@ export class OpenAIFormatter extends BaseFormatter {
         };
         
         // 添加工具（Function Call 模式）
+        // strictToolsEnabled: 启用后读取工具声明的 strict 字段
+        const strictEnabled = !!(config as any).strictToolsEnabled;
         if (tools && tools.length > 0) {
             const toolMode = config.toolMode || 'function_call';
             if (toolMode === 'function_call') {
-                body.tools = this.convertTools(tools);
+                body.tools = this.convertTools(tools, strictEnabled);
             }
         }
         
@@ -957,19 +959,21 @@ export class OpenAIFormatter extends BaseFormatter {
      *   }
      * }]
      */
-    convertTools(tools: ToolDeclaration[]): any {
+    convertTools(tools: ToolDeclaration[], strictEnabled?: boolean): any {
         if (!tools || tools.length === 0) {
             return undefined;
         }
         
-        // 转换为 OpenAI 格式
+        // 转换为 OpenAI 格式（Chat Completions API）
+        // strict 默认为 false，启用 strictToolsEnabled 后读取工具声明的 strict 字段
+        
         return tools.map(tool => ({
             type: 'function',
             function: {
                 name: tool.name,
                 description: tool.description,
                 parameters: tool.parameters,
-                strict: false  // OpenAI 的 strict 模式
+                strict: (strictEnabled && tool.strict === true) ? true : false
             }
         }));
     }

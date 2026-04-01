@@ -477,6 +477,7 @@ export function createApplyDiffTool(): Tool {
             return {
                 name: 'apply_diff',
                 category: 'file',
+                strict: true,  // API 端强制 schema 校验
                 description: `Apply legacy search/replace diffs to a file and open a pending diff for user confirmation.
 
 Parameters:
@@ -535,6 +536,7 @@ ${descriptionSuffix}`,
         return {
             name: 'apply_diff',
             category: 'file',
+            strict: true,  // API 端强制 schema 校验
             description: `Apply a unified diff patch (single-file) to a file and open a pending diff for user confirmation.
 
 Input format (simplified):

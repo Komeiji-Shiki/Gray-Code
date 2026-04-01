@@ -738,6 +738,7 @@ export function createSearchInFilesTool(): Tool {
     return {
         declaration: {
             name: 'search_in_files',
+            strict: true,  // API 端强制 schema 校验
             description: isMultiRoot
                 ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
                 : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',

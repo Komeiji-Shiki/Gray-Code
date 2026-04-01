@@ -157,8 +157,11 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         // 添加工具（Function Call 模式）
+        // strictToolsEnabled: 启用后，标记了 strict: true 的工具会带上 strict 字段
+        
+        const strictEnabled = !!(config as any).strictToolsEnabled;
         if (tools && tools.length > 0 && toolMode === 'function_call') {
-            body.tools = this.convertTools(tools);
+            body.tools = this.convertTools(tools, strictEnabled);
         }
         
         // 添加生成配置
@@ -181,6 +184,17 @@ export class AnthropicFormatter extends BaseFormatter {
             'Content-Type': 'application/json',
             'anthropic-version': '2023-06-01'
         };
+
+        // 如果启用了 strict tool use，注入 structured-outputs beta header
+        // Anthropic strict 模式必要的 beta header
+        // 此 header 是 Anthropic strict 模式的必要条件
+        if (strictEnabled && body.tools?.some((t: any) => t.strict === true)) {
+            const existingBeta = headers['anthropic-beta'];
+            const strictBeta = 'structured-outputs-2025-12-15';
+            headers['anthropic-beta'] = existingBeta
+                ? `${existingBeta},${strictBeta}`
+                : strictBeta;
+        }
         
         // 只有当 apiKey 存在时才添加认证头
         if (config.apiKey) {
@@ -1061,15 +1075,43 @@ export class AnthropicFormatter extends BaseFormatter {
      *   "input_schema": {...}  // JSON Schema
      * }]
      */
-    convertTools(tools: ToolDeclaration[]): any {
+    convertTools(tools: ToolDeclaration[], strictEnabled?: boolean): any {
         if (!tools || tools.length === 0) {
             return undefined;
         }
         
-        return tools.map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            input_schema: tool.parameters
-        }));
+        // Anthropic strict 工具数量上限为 20（API 限制）
+        
+        const ANTHROPIC_STRICT_TOOL_LIMIT = 20;
+        let strictCount = 0;
+
+        return tools.map(tool => {
+            // 判断此工具是否启用 strict
+            let useStrict = false;
+            if (strictEnabled && tool.strict === true) {
+                if (strictCount < ANTHROPIC_STRICT_TOOL_LIMIT) {
+                    useStrict = true;
+                    strictCount++;
+                } else {
+                    // 超过 20 个 strict 工具，降级为非 strict，记录警告
+                    console.warn(
+                        `[Anthropic] strict tool limit (${ANTHROPIC_STRICT_TOOL_LIMIT}) exceeded, ` +
+                        `tool "${tool.name}" downgraded to non-strict`
+                    );
+                }
+            }
+
+            const toolDef: any = {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.parameters
+            };
+
+            if (useStrict) {
+                toolDef.strict = true;
+            }
+
+            return toolDef;
+        });
     }
 }

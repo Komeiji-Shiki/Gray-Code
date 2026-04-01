@@ -34,6 +34,26 @@ export interface ToolDeclaration {
      * @example ['sharp'] - 表示需要 sharp 库
      */
     dependencies?: string[];
+
+    /**
+     * 工具别名（兼容重命名后的旧对话历史）
+     *
+     */
+    aliases?: string[];
+
+    /**
+     * 是否启用 strict 模式（API 端强制 schema 校验）
+     *
+     * 开启后，API 会使用 grammar-constrained sampling 保证模型输出
+     * 严格符合参数 schema，消除类型错误和缺失字段。
+     *
+     * 各渠道行为：
+     * - Anthropic: 工具定义中加 strict: true，请求头加 beta header
+     * - OpenAI Chat Completions: 工具定义中加 strict: true
+     * - OpenAI Responses: 默认即 strict，不需要额外设置
+     * - Gemini: 不支持，此字段无效
+     */
+    strict?: boolean;
 }
 
 /**

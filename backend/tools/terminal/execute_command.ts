@@ -598,6 +598,7 @@ export function createExecuteCommandTool(): Tool {
         declaration: {
             name: 'execute_command',
             category: 'terminal',
+            strict: true,  // API 端强制 schema 校验
             description: `Execute a Shell command and return the output.
 
 **User Environment:**
