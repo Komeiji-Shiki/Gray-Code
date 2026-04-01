@@ -19,7 +19,7 @@
  */
 
 import { t } from '../../../i18n';
-import { BaseFormatter } from './base';
+import { BaseFormatter, ensureStrictSchema } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type { OpenAIConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
@@ -972,7 +972,9 @@ export class OpenAIFormatter extends BaseFormatter {
             function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: tool.parameters,
+                parameters: (strictEnabled && tool.strict === true)
+                    ? ensureStrictSchema(tool.parameters)
+                    : tool.parameters,
                 strict: (strictEnabled && tool.strict === true) ? true : false
             }
         }));

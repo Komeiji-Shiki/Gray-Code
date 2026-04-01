@@ -22,7 +22,7 @@
  */
 
 import { t } from '../../../i18n';
-import { BaseFormatter } from './base';
+import { BaseFormatter, ensureStrictSchema } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type { AnthropicConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
@@ -1104,7 +1104,9 @@ export class AnthropicFormatter extends BaseFormatter {
             const toolDef: any = {
                 name: tool.name,
                 description: tool.description,
-                input_schema: tool.parameters
+                input_schema: useStrict
+                    ? ensureStrictSchema(tool.parameters)
+                    : tool.parameters
             };
 
             if (useStrict) {
