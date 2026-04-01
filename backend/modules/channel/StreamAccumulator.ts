@@ -34,6 +34,13 @@ const XML_TOOL_END = '</tool_use>';
 export class StreamAccumulator {
     /** 累加的 parts */
     private parts: ContentPart[] = [];
+
+    /**
+     * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall 索引集合。
+     * 用于流式边执行工具：只返回自上次调用以来新完成（args 解析成功）的 functionCall。
+     */
+    private reportedFunctionCallIndices = new Set<number>();
+
     
     /** 是否完成 */
     private isDone: boolean = false;
@@ -787,6 +794,7 @@ export class StreamAccumulator {
         this.firstChunkTime = undefined;
         this.lastChunkTime = undefined;
         this.requestStartTime = undefined;
+        this.reportedFunctionCallIndices.clear();
 
         if (this.promptToolParser) {
             this.promptToolParser.reset();
@@ -901,5 +909,55 @@ export class StreamAccumulator {
             firstChunkTime: this.firstChunkTime,
             lastChunkTime: this.lastChunkTime
         };
+    }
+
+    /**
+     * 返回自上次调用以来新完成（args 已解析成功）的 functionCall。
+     *
+     * 用于流式边执行工具：ToolIterationLoopService 在流式消费循环中
+     * 每处理一个 chunk 后调用此方法，检测是否有新的 functionCall 完成，
+     * 对不需要确认的工具立即启动异步执行。
+     *
+     * "完成"的判定：functionCall.args 已有值（partialArgs 已成功 JSON.parse）。
+     * 每个 functionCall 只会被返回一次（通过 reportedFunctionCallIndices 去重）。
+     */
+    getNewCompletedFunctionCalls(): Array<{
+        index: number;
+        name: string;
+        id: string;
+        args: Record<string, unknown>;
+    }> {
+        const result: Array<{ index: number; name: string; id: string; args: Record<string, unknown> }> = [];
+
+        for (let i = 0; i < this.parts.length; i++) {
+            if (this.reportedFunctionCallIndices.has(i)) continue;
+
+            const part = this.parts[i];
+            if (!part.functionCall) continue;
+
+            const fc = part.functionCall as any;
+            // "完成"判定：args 必须包含至少一个键，排除初始占位空壳 {}。
+            //
+            // Anthropic content_block_start 发送 input: {}，formatter 存为
+            // args: {}；OpenAI 首个 tool_call chunk 也设 args: {}。
+            // 真正的参数通过后续增量（input_json_delta / arguments delta）
+            // 拼接到 partialArgs，JSON.parse 成功后才更新 args。
+            // 仅检查 args 是否为对象会在初始阶段误判为完成，导致以空参数执行。
+            //
+            // 检查 Object.keys(args).length > 0 可同时兼容所有 provider：
+            // 只有 partialArgs 被成功 JSON.parse 后，args 才会含有实际的键。
+            const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
+            if (hasRealArgs && fc.name) {
+                this.reportedFunctionCallIndices.add(i);
+                result.push({
+                    index: i,
+                    name: fc.name,
+                    id: fc.id || '',
+                    args: fc.args,
+                });
+            }
+        }
+
+        return result;
     }
 }
