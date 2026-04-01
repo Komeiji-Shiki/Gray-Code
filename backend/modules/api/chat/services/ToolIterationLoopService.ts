@@ -560,30 +560,43 @@ export class ToolIterationLoopService {
 
             // 流式边执行工具：等待流式期间已启动的异步工具完成，
             // 将其结果从 autoPrefix 中移除（避免重复执行）。
+            let earlyResponseParts: ContentPart[] = [];
+
             if (streamingToolPromises.size > 0) {
                 // 等待所有流式期间启动的工具完成
                 await Promise.all(streamingToolPromises.values());
 
-                // 把流式期间已完成的工具结果注入到 responseParts 中，
-                // 并从 autoPrefix 中移除（避免后续 executeFunctionCallsWithProgress 重复执行）
-                const earlyResponseParts: ContentPart[] = [];
-                const earlyToolResults: ToolExecutionResult[] = [];
+                // 从 autoPrefix 中移除已在流式期间执行完的工具（避免重复执行），
+                // 同时收集它们的 functionResponse parts（后续统一写入历史）。
                 const remainingAutoPrefix: FunctionCallInfo[] = [];
 
                 for (const call of autoPrefix) {
                     if (streamingToolResults.has(call.id)) {
                         const r = streamingToolResults.get(call.id)!;
-                        earlyResponseParts.push(...((r as any).responseParts || []));
-                        earlyToolResults.push({ id: call.id, name: call.name, result: r });
+                        const parts = (r as any).responseParts as ContentPart[] | undefined;
+                        if (parts) earlyResponseParts.push(...parts);
                         this.log.info('stream.early_tool_done', { conversationId, toolName: call.name, toolId: call.id });
                     } else {
                         remainingAutoPrefix.push(call);
                     }
                 }
 
-                // 替换 autoPrefix 为剩余未执行的工具
                 autoPrefix.length = 0;
                 autoPrefix.push(...remainingAutoPrefix);
+            }
+
+            // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
+            // 但 earlyResponseParts 中有结果需要写入历史。
+            // 必须写入，否则下一轮 LLM 调用时 assistant 的 tool_use 没有对应的 tool_result，
+            // Anthropic API 会返回 400 错误。
+            if (autoPrefix.length === 0 && earlyResponseParts.length > 0) {
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: earlyResponseParts,
+                    isFunctionResponse: true
+                });
+                // 所有工具已处理完，继续下一轮循环让 LLM 处理工具结果
+                continue;
             }
 
             if (autoPrefix.length > 0) {
@@ -671,10 +684,12 @@ export class ToolIterationLoopService {
                     return;
                 }
 
-                // 将函数响应添加到历史
-                const functionResponseParts = executionResult.multimodalAttachments
+                // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
+                const laterResponseParts = executionResult.multimodalAttachments
                     ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
                     : executionResult.responseParts;
+                // earlyResponseParts 排在前面，保持与模型输出顺序一致
+                const functionResponseParts = [...earlyResponseParts, ...laterResponseParts];
 
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',
