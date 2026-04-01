@@ -12,7 +12,7 @@
 import type { ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { CheckpointRecord } from '../../../checkpoint';
-import type { Content } from '../../../conversation/types';
+import type { Content, ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import type { GenerateResponse } from '../../../channel/types';
 import { ChannelError, ErrorType } from '../../../channel/types';
@@ -36,7 +36,7 @@ import type {
 } from '../types';
 
 import { StreamResponseProcessor, isAsyncGenerator, type ProcessedChunkData } from '../handlers/StreamResponseProcessor';
-import type { FunctionCallInfo } from '../utils';
+import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { ToolCallParserService } from './ToolCallParserService';
 import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
@@ -438,6 +438,10 @@ export class ToolIterationLoopService {
             // 7. 处理响应
             let finalContent: Content;
 
+            // 流式边执行工具：跟踪流式期间已启动异步执行的工具 ID 和 Promise（仅流式模式使用）
+            const streamingToolPromises = new Map<string, Promise<Record<string, unknown>>>();
+            const streamingToolResults = new Map<string, Record<string, unknown>>();
+
             if (isAsyncGenerator(response)) {
                 // 流式响应处理
                 const processor = new StreamResponseProcessor({
@@ -447,10 +451,35 @@ export class ToolIterationLoopService {
                     abortSignal,
                     conversationId
                 });
-
-                // 处理流并 yield 每个 chunk
+                // 处理流并 yield 每个 chunk，同时检测新完成的 functionCall 提前启动执行
                 for await (const chunkData of processor.processStream(response)) {
                     yield chunkData;
+
+                    // 流式边执行工具：检测 StreamAccumulator 中新完成的 functionCall。
+                    // 对不需要确认且不需要模式策略拒绝的工具，立即启动异步执行。
+                    // 需要确认的工具跳过（仍走现有的暂停等待路径）。
+                    if (!abortSignal?.aborted) {
+                        const newCalls = processor.getAccumulator().getNewCompletedFunctionCalls();
+                        for (const fc of newCalls) {
+                            // 只对不需要确认的工具提前执行
+                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name)) {
+                                this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
+                                const promise = this.toolExecutionService.executeFunctionCalls(
+                                    [{ id: fc.id, name: fc.name, args: fc.args }],
+                                    conversationId
+                                ).then(responseParts => {
+                                    const result = { success: true, responseParts };
+                                    streamingToolResults.set(fc.id, result);
+                                    return result;
+                                }).catch(err => {
+                                    const result = { success: false, error: (err as Error).message };
+                                    streamingToolResults.set(fc.id, result);
+                                    return result;
+                                });
+                                streamingToolPromises.set(fc.id, promise);
+                            }
+                        }
+                    }
                 }
 
                 // 检查是否被取消
@@ -528,6 +557,34 @@ export class ToolIterationLoopService {
             }
 
             let executionResult: ToolExecutionFullResult | undefined;
+
+            // 流式边执行工具：等待流式期间已启动的异步工具完成，
+            // 将其结果从 autoPrefix 中移除（避免重复执行）。
+            if (streamingToolPromises.size > 0) {
+                // 等待所有流式期间启动的工具完成
+                await Promise.all(streamingToolPromises.values());
+
+                // 把流式期间已完成的工具结果注入到 responseParts 中，
+                // 并从 autoPrefix 中移除（避免后续 executeFunctionCallsWithProgress 重复执行）
+                const earlyResponseParts: ContentPart[] = [];
+                const earlyToolResults: ToolExecutionResult[] = [];
+                const remainingAutoPrefix: FunctionCallInfo[] = [];
+
+                for (const call of autoPrefix) {
+                    if (streamingToolResults.has(call.id)) {
+                        const r = streamingToolResults.get(call.id)!;
+                        earlyResponseParts.push(...((r as any).responseParts || []));
+                        earlyToolResults.push({ id: call.id, name: call.name, result: r });
+                        this.log.info('stream.early_tool_done', { conversationId, toolName: call.name, toolId: call.id });
+                    } else {
+                        remainingAutoPrefix.push(call);
+                    }
+                }
+
+                // 替换 autoPrefix 为剩余未执行的工具
+                autoPrefix.length = 0;
+                autoPrefix.push(...remainingAutoPrefix);
+            }
 
             if (autoPrefix.length > 0) {
                 // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting

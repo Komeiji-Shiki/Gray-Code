@@ -76,6 +76,11 @@ export class StreamResponseProcessor {
         this.accumulator.setProviderType(config.providerType);
     }
 
+    /** 暴露内部累加器，供 ToolIterationLoopService 实现流式边执行工具 */
+    getAccumulator(): StreamAccumulator {
+        return this.accumulator;
+    }
+
     /**
      * 处理流式响应
      *
