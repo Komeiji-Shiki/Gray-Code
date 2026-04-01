@@ -349,7 +349,8 @@ export class StreamAccumulator {
                                     const parsed = JSON.parse(lastFc.partialArgs);
                                     lastFc.args = parsed;
                                 } catch (e) {
-                                    // 解析失败（JSON 不完整），继续等待更多增量
+                                    // 解析失败（JSON 不完整），继续等待更多增量。
+                                    // 此处不打日志——流式增量中 JSON 不完整是正常现象。
                                 }
                             }
                         }
@@ -625,7 +626,10 @@ export class StreamAccumulator {
                 try {
                     p.functionCall.args = JSON.parse(p.functionCall.partialArgs);
                 } catch (e) {
-                    // 仍然无法解析，忽略
+                    // 流式结束后仍无法解析 partialArgs，记录警告便于调试。
+                    const fnName = p.functionCall?.name || 'unknown';
+                    const preview = (p.functionCall?.partialArgs || '').slice(0, 200);
+                    console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
                 }
             }
         }

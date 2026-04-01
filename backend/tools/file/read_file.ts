@@ -442,6 +442,7 @@ export function createReadFileTool(
     return {
         declaration: {
             name: 'read_file',
+            strict: true,  // API 端强制 schema 校验
             description,
             category: 'file',
             parameters: {

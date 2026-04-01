@@ -948,6 +948,16 @@ export interface LanguageMessages {
                             openaiXmlJson: string;
                         };
                     };
+                    strictTools: {
+                        label: string;
+                        hint: string;
+                        support: {
+                            anthropic: string;
+                            openai: string;
+                            openaiResponses: string;
+                            gemini: string;
+                        };
+                    };
                     timeout: {
                         label: string;
                         placeholder: string;

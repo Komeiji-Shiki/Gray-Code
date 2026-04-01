@@ -765,6 +765,16 @@ const zhCN: LanguageMessages = {
                             openaiXmlJson: 'OpenAI XML/JSON：支持读取图片和生成图片，不支持文档'
                         }
                     },
+                    strictTools: {
+                        label: '启用 Strict Tool Use',
+                        hint: '启用后，API 端将强制模型输出严格符合参数 schema，消除类型错误和缺失字段。需要 Anthropic 或 OpenAI 渠道支持，反代/代理网关可能不兼容。Gemini 不支持此功能。',
+                        support: {
+                            anthropic: 'Anthropic：自动注入 beta header，最多 20 个 strict 工具',
+                            openai: 'OpenAI：要求参数全部 required + additionalProperties: false',
+                            openaiResponses: 'OpenAI Responses：默认已启用 strict',
+                            gemini: 'Gemini：不支持'
+                        }
+                    },
                     timeout: {
                         label: '超时时间 (ms)',
                         placeholder: '30000'

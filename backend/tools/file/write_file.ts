@@ -249,6 +249,7 @@ export function createWriteFileTool(): Tool {
     return {
         declaration: {
             name: 'write_file',
+            strict: true,  // API 端强制 schema 校验
             description,
             category: 'file',
             parameters: {
