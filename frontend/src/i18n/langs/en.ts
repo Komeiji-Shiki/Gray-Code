@@ -765,6 +765,16 @@ const en: LanguageMessages = {
                             openaiXmlJson: 'OpenAI XML/JSON: Supports reading images and generating images, does not support documents'
                         }
                     },
+                    strictTools: {
+                        label: 'Enable Strict Tool Use',
+                        hint: 'When enabled, the API enforces model output to strictly conform to parameter schemas, eliminating type errors and missing fields. Requires Anthropic or OpenAI channel support. Proxies may not be compatible. Gemini does not support this feature.',
+                        support: {
+                            anthropic: 'Anthropic: Auto-injects beta header, max 20 strict tools',
+                            openai: 'OpenAI: Requires all params required + additionalProperties: false',
+                            openaiResponses: 'OpenAI Responses: Strict is enabled by default',
+                            gemini: 'Gemini: Not supported'
+                        }
+                    },
                     timeout: {
                         label: 'Timeout (ms)',
                         placeholder: '30000'

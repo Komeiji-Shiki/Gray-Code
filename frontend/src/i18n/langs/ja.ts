@@ -765,6 +765,16 @@ const ja: LanguageMessages = {
                             openaiXmlJson: 'OpenAI XML/JSON: 画像の読み取りと生成をサポートしますが、ドキュメントはサポートしていません'
                         }
                     },
+                    strictTools: {
+                        label: 'Strict Tool Use を有効化',
+                        hint: '有効にすると、API がモデル出力をパラメータ schema に厳密に準拠させ、型エラーや必須フィールドの欠落を排除します。Anthropic または OpenAI チャネルのサポートが必要です。プロキシは互換性がない場合があります。Gemini はこの機能をサポートしていません。',
+                        support: {
+                            anthropic: 'Anthropic：beta ヘッダーを自動注入、strict ツール最大 20 個',
+                            openai: 'OpenAI：全パラメータ required + additionalProperties: false が必要',
+                            openaiResponses: 'OpenAI Responses：デフォルトで strict が有効',
+                            gemini: 'Gemini：サポートなし'
+                        }
+                    },
                     timeout: {
                         label: 'タイムアウト (ms)',
                         placeholder: '30000'

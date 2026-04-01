@@ -12,7 +12,7 @@
 import type { ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { CheckpointRecord } from '../../../checkpoint';
-import type { Content } from '../../../conversation/types';
+import type { Content, ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import type { GenerateResponse } from '../../../channel/types';
 import { ChannelError, ErrorType } from '../../../channel/types';
@@ -36,7 +36,7 @@ import type {
 } from '../types';
 
 import { StreamResponseProcessor, isAsyncGenerator, type ProcessedChunkData } from '../handlers/StreamResponseProcessor';
-import type { FunctionCallInfo } from '../utils';
+import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { ToolCallParserService } from './ToolCallParserService';
 import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
@@ -438,6 +438,12 @@ export class ToolIterationLoopService {
             // 7. 处理响应
             let finalContent: Content;
 
+            // 流式边执行工具：跟踪流式期间已启动异步执行的工具 ID 和 Promise（仅流式模式使用）
+            // 存储 ToolExecutionFullResult，既包含 responseParts（写入历史），
+            // 也包含 toolResults（通知前端，result 字段是工具本身的业务返回值）。
+            const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
+            const streamingToolResults = new Map<string, ToolExecutionFullResult>();
+
             if (isAsyncGenerator(response)) {
                 // 流式响应处理
                 const processor = new StreamResponseProcessor({
@@ -447,10 +453,46 @@ export class ToolIterationLoopService {
                     abortSignal,
                     conversationId
                 });
-
-                // 处理流并 yield 每个 chunk
+                // 处理流并 yield 每个 chunk，同时检测新完成的 functionCall 提前启动执行
                 for await (const chunkData of processor.processStream(response)) {
                     yield chunkData;
+
+                    // 流式边执行工具：检测 StreamAccumulator 中新完成的 functionCall。
+                    // 对不需要确认且不需要模式策略拒绝的工具，立即启动异步执行。
+                    // 需要确认的工具跳过（仍走现有的暂停等待路径）。
+                    if (!abortSignal?.aborted) {
+                        const newCalls = processor.getAccumulator().getNewCompletedFunctionCalls();
+                        for (const fc of newCalls) {
+                            // 只对不需要确认的工具提前执行
+                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name)) {
+                                this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
+                                // 使用 executeFunctionCallsWithResults 而非 executeFunctionCalls，
+                                // 这样既能拿到 responseParts（写入历史），
+                                // 又能拿到 toolResults（其中 result 字段是工具本身的业务返回值，
+                                // 用于 toolStatus / toolIteration 事件通知前端正确渲染）。
+                                const promise = this.toolExecutionService.executeFunctionCallsWithResults(
+                                    [{ id: fc.id, name: fc.name, args: fc.args }],
+                                    conversationId
+                                ).catch(err => {
+                                    // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
+                                    // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
+                                    const errorResponse: Record<string, unknown> = {
+                                        success: false,
+                                        error: (err as Error).message
+                                    };
+                                    return {
+                                        responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
+                                        toolResults: [{ id: fc.id, name: fc.name, result: errorResponse }],
+                                        checkpoints: []
+                                    } as ToolExecutionFullResult;
+                                }).then(fullResult => {
+                                    streamingToolResults.set(fc.id, fullResult);
+                                    return fullResult;
+                                });
+                                streamingToolPromises.set(fc.id, promise);
+                            }
+                        }
+                    }
                 }
 
                 // 检查是否被取消
@@ -528,6 +570,86 @@ export class ToolIterationLoopService {
             }
 
             let executionResult: ToolExecutionFullResult | undefined;
+
+            // 流式边执行工具：等待流式期间已启动的异步工具完成，
+            // 将其结果从 autoPrefix 中移除（避免重复执行）。
+            let earlyResponseParts: ContentPart[] = [];
+
+            if (streamingToolPromises.size > 0) {
+                // 等待所有流式期间启动的工具完成
+                await Promise.all(streamingToolPromises.values());
+
+                // 从 autoPrefix 中移除已在流式期间执行完的工具（避免重复执行），
+                // 同时收集它们的 functionResponse parts（后续统一写入历史）。
+                const remainingAutoPrefix: FunctionCallInfo[] = [];
+
+                for (const call of autoPrefix) {
+                    if (streamingToolResults.has(call.id)) {
+                        // streamingToolResults 现在存储的是 ToolExecutionFullResult，
+                        // 从中提取 responseParts 用于写入历史。
+                        const fullResult = streamingToolResults.get(call.id)!;
+                        earlyResponseParts.push(...fullResult.responseParts);
+                        this.log.info('stream.early_tool_done', { conversationId, toolName: call.name, toolId: call.id });
+                    } else {
+                        remainingAutoPrefix.push(call);
+                    }
+                }
+
+                autoPrefix.length = 0;
+                autoPrefix.push(...remainingAutoPrefix);
+            }
+
+            // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
+            // 但 earlyResponseParts 中有结果需要写入历史。
+            // 必须写入，否则下一轮 LLM 调用时 assistant 的 tool_use 没有对应的 tool_result，
+            // Anthropic API 会返回 400 错误。
+            if (autoPrefix.length === 0 && earlyResponseParts.length > 0) {
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: earlyResponseParts,
+                    isFunctionResponse: true
+                });
+
+                // 通知前端所有工具已执行完毕（构造与传统路径一致的 toolResults 格式）。
+                // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
+                // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
+                // 直接从 ToolExecutionFullResult.toolResults 中提取，
+                // 其 result 字段就是工具本身的业务返回值，与传统路径格式一致。
+                const earlyToolResults: ToolExecutionResult[] = [];
+                for (const call of functionCalls) {
+                    if (streamingToolResults.has(call.id)) {
+                        earlyToolResults.push(...streamingToolResults.get(call.id)!.toolResults);
+                    }
+                }
+
+                // 发送每个工具的完成状态（让前端逐个显示工具结果）
+                for (const tr of earlyToolResults) {
+                    const r = tr.result as any;
+                    // 状态判断逻辑与传统路径（executeFunctionCallsWithProgress end 事件）保持一致
+                    let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+                    if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+                        status = 'error';
+                    } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+                        status = 'warning';
+                    }
+                    yield {
+                        conversationId,
+                        toolStatus: true as const,
+                        tool: { id: tr.id, name: tr.name, status, result: tr.result },
+                    } satisfies ChatStreamToolStatusData;
+                }
+
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolIteration: true as const,
+                    toolResults: earlyToolResults,
+                    checkpoints: [],
+                };
+
+                // 继续下一轮循环让 LLM 处理工具结果
+                continue;
+            }
 
             if (autoPrefix.length > 0) {
                 // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting
@@ -614,10 +736,12 @@ export class ToolIterationLoopService {
                     return;
                 }
 
-                // 将函数响应添加到历史
-                const functionResponseParts = executionResult.multimodalAttachments
+                // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
+                const laterResponseParts = executionResult.multimodalAttachments
                     ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
                     : executionResult.responseParts;
+                // earlyResponseParts 排在前面，保持与模型输出顺序一致
+                const functionResponseParts = [...earlyResponseParts, ...laterResponseParts];
 
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',

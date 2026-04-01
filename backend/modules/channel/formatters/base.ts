@@ -127,3 +127,43 @@ export abstract class BaseFormatter {
         });
     }
 }
+
+/**
+ * 递归给 JSON Schema 中所有 object 类型注入 additionalProperties: false。
+ *
+ * strict tool use（Anthropic / OpenAI）要求每个 object 都显式声明
+ * additionalProperties: false，否则 API 返回 400。
+ *
+ * Lim-code 的工具 schema 是手写的，大部分没有此字段，
+ * 所以在 formatter 层面统一注入，避免逐个修改工具文件。
+ */
+export function ensureStrictSchema<T extends Record<string, any>>(schema: T): T {
+    if (!schema || typeof schema !== 'object') {
+        return schema;
+    }
+
+    const result: any = { ...schema };
+
+    // 当前层是 object 类型时，注入 additionalProperties: false
+    if (result.type === 'object' && result.properties) {
+        if (result.additionalProperties === undefined) {
+            result.additionalProperties = false;
+        }
+    }
+
+    // 递归处理 properties 中的每个属性
+    if (result.properties) {
+        const newProps: Record<string, any> = {};
+        for (const [key, prop] of Object.entries(result.properties)) {
+            newProps[key] = ensureStrictSchema(prop as Record<string, any>);
+        }
+        result.properties = newProps;
+    }
+
+    // 递归处理 items（array 类型的元素定义）
+    if (result.items && typeof result.items === 'object') {
+        result.items = ensureStrictSchema(result.items);
+    }
+
+    return result;
+}

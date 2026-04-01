@@ -925,6 +925,46 @@ onMounted(async () => {
         </div>
       </div>
       
+      <!-- Strict Tool Use -->
+      <div class="form-group">
+        <div class="checkbox-with-hint">
+          <label class="custom-checkbox">
+            <input
+              type="checkbox"
+              :checked="currentConfig.strictToolsEnabled ?? false"
+              @change="(e: any) => updateConfigField('strictToolsEnabled', e.target.checked)"
+            />
+            <span class="checkmark"></span>
+            <span class="checkbox-text">{{ t('components.settings.channelSettings.form.strictTools.label') }}</span>
+          </label>
+          <span class="field-hint">{{ t('components.settings.channelSettings.form.strictTools.hint') }}</span>
+          <div class="multimodal-support-info" style="margin-top: 4px;">
+            <div class="support-list">
+              <div class="support-item" :class="{ current: currentConfig.type === 'anthropic' }">
+                <span class="type-label">
+                  <span :class="currentConfig.type === 'anthropic' ? 'support-yes' : ''">{{ t('components.settings.channelSettings.form.strictTools.support.anthropic') }}</span>
+                </span>
+              </div>
+              <div class="support-item" :class="{ current: currentConfig.type === 'openai' }">
+                <span class="type-label">
+                  <span :class="currentConfig.type === 'openai' ? 'support-yes' : ''">{{ t('components.settings.channelSettings.form.strictTools.support.openai') }}</span>
+                </span>
+              </div>
+              <div class="support-item" :class="{ current: currentConfig.type === 'openai-responses' }">
+                <span class="type-label">
+                  <span :class="currentConfig.type === 'openai-responses' ? 'support-yes' : ''">{{ t('components.settings.channelSettings.form.strictTools.support.openaiResponses') }}</span>
+                </span>
+              </div>
+              <div class="support-item" :class="{ current: currentConfig.type === 'gemini' }">
+                <span class="type-label">
+                  <span class="support-no">{{ t('components.settings.channelSettings.form.strictTools.support.gemini') }}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <div class="form-group">
         <label>{{ t('components.settings.channelSettings.form.timeout.label') }}</label>
         <input

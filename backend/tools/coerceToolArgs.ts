@@ -1,13 +1,20 @@
 /**
  * 工具参数预处理。
  *
- * 这里只保留一个兜底：
- * - 当工具 schema 的顶层参数声明为 array
- * - 且模型把该参数返回成 string
- * - 尝试对该字符串做一次 JSON.parse
- * - 只有解析结果本身就是数组时才替换原值
+ * 兜底策略：
  *
- * 其他类型不再做自动纠正，交给工具自身或调用方报错。
+ * 1. boolean 容错：模型输出 "true"/"false" 字符串时，静默转为 true/false
+ *    - 仅处理精确匹配 "true" 和 "false"，其他值（如 "yes"、"1"）不转换
+
+ *
+ * 2. number 容错：模型输出 "30"、"-5"、"3.14" 等数字字符串时，静默转为数字
+ *    - 仅处理匹配 /^-?\d+(\.\d+)?$/ 的字符串，且 Number.isFinite 为 true
+
+ *
+ * 3. array 容错：模型把数组参数输出为 JSON 字符串时，尝试 JSON.parse
+ *    - 仅在解析结果本身就是数组时才替换
+ *
+ * 所有转换仅处理顶层参数，不做递归。
  */
 
 export interface ToolParameterSchema {
@@ -25,7 +32,16 @@ export interface PropertySchema {
 }
 
 /**
- * 仅处理顶层 array 参数的字符串转数组兜底。
+ * 对顶层参数做类型容错转换。
+ *
+ * 处理三种常见的模型输出错误：
+ * - boolean 参数收到 "true"/"false" 字符串
+ * - number 参数收到数字字符串
+ * - array 参数收到 JSON 字符串
+ *
+ * 为什么要做这个：模型（尤其是较小的模型）经常在 JSON 输出中给布尔值和数字加引号，
+ * 比如输出 {"recursive": "true"} 而非 {"recursive": true}。如果不做容错，
+ * 工具内部要么静默得到错误类型，要么直接报错，用户体验差。
  */
 export function coerceToolArgs(
     args: Record<string, any>,
@@ -39,19 +55,47 @@ export function coerceToolArgs(
     let modified = false;
 
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (!(key in result) || propSchema?.type !== 'array') {
+        if (!(key in result)) {
             continue;
         }
 
         const rawValue = result[key];
-        if (Array.isArray(rawValue) || typeof rawValue !== 'string') {
+        const schemaType = propSchema?.type;
+
+        // boolean 容错："true" → true, "false" → false
+        // 仅处理精确的 "true"/"false" 字符串
+        if (schemaType === 'boolean' && typeof rawValue === 'string') {
+            if (rawValue === 'true') {
+                result[key] = true;
+                modified = true;
+            } else if (rawValue === 'false') {
+                result[key] = false;
+                modified = true;
+            }
             continue;
         }
 
-        const parsed = tryParseJson(rawValue);
-        if (Array.isArray(parsed)) {
-            result[key] = parsed;
-            modified = true;
+        // number / integer 容错："30" → 30, "-5" → -5, "3.14" → 3.14
+        // 仅处理合法十进制数字字符串
+        if ((schemaType === 'number' || schemaType === 'integer') && typeof rawValue === 'string') {
+            if (/^-?\d+(\.\d+)?$/.test(rawValue)) {
+                const n = Number(rawValue);
+                if (Number.isFinite(n)) {
+                    result[key] = n;
+                    modified = true;
+                }
+            }
+            continue;
+        }
+
+        // array 容错：JSON 字符串 → 数组（仅当解析结果是数组时替换）
+        if (schemaType === 'array' && typeof rawValue === 'string' && !Array.isArray(rawValue)) {
+            const parsed = tryParseJson(rawValue);
+            if (Array.isArray(parsed)) {
+                result[key] = parsed;
+                modified = true;
+            }
+            continue;
         }
     }
 

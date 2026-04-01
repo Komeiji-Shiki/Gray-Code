@@ -8,6 +8,7 @@ import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore } from '../../../../tools/types';
 import { coerceToolArgs, getToolArgsArrayValidationError } from '../../../../tools/coerceToolArgs';
+import { validateToolArgs } from '../../../../tools/validateToolArgs';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
@@ -608,23 +609,29 @@ export class ToolExecutionService {
             return { call, error: null };
         }
 
+        // 1. 类型容错：将 "true"→true, "30"→30, "[...]"字符串→数组
         const normalizedArgs = coerceToolArgs(call.args, tool.declaration.parameters);
+
+        // 2. 数组专项校验：coerceToolArgs 处理后仍不是数组的，直接报错
         const error = getToolArgsArrayValidationError(
             call.name,
             normalizedArgs,
             tool.declaration.parameters
         );
-
-        if (normalizedArgs === call.args) {
-            return { call, error };
+        if (error) {
+            return {
+                call: normalizedArgs === call.args ? call : { ...call, args: normalizedArgs },
+                error
+            };
         }
 
+        // 3. 完整 schema 校验：检查必需字段、类型匹配、多余字段
+        
+        const schemaError = validateToolArgs(call.name, normalizedArgs, tool.declaration.parameters);
+
         return {
-            call: {
-                ...call,
-                args: normalizedArgs
-            },
-            error
+            call: normalizedArgs === call.args ? call : { ...call, args: normalizedArgs },
+            error: schemaError
         };
     }
 

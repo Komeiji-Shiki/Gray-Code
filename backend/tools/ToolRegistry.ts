@@ -71,7 +71,21 @@ export class ToolRegistry {
      * @returns 工具实例，不存在则返回 undefined
      */
     getTool(name: string): Tool | undefined {
-        return this.tools.get(name);
+        // 1. 按主名称查找
+        const tool = this.tools.get(name);
+        if (tool) {
+            return tool;
+        }
+
+        // 2. 按别名查找（兼容工具重命名后的旧对话历史）
+        // 兼容工具重命名后的旧对话历史
+        for (const t of this.tools.values()) {
+            if (t.declaration.aliases?.includes(name)) {
+                return t;
+            }
+        }
+
+        return undefined;
     }
 
     /**

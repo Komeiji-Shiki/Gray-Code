@@ -247,6 +247,22 @@ export interface BaseChannelConfig {
      * 默认值：false
      */
     sendHistoryThoughtSignatures?: boolean;
+
+    /**
+     * 是否启用 strict tool use（API 端强制模型遵守工具参数 schema）
+     *
+     * 开启后，标记了 strict: true 的工具会在 API 请求中带上 strict 字段，
+     * API 使用 grammar-constrained sampling 保证模型输出严格符合 schema。
+     *
+     * 各渠道行为：
+     * - Anthropic: 自动注入 anthropic-beta: structured-outputs-2025-12-15 头部
+     * - OpenAI: 将工具定义中的 strict 从 false 改为 true
+     * - OpenAI Responses: 默认即 strict，此设置无额外效果
+     * - Gemini: 不支持，设置无效
+     *
+     * 默认值：false（兼容反代/代理网关不支持 strict 字段的场景）
+     */
+    strictToolsEnabled?: boolean;
     
     /**
      * 是否发送历史思考内容

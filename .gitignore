@@ -25,3 +25,6 @@ yarn-debug.log*
 pnpm-debug.log*
 tmp-*.out.log
 tmp-*.err.log
+
+# packaged extension bundles
+*.vsix

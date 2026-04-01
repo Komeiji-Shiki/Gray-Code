@@ -135,6 +135,7 @@ function countByStatus(todos: TodoItem[]): Record<TodoStatus, number> {
 export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
+        strict: true,  // API 端强制 schema 校验
         description: 'Create/replace the per-conversation TODO list (ConversationMetadata.custom["todoList"]). IMPORTANT: Use this tool to initialize the list. For incremental updates (status/content), use todo_update.',
         category: 'todo',
         parameters: {
