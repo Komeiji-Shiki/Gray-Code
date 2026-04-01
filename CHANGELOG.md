@@ -2,6 +2,15 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+
+## [1.1.20] - 2026-04-01
+
+### Added
+  - 增加边流式边执行工具的功能
+
+### Fixed
+  - 优化工具的兜底机制
+
 ## [1.1.19] - 2026-03-31
 
 ### Fixed
