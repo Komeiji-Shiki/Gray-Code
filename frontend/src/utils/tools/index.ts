@@ -45,9 +45,11 @@ import './todo/todo_update'
 
 // Design 工具
 import './design/create_design'
+import './design/update_design'
 
 // Plan 工具
 import './plan/create_plan'
+import './plan/update_plan'
 
 // Review 工具
 import './review/create_review'

@@ -525,8 +525,16 @@ const zhCN: LanguageMessages = {
                     label: '创建计划',
                     fallbackTitle: '计划'
                 },
+                updatePlan: {
+                    label: '更新计划',
+                    fallbackTitle: '计划'
+                },
                 createDesign: {
                     label: '创建设计',
+                    fallbackTitle: '设计'
+                },
+                updateDesign: {
+                    label: '更新设计',
                     fallbackTitle: '设计'
                 },
                 createReview: {
@@ -591,7 +599,13 @@ const zhCN: LanguageMessages = {
                     loadModelsFailed: '加载模型失败',
                     executePlanFailed: '执行计划失败',
                     openFileFailed: '打开文件失败',
-                    promptPrefix: '请按照以下计划执行：\n\n{plan}'
+                    promptPrefix: '请按照以下计划执行：\n\n{plan}',
+                    sourceUpToDate: '来源：最新',
+                    sourceUntracked: '来源：未追踪',
+                    sourceMismatched: '来源：已变化',
+                    sourceMissing: '来源：文件缺失',
+                    sourceBlockedMismatched: '来源文档已变化，请先重新生成或修订计划',
+                    sourceBlockedMissing: '来源文档不存在或无法读取，请先修订计划'
                 },
                 designCard: {
                     title: '设计',

@@ -525,8 +525,16 @@ const ja: LanguageMessages = {
                     label: 'プランを作成',
                     fallbackTitle: 'プラン'
                 },
+                updatePlan: {
+                    label: 'プランを更新',
+                    fallbackTitle: 'プラン'
+                },
                 createDesign: {
                     label: '設計を作成',
+                    fallbackTitle: '設計'
+                },
+                updateDesign: {
+                    label: '設計を更新',
                     fallbackTitle: '設計'
                 },
                 createReview: {
@@ -591,7 +599,13 @@ const ja: LanguageMessages = {
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     executePlanFailed: 'プランの実行に失敗しました',
                     openFileFailed: 'ファイルを開くのに失敗しました',
-                    promptPrefix: '以下のプランに従って実行してください:\n\n{plan}'
+                    promptPrefix: '以下のプランに従って実行してください:\n\n{plan}',
+                    sourceUpToDate: 'ソース: 最新',
+                    sourceUntracked: 'ソース: 未追跡',
+                    sourceMismatched: 'ソース: 変更あり',
+                    sourceMissing: 'ソース: ファイルなし',
+                    sourceBlockedMismatched: 'ソース文書が変更されました。先にプランを再生成または修正してください。',
+                    sourceBlockedMissing: 'ソース文書が見つからないか読み取れません。先にプランを修正してください。'
                 },
                 designCard: {
                     title: '設計',

@@ -132,6 +132,10 @@ export class ChatFlowService {
     return 'pending';
   }
 
+  private normalizePlanUpdateMode(value: unknown): 'revision' | 'progress_sync' {
+    return value === 'progress_sync' ? 'progress_sync' : 'revision';
+  }
+
   private normalizeTodoList(raw: unknown): TodoItemValue[] {
     if (!Array.isArray(raw)) return [];
     const out: TodoItemValue[] = [];
@@ -282,12 +286,54 @@ export class ChatFlowService {
 
         const args = call.args && typeof call.args === 'object' ? call.args as Record<string, unknown> : {};
 
-        if (call.name === 'create_plan' || call.name === 'todo_write') {
-          if (call.name === 'create_plan') {
-            const prompt = (mergedResponse as any)?.planExecutionPrompt;
-            if (typeof prompt !== 'string' || !prompt.trim()) continue;
+        if (call.name === 'create_plan') {
+          const prompt = (mergedResponse as any)?.planExecutionPrompt;
+          if (typeof prompt !== 'string' || !prompt.trim()) continue;
+
+          const todosInput = Array.isArray((mergedResponse as any)?.todos)
+            ? (mergedResponse as any)?.todos
+            : Array.isArray((mergedResponse as any)?.data?.todos)
+              ? (mergedResponse as any)?.data?.todos
+              : (args as any).todos;
+          if (!Array.isArray(todosInput)) continue;
+          list = this.normalizeTodoList(todosInput);
+          touched = true;
+          continue;
+        }
+
+        if (call.name === 'update_plan') {
+          const updateMode = this.normalizePlanUpdateMode(
+            (mergedResponse as any)?.data?.updateMode
+            ?? (mergedResponse as any)?.updateMode
+            ?? (args as any)?.updateMode
+          );
+
+          const todosInput = Array.isArray((mergedResponse as any)?.todos)
+            ? (mergedResponse as any)?.todos
+            : Array.isArray((mergedResponse as any)?.data?.todos)
+              ? (mergedResponse as any)?.data?.todos
+              : (args as any).todos;
+
+          if (updateMode === 'progress_sync') {
+            if (!Array.isArray(todosInput)) continue;
+            list = this.normalizeTodoList(todosInput);
+            touched = true;
+            continue;
           }
 
+          const prompt = (mergedResponse as any)?.planExecutionPrompt;
+          if (typeof prompt !== 'string' || !prompt.trim()) {
+            list = [];
+            touched = true;
+            continue;
+          }
+
+          list = Array.isArray(todosInput) ? this.normalizeTodoList(todosInput) : [];
+          touched = true;
+          continue;
+        }
+
+        if (call.name === 'todo_write') {
           const todosInput = Array.isArray((mergedResponse as any)?.todos)
             ? (mergedResponse as any)?.todos
             : Array.isArray((mergedResponse as any)?.data?.todos)

@@ -525,8 +525,16 @@ const en: LanguageMessages = {
                     label: 'Create Plan',
                     fallbackTitle: 'Plan'
                 },
+                updatePlan: {
+                    label: 'Update Plan',
+                    fallbackTitle: 'Plan'
+                },
                 createDesign: {
                     label: 'Create Design',
+                    fallbackTitle: 'Design'
+                },
+                updateDesign: {
+                    label: 'Update Design',
                     fallbackTitle: 'Design'
                 },
                 createReview: {
@@ -591,7 +599,13 @@ const en: LanguageMessages = {
                     loadModelsFailed: 'Failed to load models',
                     executePlanFailed: 'Failed to execute plan',
                     openFileFailed: 'Failed to open file',
-                    promptPrefix: 'Please execute the following plan:\n\n{plan}'
+                    promptPrefix: 'Please execute the following plan:\n\n{plan}',
+                    sourceUpToDate: 'Source: up to date',
+                    sourceUntracked: 'Source: untracked',
+                    sourceMismatched: 'Source: changed',
+                    sourceMissing: 'Source: missing',
+                    sourceBlockedMismatched: 'The source document has changed. Please regenerate or revise the plan first.',
+                    sourceBlockedMissing: 'The source document is missing or unreadable. Please revise the plan first.'
                 },
                 designCard: {
                     title: 'Design',

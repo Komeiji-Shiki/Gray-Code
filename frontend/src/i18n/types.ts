@@ -447,7 +447,15 @@ export interface LanguageMessages {
                     label: string;
                     fallbackTitle: string;
                 };
+                updatePlan: {
+                    label: string;
+                    fallbackTitle: string;
+                };
                 createDesign: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                updateDesign: {
                     label: string;
                     fallbackTitle: string;
                 };
@@ -514,6 +522,12 @@ export interface LanguageMessages {
                     executePlanFailed: string;
                     openFileFailed: string;
                     promptPrefix: string;
+                    sourceUpToDate: string;
+                    sourceUntracked: string;
+                    sourceMismatched: string;
+                    sourceMissing: string;
+                    sourceBlockedMismatched: string;
+                    sourceBlockedMissing: string;
                 };
                 designCard: {
                     title: string;

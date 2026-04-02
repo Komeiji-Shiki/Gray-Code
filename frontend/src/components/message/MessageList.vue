@@ -17,6 +17,7 @@ import {
   normalizeTodoStatus,
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
+import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 
 const { t } = useI18n()
 
@@ -62,9 +63,21 @@ const todoExpandedMap = new Map<string, boolean>()
 const isTodoExpanded = ref(false)
 
 
-function isExecutedCreatePlanTool(tool: any): boolean {
-  if (!tool || tool.name !== 'create_plan') return false
+function getMergedToolResult(tool: any): Record<string, unknown> {
+  const fromTool = tool?.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : {}
+  const fromResponseRaw = typeof tool?.id === 'string' && tool.id
+    ? chatStore.getToolResponseById(tool.id)
+    : undefined
+  const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
+    ? fromResponseRaw as Record<string, unknown>
+    : {}
 
+  return { ...fromTool, ...fromResponse }
+}
+
+function hasConfirmedPlanExecution(tool: any): boolean {
+  if (!tool) return false
+  if (tool.name !== 'create_plan' && tool.name !== 'update_plan') return false
   const fromTool = tool.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : undefined
   const fromResponseRaw = typeof tool.id === 'string' && tool.id
     ? chatStore.getToolResponseById(tool.id)
@@ -77,14 +90,16 @@ function isExecutedCreatePlanTool(tool: any): boolean {
     ...(fromResponse || {})
   }
 
-  const prompt = (merged as any)?.planExecutionPrompt
-  return typeof prompt === 'string' && prompt.trim().length > 0
+  return getPlanExecutionPrompt(merged).length > 0
 }
 
 function isTodoInitToolForSticky(tool: any): boolean {
   if (!tool) return false
   if (tool.name === 'todo_write') return true
-  if (tool.name === 'create_plan') return isExecutedCreatePlanTool(tool)
+  if (tool.name === 'create_plan') return hasConfirmedPlanExecution(tool)
+  if (tool.name === 'update_plan') {
+    return getPlanUpdateMode(getMergedToolResult(tool), tool.args) !== 'progress_sync' && hasConfirmedPlanExecution(tool)
+  }
   return false
 }
 
@@ -115,7 +130,7 @@ const todoStickyMeta = computed(() => {
     if (!initTool) continue
 
     let panelName = fallbackName
-    if (initTool.name === 'create_plan') {
+    if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
       const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
       if (title) {
         panelName = title
@@ -270,6 +285,61 @@ const buildCurrentText = computed(() => {
   return ''
 })
 
+const activeBuildPlanSync = computed<null | {
+  kind: 'revision' | 'progress_sync'
+  content?: string
+  signature: string
+}>(() => {
+  const build = chatStore.activeBuild
+  if (!build?.planPath) return null
+
+  const buildAnchor = typeof build.anchorBackendIndex === 'number' ? build.anchorBackendIndex : null
+  let latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null = null
+
+  for (const msg of chatStore.allMessages) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
+
+    const isAfterBuildStart = (
+      typeof msg.backendIndex === 'number' && buildAnchor !== null
+        ? msg.backendIndex >= buildAnchor
+        : typeof msg.timestamp === 'number'
+          ? msg.timestamp >= build.startedAt
+          : false
+    )
+    if (!isAfterBuildStart) continue
+
+    for (const tool of msg.tools) {
+      if (tool.name !== 'update_plan') continue
+
+      const mergedResult = getMergedToolResult(tool)
+      if (tool.status === 'error' || mergedResult.success === false) continue
+
+      const toolPath = typeof (mergedResult as any)?.data?.path === 'string'
+        ? String((mergedResult as any).data.path).trim()
+        : typeof (tool.args as any)?.path === 'string'
+          ? String((tool.args as any).path).trim()
+          : ''
+      if (!toolPath || toolPath !== build.planPath) continue
+
+      const updateMode = getPlanUpdateMode(mergedResult, tool.args)
+      const order = typeof msg.backendIndex === 'number' ? msg.backendIndex : (msg.timestamp || 0)
+      if (updateMode === 'revision') {
+        latest = { kind: 'revision', order }
+        continue
+      }
+
+      const content = typeof (mergedResult as any)?.data?.content === 'string' ? String((mergedResult as any).data.content) : ''
+      if (!content) continue
+      latest = { kind: 'progress_sync', content, order }
+    }
+  }
+
+  if (!latest) return null
+  return latest.kind === 'revision'
+    ? { kind: 'revision', signature: `revision:${latest.order}` }
+    : { kind: 'progress_sync', content: latest.content, signature: `progress_sync:${latest.order}:${latest.content || ''}` }
+})
+
 watch(
   () => chatStore.activeBuild?.id,
   (id, prev) => {
@@ -286,6 +356,25 @@ watch(
       void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
     }
   }
+)
+
+watch(
+  () => activeBuildPlanSync.value?.signature,
+  async () => {
+    const build = chatStore.activeBuild
+    const sync = activeBuildPlanSync.value
+    if (!build || !sync) return
+
+    if (sync.kind === 'revision') {
+      await chatStore.setActiveBuild(null)
+      return
+    }
+
+    if (sync.kind === 'progress_sync' && sync.content && sync.content !== build.planContent) {
+      await chatStore.setActiveBuild({ ...build, planContent: sync.content })
+    }
+  },
+  { immediate: true }
 )
 
 watch(showBuildBar, (visible) => {
