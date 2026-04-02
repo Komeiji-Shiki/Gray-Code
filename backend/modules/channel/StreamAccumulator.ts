@@ -272,14 +272,7 @@ export class StreamAccumulator {
         if (options?.visibleDelta && part.text !== undefined) {
             options.visibleDelta.push(part.thought ? { text: part.text, thought: true } : { text: part.text });
         } else if (options?.visibleDelta && part.functionCall) {
-            const visibleFunctionCall = { ...(part.functionCall as any) };
-            if (!visibleFunctionCall.id) {
-                const generatedId = this.createToolCallId();
-                (part.functionCall as any).__streamGeneratedId = generatedId;
-                visibleFunctionCall.id = generatedId;
-            }
-            delete visibleFunctionCall.__streamGeneratedId;
-            options.visibleDelta.push({ functionCall: visibleFunctionCall });
+            options.visibleDelta.push({ functionCall: { ...(part.functionCall as any) } });
         }
 
         // 提取 thoughtSignature 用于内部追踪
@@ -383,12 +376,11 @@ export class StreamAccumulator {
                 // 构建新 Part，但排除 API 原始格式的 thoughtSignature（单数）
                 const { thoughtSignature: rawSignature, ...restPart } = part as any;
                 const newPart: ContentPart = { ...restPart };
-                const { __streamGeneratedId, ...cleanFunctionCall } = fc as any;
                 // 确保 functionCall 是深拷贝的，且处理了 args
-                newPart.functionCall = { ...cleanFunctionCall };
+                newPart.functionCall = { ...fc };
                 // 只在作为新 Part 推入时才生成 id（避免在合并路径中过早赋值破坏合并逻辑）
                 if (!newPart.functionCall.id) {
-                    (newPart.functionCall as any).id = __streamGeneratedId || this.createToolCallId();
+                    (newPart.functionCall as any).id = this.createToolCallId();
                 }
                 if (fc.args) newPart.functionCall.args = { ...fc.args };
                 
