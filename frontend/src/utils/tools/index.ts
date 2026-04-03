@@ -59,6 +59,12 @@ import './review/validate_review_document'
 import './review/reopen_review'
 import './review/compare_review_documents'
 
+// Progress 工具
+import './progress/create_progress'
+import './progress/update_progress'
+import './progress/record_progress_milestone'
+import './progress/validate_progress_document'
+
 // History 工具
 import './history/history_search'
 

@@ -4,6 +4,7 @@ const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
 const mockNormalizeLineEndingsToLF = jest.fn((input: string) => input.replace(/\r\n?/g, '\n'))
+const mockSyncProgressFromPlanArtifact = jest.fn().mockResolvedValue([])
 
 jest.mock('vscode', () => ({
   workspace: {
@@ -22,6 +23,10 @@ jest.mock('../../../backend/tools/utils', () => ({
   getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
   resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
   normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
+}))
+
+jest.mock('../../../backend/tools/progress/autoSync', () => ({
+  syncProgressFromPlanArtifact: (...args: any[]) => mockSyncProgressFromPlanArtifact(...args)
 }))
 
 import { createUpdatePlanTool } from '../../../backend/tools/plan/update_plan'
@@ -63,6 +68,15 @@ describe('update_plan tool', () => {
     })
     expect(mockReadFile).toHaveBeenCalledWith({ fsPath: 'D:/workspace/.limcode/plans/api.plan.md' })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
+    expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({
+      planPath: '.limcode/plans/api.plan.md',
+      title: undefined,
+      todos: [
+        { id: 'api-1', content: '更新流程', status: 'in_progress' },
+        { id: 'api-2', content: '补充测试', status: 'pending' }
+      ],
+      updateMode: 'revision'
+    })
   })
 
   it('syncs only the TODO section in progress_sync mode and does not require confirmation', async () => {
@@ -105,6 +119,14 @@ describe('update_plan tool', () => {
     expect((result.data as any).content).toContain('<!-- LIMCODE_SOURCE_ARTIFACT_START -->')
     expect((result.data as any).content).toContain('`#api-1`')
     expect((result.data as any).content).not.toContain('`#old-1`')
+    expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({
+      planPath: '.limcode/plans/api.plan.md',
+      title: undefined,
+      todos: [
+        { id: 'api-1', content: '同步状态', status: 'completed' }
+      ],
+      updateMode: 'progress_sync'
+    })
   })
 
   it('rejects update_plan when the target plan file does not exist', async () => {

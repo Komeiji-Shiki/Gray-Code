@@ -15,6 +15,7 @@ import {
 } from './reviewDocumentSection';
 import { projectReviewToolResultData } from './resultProjection';
 import { ensureMatchingActiveReviewSession, saveReviewSessionState } from './sessionState';
+import { syncProgressFromReviewArtifact } from '../progress/autoSync';
 
 export interface FinalizeReviewArgs {
   path: string;
@@ -114,6 +115,13 @@ export function createFinalizeReviewTool(): Tool {
         }, locale);
 
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
+        const progressWarnings = await syncProgressFromReviewArtifact({
+          reviewPath: path,
+          title: next.reviewSnapshot.header.title,
+          latestConclusion: next.reviewSnapshot.summary.latestConclusion || undefined,
+          nextAction: next.reviewSnapshot.summary.recommendedNextAction || undefined,
+          eventMessage: `同步审查结论：${path}`
+        });
 
         await saveReviewSessionState(context, {
           reviewRunId: next.reviewSnapshot.reviewRunId,
@@ -134,7 +142,8 @@ export function createFinalizeReviewTool(): Tool {
             },
             extra: {
               findings: next.findings,
-              structuredFindings: next.structuredFindings
+              structuredFindings: next.structuredFindings,
+              ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
             }
           })
         };

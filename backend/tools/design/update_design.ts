@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
+import { syncProgressFromDesignArtifact } from '../progress/autoSync';
 
 export interface UpdateDesignArgs {
   path: string;
@@ -81,6 +82,10 @@ export function createUpdateDesignTool(): Tool {
         const content = normalizeLineEndingsToLF(design);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
+        const progressWarnings = await syncProgressFromDesignArtifact({
+          designPath: targetPath,
+          title: typeof args.title === 'string' ? args.title : undefined
+        });
 
         return {
           success: true,
@@ -88,7 +93,8 @@ export function createUpdateDesignTool(): Tool {
           data: {
             path: targetPath,
             content,
-            changeSummary: changeSummary || undefined
+            changeSummary: changeSummary || undefined,
+            ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
           }
         };
       } catch (e: any) {

@@ -2237,6 +2237,10 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
         'history_search',
         'todo_write',
         'todo_update',
+        'create_progress',
+        'update_progress',
+        'record_progress_milestone',
+        'validate_progress_document',
         'subagents',
         'create_design',
         'update_design'
@@ -2264,6 +2268,10 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'history_search',
         'todo_write',
         'todo_update',
+        'create_progress',
+        'update_progress',
+        'record_progress_milestone',
+        'validate_progress_document',
         'subagents',
         'create_plan',
         'update_plan'
@@ -2310,6 +2318,10 @@ export const REVIEW_MODE_TOOL_POLICY: string[] = [
     'subagents',
     'create_review',
     'validate_review_document',
+    'create_progress',
+    'update_progress',
+    'record_progress_milestone',
+    'validate_progress_document',
     'record_review_milestone',
     'finalize_review',
     'reopen_review'

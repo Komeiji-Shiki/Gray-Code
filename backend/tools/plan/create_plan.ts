@@ -11,6 +11,7 @@ import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { buildPlanDocument } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
 import { buildTrackedPlanSourceArtifact, renderPlanSourceArtifactSection, type PlanSourceArtifactInput } from './sourceArtifactSection';
+import { syncProgressFromPlanArtifact } from '../progress/autoSync';
 
 export interface CreatePlanArgs {
   title?: string;
@@ -112,6 +113,12 @@ export function createCreatePlanTool(): Tool {
         const { content, todos } = buildPlanDocument(normalizedPlan, args.todos, sourceSection);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
+        const progressWarnings = await syncProgressFromPlanArtifact({
+          planPath: outPath,
+          title: title || undefined,
+          todos,
+          updateMode: 'revision'
+        });
 
         return {
           success: true,
@@ -120,7 +127,8 @@ export function createCreatePlanTool(): Tool {
             path: outPath,
             content,
             todos,
-            sourceArtifact: trackedSourceArtifact
+            sourceArtifact: trackedSourceArtifact,
+            ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
           }
         };
       } catch (e: any) {

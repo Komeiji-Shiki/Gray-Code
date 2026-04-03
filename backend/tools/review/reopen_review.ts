@@ -14,6 +14,7 @@ import {
 } from './reviewDocumentSection';
 import { projectReviewToolResultData } from './resultProjection';
 import { loadReviewSessionState, saveReviewSessionState } from './sessionState';
+import { syncProgressFromReviewArtifact } from '../progress/autoSync';
 
 export interface ReopenReviewArgs {
   path: string;
@@ -88,6 +89,11 @@ export function createReopenReviewTool(): Tool {
         const next = reopenReviewDocument(originalContent, locale);
 
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
+        const progressWarnings = await syncProgressFromReviewArtifact({
+          reviewPath: path,
+          title: next.reviewSnapshot.header.title,
+          eventMessage: `重新打开审查：${path}`
+        });
         await saveReviewSessionState(context, {
           reviewRunId: next.reviewSnapshot.reviewRunId,
           reviewPath: path,
@@ -107,7 +113,8 @@ export function createReopenReviewTool(): Tool {
             },
             extra: {
               findings: next.findings,
-              structuredFindings: next.structuredFindings
+              structuredFindings: next.structuredFindings,
+              ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
             }
           })
         };

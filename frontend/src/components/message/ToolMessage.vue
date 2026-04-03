@@ -860,7 +860,26 @@ function renderToolContent(tool: ToolUsage) {
   // 如果有内容格式化器，使用格式化器
   if (config?.contentFormatter) {
     const content = config.contentFormatter(tool.args, tool.result)
-    return h('div', { class: 'tool-content-text' }, content)
+    const children: any[] = []
+
+    if (content) {
+      children.push(h('div', { class: 'tool-content-text' }, content))
+    }
+
+    if (tool.error) {
+      children.push(
+        h('div', { class: 'content-section error-section' }, [
+          h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
+          h('div', { class: 'error-message' }, tool.error)
+        ])
+      )
+    }
+
+    if (children.length === 0) {
+      return h('div', { class: 'tool-content-text' }, '')
+    }
+
+    return h('div', { class: 'tool-content-default' }, children)
   }
   
   // 默认显示：参数和结果的 JSON

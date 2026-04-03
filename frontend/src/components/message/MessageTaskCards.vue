@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /**
- * MessageTaskCards - 在消息正文里显示 Design / Plan / Review 卡片
+ * MessageTaskCards - 在消息正文里显示 Design / Plan / Review / Progress 卡片
  *
- * 当前同时承载 design、plan 与 review 的结果摘要展示。
+ * 当前同时承载 design、plan、review 与 progress 的结果摘要展示。
  */
 import { computed, ref, onMounted, watch } from 'vue'
 import { sendToExtension, loadState, saveState, showNotification } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
 import ReviewTaskCard from './ReviewTaskCard.vue'
+import ProgressTaskCard from './ProgressTaskCard.vue'
 import { MarkdownRenderer, CustomScrollbar } from '../common'
 import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
@@ -22,6 +23,12 @@ import {
   isReviewToolName,
   type ReviewCardData
 } from '../../utils/reviewCards'
+import {
+  extractProgressCardData,
+  formatProgressToolFallbackContent,
+  isProgressToolName,
+  type ProgressCardData
+} from '../../utils/progressCards'
 import { useChatStore, useSettingsStore } from '@/stores'
 import * as configService from '@/services/config'
 import { useI18n } from '../../i18n'
@@ -37,7 +44,7 @@ const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 type CardStatus = 'pending' | 'running' | 'success' | 'error'
-type TaskCardKind = 'design' | 'plan' | 'review'
+type TaskCardKind = 'design' | 'plan' | 'review' | 'progress'
 
 type TaskEntry = {
   kind: TaskCardKind
@@ -47,6 +54,9 @@ type TaskEntry = {
   continuationPrompt?: string
   updateMode?: PlanUpdateMode
   reviewCardData?: ReviewCardData
+  progressCardData?: ProgressCardData
+  error?: string
+  warnings?: string[]
 }
 
 type TaskCardItem = {
@@ -62,6 +72,9 @@ type TaskCardItem = {
   continuationPrompt?: string
   updateMode?: PlanUpdateMode
   reviewCardData?: ReviewCardData
+  progressCardData?: ProgressCardData
+  error?: string
+  warnings?: string[]
 }
 
 type PlanSourceStatus = 'up_to_date' | 'mismatched' | 'missing_source' | 'untracked'
@@ -277,6 +290,7 @@ function isCardExpanded(key: string): boolean {
 function getCreateFallbackTitle(kind: TaskCardKind): string {
   if (kind === 'plan') return t('components.message.tool.createPlan.fallbackTitle')
   if (kind === 'design') return t('components.message.tool.createDesign.fallbackTitle')
+  if (kind === 'progress') return t('components.message.tool.createProgress.fallbackTitle')
   return t('components.message.tool.createReview.fallbackTitle')
 }
 
@@ -672,7 +686,7 @@ function handleCardAction(card: TaskCardItem) {
 async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
   for (const card of cards) {
     if (!card?.path) continue
-    if (card.kind === 'review') continue
+    if (card.kind === 'review' || card.kind === 'progress') continue
     if (isCardActionCompleted(card)) continue
     if (card.status === 'error') continue
     if (autoOpenedCardKeys.value.has(card.key)) continue
@@ -898,12 +912,42 @@ function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
   }]
 }
 
+function getProgressTaskEntries(tool: ToolUsage): TaskEntry[] {
+  if (!isProgressToolName(tool.name)) return []
+
+  const args = (tool.args || {}) as Record<string, unknown>
+  const result = getToolResult(tool)
+  if (!result || typeof result !== 'object') return []
+  const progressResult = result as Record<string, unknown>
+
+  const progressCardData = extractProgressCardData(tool.name, args, progressResult)
+  const error = typeof progressResult.error === 'string' && progressResult.error.trim()
+    ? progressResult.error.trim()
+    : undefined
+  const warnings = Array.isArray((progressResult as any)?.data?.warnings)
+    ? ((progressResult as any).data.warnings as unknown[])
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+  if (!progressCardData) return []
+
+  return [{
+    kind: 'progress',
+    path: progressCardData.path || '',
+    content: formatProgressToolFallbackContent(tool.name, args, progressResult),
+    success: typeof progressResult.success === 'boolean' ? progressResult.success : undefined,
+    progressCardData,
+    error,
+    warnings
+  }]
+}
+
 function getTaskEntries(tool: ToolUsage): TaskEntry[] {
   if (tool.name === 'write_file') return getWriteFileTaskEntries(tool)
   if (tool.name === 'create_plan') return getCreatePlanEntries(tool)
   if (tool.name === 'update_plan') return getUpdatePlanEntries(tool)
   if (tool.name === 'create_design') return getCreateDesignEntries(tool)
   if (tool.name === 'update_design') return getUpdateDesignEntries(tool)
+  if (isProgressToolName(tool.name)) return getProgressTaskEntries(tool)
   if (isReviewToolName(tool.name)) return getReviewTaskEntries(tool)
   return []
 }
@@ -924,6 +968,8 @@ const taskCards = computed<TaskCardItem[]>(() => {
 
       const title = entry.kind === 'review'
         ? (entry.reviewCardData?.title || getDocumentTitle(entry.content, entry.path, entry.kind))
+        : entry.kind === 'progress'
+          ? (entry.progressCardData?.title || getDocumentTitle(entry.content, entry.path, entry.kind))
         : getDocumentTitle(entry.content, entry.path, entry.kind)
 
       cards.push({
@@ -938,7 +984,10 @@ const taskCards = computed<TaskCardItem[]>(() => {
         isActionCompleted: !!entry.continuationPrompt,
         continuationPrompt: entry.continuationPrompt,
         updateMode: entry.updateMode,
-        reviewCardData: entry.reviewCardData
+        reviewCardData: entry.reviewCardData,
+        progressCardData: entry.progressCardData,
+        error: entry.error,
+        warnings: entry.warnings
       })
     }
   }
@@ -969,6 +1018,14 @@ const hasAny = computed(() => taskCards.value.length > 0)
         :content="c.content"
         :status="c.status"
         @generate-plan="generatePlanFromReview(c)"
+      />
+      <ProgressTaskCard
+        v-else-if="c.kind === 'progress' && c.progressCardData"
+        :card="c.progressCardData"
+        :error="c.error"
+        :warnings="c.warnings"
+        :content="c.content"
+        :status="c.status"
       />
       <div v-else class="task-panel">
       <div class="task-header">

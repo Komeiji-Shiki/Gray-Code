@@ -35,6 +35,7 @@ export * from './subagents';
 export * from './todo';
 export * from './design';
 export * from './plan';
+export * from './progress';
 export * from './review';
 export * from './history';
 
@@ -71,6 +72,7 @@ export function getAllTools(): Tool[] {
     const { getTodoToolRegistrations } = require('./todo');
     const { getDesignToolRegistrations } = require('./design');
     const { getPlanToolRegistrations } = require('./plan');
+    const { getProgressToolRegistrations } = require('./progress');
     const { getReviewToolRegistrations } = require('./review');
     const { getHistoryToolRegistrations } = require('./history');
     
@@ -83,6 +85,7 @@ export function getAllTools(): Tool[] {
         ...getTodoToolRegistrations(),
         ...getDesignToolRegistrations(),
         ...getPlanToolRegistrations(),
+        ...getProgressToolRegistrations(),
         ...getReviewToolRegistrations(),
         ...getHistoryToolRegistrations()
     ];

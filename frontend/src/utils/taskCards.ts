@@ -98,6 +98,26 @@ export function isReviewDocPath(path: string): boolean {
   return isScopedMarkdownDocPath(path, '.limcode/review/')
 }
 
+/**
+ * Whether a path looks like the fixed progress doc at .limcode/progress.md
+ * (supports multi-root prefix like "workspace/.limcode/progress.md").
+ */
+export function isProgressDocPath(path: string): boolean {
+  const normalized = (path || '').replace(/\\/g, '/')
+  const lower = normalized.toLowerCase()
+
+  if (lower === '.limcode/progress.md') return true
+
+  const slashIndex = normalized.indexOf('/')
+  if (slashIndex <= 0) return false
+
+  const workspacePrefix = normalized.slice(0, slashIndex)
+  if (workspacePrefix === '.' || workspacePrefix === '..') return false
+  if (workspacePrefix.includes(':')) return false
+
+  return normalized.slice(slashIndex + 1).toLowerCase() === '.limcode/progress.md'
+}
+
 const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- LIMCODE_SOURCE_ARTIFACT_START -->'
 const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- LIMCODE_SOURCE_ARTIFACT_END -->'
 

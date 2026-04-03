@@ -537,6 +537,22 @@ const zhCN: LanguageMessages = {
                     label: '更新设计',
                     fallbackTitle: '设计'
                 },
+                createProgress: {
+                    label: '创建进度',
+                    fallbackTitle: '项目进度'
+                },
+                updateProgress: {
+                    label: '更新进度',
+                    fallbackTitle: '项目进度'
+                },
+                validateProgressDocument: {
+                    label: '校验进度文档',
+                    fallbackTitle: '进度校验'
+                },
+                recordProgressMilestone: {
+                    label: '记录进度里程碑',
+                    fallbackTitle: '进度里程碑'
+                },
                 createReview: {
                     label: '创建审查文档',
                     fallbackTitle: '审查'
@@ -701,6 +717,53 @@ const zhCN: LanguageMessages = {
                     generatingPlan: '生成计划中...',
                     planGenerated: '已生成计划',
                     generatePlanFailed: '生成计划失败'
+                },
+                progressCard: {
+                    sourceCreate: '创建',
+                    sourceUpdate: '更新',
+                    sourceMilestone: '里程碑',
+                    sourceValidate: '校验',
+                    defaultTitle: '项目进度',
+                    validation: '校验信息',
+                    validationInvalid: '无效',
+                    validationWarning: '有警告',
+                    validationValid: '正常',
+                    issueError: '错误',
+                    issueWarning: '警告',
+                    issueSummary: '{count} 个问题 · 错误 {errors} · 警告 {warnings}',
+                    status: '状态',
+                    phase: '阶段',
+                    statusActive: '进行中',
+                    statusBlocked: '阻塞',
+                    statusCompleted: '已完成',
+                    statusArchived: '已归档',
+                    phaseDesign: '设计',
+                    phasePlan: '计划',
+                    phaseImplementation: '实现',
+                    phaseReview: '审查',
+                    phaseMaintenance: '维护',
+                    milestoneStatusCompleted: '已完成',
+                    milestoneStatusInProgress: '进行中',
+                    currentFocus: '当前焦点',
+                    currentProgress: '当前进度',
+                    latestConclusion: '最新结论',
+                    currentBlocker: '当前阻塞',
+                    nextAction: '下一步',
+                    updatedAt: '更新时间',
+                    milestones: '里程碑',
+                    todos: 'TODO',
+                    activeRisks: '活跃风险',
+                    activeArtifacts: '关联文档',
+                    activeDesign: '设计',
+                    activePlan: '计划',
+                    activeReview: '审查',
+                    latestMilestone: '最新里程碑',
+                    openFile: '打开文档',
+                    openFileFailed: '打开进度文档失败',
+                    copyFailed: '复制路径失败',
+                    copyPath: '复制路径',
+                    copied: '已复制',
+                    rawResult: '完整结果'
                 }
             },
             attachment: {
