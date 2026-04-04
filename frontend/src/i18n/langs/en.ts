@@ -537,6 +537,22 @@ const en: LanguageMessages = {
                     label: 'Update Design',
                     fallbackTitle: 'Design'
                 },
+                createProgress: {
+                    label: 'Create Progress',
+                    fallbackTitle: 'Project Progress'
+                },
+                updateProgress: {
+                    label: 'Update Progress',
+                    fallbackTitle: 'Project Progress'
+                },
+                validateProgressDocument: {
+                    label: 'Validate Progress Document',
+                    fallbackTitle: 'Progress Validation'
+                },
+                recordProgressMilestone: {
+                    label: 'Record Progress Milestone',
+                    fallbackTitle: 'Progress Milestone'
+                },
                 createReview: {
                     label: 'Create Review',
                     fallbackTitle: 'Review'
@@ -701,6 +717,53 @@ const en: LanguageMessages = {
                     generatingPlan: 'Generating Plan...',
                     planGenerated: 'Plan Generated',
                     generatePlanFailed: 'Failed to generate plan'
+                },
+                progressCard: {
+                    sourceCreate: 'Create',
+                    sourceUpdate: 'Update',
+                    sourceMilestone: 'Milestone',
+                    sourceValidate: 'Validate',
+                    defaultTitle: 'Project Progress',
+                    validation: 'Validation',
+                    validationInvalid: 'Invalid',
+                    validationWarning: 'Warnings',
+                    validationValid: 'Valid',
+                    issueError: 'Error',
+                    issueWarning: 'Warning',
+                    issueSummary: '{count} issues · {errors} errors · {warnings} warnings',
+                    status: 'Status',
+                    phase: 'Phase',
+                    statusActive: 'Active',
+                    statusBlocked: 'Blocked',
+                    statusCompleted: 'Completed',
+                    statusArchived: 'Archived',
+                    phaseDesign: 'Design',
+                    phasePlan: 'Plan',
+                    phaseImplementation: 'Implementation',
+                    phaseReview: 'Review',
+                    phaseMaintenance: 'Maintenance',
+                    milestoneStatusCompleted: 'Completed',
+                    milestoneStatusInProgress: 'In Progress',
+                    currentFocus: 'Current Focus',
+                    currentProgress: 'Current Progress',
+                    latestConclusion: 'Latest Conclusion',
+                    currentBlocker: 'Current Blocker',
+                    nextAction: 'Next Action',
+                    updatedAt: 'Updated At',
+                    milestones: 'Milestones',
+                    todos: 'TODOs',
+                    activeRisks: 'Active Risks',
+                    activeArtifacts: 'Related Artifacts',
+                    activeDesign: 'Design',
+                    activePlan: 'Plan',
+                    activeReview: 'Review',
+                    latestMilestone: 'Latest Milestone',
+                    openFile: 'Open Document',
+                    openFileFailed: 'Failed to open progress document',
+                    copyFailed: 'Failed to copy path',
+                    copyPath: 'Copy Path',
+                    copied: 'Copied',
+                    rawResult: 'Full Result'
                 }
             },
             attachment: {

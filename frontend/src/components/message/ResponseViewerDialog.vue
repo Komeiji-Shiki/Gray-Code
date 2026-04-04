@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { JsonViewerDialog, MarkdownRenderer, Modal } from '../common'
 import ReviewTaskCard from './ReviewTaskCard.vue'
+import ProgressTaskCard from './ProgressTaskCard.vue'
 import { useI18n } from '../../i18n'
 import { copyToClipboard, formatTime } from '../../utils/format'
 import { showNotification } from '../../utils/vscode'
@@ -575,8 +576,17 @@ function formatJsonInline(value: unknown): string {
               :key="tool.id || `${tool.name}-${index}`"
               class="tool-entry"
             >
-              <div v-if="tool.reviewCardData" class="response-viewer-review-block">
+              <div v-if="tool.reviewCardData || tool.progressCardData" class="response-viewer-review-block">
+                <ProgressTaskCard
+                  v-if="tool.progressCardData"
+                  class="response-viewer-review-card"
+                  :card="tool.progressCardData"
+                  :content="tool.progressFallbackContent"
+                  :status="getReviewCardStatus(tool.status)"
+                  :show-raw-result="false"
+                />
                 <ReviewTaskCard
+                  v-else-if="tool.reviewCardData"
                   class="response-viewer-review-card"
                   :card="tool.reviewCardData"
                   :content="tool.reviewFallbackContent"
@@ -870,6 +880,14 @@ function formatJsonInline(value: unknown): string {
                   class="response-viewer-review-card embedded"
                   :card="tool.reviewCardData"
                   :content="tool.reviewFallbackContent"
+                  :status="getReviewCardStatus(tool.status)"
+                  :show-raw-result="false"
+                />
+                <ProgressTaskCard
+                  v-else-if="tool.progressCardData"
+                  class="response-viewer-review-card embedded"
+                  :card="tool.progressCardData"
+                  :content="tool.progressFallbackContent"
                   :status="getReviewCardStatus(tool.status)"
                   :show-raw-result="false"
                 />

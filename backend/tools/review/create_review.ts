@@ -17,6 +17,7 @@ import {
 } from './reviewDocumentSection';
 import { projectReviewToolResultData } from './resultProjection';
 import { ensureNoActiveReviewSession, saveReviewSessionState } from './sessionState';
+import { syncProgressFromReviewArtifact } from '../progress/autoSync';
 
 export interface CreateReviewArgs {
   title?: string;
@@ -121,6 +122,11 @@ export function createCreateReviewTool(): Tool {
         const summary = summarizeReviewDocument(content);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
+        const progressWarnings = await syncProgressFromReviewArtifact({
+          reviewPath: outPath,
+          title: summary.title || title || undefined,
+          eventMessage: `同步审查文档：${outPath}`
+        });
 
         if (summary.reviewSnapshot) {
           await saveReviewSessionState(context, {
@@ -140,7 +146,8 @@ export function createCreateReviewTool(): Tool {
             delta: {
               type: 'created',
               changedFields: ['header', 'scope', 'reviewSnapshot', 'reviewSession']
-            }
+            },
+            extra: progressWarnings.length > 0 ? { warnings: progressWarnings } : undefined
           })
         };
       } catch (e: any) {

@@ -537,6 +537,22 @@ const ja: LanguageMessages = {
                     label: '設計を更新',
                     fallbackTitle: '設計'
                 },
+                createProgress: {
+                    label: '進捗を作成',
+                    fallbackTitle: 'プロジェクト進捗'
+                },
+                updateProgress: {
+                    label: '進捗を更新',
+                    fallbackTitle: 'プロジェクト進捗'
+                },
+                validateProgressDocument: {
+                    label: '進捗文書を検証',
+                    fallbackTitle: '進捗検証'
+                },
+                recordProgressMilestone: {
+                    label: '進捗マイルストーンを記録',
+                    fallbackTitle: '進捗マイルストーン'
+                },
                 createReview: {
                     label: 'レビュー文書を作成',
                     fallbackTitle: 'レビュー'
@@ -701,6 +717,53 @@ const ja: LanguageMessages = {
                     generatingPlan: 'プランを生成中...',
                     planGenerated: 'プラン生成済み',
                     generatePlanFailed: 'プラン生成に失敗しました'
+                },
+                progressCard: {
+                    sourceCreate: '作成',
+                    sourceUpdate: '更新',
+                    sourceMilestone: 'マイルストーン',
+                    sourceValidate: '検証',
+                    defaultTitle: 'プロジェクト進捗',
+                    validation: '検証情報',
+                    validationInvalid: '無効',
+                    validationWarning: '警告あり',
+                    validationValid: '正常',
+                    issueError: 'エラー',
+                    issueWarning: '警告',
+                    issueSummary: '{count} 件の問題 · エラー {errors} · 警告 {warnings}',
+                    status: '状態',
+                    phase: '段階',
+                    statusActive: '進行中',
+                    statusBlocked: 'ブロック中',
+                    statusCompleted: '完了',
+                    statusArchived: 'アーカイブ済み',
+                    phaseDesign: '設計',
+                    phasePlan: '計画',
+                    phaseImplementation: '実装',
+                    phaseReview: 'レビュー',
+                    phaseMaintenance: '保守',
+                    milestoneStatusCompleted: '完了',
+                    milestoneStatusInProgress: '進行中',
+                    currentFocus: '現在の焦点',
+                    currentProgress: '現在の進捗',
+                    latestConclusion: '最新の結論',
+                    currentBlocker: '現在のブロッカー',
+                    nextAction: '次の対応',
+                    updatedAt: '更新日時',
+                    milestones: 'マイルストーン',
+                    todos: 'TODO',
+                    activeRisks: 'アクティブなリスク',
+                    activeArtifacts: '関連文書',
+                    activeDesign: '設計',
+                    activePlan: '計画',
+                    activeReview: 'レビュー',
+                    latestMilestone: '最新マイルストーン',
+                    openFile: '文書を開く',
+                    openFileFailed: '進捗文書を開けませんでした',
+                    copyFailed: 'パスのコピーに失敗しました',
+                    copyPath: 'パスをコピー',
+                    copied: 'コピー済み',
+                    rawResult: '完全な結果'
                 }
             },
             attachment: {

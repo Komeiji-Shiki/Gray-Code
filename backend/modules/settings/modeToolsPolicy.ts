@@ -113,6 +113,25 @@ export function isReviewPathAllowed(path: string): boolean {
 }
 
 /**
+ * 检查路径是否允许在 Progress 能力下写入
+ *
+ * 首版仅允许固定文件：
+ * - .limcode/progress.md
+ *
+ * 拒绝：
+ * - 绝对路径
+ * - 包含路径穿越（..）的路径
+ * - 空字符串、目录路径或其他 Markdown 文件
+ */
+export function isProgressPathAllowed(path: string): boolean {
+    const normalizedPath = (path || '').replace(/\\/g, '/');
+    if (!normalizedPath || normalizedPath.startsWith('/') || normalizedPath.includes('..') || normalizedPath.endsWith('/')) {
+        return false;
+    }
+    return normalizedPath === '.limcode/progress.md';
+}
+
+/**
  * 获取只读模式下被认为是危险的工具集合
  * 
  * @returns 危险工具名称的 Set

@@ -15,6 +15,7 @@ import {
   renderPlanSourceArtifactSection,
   type PlanSourceArtifactInput
 } from './sourceArtifactSection';
+import { syncProgressFromPlanArtifact } from '../progress/autoSync';
 
 export type PlanUpdateMode = 'revision' | 'progress_sync';
 
@@ -144,6 +145,13 @@ export function createUpdatePlanTool(): Tool {
         const { content, todos } = buildPlanDocument(bodyContent, args.todos, sourceSection);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
+        const progressWarnings = await syncProgressFromPlanArtifact({
+          planPath: targetPath,
+          title: typeof args.title === 'string' ? args.title : undefined,
+          todos,
+          updateMode,
+        });
+        const mergedWarnings = [...warnings, ...progressWarnings];
 
         return {
           success: true,
@@ -154,7 +162,7 @@ export function createUpdatePlanTool(): Tool {
             todos,
             updateMode,
             changeSummary: changeSummary || undefined,
-            warnings: warnings.length > 0 ? warnings : undefined
+            warnings: mergedWarnings.length > 0 ? mergedWarnings : undefined
           }
         };
       } catch (e: any) {

@@ -459,6 +459,22 @@ export interface LanguageMessages {
                     label: string;
                     fallbackTitle: string;
                 };
+                createProgress: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                updateProgress: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                validateProgressDocument: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                recordProgressMilestone: {
+                    label: string;
+                    fallbackTitle: string;
+                };
                 createReview: {
                     label: string;
                     fallbackTitle: string;
@@ -623,6 +639,53 @@ export interface LanguageMessages {
                     generatingPlan: string;
                     planGenerated: string;
                     generatePlanFailed: string;
+                };
+                progressCard: {
+                    sourceCreate: string;
+                    sourceUpdate: string;
+                    sourceMilestone: string;
+                    sourceValidate: string;
+                    defaultTitle: string;
+                    validation: string;
+                    validationInvalid: string;
+                    validationWarning: string;
+                    validationValid: string;
+                    issueError: string;
+                    issueWarning: string;
+                    issueSummary: string;
+                    status: string;
+                    phase: string;
+                    statusActive: string;
+                    statusBlocked: string;
+                    statusCompleted: string;
+                    statusArchived: string;
+                    phaseDesign: string;
+                    phasePlan: string;
+                    phaseImplementation: string;
+                    phaseReview: string;
+                    phaseMaintenance: string;
+                    milestoneStatusCompleted: string;
+                    milestoneStatusInProgress: string;
+                    currentFocus: string;
+                    currentProgress: string;
+                    latestConclusion: string;
+                    currentBlocker: string;
+                    nextAction: string;
+                    updatedAt: string;
+                    milestones: string;
+                    todos: string;
+                    activeRisks: string;
+                    activeArtifacts: string;
+                    activeDesign: string;
+                    activePlan: string;
+                    activeReview: string;
+                    latestMilestone: string;
+                    openFile: string;
+                    openFileFailed: string;
+                    copyFailed: string;
+                    copyPath: string;
+                    copied: string;
+                    rawResult: string;
                 };
             };
             attachment: {

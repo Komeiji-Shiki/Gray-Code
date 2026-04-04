@@ -12,6 +12,12 @@ import {
   isReviewToolName,
   type ReviewCardData
 } from '../../../utils/reviewCards'
+import {
+  extractProgressCardData,
+  formatProgressToolFallbackContent,
+  isProgressToolName,
+  type ProgressCardData
+} from '../../../utils/progressCards'
 import { isAwaitingToolUserConfirmation } from '../../../utils/toolContinuations'
 
 export type ResponseViewerMode = 'common' | 'advanced'
@@ -59,6 +65,8 @@ export interface ResponseViewerToolPreview {
   hasLargeResult: boolean
   reviewCardData?: ReviewCardData
   reviewFallbackContent?: string
+  progressCardData?: ProgressCardData
+  progressFallbackContent?: string
 }
 
 export interface ResponseViewerAttachmentPreview {
@@ -283,7 +291,7 @@ function buildToolPreviews(
       const argsSummary = typeof displayedArgs === 'string'
         ? summarizeText(displayedArgs, MAX_PREVIEW_LENGTH)
         : summarizeValue(displayedArgs, MAX_PREVIEW_LENGTH)
-      const reviewExtras = buildReviewToolPreviewExtras(tool.name, tool.args || {}, resolvedResult.result)
+      const taskExtras = buildTaskToolPreviewExtras(tool.name, tool.args || {}, resolvedResult.result)
 
       return {
         id: tool.id,
@@ -301,8 +309,10 @@ function buildToolPreviews(
         duration: tool.duration,
         hasLargeArgs: isLargeValue(displayedArgs),
         hasLargeResult: isLargeValue(resolvedError || resolvedResult.result),
-        reviewCardData: reviewExtras.reviewCardData,
-        reviewFallbackContent: reviewExtras.reviewFallbackContent
+        reviewCardData: taskExtras.reviewCardData,
+        reviewFallbackContent: taskExtras.reviewFallbackContent,
+        progressCardData: taskExtras.progressCardData,
+        progressFallbackContent: taskExtras.progressFallbackContent
       }
     })
   }
@@ -321,7 +331,7 @@ function buildToolPreviews(
       const argsSummary = typeof displayedArgs === 'string'
         ? summarizeText(displayedArgs, MAX_PREVIEW_LENGTH)
         : summarizeValue(displayedArgs, MAX_PREVIEW_LENGTH)
-      const reviewExtras = buildReviewToolPreviewExtras(functionCall.name, functionCall.args || {}, resolvedResult.result)
+      const taskExtras = buildTaskToolPreviewExtras(functionCall.name, functionCall.args || {}, resolvedResult.result)
 
       return {
         id: functionCall.id || `${functionCall.name}-${index}`,
@@ -339,8 +349,10 @@ function buildToolPreviews(
         duration: undefined,
         hasLargeArgs: isLargeValue(displayedArgs),
         hasLargeResult: isLargeValue(resolvedError || resolvedResult.result),
-        reviewCardData: reviewExtras.reviewCardData,
-        reviewFallbackContent: reviewExtras.reviewFallbackContent
+        reviewCardData: taskExtras.reviewCardData,
+        reviewFallbackContent: taskExtras.reviewFallbackContent,
+        progressCardData: taskExtras.progressCardData,
+        progressFallbackContent: taskExtras.progressFallbackContent
       }
     })
 }
@@ -456,25 +468,35 @@ function buildPartPreviews(
   })
 }
 
-function buildReviewToolPreviewExtras(
+function buildTaskToolPreviewExtras(
   toolName: string,
   args: Record<string, unknown>,
   result?: unknown
-): Pick<ResponseViewerToolPreview, 'reviewCardData' | 'reviewFallbackContent'> {
-  if (!isReviewToolName(toolName)) {
-    return {}
-  }
+): Pick<ResponseViewerToolPreview, 'reviewCardData' | 'reviewFallbackContent' | 'progressCardData' | 'progressFallbackContent'> {
 
   const resultRecord = result && typeof result === 'object'
     ? result as Record<string, unknown>
     : undefined
 
-  const reviewFallbackContent = formatReviewToolFallbackContent(toolName, args || {}, resultRecord).trim()
+  if (isReviewToolName(toolName)) {
+    const reviewFallbackContent = formatReviewToolFallbackContent(toolName, args || {}, resultRecord).trim()
 
-  return {
-    reviewCardData: extractReviewCardData(toolName, args || {}, resultRecord) || undefined,
-    reviewFallbackContent: reviewFallbackContent || undefined
+    return {
+      reviewCardData: extractReviewCardData(toolName, args || {}, resultRecord) || undefined,
+      reviewFallbackContent: reviewFallbackContent || undefined
+    }
   }
+
+  if (isProgressToolName(toolName)) {
+    const progressFallbackContent = formatProgressToolFallbackContent(toolName, args || {}, resultRecord).trim()
+
+    return {
+      progressCardData: extractProgressCardData(toolName, args || {}, resultRecord) || undefined,
+      progressFallbackContent: progressFallbackContent || undefined
+    }
+  }
+
+  return {}
 }
 
 function collectPartFunctionResponseMatches(parts?: ContentPart[]): Map<string, FunctionResponseMatch> {
