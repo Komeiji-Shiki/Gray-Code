@@ -279,9 +279,21 @@ export class DiffManager {
     
     /** 文档保存事件监听器 */
     private saveListeners: Map<string, vscode.Disposable> = new Map();
+
+    /** 文档即将保存事件监听器 */
+    private willSaveListeners: Map<string, vscode.Disposable> = new Map();
     
     /** 文档关闭事件监听器 */
     private closeListeners: Map<string, vscode.Disposable> = new Map();
+
+    /** 被非手动保存打断后，需要在保存完成后恢复的草稿内容 */
+    private suppressedNonManualSaveDrafts: Map<string, string> = new Map();
+
+    /** 正在执行接受动作的 diff */
+    private acceptingDiffIds: Set<string> = new Set();
+
+    /** 正在执行拒绝动作的 diff */
+    private rejectingDiffIds: Set<string> = new Set();
     
     private constructor() {
         this.contentProvider = new OriginalContentProvider();
@@ -399,6 +411,81 @@ export class DiffManager {
         for (const listener of this.saveCompleteListeners) {
             listener(diff);
         }
+    }
+
+    /**
+     * 某个 diff 是否正处于内部接受/拒绝动作处理中
+     */
+    public isDiffActionInProgress(id: string): boolean {
+        return this.acceptingDiffIds.has(id) || this.rejectingDiffIds.has(id);
+    }
+
+    /**
+     * 释放 diff 相关监听器
+     */
+    private disposeDiffListeners(id: string): void {
+        const saveListener = this.saveListeners.get(id);
+        if (saveListener) {
+            saveListener.dispose();
+            this.saveListeners.delete(id);
+        }
+
+        const willSaveListener = this.willSaveListeners.get(id);
+        if (willSaveListener) {
+            willSaveListener.dispose();
+            this.willSaveListeners.delete(id);
+        }
+
+        const closeListener = this.closeListeners.get(id);
+        if (closeListener) {
+            closeListener.dispose();
+            this.closeListeners.delete(id);
+        }
+
+        this.suppressedNonManualSaveDrafts.delete(id);
+    }
+
+    private async restorePendingDraftAfterNonManualSave(diff: PendingDiff, draftContent: string): Promise<void> {
+        const fileUri = vscode.Uri.file(diff.absolutePath);
+        const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath)
+            || await vscode.workspace.openTextDocument(fileUri);
+
+        const currentContent = doc.getText();
+        if (currentContent === draftContent) {
+            return;
+        }
+
+        const edit = new vscode.WorkspaceEdit();
+        const fullRange = new vscode.Range(
+            doc.positionAt(0),
+            doc.positionAt(currentContent.length)
+        );
+        edit.replace(fileUri, fullRange, draftContent);
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
+            throw new Error(`Failed to restore pending diff draft for ${diff.filePath}`);
+        }
+    }
+
+    private finalizeAcceptedDiff(diff: PendingDiff): void {
+        if (diff.status !== 'pending') {
+            return;
+        }
+        this.disposeDiffListeners(diff.id);
+        diff.status = 'accepted';
+        this.cleanup(diff.id);
+        this.notifyStatusChange();
+        this.notifySaveComplete(diff);
+    }
+
+    private finalizeRejectedDiff(diff: PendingDiff): void {
+        if (diff.status !== 'pending') {
+            return;
+        }
+        this.disposeDiffListeners(diff.id);
+        diff.status = 'rejected';
+        this.cleanup(diff.id);
+        this.notifyStatusChange();
     }
     
     /**
@@ -540,7 +627,14 @@ export class DiffManager {
             await this.directApplyAndSave(pendingDiff);
         } else {
             // 显示 diff 视图
-            await this.showDiffView(pendingDiff);
+            try {
+                await this.showDiffView(pendingDiff);
+            } catch (error) {
+                console.warn(
+                    `[DiffManager] Failed to open diff view for ${filePath}; keeping pending diff available for manual apply/reject.`,
+                    error
+                );
+            }
         }
         
         // 如果开启自动保存且 diff 仍处于 pending 状态，设置定时器
@@ -860,54 +954,115 @@ export class DiffManager {
             return;
         }
         
-        // 5. 监听文档保存事件
+        // 5. 监听文档即将保存事件
+        const willSaveListener = vscode.workspace.onWillSaveTextDocument((event) => {
+            if (event.document.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+                return;
+            }
+
+            if (this.isDiffActionInProgress(diff.id)) {
+                return;
+            }
+
+            const currentSettings = this.getSettings();
+            if (currentSettings.autoSave || event.reason === vscode.TextDocumentSaveReason.Manual) {
+                return;
+            }
+
+            const currentDraftContent = event.document.getText();
+            this.suppressedNonManualSaveDrafts.set(diff.id, currentDraftContent);
+
+            const fullRange = new vscode.Range(
+                event.document.positionAt(0),
+                event.document.positionAt(currentDraftContent.length)
+            );
+
+            event.waitUntil(Promise.resolve([
+                vscode.TextEdit.replace(fullRange, diff.originalContent)
+            ]));
+        });
+
+        // 6. 监听文档保存事件
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
-            if (savedDoc.uri.fsPath === diff.absolutePath) {
-                // 检查用户是否修改了内容（保存时的最终内容）
-                const savedContent = savedDoc.getText();
+            if (savedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+                return;
+            }
 
-                // 以“系统建议将保存的内容”为基准（考虑 CodeLens 拒绝块等）
-                const baseSuggestedContent = this.computeFinalSuggestedContent(diff.id, diff);
+            if (this.isDiffActionInProgress(diff.id)) {
+                return;
+            }
 
-                if (savedContent !== baseSuggestedContent && savedContent !== diff.originalContent) {
-                    // 仅保留摘要，不在工具响应里发送完整文件内容
-                    diff.userEditedContent = computeUserEditedNewLinesSummary(baseSuggestedContent, savedContent);
+            const suppressedDraft = this.suppressedNonManualSaveDrafts.get(diff.id);
+            if (suppressedDraft !== undefined) {
+                this.suppressedNonManualSaveDrafts.delete(diff.id);
+                try {
+                    await this.restorePendingDraftAfterNonManualSave(diff, suppressedDraft);
+                } catch (error) {
+                    console.warn(
+                        `[DiffManager] Failed to restore pending diff draft after non-manual save for ${diff.filePath}:`,
+                        error
+                    );
                 }
+                return;
+            }
 
-                diff.status = 'accepted';
-                saveListener.dispose();
-                this.cleanup(diff.id);
-                this.notifyStatusChange();
-                this.notifySaveComplete(diff);
+            // 检查用户是否修改了内容（保存时的最终内容）
+            const savedContent = savedDoc.getText();
 
-                // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
+            if (savedContent === diff.originalContent) {
+                this.finalizeRejectedDiff(diff);
+
                 const currentSettings = this.getSettings();
                 if (!currentSettings.autoSave) {
                     await this.closeDiffTab(diff.absolutePath);
                 }
+                return;
+            }
+
+            // 以“系统建议将保存的内容”为基准（考虑 CodeLens 拒绝块等）
+            const baseSuggestedContent = this.computeFinalSuggestedContent(diff.id, diff);
+
+            if (savedContent !== baseSuggestedContent && savedContent !== diff.originalContent) {
+                // 仅保留摘要，不在工具响应里发送完整文件内容
+                diff.userEditedContent = computeUserEditedNewLinesSummary(baseSuggestedContent, savedContent);
+            }
+
+            this.finalizeAcceptedDiff(diff);
+
+            // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
+            const currentSettings = this.getSettings();
+            if (!currentSettings.autoSave) {
+                await this.closeDiffTab(diff.absolutePath);
             }
         });
         
-        // 6. 监听文档关闭事件
+        // 7. 监听文档关闭事件
         const closeListener = vscode.workspace.onDidCloseTextDocument((closedDoc) => {
-            if (closedDoc.uri.fsPath === diff.absolutePath && diff.status === 'pending') {
-                try {
-                    const currentContent = fs.readFileSync(diff.absolutePath, 'utf8');
-                    if (currentContent !== diff.newContent) {
-                        diff.status = 'rejected';
-                        this.cleanup(diff.id);
-                        this.notifyStatusChange();
-                    }
-                } catch (e) {
-                    // 忽略错误
+            if (closedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+                return;
+            }
+
+            if (this.isDiffActionInProgress(diff.id)) {
+                return;
+            }
+
+            try {
+                const currentContent = fs.readFileSync(diff.absolutePath, 'utf8');
+                if (currentContent !== diff.newContent) {
+                    this.finalizeRejectedDiff(diff);
                 }
-                closeListener.dispose();
-                saveListener.dispose();
+            } catch (e) {
+                // 忽略错误
             }
         });
 
         // 若在注册监听器期间被取消/拒绝，立即释放监听器并恢复内容，避免残留订阅造成后续错乱
         if (!isPending()) {
+            try {
+                willSaveListener.dispose();
+            } catch {
+                // ignore
+            }
             try {
                 saveListener.dispose();
             } catch {
@@ -927,6 +1082,7 @@ export class DiffManager {
             return;
         }
         
+        this.willSaveListeners.set(diff.id, willSaveListener);
         this.saveListeners.set(diff.id, saveListener);
         this.closeListeners.set(diff.id, closeListener);
     }
@@ -943,7 +1099,10 @@ export class DiffManager {
         const currentSettings = this.getSettings();
         const timer = setTimeout(async () => {
             // 自动保存：强制使用 AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
-            await this.acceptDiff(id, true, true);
+            const accepted = await this.acceptDiff(id, true, true);
+            if (!accepted) {
+                console.warn(`[DiffManager] Auto-save failed for diff ${id}; keeping it pending for manual retry.`);
+            }
             this.autoSaveTimers.delete(id);
         }, currentSettings.autoSaveDelay);
         
@@ -958,23 +1117,13 @@ export class DiffManager {
      */
     public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
-        if (!diff || diff.status !== 'pending') {
+        if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;
         }
+
+        this.acceptingDiffIds.add(id);
         
         try {
-            // 移除监听器（避免重复处理）
-            const saveListener = this.saveListeners.get(id);
-            if (saveListener) {
-                saveListener.dispose();
-                this.saveListeners.delete(id);
-            }
-            const closeListener = this.closeListeners.get(id);
-            if (closeListener) {
-                closeListener.dispose();
-                this.closeListeners.delete(id);
-            }
-
             const finalContent = this.computeFinalSuggestedContent(id, diff);
             
             const uri = vscode.Uri.file(diff.absolutePath);
@@ -1000,7 +1149,10 @@ export class DiffManager {
                         doc.positionAt(currentContent.length)
                     );
                     edit.replace(uri, fullRange, finalContent);
-                    await vscode.workspace.applyEdit(edit);
+                    const applied = await vscode.workspace.applyEdit(edit);
+                    if (!applied) {
+                        throw new Error(`Failed to stage accepted diff content for ${diff.filePath}`);
+                    }
                 }
                 contentToSave = finalContent;
             } else {
@@ -1062,22 +1214,28 @@ export class DiffManager {
                 }
             }
             
-            diff.status = 'accepted';
-            this.cleanup(id);
-
-            this.notifyStatusChange();
-            this.notifySaveComplete(diff);
+            this.finalizeAcceptedDiff(diff);
             
-            vscode.window.setStatusBarMessage(`$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`, 3000);
+            try {
+                vscode.window.setStatusBarMessage(`$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`, 3000);
+            } catch (error) {
+                console.warn(`[DiffManager] Failed to show accepted status for ${diff.filePath}:`, error);
+            }
             
             if (closeTab) {
-                await this.closeDiffTab(diff.absolutePath);
+                try {
+                    await this.closeDiffTab(diff.absolutePath);
+                } catch (error) {
+                    console.warn(`[DiffManager] Failed to close diff tab for ${diff.filePath}:`, error);
+                }
             }
             
             return true;
         } catch (error) {
             vscode.window.showErrorMessage(t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
             return false;
+        } finally {
+            this.acceptingDiffIds.delete(id);
         }
     }
     
@@ -1103,9 +1261,11 @@ export class DiffManager {
      */
     public async rejectDiff(id: string): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
-        if (!diff || diff.status !== 'pending') {
+        if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;
         }
+
+        this.rejectingDiffIds.add(id);
         
         try {
             // 1. 恢复文件内容
@@ -1119,7 +1279,10 @@ export class DiffManager {
                     doc.positionAt(doc.getText().length)
                 );
                 edit.replace(uri, fullRange, diff.originalContent);
-                await vscode.workspace.applyEdit(edit);
+                const applied = await vscode.workspace.applyEdit(edit);
+                if (!applied) {
+                    throw new Error(`Failed to restore original content for ${diff.filePath}`);
+                }
                 
                 // 如果文件曾经被保存过（脏了），这里我们不强制保存，因为用户拒绝了 AI 的修改。
                 // 但如果文件在 AI 修改前就是干净的，AI 修改让它变脏了，我们现在恢复了原始内容，它应该变回干净（或者通过 undo）。
@@ -1128,30 +1291,20 @@ export class DiffManager {
                 fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
             }
 
-            // 2. 关闭 diff 标签页
-            await this.closeDiffTab(diff.absolutePath);
+            this.finalizeRejectedDiff(diff);
 
-            // 3. 移除监听器
-            const saveListener = this.saveListeners.get(id);
-            if (saveListener) {
-                saveListener.dispose();
-                this.saveListeners.delete(id);
+            try {
+                await this.closeDiffTab(diff.absolutePath);
+            } catch (error) {
+                console.warn(`[DiffManager] Failed to close rejected diff tab for ${diff.filePath}:`, error);
             }
-            const closeListener = this.closeListeners.get(id);
-            if (closeListener) {
-                closeListener.dispose();
-                this.closeListeners.delete(id);
-            }
-
-            diff.status = 'rejected';
-            this.cleanup(id);
-
-            this.notifyStatusChange();
             
             return true;
         } catch (error) {
             console.error('Failed to reject diff:', error);
             return false;
+        } finally {
+            this.rejectingDiffIds.delete(id);
         }
     }
     
@@ -1379,11 +1532,18 @@ export class DiffManager {
             listener.dispose();
         }
         this.saveListeners.clear();
+
+        for (const listener of this.willSaveListeners.values()) {
+            listener.dispose();
+        }
+        this.willSaveListeners.clear();
         
         for (const listener of this.closeListeners.values()) {
             listener.dispose();
         }
         this.closeListeners.clear();
+
+        this.suppressedNonManualSaveDrafts.clear();
         
         if (this.providerDisposable) {
             this.providerDisposable.dispose();
