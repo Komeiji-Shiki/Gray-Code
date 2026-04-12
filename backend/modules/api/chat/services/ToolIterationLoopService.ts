@@ -21,7 +21,6 @@ import { t } from '../../../../i18n';
 import { Logger } from '../../../../core/logger';
 import type { CheckpointService } from './CheckpointService';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
-
 import type {
     ChatStreamChunkData,
     ChatStreamCompleteData,
@@ -44,6 +43,7 @@ import type { TokenEstimationService } from './TokenEstimationService';
 import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { SummarizeService } from './SummarizeService';
+import { resolveAndPersistPostToolStopState } from './postToolStopState';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -693,7 +693,18 @@ export class ToolIterationLoopService {
                     isFunctionResponse: true
                 });
 
-                if (firstConfirmTool) {
+                const earlyStopState = await resolveAndPersistPostToolStopState(
+                    this.conversationManager,
+                    conversationId,
+                    functionCalls,
+                    earlyToolResults,
+                    {
+                        logger: this.log,
+                        logContext: { iteration, executionPath: 'stream_early' }
+                    }
+                );
+
+                if (firstConfirmTool && !earlyStopState.shouldStop) {
                     yield {
                         conversationId,
                         pendingToolCalls: [{
@@ -703,8 +714,6 @@ export class ToolIterationLoopService {
                         }],
                         content: finalContent,
                         awaitingConfirmation: true as const,
-                        // 已在流式期间自动完成的前缀工具结果仍需同步给前端，
-                        // 但不能 continue 到下一轮，否则后续待确认工具会变成“无响应的 functionCall”。
                         toolResults: earlyToolResults,
                         checkpoints: []
                     } satisfies ChatStreamToolConfirmationData;
@@ -712,15 +721,10 @@ export class ToolIterationLoopService {
                     return;
                 }
 
-                // 通知前端所有工具已执行完毕（构造与传统路径一致的 toolResults 格式）。
                 // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
                 // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
-                // 直接从 ToolExecutionFullResult.toolResults 中提取，
-                // 其 result 字段就是工具本身的业务返回值，与传统路径格式一致。
-                // 发送每个工具的完成状态（让前端逐个显示工具结果）
                 for (const tr of earlyToolResults) {
                     const r = tr.result as any;
-                    // 状态判断逻辑与传统路径（executeFunctionCallsWithProgress end 事件）保持一致
                     let status: ChatStreamToolStatusData['tool']['status'] = 'success';
                     if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
                         status = 'error';
@@ -742,7 +746,10 @@ export class ToolIterationLoopService {
                     checkpoints: [],
                 };
 
-                // 继续下一轮循环让 LLM 处理工具结果
+                if (earlyStopState.shouldStop) {
+                    return;
+                }
+
                 continue;
             }
 
@@ -860,6 +867,31 @@ export class ToolIterationLoopService {
                 });
             }
 
+            if (executionResult) {
+                const postToolStopState = await resolveAndPersistPostToolStopState(
+                    this.conversationManager,
+                    conversationId,
+                    functionCalls,
+                    executionResult.toolResults,
+                    {
+                        logger: this.log,
+                        logContext: { iteration, executionPath: 'stream' }
+                    }
+                );
+
+                if (postToolStopState.shouldStop) {
+                    yield {
+                        conversationId,
+                        content: finalContent,
+                        toolIteration: true as const,
+                        toolResults: executionResult.toolResults,
+                        checkpoints: executionResult.checkpoints
+                    };
+
+                    return;
+                }
+            }
+
             // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
             if (firstConfirmTool) {
                 yield {
@@ -871,7 +903,6 @@ export class ToolIterationLoopService {
                     }],
                     content: finalContent,
                     awaitingConfirmation: true as const,
-                    // 把已自动执行的前缀结果同步给前端（用于刷新工具状态/结果展示）
                     toolResults: executionResult?.toolResults,
                     checkpoints: executionResult?.checkpoints
                 };
@@ -881,19 +912,6 @@ export class ToolIterationLoopService {
 
             // 14. 没有需要确认的工具，说明所有工具均已自动执行完成
             if (executionResult) {
-                const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
-                const hasUserConfirmation = executionResult.toolResults.some(r => (r.result as any).requiresUserConfirmation);
-                if (hasCancelled || hasUserConfirmation) {
-                    yield {
-                        conversationId,
-                        content: finalContent,
-                        toolIteration: true as const,
-                        toolResults: executionResult.toolResults,
-                        checkpoints: executionResult.checkpoints
-                    };
-                    return;
-                }
-
                 yield {
                     conversationId,
                     content: finalContent,
@@ -1045,7 +1063,7 @@ export class ToolIterationLoopService {
             const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
             const messageIndex = currentHistory.length - 1;
 
-            const functionResponses = await this.toolExecutionService.executeFunctionCalls(
+            const executionResult = await this.toolExecutionService.executeFunctionCallsWithResults(
                 functionCalls,
                 conversationId,
                 messageIndex,
@@ -1054,12 +1072,34 @@ export class ToolIterationLoopService {
                 promptModeSnapshot
             );
 
+            const functionResponseParts = executionResult.multimodalAttachments
+                ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
+                : executionResult.responseParts;
+
             // 将函数响应添加到历史（作为 user 消息，标记为函数响应）
             await this.conversationManager.addContent(conversationId, {
                 role: 'user',
-                parts: functionResponses,
+                parts: functionResponseParts,
                 isFunctionResponse: true
             });
+
+            const postToolStopState = await resolveAndPersistPostToolStopState(
+                this.conversationManager,
+                conversationId,
+                functionCalls,
+                executionResult.toolResults,
+                {
+                    logger: this.log,
+                    logContext: { iteration, executionPath: 'non_stream' }
+                }
+            );
+
+            if (postToolStopState.shouldStop) {
+                return {
+                    content: finalContent,
+                    exceededMaxIterations: false
+                };
+            }
             
             // 注：工具响应消息的 token 计数将在下一次循环的 getHistoryWithContextTrimInfo 中
             // 与系统提示词、动态上下文一起并行计算

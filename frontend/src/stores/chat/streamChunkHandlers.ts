@@ -16,6 +16,7 @@ import {
   handleFunctionCallPart
 } from './streamHelpers'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -578,6 +579,7 @@ export function handleAwaitingConfirmation(
   // 但 isStreaming 设为 false 允许用户操作
   state.isStreaming.value = false
   state.activeStreamId.value = null
+  state._lastApprovalGatedStreamId.value = null
   // isWaitingForResponse 保持 true 或设为特殊状态
 }
 
@@ -612,7 +614,9 @@ export function handleToolIteration(
   const hasUserConfirmation = chunk.toolResults?.some(
     r => (r.result as any)?.requiresUserConfirmation
   ) ?? false
-  
+
+  let restoredTools: ToolUsage[] | undefined
+
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 tools 信息和 modelVersion
@@ -635,7 +639,7 @@ export function handleToolIteration(
     }
     
     // 合并 tools：以 finalMessage.tools 顺序为基准，保留 existingTools 的运行态字段
-    let restoredTools = mergeToolsPreferExisting(existingTools, finalMessage.tools)
+    restoredTools = mergeToolsPreferExisting(existingTools, finalMessage.tools)
     if (!restoredTools || restoredTools.length === 0) {
       restoredTools = existingTools
     }
@@ -740,15 +744,36 @@ export function handleToolIteration(
     }
   }
   
+  const toolArgsById = new Map<string, Record<string, unknown>>()
+  for (const tool of restoredTools || []) {
+    const args = tool.args && typeof tool.args === 'object'
+      ? tool.args as Record<string, unknown>
+      : {}
+    toolArgsById.set(tool.id, args)
+  }
+
+  const hasApprovalStop = chunk.toolResults?.some(result => {
+    const args = typeof result.id === 'string'
+      ? toolArgsById.get(result.id)
+      : undefined
+    return getToolApprovalStopKind(result.name, result.result, args) !== null
+  }) ?? false
+
   // 如果有工具被取消 或 有工具要求用户确认后再继续，结束 streaming 状态
-  // requiresUserConfirmation: 工具执行后的门闸（如 create_plan），等待用户点击"执行计划"后才继续
-  if (hasCancelledTools || hasUserConfirmation) {
+  // requiresUserConfirmation: 工具执行后的门闸（如 create_plan）
+  // hasApprovalStop: 覆盖 review -> plan 这类不依赖 requiresUserConfirmation 的宿主审批停止
+  if (hasCancelledTools || hasUserConfirmation || hasApprovalStop) {
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
+    state._lastApprovalGatedStreamId.value = hasApprovalStop && chunk.streamId
+      ? chunk.streamId
+      : null
     return
   }
+
+  state._lastApprovalGatedStreamId.value = null
   
   // 创建新的占位消息用于接收后续 AI 响应
   const newAssistantMessageId = generateId()
@@ -856,6 +881,7 @@ export function handleComplete(
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
   
   // 流式完成后更新对话元数据
@@ -1072,6 +1098,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.isWaitingForResponse.value = false
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }
 
@@ -1117,5 +1144,6 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

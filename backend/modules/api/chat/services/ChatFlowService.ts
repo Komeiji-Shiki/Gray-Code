@@ -9,6 +9,7 @@
  */
 
 import { t } from '../../../../i18n';
+import { Logger } from '../../../../core/logger';
 import type { ConfigManager } from '../../../config/ConfigManager';
 import type { ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
@@ -25,6 +26,7 @@ import type {
   EditAndRetryRequestData,
   ToolConfirmationResponseData,
   DeleteToMessageRequestData,
+  HiddenFunctionResponseData,
   DeleteToMessageSuccessData,
   DeleteToMessageErrorData,
   ChatSuccessData,
@@ -49,6 +51,13 @@ import type { DiffInterruptService } from './DiffInterruptService';
 import type { OrphanedToolCallService } from './OrphanedToolCallService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { ToolCallParserService } from './ToolCallParserService';
+import {
+  clearPendingApprovalGate,
+  getPendingApprovalGate,
+  getPendingApprovalGateKindForContinuationIntent
+} from '../../../conversation/pendingApprovalGate';
+import { getHiddenContinuationApprovalRequirement } from './approvalGateRules';
+import { resolveAndPersistPostToolStopState } from './postToolStopState';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -68,6 +77,7 @@ type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
 const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig';
 
 export class ChatFlowService {
+  private readonly log = Logger.get('ChatFlow');
   constructor(
     private configManager: ConfigManager,
     private conversationManager: ConversationManager,
@@ -125,6 +135,115 @@ export class ChatFlowService {
       ...(existing && typeof existing === 'object' ? existing : {}),
       ...(patch || {})
     };
+  }
+
+  private async validateHiddenContinuationApproval(
+    conversationId: string,
+    hiddenFunctionResponse?: HiddenFunctionResponseData
+  ): Promise<ChatErrorData | null> {
+    const requirement = getHiddenContinuationApprovalRequirement(hiddenFunctionResponse);
+    if (!requirement) {
+      return null;
+    }
+
+    const gate = await getPendingApprovalGate(this.conversationManager, conversationId);
+    if (!gate) {
+      this.log.warn('approval_gate.missing', {
+        conversationId,
+        intent: requirement.intent,
+        sourceToolId: hiddenFunctionResponse?.id || null,
+        sourceToolName: hiddenFunctionResponse?.name || null
+      });
+      return {
+        success: false,
+        error: {
+          code: 'APPROVAL_GATE_REQUIRED',
+          message: `Missing pending approval gate for continuation intent: ${requirement.intent}.`
+        }
+      };
+    }
+
+    const approvalId = requirement.approvalId;
+    if (!approvalId) {
+      this.log.warn('approval_gate.approval_id_missing', {
+        conversationId,
+        intent: requirement.intent,
+        gateId: gate.id,
+        sourceToolId: hiddenFunctionResponse?.id || null,
+        sourceToolName: hiddenFunctionResponse?.name || null
+      });
+      return {
+        success: false,
+        error: {
+          code: 'APPROVAL_GATE_REQUIRED',
+          message: `Missing approvalId for continuation intent: ${requirement.intent}.`
+        }
+      };
+    }
+
+    const expectedKind = getPendingApprovalGateKindForContinuationIntent(requirement.intent);
+    const hiddenToolId = typeof hiddenFunctionResponse?.id === 'string' ? hiddenFunctionResponse.id.trim() : '';
+    const hiddenToolName = typeof hiddenFunctionResponse?.name === 'string' ? hiddenFunctionResponse.name.trim() : '';
+
+    if (!hiddenToolId || !hiddenToolName) {
+      return {
+        success: false,
+        error: {
+          code: 'APPROVAL_GATE_MISMATCH',
+          message: 'Hidden continuation payload must include the original tool id and tool name.'
+        }
+      };
+    }
+
+    if (gate.id !== approvalId || gate.kind !== expectedKind || gate.continuationIntent !== requirement.intent || gate.sourceToolCallId !== hiddenToolId || gate.sourceToolName !== hiddenToolName) {
+      this.log.warn('approval_gate.mismatch', {
+        conversationId,
+        intent: requirement.intent,
+        approvalId,
+        gateId: gate.id,
+        gateKind: gate.kind,
+        gateIntent: gate.continuationIntent,
+        hiddenToolId: hiddenToolId || null,
+        hiddenToolName: hiddenToolName || null
+      });
+      return {
+        success: false,
+        error: {
+          code: 'APPROVAL_GATE_MISMATCH',
+          message: `Approval gate mismatch for continuation intent: ${requirement.intent}.`
+        }
+      };
+    }
+
+    await clearPendingApprovalGate(this.conversationManager, conversationId);
+    this.log.info('approval_gate.consumed', {
+      conversationId,
+      intent: requirement.intent,
+      gateId: gate.id,
+      sourceToolId: gate.sourceToolCallId,
+      sourceToolName: gate.sourceToolName
+    });
+    return null;
+  }
+
+  private async clearPendingApprovalGateIfPresent(
+    conversationId: string,
+    reason: string
+  ): Promise<void> {
+    const gate = await getPendingApprovalGate(this.conversationManager, conversationId);
+    if (!gate) {
+      return;
+    }
+
+    await clearPendingApprovalGate(this.conversationManager, conversationId);
+    this.log.info('approval_gate.cleared', {
+      conversationId,
+      reason,
+      gateId: gate.id,
+      gateKind: gate.kind,
+      sourceToolId: gate.sourceToolCallId,
+      sourceToolName: gate.sourceToolName
+    });
   }
 
   private normalizeTodoStatus(value: unknown): TodoStatusValue {
@@ -464,7 +583,17 @@ export class ChatFlowService {
       };
     }
 
+    const approvalValidationError = await this.validateHiddenContinuationApproval(conversationId, hiddenFunctionResponse);
+    if (approvalValidationError) {
+      return approvalValidationError;
+    }
+
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
+    if (!hiddenFunctionResponse) {
+      await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
+    }
+
 
     // 3. 添加输入到历史
     if (hiddenFunctionResponse) {
@@ -535,6 +664,8 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'retry');
 
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -620,6 +751,8 @@ export class ChatFlowService {
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_and_retry');
+
     // 4. 更新消息内容，并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: [{ text: newMessage }],
@@ -704,7 +837,21 @@ export class ChatFlowService {
       return;
     }
 
+    const approvalValidationError = await this.validateHiddenContinuationApproval(conversationId, hiddenFunctionResponse);
+    if (approvalValidationError) {
+      yield {
+        conversationId,
+        error: approvalValidationError.error
+      };
+      return;
+    }
+
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
+    if (!hiddenFunctionResponse) {
+      await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
+    }
+
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
@@ -819,6 +966,8 @@ export class ChatFlowService {
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'retry_stream');
+
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
     await this.diffInterruptService.cancelAllPending();
@@ -839,6 +988,22 @@ export class ChatFlowService {
         toolIteration: true as const,
         toolResults: orphanedFunctionCalls.toolResults,
       } satisfies ChatStreamToolIterationData;
+
+      const orphanedStopState = await resolveAndPersistPostToolStopState(
+        this.conversationManager,
+        conversationId,
+        this.toolCallParserService.extractFunctionCalls(orphanedFunctionCalls.functionCallContent),
+        orphanedFunctionCalls.toolResults,
+        {
+          logger: this.log,
+          logContext: { executionPath: 'retry_stream_orphaned' }
+        }
+      );
+
+      if (orphanedStopState.shouldStop) {
+        this.diffInterruptService.resetUserInterrupt();
+        return;
+      }
     }
 
     // 5. 重置中断标记
@@ -907,6 +1072,8 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_and_retry');
 
     // 3. 验证消息索引和角色
     const message = await this.conversationManager.getMessage(conversationId, messageIndex);
@@ -1370,6 +1537,28 @@ export class ChatFlowService {
       });
     }
 
+    const postToolStopState = await resolveAndPersistPostToolStopState(
+      this.conversationManager,
+      conversationId,
+      allFunctionCalls,
+      toolResultsThisTurn,
+      {
+        logger: this.log,
+        logContext: { executionPath: 'tool_confirmation' }
+      }
+    );
+
+    if (postToolStopState.shouldStop) {
+      yield {
+        conversationId,
+        content: lastMessage,
+        toolIteration: true as const,
+        toolResults: toolResultsThisTurn,
+        checkpoints: checkpointsThisTurn,
+      } satisfies ChatStreamToolIterationData;
+      return;
+    }
+
     // 如果本轮存在 cancelled，则不再继续推进，也不再等待下一次确认
     const hasCancelledTools = toolResultsThisTurn.some(r => (r.result as any).cancelled);
     if (hasCancelledTools) {
@@ -1453,6 +1642,8 @@ export class ChatFlowService {
     
     // 4. 拒绝所有未响应的工具调用并持久化
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'delete_to_message');
 
     try {
       // 5. 删除关联的检查点

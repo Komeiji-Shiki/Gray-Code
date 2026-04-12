@@ -13,6 +13,11 @@ import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute }
 import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
 import { getPlanSourceStatusFromContent, type PlanSourceStatusResult } from '../../backend/tools/plan/sourceArtifactSection';
 import type { PinnedFileItem } from '../../backend/modules/settings/types';
+import {
+  getPendingApprovalGate,
+  getPendingApprovalGateMismatchReason,
+  type PendingApprovalGateExpectation
+} from '../../backend/modules/conversation/pendingApprovalGate';
 
 // ========== 工作区信息 ==========
 
@@ -1232,17 +1237,71 @@ function buildPlanSourceBlockedError(sourceStatus: PlanSourceStatusResult): stri
   return 'The plan source artifact is not executable in its current state.';
 }
 
+async function validatePendingApprovalGateForContinuation(
+  ctx: HandlerContext,
+  options: {
+    conversationId: unknown;
+    toolId: unknown;
+    expectation: PendingApprovalGateExpectation;
+  }
+): Promise<{ success: true; approvalId: string } | { success: false; error: string }> {
+  const conversationId = typeof options.conversationId === 'string' ? options.conversationId.trim() : '';
+  if (!conversationId) {
+    return { success: false, error: 'conversationId is required for approval-gated continuation.' };
+  }
+
+  const toolId = typeof options.toolId === 'string' ? options.toolId.trim() : '';
+  if (!toolId) {
+    return { success: false, error: 'toolId is required for approval-gated continuation.' };
+  }
+
+  const gate = await getPendingApprovalGate(ctx.conversationManager, conversationId);
+  if (!gate) {
+    return { success: false, error: 'No pending approval gate exists for this conversation.' };
+  }
+
+  const mismatch = getPendingApprovalGateMismatchReason(gate, {
+    ...options.expectation,
+    sourceToolCallId: toolId
+  });
+
+  if (mismatch) {
+    return { success: false, error: mismatch };
+  }
+
+  return {
+    success: true,
+    approvalId: gate.id
+  };
+}
+
 export const designConfirmPlanGeneration: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { path: designPathRaw, originalContent } = data || {};
+    const { path: designPathRaw, originalContent, conversationId, toolId } = data || {};
     const designPath = typeof designPathRaw === 'string' ? designPathRaw.trim() : '';
     const originalText = typeof originalContent === 'string' ? originalContent : '';
     const confirmedPrompt = buildPlanGenerationPrompt('design', false);
     const modifiedPrompt = buildPlanGenerationPrompt('design', true);
 
+    const gateCheck = await validatePendingApprovalGateForContinuation(ctx, {
+      conversationId,
+      toolId,
+      expectation: {
+        kind: 'generate_plan',
+        continuationIntent: 'generate_plan_now',
+        sourceArtifactType: 'design',
+        sourcePath: designPath || undefined
+      }
+    });
+    if (gateCheck.success === false) {
+      ctx.sendResponse(requestId, { success: false, error: gateCheck.error });
+      return;
+    }
+
     const replyWithDesign = async (prompt: string, designContent: string) => {
       ctx.sendResponse(requestId, {
         success: true,
+        approvalId: gateCheck.approvalId,
         prompt,
         designContent,
         designPath
@@ -1286,15 +1345,31 @@ export const designConfirmPlanGeneration: MessageHandler = async (data, requestI
 
 export const reviewConfirmPlanGeneration: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { path: reviewPathRaw, originalContent } = data || {};
+    const { path: reviewPathRaw, originalContent, conversationId, toolId } = data || {};
     const reviewPath = typeof reviewPathRaw === 'string' ? reviewPathRaw.trim() : '';
     const originalText = typeof originalContent === 'string' ? originalContent : '';
     const confirmedPrompt = buildPlanGenerationPrompt('review', false);
     const modifiedPrompt = buildPlanGenerationPrompt('review', true);
 
+    const gateCheck = await validatePendingApprovalGateForContinuation(ctx, {
+      conversationId,
+      toolId,
+      expectation: {
+        kind: 'generate_plan',
+        continuationIntent: 'generate_plan_now',
+        sourceArtifactType: 'review',
+        sourcePath: reviewPath || undefined
+      }
+    });
+    if (gateCheck.success === false) {
+      ctx.sendResponse(requestId, { success: false, error: gateCheck.error });
+      return;
+    }
+
     const replyWithReview = async (prompt: string, reviewContent: string) => {
       ctx.sendResponse(requestId, {
         success: true,
+        approvalId: gateCheck.approvalId,
         prompt,
         reviewContent,
         reviewPath
@@ -1375,10 +1450,26 @@ export const planGetSourceStatus: MessageHandler = async (data, requestId, ctx) 
 
 export const planConfirmExecution: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { path: planPath, originalContent, conversationId } = data || {};
+    const { path: planPath, originalContent, conversationId, toolId } = data || {};
     const confirmedPrompt = buildPlanExecutionPrompt(false);
     const originalText = typeof originalContent === 'string' ? originalContent : '';
     const modifiedPrompt = buildPlanExecutionPrompt(true);
+
+    const normalizedPlanPath = typeof planPath === 'string' ? planPath.trim() : '';
+    const gateCheck = await validatePendingApprovalGateForContinuation(ctx, {
+      conversationId,
+      toolId,
+      expectation: {
+        kind: 'execute_plan',
+        continuationIntent: 'implement_now',
+        sourceArtifactType: 'plan',
+        sourcePath: normalizedPlanPath || undefined
+      }
+    });
+    if (gateCheck.success === false) {
+      ctx.sendResponse(requestId, { success: false, error: gateCheck.error });
+      return;
+    }
 
     let latestSourceStatus: PlanSourceStatusResult = { sourceStatus: 'untracked' };
 
@@ -1415,6 +1506,7 @@ export const planConfirmExecution: MessageHandler = async (data, requestId, ctx)
       const todos = await syncTodosFromPlanContent(planContent);
       ctx.sendResponse(requestId, {
         success: true,
+        approvalId: gateCheck.approvalId,
         prompt,
         planContent,
         todos,

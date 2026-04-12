@@ -480,6 +480,7 @@ async function executePlan(card: TaskCardItem) {
         sourceArtifactType?: 'design' | 'review'
         sourcePath?: string
         error?: string
+        approvalId?: string
         todos?: Array<{
           id: string
           content: string
@@ -488,6 +489,7 @@ async function executePlan(card: TaskCardItem) {
       }>('plan.confirmExecution', {
         path: card.path,
         originalContent: card.content,
+        toolId: card.toolId,
         conversationId: chatStore.currentConversationId
       })
 
@@ -499,6 +501,13 @@ async function executePlan(card: TaskCardItem) {
       }
 
       const prompt = String(confirmResult?.prompt || '')
+      const approvalId = typeof confirmResult?.approvalId === 'string'
+        ? confirmResult.approvalId.trim()
+        : ''
+      if (!approvalId) {
+        await showNotification(t('components.message.tool.planCard.executePlanFailed'), 'warning')
+        return
+      }
       const latestPlanContent = confirmResult?.planContent || card.content
       const todosFromPlan = Array.isArray(confirmResult?.todos) ? confirmResult.todos : []
 
@@ -530,6 +539,7 @@ async function executePlan(card: TaskCardItem) {
         modelOverride: selectedModelId.value || undefined,
         hidden: {
           functionResponse: {
+            approvalId,
             id: card.toolId,
             name: card.toolName,
             response: {
@@ -565,15 +575,30 @@ async function generatePlan(card: TaskCardItem) {
       const confirmResult = await sendToExtension<{
         success: boolean
         prompt: string
+        approvalId?: string
         designContent: string
         designPath: string
+        error?: string
       }>('design.confirmPlanGeneration', {
         path: card.path,
         originalContent: card.content,
+        toolId: card.toolId,
         conversationId: chatStore.currentConversationId
       })
 
+      if (!confirmResult?.success) {
+        await showNotification(String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed')), 'warning')
+        return
+      }
+
       const prompt = String(confirmResult?.prompt || '')
+      const approvalId = typeof confirmResult?.approvalId === 'string'
+        ? confirmResult.approvalId.trim()
+        : ''
+      if (!approvalId) {
+        await showNotification(t('components.message.tool.designCard.generatePlanFailed'), 'warning')
+        return
+      }
       const latestDesignContent = confirmResult?.designContent || card.content
       const latestDesignPath = String(confirmResult?.designPath || card.path || '')
 
@@ -592,6 +617,7 @@ async function generatePlan(card: TaskCardItem) {
         modelOverride: selectedModelId.value || undefined,
         hidden: {
           functionResponse: {
+            approvalId,
             id: card.toolId,
             name: card.toolName,
             response: {
@@ -626,15 +652,30 @@ async function generatePlanFromReview(card: TaskCardItem) {
       const confirmResult = await sendToExtension<{
         success: boolean
         prompt: string
+        approvalId?: string
         reviewContent: string
         reviewPath: string
+        error?: string
       }>('review.confirmPlanGeneration', {
         path: card.path,
         originalContent: card.content,
+        toolId: card.toolId,
         conversationId: chatStore.currentConversationId
       })
 
+      if (!confirmResult?.success) {
+        await showNotification(String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed')), 'warning')
+        return
+      }
+
       const prompt = String(confirmResult?.prompt || '')
+      const approvalId = typeof confirmResult?.approvalId === 'string'
+        ? confirmResult.approvalId.trim()
+        : ''
+      if (!approvalId) {
+        await showNotification(t('components.message.tool.reviewCard.generatePlanFailed'), 'warning')
+        return
+      }
       const latestReviewContent = confirmResult?.reviewContent || card.content
       const latestReviewPath = String(confirmResult?.reviewPath || card.path || '')
 
@@ -650,6 +691,7 @@ async function generatePlanFromReview(card: TaskCardItem) {
         modelOverride: selectedModelId.value || undefined,
         hidden: {
           functionResponse: {
+            approvalId,
             id: card.toolId,
             name: card.toolName,
             response: {

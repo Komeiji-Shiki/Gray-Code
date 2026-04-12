@@ -120,7 +120,7 @@ export class MessageRouter {
    * 取消所有活跃的流
    */
   cancelAllStreams(): void {
-    this.abortManager.cancelAll(this.getView());
+    this.streamHandler.cancelAllStreams().catch(console.error);
   }
 
   /**

@@ -55,6 +55,13 @@ export class StreamAbortManager {
   }
 
   /**
+   * 获取当前仍有活跃主流请求的对话 ID 列表
+   */
+  listConversationIds(): string[] {
+    return Array.from(this.controllers.keys());
+  }
+
+  /**
    * 删除指定对话的 AbortController
    */
   delete(conversationId: string): void {

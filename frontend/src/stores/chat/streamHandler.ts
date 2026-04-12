@@ -46,6 +46,19 @@ export interface StreamHandlerContext {
   processQueue: () => Promise<void>
 }
 
+function warnLateApprovalGatedChunk(chunk: StreamChunk, state: ChatStoreState): void {
+  if (!chunk.streamId || chunk.streamId !== state._lastApprovalGatedStreamId.value) {
+    return
+  }
+
+  console.warn('[streamHandler] Late chunk ignored for approval-gated stream', {
+    conversationId: chunk.conversationId,
+    streamId: chunk.streamId,
+    type: chunk.type
+  })
+  state._lastApprovalGatedStreamId.value = null
+}
+
 /**
  * 处理单条流式响应
  */
@@ -66,10 +79,12 @@ export function handleStreamChunk(
   // 通过 streamId 只接收“当前活跃请求”的 chunk，避免迟到 chunk 污染新请求状态。
   const activeStreamId = state.activeStreamId.value
   if (chunk.streamId && !activeStreamId) {
+    warnLateApprovalGatedChunk(chunk, state)
     return
   }
 
   if (activeStreamId && chunk.streamId !== activeStreamId) {
+    warnLateApprovalGatedChunk(chunk, state)
     return
   }
 

@@ -84,6 +84,33 @@ export class StreamRequestHandler {
     return requestId
   }
 
+  private async cleanupAbortedConversations(conversationIds: string[]): Promise<void> {
+    try {
+      const diffManager = getDiffManager();
+      await diffManager.cancelAllPending();
+    } catch (err) {
+      console.error('Failed to cancel pending diffs:', err);
+    }
+
+    if (conversationIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(conversationIds.map(async (conversationId) => {
+      try {
+        await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
+      } catch (err) {
+        console.error(`Failed to reject pending tool calls for conversation ${conversationId}:`, err);
+      }
+    }));
+  }
+
+  async cancelAllStreams(): Promise<void> {
+    const conversationIds = this.deps.abortManager.listConversationIds();
+    this.deps.abortManager.cancelAll(this.deps.getView());
+    await this.cleanupAbortedConversations(conversationIds);
+  }
+
   /**
    * 处理普通聊天流
    */
@@ -281,22 +308,9 @@ export class StreamRequestHandler {
   async cancelStream(conversationId: string, requestId: string): Promise<void> {
     // 1. 取消流式请求
     this.deps.abortManager.cancel(conversationId);
-    
-    // 2. 取消所有待处理的 diff（关闭编辑器并恢复文件）
-    try {
-      const diffManager = getDiffManager();
-      await diffManager.cancelAllPending();
-    } catch (err) {
-      console.error('Failed to cancel pending diffs:', err);
-    }
-    
-    // 3. 拒绝所有未响应的工具调用
-    try {
-      await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
-    } catch (err) {
-      console.error('Failed to reject pending tool calls:', err);
-    }
-    
+
+    await this.cleanupAbortedConversations([conversationId]);
+
     this.deps.sendResponse(requestId, { cancelled: true });
   }
 
