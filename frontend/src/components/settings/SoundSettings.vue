@@ -43,6 +43,21 @@ const cueWarning = ref(DEFAULT_UI_SOUND_SETTINGS.cues.warning)
 const cueError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.error)
 const cueTaskComplete = ref(DEFAULT_UI_SOUND_SETTINGS.cues.taskComplete)
 const cueTaskError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.taskError)
+const windowsAgentStopNotificationEnabled = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.enabled)
+const windowsAgentStopNotificationOnlyWhenWindowNotFocused = ref(
+  DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.onlyWhenWindowNotFocused
+)
+const windowsAgentStopNotificationCaseError = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.error)
+const windowsAgentStopNotificationCaseAwaitingUserAction = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.awaitingUserAction)
+const windowsAgentStopNotificationCaseContinueRequired = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.continueRequired)
+const windowsAgentStopNotificationTitleTemplate = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.titleTemplate)
+const windowsAgentStopNotificationErrorBodyTemplate = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.error)
+const windowsAgentStopNotificationAwaitingUserActionBodyTemplate = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.awaitingUserAction)
+const windowsAgentStopNotificationContinueRequiredBodyTemplate = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.continueRequired)
+
+type WindowsAgentStopPreviewReason = 'error' | 'awaiting_user_action' | 'continue_required'
+
+const windowsAgentStopTemplateVariables = ['{appName}', '{windowTitle}', '{actionLabel}', '{reasonLabel}']
 
 const assetWarning = ref<UISoundAsset | null>(null)
 const assetError = ref<UISoundAsset | null>(null)
@@ -95,6 +110,17 @@ function cancelActiveTests() {
 
 const volumeText = computed(() => `${volume.value}%`)
 
+function buildWindowsAgentStopNotificationContentDraft() {
+  return {
+    titleTemplate: windowsAgentStopNotificationTitleTemplate.value,
+    bodyTemplates: {
+      error: windowsAgentStopNotificationErrorBodyTemplate.value,
+      awaitingUserAction: windowsAgentStopNotificationAwaitingUserActionBodyTemplate.value,
+      continueRequired: windowsAgentStopNotificationContinueRequiredBodyTemplate.value
+    }
+  }
+}
+
 function buildCurrentSettings(): UISoundSettings {
   const assets: NonNullable<UISoundSettings['assets']> = {}
 
@@ -126,6 +152,16 @@ function buildCurrentSettings(): UISoundSettings {
       taskError: cueTaskError.value
     },
     assets: Object.keys(assets).length > 0 ? assets : undefined,
+    windowsAgentStopNotification: {
+      enabled: windowsAgentStopNotificationEnabled.value,
+      onlyWhenWindowNotFocused: windowsAgentStopNotificationOnlyWhenWindowNotFocused.value,
+      cases: {
+        error: windowsAgentStopNotificationCaseError.value,
+        awaitingUserAction: windowsAgentStopNotificationCaseAwaitingUserAction.value,
+        continueRequired: windowsAgentStopNotificationCaseContinueRequired.value
+      },
+      content: buildWindowsAgentStopNotificationContentDraft()
+    },
     theme: theme.value
   }
 }
@@ -248,6 +284,15 @@ async function loadConfig() {
     }
 
     theme.value = normalized.theme
+    windowsAgentStopNotificationEnabled.value = normalized.windowsAgentStopNotification.enabled
+    windowsAgentStopNotificationOnlyWhenWindowNotFocused.value = normalized.windowsAgentStopNotification.onlyWhenWindowNotFocused
+    windowsAgentStopNotificationCaseError.value = normalized.windowsAgentStopNotification.cases.error
+    windowsAgentStopNotificationCaseAwaitingUserAction.value = normalized.windowsAgentStopNotification.cases.awaitingUserAction
+    windowsAgentStopNotificationCaseContinueRequired.value = normalized.windowsAgentStopNotification.cases.continueRequired
+    windowsAgentStopNotificationTitleTemplate.value = normalized.windowsAgentStopNotification.content.titleTemplate
+    windowsAgentStopNotificationErrorBodyTemplate.value = normalized.windowsAgentStopNotification.content.bodyTemplates.error
+    windowsAgentStopNotificationAwaitingUserActionBodyTemplate.value = normalized.windowsAgentStopNotification.content.bodyTemplates.awaitingUserAction
+    windowsAgentStopNotificationContinueRequiredBodyTemplate.value = normalized.windowsAgentStopNotification.content.bodyTemplates.continueRequired
 
     // 同步到运行时（即使用户不点击保存，也保证显示与运行时一致）
     configureSoundSettings(normalized)
@@ -315,6 +360,15 @@ async function resetToDefault() {
   cueError.value = DEFAULT_UI_SOUND_SETTINGS.cues.error
   cueTaskComplete.value = DEFAULT_UI_SOUND_SETTINGS.cues.taskComplete
   cueTaskError.value = DEFAULT_UI_SOUND_SETTINGS.cues.taskError
+  windowsAgentStopNotificationEnabled.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.enabled
+  windowsAgentStopNotificationOnlyWhenWindowNotFocused.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.onlyWhenWindowNotFocused
+  windowsAgentStopNotificationCaseError.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.error
+  windowsAgentStopNotificationCaseAwaitingUserAction.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.awaitingUserAction
+  windowsAgentStopNotificationCaseContinueRequired.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.continueRequired
+  windowsAgentStopNotificationTitleTemplate.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.titleTemplate
+  windowsAgentStopNotificationErrorBodyTemplate.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.error
+  windowsAgentStopNotificationAwaitingUserActionBodyTemplate.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.awaitingUserAction
+  windowsAgentStopNotificationContinueRequiredBodyTemplate.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.continueRequired
 
   assetWarning.value = null
   assetError.value = null
@@ -326,8 +380,46 @@ async function resetToDefault() {
   await saveConfig()
 }
 
+function getTestCueLabel(cue: SoundCue): string {
+  switch (cue) {
+    case 'warning':
+      return t('components.settings.soundSettings.test.warning')
+    case 'error':
+      return t('components.settings.soundSettings.test.error')
+    case 'taskComplete':
+      return t('components.settings.soundSettings.test.taskComplete')
+    case 'taskError':
+      return t('components.settings.soundSettings.test.taskError')
+  }
+}
+
+async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreviewReason): Promise<void> {
+  try {
+    const payload = {
+      reason,
+      actionType: reason === 'awaiting_user_action'
+        ? 'execute_plan'
+        : reason === 'continue_required'
+          ? 'continue'
+          : undefined,
+      content: buildWindowsAgentStopNotificationContentDraft()
+    }
+
+    console.log('[sound-settings][preview]', 'sending Windows notification preview', {
+      reason,
+      payload
+    })
+
+    const result = await sendToExtension('notifications.preview', payload)
+    console.log('[sound-settings][preview]', 'Windows notification preview finished', { reason, result })
+  } catch (error) {
+    console.error('Failed to trigger Windows notification preview:', error)
+  }
+}
+
 async function testCue(cue: SoundCue) {
   testMessage.value = ''
+  console.log('[sound-settings][testCue]', 'start test cue', { cue })
 
   // 试听应使用当前表单音量，但不应把“未保存”的 enabled/cues 等设置带到运行时。
   // 因此这里临时覆盖运行时音量，播放后再恢复。
@@ -467,6 +559,71 @@ onBeforeUnmount(() => {
           <CustomCheckbox v-model="cueError" :label="t('components.settings.soundSettings.cues.error')" />
           <CustomCheckbox v-model="cueTaskComplete" :label="t('components.settings.soundSettings.cues.taskComplete')" />
           <CustomCheckbox v-model="cueTaskError" :label="t('components.settings.soundSettings.cues.taskError')" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="group-label">
+          <i class="codicon codicon-bell-dot"></i>
+          {{ t('components.settings.soundSettings.windowsAgentStopNotification.title') }}
+        </label>
+        <p class="field-description">{{ t('components.settings.soundSettings.windowsAgentStopNotification.description') }}</p>
+        <p class="inline-hint">{{ t('components.settings.soundSettings.windowsAgentStopNotification.rawTextHint') }}</p>
+        <p class="inline-hint">{{ t('components.settings.soundSettings.windowsAgentStopNotification.bestEffortClickHint') }}</p>
+
+        <CustomCheckbox
+          v-model="windowsAgentStopNotificationEnabled"
+          :label="t('components.settings.soundSettings.windowsAgentStopNotification.enabled')"
+        />
+        <CustomCheckbox
+          v-model="windowsAgentStopNotificationOnlyWhenWindowNotFocused"
+          :label="t('components.settings.soundSettings.windowsAgentStopNotification.onlyWhenWindowNotFocused')"
+        />
+
+        <div class="cues-grid">
+          <CustomCheckbox v-model="windowsAgentStopNotificationCaseError" :label="t('components.settings.soundSettings.windowsAgentStopNotification.cases.error')" />
+          <CustomCheckbox v-model="windowsAgentStopNotificationCaseAwaitingUserAction" :label="t('components.settings.soundSettings.windowsAgentStopNotification.cases.awaitingUserAction')" />
+          <CustomCheckbox v-model="windowsAgentStopNotificationCaseContinueRequired" :label="t('components.settings.soundSettings.windowsAgentStopNotification.cases.continueRequired')" />
+        </div>
+
+        <div class="template-field">
+          <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.title') }}</label>
+          <p class="inline-hint">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.description') }}</p>
+        </div>
+
+        <div class="template-grid">
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.titleTemplate') }}</label>
+            <input v-model="windowsAgentStopNotificationTitleTemplate" class="template-input" type="text">
+          </div>
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.errorBodyTemplate') }}</label>
+            <textarea v-model="windowsAgentStopNotificationErrorBodyTemplate" class="template-textarea" rows="2"></textarea>
+          </div>
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.awaitingUserActionBodyTemplate') }}</label>
+            <textarea v-model="windowsAgentStopNotificationAwaitingUserActionBodyTemplate" class="template-textarea" rows="2"></textarea>
+          </div>
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.continueRequiredBodyTemplate') }}</label>
+            <textarea v-model="windowsAgentStopNotificationContinueRequiredBodyTemplate" class="template-textarea" rows="2"></textarea>
+          </div>
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.variables') }}</label>
+            <p class="inline-hint">{{ t('components.settings.soundSettings.windowsAgentStopNotification.templates.variablesHint') }}</p>
+            <div class="variable-list">
+              <code v-for="variable in windowsAgentStopTemplateVariables" :key="variable" class="variable-chip">{{ variable }}</code>
+            </div>
+          </div>
+          <div class="template-field">
+            <label class="template-label">{{ t('components.settings.soundSettings.windowsAgentStopNotification.preview.title') }}</label>
+            <p class="inline-hint">{{ t('components.settings.soundSettings.windowsAgentStopNotification.preview.description') }}</p>
+            <div class="test-buttons">
+              <button class="action-btn" @click="triggerWindowsNotificationPreview('error')">{{ t('components.settings.soundSettings.windowsAgentStopNotification.preview.error') }}</button>
+              <button class="action-btn" @click="triggerWindowsNotificationPreview('awaiting_user_action')">{{ t('components.settings.soundSettings.windowsAgentStopNotification.preview.awaitingUserAction') }}</button>
+              <button class="action-btn" @click="triggerWindowsNotificationPreview('continue_required')">{{ t('components.settings.soundSettings.windowsAgentStopNotification.preview.continueRequired') }}</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -738,6 +895,59 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.inline-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.template-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.template-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.template-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.template-input,
+.template-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.template-textarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.variable-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.variable-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
 }
 
 .actions {

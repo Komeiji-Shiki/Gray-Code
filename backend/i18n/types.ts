@@ -519,6 +519,23 @@ export interface BackendLanguageMessages {
         };
 
     };
+    /** 通知相关 */
+    notifications: {
+        windowsAgentStop: {
+            currentWindow: string;
+            reasonLabels: {
+                error: string;
+                awaitingUserAction: string;
+                continueRequired: string;
+            };
+            actionLabels: {
+                generatePlan: string;
+                executePlan: string;
+                continue: string;
+                genericConfirmation: string;
+            };
+        };
+    };
     /** 工作区相关 */
     workspace: {
         noWorkspaceOpen: string;

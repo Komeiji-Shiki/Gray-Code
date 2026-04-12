@@ -572,6 +572,23 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
         }
     },
     
+    notifications: {
+        windowsAgentStop: {
+            currentWindow: 'Current Window',
+            reasonLabels: {
+                error: 'Failure',
+                awaitingUserAction: 'Waiting for User Action',
+                continueRequired: 'Waiting to Continue'
+            },
+            actionLabels: {
+                generatePlan: 'Generate Plan',
+                executePlan: 'Execute Plan',
+                continue: 'Continue',
+                genericConfirmation: 'Confirm'
+            }
+        }
+    },
+    
     workspace: {
         noWorkspaceOpen: 'No workspace open',
         singleWorkspace: 'Workspace: {path}',

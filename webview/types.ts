@@ -15,6 +15,7 @@ import type { McpManager } from '../backend/modules/mcp';
 import type { DependencyManager } from '../backend/modules/dependencies';
 import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
+import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 
 /**
  * 消息处理器上下文
@@ -39,6 +40,7 @@ export interface HandlerContext {
   storagePathManager: StoragePathManager;
   diffStorageManager: DiffStorageManager;
   toolRegistry?: ToolRegistry;
+  windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
   
   // 流式请求控制
   streamAbortControllers: Map<string, AbortController>;

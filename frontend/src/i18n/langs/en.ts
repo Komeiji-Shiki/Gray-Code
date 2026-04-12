@@ -2015,11 +2015,41 @@ const en: LanguageMessages = {
                 },
                 test: {
                     title: 'Test Playback',
-                    description: 'Unlock browser audio policy and preview cues',
+                    description: 'Unlock browser audio policy and preview sound cues',
                     warning: 'Test: Warning',
                     error: 'Test: Error',
                     taskComplete: 'Test: Task Completed',
                     taskError: 'Test: Task Failed'
+                },
+                windowsAgentStopNotification: {
+                    title: 'Windows System Notifications',
+                    description: 'Only available on Windows. These notifications are used only when the Agent stops. This phase shows a recognizable window title and renders the notification text from templates.',
+                    enabled: 'Enable Windows system notifications',
+                    onlyWhenWindowNotFocused: 'Notify only when the current window is not focused',
+                    rawTextHint: 'Notification title and body are generated from templates and do not directly display raw Agent text.',
+                    bestEffortClickHint: 'Click handling remains best effort and is not a guarantee of precise window recovery in this phase.',
+                    cases: {
+                        error: 'Notify on failures',
+                        awaitingUserAction: 'Notify when user action is required',
+                        continueRequired: 'Notify when continuation is required'
+                    },
+                    templates: {
+                        title: 'Notification Templates',
+                        description: 'Templates only support extension-controlled variables for rendering the title and body.',
+                        titleTemplate: 'Title Template',
+                        errorBodyTemplate: 'Failure Body Template',
+                        awaitingUserActionBodyTemplate: 'Awaiting User Action Body Template',
+                        continueRequiredBodyTemplate: 'Continue Required Body Template',
+                        variables: 'Available Variables',
+                        variablesHint: 'Available variables: {appName}, {windowTitle}, {actionLabel}, {reasonLabel}'
+                    },
+                    preview: {
+                        title: 'Notification Preview',
+                        description: 'Preview uses the template currently being edited and the current window title, then renders the final notification on the host side.',
+                        error: 'Preview Failure Notification',
+                        awaitingUserAction: 'Preview Awaiting User Action Notification',
+                        continueRequired: 'Preview Continue Required Notification'
+                    }
                 },
                 testBlocked: 'Audio may be blocked by browser policy. Click a test button once to unlock.',
                 testPlayed: 'Played',
@@ -2741,6 +2771,23 @@ const en: LanguageMessages = {
             summarizing: 'Auto summarizing...',
             manualSummarizing: 'Summarizing context...',
             cancelTooltip: 'Cancel summarize request'
+        },
+        agentStopNotification: {
+            errorTitle: 'LimCode Agent stopped',
+            errorMessage: 'The current conversation failed. Click the notification to return to the originating window.',
+            errorMessageWithConversation: 'Conversation "{title}" failed. Click the notification to return to the originating window.',
+            awaitingUserActionTitle: 'LimCode is waiting for your action',
+            awaitingUserActionMessage: 'The current conversation needs you to click "{action}". Click the notification to return to the originating window.',
+            awaitingUserActionMessageWithConversation: 'Conversation "{title}" needs you to click "{action}". Click the notification to return to the originating window.',
+            continueRequiredTitle: 'LimCode is waiting to continue',
+            continueRequiredMessage: 'The current conversation needs to continue. Click the notification to return to the originating window.',
+            continueRequiredMessageWithConversation: 'Conversation "{title}" needs to continue. Click the notification to return to the originating window.',
+            actions: {
+                generatePlan: 'Generate Plan',
+                executePlan: 'Execute Plan',
+                continue: 'Continue',
+                genericConfirmation: 'Return to LimCode and continue'
+            }
         }
     },
 

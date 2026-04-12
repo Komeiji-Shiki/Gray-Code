@@ -572,6 +572,23 @@ description: "このスキルの機能と使用場面の簡単な説明"
         }
     },
     
+    notifications: {
+        windowsAgentStop: {
+            currentWindow: '現在のウィンドウ',
+            reasonLabels: {
+                error: '失敗',
+                awaitingUserAction: 'ユーザー操作待ち',
+                continueRequired: '続行待ち'
+            },
+            actionLabels: {
+                generatePlan: '計画を生成',
+                executePlan: '計画を実行',
+                continue: '続行',
+                genericConfirmation: '確認'
+            }
+        }
+    },
+    
     workspace: {
         noWorkspaceOpen: 'ワークスペースが開いていません',
         singleWorkspace: 'ワークスペース: {path}',

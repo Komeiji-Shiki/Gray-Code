@@ -2065,6 +2065,36 @@ export interface LanguageMessages {
                 };
                 testBlocked: string;
                 testPlayed: string;
+                windowsAgentStopNotification: {
+                    title: string;
+                    description: string;
+                    enabled: string;
+                    onlyWhenWindowNotFocused: string;
+                    rawTextHint: string;
+                    bestEffortClickHint: string;
+                    cases: {
+                        error: string;
+                        awaitingUserAction: string;
+                        continueRequired: string;
+                    };
+                    templates: {
+                        title: string;
+                        description: string;
+                        titleTemplate: string;
+                        errorBodyTemplate: string;
+                        awaitingUserActionBodyTemplate: string;
+                        continueRequiredBodyTemplate: string;
+                        variables: string;
+                        variablesHint: string;
+                    };
+                    preview: {
+                        title: string;
+                        description: string;
+                        error: string;
+                        awaitingUserAction: string;
+                        continueRequired: string;
+                    };
+                };
                 testFailed: string;
                 saveSuccess: string;
                 saveFailed: string;
@@ -2829,6 +2859,23 @@ export interface LanguageMessages {
             summarizing: string;
             manualSummarizing: string;
             cancelTooltip: string;
+        };
+        agentStopNotification: {
+            errorTitle: string;
+            errorMessage: string;
+            errorMessageWithConversation: string;
+            awaitingUserActionTitle: string;
+            awaitingUserActionMessage: string;
+            awaitingUserActionMessageWithConversation: string;
+            continueRequiredTitle: string;
+            continueRequiredMessage: string;
+            continueRequiredMessageWithConversation: string;
+            actions: {
+                generatePlan: string;
+                executePlan: string;
+                continue: string;
+                genericConfirmation: string;
+            };
         };
     };
 
