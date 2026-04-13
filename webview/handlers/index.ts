@@ -18,6 +18,7 @@ import { registerDiffHandlers } from './DiffHandlers';
 import { registerChatHandlers } from './ChatHandlers';
 import { registerSkillsHandlers } from './SkillsHandlers';
 import { registerSubAgentsHandlers } from './SubAgentsHandlers';
+import { registerNotificationHandlers } from './NotificationHandlers';
 
 // 重新导出各个模块
 export * from './ConversationHandlers';
@@ -34,6 +35,7 @@ export * from './DiffHandlers';
 export * from './ChatHandlers';
 export * from './SkillsHandlers';
 export * from './SubAgentsHandlers';
+export * from './NotificationHandlers';
 
 /**
  * 创建并注册所有消息处理器
@@ -56,6 +58,7 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerChatHandlers(registry);
   registerSkillsHandlers(registry);
   registerSubAgentsHandlers(registry);
+  registerNotificationHandlers(registry);
   
   return registry;
 }

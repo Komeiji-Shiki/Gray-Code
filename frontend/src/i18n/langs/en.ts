@@ -787,7 +787,7 @@ const en: LanguageMessages = {
                 context: 'Context',
                 prompt: 'Prompt',
                 tokenCount: 'Token Count',
-                sound: 'Sound',
+                sound: 'Notification System',
                 appearance: 'Appearance',
                 general: 'General'
             },
@@ -1741,8 +1741,8 @@ const en: LanguageMessages = {
                         description: 'Configure specialized sub-agents that AI can invoke'
                     },
                     sound: {
-                        title: 'Sound',
-                        description: 'Play sound cues for warnings, errors, and task completion'
+                        title: 'Notification System',
+                        description: 'Configure sound cues and Windows Agent stop notifications'
                     },
                     appearance: {
                         title: 'Appearance',
@@ -1981,9 +1981,17 @@ const en: LanguageMessages = {
                 saveFailed: 'Save failed'
             },
             soundSettings: {
+                overview: {
+                    title: 'About This Page',
+                    description: 'This page manages Webview sound cues and Windows Agent stop notifications together. The settings below are grouped by function for easier adjustment.'
+                },
+                sections: {
+                    sound: { title: 'Sound Cues', description: 'Configure Webview sound cues, including enable state, volume, events, imported audio files, and test playback.' },
+                    windowsNotification: { title: 'Windows Agent Stop Notifications', description: 'Configure Windows notifications shown when the Agent stops, including templates and preview.' }
+                },
                 enabled: {
                     title: 'Enable Sound Notifications',
-                    description: 'Play sound cues on certain events (disabled by default)',
+                    description: 'Play sound cues on certain events. This switch affects only sound cues and does not control Windows system notifications.',
                     label: 'Enable'
                 },
                 volume: {
@@ -2015,11 +2023,43 @@ const en: LanguageMessages = {
                 },
                 test: {
                     title: 'Test Playback',
-                    description: 'Unlock browser audio policy and preview cues',
+                    description: 'Unlock browser audio policy and preview sound cues',
                     warning: 'Test: Warning',
                     error: 'Test: Error',
                     taskComplete: 'Test: Task Completed',
                     taskError: 'Test: Task Failed'
+                },
+                windowsAgentStopNotification: {
+                    title: 'Windows Agent Stop Notifications',
+                    description: 'Only available on Windows. These notifications are used only when the Agent stops. This phase shows a recognizable window title and renders the notification text from templates.',
+                    optionsTitle: 'Notification Rules',
+                    enabled: 'Enable Windows system notifications',
+                    onlyWhenWindowNotFocused: 'Notify only when the current window is not focused',
+                    rawTextHint: 'Notification title and body are generated from templates and do not directly display raw Agent text.',
+                    bestEffortClickHint: 'Click handling remains best effort and is not a guarantee of precise window recovery in this phase.',
+                    casesTitle: 'Notify For',
+                    cases: {
+                        error: 'Notify on failures',
+                        awaitingUserAction: 'Notify when user action is required',
+                        continueRequired: 'Notify when continuation is required'
+                    },
+                    templates: {
+                        title: 'Notification Templates',
+                        description: 'Templates only support extension-controlled variables for rendering the title and body.',
+                        titleTemplate: 'Title Template',
+                        errorBodyTemplate: 'Failure Body Template',
+                        awaitingUserActionBodyTemplate: 'Awaiting User Action Body Template',
+                        continueRequiredBodyTemplate: 'Continue Required Body Template',
+                        variables: 'Available Variables',
+                        variablesHint: 'Available variables: {appName}, {windowTitle}, {actionLabel}, {reasonLabel}'
+                    },
+                    preview: {
+                        title: 'Notification Preview',
+                        description: 'Preview uses the template currently being edited and the current window title, then renders the final notification on the host side.',
+                        error: 'Preview Failure Notification',
+                        awaitingUserAction: 'Preview Awaiting User Action Notification',
+                        continueRequired: 'Preview Continue Required Notification'
+                    }
                 },
                 testBlocked: 'Audio may be blocked by browser policy. Click a test button once to unlock.',
                 testPlayed: 'Played',
@@ -2741,6 +2781,23 @@ const en: LanguageMessages = {
             summarizing: 'Auto summarizing...',
             manualSummarizing: 'Summarizing context...',
             cancelTooltip: 'Cancel summarize request'
+        },
+        agentStopNotification: {
+            errorTitle: 'LimCode Agent stopped',
+            errorMessage: 'The current conversation failed. Click the notification to return to the originating window.',
+            errorMessageWithConversation: 'Conversation "{title}" failed. Click the notification to return to the originating window.',
+            awaitingUserActionTitle: 'LimCode is waiting for your action',
+            awaitingUserActionMessage: 'The current conversation needs you to click "{action}". Click the notification to return to the originating window.',
+            awaitingUserActionMessageWithConversation: 'Conversation "{title}" needs you to click "{action}". Click the notification to return to the originating window.',
+            continueRequiredTitle: 'LimCode is waiting to continue',
+            continueRequiredMessage: 'The current conversation needs to continue. Click the notification to return to the originating window.',
+            continueRequiredMessageWithConversation: 'Conversation "{title}" needs to continue. Click the notification to return to the originating window.',
+            actions: {
+                generatePlan: 'Generate Plan',
+                executePlan: 'Execute Plan',
+                continue: 'Continue',
+                genericConfirmation: 'Return to LimCode and continue'
+            }
         }
     },
 

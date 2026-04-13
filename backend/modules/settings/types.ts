@@ -1245,6 +1245,42 @@ export interface StorageStats {
 /**
  * UI 声音提醒设置
  */
+export interface WindowsAgentStopNotificationContentSettings {
+    /** 通知标题模板 */
+    titleTemplate?: string;
+
+    /** 通知正文模板 */
+    bodyTemplates?: {
+        /** 错误停止 */
+        error?: string;
+        /** 等待用户动作 */
+        awaitingUserAction?: string;
+        /** 等待继续 */
+        continueRequired?: string;
+    };
+}
+
+export interface WindowsAgentStopNotificationSettings {
+    /** 总开关（默认关闭） */
+    enabled?: boolean;
+
+    /** 仅在当前窗口未聚焦时发送通知 */
+    onlyWhenWindowNotFocused?: boolean;
+
+    /** 停止场景开关 */
+    cases?: {
+        /** 错误停止 */
+        error?: boolean;
+        /** 等待用户操作 */
+        awaitingUserAction?: boolean;
+        /** 等待继续 */
+        continueRequired?: boolean;
+    };
+
+    /** 通知内容模板 */
+    content?: WindowsAgentStopNotificationContentSettings;
+}
+
 export interface UISoundSettings {
     /** 总开关（默认关闭，避免打扰） */
     enabled?: boolean;
@@ -1278,6 +1314,11 @@ export interface UISoundSettings {
 
     /** 提示音风格 */
     theme?: 'beep' | 'soft';
+
+    /**
+     * Windows 专用 Agent 停止系统通知设置
+     */
+    windowsAgentStopNotification?: WindowsAgentStopNotificationSettings;
 }
 
 /**
@@ -2432,7 +2473,24 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
                 taskComplete: true,
                 taskError: true
             },
-            theme: 'beep'
+            theme: 'beep',
+            windowsAgentStopNotification: {
+                enabled: false,
+                onlyWhenWindowNotFocused: true,
+                cases: {
+                    error: true,
+                    awaitingUserAction: true,
+                    continueRequired: true
+                },
+                content: {
+                    titleTemplate: '{windowTitle} · LimCode',
+                    bodyTemplates: {
+                        error: 'LimCode 已停止，请返回处理。',
+                        awaitingUserAction: 'LimCode 正在等待：{actionLabel}。',
+                        continueRequired: 'LimCode 已暂停，可继续处理。'
+                    }
+                }
+            }
         }
     },
     lastUpdated: Date.now()

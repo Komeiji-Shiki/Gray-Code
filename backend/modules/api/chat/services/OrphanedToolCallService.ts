@@ -9,7 +9,7 @@
 
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { Content } from '../../../conversation/types';
-import type { FunctionCallInfo } from '../utils';
+import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { ToolExecutionService } from './ToolExecutionService';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { ToolCallParserService } from './ToolCallParserService';
@@ -18,7 +18,7 @@ export interface OrphanedToolCallResult {
   /** 原始的函数调用所在的 model 消息 */
   functionCallContent: Content;
   /** 工具执行结果列表 */
-  toolResults: Array<{ id?: string; name: string; result: Record<string, unknown> }>;
+  toolResults: ToolExecutionResult[];
 }
 
 export class OrphanedToolCallService {

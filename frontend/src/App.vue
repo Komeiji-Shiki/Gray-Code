@@ -21,6 +21,7 @@ import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
+import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 
 // i18n
 const { t } = useI18n()
@@ -66,6 +67,7 @@ const lastRetryAttempt = ref(-1)
 let disposeMessageListener: (() => void) | null = null
 let disposeAudioUnlockHooks: (() => void) | null = null
 let disposeVisibilityHooks: (() => void) | null = null
+let agentStopNotificationController: AgentStopNotificationController | null = null
 
 /**
  * 从 toolStatus chunk 中检测特定工具完成并播放音效：
@@ -214,9 +216,11 @@ async function handleSend(content: string, messageAttachments: Attachment[]) {
 
 // 处理取消请求
 async function handleCancel() {
+  agentStopNotificationController?.markUserCancelled()
   try {
     await chatStore.cancelStream()
   } catch (err) {
+    agentStopNotificationController?.clearUserCancelled()
     console.error('取消失败:', err)
   }
 }
@@ -391,6 +395,11 @@ onMounted(async () => {
   
   // 先加载语言设置，确保 UI 语言正确
   await loadLanguageSettings()
+
+  agentStopNotificationController = createAgentStopNotificationController({
+    chatStore,
+    sendToExtension
+  })
   
   // 立即注册命令监听器，确保在初始化期间也能响应用户操作
   disposeMessageListener = onMessageFromExtension((message: any) => {
@@ -465,6 +474,9 @@ onBeforeUnmount(() => {
 
   disposeVisibilityHooks?.()
   disposeVisibilityHooks = null
+
+  agentStopNotificationController?.dispose()
+  agentStopNotificationController = null
 })
 </script>
 

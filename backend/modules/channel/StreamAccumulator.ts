@@ -269,6 +269,22 @@ export class StreamAccumulator {
         // 注意：不在此处为 functionCall 生成 id。
         // id 的生成推迟到合并逻辑确认无法合并、需要作为新 Part 推入时再执行（见下方 newPart 构建处）。
 
+        // 例外：prompt 模式（json/xml）的增量解析器只会产出“完整工具调用块”，
+        // 不会再走 partialArgs/index 的流式合并路径。
+        // 这里提前补一个稳定 id，保证：
+        // 1. visibleDelta 里的 functionCall 带有 id
+        // 2. 后续写入 this.parts 时沿用同一个 id
+        // 3. 不影响 function_call 模式下的增量合并判断
+        if (
+            this.promptToolParser &&
+            part.functionCall &&
+            !(part.functionCall as any).id &&
+            (part.functionCall as any).partialArgs === undefined &&
+            typeof (part.functionCall as any).index !== 'number'
+        ) {
+            (part.functionCall as any).id = this.createToolCallId();
+        }
+
         if (options?.visibleDelta && part.text !== undefined) {
             options.visibleDelta.push(part.thought ? { text: part.text, thought: true } : { text: part.text });
         } else if (options?.visibleDelta && part.functionCall) {

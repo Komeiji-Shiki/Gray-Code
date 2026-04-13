@@ -572,6 +572,23 @@ description: "简要描述该技能的功能及使用场景"
         }
     },
     
+    notifications: {
+        windowsAgentStop: {
+            currentWindow: '当前窗口',
+            reasonLabels: {
+                error: '失败',
+                awaitingUserAction: '等待用户操作',
+                continueRequired: '等待继续'
+            },
+            actionLabels: {
+                generatePlan: '生成计划',
+                executePlan: '执行计划',
+                continue: '继续',
+                genericConfirmation: '确认'
+            }
+        }
+    },
+    
     workspace: {
         noWorkspaceOpen: '无工作区打开',
         singleWorkspace: '工作区: {path}',

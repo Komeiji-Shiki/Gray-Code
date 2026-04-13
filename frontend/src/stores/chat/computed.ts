@@ -4,7 +4,10 @@
 
 import { computed } from 'vue'
 import type { ChatStoreState, ChatStoreComputed } from './types'
-import { isAwaitingToolUserConfirmation } from '../../utils/toolContinuations'
+import {
+  getToolApprovalStopKind,
+  isAwaitingToolUserConfirmation
+} from '../../utils/toolContinuations'
 
 /**
  * 创建 Chat Store 计算属性
@@ -87,13 +90,16 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     // 检查是否有工具要求暂停等待用户确认（如 create_plan / create_design）
     // 此时卡片会显示对应操作按钮，不需要额外的"继续"提示
     const hasPendingUserConfirmation = lastMessage.parts?.some(p => {
-      const response = (p.functionResponse?.response as any)
+      const toolName = p.functionResponse?.name
+      const response = p.functionResponse?.response as any
       return isAwaitingToolUserConfirmation(response)
+        || (typeof toolName === 'string' && getToolApprovalStopKind(toolName, response) !== null)
     })
 
     if (hasPendingUserConfirmation) {
       return false
     }
+
 
     return true
   })

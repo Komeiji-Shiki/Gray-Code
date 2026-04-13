@@ -787,7 +787,7 @@ const zhCN: LanguageMessages = {
                 context: '上下文',
                 prompt: '提示词',
                 tokenCount: 'Token 计数',
-                sound: '声音提醒',
+                sound: '提示系统',
                 appearance: '外观',
                 general: '通用'
             },
@@ -1741,8 +1741,8 @@ const zhCN: LanguageMessages = {
                         description: '配置可由 AI 调用的专业子代理'
                     },
                     sound: {
-                        title: '声音提醒',
-                        description: '配置警告、错误与任务完成时的提示音'
+                        title: '提示系统',
+                        description: '统一配置声音提示与 Windows Agent 停止系统通知'
                     },
                     appearance: {
                         title: '外观设置',
@@ -1981,9 +1981,17 @@ const zhCN: LanguageMessages = {
                 saveFailed: '保存失败'
             },
             soundSettings: {
+                overview: {
+                    title: '本页说明',
+                    description: '本页同时管理 Webview 声音提示和 Windows Agent 停止系统通知。下方内容按功能分区，便于分别调整。'
+                },
+                sections: {
+                    sound: { title: '声音提示', description: '配置 Webview 内的提示音，包括启用、音量、事件、音效文件与测试播放。' },
+                    windowsNotification: { title: 'Windows Agent 停止系统通知', description: '配置 Agent 停止后的 Windows 系统通知、模板与预览。' }
+                },
                 enabled: {
                     title: '启用声音提醒',
-                    description: '在特定事件发生时播放提示音（默认关闭）',
+                    description: '在特定事件发生时播放提示音。此开关只影响声音提示，不影响 Windows 系统通知。',
                     label: '启用'
                 },
                 volume: {
@@ -2015,11 +2023,43 @@ const zhCN: LanguageMessages = {
                 },
                 test: {
                     title: '测试播放',
-                    description: '用于解锁浏览器音频策略，并试听提示音',
+                    description: '用于解锁浏览器音频策略并试听提示音',
                     warning: '试听：警告',
                     error: '试听：错误',
                     taskComplete: '试听：任务完成',
                     taskError: '试听：任务失败'
+                },
+                windowsAgentStopNotification: {
+                    title: 'Windows Agent 停止系统通知',
+                    description: '仅在 Windows 生效。通知只用于 Agent 停止场景。当前阶段会显示当前窗口的可识别标题，并按模板生成通知文案。',
+                    optionsTitle: '通知开关与规则',
+                    enabled: '启用 Windows 系统通知',
+                    onlyWhenWindowNotFocused: '仅在当前窗口不在前台时通知',
+                    rawTextHint: '通知标题和正文由扩展按模板生成，不直接显示 Agent 原始文本。',
+                    bestEffortClickHint: '点击通知仍为尽力而为，不作为当前阶段的精确窗口回跳保证。',
+                    casesTitle: '通知场景',
+                    cases: {
+                        error: '失败时通知',
+                        awaitingUserAction: '需要用户动作时通知',
+                        continueRequired: '需要继续时通知'
+                    },
+                    templates: {
+                        title: '通知模板',
+                        description: '模板只支持扩展可控变量，用于生成通知标题和正文。',
+                        titleTemplate: '标题模板',
+                        errorBodyTemplate: '失败正文模板',
+                        awaitingUserActionBodyTemplate: '等待用户动作正文模板',
+                        continueRequiredBodyTemplate: '等待继续正文模板',
+                        variables: '可用变量',
+                        variablesHint: '可用变量：{appName}、{windowTitle}、{actionLabel}、{reasonLabel}'
+                    },
+                    preview: {
+                        title: '通知预览',
+                        description: '预览会使用当前编辑中的模板和当前窗口标题，由宿主渲染最终通知。',
+                        error: '预览失败通知',
+                        awaitingUserAction: '预览等待用户动作通知',
+                        continueRequired: '预览等待继续通知'
+                    }
                 },
                 testBlocked: '声音被浏览器策略阻止，请点击一次“试听”按钮解锁（或检查 VS Code 音频设置）',
                 testPlayed: '已播放',
@@ -2741,6 +2781,23 @@ const zhCN: LanguageMessages = {
             summarizing: '自动总结中…',
             manualSummarizing: '手动总结中…',
             cancelTooltip: '取消总结'
+        },
+        agentStopNotification: {
+            errorTitle: 'LimCode Agent 已停止',
+            errorMessage: '当前对话执行失败。点击通知可回到对应窗口继续处理。',
+            errorMessageWithConversation: '对话“{title}”执行失败。点击通知可回到对应窗口继续处理。',
+            awaitingUserActionTitle: 'LimCode 等待您的操作',
+            awaitingUserActionMessage: '当前对话需要您点击“{action}”。点击通知可回到对应窗口继续处理。',
+            awaitingUserActionMessageWithConversation: '对话“{title}”需要您点击“{action}”。点击通知可回到对应窗口继续处理。',
+            continueRequiredTitle: 'LimCode 等待继续',
+            continueRequiredMessage: '当前对话需要继续。点击通知可回到对应窗口继续处理。',
+            continueRequiredMessageWithConversation: '对话“{title}”需要继续。点击通知可回到对应窗口继续处理。',
+            actions: {
+                generatePlan: '生成计划',
+                executePlan: '执行计划',
+                continue: '继续',
+                genericConfirmation: '回到 LimCode 继续'
+            }
         }
     },
 

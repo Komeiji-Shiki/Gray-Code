@@ -62,6 +62,7 @@ export type CancelStreamCallback = () => Promise<void>
  */
 export interface HiddenFunctionResponsePayload {
   id?: string
+  approvalId?: string
   name: string
   response: Record<string, unknown>
 }
@@ -296,6 +297,8 @@ export async function sendMessage(
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
     state.activeStreamId.value = streamId
+    state._lastApprovalGatedStreamId.value = null
+
     state._lastCancelledStreamId.value = null
     
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0

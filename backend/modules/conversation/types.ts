@@ -555,6 +555,29 @@ export interface CheckpointRecord {
     };
 }
 
+export type PendingApprovalGateKind = 'generate_plan' | 'execute_plan';
+export type PendingApprovalGateContinuationIntent = 'generate_plan_now' | 'implement_now';
+export type PendingApprovalGateSourceArtifactType = 'design' | 'review' | 'plan';
+
+export interface PendingApprovalGate {
+    /** 本次审批门闸唯一标识 */
+    id: string;
+    /** 门闸类别 */
+    kind: PendingApprovalGateKind;
+    /** 与现有 continuation 语义对齐的意图 */
+    continuationIntent: PendingApprovalGateContinuationIntent;
+    /** 触发当前门闸的工具调用 ID */
+    sourceToolCallId: string;
+    /** 触发当前门闸的工具名称 */
+    sourceToolName: string;
+    /** 触发当前门闸的源文档类型 */
+    sourceArtifactType: PendingApprovalGateSourceArtifactType;
+    /** 触发当前门闸的源文档路径（如有） */
+    sourcePath?: string;
+    /** 创建时间戳（毫秒） */
+    createdAt: number;
+}
+
 /**
  * 对话元数据
  *

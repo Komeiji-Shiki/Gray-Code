@@ -383,18 +383,31 @@ async function openDiffView(
 /**
  * 接受 Diff 修改
  */
-export const acceptDiff: MessageHandler = async (data, requestId, _ctx) => {
+export const acceptDiff: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { sessionId } = data;
     const diffManager = getDiffManager();
-    const success = await diffManager.acceptDiff(sessionId, true);
-    if (success) {
-      _ctx.sendResponse(requestId, { success: true });
-    } else {
-      _ctx.sendResponse(requestId, { success: false, error: 'Failed to accept diff' });
+
+    if (diffManager.isDiffActionInProgress(sessionId)) {
+      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', 'Diff action is already in progress.');
+      return;
     }
+
+    const diff = diffManager.getDiff(sessionId);
+    if (!diff || diff.status !== 'pending') {
+      ctx.sendError(requestId, 'DIFF_NOT_PENDING', 'Diff is no longer pending.');
+      return;
+    }
+
+    const success = await diffManager.acceptDiff(sessionId, true);
+    if (!success) {
+      ctx.sendError(requestId, 'DIFF_ACCEPT_FAILED', 'Failed to accept diff. The diff remains pending and can be retried.');
+      return;
+    }
+
+    ctx.sendResponse(requestId, { success: true, sessionId, status: 'accepted' });
   } catch (error: any) {
-    _ctx.sendError(requestId, 'ACCEPT_DIFF_ERROR', error.message || 'Failed to accept diff');
+    ctx.sendError(requestId, 'DIFF_ACCEPT_FAILED', error.message || 'Failed to accept diff');
   }
 };
 
@@ -405,6 +418,18 @@ export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { sessionId } = data;
     const diffManager = getDiffManager();
+
+    if (diffManager.isDiffActionInProgress(sessionId)) {
+      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', 'Diff action is already in progress.');
+      return;
+    }
+
+    const diff = diffManager.getDiff(sessionId);
+    if (!diff || diff.status !== 'pending') {
+      ctx.sendError(requestId, 'DIFF_NOT_PENDING', 'Diff is no longer pending.');
+      return;
+    }
+
     const success = await diffManager.rejectDiff(sessionId);
 
     // 注意：这里不要调用 conversationManager.rejectToolCalls。
@@ -412,13 +437,14 @@ export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
     // 用户点击“Reject”应当被视为“拒绝应用修改”，而不是“拒绝执行工具”。
     // 让工具本身在收到 diffManager 状态变更后返回正确的 functionResponse（status=rejected, results 等）。
 
-    if (success) {
-      ctx.sendResponse(requestId, { success: true });
-    } else {
-      ctx.sendResponse(requestId, { success: false, error: 'Failed to reject diff' });
+    if (!success) {
+      ctx.sendError(requestId, 'DIFF_REJECT_FAILED', 'Failed to reject diff. The diff remains pending and can be retried.');
+      return;
     }
+
+    ctx.sendResponse(requestId, { success: true, sessionId, status: 'rejected' });
   } catch (error: any) {
-    ctx.sendError(requestId, 'REJECT_DIFF_ERROR', error.message || 'Failed to reject diff');
+    ctx.sendError(requestId, 'DIFF_REJECT_FAILED', error.message || 'Failed to reject diff');
   }
 };
 

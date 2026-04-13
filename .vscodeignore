@@ -51,3 +51,12 @@ node_modules/**
 !node_modules/strnum/**
 !node_modules/tree-kill/**
 !node_modules/ignore/**
+!node_modules/node-notifier/**
+!node_modules/growly/**
+!node_modules/is-wsl/**
+!node_modules/is-docker/**
+!node_modules/semver/**
+!node_modules/shellwords/**
+!node_modules/uuid/**
+!node_modules/which/**
+!node_modules/isexe/**

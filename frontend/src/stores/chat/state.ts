@@ -133,6 +133,9 @@ export function createChatState(): ChatStoreState {
   /** 上一次被 cancelStream 取消的 streamingMessageId */
   const _lastCancelledStreamId = ref<string | null>(null)
 
+  /** 最近一个因审批门闸停止的 streamId */
+  const _lastApprovalGatedStreamId = ref<string | null>(null)
+
   /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
   const editorNodes = ref<EditorNode[]>([])
 
@@ -196,6 +199,7 @@ export function createChatState(): ChatStoreState {
     pendingModelOverride,
     messageQueue,
     _lastCancelledStreamId,
+    _lastApprovalGatedStreamId,
     openTabs,
     activeTabId,
     sessionSnapshots,

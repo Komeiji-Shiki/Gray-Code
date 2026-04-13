@@ -1,6 +1,12 @@
+import {
+  extractReviewCardData,
+  isReviewToolName
+} from './reviewCards'
+
 export type ContinuationIntent = 'generate_plan_now' | 'implement_now'
 export type ContinuationSourceArtifactType = 'design' | 'review' | 'plan'
 export type PlanUpdateMode = 'revision' | 'progress_sync'
+export type ToolApprovalStopKind = 'generate_plan' | 'execute_plan'
 
 export interface ToolContinuationContext {
   continuationApproved: true
@@ -140,6 +146,36 @@ export function getPlanUpdateMode(response: unknown, args?: unknown): PlanUpdate
 
 export function isPlanProgressSync(response: unknown, args?: unknown): boolean {
   return getPlanUpdateMode(response, args) === 'progress_sync'
+}
+
+export function getToolApprovalStopKind(
+  toolName: string,
+  response: unknown,
+  args?: unknown
+): ToolApprovalStopKind | null {
+  const record = asRecord(response)
+  if (!record || record.success === false) return null
+
+  if (toolName === 'create_design' || toolName === 'update_design') {
+    return isAwaitingToolUserConfirmation(record) && !getPlanGenerationPrompt(record)
+      ? 'generate_plan'
+      : null
+  }
+
+  if (toolName === 'create_plan' || toolName === 'update_plan') {
+    if (toolName === 'update_plan' && isPlanProgressSync(record, args)) {
+      return null
+    }
+
+    return isAwaitingToolUserConfirmation(record) && !getPlanExecutionPrompt(record)
+      ? 'execute_plan'
+      : null
+  }
+
+  const reviewCardData = isReviewToolName(toolName) ? extractReviewCardData(toolName, asRecord(args) || {}, record) : null
+  return reviewCardData?.status === 'completed' && !getPlanGenerationPrompt(record)
+    ? 'generate_plan'
+    : null
 }
 
 export function hasApprovedContinuation(response: unknown, expectedIntent?: ContinuationIntent): boolean {

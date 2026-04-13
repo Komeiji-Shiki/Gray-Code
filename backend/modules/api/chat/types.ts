@@ -46,6 +46,9 @@ export interface HiddenFunctionResponseData {
     /** 工具名称 */
     name: string;
 
+    /** 宿主侧审批门闸令牌（可选，仅计划类隐藏 continuation 使用） */
+    approvalId?: string;
+
     /** 函数响应对象 */
     response: Record<string, unknown>;
 }

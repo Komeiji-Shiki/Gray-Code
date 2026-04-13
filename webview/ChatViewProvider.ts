@@ -41,6 +41,7 @@ import { getDiffManager } from '../backend/tools/file/diffManager';
 import { MessageRouter } from './MessageRouter';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
+import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 
 /**
  * Diff 预览内容提供者
@@ -97,6 +98,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private storagePathManager!: StoragePathManager;
     private diffStorageManager!: DiffStorageManager;
     private conversationStorageAdapter?: FileSystemStorageAdapter;
+    private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -155,6 +157,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         this.settingsManager = new SettingsManager(settingsStorage);
         await this.settingsManager.initialize();
+        this.windowsAgentStopNotificationService = new WindowsAgentStopNotificationService({ settingsManager: this.settingsManager });
         
         // 2. 初始化存储路径管理器
         this.storagePathManager = new StoragePathManager(this.settingsManager, this.context);
@@ -603,6 +606,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             dependencyManager: this.dependencyManager,
             storagePathManager: this.storagePathManager,
             diffStorageManager: this.diffStorageManager,
+            windowsAgentStopNotificationService: this.windowsAgentStopNotificationService,
             streamAbortControllers: this.messageRouter.getAbortManager() as any,
             diffPreviewProvider: this.diffPreviewProvider,
             sendResponse: this.sendResponse.bind(this),
@@ -726,6 +730,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 释放 Skills 管理器资源
         getSkillsManager()?.dispose();
+        this.windowsAgentStopNotificationService?.dispose();
 
         console.log('ChatViewProvider disposed');
     }

@@ -74,6 +74,26 @@ export interface UISoundAsset {
   dataBase64: string
 }
 
+export interface WindowsAgentStopNotificationContentSettings {
+  titleTemplate?: string
+  bodyTemplates?: {
+    error?: string
+    awaitingUserAction?: string
+    continueRequired?: string
+  }
+}
+
+export interface WindowsAgentStopNotificationSettings {
+  enabled?: boolean
+  onlyWhenWindowNotFocused?: boolean
+  cases?: {
+    error?: boolean
+    awaitingUserAction?: boolean
+    continueRequired?: boolean
+  }
+  content?: WindowsAgentStopNotificationContentSettings
+}
+
 export interface UISoundSettings {
   /** 总开关（默认关闭，避免打扰） */
   enabled?: boolean
@@ -107,6 +127,9 @@ export interface UISoundSettings {
 
   /** 提示音风格 */
   theme?: 'beep' | 'soft'
+
+  /** Windows 专用 Agent 停止系统通知 */
+  windowsAgentStopNotification?: WindowsAgentStopNotificationSettings
 }
 
 export interface NormalizedUISoundSettings {
@@ -126,6 +149,23 @@ export interface NormalizedUISoundSettings {
     taskError?: UISoundAsset
   }
   theme: 'beep' | 'soft'
+  windowsAgentStopNotification: {
+    enabled: boolean
+    onlyWhenWindowNotFocused: boolean
+    cases: {
+      error: boolean
+      awaitingUserAction: boolean
+      continueRequired: boolean
+    }
+    content: {
+      titleTemplate: string
+      bodyTemplates: {
+        error: string
+        awaitingUserAction: string
+        continueRequired: string
+      }
+    }
+  }
 }
 
 export const DEFAULT_UI_SOUND_SETTINGS: NormalizedUISoundSettings = {
@@ -139,7 +179,24 @@ export const DEFAULT_UI_SOUND_SETTINGS: NormalizedUISoundSettings = {
     taskError: true
   },
   assets: {},
-  theme: 'beep'
+  theme: 'beep',
+  windowsAgentStopNotification: {
+    enabled: false,
+    onlyWhenWindowNotFocused: true,
+    cases: {
+      error: true,
+      awaitingUserAction: true,
+      continueRequired: true
+    },
+    content: {
+      titleTemplate: '{windowTitle} · LimCode',
+      bodyTemplates: {
+        error: 'LimCode 已停止，请返回处理。',
+        awaitingUserAction: 'LimCode 正在等待：{actionLabel}。',
+        continueRequired: 'LimCode 已暂停，可继续处理。'
+      }
+    }
+  }
 }
 
 let currentSettings: NormalizedUISoundSettings = { ...DEFAULT_UI_SOUND_SETTINGS }
@@ -163,6 +220,11 @@ const inFlightPlayByKey = new Map<string, { token: string; reservedAt: number }>
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback
   return Math.min(max, Math.max(min, n))
+}
+
+function normalizeTemplateString(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  return value.trim() || fallback
 }
 
 function normalizeSoundAsset(input: unknown): UISoundAsset | undefined {
@@ -225,13 +287,39 @@ export function normalizeUISoundSettings(input?: UISoundSettings | null): Normal
     taskError: normalizeSoundAsset(input?.assets?.taskError)
   }
 
+  const windowsAgentStopNotification = {
+    enabled: typeof input?.windowsAgentStopNotification?.enabled === 'boolean'
+      ? input.windowsAgentStopNotification.enabled
+      : DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.enabled,
+    onlyWhenWindowNotFocused: typeof input?.windowsAgentStopNotification?.onlyWhenWindowNotFocused === 'boolean'
+      ? input.windowsAgentStopNotification.onlyWhenWindowNotFocused
+      : DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.onlyWhenWindowNotFocused,
+    cases: {
+      error: typeof input?.windowsAgentStopNotification?.cases?.error === 'boolean' ? input.windowsAgentStopNotification.cases.error : DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.error,
+      awaitingUserAction: typeof input?.windowsAgentStopNotification?.cases?.awaitingUserAction === 'boolean' ? input.windowsAgentStopNotification.cases.awaitingUserAction : DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.awaitingUserAction,
+      continueRequired: typeof input?.windowsAgentStopNotification?.cases?.continueRequired === 'boolean' ? input.windowsAgentStopNotification.cases.continueRequired : DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.continueRequired
+    },
+    content: {
+      titleTemplate: normalizeTemplateString(
+        input?.windowsAgentStopNotification?.content?.titleTemplate,
+        DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.titleTemplate
+      ),
+      bodyTemplates: {
+        error: normalizeTemplateString(input?.windowsAgentStopNotification?.content?.bodyTemplates?.error, DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.error),
+        awaitingUserAction: normalizeTemplateString(input?.windowsAgentStopNotification?.content?.bodyTemplates?.awaitingUserAction, DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.awaitingUserAction),
+        continueRequired: normalizeTemplateString(input?.windowsAgentStopNotification?.content?.bodyTemplates?.continueRequired, DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.content.bodyTemplates.continueRequired)
+      }
+    }
+  }
+
   return {
     enabled,
     volume,
     cooldownMs,
     cues,
     assets,
-    theme
+    theme,
+    windowsAgentStopNotification
   }
 }
 

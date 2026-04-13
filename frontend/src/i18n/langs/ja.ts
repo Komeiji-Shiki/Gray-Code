@@ -787,7 +787,7 @@ const ja: LanguageMessages = {
                 context: 'コンテキスト',
                 prompt: 'プロンプト',
                 tokenCount: 'トークンカウント',
-                sound: 'サウンド通知',
+                sound: '通知システム',
                 appearance: '外観',
                 general: '一般'
             },
@@ -1741,8 +1741,8 @@ const ja: LanguageMessages = {
                         description: 'AI が呼び出せる専門サブエージェントを設定'
                     },
                     sound: {
-                        title: 'サウンド通知',
-                        description: '警告、エラー、タスク完了時に通知音を再生'
+                        title: '通知システム',
+                        description: 'サウンド通知と Windows Agent 停止通知をまとめて設定'
                     },
                     appearance: {
                         title: '外観',
@@ -1981,9 +1981,17 @@ const ja: LanguageMessages = {
                 saveFailed: '保存に失敗しました'
             },
             soundSettings: {
+                overview: {
+                    title: 'このページについて',
+                    description: 'このページでは、Webview のサウンド通知と Windows Agent 停止システム通知をまとめて管理します。下の設定は機能ごとに分けてあります。'
+                },
+                sections: {
+                    sound: { title: 'サウンド通知', description: 'Webview 内で再生する通知音を設定します。' },
+                    windowsNotification: { title: 'Windows Agent 停止システム通知', description: 'Agent 停止時に表示する Windows 通知、テンプレート、プレビューを設定します。' }
+                },
                 enabled: {
                     title: 'サウンド通知を有効化',
-                    description: '特定のイベント発生時に通知音を再生します（既定は無効）',
+                    description: '特定のイベントで通知音を再生します。このスイッチはサウンド通知だけに影響し、Windows システム通知は制御しません。',
                     label: '有効化'
                 },
                 volume: {
@@ -2020,6 +2028,38 @@ const ja: LanguageMessages = {
                     error: '試聴：エラー',
                     taskComplete: '試聴：タスク完了',
                     taskError: '試聴：タスク失敗'
+                },
+                windowsAgentStopNotification: {
+                    title: 'Windows Agent 停止システム通知',
+                    description: 'Windows でのみ有効です。通知は Agent が停止した場面だけで使われます。現段階では識別しやすいウィンドウ名を表示し、テンプレートから通知文面を生成します。',
+                    optionsTitle: '通知ルール',
+                    enabled: 'Windows システム通知を有効にする',
+                    onlyWhenWindowNotFocused: '現在のウィンドウが前面にないときだけ通知する',
+                    rawTextHint: '通知タイトルと本文はテンプレートから生成され、Agent の生テキストをそのまま表示しません。',
+                    bestEffortClickHint: '通知クリックの処理は引き続き best effort であり、この段階では厳密なウィンドウ復帰を保証しません。',
+                    casesTitle: '通知する場面',
+                    cases: {
+                        error: '失敗時に通知する',
+                        awaitingUserAction: 'ユーザー操作が必要なときに通知する',
+                        continueRequired: '続行が必要なときに通知する'
+                    },
+                    templates: {
+                        title: '通知テンプレート',
+                        description: 'テンプレートでは、拡張機能が管理する変数だけを使ってタイトルと本文を生成します。',
+                        titleTemplate: 'タイトルテンプレート',
+                        errorBodyTemplate: '失敗本文テンプレート',
+                        awaitingUserActionBodyTemplate: 'ユーザー操作待ち本文テンプレート',
+                        continueRequiredBodyTemplate: '続行待ち本文テンプレート',
+                        variables: '使用できる変数',
+                        variablesHint: '使用できる変数: {appName}、{windowTitle}、{actionLabel}、{reasonLabel}'
+                    },
+                    preview: {
+                        title: '通知プレビュー',
+                        description: 'プレビューは、現在編集中のテンプレートと現在のウィンドウ名を使い、ホスト側で最終通知を描画します。',
+                        error: '失敗通知をプレビュー',
+                        awaitingUserAction: 'ユーザー操作待ち通知をプレビュー',
+                        continueRequired: '続行待ち通知をプレビュー'
+                    }
                 },
                 testBlocked: '音声がブラウザのポリシーでブロックされている可能性があります。テストボタンを一度クリックして解除してください。',
                 testPlayed: '再生しました',
@@ -2741,6 +2781,23 @@ const ja: LanguageMessages = {
             summarizing: '自動要約中...',
             manualSummarizing: '要約中...',
             cancelTooltip: '要約をキャンセル'
+        },
+        agentStopNotification: {
+            errorTitle: 'LimCode Agent が停止しました',
+            errorMessage: '現在の会話は失敗しました。通知をクリックすると元のウィンドウに戻れます。',
+            errorMessageWithConversation: '会話「{title}」は失敗しました。通知をクリックすると元のウィンドウに戻れます。',
+            awaitingUserActionTitle: 'LimCode は操作を待っています',
+            awaitingUserActionMessage: '現在の会話では「{action}」が必要です。通知をクリックすると元のウィンドウに戻れます。',
+            awaitingUserActionMessageWithConversation: '会話「{title}」では「{action}」が必要です。通知をクリックすると元のウィンドウに戻れます。',
+            continueRequiredTitle: 'LimCode は続行を待っています',
+            continueRequiredMessage: '現在の会話は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
+            continueRequiredMessageWithConversation: '会話「{title}」は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
+            actions: {
+                generatePlan: 'プランを生成',
+                executePlan: 'プランを実行',
+                continue: '続行',
+                genericConfirmation: 'LimCode に戻って続行'
+            }
         }
     },
 
