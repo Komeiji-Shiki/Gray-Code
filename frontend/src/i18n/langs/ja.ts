@@ -2184,6 +2184,12 @@ const ja: LanguageMessages = {
                 }
             },
             gemini: {
+                maxImages: {
+                    label: '上流リクエストの最大画像数',
+                    placeholder: '0 = 無制限',
+                    toggleHint: '有効にすると、Gemini に送信するリクエスト全体で指定数まで画像を保持します',
+                    hint: '0 に設定すると無制限です。上限を超えた古い画像は削除され、新しい画像を優先して保持します'
+                },
                 thinking: {
                     includeThoughts: '思考内容を返す',
                     includeThoughtsHint: '有効にすると、API レスポンスにモデルの思考プロセスが含まれます',

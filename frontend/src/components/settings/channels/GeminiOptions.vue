@@ -27,6 +27,7 @@ const thinkingLevelOptions = computed<SelectOption[]>(() => [
 const DEFAULT_VALUES: Record<string, any> = {
   temperature: 1.0,
   maxOutputTokens: 8192,
+  maxImages: 0,
   thinkingConfig: {
     includeThoughts: true,
     mode: 'default',
@@ -140,6 +141,31 @@ function updateThinkingConfig(field: string, value: any) {
         :class="{ disabled: !isOptionEnabled('maxOutputTokens') }"
         @input="(e: any) => emit('update:option', 'maxOutputTokens', Number(e.target.value))"
       />
+    </div>
+
+    <!-- 最大图片数量 -->
+    <div class="option-item option-with-toggle">
+      <div class="option-header">
+        <label>{{ t('components.channels.gemini.maxImages.label') }}</label>
+        <label class="toggle-switch" :title="t('components.channels.gemini.maxImages.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="isOptionEnabled('maxImages')"
+            @change="(e: any) => handleOptionEnabledChange('maxImages', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <input
+        type="number"
+        min="0"
+        :value="config.options?.maxImages ?? 0"
+        :placeholder="t('components.channels.gemini.maxImages.placeholder')"
+        :disabled="!isOptionEnabled('maxImages')"
+        :class="{ disabled: !isOptionEnabled('maxImages') }"
+        @input="(e: any) => emit('update:option', 'maxImages', Number(e.target.value))"
+      />
+      <span class="option-hint">{{ t('components.channels.gemini.maxImages.hint') }}</span>
     </div>
     
     <!-- 思考配置 -->

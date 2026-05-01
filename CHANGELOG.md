@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.27] - 2026-05-01
+
+### Added
+  - Gemini 频道新增「上游请求最多图片数」配置，可限制发送给 API 的历史图片数量，超出上限时优先保留最新图片
+
 ## [1.1.26] - 2026-04-24
 
 ### Fixed

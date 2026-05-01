@@ -2184,6 +2184,12 @@ const zhCN: LanguageMessages = {
                 }
             },
             gemini: {
+                maxImages: {
+                    label: '上游请求最多图片数',
+                    placeholder: '0 = 不限制',
+                    toggleHint: '启用后，发送给 Gemini 的整个请求中最多保留指定数量的图片',
+                    hint: '设为 0 则不限制。超过上限的旧图片会被移除，优先保留最新图片'
+                },
                 thinking: {
                     includeThoughts: '返回思考内容',
                     includeThoughtsHint: '启用后，API 响应将包含模型的思考过程',

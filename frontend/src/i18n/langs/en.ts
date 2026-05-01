@@ -2184,6 +2184,12 @@ const en: LanguageMessages = {
                 }
             },
             gemini: {
+                maxImages: {
+                    label: 'Max Images Upstream',
+                    placeholder: '0 = no limit',
+                    toggleHint: 'When enabled, the whole request sent to Gemini keeps at most this many images',
+                    hint: 'Set to 0 for no limit. Older images over the limit are removed, keeping the newest images first'
+                },
                 thinking: {
                     includeThoughts: 'Return Thought Content',
                     includeThoughtsHint: 'When enabled, API response will include the model\'s thinking process',

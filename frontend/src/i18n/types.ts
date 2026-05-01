@@ -2232,6 +2232,12 @@ export interface LanguageMessages {
             
             /** Gemini 专属 */
             gemini: {
+                maxImages: {
+                    label: string;
+                    placeholder: string;
+                    toggleHint: string;
+                    hint: string;
+                };
                 thinking: {
                     includeThoughts: string;
                     includeThoughtsHint: string;

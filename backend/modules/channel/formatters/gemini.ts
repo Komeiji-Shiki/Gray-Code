@@ -20,6 +20,43 @@ import type {
 } from '../types';
 import { ChannelError, ErrorType } from '../types';
 
+function isImagePart(part: ContentPart): boolean {
+    const mimeType = part.inlineData?.mimeType || part.fileData?.mimeType;
+    return mimeType?.startsWith('image/') ?? false;
+}
+
+function limitTotalImageParts(contents: Content[], maxImages: number): Content[] {
+    let remainingImages = maxImages;
+
+    return contents
+        .slice()
+        .reverse()
+        .map(content => {
+            const parts = content.parts
+                .slice()
+                .reverse()
+                .filter(part => {
+                    if (!isImagePart(part)) {
+                        return true;
+                    }
+
+                    if (remainingImages <= 0) {
+                        return false;
+                    }
+
+                    remainingImages--;
+                    return true;
+                })
+                .reverse();
+
+            return {
+                ...content,
+                parts
+            };
+        })
+        .reverse();
+}
+
 /**
  * Gemini 格式转换器
  * 
@@ -79,6 +116,13 @@ export class GeminiFormatter extends BaseFormatter {
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         processedHistory = this.cleanInternalFields(processedHistory);
+
+        // 根据配置限制发送给 Gemini 的图片总数，优先保留越新的图片。
+        const maxImages = config.options?.maxImages;
+        const maxImagesEnabled = config.optionsEnabled?.maxImages !== false;
+        if (maxImagesEnabled && maxImages && maxImages > 0) {
+            processedHistory = limitTotalImageParts(processedHistory, maxImages);
+        }
 
         // 构建请求体
         const body: any = {

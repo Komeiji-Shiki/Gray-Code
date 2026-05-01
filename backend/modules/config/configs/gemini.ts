@@ -18,6 +18,9 @@ export interface GeminiOptionsEnabled {
     
     /** 是否发送最大输出 token 数 */
     maxOutputTokens?: boolean;
+
+    /** 是否限制历史消息中的图片数量 */
+    maxImages?: boolean;
     
     /** 是否启用思考配置 */
     thinkingConfig?: boolean;
@@ -91,6 +94,9 @@ export interface GeminiConfig extends BaseChannelConfig {
         
         /** 最大输出 token 数 */
         maxOutputTokens?: number;
+
+        /** 发送给上游的图片总数上限，0 表示不限制 */
+        maxImages?: number;
         
         /** 是否流式输出 */
         stream?: boolean;
