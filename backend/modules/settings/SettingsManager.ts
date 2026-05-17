@@ -1991,6 +1991,35 @@ export class SettingsManager {
         await this.updateSystemPromptConfig({ modes });
     }
 
+    /**
+     * 重命名提示词模式。
+     *
+     * 只更新模式显示名，不用前端传回的整份模式快照覆盖已保存配置，避免新建模式
+     * 在编辑过程中重命名时把模板、条目或工具策略回滚成旧值。
+     */
+    async renamePromptMode(modeId: string, name: string): Promise<PromptMode> {
+        const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
+        const normalizedName = typeof name === 'string' ? name.trim() : '';
+
+        if (!normalizedModeId) {
+            throw new Error('Mode id is required');
+        }
+        if (!normalizedName) {
+            throw new Error('Mode name is required');
+        }
+
+        const config = this.getSystemPromptConfig();
+        const existingMode = config.modes?.[normalizedModeId];
+        if (!existingMode) {
+            throw new Error(`Mode not found: ${normalizedModeId}`);
+        }
+
+        const updatedMode = this.normalizePromptModeSnapshot({ ...existingMode, id: normalizedModeId, name: normalizedName });
+        const modes = { ...config.modes, [normalizedModeId]: updatedMode };
+        await this.updateSystemPromptConfig({ modes });
+        return updatedMode;
+    }
+
     private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
         const promptAssemblyMode = this.normalizePromptAssemblyMode(mode.promptAssemblyMode);
         const promptEntries = this.normalizePromptEntries(mode.promptEntries, promptAssemblyMode);

@@ -1049,16 +1049,20 @@ function openRenameModeDialog(modeId: string) {
 // 确认重命名模式
 async function confirmRenameMode(newName: string) {
   const mode = modes.value.find(m => m.id === renamingModeId.value)
-  if (!mode || newName === mode.name) return
-  
-  const updatedMode = { ...mode, name: newName }
+  const normalizedName = newName.trim()
+  if (!mode || !normalizedName || normalizedName === mode.name) return
   
   try {
-    await sendToExtension('savePromptMode', { mode: updatedMode })
+    const result = await sendToExtension<{ mode?: PromptMode }>('renamePromptMode', {
+      modeId: renamingModeId.value,
+      name: normalizedName
+    })
+    const updatedMode: PromptMode = result?.mode || { ...mode, name: normalizedName }
     const index = modes.value.findIndex(m => m.id === renamingModeId.value)
     if (index >= 0) {
       modes.value[index] = updatedMode
     }
+    renamingModeName.value = updatedMode.name
     // 通知 InputArea 刷新模式列表
     settingsStore.refreshPromptModes()
   } catch (error) {

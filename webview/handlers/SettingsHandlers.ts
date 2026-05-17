@@ -197,6 +197,19 @@ export const savePromptMode: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /**
+ * 重命名提示词模式
+ */
+export const renamePromptMode: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { modeId, name } = data;
+    const mode = await ctx.settingsManager.renamePromptMode(modeId, name);
+    ctx.sendResponse(requestId, { success: true, mode });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'RENAME_PROMPT_MODE_ERROR', error.message || 'Failed to rename prompt mode');
+  }
+};
+
+/**
  * 删除提示词模式
  */
 export const deletePromptMode: MessageHandler = async (data, requestId, ctx) => {
@@ -255,6 +268,7 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getPromptModes', getPromptModes);
   registry.set('setCurrentPromptMode', setCurrentPromptMode);
   registry.set('savePromptMode', savePromptMode);
+  registry.set('renamePromptMode', renamePromptMode);
   registry.set('deletePromptMode', deletePromptMode);
   registry.set('countSystemPromptTokens', countSystemPromptTokens);
   registry.set('checkAnnouncement', checkAnnouncement);
