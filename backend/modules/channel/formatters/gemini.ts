@@ -552,8 +552,8 @@ export class GeminiFormatter extends BaseFormatter {
      */
     private convertThoughtSignatures(history: Content[]): Content[] {
         return history.map(content => {
-            const result: Content = {
-                role: content.role,
+            return {
+                ...content,
                 parts: content.parts.flatMap(part => {
                     // 如果有 thoughtSignatures，提取 gemini 格式的签名
                     if (part.thoughtSignatures?.gemini) {
@@ -576,11 +576,6 @@ export class GeminiFormatter extends BaseFormatter {
                     return [part];
                 }).filter(part => Object.keys(part).length > 0)
             };
-            // 保留 isUserInput 标记
-            if (content.isUserInput) {
-                result.isUserInput = true;
-            }
-            return result;
         });
     }
     

@@ -276,6 +276,35 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(textOf)).toEqual(['old cached dynamic ctx', 'old user', 'old answer', 'current ctx', 'current user']);
     });
 
+    it('preserves cached old context when the newly sent user turn has not been cached yet', () => {
+        const formatter = new TestFormatter();
+        const oldCache = serializePromptContextCache({
+            messages: [
+                { role: 'user', parts: [{ text: 'old cached full ctx' }] }
+            ],
+            dynamicSnapshotMessages: [
+                { role: 'user', parts: [{ text: 'old cached dynamic ctx' }] }
+            ],
+            text: 'old cached full ctx',
+            dynamicSnapshotText: 'old cached dynamic ctx'
+        });
+        const history: Content[] = [
+            {
+                role: 'user',
+                isUserInput: true,
+                turnDynamicContext: oldCache,
+                turnDynamicContextStrategy: 'preserve',
+                parts: [{ text: 'old user' }]
+            },
+            { role: 'model', parts: [{ text: 'old answer' }] },
+            { role: 'user', isUserInput: true, parts: [{ text: 'current user' }] }
+        ];
+
+        const result = formatter.exposeInject(history, [{ role: 'user', parts: [{ text: 'current ctx' }] }], 'preserve');
+
+        expect(result.map(textOf)).toEqual(['old cached dynamic ctx', 'old user', 'old answer', 'current ctx', 'current user']);
+    });
+
     it('keeps legacy plain-text turnDynamicContext compatible in preserve mode', () => {
         const formatter = new TestFormatter();
         const history: Content[] = [

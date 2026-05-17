@@ -13,7 +13,7 @@ import InputAttachments from './InputAttachments.vue'
 import PinnedFilesWidget from './PinnedFilesWidget.vue'
 import SkillsWidget from './SkillsWidget.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
-import type { ChannelOption, DynamicContextStrategy, PromptMode } from './types'
+import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
@@ -75,7 +75,6 @@ const configs = ref<any[]>([])
 const isLoadingConfigs = ref(false)
 
 const promptModes = ref<PromptMode[]>([])
-const globalDynamicContextStrategy = ref<DynamicContextStrategy | undefined>(undefined)
 
 const channelOptions = computed<ChannelOption[]>(() =>
   configs.value
@@ -93,15 +92,6 @@ const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
 const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
-const currentDynamicContextStrategy = computed<DynamicContextStrategy | undefined>(() => {
-  const mode = promptModes.value.find(item => item.id === chatStore.currentPromptModeId)
-  const strategy = mode?.dynamicContextStrategy ?? globalDynamicContextStrategy.value
-  if (strategy === 'preserve') return 'preserve'
-  if (strategy === 'single') return 'single'
-  // 模式列表尚未加载完成时不要向后端传 override，避免误把后端 preserve 覆盖成 single
-  return undefined
-})
-
 async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
@@ -126,10 +116,7 @@ async function loadPromptModes() {
     const result = await configService.getPromptModes()
     if (result) {
       promptModes.value = result.modes
-      globalDynamicContextStrategy.value = result.dynamicContextStrategy === 'preserve' ? 'preserve' : result.dynamicContextStrategy === 'single' ? 'single' : undefined
-      // 仅在 store 还未设置过（使用默认值 'code'）且后端返回不同值时，才初始化 store
-      // 后续切换全部由 store 驱动，不再反向覆盖
-      // （注：初始加载时 store 可能已从对话元数据恢复，此处不强制覆盖）
+      // 动态上下文策略由后端按当前模式/全局配置解析；普通发送不从这里下发覆盖值。
     }
   } catch (error) {
     console.error('Failed to load prompt modes:', error)
@@ -181,10 +168,11 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
 
   const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
-  const resolvedStrategy = options?.dynamicContextStrategyOverride ?? currentDynamicContextStrategy.value
-  const sendOptions = resolvedStrategy
-    ? { ...options, dynamicContextStrategyOverride: resolvedStrategy }
-    : options
+  // 普通发送不主动下发策略覆盖，避免输入区旧模式缓存把后端已保存的 preserve 误覆盖成 single。
+  // 只有“发送并保留旧动态上下文原位”按钮会传入显式 preserve override。
+  const sendOptions = options?.dynamicContextStrategyOverride
+    ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
+    : undefined
 
   // 智能决策：AI 空闲且队列为空时直接发送，否则入队
   if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0) {

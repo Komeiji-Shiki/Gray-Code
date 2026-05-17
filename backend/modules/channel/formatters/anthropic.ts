@@ -1023,8 +1023,8 @@ export class AnthropicFormatter extends BaseFormatter {
      */
     private convertThoughtSignatures(history: Content[]): Content[] {
         return history.map(content => {
-            const result: Content = {
-                role: content.role,
+            return {
+                ...content,
                 parts: content.parts.map(part => {
                     // 如果有 thoughtSignatures，提取 anthropic 格式的签名
                     if (part.thoughtSignatures?.anthropic) {
@@ -1043,11 +1043,6 @@ export class AnthropicFormatter extends BaseFormatter {
                     return part;
                 })
             };
-            // 保留 isUserInput 标记
-            if (content.isUserInput) {
-                result.isUserInput = true;
-            }
-            return result;
         });
     }
     

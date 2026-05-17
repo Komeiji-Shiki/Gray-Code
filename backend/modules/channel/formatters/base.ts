@@ -117,27 +117,30 @@ export abstract class BaseFormatter {
     /**
      * 查找当前回合的动态上下文稳定插入点。
      *
-     * turnDynamicContext 是 ToolIterationLoopService 在新用户回合开始时写到该回合用户消息上的缓存。
-     * 同一用户回合内，后续模型继续、工具结果、隐藏 functionResponse 都不应改变动态上下文位置，
-     * 所以只要历史里还能找到这个缓存锚点，就必须插回该消息前，而不是重新按历史尾部计算。
+     * 当前回合永远以“最后一组用户主动输入”的第一条消息为锚点。
+     * 新用户消息刚写入历史、尚未写入 turnDynamicContext 时，旧实现会回头找到上一轮缓存，
+     * 并把上一轮误判为当前回合，导致 preserve 模式下旧动态上下文不再插回原位。
      *
-     * 如果当前最新用户输入还没有缓存（旧历史或测试构造），则退回到最后一组用户输入消息，
-     * 避免把上一回合的缓存误判成本回合锚点。
+     * 因此这里先固定最新用户主动输入组；只有在当前历史没有新的主动输入组时（例如工具确认、重试等回合继续），
+     * 才退回到最近带 turnDynamicContext 的用户锚点，保持回合内工具响应后上下文位置稳定。
      */
     private findCurrentTurnStartIndex(history: Content[]): number {
         const latestUserInputIndex = this.findLastUserMessageGroupIndex(history);
+        if (latestUserInputIndex >= 0) {
+            return latestUserInputIndex;
+        }
+
         for (let i = history.length - 1; i >= 0; i--) {
             const message = history[i];
             if (
                 message.role === 'user' &&
-                message.isUserInput &&
                 !!message.turnDynamicContext
             ) {
-                return latestUserInputIndex < 0 || i >= latestUserInputIndex ? i : latestUserInputIndex;
+                return i;
             }
         }
 
-        return latestUserInputIndex;
+        return -1;
     }
 
     private findUserMessageGroupEndExclusiveIndex(history: Content[], startIndex: number): number {

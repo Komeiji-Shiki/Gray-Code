@@ -904,8 +904,8 @@ export class OpenAIFormatter extends BaseFormatter {
      */
     private convertThoughtSignatures(history: Content[]): Content[] {
         return history.map(content => {
-            const result: Content = {
-                role: content.role,
+            return {
+                ...content,
                 parts: content.parts.map(part => {
                     // 移除 thoughtSignatures 字段
                     // 未来如果 OpenAI 支持签名，可以像 Gemini 一样：
@@ -919,11 +919,6 @@ export class OpenAIFormatter extends BaseFormatter {
                     return part;
                 })
             };
-            // 保留 isUserInput 标记
-            if (content.isUserInput) {
-                result.isUserInput = true;
-            }
-            return result;
         });
     }
     
