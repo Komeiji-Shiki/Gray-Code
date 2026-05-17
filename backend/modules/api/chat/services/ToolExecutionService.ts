@@ -23,7 +23,8 @@ import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
 import {
     getOutsideWorkspaceRejectionReason,
-    toolCallNeedsOutsideWorkspaceConfirmation
+    toolCallNeedsOutsideWorkspaceConfirmation,
+    toolCallUsesManualDiffReviewForOutsideWorkspaceWrite
 } from '../../../../tools/file/outsideWorkspaceAccess';
 
 /**
@@ -913,6 +914,10 @@ export class ToolExecutionService {
 
         if (toolCallNeedsOutsideWorkspaceConfirmation(toolName, args, this.settingsManager)) {
             return true;
+        }
+
+        if (toolCallUsesManualDiffReviewForOutsideWorkspaceWrite(toolName, args, this.settingsManager)) {
+            return false;
         }
 
         // 使用统一的自动执行配置
