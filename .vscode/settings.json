@@ -1,0 +1,8 @@
+{
+    "i18n-ally.localesPaths": [
+        "backend/i18n",
+        "frontend/src/i18n",
+        "backend/i18n/langs",
+        "frontend/src/i18n/langs"
+    ]
+}

@@ -10,22 +10,17 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, MultimodalCapability } from '../types';
 import { t } from '../../i18n';
 import {
-    resolveUri,
-    resolveUriWithInfo,
+    resolveFileToolPathWithInfo,
     getAllWorkspaces,
-    isMultimodalSupported,
     getMultimodalMimeType,
     isBinaryFile,
-    formatFileSize,
-    canReadFile,
-    getReadFileError,
-    isMultimodalSupportedWithConfig,
     canReadFileWithCapability,
     getReadFileErrorWithCapability,
     isImageFile,
     isPdfFile,
     normalizeLineEndingsToLF
 } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
     'Line ranges (startLine/endLine) are only supported for text files. Do not provide them for binary/multimodal files (PDF/images/audio/video).';
@@ -72,6 +67,7 @@ interface ReadResult {
     mimeType?: string;
     size?: number;
     dimensions?: ImageDimensions;  // 图片尺寸信息
+    outsideWorkspace?: boolean;
     error?: string;
 }
 
@@ -212,11 +208,12 @@ async function readSingleFile(
     result: ReadResult;
     multimodal?: MultimodalData[];
 }> {
-    const { uri, workspace, error } = resolveUriWithInfo(filePath);
+    const { uri, workspace, error, isOutsideWorkspace } = resolveFileToolPathWithInfo(filePath);
     if (!uri) {
         return {
             result: {
                 path: filePath,
+                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: error || 'No workspace folder open'
             }
@@ -225,11 +222,13 @@ async function readSingleFile(
 
     // 非文本（binary）文件不支持行号范围
     // 注意：这是安全网。正常情况下 handler 会在调用 readSingleFile 之前拦截。
-    if (lineRange && isBinaryFile(filePath)) {
+    const actualPath = uri.fsPath;
+    if (lineRange && isBinaryFile(actualPath)) {
         return {
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
+                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
             }
@@ -237,12 +236,13 @@ async function readSingleFile(
     }
 
     // 检查是否允许读取此文件
-    if (!canReadFileWithCapability(filePath, capability)) {
-        const readError = getReadFileErrorWithCapability(filePath, true, capability);
+    if (!canReadFileWithCapability(actualPath, capability)) {
+        const readError = getReadFileErrorWithCapability(actualPath, true, capability);
         return {
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
+                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: readError || t('tools.file.readFile.cannotReadFile')
             }
@@ -251,24 +251,24 @@ async function readSingleFile(
 
     try {
         const content = await vscode.workspace.fs.readFile(uri);
-        const fileName = path.basename(filePath);
+        const fileName = path.basename(actualPath);
         
         // 检查是否支持多模态返回
         let shouldReturnMultimodal = false;
-        if (isImageFile(filePath) && capability.supportsImages) {
+        if (isImageFile(actualPath) && capability.supportsImages) {
             shouldReturnMultimodal = true;
-        } else if (isPdfFile(filePath) && capability.supportsDocuments) {
+        } else if (isPdfFile(actualPath) && capability.supportsDocuments) {
             shouldReturnMultimodal = true;
         }
         
         if (shouldReturnMultimodal) {
-            const mimeType = getMultimodalMimeType(filePath);
+            const mimeType = getMultimodalMimeType(actualPath);
             if (mimeType) {
                 const base64Data = Buffer.from(content).toString('base64');
                 
                 // 解析图片尺寸（仅对图片文件）
                 let dimensions: ImageDimensions | undefined;
-                if (isImageFile(filePath)) {
+                if (isImageFile(actualPath)) {
                     dimensions = parseImageDimensions(content, mimeType);
                 }
                 
@@ -276,6 +276,7 @@ async function readSingleFile(
                     result: {
                         path: filePath,
                         workspace: isMultiRoot ? workspace?.name : undefined,
+                        outsideWorkspace: isOutsideWorkspace,
                         success: true,
                         type: 'multimodal',
                         mimeType,
@@ -292,11 +293,12 @@ async function readSingleFile(
         }
         
         // 检查是否是其他二进制文件（不支持多模态返回）
-        if (isBinaryFile(filePath)) {
+        if (isBinaryFile(actualPath)) {
             return {
                 result: {
                     path: filePath,
                     workspace: isMultiRoot ? workspace?.name : undefined,
+                    outsideWorkspace: isOutsideWorkspace,
                     success: true,
                     type: 'binary',
                     size: content.byteLength
@@ -323,6 +325,7 @@ async function readSingleFile(
                     result: {
                         path: filePath,
                         workspace: isMultiRoot ? workspace?.name : undefined,
+                        outsideWorkspace: isOutsideWorkspace,
                         success: false,
                         totalLines,
                         error: `startLine (${startLine}) exceeds total lines (${totalLines})`
@@ -353,6 +356,7 @@ async function readSingleFile(
         const result: ReadResult = {
             path: filePath,
             workspace: isMultiRoot ? workspace?.name : undefined,
+            outsideWorkspace: isOutsideWorkspace,
             success: true,
             type: 'text',
             content: numberedLines.join('\n'),
@@ -372,6 +376,7 @@ async function readSingleFile(
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
+                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: error instanceof Error ? error.message : String(error)
             }
@@ -413,30 +418,30 @@ export function createReadFileTool(
     
     if (!multimodalEnabled) {
         // 未启用多模态时，只支持文本文件
-        description = 'Read the content of one or more files in the workspace. Supported types: text files.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+        description = 'Read the content of one or more files. Supported types: text files. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote;
     } else if (channelType === 'openai') {
         // OpenAI 格式有特殊限制
         if (toolMode === 'function_call') {
             // OpenAI function_call 模式不支持多模态
-            description = 'Read the content of one or more files in the workspace. Supported types: text files.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+            description = 'Read the content of one or more files. Supported types: text files. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote;
         } else {
             // OpenAI xml/json 模式只支持图片
-            description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP). Images are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
+            description = 'Read the content of one or more files. Supported types: text files, images (PNG/JPEG/WebP). Images are returned as multimodal data. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
         }
     } else {
         // Gemini 和 Anthropic 全面支持
-        description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP), documents (PDF). Images and documents are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
+        description = 'Read the content of one or more files. Supported types: text files, images (PNG/JPEG/WebP), documents (PDF). Images and documents are returned as multimodal data. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
     }
     
     // 多工作区说明
     if (isMultiRoot) {
-        description += '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
+        description += '\n\nMulti-root workspace: Use "workspace_name/path" format for workspace-relative paths. Absolute paths/file:// URIs outside the workspace may be allowed by settings.';
     }
     
     // 路径参数描述
     let filesDescription = 'Array of file objects. Each object has: path (required), startLine (optional), endLine (optional). Example: [{"path": "src/main.ts", "startLine": 100}]';
     if (isMultiRoot) {
-        filesDescription = `Array of file objects. Path must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        filesDescription = `Array of file objects. For workspace-relative paths, use "workspace_name/path" format. Absolute paths/file:// URIs may be allowed by settings. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -455,7 +460,7 @@ export function createReadFileTool(
                             properties: {
                                 path: {
                                     type: 'string',
-                                    description: 'File path (relative to workspace root)'
+                                    description: 'File path. Relative paths are resolved from the workspace root; absolute paths/file:// URIs may be allowed by settings.'
                                 },
                                 startLine: {
                                     type: 'number',
@@ -492,6 +497,11 @@ export function createReadFileTool(
                 return { success: false, error: 'files is required and must be a non-empty array' };
             }
 
+            const outsideWorkspaceAccessError = ensureOutsideWorkspaceAccessApproved('read_file', args, context);
+            if (outsideWorkspaceAccessError) {
+                return { success: false, error: outsideWorkspaceAccessError };
+            }
+
             const results: ReadResult[] = [];
             const allMultimodal: MultimodalData[] = [];
             let successCount = 0;
@@ -512,7 +522,8 @@ export function createReadFileTool(
                 // 禁止对任何非文本（binary）文件使用行号范围
                 // 只要显式传入 startLine/endLine（包括 0/null/字符串等），就视为传入行号范围
                 const hasLineRangeParam = (fileReq as any).startLine != null || (fileReq as any).endLine != null;
-                if (hasLineRangeParam && isBinaryFile(fileReq.path)) {
+                const parsedPath = resolveFileToolPathWithInfo(fileReq.path);
+                if (hasLineRangeParam && isBinaryFile(parsedPath.uri?.fsPath || fileReq.path)) {
                     results.push({
                         path: fileReq.path,
                         success: false,

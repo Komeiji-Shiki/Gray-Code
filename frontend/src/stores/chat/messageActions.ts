@@ -70,6 +70,7 @@ export interface HiddenFunctionResponsePayload {
 export interface SendMessageOptions {
   modelOverride?: string
   hidden?: { functionResponse: HiddenFunctionResponsePayload }
+  dynamicContextStrategyOverride?: 'single' | 'preserve'
 }
 
 /**
@@ -322,6 +323,7 @@ export async function sendMessage(
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
       promptModeId: state.currentPromptModeId.value,
+      dynamicContextStrategyOverride: options?.dynamicContextStrategyOverride,
       streamId
     })
 

@@ -100,6 +100,12 @@ export interface BuildSession {
  */
 export interface QueuedMessage {
   id: string
+  /**
+   * 本条队列消息的发送选项。
+   */
+  sendOptions?: {
+    dynamicContextStrategyOverride?: 'single' | 'preserve'
+  }
   /** 序列化后的编辑器内容（包含 @上下文标记） */
   content: string
   /** 附件 */

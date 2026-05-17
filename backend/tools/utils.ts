@@ -10,6 +10,8 @@ import { t } from '../i18n';
 
 // ==================== 文本工具（换行符统一） ====================
 
+const IS_WINDOWS = process.platform === 'win32';
+
 /**
  * 统一换行符为 LF（\n）。
  *
@@ -177,6 +179,136 @@ export function parseWorkspacePath(pathStr: string): {
 }
 
 /**
+ * 判断字符串是否是本地绝对路径或文件 URI。
+ *
+ * 仅将明确的绝对路径视为工作区外访问入口；普通相对路径仍按工作区路径解析。
+ */
+export function isAbsoluteFilePathLike(pathStr: string): boolean {
+    const trimmed = pathStr.trim();
+    if (!trimmed) {
+        return false;
+    }
+
+    if (trimmed.startsWith('file://')) {
+        return true;
+    }
+
+    if (path.isAbsolute(trimmed)) {
+        return true;
+    }
+
+    return /^[a-zA-Z]:[/\\]/.test(trimmed) || /^[/\\]{2}[^/\\]+[/\\]+[^/\\]+/.test(trimmed);
+}
+
+/**
+ * 将输入路径解析为本地文件 URI。
+ */
+export function toFileUri(pathStr: string): vscode.Uri {
+    const trimmed = pathStr.trim();
+    if (trimmed.startsWith('file://')) {
+        return vscode.Uri.parse(trimmed);
+    }
+    return vscode.Uri.file(trimmed);
+}
+
+function normalizePathForComparison(fsPath: string): string {
+    let normalized = path.resolve(fsPath).replace(/\\/g, '/');
+    if (normalized.length > 1) {
+        normalized = normalized.replace(/\/+$/, '');
+    }
+    return IS_WINDOWS ? normalized.toLowerCase() : normalized;
+}
+
+function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
+    const child = normalizePathForComparison(childPath);
+    const parent = normalizePathForComparison(parentPath);
+    return child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+}
+
+/**
+ * 查找绝对路径所属的工作区。
+ */
+export function findWorkspaceForAbsolutePath(absolutePath: string): WorkspaceInfo | undefined {
+    const workspaces = getAllWorkspaces();
+    return workspaces.find(workspace => isPathInsideOrEqual(absolutePath, workspace.fsPath));
+}
+
+/**
+ * 判断绝对路径是否位于任意工作区内。
+ */
+export function isAbsolutePathInWorkspace(absolutePath: string): boolean {
+    return findWorkspaceForAbsolutePath(absolutePath) !== undefined;
+}
+
+/**
+ * 解析文件工具路径。
+ *
+ * - 相对路径：沿用原有工作区解析逻辑
+ * - 绝对路径 / file:// URI：返回对应本地文件 URI，并标记是否位于工作区内
+ */
+export function resolveFileToolPathWithInfo(pathStr: string): {
+    uri: vscode.Uri | undefined;
+    workspace: WorkspaceInfo | undefined;
+    relativePath: string;
+    isExplicit: boolean;
+    isOutsideWorkspace: boolean;
+    isAbsoluteInput: boolean;
+    displayPath: string;
+    error?: string;
+} {
+    if (isAbsoluteFilePathLike(pathStr)) {
+        try {
+            const uri = toFileUri(pathStr);
+            const workspace = findWorkspaceForAbsolutePath(uri.fsPath);
+            let relativePath = uri.fsPath;
+            if (workspace) {
+                relativePath = path.relative(workspace.fsPath, uri.fsPath).replace(/\\/g, '/');
+                if (!relativePath) {
+                    relativePath = '.';
+                }
+            }
+
+            return {
+                uri,
+                workspace,
+                relativePath,
+                isExplicit: true,
+                isOutsideWorkspace: !workspace,
+                isAbsoluteInput: true,
+                displayPath: uri.fsPath
+            };
+        } catch (error) {
+            return {
+                uri: undefined,
+                workspace: undefined,
+                relativePath: pathStr,
+                isExplicit: false,
+                isOutsideWorkspace: true,
+                isAbsoluteInput: true,
+                displayPath: pathStr,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+
+    const resolved = resolveUriWithInfo(pathStr);
+    const isOutsideWorkspace = !!(
+        resolved.uri &&
+        resolved.workspace &&
+        !isPathInsideOrEqual(resolved.uri.fsPath, resolved.workspace.fsPath)
+    );
+
+    return {
+        ...resolved,
+        workspace: isOutsideWorkspace ? undefined : resolved.workspace,
+        relativePath: isOutsideWorkspace && resolved.uri ? resolved.uri.fsPath : resolved.relativePath,
+        isOutsideWorkspace,
+        isAbsoluteInput: false,
+        displayPath: resolved.uri?.fsPath || pathStr
+    };
+}
+
+/**
  * 解析相对路径为绝对 URI（支持多工作区）
  *
  * @param relativePath 相对路径（可带工作区前缀）
@@ -228,7 +360,7 @@ export function toRelativePath(absolutePath: string | vscode.Uri, includeWorkspa
     
     // 查找包含此路径的工作区
     for (const workspace of workspaces) {
-        if (fsPath.startsWith(workspace.fsPath)) {
+        if (isPathInsideOrEqual(fsPath, workspace.fsPath)) {
             let relativePath = path.relative(workspace.fsPath, fsPath);
             // 统一使用正斜杠
             relativePath = relativePath.replace(/\\/g, '/');

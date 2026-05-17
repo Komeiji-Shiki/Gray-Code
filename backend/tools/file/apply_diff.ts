@@ -9,10 +9,11 @@
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getDiffManager } from './diffManager';
-import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 /**
  * Legacy：单个 search/replace diff（仍被 DiffManager 用于旧结构的块级 accept/reject 逻辑）
@@ -463,12 +464,12 @@ export function createApplyDiffTool(): Tool {
         const isMultiRoot = workspaces.length > 1;
 
         // 根据工作区数量生成描述
-        let pathDescription = 'Path to the file (relative to workspace root)';
+        let pathDescription = 'Path to the file. Supports workspace-relative paths, absolute file paths, and file:// URIs.';
         let descriptionSuffix = '';
 
         if (isMultiRoot) {
-            pathDescription = `Path to the file, must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-            descriptionSuffix = `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            pathDescription = `Path to the file. Workspace-relative paths must use "workspace_name/path" format. Absolute file paths and file:// URIs are also supported. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            descriptionSuffix = `\n\nMulti-root workspace: workspace-relative paths must use "workspace_name/path" format. Absolute file paths and file:// URIs are also supported. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
         }
 
         const format = getApplyDiffFormat();
@@ -481,7 +482,7 @@ export function createApplyDiffTool(): Tool {
                 description: `Apply legacy search/replace diffs to a file and open a pending diff for user confirmation.
 
 Parameters:
-- path: Path to the file (relative to workspace root)
+- path: Path to the file. Supports workspace-relative paths, absolute file paths, and file:// URIs.
 - diffs: Array of diff objects to apply
 
 Each diff object contains:
@@ -549,7 +550,7 @@ Input format (simplified):
   This may fail if the search block is not unique; prefer full headers when possible.
 
 Parameters:
-- path: Path to the file (relative to workspace root)
+- path: Path to the file. Supports workspace-relative paths, absolute file paths, and file:// URIs.
 - patch: Unified diff hunks text (must include valid @@ headers and lines starting with ' ', '+', '-')
 
 Requirements:
@@ -597,9 +598,14 @@ ${descriptionSuffix}`,
                 return { success: false, error: 'Path is required' };
             }
 
-            const { uri } = resolveUriWithInfo(filePath);
+            const accessError = ensureOutsideWorkspaceAccessApproved('apply_diff', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
+            }
+
+            const { uri, error } = resolveFileToolPathWithInfo(filePath);
             if (!uri) {
-                return { success: false, error: 'No workspace folder open' };
+                return { success: false, error: error || 'No workspace folder open' };
             }
 
             const absolutePath = uri.fsPath;

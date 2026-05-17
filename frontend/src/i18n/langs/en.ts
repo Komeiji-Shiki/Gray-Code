@@ -249,6 +249,7 @@ const en: LanguageMessages = {
             placeholder: 'Type a message...',
             placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths, Ctrl+Shift+drag to insert @path text)',
             send: 'Send message',
+            sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
@@ -1549,7 +1550,12 @@ const en: LanguageMessages = {
                     description: 'Generated dynamically and appended to the end of messages on each request, contains real-time info (time, file tree, tabs, etc.), not stored in history.',
                     placeholder: 'Enter dynamic context template, you can use {{$WORKSPACE_FILES}}, {{$OPEN_TABS}} and other variables...',
                     enableTooltip: 'Enable/disable dynamic context template',
-                    disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.'
+                    disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.',
+                    strategyTitle: 'Dynamic context strategy',
+                    strategySingle: 'Single dynamic context (current behavior)',
+                    strategyPreserve: 'Preserve old dynamic context in place',
+                    strategyDescription: 'Single mode keeps existing behavior. Preserve mode inserts cached old dynamic contexts back at their original turns and inserts the new context before the new message.',
+                    strategyPreserveWarning: 'Preserve mode increases request tokens. More preserved contexts make context trimming or summarization more likely.'
                 },
                 toolPolicy: {
                     title: 'Tool Policy',
@@ -1809,7 +1815,30 @@ const en: LanguageMessages = {
                         enableDiffGuardDesc: 'Show a warning when the number of deleted lines exceeds a specified percentage of the total file lines',
                         diffGuardThreshold: 'Guard Threshold',
                         diffGuardThresholdDesc: 'Trigger a warning when deleted lines exceed this percentage of total file lines',
-                        diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
+                        diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.',
+                        outsideWorkspaceAccess: 'Write outside workspace',
+                        outsideWorkspaceDesc: 'Control whether apply_diff can modify existing files outside the workspace.',
+                        outsideWorkspaceDenyDesc: 'apply_diff can only modify files inside the workspace.',
+                        outsideWorkspaceAskDesc: 'Use the original tool-call approval card before modifying outside-workspace files.',
+                        outsideWorkspaceTip: 'Outside-workspace apply_diff does not have an “allow directly” option; approval is still followed by the Diff preview/save flow.'
+                    },
+                    outsideWorkspaceAccess: {
+                        deny: 'Deny',
+                        ask: 'Ask for approval',
+                        allow: 'Allow directly'
+                    },
+                    readFile: {
+                        outsideWorkspaceAccess: 'Read outside workspace',
+                        outsideWorkspaceDenyDesc: 'read_file can only read files inside the workspace.',
+                        outsideWorkspaceAskDesc: 'Use the original tool-call approval card before reading outside-workspace files.',
+                        outsideWorkspaceAllowDesc: 'Allow read_file to read outside-workspace files directly.',
+                        outsideWorkspaceTip: 'Relative paths are still resolved from the workspace; absolute paths, file:// URIs, or paths escaping the workspace are controlled by this policy.'
+                    },
+                    writeFile: {
+                        outsideWorkspaceAccess: 'Write outside workspace',
+                        outsideWorkspaceDenyDesc: 'write_file can only write files inside the workspace.',
+                        outsideWorkspaceAskDesc: 'Use the original tool-call approval card before writing outside-workspace files; the Diff preview is still shown after approval.',
+                        outsideWorkspaceTip: 'Outside-workspace writes do not have an “allow directly” option; approval is required before the write flow starts.'
                     },
                     listFiles: {
                         ignoreList: 'Ignore List',

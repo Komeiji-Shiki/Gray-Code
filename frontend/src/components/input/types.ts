@@ -9,10 +9,13 @@ export interface ChannelOption {
   type: string
 }
 
+export type DynamicContextStrategy = 'single' | 'preserve'
+
 export interface PromptMode {
   id: string
   name: string
   icon?: string
+  dynamicContextStrategy?: DynamicContextStrategy
 }
 
 export interface ModelInfo {

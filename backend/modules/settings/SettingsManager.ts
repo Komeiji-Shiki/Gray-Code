@@ -14,6 +14,8 @@ import type {
     ToolsConfig,
     ListFilesToolConfig,
     FindFilesToolConfig,
+    ReadFileToolConfig,
+    WriteFileToolConfig,
     SearchInFilesToolConfig,
     ApplyDiffToolConfig,
     DeleteFileToolConfig,
@@ -32,7 +34,12 @@ import type {
     PinnedFileItem,
     SystemPromptConfig,
     PromptMode,
+    PromptEntry,
+    PromptAssemblyMode,
+    PromptEntryRole,
+    PromptEntryType,
     ResolvedPromptModeSnapshot,
+    DynamicContextStrategy,
     StoragePathConfig,
     StorageStats,
     TokenCountConfig,
@@ -47,6 +54,8 @@ import {
     DEFAULT_LIST_FILES_CONFIG,
     DEFAULT_FIND_FILES_CONFIG,
     DEFAULT_SEARCH_IN_FILES_CONFIG,
+    DEFAULT_READ_FILE_CONFIG,
+    DEFAULT_WRITE_FILE_CONFIG,
     DEFAULT_APPLY_DIFF_CONFIG,
     DEFAULT_DELETE_FILE_CONFIG,
     DEFAULT_CHECKPOINT_CONFIG,
@@ -71,6 +80,7 @@ import {
     ASK_PROMPT_MODE,
     REVIEW_PROMPT_MODE,
     DEFAULT_MAX_TOOL_ITERATIONS,
+    CHAT_HISTORY_PROMPT_ENTRY_ID,
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
     DEFAULT_HISTORY_SEARCH_CONFIG,
@@ -110,7 +120,22 @@ export class SettingsManager {
     
     constructor(storage: SettingsStorage) {
         this.storage = storage;
-        this.settings = { ...DEFAULT_GLOBAL_SETTINGS };
+        this.settings = this.cloneConfig(DEFAULT_GLOBAL_SETTINGS);
+    }
+
+    private cloneConfig<T>(value: T): T {
+        if (value === undefined || value === null) return value;
+        if (typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            return value.map(item => this.cloneConfig(item)) as T;
+        }
+
+        const cloned: Record<string, any> = {};
+        for (const key of Object.keys(value as Record<string, any>)) {
+            cloned[key] = this.cloneConfig((value as Record<string, any>)[key]);
+        }
+
+        return cloned as T;
     }
     
     /**
@@ -120,7 +145,7 @@ export class SettingsManager {
         const stored = await this.storage.load();
         if (stored) {
             // 使用深度合并处理所有配置，确保默认值不会因用户配置部分子字段而丢失
-            this.settings = this.deepMergeConfig(DEFAULT_GLOBAL_SETTINGS, stored) as GlobalSettings;
+            this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
             
             // lastUpdated 需要使用最新的或当前时间
             this.settings.lastUpdated = stored.lastUpdated || Date.now();
@@ -431,6 +456,28 @@ export class SettingsManager {
         return this.settings.toolsConfig || {};
     }
     
+    /**
+     * 获取 read_file 工具配置
+     */
+    getReadFileConfig(): Readonly<ReadFileToolConfig> {
+        const cfg = this.settings.toolsConfig?.read_file;
+        return {
+            ...DEFAULT_READ_FILE_CONFIG,
+            ...(cfg || {})
+        };
+    }
+
+    /**
+     * 获取 write_file 工具配置
+     */
+    getWriteFileConfig(): Readonly<WriteFileToolConfig> {
+        const cfg = this.settings.toolsConfig?.write_file;
+        return {
+            ...DEFAULT_WRITE_FILE_CONFIG,
+            ...(cfg || {})
+        };
+    }
+
     /**
      * 获取 list_files 工具配置
      */
@@ -1564,19 +1611,26 @@ export class SettingsManager {
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
+
+        const normalizeMode = (mode: PromptMode): PromptMode => {
+            const normalizedMode = this.normalizePromptModeSnapshot(mode);
+            return normalizedMode;
+        };
         
         // 情况1：没有 modes 字段（老版本）
         if (!config.modes) {
             return {
                 ...config,
                 currentModeId: DEFAULT_MODE_ID,
+                dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy),
                 modes: {
                     [DEFAULT_MODE_ID]: {
                         ...CODE_PROMPT_MODE,
                         // 保留用户原有的模板配置
                         template: config.template || CODE_PROMPT_MODE.template,
                         dynamicTemplateEnabled: config.dynamicTemplateEnabled ?? CODE_PROMPT_MODE.dynamicTemplateEnabled,
-                        dynamicTemplate: config.dynamicTemplate || CODE_PROMPT_MODE.dynamicTemplate
+                        dynamicTemplate: config.dynamicTemplate || CODE_PROMPT_MODE.dynamicTemplate,
+                        dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy)
                     },
                     [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
                     'plan': PLAN_PROMPT_MODE,
@@ -1629,15 +1683,203 @@ export class SettingsManager {
                 needsUpdate = true;
             }
         }
+
+        const dynamicContextStrategy = this.normalizeDynamicContextStrategy(config.dynamicContextStrategy);
+        for (const [modeId, mode] of Object.entries(modes)) {
+            const normalizedMode = this.normalizePromptModeSnapshot(mode);
+            if (
+                mode.promptAssemblyMode !== normalizedMode.promptAssemblyMode ||
+                !this.promptEntriesEqual(normalizedMode.promptEntries, Array.isArray(mode.promptEntries) ? mode.promptEntries : undefined)
+            ) {
+                modes[modeId] = {
+                    ...mode,
+                    promptAssemblyMode: normalizedMode.promptAssemblyMode,
+                    ...(normalizedMode.promptEntries ? { promptEntries: normalizedMode.promptEntries } : {})
+                };
+                if (!normalizedMode.promptEntries) delete (modes[modeId] as any).promptEntries;
+                needsUpdate = true;
+            }
+            if (mode.dynamicContextStrategy !== undefined) {
+                const normalizedModeStrategy = this.normalizeDynamicContextStrategy(mode.dynamicContextStrategy);
+                if (mode.dynamicContextStrategy !== normalizedModeStrategy) {
+                    modes[modeId] = {
+                        ...modes[modeId],
+                        dynamicContextStrategy: normalizedModeStrategy
+                    };
+                    needsUpdate = true;
+                }
+            }
+        }
         
         if (needsUpdate) {
             return {
                 ...config,
-                modes
+                modes,
+                dynamicContextStrategy
             };
         }
 
-        return config;
+        return {
+            ...config,
+            dynamicContextStrategy
+        };
+    }
+
+    /**
+     * 规范化动态上下文策略
+     */
+    private normalizeDynamicContextStrategy(value: unknown): DynamicContextStrategy {
+        return value === 'preserve' ? 'preserve' : 'single';
+    }
+
+    /**
+     * 规范化提示词组装方式。
+     *
+     * 默认 legacy，避免旧配置里已有 promptEntries 时被隐式切到预设条目模式。
+     */
+    private normalizePromptAssemblyMode(value: unknown): PromptAssemblyMode {
+        return value === 'entries' ? 'entries' : 'legacy';
+    }
+
+    /**
+     * 规范化提示词预设条目。
+     *
+     * 读取配置时只做内存归一化；保存模式时会把归一化结果持久化。
+     */
+    private normalizePromptEntries(value: unknown, assemblyMode: PromptAssemblyMode = 'legacy'): PromptEntry[] | undefined {
+        if (!Array.isArray(value)) {
+            return assemblyMode === 'entries' ? [this.createDefaultChatHistoryPromptEntry()] : undefined;
+        }
+
+        const normalized: PromptEntry[] = [];
+        const usedIds = new Set<string>();
+
+        value.forEach((item, index) => {
+            if (!item || typeof item !== 'object') return;
+            const raw = item as Partial<PromptEntry> & Record<string, unknown>;
+
+            const fallbackId = `entry_${index}`;
+            let id = typeof raw.id === 'string' && raw.id.trim()
+                ? raw.id.trim()
+                : fallbackId;
+            if (usedIds.has(id)) {
+                id = `${id}_${index}`;
+            }
+            usedIds.add(id);
+
+            const type: PromptEntryType = raw.type === 'chat_history' ? 'chat_history' : 'prompt';
+            const role: PromptEntryRole = type === 'chat_history'
+                ? 'user'
+                : raw.role === 'user' || raw.role === 'assistant' || raw.role === 'system'
+                ? raw.role
+                : 'system';
+            const name = typeof raw.name === 'string' && raw.name.trim()
+                ? raw.name.trim()
+                : type === 'chat_history'
+                    ? 'Chat History'
+                    : `Prompt ${index + 1}`;
+            const order = typeof raw.order === 'number' && Number.isFinite(raw.order)
+                ? raw.order
+                : index;
+
+            normalized.push({
+                id,
+                name,
+                type,
+                enabled: type === 'chat_history' ? true : raw.enabled !== false,
+                role,
+                content: type === 'chat_history' ? '' : typeof raw.content === 'string' ? raw.content : '',
+                order
+            });
+        });
+
+        if (assemblyMode === 'entries') {
+            return this.ensureChatHistoryPromptEntry(normalized);
+        }
+
+        return normalized.length > 0 ? normalized : undefined;
+    }
+
+    private createDefaultChatHistoryPromptEntry(order = 1000): PromptEntry {
+        return {
+            id: CHAT_HISTORY_PROMPT_ENTRY_ID,
+            name: 'Chat History',
+            type: 'chat_history',
+            enabled: true,
+            role: 'user',
+            content: '',
+            order
+        };
+    }
+
+    private ensureChatHistoryPromptEntry(entries: PromptEntry[]): PromptEntry[] {
+        const result: PromptEntry[] = [];
+        let hasChatHistory = false;
+
+        for (const entry of entries) {
+            if (entry.type !== 'chat_history') {
+                result.push(entry);
+                continue;
+            }
+
+            if (hasChatHistory) {
+                continue;
+            }
+
+            hasChatHistory = true;
+            result.push({
+                ...entry,
+                id: CHAT_HISTORY_PROMPT_ENTRY_ID,
+                name: entry.name.trim() || 'Chat History',
+                type: 'chat_history',
+                enabled: true,
+                role: 'user',
+                content: ''
+            });
+        }
+
+        if (!hasChatHistory) {
+            result.push(this.createDefaultChatHistoryPromptEntry(result.length));
+        }
+
+        return result
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+            .map((entry, index) => ({ ...entry, order: index }));
+    }
+
+    private promptEntriesEqual(a?: PromptEntry[], b?: PromptEntry[]): boolean {
+        if (!a && !b) return true;
+        if (!a || !b) return false;
+        if (a.length !== b.length) return false;
+
+        return a.every((entry, index) => {
+            const other = b[index];
+            return !!other &&
+                entry.id === other.id &&
+                entry.name === other.name &&
+                (entry.type || 'prompt') === (other.type || 'prompt') &&
+                entry.enabled === other.enabled &&
+                entry.role === other.role &&
+                entry.content === other.content &&
+                entry.order === other.order;
+        });
+    }
+
+    /**
+     * 解析本次请求应使用的动态上下文策略
+     */
+    resolveDynamicContextStrategy(
+        modeSnapshot?: ResolvedPromptModeSnapshot,
+        override?: DynamicContextStrategy
+    ): DynamicContextStrategy {
+        if (override) {
+            return this.normalizeDynamicContextStrategy(override);
+        }
+
+        const config = this.getSystemPromptConfig();
+        return this.normalizeDynamicContextStrategy(
+            modeSnapshot?.dynamicContextStrategy ?? config.dynamicContextStrategy
+        );
     }
     
     /**
@@ -1700,19 +1942,11 @@ export class SettingsManager {
 
         if (!resolvedMode) {
             return {
-                ...CODE_PROMPT_MODE,
-                toolPolicy: Array.isArray(CODE_PROMPT_MODE.toolPolicy)
-                    ? [...CODE_PROMPT_MODE.toolPolicy]
-                    : undefined
+                ...this.normalizePromptModeSnapshot(CODE_PROMPT_MODE)
             };
         }
 
-        return {
-            ...resolvedMode,
-            toolPolicy: Array.isArray(resolvedMode.toolPolicy)
-                ? [...resolvedMode.toolPolicy]
-                : undefined
-        };
+        return this.normalizePromptModeSnapshot(resolvedMode);
     }
 
     /**
@@ -1753,8 +1987,21 @@ export class SettingsManager {
      */
     async savePromptMode(mode: PromptMode): Promise<void> {
         const config = this.getSystemPromptConfig();
-        const modes = { ...config.modes, [mode.id]: mode };
+        const modes = { ...config.modes, [mode.id]: this.normalizePromptModeSnapshot(mode) };
         await this.updateSystemPromptConfig({ modes });
+    }
+
+    private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
+        const promptAssemblyMode = this.normalizePromptAssemblyMode(mode.promptAssemblyMode);
+        const promptEntries = this.normalizePromptEntries(mode.promptEntries, promptAssemblyMode);
+        return {
+            ...mode,
+            promptAssemblyMode,
+            toolPolicy: Array.isArray(mode.toolPolicy)
+                ? [...mode.toolPolicy]
+                : undefined,
+            ...(promptEntries ? { promptEntries } : {})
+        };
     }
     
     /**

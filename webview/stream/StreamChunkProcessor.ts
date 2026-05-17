@@ -65,6 +65,13 @@ export class StreamChunkProcessor {
       });
       // 工具状态变更立即刷新，确保前端实时反映执行进度
       this.flush();
+    } else if ('agentState' in chunk && chunk.agentState) {
+      this.enqueue('agentState', {
+        agentState: true,
+        event: chunk.event
+      });
+      // Agent 状态机事件需要即时进入轨迹面板
+      this.flush();
     } else if ('awaitingConfirmation' in chunk && chunk.awaitingConfirmation) {
       this.enqueue('awaitingConfirmation', {
         content: chunk.content,

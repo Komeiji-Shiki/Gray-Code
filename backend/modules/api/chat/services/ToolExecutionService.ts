@@ -21,6 +21,10 @@ import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
 import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
+import {
+    getOutsideWorkspaceRejectionReason,
+    toolCallNeedsOutsideWorkspaceConfirmation
+} from '../../../../tools/file/outsideWorkspaceAccess';
 
 /**
  * 工具执行完整结果
@@ -153,7 +157,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        approvedToolCallIds?: Set<string>
     ): Promise<ToolExecutionFullResult> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -273,7 +278,14 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
+                    response = await this.executeBuiltinTool(
+                        executionCall,
+                        conversationId,
+                        config,
+                        abortSignal,
+                        promptModeSnapshot,
+                        approvedToolCallIds?.has(executionCall.id) === true
+                    );
                 }
             } catch (error) {
                 const err = error as Error;
@@ -359,7 +371,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        approvedToolCallIds?: Set<string>
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -485,7 +498,14 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
+                    response = await this.executeBuiltinTool(
+                        executionCall,
+                        conversationId,
+                        config,
+                        abortSignal,
+                        promptModeSnapshot,
+                        approvedToolCallIds?.has(executionCall.id) === true
+                    );
                 }
             } catch (error) {
                 const err = error as Error;
@@ -695,7 +715,8 @@ export class ToolExecutionService {
         conversationId?: string,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        approvedByToolConfirmation?: boolean
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -720,6 +741,7 @@ export class ToolExecutionService {
             abortSignal,
             toolId: call.id,  // 使用函数调用 ID 作为工具 ID，用于追踪和取消
             toolOptions: config?.toolOptions,  // 传递工具配置
+            approvedByToolConfirmation: approvedByToolConfirmation === true,
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
             conversationStore: this.conversationStore
@@ -879,14 +901,18 @@ export class ToolExecutionService {
      * @param toolName 工具名称
      * @returns 是否需要确认
      */
-    toolNeedsConfirmation(toolName: string, promptModeSnapshot?: ResolvedPromptModeSnapshot): boolean {
+    toolNeedsConfirmation(toolName: string, args?: Record<string, unknown>, promptModeSnapshot?: ResolvedPromptModeSnapshot): boolean {
         // 如果工具在当前模式被禁用（mode allowlist / Plan write_file 路径限制 / toolsEnabled），则不等待确认
-        if (this.getToolRejectionReason(toolName, undefined, promptModeSnapshot) !== null) {
+        if (this.getToolRejectionReason(toolName, args, promptModeSnapshot) !== null) {
             return false;
         }
 
         if (!this.settingsManager) {
             return false;
+        }
+
+        if (toolCallNeedsOutsideWorkspaceConfirmation(toolName, args, this.settingsManager)) {
+            return true;
         }
 
         // 使用统一的自动执行配置
@@ -902,7 +928,7 @@ export class ToolExecutionService {
      * @returns 需要确认的函数调用列表
      */
     getToolsNeedingConfirmation(calls: FunctionCallInfo[], promptModeSnapshot?: ResolvedPromptModeSnapshot): FunctionCallInfo[] {
-        return calls.filter(call => this.toolNeedsConfirmation(call.name, promptModeSnapshot));
+        return calls.filter(call => this.toolNeedsConfirmation(call.name, call.args, promptModeSnapshot));
     }
 
     /**
@@ -978,6 +1004,11 @@ export class ToolExecutionService {
             if (validation.ok === false) {
                 return validation.error;
             }
+        }
+
+        const outsideWorkspaceRejection = getOutsideWorkspaceRejectionReason(toolName, args, this.settingsManager);
+        if (outsideWorkspaceRejection) {
+            return outsideWorkspaceRejection;
         }
 
         return null;

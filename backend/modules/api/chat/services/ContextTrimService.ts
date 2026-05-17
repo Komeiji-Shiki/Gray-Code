@@ -16,20 +16,21 @@
  *
  * Token 计算包含：
  * - 系统提示词（静态模板）
- * - 动态上下文（文件树、诊断信息、固定文件等实际填充内容）
- * - 对话历史消息
+ * - 当前 prompt context（chat-history 前后临时消息的实际填充内容）
+ * - 对话历史消息和 preserve 旧回合动态快照
  */
 
 import type { Content } from '../../../conversation/types';
 import type { ConversationManager, GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { PromptManager } from '../../../prompt';
-import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { BaseChannelConfig, ModelInfo } from '../../../config/configs/base';
 import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
 
 import { Logger } from '../../../../core/logger';
+import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/promptContextCache';
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -246,12 +247,14 @@ export class ContextTrimService {
         fullHistory: Content[],
         historyOptions: GetHistoryOptions,
         minimumStartIndex: number,
-        candidateStartIndex: number
+        candidateStartIndex: number,
+        dynamicContextStrategy: DynamicContextStrategy = 'single'
     ): Promise<ContextTrimInfo & { normalization: NormalizedTrimStartResult }> {
         const normalization = this.normalizeTrimStartIndex(fullHistory, minimumStartIndex, candidateStartIndex);
         const history = await this.conversationManager.getHistoryForAPI(conversationId, {
             ...historyOptions,
-            startIndex: normalization.startIndex
+            startIndex: normalization.startIndex,
+            includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
         });
 
         return {
@@ -535,7 +538,8 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         precomputedDynamicContextText?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        modelOverride?: string
+        modelOverride?: string,
+        dynamicContextStrategy: DynamicContextStrategy = 'single'
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
@@ -616,7 +620,7 @@ export class ContextTrimService {
         // 传入 runtime 以便正确解析模板中的变量
         const systemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtime);
         
-        // 使用预生成的动态上下文文本（如果传入），否则内部生成
+        // 使用预生成的 prompt context 文本（如果传入），否则内部生成；该文本包含 chat-history 前后两侧临时消息。
         let dynamicContextText: string;
         if (precomputedDynamicContextText !== undefined) {
             dynamicContextText = precomputedDynamicContextText;
@@ -665,6 +669,27 @@ export class ContextTrimService {
                 break;
             }
         }
+
+        const preservedDynamicContextTokenByIndex = new Map<number, number>();
+        if (dynamicContextStrategy === 'preserve') {
+            const preservedDynamicContextEntries = fullHistory
+                .map((message, index) => ({
+                    index,
+                    text: getPromptContextCacheDynamicSnapshotText(message.turnDynamicContext),
+                    message
+                }))
+                .filter(({ index, text, message }) =>
+                    index !== lastNonFunctionResponseUserIndex &&
+                    message.role === 'user' &&
+                    message.isUserInput &&
+                    !!text?.trim()
+                );
+            const preservedDynamicContextTexts = preservedDynamicContextEntries.map(entry => entry.text!);
+            const preservedDynamicContextTokens = await this.tokenEstimationService.countTextTokensBatch(preservedDynamicContextTexts, channelType);
+            preservedDynamicContextEntries.forEach((entry, index) => {
+                preservedDynamicContextTokenByIndex.set(entry.index, preservedDynamicContextTokens[index] ?? 0);
+            });
+        }
         
         // 识别所有回合起始位置
         const roundStartIndices: number[] = [];
@@ -700,7 +725,8 @@ export class ContextTrimService {
                 fullHistory,
                 historyOptions,
                 summaryStartIndex,
-                summaryStartIndex
+                summaryStartIndex,
+                dynamicContextStrategy
             );
             return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
         }
@@ -753,7 +779,8 @@ export class ContextTrimService {
                 fullHistory,
                 historyOptions,
                 summaryStartIndex,
-                summaryStartIndex
+                summaryStartIndex,
+                dynamicContextStrategy
             );
             
             // 估算当前 token 总量来判断是否需要总结
@@ -768,7 +795,8 @@ export class ContextTrimService {
                 sendCurrentThoughts,
                 sendCurrentThoughtSignatures,
                 channelType,
-                promptTokens
+                promptTokens,
+                preservedDynamicContextTokenByIndex
             );
 
             // 直接复用现有 token 估算系统：
@@ -806,7 +834,8 @@ export class ContextTrimService {
             sendCurrentThoughts,
             sendCurrentThoughtSignatures,
             channelType,
-            promptTokens
+            promptTokens,
+            preservedDynamicContextTokenByIndex
         );
 
         this.logDebug('trim.full_history_estimate', {
@@ -826,7 +855,8 @@ export class ContextTrimService {
                 fullHistory,
                 historyOptions,
                 summaryStartIndex,
-                summaryStartIndex
+                summaryStartIndex,
+                dynamicContextStrategy
             );
             this.logDebug('trim.not_needed', {
                 conversationId,
@@ -850,7 +880,8 @@ export class ContextTrimService {
                 sendCurrentThoughts,
                 sendCurrentThoughtSignatures,
                 channelType,
-                promptTokens
+                promptTokens,
+                preservedDynamicContextTokenByIndex
             );
 
             this.logDebug('trim.saved_state_estimate', {
@@ -869,7 +900,8 @@ export class ContextTrimService {
                     fullHistory,
                     historyOptions,
                     summaryStartIndex,
-                    savedState.trimStartIndex
+                    savedState.trimStartIndex,
+                    dynamicContextStrategy
                 );
                 
                 this.logDebug('trim.saved_state_reused', {
@@ -892,7 +924,8 @@ export class ContextTrimService {
                 promptTokens,
                 trimmedTokenResult.roundTokenInfos,
                 threshold,
-                maxContextTokens
+                maxContextTokens,
+                dynamicContextStrategy
             );
         }
         
@@ -907,7 +940,8 @@ export class ContextTrimService {
             promptTokens,
             fullTokenResult.roundTokenInfos,
             threshold,
-            maxContextTokens
+            maxContextTokens,
+            dynamicContextStrategy
         );
     }
 
@@ -928,7 +962,8 @@ export class ContextTrimService {
         sendCurrentThoughts: boolean,
         sendCurrentThoughtSignatures: boolean,
         channelType: string,
-        promptTokens: number  // 系统提示词 + 动态上下文的总 token 数
+        promptTokens: number,  // 系统提示词 + 当前动态上下文的总 token 数
+        preservedDynamicContextTokenByIndex: Map<number, number> = new Map()
     ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[]; usageStats: AccumulateUsageStats } {
         let estimatedTotalTokens = promptTokens;
         let hasEstimatedTokens = promptTokens > 0;
@@ -963,6 +998,13 @@ export class ContextTrimService {
                         });
                     }
                     currentRoundStartIndex = i;
+                }
+
+                const preservedDynamicContextTokens = preservedDynamicContextTokenByIndex.get(i) ?? 0;
+                if (preservedDynamicContextTokens > 0) {
+                    estimatedTotalTokens += preservedDynamicContextTokens;
+                    usageStats.userTokensTotal += preservedDynamicContextTokens;
+                    hasEstimatedTokens = true;
                 }
                 
                 // 用户消息：优先使用当前渠道的 tokenCountByChannel，其次 estimatedTokenCount，最后回退估算
@@ -1081,7 +1123,8 @@ export class ContextTrimService {
         promptTokens: number,  // 系统提示词 + 动态上下文的总 token 数
         roundsAfterStart: RoundTokenInfo[],
         threshold: number,
-        maxContextTokens: number
+        maxContextTokens: number,
+        dynamicContextStrategy: DynamicContextStrategy = 'single'
     ): Promise<ContextTrimInfo> {
         // 至少需要保留当前回合（最后一个回合）
         if (roundsAfterStart.length <= 1) {
@@ -1090,7 +1133,8 @@ export class ContextTrimService {
                 fullHistory,
                 historyOptions,
                 effectiveStartIndex,
-                effectiveStartIndex
+                effectiveStartIndex,
+                dynamicContextStrategy
             );
             this.logDebug('trim.perform.no_additional_cut', {
                 conversationId,
@@ -1158,7 +1202,8 @@ export class ContextTrimService {
                 fullHistory,
                 historyOptions,
                 effectiveStartIndex,
-                effectiveStartIndex
+                effectiveStartIndex,
+                dynamicContextStrategy
             );
             this.logDebug('trim.perform.no_additional_cut', {
                 conversationId,
@@ -1180,7 +1225,8 @@ export class ContextTrimService {
             fullHistory,
             historyOptions,
             effectiveStartIndex,
-            trimStartIndex
+            trimStartIndex,
+            dynamicContextStrategy
         );
         const trimmedHistory = normalizedTrimmedHistory.history;
         const finalTrimStartIndex = normalizedTrimmedHistory.trimStartIndex;
@@ -1226,9 +1272,10 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         precomputedDynamicContextText?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        modelOverride?: string
+        modelOverride?: string,
+        dynamicContextStrategy: DynamicContextStrategy = 'single'
     ): Promise<Content[]> {
-        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText, promptModeSnapshot, modelOverride);
+        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText, promptModeSnapshot, modelOverride, dynamicContextStrategy);
         return result.history;
     }
 }

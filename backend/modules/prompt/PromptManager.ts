@@ -18,7 +18,8 @@ import type { PromptConfig, PromptContext } from './types'
 import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
-import type { PinnedFileItem, ResolvedPromptModeSnapshot } from '../settings/types'
+import type { PinnedFileItem, PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings/types'
+import { promptContextMessagesToText } from './promptContextCache'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
@@ -29,7 +30,49 @@ export type DynamicRuntimeContext = {
 
     /** ConversationMetadata.custom['inputPinnedFiles'] */
     pinnedFiles?: unknown
+
+    /** ConversationMetadata.custom['inputSkills'] */
+    skills?: unknown
 }
+
+export interface PromptContextBundle {
+    /** 当前请求中位于真实聊天历史之前的非 system prompt context。 */
+    beforeHistoryMessages: Content[]
+
+    /** 当前请求中位于真实聊天历史之后的非 system prompt context。 */
+    afterHistoryMessages: Content[]
+
+    /** preserve 旧回合快照要插回原位的 before-history 动态子集。 */
+    dynamicSnapshotBeforeHistoryMessages: Content[]
+
+    /** preserve 旧回合快照要插回原位的 after-history 动态子集。 */
+    dynamicSnapshotAfterHistoryMessages: Content[]
+
+    /** 当前请求要插入的完整非 system prompt context（before + after），保留给旧调用兼容。 */
+    messages: Content[]
+
+    /** preserve 旧回合快照要插回原位的动态子集（dynamic before + dynamic after）。 */
+    dynamicSnapshotMessages: Content[]
+
+    /** messages 的纯文本拼接，用于 token 计数。 */
+    text: string
+
+    /** dynamicSnapshotMessages 的纯文本拼接，用于 preserve 历史 token 计数。 */
+    dynamicSnapshotText: string
+
+    /** entry 表示 chat_history 条目显式控制真实历史位置；legacy 表示沿用旧插入逻辑。 */
+    historyPlacement: 'legacy' | 'entry'
+}
+
+const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
+    'TODO_LIST',
+    'WORKSPACE_FILES',
+    'OPEN_TABS',
+    'ACTIVE_EDITOR',
+    'DIAGNOSTICS',
+    'PINNED_FILES',
+    'SKILLS'
+])
 
 function isTodoStatus(value: unknown): value is TodoStatus {
     return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'cancelled'
@@ -200,6 +243,12 @@ export class PromptManager {
      * 获取系统提示词（使用缓存）
      */
     getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
+        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
+        if (this.usesPromptEntries(resolvedMode)) {
+            // 预设条目允许 system 条目引用动态占位符，不能复用旧静态缓存。
+            return this.generatePrompt(modeSnapshot, runtime)
+        }
+
         const now = Date.now()
         const cacheKey = this.buildPromptCacheKey(modeSnapshot)
         
@@ -243,6 +292,15 @@ export class PromptManager {
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         
+        if (this.usesPromptEntries(resolvedMode)) {
+            return this.getEnabledPromptEntries(resolvedMode)
+                .filter(entry => (entry.type || 'prompt') === 'prompt')
+                .filter(entry => entry.role === 'system')
+                .map(entry => this.renderPromptEntryContent(entry.content, runtime))
+                .filter(Boolean)
+                .join('\n\n')
+        }
+
         // 请求运行时必须显式使用本次解析出的模式快照，不能依赖全局当前模式。
         const template = resolvedMode?.template || promptConfig?.template || ''
         return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
@@ -297,28 +355,45 @@ export class PromptManager {
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
      * - {{$DIAGNOSTICS}} - 诊断信息
      * - {{$PINNED_FILES}} - 固定文件内容
+     * - {{$SKILLS}} - 当前会话启用的 Skills 列表
      */
     private generateDynamicFromTemplate(template: string, contextConfig: any, runtime?: DynamicRuntimeContext): string {
-        const settingsManager = getGlobalSettingsManager()
-        
-        // 动态模块
-        const modules: Record<string, string> = {
+        const referencedKeys = this.getReferencedPromptPlaceholders(template)
+        const modules = this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
+        const templateModules: Record<string, string> = {
             'TODO_LIST': '',
             'WORKSPACE_FILES': '',
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
             'DIAGNOSTICS': '',
-            'PINNED_FILES': ''
+            'PINNED_FILES': '',
+            'SKILLS': '',
+            ...modules
         }
 
-        // TODO 列表（来自会话元数据）
-        const todoText = formatTodoListText(runtime?.todoList)
-        if (todoText) {
-            modules['TODO_LIST'] = this.wrapSection('TODO LIST', todoText)
+        let result = template
+        for (const [key, value] of Object.entries(templateModules)) {
+            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            result = result.replace(regex, value)
+        }
+
+        return this.cleanupEmptyLines(result)
+    }
+
+    private buildDynamicPromptModules(contextConfig: any, runtime?: DynamicRuntimeContext, onlyKeys?: Set<string>): Record<string, string> {
+        const settingsManager = getGlobalSettingsManager()
+        const modules: Record<string, string> = {}
+        const shouldBuild = (key: string) => !onlyKeys || onlyKeys.has(key)
+
+        if (shouldBuild('TODO_LIST')) {
+            const todoText = formatTodoListText(runtime?.todoList)
+            if (todoText) {
+                modules['TODO_LIST'] = this.wrapSection('TODO LIST', todoText)
+            }
         }
         
         // 工作区文件树
-        if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
+        if (shouldBuild('WORKSPACE_FILES') && (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles)) {
             const fileTreeContent = this.generateFileTreeSection(
                 contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
                 contextConfig?.ignorePatterns ?? []
@@ -329,7 +404,7 @@ export class PromptManager {
         }
         
         // 打开的标签页
-        if (contextConfig?.includeOpenTabs) {
+        if (shouldBuild('OPEN_TABS') && contextConfig?.includeOpenTabs) {
             const openTabsContent = this.generateOpenTabsSection(
                 contextConfig.maxOpenTabs,
                 contextConfig.ignorePatterns || []
@@ -340,7 +415,7 @@ export class PromptManager {
         }
         
         // 当前活动编辑器
-        if (contextConfig?.includeActiveEditor) {
+        if (shouldBuild('ACTIVE_EDITOR') && contextConfig?.includeActiveEditor) {
             const activeEditorContent = this.generateActiveEditorSection(
                 contextConfig.ignorePatterns || []
             )
@@ -350,27 +425,30 @@ export class PromptManager {
         }
         
         // 诊断信息
-        const diagnosticsContent = this.generateDiagnosticsSection()
-        if (diagnosticsContent) {
-            modules['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
+        if (shouldBuild('DIAGNOSTICS')) {
+            const diagnosticsContent = this.generateDiagnosticsSection()
+            if (diagnosticsContent) {
+                modules['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
+            }
         }
         
         // 固定文件内容
-        const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
-        if (pinnedFilesContent) {
-            const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
-            modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
+        if (shouldBuild('PINNED_FILES')) {
+            const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
+            if (pinnedFilesContent) {
+                const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
+                modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
+            }
         }
-        
-        // 替换模板中的占位符
-        let result = template
-        for (const [key, value] of Object.entries(modules)) {
-            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
-            result = result.replace(regex, value)
+
+        if (shouldBuild('SKILLS')) {
+            const skillsText = this.generateSkillsSection(runtime?.skills)
+            if (skillsText) {
+                modules['SKILLS'] = this.wrapSection('SKILLS', skillsText)
+            }
         }
-        
-        // 清理多余的空行
-        return this.cleanupEmptyLines(result)
+
+        return modules
     }
     
     /**
@@ -461,6 +539,104 @@ export class PromptManager {
             '- If binary="true", treat this block as a structural reference/attachment marker only; do not try to summarize or infer textual body from title/path/file name.'
         ].join('\n')
     }
+
+    private usesPromptEntries(mode?: ResolvedPromptModeSnapshot): boolean {
+        return mode?.promptAssemblyMode === 'entries'
+    }
+
+    private getEnabledPromptEntries(mode?: ResolvedPromptModeSnapshot): PromptEntry[] {
+        if (!Array.isArray(mode?.promptEntries)) {
+            return []
+        }
+
+        return [...mode.promptEntries]
+            .filter(entry => !!entry && entry.enabled !== false)
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    }
+
+    private entryRoleToContentRole(role: PromptEntryRole): Content['role'] {
+        if (role === 'assistant') return 'model'
+        if (role === 'user') return 'user'
+        return 'system'
+    }
+
+    private hasDynamicPlaceholder(content: string): boolean {
+        for (const key of DYNAMIC_PROMPT_PLACEHOLDERS) {
+            if (content.includes(`{{$${key}}}`)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private generateSkillsSection(raw: unknown): string {
+        if (!Array.isArray(raw)) {
+            return ''
+        }
+
+        const lines = raw
+            .filter(item => item && typeof item === 'object')
+            .map(item => {
+                const name = typeof (item as any).name === 'string' ? (item as any).name.trim() : ''
+                const description = typeof (item as any).description === 'string' ? (item as any).description.trim() : ''
+                const id = typeof (item as any).id === 'string' ? (item as any).id.trim() : ''
+                if (!name && !id) return ''
+                const label = name || id
+                return description ? `- ${label}: ${description}` : `- ${label}`
+            })
+            .filter(Boolean)
+
+        return lines.join('\n')
+    }
+
+    private getReferencedPromptPlaceholders(template: string): Set<string> {
+        const keys = new Set<string>()
+        const regex = /\{\{\$([A-Z_]+)\}\}/g
+        let match: RegExpExecArray | null
+        while ((match = regex.exec(template)) !== null) {
+            keys.add(match[1])
+        }
+        return keys
+    }
+
+    private renderPromptTemplateContent(template: string, runtime?: DynamicRuntimeContext): string {
+        const settingsManager = getGlobalSettingsManager()
+        const contextConfig = settingsManager?.getContextAwarenessConfig()
+        const referencedKeys = this.getReferencedPromptPlaceholders(template)
+
+        const modules: Record<string, string> = {
+            'ENVIRONMENT': '',
+            'CONTEXT_BADGE_FORMAT': '',
+            'TODO_LIST': '',
+            'WORKSPACE_FILES': '',
+            'OPEN_TABS': '',
+            'ACTIVE_EDITOR': '',
+            'DIAGNOSTICS': '',
+            'PINNED_FILES': '',
+            'SKILLS': '',
+            'TOOLS': '{{$TOOLS}}',
+            'MCP_TOOLS': '{{$MCP_TOOLS}}'
+        }
+        if (referencedKeys.has('ENVIRONMENT')) {
+            modules['ENVIRONMENT'] = this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection())
+        }
+        if (referencedKeys.has('CONTEXT_BADGE_FORMAT')) {
+            modules['CONTEXT_BADGE_FORMAT'] = this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection())
+        }
+        Object.assign(modules, this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys))
+
+        let result = template
+        for (const [key, value] of Object.entries(modules)) {
+            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            result = result.replace(regex, value)
+        }
+
+        return this.cleanupEmptyLines(result)
+    }
+
+    private renderPromptEntryContent(content: string, runtime?: DynamicRuntimeContext): string {
+        return this.renderPromptTemplateContent(content, runtime)
+    }
     
     /**
      * 获取动态上下文消息
@@ -482,6 +658,89 @@ export class PromptManager {
      * @returns 动态上下文消息数组（一条 user 消息）
      */
     getDynamicContextMessages(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): Content[] {
+        return this.getPromptContextBundle(modeSnapshot, runtime).messages
+    }
+
+    getPromptContextBundle(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): PromptContextBundle {
+        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
+
+        if (this.usesPromptEntries(resolvedMode)) {
+            const beforeHistoryMessages: Content[] = []
+            const afterHistoryMessages: Content[] = []
+            const dynamicSnapshotBeforeHistoryMessages: Content[] = []
+            const dynamicSnapshotAfterHistoryMessages: Content[] = []
+            const entries = this.getEnabledPromptEntries(resolvedMode)
+            const chatHistoryIndex = entries.findIndex(entry => entry.type === 'chat_history')
+            const historyPlacement: PromptContextBundle['historyPlacement'] = chatHistoryIndex >= 0 ? 'entry' : 'legacy'
+
+            for (let index = 0; index < entries.length; index++) {
+                const entry = entries[index]
+                if ((entry.type || 'prompt') !== 'prompt' || entry.role === 'system') {
+                    continue
+                }
+
+                const role = this.entryRoleToContentRole(entry.role)
+                if (role !== 'user' && role !== 'model') {
+                    continue
+                }
+
+                const text = this.renderPromptEntryContent(entry.content, runtime)
+                if (!text.trim()) {
+                    continue
+                }
+
+                const message: Content = {
+                    role,
+                    parts: [{ text }]
+                }
+                const targetMessages = historyPlacement === 'entry' && index > chatHistoryIndex
+                    ? afterHistoryMessages
+                    : beforeHistoryMessages
+                targetMessages.push(message)
+
+                if (this.hasDynamicPlaceholder(entry.content)) {
+                    const targetSnapshotMessages = historyPlacement === 'entry' && index > chatHistoryIndex
+                        ? dynamicSnapshotAfterHistoryMessages
+                        : dynamicSnapshotBeforeHistoryMessages
+                    targetSnapshotMessages.push(message)
+                }
+            }
+
+            const messages = [...beforeHistoryMessages, ...afterHistoryMessages]
+            const dynamicSnapshotMessages = [
+                ...dynamicSnapshotBeforeHistoryMessages,
+                ...dynamicSnapshotAfterHistoryMessages
+            ]
+
+            return {
+                beforeHistoryMessages,
+                afterHistoryMessages,
+                dynamicSnapshotBeforeHistoryMessages,
+                dynamicSnapshotAfterHistoryMessages,
+                messages,
+                dynamicSnapshotMessages,
+                text: promptContextMessagesToText(messages),
+                dynamicSnapshotText: promptContextMessagesToText(dynamicSnapshotMessages),
+                historyPlacement
+            }
+        }
+
+        const messages = this.getLegacyDynamicContextMessages(modeSnapshot, runtime)
+        const text = promptContextMessagesToText(messages)
+        return {
+            beforeHistoryMessages: messages,
+            afterHistoryMessages: [],
+            dynamicSnapshotBeforeHistoryMessages: messages,
+            dynamicSnapshotAfterHistoryMessages: [],
+            messages,
+            dynamicSnapshotMessages: messages,
+            text,
+            dynamicSnapshotText: text,
+            historyPlacement: 'legacy'
+        }
+    }
+
+    private getLegacyDynamicContextMessages(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): Content[] {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
@@ -583,15 +842,7 @@ export class PromptManager {
      * @returns 动态上下文的纯文本，如果没有内容则返回空字符串
      */
     getDynamicContextText(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
-        const messages = this.getDynamicContextMessages(modeSnapshot, runtime)
-        if (messages.length === 0) {
-            return ''
-        }
-        
-        // 从 Content[] 中提取所有文本
-        return messages
-            .map(msg => msg.parts?.map(p => p.text || '').join('') || '')
-            .join('\n\n')
+        return this.getPromptContextBundle(modeSnapshot, runtime).text
     }
     
     /**

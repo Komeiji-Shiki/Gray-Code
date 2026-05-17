@@ -7,6 +7,8 @@
 import type { Content } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
+import type { DynamicContextStrategy } from '../../settings/types';
+
 
 // ==================== 请求数据 ====================
 
@@ -97,6 +99,11 @@ export interface ChatRequestData {
      * 如果提供，将在本次请求期间临时切换到该模式，影响系统提示词模板和工具策略。
      */
     promptModeId?: string;
+
+    /**
+     * 本次发送的动态上下文策略覆盖。
+     */
+    dynamicContextStrategyOverride?: DynamicContextStrategy;
 }
 
 // ==================== 响应数据 ====================
@@ -178,6 +185,85 @@ export interface ChatStreamErrorData {
         /** 错误消息 */
         message: string;
     };
+}
+
+export type AgentLoopState =
+    | 'prepare_context'
+    | 'context_trim'
+    | 'summarizing'
+    | 'request_model'
+    | 'streaming'
+    | 'parse_tool_calls'
+    | 'waiting_confirmation'
+    | 'executing_tools'
+    | 'append_tool_results'
+    | 'completed'
+    | 'aborted'
+    | 'failed';
+
+export type AgentTraceEventStatus = 'started' | 'completed' | 'info' | 'failed';
+
+export interface PromptContextPreviewSection {
+    /** 稳定分区 ID */
+    id: string;
+    /** 展示标题 */
+    title: string;
+    /** 消息角色（如果该区块会作为消息插入） */
+    role?: 'system' | 'user' | 'model';
+    /** 预览文本（可能被截断） */
+    text: string;
+    /** 原始字符数 */
+    charCount: number;
+    /** 粗略 token 估算（仅用于 UI 预算感知） */
+    estimatedTokens: number;
+    /** 合并了多少条消息 */
+    messageCount?: number;
+    /** text 是否被截断 */
+    truncated?: boolean;
+}
+
+export interface PromptContextPreview {
+    generatedAt: number;
+    iteration: number;
+    strategy: DynamicContextStrategy;
+    historyPlacement: 'legacy' | 'entry';
+    trim: {
+        trimStartIndex?: number;
+        historyLength: number;
+        needsAutoSummarize?: boolean;
+    };
+    sections: PromptContextPreviewSection[];
+}
+
+export interface AgentTraceEvent {
+    id: string;
+    state: AgentLoopState;
+    status: AgentTraceEventStatus;
+    label: string;
+    detail?: string;
+    iteration?: number;
+    createdAt: number;
+    durationMs?: number;
+    tool?: {
+        id?: string;
+        name: string;
+    };
+    promptContextPreview?: PromptContextPreview;
+}
+
+/**
+ * Agent 状态/轨迹事件。
+ *
+ * 前端会将这些事件挂到当前 assistant 消息的 metadata.agentTrace 中，
+ * 用于展示工具循环状态机与 Prompt Context 预览。
+ */
+export interface ChatStreamAgentStateData {
+    /** 对话 ID */
+    conversationId: string;
+    /** 标记这是 Agent 状态事件 */
+    agentState: true;
+    /** 状态事件负载 */
+    event: AgentTraceEvent;
 }
 
 /**

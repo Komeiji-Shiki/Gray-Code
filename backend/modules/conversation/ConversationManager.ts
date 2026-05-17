@@ -90,6 +90,14 @@ export interface GetHistoryOptions {
      * 默认为 0（从头开始）。
      */
     startIndex?: number;
+
+    /**
+     * 是否保留内部动态上下文字段 turnDynamicContext。
+     *
+     * 默认 false：常规 API 历史会过滤内部字段。
+     * preserve 策略构建请求时会开启，用于把旧动态上下文固定插回原位。
+     */
+    includeTurnDynamicContext?: boolean;
 }
 
 /**
@@ -1264,6 +1272,13 @@ export class ConversationManager {
             // 保留 isUserInput 标记（用于确定动态提示词插入位置）
             if (message.isUserInput) {
                 result.isUserInput = true;
+            }
+
+            // preserve 动态上下文策略需要在 formatter 构建请求时读取旧回合缓存。
+            // 字段本身仍会在 formatter.cleanInternalFields 中被过滤，不会直接发送给模型。
+            if (opts.includeTurnDynamicContext && message.turnDynamicContext) {
+                result.turnDynamicContext = message.turnDynamicContext;
+                result.turnDynamicContextStrategy = message.turnDynamicContextStrategy;
             }
             
             return result;

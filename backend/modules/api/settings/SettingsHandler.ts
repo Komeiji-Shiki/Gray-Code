@@ -331,6 +331,22 @@ export class SettingsHandler {
                     config
                 };
             }
+
+            if (toolName === 'read_file') {
+                const config = this.settingsManager.getReadFileConfig();
+                return {
+                    success: true,
+                    config
+                };
+            }
+
+            if (toolName === 'write_file') {
+                const config = this.settingsManager.getWriteFileConfig();
+                return {
+                    success: true,
+                    config
+                };
+            }
             
             if (toolName === 'apply_diff') {
                 const config = this.settingsManager.getApplyDiffConfig();

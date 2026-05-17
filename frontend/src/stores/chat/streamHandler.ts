@@ -22,6 +22,7 @@ import {
   handleCheckpoints,
   handleAutoSummaryStatus,
   handleAutoSummary,
+  handleAgentState,
   handleCancelled,
   handleError
 } from './streamChunkHandlers'
@@ -104,6 +105,10 @@ export function handleStreamChunk(
 
     case 'toolStatus':
       handleToolStatus(chunk, state)
+      break
+
+    case 'agentState':
+      handleAgentState(chunk, state)
       break
       
     case 'awaitingConfirmation':

@@ -14,13 +14,13 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { Content, ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
-import type { GenerateResponse } from '../../../channel/types';
+import type { GenerateResponse, RequestPromptContext } from '../../../channel/types';
 import { ChannelError, ErrorType } from '../../../channel/types';
 import { PromptManager } from '../../../prompt';
 import { t } from '../../../../i18n';
 import { Logger } from '../../../../core/logger';
 import type { CheckpointService } from './CheckpointService';
-import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type {
     ChatStreamChunkData,
     ChatStreamCompleteData,
@@ -32,7 +32,8 @@ import type {
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
     ChatStreamToolStatusData,
-    PendingToolCall
+    ChatStreamAgentStateData,
+    PendingToolCall,
 } from '../types';
 
 import { StreamResponseProcessor, isAsyncGenerator, type ProcessedChunkData } from '../handlers/StreamResponseProcessor';
@@ -44,6 +45,8 @@ import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { SummarizeService } from './SummarizeService';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
+import { buildPromptContextPreview, createAgentStateData } from './agentTrace';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -82,6 +85,11 @@ export interface ToolIterationLoopConfig {
     isNewTurn?: boolean;
 
     promptModeSnapshot?: ResolvedPromptModeSnapshot;
+
+    /**
+     * 本轮动态上下文策略。
+     */
+    dynamicContextStrategy?: DynamicContextStrategy;
 }
 
 /**
@@ -97,7 +105,8 @@ export type ToolIterationLoopOutput =
     | ChatStreamAutoSummaryStatusData
     | ChatStreamToolConfirmationData
     | ChatStreamToolsExecutingData
-    | ChatStreamToolStatusData;
+    | ChatStreamToolStatusData
+    | ChatStreamAgentStateData;
 
 /**
  * 非流式工具循环结果
@@ -244,6 +253,40 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * preserve 策略启用时，把当前回合之前所有已缓存动态上下文的用户回合锚定为 preserve。
+     *
+     * 这里必须同步更新传入的 history：不同存储适配器对 loadHistory 的引用语义不一致，
+     * 如果只持久化 updateMessage，本次请求后续裁剪/组装仍可能读到旧的 single 标记，
+     * 导致主人按 Enter 发送的这一轮没有把旧动态上下文插回原位。
+     */
+    private async preserveHistoricalTurnDynamicContexts(
+        conversationId: string,
+        history: Content[],
+        currentTurnStartIndex: number
+    ): Promise<void> {
+        const updates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
+
+        for (let i = currentTurnStartIndex - 1; i >= 0; i--) {
+            const message = history[i];
+            if (message.role !== 'user' || !message.isUserInput) {
+                continue;
+            }
+
+            if (message.turnDynamicContext && message.turnDynamicContextStrategy !== 'preserve') {
+                message.turnDynamicContextStrategy = 'preserve';
+                updates.push({
+                    messageIndex: i,
+                    updates: { turnDynamicContextStrategy: 'preserve' }
+                });
+            }
+        }
+
+        if (updates.length > 0) {
+            await this.conversationManager.updateMessagesBatch(conversationId, updates);
+        }
+    }
+
+    /**
      * 清除指定会话的裁剪状态
      * 
      * 在以下情况下应调用：
@@ -317,43 +360,70 @@ export class ToolIterationLoopService {
         } = loopConfig;
 
         const isNewTurn = loopConfig.isNewTurn !== false;
+        let dynamicContextStrategy: DynamicContextStrategy = loopConfig.dynamicContextStrategy ?? 'single';
 
         let iteration = startIteration;
 
+        const prepareContextStartedAt = Date.now();
         // 动态上下文在回合开始时生成一次，回合内所有迭代（包括工具确认后的继续）复用
         // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件、TODO、Skills
-        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
+        // 这些内容不存储到后端历史，仅在发送时按 promptContext 临时插入
         // 缓存存储在回合起始用户消息的 turnDynamicContext 字段上，确保每个回合独立
-        let dynamicContextMessages: Content[];
+        let promptContext: RequestPromptContext;
         let dynamicContextText: string;
+        let dynamicContextCache: string;
         let runtimeContext: any = undefined;
 
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
 
+        if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
+            await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
+        }
+
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
             runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
-            dynamicContextMessages = this.promptManager.getDynamicContextMessages(promptModeSnapshot, runtimeContext);
-            dynamicContextText = this.promptManager.getDynamicContextText(promptModeSnapshot, runtimeContext);
+            const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
+            promptContext = {
+                beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
+                afterHistoryMessages: promptContextBundle.afterHistoryMessages,
+                historyPlacement: promptContextBundle.historyPlacement
+            };
+            dynamicContextText = promptContextBundle.text;
+            dynamicContextCache = serializePromptContextCache(promptContextBundle);
 
             // 存到回合起始用户消息上
             if (turnStartIndex >= 0) {
                 await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
-                    turnDynamicContext: dynamicContextText
+                    turnDynamicContext: dynamicContextCache,
+                    turnDynamicContextStrategy: dynamicContextStrategy
                 });
             }
         } else {
-            // 回合继续（如工具确认后、重试等）：从缓存的纯文本重建
-            dynamicContextText = historyRef[turnStartIndex].turnDynamicContext!;
-            dynamicContextMessages = [{
-                role: 'user' as const,
-                parts: [{ text: dynamicContextText }]
-            }];
+            // 回合继续（如工具确认后、重试等）：从结构化缓存恢复，旧纯文本缓存也兼容
+            dynamicContextCache = historyRef[turnStartIndex].turnDynamicContext!;
+            const cached = deserializePromptContextCache(dynamicContextCache);
+            dynamicContextText = cached.contextText;
+            dynamicContextStrategy = historyRef[turnStartIndex].turnDynamicContextStrategy ?? dynamicContextStrategy;
+            promptContext = {
+                beforeHistoryMessages: cached.beforeHistoryMessages,
+                afterHistoryMessages: cached.afterHistoryMessages,
+                historyPlacement: cached.historyPlacement
+            };
             // 加载 runtime 以便解析系统提示词
             runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
         }
+
+        yield createAgentStateData({
+            conversationId,
+            state: 'prepare_context',
+            status: 'completed',
+            label: '动态上下文准备完成',
+            detail: `strategy=${dynamicContextStrategy}, turnStartIndex=${turnStartIndex}`,
+            startedAt: prepareContextStartedAt
+        });
 
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
@@ -380,6 +450,15 @@ export class ToolIterationLoopService {
             }
 
             // 3. 获取对话历史（应用上下文裁剪）
+            const contextTrimStartedAt = Date.now();
+            yield createAgentStateData({
+                conversationId,
+                state: 'context_trim',
+                status: 'started',
+                label: '计算上下文窗口',
+                iteration
+            });
+
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
             const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
@@ -387,7 +466,8 @@ export class ToolIterationLoopService {
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
-                modelOverride
+                modelOverride,
+                dynamicContextStrategy
             );
 
             try {
@@ -406,6 +486,18 @@ export class ToolIterationLoopService {
                 this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
 
                 // 先通知前端显示“自动总结中”提示
+                yield {
+                    conversationId,
+                    agentState: true as const,
+                    event: createAgentStateData({
+                        conversationId,
+                        state: 'summarizing',
+                        status: 'started',
+                        label: '自动总结上下文',
+                        iteration
+                    }).event
+                } satisfies ChatStreamAgentStateData;
+
                 yield {
                     conversationId,
                     autoSummaryStatus: true as const,
@@ -433,6 +525,14 @@ export class ToolIterationLoopService {
                         } satisfies ChatStreamAutoSummaryData;
                     }
 
+                    yield createAgentStateData({
+                        conversationId,
+                        state: 'summarizing',
+                        status: 'completed',
+                        label: '自动总结完成',
+                        iteration
+                    });
+
                     // 总结完成，隐藏“自动总结中”提示
                     yield {
                         conversationId,
@@ -447,7 +547,8 @@ export class ToolIterationLoopService {
                     const postSummarizeTurnIndex = this.findTurnStartMessageIndex(postSummarizeHistory);
                     if (postSummarizeTurnIndex >= 0 && !postSummarizeHistory[postSummarizeTurnIndex].turnDynamicContext) {
                         await this.conversationManager.updateMessage(conversationId, postSummarizeTurnIndex, {
-                            turnDynamicContext: dynamicContextText
+                            turnDynamicContext: dynamicContextCache,
+                            turnDynamicContextStrategy: dynamicContextStrategy
                         });
                     }
 
@@ -493,8 +594,39 @@ export class ToolIterationLoopService {
                 ? this.promptManager.refreshAndGetPrompt(promptModeSnapshot, runtimeContext)
                 : this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
 
+            const promptContextPreview = buildPromptContextPreview({
+                iteration,
+                strategy: dynamicContextStrategy,
+                promptContext,
+                dynamicSystemPrompt,
+                history,
+                trimStartIndex: trimResult.trimStartIndex,
+                needsAutoSummarize: trimResult.needsAutoSummarize
+            });
+
+            yield createAgentStateData({
+                conversationId,
+                state: 'context_trim',
+                status: 'completed',
+                label: '上下文窗口已就绪',
+                detail: `history=${history.length}, trimStartIndex=${trimResult.trimStartIndex ?? 0}`,
+                iteration,
+                startedAt: contextTrimStartedAt,
+                promptContextPreview
+            });
+
             // 5. 记录请求开始时间
             const requestStartTime = Date.now();
+
+            yield createAgentStateData({
+                conversationId,
+                state: 'request_model',
+                status: 'started',
+                label: '请求模型',
+                detail: modelOverride || (config as any).model || configId,
+                iteration,
+                promptContextPreview
+            });
 
             // 6. 调用 AI
             const response = await this.channelManager.generate({
@@ -502,10 +634,20 @@ export class ToolIterationLoopService {
                 history,
                 abortSignal,
                 dynamicSystemPrompt,
-                dynamicContextMessages,
+                promptContext,
+                dynamicContextStrategy,
                 modelOverride,
                 promptModeSnapshot,
                 conversationId
+            });
+
+            yield createAgentStateData({
+                conversationId,
+                state: 'request_model',
+                status: 'completed',
+                label: '模型请求已建立',
+                iteration,
+                startedAt: requestStartTime
             });
 
             // 7. 处理响应
@@ -518,6 +660,15 @@ export class ToolIterationLoopService {
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
 
             if (isAsyncGenerator(response)) {
+                const streamingStartedAt = Date.now();
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'streaming',
+                    status: 'started',
+                    label: '接收模型流式输出',
+                    iteration
+                });
+
                 // 流式响应处理
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
@@ -537,7 +688,7 @@ export class ToolIterationLoopService {
                         const newCalls = processor.getAccumulator().getNewCompletedFunctionCalls();
                         for (const fc of newCalls) {
                             // 只对不需要确认的工具提前执行
-                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name)) {
+                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name, fc.args, promptModeSnapshot)) {
                                 this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
                                 // 使用 executeFunctionCallsWithResults 而非 executeFunctionCalls，
                                 // 这样既能拿到 responseParts（写入历史），
@@ -568,6 +719,16 @@ export class ToolIterationLoopService {
                     }
                 }
 
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'streaming',
+                    status: 'completed',
+                    label: '模型流式输出完成',
+                    detail: `chunks=${processor.getContent().chunkCount ?? 0}`,
+                    iteration,
+                    startedAt: streamingStartedAt
+                });
+
                 // 检查是否被取消
                 if (processor.isCancelled()) {
                     const partialContent = processor.getContent();
@@ -581,6 +742,14 @@ export class ToolIterationLoopService {
 
                 finalContent = processor.getContent();
             } else {
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'streaming',
+                    status: 'info',
+                    label: '处理非流式模型响应',
+                    iteration
+                });
+
                 // 非流式响应处理
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
@@ -595,6 +764,15 @@ export class ToolIterationLoopService {
                 yield chunkData;
             }
 
+            const parseToolStartedAt = Date.now();
+            yield createAgentStateData({
+                conversationId,
+                state: 'parse_tool_calls',
+                status: 'started',
+                label: '解析工具调用',
+                iteration
+            });
+
             // 9. 转换工具调用格式
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
@@ -608,6 +786,15 @@ export class ToolIterationLoopService {
             const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent, config.toolMode || 'function_call');
 
             if (functionCalls.length === 0) {
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'parse_tool_calls',
+                    status: 'completed',
+                    label: '没有工具调用',
+                    iteration,
+                    startedAt: parseToolStartedAt
+                });
+
                 // 没有工具调用，创建模型消息后的检查点并返回完成数据
                 const modelMessageCheckpoints: CheckpointRecord[] = [];
                 const checkpoint = await this.checkpointService.createModelMessageCheckpoint(
@@ -618,6 +805,14 @@ export class ToolIterationLoopService {
                     modelMessageCheckpoints.push(checkpoint);
                 }
 
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'completed',
+                    status: 'completed',
+                    label: '本轮 Agent 已完成',
+                    iteration
+                });
+
                 // 返回完成数据
                 yield {
                     conversationId,
@@ -627,6 +822,15 @@ export class ToolIterationLoopService {
                 return;
             }
 
+            yield createAgentStateData({
+                conversationId,
+                state: 'parse_tool_calls',
+                status: 'completed',
+                label: `解析到 ${functionCalls.length} 个工具调用`,
+                iteration,
+                startedAt: parseToolStartedAt
+            });
+
             // 12. 有工具调用：按 AI 输出顺序依次处理。
             // 规则：执行到第一个“需要用户批准”的工具时暂停；后续工具必须等待前置工具完成。
 
@@ -635,7 +839,7 @@ export class ToolIterationLoopService {
             let firstConfirmTool: FunctionCallInfo | null = null;
 
             for (const call of functionCalls) {
-                if (this.toolExecutionService.toolNeedsConfirmation(call.name, promptModeSnapshot)) {
+                if (this.toolExecutionService.toolNeedsConfirmation(call.name, call.args, promptModeSnapshot)) {
                     firstConfirmTool = call;
                     break;
                 }
@@ -705,6 +909,15 @@ export class ToolIterationLoopService {
                 );
 
                 if (firstConfirmTool && !earlyStopState.shouldStop) {
+                    yield createAgentStateData({
+                        conversationId,
+                        state: 'waiting_confirmation',
+                        status: 'started',
+                        label: `等待工具确认：${firstConfirmTool.name}`,
+                        iteration,
+                        tool: { id: firstConfirmTool.id, name: firstConfirmTool.name }
+                    });
+
                     yield {
                         conversationId,
                         pendingToolCalls: [{
@@ -754,6 +967,15 @@ export class ToolIterationLoopService {
             }
 
             if (autoPrefix.length > 0) {
+                const toolsStartedAt = Date.now();
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'executing_tools',
+                    status: 'started',
+                    label: `执行 ${autoPrefix.length} 个工具`,
+                    iteration
+                });
+
                 // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting
                 // 让前端尽早看到完整的工具队列（第一个为 executing，其余为 queued）
                 yield {
@@ -795,6 +1017,15 @@ export class ToolIterationLoopService {
                         const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
 
                         // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
+                        yield createAgentStateData({
+                            conversationId,
+                            state: 'executing_tools',
+                            status: 'info',
+                            label: `执行工具：${event.call.name}`,
+                            iteration,
+                            tool: { id: event.call.id, name: event.call.name }
+                        });
+
                         yield {
                             conversationId,
                             content: finalContent,
@@ -817,6 +1048,16 @@ export class ToolIterationLoopService {
                             status = 'warning';
                         }
 
+                        yield createAgentStateData({
+                            conversationId,
+                            state: 'executing_tools',
+                            status: status === 'error' ? 'failed' : 'completed',
+                            label: `工具完成：${event.call.name}`,
+                            detail: status,
+                            iteration,
+                            tool: { id: event.call.id, name: event.call.name }
+                        });
+
                         yield {
                             conversationId,
                             toolStatus: true as const,
@@ -830,6 +1071,15 @@ export class ToolIterationLoopService {
                     }
                 }
 
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'executing_tools',
+                    status: 'completed',
+                    label: '工具批次执行完成',
+                    iteration,
+                    startedAt: toolsStartedAt
+                });
+
                 // 检查是否已取消
                 if (abortSignal?.aborted) {
                     yield {
@@ -840,6 +1090,13 @@ export class ToolIterationLoopService {
                 }
 
                 // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'append_tool_results',
+                    status: 'started',
+                    label: '写入工具结果到对话历史',
+                    iteration
+                });
 
                 const combinedToolResults = this.orderToolResultsByCallSequence(
                     functionCalls,
@@ -864,6 +1121,14 @@ export class ToolIterationLoopService {
                     role: 'user',
                     parts: functionResponseParts,
                     isFunctionResponse: true
+                });
+
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'append_tool_results',
+                    status: 'completed',
+                    label: '工具结果已写入历史',
+                    iteration
                 });
             }
 
@@ -894,6 +1159,15 @@ export class ToolIterationLoopService {
 
             // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
             if (firstConfirmTool) {
+                yield createAgentStateData({
+                    conversationId,
+                    state: 'waiting_confirmation',
+                    status: 'started',
+                    label: `等待工具确认：${firstConfirmTool.name}`,
+                    iteration,
+                    tool: { id: firstConfirmTool.id, name: firstConfirmTool.name }
+                });
+
                 yield {
                     conversationId,
                     pendingToolCalls: [{
@@ -946,24 +1220,57 @@ export class ToolIterationLoopService {
         config: BaseChannelConfig,
         maxIterations: number,
         modelOverride?: string,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        dynamicContextStrategy: DynamicContextStrategy = 'single',
+        isNewTurn: boolean = true
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
-        // 在回合开始时一次性生成动态上下文，回合内所有迭代复用，并存到回合起始用户消息上
-        const runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
-        const dynamicContextMessages = this.promptManager.getDynamicContextMessages(promptModeSnapshot, runtimeContext);
-        // 预计算动态上下文文本，用于 ContextTrimService 的 token 计数
-        const dynamicContextText = this.promptManager.getDynamicContextText(promptModeSnapshot, runtimeContext);
-
-        // 存到回合起始用户消息上
+        // 在回合开始时一次性生成动态上下文，回合内所有迭代复用，并存到回合起始用户消息上。
+        // 非新回合（retry / hidden functionResponse / 工具确认后的继续）必须读取这个缓存，
+        // 不能重新生成并让动态上下文跟随历史尾部漂移。
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
-        if (turnStartIndex >= 0) {
-            await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
-                turnDynamicContext: dynamicContextText
-            });
+
+        if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
+            await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
+        }
+
+        let promptContext: RequestPromptContext;
+        let dynamicContextText: string;
+        let dynamicContextCache: string;
+        let runtimeContext: any = undefined;
+
+        if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
+            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
+            promptContext = {
+                beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
+                afterHistoryMessages: promptContextBundle.afterHistoryMessages,
+                historyPlacement: promptContextBundle.historyPlacement
+            };
+            dynamicContextText = promptContextBundle.text;
+            dynamicContextCache = serializePromptContextCache(promptContextBundle);
+
+            if (turnStartIndex >= 0) {
+                await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
+                    turnDynamicContext: dynamicContextCache,
+                    turnDynamicContextStrategy: dynamicContextStrategy
+                });
+            }
+        } else {
+            dynamicContextCache = historyRef[turnStartIndex].turnDynamicContext!;
+            const cached = deserializePromptContextCache(dynamicContextCache);
+            dynamicContextText = cached.contextText;
+            dynamicContextStrategy = historyRef[turnStartIndex].turnDynamicContextStrategy ?? dynamicContextStrategy;
+            promptContext = {
+                beforeHistoryMessages: cached.beforeHistoryMessages,
+                afterHistoryMessages: cached.afterHistoryMessages,
+                historyPlacement: cached.historyPlacement
+            };
+
+            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
         }
 
         // -1 表示无限制
@@ -977,7 +1284,8 @@ export class ToolIterationLoopService {
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
-                modelOverride
+                modelOverride,
+                dynamicContextStrategy
             );
 
             try {
@@ -1001,6 +1309,18 @@ export class ToolIterationLoopService {
                 );
 
                 if (summarizeResult.success) {
+                    // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
+                    // 需要将当前的动态上下文重新存到新历史的回合起始消息上，
+                    // 确保后续迭代（如工具确认后的新 runToolLoop 调用）能读到缓存。
+                    const postSummarizeHistory = await this.conversationManager.getHistoryRef(conversationId);
+                    const postSummarizeTurnIndex = this.findTurnStartMessageIndex(postSummarizeHistory);
+                    if (postSummarizeTurnIndex >= 0 && !postSummarizeHistory[postSummarizeTurnIndex].turnDynamicContext) {
+                        await this.conversationManager.updateMessage(conversationId, postSummarizeTurnIndex, {
+                            turnDynamicContext: dynamicContextCache,
+                            turnDynamicContextStrategy: dynamicContextStrategy
+                        });
+                    }
+
                     // 总结成功，重新获取历史
                     continue;
                 }
@@ -1023,7 +1343,8 @@ export class ToolIterationLoopService {
                 configId,
                 history,
                 dynamicSystemPrompt,
-                dynamicContextMessages,
+                promptContext,
+                dynamicContextStrategy,
                 modelOverride,
                 promptModeSnapshot,
                 conversationId

@@ -4,6 +4,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { CustomSelect, InputDialog, ConfirmDialog, type SelectOption } from '../common'
+import PromptEntriesEditor from './PromptEntriesEditor.vue'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -21,14 +22,32 @@ interface PromptModule {
   requiresConfig?: string
 }
 
+type DynamicContextStrategy = 'single' | 'preserve'
+type PromptEntryRole = 'system' | 'user' | 'assistant'
+type PromptAssemblyMode = 'legacy' | 'entries'
+type PromptEntryType = 'prompt' | 'chat_history'
+
+interface PromptEntry {
+  id: string
+  name: string
+  type?: PromptEntryType
+  enabled: boolean
+  role: PromptEntryRole
+  content: string
+  order: number
+}
+
 // 提示词模式
 interface PromptMode {
   id: string
   name: string
   icon?: string
   template: string
+  promptAssemblyMode?: PromptAssemblyMode
   dynamicTemplateEnabled: boolean
   dynamicTemplate: string
+  dynamicContextStrategy?: DynamicContextStrategy
+  promptEntries?: PromptEntry[]
   toolPolicy?: string[]
 }
 
@@ -50,6 +69,7 @@ interface SystemPromptConfig {
   template: string
   dynamicTemplateEnabled: boolean
   dynamicTemplate: string
+  dynamicContextStrategy: DynamicContextStrategy
   customPrefix: string
   customSuffix: string
 }
@@ -395,6 +415,8 @@ const DEFAULT_DYNAMIC_TEMPLATE = `This is the current turn's dynamic context inf
 
 // 默认模式 ID
 const DEFAULT_MODE_ID = 'code'
+const CHAT_HISTORY_PROMPT_ENTRY_ID = 'chat-history'
+const DEFAULT_PROMPT_ASSEMBLY_MODE: PromptAssemblyMode = 'legacy'
 
 // 模式列表
 const modes = ref<PromptMode[]>([])
@@ -425,10 +447,12 @@ const config = reactive<{
   template: string
   dynamicTemplateEnabled: boolean
   dynamicTemplate: string
+  dynamicContextStrategy: DynamicContextStrategy
 }>({
   template: DEFAULT_TEMPLATE,
   dynamicTemplateEnabled: true,
-  dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
+  dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
+  dynamicContextStrategy: 'single'
 })
 
 // 原始配置（用于检测变化）
@@ -444,6 +468,88 @@ const toolPolicyMode = ref<ToolPolicyMode>('inherit')
 const toolPolicy = ref<string[]>([])
 const originalToolPolicyMode = ref<ToolPolicyMode>('inherit')
 const originalToolPolicy = ref<string[]>([])
+const promptEntries = ref<PromptEntry[]>([])
+const originalPromptEntries = ref<PromptEntry[]>([])
+const promptAssemblyMode = ref<PromptAssemblyMode>(DEFAULT_PROMPT_ASSEMBLY_MODE)
+const originalPromptAssemblyMode = ref<PromptAssemblyMode>(DEFAULT_PROMPT_ASSEMBLY_MODE)
+
+function normalizePromptAssemblyMode(value: unknown): PromptAssemblyMode {
+  return value === 'entries' ? 'entries' : 'legacy'
+}
+
+function createChatHistoryPromptEntry(order = 1000): PromptEntry {
+  return {
+    id: CHAT_HISTORY_PROMPT_ENTRY_ID,
+    name: 'Chat History',
+    type: 'chat_history',
+    enabled: true,
+    role: 'user',
+    content: '',
+    order
+  }
+}
+
+function normalizePromptEntries(entries: PromptEntry[] | undefined, assemblyMode: PromptAssemblyMode = promptAssemblyMode.value): PromptEntry[] {
+  const rawEntries = Array.isArray(entries) ? entries : []
+  const normalized = rawEntries
+    .filter(entry => entry && typeof entry === 'object')
+    .map((entry, index) => ({
+      id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : `entry_${index}`,
+      name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : `Prompt ${index + 1}`,
+      type: entry.type === 'chat_history' || entry.id === CHAT_HISTORY_PROMPT_ENTRY_ID ? 'chat_history' as const : 'prompt' as const,
+      enabled: entry.enabled !== false,
+      role: entry.role === 'user' || entry.role === 'assistant' || entry.role === 'system' ? entry.role : 'system',
+      content: typeof entry.content === 'string' ? entry.content : '',
+      order: typeof entry.order === 'number' && Number.isFinite(entry.order) ? entry.order : index
+    }))
+
+  if (assemblyMode === 'entries') {
+    const result: PromptEntry[] = []
+    let hasChatHistory = false
+    for (const entry of normalized) {
+      if (entry.type !== 'chat_history') {
+        result.push(entry)
+        continue
+      }
+      if (hasChatHistory) continue
+      hasChatHistory = true
+      result.push({
+        ...createChatHistoryPromptEntry(entry.order),
+        name: entry.name.trim() || 'Chat History'
+      })
+    }
+    if (!hasChatHistory) {
+      result.push(createChatHistoryPromptEntry(result.length))
+    }
+    return result
+      .sort((a, b) => a.order - b.order)
+      .map((entry, index) => ({ ...entry, order: index }))
+  }
+
+  return normalized
+    .filter(entry => entry.type !== 'chat_history')
+    .sort((a, b) => a.order - b.order)
+    .map((entry, index) => ({ ...entry, order: index }))
+}
+
+function clonePromptEntries(entries: PromptEntry[]): PromptEntry[] {
+  return entries.map(entry => ({ ...entry }))
+}
+
+function isSamePromptEntries(a: PromptEntry[], b: PromptEntry[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((entry, index) => {
+    const other = b[index]
+    return !!other &&
+      entry.id === other.id &&
+      entry.name === other.name &&
+      (entry.type || 'prompt') === (other.type || 'prompt') &&
+      entry.enabled === other.enabled &&
+      entry.role === other.role &&
+      entry.content === other.content &&
+      entry.order === other.order
+  })
+}
 
 function normalizeToolList(list: string[] | undefined): string[] {
   if (!Array.isArray(list)) return []
@@ -558,13 +664,18 @@ const hasChanges = computed(() => {
   if (!originalConfig.value) return false
   const basicChanged = config.template !== originalConfig.value.template ||
     config.dynamicTemplateEnabled !== originalConfig.value.dynamicTemplateEnabled ||
-    config.dynamicTemplate !== originalConfig.value.dynamicTemplate
+    config.dynamicTemplate !== originalConfig.value.dynamicTemplate ||
+    config.dynamicContextStrategy !== originalConfig.value.dynamicContextStrategy
+
+  const assemblyChanged = promptAssemblyMode.value !== originalPromptAssemblyMode.value
 
   const policyChanged =
     toolPolicyMode.value !== originalToolPolicyMode.value ||
     !isSameToolList(toolPolicy.value, originalToolPolicy.value)
 
-  return basicChanged || policyChanged
+  const entriesChanged = !isSamePromptEntries(promptEntries.value, originalPromptEntries.value)
+
+  return basicChanged || assemblyChanged || policyChanged || entriesChanged
 })
 
 // 加载状态
@@ -624,7 +735,12 @@ function loadModeConfig(modeId: string) {
     config.template = mode.template || DEFAULT_TEMPLATE
     config.dynamicTemplateEnabled = mode.dynamicTemplateEnabled ?? true
     config.dynamicTemplate = mode.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
+    config.dynamicContextStrategy = mode.dynamicContextStrategy || 'single'
     originalConfig.value = { ...config }
+    promptAssemblyMode.value = normalizePromptAssemblyMode(mode.promptAssemblyMode)
+    originalPromptAssemblyMode.value = promptAssemblyMode.value
+    promptEntries.value = normalizePromptEntries(mode.promptEntries, promptAssemblyMode.value)
+    originalPromptEntries.value = clonePromptEntries(promptEntries.value)
 
     // 加载模式工具策略
     const policy = mode.toolPolicy
@@ -680,22 +796,29 @@ async function saveConfig() {
     const baseMode: PromptMode = currentMode || {
       id: selectedModeId.value,
       name: '默认模式',
-     icon: 'symbol-method',
+      icon: 'symbol-method',
       template: DEFAULT_TEMPLATE,
+      promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
       dynamicTemplateEnabled: true,
-      dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
+      dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
+      dynamicContextStrategy: 'single'
     }
 
     const nextToolPolicy = toolPolicyMode.value === 'custom'
       ? Array.from(new Set(toolPolicy.value))
       : undefined
 
+    const nextPromptEntries = normalizePromptEntries(promptEntries.value, promptAssemblyMode.value)
+
     const updatedMode: PromptMode = {
       ...baseMode,
       template: cleanedTemplate,
+      promptAssemblyMode: promptAssemblyMode.value,
       dynamicTemplateEnabled: config.dynamicTemplateEnabled,
       dynamicTemplate: cleanedDynamicTemplate,
-      toolPolicy: nextToolPolicy
+      dynamicContextStrategy: config.dynamicContextStrategy,
+      toolPolicy: nextToolPolicy,
+      promptEntries: nextPromptEntries.length > 0 ? nextPromptEntries : undefined
     }
     if (toolPolicyMode.value !== 'custom') {
       delete (updatedMode as any).toolPolicy
@@ -706,15 +829,22 @@ async function saveConfig() {
     // 更新本地配置为清理后的版本
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
+    config.dynamicContextStrategy = updatedMode.dynamicContextStrategy || 'single'
     originalConfig.value = { ...config }
+    originalPromptAssemblyMode.value = promptAssemblyMode.value
     originalToolPolicyMode.value = toolPolicyMode.value
     originalToolPolicy.value = [...toolPolicy.value]
+    promptEntries.value = clonePromptEntries(nextPromptEntries)
+    originalPromptEntries.value = clonePromptEntries(nextPromptEntries)
     
     // 更新模式列表中的配置
     const modeIndex = modes.value.findIndex(m => m.id === selectedModeId.value)
     if (modeIndex >= 0) {
       modes.value[modeIndex] = updatedMode
     }
+
+    // 通知 InputArea 刷新模式列表，避免保存动态上下文策略后输入区仍显示旧模式数据
+    settingsStore.refreshPromptModes()
     
     saveMessage.value = t('components.settings.promptSettings.saveSuccess')
     setTimeout(() => { saveMessage.value = '' }, 2000)
@@ -783,6 +913,13 @@ function cleanupEmptyLines(text: string): string {
   return text.replace(/\n{3,}/g, '\n\n').trim()
 }
 
+function handlePromptAssemblyModeChange(mode: PromptAssemblyMode) {
+  promptAssemblyMode.value = mode
+  if (mode === 'entries') {
+    promptEntries.value = normalizePromptEntries(promptEntries.value, 'entries')
+  }
+}
+
 // 重置静态模板为默认
 function resetStaticToDefault() {
   const modeDefaults: Record<string, string> = {
@@ -822,6 +959,42 @@ function insertDynamicModule(moduleId: string) {
   config.dynamicTemplate += placeholder
 }
 
+function convertLegacyTemplatesToEntries() {
+  const entries: PromptEntry[] = []
+  const cleanedTemplate = cleanupEmptyLines(config.template)
+  const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
+
+  if (cleanedTemplate) {
+    entries.push({
+      id: 'legacy-system-template',
+      name: '系统提示词',
+      enabled: true,
+      role: 'system',
+      content: cleanedTemplate,
+      order: 0
+    })
+  }
+
+  if (cleanedDynamicTemplate) {
+    entries.push({
+      id: 'legacy-dynamic-context',
+      name: '动态上下文',
+      enabled: config.dynamicTemplateEnabled,
+      role: 'user',
+      content: cleanedDynamicTemplate,
+      order: 100
+    })
+  }
+
+  entries.push({
+    ...createChatHistoryPromptEntry(50),
+    name: 'Chat History'
+  })
+
+  promptAssemblyMode.value = 'entries'
+  promptEntries.value = normalizePromptEntries(entries, 'entries')
+}
+
 // 切换模块展开
 function toggleModule(moduleId: string) {
   expandedModule.value = expandedModule.value === moduleId ? null : moduleId
@@ -845,8 +1018,10 @@ async function confirmAddMode(name: string) {
     name,
     icon: 'symbol-method',
     template: DEFAULT_TEMPLATE,
+    promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
     dynamicTemplateEnabled: true,
-    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
+    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
+    dynamicContextStrategy: 'single'
   }
   
   try {
@@ -980,9 +1155,101 @@ watch(selectedChannel, () => {
           </button>
         </div>
       </div>
+
+      <!-- 提示词组装方式 -->
+      <div class="template-section assembly-section">
+        <div class="section-header">
+          <label class="section-label">
+            <i class="codicon codicon-settings-gear"></i>
+            提示词组装方式
+          </label>
+        </div>
+        <p class="section-description">
+          每个模式只能选择一种组装方式：传统模板或预设条目。
+        </p>
+        <div class="assembly-options">
+          <label class="radio-option assembly-option">
+            <input
+              type="radio"
+              value="legacy"
+              :checked="promptAssemblyMode === 'legacy'"
+              @change="handlePromptAssemblyModeChange('legacy')"
+            />
+            <span class="radio-text">传统模板</span>
+            <span class="assembly-option-desc">使用系统提示词模板和动态上下文模板。</span>
+          </label>
+          <label class="radio-option assembly-option">
+            <input
+              type="radio"
+              value="entries"
+              :checked="promptAssemblyMode === 'entries'"
+              @change="handlePromptAssemblyModeChange('entries')"
+            />
+            <span class="radio-text">预设条目</span>
+            <span class="assembly-option-desc">使用可排序条目，并通过 Chat History 控制真实历史位置。</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 动态上下文保留策略：传统模板和预设条目都生效 -->
+      <div class="template-section dynamic-strategy-section">
+        <div class="section-header">
+          <label class="section-label">
+            <i class="codicon codicon-history"></i>
+            {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
+          </label>
+        </div>
+
+        <div class="dynamic-strategy-block">
+          <div class="dynamic-strategy-options">
+            <label class="radio-option">
+              <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
+              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
+              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
+            </label>
+          </div>
+          <p class="dynamic-strategy-description">
+            当预设条目或传统模板中包含
+            <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
+            <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
+            <code>{{ formatModuleId('TODO_LIST') }}</code>
+            等会变化变量时，此设置决定旧回合快照是否保留。
+          </p>
+          <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
+            <i class="codicon codicon-warning"></i>
+            preserve 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+          </p>
+        </div>
+      </div>
+
+      <template v-if="promptAssemblyMode === 'entries'">
+        <!-- 预设提示词条目编辑区 -->
+        <div class="template-section entries-section">
+          <div class="section-header">
+            <label class="section-label">
+              <i class="codicon codicon-list-tree"></i>
+              预设提示词条目
+              <span class="section-badge entries-badge">role / drag</span>
+            </label>
+          </div>
+          <p class="section-description">
+            按顺序编辑多条提示词。system 条目会合并进系统提示词，user / assistant 条目会作为本次请求的临时上下文插入；Chat History 条目表示真实聊天历史插入点。
+          </p>
+          <PromptEntriesEditor
+            v-model="promptEntries"
+            :static-modules="STATIC_PROMPT_MODULES"
+            :dynamic-modules="DYNAMIC_CONTEXT_MODULES"
+            @convert-legacy="convertLegacyTemplatesToEntries"
+          />
+        </div>
+      </template>
       
-      <!-- 静态系统提示词编辑区 -->
-      <div class="template-section">
+      <template v-else>
+        <!-- 静态系统提示词编辑区 -->
+        <div class="template-section">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-file-code"></i>
@@ -1005,10 +1272,10 @@ watch(selectedChannel, () => {
           :placeholder="t('components.settings.promptSettings.staticSection.placeholder')"
           rows="12"
         ></textarea>
-      </div>
+        </div>
       
-      <!-- 动态上下文模板编辑区 -->
-      <div class="template-section dynamic-section">
+        <!-- 动态上下文模板编辑区 -->
+        <div class="template-section dynamic-section">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-sync"></i>
@@ -1048,7 +1315,8 @@ watch(selectedChannel, () => {
           :placeholder="t('components.settings.promptSettings.dynamicSection.placeholder')"
           rows="10"
         ></textarea>
-      </div>
+        </div>
+      </template>
 
       <!-- 模式工具策略 -->
       <div class="template-section tool-policy-section">
@@ -1589,6 +1857,11 @@ watch(selectedChannel, () => {
   color: var(--vscode-editor-background);
 }
 
+.section-badge.entries-badge {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
 .section-label code {
   font-size: 11px;
   padding: 2px 4px;
@@ -2102,6 +2375,77 @@ watch(selectedChannel, () => {
 .toggle-switch input:focus + .toggle-slider {
   border-color: var(--vscode-focusBorder);
 }
+
+.assembly-section {
+  border-color: var(--vscode-button-background);
+}
+
+.assembly-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.assembly-option {
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.assembly-option .radio-text {
+  font-weight: 600;
+}
+
+.assembly-option-desc {
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.45;
+}
+
+.entries-section {
+  border-color: var(--vscode-focusBorder);
+}
+
+.dynamic-strategy-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 4px;
+}
+
+.dynamic-strategy-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.dynamic-strategy-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.dynamic-strategy-description,
+.dynamic-strategy-warning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dynamic-strategy-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+}
+
 
 /* 禁用提示 */
 .disabled-notice {

@@ -699,6 +699,7 @@ export interface LanguageMessages {
             placeholder: string;
             placeholderHint: string;
             send: string;
+            sendPreserveDynamicContext: string;
             stopGenerating: string;
             attachFile: string;
             pinnedFiles: string;
@@ -855,6 +856,29 @@ export interface LanguageMessages {
                         diffGuardThreshold: string;
                         diffGuardThresholdDesc: string;
                         diffGuardWarning: string;
+                        outsideWorkspaceAccess: string;
+                        outsideWorkspaceDesc: string;
+                        outsideWorkspaceDenyDesc: string;
+                        outsideWorkspaceAskDesc: string;
+                        outsideWorkspaceTip: string;
+                    };
+                    outsideWorkspaceAccess: {
+                        deny: string;
+                        ask: string;
+                        allow: string;
+                    };
+                    readFile: {
+                        outsideWorkspaceAccess: string;
+                        outsideWorkspaceDenyDesc: string;
+                        outsideWorkspaceAskDesc: string;
+                        outsideWorkspaceAllowDesc: string;
+                        outsideWorkspaceTip: string;
+                    };
+                    writeFile: {
+                        outsideWorkspaceAccess: string;
+                        outsideWorkspaceDenyDesc: string;
+                        outsideWorkspaceAskDesc: string;
+                        outsideWorkspaceTip: string;
                     };
                     listFiles: {
                         ignoreList: string;
@@ -1733,6 +1757,11 @@ export interface LanguageMessages {
                     placeholder: string;
                     enableTooltip: string;
                     disabledNotice: string;
+                    strategyTitle: string;
+                    strategySingle: string;
+                    strategyPreserve: string;
+                    strategyDescription: string;
+                    strategyPreserveWarning: string;
                 };
                 toolPolicy: {
                     title: string;

@@ -18,6 +18,10 @@ export type {
     ToolsConfig,
     ListFilesToolConfig,
     ApplyDiffToolConfig,
+    ReadFileToolConfig,
+    WriteFileToolConfig,
+    OutsideWorkspaceReadAccess,
+    OutsideWorkspaceWriteAccess,
     ExecuteCommandToolConfig,
     ShellConfig,
     StoragePathConfig,
@@ -25,6 +29,8 @@ export type {
 } from './types';
 export {
     DEFAULT_GLOBAL_SETTINGS,
+    DEFAULT_READ_FILE_CONFIG,
+    DEFAULT_WRITE_FILE_CONFIG,
     DEFAULT_LIST_FILES_CONFIG,
     DEFAULT_APPLY_DIFF_CONFIG,
     getDefaultExecuteCommandConfig

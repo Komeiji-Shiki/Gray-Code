@@ -28,6 +28,45 @@ export interface ToolAutoExecConfig {
 }
 
 /**
+ * read_file 工具访问工作区外文件的策略
+ *
+ * - deny: 禁止读取工作区外文件
+ * - ask: 每次读取前请求用户确认
+ * - allow: 直接允许读取
+ */
+export type OutsideWorkspaceReadAccess = 'deny' | 'ask' | 'allow';
+
+/**
+ * write_file 工具访问工作区外文件的策略
+ *
+ * - deny: 禁止写入工作区外文件
+ * - ask: 每次写入前请求用户确认
+ */
+export type OutsideWorkspaceWriteAccess = 'deny' | 'ask';
+
+/**
+ * Read File 工具配置
+ */
+export interface ReadFileToolConfig {
+    /**
+     * 工作区外文件读取策略
+     */
+    outsideWorkspaceAccess: OutsideWorkspaceReadAccess;
+    [key: string]: unknown;
+}
+
+/**
+ * Write File 工具配置
+ */
+export interface WriteFileToolConfig {
+    /**
+     * 工作区外文件写入策略
+     */
+    outsideWorkspaceAccess: OutsideWorkspaceWriteAccess;
+    [key: string]: unknown;
+}
+
+/**
  * List Files 工具配置
  */
 export interface ListFilesToolConfig {
@@ -163,6 +202,13 @@ export interface ApplyDiffToolConfig {
      * - search_replace: 旧版 search/replace/start_line diffs
      */
     format: ApplyDiffFormat;
+
+    /**
+     * 工作区外写入访问策略
+     * - deny: 禁止 apply_diff 修改工作区外文件
+     * - ask: 通过原本工具调用确认框询问用户
+     */
+    outsideWorkspaceAccess: OutsideWorkspaceWriteAccess;
 
     /**
      * 是否自动应用修改
@@ -649,6 +695,72 @@ export interface PromptModule {
 }
 
 /**
+ * 动态上下文策略
+ * - single: 仅存在一份动态上下文，保持当前请求插入策略
+ * - preserve: 保留旧动态上下文原位不变，新回合上下文插到新回合位置
+ */
+export type DynamicContextStrategy = 'single' | 'preserve';
+
+/**
+ * 提示词组装方式。
+ *
+ * - legacy：使用传统 template / dynamicTemplate
+ * - entries：使用 fast-tavern 风格 promptEntries，并由 chat_history 条目决定真实历史位置
+ */
+export type PromptAssemblyMode = 'legacy' | 'entries';
+
+/**
+ * 提示词预设条目类型。
+ *
+ * - prompt：普通提示词条目
+ * - chat_history：真实聊天历史插入点
+ */
+export type PromptEntryType = 'prompt' | 'chat_history';
+
+/** 预设模式中固定的聊天历史占位条目 ID。 */
+export const CHAT_HISTORY_PROMPT_ENTRY_ID = 'chat-history';
+
+/**
+ * 提示词预设条目的角色。
+ *
+ * 普通 prompt 条目使用该角色；chat_history 条目的 role/content 会被忽略。
+ * UI 使用 assistant 命名；后端发送给模型前会映射为内部 Content.role = model。
+ */
+export type PromptEntryRole = 'system' | 'user' | 'assistant';
+
+/**
+ * 提示词预设条目。
+ *
+ * 条目按 order 排序；enabled=false 时不参与组装。
+ * - chat_history：真实对话历史插入点，不能发送成普通消息
+ * - system：合并进系统提示词
+ * - user：作为临时 user 上下文消息插入请求，不写入真实历史
+ * - assistant：作为临时 model 上下文消息插入请求，不写入真实历史
+ */
+export interface PromptEntry {
+    /** 条目 ID（同一模式内唯一） */
+    id: string;
+
+    /** 条目名称（用于显示） */
+    name: string;
+
+    /** 条目类型。旧配置未设置时视为 prompt。 */
+    type?: PromptEntryType;
+
+    /** 是否启用 */
+    enabled: boolean;
+
+    /** 条目角色 */
+    role: PromptEntryRole;
+
+    /** 提示词内容，支持 {{$MODULE}} 占位符 */
+    content: string;
+
+    /** 排序值，小的在前 */
+    order: number;
+}
+
+/**
  * 提示词模式定义
  * 
  * 每个模式包含独立的系统提示词和动态上下文配置
@@ -673,6 +785,11 @@ export interface PromptMode {
      * 系统提示词模板
      */
     template: string;
+
+    /**
+     * 提示词组装方式。未设置时为 legacy，避免旧配置被 promptEntries 隐式接管。
+     */
+    promptAssemblyMode?: PromptAssemblyMode;
     
     /**
      * 是否启用动态上下文模板
@@ -683,6 +800,18 @@ export interface PromptMode {
      * 动态上下文模板
      */
     dynamicTemplate: string;
+
+    /**
+     * 动态上下文策略。未设置时继承全局 system_prompt.dynamicContextStrategy。
+     */
+    dynamicContextStrategy?: DynamicContextStrategy;
+
+    /**
+     * fast-tavern 风格的有序预设条目。
+     *
+     * 仅 promptAssemblyMode === 'entries' 时参与组装。
+     */
+    promptEntries?: PromptEntry[];
     
     /**
      * 工具策略（allowlist）
@@ -770,6 +899,14 @@ export interface SystemPromptConfig {
      * 每次请求时动态生成，不存储到历史记录中
      */
     dynamicTemplate: string;
+
+    /**
+     * 动态上下文保留策略
+     *
+     * single: 仅在当前请求中插入一份动态上下文，保持现状
+     * preserve: 保留每个回合缓存的动态上下文原位，不改写旧上下文
+     */
+    dynamicContextStrategy: DynamicContextStrategy;
     
     [key: string]: unknown;
 }
@@ -1139,6 +1276,8 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
  * value: 该工具的配置对象
  */
 export interface ToolsConfig {
+    read_file?: ReadFileToolConfig;
+    write_file?: WriteFileToolConfig;
     list_files?: ListFilesToolConfig;
     find_files?: FindFilesToolConfig;
     search_in_files?: SearchInFilesToolConfig;
@@ -1536,6 +1675,20 @@ export const COMMON_IGNORE_PATTERNS = [
 ];
 
 /**
+ * 默认 read_file 配置
+ */
+export const DEFAULT_READ_FILE_CONFIG: ReadFileToolConfig = {
+    outsideWorkspaceAccess: 'deny'
+};
+
+/**
+ * 默认 write_file 配置
+ */
+export const DEFAULT_WRITE_FILE_CONFIG: WriteFileToolConfig = {
+    outsideWorkspaceAccess: 'deny'
+};
+
+/**
  * 默认 list_files 配置
  */
 export const DEFAULT_LIST_FILES_CONFIG: ListFilesToolConfig = {
@@ -1611,6 +1764,7 @@ export const DEFAULT_SEARCH_IN_FILES_CONFIG: SearchInFilesToolConfig = {
 export const DEFAULT_APPLY_DIFF_CONFIG: ApplyDiffToolConfig = {
     // 默认使用新格式（unified diff patch）
     format: 'unified',
+    outsideWorkspaceAccess: 'deny',
     autoSave: false,
     autoSaveDelay: 3000,
     autoApplyWithoutDiffView: false,
@@ -2253,6 +2407,7 @@ export const CODE_PROMPT_MODE: PromptMode = {
     name: 'Code',
     icon: 'code',
     template: CODE_MODE_TEMPLATE,
+    promptAssemblyMode: 'legacy',
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
 };
@@ -2265,6 +2420,7 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
     name: 'Design',
     icon: 'lightbulb',
     template: DESIGN_MODE_TEMPLATE,
+    promptAssemblyMode: 'legacy',
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     toolPolicy: [
@@ -2296,6 +2452,7 @@ export const PLAN_PROMPT_MODE: PromptMode = {
     name: 'Plan',
     icon: 'list-unordered',
     template: PLAN_MODE_TEMPLATE,
+    promptAssemblyMode: 'legacy',
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     toolPolicy: [
@@ -2327,6 +2484,7 @@ export const ASK_PROMPT_MODE: PromptMode = {
     name: 'Ask',
     icon: 'question',
     template: ASK_MODE_TEMPLATE,
+    promptAssemblyMode: 'legacy',
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     toolPolicy: [
@@ -2373,6 +2531,7 @@ export const REVIEW_PROMPT_MODE: PromptMode = {
     name: 'Review',
     icon: 'eye',
     template: REVIEW_MODE_TEMPLATE,
+    promptAssemblyMode: 'legacy',
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     toolPolicy: REVIEW_MODE_TOOL_POLICY
@@ -2398,6 +2557,7 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    dynamicContextStrategy: 'single',
     customPrefix: '',
     customSuffix: ''
 };
@@ -2432,6 +2592,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     },
     toolAutoExec: DEFAULT_TOOL_AUTO_EXEC_CONFIG,
     toolsConfig: {
+        read_file: DEFAULT_READ_FILE_CONFIG,
+        write_file: DEFAULT_WRITE_FILE_CONFIG,
         list_files: DEFAULT_LIST_FILES_CONFIG,
         find_files: DEFAULT_FIND_FILES_CONFIG,
         search_in_files: DEFAULT_SEARCH_IN_FILES_CONFIG,

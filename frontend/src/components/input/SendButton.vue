@@ -16,12 +16,17 @@ defineProps<{
 
 const emit = defineEmits<{
   click: []
+  preserveDynamicContextClick: []
   cancel: []
 }>()
 
 // 处理点击
 function handleClick() {
   emit('click')
+}
+
+function handlePreserveDynamicContextClick() {
+  emit('preserveDynamicContextClick')
 }
 
 // 处理取消
@@ -41,16 +46,25 @@ function handleCancel() {
     <i class="codicon codicon-primitive-square stop-icon"></i>
   </button>
   
-  <!-- 发送按钮 - 正常状态下显示 -->
-  <button
-    v-else
-    class="send-button"
-    :disabled="disabled"
-    :title="t('components.input.send')"
-    @click="handleClick"
-  >
-    <i class="codicon codicon-send send-icon"></i>
-  </button>
+  <div v-else class="send-button-group">
+    <button
+      class="send-button preserve-send-button"
+      :disabled="disabled"
+      :title="t('components.input.sendPreserveDynamicContext')"
+      @click="handlePreserveDynamicContextClick"
+    >
+      <i class="codicon codicon-pinned preserve-send-icon"></i>
+    </button>
+
+    <button
+      class="send-button"
+      :disabled="disabled"
+      :title="t('components.input.send')"
+      @click="handleClick"
+    >
+      <i class="codicon codicon-send send-icon"></i>
+    </button>
+  </div>
 </template>
 
 <style scoped>
@@ -69,6 +83,20 @@ function handleCancel() {
   flex-shrink: 0;
 }
 
+.send-button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.preserve-send-button {
+  color: var(--vscode-descriptionForeground);
+}
+
+.preserve-send-button:hover:not(:disabled) {
+  color: var(--vscode-foreground);
+}
+
 .send-button:hover:not(:disabled) {
   background: var(--vscode-toolbar-hoverBackground);
 }
@@ -84,6 +112,10 @@ function handleCancel() {
 
 .send-icon {
   font-size: 16px;
+}
+
+.preserve-send-icon {
+  font-size: 15px;
 }
 
 .stop-icon {

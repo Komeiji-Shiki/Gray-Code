@@ -15,6 +15,8 @@ import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useDependency, TOOL_DEPENDENCIES, hasToolDependencies, getToolDependencies } from '@/composables/useDependency'
 import { useI18n } from '@/composables'
+import ReadFileConfig from './tools/files/read_file.vue'
+import WriteFileConfig from './tools/files/write_file.vue'
 import ListFilesConfig from './tools/files/list_files.vue'
 import ApplyDiffConfig from './tools/files/apply_diff.vue'
 import ExecuteCommandConfig from './tools/terminal/execute_command.vue'
@@ -59,6 +61,8 @@ const {
 // 判断工具是否有配置面板
 function hasConfigPanel(toolName: string): boolean {
   const toolsWithConfig = [
+    'read_file',
+    'write_file',
     'list_files',
     'apply_diff',
     'execute_command',
@@ -406,6 +410,14 @@ onMounted(() => {
             />
             
             <!-- 配置面板 -->
+            <ReadFileConfig
+              v-if="tool.name === 'read_file' && isConfigExpanded(tool.name)"
+              :tool-name="tool.name"
+            />
+            <WriteFileConfig
+              v-if="tool.name === 'write_file' && isConfigExpanded(tool.name)"
+              :tool-name="tool.name"
+            />
             <ListFilesConfig
               v-if="tool.name === 'list_files' && isConfigExpanded(tool.name)"
               :tool-name="tool.name"

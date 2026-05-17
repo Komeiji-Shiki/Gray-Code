@@ -69,7 +69,7 @@ export class OpenAIFormatter extends BaseFormatter {
         config: OpenAIConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history, dynamicContextMessages } = request;
+        const { history } = request;
         const toolMode = config.toolMode || 'function_call';
         
         // 处理工具和系统指令
@@ -117,25 +117,11 @@ export class OpenAIFormatter extends BaseFormatter {
         
         // 转换思考签名格式（移除，因为 OpenAI 目前不使用思考签名）
         let processedHistory = this.convertThoughtSignatures(history);
-        
-        // 插入动态上下文消息
-        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
-        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
-        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
-            // 在 processedHistory 中计算最后一组用户主动消息的第一条索引
-            const insertIndex = this.findLastUserMessageGroupIndex(processedHistory);
-            
-            if (insertIndex >= 0) {
-                processedHistory = [
-                    ...processedHistory.slice(0, insertIndex),
-                    ...dynamicContextMessages,
-                    ...processedHistory.slice(insertIndex)
-                ];
-            } else {
-                // 找不到用户主动消息（如自动总结后），插入到历史最前面（总结消息之前）
-                processedHistory = [...dynamicContextMessages, ...processedHistory];
-            }
-        }
+        processedHistory = this.injectPromptContextMessages(
+            processedHistory,
+            this.getPromptContextForRequest(request),
+            request.dynamicContextStrategy
+        );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         processedHistory = this.cleanInternalFields(processedHistory);

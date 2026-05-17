@@ -13,6 +13,8 @@ import type {
     StreamChunk,
     HttpRequestOptions
 } from '../types';
+import type { RequestPromptContext } from '../types';
+import { deserializePromptContextCache } from '../../prompt/promptContextCache';
 
 /**
  * 格式转换器基类
@@ -111,6 +113,49 @@ export abstract class BaseFormatter {
         
         return firstIndex;
     }
+
+    /**
+     * 查找当前回合的动态上下文稳定插入点。
+     *
+     * turnDynamicContext 是 ToolIterationLoopService 在新用户回合开始时写到该回合用户消息上的缓存。
+     * 同一用户回合内，后续模型继续、工具结果、隐藏 functionResponse 都不应改变动态上下文位置，
+     * 所以只要历史里还能找到这个缓存锚点，就必须插回该消息前，而不是重新按历史尾部计算。
+     *
+     * 如果当前最新用户输入还没有缓存（旧历史或测试构造），则退回到最后一组用户输入消息，
+     * 避免把上一回合的缓存误判成本回合锚点。
+     */
+    private findCurrentTurnStartIndex(history: Content[]): number {
+        const latestUserInputIndex = this.findLastUserMessageGroupIndex(history);
+        for (let i = history.length - 1; i >= 0; i--) {
+            const message = history[i];
+            if (
+                message.role === 'user' &&
+                message.isUserInput &&
+                !!message.turnDynamicContext
+            ) {
+                return latestUserInputIndex < 0 || i >= latestUserInputIndex ? i : latestUserInputIndex;
+            }
+        }
+
+        return latestUserInputIndex;
+    }
+
+    private findUserMessageGroupEndExclusiveIndex(history: Content[], startIndex: number): number {
+        if (startIndex < 0 || startIndex >= history.length) {
+            return -1;
+        }
+
+        let endIndex = startIndex + 1;
+        while (
+            endIndex < history.length &&
+            history[endIndex].role === 'user' &&
+            history[endIndex].isUserInput
+        ) {
+            endIndex++;
+        }
+
+        return endIndex;
+    }
     
     /**
      * 清理历史消息中的内部字段
@@ -122,9 +167,142 @@ export abstract class BaseFormatter {
      */
     protected cleanInternalFields(history: Content[]): Content[] {
         return history.map(content => {
-            const { isUserInput, ...rest } = content;
+            const { isUserInput, turnDynamicContext, turnDynamicContextStrategy, ...rest } = content;
             return rest;
         });
+    }
+
+    /**
+     * 从 turnDynamicContext 缓存构建历史 preserve 动态快照消息。
+     *
+     * 新缓存是 JSON；旧历史纯文本会在反序列化时按一条 user 消息兼容。
+     */
+    protected createDynamicContextMessagesFromCache(cache: string): Content[] {
+        return deserializePromptContextCache(cache).dynamicSnapshotMessages;
+    }
+
+    /**
+     * 从 GenerateRequest 里取结构化 prompt context。
+     *
+     * 旧调用路径只传 dynamicContextMessages 时，自动包装成 legacy 插入方式。
+     */
+    protected getPromptContextForRequest(request: GenerateRequest): RequestPromptContext | undefined {
+        if (request.promptContext) {
+            return request.promptContext;
+        }
+        if (!request.dynamicContextMessages) {
+            return undefined;
+        }
+        return {
+            beforeHistoryMessages: request.dynamicContextMessages,
+            afterHistoryMessages: [],
+            historyPlacement: 'legacy'
+        };
+    }
+
+    /**
+     * 按策略插入 prompt context。
+     *
+     * single：保持旧行为，只在最后一组用户主动消息前插入当前动态上下文。
+     * preserve：先把历史里已标记 preserve 的 turnDynamicContext 插回对应 user 消息前，
+     * 再把当前动态上下文插到当前回合位置；旧动态上下文不移动、不改写。
+     */
+    protected injectDynamicContextMessages(
+        history: Content[],
+        dynamicContextMessages?: Content[],
+        strategy: 'single' | 'preserve' = 'single'
+    ): Content[] {
+        return this.injectPromptContextMessages(
+            history,
+            dynamicContextMessages
+                ? {
+                    beforeHistoryMessages: dynamicContextMessages,
+                    afterHistoryMessages: [],
+                    historyPlacement: 'legacy'
+                }
+                : undefined,
+            strategy
+        );
+    }
+
+    protected injectPromptContextMessages(
+        history: Content[],
+        promptContext?: RequestPromptContext,
+        strategy: 'single' | 'preserve' = 'single'
+    ): Content[] {
+        const context = promptContext ?? { beforeHistoryMessages: [], afterHistoryMessages: [], historyPlacement: 'legacy' as const };
+        const preservedHistory = strategy === 'preserve'
+            ? this.injectPreservedDynamicSnapshots(history)
+            : history;
+
+        if (context.historyPlacement === 'entry') {
+            const currentTurnStartIndex = this.findCurrentTurnStartIndex(preservedHistory);
+
+            if (currentTurnStartIndex >= 0) {
+                return [
+                    ...context.beforeHistoryMessages,
+                    ...preservedHistory.slice(0, currentTurnStartIndex),
+                    ...context.afterHistoryMessages,
+                    ...preservedHistory.slice(currentTurnStartIndex)
+                ];
+            }
+
+            return [
+                ...context.beforeHistoryMessages,
+                ...preservedHistory,
+                ...context.afterHistoryMessages
+            ];
+        }
+
+        const legacyMessages = [
+            ...context.beforeHistoryMessages,
+            ...context.afterHistoryMessages
+        ];
+        return this.injectCurrentDynamicContext(preservedHistory, legacyMessages);
+    }
+
+    private injectPreservedDynamicSnapshots(history: Content[]): Content[] {
+        const result: Content[] = [];
+        const currentTurnStartIndex = this.findCurrentTurnStartIndex(history);
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+
+            const isHistoricalPreservedTurn =
+                currentTurnStartIndex >= 0 &&
+                i !== currentTurnStartIndex &&
+                message.role === 'user' &&
+                message.isUserInput &&
+                !!message.turnDynamicContext;
+
+            if (isHistoricalPreservedTurn) {
+                result.push(...this.createDynamicContextMessagesFromCache(message.turnDynamicContext!));
+            }
+            result.push(message);
+        }
+
+        return result;
+    }
+
+    /**
+     * 保持原有单份动态上下文插入逻辑。
+     */
+    private injectCurrentDynamicContext(history: Content[], dynamicContextMessages?: Content[]): Content[] {
+        if (!dynamicContextMessages || dynamicContextMessages.length === 0) {
+            return history;
+        }
+
+        const insertIndex = this.findCurrentTurnStartIndex(history);
+
+        if (insertIndex >= 0) {
+            return [
+                ...history.slice(0, insertIndex),
+                ...dynamicContextMessages,
+                ...history.slice(insertIndex)
+            ];
+        }
+
+        // 找不到用户主动消息（如自动总结后），插入到历史最前面（总结消息之前）
+        return [...dynamicContextMessages, ...history];
     }
 }
 

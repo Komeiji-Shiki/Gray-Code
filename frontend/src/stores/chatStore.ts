@@ -298,12 +298,13 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 将消息加入排队队列
    */
-  function enqueueMessage(content: string, attachments: Attachment[] = []): void {
+  function enqueueMessage(content: string, attachments: Attachment[] = [], sendOptions?: QueuedMessage['sendOptions']): void {
     const item: QueuedMessage = {
       id: generateId(),
       content,
       attachments: [...attachments],
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      sendOptions
     }
     state.messageQueue.value = [...state.messageQueue.value, item]
   }
@@ -367,7 +368,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 发送消息
-    await sendMessage(item.content, item.attachments)
+    await sendMessage(item.content, item.attachments, item.sendOptions)
   }
 
   /**
@@ -383,7 +384,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!next) return
 
     // 发送下一条排队消息
-    await sendMessage(next.content, next.attachments)
+    await sendMessage(next.content, next.attachments, next.sendOptions)
   }
 
   // ============ Build（Plan 执行）============

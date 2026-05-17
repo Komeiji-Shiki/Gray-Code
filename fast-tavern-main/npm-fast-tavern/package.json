@@ -1,0 +1,31 @@
+{
+  "name": "fast-tavern",
+  "version": "0.1.8",
+  "description": "A framework-agnostic prompt engine: preset + worldbook + character + regex + macros -> compiled messages.",
+  "keywords": ["prompt", "worldbook", "regex", "macro", "sillytavern"],
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "npm run build && node test/test.mjs"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
+  }
+}

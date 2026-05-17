@@ -14,8 +14,11 @@ import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox } from '../../../common'
 import { t } from '@/i18n'
 
+type OutsideWorkspaceWriteAccess = 'deny' | 'ask'
+
 // 配置数据
 const format = ref<'unified' | 'search_replace'>('unified')
+const outsideWorkspaceAccess = ref<OutsideWorkspaceWriteAccess>('deny')
 const autoSave = ref(false)
 const autoSaveDelay = ref(3000)
 const autoApplyWithoutDiffView = ref(false)
@@ -37,6 +40,19 @@ const delayOptions = computed(() => [
   { value: 10000, label: t('components.settings.toolSettings.files.applyDiff.delay10s') }
 ])
 
+const outsideWorkspaceAccessOptions: Array<{ value: OutsideWorkspaceWriteAccess; labelKey: string; descKey: string }> = [
+  {
+    value: 'deny',
+    labelKey: 'components.settings.toolSettings.files.outsideWorkspaceAccess.deny',
+    descKey: 'components.settings.toolSettings.files.applyDiff.outsideWorkspaceDenyDesc'
+  },
+  {
+    value: 'ask',
+    labelKey: 'components.settings.toolSettings.files.outsideWorkspaceAccess.ask',
+    descKey: 'components.settings.toolSettings.files.applyDiff.outsideWorkspaceAskDesc'
+  }
+]
+
 // 计算当前选中的延迟标签
 const currentDelayLabel = computed(() => {
   const option = delayOptions.value.find(o => o.value === autoSaveDelay.value)
@@ -49,6 +65,7 @@ async function loadConfig() {
   try {
     const response = await sendToExtension<{ config: {
       format?: 'unified' | 'search_replace';
+      outsideWorkspaceAccess?: OutsideWorkspaceWriteAccess;
       autoSave: boolean;
       autoSaveDelay: number;
       autoApplyWithoutDiffView?: boolean;
@@ -62,6 +79,7 @@ async function loadConfig() {
     )
     if (response?.config) {
       format.value = response.config.format ?? 'unified'
+      outsideWorkspaceAccess.value = response.config.outsideWorkspaceAccess ?? 'deny'
       autoSave.value = response.config.autoSave ?? false
       autoSaveDelay.value = response.config.autoSaveDelay ?? 3000
       autoApplyWithoutDiffView.value = response.config.autoApplyWithoutDiffView ?? false
@@ -82,6 +100,7 @@ async function saveConfig() {
     await sendToExtension('tools.updateApplyDiffConfig', {
       config: {
         format: format.value,
+        outsideWorkspaceAccess: outsideWorkspaceAccess.value,
         autoSave: autoSave.value,
         autoSaveDelay: autoSaveDelay.value,
         autoApplyWithoutDiffView: autoApplyWithoutDiffView.value,
@@ -98,6 +117,12 @@ async function saveConfig() {
 
 function updateFormat(newFormat: 'unified' | 'search_replace') {
   format.value = newFormat
+  saveConfig()
+}
+
+function updateOutsideWorkspaceAccess(value: OutsideWorkspaceWriteAccess) {
+  if (outsideWorkspaceAccess.value === value) return
+  outsideWorkspaceAccess.value = value
   saveConfig()
 }
 
@@ -180,6 +205,39 @@ onMounted(() => {
                 {{ t('components.settings.toolSettings.files.applyDiff.formatSearchReplace') }}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 工作区外写入权限 -->
+      <div class="config-section">
+        <div class="section-header">
+          <i class="codicon codicon-folder-opened"></i>
+          <span>{{ t('components.settings.toolSettings.files.applyDiff.outsideWorkspaceAccess') }}</span>
+        </div>
+
+        <div class="section-content">
+          <div class="config-item access-config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.files.applyDiff.outsideWorkspaceAccess') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.files.applyDiff.outsideWorkspaceDesc') }}</span>
+            </div>
+            <div class="access-selector">
+              <button
+                v-for="option in outsideWorkspaceAccessOptions"
+                :key="option.value"
+                :class="['access-btn', { active: outsideWorkspaceAccess === option.value }]"
+                :disabled="isSaving"
+                @click="updateOutsideWorkspaceAccess(option.value)"
+              >
+                <span class="access-btn-title">{{ t(option.labelKey) }}</span>
+                <span class="access-btn-desc">{{ t(option.descKey) }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="config-tip warning">
+            <i class="codicon codicon-warning"></i>
+            <span>{{ t('components.settings.toolSettings.files.applyDiff.outsideWorkspaceTip') }}</span>
           </div>
         </div>
       </div>
@@ -434,6 +492,82 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.access-config-item {
+  align-items: flex-start;
+}
+
+.access-selector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.access-btn {
+  min-width: 120px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.access-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.access-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}
+
+.access-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.access-btn-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.access-btn-desc {
+  font-size: 10px;
+  line-height: 1.3;
+  opacity: 0.85;
+}
+
+.config-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.config-tip.warning {
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 193, 7, 0.08));
+  border-color: var(--vscode-inputValidation-warningBorder, rgba(255, 193, 7, 0.45));
+}
+
+.config-tip .codicon {
+  margin-top: 1px;
+  flex-shrink: 0;
 }
 
 .threshold-number-input {

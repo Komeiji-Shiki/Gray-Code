@@ -165,6 +165,12 @@ export interface ToolContext {
      * 格式为: `tool_{timestamp}_{random}`
      */
     toolId?: string;
+
+    /**
+     * 本次工具调用是否已经通过聊天里的原本工具确认框批准。
+     * 工作区外 ask 策略会使用这个标记区分“已批准执行”和“绕过确认直接调用”。
+     */
+    approvedByToolConfirmation?: boolean;
     
     /**
      * 工具配置

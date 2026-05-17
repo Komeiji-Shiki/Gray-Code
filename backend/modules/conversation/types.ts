@@ -326,8 +326,8 @@ export interface Content {
      * 思考持续时间（毫秒）
      *
      * 仅对包含思考内容的 model 消息有值
-     * 记录从收到第一个思考块到收到第一个非思考内容块之间的时间
-     * 用于在前端显示 AI 思考耗时
+     * 记录从请求开始到收到第一个非思考内容块之间的时间，包含首字/首块等待时间。
+     * 用于在前端显示 AI 思考耗时。
      */
     thinkingDuration?: number;
     
@@ -335,7 +335,7 @@ export interface Content {
      * 思考开始时间戳（毫秒）
      *
      * 仅在流式响应过程中使用，用于计算思考持续时间
-     * 完成后会被移除，只保留 thinkingDuration
+     * 对思考模型从请求开始时间计入；完成后会被移除，只保留 thinkingDuration
      */
     thinkingStartTime?: number;
     
@@ -491,6 +491,11 @@ export interface Content {
      * 也不会传给前端（getMessagesPaged 中过滤）。
      */
     turnDynamicContext?: string;
+
+    /**
+     * 当前回合使用的动态上下文策略（内部缓存字段）。
+     */
+    turnDynamicContextStrategy?: 'single' | 'preserve';
 }
 
 /**

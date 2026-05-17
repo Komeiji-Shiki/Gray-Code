@@ -13,8 +13,7 @@ import InputAttachments from './InputAttachments.vue'
 import PinnedFilesWidget from './PinnedFilesWidget.vue'
 import SkillsWidget from './SkillsWidget.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
-import type { ChannelOption } from './types'
-import type { PromptMode } from './types'
+import type { ChannelOption, DynamicContextStrategy, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
@@ -42,7 +41,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [content: string, attachments: Attachment[]]
+  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }]
   cancel: []
   clearAttachments: []
   attachFile: []
@@ -76,6 +75,7 @@ const configs = ref<any[]>([])
 const isLoadingConfigs = ref(false)
 
 const promptModes = ref<PromptMode[]>([])
+const globalDynamicContextStrategy = ref<DynamicContextStrategy | undefined>(undefined)
 
 const channelOptions = computed<ChannelOption[]>(() =>
   configs.value
@@ -93,6 +93,14 @@ const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
 const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
+const currentDynamicContextStrategy = computed<DynamicContextStrategy | undefined>(() => {
+  const mode = promptModes.value.find(item => item.id === chatStore.currentPromptModeId)
+  const strategy = mode?.dynamicContextStrategy ?? globalDynamicContextStrategy.value
+  if (strategy === 'preserve') return 'preserve'
+  if (strategy === 'single') return 'single'
+  // 模式列表尚未加载完成时不要向后端传 override，避免误把后端 preserve 覆盖成 single
+  return undefined
+})
 
 async function loadConfigs() {
   isLoadingConfigs.value = true
@@ -118,6 +126,7 @@ async function loadPromptModes() {
     const result = await configService.getPromptModes()
     if (result) {
       promptModes.value = result.modes
+      globalDynamicContextStrategy.value = result.dynamicContextStrategy === 'preserve' ? 'preserve' : result.dynamicContextStrategy === 'single' ? 'single' : undefined
       // 仅在 store 还未设置过（使用默认值 'code'）且后端返回不同值时，才初始化 store
       // 后续切换全部由 store 驱动，不再反向覆盖
       // （注：初始加载时 store 可能已从对话元数据恢复，此处不强制覆盖）
@@ -167,23 +176,27 @@ const canSend = computed(() => {
   return hasContent && !props.uploading
 })
 
-function handleSend() {
+function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!canSend.value) return
 
   const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
+  const resolvedStrategy = options?.dynamicContextStrategyOverride ?? currentDynamicContextStrategy.value
+  const sendOptions = resolvedStrategy
+    ? { ...options, dynamicContextStrategyOverride: resolvedStrategy }
+    : options
 
   // 智能决策：AI 空闲且队列为空时直接发送，否则入队
   if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0) {
     // 直接发送
-    emit('send', content, currentAttachments)
+    emit('send', content, currentAttachments, sendOptions)
   } else {
     // 加入候选区队列
     // 如果有工具待确认，仍走直接发送路径（拒绝工具的场景）
     if (chatStore.hasPendingToolConfirmation) {
-      emit('send', content, currentAttachments)
+      emit('send', content, currentAttachments, sendOptions)
     } else {
-      chatStore.enqueueMessage(content, currentAttachments)
+      chatStore.enqueueMessage(content, currentAttachments, sendOptions)
       // 入队后清空附件（通知父组件）
       emit('clearAttachments')
     }
@@ -192,6 +205,11 @@ function handleSend() {
   editorNodes.value = []
   chatStore.clearInputValue()
 }
+
+function handlePreserveDynamicContextSend() {
+  handleSend({ dynamicContextStrategyOverride: 'preserve' })
+}
+
 
 function handleCancel() {
   emit('cancel')
@@ -651,6 +669,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           :disabled="!canSend"
           :loading="chatStore.isWaitingForResponse"
           @click="handleSend"
+          @preserve-dynamic-context-click="handlePreserveDynamicContextSend"
           @cancel="handleCancel"
         />
       </div>

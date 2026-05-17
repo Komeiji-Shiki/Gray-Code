@@ -66,7 +66,10 @@ export class StreamAccumulator {
     /** 思考开始时间戳（毫秒） */
     private thinkingStartTime?: number;
     
-    /** 思考持续时间（毫秒） */
+    /**
+     * 思考持续时间（毫秒）。
+     * 对思考模型来说，从请求开始计入，包含首字/首块等待时间。
+     */
     private thinkingDuration?: number;
     
     /** 是否已经收到非思考的普通文本 */
@@ -241,6 +244,17 @@ export class StreamAccumulator {
         return this.providerType;
     }
     
+    private ensureThinkingStartTime(): void {
+        if (this.thinkingStartTime !== undefined) {
+            return;
+        }
+
+        // 一旦确认本次响应包含思考内容，就把请求开始到首段思考/首字之间的等待也计入思考时间。
+        this.thinkingStartTime = this.requestStartTime
+            ?? this.firstChunkTime
+            ?? Date.now();
+    }
+
     /**
      * 添加单个 part
      *
@@ -294,6 +308,10 @@ export class StreamAccumulator {
         // 提取 thoughtSignature 用于内部追踪
         if ((part as any).thoughtSignature) {
             this.thoughtSignatures[this.providerType] = (part as any).thoughtSignature;
+        }
+
+        if (part.redactedThinking) {
+            this.ensureThinkingStartTime();
         }
         if (part.thoughtSignatures) {
             Object.assign(this.thoughtSignatures, part.thoughtSignatures);
@@ -432,9 +450,7 @@ export class StreamAccumulator {
         // 思考计时逻辑
         if (isThought) {
             // 记录思考开始时间（仅首次）
-            if (this.thinkingStartTime === undefined) {
-                this.thinkingStartTime = Date.now();
-            }
+            this.ensureThinkingStartTime();
         } else if (part.text) {
             // 收到普通文本时，计算思考持续时间
             if (this.thinkingStartTime !== undefined && !this.hasReceivedNormalText) {

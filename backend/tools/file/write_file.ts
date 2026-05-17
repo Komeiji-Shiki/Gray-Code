@@ -9,9 +9,12 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
 import { getDiffManager } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
+
+const EXTERNAL_PENDING_WRITE_DIR = path.join(require('os').tmpdir(), 'limcode-outside-workspace-write');
 
 /**
  * 单个文件写入配置
@@ -37,6 +40,36 @@ interface WriteResult {
     diffContentId?: string;
     /** Pending diff ID，用于确认/拒绝（历史字段，尽量避免再依赖） */
     pendingDiffId?: string;
+    outsideWorkspace?: boolean;
+}
+
+function ensureDirectoryExists(dirPath: string): void {
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+}
+
+function createExternalPreviewFilePath(targetPath: string): string {
+    ensureDirectoryExists(EXTERNAL_PENDING_WRITE_DIR);
+    const safeBaseName = path.basename(targetPath) || 'outside-workspace-file';
+    return path.join(
+        EXTERNAL_PENDING_WRITE_DIR,
+        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeBaseName}`
+    );
+}
+
+function cleanupPreviewFile(previewPath: string | undefined): void {
+    if (!previewPath) {
+        return;
+    }
+
+    try {
+        if (fs.existsSync(previewPath)) {
+            fs.unlinkSync(previewPath);
+        }
+    } catch (error) {
+        console.warn(`Failed to remove outside-workspace write preview file: ${previewPath}`, error);
+    }
 }
 
 /**
@@ -54,17 +87,20 @@ async function writeSingleFile(
 ): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
-    const { uri, workspace } = resolveUriWithInfo(filePath);
+    const { uri, workspace, error, isOutsideWorkspace } = resolveFileToolPathWithInfo(filePath);
     if (!uri) {
         return {
             path: filePath,
             success: false,
-            error: 'No workspace folder open'
+            outsideWorkspace: isOutsideWorkspace,
+            error: error || 'No workspace folder open'
         };
     }
 
     const absolutePath = uri.fsPath;
     const workspaceName = isMultiRoot ? workspace?.name : undefined;
+    let previewPath: string | undefined;
+    let diffAbsolutePath = absolutePath;
 
     try {
         // 检查文件是否存在并获取原始内容
@@ -87,18 +123,24 @@ async function writeSingleFile(
             return {
                 path: filePath,
                 success: true,
+                outsideWorkspace: isOutsideWorkspace,
                 action: 'unchanged'
             };
         }
 
-        // 如果文件不存在，需要先创建目录
+        // 如果文件不存在，需要先创建目录。工作区外新文件必须等用户确认后才真正写入目标路径，
+        // 因此使用临时预览文件承载 diff 视图。
         if (!fileExists) {
-            const dirPath = path.dirname(absolutePath);
-            if (!fs.existsSync(dirPath)) {
-                fs.mkdirSync(dirPath, { recursive: true });
+            if (isOutsideWorkspace) {
+                previewPath = createExternalPreviewFilePath(absolutePath);
+                fs.writeFileSync(previewPath, '', 'utf8');
+                diffAbsolutePath = previewPath;
+            } else {
+                const dirPath = path.dirname(absolutePath);
+                ensureDirectoryExists(dirPath);
+                // 创建空文件以便 DiffManager 可以操作
+                fs.writeFileSync(absolutePath, '', 'utf8');
             }
-            // 创建空文件以便 DiffManager 可以操作
-            fs.writeFileSync(absolutePath, '', 'utf8');
         }
 
         // 使用 DiffManager 创建待审阅的 diff
@@ -114,7 +156,7 @@ async function writeSingleFile(
         
         const pendingDiff = await diffManager.createPendingDiff(
             filePath,
-            absolutePath,
+            diffAbsolutePath,
             originalContent,
             content,
             blocks,  // 传递 blocks 信息以启用 CodeLens 和 inline decorations
@@ -175,6 +217,15 @@ async function writeSingleFile(
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
 
+        if (wasAccepted && previewPath) {
+            ensureDirectoryExists(path.dirname(absolutePath));
+            let contentToWrite = content;
+            if (previewPath && fs.existsSync(previewPath)) {
+                contentToWrite = fs.readFileSync(previewPath, 'utf8');
+            }
+            fs.writeFileSync(absolutePath, contentToWrite, 'utf8');
+        }
+
         // 尝试将内容保存到 DiffStorageManager，供前端按需加载
         const diffStorageManager = getDiffStorageManager();
         let diffContentId: string | undefined;
@@ -198,6 +249,7 @@ async function writeSingleFile(
                 path: filePath,
                 success: false,
                 cancelled: true,
+                outsideWorkspace: isOutsideWorkspace,
                 action: fileExists ? 'modified' : 'created',
                 status: 'rejected',
                 error: interruptReason === 'abort'
@@ -211,6 +263,7 @@ async function writeSingleFile(
         return {
             path: filePath,
             success: wasAccepted,
+            outsideWorkspace: isOutsideWorkspace,
             action: fileExists ? 'modified' : 'created',
             status: wasAccepted ? 'accepted' : 'rejected',
             error: wasAccepted ? undefined : 'Diff was rejected',
@@ -220,8 +273,11 @@ async function writeSingleFile(
         return {
             path: filePath,
             success: false,
+            outsideWorkspace: isOutsideWorkspace,
             error: error instanceof Error ? error.message : String(error)
         };
+    } finally {
+        cleanupPreviewFile(previewPath);
     }
 }
 
@@ -238,12 +294,12 @@ export function createWriteFileTool(): Tool {
     const arrayFormatNote = '\n\n**IMPORTANT**: The `files` parameter MUST be an array, even for a single file. Example: `{"files": [{"path": "file.txt", "content": "..."}]}`, NOT `{"path": "file.txt", "content": "..."}`.';
     
     // 根据工作区数量生成描述
-    let description = 'Write content to one or more files. A Diff preview will be shown for user confirmation regardless of whether the file exists. For new files, a full content diff preview will be shown. Supports auto-save or manual review mode (configured in settings).' + arrayFormatNote;
-    let pathDescription = 'File path (relative to workspace root)';
+    let description = 'Write content to one or more files. A Diff preview will be shown for user confirmation regardless of whether the file exists. For new files, a full content diff preview will be shown. Supports auto-save or manual review mode (configured in settings). Relative paths are resolved from the workspace root; absolute paths or file:// URIs outside the workspace require permission according to settings.' + arrayFormatNote;
+    let pathDescription = 'File path. Relative paths are resolved from the workspace root; absolute paths/file:// URIs may be allowed by settings.';
     
     if (isMultiRoot) {
-        description += `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-        pathDescription = `File path, must use "workspace_name/path" format`;
+        description += `\n\nMulti-root workspace: For workspace-relative paths, use "workspace_name/path" format. Absolute paths/file:// URIs outside the workspace may be allowed by settings. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = `File path. For workspace-relative paths use "workspace_name/path" format; absolute paths/file:// URIs may be allowed by settings.`;
     }
     
     return {
@@ -282,13 +338,15 @@ export function createWriteFileTool(): Tool {
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required' };
             }
+
+            const outsideWorkspaceAccessError = ensureOutsideWorkspaceAccessApproved('write_file', args, context);
+            if (outsideWorkspaceAccessError) {
+                return { success: false, error: outsideWorkspaceAccessError };
+            }
             
             // 获取工作区信息
             const workspaces = getAllWorkspaces();
             const isMultiRoot = workspaces.length > 1;
-
-            const diffManager = getDiffManager();
-            const settings = diffManager.getSettings();
 
             const results: WriteResult[] = [];
             let successCount = 0;

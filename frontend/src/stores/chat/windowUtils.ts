@@ -108,6 +108,24 @@ export function setTotalMessagesFromWindow(state: ChatStoreState): void {
 }
 
 /**
+ * 同步顶部折叠提示。
+ *
+ * foldedMessageCount 表示“当前窗口之前仍未加载的消息数”，应由窗口起点推导，
+ * 不能按裁剪次数累加；否则用户上拉恢复历史后再次裁剪会让数字虚高。
+ */
+export function syncFoldedHistoryHint(state: ChatStoreState): void {
+  if (state.windowStartIndex.value <= 0) {
+    state.historyFolded.value = false
+    state.foldedMessageCount.value = 0
+    return
+  }
+
+  if (state.historyFolded.value) {
+    state.foldedMessageCount.value = state.windowStartIndex.value
+  }
+}
+
+/**
  * 裁剪消息窗口（从顶部丢弃更早消息）
  *
  * 返回：被丢弃的消息条数（包含 functionResponse）。
@@ -139,7 +157,7 @@ export function trimWindowFromTop(state: ChatStoreState, maxCount = MAX_WINDOW_M
 
   // 标记已发生折叠（用于 UI 提示）
   state.historyFolded.value = true
-  state.foldedMessageCount.value += removeCount
+  syncFoldedHistoryHint(state)
 
   syncTotalMessagesFromWindow(state)
 

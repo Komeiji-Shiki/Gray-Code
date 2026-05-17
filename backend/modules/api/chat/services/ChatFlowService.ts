@@ -16,7 +16,7 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { ChannelError, ErrorType } from '../../../channel/types';
-import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { Content, ContentPart } from '../../../conversation/types';
 import type { CheckpointRecord } from '../../../checkpoint';
 
@@ -41,6 +41,7 @@ import type {
   ChatStreamToolStatusData,
   ChatStreamAutoSummaryData,
   ChatStreamAutoSummaryStatusData,
+  ChatStreamAgentStateData,
 } from '../types';
 
 import type { MessageBuilderService } from './MessageBuilderService';
@@ -58,6 +59,7 @@ import {
 } from '../../../conversation/pendingApprovalGate';
 import { getHiddenContinuationApprovalRequirement } from './approvalGateRules';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { createAgentStateData } from './agentTrace';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -69,7 +71,8 @@ export type ChatStreamOutput =
   | ChatStreamToolsExecutingData
   | ChatStreamToolStatusData
   | ChatStreamAutoSummaryData
-  | ChatStreamAutoSummaryStatusData;
+  | ChatStreamAutoSummaryStatusData
+  | ChatStreamAgentStateData;
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
@@ -125,6 +128,13 @@ export class ChatFlowService {
 
     const stored = await this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PROMPT_MODE_KEY);
     return this.settingsManager.resolvePromptMode(this.normalizePromptModeId((stored as any)?.modeId));
+  }
+
+  private resolveDynamicContextStrategy(
+    promptModeSnapshot?: ResolvedPromptModeSnapshot,
+    override?: DynamicContextStrategy
+  ): DynamicContextStrategy {
+    return this.settingsManager?.resolveDynamicContextStrategy(promptModeSnapshot, override) ?? (override === 'preserve' ? 'preserve' : 'single');
   }
 
   private mergeResponseWithCleanup(
@@ -589,6 +599,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot, request.dynamicContextStrategyOverride);
 
     if (!hiddenFunctionResponse) {
       await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
@@ -614,6 +625,8 @@ export class ChatFlowService {
       maxToolIterations,
       modelOverride,
       promptModeSnapshot,
+      dynamicContextStrategy,
+      !hiddenFunctionResponse,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -664,6 +677,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry');
 
@@ -676,6 +690,8 @@ export class ChatFlowService {
       maxToolIterations,
       modelOverride,
       promptModeSnapshot,
+      dynamicContextStrategy,
+      false,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -750,6 +766,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_and_retry');
 
@@ -784,6 +801,7 @@ export class ChatFlowService {
       maxToolIterations,
       modelOverride,
       promptModeSnapshot,
+      dynamicContextStrategy,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -847,6 +865,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot, request.dynamicContextStrategyOverride);
 
     if (!hiddenFunctionResponse) {
       await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
@@ -923,7 +942,9 @@ export class ChatFlowService {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
+      isNewTurn: !hiddenFunctionResponse,
       promptModeSnapshot,
+      dynamicContextStrategy,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -965,6 +986,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry_stream');
 
@@ -1031,6 +1053,7 @@ export class ChatFlowService {
       // 重试的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文
       isNewTurn: false,
       promptModeSnapshot,
+      dynamicContextStrategy,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -1072,6 +1095,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_and_retry');
 
@@ -1178,6 +1202,7 @@ export class ChatFlowService {
       isFirstMessage: isEditFirstMessage,
       maxIterations: maxToolIterations,
       promptModeSnapshot,
+      dynamicContextStrategy,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -1208,6 +1233,7 @@ export class ChatFlowService {
     }
 
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     // 3. 寻找最后一条包含工具调用的 model 消息及其索引
     const history = await this.conversationManager.getHistoryRef(conversationId);
@@ -1280,6 +1306,7 @@ export class ChatFlowService {
         createBeforeModelCheckpoint: false,
         isNewTurn: false,
         promptModeSnapshot,
+        dynamicContextStrategy,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1306,6 +1333,8 @@ export class ChatFlowService {
         maxIterations: this.getMaxToolIterations(),
         createBeforeModelCheckpoint: false,
         isNewTurn: false,
+        promptModeSnapshot,
+        dynamicContextStrategy,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1343,6 +1372,14 @@ export class ChatFlowService {
 
     // 4.1 先处理队首工具（该工具一定是“当前等待批准”的那个）
     if (nextDecision.confirmed) {
+      yield createAgentStateData({
+        conversationId,
+        state: 'executing_tools',
+        status: 'started',
+        label: `执行已确认工具：${nextCall.name}`,
+        tool: { id: nextCall.id, name: nextCall.name },
+      });
+
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
         [nextCall],
         conversationId,
@@ -1350,6 +1387,7 @@ export class ChatFlowService {
         config,
         request.abortSignal,
         promptModeSnapshot,
+        new Set([nextCall.id]),
       );
 
       while (true) {
@@ -1362,6 +1400,14 @@ export class ChatFlowService {
         const event = value as ToolExecutionProgressEvent;
 
         if (event.type === 'start') {
+          yield createAgentStateData({
+            conversationId,
+            state: 'executing_tools',
+            status: 'info',
+            label: `执行工具：${event.call.name}`,
+            tool: { id: event.call.id, name: event.call.name },
+          });
+
           yield {
             conversationId,
             content: lastMessage,
@@ -1384,6 +1430,14 @@ export class ChatFlowService {
             status = 'warning';
           }
 
+          yield createAgentStateData({
+            conversationId,
+            state: 'executing_tools',
+            status: status === 'error' ? 'failed' : 'completed',
+            label: status === 'error' ? `工具执行失败：${event.call.name}` : `工具执行完成：${event.call.name}`,
+            tool: { id: event.call.id, name: event.call.name },
+          });
+
           yield {
             conversationId,
             toolStatus: true as const,
@@ -1397,8 +1451,24 @@ export class ChatFlowService {
         }
       }
 
+      yield createAgentStateData({
+        conversationId,
+        state: 'executing_tools',
+        status: 'completed',
+        label: `已确认工具执行完成：${nextCall.name}`,
+        tool: { id: nextCall.id, name: nextCall.name },
+      });
+
       resolvedIdsThisTurn.add(nextCall.id);
     } else {
+      yield createAgentStateData({
+        conversationId,
+        state: 'waiting_confirmation',
+        status: 'completed',
+        label: `工具已被拒绝：${nextCall.name}`,
+        tool: { id: nextCall.id, name: nextCall.name },
+      });
+
       await this.conversationManager.rejectToolCalls(conversationId, messageIndex, [nextCall.id]);
 
       const rejectedResult = {
@@ -1437,7 +1507,7 @@ export class ChatFlowService {
       if (respondedToolIds.has(c.id) || resolvedIdsThisTurn.has(c.id)) {
         continue;
       }
-      if (this.toolExecutionService.toolNeedsConfirmation(c.name, promptModeSnapshot)) {
+      if (this.toolExecutionService.toolNeedsConfirmation(c.name, c.args, promptModeSnapshot)) {
         nextConfirmTool = c;
         break;
       }
@@ -1445,6 +1515,14 @@ export class ChatFlowService {
     }
 
     if (autoSuffix.length > 0) {
+      const autoStartedAt = Date.now();
+      yield createAgentStateData({
+        conversationId,
+        state: 'executing_tools',
+        status: 'started',
+        label: `继续自动执行 ${autoSuffix.length} 个后续工具`,
+      });
+
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
         autoSuffix,
         conversationId,
@@ -1464,6 +1542,14 @@ export class ChatFlowService {
         const event = value as ToolExecutionProgressEvent;
 
         if (event.type === 'start') {
+          yield createAgentStateData({
+            conversationId,
+            state: 'executing_tools',
+            status: 'info',
+            label: `执行工具：${event.call.name}`,
+            tool: { id: event.call.id, name: event.call.name },
+          });
+
           yield {
             conversationId,
             content: lastMessage,
@@ -1486,6 +1572,14 @@ export class ChatFlowService {
             status = 'warning';
           }
 
+          yield createAgentStateData({
+            conversationId,
+            state: 'executing_tools',
+            status: status === 'error' ? 'failed' : 'completed',
+            label: status === 'error' ? `工具执行失败：${event.call.name}` : `工具执行完成：${event.call.name}`,
+            tool: { id: event.call.id, name: event.call.name },
+          });
+
           yield {
             conversationId,
             toolStatus: true as const,
@@ -1498,6 +1592,14 @@ export class ChatFlowService {
           } satisfies ChatStreamToolStatusData;
         }
       }
+
+      yield createAgentStateData({
+        conversationId,
+        state: 'executing_tools',
+        status: 'completed',
+        label: '后续工具批次执行完成',
+        startedAt: autoStartedAt,
+      });
 
       for (const c of autoSuffix) {
         resolvedIdsThisTurn.add(c.id);
@@ -1518,6 +1620,13 @@ export class ChatFlowService {
 
     // 6. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
     if (responseParts.length > 0 || multimodalAttachments.length > 0) {
+      yield createAgentStateData({
+        conversationId,
+        state: 'append_tool_results',
+        status: 'started',
+        label: '写入已确认工具结果到对话历史',
+      });
+
       const confirmFunctionResponseParts = multimodalAttachments.length > 0
         ? [...multimodalAttachments, ...responseParts]
         : responseParts;
@@ -1526,6 +1635,13 @@ export class ChatFlowService {
         role: 'user',
         parts: confirmFunctionResponseParts,
         isFunctionResponse: true,
+      });
+
+      yield createAgentStateData({
+        conversationId,
+        state: 'append_tool_results',
+        status: 'completed',
+        label: '已确认工具结果已写入历史',
       });
     }
 
@@ -1574,6 +1690,14 @@ export class ChatFlowService {
 
     // 6. 如果还有需要批准的工具，进入等待确认阶段（不触发 toolIteration，也不继续 AI）
     if (nextConfirmTool) {
+      yield createAgentStateData({
+        conversationId,
+        state: 'waiting_confirmation',
+        status: 'started',
+        label: `等待工具确认：${nextConfirmTool.name}`,
+        tool: { id: nextConfirmTool.id, name: nextConfirmTool.name },
+      });
+
       yield {
         conversationId,
         pendingToolCalls: [{
@@ -1618,6 +1742,7 @@ export class ChatFlowService {
       createBeforeModelCheckpoint: false,
       isNewTurn: false,
       promptModeSnapshot,
+      dynamicContextStrategy,
     })) {
       yield output as ChatStreamOutput;
     }

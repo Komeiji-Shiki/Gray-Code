@@ -266,7 +266,71 @@ export interface MessageMetadata {
   thoughtsTokenCount?: number
   /** @deprecated 使用 usageMetadata.candidatesTokenCount */
   candidatesTokenCount?: number
+  /** Agent 工具循环运行轨迹 */
+  agentTrace?: AgentTraceEvent[]
+  /** 本轮实际发送给模型的 Prompt Context 预览 */
+  promptContextPreview?: PromptContextPreview
+  /** 当前 Agent 状态 */
+  currentAgentState?: AgentLoopState
   [key: string]: any
+}
+
+// ============ Agent 轨迹 / Prompt Context 预览 ============
+
+export type AgentLoopState =
+  | 'prepare_context'
+  | 'context_trim'
+  | 'summarizing'
+  | 'request_model'
+  | 'streaming'
+  | 'parse_tool_calls'
+  | 'waiting_confirmation'
+  | 'executing_tools'
+  | 'append_tool_results'
+  | 'completed'
+  | 'aborted'
+  | 'failed'
+
+export type AgentTraceEventStatus = 'started' | 'completed' | 'info' | 'failed'
+
+export interface PromptContextPreviewSection {
+  id: string
+  title: string
+  role?: 'system' | 'user' | 'model'
+  text: string
+  charCount: number
+  estimatedTokens: number
+  messageCount?: number
+  truncated?: boolean
+}
+
+export interface PromptContextPreview {
+  generatedAt: number
+  iteration: number
+  strategy: 'single' | 'preserve'
+  historyPlacement: 'legacy' | 'entry'
+  trim: {
+    trimStartIndex?: number
+    historyLength: number
+    needsAutoSummarize?: boolean
+  }
+  sections: PromptContextPreviewSection[]
+}
+
+export interface AgentTraceEvent {
+  id: string
+  state: AgentLoopState
+  status: AgentTraceEventStatus
+  label: string
+  detail?: string
+  iteration?: number
+  createdAt: number
+  durationMs?: number
+  tool?: {
+    id?: string
+    name: string
+  }
+  promptContextPreview?: PromptContextPreview
 }
 
 // ============ 工具相关类型 ============
@@ -414,6 +478,8 @@ export interface ChatRequest {
   message: string
   /** 可选：覆盖本次请求使用的模型（不修改 config） */
   modelOverride?: string
+  /** 可选：覆盖本次请求的动态上下文策略 */
+  dynamicContextStrategyOverride?: 'single' | 'preserve'
 }
 
 export interface RetryRequest {
@@ -497,6 +563,7 @@ export interface StreamChunk {
     | 'awaitingConfirmation'
     | 'toolsExecuting'
     | 'toolStatus'
+    | 'agentState'
     | 'autoSummaryStatus'
     | 'autoSummary'
   conversationId: string
@@ -526,6 +593,10 @@ export interface StreamChunk {
     status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
     result?: Record<string, unknown>
   }
+
+  /** Agent 状态机事件（用于运行轨迹面板） */
+  agentState?: boolean
+  event?: AgentTraceEvent
 
   /** 自动总结状态（用于显示“自动总结中”提示） */
   autoSummaryStatus?: boolean

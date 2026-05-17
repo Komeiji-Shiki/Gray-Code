@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fast-tavern"
+version = "0.1.8"
+description = "A framework-agnostic prompt engine: preset + worldbook + character + regex + macros -> compiled messages."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["prompt", "worldbook", "regex", "macro", "sillytavern"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fast_tavern"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

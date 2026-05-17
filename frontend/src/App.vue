@@ -193,7 +193,7 @@ function handleNewTab() {
 }
 
 // 处理发送消息
-async function handleSend(content: string, messageAttachments: Attachment[]) {
+async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!content.trim() && messageAttachments.length === 0) return
 
   // 先立即清除附件，不需要等待响应完成
@@ -208,7 +208,7 @@ async function handleSend(content: string, messageAttachments: Attachment[]) {
     }
 
     // 正常发送消息（传递附件）
-    await chatStore.sendMessage(content, messageAttachments)
+    await chatStore.sendMessage(content, messageAttachments, options)
   } catch (err) {
     console.error('发送失败:', err)
   }

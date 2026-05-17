@@ -5,7 +5,19 @@
  */
 
 import type { Content, ContentPart } from '../conversation/types';
-import type { ResolvedPromptModeSnapshot } from '../settings/types';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../settings/types';
+
+/**
+ * 本次请求临时 prompt context。
+ *
+ * historyPlacement = entry 时，formatter 按 beforeHistoryMessages -> 真实 history -> afterHistoryMessages 组装。
+ * historyPlacement = legacy 时，formatter 保持旧行为，把 beforeHistoryMessages/dynamicContextMessages 插到当前 user 前。
+ */
+export interface RequestPromptContext {
+    beforeHistoryMessages: Content[];
+    afterHistoryMessages: Content[];
+    historyPlacement?: 'legacy' | 'entry';
+}
 
 /**
  * 生成请求
@@ -32,17 +44,32 @@ export interface GenerateRequest {
     dynamicSystemPrompt?: string;
     
     /**
+     * 当前请求的结构化 prompt context。
+     * 新的预设条目模式用此字段控制 chat-history 前后插入位置。
+     */
+    promptContext?: RequestPromptContext;
+
+    /**
      * 动态上下文消息（可选）
      *
-     * 由 PromptManager.getDynamicContextMessages() 生成的动态上下文。
-     * 包含当前时间、文件树、打开标签页、诊断信息等频繁变化的内容。
+     * 由 PromptManager 生成的临时上下文消息。
+     * 旧模板模式下包含当前时间、文件树、打开标签页、诊断信息等动态内容；
+     * 预设条目模式下也可能包含 role=user/assistant 的有序非 system 条目。
      * 
+     * @deprecated 使用 promptContext。保留此字段用于旧调用路径。
+     *
      * 这些消息会被插入到连续的最后一组用户输入消息（isUserInput=true）之前，
      * 但不会存储到后端历史记录中。
      * 
      * 插入位置由 formatter 内部通过查找 isUserInput 标记计算。
      */
     dynamicContextMessages?: Content[];
+
+    /**
+     * 动态上下文插入策略。
+     * single 保持现状；preserve 会把各回合缓存的动态上下文固定插回原位。
+     */
+    dynamicContextStrategy?: DynamicContextStrategy;
     
     /**
      * 跳过工具注入（可选）

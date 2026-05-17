@@ -115,7 +115,17 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId, streamId: clientStreamId } = data;
+    const {
+      conversationId,
+      message,
+      configId,
+      attachments,
+      modelOverride,
+      hiddenFunctionResponse,
+      promptModeId,
+      dynamicContextStrategyOverride,
+      streamId: clientStreamId
+    } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
@@ -131,6 +141,7 @@ export class StreamRequestHandler {
         attachments,
         hiddenFunctionResponse,
         promptModeId: this.normalizePromptModeId(promptModeId),
+        dynamicContextStrategyOverride,
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });

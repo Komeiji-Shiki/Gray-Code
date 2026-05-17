@@ -11,6 +11,7 @@ import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import MessageTaskCards from './MessageTaskCards.vue'
+import AgentTracePanel from './AgentTracePanel.vue'
 import ResponseViewerDialog from './ResponseViewerDialog.vue'
 import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
@@ -745,6 +746,12 @@ function handleRestoreAndRetry(checkpointId: string) {
             </span>
           </div>
         </div>
+
+        <AgentTracePanel
+          v-if="!isUser && message.metadata?.agentTrace?.length"
+          :trace="message.metadata.agentTrace"
+          :prompt-context-preview="message.metadata.promptContextPreview"
+        />
 
         <!-- Cursor 风格任务卡片：Plan/SubAgent 缩略预览，放在消息内容下方 -->
         <MessageTaskCards

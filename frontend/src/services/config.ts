@@ -15,7 +15,11 @@ export async function updateConfig(configId: string, updates: Record<string, any
 }
 
 export async function getPromptModes() {
-  return await sendToExtension<{ modes: PromptMode[]; currentModeId: string }>('getPromptModes', {})
+  return await sendToExtension<{
+    modes: PromptMode[]
+    currentModeId: string
+    dynamicContextStrategy?: 'single' | 'preserve'
+  }>('getPromptModes', {})
 }
 
 export async function setCurrentPromptMode(modeId: string) {

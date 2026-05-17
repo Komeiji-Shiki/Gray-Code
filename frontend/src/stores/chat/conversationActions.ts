@@ -9,7 +9,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content, Message } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
-import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
+import { syncTotalMessagesFromWindow, syncFoldedHistoryHint } from './windowUtils'
 import {
   applyConversationModelConfig,
   applyConversationPromptMode,
@@ -510,6 +510,7 @@ export async function loadOlderMessagesPage(
     if (older.length === 0) {
       state.windowStartIndex.value = 0
       state.totalMessages.value = result?.total ?? state.totalMessages.value
+      syncFoldedHistoryHint(state)
       return false
     }
 
@@ -520,8 +521,10 @@ export async function loadOlderMessagesPage(
     state.totalMessages.value = result?.total ?? state.totalMessages.value
     state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
 
-    // 超过窗口上限则裁剪（释放资源）
-    trimWindowFromTop(state)
+    // 这是用户主动上拉恢复更早历史，不能立刻从顶部裁剪；
+    // 否则刚拉回来的旧消息会被马上丢掉，表现为“继续上拉无法加载”。
+    // 后续发送/重试等向底部追加新消息时仍会通过 trimWindowFromTop 控制窗口大小。
+    syncFoldedHistoryHint(state)
 
     perfLog('conversation.window', {
       start: state.windowStartIndex.value,

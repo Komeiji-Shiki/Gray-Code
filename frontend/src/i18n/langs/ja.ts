@@ -249,6 +249,7 @@ const ja: LanguageMessages = {
             placeholder: 'メッセージを入力...',
             placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加、Ctrl+Shift+ドラッグで @path を挿入）',
             send: 'メッセージを送信',
+            sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
@@ -1549,7 +1550,12 @@ const ja: LanguageMessages = {
                     description: '各リクエスト時に動的に生成されメッセージ末尾に追加されます。リアルタイム情報（時刻、ファイルツリー、タブなど）を含み、履歴には保存されません。',
                     placeholder: '動的コンテキストテンプレートを入力、{{$WORKSPACE_FILES}}、{{$OPEN_TABS}} などの変数を使用できます...',
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
-                    disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。'
+                    disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。',
+                    strategyTitle: '動的コンテキスト戦略',
+                    strategySingle: '単一の動的コンテキスト（現在の動作）',
+                    strategyPreserve: '古い動的コンテキストを元の位置に保持',
+                    strategyDescription: '単一モードは既存の動作を維持します。保持モードでは、キャッシュ済みの古い動的コンテキストを元のターン位置に戻し、新しいコンテキストを新しいメッセージの前に挿入します。',
+                    strategyPreserveWarning: '保持モードはリクエストのトークン数を増やします。保持するコンテキストが多いほど、コンテキスト裁剪や要約が発生しやすくなります。'
                 },
                 toolPolicy: {
                     title: 'ツールポリシー',
@@ -1809,7 +1815,30 @@ const ja: LanguageMessages = {
                         enableDiffGuardDesc: '一度に削除される行数がファイル全体の指定割合を超えた場合に警告を表示します',
                         diffGuardThreshold: 'ガード閾値',
                         diffGuardThresholdDesc: '削除行数がファイル全体の行数に対するこの割合を超えた場合に警告をトリガーします',
-                        diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
+                        diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。',
+                        outsideWorkspaceAccess: 'ワークスペース外の書き込み',
+                        outsideWorkspaceDesc: 'apply_diff がワークスペース外の既存ファイルを変更できるかを制御します。',
+                        outsideWorkspaceDenyDesc: 'apply_diff はワークスペース内のファイルのみ変更できます。',
+                        outsideWorkspaceAskDesc: 'ワークスペース外のファイルを変更する前に、元のツール呼び出し承認カードで確認します。',
+                        outsideWorkspaceTip: 'ワークスペース外の apply_diff には「直接許可」オプションはありません。承認後も Diff プレビュー/保存フローに進みます。'
+                    },
+                    outsideWorkspaceAccess: {
+                        deny: '禁止',
+                        ask: 'ユーザー承認が必要',
+                        allow: '直接許可'
+                    },
+                    readFile: {
+                        outsideWorkspaceAccess: 'ワークスペース外の読み取り',
+                        outsideWorkspaceDenyDesc: 'read_file はワークスペース内のファイルのみ読み取れます。',
+                        outsideWorkspaceAskDesc: 'ワークスペース外のファイルを読み取る前に、元のツール呼び出し承認カードで確認します。',
+                        outsideWorkspaceAllowDesc: 'read_file がワークスペース外のファイルを直接読み取ることを許可します。',
+                        outsideWorkspaceTip: '相対パスは引き続きワークスペースから解決されます。絶対パス、file:// URI、またはワークスペース境界を越えるパスはこのポリシーで制御されます。'
+                    },
+                    writeFile: {
+                        outsideWorkspaceAccess: 'ワークスペース外の書き込み',
+                        outsideWorkspaceDenyDesc: 'write_file はワークスペース内のファイルのみ書き込めます。',
+                        outsideWorkspaceAskDesc: 'ワークスペース外のファイルを書き込む前に、元のツール呼び出し承認カードで確認し、承認後も Diff プレビューを表示します。',
+                        outsideWorkspaceTip: 'ワークスペース外への書き込みには「直接許可」オプションはありません。書き込みフロー開始前に承認が必要です。'
                     },
                     listFiles: {
                         ignoreList: '無視リスト',

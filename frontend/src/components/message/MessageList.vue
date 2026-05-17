@@ -414,8 +414,6 @@ function toggleTodoExpanded() {
 const VISIBLE_INCREMENT = 40
 const visibleCount = ref(VISIBLE_INCREMENT)
 
-// 是否还需要继续向前补拉历史，以满足当前目标可见消息数
-const hasMoreVisible = computed(() => props.messages.length < visibleCount.value && chatStore.windowStartIndex > 0)
 // 是否还有更多“未加载到窗口”的历史消息
 const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
 // 顶部加载指示器：只要仍有更早历史就显示
@@ -566,19 +564,27 @@ async function loadMore() {
   try {
     if (!hasMoreHistory.value) return
 
+    const prevLen = props.messages.length
+
     visibleCount.value += VISIBLE_INCREMENT
     await nextTick()
 
-    while (hasMoreVisible.value && hasMoreHistory.value) {
-      const prevLen = props.messages.length
+    if (hasMoreHistory.value) {
       await chatStore.loadOlderMessagesPage()
       await nextTick()
+    }
 
-      if (props.messages.length <= prevLen) {
-        break
+    if (props.messages.length <= prevLen && hasMoreHistory.value) {
+      // 如果这一页没有新增可见消息，继续尝试下一页，避免 functionResponse 密集区卡住顶部加载。
+      while (hasMoreHistory.value) {
+        const currentLen = props.messages.length
+        const loaded = await chatStore.loadOlderMessagesPage()
+        await nextTick()
+
+        if (!loaded || props.messages.length > currentLen) {
+          break
+        }
       }
-
-      await nextTick()
     }
   } finally {
     // 保持滚动位置：顶部插入内容会导致滚动跳动，这里手动修正

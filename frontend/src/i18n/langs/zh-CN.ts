@@ -249,6 +249,7 @@ const zhCN: LanguageMessages = {
             placeholder: '输入消息...',
             placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径，Ctrl+Shift+拖拽插入 @path 文本)',
             send: '发送消息',
+            sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
@@ -1549,7 +1550,12 @@ const zhCN: LanguageMessages = {
                     description: '每次请求时动态生成并追加到消息末尾，包含实时信息（时间、文件树、标签页等），不存储到历史记录中。',
                     placeholder: '输入动态上下文模板，可使用 {{$WORKSPACE_FILES}}、{{$OPEN_TABS}} 等变量...',
                     enableTooltip: '启用/禁用动态上下文模板',
-                    disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。'
+                    disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。',
+                    strategyTitle: '动态上下文策略',
+                    strategySingle: '单份动态上下文（当前策略）',
+                    strategyPreserve: '保留旧动态上下文原位',
+                    strategyDescription: '单份模式保持现有行为；保留模式会把已缓存的旧动态上下文固定插回原回合位置，新回合上下文插入到新消息前。',
+                    strategyPreserveWarning: '保留模式会增加请求 token；旧动态上下文越多，越容易触发上下文裁剪或总结。'
                 },
                 toolPolicy: {
                     title: '工具策略',
@@ -1809,7 +1815,30 @@ const zhCN: LanguageMessages = {
                         enableDiffGuardDesc: '当一次性删除的行数超过文件总行数的指定百分比时，在工具外侧显示警告提示',
                         diffGuardThreshold: '警戒阈值',
                         diffGuardThresholdDesc: '删除行数占文件总行数的百分比超过此值时触发警告',
-                        diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
+                        diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查',
+                        outsideWorkspaceAccess: '工作区外写入',
+                        outsideWorkspaceDesc: '控制 apply_diff 修改工作区外已有文件的行为。',
+                        outsideWorkspaceDenyDesc: 'apply_diff 只能修改工作区内文件。',
+                        outsideWorkspaceAskDesc: '修改工作区外文件前使用原本工具调用确认框请求同意。',
+                        outsideWorkspaceTip: '工作区外 apply_diff 不提供“直接允许”选项；确认后仍会进入 Diff 预览/保存流程。'
+                    },
+                    outsideWorkspaceAccess: {
+                        deny: '禁止',
+                        ask: '需要用户同意',
+                        allow: '直接允许'
+                    },
+                    readFile: {
+                        outsideWorkspaceAccess: '工作区外读取',
+                        outsideWorkspaceDenyDesc: 'read_file 只能读取工作区内文件。',
+                        outsideWorkspaceAskDesc: '读取工作区外文件前使用原本工具调用确认框请求同意。',
+                        outsideWorkspaceAllowDesc: '允许 read_file 直接读取工作区外文件。',
+                        outsideWorkspaceTip: '相对路径仍按工作区解析；绝对路径、file:// URI 或越过工作区边界的路径会按此策略处理。'
+                    },
+                    writeFile: {
+                        outsideWorkspaceAccess: '工作区外写入',
+                        outsideWorkspaceDenyDesc: 'write_file 只能写入工作区内文件。',
+                        outsideWorkspaceAskDesc: '写入工作区外文件前使用原本工具调用确认框请求同意，确认后仍会显示 Diff 预览。',
+                        outsideWorkspaceTip: '工作区外写入不提供“直接允许”选项；确认后才会进入文件写入流程。'
                     },
                     listFiles: {
                         ignoreList: '忽略列表',

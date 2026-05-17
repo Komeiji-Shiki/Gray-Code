@@ -96,6 +96,22 @@ function normalizeStreamingToQueued(status?: ToolUsage['status']): ToolUsage['st
   return status === 'streaming' ? 'queued' : status
 }
 
+function mergeMessageMetadata(
+  existing: Message['metadata'] | undefined,
+  incoming: Message['metadata'] | undefined
+): Message['metadata'] {
+  const merged = {
+    ...(existing || {}),
+    ...(incoming || {})
+  }
+
+  if (existing?.agentTrace) merged.agentTrace = existing.agentTrace
+  if (existing?.promptContextPreview) merged.promptContextPreview = existing.promptContextPreview
+  if (existing?.currentAgentState) merged.currentAgentState = existing.currentAgentState
+
+  return merged
+}
+
 function buildMessageFromContentSnapshot(currentMessage: Message, snapshotContent: NonNullable<StreamChunk['chunk']>['contentSnapshot']): Message {
   const existingModelVersion = currentMessage.metadata?.modelVersion
   const snapshotMessage = contentToMessageEnhanced(snapshotContent!, currentMessage.id)
@@ -113,7 +129,8 @@ function buildMessageFromContentSnapshot(currentMessage: Message, snapshotConten
     // 确保 snapshot 重建不会因为 merge 结果为空而丢失工具信息
     tools: (mergedTools && mergedTools.length > 0)
       ? mergedTools
-      : (snapshotMessage.tools && snapshotMessage.tools.length > 0 ? snapshotMessage.tools : currentMessage.tools)
+      : (snapshotMessage.tools && snapshotMessage.tools.length > 0 ? snapshotMessage.tools : currentMessage.tools),
+    metadata: mergeMessageMetadata(currentMessage.metadata, snapshotMessage.metadata)
   }
 
   if (!updatedMessage.metadata) {
@@ -234,6 +251,36 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 }
 
 /**
+ * 处理 agentState 类型：追加 Agent 状态机事件到当前 assistant 消息 metadata。
+ */
+export function handleAgentState(chunk: StreamChunk, state: ChatStoreState): void {
+  if (!chunk.agentState || !chunk.event) return
+
+  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  if (messageIndex === -1) return
+
+  const message = state.allMessages.value[messageIndex]
+  const metadata = { ...(message.metadata || {}) }
+  const trace = Array.isArray(metadata.agentTrace)
+    ? [...metadata.agentTrace]
+    : []
+
+  trace.push(chunk.event)
+
+  metadata.agentTrace = trace
+  metadata.currentAgentState = chunk.event.state
+
+  if (chunk.event.promptContextPreview) {
+    metadata.promptContextPreview = chunk.event.promptContextPreview
+  }
+
+  replaceMessageAt(state, messageIndex, {
+    ...message,
+    metadata
+  })
+}
+
+/**
  * 处理 toolsExecuting 类型
  */
 export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState): void {
@@ -271,7 +318,8 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       // toolsExecuting 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
       // 优先使用合并结果，其次回退到已有 tools，避免 batch 跳过 chunk 导致 tools 丢失
-      tools: mergedTools.length > 0 ? mergedTools : (existingTools || undefined)
+      tools: mergedTools.length > 0 ? mergedTools : (existingTools || undefined),
+      metadata: mergeMessageMetadata(message.metadata, finalMessage.metadata)
     }
 
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
@@ -458,7 +506,8 @@ export function handleAwaitingConfirmation(
       streaming: false,
       // awaitingConfirmation 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
-      tools: mergedTools.length > 0 ? mergedTools : undefined
+      tools: mergedTools.length > 0 ? mergedTools : undefined,
+      metadata: mergeMessageMetadata(message.metadata, finalMessage.metadata)
     }
 
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
@@ -677,7 +726,8 @@ export function handleToolIteration(
       // toolIteration 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
       tools: restoredTools,
-      parts: safePartsForToolIteration
+      parts: safePartsForToolIteration,
+      metadata: mergeMessageMetadata(message.metadata, finalMessage.metadata)
     }
     
     // 用新对象替换数组中的旧对象
@@ -861,7 +911,8 @@ export function handleComplete(
       tools: finalMessage.tools && finalMessage.tools.length > 0
         ? finalMessage.tools
         : existingTools,
-      parts: safePartsForComplete
+      parts: safePartsForComplete,
+      metadata: mergeMessageMetadata(message.metadata, finalMessage.metadata)
     }
     
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新

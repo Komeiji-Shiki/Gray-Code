@@ -163,7 +163,8 @@ export const getPromptModes: MessageHandler = async (data, requestId, ctx) => {
   try {
     const modes = ctx.settingsManager.getAllPromptModes();
     const currentModeId = ctx.settingsManager.getCurrentPromptModeId();
-    ctx.sendResponse(requestId, { modes, currentModeId });
+    const dynamicContextStrategy = ctx.settingsManager.getSystemPromptConfig().dynamicContextStrategy;
+    ctx.sendResponse(requestId, { modes, currentModeId, dynamicContextStrategy });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_PROMPT_MODES_ERROR', error.message || 'Failed to get prompt modes');
   }

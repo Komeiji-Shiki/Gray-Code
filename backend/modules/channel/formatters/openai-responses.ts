@@ -32,7 +32,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         config: OpenAIResponsesConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history, dynamicContextMessages } = request;
+        const { history } = request;
         
         // 准备系统指令 (instructions)
         let instructions = config.systemInstruction;
@@ -44,25 +44,12 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 : request.dynamicSystemPrompt;
         }
 
-        // 插入动态上下文消息
-        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
-        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
         let processedHistory = history;
-        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
-            // 在 processedHistory 中计算最后一组用户主动消息的第一条索引
-            const insertIndex = this.findLastUserMessageGroupIndex(processedHistory);
-            
-            if (insertIndex >= 0) {
-                processedHistory = [
-                    ...processedHistory.slice(0, insertIndex),
-                    ...dynamicContextMessages,
-                    ...processedHistory.slice(insertIndex)
-                ];
-            } else {
-                // 找不到用户主动消息（如自动总结后），插入到历史最前面（总结消息之前）
-                processedHistory = [...dynamicContextMessages, ...processedHistory];
-            }
-        }
+        processedHistory = this.injectPromptContextMessages(
+            processedHistory,
+            this.getPromptContextForRequest(request),
+            request.dynamicContextStrategy
+        );
 
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         processedHistory = this.cleanInternalFields(processedHistory);
