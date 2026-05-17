@@ -2,23 +2,6 @@ node_modules
 dist
 .limcode
 
-# local environment / secrets
-.env
-.env.*
-!.env.example
-!.env.*.example
-
-# OS / editor artifacts
-.DS_Store
-Thumbs.db
-Desktop.ini
-*.swp
-*.swo
-
-# VS Code test runtime
-.vscode-test/
-.vscode-test-web/
-
 # tests (keep local; do not track in git)
 test/
 jest.config.cjs
@@ -29,15 +12,6 @@ coverage
 .jest-cache
 .ts-jest
 .cache
-
-# TypeScript incremental build info
-*.tsbuildinfo
-
-# temporary files
-tmp/
-temp/
-*.tmp
-*.temp
 
 # lock files (project uses npm)
 pnpm-lock.yaml

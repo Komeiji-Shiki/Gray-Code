@@ -99,7 +99,7 @@ function getApplyDiffConfig(settingsManager?: SettingsManager): Readonly<ApplyDi
  * 当处于“手动审阅”模式（autoSave=false）时，这个 Diff 审阅已经是本次写入的明确确认，
  * 不需要在工具调用层再弹一次 outside-workspace 确认，避免用户看到“两次确认”。
  *
- * 如果启用了自动应用（autoSave=true，尤其是 autoApplyWithoutDiffView），仍保留工具层确认，
+ * 如果启用了自动应用（autoSave=true），仍保留工具层确认，
  * 防止工作区外文件被静默写入。
  */
 function isWriteConfirmationCoveredByManualDiffReview(toolName: OutsideWorkspaceAwareToolName, settingsManager?: SettingsManager): boolean {

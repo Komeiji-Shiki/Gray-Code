@@ -38,7 +38,6 @@ import type {
     ChatStreamToolStatusData,
     ChatStreamAutoSummaryData,
     ChatStreamAutoSummaryStatusData,
-    ChatStreamAgentStateData,
     ToolConfirmationResponseData,
     PendingToolCall,
     RetryRequestData,
@@ -327,7 +326,6 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
-        | ChatStreamAgentStateData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleChatStream(request)) {
@@ -371,7 +369,6 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
-        | ChatStreamAgentStateData
     > {
         // 新实现：委托给 ChatFlowService 处理完整流程，保留统一的错误处理逻辑
         try {
@@ -458,7 +455,6 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
-        | ChatStreamAgentStateData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleRetryStream(request)) {
@@ -523,7 +519,6 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
-        | ChatStreamAgentStateData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleEditAndRetryStream(request)) {

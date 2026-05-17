@@ -41,7 +41,6 @@ import type {
   ChatStreamToolStatusData,
   ChatStreamAutoSummaryData,
   ChatStreamAutoSummaryStatusData,
-  ChatStreamAgentStateData,
 } from '../types';
 
 import type { MessageBuilderService } from './MessageBuilderService';
@@ -59,7 +58,6 @@ import {
 } from '../../../conversation/pendingApprovalGate';
 import { getHiddenContinuationApprovalRequirement } from './approvalGateRules';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
-import { createAgentStateData } from './agentTrace';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -71,8 +69,7 @@ export type ChatStreamOutput =
   | ChatStreamToolsExecutingData
   | ChatStreamToolStatusData
   | ChatStreamAutoSummaryData
-  | ChatStreamAutoSummaryStatusData
-  | ChatStreamAgentStateData;
+  | ChatStreamAutoSummaryStatusData;
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
@@ -1372,14 +1369,6 @@ export class ChatFlowService {
 
     // 4.1 先处理队首工具（该工具一定是“当前等待批准”的那个）
     if (nextDecision.confirmed) {
-      yield createAgentStateData({
-        conversationId,
-        state: 'executing_tools',
-        status: 'started',
-        label: `执行已确认工具：${nextCall.name}`,
-        tool: { id: nextCall.id, name: nextCall.name },
-      });
-
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
         [nextCall],
         conversationId,
@@ -1400,14 +1389,6 @@ export class ChatFlowService {
         const event = value as ToolExecutionProgressEvent;
 
         if (event.type === 'start') {
-          yield createAgentStateData({
-            conversationId,
-            state: 'executing_tools',
-            status: 'info',
-            label: `执行工具：${event.call.name}`,
-            tool: { id: event.call.id, name: event.call.name },
-          });
-
           yield {
             conversationId,
             content: lastMessage,
@@ -1430,14 +1411,6 @@ export class ChatFlowService {
             status = 'warning';
           }
 
-          yield createAgentStateData({
-            conversationId,
-            state: 'executing_tools',
-            status: status === 'error' ? 'failed' : 'completed',
-            label: status === 'error' ? `工具执行失败：${event.call.name}` : `工具执行完成：${event.call.name}`,
-            tool: { id: event.call.id, name: event.call.name },
-          });
-
           yield {
             conversationId,
             toolStatus: true as const,
@@ -1451,24 +1424,8 @@ export class ChatFlowService {
         }
       }
 
-      yield createAgentStateData({
-        conversationId,
-        state: 'executing_tools',
-        status: 'completed',
-        label: `已确认工具执行完成：${nextCall.name}`,
-        tool: { id: nextCall.id, name: nextCall.name },
-      });
-
       resolvedIdsThisTurn.add(nextCall.id);
     } else {
-      yield createAgentStateData({
-        conversationId,
-        state: 'waiting_confirmation',
-        status: 'completed',
-        label: `工具已被拒绝：${nextCall.name}`,
-        tool: { id: nextCall.id, name: nextCall.name },
-      });
-
       await this.conversationManager.rejectToolCalls(conversationId, messageIndex, [nextCall.id]);
 
       const rejectedResult = {
@@ -1515,14 +1472,6 @@ export class ChatFlowService {
     }
 
     if (autoSuffix.length > 0) {
-      const autoStartedAt = Date.now();
-      yield createAgentStateData({
-        conversationId,
-        state: 'executing_tools',
-        status: 'started',
-        label: `继续自动执行 ${autoSuffix.length} 个后续工具`,
-      });
-
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
         autoSuffix,
         conversationId,
@@ -1542,14 +1491,6 @@ export class ChatFlowService {
         const event = value as ToolExecutionProgressEvent;
 
         if (event.type === 'start') {
-          yield createAgentStateData({
-            conversationId,
-            state: 'executing_tools',
-            status: 'info',
-            label: `执行工具：${event.call.name}`,
-            tool: { id: event.call.id, name: event.call.name },
-          });
-
           yield {
             conversationId,
             content: lastMessage,
@@ -1572,14 +1513,6 @@ export class ChatFlowService {
             status = 'warning';
           }
 
-          yield createAgentStateData({
-            conversationId,
-            state: 'executing_tools',
-            status: status === 'error' ? 'failed' : 'completed',
-            label: status === 'error' ? `工具执行失败：${event.call.name}` : `工具执行完成：${event.call.name}`,
-            tool: { id: event.call.id, name: event.call.name },
-          });
-
           yield {
             conversationId,
             toolStatus: true as const,
@@ -1592,14 +1525,6 @@ export class ChatFlowService {
           } satisfies ChatStreamToolStatusData;
         }
       }
-
-      yield createAgentStateData({
-        conversationId,
-        state: 'executing_tools',
-        status: 'completed',
-        label: '后续工具批次执行完成',
-        startedAt: autoStartedAt,
-      });
 
       for (const c of autoSuffix) {
         resolvedIdsThisTurn.add(c.id);
@@ -1620,13 +1545,6 @@ export class ChatFlowService {
 
     // 6. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
     if (responseParts.length > 0 || multimodalAttachments.length > 0) {
-      yield createAgentStateData({
-        conversationId,
-        state: 'append_tool_results',
-        status: 'started',
-        label: '写入已确认工具结果到对话历史',
-      });
-
       const confirmFunctionResponseParts = multimodalAttachments.length > 0
         ? [...multimodalAttachments, ...responseParts]
         : responseParts;
@@ -1635,13 +1553,6 @@ export class ChatFlowService {
         role: 'user',
         parts: confirmFunctionResponseParts,
         isFunctionResponse: true,
-      });
-
-      yield createAgentStateData({
-        conversationId,
-        state: 'append_tool_results',
-        status: 'completed',
-        label: '已确认工具结果已写入历史',
       });
     }
 
@@ -1690,14 +1601,6 @@ export class ChatFlowService {
 
     // 6. 如果还有需要批准的工具，进入等待确认阶段（不触发 toolIteration，也不继续 AI）
     if (nextConfirmTool) {
-      yield createAgentStateData({
-        conversationId,
-        state: 'waiting_confirmation',
-        status: 'started',
-        label: `等待工具确认：${nextConfirmTool.name}`,
-        tool: { id: nextConfirmTool.id, name: nextConfirmTool.name },
-      });
-
       yield {
         conversationId,
         pendingToolCalls: [{

@@ -32,8 +32,7 @@ import type {
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
     ChatStreamToolStatusData,
-    ChatStreamAgentStateData,
-    PendingToolCall,
+    PendingToolCall
 } from '../types';
 
 import { StreamResponseProcessor, isAsyncGenerator, type ProcessedChunkData } from '../handlers/StreamResponseProcessor';
@@ -46,7 +45,6 @@ import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgre
 import type { SummarizeService } from './SummarizeService';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
-import { buildPromptContextPreview, createAgentStateData } from './agentTrace';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -105,8 +103,7 @@ export type ToolIterationLoopOutput =
     | ChatStreamAutoSummaryStatusData
     | ChatStreamToolConfirmationData
     | ChatStreamToolsExecutingData
-    | ChatStreamToolStatusData
-    | ChatStreamAgentStateData;
+    | ChatStreamToolStatusData;
 
 /**
  * 非流式工具循环结果
@@ -364,7 +361,6 @@ export class ToolIterationLoopService {
 
         let iteration = startIteration;
 
-        const prepareContextStartedAt = Date.now();
         // 动态上下文在回合开始时生成一次，回合内所有迭代（包括工具确认后的继续）复用
         // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件、TODO、Skills
         // 这些内容不存储到后端历史，仅在发送时按 promptContext 临时插入
@@ -416,15 +412,6 @@ export class ToolIterationLoopService {
             runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
         }
 
-        yield createAgentStateData({
-            conversationId,
-            state: 'prepare_context',
-            status: 'completed',
-            label: '动态上下文准备完成',
-            detail: `strategy=${dynamicContextStrategy}, turnStartIndex=${turnStartIndex}`,
-            startedAt: prepareContextStartedAt
-        });
-
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
@@ -450,15 +437,6 @@ export class ToolIterationLoopService {
             }
 
             // 3. 获取对话历史（应用上下文裁剪）
-            const contextTrimStartedAt = Date.now();
-            yield createAgentStateData({
-                conversationId,
-                state: 'context_trim',
-                status: 'started',
-                label: '计算上下文窗口',
-                iteration
-            });
-
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
             const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
@@ -488,18 +466,6 @@ export class ToolIterationLoopService {
                 // 先通知前端显示“自动总结中”提示
                 yield {
                     conversationId,
-                    agentState: true as const,
-                    event: createAgentStateData({
-                        conversationId,
-                        state: 'summarizing',
-                        status: 'started',
-                        label: '自动总结上下文',
-                        iteration
-                    }).event
-                } satisfies ChatStreamAgentStateData;
-
-                yield {
-                    conversationId,
                     autoSummaryStatus: true as const,
                     status: 'started' as const
                 } satisfies ChatStreamAutoSummaryStatusData;
@@ -524,14 +490,6 @@ export class ToolIterationLoopService {
                             insertIndex: summarizeResult.insertIndex
                         } satisfies ChatStreamAutoSummaryData;
                     }
-
-                    yield createAgentStateData({
-                        conversationId,
-                        state: 'summarizing',
-                        status: 'completed',
-                        label: '自动总结完成',
-                        iteration
-                    });
 
                     // 总结完成，隐藏“自动总结中”提示
                     yield {
@@ -594,39 +552,8 @@ export class ToolIterationLoopService {
                 ? this.promptManager.refreshAndGetPrompt(promptModeSnapshot, runtimeContext)
                 : this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
 
-            const promptContextPreview = buildPromptContextPreview({
-                iteration,
-                strategy: dynamicContextStrategy,
-                promptContext,
-                dynamicSystemPrompt,
-                history,
-                trimStartIndex: trimResult.trimStartIndex,
-                needsAutoSummarize: trimResult.needsAutoSummarize
-            });
-
-            yield createAgentStateData({
-                conversationId,
-                state: 'context_trim',
-                status: 'completed',
-                label: '上下文窗口已就绪',
-                detail: `history=${history.length}, trimStartIndex=${trimResult.trimStartIndex ?? 0}`,
-                iteration,
-                startedAt: contextTrimStartedAt,
-                promptContextPreview
-            });
-
             // 5. 记录请求开始时间
             const requestStartTime = Date.now();
-
-            yield createAgentStateData({
-                conversationId,
-                state: 'request_model',
-                status: 'started',
-                label: '请求模型',
-                detail: modelOverride || (config as any).model || configId,
-                iteration,
-                promptContextPreview
-            });
 
             // 6. 调用 AI
             const response = await this.channelManager.generate({
@@ -641,15 +568,6 @@ export class ToolIterationLoopService {
                 conversationId
             });
 
-            yield createAgentStateData({
-                conversationId,
-                state: 'request_model',
-                status: 'completed',
-                label: '模型请求已建立',
-                iteration,
-                startedAt: requestStartTime
-            });
-
             // 7. 处理响应
             let finalContent: Content;
 
@@ -660,15 +578,6 @@ export class ToolIterationLoopService {
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
 
             if (isAsyncGenerator(response)) {
-                const streamingStartedAt = Date.now();
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'streaming',
-                    status: 'started',
-                    label: '接收模型流式输出',
-                    iteration
-                });
-
                 // 流式响应处理
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
@@ -719,16 +628,6 @@ export class ToolIterationLoopService {
                     }
                 }
 
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'streaming',
-                    status: 'completed',
-                    label: '模型流式输出完成',
-                    detail: `chunks=${processor.getContent().chunkCount ?? 0}`,
-                    iteration,
-                    startedAt: streamingStartedAt
-                });
-
                 // 检查是否被取消
                 if (processor.isCancelled()) {
                     const partialContent = processor.getContent();
@@ -742,14 +641,6 @@ export class ToolIterationLoopService {
 
                 finalContent = processor.getContent();
             } else {
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'streaming',
-                    status: 'info',
-                    label: '处理非流式模型响应',
-                    iteration
-                });
-
                 // 非流式响应处理
                 const processor = new StreamResponseProcessor({
                     requestStartTime,
@@ -764,15 +655,6 @@ export class ToolIterationLoopService {
                 yield chunkData;
             }
 
-            const parseToolStartedAt = Date.now();
-            yield createAgentStateData({
-                conversationId,
-                state: 'parse_tool_calls',
-                status: 'started',
-                label: '解析工具调用',
-                iteration
-            });
-
             // 9. 转换工具调用格式
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
@@ -786,15 +668,6 @@ export class ToolIterationLoopService {
             const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent, config.toolMode || 'function_call');
 
             if (functionCalls.length === 0) {
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'parse_tool_calls',
-                    status: 'completed',
-                    label: '没有工具调用',
-                    iteration,
-                    startedAt: parseToolStartedAt
-                });
-
                 // 没有工具调用，创建模型消息后的检查点并返回完成数据
                 const modelMessageCheckpoints: CheckpointRecord[] = [];
                 const checkpoint = await this.checkpointService.createModelMessageCheckpoint(
@@ -805,14 +678,6 @@ export class ToolIterationLoopService {
                     modelMessageCheckpoints.push(checkpoint);
                 }
 
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'completed',
-                    status: 'completed',
-                    label: '本轮 Agent 已完成',
-                    iteration
-                });
-
                 // 返回完成数据
                 yield {
                     conversationId,
@@ -821,15 +686,6 @@ export class ToolIterationLoopService {
                 };
                 return;
             }
-
-            yield createAgentStateData({
-                conversationId,
-                state: 'parse_tool_calls',
-                status: 'completed',
-                label: `解析到 ${functionCalls.length} 个工具调用`,
-                iteration,
-                startedAt: parseToolStartedAt
-            });
 
             // 12. 有工具调用：按 AI 输出顺序依次处理。
             // 规则：执行到第一个“需要用户批准”的工具时暂停；后续工具必须等待前置工具完成。
@@ -909,15 +765,6 @@ export class ToolIterationLoopService {
                 );
 
                 if (firstConfirmTool && !earlyStopState.shouldStop) {
-                    yield createAgentStateData({
-                        conversationId,
-                        state: 'waiting_confirmation',
-                        status: 'started',
-                        label: `等待工具确认：${firstConfirmTool.name}`,
-                        iteration,
-                        tool: { id: firstConfirmTool.id, name: firstConfirmTool.name }
-                    });
-
                     yield {
                         conversationId,
                         pendingToolCalls: [{
@@ -967,15 +814,6 @@ export class ToolIterationLoopService {
             }
 
             if (autoPrefix.length > 0) {
-                const toolsStartedAt = Date.now();
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'executing_tools',
-                    status: 'started',
-                    label: `执行 ${autoPrefix.length} 个工具`,
-                    iteration
-                });
-
                 // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting
                 // 让前端尽早看到完整的工具队列（第一个为 executing，其余为 queued）
                 yield {
@@ -1017,15 +855,6 @@ export class ToolIterationLoopService {
                         const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
 
                         // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
-                        yield createAgentStateData({
-                            conversationId,
-                            state: 'executing_tools',
-                            status: 'info',
-                            label: `执行工具：${event.call.name}`,
-                            iteration,
-                            tool: { id: event.call.id, name: event.call.name }
-                        });
-
                         yield {
                             conversationId,
                             content: finalContent,
@@ -1048,16 +877,6 @@ export class ToolIterationLoopService {
                             status = 'warning';
                         }
 
-                        yield createAgentStateData({
-                            conversationId,
-                            state: 'executing_tools',
-                            status: status === 'error' ? 'failed' : 'completed',
-                            label: `工具完成：${event.call.name}`,
-                            detail: status,
-                            iteration,
-                            tool: { id: event.call.id, name: event.call.name }
-                        });
-
                         yield {
                             conversationId,
                             toolStatus: true as const,
@@ -1071,15 +890,6 @@ export class ToolIterationLoopService {
                     }
                 }
 
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'executing_tools',
-                    status: 'completed',
-                    label: '工具批次执行完成',
-                    iteration,
-                    startedAt: toolsStartedAt
-                });
-
                 // 检查是否已取消
                 if (abortSignal?.aborted) {
                     yield {
@@ -1090,13 +900,6 @@ export class ToolIterationLoopService {
                 }
 
                 // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'append_tool_results',
-                    status: 'started',
-                    label: '写入工具结果到对话历史',
-                    iteration
-                });
 
                 const combinedToolResults = this.orderToolResultsByCallSequence(
                     functionCalls,
@@ -1121,14 +924,6 @@ export class ToolIterationLoopService {
                     role: 'user',
                     parts: functionResponseParts,
                     isFunctionResponse: true
-                });
-
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'append_tool_results',
-                    status: 'completed',
-                    label: '工具结果已写入历史',
-                    iteration
                 });
             }
 
@@ -1159,15 +954,6 @@ export class ToolIterationLoopService {
 
             // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
             if (firstConfirmTool) {
-                yield createAgentStateData({
-                    conversationId,
-                    state: 'waiting_confirmation',
-                    status: 'started',
-                    label: `等待工具确认：${firstConfirmTool.name}`,
-                    iteration,
-                    tool: { id: firstConfirmTool.id, name: firstConfirmTool.name }
-                });
-
                 yield {
                     conversationId,
                     pendingToolCalls: [{
