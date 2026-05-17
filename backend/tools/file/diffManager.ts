@@ -70,6 +70,10 @@ export interface DiffSettings {
     autoSaveDelay: number;
 }
 
+export interface CreatePendingDiffOptions {
+    confirmedByToolConfirmation?: boolean;
+}
+
 /**
  * 状态变化监听器
  */
@@ -555,7 +559,8 @@ export class DiffManager {
         newContent: string,
         blocks?: Array<{ index: number; startLine: number; endLine: number }>,
         rawDiffs?: any[],
-        toolId?: string
+        toolId?: string,
+        options?: CreatePendingDiffOptions
     ): Promise<PendingDiff> {
         const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
@@ -583,8 +588,15 @@ export class DiffManager {
         
         // 获取完整配置以决定是否跳过 diff 视图
         const fullConfig = this.getFullApplyDiffConfig();
-        const shouldSkipDiffView = fullConfig?.autoSave && fullConfig?.autoApplyWithoutDiffView;
-        
+        const currentSettings = this.getSettings();
+        const shouldApplyImmediatelyAfterToolConfirmation =
+            currentSettings.autoSave === true && options?.confirmedByToolConfirmation === true;
+        const shouldSkipDiffView = currentSettings.autoSave === true
+            && (
+                fullConfig?.autoApplyWithoutDiffView === true
+                || shouldApplyImmediatelyAfterToolConfirmation
+            );
+
         // 注册原始内容到提供者（仅在需要显示 diff 视图时）
         if (!shouldSkipDiffView) {
             this.contentProvider.setContent(id, originalContent);
@@ -622,8 +634,11 @@ export class DiffManager {
         }
         
         // 根据配置决定是否显示 diff 视图
-        if (shouldSkipDiffView) {
-            // 跳过 diff 视图：直接写入文件并保存
+        if (shouldApplyImmediatelyAfterToolConfirmation) {
+            // 用户已经点过工具确认卡：直接保存，不再显示二次保存/拒绝倒计时。
+            await this.directApplyAndSave(pendingDiff);
+        } else if (shouldSkipDiffView) {
+            // 跳过 diff 视图：直接写入文件并保存。
             await this.directApplyAndSave(pendingDiff);
         } else {
             // 显示 diff 视图
@@ -655,6 +670,20 @@ export class DiffManager {
      * 直接应用修改并保存（不打开 diff 视图）
      * 用于 autoApplyWithoutDiffView 模式
      */
+    private async openSavedFile(diff: PendingDiff): Promise<void> {
+        try {
+            const uri = vscode.Uri.file(diff.absolutePath);
+            const document = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath)
+                || await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(document, {
+                preview: false,
+                preserveFocus: false
+            });
+        } catch (error) {
+            console.warn(`[DiffManager] Failed to open saved file ${diff.filePath}:`, error);
+        }
+    }
+
     private async directApplyAndSave(diff: PendingDiff): Promise<void> {
         try {
             // 直接写入文件到磁盘
@@ -685,6 +714,8 @@ export class DiffManager {
                 `$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`,
                 3000
             );
+
+            await this.openSavedFile(diff);
         } catch (error) {
             console.error('[DiffManager] directApplyAndSave failed:', error);
             // 回退到显示 diff 视图
@@ -1229,6 +1260,8 @@ export class DiffManager {
                     console.warn(`[DiffManager] Failed to close diff tab for ${diff.filePath}:`, error);
                 }
             }
+
+            await this.openSavedFile(diff);
             
             return true;
         } catch (error) {

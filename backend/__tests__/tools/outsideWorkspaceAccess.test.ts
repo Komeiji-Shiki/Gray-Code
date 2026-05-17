@@ -6,8 +6,7 @@ import {
     getOutsideWorkspaceAccessCheck,
     getOutsideWorkspaceRejectionReason,
     isOutsideWorkspaceWriteCoveredByManualDiffReview,
-    toolCallNeedsOutsideWorkspaceConfirmation,
-    toolCallUsesManualDiffReviewForOutsideWorkspaceWrite
+    toolCallNeedsOutsideWorkspaceConfirmation
 } from '../../tools/file/outsideWorkspaceAccess';
 import { setGlobalSettingsManager } from '../../core/settingsContext';
 import { SettingsManager, MemorySettingsStorage } from '../../modules/settings';
@@ -81,7 +80,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('skips the generic tool confirmation for outside-workspace writes covered by manual diff review', async () => {
+    it('skips generic tool confirmation for outside-workspace writes that use manual diff review', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('write_file', false);
 
@@ -90,20 +89,18 @@ describe('outside workspace file access policy', () => {
 
         expect(isOutsideWorkspaceWriteCoveredByManualDiffReview('write_file', settingsManager)).toBe(true);
         expect(toolCallNeedsOutsideWorkspaceConfirmation('write_file', args, settingsManager)).toBe(false);
-        expect(toolCallUsesManualDiffReviewForOutsideWorkspaceWrite('write_file', args, settingsManager)).toBe(true);
         expect(service.toolNeedsConfirmation('write_file', args)).toBe(false);
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('keeps the generic tool confirmation for workspace writes when auto execution is disabled', async () => {
+    it('skips generic tool confirmation for workspace writes that use manual diff review', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('write_file', false);
 
         const service = new ToolExecutionService(undefined, undefined, settingsManager);
         const args = { files: [{ path: 'inside.txt', content: 'x' }] };
 
-        expect(toolCallUsesManualDiffReviewForOutsideWorkspaceWrite('write_file', args, settingsManager)).toBe(false);
-        expect(service.toolNeedsConfirmation('write_file', args)).toBe(true);
+        expect(service.toolNeedsConfirmation('write_file', args)).toBe(false);
     });
 
     it('routes outside-workspace writes through tool confirmation when auto applying diffs', async () => {
@@ -128,7 +125,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('skips the generic tool confirmation for outside-workspace apply_diff covered by manual diff review', async () => {
+    it('skips generic tool confirmation for outside-workspace apply_diff that uses manual diff review', async () => {
         await settingsManager.updateApplyDiffConfig({ outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('apply_diff', false);
 
@@ -137,7 +134,6 @@ describe('outside workspace file access policy', () => {
 
         expect(isOutsideWorkspaceWriteCoveredByManualDiffReview('apply_diff', settingsManager)).toBe(true);
         expect(toolCallNeedsOutsideWorkspaceConfirmation('apply_diff', args, settingsManager)).toBe(false);
-        expect(toolCallUsesManualDiffReviewForOutsideWorkspaceWrite('apply_diff', args, settingsManager)).toBe(true);
         expect(service.toolNeedsConfirmation('apply_diff', args)).toBe(false);
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });

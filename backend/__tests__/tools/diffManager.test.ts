@@ -304,6 +304,37 @@ describe('DiffManager lifecycle closure', () => {
         expect(console.warn).toHaveBeenCalled();
     });
 
+    it('directly saves confirmed tool diffs without scheduling auto-save confirmation', async () => {
+        const manager = getManager();
+        const statusListener = jest.fn();
+        const saveListener = jest.fn();
+        manager.addStatusListener(statusListener);
+        manager.addSaveCompleteListener(saveListener);
+        manager.updateSettings({ autoSave: true, autoSaveDelay: 5000 });
+
+        jest.spyOn(manager as any, 'showDiffView');
+        jest.spyOn(manager as any, 'scheduleAutoSave');
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'accepted',
+            undefined,
+            undefined,
+            'tool-1',
+            { confirmedByToolConfirmation: true }
+        );
+
+        expect(pendingDiff.status).toBe('accepted');
+        expect(fs.writeFileSync).toHaveBeenCalledWith('C:/tmp/file.ts', 'accepted', 'utf8');
+        expect((manager as any).showDiffView).not.toHaveBeenCalled();
+        expect((manager as any).scheduleAutoSave).not.toHaveBeenCalled();
+        expect((manager as any).autoSaveTimers.has(pendingDiff.id)).toBe(false);
+        expect(statusListener).toHaveBeenCalled();
+        expect(saveListener).toHaveBeenCalledWith(pendingDiff);
+    });
+
     it('auto-save failure leaves the diff pending for manual retry', async () => {
         jest.useFakeTimers();
 

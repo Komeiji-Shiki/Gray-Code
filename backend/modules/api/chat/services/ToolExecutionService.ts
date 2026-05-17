@@ -23,8 +23,7 @@ import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
 import {
     getOutsideWorkspaceRejectionReason,
-    toolCallNeedsOutsideWorkspaceConfirmation,
-    toolCallUsesManualDiffReviewForOutsideWorkspaceWrite
+    toolCallNeedsOutsideWorkspaceConfirmation
 } from '../../../../tools/file/outsideWorkspaceAccess';
 
 /**
@@ -916,7 +915,7 @@ export class ToolExecutionService {
             return true;
         }
 
-        if (toolCallUsesManualDiffReviewForOutsideWorkspaceWrite(toolName, args, this.settingsManager)) {
+        if (this.isManualDiffReviewWriteTool(toolName)) {
             return false;
         }
 
@@ -924,6 +923,13 @@ export class ToolExecutionService {
         // isToolAutoExec 返回 true 表示自动执行，不需要确认
         // isToolAutoExec 返回 false 表示需要确认
         return !this.settingsManager.isToolAutoExec(toolName);
+    }
+
+    private isManualDiffReviewWriteTool(toolName: string): boolean {
+        if (toolName !== 'write_file' && toolName !== 'apply_diff') {
+            return false;
+        }
+        return this.settingsManager?.getApplyDiffConfig().autoSave !== true;
     }
 
     /**

@@ -14,8 +14,6 @@ import { getDiffManager } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
-const EXTERNAL_PENDING_WRITE_DIR = path.join(require('os').tmpdir(), 'limcode-outside-workspace-write');
-
 /**
  * 单个文件写入配置
  */
@@ -49,29 +47,6 @@ function ensureDirectoryExists(dirPath: string): void {
     }
 }
 
-function createExternalPreviewFilePath(targetPath: string): string {
-    ensureDirectoryExists(EXTERNAL_PENDING_WRITE_DIR);
-    const safeBaseName = path.basename(targetPath) || 'outside-workspace-file';
-    return path.join(
-        EXTERNAL_PENDING_WRITE_DIR,
-        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeBaseName}`
-    );
-}
-
-function cleanupPreviewFile(previewPath: string | undefined): void {
-    if (!previewPath) {
-        return;
-    }
-
-    try {
-        if (fs.existsSync(previewPath)) {
-            fs.unlinkSync(previewPath);
-        }
-    } catch (error) {
-        console.warn(`Failed to remove outside-workspace write preview file: ${previewPath}`, error);
-    }
-}
-
 /**
  * 写入单个文件
  * @param entry 文件条目
@@ -83,7 +58,8 @@ async function writeSingleFile(
     entry: WriteFileEntry,
     isMultiRoot: boolean,
     toolId?: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    confirmedByToolConfirmation?: boolean
 ): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
@@ -99,8 +75,6 @@ async function writeSingleFile(
 
     const absolutePath = uri.fsPath;
     const workspaceName = isMultiRoot ? workspace?.name : undefined;
-    let previewPath: string | undefined;
-    let diffAbsolutePath = absolutePath;
 
     try {
         // 检查文件是否存在并获取原始内容
@@ -128,19 +102,12 @@ async function writeSingleFile(
             };
         }
 
-        // 如果文件不存在，需要先创建目录。工作区外新文件必须等用户确认后才真正写入目标路径，
-        // 因此使用临时预览文件承载 diff 视图。
+        // 如果文件不存在，需要先创建目录和空文件，以便 DiffManager 可以像处理工作区内文件一样
+        // 直接打开目标文件并承载待确认修改。
         if (!fileExists) {
-            if (isOutsideWorkspace) {
-                previewPath = createExternalPreviewFilePath(absolutePath);
-                fs.writeFileSync(previewPath, '', 'utf8');
-                diffAbsolutePath = previewPath;
-            } else {
-                const dirPath = path.dirname(absolutePath);
-                ensureDirectoryExists(dirPath);
-                // 创建空文件以便 DiffManager 可以操作
-                fs.writeFileSync(absolutePath, '', 'utf8');
-            }
+            const dirPath = path.dirname(absolutePath);
+            ensureDirectoryExists(dirPath);
+            fs.writeFileSync(absolutePath, '', 'utf8');
         }
 
         // 使用 DiffManager 创建待审阅的 diff
@@ -156,12 +123,13 @@ async function writeSingleFile(
         
         const pendingDiff = await diffManager.createPendingDiff(
             filePath,
-            diffAbsolutePath,
+            absolutePath,
             originalContent,
             content,
             blocks,  // 传递 blocks 信息以启用 CodeLens 和 inline decorations
             undefined,  // diffs
-            toolId  // 传递 toolId 以便前端跟踪
+            toolId,  // 传递 toolId 以便前端跟踪
+            { confirmedByToolConfirmation }
         );
 
         // 等待 diff 被处理（保存或拒绝）或用户中断/取消
@@ -217,15 +185,6 @@ async function writeSingleFile(
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
 
-        if (wasAccepted && previewPath) {
-            ensureDirectoryExists(path.dirname(absolutePath));
-            let contentToWrite = content;
-            if (previewPath && fs.existsSync(previewPath)) {
-                contentToWrite = fs.readFileSync(previewPath, 'utf8');
-            }
-            fs.writeFileSync(absolutePath, contentToWrite, 'utf8');
-        }
-
         // 尝试将内容保存到 DiffStorageManager，供前端按需加载
         const diffStorageManager = getDiffStorageManager();
         let diffContentId: string | undefined;
@@ -276,8 +235,6 @@ async function writeSingleFile(
             outsideWorkspace: isOutsideWorkspace,
             error: error instanceof Error ? error.message : String(error)
         };
-    } finally {
-        cleanupPreviewFile(previewPath);
     }
 }
 
@@ -356,7 +313,13 @@ export function createWriteFileTool(): Tool {
             let unchangedCount = 0;
 
             for (const entry of fileList) {
-                const result = await writeSingleFile(entry, isMultiRoot, context?.toolId, context?.abortSignal);
+                const result = await writeSingleFile(
+                    entry,
+                    isMultiRoot,
+                    context?.toolId,
+                    context?.abortSignal,
+                    context?.approvedByToolConfirmation === true
+                );
                 results.push(result);
                 
                 if (result.success) {

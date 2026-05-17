@@ -737,7 +737,8 @@ ${descriptionSuffix}`,
                         newContent,
                         blocks,
                         rawDiffs,
-                        context?.toolId
+                        context?.toolId,
+                        { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
                     );
 
                     // 等待 diff 被处理（保存或拒绝）或用户中断
@@ -951,7 +952,8 @@ ${descriptionSuffix}`,
                     currentContent,
                     blocks,
                     diffs as any[],
-                    context?.toolId
+                    context?.toolId,
+                    { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
                 );
 
                 const wasInterrupted = await new Promise<boolean>((resolve) => {

@@ -96,10 +96,11 @@ function getApplyDiffConfig(settingsManager?: SettingsManager): Readonly<ApplyDi
 /**
  * write_file / apply_diff 本身会创建 Diff 预览并等待用户接受/拒绝。
  *
- * 当处于“手动审阅”模式（autoSave=false）时，这个 Diff 审阅就是本次写入的确认动作，
- * 不需要在工具调用层再弹任何写入确认，避免用户先确认工具、再确认 Diff 的“双确认”。
+ * 当处于“手动审阅”模式（autoSave=false）时，这个 Diff 审阅已经覆盖了
+ * outside-workspace ask 策略需要的访问确认，因此不再叠加一层工作区外权限确认。
+ * 通用工具确认（autoExec=false）仍按原规则生效，保持和工作区内写入一致。
  *
- * 如果启用了自动应用（autoSave=true），仍保留工具层确认，
+ * 如果启用了自动应用（autoSave=true），仍保留工作区外权限确认，
  * 防止工作区外文件被静默写入。
  */
 export function isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName: string, settingsManager?: SettingsManager): boolean {
@@ -107,22 +108,6 @@ export function isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName: strin
         return false;
     }
     return getApplyDiffConfig(settingsManager).autoSave !== true;
-}
-
-export function toolCallUsesManualDiffReviewForOutsideWorkspaceWrite(
-    toolName: string,
-    args: Record<string, unknown> | undefined,
-    settingsManager?: SettingsManager
-): boolean {
-    if (!isOutsideWorkspaceAwareTool(toolName) || toolName === 'read_file') {
-        return false;
-    }
-
-    const check = getOutsideWorkspaceAccessCheck(toolName, args, settingsManager);
-    return check.isOutsideWorkspace
-        && !check.denied
-        && check.policy === 'ask'
-        && isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName, settingsManager);
 }
 
 export function getOutsideWorkspaceAccessCheck(
