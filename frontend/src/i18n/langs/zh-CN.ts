@@ -358,7 +358,8 @@ const zhCN: LanguageMessages = {
                 assistant: '助手'
             },
             actions: {
-                viewResponse: '查看回复'
+                viewResponse: '查看回复',
+                branchFromHere: '从这里创建分支'
             },
             responseViewer: {
                 commonMode: '常用模式',
@@ -1532,7 +1533,25 @@ const zhCN: LanguageMessages = {
                     unsavedChanges: '当前模式有未保存的更改，确定要放弃并切换吗？',
                     newModeName: '请输入新模式的名称',
                     newModeDefault: '新模式',
-                    renameModePrompt: '请输入新的模式名称'
+                    renameModePrompt: '请输入新的模式名称',
+                    duplicate: '复制模式',
+                    copySuffix: '副本',
+                    exportCurrent: '导出当前模式',
+                    exportAll: '导出全部模式',
+                    exportSuccess: '已导出并复制到剪贴板',
+                    exportDownloadOnly: '已导出文件，剪贴板复制失败',
+                    import: '导入模式',
+                    importDescription: '粘贴 LimCode 提示词模式 JSON，或从文件读取。导入时会自动生成新 ID，并避免覆盖现有模式。',
+                    importFromFile: '从文件读取',
+                    importPlaceholder: '粘贴导出的提示词模式 JSON...',
+                    importConfirm: '导入',
+                    importInvalid: '导入内容不是有效的提示词模式',
+                    importEmpty: '导入内容为空',
+                    importFailed: '导入失败',
+                    importSuccess: '已导入 {count} 个模式',
+                    importedModeDefault: '导入模式',
+                    duplicateSuccess: '已复制模式',
+                    duplicateFailed: '复制模式失败'
                 },
                 templateSection: {
                     title: '系统提示词模板',

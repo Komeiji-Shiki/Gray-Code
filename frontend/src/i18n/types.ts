@@ -280,6 +280,7 @@ export interface LanguageMessages {
             };
             actions: {
                 viewResponse: string;
+                branchFromHere: string;
             };
             responseViewer: {
                 commonMode: string;
@@ -1739,6 +1740,24 @@ export interface LanguageMessages {
                     newModeName: string;
                     newModeDefault: string;
                     renameModePrompt: string;
+                    duplicate: string;
+                    copySuffix: string;
+                    exportCurrent: string;
+                    exportAll: string;
+                    exportSuccess: string;
+                    exportDownloadOnly: string;
+                    import: string;
+                    importDescription: string;
+                    importFromFile: string;
+                    importPlaceholder: string;
+                    importConfirm: string;
+                    importInvalid: string;
+                    importEmpty: string;
+                    importFailed: string;
+                    importSuccess: string;
+                    importedModeDefault: string;
+                    duplicateSuccess: string;
+                    duplicateFailed: string;
                 };
                 templateSection: {
                     title: string;

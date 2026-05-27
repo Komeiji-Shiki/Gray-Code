@@ -68,6 +68,29 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
   ctx.sendResponse(requestId, { success: true });
 };
 
+
+/**
+ * 从指定消息创建分支对话
+ */
+export const createBranchConversation: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { sourceConversationId, branchAtIndex, title, conversationId, workspaceUri } = data || {};
+    const resolvedWorkspaceUri = workspaceUri || ctx.getCurrentWorkspaceUri() || undefined;
+    const result = await ctx.conversationManager.createBranchConversation(
+      sourceConversationId,
+      Number(branchAtIndex),
+      {
+        conversationId,
+        title,
+        workspaceUri: resolvedWorkspaceUri
+      }
+    );
+    ctx.sendResponse(requestId, { success: true, ...result });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'CREATE_BRANCH_CONVERSATION_ERROR', error.message || 'Failed to create branch conversation');
+  }
+};
+
 /**
  * 获取对话消息
  */
@@ -134,6 +157,8 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.setWorkspaceUri', setWorkspaceUri);
   registry.set('conversation.setCustomMetadata', setCustomMetadata);
   registry.set('conversation.deleteConversation', deleteConversation);
+  registry.set('conversation.createBranchConversation', createBranchConversation);
+
   registry.set('conversation.getMessages', getMessages);
   registry.set('conversation.getMessagesPaged', getMessagesPaged);
   registry.set('conversation.loadConversationForView', loadConversationForView);

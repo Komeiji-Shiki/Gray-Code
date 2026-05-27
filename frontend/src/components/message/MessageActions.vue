@@ -14,6 +14,7 @@ defineProps<{
   canEdit?: boolean
   canRetry?: boolean
   canViewResponse?: boolean
+  canBranch?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +23,7 @@ const emit = defineEmits<{
   delete: []
   retry: []
   viewResponse: []
+  branch: []
 }>()
 
 // 复制状态
@@ -72,6 +74,15 @@ function handleCopy() {
       size="small"
       :tooltip="isCopied ? t('components.common.tooltip.copied') : t('common.copy')"
       @click="handleCopy"
+    />
+
+    <!-- 从此处创建分支 -->
+    <IconButton
+      v-if="canBranch"
+      icon="codicon-repo-forked"
+      size="small"
+      :tooltip="t('components.message.actions.branchFromHere')"
+      @click="emit('branch')"
     />
 
     <!-- 查看回复 -->

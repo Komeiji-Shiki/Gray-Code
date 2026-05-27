@@ -358,7 +358,8 @@ const en: LanguageMessages = {
                 assistant: 'Assistant'
             },
             actions: {
-                viewResponse: 'View response'
+                viewResponse: 'View response',
+                branchFromHere: 'Branch from here'
             },
             responseViewer: {
                 commonMode: 'Common mode',
@@ -1532,7 +1533,25 @@ const en: LanguageMessages = {
                     unsavedChanges: 'The current mode has unsaved changes. Are you sure you want to discard and switch?',
                     newModeName: 'Please enter a name for the new mode',
                     newModeDefault: 'New Mode',
-                    renameModePrompt: 'Please enter the new mode name'
+                    renameModePrompt: 'Please enter the new mode name',
+                    duplicate: 'Duplicate Mode',
+                    copySuffix: 'Copy',
+                    exportCurrent: 'Export Current Mode',
+                    exportAll: 'Export All Modes',
+                    exportSuccess: 'Exported and copied to clipboard',
+                    exportDownloadOnly: 'Exported file, but clipboard copy failed',
+                    import: 'Import Modes',
+                    importDescription: 'Paste LimCode prompt mode JSON, or read it from a file. Imported modes will receive new IDs and will not overwrite existing modes.',
+                    importFromFile: 'Read from file',
+                    importPlaceholder: 'Paste exported prompt mode JSON...',
+                    importConfirm: 'Import',
+                    importInvalid: 'The import content is not a valid prompt mode',
+                    importEmpty: 'Import content is empty',
+                    importFailed: 'Import failed',
+                    importSuccess: 'Imported {count} mode(s)',
+                    importedModeDefault: 'Imported Mode',
+                    duplicateSuccess: 'Mode duplicated',
+                    duplicateFailed: 'Failed to duplicate mode'
                 },
                 templateSection: {
                     title: 'System Prompt Template',

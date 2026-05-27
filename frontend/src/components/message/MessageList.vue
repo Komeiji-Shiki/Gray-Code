@@ -860,6 +860,16 @@ function handleRetry(messageId: string) {
   if (actualIndex !== -1) chatStore.retryFromMessage(actualIndex)
 }
 
+// 从某条消息创建分支对话
+async function handleBranch(messageId: string) {
+  const msg = chatStore.allMessages.find(m => m.id === messageId)
+  const backendIndex = msg?.backendIndex
+  if (typeof backendIndex !== 'number' || !Number.isFinite(backendIndex)) {
+    return
+  }
+  await chatStore.branchFromMessage(backendIndex)
+}
+
 // 处理复制
 function handleCopy(content: string) {
   emit('copy', content)
@@ -1098,6 +1108,7 @@ function formatCheckpointTime(timestamp: number): string {
               @delete="handleDelete"
               @retry="handleRetry"
               @copy="handleCopy"
+              @branch="handleBranch"
               @restore-checkpoint="handleRestoreCheckpoint"
               @restore-and-retry="handleRestoreAndRetry"
               @restore-and-edit="handleRestoreAndEdit"

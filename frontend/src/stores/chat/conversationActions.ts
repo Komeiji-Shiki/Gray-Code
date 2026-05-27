@@ -324,6 +324,78 @@ export async function createAndPersistConversation(
  * 优化：只获取元信息，不加载具体消息内容
  * 消息内容在用户点击对话时才延迟加载
  */
+export interface BranchConversationResult {
+  success: boolean
+  conversationId: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+  preview?: string
+  workspaceUri?: string
+}
+
+/**
+ * 基于某条后端历史消息创建分支对话。
+ */
+export async function createBranchConversation(
+  state: ChatStoreState,
+  sourceConversationId: string,
+  branchAtIndex: number,
+  options: { title?: string } = {}
+): Promise<Conversation | null> {
+  try {
+    const result = await sendToExtension<BranchConversationResult>('conversation.createBranchConversation', {
+      sourceConversationId,
+      branchAtIndex,
+      title: options.title,
+      workspaceUri: state.currentWorkspaceUri.value || undefined
+    })
+
+    if (!result?.success || !result.conversationId) {
+      return null
+    }
+
+    const now = Date.now()
+    const conversation: Conversation = {
+      id: result.conversationId,
+      title: result.title || `Chat ${result.conversationId.slice(0, 8)}`,
+      createdAt: result.createdAt || now,
+      updatedAt: result.updatedAt || result.createdAt || now,
+      messageCount: result.messageCount || branchAtIndex + 1,
+      preview: result.preview,
+      isPersisted: true,
+      workspaceUri: result.workspaceUri || state.currentWorkspaceUri.value || undefined
+    }
+
+    const existingIndex = state.conversations.value.findIndex(c => c.id === conversation.id)
+    if (existingIndex >= 0) {
+      state.conversations.value.splice(existingIndex, 1, conversation)
+    } else {
+      state.conversations.value.unshift(conversation)
+    }
+
+    const persistedIndex = state.persistedConversationIds.value.indexOf(conversation.id)
+    if (persistedIndex >= 0) {
+      state.persistedConversationIds.value.splice(persistedIndex, 1)
+      state.persistedConversationIds.value.unshift(conversation.id)
+    } else {
+      state.persistedConversationIds.value.unshift(conversation.id)
+      state.persistedConversationsLoaded.value += 1
+    }
+
+    return conversation
+  } catch (err: any) {
+    console.error('[conversationActions] Failed to create branch conversation:', err)
+    state.error.value = {
+      code: err?.code || 'CREATE_BRANCH_CONVERSATION_ERROR',
+      message: err?.message || 'Failed to create branch conversation'
+    }
+    return null
+  }
+}
+
+
 export async function loadConversations(state: ChatStoreState): Promise<void> {
   state.isLoadingConversations.value = true
 

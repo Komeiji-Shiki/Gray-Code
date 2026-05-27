@@ -36,6 +36,7 @@ const emit = defineEmits<{
   retry: [messageId: string]
   restoreAndRetry: [messageId: string, checkpointId: string]
   copy: [content: string]
+  branch: [messageId: string]
 }>()
 
 const chatStore = useChatStore()
@@ -542,11 +543,13 @@ function handleRestoreAndRetry(checkpointId: string) {
         :message="message"
         :can-edit="isUser"
         :can-retry="!isUser"
+        :can-branch="typeof message.backendIndex === 'number' && !isStreaming"
         :can-view-response="!isUser"
         @edit="startEdit"
         @copy="handleCopy"
         @delete="handleDelete"
         @retry="handleRetryClick"
+        @branch="emit('branch', message.id)"
         @view-response="handleViewResponse"
       />
     </div>

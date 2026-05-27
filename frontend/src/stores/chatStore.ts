@@ -49,7 +49,8 @@ import {
   switchConversation as switchConvAction,
   deleteConversation as deleteConvAction,
   isDeletingConversation,
-  updateConversationAfterMessage
+  updateConversationAfterMessage,
+  createBranchConversation as createBranchConversationAction
 } from './chat/conversationActions'
 
 import {
@@ -253,6 +254,35 @@ export const useChatStore = defineStore('chat', () => {
       if (conv) {
         updateTabTitle(state, state.activeTabId.value, conv.title)
       }
+    }
+  }
+
+  /**
+   * 从指定后端消息索引创建分支对话，并在新标签页中打开。
+   */
+  const branchFromMessage = async (messageBackendIndex: number): Promise<void> => {
+    const sourceConversationId = state.currentConversationId.value
+    if (!sourceConversationId) return
+    if (!Number.isFinite(messageBackendIndex) || messageBackendIndex < 0) return
+
+    if (state.isWaitingForResponse.value || state.isStreaming.value) {
+      await cancelStreamAndRejectTools()
+    }
+
+    const conv = await createBranchConversationAction(state, sourceConversationId, messageBackendIndex)
+    if (!conv) return
+
+    const tabId = createTabAction(state, {
+      conversationId: conv.id,
+      title: conv.title
+    })
+
+    if (tabId) {
+      switchTabWrapped(tabId)
+      await switchConvAction(state, conv.id, cancelStreamAndRejectTools)
+      updateTabTitle(state, tabId, conv.title)
+    } else {
+      await switchConversation(conv.id)
     }
   }
 
@@ -613,6 +643,7 @@ export const useChatStore = defineStore('chat', () => {
     loadMoreConversations,
     switchConversation,
     deleteConversation,
+    branchFromMessage,
     isDeletingConversation: (id: string) => isDeletingConversation(state, id),
     
     // 消息管理

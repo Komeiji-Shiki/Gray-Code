@@ -358,7 +358,8 @@ const ja: LanguageMessages = {
                 assistant: 'アシスタント'
             },
             actions: {
-                viewResponse: '応答を見る'
+                viewResponse: '応答を見る',
+                branchFromHere: 'ここから分岐'
             },
             responseViewer: {
                 commonMode: '通常モード',
@@ -1532,7 +1533,25 @@ const ja: LanguageMessages = {
                     unsavedChanges: '現在のモードには未保存の変更があります。破棄して切り替えてもよろしいですか？',
                     newModeName: '新しいモードの名前を入力してください',
                     newModeDefault: '新しいモード',
-                    renameModePrompt: '新しいモード名を入力してください'
+                    renameModePrompt: '新しいモード名を入力してください',
+                    duplicate: 'モードを複製',
+                    copySuffix: 'コピー',
+                    exportCurrent: '現在のモードをエクスポート',
+                    exportAll: 'すべてのモードをエクスポート',
+                    exportSuccess: 'エクスポートしてクリップボードにコピーしました',
+                    exportDownloadOnly: 'ファイルをエクスポートしましたが、クリップボードへのコピーに失敗しました',
+                    import: 'モードをインポート',
+                    importDescription: 'LimCode プロンプトモード JSON を貼り付けるか、ファイルから読み込みます。インポート時は新しい ID が生成され、既存のモードは上書きされません。',
+                    importFromFile: 'ファイルから読み込み',
+                    importPlaceholder: 'エクスポートしたプロンプトモード JSON を貼り付け...',
+                    importConfirm: 'インポート',
+                    importInvalid: 'インポート内容は有効なプロンプトモードではありません',
+                    importEmpty: 'インポート内容が空です',
+                    importFailed: 'インポートに失敗しました',
+                    importSuccess: '{count} 個のモードをインポートしました',
+                    importedModeDefault: 'インポートしたモード',
+                    duplicateSuccess: 'モードを複製しました',
+                    duplicateFailed: 'モードの複製に失敗しました'
                 },
                 templateSection: {
                     title: 'システムプロンプトテンプレート',

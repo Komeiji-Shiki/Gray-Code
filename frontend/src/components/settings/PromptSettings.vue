@@ -4,6 +4,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { CustomSelect, InputDialog, ConfirmDialog, type SelectOption } from '../common'
+import { copyToClipboard } from '@/utils/format'
 import PromptEntriesEditor from './PromptEntriesEditor.vue'
 
 const { t } = useI18n()
@@ -425,14 +426,21 @@ const selectedModeId = ref(DEFAULT_MODE_ID)  // 当前编辑的模式
 
 // 对话框状态
 const showAddModeDialog = ref(false)
+const showDuplicateModeDialog = ref(false)
+const showImportModeDialog = ref(false)
 const showRenameModeDialog = ref(false)
 const showDeleteConfirm = ref(false)
 const showUnsavedConfirm = ref(false)
 const showResetStaticConfirm = ref(false)
 const showResetDynamicConfirm = ref(false)
 const pendingModeId = ref('')
+const duplicatingModeId = ref('')
+const duplicatingModeName = ref('')
 const renamingModeId = ref('')
 const renamingModeName = ref('')
+const importPayloadText = ref('')
+const importErrorMessage = ref('')
+const importFileInputRef = ref<HTMLInputElement | null>(null)
 
 // 模式选项（用于 CustomSelect）
 const modeOptions = computed<SelectOption[]>(() => {
@@ -534,6 +542,214 @@ function normalizePromptEntries(entries: PromptEntry[] | undefined, assemblyMode
 
 function clonePromptEntries(entries: PromptEntry[]): PromptEntry[] {
   return entries.map(entry => ({ ...entry }))
+}
+
+function clonePromptMode(mode: PromptMode): PromptMode {
+  const cloned: PromptMode = {
+    ...mode,
+    promptAssemblyMode: normalizePromptAssemblyMode(mode.promptAssemblyMode),
+    toolPolicy: Array.isArray(mode.toolPolicy) ? [...mode.toolPolicy] : undefined,
+    promptEntries: Array.isArray(mode.promptEntries)
+      ? clonePromptEntries(mode.promptEntries)
+      : undefined
+  }
+  if (!Array.isArray(mode.toolPolicy)) {
+    delete (cloned as any).toolPolicy
+  }
+  if (!Array.isArray(mode.promptEntries)) {
+    delete (cloned as any).promptEntries
+  }
+  return cloned
+}
+
+function createModeId(prefix = 'mode'): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function getUniqueModeName(baseName: string): string {
+  const trimmed = baseName.trim() || t('components.settings.promptSettings.modes.newModeDefault')
+  const used = new Set(modes.value.map(mode => mode.name.trim()))
+  if (!used.has(trimmed)) return trimmed
+
+  let index = 2
+  let candidate = `${trimmed} ${index}`
+  while (used.has(candidate)) {
+    index += 1
+    candidate = `${trimmed} ${index}`
+  }
+  return candidate
+}
+
+function getDuplicateModeName(mode: PromptMode): string {
+  return getUniqueModeName(`${mode.name} ${t('components.settings.promptSettings.modes.copySuffix')}`)
+}
+
+function buildEditedModeSnapshot(sourceMode?: PromptMode): PromptMode {
+  const fallbackMode: PromptMode = sourceMode || {
+    id: selectedModeId.value,
+    name: t('components.settings.promptSettings.modes.newModeDefault'),
+    icon: 'symbol-method',
+    template: DEFAULT_TEMPLATE,
+    promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
+    dynamicContextStrategy: 'single'
+  }
+
+  const snapshot: PromptMode = {
+    ...clonePromptMode(fallbackMode),
+    template: cleanupEmptyLines(config.template || ''),
+    promptAssemblyMode: promptAssemblyMode.value,
+    dynamicTemplateEnabled: config.dynamicTemplateEnabled,
+    dynamicTemplate: cleanupEmptyLines(config.dynamicTemplate || ''),
+    dynamicContextStrategy: config.dynamicContextStrategy,
+    promptEntries: normalizePromptEntries(promptEntries.value, promptAssemblyMode.value)
+  }
+
+  if (toolPolicyMode.value === 'custom') {
+    snapshot.toolPolicy = Array.from(new Set(toolPolicy.value))
+  } else {
+    delete (snapshot as any).toolPolicy
+  }
+
+  if (!snapshot.promptEntries || snapshot.promptEntries.length === 0) {
+    delete (snapshot as any).promptEntries
+  }
+
+  return snapshot
+}
+
+function getModeSnapshotForExport(mode: PromptMode): PromptMode {
+  return mode.id === selectedModeId.value
+    ? buildEditedModeSnapshot(mode)
+    : clonePromptMode(mode)
+}
+
+function sanitizeImportedMode(raw: unknown, fallbackName: string): PromptMode {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(t('components.settings.promptSettings.modes.importInvalid'))
+  }
+
+  const item = raw as Partial<PromptMode> & Record<string, unknown>
+  const assemblyMode = normalizePromptAssemblyMode(item.promptAssemblyMode)
+  const name = typeof item.name === 'string' && item.name.trim()
+    ? item.name.trim()
+    : fallbackName
+
+  return {
+    id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : createModeId('imported_mode'),
+    name,
+    icon: typeof item.icon === 'string' && item.icon.trim() ? item.icon.trim() : 'symbol-method',
+    template: typeof item.template === 'string' ? item.template : DEFAULT_TEMPLATE,
+    promptAssemblyMode: assemblyMode,
+    dynamicTemplateEnabled: item.dynamicTemplateEnabled !== false,
+    dynamicTemplate: typeof item.dynamicTemplate === 'string' ? item.dynamicTemplate : DEFAULT_DYNAMIC_TEMPLATE,
+    dynamicContextStrategy: item.dynamicContextStrategy === 'preserve' ? 'preserve' : 'single',
+    promptEntries: normalizePromptEntries(item.promptEntries as PromptEntry[] | undefined, assemblyMode),
+    toolPolicy: Array.isArray(item.toolPolicy)
+      ? Array.from(new Set(item.toolPolicy.filter((tool): tool is string => typeof tool === 'string' && tool.trim()).map(tool => tool.trim())))
+      : undefined
+  }
+}
+
+function parsePromptModeImportPayload(rawText: string): PromptMode[] {
+  const trimmed = rawText.trim()
+  if (!trimmed) {
+    throw new Error(t('components.settings.promptSettings.modes.importEmpty'))
+  }
+
+  const parsed = JSON.parse(trimmed)
+  const source = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.modes)
+      ? parsed.modes
+      : parsed?.mode
+        ? [parsed.mode]
+        : [parsed]
+
+  const imported = source.map((item: unknown, index: number) =>
+    sanitizeImportedMode(item, `${t('components.settings.promptSettings.modes.importedModeDefault')} ${index + 1}`)
+  )
+
+  if (imported.length === 0) {
+    throw new Error(t('components.settings.promptSettings.modes.importEmpty'))
+  }
+
+  return imported
+}
+
+function buildPromptModeExportPayload(target: 'current' | 'all'): string {
+  const exportedModes = target === 'current'
+    ? modes.value
+        .filter(mode => mode.id === selectedModeId.value)
+        .map(mode => getModeSnapshotForExport(mode))
+    : modes.value.map(mode => getModeSnapshotForExport(mode))
+
+  const payload = {
+    schema: 'limcode.promptModes.v1',
+    exportedAt: new Date().toISOString(),
+    modes: exportedModes
+  }
+
+  return JSON.stringify(payload, null, 2)
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+async function exportPromptModes(target: 'current' | 'all') {
+  const payload = buildPromptModeExportPayload(target)
+  const filename = target === 'current'
+    ? `limcode-prompt-mode-${selectedModeId.value || 'current'}.json`
+    : 'limcode-prompt-modes.json'
+
+  downloadTextFile(filename, payload)
+  const copied = await copyToClipboard(payload)
+  saveMessage.value = copied
+    ? t('components.settings.promptSettings.modes.exportSuccess')
+    : t('components.settings.promptSettings.modes.exportDownloadOnly')
+  setTimeout(() => { saveMessage.value = '' }, 2500)
+}
+
+async function persistImportedModes(importedModes: PromptMode[]) {
+  const savedModes: PromptMode[] = []
+
+  for (const importedMode of importedModes) {
+    const mode: PromptMode = {
+      ...importedMode,
+      id: createModeId('imported_mode'),
+      name: getUniqueModeName(importedMode.name)
+    }
+    if (!mode.toolPolicy || mode.toolPolicy.length === 0) {
+      delete (mode as any).toolPolicy
+    }
+    if (!mode.promptEntries || mode.promptEntries.length === 0) {
+      delete (mode as any).promptEntries
+    }
+
+    await sendToExtension('savePromptMode', { mode })
+    savedModes.push(mode)
+  }
+
+  modes.value = [...modes.value, ...savedModes]
+  const lastMode = savedModes[savedModes.length - 1]
+  if (lastMode) {
+    selectedModeId.value = lastMode.id
+    loadModeConfig(lastMode.id)
+  }
+  settingsStore.refreshPromptModes()
+  saveMessage.value = t('components.settings.promptSettings.modes.importSuccess', { count: savedModes.length })
+  setTimeout(() => { saveMessage.value = '' }, 2500)
 }
 
 function isSamePromptEntries(a: PromptEntry[], b: PromptEntry[]): boolean {
@@ -1012,7 +1228,7 @@ function openAddModeDialog() {
 
 // 确认添加新模式
 async function confirmAddMode(name: string) {
-  const id = `mode_${Date.now()}`
+  const id = createModeId()
   const newMode: PromptMode = {
     id,
     name,
@@ -1033,6 +1249,90 @@ async function confirmAddMode(name: string) {
     settingsStore.refreshPromptModes()
   } catch (error) {
     console.error('Failed to add mode:', error)
+  }
+}
+
+function openDuplicateModeDialog() {
+  const source = modes.value.find(m => m.id === selectedModeId.value)
+  if (!source) return
+  duplicatingModeId.value = source.id
+  duplicatingModeName.value = getDuplicateModeName(source)
+  showDuplicateModeDialog.value = true
+}
+
+async function confirmDuplicateMode(name: string) {
+  const source = modes.value.find(m => m.id === duplicatingModeId.value)
+  const normalizedName = name.trim()
+  if (!source || !normalizedName) return
+
+  const baseSnapshot = source.id === selectedModeId.value
+    ? buildEditedModeSnapshot(source)
+    : clonePromptMode(source)
+
+  const duplicatedMode: PromptMode = {
+    ...baseSnapshot,
+    id: createModeId('mode_copy'),
+    name: getUniqueModeName(normalizedName),
+    promptEntries: Array.isArray(baseSnapshot.promptEntries)
+      ? clonePromptEntries(baseSnapshot.promptEntries).map(entry => ({ ...entry }))
+      : undefined,
+    toolPolicy: Array.isArray(baseSnapshot.toolPolicy) ? [...baseSnapshot.toolPolicy] : undefined
+  }
+  if (!duplicatedMode.toolPolicy || duplicatedMode.toolPolicy.length === 0) {
+    delete (duplicatedMode as any).toolPolicy
+  }
+  if (!duplicatedMode.promptEntries || duplicatedMode.promptEntries.length === 0) {
+    delete (duplicatedMode as any).promptEntries
+  }
+
+  try {
+    await sendToExtension('savePromptMode', { mode: duplicatedMode })
+    modes.value.push(duplicatedMode)
+    selectedModeId.value = duplicatedMode.id
+    loadModeConfig(duplicatedMode.id)
+    settingsStore.refreshPromptModes()
+    saveMessage.value = t('components.settings.promptSettings.modes.duplicateSuccess')
+    setTimeout(() => { saveMessage.value = '' }, 2000)
+  } catch (error) {
+    console.error('Failed to duplicate mode:', error)
+    saveMessage.value = t('components.settings.promptSettings.modes.duplicateFailed')
+  }
+}
+
+function openImportModeDialog() {
+  importPayloadText.value = ''
+  importErrorMessage.value = ''
+  showImportModeDialog.value = true
+}
+
+async function confirmImportModes() {
+  importErrorMessage.value = ''
+  try {
+    const importedModes = parsePromptModeImportPayload(importPayloadText.value)
+    await persistImportedModes(importedModes)
+    showImportModeDialog.value = false
+  } catch (error: any) {
+    console.error('Failed to import prompt modes:', error)
+    importErrorMessage.value = error?.message || t('components.settings.promptSettings.modes.importFailed')
+  }
+}
+
+function triggerImportFilePicker() {
+  importFileInputRef.value?.click()
+}
+
+async function handleImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file) return
+
+  try {
+    importPayloadText.value = await file.text()
+    importErrorMessage.value = ''
+  } catch (error: any) {
+    importErrorMessage.value = error?.message || t('components.settings.promptSettings.modes.importFailed')
+  } finally {
+    if (input) input.value = ''
   }
 }
 
@@ -1141,6 +1441,27 @@ watch(selectedChannel, () => {
         <div class="mode-actions">
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
             <i class="codicon codicon-add"></i>
+          </button>
+          <button 
+            class="mode-action-btn" 
+            @click="openDuplicateModeDialog" 
+            :title="t('components.settings.promptSettings.modes.duplicate')"
+          >
+            <i class="codicon codicon-copy"></i>
+          </button>
+          <button 
+            class="mode-action-btn" 
+            @click="exportPromptModes('current')" 
+            :title="t('components.settings.promptSettings.modes.exportCurrent')"
+          >
+            <i class="codicon codicon-export"></i>
+          </button>
+          <button 
+            class="mode-action-btn" 
+            @click="openImportModeDialog" 
+            :title="t('components.settings.promptSettings.modes.import')"
+          >
+            <i class="codicon codicon-cloud-upload"></i>
           </button>
           <button 
             class="mode-action-btn" 
@@ -1646,6 +1967,69 @@ watch(selectedChannel, () => {
       @confirm="confirmAddMode"
     />
     
+    <!-- 复制模式对话框 -->
+    <InputDialog
+      v-model="showDuplicateModeDialog"
+      :title="t('components.settings.promptSettings.modes.duplicate')"
+      :placeholder="duplicatingModeName"
+      :default-value="duplicatingModeName"
+      @confirm="confirmDuplicateMode"
+    />
+
+    <!-- 导入模式对话框 -->
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div v-if="showImportModeDialog" class="import-dialog-overlay" @click.self="showImportModeDialog = false">
+          <div class="import-dialog">
+            <div class="import-dialog-header">
+              <i class="codicon codicon-cloud-upload"></i>
+              <span>{{ t('components.settings.promptSettings.modes.import') }}</span>
+            </div>
+            <div class="import-dialog-body">
+              <p class="import-dialog-description">
+                {{ t('components.settings.promptSettings.modes.importDescription') }}
+              </p>
+              <div class="import-dialog-toolbar">
+                <button class="small-btn" type="button" @click="triggerImportFilePicker">
+                  <i class="codicon codicon-folder-opened"></i>
+                  {{ t('components.settings.promptSettings.modes.importFromFile') }}
+                </button>
+                <button class="small-btn" type="button" @click="exportPromptModes('all')">
+                  <i class="codicon codicon-export"></i>
+                  {{ t('components.settings.promptSettings.modes.exportAll') }}
+                </button>
+              </div>
+              <input
+                ref="importFileInputRef"
+                type="file"
+                accept="application/json,.json"
+                class="hidden-file-input"
+                @change="handleImportFileChange"
+              />
+              <textarea
+                v-model="importPayloadText"
+                class="import-textarea"
+                :placeholder="t('components.settings.promptSettings.modes.importPlaceholder')"
+                rows="12"
+              ></textarea>
+              <p v-if="importErrorMessage" class="import-error">
+                <i class="codicon codicon-warning"></i>
+                {{ importErrorMessage }}
+              </p>
+            </div>
+            <div class="import-dialog-footer">
+              <button class="small-btn" type="button" @click="showImportModeDialog = false">
+                {{ t('common.cancel') }}
+              </button>
+              <button class="save-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
+                {{ t('components.settings.promptSettings.modes.importConfirm') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+    
     <!-- 重命名模式对话框 -->
     <InputDialog
       v-model="showRenameModeDialog"
@@ -1709,21 +2093,21 @@ watch(selectedChannel, () => {
 /* 模式选择栏 */
 .mode-selector-bar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   padding: 10px 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
-  flex-wrap: nowrap;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
 .mode-selector-left {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1;
+  gap: 8px;
+  flex: 1 1 240px;
   min-width: 0;
 }
 
@@ -1744,10 +2128,10 @@ watch(selectedChannel, () => {
 
 /* 模式选择下拉框固定宽度 */
 .mode-select-dropdown {
-  width: 160px;
-  min-width: 160px;
-  max-width: 160px;
-  flex-shrink: 0;
+  width: auto;
+  min-width: 150px;
+  max-width: 260px;
+  flex: 1 1 160px;
 }
 
 .mode-select-dropdown :deep(.select-trigger) {
@@ -1774,8 +2158,11 @@ watch(selectedChannel, () => {
 
 .mode-actions {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .mode-action-btn {
@@ -1807,6 +2194,138 @@ watch(selectedChannel, () => {
 
 .mode-action-btn .codicon {
   font-size: 14px;
+}
+
+@media (max-width: 520px) {
+  .mode-selector-left {
+    flex-basis: 100%;
+  }
+
+  .mode-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 380px) {
+  .mode-label-text {
+    display: none;
+  }
+
+  .mode-selector-left {
+    flex-basis: 100%;
+  }
+}
+
+
+.import-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.import-dialog {
+  width: min(720px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.import-dialog-header,
+.import-dialog-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.import-dialog-header {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.import-dialog-header .codicon {
+  color: var(--vscode-editorInfo-foreground);
+}
+
+.import-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow: auto;
+}
+
+.import-dialog-description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.import-dialog-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.import-dialog-footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--vscode-panel-border);
+  border-bottom: none;
+}
+
+.import-textarea {
+  width: 100%;
+  min-height: 240px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  resize: vertical;
+  outline: none;
+}
+
+.import-textarea:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.import-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-errorForeground);
+}
+
+.dialog-fade-enter-active,
+.dialog-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.dialog-fade-enter-from,
+.dialog-fade-leave-to {
+  opacity: 0;
 }
 
 .template-section {

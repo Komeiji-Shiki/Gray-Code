@@ -100,6 +100,17 @@ export interface GetHistoryOptions {
     includeTurnDynamicContext?: boolean;
 }
 
+export interface CreateBranchConversationResult {
+    conversationId: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+    messageCount: number;
+    preview?: string;
+    workspaceUri?: string;
+}
+
+
 /**
  * 对话管理器
  *
@@ -112,6 +123,66 @@ export interface GetHistoryOptions {
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
+
+    private cloneJson<T>(value: T): T {
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    private getTextPreviewFromContent(content: Content | undefined, maxLength = 50): string | undefined {
+        if (!content || !Array.isArray(content.parts)) return undefined;
+        const text = content.parts
+            .map(part => typeof part.text === 'string' ? part.text : '')
+            .join('')
+            .trim();
+        if (!text) return undefined;
+        return text.slice(0, maxLength);
+    }
+
+    private buildBranchTitle(sourceTitle: string | undefined, branchAtIndex: number): string {
+        const base = typeof sourceTitle === 'string' && sourceTitle.trim()
+            ? sourceTitle.trim()
+            : 'Conversation';
+        const maxBaseLength = 44;
+        const compactBase = base.length > maxBaseLength ? `${base.slice(0, maxBaseLength)}...` : base;
+        return `${compactBase} · Branch @${branchAtIndex + 1}`;
+    }
+
+    private buildBranchCustomMetadata(
+        sourceCustom: Record<string, unknown> | undefined,
+        sourceConversationId: string,
+        branchAtIndex: number,
+        messageCount: number,
+        preview: string | undefined,
+        createdAt: number
+    ): Record<string, unknown> {
+        const copied: Record<string, unknown> = {};
+        const allowedKeys = [
+            'inputModelConfig',
+            'promptModeConfig',
+            'inputPinnedFiles',
+            'inputSkills',
+            'todoList'
+        ];
+
+        if (sourceCustom && typeof sourceCustom === 'object') {
+            for (const key of allowedKeys) {
+                if (sourceCustom[key] !== undefined) {
+                    copied[key] = this.cloneJson(sourceCustom[key]);
+                }
+            }
+        }
+
+        copied.messageCount = messageCount;
+        if (preview) copied.preview = preview;
+        copied.updatedAt = createdAt;
+        copied.branch = {
+            sourceConversationId,
+            sourceMessageIndex: branchAtIndex,
+            createdAt
+        };
+
+        return copied;
+    }
 
     private resolveIntegrityStatus(
         integrity: ConversationStorageIntegrity | null
@@ -276,6 +347,93 @@ export class ConversationManager {
 
         await this.storage.saveHistory(conversationId, []);
         await this.storage.saveMetadata(meta);
+    }
+
+
+    /**
+     * 基于源对话的某条消息创建分支对话。
+     *
+     * 分支会复制从开头到目标消息（包含目标消息）的完整 Gemini 历史，
+     * 并继承模型、提示词模式、固定文件和 Skills 等稳定上下文元数据。
+     * 运行态元数据（如 checkpoints、activeBuild、pendingApprovalGate、trimState）不会复制。
+     */
+    async createBranchConversation(
+        sourceConversationId: string,
+        branchAtIndex: number,
+        options: { conversationId?: string; title?: string; workspaceUri?: string } = {}
+    ): Promise<CreateBranchConversationResult> {
+        const normalizedSourceId = typeof sourceConversationId === 'string' ? sourceConversationId.trim() : '';
+        if (!normalizedSourceId) {
+            throw new Error('Source conversation id is required');
+        }
+
+        const history = await this.loadHistory(normalizedSourceId);
+        if (history.length === 0) {
+            throw new Error('Cannot create a branch from an empty conversation');
+        }
+
+        const index = Math.floor(branchAtIndex);
+        if (!Number.isFinite(index) || index < 0 || index >= history.length) {
+            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: branchAtIndex }));
+        }
+
+        const targetConversationId = typeof options.conversationId === 'string' && options.conversationId.trim()
+            ? options.conversationId.trim()
+            : `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+        const existing = await this.storage.loadHistoryWithStatus(targetConversationId);
+        if (existing.value) {
+            throw new Error(t('modules.conversation.errors.conversationExists', { conversationId: targetConversationId }));
+        }
+        if (existing.errorCode && existing.errorCode !== 'not_found') {
+            throw new Error(
+                `Cannot create branch conversation ${targetConversationId}: history file is not readable (${existing.errorCode})`
+            );
+        }
+
+        const sourceMeta = await this.loadStoredMetadata(normalizedSourceId);
+        const now = Date.now();
+        const branchHistory = this.cloneJson(history.slice(0, index + 1));
+        const messageCount = branchHistory.length;
+        const lastUserMessage = [...branchHistory]
+            .reverse()
+            .find(message => message.role === 'user' && !message.isFunctionResponse);
+        const preview = this.getTextPreviewFromContent(lastUserMessage);
+        const title = typeof options.title === 'string' && options.title.trim()
+            ? options.title.trim()
+            : this.buildBranchTitle(sourceMeta?.title, index);
+        const workspaceUri = typeof options.workspaceUri === 'string' && options.workspaceUri.trim()
+            ? options.workspaceUri.trim()
+            : sourceMeta?.workspaceUri;
+
+        const meta: ConversationMetadata = {
+            id: targetConversationId,
+            title,
+            createdAt: now,
+            updatedAt: now,
+            workspaceUri,
+            custom: this.buildBranchCustomMetadata(
+                sourceMeta?.custom,
+                normalizedSourceId,
+                index,
+                messageCount,
+                preview,
+                now
+            )
+        };
+
+        await this.storage.saveHistory(targetConversationId, branchHistory);
+        await this.storage.saveMetadata(meta);
+
+        return {
+            conversationId: targetConversationId,
+            title,
+            createdAt: now,
+            updatedAt: now,
+            messageCount,
+            preview,
+            workspaceUri
+        };
     }
 
     /**
