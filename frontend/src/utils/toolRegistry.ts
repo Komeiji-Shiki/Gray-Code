@@ -4,6 +4,29 @@
  */
 
 import type { Component } from 'vue'
+import type { ToolUsage } from '../types'
+
+export interface ToolActionContext {
+  /** 当前主聊天对话 ID，历史 SubAgent 卡片打开 Monitor 时需要用它恢复 metadata 快照 */
+  conversationId?: string | null
+}
+
+export interface ToolActionConfig {
+  /** 操作 ID，用于按钮 key 和日志定位 */
+  id: string
+  /** 操作文案 */
+  label: string | ((tool: ToolUsage, context: ToolActionContext) => string)
+  /** 悬停提示 */
+  title?: string | ((tool: ToolUsage, context: ToolActionContext) => string)
+  /** codicon 图标 */
+  icon?: string
+  /** 是否显示该操作 */
+  visible?: (tool: ToolUsage, context: ToolActionContext) => boolean
+  /** 操作执行函数 */
+  run: (tool: ToolUsage, context: ToolActionContext) => Promise<void> | void
+  /** 视觉样式 */
+  variant?: 'default' | 'primary' | 'danger'
+}
 
 /**
  * 工具配置
@@ -33,11 +56,12 @@ export interface ToolConfig {
   /** 是否可展开（默认为 true，如果设置为 false 则不显示展开按钮和详细内容） */
   expandable?: boolean
   
-  /** 是否支持 diff 预览（显示"查看差异"按钮） */
-  hasDiffPreview?: boolean
-  
-  /** 获取 diff 预览所需的文件路径 */
-  getDiffFilePath?: (args: Record<string, unknown>, result?: Record<string, unknown>) => string | string[]
+  /**
+   * 工具头部显眼操作按钮。
+   *
+   * 用于把 diff 预览、SubAgent 详情等工具相关操作声明到 ToolConfig，避免 ToolMessage 继续增加工具名特判。
+   */
+  actions?: ToolActionConfig[]
   
   /** 是否隐藏此工具（不在消息列表中显示） */
   hidden?: boolean

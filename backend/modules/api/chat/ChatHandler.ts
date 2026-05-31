@@ -238,6 +238,13 @@ export class ChatHandler {
         this.mcpManager = mcpManager;
         this.toolExecutionService.setMcpManager(mcpManager);
     }
+
+    /**
+     * 获取共享工具执行服务，供 SubAgent 复用主流程工具执行语义。
+     */
+    getToolExecutionService(): ToolExecutionService {
+        return this.toolExecutionService;
+    }
     
     /**
      * 设置 Diff 存储管理器（可选）

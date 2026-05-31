@@ -12,13 +12,14 @@
 
 import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage, Message } from '../../types'
-import { getToolConfig } from '../../utils/toolRegistry'
+import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { sendToExtension, onExtensionCommand, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
 
 const { t } = useI18n()
 
@@ -839,28 +840,58 @@ function isExpandable(tool: ToolUsage): boolean {
   return config?.expandable !== false
 }
 
+function getToolActionContext(): ToolActionContext {
+  return {
+    conversationId: chatStore.currentConversationId || null
+  }
+}
+
+function getToolActionLabel(action: ToolActionConfig, tool: ToolUsage): string {
+  const context = getToolActionContext()
+  return typeof action.label === 'function' ? action.label(tool, context) : action.label
+}
+
+function getToolActionTitle(action: ToolActionConfig, tool: ToolUsage): string {
+  const context = getToolActionContext()
+  if (!action.title) return getToolActionLabel(action, tool)
+  return typeof action.title === 'function' ? action.title(tool, context) : action.title
+}
+
+function getVisibleToolActions(tool: ToolUsage): ToolActionConfig[] {
+  const config = getToolConfig(tool.name)
+  const context = getToolActionContext()
+  return (config?.actions || []).filter(action => {
+    if (!action.visible) return true
+    try {
+      return action.visible(tool, context)
+    } catch (error) {
+      console.error(`[ToolMessage] Failed to evaluate action visibility for ${tool.name}:${action.id}`, error)
+      return false
+    }
+  })
+}
+
+async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
+  try {
+    await action.run(tool, getToolActionContext())
+  } catch (error) {
+    const message = getActionErrorMessage(error, `Failed to run action: ${action.id}`)
+    await showNotification(message, 'error')
+    console.error(`[ToolMessage] Failed to run action ${action.id} for ${tool.name}`, error)
+  }
+}
+
+function getToolActionClass(action: ToolActionConfig): string[] {
+  const variant = action.variant || 'default'
+  return ['tool-action-btn', `tool-action-${variant}`]
+}
+
 function canToggleExpand(tool: ToolUsage): boolean {
   return isExpandable(tool)
 }
 
 function shouldShowToolContent(tool: ToolUsage): boolean {
   return isExpandable(tool) && isExpanded(tool.id)
-}
-
-// 检查工具是否支持 diff 预览
-function hasDiffPreview(tool: ToolUsage): boolean {
-  const config = getToolConfig(tool.name)
-  return config?.hasDiffPreview === true
-}
-
-// 获取 diff 预览的文件路径
-function getDiffFilePaths(tool: ToolUsage): string[] {
-  const config = getToolConfig(tool.name)
-  if (!config?.getDiffFilePath) return []
-  
-  const result = config.getDiffFilePath(tool.args, tool.result as Record<string, unknown> | undefined)
-  if (Array.isArray(result)) return result
-  return result ? [result] : []
 }
 
 // 获取 diff 警戒值警告（优先使用实时 pending 数据，其次使用工具结果中的兜底数据）
@@ -883,28 +914,6 @@ function getDiffGuardWarning(tool: ToolUsage): { warning: string; deletePercent:
     }
   }
   return null
-}
-
-// 打开 diff 预览（在 VSCode 中）
-async function openDiffPreview(tool: ToolUsage) {
-  const paths = getDiffFilePaths(tool)
-  if (paths.length === 0) return
-  
-  try {
-    // 使用 JSON 序列化确保数据可克隆
-    const serializedArgs = JSON.parse(JSON.stringify(tool.args || {}))
-    const serializedResult = tool.result ? JSON.parse(JSON.stringify(tool.result)) : undefined
-    
-    await sendToExtension('diff.openPreview', {
-      toolId: tool.id,
-      toolName: tool.name,
-      filePaths: paths,
-      args: serializedArgs,
-      result: serializedResult
-    })
-  } catch (err) {
-    console.error(t('components.message.tool.openDiffFailed'), err)
-  }
 }
 
 // 获取状态图标
@@ -962,7 +971,10 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
 
 // 判断是否应显示流式参数预览
 function shouldShowStreamingPreview(tool: ToolUsage): boolean {
-  return tool.status === 'streaming' && !!tool.partialArgs && tool.partialArgs.length > 0
+  // 修改原因：流式提前执行会把工具执行态推进到 executing，但参数输入快照可能仍以 partialArgs 形式存在。
+  // 修改方式：委托 toolPreviewPolicy 按“仍处于非终态且存在 partialArgs”判断，而不是只接受 streaming。
+  // 修改目的：工具开始执行后仍能保留参数预览，直到最终 args 快照替换 partialArgs。
+  return shouldShowToolArgumentPreview(tool)
 }
 
 // 流式预览元素引用（用于自动滚动到底部）
@@ -1144,16 +1156,19 @@ function renderToolContent(tool: ToolUsage) {
               <span class="reject-btn-text">{{ t('components.message.tool.reject') }}</span>
             </button>
             
-            <!-- diff 预览按钮 -->
+            <!-- 通用工具操作按钮：diff 预览、SubAgent 详情等都走 ToolConfig.actions -->
             <button
-              v-if="hasDiffPreview(tool) && getDiffFilePaths(tool).length > 0"
-              class="diff-preview-btn"
-              :title="t('components.message.tool.viewDiffInVSCode')"
-              @click.stop="openDiffPreview(tool)"
+              v-for="action in getVisibleToolActions(tool)"
+              :key="action.id"
+              :class="getToolActionClass(action)"
+              :title="getToolActionTitle(action, tool)"
+              @click.stop="runToolAction(action, tool)"
             >
-              <span class="diff-btn-icon codicon codicon-diff"></span>
-              <span class="diff-btn-text">{{ t('components.message.tool.viewDiff') }}</span>
-              <span class="diff-btn-arrow codicon codicon-arrow-right"></span>
+              <span
+                v-if="action.icon"
+                :class="['tool-action-icon', 'codicon', action.icon]"
+              ></span>
+              <span class="tool-action-text">{{ getToolActionLabel(action, tool) }}</span>
             </button>
           </div>
         </div>
@@ -1511,6 +1526,54 @@ function renderToolContent(tool: ToolUsage) {
 .diff-preview-btn:hover .diff-btn-arrow {
   transform: translateX(2px);
   opacity: 0.8;
+}
+
+.tool-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid #555555;
+  border-radius: 2px;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.tool-action-btn:hover {
+  background: rgba(128, 128, 128, 0.1);
+  border-color: #777777;
+}
+
+.tool-action-btn:active {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.tool-action-primary {
+  border-color: var(--vscode-button-background);
+}
+
+.tool-action-primary:hover {
+  background: var(--vscode-button-hoverBackground);
+  color: var(--vscode-button-foreground);
+}
+
+.tool-action-danger {
+  border-color: var(--vscode-errorForeground);
+  color: var(--vscode-errorForeground);
+}
+
+.tool-action-icon {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.tool-action-text {
+  white-space: nowrap;
 }
 
 /* 流式参数预览 */

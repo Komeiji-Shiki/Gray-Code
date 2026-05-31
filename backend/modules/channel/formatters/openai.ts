@@ -18,6 +18,7 @@
  * - functionResponse：用 role: tool 发送
  */
 
+import { createHash } from 'crypto';
 import { t } from '../../../i18n';
 import { BaseFormatter, ensureStrictSchema } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
@@ -50,6 +51,8 @@ import type {
     ChannelError,
     ErrorType
 } from '../types';
+
+const DEEPSEEK_USER_ID_PREFIX = 'limcode-conversation-';
 
 /**
  * OpenAI 格式转换器
@@ -134,7 +137,12 @@ export class OpenAIFormatter extends BaseFormatter {
             model: config.model,
             messages: messages
         };
-        
+
+        const deepSeekUserId = this.buildDeepSeekUserId(request, config);
+        if (deepSeekUserId) {
+            body.user_id = deepSeekUserId;
+        }
+
         // 添加工具（Function Call 模式）
         // strictToolsEnabled: 启用后读取工具声明的 strict 字段
         const strictEnabled = !!(config as any).strictToolsEnabled;
@@ -201,6 +209,33 @@ export class OpenAIFormatter extends BaseFormatter {
             timeout: config.timeout,  // 使用配置的超时时间
             stream: useStream
         };
+    }
+
+    /**
+     * DeepSeek Chat Completions 支持 user_id 顶层字段。
+     *
+     * 只有调用方显式传入 conversationId 时才生成 user_id。
+     * 主聊天请求会传入真实对话 ID；总结、子代理等内部请求默认不传，
+     * 这样可以避免把不同前缀空间误并到主聊天 KVCache 隔离域里。
+     * 此功能由渠道设置 deepSeekUserIdEnabled 显式控制，默认关闭，避免误判兼容服务。
+     *
+     * user_id 使用对话 ID 的哈希，保证稳定且不包含原始对话信息。
+     */
+    private buildDeepSeekUserId(request: GenerateRequest, config: OpenAIConfig): string | undefined {
+        if (!config.deepSeekUserIdEnabled) {
+            return undefined;
+        }
+
+        const conversationId = request.conversationId?.trim();
+        if (!conversationId) {
+            return undefined;
+        }
+
+        const digest = createHash('sha256')
+            .update(conversationId, 'utf8')
+            .digest('hex');
+
+        return `${DEEPSEEK_USER_ID_PREFIX}${digest}`;
     }
     
     /**

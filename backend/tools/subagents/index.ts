@@ -15,6 +15,7 @@ export type {
     SubAgentToolCall,
     SubAgentChannelConfig,
     SubAgentToolsConfig,
+    SubAgentFailureModeAfterRetries,
     SubAgentRegistryEntry,
     SubAgentExecutor,
     SubAgentExecutorContext,
@@ -31,6 +32,24 @@ export {
     createDefaultExecutor,
     defaultExecutorFactory
 } from './executor';
+
+// 导出运行事件总线和控制器
+export {
+    subAgentRunEventBus,
+    SUBAGENT_RUNS_METADATA_KEY,
+    type SubAgentRunEvent,
+    type SubAgentRunSnapshot,
+    type SubAgentRunStatus,
+    type SubAgentRunManifest,
+    type SubAgentRunContentWindow,
+    type SubAgentRunContentWindowOptions
+} from './runEventBus';
+export { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
+export {
+    subAgentRunController,
+    type SubAgentControlAction,
+    type SubAgentRunControlState
+} from './runController';
 
 // 导出工具
 export { 

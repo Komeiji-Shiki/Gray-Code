@@ -460,6 +460,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             noHistory: 'No conversation history found.',
             searchResultHeader: 'Found {count} match(es) for "{query}" in history ({totalLines} total lines)',
             noMatchesFound: 'No matches found for "{query}" in history ({totalLines} total lines). Try different keywords.',
+            keywordFallbackNotice: '[No exact phrase match; searched individual whitespace-separated keywords instead: {terms}]',
             resultsLimited: '[Results limited to {max} matches. Try a more specific query to narrow results.]',
             readResultHeader: 'Lines {start}-{end} of {totalLines} total lines in history',
             readTruncated: '[Output limited to {max} lines. Use start_line={nextStart} to continue reading.]',

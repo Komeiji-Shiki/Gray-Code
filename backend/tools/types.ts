@@ -6,6 +6,35 @@
  */
 
 /**
+ * 通用工具进度事件。
+ *
+ * 用于 SubAgent Monitor、长任务工具和后续可观测工具进度，不把进度协议散落到具体工具实现里。
+ */
+export interface ToolProgressEvent {
+    /** 事件所属运行实例；SubAgent 使用 runId，普通工具可不填 */
+    runId?: string;
+    /** 事件类型，覆盖运行级、内容级和工具级进度 */
+    type: 'run_created' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
+        | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted'
+        | 'retrying' | 'retrySuccess' | 'retryFailed'
+        | 'llm_delta' | 'content_snapshot'
+        | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';
+    /** 工具调用 ID；工具级事件使用 */
+    toolId?: string;
+    /** 工具名；工具级事件使用 */
+    toolName?: string;
+    /** 事件时间戳；发送方不填时由桥接层补齐 */
+    timestamp?: number;
+    /** 复用现有结构的事件主体，例如工具结果、流式内容片段或业务进度 */
+    payload?: unknown;
+}
+
+/**
+ * 通用工具进度发射函数。
+ */
+export type ToolProgressEmitter = (event: ToolProgressEvent) => void | Promise<void>;
+
+/**
  * 工具声明（Gemini Function Calling 格式）
  */
 export interface ToolDeclaration {

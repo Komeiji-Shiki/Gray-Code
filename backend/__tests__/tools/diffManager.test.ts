@@ -335,7 +335,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(saveListener).toHaveBeenCalledWith(pendingDiff);
     });
 
-    it('auto-save failure leaves the diff pending for manual retry', async () => {
+    it('auto-save failure finalizes the diff as rejected to unblock tool execution', async () => {
         jest.useFakeTimers();
 
         const manager = getManager();
@@ -356,10 +356,13 @@ describe('DiffManager lifecycle closure', () => {
         await jest.advanceTimersByTimeAsync(10);
         await Promise.resolve();
 
-        expect(diff.status).toBe('pending');
+        expect(diff.status).toBe('rejected');
         expect((manager as any).autoSaveTimers.has(diff.id)).toBe(false);
-        expect((manager as any).saveListeners.get(diff.id)).toBe(listeners.saveDisposable);
-        expect((manager as any).closeListeners.get(diff.id)).toBe(listeners.closeDisposable);
+        expect((manager as any).saveListeners.get(diff.id)).toBeUndefined();
+        expect((manager as any).closeListeners.get(diff.id)).toBeUndefined();
+        expect(listeners.saveDisposable.dispose).toHaveBeenCalled();
+        expect(listeners.closeDisposable.dispose).toHaveBeenCalled();
+        expect(diff.autoSaveError).toContain('Auto-save failed while accepting diff');
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });

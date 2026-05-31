@@ -16,20 +16,11 @@ import {
   handleFunctionCallPart
 } from './streamHelpers'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
-}
-
-function replaceMessageAt(state: ChatStoreState, messageIndex: number, nextMessage: Message): void {
-  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
-  state.allMessages.value[messageIndex] = nextMessage
-}
-
-function removeMessageAt(state: ChatStoreState, messageIndex: number): void {
-  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
-  state.allMessages.value.splice(messageIndex, 1)
 }
 
 /**
@@ -157,7 +148,7 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex === -1 || !chunk.chunk) {
     return
   }
@@ -244,7 +235,7 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
   // 这解决了用户确认工具后点击取消不生效的问题
   state.isStreaming.value = true
 
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
 
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
@@ -322,7 +313,7 @@ export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): voi
   // 1) 优先更新当前 streamingMessageId 对应的消息（通常就是包含工具调用的 assistant 消息）
   let messageIndex = -1
   if (state.streamingMessageId.value) {
-    const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+    const idx = getMessageIndexById(state, state.streamingMessageId.value)
     if (idx !== -1) {
       const m = all[idx]
       if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
@@ -373,7 +364,7 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
   if (chunks.length === 0) return
 
   // 收集所有 tool 更新，按目标消息分组
-  interface ToolUpdate { status: any; result: any }
+  interface ToolUpdate { status: any; result: any; args?: Record<string, unknown> }
   const updatesByMessageIndex = new Map<number, Map<string, ToolUpdate>>()
   const all = state.allMessages.value
 
@@ -384,7 +375,7 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     // 查找目标消息
     let messageIndex = -1
     if (state.streamingMessageId.value) {
-      const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+      const idx = getMessageIndexById(state, state.streamingMessageId.value)
       if (idx !== -1) {
         const m = all[idx]
         if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
@@ -408,7 +399,8 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     }
     updatesByMessageIndex.get(messageIndex)!.set(toolUpdate.id, {
       status: toolUpdate.status,
-      result: toolUpdate.result
+      result: toolUpdate.result,
+      args: toolUpdate.args && typeof toolUpdate.args === 'object' ? toolUpdate.args as Record<string, unknown> : undefined
     })
   }
 
@@ -420,9 +412,11 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     const updatedTools = message.tools?.map(t => {
       const update = toolUpdates.get(t.id)
       if (!update) return t
+      const hasArgsSnapshot = !!update.args
       return {
         ...t,
         status: update.status as any,
+        ...(hasArgsSnapshot ? { args: update.args, partialArgs: undefined } : {}),
         result: (update.result as any) ?? t.result
       }
     })
@@ -439,7 +433,7 @@ export function handleAwaitingConfirmation(
   addCheckpoint: (checkpoint: CheckpointRecord) => void
 ): void {
   // 等待用户确认工具执行
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 modelVersion
@@ -550,7 +544,7 @@ export function handleAwaitingConfirmation(
         isFunctionResponse: true,
         parts: newParts
       }
-      state.allMessages.value.push(responseMessage)
+      appendMessage(state, responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
 
@@ -593,7 +587,7 @@ export function handleToolIteration(
   addCheckpoint: (checkpoint: CheckpointRecord) => void
 ): void {
   // 工具迭代完成：当前消息包含工具调用
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   
   // 检查是否有工具被取消或拒绝
   const cancelledToolIds = new Set<string>()
@@ -719,7 +713,7 @@ export function handleToolIteration(
         isFunctionResponse: true,
         parts
       }
-      state.allMessages.value.push(responseMessage)
+      appendMessage(state, responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
 
@@ -789,7 +783,7 @@ export function handleToolIteration(
       modelVersion: state.pendingModelOverride.value || currentModelName()
     }
   }
-  state.allMessages.value.push(newAssistantMessage)
+  appendMessage(state, newAssistantMessage)
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
   state.streamingMessageId.value = newAssistantMessageId
@@ -823,7 +817,7 @@ export function handleComplete(
     return
   }
 
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 tools 信息（complete 阶段的 content 通常只含文本，不含 functionCall）
@@ -982,7 +976,7 @@ export function handleAutoSummary(
     state.allMessages.value.length
   )
 
-  state.allMessages.value.splice(localInsertIndex, 0, summaryMessage)
+  insertMessageAt(state, localInsertIndex, summaryMessage)
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -1005,7 +999,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
 
   if (isStaleCallback) {
     // 迟到的旧请求 cancelled chunk：只尝试清理旧消息的元数据，不重置全局状态
-    const oldMsgIndex = state.allMessages.value.findIndex(m => m.id === lastCancelledId)
+    const oldMsgIndex = getMessageIndexById(state, lastCancelledId)
     if (oldMsgIndex !== -1) {
       const msg = state.allMessages.value[oldMsgIndex]
       if (msg.streaming) {
@@ -1019,7 +1013,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   // 正常的 cancelled 处理
   let messageIndex = -1
   if (state.streamingMessageId.value) {
-    messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+    messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   } else {
     // 兼容性处理：如果 streamingMessageId 已被 cancelStream 清除，则寻找最后一条助手消息
     // 仅当最后一条助手消息处于非流式状态（说明刚被 cancelStream 处理过）时才尝试更新其元数据
@@ -1133,7 +1127,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
     const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall)
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
-      const removeIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+      const removeIndex = getMessageIndexById(state, state.streamingMessageId.value)
       removeMessageAt(state, removeIndex)
     }
     state.streamingMessageId.value = null

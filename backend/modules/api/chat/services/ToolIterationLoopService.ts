@@ -44,10 +44,35 @@ import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { SummarizeService } from './SummarizeService';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './streamingToolProgress';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
+
+const DIFF_REVIEW_TOOL_NAMES = new Set(['apply_diff', 'write_file', 'insert_code', 'delete_code']);
+
+function isDiffReviewToolCall(call: FunctionCallInfo): boolean {
+    if (DIFF_REVIEW_TOOL_NAMES.has(call.name)) {
+        return true;
+    }
+
+    if (call.name === 'search_in_files') {
+        const mode = typeof call.args?.mode === 'string' ? call.args.mode : 'search';
+        return mode === 'replace';
+    }
+
+    return false;
+}
+
+function shouldStartToolDuringModelStream(
+    call: FunctionCallInfo,
+    toolExecutionService: ToolExecutionService,
+    promptModeSnapshot?: ResolvedPromptModeSnapshot
+): boolean {
+    return !toolExecutionService.toolNeedsConfirmation(call.name, call.args, promptModeSnapshot)
+        && !isDiffReviewToolCall(call);
+}
 
 /**
  * 工具迭代循环配置
@@ -576,6 +601,14 @@ export class ToolIterationLoopService {
             // 也包含 toolResults（通知前端，result 字段是工具本身的业务返回值）。
             const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
+            const earlyToolProgressQueue = new EarlyStreamingToolProgressQueue();
+            const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
+                .drainSettled()
+                .flatMap(settlement => settlement.fullResult.toolResults.map(toolResult => ({
+                    conversationId,
+                    toolStatus: true as const,
+                    tool: createChatToolStatusUpdate(toolResult)
+                })));
 
             if (isAsyncGenerator(response)) {
                 // 流式响应处理
@@ -596,16 +629,27 @@ export class ToolIterationLoopService {
                     if (!abortSignal?.aborted) {
                         const newCalls = processor.getAccumulator().getNewCompletedFunctionCalls();
                         for (const fc of newCalls) {
-                            // 只对不需要确认的工具提前执行
-                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name, fc.args, promptModeSnapshot)) {
+                            // 只对不需要确认、且不会创建 pending diff 审阅会话的工具提前执行。
+                            if (shouldStartToolDuringModelStream(fc, this.toolExecutionService, promptModeSnapshot)) {
                                 this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
-                                // 使用 executeFunctionCallsWithResults 而非 executeFunctionCalls，
-                                // 这样既能拿到 responseParts（写入历史），
-                                // 又能拿到 toolResults（其中 result 字段是工具本身的业务返回值，
-                                // 用于 toolStatus / toolIteration 事件通知前端正确渲染）。
-                                const promise = this.toolExecutionService.executeFunctionCallsWithResults(
+                                yield {
+                                    conversationId,
+                                    toolStatus: true as const,
+                                    tool: {
+                                        id: fc.id,
+                                        name: fc.name,
+                                        status: 'executing' as const,
+                                        args: fc.args
+                                    }
+                                } satisfies ChatStreamToolStatusData;
+
+                                const rawPromise = this.toolExecutionService.executeFunctionCallsWithResults(
                                     [{ id: fc.id, name: fc.name, args: fc.args }],
-                                    conversationId
+                                    conversationId,
+                                    undefined,
+                                    config,
+                                    abortSignal,
+                                    promptModeSnapshot
                                 ).catch(err => {
                                     // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
                                     // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
@@ -615,16 +659,22 @@ export class ToolIterationLoopService {
                                     };
                                     return {
                                         responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
-                                        toolResults: [{ id: fc.id, name: fc.name, result: errorResponse }],
+                                        toolResults: [{ id: fc.id, name: fc.name, args: fc.args, result: errorResponse }],
                                         checkpoints: []
                                     } as ToolExecutionFullResult;
                                 }).then(fullResult => {
                                     streamingToolResults.set(fc.id, fullResult);
                                     return fullResult;
                                 });
+
+                                const promise = earlyToolProgressQueue.track(fc, rawPromise);
                                 streamingToolPromises.set(fc.id, promise);
                             }
                         }
+                    }
+
+                    for (const statusChunk of drainSettledEarlyToolStatuses()) {
+                        yield statusChunk;
                     }
                 }
 
@@ -709,8 +759,19 @@ export class ToolIterationLoopService {
             let earlyResponseParts: ContentPart[] = [];
 
             if (streamingToolPromises.size > 0) {
-                // 等待所有流式期间启动的工具完成
-                await Promise.all(streamingToolPromises.values());
+                while (earlyToolProgressQueue.hasPending()) {
+                    const readyStatuses = drainSettledEarlyToolStatuses();
+                    if (readyStatuses.length > 0) {
+                        for (const statusChunk of readyStatuses) {
+                            yield statusChunk;
+                        }
+                        continue;
+                    }
+                    await earlyToolProgressQueue.waitForNextSettlement();
+                }
+                for (const statusChunk of drainSettledEarlyToolStatuses()) {
+                    yield statusChunk;
+                }
 
                 // 从 autoPrefix 中移除已在流式期间执行完的工具（避免重复执行），
                 // 同时收集它们的 functionResponse parts（后续统一写入历史）。
@@ -779,23 +840,6 @@ export class ToolIterationLoopService {
                     } satisfies ChatStreamToolConfirmationData;
 
                     return;
-                }
-
-                // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
-                // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
-                for (const tr of earlyToolResults) {
-                    const r = tr.result as any;
-                    let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-                    if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-                        status = 'error';
-                    } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-                        status = 'warning';
-                    }
-                    yield {
-                        conversationId,
-                        toolStatus: true as const,
-                        tool: { id: tr.id, name: tr.name, status, result: tr.result },
-                    } satisfies ChatStreamToolStatusData;
                 }
 
                 yield {
@@ -869,23 +913,10 @@ export class ToolIterationLoopService {
                     }
 
                     if (event.type === 'end') {
-                        const r = event.toolResult.result as any;
-                        let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-                        if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-                            status = 'error';
-                        } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-                            status = 'warning';
-                        }
-
                         yield {
                             conversationId,
                             toolStatus: true as const,
-                            tool: {
-                                id: event.call.id,
-                                name: event.call.name,
-                                status,
-                                result: event.toolResult.result
-                            }
+                            tool: createChatToolStatusUpdate(event.toolResult)
                         } satisfies ChatStreamToolStatusData;
                     }
                 }

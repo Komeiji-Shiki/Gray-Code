@@ -18,7 +18,7 @@ import {
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
-import { computeVirtualRows, resolveLoadedVisibleMessages } from './messageListUtils'
+import { resolveLoadedVisibleMessages } from './messageListUtils'
 
 const { t } = useI18n()
 
@@ -514,39 +514,8 @@ const messageRenderRows = computed<RenderRow[]>(() => {
 })
 
 // 是否正在加载更多（用于节流）
-const VIRTUALIZATION_ROW_THRESHOLD = 180
-const ESTIMATED_ROW_HEIGHT = 112
-const VIRTUAL_OVERSCAN = 10
 const viewportHeight = ref(0)
 const scrollTop = ref(0)
-const lastVirtualizationLogKey = ref('')
-
-const virtualRows = computed(() => {
-  const result = computeVirtualRows(messageRenderRows.value, {
-    threshold: VIRTUALIZATION_ROW_THRESHOLD,
-    estimatedRowHeight: ESTIMATED_ROW_HEIGHT,
-    overscan: VIRTUAL_OVERSCAN,
-    viewportHeight: viewportHeight.value,
-    scrollTop: scrollTop.value
-  })
-
-  if (result.fallback && messageRenderRows.value.length > VIRTUALIZATION_ROW_THRESHOLD) {
-    const logKey = `${result.reason}:${messageRenderRows.value.length}:${result.startIndex}:${result.endIndex}`
-    if (lastVirtualizationLogKey.value !== logKey) {
-      lastVirtualizationLogKey.value = logKey
-      console.warn('message_list_virtualization_fallback', {
-        reason: result.reason,
-        totalRows: messageRenderRows.value.length,
-        startIndex: result.startIndex,
-        endIndex: result.endIndex
-      })
-    }
-  } else if (!result.fallback) {
-    lastVirtualizationLogKey.value = ''
-  }
-
-  return result
-})
 
 const isLoadingMore = ref(false)
 
@@ -1009,13 +978,7 @@ function formatCheckpointTime(timestamp: number): string {
           </span>
         </div>
 
-        <div
-          v-if="virtualRows.topPadding > 0"
-          class="virtual-spacer"
-          :style="{ height: `${virtualRows.topPadding}px` }"
-        ></div>
-
-        <template v-for="row in virtualRows.rows" :key="row.key">
+        <template v-for="row in messageRenderRows" :key="row.key">
           <div v-if="row.kind === 'build'" class="build-sticky-shell">
             <div class="build-bar" :class="{ expanded: isBuildExpanded }">
               <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
@@ -1184,12 +1147,6 @@ function formatCheckpointTime(timestamp: number): string {
             </div>
           </div>
         </template>
-
-        <div
-          v-if="virtualRows.bottomPadding > 0"
-          class="virtual-spacer"
-          :style="{ height: `${virtualRows.bottomPadding}px` }"
-        ></div>
         
         <!-- 继续对话提示 - 当最后一条是工具响应时显示 -->
         <div v-if="chatStore.needsContinueButton" class="continue-message">
@@ -1474,11 +1431,6 @@ function formatCheckpointTime(timestamp: number): string {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-}
-
-.virtual-spacer {
-  flex: 0 0 auto;
-  pointer-events: none;
 }
 
 /* 加载更多指示器 */

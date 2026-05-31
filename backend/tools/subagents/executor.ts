@@ -13,55 +13,28 @@ import type {
     SubAgentExecutorContext,
     SubAgentExecutorFactory
 } from './types';
-import type { ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
-import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
-import { coerceToolArgs, getToolArgsArrayValidationError } from '../coerceToolArgs';
+import type { ToolDeclaration } from '../types';
+import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
+import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
+import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
+import type { Content } from '../../modules/conversation/types';
+import { subAgentRunEventBus } from './runEventBus';
+import { subAgentRunController } from './runController';
 
 /**
- * 子代理内部使用的工具调用结构。
+ * 子代理内部工具执行结果。
  *
- * 这里额外保留 id，原因是：
- * - Anthropic 需要用 tool_use.id 对应回 tool_result.tool_use_id
- * - OpenAI Responses 需要用 function_call.call_id 对应回 function_call_output.call_id
- *
- * 如果这里把 id 丢掉，子代理在第一次工具调用后的续传请求就会直接触发 400。
+ * 修改原因：SubAgent 历史需要写入主 ToolExecutionService 生成的 functionResponse parts，不能只保存简化的 success/result/error。
+ * 修改方式：在原有 result/success/error 外，携带 responseParts、toolResults 和 prompt 模式多模态附件。
+ * 修改目的：让 read_file 图片、MCP 多模态和后续工具结果格式升级能被 SubAgent 自动继承。
  */
-interface ParsedToolCall {
-    name: string;
-    args: Record<string, unknown>;
-    id?: string;
-}
-
-/**
- * 清理 JSON Schema 中目标模型不接受的字段。
- *
- * 目的：
- * - 子代理会通过 toolOverrides 直接把工具声明传给 ChannelManager.generate()
- * - 一旦走 toolOverrides，这些工具声明不会再经过 ChannelManager.getFilteredTools()
- * - 因此这里必须主动做一次与主对话一致的 schema 清理
- *
- * 目前至少要移除：
- * - $schema
- * - additionalProperties
- */
-function cleanJsonSchemaForSubAgent(schema: any): any {
-    if (!schema || typeof schema !== 'object') {
-        return schema;
-    }
-
-    if (Array.isArray(schema)) {
-        return schema.map(item => cleanJsonSchemaForSubAgent(item));
-    }
-
-    const cleaned: Record<string, any> = {};
-    for (const [key, value] of Object.entries(schema)) {
-        if (key === '$schema' || key === 'additionalProperties') {
-            continue;
-        }
-        cleaned[key] = cleanJsonSchemaForSubAgent(value);
-    }
-    return cleaned;
+interface SubAgentExecutedToolCall {
+    result: unknown;
+    success: boolean;
+    error?: string;
+    responseParts?: any[];
+    toolResults?: any[];
+    multimodalAttachments?: any[];
 }
 
 /**
@@ -92,71 +65,42 @@ async function getAvailableTools(
     config: SubAgentConfig,
     context: SubAgentExecutorContext
 ): Promise<ToolDeclaration[]> {
-    const tools: ToolDeclaration[] = [];
+    if (!context.configManager) {
+        throw new Error('SubAgent shared ToolDeclarationResolver requires configManager in executor context.');
+    }
+
+    const channelConfig = await context.configManager.getConfig(config.channel.channelId);
+    if (!channelConfig) {
+        throw new Error(`SubAgent channel config not found: ${config.channel.channelId}`);
+    }
+
     const toolsConfig = config.tools;
     const mode = toolsConfig.mode;
-    // 支持 whitelist/blacklist 或 list 字段
-    const whitelist = toolsConfig.whitelist || toolsConfig.list;
-    const blacklist = toolsConfig.blacklist || toolsConfig.list;
-    const includeMcp = toolsConfig.includeMcp;
-    
-    // 获取内置工具
-    if (mode !== 'mcp' && context.toolRegistry) {
-        const builtinTools = context.toolRegistry.getAvailableDeclarations()
-            .map((tool: ToolDeclaration) => ({
-                ...tool,
-                // 这里补做 schema 清理，避免 toolOverrides 跳过主流程的 cleanJsonSchema。
-                parameters: cleanJsonSchemaForSubAgent(tool.parameters)
-            }));
+    const includeBuiltins = mode !== 'mcp';
+    const includeMcp = mode === 'all' || mode === 'mcp' || toolsConfig.includeMcp === true;
+    const allowlist = mode === 'whitelist' ? (toolsConfig.whitelist || toolsConfig.list || []) : undefined;
+    const denylist = mode === 'blacklist' ? (toolsConfig.blacklist || toolsConfig.list || []) : undefined;
 
-        // 排除 subagents 工具
-        tools.push(...builtinTools.filter(t => t.name !== 'subagents'));
-    }
-    
-    // 获取 MCP 工具
-    if ((mode === 'all' || mode === 'mcp' || includeMcp) && context.mcpManager) {
-        try {
-            const mcpToolsResult = context.mcpManager.getAllTools();
-            if (mcpToolsResult && Array.isArray(mcpToolsResult)) {
-                for (const serverTools of mcpToolsResult) {
-                    if (serverTools.tools && Array.isArray(serverTools.tools)) {
-                        for (const tool of serverTools.tools) {
-                            tools.push({
-                                name: `mcp__${serverTools.serverId}__${tool.name}`,
-                                description: tool.description || '',
-                                // MCP 的原始 inputSchema 可能带有 $schema / additionalProperties。
-                                // 子代理直接走 toolOverrides 时，如果不在这里清理，Gemini 等接口会直接 400。
-                                parameters: cleanJsonSchemaForSubAgent(
-                                    tool.inputSchema || { type: 'object', properties: {} }
-                                )
-                            });
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[SubAgent] Failed to get MCP tools:', e);
-        }
-    }
-    
-    // 应用白名单/黑名单过滤
-    let filteredTools = tools;
-    
-    if (mode === 'whitelist' && whitelist && whitelist.length > 0) {
-        const whitelistSet = new Set(whitelist);
-        filteredTools = tools.filter(t => whitelistSet.has(t.name));
-    } else if (mode === 'blacklist' && blacklist && blacklist.length > 0) {
-        const blacklistSet = new Set(blacklist);
-        filteredTools = tools.filter(t => !blacklistSet.has(t.name));
-    }
+    // 修改原因：SubAgent 过去直接读取 toolRegistry/MCP 并自己清理 schema，导致工具声明与主会话动态声明分叉。
+    // 修改方式：统一委托 ToolDeclarationResolver，并把 SubAgent 自己的 provider config、工具白名单和黑名单作为输入。
+    // 修改目的：read_file 多模态说明、图片工具过滤、MCP schema 清理等以后只需要升级一个入口。
+    const resolver = new ToolDeclarationResolver(
+        context.toolRegistry,
+        context.settingsManager,
+        context.mcpManager
+    );
 
-    const inheritedAllowlist = context.promptModeSnapshot?.toolPolicy;
-    if (Array.isArray(inheritedAllowlist) && inheritedAllowlist.length > 0) {
-        const allowlistSet = new Set(inheritedAllowlist);
-        filteredTools = filteredTools.filter(t => allowlistSet.has(t.name));
-    }
-    
-    return filteredTools;
+    return resolver.resolve({
+        multimodalEnabled: channelConfig.multimodalToolsEnabled,
+        channelType: channelConfig.type,
+        toolMode: channelConfig.toolMode,
+        promptModeSnapshot: context.promptModeSnapshot,
+        includeBuiltins,
+        includeMcp,
+        allowlist,
+        denylist,
+        excludeToolNames: ['subagents']
+    }) || [];
 }
 
 /**
@@ -167,13 +111,36 @@ async function executeToolCall(
     args: Record<string, unknown>,
     context: SubAgentExecutorContext,
     abortSignal?: AbortSignal,
-    allowedToolNames?: Set<string>
-): Promise<{ result: unknown; success: boolean; error?: string }> {
-    const startTime = Date.now();
-    
+    allowedToolNames?: Set<string>,
+    agentConfig?: SubAgentConfig,
+    callId?: string,
+    runId?: string,
+    agentName?: string
+): Promise<SubAgentExecutedToolCall> {
+    const executionCall = {
+        id: callId || `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: toolName,
+        args
+    };
+    const actualRunId = runId || executionCall.id;
+    const emitToolFailure = (error: string, payload?: Record<string, unknown>) => {
+        // 修改原因：Monitor 工具卡现在会消费 tool_started/tool_failed 事件；异常或早退路径不能只返回 functionResponse 后再等窗口刷新。
+        // 修改方式：在所有已知失败路径统一发 tool_failed，payload 保持轻量，只带错误和必要状态字段。
+        // 修改目的：工具执行失败时 UI 能立即进入 error，不会长期卡在 executing/queued。
+        subAgentRunEventBus.emit({
+            runId: actualRunId,
+            agentName,
+            type: 'tool_failed',
+            toolId: executionCall.id,
+            toolName,
+            payload: { success: false, error, ...(payload || {}) }
+        });
+    };
+
     try {
         // 检查是否取消
         if (abortSignal?.aborted) {
+            emitToolFailure('Cancelled', { cancelled: true });
             return {
                 result: null,
                 success: false,
@@ -185,268 +152,101 @@ async function executeToolCall(
         // 即使 AI 不应该调用不在列表里的工具，这里做防御性校验
         if (allowedToolNames && allowedToolNames.size > 0) {
             if (!allowedToolNames.has(toolName)) {
+                const error = `Tool not allowed for this sub-agent: ${toolName}`;
+                emitToolFailure(error);
                 return {
                     result: null,
                     success: false,
-                    error: `Tool not allowed for this sub-agent: ${toolName}`
+                    error
                 };
             }
         }
 
-        // 安全策略：防止子代理绕过“模式工具限制”
-        // - mode.toolPolicy 为非空数组时：硬 allowlist
-        // - settingsManager.isToolEnabled(toolName) 为 false 时：拒绝
-        // - Plan 模式下 write_file：仅允许写入 .limcode/plans 下的 .md/.plan.md（同 ToolExecutionService 规则）
-        function isPlanModeWriteFilePathAllowed(path: string): boolean {
-            // 单工作区格式：.limcode/plans/...
-            if (isPlanPathAllowed(path)) {
-                return true;
-            }
-
-            // 多工作区：允许 workspaceName/.limcode/plans/...
-            const normalized = path.replace(/\\/g, '/');
-            const slashIndex = normalized.indexOf('/');
-            if (slashIndex <= 0) {
-                return false;
-            }
-            const withoutWorkspacePrefix = normalized.substring(slashIndex + 1);
-            return isPlanPathAllowed(withoutWorkspacePrefix);
-        }
-
-        function parseMcpToolNameAny(name: string): { serverId: string; toolName: string } | null {
-            // Preferred: mcp__{serverId}__{toolName}
-            if (name.startsWith('mcp__')) {
-                const parts = name.split('__');
-                if (parts.length >= 3) {
-                    const serverId = parts[1];
-                    const tool = parts.slice(2).join('__');
-                    if (serverId && tool) {
-                        return { serverId, toolName: tool };
-                    }
-                }
-                return null;
-            }
-
-            // Backward compatible: mcp_{serverId}_{toolName}
-            if (name.startsWith('mcp_')) {
-                const rest = name.substring(4);
-                const idx = rest.indexOf('_');
-                if (idx <= 0) return null;
-                const serverId = rest.substring(0, idx);
-                const tool = rest.substring(idx + 1);
-                if (!serverId || !tool) return null;
-                return { serverId, toolName: tool };
-            }
-
-            return null;
-        }
-
-        const builtinTool = context.toolRegistry?.getTool(toolName);
-        const normalizedArgs = builtinTool
-            ? coerceToolArgs(args, builtinTool.declaration.parameters)
-            : args;
-        const arrayArgsError = builtinTool
-            ? getToolArgsArrayValidationError(toolName, normalizedArgs, builtinTool.declaration.parameters)
-            : null;
-
-        if (arrayArgsError) {
+        if (!context.toolExecutionService || !context.configManager || !agentConfig) {
+            const error = 'SubAgent shared ToolExecutionService/configManager is missing. Refusing to use legacy fallback execution.';
+            emitToolFailure(error);
             return {
                 result: null,
                 success: false,
-                error: arrayArgsError
+                error
             };
         }
 
-        if (context.settingsManager) {
-            const currentMode = context.promptModeSnapshot || context.settingsManager.getCurrentPromptMode?.();
-            const allowlist = currentMode?.toolPolicy;
-
-            if (Array.isArray(allowlist) && allowlist.length > 0) {
-                const allowlistSet = new Set(allowlist);
-                if (!allowlistSet.has(toolName)) {
-                    return {
-                        result: null,
-                        success: false,
-                        error: `Tool not allowed in current mode: ${toolName}`
-                    };
-                }
-            }
-
-            if (context.settingsManager.isToolEnabled?.(toolName) === false) {
-                return {
-                    result: null,
-                    success: false,
-                    error: `Tool is disabled: ${toolName}`
-                };
-            }
-
-            if (currentMode?.id === 'plan' && toolName === 'write_file') {
-                const files = (normalizedArgs as any)?.files;
-                if (!Array.isArray(files) || files.length === 0) {
-                    return {
-                        result: null,
-                        success: false,
-                        error: 'Invalid write_file args in plan mode: files must be a non-empty array'
-                    };
-                }
-
-                for (const file of files) {
-                    const filePath = (file as any)?.path;
-                    if (typeof filePath !== 'string') {
-                        return {
-                            result: null,
-                            success: false,
-                            error: 'Invalid write_file args in plan mode: files[].path must be a string'
-                        };
-                    }
-                    if (!isPlanModeWriteFilePathAllowed(filePath)) {
-                        return {
-                            result: null,
-                            success: false,
-                            error: `write_file path not allowed in plan mode: ${filePath}`
-                        };
-                    }
-                }
-            }
+        const channelConfig = await context.configManager.getConfig(agentConfig.channel.channelId);
+        if (!channelConfig) {
+            const error = `SubAgent channel config not found: ${agentConfig.channel.channelId}`;
+            emitToolFailure(error);
+            return {
+                result: null,
+                success: false,
+                error
+            };
         }
-        
-        // 检查是否是 MCP 工具
-        const mcpParsed = context.mcpManager ? parseMcpToolNameAny(toolName) : null;
-        if (mcpParsed && context.mcpManager) {
-            const result = await context.mcpManager.callTool({
-                serverId: mcpParsed.serverId,
-                toolName: mcpParsed.toolName,
-                arguments: args
+
+            subAgentRunEventBus.emit({
+                runId: actualRunId,
+                agentName,
+                type: 'tool_started',
+                toolId: executionCall.id,
+                toolName,
+                payload: { args }
             });
 
-            if (result.success) {
-                const textContent = result.content
-                    ?.filter((c: any) => c?.type === 'text')
-                    .map((c: any) => c?.text)
-                    .filter((t: any) => typeof t === 'string' && t.trim().length > 0)
-                    .join('\n') || '';
-
-                return {
-                    result: textContent,
-                    success: true
-                };
-            }
-
-            return {
-                result: null,
-                success: false,
-                error: result.error || `MCP tool call failed: ${mcpParsed.toolName}`
-            };
-        }
-        
-        // 内置工具
-        if (builtinTool) {
-            const toolContext: ToolContext = {
+            // 修改原因：SubAgent 不能再复制主工具执行逻辑，否则多模态、MCP、工具配置和参数校验会继续分叉。
+            // 修改方式：优先调用 ChatHandler 注入的 ToolExecutionService，并传入 SubAgent 自己的 provider config。
+            // 修改目的：让 SubAgent 内部工具调用和主会话工具调用共享同一套执行、校验和 functionResponse 打包逻辑。
+            const fullResult = await context.toolExecutionService.executeFunctionCallsWithResults(
+                [executionCall],
+                undefined,
+                undefined,
+                channelConfig || undefined,
                 abortSignal,
-                toolId: `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-            };
+                context.promptModeSnapshot,
+                (event: any) => subAgentRunEventBus.emit({
+                    ...event,
+                    runId: actualRunId,
+                    agentName
+                })
+            );
 
-            const result: ToolResult = await builtinTool.handler(normalizedArgs, toolContext);
+            const toolResult = fullResult.toolResults?.[0];
+            const resultPayload = toolResult?.result ?? { success: false, error: `Tool produced no result: ${toolName}` };
+            const success = !(
+                (resultPayload as any)?.success === false ||
+                (resultPayload as any)?.error ||
+                (resultPayload as any)?.cancelled ||
+                (resultPayload as any)?.rejected
+            );
+            const error = typeof (resultPayload as any)?.error === 'string'
+                ? (resultPayload as any).error
+                : undefined;
+
+            subAgentRunEventBus.emit({
+                runId: actualRunId,
+                agentName,
+                type: success ? 'tool_completed' : 'tool_failed',
+                toolId: executionCall.id,
+                toolName,
+                payload: toolResult
+            });
 
             return {
-                result: result.success ? result.data : result.error,
-                success: result.success,
-                error: result.error
+                result: resultPayload,
+                success,
+                error,
+                responseParts: fullResult.responseParts,
+                toolResults: fullResult.toolResults,
+                multimodalAttachments: fullResult.multimodalAttachments
             };
-        }
-        
-        return {
-            result: null,
-            success: false,
-            error: `Tool not found: ${toolName}`
-        };
     } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        emitToolFailure(error);
         return {
             result: null,
             success: false,
-            error: e instanceof Error ? e.message : String(e)
+            error
         };
     }
-}
-
-/**
- * 解析 AI 响应中的工具调用
- * 
- * 支持标准化的 GenerateResponse 格式
- */
-function parseToolCalls(response: any): ParsedToolCall[] {
-    const calls: ParsedToolCall[] = [];
-    
-    // 标准化格式: response.content.parts。这里必须保留 functionCall.id，供下一轮工具结果回传使用。
-    if (response?.content?.parts) {
-        for (const part of response.content.parts) {
-            if (part.functionCall) {
-                calls.push({
-                    name: part.functionCall.name,
-                    args: part.functionCall.args || {},
-                    id: part.functionCall.id
-                });
-            }
-        }
-        return calls;
-    }
-    
-    // Gemini 原始格式: response.candidates[0].content.parts
-    if (response?.candidates?.[0]?.content?.parts) {
-        for (const part of response.candidates[0].content.parts) {
-            if (part.functionCall) {
-                calls.push({
-                    name: part.functionCall.name,
-                    args: part.functionCall.args || {},
-                    id: part.functionCall.id
-                });
-            }
-        }
-        return calls;
-    }
-    
-    // OpenAI 格式: response.choices[0].message.tool_calls
-    if (response?.choices?.[0]?.message?.tool_calls) {
-        for (const toolCall of response.choices[0].message.tool_calls) {
-            if (toolCall.function) {
-                try {
-                    calls.push({
-                        name: toolCall.function.name,
-                        args: JSON.parse(toolCall.function.arguments || '{}'),
-                        id: toolCall.id
-                    });
-                } catch {
-                    calls.push({
-                        name: toolCall.function.name,
-                        args: {},
-                        id: toolCall.id
-                    });
-                }
-            }
-        }
-        return calls;
-    }
-    
-    // Anthropic 格式: response.content 数组中查找 type: 'tool_use'
-    if (response?.content && Array.isArray(response.content)) {
-        for (const block of response.content) {
-            if (block.type === 'tool_use') {
-                calls.push({
-                    name: block.name,
-                    args: block.input || {},
-                    id: block.id
-                });
-            }
-        }
-        return calls;
-    }
-
-    // 说明：这里暂时不解析 XML / JSON 提示型工具调用。
-    // 子代理默认执行器当前只支持原生 function calling 风格的工具往返。
-    // 如果后续要补齐 xml/json 模式，应复用主流程中的 promptToolParser，
-    // 而不是在这里临时用字符串规则做一套不完整的解析。
-    
-    return calls;
 }
 
 /**
@@ -501,39 +301,126 @@ export function createDefaultExecutor(
         const toolCalls: SubAgentToolCall[] = [];
         let steps = 0;
         let modelVersion: string | undefined;
+        // 修改原因：主聊天卡片和 Monitor 需要用稳定 ID 关联同一次 SubAgent 运行，但 pending 阶段前端还拿不到最终 ToolResult。
+        // 修改方式：优先使用 handler 根据主工具调用 id 预分配的 runId；没有外部 runId 时才回退为本地随机 runId。
+        // 修改目的：让 pending、完成态和历史态的 Open details 都能定位同一次运行，同时兼容非主聊天入口。
+        const requestedRunId = typeof request.runId === 'string' && request.runId.trim() ? request.runId.trim() : undefined;
+        const runId = requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const initialPromptContent: Content = {
+            role: 'user',
+            parts: [{
+                text: [
+                    '# SubAgent Invocation',
+                    '',
+                    '## Agent System Prompt',
+                    config.systemPrompt || '(empty)',
+                    '',
+                    request.context ? '## Context' : '',
+                    request.context || '',
+                    request.context ? '' : '',
+                    '## User Prompt',
+                    request.prompt
+                ].filter(Boolean).join('\n')
+            }],
+            isUserInput: true,
+            timestamp: Date.now()
+        } as Content;
+        subAgentRunEventBus.createRun(runId, config.name, {
+            agentType: request.agentType,
+            prompt: request.prompt,
+            context: request.context
+        }, {
+            conversationId: context.conversationId,
+            conversationStore: context.conversationStore,
+            initialContents: [initialPromptContent]
+        });
+        // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
+        // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
+        // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
+        subAgentRunController.register(runId, config.name);
         const maxIterations = config.maxIterations ?? 20;
         const maxRuntime = config.maxRuntime ?? 300; // 默认 5 分钟
         const startTime = Date.now();
+        const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         
         // 创建超时控制器
         let timeoutController: AbortController | null = null;
-        let combinedSignal: AbortSignal | undefined = abortSignal;
-        
-        if (maxRuntime > 0) {
-            timeoutController = new AbortController();
-            // 设置超时定时器
-            const timeoutId = setTimeout(() => {
-                timeoutController?.abort();
-            }, maxRuntime * 1000);
-            
-            // 组合信号：用户取消 + 超时
-            if (abortSignal) {
-                // 监听用户取消
-                abortSignal.addEventListener('abort', () => {
-                    clearTimeout(timeoutId);
-                    timeoutController?.abort();
-                });
-            }
-            combinedSignal = timeoutController.signal;
-        }
+        let timeoutId: ReturnType<typeof setInterval> | undefined;
         
         // 检查是否超时的辅助函数
         const checkTimeout = (): { exceeded: boolean; elapsed: number } => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const elapsed = Math.floor(getActiveElapsedMs() / 1000);
             if (maxRuntime > 0 && elapsed >= maxRuntime) {
                 return { exceeded: true, elapsed };
             }
             return { exceeded: false, elapsed };
+        };
+
+        if (maxRuntime > 0) {
+            timeoutController = new AbortController();
+            // 修改原因：Monitor 暂停和等待用户操作的时间不应计入 maxRuntime，固定 setTimeout 会误把暂停时间算入运行时间。
+            // 修改方式：用短间隔轮询 checkTimeout，checkTimeout 会扣除 runController 记录的 inactiveDurationMs。
+            // 修改目的：用户暂停查看 Monitor 或等待手动决策时，SubAgent 不会因为真实墙钟时间流逝而超时失败。
+            timeoutId = setInterval(() => {
+                if (checkTimeout().exceeded) {
+                    timeoutController?.abort();
+                }
+            }, 500);
+            if (abortSignal) {
+                abortSignal.addEventListener('abort', () => {
+                    if (timeoutId) clearInterval(timeoutId);
+                    timeoutController?.abort();
+                });
+            }
+        }
+
+        const createOperationSignal = (): AbortSignal | undefined => {
+            const signals = [abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
+                .filter((signal): signal is AbortSignal => !!signal);
+            if (signals.length === 0) return undefined;
+            const controller = new AbortController();
+            const abort = () => controller.abort();
+            for (const signal of signals) {
+                if (signal.aborted) {
+                    controller.abort();
+                    break;
+                }
+                signal.addEventListener('abort', abort, { once: true });
+            }
+            return controller.signal;
+        };
+
+        let lastResponse: string = '';
+
+        const buildCancelledResult = (error: string): SubAgentResult => ({
+            success: false,
+            response: lastResponse,
+            modelVersion,
+            steps,
+            runId,
+            toolCalls,
+            error,
+            cancelled: true
+        });
+
+        const waitForControlIfNeeded = async (): Promise<SubAgentResult | null> => {
+            const state = subAgentRunController.getState(runId);
+            if (!state) return null;
+            if (state.status === 'cancelled') {
+                return buildCancelledResult(subAgentRunController.getExitReason(runId) || '用户主动终止 SubAgent 执行');
+            }
+            if (state.status === 'paused' || state.status === 'awaiting_monitor_action') {
+                const status = await subAgentRunController.waitUntilRunnable(runId);
+                if (status === 'cancelled') {
+                    return buildCancelledResult(subAgentRunController.getExitReason(runId) || '用户主动终止 SubAgent 执行');
+                }
+            }
+            return null;
+        };
+
+        const isControlInterruption = (): boolean => {
+            const state = subAgentRunController.getState(runId);
+            return !!state && (state.status === 'paused' || state.status === 'awaiting_monitor_action' || state.status === 'cancelled');
         };
         
         // 检查是否超出迭代次数的辅助函数
@@ -541,10 +428,20 @@ export function createDefaultExecutor(
             if (maxIterations === -1) return false; // -1 表示无限制
             return steps >= maxIterations;
         };
+
+        const resolveFailureModeAfterRetries = (): 'fail_parent_tool' | 'wait_for_monitor_action' => {
+            // 修改原因：旧 SubAgent 配置可能没有 failureModeAfterRetries，但运行时必须有明确策略。
+            // 修改方式：优先使用单个 SubAgent 覆盖值，其次使用全局 SubAgents 默认值，最后回退到 fail_parent_tool。
+            // 修改目的：满足“运行时补齐，不主动写回”的兼容策略。
+            const own = config.failureModeAfterRetries;
+            if (own === 'wait_for_monitor_action' || own === 'fail_parent_tool') return own;
+            const global = context.settingsManager?.getSubAgentsConfig?.()?.failureModeAfterRetries;
+            return global === 'wait_for_monitor_action' ? 'wait_for_monitor_action' : 'fail_parent_tool';
+        };
         
         try {
             // 检查是否取消
-            if (combinedSignal?.aborted || abortSignal?.aborted) {
+            if (abortSignal?.aborted || timeoutController?.signal.aborted) {
                 return {
                     success: false,
                     error: 'Cancelled before execution',
@@ -552,6 +449,17 @@ export function createDefaultExecutor(
                 };
             }
             
+            if (!context.configManager) {
+                throw new Error('SubAgent shared parser/stream path requires configManager in executor context.');
+            }
+            const channelConfig = await context.configManager.getConfig(config.channel.channelId);
+            if (!channelConfig) {
+                throw new Error(`SubAgent channel config not found: ${config.channel.channelId}`);
+            }
+            const toolMode = channelConfig.toolMode || 'function_call';
+            const providerType = channelConfig.type || 'custom';
+            const toolCallParser = new ToolCallParserService();
+
             // 获取可用工具
             const availableTools = await getAvailableTools(config, context);
             
@@ -573,11 +481,15 @@ export function createDefaultExecutor(
             ];
             
             // 工具迭代循环
-            let lastResponse: string = '';
             
             while (true) {
+                const controlWaitResult = await waitForControlIfNeeded();
+                if (controlWaitResult) {
+                    return controlWaitResult;
+                }
+
                 // 检查是否取消或超时
-                if (combinedSignal?.aborted || abortSignal?.aborted) {
+                if (abortSignal?.aborted || timeoutController?.signal.aborted) {
                     const timeoutCheck = checkTimeout();
                     const isTimeout = timeoutCheck.exceeded;
                     return {
@@ -621,13 +533,33 @@ export function createDefaultExecutor(
                 steps++;
                 
                 // 调用 AI
+                const operationSignal = createOperationSignal();
+                let retryFailedInThisCall = false;
                 const generateRequest: any = {
                     configId: config.channel.channelId,
                     history: history,
                     dynamicSystemPrompt: systemPrompt,
-                    abortSignal: combinedSignal,
+                    abortSignal: operationSignal,
                     toolOverrides: availableTools.length > 0 ? availableTools : undefined,
                     suppressRetryNotification: true,
+                    retryStatusCallback: (status: any) => {
+                        if (status?.type === 'retryFailed') {
+                            retryFailedInThisCall = true;
+                        }
+                        // 修改原因：SubAgent 内部自动重试状态不能进入主窗口 retryStatus，但用户需要在 Monitor 里看到。
+                        // 修改方式：通过 GenerateRequest.retryStatusCallback 把 ChannelManager 的 retrying/retrySuccess/retryFailed 事件路由到 SubAgent runEventBus。
+                        // 修改目的：继续复用 Provider 自动重试配置，同时让 Monitor 成为内部重试状态的唯一展示位置。
+                        subAgentRunEventBus.emit({
+                            runId,
+                            agentName: config.name,
+                            type: status?.type || 'run_updated',
+                            payload: status
+                        });
+                    },
+                    // 修改原因：SubAgent 解析 XML/JSON prompt tool mode 时必须和主请求使用同一份模式快照。
+                    // 修改方式：把父请求解析好的 promptModeSnapshot 继续传给 ChannelManager。
+                    // 修改目的：避免 SubAgent 工具声明和工具调用解析在不同 prompt mode 下再次分叉。
+                    promptModeSnapshot: context.promptModeSnapshot
                 };
                 
                 // 如果指定了模型，设置模型覆盖
@@ -638,29 +570,63 @@ export function createDefaultExecutor(
                 let response: any;
                 try {
                     const result = await context.channelManager.generate(generateRequest);
+                    const requestStartTime = Date.now();
+                    const streamProcessor = new StreamResponseProcessor({
+                        requestStartTime,
+                        providerType,
+                        toolMode,
+                        abortSignal: operationSignal,
+                        conversationId: runId
+                    });
                     
-                    // 检查是否是流式响应（AsyncGenerator）
-                    if (result && typeof result[Symbol.asyncIterator] === 'function') {
-                        // 流式响应，使用 StreamAccumulator 来累加
-                        const accumulator = new StreamAccumulator();
-                        
-                        for await (const chunk of result as AsyncGenerator<any>) {
-                            // 在流式过程中也检查超时
-                            if (combinedSignal?.aborted || checkTimeout().exceeded) {
+                    if (isAsyncGenerator(result)) {
+                        // 修改原因：SubAgent 不应直接 new StreamAccumulator，否则主窗口流式解析升级时 Monitor 不会同步升级。
+                        // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
+                        // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
+                        for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
+                            if (operationSignal?.aborted || checkTimeout().exceeded) {
                                 break;
                             }
-                            accumulator.add(chunk);
+                            subAgentRunEventBus.emit({
+                                runId,
+                                agentName: config.name,
+                                type: 'llm_delta',
+                                payload: chunkData.chunk
+                            });
                         }
-                        
-                        // 获取累加后的完整响应
+                        if (operationSignal?.aborted && isControlInterruption()) {
+                            // 修改原因：暂停/退出会中止当前 LLM 流，旧逻辑会继续把 partial content 当作成功响应并可能发 run_completed。
+                            // 修改方式：流循环结束后立即检查 run control state，交给 waitForControlIfNeeded 处理 pause/resume/exit 语义。
+                            // 修改目的：SubAgent pause 不让主工具失败，exit 才按用户意图让主工具失败，避免 partial stream 被误判完成。
+                            const controlResult = await waitForControlIfNeeded();
+                            if (controlResult) return controlResult;
+                            continue;
+                        }
                         response = {
-                            content: accumulator.getContent(),
-                            finishReason: accumulator.getFinishReason()
+                            content: streamProcessor.getContent()
                         };
+                        subAgentRunEventBus.updateLastModelContent(runId, response.content);
                     } else {
-                        // 非流式响应
-                        response = result;
+                        const processed = streamProcessor.processNonStream(result as any);
+                        response = {
+                            ...(result as any),
+                            content: processed.content
+                        };
+                        subAgentRunEventBus.updateLastModelContent(runId, response.content);
+                        subAgentRunEventBus.emit({
+                            runId,
+                            agentName: config.name,
+                            type: 'llm_delta',
+                            payload: processed.chunkData.chunk
+                        });
                     }
+
+                    subAgentRunEventBus.emit({
+                        runId,
+                        agentName: config.name,
+                        type: 'content_snapshot',
+                        payload: response?.content
+                    });
                 } catch (e) {
                     // 检查是否是超时导致的错误
                     const timeoutCheck = checkTimeout();
@@ -674,6 +640,20 @@ export function createDefaultExecutor(
                             error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
                         };
                     }
+                    if (operationSignal?.aborted && isControlInterruption()) {
+                        const controlResult = await waitForControlIfNeeded();
+                        if (controlResult) return controlResult;
+                        continue;
+                    }
+
+                    if (retryFailedInThisCall && resolveFailureModeAfterRetries() === 'wait_for_monitor_action') {
+                        const reason = e instanceof Error ? e.message : String(e);
+                        subAgentRunController.markAwaitingMonitorAction(runId, reason);
+                        const controlResult = await waitForControlIfNeeded();
+                        if (controlResult) return controlResult;
+                        continue;
+                    }
+
                     return {
                         success: false,
                         response: lastResponse,
@@ -684,8 +664,16 @@ export function createDefaultExecutor(
                     };
                 }
                 
-                // 解析响应
-                const currentToolCalls = parseToolCalls(response);
+                // 修改原因：SubAgent 过去自己解析各 provider 的工具调用，主流程支持 XML/JSON prompt tool mode 后容易漏同步。
+                // 修改方式：统一把标准 Content 交给 ToolCallParserService 转换和提取 functionCall。
+                // 修改目的：所有工具调用解析能力只维护一个入口。
+                if (response?.content) {
+                    toolCallParser.convertPromptModeToolCallsToFunctionCalls(response.content, toolMode);
+                    toolCallParser.ensureFunctionCallIds(response.content);
+                }
+                const currentToolCalls = response?.content
+                    ? toolCallParser.extractFunctionCalls(response.content, toolMode)
+                    : [];
                 const textContent = extractTextContent(response);
 
                 // 记录子代理实际运行的模型版本（优先 content.modelVersion，其次 response.model）
@@ -703,7 +691,10 @@ export function createDefaultExecutor(
                 
                 // 将 AI 响应添加到历史（过滤掉思考内容）
                 if (response?.content) {
-                    // 过滤掉思考 parts，只保留正文和工具调用
+                    // 修改原因：Monitor 需要显示完整模型消息，包括主窗口允许展示的 thought、工具调用、计时和 usage 信息。
+                    // 修改方式：Monitor 子记录保存完整 response.content；发回子模型的历史仍过滤 thought，保持现有请求安全语义。
+                    // 修改目的：UI 展示和模型续传各走正确数据，不再为了续传牺牲 Monitor 的完整聊天体验。
+                    subAgentRunEventBus.updateLastModelContent(runId, response.content);
                     const filteredParts = (response.content.parts || []).filter(
                         (part: any) => !part.thought
                     );
@@ -717,11 +708,18 @@ export function createDefaultExecutor(
                 
                 // 如果没有工具调用，说明代理已完成任务
                 if (currentToolCalls.length === 0) {
+                    subAgentRunEventBus.emit({
+                        runId,
+                        agentName: config.name,
+                        type: 'run_completed',
+                        payload: { response: lastResponse, steps, modelVersion }
+                    });
                     return {
                         success: true,
                         response: lastResponse,
                         modelVersion,
                         steps,
+                        runId,
                         toolCalls
                     };
                 }
@@ -732,7 +730,8 @@ export function createDefaultExecutor(
                 for (const call of currentToolCalls) {
                     // 执行工具前检查超时
                     const timeoutCheck = checkTimeout();
-                    if (timeoutCheck.exceeded || combinedSignal?.aborted) {
+                    const toolOperationSignal = createOperationSignal();
+                    if (timeoutCheck.exceeded || abortSignal?.aborted || timeoutController?.signal.aborted) {
                         return {
                             success: false,
                             response: lastResponse,
@@ -745,11 +744,15 @@ export function createDefaultExecutor(
                     
                     const toolStartTime = Date.now();
                     const result = await executeToolCall(
-                  call.name,
+                        call.name,
                         call.args,
                         context,
-                        combinedSignal,
-                        allowedToolNames
+                        toolOperationSignal,
+                        allowedToolNames,
+                        config,
+                        call.id,
+                        runId,
+                        config.name
                     );
                     const duration = Date.now() - toolStartTime;
                     
@@ -761,51 +764,77 @@ export function createDefaultExecutor(
                         duration
                     });
                     
-                    // 构建工具结果 part（Gemini 格式）
-                    toolResultParts.push({
-                        functionResponse: {
-                            // 必须回传原始工具调用 id。
-                            // 原因：
-                            // 1. Anthropic 需要它来生成 tool_result.tool_use_id
-                            // 2. OpenAI Responses 需要它来生成 function_call_output.call_id
-                            // 如果这里不保留，子代理会在第一次工具调用后的下一轮请求直接报 400。
-                            name: call.name,
-                            response: {
-                                success: result.success,
-                                result: result.result,
-                                error: result.error
-                            },
-                            id: call.id
+                    if (result.responseParts && result.responseParts.length > 0) {
+                        // 修改原因：主 ToolExecutionService 已经负责构造包含多模态 parts 的 functionResponse，SubAgent 不应再手写简化结果。
+                        // 修改方式：优先写入 ToolExecutionService 返回的 responseParts，并在 prompt 模式下带上 multimodalAttachments。
+                        // 修改目的：确保图片/PDF/MCP 多模态结果在 SubAgent 内部能按主流程同样的格式回传给子模型。
+                        if (result.multimodalAttachments && result.multimodalAttachments.length > 0) {
+                            toolResultParts.push(...result.multimodalAttachments);
                         }
-                    });
+                        toolResultParts.push(...result.responseParts);
+                    } else {
+                        // 回退路径只用于旧上下文缺少 ToolExecutionService 的情况，保留原始 id 以满足 Anthropic/Responses 配对要求。
+                        toolResultParts.push({
+                            functionResponse: {
+                                name: call.name,
+                                response: {
+                                    success: result.success,
+                                    result: result.result,
+                                    error: result.error
+                                },
+                                id: call.id
+                            }
+                        });
+                    }
                 }
                 
                 // 将工具结果添加到历史（作为 user 消息）
+                const functionResponseContent = {
+                    role: 'user' as const,
+                    parts: toolResultParts,
+                    isFunctionResponse: true,
+                    timestamp: Date.now()
+                } as Content;
                 history.push({
                     role: 'user',
                     parts: toolResultParts
                 });
+                // 修改原因：SubAgent 工具结果写入也要经过统一 transcript 仓储接口，避免继续新增“只属于事件总线旧 API”的写路径。
+                // 修改方式：通过 runEventBus 暴露的 getTranscriptRepository().appendContent 写入 functionResponse content。
+                // 修改目的：让主聊天与 SubAgent 的 transcript append 语义完全对齐，同时不改变 event bus 的广播和持久化效果。
+                await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(functionResponseContent);
             }
             
         } catch (e) {
             // 检查是否是超时导致的错误
             const timeoutCheck = checkTimeout();
             if (timeoutCheck.exceeded) {
+                const error = `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`;
+                subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'run_failed', payload: { error } });
                 return {
                     success: false,
                     modelVersion,
                     steps,
+                    runId,
                     toolCalls,
-                    error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
+                    error
                 };
             }
+            const error = e instanceof Error ? e.message : String(e);
+            subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'run_failed', payload: { error } });
             return {
                 success: false,
                 modelVersion,
                 steps,
+                runId,
                 toolCalls,
-                error: e instanceof Error ? e.message : String(e)
+                error
             };
+        } finally {
+            // 修改原因：run 完成、失败或取消后不能继续显示为可控制的活跃执行。
+            // 修改方式：executor 最外层 finally 注销 runController 中的活跃记录，事件总线快照仍保留历史。
+            // 修改目的：避免 Monitor 对历史 run 展示“中止/退出”等会影响主工具的按钮。
+            subAgentRunController.unregister(runId);
         }
     };
 }

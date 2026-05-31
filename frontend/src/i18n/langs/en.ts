@@ -512,6 +512,8 @@ const en: LanguageMessages = {
                 viewDiff: 'View Diff',
                 viewDiffInVSCode: 'View diff in VSCode',
                 openDiffFailed: 'Failed to open diff preview',
+                openDetails: 'Open details',
+                openSubAgentMonitorDetails: 'Open SubAgent Monitor details',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1812,6 +1814,7 @@ const en: LanguageMessages = {
                         autoSaveDelay: 'Auto Save Delay',
                         delayTime: 'Delay Time',
                         delayTimeDesc: 'Wait this amount of time after showing changes before auto-saving',
+                        delay005s: '0.05 seconds',
                         delay1s: '1 second',
                         delay2s: '2 seconds',
                         delay3s: '3 seconds',
@@ -1821,8 +1824,8 @@ const en: LanguageMessages = {
                         infoDisabled: 'Current setting: After AI modifies files, you need to manually press Ctrl+S in the editor to confirm and save changes.',
 
                         format: 'Diff Format',
-                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (unified diff is recommended by default)',
-                        formatUnified: 'Unified diff (unified diff patch)',
+                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (structured hunks are recommended by default; legacy unified diff patch remains compatible)',
+                        formatUnified: 'Structured hunks (recommended; unified diff patch compatible)',
                         formatSearchReplace: 'Legacy (search/replace)',
 
                         skipDiffView: 'Skip Diff View',
@@ -2261,6 +2264,11 @@ const en: LanguageMessages = {
                 }
             },
             openai: {
+                deepSeekUserId: {
+                    title: 'DeepSeek user_id',
+                    hint: 'Send the top-level user_id field for DeepSeek Chat Completions to isolate KVCache per conversation. It only applies when the current main chat request has a conversation ID; internal requests such as summaries and sub-agents do not send it by default. Enable this only for DeepSeek channels.',
+                    toggleHint: 'Generate a stable privacy-safe user_id from the current conversation ID'
+                },
                 frequencyPenalty: {
                     label: 'Frequency Penalty',
                     hint: '-2.0 - 2.0',
@@ -2458,6 +2466,7 @@ const en: LanguageMessages = {
                     copyAll: 'Copy all list',
                     copyList: 'Copy list',
                     dirStat: '{folderCount} folders, {fileCount} files',
+                    lines: '{count} lines',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count}',
                     emptyDirectory: 'Directory is empty'
@@ -2504,6 +2513,7 @@ const en: LanguageMessages = {
                     title: 'Find Files',
                     totalFiles: 'Total {count} files',
                     fileCount: '{count} files',
+                    lines: '{count} lines',
                     truncated: 'Truncated',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count} files',
@@ -2529,7 +2539,8 @@ const en: LanguageMessages = {
                     filesModified: '{count} files',
                     viewMatches: 'Matches',
                     viewDiff: 'Diff',
-                    loadingDiff: 'Loading diff...'
+                    loadingDiff: 'Loading diff...',
+                    omittedUnchangedLines: '… {count} unchanged lines omitted …'
                 }
             },
             history: {
@@ -2543,6 +2554,11 @@ const en: LanguageMessages = {
                     regex: 'Regex',
                     keywords: 'Keywords:',
                     lineRange: 'Lines:',
+                    lineCount: '{count} lines',
+                    matchLineCount: '{count} matching lines',
+                    blockCount: '{count} blocks',
+                    contextBlock: 'Block {index}',
+                    match: 'Match',
                     noContent: 'No content returned',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count} lines',

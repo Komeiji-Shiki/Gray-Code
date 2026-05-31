@@ -407,6 +407,7 @@ export interface BackendLanguageMessages {
             noHistory: string;
             searchResultHeader: string;
             noMatchesFound: string;
+            keywordFallbackNotice: string;
             resultsLimited: string;
             readResultHeader: string;
             readTruncated: string;

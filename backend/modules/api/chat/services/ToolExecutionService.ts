@@ -6,7 +6,7 @@
 
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
-import type { ConversationStore } from '../../../../tools/types';
+import type { ConversationStore, ToolProgressEmitter } from '../../../../tools/types';
 import { coerceToolArgs, getToolArgsArrayValidationError, type ToolParameterSchema } from '../../../../tools/coerceToolArgs';
 
 import { validateToolArgs } from '../../../../tools/validateToolArgs';
@@ -16,6 +16,7 @@ import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
+import { isMcpToolName, decodeMcpToolName } from '../../../mcp/mcpToolNameCodec';
 import type { ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
@@ -119,7 +120,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<ContentPart[]> {
         const { responseParts } = await this.executeFunctionCallsWithResults(
             calls,
@@ -127,7 +129,8 @@ export class ToolExecutionService {
             messageIndex,
             config,
             abortSignal,
-            promptModeSnapshot
+            promptModeSnapshot,
+            progressEmitter
         );
         return responseParts;
     }
@@ -158,8 +161,14 @@ export class ToolExecutionService {
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        approvedToolCallIds?: Set<string>
+        executionOptions?: Set<string> | ToolProgressEmitter,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<ToolExecutionFullResult> {
+        const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
+        const resolvedProgressEmitter = typeof executionOptions === 'function'
+            ? executionOptions
+            : progressEmitter;
+
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
         const checkpoints: CheckpointRecord[] = [];
@@ -202,6 +211,7 @@ export class ToolExecutionService {
             toolResults.push({
                 id: call.id,
                 name: call.name,
+                args: call.args,
                 result: response
             });
 
@@ -231,6 +241,7 @@ export class ToolExecutionService {
                 toolResults.push({
                     id: preparedCall.call.id,
                     name: preparedCall.call.name,
+                    args: preparedCall.call.args,
                     result: JSON.parse(JSON.stringify(response))
                 });
 
@@ -258,6 +269,7 @@ export class ToolExecutionService {
                 toolResults.push({
                     id: executionCall.id,
                     name: executionCall.name,
+                    args: executionCall.args,
                     result: JSON.parse(JSON.stringify(response))
                 });
 
@@ -274,8 +286,7 @@ export class ToolExecutionService {
             let response: Record<string, unknown>;
 
             try {
-                // 检查是否是 MCP 工具（格式：mcp__{serverId}__{toolName}）
-                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                if (isMcpToolName(executionCall.name) && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
                     response = await this.executeBuiltinTool(
@@ -284,7 +295,8 @@ export class ToolExecutionService {
                         config,
                         abortSignal,
                         promptModeSnapshot,
-                        approvedToolCallIds?.has(executionCall.id) === true
+                        approvedToolCallIds?.has(executionCall.id) === true,
+                        resolvedProgressEmitter
                     );
                 }
             } catch (error) {
@@ -300,6 +312,7 @@ export class ToolExecutionService {
             toolResults.push({
                 id: executionCall.id,
                 name: executionCall.name,
+                args: executionCall.args,
                 result: JSON.parse(JSON.stringify(response))
             });
 
@@ -372,8 +385,14 @@ export class ToolExecutionService {
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        approvedToolCallIds?: Set<string>
+        executionOptions?: Set<string> | ToolProgressEmitter,
+        progressEmitter?: ToolProgressEmitter
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
+        const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
+        const resolvedProgressEmitter = typeof executionOptions === 'function'
+            ? executionOptions
+            : progressEmitter;
+
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
         const checkpoints: CheckpointRecord[] = [];
@@ -413,6 +432,7 @@ export class ToolExecutionService {
             const tr: ToolExecutionResult = {
                 id: call.id,
                 name: call.name,
+                args: call.args,
                 result: response
             };
 
@@ -445,6 +465,7 @@ export class ToolExecutionService {
                 const toolResult: ToolExecutionResult = {
                     id: preparedCall.call.id,
                     name: preparedCall.call.name,
+                    args: preparedCall.call.args,
                     result: JSON.parse(JSON.stringify(response))
                 };
                 toolResults.push(toolResult);
@@ -474,6 +495,7 @@ export class ToolExecutionService {
                 const toolResult: ToolExecutionResult = {
                     id: executionCall.id,
                     name: executionCall.name,
+                    args: executionCall.args,
                     result: JSON.parse(JSON.stringify(response))
                 };
                 toolResults.push(toolResult);
@@ -495,7 +517,7 @@ export class ToolExecutionService {
             let response: Record<string, unknown>;
 
             try {
-                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                if (isMcpToolName(executionCall.name) && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
                     response = await this.executeBuiltinTool(
@@ -504,7 +526,8 @@ export class ToolExecutionService {
                         config,
                         abortSignal,
                         promptModeSnapshot,
-                        approvedToolCallIds?.has(executionCall.id) === true
+                        approvedToolCallIds?.has(executionCall.id) === true,
+                        resolvedProgressEmitter
                     );
                 }
             } catch (error) {
@@ -518,6 +541,7 @@ export class ToolExecutionService {
             const toolResult: ToolExecutionResult = {
                 id: executionCall.id,
                 name: executionCall.name,
+                args: executionCall.args,
                 // 深拷贝：保留完整数据供前端显示
                 result: JSON.parse(JSON.stringify(response))
             };
@@ -579,10 +603,9 @@ export class ToolExecutionService {
      * 执行 MCP 工具
      */
     private async executeMcpTool(call: FunctionCallInfo): Promise<Record<string, unknown>> {
-        const parts = call.name.split('__');
-        if (parts.length >= 3) {
-            const serverId = parts[1];
-            const toolName = parts.slice(2).join('__');
+        const decoded = decodeMcpToolName(call.name);
+        if (decoded) {
+            const { serverId, toolName } = decoded;
 
             const result = await this.mcpManager!.callTool({
                 serverId,
@@ -666,7 +689,7 @@ export class ToolExecutionService {
     private prepareToolCallForExecution(
         call: FunctionCallInfo
     ): { call: FunctionCallInfo; error: string | null } {
-        if (call.name.startsWith('mcp__')) {
+        if (isMcpToolName(call.name)) {
             return { call, error: null };
         }
 
@@ -716,7 +739,8 @@ export class ToolExecutionService {
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        approvedByToolConfirmation?: boolean
+        approvedByToolConfirmation?: boolean,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -744,7 +768,16 @@ export class ToolExecutionService {
             approvedByToolConfirmation: approvedByToolConfirmation === true,
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
-            conversationStore: this.conversationStore
+            conversationStore: this.conversationStore,
+            // 让 SubAgent Monitor 和长耗时工具复用同一工具执行链路上报进度。
+            emitProgress: progressEmitter
+                ? (event: Parameters<ToolProgressEmitter>[0]) => progressEmitter({
+                    ...event,
+                    toolId: event.toolId || call.id,
+                    toolName: event.toolName || call.name,
+                    timestamp: event.timestamp || Date.now()
+                })
+                : undefined
         };
 
         toolContext.promptModeSnapshot = promptModeSnapshot;
@@ -1028,18 +1061,32 @@ export class ToolExecutionService {
     private validatePlanModeWriteFileArgs(
         args?: Record<string, unknown>
     ): { ok: true } | { ok: false; error: string } {
-        const files = (args as any)?.files;
+        const rawPath = (args as any)?.path;
+        const files = typeof rawPath === 'string'
+            ? [{ path: rawPath }]
+            : (args as any)?.files;
+
         if (!Array.isArray(files) || files.length === 0) {
-            return { ok: false, error: 'In plan mode, write_file requires a non-empty "files" array.' };
+            return { ok: false, error: 'In plan mode, write_file requires a non-empty "path" string.' };
         }
+
+        const pathLabel = typeof rawPath === 'string'
+            ? 'write_file.path'
+            : 'write_file.files[].path';
 
         for (const entry of files) {
             if (!entry || typeof entry !== 'object') {
-                return { ok: false, error: 'In plan mode, write_file.files entries must be objects.' };
+                return {
+                    ok: false,
+                    error: 'In plan mode, write_file file entries must be objects.'
+                };
             }
             const path = (entry as any).path;
             if (typeof path !== 'string' || !path.trim()) {
-                return { ok: false, error: 'In plan mode, write_file.files[].path must be a non-empty string.' };
+                return {
+                    ok: false,
+                    error: `In plan mode, ${pathLabel} must be a non-empty string.`
+                };
             }
             if (!this.isPlanModeWriteFilePathAllowed(path)) {
                 return {

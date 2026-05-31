@@ -647,7 +647,7 @@ function sanitizeImportedMode(raw: unknown, fallbackName: string): PromptMode {
     dynamicContextStrategy: item.dynamicContextStrategy === 'preserve' ? 'preserve' : 'single',
     promptEntries: normalizePromptEntries(item.promptEntries as PromptEntry[] | undefined, assemblyMode),
     toolPolicy: Array.isArray(item.toolPolicy)
-      ? Array.from(new Set(item.toolPolicy.filter((tool): tool is string => typeof tool === 'string' && tool.trim()).map(tool => tool.trim())))
+      ? Array.from(new Set(item.toolPolicy.filter((tool): tool is string => typeof tool === 'string' && tool.trim().length > 0).map(tool => tool.trim())))
       : undefined
   }
 }

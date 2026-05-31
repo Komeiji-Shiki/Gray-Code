@@ -460,6 +460,7 @@ description: "简要描述该技能的功能及使用场景"
             noHistory: '未找到对话历史记录。',
             searchResultHeader: '在历史记录中找到 {count} 个匹配项，关键词："{query}"（共 {totalLines} 行）',
             noMatchesFound: '在历史记录中未找到 "{query}" 的匹配项（共 {totalLines} 行）。请尝试其他关键词。',
+            keywordFallbackNotice: '[未找到完整短语，已改用空格分隔关键词搜索：{terms}]',
             resultsLimited: '[结果限制为 {max} 个匹配项。请使用更具体的关键词。]',
             readResultHeader: '历史记录的第 {start}-{end} 行（共 {totalLines} 行）',
             readTruncated: '[输出限制为 {max} 行。使用 start_line={nextStart} 继续读取。]',

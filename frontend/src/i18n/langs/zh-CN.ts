@@ -512,6 +512,8 @@ const zhCN: LanguageMessages = {
                 viewDiff: '查看差异',
                 viewDiffInVSCode: '在 VSCode 中查看差异',
                 openDiffFailed: '打开 diff 预览失败',
+                openDetails: '打开详情',
+                openSubAgentMonitorDetails: '打开 SubAgent Monitor 详情',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1812,6 +1814,7 @@ const zhCN: LanguageMessages = {
                         autoSaveDelay: '自动保存延迟',
                         delayTime: '延迟时间',
                         delayTimeDesc: '修改显示后等待此时间再自动保存',
+                        delay005s: '0.05 秒',
                         delay1s: '1 秒',
                         delay2s: '2 秒',
                         delay3s: '3 秒',
@@ -1821,8 +1824,8 @@ const zhCN: LanguageMessages = {
                         infoDisabled: '当前设置：AI 修改文件后，需要您手动在编辑器中按 Ctrl+S 保存确认修改。',
 
                         format: '差异格式',
-                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐统一 diff）',
-                        formatUnified: '统一 diff（unified diff patch）',
+                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐结构化 hunks，兼容旧 unified diff patch）',
+                        formatUnified: '结构化 hunks（推荐，兼容 unified diff patch）',
                         formatSearchReplace: '旧格式（search/replace）',
 
                         skipDiffView: '跳过差异视图',
@@ -2261,6 +2264,11 @@ const zhCN: LanguageMessages = {
                 }
             },
             openai: {
+                deepSeekUserId: {
+                    title: 'DeepSeek user_id',
+                    hint: '为 DeepSeek Chat Completions 请求发送顶层 user_id，用于按对话隔离 KVCache。仅在当前主聊天请求存在对话 ID 时生效；总结、子代理等内部请求默认不会发送。请只为 DeepSeek 渠道开启。',
+                    toggleHint: '开启后基于当前对话 ID 生成稳定且不包含隐私信息的 user_id'
+                },
                 frequencyPenalty: {
                     label: '频率惩罚 (Frequency Penalty)',
                     hint: '-2.0 - 2.0',
@@ -2458,6 +2466,7 @@ const zhCN: LanguageMessages = {
                     copyAll: '复制全部列表',
                     copyList: '复制列表',
                     dirStat: '{folderCount} 文件夹, {fileCount} 文件',
+                    lines: '{count} 行',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 个',
                     emptyDirectory: '目录为空'
@@ -2737,6 +2746,7 @@ const zhCN: LanguageMessages = {
                     title: '查找文件',
                     totalFiles: '共 {count} 个文件',
                     fileCount: '{count} 个文件',
+                    lines: '{count} 行',
                     truncated: '已截断',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 个文件',
@@ -2762,7 +2772,8 @@ const zhCN: LanguageMessages = {
                     filesModified: '{count} 个文件',
                     viewMatches: '匹配项',
                     viewDiff: '差异',
-                    loadingDiff: '加载差异中...'
+                    loadingDiff: '加载差异中...',
+                    omittedUnchangedLines: '… 已省略 {count} 行未变化内容 …'
                 }
             },
             history: {
@@ -2776,6 +2787,11 @@ const zhCN: LanguageMessages = {
                     regex: '正则',
                     keywords: '关键词：',
                     lineRange: '行范围：',
+                    lineCount: '{count} 行',
+                    matchLineCount: '{count} 个匹配行',
+                    blockCount: '{count} 个片段',
+                    contextBlock: '片段 {index}',
+                    match: '匹配',
                     noContent: '没有返回内容',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 行',

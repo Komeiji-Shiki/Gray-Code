@@ -1,14 +1,30 @@
 /**
- * 流式处理辅助函数
- * 
+ * 娴佸紡澶勭悊杈呭姪鍑芥暟
+ *
  * @module streamHelpers
- * 包含消息操作、工具调用解析等辅助函数
+ * 鍖呭惈娑堟伅鎿嶄綔銆佸伐鍏疯皟鐢ㄨВ鏋愮瓑杈呭姪鍑芥暟
+ *
+ * WP15: functionCall merge 绾嚱鏁板凡鏀舵暃鍒?utils/functionCallMerge.ts锛?
+ * 鏈枃浠朵粎淇濈暀 Main Chat 鐗规湁鐨勮妭娴佹帶鍒躲€乀oolEntry 鍚屾鍜?handleFunctionCallPart 鍏ュ彛銆?
  */
 
 import type { Message } from '../../types'
 import type { ChatStoreState } from './types'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+// WP15: 缁熶竴 functionCall merge 绾嚱鏁板叆鍙ｃ€?
+// 涓轰粈涔堜粠鐙珛妯″潡瀵煎叆锛歁ain Chat 鍜?SubAgent Monitor 涔嬪墠鍚勮嚜缁存姢浜嗙浉鍚岀殑 normalizeNonEmptyString銆?
+// hasNonEmptyArgs銆乼ryParseArgs銆乬etFunctionCallMergeReason銆乵ergeFunctionCall銆?
+// 鎬庝箞鏀癸細鍏ㄩ儴鏀舵暃鍒?frontend/src/utils/functionCallMerge.ts锛屼袱杈逛繚鎸佸悎骞惰涔変竴鑷淬€?
+// 鐩殑锛氬悗缁?WP20 AgentRunEvent 缁熶竴 reducer 鍙互鐩存帴渚濊禆杩欎釜妯″潡銆?
+import {
+  type StreamFunctionCall,
+  normalizeNonEmptyString,
+  hasNonEmptyArgs,
+  tryParseArgs,
+  getFunctionCallMergeReason,
+  mergeFunctionCall as unifiedMergeFunctionCall
+} from '../../utils/functionCallMerge'
 
 
 const todoDebugPrinted = new Set<string>()
@@ -24,19 +40,20 @@ function isTodoToolName(name: unknown): boolean {
 }
 
 /**
- * 添加 functionCall 到消息
+ * 娣诲姞 functionCall 鍒版秷鎭?
  */
 export function addFunctionCallToMessage(
   message: Message,
-  call: { 
-    id: string; 
-    name: string; 
-    args: Record<string, unknown>; 
-    partialArgs?: string; 
-    index?: number 
+  call: {
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    partialArgs?: string;
+    index?: number;
+    itemId?: string
   }
 ): void {
-  // 更新 tools 数组
+  // 鏇存柊 tools 鏁扮粍
   if (!message.tools) {
     message.tools = []
   }
@@ -44,14 +61,19 @@ export function addFunctionCallToMessage(
     id: call.id,
     name: call.name,
     args: call.args,
-    // 传递 partialArgs 以便 ToolMessage 组件显示流式预览
+    // 涓轰粈涔堝悓姝?itemId/index锛歮essage.tools 鏄?ToolMessage 鐨勪富瑕佹暟鎹簮锛屽繀椤诲拰 parts 浣跨敤鍚屼竴濂楁祦寮忓悎骞堕敭銆?
+    // 鎬庝箞鏀癸細鎶?provider 鐨勫唴閮ㄥ畾浣嶅瓧娈靛彧淇濈暀鍦ㄥ墠绔姇褰遍噷锛屼笉鍙備笌宸ュ叿缁撴灉鍥炰紶銆?
+    // 鐩殑锛歝ontentSnapshot 瑕嗙洊鏃跺彲浠ヨ瘑鍒苟鏇挎崲 0 鍙傛暟鍗犱綅宸ュ叿锛岃€屼笉鏄妸瀹冭拷鍔犳垚绗簩寮犲崱銆?
+    itemId: call.itemId,
+    index: call.index,
+    // 浼犻€?partialArgs 浠ヤ究 ToolMessage 缁勪欢鏄剧ず娴佸紡棰勮
     partialArgs: call.partialArgs,
-    // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
-    // 有 partialArgs 说明参数仍在流式累积中；无 partialArgs 说明已拿到完整参数
+    // 鍒氫粠娴佸紡鍐呭閲岃В鏋?鎷兼帴鍑烘潵鐨勫伐鍏疯皟鐢紝瑙嗕负"AI 杩樺湪杈撳嚭/瀹屽杽宸ュ叿鍐呭"
+    // 鏈?partialArgs 璇存槑鍙傛暟浠嶅湪娴佸紡绱Н涓紱鏃?partialArgs 璇存槑宸叉嬁鍒板畬鏁村弬鏁?
     status: typeof call.partialArgs === 'string' ? 'streaming' : 'queued'
   })
-  
-  // 更新 parts（用于渲染）
+
+  // 鏇存柊 parts锛堢敤浜庢覆鏌擄級
   if (!message.parts) {
     message.parts = []
   }
@@ -61,26 +83,30 @@ export function addFunctionCallToMessage(
       name: call.name,
       args: call.args,
       partialArgs: call.partialArgs,
-      index: call.index
+      index: call.index,
+      // 涓轰粈涔堝悓姝?itemId锛歱arts 涓?tools 閮藉彲鑳藉弬涓庢覆鏌撳拰蹇収閲嶅缓锛屼袱涓姇褰卞繀椤诲叡浜悓涓€鍐呴儴鍚堝苟閿€?
+      // 鎬庝箞鏀癸細鍙湪鍓嶇娴佸紡 part 涓婁繚瀛?itemId锛屽悗绔渶缁堝巻鍙蹭細娓呯悊璇ュ瓧娈点€?
+      // 鐩殑锛氳鏈€鍚庡埌杈剧殑瀹屾暣鍙傛暟浜嬩欢鑳借鐩栧垵濮嬪崰浣?part锛岃€屼笉鏄敓鎴?鍙傛暟 0"鐨勫亣宸ュ叿銆?
+      itemId: call.itemId
     }
   })
 }
 
 /**
- * 添加文本到消息（合并连续的文本 part）
+ * 娣诲姞鏂囨湰鍒版秷鎭紙鍚堝苟杩炵画鐨勬枃鏈?part锛?
  */
 export function addTextToMessage(message: Message, text: string, isThought: boolean = false): void {
-  // 普通文本才累加到 content
+  // 鏅€氭枃鏈墠绱姞鍒?content
   if (!isThought) {
     message.content += text
   }
-  
+
   if (!message.parts) {
     message.parts = []
   }
-  
+
   const lastPart = message.parts[message.parts.length - 1]
-  // 只有相同类型（都是思考或都不是思考）才合并
+  // 鍙湁鐩稿悓绫诲瀷锛堥兘鏄€濊€冩垨閮戒笉鏄€濊€冿級鎵嶅悎骞?
   const lastIsThought = lastPart?.thought === true
   if (lastPart && lastPart.text !== undefined && !lastPart.functionCall && lastIsThought === isThought) {
     lastPart.text += text
@@ -90,10 +116,10 @@ export function addTextToMessage(message: Message, text: string, isThought: bool
 }
 
 /**
- * 处理流式文本
+ * 澶勭悊娴佸紡鏂囨湰
  *
- * Prompt 模式工具调用现在以后端解析结果为准。
- * 前端这里只负责把可见文本追加到消息中。
+ * Prompt 妯″紡宸ュ叿璋冪敤鐜板湪浠ュ悗绔В鏋愮粨鏋滀负鍑嗐€?
+ * 鍓嶇杩欓噷鍙礋璐ｆ妸鍙鏂囨湰杩藉姞鍒版秷鎭腑銆?
  */
 export function processStreamingText(
   message: Message,
@@ -104,27 +130,29 @@ export function processStreamingText(
 }
 
 /**
- * 兼容旧调用链。
- * Prompt 模式工具缓冲现在位于后端，此处不再需要额外处理。
+ * 鍏煎鏃ц皟鐢ㄩ摼銆?
+ * Prompt 妯″紡宸ュ叿缂撳啿鐜板湪浣嶄簬鍚庣锛屾澶勪笉鍐嶉渶瑕侀澶栧鐞嗐€?
  */
 export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): void {
 }
 
 /**
- * 处理工具调用 part（原生 function call format）
+ * 澶勭悊宸ュ叿璋冪敤 part锛堝師鐢?function call format锛?
  */
 
 /**
- * partialArgs JSON.parse 节流控制
- * 
- * 问题：每个增量片段都对整个累积字符串做 JSON.parse，当参数很大时（如 write_file 写长代码），
- * 复杂度退化为 O(N²)，导致主线程卡死。
- * 
- * 策略：
- * - 跟踪上次成功/尝试 parse 时的字符串长度
- * - 每次增量后，只有当新增数据量超过阈值时才再次尝试 parse
- * - 阈值随字符串长度动态增长：短字符串频繁 parse（保证小参数的预览体验），
- *   长字符串大幅减少 parse 次数（避免 O(N²) 卡顿）
+ * partialArgs JSON.parse 鑺傛祦鎺у埗
+ *
+ * 闂锛氭瘡涓閲忕墖娈甸兘瀵规暣涓疮绉瓧绗︿覆鍋?JSON.parse锛屽綋鍙傛暟寰堝ぇ鏃讹紙濡?write_file 鍐欓暱浠ｇ爜锛夛紝
+ * 澶嶆潅搴﹂€€鍖栦负 O(N虏)锛屽鑷翠富绾跨▼鍗℃銆?
+ *
+ * 绛栫暐锛?
+ * - 璺熻釜涓婃鎴愬姛/灏濊瘯 parse 鏃剁殑瀛楃涓查暱搴?
+ * - 姣忔澧為噺鍚庯紝鍙湁褰撴柊澧炴暟鎹噺瓒呰繃闃堝€兼椂鎵嶅啀娆″皾璇?parse
+ * - 闃堝€奸殢瀛楃涓查暱搴﹀姩鎬佸闀匡細鐭瓧绗︿覆棰戠箒 parse锛堜繚璇佸皬鍙傛暟鐨勯瑙堜綋楠岋級锛?
+ *   闀垮瓧绗︿覆澶у箙鍑忓皯 parse 娆℃暟锛堥伩鍏?O(N虏) 鍗￠】锛?
+ *
+ * WP15: 杩欐槸 Main Chat 鐗规湁鐨勮妭娴佺瓥鐣ワ紝Monitor 鍐呭澧為噺 reducer 涓嶉渶瑕佹閫昏緫銆?
  */
 const partialArgsParseState = new WeakMap<object, { lastParseLen: number }>()
 
@@ -134,8 +162,8 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
     state = { lastParseLen: 0 }
     partialArgsParseState.set(fcRef, state)
   }
-  // 动态阈值：短字符串(<1KB) 每 200 字符 parse 一次；
-  // 中等字符串(1-10KB) 每 1KB parse 一次；长字符串 每 4KB parse 一次
+  // 鍔ㄦ€侀槇鍊硷細鐭瓧绗︿覆(<1KB) 姣?200 瀛楃 parse 涓€娆★紱
+  // 涓瓑瀛楃涓?1-10KB) 姣?1KB parse 涓€娆★紱闀垮瓧绗︿覆 姣?4KB parse 涓€娆?
   const threshold = currentLen < 1024 ? 200 : currentLen < 10240 ? 1024 : 4096
   const delta = currentLen - state.lastParseLen
   if (delta < threshold) return false
@@ -143,143 +171,161 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
   return true
 }
 
-export function handleFunctionCallPart(part: any, message: Message): void {
-  const fc = part.functionCall
-  const lastPart = message.parts![message.parts!.length - 1]
+// WP15: StreamFunctionCall, normalizeNonEmptyString, hasNonEmptyArgs, tryParseArgs,
+// getFunctionCallMergeReason 宸插叏閮ㄦ敹鏁涘埌 utils/functionCallMerge.ts銆?
+// 浠呬繚鐣?Main Chat 鐗规湁鐨?findToolEntry銆乻yncToolEntryFromFunctionCall銆?
+// normalizeNewFunctionCall 鍜?handleFunctionCallPart銆?
 
-  const incomingId = typeof fc.id === 'string' && fc.id.trim() ? fc.id.trim() : ''
-  const incomingHasPartial = typeof fc.partialArgs === 'string'
-  const incomingHasArgs = !!(fc.args && Object.keys(fc.args).length > 0)
-  
-  // 尝试合并到最后一个工具调用块
-  let merged = false
-  if (lastPart && lastPart.functionCall) {
-    const lastFc = lastPart.functionCall
-    const lastId = typeof lastFc.id === 'string' && lastFc.id.trim() ? lastFc.id.trim() : ''
-    const lastHasPartial = typeof lastFc.partialArgs === 'string'
-    
-    // 只在“明显仍是同一次工具调用增量”时合并，避免把后续独立工具调用误并到上一条。
-    const sameId = incomingId && lastId && incomingId === lastId
-    const sameIndex = fc.index !== undefined && lastFc.index === fc.index
+function findToolEntry(message: Message, fc: StreamFunctionCall, previousId?: string) {
+  const tools = message.tools || []
+  const ids = [previousId, fc.id].map(normalizeNonEmptyString).filter(Boolean)
 
-    const canMergeByIndex =
-      !sameId &&
-      sameIndex &&
-      lastHasPartial &&
-      (incomingHasPartial || incomingHasArgs)
-
-    const canMergeLegacyPartial =
-      !sameId &&
-      !incomingId &&
-      fc.index === undefined &&
-      incomingHasPartial
-
-    // OpenAI Responses API 模式：初始 chunk { name, id, index: null } 后跟
-    // 数据 chunk { index: N, partialArgs }。初始 chunk 无 partialArgs 也无 args，
-    // 需要特殊处理把首个数据 chunk 合并到刚创建的工具上。
-    const lastIsFreshTool = !lastHasPartial && (!lastFc.args || Object.keys(lastFc.args).length === 0)
-    const canMergeAsFreshToolData =
-      !sameId &&
-      !incomingId &&
-      incomingHasPartial &&
-      lastIsFreshTool
-
-    const canMerge = !!(sameId || canMergeByIndex || canMergeLegacyPartial || canMergeAsFreshToolData)
-    
-    if (canMerge) {
-      if (isTodoToolName(fc.name) || isTodoToolName(lastFc.name)) {
-        debugTodoOnce(`merge-${message.id}-${lastFc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || lastFc.name)}`, {
-          messageId: message.id,
-          action: 'merge_function_call_part',
-          incomingName: fc.name || null,
-          incomingId: incomingId || null,
-          incomingIndex: fc.index ?? null,
-          incomingHasPartial,
-          incomingHasArgs,
-          lastName: lastFc.name || null,
-          lastId: lastId || null,
-          lastIndex: lastFc.index ?? null,
-          canMerge,
-          canMergeReason: sameId ? 'sameId' : (canMergeByIndex ? 'sameIndexWithPartial' : (canMergeLegacyPartial ? 'legacyPartial' : 'none'))
-        })
-      }
-
-      // 合并名称、ID 和 index
-      if (fc.name && !lastFc.name) lastFc.name = fc.name
-      if (fc.id && !lastFc.id) lastFc.id = fc.id
-      if (typeof fc.index === 'number' && (lastFc.index === undefined || lastFc.index === null)) {
-        lastFc.index = fc.index
-      }
-      
-      // 合并参数
-      if (incomingHasPartial) {
-        lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs
-        // 节流式 JSON.parse：只在累积足够数据时才尝试解析，避免 O(N²) 卡顿
-        if (lastFc.partialArgs.trim() && shouldAttemptParse(lastFc, lastFc.partialArgs.length)) {
-          try {
-            lastFc.args = JSON.parse(lastFc.partialArgs)
-          } catch (e) { /* 继续累积 */ }
-          // 无论成功与否，lastParseLen 已在 shouldAttemptParse 中更新
-        }
-
-        // ★ 同步更新 message.tools 中对应工具的流式状态和 partialArgs
-        const toolId = lastFc.id
-        if (toolId) {
-          const toolEntry = message.tools?.find(t => t.id === toolId)
-          if (toolEntry) {
-            toolEntry.status = 'streaming'
-            toolEntry.partialArgs = lastFc.partialArgs
-            // 同步已解析的 args（用于描述格式化器预览）
-            if (lastFc.args && Object.keys(lastFc.args).length > 0) {
-              toolEntry.args = lastFc.args
-            }
-          }
-        }
-      } else if (fc.args && Object.keys(fc.args).length > 0) {
-        lastFc.args = { ...lastFc.args, ...fc.args }
-
-        // 收到完整 args 后，认为该次增量拼接已收束，
-        // 清理残留 partialArgs，避免后续相同 index 的新工具调用被误合并。
-        if (lastFc.partialArgs) {
-          delete lastFc.partialArgs
-        }
-      }
-
-      // 工具参数接收完毕：同步 message.tools 状态和 args
-      const resolvedId = lastFc.id
-      if (resolvedId && !lastFc.partialArgs && lastFc.args && Object.keys(lastFc.args).length > 0) {
-        const toolEntry = message.tools?.find(t => t.id === resolvedId)
-        if (toolEntry && toolEntry.status === 'streaming') {
-          toolEntry.status = 'queued'
-          toolEntry.args = lastFc.args
-          delete toolEntry.partialArgs
-        }
-      }
-      
-      merged = true
-    }
+  for (const id of ids) {
+    const byId = tools.find(t => t.id === id)
+    if (byId) return byId
   }
-  
-  if (!merged) {
-    if (isTodoToolName(fc.name)) {
-      debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
+
+  const itemId = normalizeNonEmptyString(fc.itemId)
+  if (itemId) {
+    const byItemId = tools.find(t => normalizeNonEmptyString((t as any).itemId) === itemId)
+    if (byItemId) return byItemId
+  }
+
+  if (typeof fc.index === 'number') {
+    const byIndex = tools.find(t => typeof (t as any).index === 'number' && (t as any).index === fc.index)
+    if (byIndex) return byIndex
+  }
+
+  return undefined
+}
+
+function syncToolEntryFromFunctionCall(message: Message, fc: StreamFunctionCall, previousId?: string): void {
+  const toolEntry = findToolEntry(message, fc, previousId)
+  if (!toolEntry) return
+
+  const nextId = normalizeNonEmptyString(fc.id)
+  if (nextId && toolEntry.id !== nextId) {
+    toolEntry.id = nextId
+  }
+  if (fc.name) toolEntry.name = fc.name
+  if (fc.itemId) toolEntry.itemId = fc.itemId
+  if (typeof fc.index === 'number') toolEntry.index = fc.index
+
+  if (hasNonEmptyArgs(fc.args)) {
+    toolEntry.args = fc.args
+  }
+
+  if (typeof fc.partialArgs === 'string') {
+    toolEntry.status = 'streaming'
+    toolEntry.partialArgs = fc.partialArgs
+  } else if (toolEntry.status === 'streaming' && hasNonEmptyArgs(fc.args)) {
+    toolEntry.status = 'queued'
+    delete toolEntry.partialArgs
+  }
+}
+
+/**
+ * WP15: Main Chat 涓撶敤鐨?mergeFunctionCall 钖勫寘瑁呫€?
+ *
+ * 涓轰粈涔堥渶瑕佽繖涓寘瑁咃細Main Chat 娴佸紡璺緞鏈夌壒鏈夌殑 partialArgs JSON.parse 鑺傛祦绛栫暐锛坰houldAttemptParse锛夛紝
+ * 鑰?SubAgent Monitor 鐨?contentDelta 鍙湪 finalArgs=true 鏃惰В鏋愩€?
+ * 鎬庝箞鏀癸細鎶婅妭娴佸洖璋冧紶鍏?unifiedMergeFunctionCall锛屼繚鎸?Main Chat 娴佸紡鎬ц兘浼樺寲涓嶄涪澶便€?
+ * 鐩殑锛氱粺涓€鍚堝苟璇箟鐨勫悓鏃讹紝淇濈暀 Main Chat 鐗规湁鐨?O(N虏) 闃叉姢銆?
+ */
+function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): string | undefined {
+  return unifiedMergeFunctionCall(target, incoming, {
+    shouldParseArgs: (_incoming, combinedPartialArgs) => {
+      // 涓轰粈涔?finalArgs=true 鏃剁粫杩囪妭娴侊細arguments.done 浼犵殑鏄畬鏁?JSON锛?
+      // 蹇呴』绔嬪嵆瑙ｆ瀽鎵嶈兘璁╁伐鍏疯繘鍏?queued 鐘舵€佸苟瑙﹀彂鍚庣画鎵ц銆?
+      // 鎬庝箞鏀癸細finalArgs 鎴栬妭娴侀槇鍊奸€氳繃鍗宠В鏋愩€?
+      if (_incoming.finalArgs === true) return true
+      return shouldAttemptParse(target, combinedPartialArgs.length)
+    }
+  })
+}
+
+function normalizeNewFunctionCall(incoming: StreamFunctionCall): { args: Record<string, unknown>; partialArgs?: string } {
+  if (hasNonEmptyArgs(incoming.args)) {
+    return { args: incoming.args }
+  }
+
+  const parsed = incoming.finalArgs === true ? tryParseArgs(incoming.partialArgs) : null
+  if (parsed) {
+    return { args: parsed }
+  }
+
+  return { args: {}, partialArgs: incoming.partialArgs }
+}
+
+export function handleFunctionCallPart(part: any, message: Message): void {
+  const fc = part.functionCall as StreamFunctionCall
+  const incomingHasPartial = typeof fc.partialArgs === 'string'
+  const incomingHasArgs = hasNonEmptyArgs(fc.args)
+
+  let matched: { fc: StreamFunctionCall; reason: string } | null = null
+  let isLastFunctionCall = true
+
+  // 涓轰粈涔堜粠鍚庡線鍓嶆壘锛岃€屼笉鏄彧鐪嬫渶鍚庝竴涓?part锛氭祦寮忓搷搴旈噷鍙兘绌挎彃鎬濊€冪鍚嶃€佹枃鏈垨鐘舵€佸揩鐓с€?
+  // 鎬庝箞鏀癸細鎸?itemId銆乮ndex銆乮d銆乫resh placeholder 鐨勭粺涓€浼樺厛绾у鎵惧悓涓€閫昏緫宸ュ叿璋冪敤銆?
+  // 鐩殑锛氳鍓嶇鍜屽悗绔?StreamAccumulator 浣跨敤鍚屼竴濂楀悎骞舵ā鍨嬶紝閬垮厤 MCP 宸ュ叿涓存椂閲嶅鏄剧ず銆?
+  for (let i = (message.parts?.length || 0) - 1; i >= 0; i--) {
+    const existing = message.parts?.[i]?.functionCall as StreamFunctionCall | undefined
+    if (!existing) continue
+
+    const reason = getFunctionCallMergeReason(fc, existing, isLastFunctionCall)
+    if (reason) {
+      matched = { fc: existing, reason }
+      break
+    }
+
+    isLastFunctionCall = false
+  }
+
+  if (matched) {
+    if (isTodoToolName(fc.name) || isTodoToolName(matched.fc.name)) {
+      debugTodoOnce(`merge-${message.id}-${matched.fc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || matched.fc.name)}`, {
         messageId: message.id,
-        action: 'append_new_function_call_part',
-        incomingName: fc.name,
-        incomingId: typeof fc.id === 'string' ? fc.id : null,
+        action: 'merge_function_call_part',
+        incomingName: fc.name || null,
+        incomingId: normalizeNonEmptyString(fc.id) || null,
+        incomingItemId: normalizeNonEmptyString(fc.itemId) || null,
         incomingIndex: fc.index ?? null,
-        hasPartial: typeof fc.partialArgs === 'string',
-        hasArgs: !!(fc.args && Object.keys(fc.args).length > 0)
+        incomingHasPartial,
+        incomingHasArgs,
+        lastName: matched.fc.name || null,
+        lastId: normalizeNonEmptyString(matched.fc.id) || null,
+        lastItemId: normalizeNonEmptyString(matched.fc.itemId) || null,
+        lastIndex: matched.fc.index ?? null,
+        canMerge: true,
+        canMergeReason: matched.reason
       })
     }
 
-    // 找不到可合并的，添加新块
-    addFunctionCallToMessage(message, {
-      id: fc.id || generateId(),
-      name: fc.name || '',
-      args: fc.args || {},
-      partialArgs: fc.partialArgs,
-      index: fc.index
+    const previousId = mergeFunctionCall(matched.fc, fc)
+    syncToolEntryFromFunctionCall(message, matched.fc, previousId)
+    return
+  }
+
+  if (isTodoToolName(fc.name)) {
+    debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
+      messageId: message.id,
+      action: 'append_new_function_call_part',
+      incomingName: fc.name,
+      incomingId: typeof fc.id === 'string' ? fc.id : null,
+      incomingItemId: typeof fc.itemId === 'string' ? fc.itemId : null,
+      incomingIndex: fc.index ?? null,
+      hasPartial: incomingHasPartial,
+      hasArgs: incomingHasArgs
     })
   }
+
+  const normalized = normalizeNewFunctionCall(fc)
+  addFunctionCallToMessage(message, {
+    id: fc.id || generateId(),
+    name: fc.name || '',
+    args: normalized.args,
+    partialArgs: normalized.partialArgs,
+    index: fc.index,
+    itemId: fc.itemId
+  })
 }

@@ -52,6 +52,27 @@ interface ReplaceResult {
   diffContentId?: string
 }
 
+interface QueryFallbackInfo {
+  applied: boolean
+  originalQuery: string
+  keywords: string[]
+  reason?: 'whitespace_keyword_or' | 'suspected_regex'
+  suggestion?: string
+  signals?: string[]
+}
+
+interface PathWarningInfo {
+  type: 'possible_multiple_paths'
+  path: string
+  candidates: string[]
+  message: string
+}
+
+const resultData = computed(() => {
+  const result = props.result as Record<string, any> | undefined
+  return result?.data as Record<string, any> | undefined
+})
+
 // 获取搜索匹配结果
 const searchResults = computed((): SearchMatch[] => {
   const result = props.result as Record<string, any> | undefined
@@ -93,6 +114,14 @@ const filesModified = computed(() => {
 const truncated = computed(() => {
   const result = props.result as Record<string, any> | undefined
   return result?.data?.truncated as boolean || false
+})
+
+const queryFallback = computed(() => {
+  return resultData.value?.queryFallback as QueryFallbackInfo | undefined
+})
+
+const pathWarning = computed(() => {
+  return resultData.value?.pathWarning as PathWarningInfo | undefined
 })
 
 // 按文件分组
@@ -220,7 +249,7 @@ function isLoadingDiff(path: string): boolean {
 
 // 计算差异行
 interface DiffLine {
-  type: 'unchanged' | 'deleted' | 'added'
+  type: 'unchanged' | 'deleted' | 'added' | 'omitted'
   content: string
   oldLineNum?: number
   newLineNum?: number
@@ -362,20 +391,79 @@ function getDiffStats(diffLines: DiffLine[]) {
 // 预览 diff 行数
 const previewDiffLineCount = 20
 
+// 变更上下文行数
+const diffContextLineCount = 1
+
 // Diff 展开状态
 const expandedDiffs = ref<Set<string>>(new Set())
 
+function getContextualDiffLines(diffLines: DiffLine[]): DiffLine[] {
+  const changedIndexes = diffLines
+    .map((line, index) => (line.type === 'added' || line.type === 'deleted') ? index : -1)
+    .filter(index => index >= 0)
+
+  if (changedIndexes.length === 0) {
+    return diffLines
+  }
+
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - diffContextLineCount)
+    const end = Math.min(diffLines.length - 1, index + diffContextLineCount)
+    const previous = ranges[ranges.length - 1]
+
+    if (previous && start <= previous.end + 1) {
+      previous.end = Math.max(previous.end, end)
+    } else {
+      ranges.push({ start, end })
+    }
+  }
+
+  const contextualLines: DiffLine[] = []
+  let previousEnd = -1
+
+  for (const range of ranges) {
+    const omittedBefore = range.start - previousEnd - 1
+    if (omittedBefore > 0) {
+      contextualLines.push({
+        type: 'omitted',
+        content: t('components.tools.search.searchInFilesPanel.omittedUnchangedLines', { count: omittedBefore })
+      })
+    }
+
+    contextualLines.push(...diffLines.slice(range.start, range.end + 1))
+    previousEnd = range.end
+  }
+
+  const omittedAfter = diffLines.length - previousEnd - 1
+  if (omittedAfter > 0) {
+    contextualLines.push({
+      type: 'omitted',
+      content: t('components.tools.search.searchInFilesPanel.omittedUnchangedLines', { count: omittedAfter })
+    })
+  }
+
+  return contextualLines
+}
+
 // 检查 diff 是否需要展开
 function needsDiffExpand(diffLines: DiffLine[]): boolean {
-  return diffLines.length > previewDiffLineCount
+  return getContextualDiffLines(diffLines).length > previewDiffLineCount
 }
 
 // 获取显示的 diff 行
 function getDisplayDiffLines(diffLines: DiffLine[], path: string): DiffLine[] {
-  if (expandedDiffs.value.has(path) || diffLines.length <= previewDiffLineCount) {
-    return diffLines
+  const contextualLines = getContextualDiffLines(diffLines)
+  if (expandedDiffs.value.has(path) || contextualLines.length <= previewDiffLineCount) {
+    return contextualLines
   }
-  return diffLines.slice(0, previewDiffLineCount)
+  return contextualLines.slice(0, previewDiffLineCount)
+}
+
+function getHiddenDiffLineCount(diffLines: DiffLine[], path: string): number {
+  const contextualLines = getContextualDiffLines(diffLines)
+  if (expandedDiffs.value.has(path)) return 0
+  return Math.max(0, contextualLines.length - previewDiffLineCount)
 }
 
 // 切换 diff 展开状态
@@ -431,6 +519,24 @@ function isDiffExpanded(path: string): boolean {
       <div v-if="filePattern !== '**/*'" class="pattern-row">
         <span class="label">{{ t('components.tools.search.searchInFilesPanel.pattern') }}</span>
         <span class="pattern-text">{{ filePattern }}</span>
+      </div>
+    </div>
+
+    <div v-if="queryFallback || pathWarning" class="diagnostic-box">
+      <div v-if="queryFallback?.reason === 'suspected_regex'" class="diagnostic-row warning">
+        <span class="codicon codicon-warning"></span>
+        <span>{{ queryFallback.suggestion }}</span>
+      </div>
+      <div v-else-if="queryFallback?.reason === 'whitespace_keyword_or'" class="diagnostic-row info">
+        <span class="codicon codicon-search"></span>
+        <span>
+          No exact phrase match was found, so search retried space-separated keywords:
+          <code>{{ queryFallback.keywords.join(', ') }}</code>
+        </span>
+      </div>
+      <div v-if="pathWarning" class="diagnostic-row warning">
+        <span class="codicon codicon-warning"></span>
+        <span>{{ pathWarning.message }}</span>
       </div>
     </div>
     
@@ -513,6 +619,7 @@ function isDiffExpanded(path: string): boolean {
                 <span class="line-marker">
                   <span v-if="line.type === 'deleted'" class="marker deleted">-</span>
                   <span v-else-if="line.type === 'added'" class="marker added">+</span>
+                  <span v-else-if="line.type === 'omitted'" class="marker omitted">⋯</span>
                   <span v-else class="marker unchanged">&nbsp;</span>
                 </span>
                 <span class="line-content">{{ line.content || ' ' }}</span>
@@ -524,7 +631,7 @@ function isDiffExpanded(path: string): boolean {
           <div v-if="needsDiffExpand(computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent))" class="expand-section">
             <button class="expand-btn" @click="toggleDiffExpand(replaceResult.file)">
               <span :class="['codicon', isDiffExpanded(replaceResult.file) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isDiffExpanded(replaceResult.file) ? t('components.tools.search.searchInFilesPanel.collapse') : t('components.tools.search.searchInFilesPanel.expandRemaining', { count: computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent).length - previewDiffLineCount }) }}
+              {{ isDiffExpanded(replaceResult.file) ? t('components.tools.search.searchInFilesPanel.collapse') : t('components.tools.search.searchInFilesPanel.expandRemaining', { count: getHiddenDiffLineCount(computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent), replaceResult.file) }) }}
             </button>
           </div>
         </div>
@@ -695,6 +802,37 @@ function isDiffExpanded(path: string): boolean {
 .path-text,
 .pattern-text {
   font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-foreground);
+}
+
+.diagnostic-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.diagnostic-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs, 4px);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diagnostic-row.warning {
+  color: var(--vscode-charts-yellow);
+}
+
+.diagnostic-row.info {
+  color: var(--vscode-descriptionForeground);
+}
+
+.diagnostic-row code {
   color: var(--vscode-foreground);
 }
 
@@ -893,6 +1031,12 @@ function isDiffExpanded(path: string): boolean {
   background: rgba(0, 200, 83, 0.15);
 }
 
+.diff-line.line-omitted {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
 /* 行号 */
 .line-nums {
   display: flex;
@@ -941,6 +1085,10 @@ function isDiffExpanded(path: string): boolean {
 
 .marker.unchanged {
   color: transparent;
+}
+
+.marker.omitted {
+  color: var(--vscode-descriptionForeground);
 }
 
 /* 行内容 */

@@ -34,6 +34,18 @@ export interface ContentPart {
      */
     index?: number
     /**
+     * Responses API 的 output item 内部 ID。
+     *
+     * 前端只把 itemId 当作同一轮流式工具调用的内部合并键，不把它当作最终工具调用 ID。
+     */
+    itemId?: string
+    /**
+     * 标记 partialArgs 是完整 arguments，而不是 delta。
+     *
+     * arguments.done/output_item.done 给的是完整 JSON，合并时看到 finalArgs 就覆盖已有 partialArgs。
+     */
+    finalArgs?: boolean
+    /**
      * 流式响应中的原始参数片段
      */
     partialArgs?: string
@@ -299,6 +311,18 @@ export interface ToolUsage {
   id: string
   name: string
   args: Record<string, unknown>
+  /**
+   * 流式工具调用的内部 output item ID。
+   *
+   * 用于在最终 call_id 出现前，把参数增量和占位工具合并到同一张卡片。
+   */
+  itemId?: string
+  /**
+   * Provider 给出的流式工具序号，允许 0。
+   *
+   * 部分 Responses 事件只有 output_index，没有 call_id，需要用 index 作为次级合并键。
+   */
+  index?: number
   result?: Record<string, unknown>
   error?: string
   duration?: number
@@ -526,6 +550,8 @@ export interface StreamChunk {
     id: string
     name: string
     status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
+    /** 工具参数快照；用于 toolStatus 早于完整 functionCall 到达时更新工具卡参数预览 */
+    args?: Record<string, unknown>
     result?: Record<string, unknown>
   }
 

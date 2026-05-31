@@ -49,6 +49,12 @@ export interface OpenAIConfig extends BaseChannelConfig {
     /** 当前使用的模型名称 */
     model: string;
     
+    /**
+     * 是否为 DeepSeek Chat Completions 请求发送 user_id。
+     * 开启后会基于主聊天 conversationId 生成稳定且不含隐私信息的 user_id。
+     */
+    deepSeekUserIdEnabled?: boolean;
+
     /** 可用模型列表 */
     models?: ModelInfo[];
     

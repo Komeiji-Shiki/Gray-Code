@@ -30,6 +30,13 @@ export interface ContextTrimInfo {
     trimStartIndex: number;
     /** 是否需要触发自动总结（仅当 autoSummarizeEnabled 开启且 token 超过阈值时为 true） */
     needsAutoSummarize?: boolean;
+    /** 本轮上下文管理决策记录，用于日志和测试观测。 */
+    contextManagementDecision?: {
+        enabled: boolean;
+        mode: 'off' | 'trim' | 'summarize';
+        source: 'explicit' | 'legacy';
+        action: 'disabled' | 'not_needed' | 'saved_state_reused' | 'trim_applied' | 'auto_summarize_needed';
+    };
 }
 
 /**
@@ -66,4 +73,6 @@ export interface ToolExecutionResult {
     name: string;
     /** 执行结果 */
     result: Record<string, unknown>;
+    /** 工具调用参数快照，用于流式状态事件即时补齐前端工具卡 */
+    args?: Record<string, unknown>;
 }

@@ -1191,6 +1191,11 @@ export interface SubAgentToolsConfig {
 }
 
 /**
+ * Provider 自动重试耗尽后的 SubAgent 处理策略。
+ */
+export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action';
+
+/**
  * 子代理配置项
  */
 export interface SubAgentConfigItem {
@@ -1238,6 +1243,11 @@ export interface SubAgentConfigItem {
      * 默认: 300 (5分钟)
      */
     maxRuntime?: number;
+
+    /**
+     * Provider 自动重试耗尽后的处理策略，可覆盖全局默认值。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
     
     /**
      * 是否启用
@@ -1259,6 +1269,11 @@ export interface SubAgentsConfig extends Record<string, unknown> {
      * 默认: 3
      */
     maxConcurrentAgents?: number;
+
+    /**
+     * 全局默认的 Provider 自动重试耗尽处理策略。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
 }
 
 /**
@@ -1266,7 +1281,8 @@ export interface SubAgentsConfig extends Record<string, unknown> {
  */
 export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     agents: [],
-    maxConcurrentAgents: 3
+    maxConcurrentAgents: 3,
+    failureModeAfterRetries: 'fail_parent_tool'
 };
 
 /**

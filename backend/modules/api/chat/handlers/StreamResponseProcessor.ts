@@ -145,7 +145,7 @@ export class StreamResponseProcessor {
      */
     getResult(): StreamProcessorResult {
         return {
-            content: this.accumulator.getContent(),
+            content: this.accumulator.getFinalContent(),
             cancelled: this.cancelled
         };
     }
@@ -154,7 +154,7 @@ export class StreamResponseProcessor {
      * 获取最终内容
      */
     getContent(): Content {
-        return this.accumulator.getContent();
+        return this.accumulator.getFinalContent();
     }
 
     /**
@@ -168,7 +168,7 @@ export class StreamResponseProcessor {
      * 获取取消数据（用于 yield）
      */
     getCancelledData(): CancelledData {
-        const content = this.accumulator.getContent();
+        const content = this.accumulator.getFinalContent();
         if (content.parts.length > 0) {
             return {
                 conversationId: this.config.conversationId,

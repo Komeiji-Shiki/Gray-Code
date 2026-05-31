@@ -21,6 +21,7 @@
  */
 
 import type { Content } from '../../../conversation/types';
+import { CONVERSATION_CONTEXT_TRIM_STATE_KEY } from '../../../conversation/types';
 import type { ConversationManager, GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { PromptManager } from '../../../prompt';
 import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
@@ -73,7 +74,13 @@ interface PersistedTrimState {
 }
 
 /** 裁剪状态在 custom metadata 中的 key */
-const TRIM_STATE_KEY = 'trimState';
+const TRIM_STATE_KEY = CONVERSATION_CONTEXT_TRIM_STATE_KEY;
+
+interface ContextManagementPolicy {
+    enabled: boolean;
+    mode: 'trim' | 'summarize';
+    source: 'explicit' | 'legacy';
+}
 
 interface MaxContextResolution {
     maxContextTokens: number;
@@ -100,6 +107,26 @@ export class ContextTrimService {
         private tokenEstimationService: TokenEstimationService,
         private messageBuilderService: MessageBuilderService
     ) {}
+
+    private resolveContextManagementPolicy(config: BaseChannelConfig): ContextManagementPolicy {
+        if (typeof config.contextManagementEnabled === 'boolean') {
+            return {
+                enabled: config.contextManagementEnabled,
+                mode: config.contextManagementMode === 'summarize' ? 'summarize' : 'trim',
+                source: 'explicit'
+            };
+        }
+
+        if (config.autoSummarizeEnabled) {
+            return { enabled: true, mode: 'summarize', source: 'legacy' };
+        }
+
+        if (config.contextThresholdEnabled) {
+            return { enabled: true, mode: 'trim', source: 'legacy' };
+        }
+
+        return { enabled: false, mode: 'trim', source: 'legacy' };
+    }
     
     /**
      * 获取持久化的裁剪状态
@@ -127,7 +154,7 @@ export class ContextTrimService {
      * @param conversationId 会话 ID
      */
     async clearTrimState(conversationId: string): Promise<void> {
-        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, null);
+        await this.conversationManager.invalidateContextManagementState(conversationId, 'context_trim_service_clear');
     }
 
     private logDebug(message: string, details?: Record<string, unknown>): void {
@@ -427,8 +454,8 @@ export class ContextTrimService {
         latestTokenCount: number,
         modelOverride?: string
     ): number {
-        // 检查是否启用上下文阈值检测
-        if (!config.contextThresholdEnabled) {
+        const policy = this.resolveContextManagementPolicy(config);
+        if (!policy.enabled || policy.mode !== 'trim') {
             return 0;
         }
         
@@ -549,6 +576,26 @@ export class ContextTrimService {
             return { history: [], trimStartIndex: 0 };
         }
         
+        const policy = this.resolveContextManagementPolicy(config);
+        if (!policy.enabled) {
+            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
+                ...historyOptions,
+                startIndex: 0,
+                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
+            });
+            this.logDebug('trim.disabled', { conversationId, source: policy.source, fullHistoryLength: fullHistory.length });
+            return {
+                history,
+                trimStartIndex: 0,
+                contextManagementDecision: {
+                    enabled: false,
+                    mode: 'off',
+                    source: policy.source,
+                    action: 'disabled'
+                }
+            };
+        }
+
         // 获取当前渠道类型（gemini, openai, anthropic, custom）
         const channelType = config.type || 'custom';
         
@@ -717,20 +764,6 @@ export class ContextTrimService {
             }
         }
         
-        // 检查是否启用上下文阈值检测（上下文裁剪和自动总结互斥）
-        if (!config.contextThresholdEnabled && !config.autoSummarizeEnabled) {
-            // 未启用阈值检测，直接返回从 summary 开始的历史
-            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
-                conversationId,
-                fullHistory,
-                historyOptions,
-                summaryStartIndex,
-                summaryStartIndex,
-                dynamicContextStrategy
-            );
-            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
-        }
-        
         // 获取最大上下文和阈值
         const maxContextResolution = this.resolveMaxContextTokens(config, modelOverride);
         const maxContextTokens = maxContextResolution.maxContextTokens;
@@ -747,8 +780,9 @@ export class ContextTrimService {
             configMaxContextTokens: maxContextResolution.configMaxContextTokens,
             modelId: maxContextResolution.modelId,
             modelContextWindow: maxContextResolution.modelContextWindow,
-            contextThresholdEnabled: !!config.contextThresholdEnabled,
-            autoSummarizeEnabled: !!config.autoSummarizeEnabled,
+            contextManagementEnabled: policy.enabled,
+            contextManagementMode: policy.mode,
+            contextManagementSource: policy.source,
             contextTrimExtraCut: config.contextTrimExtraCut ?? 0,
             summaryStartIndex,
             savedTrimStartIndex: savedState?.trimStartIndex ?? null,
@@ -773,7 +807,7 @@ export class ContextTrimService {
         // ========== 自动总结模式 ==========
         // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
         // 由 ToolIterationLoopService 在发送请求前触发总结
-        if (config.autoSummarizeEnabled) {
+        if (policy.mode === 'summarize') {
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
                 fullHistory,
@@ -816,7 +850,17 @@ export class ContextTrimService {
                 this.log.info('auto_summarize_needed', { conversationId, estimatedTotalTokens: fullTokenResult.estimatedTotalTokens, threshold });
             }
             
-            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex, needsAutoSummarize };
+            return {
+                history: normalizedHistory.history,
+                trimStartIndex: normalizedHistory.trimStartIndex,
+                needsAutoSummarize,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: policy.source,
+                    action: needsAutoSummarize ? 'auto_summarize_needed' : 'not_needed'
+                }
+            };
         }
         
         // ========== 上下文裁剪模式（原有逻辑） ==========
@@ -863,7 +907,16 @@ export class ContextTrimService {
                 estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
                 threshold
             });
-            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
+            return {
+                history: normalizedHistory.history,
+                trimStartIndex: normalizedHistory.trimStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'trim',
+                    source: policy.source,
+                    action: 'not_needed'
+                }
+            };
         }
         
         // 完整历史超过阈值，需要裁剪
@@ -909,7 +962,16 @@ export class ContextTrimService {
                     finalTrimStartIndex: normalizedHistory.trimStartIndex
                 });
 
-                return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
+                return {
+                    history: normalizedHistory.history,
+                    trimStartIndex: normalizedHistory.trimStartIndex,
+                    contextManagementDecision: {
+                        enabled: true,
+                        mode: 'trim',
+                        source: policy.source,
+                        action: 'saved_state_reused'
+                    }
+                };
             }
             
             // 使用保存的状态后仍然超过阈值，需要进一步裁剪
@@ -1260,7 +1322,16 @@ export class ContextTrimService {
             roundEvaluation
         });
         
-        return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
+        return {
+            history: trimmedHistory,
+            trimStartIndex: finalTrimStartIndex,
+            contextManagementDecision: {
+                enabled: true,
+                mode: 'trim',
+                source: this.resolveContextManagementPolicy(config).source,
+                action: 'trim_applied'
+            }
+        };
     }
 
     /**

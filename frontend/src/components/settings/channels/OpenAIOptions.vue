@@ -112,6 +112,27 @@ function handleNumberChange(optionKey: string, event: any) {
 
 <template>
   <div class="openai-options">
+    <!-- DeepSeek user_id -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-key"></i>
+          {{ t('components.channels.openai.deepSeekUserId.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.openai.deepSeekUserId.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="config.deepSeekUserIdEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'deepSeekUserIdEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.openai.deepSeekUserId.hint') }}</span>
+      </div>
+    </div>
+
     <!-- 温度 -->
     <div class="option-item option-with-toggle">
       <div class="option-header">

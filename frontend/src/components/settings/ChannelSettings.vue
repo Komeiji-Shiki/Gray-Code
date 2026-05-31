@@ -271,8 +271,12 @@ async function updateToolOptions(config: ToolOptions) {
 
 // ==================== 上下文阈值 ====================
 
-// 上下文管理总开关（裁剪或自动总结任一开启即为开启）
+// 上下文管理总开关。新配置优先使用显式字段，旧配置继续由两个旧布尔字段推导。
 const contextManagementEnabled = computed(() => {
+  if (typeof currentConfig.value?.contextManagementEnabled === 'boolean') {
+    return currentConfig.value.contextManagementEnabled
+  }
+
   return (currentConfig.value?.contextThresholdEnabled ?? false) || (currentConfig.value?.autoSummarizeEnabled ?? false)
 })
 
@@ -281,8 +285,11 @@ const contextThreshold = computed(() => {
   return currentConfig.value?.contextThreshold ?? '80%'
 })
 
-// 上下文管理模式：'trim' 或 'summarize'
+// 上下文管理模式：'trim' 或 'summarize'。显式字段缺失时兼容旧 autoSummarizeEnabled。
 const contextManagementMode = computed(() => {
+  if (currentConfig.value?.contextManagementMode === 'summarize') return 'summarize'
+  if (currentConfig.value?.contextManagementMode === 'trim') return 'trim'
+
   if (currentConfig.value?.autoSummarizeEnabled) return 'summarize'
   return 'trim'
 })
@@ -303,14 +310,19 @@ const contextTrimExtraCut = computed(() => {
 // 更新上下文管理总开关
 async function updateContextManagementEnabled(enabled: boolean) {
   if (enabled) {
-    // 开启时，按当前模式设置对应字段
     const mode = contextManagementMode.value
-    await updateConfigField('contextThresholdEnabled', mode === 'trim')
-    await updateConfigField('autoSummarizeEnabled', mode === 'summarize')
+    await updateConfigFields({
+      contextManagementEnabled: true,
+      contextManagementMode: mode,
+      contextThresholdEnabled: mode === 'trim',
+      autoSummarizeEnabled: mode === 'summarize'
+    })
   } else {
-    // 关闭时，两个都关
-    await updateConfigField('contextThresholdEnabled', false)
-    await updateConfigField('autoSummarizeEnabled', false)
+    await updateConfigFields({
+      contextManagementEnabled: false,
+      contextThresholdEnabled: false,
+      autoSummarizeEnabled: false
+    })
   }
 }
 
@@ -330,13 +342,13 @@ async function updateContextThreshold(value: string) {
 
 // 更新上下文管理模式
 async function updateContextManagementMode(mode: string) {
-  if (mode === 'trim') {
-    await updateConfigField('contextThresholdEnabled', true)
-    await updateConfigField('autoSummarizeEnabled', false)
-  } else {
-    await updateConfigField('contextThresholdEnabled', false)
-    await updateConfigField('autoSummarizeEnabled', true)
-  }
+  const nextMode = mode === 'summarize' ? 'summarize' : 'trim'
+  await updateConfigFields({
+    contextManagementEnabled: true,
+    contextManagementMode: nextMode,
+    contextThresholdEnabled: nextMode === 'trim',
+    autoSummarizeEnabled: nextMode === 'summarize'
+  })
 }
 
 // 更新裁剪时额外裁剪量

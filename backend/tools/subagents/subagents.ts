@@ -10,6 +10,7 @@ import type { SubAgentRequest, SubAgentResult, SubAgentConfig } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
+import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 
 /**
  * 获取可用的子代理名称列表
@@ -39,7 +40,7 @@ function getAgentAvailableTools(config: SubAgentConfig): string[] {
         const mcpTools = mcpManager.getAllTools();
         for (const serverTools of mcpTools) {
             for (const tool of serverTools.tools || []) {
-                mcpToolNames.push(`mcp__${serverTools.serverId}__${tool.name}`);
+                mcpToolNames.push(encodeMcpToolName(serverTools.serverId, tool.name));
             }
         }
     }
@@ -197,10 +198,20 @@ export function getSubAgentsToolDeclaration(): ToolDeclaration {
 /**
  * 工具处理器
  */
+function normalizeToolIdForRunId(toolId: string): string {
+    return toolId.trim().replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function getPreallocatedRunId(context?: ToolContext): string | undefined {
+    const toolId = typeof context?.toolId === 'string' ? normalizeToolIdForRunId(context.toolId) : '';
+    return toolId ? `subagent_run_${toolId}` : undefined;
+}
+
 async function subAgentsHandler(args: Record<string, any>, context?: ToolContext): Promise<ToolResult> {
     const agentName = args.agentName as string;
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
+    const runId = getPreallocatedRunId(context);
     
     if (!agentName || !prompt) {
         return { success: false, error: `${!agentName ? 'agentName' : 'prompt'} is required` };
@@ -221,6 +232,8 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const runtimeExecutor = baseExecutorContext
         ? createDefaultExecutor(agentEntry.config, {
             ...baseExecutorContext,
+            conversationId: context?.conversationId as string | undefined,
+            conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
         })
         : agentEntry.executor;
@@ -238,11 +251,12 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         const result = await runtimeExecutor({
             agentType: agentEntry.config.type,
             prompt,
-            context: additionalContext
+            context: additionalContext,
+            runId
         }, abortSignal);
         
         if (result.cancelled || abortSignal?.aborted) {
-            return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
+            return { success: false, error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
         }
         
         // 构建公共 data：子代理运行信息
@@ -258,6 +272,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         
         const data: Record<string, unknown> = {
             agentName,
+            runId: result.runId,
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
             modelId: agentEntry.config.channel.modelId,

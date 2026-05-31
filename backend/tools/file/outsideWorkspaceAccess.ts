@@ -64,10 +64,16 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
     }
 
     if (toolName === 'read_file' || toolName === 'write_file') {
+        const singlePath = (args as any).path;
+        if (typeof singlePath === 'string' && singlePath.trim().length > 0) {
+            return [singlePath];
+        }
+
         const files = (args as any).files;
         if (!Array.isArray(files)) {
             return [];
         }
+
         return files
             .map(item => item?.path)
             .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);

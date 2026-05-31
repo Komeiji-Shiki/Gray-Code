@@ -1,10 +1,12 @@
 /**
- * Diff 管理器 - 管理待审阅的文件修改
- * 
- * 功能：
- * - 管理待处理的 diff 修改
- * - 显示 VS Code diff 视图
- * - 支持自动保存和手动审阅模式
+ * Diff 绠＄悊鍣?- 绠＄悊寰呭闃呯殑鏂囦欢淇敼銆?
+ *
+ * DiffManager 璐熻矗鍏紑 API銆乨iff 棰勮涓庡伐鍏风瓑寰呰涔夛紱鍗曚釜 review 鐨?outcome 鐢?DiffReviewSession 鍗忎綔鑰呮壙杞姐€?
+ *
+ * 鍔熻兘锛?
+ * - 绠＄悊寰呭鐞嗙殑 diff 淇敼
+ * - 鏄剧ず VS Code diff 瑙嗗浘
+ * - 鏀寔鑷姩淇濆瓨鍜屾墜鍔ㄥ闃呮ā寮?
  */
 
 import * as vscode from 'vscode';
@@ -14,88 +16,110 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
-import { applyDiffToContent } from './apply_diff';
+import {
+    applyDiffToContent,
+    applyStructuredDiffHunksBestEffort,
+    type StructuredDiffHunk
+} from './apply_diff';
+import { DiffReviewSession } from './DiffReviewSession';
 import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
- * 待处理的 Diff 修改
+ * 寰呭鐞嗙殑 Diff 淇敼
  */
 export interface PendingDiff {
-    /** 唯一 ID */
+    /** 鍞竴 ID */
     id: string;
-    /** 文件路径（相对路径） */
+    /** 鏂囦欢璺緞锛堢浉瀵硅矾寰勶級 */
     filePath: string;
-    /** 文件绝对路径 */
+    /** 鏂囦欢缁濆璺緞 */
     absolutePath: string;
-    /** 原始内容 */
+    /** 鍘熷鍐呭 */
     originalContent: string;
-    /** 修改后的内容（AI 建议的内容） */
+    /** 淇敼鍚庣殑鍐呭锛圓I 寤鸿鐨勫唴瀹癸級 */
     newContent: string;
     /**
-     * 用户新增/替换行摘要（仅当用户修改了 AI 建议时存在）。
+     * 鐢ㄦ埛鏂板/鏇挎崲琛屾憳瑕侊紙浠呭綋鐢ㄦ埛淇敼浜?AI 寤鸿鏃跺瓨鍦級銆?
      *
-     * 格式（每行一条记录，多行用 `\n` 分隔；空行内容为空字符串）：
-     * - 新增：`+ | newLine | 内容`  （newLine 为用户最终保存内容中的 1-based 行号）
-     * - 替换：`~ | newLine | 内容`  （newLine 为用户最终保存内容中的 1-based 行号）
-     * - 删除：`- | baseLine | 内容` （baseLine 为系统建议保存内容中的 1-based 行号）
+     * 鏍煎紡锛堟瘡琛屼竴鏉¤褰曪紝澶氳鐢?`\n` 鍒嗛殧锛涚┖琛屽唴瀹逛负绌哄瓧绗︿覆锛夛細
+     * - 鏂板锛歚+ | newLine | 鍐呭`  锛坣ewLine 涓虹敤鎴锋渶缁堜繚瀛樺唴瀹逛腑鐨?1-based 琛屽彿锛?
+     * - 鏇挎崲锛歚~ | newLine | 鍐呭`  锛坣ewLine 涓虹敤鎴锋渶缁堜繚瀛樺唴瀹逛腑鐨?1-based 琛屽彿锛?
+     * - 鍒犻櫎锛歚- | baseLine | 鍐呭` 锛坆aseLine 涓虹郴缁熷缓璁繚瀛樺唴瀹逛腑鐨?1-based 琛屽彿锛?
      */
     userEditedContent?: string;
-    /** 创建时间 */
+    /** 鍒涘缓鏃堕棿 */
     timestamp: number;
-    /** 状态 */
+    /** 鐘舵€?*/
     status: 'pending' | 'accepted' | 'rejected';
-    /** 关联的 diff 块（用于 CodeLens） */
+    /** 鍏宠仈鐨?diff 鍧楋紙鐢ㄤ簬 CodeLens锛?*/
     blocks?: Array<{
         index: number;
         startLine: number;
         endLine: number;
     }>;
-    /** 原始 diffs 列表 */
+    /** 鍘熷 diffs 鍒楄〃 */
     rawDiffs?: any[];
-    /** 关联的工具 ID */
+    /** 鍏宠仈鐨勫伐鍏?ID */
     toolId?: string;
-    /** diff 警戒值警告信息（当删除行数超过阈值时设置） */
+    /** diff 璀︽垝鍊艰鍛婁俊鎭紙褰撳垹闄よ鏁拌秴杩囬槇鍊兼椂璁剧疆锛?*/
     diffGuardWarning?: string;
-    /** 删除行占比（0-100，用于前端显示） */
+    /** 鍒犻櫎琛屽崰姣旓紙0-100锛岀敤浜庡墠绔樉绀猴級 */
     diffGuardDeletePercent?: number;
+    /**
+     * 鑷姩淇濆瓨澶辫触鍘熷洜銆?
+     * 涓轰粈涔堟柊澧烇細autoSave=true 琛ㄧず宸ュ叿搴旇嚜鍔ㄦ敹鏁涳紱濡傛灉淇濆瓨澶辫触浠嶄繚鎸?pending锛屾祦寮忔彁鍓嶆墽琛屼細涓€鐩寸瓑寰呫€?
+     * 鎬庝箞鏀癸細鍦ㄥ悗绔嚜鍔ㄤ繚瀛樺け璐ュ悗璁板綍閿欒骞剁粓缁?diff锛屽伐鍏风粨鏋滃彲鎹杩斿洖鏄庣‘澶辫触鐘舵€併€?
+     * 鐩殑锛氶伩鍏嶈嚜鍔ㄧ‘璁ゆā寮忎笅鍑虹幇蹇呴』鐢ㄦ埛涓鐨勬偓鎸傜姸鎬併€?
+     */
+    autoSaveError?: string;
 }
 
 /**
- * Diff 设置
+ * Diff 璁剧疆
  */
 export interface DiffSettings {
-    /** 是否自动保存 */
+    /** 鏄惁鑷姩淇濆瓨 */
     autoSave: boolean;
-    /** 自动保存延迟（毫秒） */
+    /** 鑷姩淇濆瓨寤惰繜锛堟绉掞級 */
     autoSaveDelay: number;
 }
 
-export interface CreatePendingDiffOptions {
-    confirmedByToolConfirmation?: boolean;
-}
-
 /**
- * 状态变化监听器
+ * 鐘舵€佸彉鍖栫洃鍚櫒
  */
 type StatusChangeListener = (pending: PendingDiff[], allProcessed: boolean) => void;
 
 /**
- * Diff 保存监听器（当 diff 被实际保存到磁盘时调用）
+ * Diff 淇濆瓨鐩戝惉鍣紙褰?diff 琚疄闄呬繚瀛樺埌纾佺洏鏃惰皟鐢級
  */
 type DiffSaveListener = (diff: PendingDiff) => void;
 
 /**
- * 用户中断标记
+ * Diff 缁撶畻绛夊緟缁撴灉銆?
+ *
+ * 涓轰粈涔堣鏂板锛氬涓枃浠剁紪杈戝伐鍏烽兘鍦ㄧ瓑寰?pending diff 缁撴潫锛屼絾 apply_diff 鍙潬鐘舵€佺洃鍚紝
+ * 鍦ㄧ敤鎴蜂腑鏂竻鎺夎嚜鍔ㄤ繚瀛樺畾鏃跺櫒涓旀病鏈夊悗缁姸鎬佷簨浠舵椂鍙兘涓€鐩寸瓑寰呫€?
+ * 鎬庝箞鏀癸細鎶娾€滄甯哥粨鏉熴€乤bort 鍙栨秷銆佺敤鎴锋柊璇锋眰涓柇鈥濇娊璞℃垚 DiffManager 绾у埆鐨勯€氱敤缁撴灉銆?
+ * 鐩殑锛氭墍鏈?diff-review 宸ュ叿鍏变韩鍚屼竴濂楃敓鍛藉懆鏈熺瓑寰呰涔夛紝閬垮厤鏌愪釜宸ュ叿鐙嚜閬楁紡涓柇璺緞銆?
+ */
+export type DiffResolutionReason = 'none' | 'abort' | 'user';
+
+/**
+ * 鐢ㄦ埛涓柇鏍囪
  */
 let userInterruptFlag = false;
 
 /**
- * Diff 管理器
+ * Diff 绠＄悊鍣?
  */
 type DiffOp = {
     type: 'equal' | 'insert' | 'delete';
     line: string;
 };
+
+export interface CreatePendingDiffOptions {
+    confirmedByToolConfirmation?: boolean;
+}
 
 function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
     return !!d && typeof d === 'object' && typeof d.search === 'string' && typeof d.replace === 'string';
@@ -111,10 +135,22 @@ function isUnifiedDiffHunk(d: any): d is UnifiedDiffHunk {
     );
 }
 
+function isStructuredDiffHunk(d: any): d is StructuredDiffHunk {
+    // 涓轰粈涔堣璇嗗埆缁撴瀯鍖?hunk锛歛pply_diff 鏂版牸寮忓瓨鍏?rawDiffs 鍚庯紝鍧楃骇鎺ュ彈/鎷掔粷闇€瑕佹寜鍚屼竴濂?oldContent/newContent 瑙勫垯閲嶆斁銆?
+    // 鎬庝箞鏀癸細鐢ㄥ瓧娈靛舰鎬佸尯鍒嗭紝涓嶆柊澧炲伐鍏风被鍨嬫垨閰嶇疆鍒嗘敮锛岄伩鍏嶅墠鍚庣鍑虹幇绗笁濂楀苟琛屽崗璁€?
+    // 鐩殑锛氳 DiffManager 鍦ㄧ敤鎴锋嫆缁濇煇涓潡鍚庝粛鑳藉噯纭噸绠楁渶缁堟枃浠跺唴瀹广€?
+    return (
+        !!d &&
+        typeof d === 'object' &&
+        typeof d.oldContent === 'string' &&
+        typeof d.newContent === 'string'
+    );
+}
+
 function splitLines(text: string): string[] {
     const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = normalized.split('\n');
-    // 如果文本以换行结尾，split 会产生最后一个空行，这里去掉，避免行号计算偏差
+    // 濡傛灉鏂囨湰浠ユ崲琛岀粨灏撅紝split 浼氫骇鐢熸渶鍚庝竴涓┖琛岋紝杩欓噷鍘绘帀锛岄伩鍏嶈鍙疯绠楀亸宸?
     if (lines.length > 0 && lines[lines.length - 1] === '') {
         lines.pop();
     }
@@ -122,7 +158,7 @@ function splitLines(text: string): string[] {
 }
 
 /**
- * Myers 差分（按行），返回操作序列
+ * Myers 宸垎锛堟寜琛岋級锛岃繑鍥炴搷浣滃簭鍒?
  */
 function myersDiffLines(a: string[], b: string[]): DiffOp[] {
     const n = a.length;
@@ -209,7 +245,7 @@ function myersDiffLines(a: string[], b: string[]): DiffOp[] {
         v = vNext;
     }
 
-    // fallback
+    // 鏈壘鍒扮紪杈戣剼鏈椂杩斿洖绌哄彉鏇达紝鐢辫皟鐢ㄦ柟鎸夋棤宸紓澶勭悊銆?
     return [];
 }
 
@@ -221,9 +257,9 @@ function computeUserEditedNewLinesSummary(baseContent: string, userContent: stri
     let baseLine = 1;
     let newLine = 1;
 
-    // replace 的判定：在上一次 equal 之后是否出现过 delete。
-    // - delete 后紧跟 insert => 视为 replace（~）
-    // - 只有 insert => insert（+）
+    // replace 鐨勫垽瀹氾細鍦ㄤ笂涓€娆?equal 涔嬪悗鏄惁鍑虹幇杩?delete銆?
+    // - delete 鍚庣揣璺?insert => 瑙嗕负 replace锛垀锛?
+    // - 鍙湁 insert => insert锛?锛?
     let hadDeleteSinceLastEqual = false;
 
     const result: string[] = [];
@@ -237,16 +273,16 @@ function computeUserEditedNewLinesSummary(baseContent: string, userContent: stri
         }
 
         if (op.type === 'delete') {
-            // 删除行：行号使用 baseSuggestedContent（系统建议保存内容）的行号
+            // 鍒犻櫎琛岋細琛屽彿浣跨敤 baseSuggestedContent锛堢郴缁熷缓璁繚瀛樺唴瀹癸級鐨勮鍙?
             result.push(`- | ${baseLine} | ${op.line}`);
             hadDeleteSinceLastEqual = true;
             baseLine++;
             continue;
         }
 
-        // insert（包含新增行，以及 replace 的新行）
+        // insert锛堝寘鍚柊澧炶锛屼互鍙?replace 鐨勬柊琛岋級
         const opType = hadDeleteSinceLastEqual ? '~' : '+';
-        // 新增/替换行：行号使用 userContent（用户最终保存内容）的行号
+        // 鏂板/鏇挎崲琛岋細琛屽彿浣跨敤 userContent锛堢敤鎴锋渶缁堜繚瀛樺唴瀹癸級鐨勮鍙?
         result.push(`${opType} | ${newLine} | ${op.line}`);
         newLine++;
     }
@@ -256,49 +292,61 @@ function computeUserEditedNewLinesSummary(baseContent: string, userContent: stri
 
 export class DiffManager {
     private static instance: DiffManager | null = null;
-    
-    /** 待处理的 diff 列表 */
+
+    /** 寰呭鐞嗙殑 diff 鍒楄〃锛堝叕寮€杩斿洖鍊间粛涓?PendingDiff锛岀敓鍛藉懆鏈熺姸鎬佺敱 diffSessions 鎸佹湁鍚屼竴瀵硅薄锛?*/
     private pendingDiffs: Map<string, PendingDiff> = new Map();
-    
-    /** 虚拟文档内容提供者 */
+
+    /** 鍗曚釜 diff review 鐨勫唴閮ㄧ敓鍛藉懆鏈熷崗浣滆€?*/
+    private diffSessions: Map<string, DiffReviewSession> = new Map();
+
+    /** 铏氭嫙鏂囨。鍐呭鎻愪緵鑰?*/
     private contentProvider: OriginalContentProvider;
-    
-    /** 内容提供者注册 */
+
+    /** 鍐呭鎻愪緵鑰呮敞鍐?*/
     private providerDisposable: vscode.Disposable | null = null;
-    
-    /** 设置 */
+
+    /** 璁剧疆 */
     private settings: DiffSettings = {
         autoSave: false,
         autoSaveDelay: 3000
     };
-    
-    /** 自动保存定时器 */
+
+    /** 鑷姩淇濆瓨瀹氭椂鍣?*/
     private autoSaveTimers: Map<string, NodeJS.Timeout> = new Map();
-    
-    /** 状态变化监听器 */
+
+    /** 鐘舵€佸彉鍖栫洃鍚櫒 */
     private statusListeners: Set<StatusChangeListener> = new Set();
-    
-    /** Diff 保存监听器（当文件被实际保存时调用） */
+
+    /** Diff 淇濆瓨鐩戝惉鍣紙褰撴枃浠惰瀹為檯淇濆瓨鏃惰皟鐢級 */
     private saveCompleteListeners: Set<DiffSaveListener> = new Set();
-    
-    /** 文档保存事件监听器 */
+
+    /** 鏂囨。淇濆瓨浜嬩欢鐩戝惉鍣?*/
     private saveListeners: Map<string, vscode.Disposable> = new Map();
 
-    /** 文档即将保存事件监听器 */
+    /** 鏂囨。鍗冲皢淇濆瓨浜嬩欢鐩戝惉鍣?*/
     private willSaveListeners: Map<string, vscode.Disposable> = new Map();
-    
-    /** 文档关闭事件监听器 */
+
+    /** 鏂囨。鍏抽棴浜嬩欢鐩戝惉鍣?*/
     private closeListeners: Map<string, vscode.Disposable> = new Map();
 
-    /** 被非手动保存打断后，需要在保存完成后恢复的草稿内容 */
+    /** 琚潪鎵嬪姩淇濆瓨鎵撴柇鍚庯紝闇€瑕佸湪淇濆瓨瀹屾垚鍚庢仮澶嶇殑鑽夌鍐呭 */
     private suppressedNonManualSaveDrafts: Map<string, string> = new Map();
 
-    /** 正在执行接受动作的 diff */
+    /** 姝ｅ湪鎵ц鎺ュ彈鍔ㄤ綔鐨?diff */
     private acceptingDiffIds: Set<string> = new Set();
 
-    /** 正在执行拒绝动作的 diff */
+    /** 姝ｅ湪鎵ц鎷掔粷鍔ㄤ綔鐨?diff */
     private rejectingDiffIds: Set<string> = new Set();
-    
+
+    /**
+     * Diff 鍔ㄤ綔鍏ㄥ眬涓茶闃熷垪銆?
+     *
+     * 涓轰粈涔堣鏀癸細澶氫釜 diff 纭鍏ュ彛鍙兘鍚屾椂瑙﹀彂锛屼緥濡傚墠绔寜閽€佽嚜鍔ㄤ繚瀛樸€丆odeLens 鎴栬繛缁伐鍏疯皟鐢紝鍗曢潬 20ms 寤惰繜鍙兘闄嶄綆姒傜巼锛屼笉鑳戒繚璇?VS Code 鏂囨。淇濆瓨銆佹爣绛鹃〉鍒囨崲鍜岀姸鎬佸箍鎾寜椤哄簭鏀舵暃銆?
+     * 鎬庝箞鏀癸細鐢?Promise 闃熷垪鎶婃墍鏈変細鏀瑰彉 diff 鐘舵€佹垨缂栬緫鍣ㄥ唴瀹圭殑鍔ㄤ綔涓茶鎵ц锛涙瘡涓换鍔℃棤璁烘垚鍔熷け璐ラ兘浼氶噴鏀鹃槦鍒楋紝閬垮厤鍚庣画纭琚案涔呴樆濉炪€?
+     * 鐩殑锛氫粠鍗忚灞傛秷闄ゅ苟鍙戠‘璁ょ珵鎬侊紝鑰屼笉鏄緷璧栧浐瀹氭椂闂寸瓑寰呫€?
+     */
+    private diffActionQueue: Promise<void> = Promise.resolve();
+
     private constructor() {
         this.contentProvider = new OriginalContentProvider();
         this.providerDisposable = vscode.workspace.registerTextDocumentContentProvider(
@@ -306,9 +354,9 @@ export class DiffManager {
             this.contentProvider
         );
     }
-    
+
     /**
-     * 获取单例实例
+     * 鑾峰彇鍗曚緥瀹炰緥
      */
     public static getInstance(): DiffManager {
         if (!DiffManager.instance) {
@@ -316,17 +364,17 @@ export class DiffManager {
         }
         return DiffManager.instance;
     }
-    
+
     /**
-     * 更新设置
+     * 鏇存柊璁剧疆
      */
     public updateSettings(settings: Partial<DiffSettings>): void {
         this.settings = { ...this.settings, ...settings };
     }
-    
+
     /**
-     * 获取当前设置
-     * 优先从全局设置管理器读取，否则使用本地设置
+     * 鑾峰彇褰撳墠璁剧疆
+     * 浼樺厛浠庡叏灞€璁剧疆绠＄悊鍣ㄨ鍙栵紝鍚﹀垯浣跨敤鏈湴璁剧疆
      */
     public getSettings(): DiffSettings {
         const settingsManager = getGlobalSettingsManager();
@@ -341,20 +389,20 @@ export class DiffManager {
     }
 
     /**
-     * 刷新自动保存定时器（用于运行时设置变更）
+     * 鍒锋柊鑷姩淇濆瓨瀹氭椂鍣紙鐢ㄤ簬杩愯鏃惰缃彉鏇达級
      *
-     * 说明：
-     * - 当用户在 diff 已经处于 pending 状态后，才开启/关闭“启用自动应用”或调整延迟时，
-     *   需要通过此方法让当前已存在的 pending diff 立即按最新配置生效。
+     * 璇存槑锛?
+     * - 褰撶敤鎴峰湪 diff 宸茬粡澶勪簬 pending 鐘舵€佸悗锛屾墠寮€鍚?鍏抽棴鈥滃惎鐢ㄨ嚜鍔ㄥ簲鐢ㄢ€濇垨璋冩暣寤惰繜鏃讹紝
+     *   闇€瑕侀€氳繃姝ゆ柟娉曡褰撳墠宸插瓨鍦ㄧ殑 pending diff 绔嬪嵆鎸夋渶鏂伴厤缃敓鏁堛€?
      *
-     * 行为：
-     * - autoSave = false：取消所有已调度的自动保存
-     * - autoSave = true：为所有 pending diff 调度/重置自动保存（使用最新的 autoSaveDelay）
+     * 琛屼负锛?
+     * - autoSave = false锛氬彇娑堟墍鏈夊凡璋冨害鐨勮嚜鍔ㄤ繚瀛?
+     * - autoSave = true锛氫负鎵€鏈?pending diff 璋冨害/閲嶇疆鑷姩淇濆瓨锛堜娇鐢ㄦ渶鏂扮殑 autoSaveDelay锛?
      */
     public refreshAutoSaveTimers(): void {
         const currentSettings = this.getSettings();
 
-        // 关闭自动保存：清理全部定时器
+        // 鍏抽棴鑷姩淇濆瓨锛氭竻鐞嗗叏閮ㄥ畾鏃跺櫒
         if (!currentSettings.autoSave) {
             for (const timer of this.autoSaveTimers.values()) {
                 clearTimeout(timer);
@@ -363,28 +411,28 @@ export class DiffManager {
             return;
         }
 
-        // 开启自动保存：为所有 pending diff 调度/重置定时器
+        // 寮€鍚嚜鍔ㄤ繚瀛橈細涓烘墍鏈?pending diff 璋冨害/閲嶇疆瀹氭椂鍣?
         for (const diff of this.getPendingDiffs()) {
             this.scheduleAutoSave(diff.id);
         }
     }
-    
+
     /**
-     * 添加状态变化监听器
+     * 娣诲姞鐘舵€佸彉鍖栫洃鍚櫒
      */
     public addStatusListener(listener: StatusChangeListener): void {
         this.statusListeners.add(listener);
     }
-    
+
     /**
-     * 移除状态变化监听器
+     * 绉婚櫎鐘舵€佸彉鍖栫洃鍚櫒
      */
     public removeStatusListener(listener: StatusChangeListener): void {
         this.statusListeners.delete(listener);
     }
-    
+
     /**
-     * 通知状态变化
+     * 閫氱煡鐘舵€佸彉鍖?
      */
     private notifyStatusChange(): void {
         const pending = this.getPendingDiffs();
@@ -393,23 +441,23 @@ export class DiffManager {
             listener(pending, allProcessed);
         }
     }
-    
+
     /**
-     * 添加 diff 保存完成监听器
+     * 娣诲姞 diff 淇濆瓨瀹屾垚鐩戝惉鍣?
      */
     public addSaveCompleteListener(listener: DiffSaveListener): void {
         this.saveCompleteListeners.add(listener);
     }
-    
+
     /**
-     * 移除 diff 保存完成监听器
+     * 绉婚櫎 diff 淇濆瓨瀹屾垚鐩戝惉鍣?
      */
     public removeSaveCompleteListener(listener: DiffSaveListener): void {
         this.saveCompleteListeners.delete(listener);
     }
-    
+
     /**
-     * 通知 diff 保存完成
+     * 閫氱煡 diff 淇濆瓨瀹屾垚
      */
     private notifySaveComplete(diff: PendingDiff): void {
         for (const listener of this.saveCompleteListeners) {
@@ -418,14 +466,27 @@ export class DiffManager {
     }
 
     /**
-     * 某个 diff 是否正处于内部接受/拒绝动作处理中
+     * 鏌愪釜 diff 鏄惁姝ｅ浜庡唴閮ㄦ帴鍙?鎷掔粷鍔ㄤ綔澶勭悊涓?
      */
     public isDiffActionInProgress(id: string): boolean {
         return this.acceptingDiffIds.has(id) || this.rejectingDiffIds.has(id);
     }
 
+    private runDiffActionSerialized<T>(action: () => Promise<T>): Promise<T> {
+        // 涓轰粈涔堜笉鐢?setTimeout(20)锛氬浐瀹氬欢杩熸棤娉曡鐩栨參纾佺洏銆佹參 VS Code 淇濆瓨銆佸涓?diff 鏍囩椤靛垏鎹㈢瓑鐪熷疄鑰楁椂宸紓銆?
+        // 鎬庝箞鏀癸細鎶婁笅涓€涓姩浣滄帴鍒板綋鍓嶉槦灏句箣鍚庯紝骞舵妸闃熷熬褰掍竴鍖栦负 void Promise锛岀‘淇濆け璐ヤ笉浼氭墦鏂悗缁槦鍒椼€?
+        // 鐩殑锛氳 accept/reject/block/auto-save 鐨勭姸鎬佸彉鏇村舰鎴愮‘瀹氶『搴忥紝閬垮厤骞跺彂纭閾捐矾浜掔浉鎶㈠崰銆?
+        const previous = this.diffActionQueue.catch(() => undefined);
+        const current = previous.then(action);
+        this.diffActionQueue = current.then(
+            () => undefined,
+            () => undefined
+        );
+        return current;
+    }
+
     /**
-     * 释放 diff 相关监听器
+     * 閲婃斁 diff 鐩稿叧鐩戝惉鍣?
      */
     private disposeDiffListeners(id: string): void {
         const saveListener = this.saveListeners.get(id);
@@ -471,12 +532,18 @@ export class DiffManager {
         }
     }
 
-    private finalizeAcceptedDiff(diff: PendingDiff): void {
+    private finalizeAcceptedDiff(diff: PendingDiff, options?: { partial?: boolean }): void {
         if (diff.status !== 'pending') {
             return;
         }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.accept({ partial: options?.partial ?? !!diff.userEditedContent })
+            : this.finalizeLegacyPendingDiff(diff, 'accepted');
+        if (!finalized) {
+            return;
+        }
         this.disposeDiffListeners(diff.id);
-        diff.status = 'accepted';
         this.cleanup(diff.id);
         this.notifyStatusChange();
         this.notifySaveComplete(diff);
@@ -486,14 +553,40 @@ export class DiffManager {
         if (diff.status !== 'pending') {
             return;
         }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.reject()
+            : this.finalizeLegacyPendingDiff(diff, 'rejected');
+        if (!finalized) {
+            return;
+        }
         this.disposeDiffListeners(diff.id);
-        diff.status = 'rejected';
         this.cleanup(diff.id);
         this.notifyStatusChange();
     }
-    
+
+    private finalizeCancelledDiff(diff: PendingDiff): void {
+        if (diff.status !== 'pending') {
+            return;
+        }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.cancel()
+            : this.finalizeLegacyPendingDiff(diff, 'rejected');
+        if (!finalized) {
+            return;
+        }
+        this.disposeDiffListeners(diff.id);
+        this.cleanup(diff.id);
+    }
+
+    private finalizeLegacyPendingDiff(diff: PendingDiff, status: PendingDiff['status']): boolean {
+        diff.status = status;
+        return true;
+    }
+
     /**
-     * 创建待审阅的 diff
+     * 鍒涘缓寰呭闃呯殑 diff
      */
     private getFullApplyDiffConfig() {
         const settingsManager = getGlobalSettingsManager();
@@ -502,40 +595,40 @@ export class DiffManager {
         }
         return null;
     }
-    
+
     /**
-     * 检查 diff 警戒值
-     * 计算删除行数占原始文件总行数的百分比
+     * 妫€鏌?diff 璀︽垝鍊?
+     * 璁＄畻鍒犻櫎琛屾暟鍗犲師濮嬫枃浠舵€昏鏁扮殑鐧惧垎姣?
      */
     private checkDiffGuard(originalContent: string, newContent: string): { warning?: string; deletePercent: number } {
         const config = this.getFullApplyDiffConfig();
         if (!config || !config.diffGuardEnabled) {
             return { deletePercent: 0 };
         }
-        
-        // 使用统一的按行切分（处理 CRLF/尾部换行），避免行数统计偏差
+
+        // 浣跨敤缁熶竴鐨勬寜琛屽垏鍒嗭紙澶勭悊 CRLF/灏鹃儴鎹㈣锛夛紝閬垮厤琛屾暟缁熻鍋忓樊
         const originalLines = splitLines(originalContent);
         const newLines = splitLines(newContent);
         const totalOriginalLines = originalLines.length;
-        
+
         if (totalOriginalLines === 0) {
             return { deletePercent: 0 };
         }
-        
-        // 计算“真实删除行数”（而非净行数变化）：
-        // - 例如 3 行被删除，同时插入 1 行，净减少 2 行；
-        //   但删除行数应记为 3 行。
-        // 这里基于 Myers diff 统计 delete 操作数量。
+
+        // 璁＄畻鈥滅湡瀹炲垹闄よ鏁扳€濓紙鑰岄潪鍑€琛屾暟鍙樺寲锛夛細
+        // - 渚嬪 3 琛岃鍒犻櫎锛屽悓鏃舵彃鍏?1 琛岋紝鍑€鍑忓皯 2 琛岋紱
+        //   浣嗗垹闄よ鏁板簲璁颁负 3 琛屻€?
+        // 杩欓噷鍩轰簬 Myers diff 缁熻 delete 鎿嶄綔鏁伴噺銆?
         const ops = myersDiffLines(originalLines, newLines);
         let deletedLineCount = ops.filter(op => op.type === 'delete').length;
 
-        // 极端兜底：如果差分异常返回空，退化为净行数变化（至少保证有值）
+        // 鏋佺鍏滃簳锛氬鏋滃樊鍒嗗紓甯歌繑鍥炵┖锛岄€€鍖栦负鍑€琛屾暟鍙樺寲锛堣嚦灏戜繚璇佹湁鍊硷級
         if (ops.length === 0 && originalLines.length !== newLines.length) {
             deletedLineCount = Math.max(0, totalOriginalLines - newLines.length);
         }
 
         const deletePercent = Math.round((deletedLineCount / totalOriginalLines) * 100);
-        
+
         if (deletePercent >= config.diffGuardThreshold) {
             const warning = t('tools.file.diffManager.diffGuardWarning', {
                 deletePercent: String(deletePercent),
@@ -545,12 +638,12 @@ export class DiffManager {
             });
             return { warning, deletePercent };
         }
-        
+
         return { deletePercent };
     }
-    
+
     /**
-     * 创建待审阅的 diff（原始方法）
+     * 鍒涘缓寰呭闃呯殑 diff锛堝師濮嬫柟娉曪級
      */
     public async createPendingDiff(
         filePath: string,
@@ -563,46 +656,44 @@ export class DiffManager {
         options?: CreatePendingDiffOptions
     ): Promise<PendingDiff> {
         const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        
-        const pendingDiff: PendingDiff = {
+        const session = DiffReviewSession.create({
             id,
             filePath,
             absolutePath,
             originalContent,
             newContent,
-            timestamp: Date.now(),
-            status: 'pending',
             blocks,
             rawDiffs,
-            toolId
-        };
-        
+            toolCallId: toolId
+        });
+        const pendingDiff = session.pendingDiff;
+
+        this.diffSessions.set(id, session);
         this.pendingDiffs.set(id, pendingDiff);
-        
-        // 检查 diff 警戒值
+
+        // 妫€鏌?diff 璀︽垝鍊?
         const guardResult = this.checkDiffGuard(originalContent, newContent);
         if (guardResult.warning) {
             pendingDiff.diffGuardWarning = guardResult.warning;
         }
         pendingDiff.diffGuardDeletePercent = guardResult.deletePercent;
-        
-        // 获取完整配置以决定是否跳过 diff 视图
-        const fullConfig = this.getFullApplyDiffConfig();
-        const currentSettings = this.getSettings();
-        const shouldApplyImmediatelyAfterToolConfirmation =
-            currentSettings.autoSave === true && options?.confirmedByToolConfirmation === true;
-        const shouldSkipDiffView = currentSettings.autoSave === true
-            && (
-                fullConfig?.autoApplyWithoutDiffView === true
-                || shouldApplyImmediatelyAfterToolConfirmation
-            );
 
-        // 注册原始内容到提供者（仅在需要显示 diff 视图时）
+        // 鑾峰彇瀹屾暣閰嶇疆浠ュ喅瀹氭槸鍚﹁烦杩?diff 瑙嗗浘
+        // 濡傛灉宸ュ叿璋冪敤宸茬粡缁忚繃鍘熷宸ュ叿纭锛屽苟涓斿綋鍓嶅浜庤嚜鍔ㄥ簲鐢ㄦā寮忥紝璇存槑鐢ㄦ埛宸茬粡鎵瑰噯杩欐鍐欏叆銆?
+        // 姝ゆ椂鐩存帴淇濆瓨锛岄伩鍏嶁€滃伐鍏风‘璁や竴娆?+ diff 鑷姩淇濆瓨鍐嶇瓑寰呬竴娆♀€濈殑鍙岄噸纭閾捐矾銆?
+        const currentSettings = this.getSettings();
+        const fullConfig = this.getFullApplyDiffConfig();
+        const shouldDirectApplyConfirmedToolDiff =
+            options?.confirmedByToolConfirmation === true && currentSettings.autoSave === true;
+        const shouldSkipDiffView = shouldDirectApplyConfirmedToolDiff ||
+            (fullConfig?.autoSave && fullConfig?.autoApplyWithoutDiffView);
+
+        // 娉ㄥ唽鍘熷鍐呭鍒版彁渚涜€咃紙浠呭湪闇€瑕佹樉绀?diff 瑙嗗浘鏃讹級
         if (!shouldSkipDiffView) {
             this.contentProvider.setContent(id, originalContent);
         }
-        
-        // 如果有块信息且不跳过 diff 视图，注册到 CodeLens 提供者
+
+        // 濡傛灉鏈夊潡淇℃伅涓斾笉璺宠繃 diff 瑙嗗浘锛屾敞鍐屽埌 CodeLens 鎻愪緵鑰?
         if (blocks && !shouldSkipDiffView) {
             const provider = getDiffCodeLensProvider();
             provider.addSession({
@@ -614,8 +705,8 @@ export class DiffManager {
                 newContent,
                 timestamp: Date.now()
             });
-            
-            // 设置回调
+
+            // 璁剧疆鍥炶皟
             provider.setConfirmCallback(async (sessionId, blockIndex) => {
                 if (blockIndex === undefined) {
                     await this.acceptDiff(sessionId, true);
@@ -623,7 +714,7 @@ export class DiffManager {
                     await this.confirmBlock(sessionId, blockIndex);
                 }
             });
-            
+
             provider.setRejectCallback(async (sessionId, blockIndex) => {
                 if (blockIndex === undefined) {
                     await this.rejectDiff(sessionId);
@@ -632,16 +723,13 @@ export class DiffManager {
                 }
             });
         }
-        
-        // 根据配置决定是否显示 diff 视图
-        if (shouldApplyImmediatelyAfterToolConfirmation) {
-            // 用户已经点过工具确认卡：直接保存，不再显示二次保存/拒绝倒计时。
-            await this.directApplyAndSave(pendingDiff);
-        } else if (shouldSkipDiffView) {
-            // 跳过 diff 视图：直接写入文件并保存。
+
+        // 鏍规嵁閰嶇疆鍐冲畾鏄惁鏄剧ず diff 瑙嗗浘
+        if (shouldSkipDiffView) {
+            // 璺宠繃 diff 瑙嗗浘锛氱洿鎺ュ啓鍏ユ枃浠跺苟淇濆瓨
             await this.directApplyAndSave(pendingDiff);
         } else {
-            // 显示 diff 视图
+            // 鏄剧ず diff 瑙嗗浘
             try {
                 await this.showDiffView(pendingDiff);
             } catch (error) {
@@ -651,112 +739,102 @@ export class DiffManager {
                 );
             }
         }
-        
-        // 如果开启自动保存且 diff 仍处于 pending 状态，设置定时器
+
+        // 濡傛灉寮€鍚嚜鍔ㄤ繚瀛樹笖 diff 浠嶅浜?pending 鐘舵€侊紝璁剧疆瀹氭椂鍣?
         if (pendingDiff.status === 'pending') {
             const currentSettings = this.getSettings();
             if (currentSettings.autoSave) {
                 this.scheduleAutoSave(id);
             }
         }
-        
-        // 通知状态变化
+
+        // 閫氱煡鐘舵€佸彉鍖?
         this.notifyStatusChange();
-        
+
         return pendingDiff;
     }
 
     /**
-     * 直接应用修改并保存（不打开 diff 视图）
-     * 用于 autoApplyWithoutDiffView 模式
+     * 鐩存帴搴旂敤淇敼骞朵繚瀛橈紙涓嶆墦寮€ diff 瑙嗗浘锛?
+     * 鐢ㄤ簬 autoApplyWithoutDiffView 妯″紡
      */
-    private async openSavedFile(diff: PendingDiff): Promise<void> {
-        try {
-            const uri = vscode.Uri.file(diff.absolutePath);
-            const document = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath)
-                || await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(document, {
-                preview: false,
-                preserveFocus: false
-            });
-        } catch (error) {
-            console.warn(`[DiffManager] Failed to open saved file ${diff.filePath}:`, error);
-        }
-    }
-
     private async directApplyAndSave(diff: PendingDiff): Promise<void> {
         try {
-            // 直接写入文件到磁盘
+            // 鐩存帴鍐欏叆鏂囦欢鍒扮鐩?
             fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
-            
-            // 如果文档已在编辑器中打开，则刷新它
+
+            // 濡傛灉鏂囨。宸插湪缂栬緫鍣ㄤ腑鎵撳紑锛屽垯鍒锋柊瀹?
             const uri = vscode.Uri.file(diff.absolutePath);
             const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
             if (openDoc) {
-                // revert 让 VSCode 从磁盘重新加载
+                // revert 璁?VSCode 浠庣鐩橀噸鏂板姞杞?
                 try {
-                    // 先 focus 到该文档，然后 revert
+                    // 鍏?focus 鍒拌鏂囨。锛岀劧鍚?revert
                     await vscode.window.showTextDocument(openDoc, { preview: false, preserveFocus: true });
                     await vscode.commands.executeCommand('workbench.action.files.revert');
                 } catch {
                     // ignore
                 }
             }
-            
-            // 标记为已接受
-            diff.status = 'accepted';
-            this.cleanup(diff.id);
-            
-            this.notifyStatusChange();
-            this.notifySaveComplete(diff);
-            
+
+            // 鏍囪涓哄凡鎺ュ彈
+            this.finalizeAcceptedDiff(diff);
+
             vscode.window.setStatusBarMessage(
                 `$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`,
                 3000
             );
-
-            await this.openSavedFile(diff);
         } catch (error) {
             console.error('[DiffManager] directApplyAndSave failed:', error);
-            // 回退到显示 diff 视图
+            // 鍥為€€鍒版樉绀?diff 瑙嗗浘
             await this.showDiffView(diff);
         }
     }
 
     /**
-     * 确认单个块
+     * 纭鍗曚釜鍧?
      */
     public async confirmBlock(sessionId: string, blockIndex: number): Promise<void> {
+        await this.runDiffActionSerialized(() => this.confirmBlockUnlocked(sessionId, blockIndex));
+    }
+
+    private async confirmBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
+        this.diffSessions.get(sessionId)?.markPresented();
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, true);
-        
-        // 如果所有块都处理完了，自动结束整个 diff
+
+        // 濡傛灉鎵€鏈夊潡閮藉鐞嗗畬浜嗭紝鑷姩缁撴潫鏁翠釜 diff
         if (provider.isSessionComplete(sessionId)) {
             const session = provider.getSession(sessionId);
-            // 理论上 confirmBlock 一定会有 confirmed，因此不太可能 allRejected，但这里仍做保护
+            // 鐞嗚涓?confirmBlock 涓€瀹氫細鏈?confirmed锛屽洜姝や笉澶彲鑳?allRejected锛屼絾杩欓噷浠嶅仛淇濇姢
             const allRejected = !!session && session.blocks.length > 0 && session.blocks.every(b => b.rejected);
             if (allRejected) {
-                await this.rejectDiff(sessionId);
+                await this.rejectDiffUnlocked(sessionId);
             } else {
-                await this.acceptDiff(sessionId, true);
+                await this.acceptDiffUnlocked(sessionId, true);
             }
         }
     }
 
     /**
-     * 拒绝单个块
+     * 鎷掔粷鍗曚釜鍧?
      */
     public async rejectBlock(sessionId: string, blockIndex: number): Promise<void> {
+        await this.runDiffActionSerialized(() => this.rejectBlockUnlocked(sessionId, blockIndex));
+    }
+
+    private async rejectBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
+        this.diffSessions.get(sessionId)?.markPresented();
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, false);
-        
-        // 实时更新编辑器内容，移除被拒绝的块
+
+        // 瀹炴椂鏇存柊缂栬緫鍣ㄥ唴瀹癸紝绉婚櫎琚嫆缁濈殑鍧?
         const diff = this.pendingDiffs.get(sessionId);
         if (diff && diff.rawDiffs && diff.rawDiffs.length > 0) {
             let tempContent = diff.originalContent;
             const session = provider.getSession(sessionId);
             if (session) {
-                // 本次需要应用的块（未被拒绝）
+                // 鏈闇€瑕佸簲鐢ㄧ殑鍧楋紙鏈鎷掔粷锛?
                 const applyIndices = new Set<number>();
                 for (let i = 0; i < diff.rawDiffs.length; i++) {
                     const blockInfo = session.blocks.find(b => b.index === i);
@@ -767,14 +845,33 @@ export class DiffManager {
 
                 const first = diff.rawDiffs[0];
 
-                if (isUnifiedDiffHunk(first)) {
-                    // unified diff hunks：重新从 originalContent 计算“仅包含未拒绝块”的最终内容
+                if (isStructuredDiffHunk(first)) {
+                    // 涓轰粈涔堢粨鏋勫寲 hunk 瑕佷紭鍏堝鐞嗭細瀹冨拰 legacy search/replace 瀛楁鍚嶄笉鍚岋紝浣嗗悓鏍烽渶瑕佹敮鎸佸潡绾ф嫆缁濆悗鐨勫唴瀹归噸绠椼€?
+                    // 鎬庝箞鏀癸細澶嶇敤 apply_diff 瀵煎嚭鐨勭粨鏋勫寲搴旂敤鍑芥暟锛屽苟浼犲叆鏈嫆缁濆潡绱㈠紩闆嗗悎銆?
+                    // 鐩殑锛氶伩鍏嶆嫆缁濇煇涓?hunk 鍚庣敤鏃?start_line 閫昏緫璇畻鍚庣画閲嶅鍐呭銆?
+                    try {
+                        const hunks = diff.rawDiffs as StructuredDiffHunk[];
+                        const r = applyStructuredDiffHunksBestEffort(tempContent, hunks, { applyIndices });
+                        tempContent = r.newContent;
+
+                        for (const h of r.blocks) {
+                            const blockInfo = session.blocks.find(b => b.index === h.index);
+                            if (blockInfo) {
+                                blockInfo.startLine = h.startLine;
+                                blockInfo.endLine = h.endLine;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[DiffManager] Failed to recompute structured diff content after rejecting a block:', e);
+                    }
+                } else if (isUnifiedDiffHunk(first)) {
+                    // unified diff hunks锛氶噸鏂颁粠 originalContent 璁＄畻鈥滀粎鍖呭惈鏈嫆缁濆潡鈥濈殑鏈€缁堝唴瀹?
                     try {
                         const hunks = diff.rawDiffs as UnifiedDiffHunk[];
                         const r = applyUnifiedDiffHunks(tempContent, hunks, { applyIndices });
                         tempContent = r.newContent;
 
-                        // 更新各块在当前内容中的范围
+                        // 鏇存柊鍚勫潡鍦ㄥ綋鍓嶅唴瀹逛腑鐨勮寖鍥?
                         for (const h of r.appliedHunks) {
                             const blockInfo = session.blocks.find(b => b.index === h.index);
                             if (blockInfo) {
@@ -786,7 +883,7 @@ export class DiffManager {
                         console.warn('[DiffManager] Failed to recompute unified diff content after rejecting a block:', e);
                     }
                 } else {
-                    // legacy search/replace diffs（向后兼容）
+                    // legacy search/replace diffs锛堝悜鍚庡吋瀹癸級
                     for (let i = 0; i < diff.rawDiffs.length; i++) {
                         const blockInfo = session.blocks.find(b => b.index === i);
                         const d = diff.rawDiffs[i];
@@ -800,14 +897,14 @@ export class DiffManager {
                         if (result.success && result.matchedLine !== undefined) {
                             tempContent = result.result;
 
-                            // 更新此块在当前内容中的范围
+                            // 鏇存柊姝ゅ潡鍦ㄥ綋鍓嶅唴瀹逛腑鐨勮寖鍥?
                             blockInfo.startLine = result.matchedLine;
                             blockInfo.endLine = result.matchedLine + replaceLines - 1;
                         }
                     }
                 }
 
-                // 更新编辑器
+                // 鏇存柊缂栬緫鍣?
                 const uri = vscode.Uri.file(diff.absolutePath);
                 const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
                 if (doc) {
@@ -822,23 +919,28 @@ export class DiffManager {
             }
         }
 
-        // 如果所有块都处理完了，自动结束
+        // 濡傛灉鎵€鏈夊潡閮藉鐞嗗畬浜嗭紝鑷姩缁撴潫
         if (provider.isSessionComplete(sessionId)) {
             const session = provider.getSession(sessionId);
             const allRejected = !!session && session.blocks.length > 0 && session.blocks.every(b => b.rejected);
 
-            // 全部块都被拒绝：视为用户明确拒绝本次 diff（不保存任何更改）
+            // 鍏ㄩ儴鍧楅兘琚嫆缁濓細瑙嗕负鐢ㄦ埛鏄庣‘鎷掔粷鏈 diff锛堜笉淇濆瓨浠讳綍鏇存敼锛?
             if (allRejected) {
-                await this.rejectDiff(sessionId);
+                await this.rejectDiffUnlocked(sessionId);
             } else {
-                // 部分接受/部分拒绝：保存“剩余接受的块”
-                await this.acceptDiff(sessionId, true);
+                // 閮ㄥ垎鎺ュ彈/閮ㄥ垎鎷掔粷锛氫繚瀛樷€滃墿浣欐帴鍙楃殑鍧椻€?
+                await this.acceptDiffUnlocked(sessionId, true);
             }
         }
     }
-    
+
+    private hasRejectedBlocks(id: string): boolean {
+        const session = getDiffCodeLensProvider().getSession(id);
+        return !!session && session.blocks.some(b => b.rejected);
+    }
+
     private computeFinalSuggestedContent(id: string, diff: PendingDiff): string {
-        // 计算最终内容（仅包含已确认的块）
+        // 璁＄畻鏈€缁堝唴瀹癸紙浠呭寘鍚凡纭鐨勫潡锛?
         let finalContent = diff.newContent;
 
         if (!diff.rawDiffs || diff.rawDiffs.length === 0) {
@@ -856,10 +958,10 @@ export class DiffManager {
             return finalContent;
         }
 
-        // 有被拒绝的块，重新计算内容
+        // 鏈夎鎷掔粷鐨勫潡锛岄噸鏂拌绠楀唴瀹?
         finalContent = diff.originalContent;
 
-        // 需要应用的块（未被拒绝）
+        // 闇€瑕佸簲鐢ㄧ殑鍧楋紙鏈鎷掔粷锛?
         const applyIndices = new Set<number>();
         for (let i = 0; i < diff.rawDiffs.length; i++) {
             const blockInfo = session.blocks.find(b => b.index === i);
@@ -870,7 +972,18 @@ export class DiffManager {
 
         const first = diff.rawDiffs[0];
 
-        if (isUnifiedDiffHunk(first)) {
+        if (isStructuredDiffHunk(first)) {
+            // 涓轰粈涔?finalContent 涔熻鏀寔缁撴瀯鍖?hunk锛氫繚瀛樺墠浼氭牴鎹敤鎴锋嫆缁濈殑鍧楅噸鏂拌绠楁渶缁堝缓璁唴瀹广€?
+            // 鎬庝箞鏀癸細澶嶇敤鍚屼竴涓粨鏋勫寲搴旂敤鍑芥暟锛屽彧搴旂敤鏈嫆缁濈殑 hunk 绱㈠紩銆?
+            // 鐩殑锛氱‘淇濈紪杈戝櫒瀹炴椂鍐呭鍜屾渶缁堣惤鐩樺唴瀹逛娇鐢ㄥ畬鍏ㄤ竴鑷寸殑閲嶆斁瑙勫垯銆?
+            try {
+                const hunks = diff.rawDiffs as StructuredDiffHunk[];
+                const r = applyStructuredDiffHunksBestEffort(finalContent, hunks, { applyIndices });
+                finalContent = r.newContent;
+            } catch (e) {
+                console.warn('[DiffManager] Failed to recompute final suggested content for structured diff:', e);
+            }
+        } else if (isUnifiedDiffHunk(first)) {
             // unified diff hunks
             try {
                 const hunks = diff.rawDiffs as UnifiedDiffHunk[];
@@ -899,10 +1012,11 @@ export class DiffManager {
     }
 
     /**
-     * 显示内联 diff 视图
+     * 鏄剧ず鍐呰仈 diff 瑙嗗浘
      */
     private async showDiffView(diff: PendingDiff): Promise<void> {
         const fileUri = vscode.Uri.file(diff.absolutePath);
+        this.diffSessions.get(diff.id)?.markPresented();
 
         const isPending = () => diff.status === 'pending';
 
@@ -922,12 +1036,12 @@ export class DiffManager {
             }
         };
 
-        // 如果在进入 showDiffView 之前就已被处理（例如 cancelAllPending 先一步发生），直接短路
+        // 濡傛灉鍦ㄨ繘鍏?showDiffView 涔嬪墠灏卞凡琚鐞嗭紙渚嬪 cancelAllPending 鍏堜竴姝ュ彂鐢燂級锛岀洿鎺ョ煭璺?
         if (!isPending()) {
             return;
         }
-        
-        // 1. 打开并修改目标文件（不保存）
+
+        // 1. 鎵撳紑骞朵慨鏀圭洰鏍囨枃浠讹紙涓嶄繚瀛橈級
         const document = await vscode.workspace.openTextDocument(fileUri);
         if (!isPending()) {
             return;
@@ -939,18 +1053,18 @@ export class DiffManager {
         if (!isPending()) {
             return;
         }
-        
-        // 应用修改
+
+        // 搴旂敤淇敼
         const fullRange = new vscode.Range(
             document.positionAt(0),
             document.positionAt(document.getText().length)
         );
-        
+
         await editor.edit((editBuilder) => {
             editBuilder.replace(fullRange, diff.newContent);
         });
 
-        // 若在 apply edit 过程中被取消/拒绝，立即恢复原始内容并退出，避免留下脏文档
+        // 鑻ュ湪 apply edit 杩囩▼涓鍙栨秷/鎷掔粷锛岀珛鍗虫仮澶嶅師濮嬪唴瀹瑰苟閫€鍑猴紝閬垮厤鐣欎笅鑴忔枃妗?
         if (!isPending()) {
             await restoreToOriginalBestEffort();
             try {
@@ -960,11 +1074,11 @@ export class DiffManager {
             }
             return;
         }
-        
-        // 2. 创建原始内容的虚拟 URI
+
+        // 2. 鍒涘缓鍘熷鍐呭鐨勮櫄鎷?URI
         const originalUri = vscode.Uri.parse(`gemini-diff-original:${diff.id}/${path.basename(diff.filePath)}`);
-        
-        // 4. 打开 diff 视图
+
+        // 4. 鎵撳紑 diff 瑙嗗浘
         const title = t('tools.file.diffManager.diffTitle', { filePath: diff.filePath });
         if (!isPending()) {
             await restoreToOriginalBestEffort();
@@ -974,7 +1088,7 @@ export class DiffManager {
             preview: false
         });
 
-        // 若在打开 diff 视图期间被取消/拒绝，关闭 diff 并恢复原始内容，避免 UI 残留
+        // 鑻ュ湪鎵撳紑 diff 瑙嗗浘鏈熼棿琚彇娑?鎷掔粷锛屽叧闂?diff 骞舵仮澶嶅師濮嬪唴瀹癸紝閬垮厤 UI 娈嬬暀
         if (!isPending()) {
             try {
                 await this.closeDiffTab(diff.absolutePath);
@@ -984,8 +1098,8 @@ export class DiffManager {
             await restoreToOriginalBestEffort();
             return;
         }
-        
-        // 5. 监听文档即将保存事件
+
+        // 5. 鐩戝惉鏂囨。鍗冲皢淇濆瓨浜嬩欢
         const willSaveListener = vscode.workspace.onWillSaveTextDocument((event) => {
             if (event.document.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
                 return;
@@ -1013,7 +1127,7 @@ export class DiffManager {
             ]));
         });
 
-        // 6. 监听文档保存事件
+        // 6. 鐩戝惉鏂囨。淇濆瓨浜嬩欢
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
             if (savedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
                 return;
@@ -1037,7 +1151,7 @@ export class DiffManager {
                 return;
             }
 
-            // 检查用户是否修改了内容（保存时的最终内容）
+            // 妫€鏌ョ敤鎴锋槸鍚︿慨鏀逛簡鍐呭锛堜繚瀛樻椂鐨勬渶缁堝唴瀹癸級
             const savedContent = savedDoc.getText();
 
             if (savedContent === diff.originalContent) {
@@ -1050,24 +1164,24 @@ export class DiffManager {
                 return;
             }
 
-            // 以“系统建议将保存的内容”为基准（考虑 CodeLens 拒绝块等）
+            // 浠モ€滅郴缁熷缓璁皢淇濆瓨鐨勫唴瀹光€濅负鍩哄噯锛堣€冭檻 CodeLens 鎷掔粷鍧楃瓑锛?
             const baseSuggestedContent = this.computeFinalSuggestedContent(diff.id, diff);
 
             if (savedContent !== baseSuggestedContent && savedContent !== diff.originalContent) {
-                // 仅保留摘要，不在工具响应里发送完整文件内容
+                // 浠呬繚鐣欐憳瑕侊紝涓嶅湪宸ュ叿鍝嶅簲閲屽彂閫佸畬鏁存枃浠跺唴瀹?
                 diff.userEditedContent = computeUserEditedNewLinesSummary(baseSuggestedContent, savedContent);
             }
 
-            this.finalizeAcceptedDiff(diff);
+            this.finalizeAcceptedDiff(diff, { partial: !!diff.userEditedContent || this.hasRejectedBlocks(diff.id) });
 
-            // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
+            // 闈炶嚜鍔ㄤ繚瀛樻ā寮忎笅锛岀敤鎴锋墜鍔ㄤ繚瀛樺悗鑷姩鍏抽棴 diff 鏍囩椤?
             const currentSettings = this.getSettings();
             if (!currentSettings.autoSave) {
                 await this.closeDiffTab(diff.absolutePath);
             }
         });
-        
-        // 7. 监听文档关闭事件
+
+        // 7. 鐩戝惉鏂囨。鍏抽棴浜嬩欢
         const closeListener = vscode.workspace.onDidCloseTextDocument((closedDoc) => {
             if (closedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
                 return;
@@ -1083,11 +1197,11 @@ export class DiffManager {
                     this.finalizeRejectedDiff(diff);
                 }
             } catch (e) {
-                // 忽略错误
+                // 蹇界暐閿欒
             }
         });
 
-        // 若在注册监听器期间被取消/拒绝，立即释放监听器并恢复内容，避免残留订阅造成后续错乱
+        // 鑻ュ湪娉ㄥ唽鐩戝惉鍣ㄦ湡闂磋鍙栨秷/鎷掔粷锛岀珛鍗抽噴鏀剧洃鍚櫒骞舵仮澶嶅唴瀹癸紝閬垮厤娈嬬暀璁㈤槄閫犳垚鍚庣画閿欎贡
         if (!isPending()) {
             try {
                 willSaveListener.dispose();
@@ -1112,67 +1226,97 @@ export class DiffManager {
             await restoreToOriginalBestEffort();
             return;
         }
-        
+
         this.willSaveListeners.set(diff.id, willSaveListener);
         this.saveListeners.set(diff.id, saveListener);
         this.closeListeners.set(diff.id, closeListener);
     }
-    
+
     /**
-     * 设置自动保存定时器
+     * 璁剧疆鑷姩淇濆瓨瀹氭椂鍣?
      */
     private scheduleAutoSave(id: string): void {
         const existingTimer = this.autoSaveTimers.get(id);
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
-        
+
         const currentSettings = this.getSettings();
-        const timer = setTimeout(async () => {
-            // 自动保存：强制使用 AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
+        const session = this.diffSessions.get(id);
+        const runAutoSave = async () => {
+            // 鑷姩淇濆瓨锛氬己鍒朵娇鐢?AI 寤鸿鐨勫唴瀹癸紙閬垮厤瑕嗙洊鐢ㄦ埛鍙兘姝ｅ湪杩涜鐨勬墜鍔ㄤ慨鏀癸級
             const accepted = await this.acceptDiff(id, true, true);
             if (!accepted) {
-                console.warn(`[DiffManager] Auto-save failed for diff ${id}; keeping it pending for manual retry.`);
+                // 鑷姩淇濆瓨澶辫触蹇呴』浠ユ槑纭?rejected 鏀舵暃锛屽惁鍒欑瓑寰?diff 缁撴潫鐨勫伐鍏?Promise 浼氭案涔?pending銆?
+                await this.finalizeAutoSaveFailure(id, 'Auto-save failed while accepting diff. The diff was rejected to unblock tool execution.');
             }
             this.autoSaveTimers.delete(id);
-        }, currentSettings.autoSaveDelay);
-        
+        };
+
+        const timer = session
+            ? session.scheduleAutoSave(currentSettings.autoSaveDelay, runAutoSave)
+            : setTimeout(runAutoSave, currentSettings.autoSaveDelay);
+
         this.autoSaveTimers.set(id, timer);
     }
-    
+
+    private async finalizeAutoSaveFailure(id: string, message: string): Promise<void> {
+        const diff = this.pendingDiffs.get(id);
+        if (!diff || diff.status !== 'pending') {
+            return;
+        }
+
+        // 淇濈暀 acceptDiff 鎹曡幏鍒扮殑搴曞眰淇濆瓨閿欒锛涜繖閲屼粎琛ュ厖鑷姩淇濆瓨鏀舵暃璇箟锛岄伩鍏嶈鐩栫湡瀹炲紓甯搞€?
+        diff.autoSaveError = diff.autoSaveError
+            ? `${message} ${diff.autoSaveError}`
+            : message;
+
+        const rejected = await this.rejectDiff(id);
+        if (rejected) {
+            return;
+        }
+
+        // rejectDiff 涔熷け璐ユ椂鍙噴鏀剧瓑寰呬腑鐨勫伐鍏?Promise锛屼笉鍐嶅皾璇曚繚瀛樻垨鎭㈠锛岄伩鍏嶉噸澶嶈Е鍙?VS Code 缂栬緫鍣ㄧ珵鎬併€?
+        this.finalizeRejectedDiff(diff);
+    }
+
     /**
-     * 接受 diff（保存修改）
+     * 鎺ュ彈 diff锛堜繚瀛樹慨鏀癸級
      * @param id diff ID
-     * @param closeTab 是否关闭标签页
-     * @param isAutoSave 是否为自动保存（自动保存时强制使用 AI 内容；手动接受时尽量保留用户编辑）
+     * @param closeTab 鏄惁鍏抽棴鏍囩椤?
+     * @param isAutoSave 鏄惁涓鸿嚜鍔ㄤ繚瀛橈紙鑷姩淇濆瓨鏃跺己鍒朵娇鐢?AI 鍐呭锛涙墜鍔ㄦ帴鍙楁椂灏介噺淇濈暀鐢ㄦ埛缂栬緫锛?
      */
     public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
+        return this.runDiffActionSerialized(() => this.acceptDiffUnlocked(id, closeTab, isAutoSave));
+    }
+
+    private async acceptDiffUnlocked(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;
         }
 
         this.acceptingDiffIds.add(id);
-        
+
         try {
             const finalContent = this.computeFinalSuggestedContent(id, diff);
-            
+
             const uri = vscode.Uri.file(diff.absolutePath);
             let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
-            
-            // 如果文档未打开，先打开它
+
+            // 濡傛灉鏂囨。鏈墦寮€锛屽厛鎵撳紑瀹?
             if (!doc) {
                 doc = await vscode.workspace.openTextDocument(uri);
             }
-            
+
             const currentContent = doc.getText();
 
-            // 自动保存：强制保存 AI 计算出来的 finalContent。
-            // 手动接受：如果用户在编辑器中改过内容，则保留当前内容，不覆盖。
+            // 鑷姩淇濆瓨锛氬己鍒朵繚瀛?AI 璁＄畻鍑烘潵鐨?finalContent銆?
+            // 鎵嬪姩鎺ュ彈锛氬鏋滅敤鎴峰湪缂栬緫鍣ㄤ腑鏀硅繃鍐呭锛屽垯淇濈暀褰撳墠鍐呭锛屼笉瑕嗙洊銆?
             let contentToSave = finalContent;
 
             if (isAutoSave || currentContent === diff.originalContent) {
-                // 覆盖到 finalContent（自动保存 / 文档仍是原始内容时）
+                // 瑕嗙洊鍒?finalContent锛堣嚜鍔ㄤ繚瀛?/ 鏂囨。浠嶆槸鍘熷鍐呭鏃讹級
                 if (currentContent !== finalContent) {
                     const edit = new vscode.WorkspaceEdit();
                     const fullRange = new vscode.Range(
@@ -1187,18 +1331,18 @@ export class DiffManager {
                 }
                 contentToSave = finalContent;
             } else {
-                // currentContent != original => 认为用户已经在 AI 建议上做了调整（包含手动编辑/拒绝部分块）
+                // currentContent != original => 璁や负鐢ㄦ埛宸茬粡鍦?AI 寤鸿涓婂仛浜嗚皟鏁达紙鍖呭惈鎵嬪姩缂栬緫/鎷掔粷閮ㄥ垎鍧楋級
                 if (currentContent !== finalContent) {
                     diff.userEditedContent = computeUserEditedNewLinesSummary(finalContent, currentContent);
                 }
                 contentToSave = currentContent;
             }
-            
+
             const normalizeToLF = (text: string): string => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
             const revertOpenDocumentToDisk = async (): Promise<void> => {
                 try {
-                    // 关键：使用 revert 丢弃脏状态并从磁盘重新加载，避免 VSCode “文件内容较新”保存冲突提示
+                    // 鍏抽敭锛氫娇鐢?revert 涓㈠純鑴忕姸鎬佸苟浠庣鐩橀噸鏂板姞杞斤紝閬垮厤 VSCode 鈥滄枃浠跺唴瀹硅緝鏂扳€濅繚瀛樺啿绐佹彁绀?
                     await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
                     await vscode.commands.executeCommand('workbench.action.files.revert');
                 } catch {
@@ -1206,7 +1350,7 @@ export class DiffManager {
                 }
             };
 
-            // 读取磁盘内容，用于判断是否需要绕过 doc.save（doc.save 在磁盘变更时会触发 VSCode 冲突提示）
+            // 璇诲彇纾佺洏鍐呭锛岀敤浜庡垽鏂槸鍚﹂渶瑕佺粫杩?doc.save锛坉oc.save 鍦ㄧ鐩樺彉鏇存椂浼氳Е鍙?VSCode 鍐茬獊鎻愮ず锛?
             let diskContent: string | undefined;
             try {
                 diskContent = fs.readFileSync(diff.absolutePath, 'utf8');
@@ -1218,18 +1362,18 @@ export class DiffManager {
             const diskNormalized = diskContent !== undefined ? normalizeToLF(diskContent) : undefined;
             const originalNormalized = normalizeToLF(diff.originalContent);
 
-            // 1) 若磁盘内容已经等于要保存的内容：无需保存，直接 revert 清理 dirty（避免冲突提示）
+            // 1) 鑻ョ鐩樺唴瀹瑰凡缁忕瓑浜庤淇濆瓨鐨勫唴瀹癸細鏃犻渶淇濆瓨锛岀洿鎺?revert 娓呯悊 dirty锛堥伩鍏嶅啿绐佹彁绀猴級
             if (diskNormalized !== undefined && diskNormalized === saveNormalized) {
                 if (doc.isDirty) {
                     await revertOpenDocumentToDisk();
                 }
             }
-            // 2) 若磁盘内容已不同于 diff 创建时的 originalContent：说明中途被外部写入/回滚，绕过 doc.save 强制写入后再 revert
+            // 2) 鑻ョ鐩樺唴瀹瑰凡涓嶅悓浜?diff 鍒涘缓鏃剁殑 originalContent锛氳鏄庝腑閫旇澶栭儴鍐欏叆/鍥炴粴锛岀粫杩?doc.save 寮哄埗鍐欏叆鍚庡啀 revert
             else if (diskNormalized !== undefined && diskNormalized !== originalNormalized) {
                 fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
                 await revertOpenDocumentToDisk();
             }
-            // 3) 磁盘仍为 originalContent：走 doc.save 快路径（保留 VSCode 的编码/换行等保存策略）
+            // 3) 纾佺洏浠嶄负 originalContent锛氳蛋 doc.save 蹇矾寰勶紙淇濈暀 VSCode 鐨勭紪鐮?鎹㈣绛変繚瀛樼瓥鐣ワ級
             else {
                 let saved = false;
                 try {
@@ -1239,20 +1383,20 @@ export class DiffManager {
                 }
 
                 if (!saved) {
-                    // 如果 VSCode API 保存失败，尝试直接写入文件
+                    // 濡傛灉 VSCode API 淇濆瓨澶辫触锛屽皾璇曠洿鎺ュ啓鍏ユ枃浠?
                     fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
                     await revertOpenDocumentToDisk();
                 }
             }
-            
-            this.finalizeAcceptedDiff(diff);
-            
+
+            this.finalizeAcceptedDiff(diff, { partial: !!diff.userEditedContent || this.hasRejectedBlocks(id) });
+
             try {
                 vscode.window.setStatusBarMessage(`$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`, 3000);
             } catch (error) {
                 console.warn(`[DiffManager] Failed to show accepted status for ${diff.filePath}:`, error);
             }
-            
+
             if (closeTab) {
                 try {
                     await this.closeDiffTab(diff.absolutePath);
@@ -1261,19 +1405,21 @@ export class DiffManager {
                 }
             }
 
-            await this.openSavedFile(diff);
-            
             return true;
         } catch (error) {
-            vscode.window.showErrorMessage(t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
+            const message = t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) });
+            if (diff) {
+                diff.autoSaveError = message;
+            }
+            vscode.window.showErrorMessage(message);
             return false;
         } finally {
             this.acceptingDiffIds.delete(id);
         }
     }
-    
+
     /**
-     * 关闭指定文件的 diff 标签页
+     * 鍏抽棴鎸囧畾鏂囦欢鐨?diff 鏍囩椤?
      */
     private async closeDiffTab(filePath: string): Promise<void> {
         for (const tabGroup of vscode.window.tabGroups.all) {
@@ -1288,23 +1434,27 @@ export class DiffManager {
             }
         }
     }
-    
+
     /**
-     * 拒绝 diff（放弃修改）
+     * 鎷掔粷 diff锛堟斁寮冧慨鏀癸級
      */
     public async rejectDiff(id: string): Promise<boolean> {
+        return this.runDiffActionSerialized(() => this.rejectDiffUnlocked(id));
+    }
+
+    private async rejectDiffUnlocked(id: string): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;
         }
 
         this.rejectingDiffIds.add(id);
-        
+
         try {
-            // 1. 恢复文件内容
+            // 1. 鎭㈠鏂囦欢鍐呭
             const uri = vscode.Uri.file(diff.absolutePath);
             const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
-            
+
             if (doc) {
                 const edit = new vscode.WorkspaceEdit();
                 const fullRange = new vscode.Range(
@@ -1316,11 +1466,11 @@ export class DiffManager {
                 if (!applied) {
                     throw new Error(`Failed to restore original content for ${diff.filePath}`);
                 }
-                
-                // 如果文件曾经被保存过（脏了），这里我们不强制保存，因为用户拒绝了 AI 的修改。
-                // 但如果文件在 AI 修改前就是干净的，AI 修改让它变脏了，我们现在恢复了原始内容，它应该变回干净（或者通过 undo）。
+
+                // 濡傛灉鏂囦欢鏇剧粡琚繚瀛樿繃锛堣剰浜嗭級锛岃繖閲屾垜浠笉寮哄埗淇濆瓨锛屽洜涓虹敤鎴锋嫆缁濅簡 AI 鐨勪慨鏀广€?
+                // 浣嗗鏋滄枃浠跺湪 AI 淇敼鍓嶅氨鏄共鍑€鐨勶紝AI 淇敼璁╁畠鍙樿剰浜嗭紝鎴戜滑鐜板湪鎭㈠浜嗗師濮嬪唴瀹癸紝瀹冨簲璇ュ彉鍥炲共鍑€锛堟垨鑰呴€氳繃 undo锛夈€?
             } else {
-                // 如果文档没打开，直接写回原始文件内容确保万无一失
+                // 濡傛灉鏂囨。娌℃墦寮€锛岀洿鎺ュ啓鍥炲師濮嬫枃浠跺唴瀹圭‘淇濅竾鏃犱竴澶?
                 fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
             }
 
@@ -1331,7 +1481,7 @@ export class DiffManager {
             } catch (error) {
                 console.warn(`[DiffManager] Failed to close rejected diff tab for ${diff.filePath}:`, error);
             }
-            
+
             return true;
         } catch (error) {
             console.error('Failed to reject diff:', error);
@@ -1340,9 +1490,9 @@ export class DiffManager {
             this.rejectingDiffIds.delete(id);
         }
     }
-    
+
     /**
-     * 接受所有待处理的 diff
+     * 鎺ュ彈鎵€鏈夊緟澶勭悊鐨?diff
      */
     public async acceptAll(): Promise<number> {
         let count = 0;
@@ -1356,9 +1506,9 @@ export class DiffManager {
         }
         return count;
     }
-    
+
     /**
-     * 拒绝所有待处理的 diff
+     * 鎷掔粷鎵€鏈夊緟澶勭悊鐨?diff
      */
     public async rejectAll(): Promise<number> {
         let count = 0;
@@ -1372,9 +1522,9 @@ export class DiffManager {
         }
         return count;
     }
-    
+
     /**
-     * 清理资源
+     * 娓呯悊璧勬簮
      */
     private cleanup(id: string): void {
         const timer = this.autoSaveTimers.get(id);
@@ -1382,16 +1532,17 @@ export class DiffManager {
             clearTimeout(timer);
             this.autoSaveTimers.delete(id);
         }
-        
+        this.diffSessions.get(id)?.clearAutoSave();
+
         this.contentProvider.removeContent(id);
 
-        // 移除 CodeLens 会话（会自动触发相关 UI 刷新）
+        // 绉婚櫎 CodeLens 浼氳瘽锛堜細鑷姩瑙﹀彂鐩稿叧 UI 鍒锋柊锛?
         try {
             getDiffCodeLensProvider().removeSession(id);
         } catch (err) {
             console.warn(`[DiffManager] Failed to remove CodeLens session ${id}:`, err);
         }
-        
+
         const tempDir = path.join(require('os').tmpdir(), 'gemini-diff');
         const diff = this.pendingDiffs.get(id);
         if (diff) {
@@ -1401,23 +1552,23 @@ export class DiffManager {
             }
         }
     }
-    
+
     /**
-     * 获取所有待处理的 diff
+     * 鑾峰彇鎵€鏈夊緟澶勭悊鐨?diff
      */
     public getPendingDiffs(): PendingDiff[] {
         return Array.from(this.pendingDiffs.values()).filter(d => d.status === 'pending');
     }
 
     /**
-     * 检查是否所有 diff 都已处理
+     * 妫€鏌ユ槸鍚︽墍鏈?diff 閮藉凡澶勭悊
      */
     public areAllProcessed(): boolean {
         return this.getPendingDiffs().length === 0;
     }
-    
+
     /**
-     * 等待所有 diff 被处理
+     * 绛夊緟鎵€鏈?diff 琚鐞?
      */
     public waitForAllProcessed(): Promise<void> {
         return new Promise((resolve) => {
@@ -1425,48 +1576,141 @@ export class DiffManager {
                 resolve();
                 return;
             }
-            
+
             const listener: StatusChangeListener = (_pending, allProcessed) => {
                 if (allProcessed) {
                     this.removeStatusListener(listener);
                     resolve();
                 }
             };
-            
+
             this.addStatusListener(listener);
         });
     }
-    
+
     /**
-     * 标记用户中断（用户发送了新消息）
-     * 这会让所有等待中的工具立即返回
+     * 绛夊緟鎸囧畾 pending diff 缁撶畻銆?
+     * 缁熶竴鐘舵€佺洃鍚€佽疆璇€佺敤鎴蜂腑鏂笌 AbortSignal锛沘bort/user 涓柇閮戒細涓诲姩 reject 褰撳墠 diff 骞舵竻鐞嗚祫婧愶紝
+     * 閬垮厤鏂囦欢宸插鐞嗕絾宸ュ叿 Promise 浠嶆偓鎸傘€?
+     */
+    public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
+        return new Promise<DiffResolutionReason>((resolve) => {
+            let resolved = false;
+            let pollTimer: ReturnType<typeof setTimeout> | undefined;
+            let abortHandler: (() => void) | undefined;
+            let statusListener: StatusChangeListener | undefined;
+
+            const clearPollTimer = () => {
+                if (pollTimer) {
+                    clearTimeout(pollTimer);
+                    pollTimer = undefined;
+                }
+            };
+
+            const finish = (reason: DiffResolutionReason) => {
+                if (resolved) return;
+                resolved = true;
+                clearPollTimer();
+
+                if (statusListener) {
+                    this.removeStatusListener(statusListener);
+                    statusListener = undefined;
+                }
+
+                if (abortHandler && abortSignal) {
+                    try {
+                        abortSignal.removeEventListener('abort', abortHandler);
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                resolve(reason);
+            };
+
+            const rejectAndFinish = (reason: Exclude<DiffResolutionReason, 'none'>) => {
+                this.rejectDiff(id).catch(() => {});
+                finish(reason);
+            };
+
+            const scheduleNextCheck = () => {
+                if (resolved || pollTimer) return;
+                pollTimer = setTimeout(() => {
+                    pollTimer = undefined;
+                    checkStatus();
+                }, 100);
+            };
+
+            const checkStatus = () => {
+                if (resolved) return;
+
+                if (this.isUserInterrupted()) {
+                    rejectAndFinish('user');
+                    return;
+                }
+
+                const diff = this.getDiff(id);
+                if (!diff || diff.status !== 'pending') {
+                    finish('none');
+                    return;
+                }
+
+                scheduleNextCheck();
+            };
+
+            abortHandler = () => {
+                rejectAndFinish('abort');
+            };
+
+            if (abortSignal) {
+                if (abortSignal.aborted) {
+                    abortHandler();
+                    return;
+                }
+                abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
+            }
+
+            statusListener = () => {
+                checkStatus();
+            };
+            this.addStatusListener(statusListener);
+
+            // createPendingDiff 鍙兘鍦?autoApplyWithoutDiffView 鎴栧閮ㄥ彇娑堣矾寰勪腑宸插畬鎴愶紝
+            // 鎵€浠ユ敞鍐岀洃鍚悗绔嬪埢妫€鏌ヤ竴娆★紝閬垮厤閿欒繃杩斿洖鍓嶅彂鐢熺殑鐘舵€佸彉鍖栥€?
+            checkStatus();
+        });
+    }
+
+    /**
+     * 鏍囪鐢ㄦ埛涓柇锛堢敤鎴峰彂閫佷簡鏂版秷鎭級
+     * 杩欎細璁╂墍鏈夌瓑寰呬腑鐨勫伐鍏风珛鍗宠繑鍥?
      */
     public markUserInterrupt(): void {
         userInterruptFlag = true;
-        // 取消所有自动保存定时器
+        // 鍙栨秷鎵€鏈夎嚜鍔ㄤ繚瀛樺畾鏃跺櫒
         for (const timer of this.autoSaveTimers.values()) {
             clearTimeout(timer);
         }
         this.autoSaveTimers.clear();
     }
-    
+
     /**
-     * 重置用户中断标记
+     * 閲嶇疆鐢ㄦ埛涓柇鏍囪
      */
     public resetUserInterrupt(): void {
         userInterruptFlag = false;
     }
-    
+
     /**
-     * 检查是否被用户中断
+     * 妫€鏌ユ槸鍚﹁鐢ㄦ埛涓柇
      */
     public isUserInterrupted(): boolean {
         return userInterruptFlag;
     }
-    
+
     /**
-     * 取消所有待处理的 diff（标记为已取消）
-     * 用于用户发送新消息或删除消息时清理未确认的 diff
+     * 鍙栨秷鎵€鏈夊緟澶勭悊鐨?diff锛堟爣璁颁负宸插彇娑堬級
+     * 鐢ㄤ簬鐢ㄦ埛鍙戦€佹柊娑堟伅鎴栧垹闄ゆ秷鎭椂娓呯悊鏈‘璁ょ殑 diff
      */
     public async cancelAllPending(): Promise<{ cancelled: PendingDiff[] }> {
         const cancelled: PendingDiff[] = [];
@@ -1481,50 +1725,23 @@ export class DiffManager {
                 continue;
             }
 
-            // 1. 标记为拒绝（从 pending 列表中移除）
-            diff.status = 'rejected';
+            // 1. 鏍囪涓哄彇娑堬紙鍏紑 PendingDiff 鐘舵€佷粛鏄犲皠涓?rejected锛屼互淇濇寔鏃㈡湁 API/鍓嶇鍒ゆ柇涓嶅彉锛?
+            this.finalizeCancelledDiff(diff);
             cancelled.push({ ...diff });
 
-            // 2. 关闭 diff 编辑器标签页
+            // 2. 鍏抽棴 diff 缂栬緫鍣ㄦ爣绛鹃〉
             try {
                 await this.closeDiffTab(diff.absolutePath);
             } catch (err) {
                 console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
             }
 
-            // 3. 移除监听器
-            const saveListener = this.saveListeners.get(id);
-            if (saveListener) {
-                try {
-                    saveListener.dispose();
-                } catch {
-                    // ignore
-                }
-                this.saveListeners.delete(id);
-            }
-            const closeListener = this.closeListeners.get(id);
-            if (closeListener) {
-                try {
-                    closeListener.dispose();
-                } catch {
-                    // ignore
-                }
-                this.closeListeners.delete(id);
-            }
-
-            // 4. 清理资源（会自动移除 CodeLens 会话并通知状态变化）
-            try {
-                this.cleanup(id);
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to cleanup diff ${id}:`, err);
-            }
-
-            // 6. 尝试恢复文件到原始状态
+            // 6. 灏濊瘯鎭㈠鏂囦欢鍒板師濮嬬姸鎬?
             try {
                 const uri = vscode.Uri.file(diff.absolutePath);
                 const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
                 if (doc && doc.isDirty) {
-                    // 恢复到原始内容
+                    // 鎭㈠鍒板師濮嬪唴瀹?
                     const edit = new vscode.WorkspaceEdit();
                     const fullRange = new vscode.Range(
                         doc.positionAt(0),
@@ -1544,23 +1761,23 @@ export class DiffManager {
 
         return { cancelled };
     }
-    
+
     /**
-     * 获取指定 ID 的 diff
+     * 鑾峰彇鎸囧畾 ID 鐨?diff
      */
     public getDiff(id: string): PendingDiff | undefined {
         return this.pendingDiffs.get(id);
     }
-    
+
     /**
-     * 销毁管理器
+     * 閿€姣佺鐞嗗櫒
      */
     public dispose(): void {
         for (const timer of this.autoSaveTimers.values()) {
             clearTimeout(timer);
         }
         this.autoSaveTimers.clear();
-        
+
         for (const listener of this.saveListeners.values()) {
             listener.dispose();
         }
@@ -1570,39 +1787,44 @@ export class DiffManager {
             listener.dispose();
         }
         this.willSaveListeners.clear();
-        
+
         for (const listener of this.closeListeners.values()) {
             listener.dispose();
         }
         this.closeListeners.clear();
 
+        for (const session of this.diffSessions.values()) {
+            session.dispose();
+        }
+        this.diffSessions.clear();
+
         this.suppressedNonManualSaveDrafts.clear();
-        
+
         if (this.providerDisposable) {
             this.providerDisposable.dispose();
         }
-        
+
         DiffManager.instance = null;
     }
 }
 
 /**
- * 原始内容提供者 - 用于 diff 视图显示原始文件内容
+ * 鍘熷鍐呭鎻愪緵鑰?- 鐢ㄤ簬 diff 瑙嗗浘鏄剧ず鍘熷鏂囦欢鍐呭
  */
 class OriginalContentProvider implements vscode.TextDocumentContentProvider {
     private contents: Map<string, string> = new Map();
     private onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
-    
+
     public onDidChange = this.onDidChangeEmitter.event;
-    
+
     public setContent(id: string, content: string): void {
         this.contents.set(id, content);
     }
-    
+
     public removeContent(id: string): void {
         this.contents.delete(id);
     }
-    
+
     public provideTextDocumentContent(uri: vscode.Uri): string {
         const path = uri.path;
         const parts = path.split('/').filter(p => p.length > 0);
@@ -1612,7 +1834,7 @@ class OriginalContentProvider implements vscode.TextDocumentContentProvider {
 }
 
 /**
- * 获取 DiffManager 实例
+ * 鑾峰彇 DiffManager 瀹炰緥
  */
 export function getDiffManager(): DiffManager {
     return DiffManager.getInstance();

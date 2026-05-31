@@ -7,20 +7,22 @@
 
 import { ref, computed, watch, onUnmounted } from 'vue'
 import MessageActions from './MessageActions.vue'
-import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import MessageTaskCards from './MessageTaskCards.vue'
 import ResponseViewerDialog from './ResponseViewerDialog.vue'
+import MessageRenderBlock from './MessageRenderBlock.vue'
 import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../utils/toolRenderEntries'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
+import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
 
 const { t } = useI18n()
 
@@ -69,15 +71,6 @@ const isStreaming = computed(() => props.message.streaming === true)
 
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
-
-/**
- * 渲染块类型
- */
-interface RenderBlock {
-  type: 'text' | 'tool' | 'thought'
-  text?: string
-  tools?: ToolUsage[]
-}
 
 // 思考内容展开状态
 const isThoughtExpanded = ref(false)
@@ -166,7 +159,10 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentTextBlock.length > 0) {
       const text = currentTextBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'text', text })
+        // 修改原因：流式正文每个 delta 都会改变 text.length；把长度/正文片段写进 key 会让 Vue 销毁重建 MarkdownRenderer，触发闪烁。
+        // 修改方式：key 只表达结构身份（第几个 block + 类型），内容增长只通过 props 更新。
+        // 修改目的：让主聊天与 Monitor 的流式文本块都复用同一组件实例，保留旧 HTML 直到新 HTML 渲染完成。
+        blocks.push({ type: 'text', text, key: `${blocks.length}:text` })
       }
       currentTextBlock = []
     }
@@ -175,7 +171,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   // 辅助函数：刷新工具块
   const flushTools = () => {
     if (currentToolBlock.length > 0) {
-      blocks.push({ type: 'tool', tools: [...currentToolBlock] })
+      blocks.push({
+        type: 'tool',
+        tools: [...currentToolBlock],
+        key: `${blocks.length}:tool:${currentToolBlock.map(tool => tool.id).join('|')}`
+      })
       currentToolBlock = []
     }
   }
@@ -185,10 +185,35 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentThoughtBlock.length > 0) {
       const text = currentThoughtBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'thought', text })
+        // 修改原因：thought 与正文共享同一 RenderBlock 身份契约；思考内容增长也不应改变组件身份。
+        // 修改方式：移除 text.length/text.slice 这类内容派生 key，只保留结构位置和类型。
+        // 修改目的：避免展开思考块接入流式渲染后重现正文闪烁问题。
+        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought` })
       }
       currentThoughtBlock = []
     }
+  }
+
+  const upsertToolAcrossRenderedBlocks = (entry: ToolUsage) => {
+    const currentIndex = currentToolBlock.findIndex(tool => tool.id === entry.id)
+    if (currentIndex !== -1) {
+      upsertToolRenderEntry(currentToolBlock, entry)
+      return
+    }
+
+    for (const block of blocks) {
+      if (block.type !== 'tool' || !block.tools) continue
+      if (block.tools.some(tool => tool.id === entry.id)) {
+        // 为什么要跨 block 去重：流式快照/终结事件可能让同一逻辑工具的占位 part 和最终 part 中间夹着文本或思考片段，
+        // 只在当前连续工具块里 upsert 仍会渲染成两张工具卡。
+        // 怎么改：如果之前任意工具块里已经有同一 stable tool id，就更新那一项，不再创建新的工具块。
+        // 目的：等待执行、MCP 请求中、diff 自动确认倒计时等 pending 阶段都只显示一张最后工具卡。
+        upsertToolRenderEntry(block.tools, entry)
+        return
+      }
+    }
+
+    upsertToolRenderEntry(currentToolBlock, entry)
   }
   
   for (const part of parts) {
@@ -215,40 +240,29 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       flushText()
       flushThought()
       
-      // 从 message.tools 中查找对应的工具状态。
-      // 优先按 functionCall.id 匹配；若 part 里没有 id（某些模型/模式下会缺失），
-      // 回退到同序位工具，确保每条工具消息都能拿到稳定 toolId（用于 TODO 快照锚定）。
+      // 为什么工具渲染不再只按 functionCall.id 解析：pending 阶段可能同时存在临时占位 part 和最终 call_id part，
+      // 旧逻辑看到临时 id 后不会回退到 message.tools 的同序位真实工具，导致最后一个工具显示两次。
+      // 怎么改：统一通过 toolRenderEntries 按 id -> itemId -> index -> 序位解析，并对同一 stable id 做 upsert。
+      // 目的：让渲染层与流式合并层共享同一逻辑工具识别方式，pending/awaiting/complete 都只显示一张工具卡。
+      const renderTool = buildFunctionCallToolRenderEntry({
+        messageId: props.message.id,
+        functionCall: part.functionCall,
+        messageTools,
+        functionCallOrdinal
+      })
       const toolIdFromPart = typeof part.functionCall.id === 'string' ? part.functionCall.id : ''
-      let existingTool: ToolUsage | undefined
-      if (toolIdFromPart) {
-        existingTool = messageTools.find(t => t.id === toolIdFromPart)
-      } else if (functionCallOrdinal < messageTools.length) {
-        existingTool = messageTools[functionCallOrdinal]
-      }
-
-      const stableToolId =
-        toolIdFromPart ||
-        existingTool?.id ||
-        `${props.message.id}:tool:${functionCallOrdinal}`
       
-      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${stableToolId}`, {
+      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${renderTool.id}`, {
         messageId: props.message.id,
         messageBackendIndex: props.message.backendIndex,
         functionCallOrdinal,
         functionCallName: part.functionCall.name,
         functionCallIdFromPart: toolIdFromPart || null,
-        resolvedToolId: stableToolId,
-        existingToolId: existingTool?.id || null
+        resolvedToolId: renderTool.id,
+        existingToolId: renderTool.id || null
       })
 
-      currentToolBlock.push({
-        id: stableToolId,
-        name: part.functionCall.name,
-        args: part.functionCall.args,
-        partialArgs: part.functionCall.partialArgs,
-        status: existingTool?.status,
-        result: existingTool?.result
-      })
+      upsertToolAcrossRenderedBlocks(renderTool)
 
       functionCallOrdinal += 1
     }
@@ -513,6 +527,10 @@ const responseViewerData = computed(() => buildResponseViewerData(props.message,
   allMessages: chatStore.allMessages
 }))
 
+function toggleThought() {
+  isThoughtExpanded.value = !isThoughtExpanded.value
+}
+
 function handleRetry() {
   emit('retry', props.message.id)
 }
@@ -618,56 +636,25 @@ function handleRestoreAndRetry(checkpointId: string) {
         <div class="message-content">
         <!-- 有 parts 时渲染内容块（TODO 工具块会下沉到消息底部） -->
         <template v-if="renderBlocks.length > 0">
-          <template v-for="(block, index) in contentRenderBlocks" :key="index">
-            <!-- 思考块：可折叠显示 -->
-            <div v-if="block.type === 'thought'" class="thought-block">
-              <div
-                class="thought-header"
-                @click="isThoughtExpanded = !isThoughtExpanded"
-              >
-                <i class="codicon" :class="isThoughtExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
-                <i class="codicon codicon-lightbulb thought-icon" :class="{ 'thinking-pulse': isThinking }"></i>
-                <span class="thought-label">{{ isThinking ? t('components.message.thought.thinking') : t('components.message.thought.thoughtProcess') }}</span>
-                <span v-if="thinkingTimeDisplay" class="thought-time" :class="{ 'thinking-active': isThinking }">
-                  {{ thinkingTimeDisplay }}
-                </span>
-                <span v-if="!isThoughtExpanded" class="thought-preview">
-                  {{ (block.text || '').slice(0, 50) }}{{ (block.text || '').length > 50 ? '...' : '' }}
-                </span>
-              </div>
-              <div v-if="isThoughtExpanded" class="thought-content">
-                <MarkdownRenderer
-                  :content="block.text || ''"
-                  :latex-only="false"
-                  class="thought-text"
-                />
-              </div>
-            </div>
-            
-            <!-- 文本块：使用 MarkdownRenderer 渲染 -->
-            <!-- 用户消息仅渲染 LaTeX，助手消息渲染完整 Markdown -->
-            <!-- 用户消息如果有上下文块，使用解析后的内容 -->
-            <InlineContextMessage
-              v-else-if="block.type === 'text' && isUser && hasContextBlocks(block.text || '')"
-              :content="block.text || ''"
-            />
-
-            <MarkdownRenderer
-              v-else-if="block.type === 'text'"
-              :content="block.text || ''"
-              :latex-only="isUser"
-              :is-streaming="isStreaming"
-              class="content-text"
-            />
-            
-            <!-- 工具调用块 -->
-            <ToolMessage
-              :message-backend-index="message.backendIndex"
-              v-else-if="block.type === 'tool'"
-              class="tool-message-block"
-              :tools="block.tools!"
-            />
-          </template>
+          <!--
+            WP31 修复：v-memo 与 v-for 现在共处同一 MessageRenderBlock 组件元素上。
+            修改原因：Vue 官方明确警告 v-memo 不能放在 v-for 内部子节点上。
+            修改方式：通过组件提取 + 共享类型，让 v-memo 和 v-for 在同一元素。
+            修改目的：符合 Vue 官方语义，同时保持完成态消息不重渲染的优化不变。
+          -->
+          <MessageRenderBlock
+            v-for="block in contentRenderBlocks"
+            :key="getRenderBlockKey(block)"
+            :block="block"
+            :message-role="isUser ? 'user' : 'assistant'"
+            :message-backend-index="message.backendIndex"
+            :is-streaming="isStreaming"
+            :is-thought-expanded="isThoughtExpanded"
+            :is-thinking="isThinking"
+            :thinking-time-display="thinkingTimeDisplay"
+            :toggle-thought="toggleThought"
+            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay)"
+          />
         </template>
         
         <!-- 无 parts 但有 content 时：直接渲染 content -->

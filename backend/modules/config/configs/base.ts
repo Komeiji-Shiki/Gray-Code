@@ -326,11 +326,29 @@ export interface BaseChannelConfig {
     retryInterval?: number;
     
     /**
+     * 是否启用上下文管理总开关。
+     *
+     * 如果该字段存在，后端会以它作为权威入口；旧字段
+     * contextThresholdEnabled / autoSummarizeEnabled 仅作为兼容镜像。
+     * 如果该字段不存在，则继续按旧字段推导，兼容历史配置。
+     */
+    contextManagementEnabled?: boolean;
+
+    /**
+     * 上下文管理模式。
+     *
+     * trim 表示超过阈值时静默裁剪；summarize 表示超过阈值时先自动总结。
+     * 仅当 contextManagementEnabled 为 true 时生效。
+     */
+    contextManagementMode?: 'trim' | 'summarize';
+
+    /**
      * 是否启用上下文阈值检测
      *
      * 启用后，当总 token 数超过阈值时，自动舍弃最旧的对话回合
      *
      * 默认值：false
+     * @deprecated 推荐使用 contextManagementEnabled + contextManagementMode；该字段保留用于旧配置兼容。
      */
     contextThresholdEnabled?: boolean;
     
@@ -371,6 +389,7 @@ export interface BaseChannelConfig {
      * 启用后，在舍弃旧回合前先进行总结
      *
      * 默认值：false
+     * @deprecated 推荐使用 contextManagementEnabled + contextManagementMode；该字段保留用于旧配置兼容。
      */
     autoSummarizeEnabled?: boolean;
     

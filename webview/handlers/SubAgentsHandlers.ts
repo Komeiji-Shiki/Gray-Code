@@ -3,9 +3,31 @@
  */
 
 import { t } from '../../backend/i18n';
-import { subAgentRegistry, refreshSubAgentsTool } from '../../backend/tools/subagents';
+import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus } from '../../backend/tools/subagents';
+import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation/TranscriptMutation';
 import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
+
+const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
+
+function createRunMutationResponse(runId: string, anchorIndex?: number) {
+  const manifest = subAgentRunEventBus.getManifest(runId);
+  if (!manifest) return undefined;
+
+  let contentWindow = typeof anchorIndex === 'number'
+    ? subAgentRunEventBus.getContentWindow(runId, {
+      startIndex: Math.max(0, Math.floor(anchorIndex) - Math.floor(MUTATION_RESPONSE_WINDOW_LIMIT / 2)),
+      limit: MUTATION_RESPONSE_WINDOW_LIMIT,
+      fromTail: false
+    })
+    : undefined;
+
+  if (!contentWindow || contentWindow.contents.length === 0) {
+    contentWindow = subAgentRunEventBus.getContentWindow(runId, { limit: MUTATION_RESPONSE_WINDOW_LIMIT, fromTail: true });
+  }
+
+  return { success: true, manifest, window: contentWindow };
+}
 
 /**
  * 获取所有子代理列表和全局配置
@@ -16,8 +38,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const config = ctx.settingsManager.getSubAgentsConfig();
     const agents = config.agents || [];
     const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
+    const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -55,6 +78,8 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
       channel: data.channel || { channelId: '' },
       tools: data.tools || { mode: 'all' },
       maxIterations: data.maxIterations,
+      maxRuntime: data.maxRuntime,
+      failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
       enabled: data.enabled !== false
     };
     
@@ -195,6 +220,139 @@ export const setSubAgentEnabled: MessageHandler = async (data, requestId, ctx) =
   }
 };
 
+export const openSubAgentMonitor: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : undefined;
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+
+    if (!ctx.openSubAgentMonitor) {
+      ctx.sendError(requestId, 'SUBAGENT_MONITOR_UNAVAILABLE', 'SubAgent Monitor is not available in this context');
+      return;
+    }
+
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+
+    await ctx.openSubAgentMonitor(runId, conversationId);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'OPEN_SUBAGENT_MONITOR_ERROR', error.message || 'Failed to open SubAgent Monitor');
+  }
+};
+
+export const pauseRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    const success = subAgentRunController.pause(runId);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_ERROR', error.message || 'Failed to pause SubAgent run');
+  }
+};
+
+export const resumeRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    const success = subAgentRunController.resume(runId);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_ERROR', error.message || 'Failed to resume SubAgent run');
+  }
+};
+
+export const exitRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    const reason = typeof data?.reason === 'string' && data.reason.trim()
+      ? data.reason.trim()
+      : '用户主动终止 SubAgent 执行';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    const success = subAgentRunController.exit(runId, reason);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_ERROR', error.message || 'Failed to exit SubAgent run');
+  }
+};
+
+export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : '';
+    const contentIndex = Number(data?.contentIndex);
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+
+    if (!runId || !Number.isFinite(contentIndex)) {
+      ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+      return;
+    }
+
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
+    if (!snapshot) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+
+    const response = createRunMutationResponse(runId, contentIndex);
+    if (!response) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+    ctx.sendResponse(requestId, response);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_ERROR', error.message || 'Failed to delete SubAgent message');
+  }
+};
+
+export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : '';
+    const contentIndex = Number(data?.contentIndex);
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+
+    if (!runId || !Number.isFinite(contentIndex)) {
+      ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+      return;
+    }
+
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
+    if (!snapshot) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+
+    const response = createRunMutationResponse(runId, contentIndex);
+    if (!response) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+    ctx.sendResponse(requestId, response);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_ERROR', error.message || 'Failed to retry SubAgent message');
+  }
+};
+
 /**
  * 更新全局配置（maxConcurrentAgents 等）
  */
@@ -205,6 +363,10 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
     // 支持的全局配置字段
     if (data.maxConcurrentAgents !== undefined) {
       updates.maxConcurrentAgents = data.maxConcurrentAgents;
+    }
+
+    if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {
+      updates.failureModeAfterRetries = data.failureModeAfterRetries;
     }
     
     if (Object.keys(updates).length > 0) {
@@ -251,4 +413,10 @@ export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>)
   registry.set('subagents.delete', deleteSubAgent);
   registry.set('subagents.setEnabled', setSubAgentEnabled);
   registry.set('subagents.updateGlobalConfig', updateGlobalConfig);
+  registry.set('subagents.openMonitor', openSubAgentMonitor);
+  registry.set('subagents.pauseRun', pauseRun);
+  registry.set('subagents.resumeRun', resumeRun);
+  registry.set('subagents.exitRun', exitRun);
+  registry.set('subagents.deleteRunMessage', deleteRunMessage);
+  registry.set('subagents.retryRunFromMessage', retryRunFromMessage);
 }

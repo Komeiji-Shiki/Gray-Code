@@ -34,6 +34,24 @@ export interface GenerateRequest {
     
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 单次请求专用重试状态回调。
+     *
+     * 修改原因：SubAgent 内部自动重试状态需要显示在 Monitor，但不能污染主窗口全局 retryStatus UI。
+     * 修改方式：在 GenerateRequest 上增加局部 retryStatusCallback；ChannelManager 优先使用它，否则再使用全局回调。
+     * 修改目的：Provider 自动重试仍由 ChannelManager 统一负责，同时允许调用方自定义重试状态路由。
+     */
+    retryStatusCallback?: (status: {
+        type: 'retrying' | 'retrySuccess' | 'retryFailed';
+        attempt: number;
+        maxAttempts: number;
+        error?: string;
+        errorDetails?: any;
+        nextRetryIn?: number;
+        createdAt: number;
+        conversationId?: string;
+    }) => void;
     
     /**
      * 动态系统提示词（可选）
@@ -123,10 +141,11 @@ export interface GenerateRequest {
     suppressRetryNotification?: boolean;
     
     /**
-     * 对话 ID（可选，仅用于重试通知标识）
+     * 对话 ID（可选）
      *
      * 如果提供，重试状态回调会携带该 ID，便于前端按对话隔离重试状态。
-     * 渠道层本身不使用该字段。
+     * OpenAI 兼容渠道启用 deepSeekUserIdEnabled 时，会基于该 ID 生成稳定 user_id，
+     * 用于 DeepSeek 同一对话内的 KVCache 隔离；未传入时不会生成 provider 侧 user_id。
      */
     conversationId?: string;
 
@@ -214,6 +233,22 @@ export interface StreamChunk {
     
     /** 模型版本（仅最后一个块包含） */
     modelVersion?: string;
+
+    /**
+     * Provider 原生事件的轻量语义。
+     *
+     * 修改原因：OpenAI Responses 等 provider 会把文本、reasoning、工具参数和结构完成拆成不同事件，旧协议只剩 delta 后无法判断哪些事件属于高频热路径。
+     * 修改方式：在兼容的 StreamChunk 上补充 providerEvent 元数据，只记录路由和合并所需的轻量字段，不让前端依赖 provider 私有 payload。
+     * 修改目的：StreamResponseProcessor 可以按语义决定 delta 还是 snapshot，避免每个 tool args delta 都重建完整 Content。
+     */
+    providerEvent?: {
+        type: string;
+        outputIndex?: number;
+        contentIndex?: number;
+        itemId?: string;
+        callId?: string;
+        isFinalArgs?: boolean;
+    };
 
     /**
      * 当前已经归一化的内容快照

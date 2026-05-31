@@ -38,6 +38,7 @@ import type { Content } from '../../modules/conversation/types';
 import type { HistorySearchToolConfig } from '../../modules/settings/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
+import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp } from '../utils';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───
 
@@ -201,15 +202,59 @@ function addLineNumbers(lines: string[], startLine: number = 1, truncateLong: bo
 
 // ─── 模式实现 ───────────────────────────────────────────
 
+function splitKeywordQuery(query: string): string[] {
+    return Array.from(new Set(query.trim().split(/\s+/).filter(Boolean)));
+}
+
+function collectMatchingLineIndices(
+    docLines: string[],
+    maxMatches: number,
+    testLine: (line: string) => boolean
+): number[] {
+    const matchLineIndices: number[] = [];
+    for (let i = 0; i < docLines.length; i++) {
+        if (testLine(docLines[i])) {
+            matchLineIndices.push(i);
+            if (matchLineIndices.length >= maxMatches) break;
+        }
+    }
+    return matchLineIndices;
+}
+
 /**
  * search 模式：关键词搜索，返回匹配行号和上下文
  */
 function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: RuntimeConfig): ToolResult {
-    let pattern: RegExp;
+    let keywordFallbackTerms: string[] = [];
+    let matchLineIndices: number[] = [];
     try {
-        pattern = isRegex
-            ? new RegExp(query, 'gi')
-            : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        if (isRegex) {
+            const pattern = new RegExp(query, 'gi');
+            matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                pattern.lastIndex = 0;
+                return pattern.test(line);
+            });
+        } else {
+            const exactPattern = new RegExp(escapeRegExp(query), 'gi');
+            matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                exactPattern.lastIndex = 0;
+                return exactPattern.test(line);
+            });
+
+            const keywordTerms = splitKeywordQuery(query);
+            if (matchLineIndices.length === 0 && keywordTerms.length > 1) {
+                const keywordPatterns = keywordTerms.map(term => new RegExp(escapeRegExp(term), 'gi'));
+                matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                    return keywordPatterns.some(pattern => {
+                        pattern.lastIndex = 0;
+                        return pattern.test(line);
+                    });
+                });
+                if (matchLineIndices.length > 0) {
+                    keywordFallbackTerms = keywordTerms;
+                }
+            }
+        }
     } catch (e: any) {
         return {
             success: false,
@@ -217,20 +262,21 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
         };
     }
 
-    // 找出所有匹配行
-    const matchLineIndices: number[] = [];
-    for (let i = 0; i < docLines.length; i++) {
-        pattern.lastIndex = 0;
-        if (pattern.test(docLines[i])) {
-            matchLineIndices.push(i);
-            if (matchLineIndices.length >= cfg.maxSearchMatches) break;
-        }
-    }
-
     if (matchLineIndices.length === 0) {
+        const noMatchesMessage = t('tools.history.noMatchesFound', { query, totalLines: docLines.length });
+        if (!isRegex) {
+            const regexIntent = detectSuspectedRegexIntent(query);
+            if (regexIntent.suspected) {
+                return {
+                    success: true,
+                    data: `${noMatchesMessage}\n\n[suspected_regex] ${createSuspectedRegexSuggestion(regexIntent.signals, 'is_regex')}`
+                };
+            }
+        }
+
         return {
             success: true,
-            data: t('tools.history.noMatchesFound', { query, totalLines: docLines.length })
+            data: noMatchesMessage
         };
     }
 
@@ -241,6 +287,11 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
         query,
         totalLines: docLines.length
     }));
+    if (keywordFallbackTerms.length > 0) {
+        resultParts.push(t('tools.history.keywordFallbackNotice', {
+            terms: keywordFallbackTerms.join(', ')
+        }));
+    }
     resultParts.push('');
 
     // 合并相邻的上下文范围，避免重复输出
@@ -379,19 +430,19 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                 },
                 query: {
                     type: 'string',
-                    description: '[search mode] Search keyword or regex pattern'
+                    description: '[search mode] Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set is_regex=true. Search results are locators with context, not complete history content.'
                 },
                 is_regex: {
                     type: 'boolean',
-                    description: '[search mode] Whether to treat query as a regular expression. Default: false'
+                    description: '[search mode] Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally.'
                 },
                 start_line: {
                     type: 'number',
-                    description: '[read mode] Start line number (1-based, inclusive)'
+                    description: '[read mode] Start line number from the virtual history document (1-based, inclusive). Use snake_case start_line, not read_file-style startLine.'
                 },
                 end_line: {
                     type: 'number',
-                    description: '[read mode] End line number (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read.'
+                    description: '[read mode] End line number from the virtual history document (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read. For one complete long line, set end_line equal to start_line.'
                 }
             },
             required: ['mode']
@@ -402,13 +453,15 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
         get() {
             const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
             const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
-            return `Search and read conversation history. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
+            return `Search and read conversation history, not workspace files. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
+                `Use this tool for earlier chat turns, previous tool calls, tool results, and user decisions; use search_in_files or find_files for repository files. ` +
                 `The history is formatted as a virtual document with line numbers. ` +
+                `The line number markers are for navigation and are not part of the original message body. ` +
                 `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══". ` +
                 `Two modes:\n` +
-                `"search" — find keywords/regex in history, returns matching line numbers and context (like search_in_files). ` +
-                `"read" — read specific line range from the formatted history (like read_file with startLine/endLine, max ${MAX_READ_LINES} lines per read). ` +
-                `Typical workflow: use search to locate relevant lines, then use read to get the full content around those lines.\n` +
+                `"search" — find keywords/regex in history and return matching line numbers with context. Search output is a locator, not the full content. If the query uses regex syntax, set is_regex=true; otherwise those characters are treated literally. ` +
+                `"read" — read a specific line range from the formatted history using start_line/end_line (snake_case, max ${MAX_READ_LINES} lines per read). Do not use read_file-style startLine/endLine here. ` +
+                `Typical workflow: use search to locate relevant lines, then use read to get the complete content around those lines or an entire round range from the round header.\n` +
                 `Tip: to get the full content of a single long line (e.g. a tool response), use read with start_line=N end_line=N — single-line reads are never truncated.`;
         },
         enumerable: true

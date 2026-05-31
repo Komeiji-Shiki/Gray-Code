@@ -40,6 +40,7 @@ const pathList = computed(() => {
 interface Entry {
   name: string
   type: 'file' | 'directory'
+  lineCount?: number
 }
 
 // 单个目录的结果
@@ -213,10 +214,21 @@ function getEntryIcon(entry: Entry): string {
   return iconMap[ext] || 'codicon-file'
 }
 
+function formatEntryLineCount(entry: Entry): string {
+  return typeof entry.lineCount === 'number'
+    ? t('components.tools.file.listFilesPanel.lines', { count: entry.lineCount })
+    : ''
+}
+
+function formatEntryForCopy(entry: Entry): string {
+  const lineCount = formatEntryLineCount(entry)
+  return lineCount ? `${entry.name} (${lineCount})` : entry.name
+}
+
 // 复制单个目录的条目列表
 async function copyDirEntries(result: ListResult) {
   try {
-    await navigator.clipboard.writeText(result.entries.map(e => e.name).join('\n'))
+    await navigator.clipboard.writeText(result.entries.map(formatEntryForCopy).join('\n'))
   } catch (err) {
     console.error('复制失败:', err)
   }
@@ -225,7 +237,7 @@ async function copyDirEntries(result: ListResult) {
 // 复制所有条目列表
 async function copyAllEntries() {
   try {
-    const allEntries = listResults.value.flatMap(r => r.entries.map(e => e.name))
+    const allEntries = listResults.value.flatMap(r => r.entries.map(formatEntryForCopy))
     await navigator.clipboard.writeText(allEntries.join('\n'))
   } catch (err) {
     console.error('复制失败:', err)
@@ -295,6 +307,7 @@ async function copyAllEntries() {
           >
             <span :class="['file-icon', 'codicon', getEntryIcon(entry)]"></span>
             <span class="file-path">{{ entry.name }}</span>
+            <span v-if="formatEntryLineCount(entry)" class="line-count-badge">{{ formatEntryLineCount(entry) }}</span>
           </div>
           
           <!-- 展开/收起按钮 -->
@@ -500,6 +513,7 @@ async function copyAllEntries() {
   padding: 2px var(--spacing-sm, 8px);
   background: var(--vscode-editor-background);
   transition: background-color var(--transition-fast, 0.1s);
+  min-width: 0;
 }
 
 .file-item:hover {
@@ -527,6 +541,18 @@ async function copyAllEntries() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.line-count-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
 }
 
 /* 展开区域 */

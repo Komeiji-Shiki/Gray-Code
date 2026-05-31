@@ -633,6 +633,9 @@ export class SettingsManager {
             ...oldConfig,
             ...config
         };
+        if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
+            newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
+        }
         
         if (!this.settings.toolsConfig) {
             this.settings.toolsConfig = {};
@@ -2349,7 +2352,10 @@ export class SettingsManager {
      * 获取子代理配置
      */
     getSubAgentsConfig(): SubAgentsConfig {
-        return this.settings.toolsConfig?.subagents || DEFAULT_SUBAGENTS_CONFIG;
+        return {
+            ...DEFAULT_SUBAGENTS_CONFIG,
+            ...(this.settings.toolsConfig?.subagents || {})
+        };
     }
     
     /**

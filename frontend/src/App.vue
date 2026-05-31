@@ -13,6 +13,7 @@ import { HistoryPage } from './components/history'
 import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
+import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage } from './i18n'
@@ -25,6 +26,9 @@ import { createAgentStopNotificationController, type AgentStopNotificationContro
 
 // i18n
 const { t } = useI18n()
+
+// SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
+const isSubAgentMonitor = (window as any).__LIMCODE_VIEW_MODE === 'subagentMonitor'
 
 // 语言是否已加载
 const languageLoaded = ref(false)
@@ -382,6 +386,11 @@ async function loadLanguageSettings() {
 
 // 组件挂载
 onMounted(async () => {
+  if (isSubAgentMonitor) {
+    console.log('LimCode SubAgent Monitor 已加载')
+    return
+  }
+
   console.log('LimCode Chat 已加载')
   
   // Notify the extension that the webview is ready to receive command messages.
@@ -481,7 +490,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-container">
+  <SubAgentMonitor v-if="isSubAgentMonitor" />
+  <div v-else class="app-container">
     <!-- 等待语言加载完成 -->
     <template v-if="!languageLoaded">
       <div class="loading-container">

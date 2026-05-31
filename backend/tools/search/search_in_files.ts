@@ -9,7 +9,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF } from '../utils';
+import {
+    getWorkspaceRoot,
+    getAllWorkspaces,
+    parseWorkspacePath,
+    toRelativePath,
+    normalizeLineEndingsToLF,
+    escapeRegExp,
+    detectSuspectedRegexIntent,
+    createSuspectedRegexSuggestion
+} from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
@@ -50,11 +59,26 @@ function getExcludePattern(): string {
     return DEFAULT_EXCLUDE;
 }
 
-/**
- * 转义正则特殊字符
- */
-function escapeRegex(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function splitWhitespaceFallbackKeywords(query: string): string[] {
+    const seen = new Set<string>();
+    const keywords: string[] = [];
+
+    for (const rawKeyword of query.trim().split(/\s+/)) {
+        const keyword = rawKeyword.trim();
+        if (!keyword) continue;
+
+        const dedupeKey = keyword.toLocaleLowerCase();
+        if (seen.has(dedupeKey)) continue;
+
+        seen.add(dedupeKey);
+        keywords.push(keyword);
+    }
+
+    return keywords.length > 1 ? keywords : [];
+}
+
+function createFallbackKeywordRegex(keywords: string[], flags: string): RegExp {
+    return new RegExp(keywords.map(escapeRegExp).join('|'), flags);
 }
 
 /**
@@ -78,6 +102,8 @@ interface ReplaceResult {
     replacements: number;
     status?: 'accepted' | 'rejected' | 'pending';
     diffContentId?: string;
+    /** 自动保存失败原因；用于让 search/replace 的文件级结果解释 rejected 的真实原因 */
+    autoSaveError?: string;
     /** Pending diff ID，用于确认/拒绝 */
     pendingDiffId?: string;
 }
@@ -97,6 +123,27 @@ interface TextDetectionResult {
 interface SearchBudget {
     remainingChars: number;
     truncated: boolean;
+}
+
+interface SearchPassResult {
+    results: SearchMatch[];
+    budgetTruncated: boolean;
+}
+
+interface SearchQueryFallbackInfo {
+    applied: boolean;
+    originalQuery: string;
+    keywords: string[];
+    reason?: 'whitespace_keyword_or' | 'suspected_regex';
+    suggestion?: string;
+    signals?: string[];
+}
+
+interface SearchPathWarningInfo {
+    type: 'possible_multiple_paths';
+    path: string;
+    candidates: string[];
+    message: string;
 }
 
 function clampNonNegativeNumber(value: unknown, fallback: number): number {
@@ -576,54 +623,7 @@ async function searchAndReplaceInDirectory(
                     toolId
                 );
 
-                // 等待 diff 被处理（保存或拒绝）或用户中断/取消
-                const interruptReason = await new Promise<'none' | 'abort' | 'user'>((resolve) => {
-                    let resolved = false;
-                    let abortHandler: (() => void) | undefined;
-
-                    const finish = (reason: 'none' | 'abort' | 'user') => {
-                        if (resolved) return;
-                        resolved = true;
-                        if (abortHandler && abortSignal) {
-                            try {
-                                abortSignal.removeEventListener('abort', abortHandler);
-                            } catch {
-                                // ignore
-                            }
-                        }
-                        resolve(reason);
-                    };
-
-                    abortHandler = () => {
-                        diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                        finish('abort');
-                    };
-
-                    if (abortSignal) {
-                        if (abortSignal.aborted) {
-                            abortHandler();
-                            return;
-                        }
-                        abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-                    }
-
-                    const checkStatus = () => {
-                        // 检查用户中断
-                        if (diffManager.isUserInterrupted()) {
-                            diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                            finish('user');
-                            return;
-                        }
-
-                        const diff = diffManager.getDiff(pendingDiff.id);
-                        if (!diff || diff.status !== 'pending') {
-                            finish('none');
-                        } else {
-                            setTimeout(checkStatus, 100);
-                        }
-                    };
-                    checkStatus();
-                });
+                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
                 const wasInterrupted = interruptReason !== 'none';
                 if (wasInterrupted) {
@@ -632,6 +632,7 @@ async function searchAndReplaceInDirectory(
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+                const autoSaveError = finalDiff?.autoSaveError;
 
                 // 取消/中断视为 rejected，避免前端继续显示 waiting
                 status = wasAccepted ? 'accepted' : 'rejected';
@@ -658,6 +659,7 @@ async function searchAndReplaceInDirectory(
                     replacements: fileReplacementCount,
                     status,
                     diffContentId,
+                    autoSaveError,
                     pendingDiffId
                 });
             }
@@ -722,6 +724,30 @@ async function getSearchRootAndPattern(
     };
 }
 
+function createPossibleMultiplePathsWarning(searchPath: string): SearchPathWarningInfo | undefined {
+    const normalized = (searchPath || '').trim();
+    if (!normalized || normalized === '.') {
+        return undefined;
+    }
+
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+        return undefined;
+    }
+
+    const pathLikeParts = parts.filter(part => part.includes('/') || part.includes('\\') || part.startsWith('@'));
+    if (pathLikeParts.length < 2) {
+        return undefined;
+    }
+
+    return {
+        type: 'possible_multiple_paths',
+        path: searchPath,
+        candidates: parts,
+        message: `The path parameter accepts exactly one file or directory. The supplied path looks like multiple whitespace-separated paths (${parts.join(', ')}). Run separate parallel search_in_files calls for each path instead of putting them in one path string.`
+    };
+}
+
 /**
  * 创建搜索文件内容工具
  */
@@ -754,7 +780,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     query: {
                         type: 'string',
-                        description: 'Search keyword or regular expression'
+                        description: 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and may retry space-separated keywords when isRegex=false.'
                     },
                     path: {
                         type: 'string',
@@ -768,7 +794,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     isRegex: {
                         type: 'boolean',
-                        description: 'Whether to treat query as a regular expression',
+                        description: 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
                         default: false
                     },
                     maxResults: {
@@ -822,7 +848,7 @@ export function createSearchInFilesTool(): Tool {
                 const flags = isReplaceMode ? 'g' : 'gim';
                 const searchRegex = isRegex
                     ? new RegExp(query, flags)
-                    : new RegExp(escapeRegex(query), flags);
+                    : new RegExp(escapeRegExp(query), flags);
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
@@ -834,6 +860,7 @@ export function createSearchInFilesTool(): Tool {
                 
                 // 解析路径，确定搜索范围
                 const { workspace: targetWorkspace, relativePath, isExplicit } = parseWorkspacePath(searchPath);
+                const pathWarning = createPossibleMultiplePathsWarning(searchPath);
                 
                 if (isReplaceMode) {
                     // 替换模式
@@ -935,13 +962,13 @@ export function createSearchInFilesTool(): Tool {
                             results: allReplacements,
                             filesModified: allReplacements.length,
                             totalReplacements,
-                            multiRoot: workspaces.length > 1
+                            multiRoot: workspaces.length > 1,
+                            pathWarning: allMatches.length === 0 && allReplacements.length === 0 ? pathWarning : undefined
                         },
                         error: anyCancelled ? 'Search/replace was cancelled by user' : undefined
                     };
                 } else {
                     // 仅搜索模式
-                    let allResults: SearchMatch[] = [];
                     const configuredMaxTotal = searchConfig.maxTotalResultChars;
                     const maxTotalChars = (typeof configuredMaxTotal === 'number' && Number.isFinite(configuredMaxTotal))
                         ? Math.floor(configuredMaxTotal)
@@ -950,60 +977,100 @@ export function createSearchInFilesTool(): Tool {
                         ? { remainingChars: maxTotalChars, truncated: false }
                         : undefined;
                     
-                    if (isExplicit && targetWorkspace) {
-                        // 显式指定了工作区，只搜索该工作区
-                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
-                            targetWorkspace.uri,
-                            relativePath,
-                            filePattern
-                        );
-                        allResults = await searchInDirectory(
-                            searchRoot,
-                            effectivePattern,
-                            searchRegex,
-                            maxResults,
-                            workspaces.length > 1 ? targetWorkspace.name : null,
-                            excludePattern,
-                            searchConfig,
-                            budget
-                        );
-                    } else if (searchPath === '.' && workspaces.length > 1) {
-                        // 搜索所有工作区
-                        for (const ws of workspaces) {
-                            if (allResults.length >= maxResults) break;
-                            if (budget && budget.remainingChars <= 0) break;
-                            
-                            const remaining = maxResults - allResults.length;
-                            const wsResults = await searchInDirectory(
-                                ws.uri,
-                                filePattern,
-                                searchRegex,
-                                remaining,
-                                ws.name,
+                    const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
+                        const results: SearchMatch[] = [];
+
+                        if (isExplicit && targetWorkspace) {
+                            // 显式指定了工作区，只搜索该工作区
+                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                                targetWorkspace.uri,
+                                relativePath,
+                                filePattern
+                            );
+                            results.push(...await searchInDirectory(
+                                searchRoot,
+                                effectivePattern,
+                                regex,
+                                maxResults,
+                                workspaces.length > 1 ? targetWorkspace.name : null,
                                 excludePattern,
                                 searchConfig,
                                 budget
+                            ));
+                        } else if (searchPath === '.' && workspaces.length > 1) {
+                            // 搜索所有工作区
+                            for (const ws of workspaces) {
+                                if (results.length >= maxResults) break;
+                                if (budget && budget.remainingChars <= 0) break;
+
+                                const remaining = maxResults - results.length;
+                                const wsResults = await searchInDirectory(
+                                    ws.uri,
+                                    filePattern,
+                                    regex,
+                                    remaining,
+                                    ws.name,
+                                    excludePattern,
+                                    searchConfig,
+                                    budget
+                                );
+                                results.push(...wsResults);
+                            }
+                        } else {
+                            // 单工作区或未指定，使用默认
+                            const root = targetWorkspace?.uri || workspaces[0].uri;
+                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                                root,
+                                relativePath,
+                                filePattern
                             );
-                            allResults.push(...wsResults);
+                            results.push(...await searchInDirectory(
+                                searchRoot,
+                                effectivePattern,
+                                regex,
+                                maxResults,
+                                workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
+                                excludePattern,
+                                searchConfig,
+                                budget
+                            ));
                         }
-                    } else {
-                        // 单工作区或未指定，使用默认
-                        const root = targetWorkspace?.uri || workspaces[0].uri;
-                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
-                            root,
-                            relativePath,
-                            filePattern
-                        );
-                        allResults = await searchInDirectory(
-                            searchRoot,
-                            effectivePattern,
-                            searchRegex,
-                            maxResults,
-                            workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
-                            excludePattern,
-                            searchConfig,
-                            budget
-                        );
+
+                        return {
+                            results,
+                            budgetTruncated: !!budget?.truncated
+                        };
+                    };
+
+                    let searchPass = await runSearchPass(searchRegex);
+                    let allResults = searchPass.results;
+                    let fallbackInfo: SearchQueryFallbackInfo | undefined;
+
+                    const fallbackKeywords = !isRegex ? splitWhitespaceFallbackKeywords(query) : [];
+                    if (allResults.length === 0 && !searchPass.budgetTruncated && fallbackKeywords.length > 0) {
+                        const fallbackRegex = createFallbackKeywordRegex(fallbackKeywords, flags);
+                        searchPass = await runSearchPass(fallbackRegex);
+                        allResults = searchPass.results;
+                        fallbackInfo = {
+                            applied: true,
+                            originalQuery: query,
+                            keywords: fallbackKeywords,
+                            reason: 'whitespace_keyword_or'
+                        };
+                    }
+
+                    if (allResults.length === 0 && !searchPass.budgetTruncated && !isRegex) {
+                        const regexIntent = detectSuspectedRegexIntent(query);
+                        if (regexIntent.suspected) {
+                            fallbackInfo = {
+                                applied: false,
+                                originalQuery: query,
+                                keywords: [],
+                                reason: 'suspected_regex',
+                                signals: regexIntent.signals,
+                                suggestion: createSuspectedRegexSuggestion(regexIntent.signals)
+                            };
+                        }
                     }
 
                     return {
@@ -1011,8 +1078,10 @@ export function createSearchInFilesTool(): Tool {
                         data: {
                             results: allResults,
                             count: allResults.length,
-                            truncated: allResults.length >= maxResults || !!budget?.truncated,
-                            multiRoot: workspaces.length > 1
+                            truncated: allResults.length >= maxResults || searchPass.budgetTruncated,
+                            multiRoot: workspaces.length > 1,
+                            queryFallback: fallbackInfo,
+                            pathWarning: allResults.length === 0 ? pathWarning : undefined
                         }
                     };
                 }

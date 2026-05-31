@@ -16,6 +16,7 @@ import type { DependencyManager } from '../backend/modules/dependencies';
 import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import type { WebviewClientId } from './runtime/WebviewClientRegistry';
 
 /**
  * 消息处理器上下文
@@ -25,6 +26,7 @@ export interface HandlerContext {
   // VSCode 上下文
   context?: vscode.ExtensionContext;
   view?: vscode.WebviewView | undefined;
+  clientId?: WebviewClientId;
   
   // 后端模块
   configManager: ConfigManager;
@@ -52,6 +54,7 @@ export interface HandlerContext {
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
   postMessage?: (message: any) => void;
+  openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
   
   // 工具函数
   getCurrentWorkspaceUri?: () => string | null;

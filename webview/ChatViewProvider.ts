@@ -39,9 +39,12 @@ import {
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
 import { MessageRouter } from './MessageRouter';
+import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
+import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 
 /**
  * Diff 预览内容提供者
@@ -99,6 +102,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private diffStorageManager!: DiffStorageManager;
     private conversationStorageAdapter?: FileSystemStorageAdapter;
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
+    private subAgentMonitorPanel?: SubAgentMonitorPanel;
+    private mainChatClientDisposable?: vscode.Disposable;
+    private readonly webviewClientRegistry = new WebviewClientRegistry();
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -320,7 +326,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             channelManager: this.channelManager,
             toolRegistry: toolRegistry,
             mcpManager: this.mcpManager,
-            settingsManager: this.settingsManager
+            settingsManager: this.settingsManager,
+            configManager: this.configManager,
+            toolExecutionService: this.chatHandler.getToolExecutionService()
         });
         
         // 26. 初始化依赖管理器（使用自定义路径）
@@ -347,11 +355,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.settingsManager,
             () => this._view,
             this.sendResponse.bind(this),
-            this.sendError.bind(this)
+            this.sendError.bind(this),
+            this.webviewClientRegistry
         );
         
         // 30. 初始化子代理（从持久化存储加载）
         this.initializeSubAgents();
+
+        this.subAgentMonitorPanel = new SubAgentMonitorPanel(
+            this.context,
+            this.webviewDevServerUrl,
+            this.routeSubAgentMonitorMessage.bind(this),
+            this.registerWebviewClient.bind(this),
+            this.conversationManager
+        );
         
         console.log('LimCode backend initialized with global context');
         console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
@@ -404,12 +421,96 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             data: event
         });
     }
+
+    private openSubAgentMonitor(runId?: string, conversationId?: string): void {
+        if (!this.subAgentMonitorPanel) {
+            this.subAgentMonitorPanel = new SubAgentMonitorPanel(
+                this.context,
+                this.webviewDevServerUrl,
+                this.routeSubAgentMonitorMessage.bind(this),
+                this.registerWebviewClient.bind(this),
+                this.conversationManager
+            );
+        }
+
+        this.subAgentMonitorPanel.open(runId, conversationId);
+    }
+
+    private normalizeClientId(clientId: unknown, fallback: string): string {
+        return typeof clientId === 'string' && clientId.trim() ? clientId.trim() : fallback;
+    }
+
+    private postRoutedWebviewMessage(clientId: string, message: Record<string, any>, fallbackWebview?: vscode.Webview): void {
+        const routedMessage = { ...message, clientId };
+        if (this.webviewClientRegistry.postMessage(clientId, routedMessage)) {
+            return;
+        }
+        fallbackWebview?.postMessage(routedMessage);
+    }
+
+    private registerWebviewClient(clientId: string, webview: vscode.Webview, runScope?: RunScope): vscode.Disposable {
+        return this.webviewClientRegistry.register({
+            clientId,
+            runScope,
+            webviewHost: { webview },
+            postMessage: (message) => webview.postMessage(message)
+        });
+    }
+
+    private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
+        await this.initPromise;
+
+        const { type, data, clientId } = message || {};
+        const requestId = typeof message?.requestId === 'string' ? message.requestId : '';
+        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.subagentMonitor);
+
+        const sendResponse = (id: string, responseData: any) => {
+            this.postRoutedWebviewMessage(routedClientId, {
+                type: 'response',
+                requestId: id,
+                success: true,
+                data: responseData
+            }, webview);
+        };
+
+        const sendError = (id: string, code: string, errorMessage: string) => {
+            this.postRoutedWebviewMessage(routedClientId, {
+                type: 'error',
+                requestId: id,
+                success: false,
+                error: {
+                    code,
+                    message: errorMessage
+                }
+            }, webview);
+        };
+
+        const ctx: HandlerContext = {
+            ...this.createHandlerContext(requestId),
+            clientId: routedClientId,
+            view: undefined,
+            sendResponse,
+            sendError,
+            postMessage: (outgoing: any) => {
+                this.postRoutedWebviewMessage(routedClientId, outgoing, webview);
+            },
+            openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
+        };
+
+        try {
+            return await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
+        } catch (error: any) {
+            sendError(requestId, error.code || 'HANDLER_ERROR', error.message || String(error));
+            return true;
+        }
+    }
     
     /**
      * 初始化子代理（从持久化存储加载到内存 registry）
      */
     private initializeSubAgents(): void {
         const ctx: HandlerContext = {
+            clientId: WEBVIEW_CLIENT_IDS.mainChat,
             settingsManager: this.settingsManager,
             configManager: this.configManager,
             channelManager: this.channelManager,
@@ -425,8 +526,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             postMessage: (message: any) => {
-                this._view?.webview.postMessage(message);
-            }
+                this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, message, this._view?.webview);
+            },
+            openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
         
         initializeSubAgentsFromSettings(ctx);
@@ -530,6 +632,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ) {
         this._view = webviewView;
         this.webviewReady = false;
+        this.mainChatClientDisposable?.dispose();
+        this.mainChatClientDisposable = this.registerWebviewClient(WEBVIEW_CLIENT_IDS.mainChat, webviewView.webview, {
+            type: 'conversation',
+            conversationId: 'main-chat'
+        });
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -594,6 +701,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return {
             context: this.context,
             view: this._view,
+            clientId: WEBVIEW_CLIENT_IDS.mainChat,
             configManager: this.configManager,
             channelManager: this.channelManager,
             conversationManager: this.conversationManager,
@@ -612,7 +720,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
-            syncLanguageToBackend: this.syncLanguageToBackend.bind(this)
+            syncLanguageToBackend: this.syncLanguageToBackend.bind(this),
+            openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
     }
 
@@ -620,7 +729,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理来自前端的消息
      */
     private async handleMessage(message: any) {
-        const { type, data, requestId } = message;
+        const { type, data, requestId, clientId } = message;
+        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.mainChat);
 
         // The frontend sends this as soon as its JS is ready to receive commands.
         // Handle it even if backend init is still running.
@@ -628,16 +738,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.webviewReady = true;
             // Flush any queued commands.
             for (const cmd of this.pendingCommands) {
-                this._view?.webview.postMessage({
+                this.postRoutedWebviewMessage(routedClientId, {
                     type: 'command',
                     command: cmd.command,
                     data: cmd.data
-                });
+                }, this._view?.webview);
             }
             this.pendingCommands = [];
 
             if (requestId) {
-                this.sendResponse(requestId, { success: true });
+                this.postRoutedWebviewMessage(routedClientId, {
+                    type: 'response',
+                    requestId,
+                    success: true,
+                    data: { success: true }
+                }, this._view?.webview);
             }
             return;
         }
@@ -647,10 +762,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.initPromise;
             
             // 创建处理器上下文
-            const ctx = this.createHandlerContext(requestId);
+            const ctx = {
+                ...this.createHandlerContext(requestId),
+                clientId: routedClientId
+            };
             
             // 使用消息路由器处理消息
-            const handled = await this.messageRouter.route(type, data, requestId, ctx);
+            const handled = await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
             
             if (!handled) {
                 console.warn('Unknown message type:', type);
@@ -731,6 +849,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 释放 Skills 管理器资源
         getSkillsManager()?.dispose();
         this.windowsAgentStopNotificationService?.dispose();
+        this.subAgentMonitorPanel?.dispose();
+        this.subAgentMonitorPanel = undefined;
+        this.mainChatClientDisposable?.dispose();
+        this.mainChatClientDisposable = undefined;
 
         console.log('ChatViewProvider disposed');
     }
@@ -739,19 +861,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 发送响应到前端
      */
     private sendResponse(requestId: string, data: any) {
-        this._view?.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'response',
             requestId,
             success: true,
             data
-        });
+        }, this._view?.webview);
     }
 
     /**
      * 发送错误到前端
      */
     private sendError(requestId: string, code: string, message: string) {
-        this._view?.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'error',
             requestId,
             success: false,
@@ -759,7 +881,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 code,
                 message
             }
-        });
+        }, this._view?.webview);
     }
 
     /**
@@ -772,11 +894,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        this._view.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'command',
             command,
             data
-        });
+        }, this._view.webview);
     }
 
     /**

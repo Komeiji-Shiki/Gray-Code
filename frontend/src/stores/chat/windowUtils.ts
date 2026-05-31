@@ -1,6 +1,7 @@
 import type { ChatStoreState } from './types'
 import type { Message } from '../../types'
 import { perfLog } from '../../utils/perf'
+import { replaceAllMessages } from './state'
 
 /** 默认消息窗口上限（按可见消息预算计算，保留完整轮次） */
 export const MAX_WINDOW_MESSAGES = 800
@@ -149,7 +150,7 @@ export function trimWindowFromTop(state: ChatStoreState, maxCount = MAX_WINDOW_M
 
   if (removeCount <= 0) return 0
 
-  state.allMessages.value = all.slice(removeCount)
+  replaceAllMessages(state, all.slice(removeCount))
   state.windowStartIndex.value = nextWindowStartIndex
 
   // 清理窗口外的检查点，避免长期累积

@@ -24,6 +24,7 @@ const autoSaveDelay = ref(3000)
 const autoApplyWithoutDiffView = ref(false)
 const diffGuardEnabled = ref(true)
 const diffGuardThreshold = ref(50)
+const MIN_AUTO_SAVE_DELAY_MS = 50
 
 // 保存状态
 const isSaving = ref(false)
@@ -33,6 +34,7 @@ const isLoading = ref(false)
 
 // 延迟选项（毫秒）
 const delayOptions = computed(() => [
+  { value: MIN_AUTO_SAVE_DELAY_MS, label: t('components.settings.toolSettings.files.applyDiff.delay005s') },
   { value: 1000, label: t('components.settings.toolSettings.files.applyDiff.delay1s') },
   { value: 2000, label: t('components.settings.toolSettings.files.applyDiff.delay2s') },
   { value: 3000, label: t('components.settings.toolSettings.files.applyDiff.delay3s') },
@@ -81,7 +83,7 @@ async function loadConfig() {
       format.value = response.config.format ?? 'unified'
       outsideWorkspaceAccess.value = response.config.outsideWorkspaceAccess ?? 'deny'
       autoSave.value = response.config.autoSave ?? false
-      autoSaveDelay.value = response.config.autoSaveDelay ?? 3000
+      autoSaveDelay.value = normalizeAutoSaveDelay(response.config.autoSaveDelay ?? 3000)
       autoApplyWithoutDiffView.value = response.config.autoApplyWithoutDiffView ?? false
       diffGuardEnabled.value = response.config.diffGuardEnabled ?? true
       diffGuardThreshold.value = response.config.diffGuardThreshold ?? 50
@@ -155,9 +157,13 @@ function updateDiffGuardThreshold(event: Event) {
   saveConfig()
 }
 
+function normalizeAutoSaveDelay(delay: number): number {
+  return Number.isFinite(delay) ? Math.max(MIN_AUTO_SAVE_DELAY_MS, delay) : 3000
+}
+
 // 更新延迟时间
 function updateDelay(delay: number) {
-  autoSaveDelay.value = delay
+  autoSaveDelay.value = normalizeAutoSaveDelay(delay)
   saveConfig()
 }
 

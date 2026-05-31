@@ -34,11 +34,17 @@ const patternList = computed(() => {
   return []
 })
 
+interface FoundFileDetail {
+  path: string
+  lineCount?: number
+}
+
 // 单个模式的查找结果
 interface FindResult {
   pattern: string
   success: boolean
   files?: string[]
+  fileDetails?: FoundFileDetail[]
   count?: number
   truncated?: boolean
   error?: string
@@ -114,18 +120,25 @@ function isPatternExpanded(pattern: string): boolean {
   return expandedPatterns.value.has(pattern)
 }
 
-// 获取显示的文件列表
-function getDisplayFiles(result: FindResult): string[] {
-  if (!result.files) return []
-  if (isPatternExpanded(result.pattern) || result.files.length <= previewFileCount) {
-    return result.files
+function getFileDetails(result: FindResult): FoundFileDetail[] {
+  if (Array.isArray(result.fileDetails) && result.fileDetails.length > 0) {
+    return result.fileDetails
   }
-  return result.files.slice(0, previewFileCount)
+  return (result.files || []).map(path => ({ path }))
+}
+
+// 获取显示的文件列表
+function getDisplayFiles(result: FindResult): FoundFileDetail[] {
+  const files = getFileDetails(result)
+  if (isPatternExpanded(result.pattern) || files.length <= previewFileCount) {
+    return files
+  }
+  return files.slice(0, previewFileCount)
 }
 
 // 检查是否需要展开按钮
 function needsExpand(result: FindResult): boolean {
-  return (result.files?.length || 0) > previewFileCount
+  return getFileDetails(result).length > previewFileCount
 }
 
 // 获取文件名
@@ -139,6 +152,12 @@ function getDirPath(filePath: string): string {
   const parts = filePath.split(/[/\\]/)
   parts.pop()
   return parts.join('/')
+}
+
+function formatLineCount(file: FoundFileDetail): string {
+  return typeof file.lineCount === 'number'
+    ? t('components.tools.search.findFilesPanel.lines', { count: file.lineCount })
+    : ''
 }
 </script>
 
@@ -196,17 +215,18 @@ function getDirPath(filePath: string): string {
         </div>
         
         <!-- 文件列表 -->
-        <div v-else-if="result.files && result.files.length > 0" class="file-list">
+        <div v-else-if="getFileDetails(result).length > 0" class="file-list">
           <CustomScrollbar :max-height="200">
             <div class="file-items">
               <div
                 v-for="file in getDisplayFiles(result)"
-                :key="file"
+                :key="file.path"
                 class="file-item"
               >
                 <span class="codicon codicon-file file-icon"></span>
-                <span class="file-name">{{ getFileName(file) }}</span>
-                <span class="file-dir">{{ getDirPath(file) }}</span>
+                <span class="file-name">{{ getFileName(file.path) }}</span>
+                <span class="file-dir">{{ getDirPath(file.path) }}</span>
+                <span v-if="formatLineCount(file)" class="line-count-badge">{{ formatLineCount(file) }}</span>
               </div>
             </div>
           </CustomScrollbar>
@@ -215,7 +235,7 @@ function getDirPath(filePath: string): string {
           <div v-if="needsExpand(result)" class="expand-section">
             <button class="expand-btn" @click="togglePattern(result.pattern)">
               <span :class="['codicon', isPatternExpanded(result.pattern) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isPatternExpanded(result.pattern) ? t('components.tools.search.findFilesPanel.collapse') : t('components.tools.search.findFilesPanel.expandRemaining', { count: (result.files?.length || 0) - previewFileCount }) }}
+              {{ isPatternExpanded(result.pattern) ? t('components.tools.search.findFilesPanel.collapse') : t('components.tools.search.findFilesPanel.expandRemaining', { count: getFileDetails(result).length - previewFileCount }) }}
             </button>
           </div>
         </div>
@@ -400,6 +420,7 @@ function getDirPath(filePath: string): string {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 11px;
   border-bottom: 1px solid var(--vscode-panel-border);
+  min-width: 0;
 }
 
 .file-item:last-child {
@@ -425,6 +446,18 @@ function getDirPath(filePath: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.line-count-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
 }
 
 /* 展开区域 */

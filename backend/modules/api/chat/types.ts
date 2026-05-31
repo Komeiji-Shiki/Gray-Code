@@ -405,6 +405,12 @@ export interface ChatStreamToolStatusData {
         name: string;
         /** 工具状态 */
         status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning';
+        /**
+         * 可选：工具调用的完整参数快照。
+         *
+         * 流式提前执行状态可能早于前端完成 partialArgs 解析到达，携带 args 可让工具卡即时补齐描述。
+         */
+        args?: Record<string, unknown>;
         /** 可选：本次工具的执行结果（用于前端即时展示，不建议用于持久化） */
         result?: Record<string, unknown>;
     };

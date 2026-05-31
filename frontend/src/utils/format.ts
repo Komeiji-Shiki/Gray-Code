@@ -89,7 +89,7 @@ export function highlightText(text: string, keyword: string): string {
 }
 
 // 转义正则表达式特殊字符
-function escapeRegExp(str: string): string {
+export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 

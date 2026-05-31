@@ -132,7 +132,11 @@ const showHScrollbar = ref(false)
 
 // ==================== Marker 状态 ====================
 const markerPositions = ref<MarkerItem[]>([])
-let markerUpdateTimer: ReturnType<typeof setTimeout> | null = null
+let layoutUpdateRafId: number | null = null
+const pendingLayoutUpdateOptions = {
+  preserveBottom: false,
+  updateMarkers: false
+}
 
 // ==================== Tooltip 状态 ====================
 const tooltipVisible = ref(false)
@@ -261,21 +265,6 @@ function updateMarkers() {
 }
 
 /**
- * 防抖版 updateMarkers
- * MutationObserver 在流式输出期间会高频触发，
- * 这里用 80ms 防抖避免频繁 DOM 查询 + 布局计算
- */
-function debouncedUpdateMarkers() {
-  if (markerUpdateTimer) {
-    clearTimeout(markerUpdateTimer)
-  }
-  markerUpdateTimer = setTimeout(() => {
-    updateMarkers()
-    markerUpdateTimer = null
-  }, 80)
-}
-
-/**
  * 点击 marker 跳转到对应元素
  */
 function handleMarkerClick(marker: MarkerItem, e: MouseEvent) {
@@ -367,6 +356,38 @@ function handleTooltipWheel(e: WheelEvent) {
   scrollContainer.value.scrollBy({
     top: e.deltaY,
     behavior: 'auto'
+  })
+}
+
+function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
+  if (!scrollContainer.value) return
+
+  const container = scrollContainer.value
+  if (options.preserveBottom && props.stickyBottom && wasAtBottom) {
+    container.scrollTop = container.scrollHeight
+  }
+
+  updateScrollbar()
+
+  if (options.updateMarkers && props.markerSelector) {
+    updateMarkers()
+  }
+
+  wasAtBottom = isAtBottom()
+}
+
+function scheduleLayoutUpdate(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
+  pendingLayoutUpdateOptions.preserveBottom ||= !!options.preserveBottom
+  pendingLayoutUpdateOptions.updateMarkers ||= !!options.updateMarkers
+
+  if (layoutUpdateRafId !== null) return
+
+  layoutUpdateRafId = requestAnimationFrame(() => {
+    layoutUpdateRafId = null
+    const nextOptions = { ...pendingLayoutUpdateOptions }
+    pendingLayoutUpdateOptions.preserveBottom = false
+    pendingLayoutUpdateOptions.updateMarkers = false
+    updateLayout(nextOptions)
   })
 }
 
@@ -579,11 +600,7 @@ onMounted(() => {
     // 使用 ResizeObserver 监听容器尺寸变化
     if (window.ResizeObserver && scrollContainer.value) {
       resizeObserver = new ResizeObserver(() => {
-        updateScrollbar()
-        // 尺寸变化时重新计算 marker 位置
-        if (props.markerSelector) {
-          debouncedUpdateMarkers()
-        }
+        scheduleLayoutUpdate({ updateMarkers: true })
       })
       resizeObserver.observe(scrollContainer.value)
     }
@@ -591,20 +608,7 @@ onMounted(() => {
     // 使用 MutationObserver 监听内容变化
     if (scrollContainer.value) {
       mutationObserver = new MutationObserver(() => {
-        if (!scrollContainer.value) return
-        
-        // 粘性底部：只有之前在底部时才保持在底部
-        if (props.stickyBottom && wasAtBottom) {
-          scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
-        }
-        
-        updateScrollbar()
-        // 内容变化时重新计算 marker 位置（防抖）
-        if (props.markerSelector) {
-          debouncedUpdateMarkers()
-        }
-        // 更新底部状态，用于下次检测
-        wasAtBottom = isAtBottom()
+        scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: true })
       })
       mutationObserver.observe(scrollContainer.value, {
         childList: true,
@@ -632,9 +636,9 @@ onBeforeUnmount(() => {
     mutationObserver.disconnect()
     mutationObserver = null
   }
-  if (markerUpdateTimer) {
-    clearTimeout(markerUpdateTimer)
-    markerUpdateTimer = null
+  if (layoutUpdateRafId !== null) {
+    cancelAnimationFrame(layoutUpdateRafId)
+    layoutUpdateRafId = null
   }
   if (tooltipHideTimer) {
     clearTimeout(tooltipHideTimer)
@@ -662,7 +666,7 @@ function scrollToTop() {
 
 function scrollToBottom(options?: { instant?: boolean }) {
   if (scrollContainer.value) {
-    const behavior = options?.instant ? 'instant' as ScrollBehavior : 'smooth'
+    const behavior = options?.instant ? 'auto' as ScrollBehavior : 'smooth'
     // 强制更新一次，确保获取最新的 scrollHeight
     nextTick(() => {
       if (scrollContainer.value) {

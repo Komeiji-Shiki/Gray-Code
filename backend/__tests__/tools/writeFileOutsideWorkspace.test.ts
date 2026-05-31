@@ -15,7 +15,8 @@ const mockDiffManager = {
     createPendingDiff: jest.fn(),
     getDiff: jest.fn(),
     isUserInterrupted: jest.fn(),
-    rejectDiff: jest.fn()
+    rejectDiff: jest.fn(),
+    waitForDiffResolution: jest.fn()
 };
 
 jest.mock('../../tools/file/diffManager', () => ({
@@ -45,6 +46,7 @@ describe('write_file outside-workspace flow', () => {
         mockDiffManager.getDiff.mockReturnValue({ id: 'diff-1', status: 'accepted' });
         mockDiffManager.isUserInterrupted.mockReturnValue(false);
         mockDiffManager.rejectDiff.mockResolvedValue(true);
+        mockDiffManager.waitForDiffResolution.mockResolvedValue('none');
 
         settingsManager = new SettingsManager(new MemorySettingsStorage());
         await settingsManager.initialize();
@@ -58,7 +60,7 @@ describe('write_file outside-workspace flow', () => {
         const tool = registerWriteFile();
 
         const result = await tool.handler(
-            { files: [{ path: outsidePath, content: 'hello outside' }] },
+            { path: outsidePath, content: 'hello outside' },
             { toolId: 'tool-1' }
         );
 
@@ -83,7 +85,7 @@ describe('write_file outside-workspace flow', () => {
         const tool = registerWriteFile();
 
         await tool.handler(
-            { files: [{ path: outsidePath, content: 'confirmed content' }] },
+            { path: outsidePath, content: 'confirmed content' },
             { toolId: 'tool-2', approvedByToolConfirmation: true }
         );
 

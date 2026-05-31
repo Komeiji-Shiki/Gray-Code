@@ -15,6 +15,15 @@ import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types';
 export type SubAgentType = string;
 
 /**
+ * Provider 自动重试耗尽后的 SubAgent 处理策略。
+ *
+ * 修改原因：SubAgent 复用 ChannelManager 自动重试后，仍需要决定重试耗尽时主工具是否立即失败。
+ * 修改方式：在 SubAgent 运行时类型中声明同一组稳定枚举值，与 SettingsManager 的持久化字段保持一致。
+ * 修改目的：让 executor、registry 和 Monitor 控制器共享同一语义，避免字符串特判散落。
+ */
+export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action';
+
+/**
  * 子代理渠道配置
  * 
  * 指定子代理使用的 AI 渠道和模型
@@ -83,6 +92,15 @@ export interface SubAgentConfig {
     
     /** 最大运行时间（秒，默认 300，-1 表示无限制） */
     maxRuntime?: number;
+
+    /**
+     * Provider 自动重试耗尽后的处理策略。
+     *
+     * 修改原因：单个 SubAgent 需要能覆盖全局默认策略，决定失败后是否等待 Monitor 操作。
+     * 修改方式：字段保持可选，运行时由 settings 全局默认值补齐。
+     * 修改目的：兼容旧配置，并为后续暂停/等待状态机提供明确策略输入。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
     
     /** 是否启用（禁用的代理不会出现在工具列表中） */
     enabled?: boolean;
@@ -100,6 +118,15 @@ export interface SubAgentRequest {
     
     /** 附加上下文（可选） */
     context?: string;
+
+    /**
+     * 外部预分配的 SubAgent 运行实例 ID。
+     *
+     * 修改原因：主窗口工具卡片在 pending 阶段还没有 ToolResult，但需要立即显示并打开 Open details。
+     * 修改方式：subagents handler 根据主工具调用 id 预先生成 runId，再交给默认 executor 使用。
+     * 修改目的：pending、完成态和历史态都用同一个 runId 打开同一次 Monitor 运行。
+     */
+    runId?: string;
 }
 
 /**
@@ -141,6 +168,15 @@ export interface SubAgentResult {
     
     /** 执行步骤数 */
     steps?: number;
+
+    /**
+     * SubAgent 运行实例 ID。
+     *
+     * 修改原因：主聊天工具块和 SubAgent Monitor 需要用同一个稳定 ID 定位运行过程。
+     * 修改方式：由默认执行器创建 runId，并随最终结果返回。
+     * 修改目的：不把内部事件写入主历史，也能从主卡片打开对应的运行详情。
+     */
+    runId?: string;
     
     /** 使用的工具调用记录 */
     toolCalls?: SubAgentToolCall[];
@@ -169,6 +205,33 @@ export interface SubAgentExecutorContext {
     
     /** 设置管理器 */
     settingsManager?: any; // SettingsManager 类型
+
+    /**
+     * 配置管理器。
+     *
+     * 修改原因：SubAgent 的 provider 配置独立于主会话，但工具执行仍需要读取该 provider 的多模态和 toolMode 能力。
+     * 修改方式：把 ConfigManager 注入执行上下文，由 SubAgent 在每次 run 中解析自己的 channel 配置。
+     * 修改目的：避免 SubAgent 工具执行时因拿不到渠道配置而退化为 multimodalEnabled=false。
+     */
+    configManager?: any; // ConfigManager 类型
+
+    /**
+     * 共享工具执行服务。
+     *
+     * 修改原因：SubAgent 不能再复制 ToolExecutionService 的工具参数校验、MCP、多模态打包和工具配置注入逻辑。
+     * 修改方式：通过上下文注入 ChatHandler 持有的 ToolExecutionService 实例；执行时仍传入 SubAgent 自己的 provider 配置。
+     * 修改目的：共享工具执行内核，但保持 SubAgent 模型能力、toolMode 和多模态开关独立于主会话。
+     */
+    toolExecutionService?: any; // ToolExecutionService 类型
+
+    /** 对话 ID，用于把 SubAgent 内部记录保存到 conversation 子记录 */
+    conversationId?: string;
+
+    /** 对话元数据存储，用于保存 subAgentRuns 子记录 */
+    conversationStore?: {
+        getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
+        setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    };
 
     /** 父请求继承下来的提示词模式快照（可选） */
     promptModeSnapshot?: ResolvedPromptModeSnapshot;

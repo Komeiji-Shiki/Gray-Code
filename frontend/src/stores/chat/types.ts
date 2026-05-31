@@ -143,6 +143,13 @@ export interface ChatStoreState {
    * `Message.backendIndex`（绝对索引）用于与后端对齐。
    */
   allMessages: Ref<Message[]>
+  /**
+   * message.id -> allMessages 数组下标。
+   *
+   * 这是高频按消息 id 定位的派生索引，allMessages 仍是唯一消息真源。
+   * 维护时保持 findIndex 的首命中语义，避免重复 id 的极端历史改变旧行为。
+   */
+  messageIndexById: Ref<Map<string, number>>
   /** 当前窗口的起始绝对索引（等于 allMessages[0].backendIndex） */
   windowStartIndex: Ref<number>
   /** 后端该对话的总消息数（绝对长度） */

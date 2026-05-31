@@ -433,6 +433,8 @@ export interface LanguageMessages {
                 viewDiff: string;
                 viewDiffInVSCode: string;
                 openDiffFailed: string;
+                openDetails: string;
+                openSubAgentMonitorDetails: string;
                 todoWrite: {
                     label: string;
                     labelWithCount: string;
@@ -834,6 +836,7 @@ export interface LanguageMessages {
                         autoSaveDelay: string;
                         delayTime: string;
                         delayTimeDesc: string;
+                        delay005s: string;
                         delay1s: string;
                         delay2s: string;
                         delay3s: string;
@@ -2311,6 +2314,11 @@ export interface LanguageMessages {
             
             /** OpenAI 专属 */
             openai: {
+                deepSeekUserId: {
+                    title: string;
+                    hint: string;
+                    toggleHint: string;
+                };
                 frequencyPenalty: {
                     label: string;
                     hint: string;
@@ -2524,6 +2532,7 @@ export interface LanguageMessages {
                     copyAll: string;
                     copyList: string;
                     dirStat: string;
+                    lines: string;
                     collapse: string;
                     expandRemaining: string;
                     emptyDirectory: string;
@@ -2574,6 +2583,7 @@ export interface LanguageMessages {
                     title: string;
                     totalFiles: string;
                     fileCount: string;
+                    lines: string;
                     truncated: string;
                     collapse: string;
                     expandRemaining: string;
@@ -2601,6 +2611,7 @@ export interface LanguageMessages {
                     viewMatches: string;
                     viewDiff: string;
                     loadingDiff: string;
+                    omittedUnchangedLines: string;
                 };
             };
             /** 历史检索工具 */
@@ -2615,6 +2626,11 @@ export interface LanguageMessages {
                     regex: string;
                     keywords: string;
                     lineRange: string;
+                    lineCount: string;
+                    matchLineCount: string;
+                    blockCount: string;
+                    contextBlock: string;
+                    match: string;
                     noContent: string;
                     collapse: string;
                     expandRemaining: string;

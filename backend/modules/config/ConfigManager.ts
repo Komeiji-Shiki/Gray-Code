@@ -122,6 +122,7 @@ export class ConfigManager {
                 return {
                     ...baseDefaults,
                     url: 'https://api.openai.com/v1',
+                    deepSeekUserIdEnabled: false,
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,

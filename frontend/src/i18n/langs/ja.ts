@@ -512,6 +512,8 @@ const ja: LanguageMessages = {
                 viewDiff: '差分を表示',
                 viewDiffInVSCode: 'VSCode で差分を表示',
                 openDiffFailed: 'diff プレビューを開くのに失敗しました',
+                openDetails: '詳細を開く',
+                openSubAgentMonitorDetails: 'SubAgent Monitor の詳細を開く',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1812,6 +1814,7 @@ const ja: LanguageMessages = {
                         autoSaveDelay: '自動保存遅延',
                         delayTime: '遅延時間',
                         delayTimeDesc: '変更が表示されてから自動保存するまでの待機時間',
+                        delay005s: '0.05 秒',
                         delay1s: '1 秒',
                         delay2s: '2 秒',
                         delay3s: '3 秒',
@@ -1821,8 +1824,8 @@ const ja: LanguageMessages = {
                         infoDisabled: '現在の設定：AI がファイルを変更した後、エディターで Ctrl+S を手動で押して変更を確認して保存する必要があります。',
 
                         format: '差分形式',
-                        formatDesc: 'AI が apply_diff を呼び出すときのパラメータ形式を選択します（デフォルトは統一 diff 推奨）',
-                        formatUnified: '統一 diff（unified diff patch）',
+                        formatDesc: 'AI が apply_diff を呼び出すときのパラメータ形式を選択します（デフォルトは構造化 hunks 推奨、旧 unified diff patch も互換）',
+                        formatUnified: '構造化 hunks（推奨、unified diff patch 互換）',
                         formatSearchReplace: '旧形式（search/replace）',
 
                         skipDiffView: '差分ビューをスキップ',
@@ -2261,6 +2264,11 @@ const ja: LanguageMessages = {
                 }
             },
             openai: {
+                deepSeekUserId: {
+                    title: 'DeepSeek user_id',
+                    hint: 'DeepSeek Chat Completions リクエストにトップレベルの user_id を送信し、会話ごとに KVCache を分離します。現在のメインチャットリクエストに会話 ID がある場合のみ有効です。要約やサブエージェントなどの内部リクエストでは既定で送信されません。DeepSeek チャンネルでのみ有効にしてください。',
+                    toggleHint: '現在の会話 ID から安定したプライバシー安全な user_id を生成します'
+                },
                 frequencyPenalty: {
                     label: '頻度ペナルティ (Frequency Penalty)',
                     hint: '-2.0 - 2.0',
@@ -2458,6 +2466,7 @@ const ja: LanguageMessages = {
                     copyAll: 'すべてのリストをコピー',
                     copyList: 'リストをコピー',
                     dirStat: '{folderCount} フォルダー、{fileCount} ファイル',
+                    lines: '{count} 行',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} 個を展開',
                     emptyDirectory: 'ディレクトリは空です'
@@ -2504,6 +2513,7 @@ const ja: LanguageMessages = {
                     title: 'ファイルを検索',
                     totalFiles: '合計 {count} ファイル',
                     fileCount: '{count} ファイル',
+                    lines: '{count} 行',
                     truncated: '切り捨て',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} ファイルを展開',
@@ -2529,7 +2539,8 @@ const ja: LanguageMessages = {
                     filesModified: '{count} ファイル',
                     viewMatches: '一致項目',
                     viewDiff: '差分',
-                    loadingDiff: '差分を読み込み中...'
+                    loadingDiff: '差分を読み込み中...',
+                    omittedUnchangedLines: '… 変更なしの {count} 行を省略 …'
                 }
             },
             history: {
@@ -2543,6 +2554,11 @@ const ja: LanguageMessages = {
                     regex: '正規表現',
                     keywords: 'キーワード：',
                     lineRange: '行範囲：',
+                    lineCount: '{count} 行',
+                    matchLineCount: '{count} 一致行',
+                    blockCount: '{count} ブロック',
+                    contextBlock: 'ブロック {index}',
+                    match: '一致',
                     noContent: 'コンテンツが返されませんでした',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} 行を展開',

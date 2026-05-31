@@ -490,6 +490,22 @@ export function isBinaryFile(filePath: string): boolean {
     return BINARY_EXTENSIONS.has(ext);
 }
 
+export async function countTextFileLines(uri: vscode.Uri, filePath: string): Promise<number | undefined> {
+    // 文件发现类工具需要在不读取完整内容到返回值的前提下提示文本文件规模。
+    // 二进制文件或读取失败时保持 undefined，避免把该能力变成硬失败。
+    if (isBinaryFile(filePath)) {
+        return undefined;
+    }
+
+    try {
+        const content = await vscode.workspace.fs.readFile(uri);
+        const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
+        return text.split('\n').length;
+    } catch {
+        return undefined;
+    }
+}
+
 /**
  * 格式化文件大小
  */
@@ -781,7 +797,7 @@ export interface ImageDimensions {
 /**
  * 计算最大公约数
  */
-function gcd(a: number, b: number): number {
+export function gcd(a: number, b: number): number {
     return b === 0 ? a : gcd(b, a % b);
 }
 
@@ -830,4 +846,55 @@ export function createImageDimensions(width: number, height: number): ImageDimen
         height,
         aspectRatio: calculateAspectRatio(width, height)
     };
+}
+
+/**
+ * 转义正则表达式特殊字符。
+ */
+export function escapeRegExp(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export interface RegexIntentDetection {
+    suspected: boolean;
+    signals: string[];
+}
+
+/**
+ * 检测非正则查询里是否包含明显的正则语法。
+ *
+ * 只返回诊断信号，不自动把字面量搜索改成正则搜索，避免误伤 Markdown 表格、TypeScript union、Shell 管道等普通文本。
+ */
+export function detectSuspectedRegexIntent(query: string): RegexIntentDetection {
+    const signals: string[] = [];
+
+    if (query.includes('.*')) signals.push('.*');
+    if (query.includes('.+')) signals.push('.+');
+    if (/\\\./.test(query)) signals.push('\\.');
+    if (/\\[dDwWsSbB]/.test(query)) signals.push('\\d/\\w/\\s');
+    if (/\[[^\]\n]+\]/.test(query)) signals.push('[]');
+    if (/\([^()\n]*\|[^()\n]*\)/.test(query)) signals.push('(...) with |');
+    if (/\{\d+(,\d*)?\}/.test(query)) signals.push('{n,m}');
+    if (query.startsWith('^')) signals.push('^');
+    if (query.endsWith('$')) signals.push('$');
+
+    for (let i = 0; i < query.length; i++) {
+        if (query[i] !== '|') continue;
+        const previous = i > 0 ? query[i - 1] : '';
+        const next = i + 1 < query.length ? query[i + 1] : '';
+        if (previous && next && !/\s/.test(previous) && !/\s/.test(next)) {
+            signals.push('|');
+            break;
+        }
+    }
+
+    return {
+        suspected: signals.length > 0,
+        signals: Array.from(new Set(signals))
+    };
+}
+
+export function createSuspectedRegexSuggestion(signals: string[], regexFlagName: string = 'isRegex'): string {
+    const signalText = signals.length > 0 ? signals.join(', ') : 'regex-like syntax';
+    return `Query contains regex-like syntax (${signalText}), but ${regexFlagName}=false, so these characters were searched literally. Retry with ${regexFlagName}=true if this was intended as regex OR/wildcard/escaped-dot search. The tool does not automatically reinterpret literal queries as regex.`;
 }

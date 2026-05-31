@@ -34,6 +34,8 @@ interface DeleteResult {
     error?: string;
     cancelled?: boolean;
     diffContentId?: string;
+    /** 自动保存失败原因；用于解释 rejected 的真实来源 */
+    autoSaveError?: string;
     pendingDiffId?: string;
 }
 
@@ -139,6 +141,7 @@ async function deleteSingleFile(
         const wasInterrupted = interruptReason !== 'none';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        const autoSaveError = finalDiff?.autoSaveError;
 
         // 保存 diff 内容供前端按需加载
         const diffStorageManager = getDiffStorageManager();
@@ -179,7 +182,8 @@ async function deleteSingleFile(
             end_line: endLine,
             deletedLines: deletedCount,
             status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : 'Diff was rejected',
+            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
+            autoSaveError,
             diffContentId,
             pendingDiffId: pendingDiff.id
         };
@@ -291,43 +295,7 @@ function waitForDiffResolution(
     diffId: string,
     abortSignal?: AbortSignal
 ): Promise<'none' | 'abort' | 'user'> {
-    return new Promise<'none' | 'abort' | 'user'>((resolve) => {
-        let resolved = false;
-
-        const finish = (reason: 'none' | 'abort' | 'user') => {
-            if (resolved) return;
-     resolved = true;
-            if (abortHandler && abortSignal) {
-                try { abortSignal.removeEventListener('abort', abortHandler); } catch { /* ignore */ }
-            }
-            resolve(reason);
-        };
-
-        const abortHandler = () => {
-            diffManager.rejectDiff(diffId).catch(() => {});
-            finish('abort');
-        };
-
-        if (abortSignal) {
-            if (abortSignal.aborted) { abortHandler(); return; }
-            abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-        }
-
-        const checkStatus = () => {
-            if (diffManager.isUserInterrupted()) {
-                diffManager.rejectDiff(diffId).catch(() => {});
-                finish('user');
-                return;
-            }
-            const diff = diffManager.getDiff(diffId);
-            if (!diff || diff.status !== 'pending') {
-                finish('none');
-            } else {
-                setTimeout(checkStatus, 100);
-            }
-        };
-        checkStatus();
-    });
+    return diffManager.waitForDiffResolution(diffId, abortSignal);
 }
 
 /**

@@ -1,38 +1,42 @@
 /**
  * 读取文件工具
  *
- * 支持读取单个或多个文件
+ * 支持读取单个文件
  * 支持多工作区（Multi-root Workspaces）
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { Tool, ToolResult, MultimodalData, MultimodalCapability } from '../types';
+import type { Tool, ToolContext, ToolResult, MultimodalData, MultimodalCapability } from '../types';
 import { t } from '../../i18n';
+import { Logger } from '../../core/logger';
 import {
-    resolveFileToolPathWithInfo,
+    resolveUri,
+    resolveUriWithInfo,
     getAllWorkspaces,
+    isMultimodalSupported,
     getMultimodalMimeType,
     isBinaryFile,
+    formatFileSize,
+    canReadFile,
+    getReadFileError,
+    isMultimodalSupportedWithConfig,
     canReadFileWithCapability,
     getReadFileErrorWithCapability,
     isImageFile,
     isPdfFile,
-    normalizeLineEndingsToLF
+    normalizeLineEndingsToLF,
+    // WP13 去重：gcd、calculateAspectRatio、ImageDimensions 原来在 read_file.ts 中重复定义，
+    // 现改为从 utils.ts 统一导入。
+    gcd,
+    calculateAspectRatio,
+    type ImageDimensions
 } from '../utils';
-import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
     'Line ranges (startLine/endLine) are only supported for text files. Do not provide them for binary/multimodal files (PDF/images/audio/video).';
 
-/**
- * 图片尺寸信息
- */
-interface ImageDimensions {
-    width: number;
-    height: number;
-    aspectRatio: string;  // 如 "16:9", "4:3", "1:1"
-}
+const log = Logger.get('ReadFileTool');
 
 /**
  * 行范围选项
@@ -51,6 +55,27 @@ interface FileReadRequest {
     endLine?: number;
 }
 
+interface ResolvedLineRangeArgs {
+    startLine?: number;
+    endLine?: number;
+}
+
+/**
+ * read_file 多模态调试信息。
+ *
+ * 添加原因：用户界面已开启“多模态工具”但运行时仍可能收到 false，单靠错误文案无法定位是哪条链路漏传。
+ * 添加方式：仅暴露非敏感字段，例如渠道类型、工具模式、配置开关和最终能力，不输出 API Key 或请求正文。
+ * 添加目的：让失败结果面板直接展示判断依据，便于确认问题出在设置保存、配置传递还是工具能力计算。
+ */
+interface ReadFileDebugInfo {
+    source: string;
+    pathKind: 'image' | 'pdf' | 'binary' | 'text';
+    handlerMultimodalEnabled: boolean;
+    handlerCapability: MultimodalCapability;
+    contextKeys: string[];
+    upstream?: Record<string, unknown>;
+}
+
 /**
  * 单个文件读取结果
  */
@@ -67,42 +92,8 @@ interface ReadResult {
     mimeType?: string;
     size?: number;
     dimensions?: ImageDimensions;  // 图片尺寸信息
-    outsideWorkspace?: boolean;
     error?: string;
-}
-
-/**
- * 计算最大公约数
- */
-function gcd(a: number, b: number): number {
-    return b === 0 ? a : gcd(b, a % b);
-}
-
-/**
- * 计算宽高比字符串
- */
-function calculateAspectRatio(width: number, height: number): string {
-    const divisor = gcd(width, height);
-    const ratioW = width / divisor;
-    const ratioH = height / divisor;
-    
-    // 如果比例数字太大，使用近似值
-    if (ratioW > 100 || ratioH > 100) {
-        const ratio = width / height;
-        // 常见比例检测
-        if (Math.abs(ratio - 16/9) < 0.05) return '16:9';
-        if (Math.abs(ratio - 9/16) < 0.05) return '9:16';
-        if (Math.abs(ratio - 4/3) < 0.05) return '4:3';
-        if (Math.abs(ratio - 3/4) < 0.05) return '3:4';
-        if (Math.abs(ratio - 3/2) < 0.05) return '3:2';
-        if (Math.abs(ratio - 2/3) < 0.05) return '2:3';
-        if (Math.abs(ratio - 1) < 0.05) return '1:1';
-        if (Math.abs(ratio - 21/9) < 0.05) return '21:9';
-        // 返回小数比例
-        return `${ratio.toFixed(2)}:1`;
-    }
-    
-    return `${ratioW}:${ratioH}`;
+    debug?: ReadFileDebugInfo;
 }
 
 /**
@@ -191,6 +182,70 @@ function parseImageDimensions(buffer: Uint8Array, mimeType: string): ImageDimens
     return undefined;
 }
 
+function normalizeLineNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1
+        ? value
+        : undefined;
+}
+
+function resolveLineRangeArgs(args: Record<string, unknown>): ResolvedLineRangeArgs {
+    // 修改原因：模型经常按其他文件读取工具的习惯传 line/maxLines/limit，而 read_file 原本只接受 startLine/endLine，会被 strict schema 直接拒绝。
+    // 修改方式：保留 startLine/endLine 作为规范字段，同时把 line/maxLine/maxLines/limit 收敛为同一个 LineRange 语义。
+    // 修改目的：提高工具调用容错率，并让“读取第 N 行”或“读取最多 N 行”的自然表达无需失败后重试。
+    const explicitStartLine = normalizeLineNumber(args.startLine);
+    const explicitEndLine = normalizeLineNumber(args.endLine);
+    const aliasLine = normalizeLineNumber(args.line);
+    const aliasMaxLine = normalizeLineNumber(args.maxLine);
+    const maxLines = normalizeLineNumber(args.maxLines) ?? normalizeLineNumber(args.limit);
+
+    let startLine = explicitStartLine ?? aliasLine;
+    let endLine = explicitEndLine ?? aliasMaxLine;
+
+    if (endLine === undefined && maxLines !== undefined) {
+        const baseLine = startLine ?? 1;
+        startLine = baseLine;
+        endLine = baseLine + maxLines - 1;
+    } else if (explicitStartLine === undefined && explicitEndLine === undefined && aliasLine !== undefined && aliasMaxLine === undefined) {
+        // 修改原因：单独的 line 更接近“读取这一行”，而不是 startLine 的“从这一行读到文件末尾”。
+        // 修改方式：只有在没有 maxLines/maxLine/endLine 时，把 line=N 解释为 N..N。
+        // 修改目的：让模型或用户表达“line: 42”时得到最符合直觉的单行结果。
+        endLine = aliasLine;
+    }
+
+    return { startLine, endLine };
+}
+
+function getPathKind(filePath: string): ReadFileDebugInfo['pathKind'] {
+    if (isImageFile(filePath)) return 'image';
+    if (isPdfFile(filePath)) return 'pdf';
+    if (isBinaryFile(filePath)) return 'binary';
+    return 'text';
+}
+
+function buildReadFileDebugInfo(
+    filePath: string,
+    multimodalEnabled: boolean,
+    capability: MultimodalCapability,
+    context?: ToolContext
+): ReadFileDebugInfo {
+    // 调试原因：read_file 的错误取决于工具执行上下文，而上下文由多个服务组装；需要保留上游快照。
+    // 调试方式：复制 ToolExecutionService 注入的 multimodalDebug，并记录 read_file 实际收到的能力值。
+    // 调试目的：当图片读取失败时，可以对比 upstream 与 handler 两层值，判断是上游漏传还是本工具判断错误。
+    const upstream = typeof context?.multimodalDebug === 'object' && context.multimodalDebug !== null
+        ? context.multimodalDebug as Record<string, unknown>
+        : undefined;
+
+    return {
+        source: 'read_file.handler',
+        pathKind: getPathKind(filePath),
+        handlerMultimodalEnabled: multimodalEnabled,
+        handlerCapability: capability,
+        contextKeys: Object.keys(context ?? {}).sort(),
+        upstream
+    };
+}
+
+
 /**
  * 读取单个文件
  *
@@ -202,18 +257,19 @@ function parseImageDimensions(buffer: Uint8Array, mimeType: string): ImageDimens
 async function readSingleFile(
     filePath: string,
     capability: MultimodalCapability,
+    multimodalEnabled: boolean,
     isMultiRoot: boolean,
-    lineRange?: LineRange
+    lineRange?: LineRange,
+    debug?: ReadFileDebugInfo
 ): Promise<{
     result: ReadResult;
     multimodal?: MultimodalData[];
 }> {
-    const { uri, workspace, error, isOutsideWorkspace } = resolveFileToolPathWithInfo(filePath);
+    const { uri, workspace, error } = resolveUriWithInfo(filePath);
     if (!uri) {
         return {
             result: {
                 path: filePath,
-                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: error || 'No workspace folder open'
             }
@@ -222,13 +278,11 @@ async function readSingleFile(
 
     // 非文本（binary）文件不支持行号范围
     // 注意：这是安全网。正常情况下 handler 会在调用 readSingleFile 之前拦截。
-    const actualPath = uri.fsPath;
-    if (lineRange && isBinaryFile(actualPath)) {
+    if (lineRange && isBinaryFile(filePath)) {
         return {
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
-                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
             }
@@ -236,39 +290,47 @@ async function readSingleFile(
     }
 
     // 检查是否允许读取此文件
-    if (!canReadFileWithCapability(actualPath, capability)) {
-        const readError = getReadFileErrorWithCapability(actualPath, true, capability);
+    if (!canReadFileWithCapability(filePath, capability)) {
+        const readError = getReadFileErrorWithCapability(filePath, multimodalEnabled, capability);
+        // 调试原因：这里是“多模态工具未启用”错误的最终出口，需要把判定快照写入日志和工具结果。
+        // 调试方式：日志用于 OutputChannel/控制台，result.debug 用于前端 read_file 面板。
+        // 调试目的：用户无需复现到调试器，也能看到 resolvedMultimodalEnabled、capability 和上游 config 是否一致。
+        log.warn('read_file.rejected_by_multimodal_capability', {
+            path: filePath,
+            error: readError,
+            debug
+        });
         return {
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
-                outsideWorkspace: isOutsideWorkspace,
                 success: false,
-                error: readError || t('tools.file.readFile.cannotReadFile')
+                error: readError || t('tools.file.readFile.cannotReadFile'),
+                debug
             }
         };
     }
 
     try {
         const content = await vscode.workspace.fs.readFile(uri);
-        const fileName = path.basename(actualPath);
+        const fileName = path.basename(filePath);
         
         // 检查是否支持多模态返回
         let shouldReturnMultimodal = false;
-        if (isImageFile(actualPath) && capability.supportsImages) {
+        if (isImageFile(filePath) && capability.supportsImages) {
             shouldReturnMultimodal = true;
-        } else if (isPdfFile(actualPath) && capability.supportsDocuments) {
+        } else if (isPdfFile(filePath) && capability.supportsDocuments) {
             shouldReturnMultimodal = true;
         }
         
         if (shouldReturnMultimodal) {
-            const mimeType = getMultimodalMimeType(actualPath);
+            const mimeType = getMultimodalMimeType(filePath);
             if (mimeType) {
                 const base64Data = Buffer.from(content).toString('base64');
                 
                 // 解析图片尺寸（仅对图片文件）
                 let dimensions: ImageDimensions | undefined;
-                if (isImageFile(actualPath)) {
+                if (isImageFile(filePath)) {
                     dimensions = parseImageDimensions(content, mimeType);
                 }
                 
@@ -276,7 +338,6 @@ async function readSingleFile(
                     result: {
                         path: filePath,
                         workspace: isMultiRoot ? workspace?.name : undefined,
-                        outsideWorkspace: isOutsideWorkspace,
                         success: true,
                         type: 'multimodal',
                         mimeType,
@@ -293,12 +354,11 @@ async function readSingleFile(
         }
         
         // 检查是否是其他二进制文件（不支持多模态返回）
-        if (isBinaryFile(actualPath)) {
+        if (isBinaryFile(filePath)) {
             return {
                 result: {
                     path: filePath,
                     workspace: isMultiRoot ? workspace?.name : undefined,
-                    outsideWorkspace: isOutsideWorkspace,
                     success: true,
                     type: 'binary',
                     size: content.byteLength
@@ -325,7 +385,6 @@ async function readSingleFile(
                     result: {
                         path: filePath,
                         workspace: isMultiRoot ? workspace?.name : undefined,
-                        outsideWorkspace: isOutsideWorkspace,
                         success: false,
                         totalLines,
                         error: `startLine (${startLine}) exceeds total lines (${totalLines})`
@@ -356,7 +415,6 @@ async function readSingleFile(
         const result: ReadResult = {
             path: filePath,
             workspace: isMultiRoot ? workspace?.name : undefined,
-            outsideWorkspace: isOutsideWorkspace,
             success: true,
             type: 'text',
             content: numberedLines.join('\n'),
@@ -376,7 +434,6 @@ async function readSingleFile(
             result: {
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
-                outsideWorkspace: isOutsideWorkspace,
                 success: false,
                 error: error instanceof Error ? error.message : String(error)
             }
@@ -404,44 +461,41 @@ export function createReadFileTool(
     let description: string;
     
     // 行号格式说明
-    const lineNumberNote = '\n\n**Note**: Text files return content with line number prefixes (e.g., "   1 | code here"). The numbers and "|" are line markers and not part of the file content. Please ignore these prefixes when editing files.';
-    
-    // 数组格式强调说明
-    const arrayFormatNote = '\n\n**IMPORTANT**: The `files` parameter MUST be an array, even for a single file. Example: `{"files": [{"path": "file.txt"}]}` or `{"files": [{"path": "file.txt", "startLine": 100, "endLine": 200}]}`.';
+    const lineNumberNote = '\n\n说明：读取文本文件时，返回内容会带行号前缀（例如 "   1 | code here"）。这些数字和 "|" 只是定位标记，不属于文件正文；编辑文件时不要把它们写回去。';
     
     // 行范围说明
-    const lineRangeNote = '\n\n**Line Range**: Each file can have its own `startLine` and `endLine`. ONLY use line range when you have PRECISE line numbers (e.g., from get_symbols, goto_definition, find_references, or previous read_file results). Do NOT guess line numbers - if uncertain, read the entire file without specifying line range.';
+    const lineRangeNote = '\n\n行范围：只有已经知道准确行号时才填写 startLine/endLine（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。如果没有提供任何行数参数，read_file 会读取整个文本文件。兼容别名：line=N 表示只读取第 N 行；maxLine=N 等同于 endLine=N；maxLines=N 或 limit=N 表示最多读取 N 行，并从 startLine/line 或第 1 行开始计算。推荐优先使用 startLine/endLine。';
 
     // 多模态/二进制行范围限制说明（多模态开启时强调）
     const lineRangeBinaryRestrictionNote =
-        '\n\n**IMPORTANT**: Line ranges (`startLine`/`endLine`) are supported for TEXT files only. Do NOT provide them for PDF/images/audio/video or other binary files; the tool will return an error.';
+        '\n\n重要：startLine/endLine 只适用于文本文件。读取图片、PDF、音频、视频或其他二进制/多模态文件时无需填写行范围；即使误填，工具也会忽略这些行范围参数。';
     
     if (!multimodalEnabled) {
         // 未启用多模态时，只支持文本文件
-        description = 'Read the content of one or more files. Supported types: text files. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+        description = '读取工作区中的一个文件。当前支持类型：文本文件。' + lineNumberNote + lineRangeNote;
     } else if (channelType === 'openai') {
         // OpenAI 格式有特殊限制
         if (toolMode === 'function_call') {
             // OpenAI function_call 模式不支持多模态
-            description = 'Read the content of one or more files. Supported types: text files. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+            description = '读取工作区中的一个文件。当前支持类型：文本文件。' + lineNumberNote + lineRangeNote;
         } else {
             // OpenAI xml/json 模式只支持图片
-            description = 'Read the content of one or more files. Supported types: text files, images (PNG/JPEG/WebP). Images are returned as multimodal data. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
+            description = '读取工作区中的一个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）。图片会作为多模态数据返回。' + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
         }
     } else {
         // Gemini 和 Anthropic 全面支持
-        description = 'Read the content of one or more files. Supported types: text files, images (PNG/JPEG/WebP), documents (PDF). Images and documents are returned as multimodal data. Paths are relative to the workspace by default; absolute paths or file:// URIs outside the workspace require permission according to settings.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
+        description = '读取工作区中的一个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）、文档（PDF）。图片和文档会作为多模态数据返回。' + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
     }
     
     // 多工作区说明
     if (isMultiRoot) {
-        description += '\n\nMulti-root workspace: Use "workspace_name/path" format for workspace-relative paths. Absolute paths/file:// URIs outside the workspace may be allowed by settings.';
+        description += '\n\n多根工作区：path 必须使用 "workspace_name/path" 格式来指定工作区。';
     }
     
     // 路径参数描述
-    let filesDescription = 'Array of file objects. Each object has: path (required), startLine (optional), endLine (optional). Example: [{"path": "src/main.ts", "startLine": 100}]';
+    let pathDescription = '要读取的文件路径，相对于当前工作区根目录。例如：src/main.ts。';
     if (isMultiRoot) {
-        filesDescription = `Array of file objects. For workspace-relative paths, use "workspace_name/path" format. Absolute paths/file:// URIs may be allowed by settings. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = `要读取的文件路径。当前是多根工作区，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`;
     }
     
     return {
@@ -453,34 +507,47 @@ export function createReadFileTool(
             parameters: {
                 type: 'object',
                 properties: {
-                    files: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                path: {
-                                    type: 'string',
-                                    description: 'File path. Relative paths are resolved from the workspace root; absolute paths/file:// URIs may be allowed by settings.'
-                                },
-                                startLine: {
-                                    type: 'number',
-                                    description: 'Start line number (1-based, inclusive). TEXT FILES ONLY. Reads from this line to end of file, or to endLine if specified.'
-                                },
-                                endLine: {
-                                    type: 'number',
-                                    description: 'End line number (1-based, inclusive). TEXT FILES ONLY. Reads from beginning (or startLine) to this line.'
-                                }
-                            },
-                            required: ['path']
-                        },
-                        description: filesDescription
+                    path: {
+                        type: 'string',
+                        description: pathDescription
+                    },
+                    startLine: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '起始行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。指定后从该行读取到文件末尾，或读取到 endLine。'
+                    },
+                    endLine: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '结束行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。未指定 startLine 时，从文件开头读取到该行。'
+                    },
+                    line: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：读取单独某一行，1-based。若同时提供 maxLines，则从该行开始读取最多 maxLines 行。推荐新调用优先使用 startLine/endLine。'
+                    },
+                    maxLine: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：最大行号，等同于 endLine。用于容错模型把 endLine 写成 maxLine 的情况。'
+                    },
+                    maxLines: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：最多读取多少行。从 startLine/line 开始；如果未提供起始行，则从第 1 行开始。'
+                    },
+                    limit: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：等同于 maxLines。用于容错模型常见的 limit 参数；推荐新调用使用 endLine 或 maxLines。'
                     }
                 },
-                required: ['files']
+                required: ['path']
             }
         },
         handler: async (args, context): Promise<ToolResult> => {
             // 从 context 中获取多模态能力
+            const multimodalEnabled = context?.multimodalEnabled === true;
             const capability = context?.capability as MultimodalCapability ?? {
                 supportsImages: false,
                 supportsDocuments: false,
@@ -491,15 +558,18 @@ export function createReadFileTool(
             const workspaces = getAllWorkspaces();
             const isMultiRoot = workspaces.length > 1;
             
-            // 获取文件列表参数
-            const fileList = args.files as FileReadRequest[];
-            if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
-                return { success: false, error: 'files is required and must be a non-empty array' };
-            }
+            const resolvedLineRange = resolveLineRangeArgs(args);
+            const fileReq: FileReadRequest = {
+                path: args.path as string,
+                // 修改原因：read_file 对外继续以 startLine/endLine 作为内部规范，避免后续读取逻辑理解多个别名。
+                // 修改方式：handler 入口先把 line/maxLine/maxLines/limit 全部归一化为 startLine/endLine。
+                // 修改目的：兼容模型常见参数写法，同时保持 readSingleFile 的行范围模型简单稳定。
+                startLine: resolvedLineRange.startLine,
+                endLine: resolvedLineRange.endLine
+            };
 
-            const outsideWorkspaceAccessError = ensureOutsideWorkspaceAccessApproved('read_file', args, context);
-            if (outsideWorkspaceAccessError) {
-                return { success: false, error: outsideWorkspaceAccessError };
+            if (typeof fileReq.path !== 'string' || fileReq.path.trim() === '') {
+                return { success: false, error: 'path is required' };
             }
 
             const results: ReadResult[] = [];
@@ -507,58 +577,30 @@ export function createReadFileTool(
             let successCount = 0;
             let failCount = 0;
 
-            for (const fileReq of fileList) {
-                // 验证每个文件请求
-                if (!fileReq || typeof fileReq.path !== 'string') {
-                    results.push({
-                        path: String(fileReq?.path || 'unknown'),
-                        success: false,
-                        error: 'Invalid file request: path is required'
-                    });
-                    failCount++;
-                    continue;
-                }
-
-                // 禁止对任何非文本（binary）文件使用行号范围
-                // 只要显式传入 startLine/endLine（包括 0/null/字符串等），就视为传入行号范围
-                const hasLineRangeParam = (fileReq as any).startLine != null || (fileReq as any).endLine != null;
-                const parsedPath = resolveFileToolPathWithInfo(fileReq.path);
-                if (hasLineRangeParam && isBinaryFile(parsedPath.uri?.fsPath || fileReq.path)) {
-                    results.push({
-                        path: fileReq.path,
-                        success: false,
-                        error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
-                    });
-                    failCount++;
-                    continue;
-                }
-                
-                // 构建行范围对象（每个文件单独的行范围）
-                let lineRange: LineRange | undefined;
+            // 构建行范围对象。行范围只对文本文件有意义；非文本/多模态文件即使误传也忽略。
+            let lineRange: LineRange | undefined;
+            if (!isBinaryFile(fileReq.path)) {
                 const startLine = fileReq.startLine;
                 const endLine = fileReq.endLine;
-                
-                if ((typeof startLine === 'number' && startLine >= 1) || (typeof endLine === 'number' && endLine >= 1)) {
+
+                if (startLine !== undefined || endLine !== undefined) {
                     lineRange = {};
-                    if (typeof startLine === 'number' && startLine >= 1) {
-                        lineRange.startLine = startLine;
-                    }
-                    if (typeof endLine === 'number' && endLine >= 1) {
-                        lineRange.endLine = endLine;
-                    }
+                    if (startLine !== undefined) lineRange.startLine = startLine;
+                    if (endLine !== undefined) lineRange.endLine = endLine;
                 }
-                
-                const { result, multimodal } = await readSingleFile(fileReq.path, capability, isMultiRoot, lineRange);
-                results.push(result);
-                
-                if (result.success) {
-                    successCount++;
-                    if (multimodal) {
-                        allMultimodal.push(...multimodal);
-                    }
-                } else {
-                    failCount++;
+            }
+
+            const debug = buildReadFileDebugInfo(fileReq.path, multimodalEnabled, capability, context);
+            const { result, multimodal } = await readSingleFile(fileReq.path, capability, multimodalEnabled, isMultiRoot, lineRange, debug);
+            results.push(result);
+
+            if (result.success) {
+                successCount++;
+                if (multimodal) {
+                    allMultimodal.push(...multimodal);
                 }
+            } else {
+                failCount++;
             }
 
             const allSuccess = failCount === 0;
@@ -568,11 +610,11 @@ export function createReadFileTool(
                     results,
                     successCount,
                     failCount,
-                    totalCount: fileList.length,
+                    totalCount: 1,
                     multiRoot: isMultiRoot
                 },
                 multimodal: allMultimodal.length > 0 ? allMultimodal : undefined,
-                error: allSuccess ? undefined : `${failCount} files failed to read`
+                error: allSuccess ? undefined : `${failCount} file failed to read`
             };
         }
     };

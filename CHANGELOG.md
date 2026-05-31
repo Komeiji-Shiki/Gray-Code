@@ -3,6 +3,69 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [Unreleased]
+
+### Added
+  - OpenAI 兼容渠道新增 DeepSeek `user_id` 开关，用户可在渠道设置中显式启用，启用后主聊天请求会基于当前对话 ID 生成稳定且不包含隐私信息的 `user_id`，用于 DeepSeek KVCache 按对话隔离；默认关闭，避免误判中转或其他兼容服务
+
+### Fixed
+  - 修复聊天消息列表右侧滚动条在长对话、工具卡片和流式输出场景下抽搐、跳位的问题
+  - 修复用户消息滚动条标记在滚动过程中可能消失的问题，保留已加载消息窗口内的用户消息标记和预览文本
+  - 修复提示词模式导入时工具策略过滤的 TypeScript 类型问题
+  - 修复 MCP 工具名包含双下划线时前端解析错误的问题
+  - 同步上游 search_in_files / history_search 正则诊断能力：非正则零命中时识别疑似正则查询并提示显式启用 isRegex / is_regex，避免 `foo|bar`、`ssh.*root`、`38\\.12` 等查询被静默按字面量搜索
+
+### Improved
+  - 优化自定义滚动条的尺寸、内容和 marker 更新时机，合并到浏览器渲染帧中处理，降低重复布局计算导致的抖动
+  - 优化 search_in_files 替换结果的 diff 预览，仅折叠大段未变化内容并保留变更附近上下文
+  - 优化 history_search 与 execute_command 的工具描述，减少历史读取、正则搜索和工作目录参数误用
+  - 同步上游 search_in_files / history_search 多关键词搜索兜底：非正则搜索先匹配完整短语，零命中后再尝试空格分隔关键词，提高自然语言式关键词输入的召回率
+  - search_in_files 工具结果面板新增查询诊断展示，直接显示 suspected_regex、关键词兜底和疑似多个 path 的纠错建议
+  - 增强 execute_command 的 cwd 工作目录说明，明确单根/多根工作区相对路径、workspace 外绝对路径和避免在 command 中嵌入 cd 的规则
+  - 主聊天接入 functionCallMerge，统一流式工具调用的 itemId/index/finalArgs 合并逻辑，降低重复工具卡、空参数工具卡和分片参数错位问题
+  - diff 预览按钮迁移到 ToolConfig.actions，移除 ToolMessage 对 hasDiffPreview/getDiffFilePath 的旧特判依赖
+
+### Synced from upstream (1.1.28 → 1.2.5)
+
+#### 工具增强
+  - apply_diff 升级为结构化 hunks（oldContent/newContent），保留旧 patch 兼容入口；新增行首缩进容错兜底，降低模型缩进误差导致的匹配失败
+  - execute_command 重写 Shell 选择规则说明：明确 PowerShell/CMD/sh/Git Bash/WSL/Zsh 的解析规则、管道符转义、复杂命令最佳实践和 SSH 多层解析边界
+  - read_file / write_file 输入格式简化，单文件读写改为直接传 `{ path, ... }`；read_file 增加 `line`/`maxLine`/`maxLines`/`limit` 兼容别名
+  - list_files / find_files 增加文本文件 `lineCount` 元数据，list_files / find_files / history_search 前端结果卡片展示行数信息
+  - DiffReviewSession 抽取为 DiffManager 内部协作者，集中单个 diff review 生命周期；新增 autoSaveError 避免自动确认模式下悬挂状态
+
+#### 流式渲染
+  - MarkdownRenderer streaming 调度从纯 debounce 调整为 leading/trailing/max-wait 策略：首个非空片段立即显示，持续输出有最大等待上限
+  - 主聊天流式正文不再因 text/thought block key 随正文长度变化而闪烁重建
+
+#### 架构模块
+  - 新增 TranscriptRepository / TranscriptMutation 抽象层，收敛主聊天与 SubAgent transcript 读写入口
+  - ConversationManager 接入 TranscriptRepository 处理删除、截断、清空和快照恢复等结构性历史变更，并在变更后清理上下文裁剪状态
+  - RunController 最小共享契约迁移到 `backend/core/`，统一主聊天取消与 SubAgent pause/resume/exit 接口
+  - 新增 ToolDeclarationResolver 工具声明解析器
+  - 新增 mcpToolNameCodec 模块，修复 MCP 工具名包含双下划线时前端解析错误
+  - 新增 functionCallMerge 模块，标准化 Anthropic `tool_use` 流式工具调用 id/index 语义，消除重复工具卡片
+
+#### Token 速度
+  - 新增 tokenRate 公共工具，统一主聊天、SubAgent Monitor 和响应详情的 token 速度计算入口
+  - 修复流式 `streamDuration` 语义：使用请求开始到最后一个流式块的完整耗时，降低上游一次性吐出多段 SSE 时的畸高速率
+
+#### SubAgent Monitor（基础设施）
+  - 新增 SubAgent Monitor 独立编辑器面板、运行事件总线（runEventBus）与运行控制器（runController）
+  - 新增 WebviewClientRegistry 实现 client-aware Webview routing，让 Main Chat 与 SubAgent Monitor 响应回到正确 Webview
+  - 新增 agentRun store（events/reducer/selectors/contentDelta）为 Monitor 前端数据流提供状态管理
+  - Monitor 前端组件：实时输出、工具卡参数显示、多 run 标签页、窗口状态管理
+  - 接入 App 独立面板模式：`__LIMCODE_VIEW_MODE = 'subagentMonitor'` 时渲染 SubAgent Monitor，并跳过主聊天初始化链路
+  - SubAgent 工具卡新增“打开详情 / Open details”操作，复用 `ToolConfig.actions` 和 `ToolMessage` 通用工具操作按钮渲染
+  - Webview 侧补齐 `subagents.openMonitor`、pause/resume/exit、delete/retry message 等 Monitor 操作 handler，并在 `ChatViewProvider` 中完成最小路由接线
+  - 补齐 SubAgent Monitor 相关 i18n key（zh-CN / en / ja）和前后端通信类型
+  - 补齐 ToolProgressEvent、ToolExecutionResult.args、countTextFileLines、gcd 等同步过程中需要的后端类型与工具函数导出
+  - 验证通过：`cd frontend; npx vue-tsc --noEmit`、根目录 `npx tsc --noEmit`、相关 Jest 单测 `parsers.test.ts` / `ConversationManager.branch.test.ts` / `toolIterationDynamicContextPreserve.test.ts`
+
+#### 新增文件统计
+  - 后端新增 13 个模块/工具文件，前端新增 14 个组件/工具文件
+  - 核心工具 4 个文件同步至上游最新，语法验证通过
+
 ## [1.1.27] - 2026-05-01
 
 ### Added
