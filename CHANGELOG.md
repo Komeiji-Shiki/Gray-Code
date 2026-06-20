@@ -7,6 +7,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Added
   - OpenAI 兼容渠道新增 DeepSeek `user_id` 开关，用户可在渠道设置中显式启用，启用后主聊天请求会基于当前对话 ID 生成稳定且不包含隐私信息的 `user_id`，用于 DeepSeek KVCache 按对话隔离；默认关闭，避免误判中转或其他兼容服务
+  - 新增设置导入/导出功能（`limcode.exportSettings` / `limcode.importSettings`），可在设置面板中将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复；支持跳过已存在项和覆盖全部两种导入模式
 
 ### Fixed
   - 修复聊天消息列表右侧滚动条在长对话、工具卡片和流式输出场景下抽搐、跳位的问题
@@ -14,6 +15,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 修复提示词模式导入时工具策略过滤的 TypeScript 类型问题
   - 修复 MCP 工具名包含双下划线时前端解析错误的问题
   - 同步上游 search_in_files / history_search 正则诊断能力：非正则零命中时识别疑似正则查询并提示显式启用 isRegex / is_regex，避免 `foo|bar`、`ssh.*root`、`38\\.12` 等查询被静默按字面量搜索
+  - 修复 apply_diff / insert_code / delete_code 在工作区外且 autoSave 开启时，用户手动确认工具调用后仍需等待 diff 自动保存计时器的问题，现在确认后直接应用保存
 
 ### Improved
   - 优化自定义滚动条的尺寸、内容和 marker 更新时机，合并到浏览器渲染帧中处理，降低重复布局计算导致的抖动
@@ -24,6 +26,8 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 增强 execute_command 的 cwd 工作目录说明，明确单根/多根工作区相对路径、workspace 外绝对路径和避免在 command 中嵌入 cd 的规则
   - 主聊天接入 functionCallMerge，统一流式工具调用的 itemId/index/finalArgs 合并逻辑，降低重复工具卡、空参数工具卡和分片参数错位问题
   - diff 预览按钮迁移到 ToolConfig.actions，移除 ToolMessage 对 hasDiffPreview/getDiffFilePath 的旧特判依赖
+  - read_file 前端组件适配 path 参数，支持 startLine/endLine 行范围显示
+  - resolveUri / resolveUriWithInfo 增强绝对路径处理，自动匹配所属工作区
 
 ### Synced from upstream (1.1.28 → 1.2.5)
 
