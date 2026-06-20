@@ -315,6 +315,15 @@ export function resolveFileToolPathWithInfo(pathStr: string): {
  * @returns URI，如果无法解析则返回 undefined
  */
 export function resolveUri(relativePath: string): vscode.Uri | undefined {
+    // 绝对路径直接创建 URI，避免和 workspace 路径错误拼接
+    if (isAbsoluteFilePathLike(relativePath)) {
+        try {
+            return toFileUri(relativePath);
+        } catch {
+            return undefined;
+        }
+    }
+
     const { workspace, relativePath: actualPath } = parseWorkspacePath(relativePath);
     if (!workspace) {
         return undefined;
@@ -335,6 +344,35 @@ export function resolveUriWithInfo(relativePath: string): {
     isExplicit: boolean;
     error?: string;
 } {
+    // 绝对路径：直接创建 URI，然后检查是否位于某个工作区内
+    if (isAbsoluteFilePathLike(relativePath)) {
+        try {
+            const uri = toFileUri(relativePath);
+            const workspace = findWorkspaceForAbsolutePath(uri.fsPath);
+            let relPath = uri.fsPath;
+            if (workspace) {
+                relPath = path.relative(workspace.fsPath, uri.fsPath).replace(/\\/g, '/');
+                if (!relPath) {
+                    relPath = '.';
+                }
+            }
+            return {
+                uri,
+                workspace,
+                relativePath: relPath,
+                isExplicit: true
+            };
+        } catch (error) {
+            return {
+                uri: undefined,
+                workspace: undefined,
+                relativePath: relativePath,
+                isExplicit: false,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+
     const { workspace, relativePath: actualPath, isExplicit, error } = parseWorkspacePath(relativePath);
     if (!workspace) {
         return { uri: undefined, workspace: undefined, relativePath: actualPath, isExplicit, error };

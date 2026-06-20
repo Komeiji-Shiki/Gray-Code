@@ -34,12 +34,15 @@ interface FileRequest {
   endLine?: number
 }
 
-// 获取文件请求列表
+// 获取文件请求列表（read_file 接收单个 path，这里包装为统一数组）
 const fileRequests = computed((): FileRequest[] => {
-  if (props.args.files && Array.isArray(props.args.files)) {
-    return props.args.files as FileRequest[]
+  const path = typeof props.args.path === 'string' ? props.args.path : null
+  if (!path) {
+    return []
   }
-  return []
+  const startLine = typeof props.args.startLine === 'number' ? props.args.startLine : undefined
+  const endLine = typeof props.args.endLine === 'number' ? props.args.endLine : undefined
+  return [{ path, startLine, endLine }]
 })
 
 // 获取路径列表

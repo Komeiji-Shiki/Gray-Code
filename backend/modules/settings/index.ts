@@ -9,6 +9,8 @@ export type { SettingsStorage } from './SettingsManager';
 export { FileSettingsStorage, MemorySettingsStorage } from './storage';
 export { VSCodeSettingsStorage } from './VSCodeSettingsStorage';
 export { StoragePathManager } from './StoragePathManager';
+export { SettingsExporter } from './SettingsExporter';
+export type { SettingsExportData, SkillExportData, ImportResult } from './SettingsExporter';
 export type {
     GlobalSettings,
     ToolsEnabledState,

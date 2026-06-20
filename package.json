@@ -46,6 +46,18 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "limcode.exportSettings",
+        "title": "导出设置",
+        "icon": "$(export)",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.importSettings",
+        "title": "导入设置",
+        "icon": "$(import)",
+        "category": "LimCode"
+      },
+      {
         "command": "limcode.migrateConversationHistories",
         "title": "迁移旧对话历史",
         "icon": "$(history)",

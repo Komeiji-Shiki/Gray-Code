@@ -28,3 +28,8 @@ tmp-*.err.log
 
 # packaged extension bundles
 *.vsix
+
+# temp artifacts
+.tmp/
+diff_analyzer.py
+limcode-settings.json

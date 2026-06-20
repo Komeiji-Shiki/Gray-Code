@@ -1803,6 +1803,23 @@ const ja: LanguageMessages = {
                     version: 'バージョン：1.1.26',
                     repository: 'リポジトリ',
                     developer: '開発者'
+                },
+                exportImport: {
+                    title: '設定のエクスポート/インポート',
+                    description: 'すべてのプラグイン設定（チャンネル設定、MCP サーバー、スキルなど）を JSON ファイルとしてエクスポートするか、ファイルからインポートして設定を復元します。会話履歴とチェックポイントは含まれません。',
+                    exportBtn: '設定をエクスポート',
+                    importBtn: '設定をインポート',
+                    exporting: 'エクスポート中...',
+                    importing: 'インポート中...',
+                    exportSuccess: '設定が正常にエクスポートされました: {path}',
+                    exportFailed: 'エクスポートに失敗しました',
+                    importSuccess: 'インポートが完了しました。インポート済み: {items}',
+                    importNoItems: 'インポートする項目がありません',
+                    importFailed: 'インポートに失敗しました',
+                    vscodeSettings: 'VSCode 設定',
+                    channelConfigs: ' 件のチャンネル設定',
+                    mcpServers: ' 件の MCP サーバー',
+                    skills: ' 件のスキル'
                 }
             },
             toolSettings: {

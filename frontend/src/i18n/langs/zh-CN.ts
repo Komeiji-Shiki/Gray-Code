@@ -1803,6 +1803,23 @@ const zhCN: LanguageMessages = {
                     version: '版本：1.1.26',
                     repository: '项目仓库',
                     developer: '开发者'
+                },
+                exportImport: {
+                    title: '设置导入/导出',
+                    description: '将所有插件设置（渠道配置、MCP 服务器、Skills 等）打包导出为 JSON 文件，或从文件导入恢复设置。不包含对话历史和检查点。',
+                    exportBtn: '导出设置',
+                    importBtn: '导入设置',
+                    exporting: '正在导出...',
+                    importing: '正在导入...',
+                    exportSuccess: '设置已成功导出到：{path}',
+                    exportFailed: '导出失败',
+                    importSuccess: '导入完成。已导入：{items}',
+                    importNoItems: '没有可导入的项目',
+                    importFailed: '导入失败',
+                    vscodeSettings: 'VSCode 设置',
+                    channelConfigs: '个渠道配置',
+                    mcpServers: '个 MCP 服务器',
+                    skills: '个 Skills'
                 }
             },
             toolSettings: {

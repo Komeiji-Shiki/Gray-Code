@@ -18,7 +18,7 @@ import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config'
 import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
 import { ModelsHandler } from '../backend/modules/api/models';
-import { SettingsManager, VSCodeSettingsStorage, StoragePathManager } from '../backend/modules/settings';
+import { SettingsManager, VSCodeSettingsStorage, StoragePathManager, SettingsExporter } from '../backend/modules/settings';
 import type { StoragePathConfig, StorageStats, SettingsChangeEvent } from '../backend/modules/settings';
 import { SettingsHandler } from '../backend/modules/api/settings';
 import { CheckpointManager } from '../backend/modules/checkpoint';
@@ -28,6 +28,7 @@ import { DependencyManager, type InstallProgressEvent } from '../backend/modules
 import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
+import type { SettingsExportData } from '../backend/modules/settings';
 import {
     setGlobalSettingsManager,
     setGlobalConfigManager,
@@ -924,6 +925,76 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         return this.storagePathManager.getEffectiveDataPath();
     }
+
+    /**
+     * 导出插件设置（排除对话历史和检查点）
+     *
+     * 收集所有设置数据并序列化为 JSON 字符串。
+     */
+    public async exportSettings(): Promise<string> {
+        await this.initPromise;
+
+        const skillsManager = getSkillsManager();
+        if (!skillsManager) {
+            throw new Error('SkillsManager is not initialized.');
+        }
+
+        const exporter = new SettingsExporter(
+            this.settingsManager,
+            this.configManager,
+            this.mcpManager,
+            skillsManager,
+            this.getExtensionVersion(),
+            this.storagePathManager.getEffectiveDataPath() + '/skills'
+        );
+
+        return await exporter.exportToJson(true);
+    }
+
+    /**
+     * 导入插件设置
+     *
+     * @param json 导出文件的 JSON 字符串
+     * @param options 导入选项
+     */
+    public async importSettings(
+        json: string,
+        options?: { overwriteChannelConfigs?: boolean; overwriteMcpServers?: boolean; overwriteSkills?: boolean }
+    ): Promise<{ success: boolean; imported: { vscodeSettings: boolean; channelConfigs: number; mcpServers: number; skills: number }; errors: string[] }> {
+        await this.initPromise;
+
+        const skillsManager = getSkillsManager();
+        if (!skillsManager) {
+            throw new Error('SkillsManager is not initialized.');
+        }
+
+        const exporter = new SettingsExporter(
+            this.settingsManager,
+            this.configManager,
+            this.mcpManager,
+            skillsManager,
+            this.getExtensionVersion(),
+            this.storagePathManager.getEffectiveDataPath() + '/skills'
+        );
+
+        const data = exporter.parseExportData(json);
+        return await exporter.importFromData(data, options);
+    }
+
+    /**
+     * 获取当前插件版本号
+     */
+    private getExtensionVersion(): string {
+        try {
+            // 从 package.json 读取版本号
+            const packageJsonPath = path.join(this.context.extensionPath, 'package.json');
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            return packageJson.version || '0.0.0';
+        } catch {
+            return '0.0.0';
+        }
+    }
+
 
     /**
      * 生成webview的HTML

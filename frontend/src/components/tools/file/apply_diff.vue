@@ -144,6 +144,25 @@ const filePath = computed(() => {
 // - 新格式：优先读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
 // - 旧格式：兼容 args.diffs
 const diffList = computed((): DiffBlock[] => {
+  // 结构化 hunks（推荐新格式）
+  const hunks = props.args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined
+  if (hunks && Array.isArray(hunks) && hunks.length > 0) {
+    const data = props.result?.data as Record<string, any> | undefined
+    const results = (data?.results as Array<{ index: number; success?: boolean; error?: string; startLine?: number; matchKind?: string }> | undefined) || []
+
+    return hunks.map((h, i) => {
+      const r = results.find(x => x.index === i)
+      return {
+        search: h.oldContent,
+        replace: h.newContent,
+        start_line: h.startLine,
+        success: r?.success,
+        error: r?.error
+      }
+    })
+  }
+
+
   const patch = props.args.patch as string | undefined
   if (patch && typeof patch === 'string' && patch.trim()) {
     const blocks = parseUnifiedPatchToDiffBlocks(patch)

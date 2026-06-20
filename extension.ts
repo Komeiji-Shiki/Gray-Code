@@ -3,6 +3,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
 import { ChatViewProvider } from './webview/ChatViewProvider';
 import { t, setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { Logger } from './backend/core/logger';
@@ -75,6 +76,128 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('limcode.showSettings', () => {
             chatViewProvider.sendCommand('showSettings');
+        })
+    );
+
+    // 注册命令：导出设置
+    context.subscriptions.push(
+        vscode.commands.registerCommand('limcode.exportSettings', async () => {
+            if (!chatViewProvider) {
+                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法导出设置。');
+                return;
+            }
+
+            try {
+                // 让用户选择保存位置
+                const result = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file('limcode-settings.json'),
+                    filters: {
+                        'JSON Files': ['json'],
+                        'All Files': ['*']
+                    },
+                    title: '导出 LimCode 设置'
+                });
+
+                if (!result) {
+                    return; // 用户取消
+                }
+
+                const json = await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'LimCode：正在导出设置...',
+                    cancellable: false
+                }, async () => {
+                    return await chatViewProvider!.exportSettings();
+                });
+
+                // 写入文件
+                await fs.writeFile(result.fsPath, json, 'utf-8');
+
+                vscode.window.showInformationMessage(`设置已成功导出到：${result.fsPath}`);
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`LimCode 导出设置失败：${error?.message || String(error)}`);
+            }
+        })
+    );
+
+    // 注册命令：导入设置
+    context.subscriptions.push(
+        vscode.commands.registerCommand('limcode.importSettings', async () => {
+            if (!chatViewProvider) {
+                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法导入设置。');
+                return;
+            }
+
+            try {
+                // 让用户选择导入文件
+                const result = await vscode.window.showOpenDialog({
+                    canSelectFiles: true,
+                    canSelectFolders: false,
+                    canSelectMany: false,
+                    filters: {
+                        'JSON Files': ['json'],
+                        'All Files': ['*']
+                    },
+                    title: '导入 LimCode 设置'
+                });
+
+                if (!result || result.length === 0) {
+                    return; // 用户取消
+                }
+
+                const filePath = result[0].fsPath;
+
+                // 读取文件
+                const json = await fs.readFile(filePath, 'utf-8');
+
+                // 让用户确认导入选项
+                const overwriteChoice = await vscode.window.showQuickPick(
+                    [
+                        { label: '跳过已存在的项', description: '只导入新的配置，不覆盖已有配置', value: 'skip' },
+                        { label: '覆盖所有', description: '覆盖所有已有配置（建议先备份）', value: 'overwrite' }
+                    ],
+                    {
+                        placeHolder: '选择导入方式',
+                        title: 'LimCode 导入设置'
+                    }
+                );
+
+                if (!overwriteChoice) {
+                    return; // 用户取消
+                }
+
+                const overwrite = overwriteChoice.value === 'overwrite';
+
+                const importResult = await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'LimCode：正在导入设置...',
+                    cancellable: false
+                }, async () => {
+                    return await chatViewProvider!.importSettings(json, {
+                        overwriteChannelConfigs: overwrite,
+                        overwriteMcpServers: overwrite,
+                        overwriteSkills: overwrite
+                    });
+                });
+
+                // 构建结果消息
+                const parts: string[] = [];
+                if (importResult.imported.vscodeSettings) parts.push('VSCode 设置');
+                if (importResult.imported.channelConfigs > 0) parts.push(`${importResult.imported.channelConfigs} 个渠道配置`);
+                if (importResult.imported.mcpServers > 0) parts.push(`${importResult.imported.mcpServers} 个 MCP 服务器`);
+                if (importResult.imported.skills > 0) parts.push(`${importResult.imported.skills} 个 Skills`);
+
+                if (importResult.success) {
+                    const importedItems = parts.length > 0 ? `已导入：${parts.join('、')}` : '没有可导入的项';
+                    vscode.window.showInformationMessage(`设置导入完成。${importedItems}。`);
+                } else {
+                    const importedItems = parts.length > 0 ? `已导入：${parts.join('、')}。` : '';
+                    const errorSummary = importResult.errors.join('；');
+                    vscode.window.showWarningMessage(`设置导入部分完成。${importedItems}错误：${errorSummary}`);
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`LimCode 导入设置失败：${error?.message || String(error)}`);
+            }
         })
     );
 

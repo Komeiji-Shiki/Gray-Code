@@ -1803,6 +1803,23 @@ const en: LanguageMessages = {
                     version: 'Version: 1.1.26',
                     repository: 'Repository',
                     developer: 'Developer'
+                },
+                exportImport: {
+                    title: 'Settings Export/Import',
+                    description: 'Export all plugin settings (channel configs, MCP servers, Skills, etc.) as a JSON file, or import to restore settings. Conversation history and checkpoints are excluded.',
+                    exportBtn: 'Export Settings',
+                    importBtn: 'Import Settings',
+                    exporting: 'Exporting...',
+                    importing: 'Importing...',
+                    exportSuccess: 'Settings exported successfully to: {path}',
+                    exportFailed: 'Export failed',
+                    importSuccess: 'Import completed. Imported: {items}',
+                    importNoItems: 'No items to import',
+                    importFailed: 'Import failed',
+                    vscodeSettings: 'VSCode Settings',
+                    channelConfigs: ' channel config(s)',
+                    mcpServers: ' MCP server(s)',
+                    skills: ' skill(s)'
                 }
             },
             toolSettings: {

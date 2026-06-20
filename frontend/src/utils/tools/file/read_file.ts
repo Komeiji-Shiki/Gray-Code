@@ -5,12 +5,6 @@
 import { registerTool } from '../../toolRegistry'
 import ReadFileComponent from '../../../components/tools/file/read_file.vue'
 
-interface FileRequest {
-  path: string
-  startLine?: number
-  endLine?: number
-}
-
 // 注册 read_file 工具
 registerTool('read_file', {
   name: 'read_file',
@@ -19,21 +13,22 @@ registerTool('read_file', {
   
   // 描述生成器 - 显示文件路径和行范围
   descriptionFormatter: (args) => {
-    if (!args.files || !Array.isArray(args.files)) {
+    const path = typeof args.path === 'string' ? args.path : null
+    if (!path) {
       return '?'
     }
-    
-    return (args.files as FileRequest[]).map(f => {
-      let desc = f.path || '?'
-      if (f.startLine !== undefined && f.endLine !== undefined) {
-        desc += ` [L${f.startLine}-${f.endLine}]`
-      } else if (f.startLine !== undefined) {
-        desc += ` [L${f.startLine}+]`
-      } else if (f.endLine !== undefined) {
-        desc += ` [L1-${f.endLine}]`
-      }
-      return desc
-    }).join('\n')
+
+    let desc = path
+    const startLine = typeof args.startLine === 'number' ? args.startLine : undefined
+    const endLine = typeof args.endLine === 'number' ? args.endLine : undefined
+    if (startLine !== undefined && endLine !== undefined) {
+      desc += ` [L${startLine}-${endLine}]`
+    } else if (startLine !== undefined) {
+      desc += ` [L${startLine}+]`
+    } else if (endLine !== undefined) {
+      desc += ` [L1-${endLine}]`
+    }
+    return desc
   },
   
   // 使用自定义组件显示内容

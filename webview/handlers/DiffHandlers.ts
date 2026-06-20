@@ -88,10 +88,12 @@ async function handleApplyDiffPreview(
 ): Promise<void> {
   const filePath = args.path as string;
   const patch = args.patch as string | undefined;
+  // 结构化 hunks（推荐新格式）
+  const hunks = args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined;
   // legacy fallback
   const diffs = args.diffs as Array<{ search: string; replace: string; start_line?: number }> | undefined;
   
-  if (!filePath || (!patch && (!diffs || diffs.length === 0))) {
+  if (!filePath || (!patch && (!hunks || hunks.length === 0) && (!diffs || diffs.length === 0))) {
     throw new Error(t('webview.errors.invalidDiffData'));
   }
   
@@ -124,6 +126,11 @@ async function handleApplyDiffPreview(
     const built = buildPreviewContentsFromUnifiedPatch(patch);
     originalContent = built.originalContent;
     newContent = built.newContent;
+    diffTitle = t('webview.messages.historyDiffPreview', { filePath });
+  } else if (hunks && hunks.length > 0) {
+    // 结构化 hunks 预览：拼接各 hunk 的 oldContent / newContent
+    originalContent = hunks.map((h, i) => `// === Hunk #${i + 1}${h.startLine !== undefined ? ` (Line ${h.startLine})` : ''} ===\n${h.oldContent}`).join('\n\n');
+    newContent = hunks.map((h, i) => `// === Hunk #${i + 1}${h.startLine !== undefined ? ` (Line ${h.startLine})` : ''} ===\n${h.newContent}`).join('\n\n');
     diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   } else {
     // legacy diffs preview

@@ -2011,6 +2011,23 @@ export interface LanguageMessages {
                     repository: string;
                     developer: string;
                 };
+                exportImport: {
+                    title: string;
+                    description: string;
+                    exportBtn: string;
+                    importBtn: string;
+                    exporting: string;
+                    importing: string;
+                    exportSuccess: string;
+                    exportFailed: string;
+                    importSuccess: string;
+                    importNoItems: string;
+                    importFailed: string;
+                    vscodeSettings: string;
+                    channelConfigs: string;
+                    mcpServers: string;
+                    skills: string;
+                };
             };
             toolsSettings: {
                 maxIterations: {

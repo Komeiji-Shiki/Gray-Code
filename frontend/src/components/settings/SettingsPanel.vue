@@ -311,6 +311,73 @@ async function updateLanguage(lang: string) {
   }
 }
 
+// ========== 设置导入/导出 ==========
+const isExporting = ref(false)
+const isImporting = ref(false)
+const importExportMessage = ref('')
+const importExportMessageType = ref<'success' | 'error'>('success')
+
+async function handleExportSettings() {
+  isExporting.value = true
+  importExportMessage.value = ''
+  
+  try {
+    const response = await sendToExtension<any>('settings.export', {})
+    if (response?.success) {
+      importExportMessage.value = t('components.settings.settingsPanel.exportImport.exportSuccess', { path: response.filePath })
+      importExportMessageType.value = 'success'
+    } else if (response?.cancelled) {
+      // 用户取消了，不显示消息
+    } else {
+      importExportMessage.value = t('components.settings.settingsPanel.exportImport.exportFailed')
+      importExportMessageType.value = 'error'
+    }
+  } catch (error: any) {
+    importExportMessage.value = error?.message || t('components.settings.settingsPanel.exportImport.exportFailed')
+    importExportMessageType.value = 'error'
+  } finally {
+    isExporting.value = false
+    if (importExportMessage.value) {
+      setTimeout(() => { importExportMessage.value = '' }, 5000)
+    }
+  }
+}
+
+async function handleImportSettings() {
+  isImporting.value = true
+  importExportMessage.value = ''
+  
+  try {
+    // 先让用户选择导入方式（弹出确认对话框由扩展端处理）
+    // 这里直接调用导入，扩展端会弹出文件选择器和覆盖确认
+    const response = await sendToExtension<any>('settings.import', { overwrite: false })
+    if (response?.success) {
+      const parts: string[] = []
+      if (response.imported?.vscodeSettings) parts.push(t('components.settings.settingsPanel.exportImport.vscodeSettings'))
+      if (response.imported?.channelConfigs > 0) parts.push(`${response.imported.channelConfigs} ${t('components.settings.settingsPanel.exportImport.channelConfigs')}`)
+      if (response.imported?.mcpServers > 0) parts.push(`${response.imported.mcpServers} ${t('components.settings.settingsPanel.exportImport.mcpServers')}`)
+      if (response.imported?.skills > 0) parts.push(`${response.imported.skills} ${t('components.settings.settingsPanel.exportImport.skills')}`)
+      importExportMessage.value = parts.length > 0
+        ? t('components.settings.settingsPanel.exportImport.importSuccess', { items: parts.join('、') })
+        : t('components.settings.settingsPanel.exportImport.importNoItems')
+      importExportMessageType.value = 'success'
+    } else if (response?.cancelled) {
+      // 用户取消了
+    } else {
+      importExportMessage.value = response?.errors?.join('；') || t('components.settings.settingsPanel.exportImport.importFailed')
+      importExportMessageType.value = 'error'
+    }
+  } catch (error: any) {
+    importExportMessage.value = error?.message || t('components.settings.settingsPanel.exportImport.importFailed')
+    importExportMessageType.value = 'error'
+  } finally {
+    isImporting.value = false
+    if (importExportMessage.value) {
+      setTimeout(() => { importExportMessage.value = '' }, 8000)
+    }
+  }
+}
+
 // 初始化
 onMounted(() => {
   loadSettings()
@@ -620,6 +687,44 @@ onMounted(() => {
                       {{ t('components.settings.storageSettings.reloadWindow') }}
                     </button>
                   </div>
+                </div>
+              </div>
+              
+              <div class="divider"></div>
+              
+              <!-- 设置导入/导出 -->
+              <div class="form-group">
+                <label class="group-label">
+                  <i class="codicon codicon-export"></i>
+                  {{ t('components.settings.settingsPanel.exportImport.title') }}
+                </label>
+                <p class="field-description">{{ t('components.settings.settingsPanel.exportImport.description') }}</p>
+                
+                <div class="import-export-actions">
+                  <button
+                    class="action-btn primary"
+                    @click="handleExportSettings"
+                    :disabled="isExporting"
+                  >
+                    <i v-if="isExporting" class="codicon codicon-loading codicon-modifier-spin"></i>
+                    <i v-else class="codicon codicon-export"></i>
+                    {{ isExporting ? t('components.settings.settingsPanel.exportImport.exporting') : t('components.settings.settingsPanel.exportImport.exportBtn') }}
+                  </button>
+                  <button
+                    class="action-btn"
+                    @click="handleImportSettings"
+                    :disabled="isImporting"
+                  >
+                    <i v-if="isImporting" class="codicon codicon-loading codicon-modifier-spin"></i>
+                    <i v-else class="codicon codicon-import"></i>
+                    {{ isImporting ? t('components.settings.settingsPanel.exportImport.importing') : t('components.settings.settingsPanel.exportImport.importBtn') }}
+                  </button>
+                </div>
+                
+                <!-- 状态消息 -->
+                <div v-if="importExportMessage" class="storage-message" :class="importExportMessageType">
+                  <i :class="['codicon', importExportMessageType === 'success' ? 'codicon-check' : 'codicon-error']"></i>
+                  {{ importExportMessage }}
                 </div>
               </div>
               
