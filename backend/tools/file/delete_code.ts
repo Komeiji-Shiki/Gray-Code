@@ -56,7 +56,8 @@ function deleteLineRange(lines: string[], startLine: number, endLine: number): s
 async function deleteSingleFile(
     entry: DeleteCodeEntry,
     toolId?: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    approvedByToolConfirmation?: boolean
 ): Promise<DeleteResult> {
     const { path: filePath, start_line: startLine, end_line: endLine } = entry;
 
@@ -130,7 +131,8 @@ async function deleteSingleFile(
             newContent,
             blocks,
             undefined,
-            toolId
+            toolId,
+            { confirmedByToolConfirmation: approvedByToolConfirmation === true }
         );
 
         // 等待用户处理
@@ -258,7 +260,7 @@ export function createDeleteCodeTool(): Tool {
             let failCount = 0;
 
             for (const entry of fileList) {
-                const result = await deleteSingleFile(entry, context?.toolId, context?.abortSignal);
+                const result = await deleteSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation);
                results.push(result);
                 if (result.success) {
                     successCount++;

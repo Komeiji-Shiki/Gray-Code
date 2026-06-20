@@ -1424,7 +1424,8 @@ ${descriptionSuffix}`,
                         newContent,
                         blocks,
                         rawDiffs,
-                        context?.toolId
+                        context?.toolId,
+                        { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
                     );
 
                     // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
@@ -1598,7 +1599,8 @@ ${descriptionSuffix}`,
                     currentContent,
                     blocks,
                     diffs as any[],
-                    context?.toolId
+                    context?.toolId,
+                    { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
                 );
 
                 // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
