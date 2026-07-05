@@ -473,16 +473,14 @@ export class ToolIterationLoopService {
                 dynamicContextStrategy
             );
 
-            try {
-                this.log.debug('stream.trim_result', {
-                    conversationId, iteration,
-                    modelOverride: modelOverride || null,
-                    configModel: (config as any).model || null,
-                    trimStartIndex: trimResult.trimStartIndex,
-                    historyLength: trimResult.history.length,
-                    needsAutoSummarize: !!trimResult.needsAutoSummarize
-                });
-            } catch {}
+            this.log.debug('stream.trim_result', {
+                conversationId, iteration,
+                modelOverride: modelOverride || null,
+                configModel: (config as any).model || null,
+                trimStartIndex: trimResult.trimStartIndex,
+                historyLength: trimResult.history.length,
+                needsAutoSummarize: !!trimResult.needsAutoSummarize
+            });
 
             // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
             if (trimResult.needsAutoSummarize && this.summarizeService) {
@@ -1105,16 +1103,14 @@ export class ToolIterationLoopService {
                 dynamicContextStrategy
             );
 
-            try {
-                this.log.debug('nonstream.trim_result', {
-                    conversationId, iteration,
-                    modelOverride: modelOverride || null,
-                    configModel: (config as any).model || null,
-                    trimStartIndex: trimResult.trimStartIndex,
-                    historyLength: trimResult.history.length,
-                    needsAutoSummarize: !!trimResult.needsAutoSummarize
-                });
-            } catch {}
+            this.log.debug('nonstream.trim_result', {
+                conversationId, iteration,
+                modelOverride: modelOverride || null,
+                configModel: (config as any).model || null,
+                trimStartIndex: trimResult.trimStartIndex,
+                historyLength: trimResult.history.length,
+                needsAutoSummarize: !!trimResult.needsAutoSummarize
+            });
 
             // 自动总结检测
             if (trimResult.needsAutoSummarize && this.summarizeService) {

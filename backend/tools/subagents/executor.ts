@@ -17,7 +17,9 @@ import type { ToolDeclaration } from '../types';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
 import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
-import type { Content } from '../../modules/conversation/types';
+import type { Content, ContentPart } from '../../modules/conversation/types';
+import type { ToolExecutionResult } from '../../modules/api/chat/utils';
+import type { GenerateRequest } from '../../modules/channel/types';
 import { subAgentRunEventBus } from './runEventBus';
 import { subAgentRunController } from './runController';
 
@@ -32,9 +34,9 @@ interface SubAgentExecutedToolCall {
     result: unknown;
     success: boolean;
     error?: string;
-    responseParts?: any[];
-    toolResults?: any[];
-    multimodalAttachments?: any[];
+    responseParts?: ContentPart[];
+    toolResults?: ToolExecutionResult[];
+    multimodalAttachments?: ContentPart[];
 }
 
 /**
@@ -202,7 +204,7 @@ async function executeToolCall(
                 channelConfig || undefined,
                 abortSignal,
                 context.promptModeSnapshot,
-                (event: any) => subAgentRunEventBus.emit({
+                (event) => subAgentRunEventBus.emit({
                     ...event,
                     runId: actualRunId,
                     agentName
@@ -210,15 +212,15 @@ async function executeToolCall(
             );
 
             const toolResult = fullResult.toolResults?.[0];
-            const resultPayload = toolResult?.result ?? { success: false, error: `Tool produced no result: ${toolName}` };
+            const resultPayload: Record<string, unknown> = toolResult?.result ?? { success: false, error: `Tool produced no result: ${toolName}` };
             const success = !(
-                (resultPayload as any)?.success === false ||
-                (resultPayload as any)?.error ||
-                (resultPayload as any)?.cancelled ||
-                (resultPayload as any)?.rejected
+                resultPayload.success === false ||
+                resultPayload.error ||
+                resultPayload.cancelled ||
+                resultPayload.rejected
             );
-            const error = typeof (resultPayload as any)?.error === 'string'
-                ? (resultPayload as any).error
+            const error = typeof resultPayload.error === 'string'
+                ? resultPayload.error
                 : undefined;
 
             subAgentRunEventBus.emit({
@@ -476,7 +478,7 @@ export function createDefaultExecutor(
             }
             
             // 构建对话历史（Content 格式）
-            const history: Array<{ role: 'user' | 'model'; parts: any[] }> = [
+            const history: Content[] = [
                 { role: 'user', parts: [{ text: userPrompt }] }
             ];
             
@@ -535,15 +537,15 @@ export function createDefaultExecutor(
                 // 调用 AI
                 const operationSignal = createOperationSignal();
                 let retryFailedInThisCall = false;
-                const generateRequest: any = {
+                const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
                     history: history,
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: operationSignal,
                     toolOverrides: availableTools.length > 0 ? availableTools : undefined,
                     suppressRetryNotification: true,
-                    retryStatusCallback: (status: any) => {
-                        if (status?.type === 'retryFailed') {
+                    retryStatusCallback: (status) => {
+                        if (status.type === 'retryFailed') {
                             retryFailedInThisCall = true;
                         }
                         // 修改原因：SubAgent 内部自动重试状态不能进入主窗口 retryStatus，但用户需要在 Monitor 里看到。
@@ -552,7 +554,7 @@ export function createDefaultExecutor(
                         subAgentRunEventBus.emit({
                             runId,
                             agentName: config.name,
-                            type: status?.type || 'run_updated',
+                            type: status.type || 'run_updated',
                             payload: status
                         });
                     },
@@ -725,7 +727,7 @@ export function createDefaultExecutor(
                 }
                 
                 // 执行工具调用
-                const toolResultParts: any[] = [];
+                const toolResultParts: ContentPart[] = [];
                 
                 for (const call of currentToolCalls) {
                     // 执行工具前检查超时

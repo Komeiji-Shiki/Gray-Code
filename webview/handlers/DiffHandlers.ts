@@ -276,8 +276,17 @@ async function handleWriteFilePreview(
   ctx: HandlerContext,
   toolId?: string
 ): Promise<void> {
-  const files = args.files as Array<{ path: string; content: string }>;
-  
+  // 兼容批量格式 (files 数组) 和单文件格式 (path + content)
+  let files = args.files as Array<{ path: string; content: string }> | undefined;
+  if (!files || files.length === 0) {
+    // 回退到单文件参数格式
+    const singlePath = args.path as string | undefined;
+    const singleContent = args.content as string | undefined;
+    if (singlePath) {
+      files = [{ path: singlePath, content: singleContent || '' }];
+    }
+  }
+
   if (!files || files.length === 0) {
     throw new Error(t('webview.errors.noFileContent'));
   }

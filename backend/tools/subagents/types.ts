@@ -4,8 +4,13 @@
  * 定义子代理的类型和接口
  */
 
-import type { Tool, ToolDeclaration } from '../types';
 import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types';
+import type { ChannelManager } from '../../modules/channel/ChannelManager';
+import type { ToolRegistry } from '../ToolRegistry';
+import type { McpManager } from '../../modules/mcp/McpManager';
+import type { SettingsManager } from '../../modules/settings/SettingsManager';
+import type { ConfigManager } from '../../modules/config/ConfigManager';
+import type { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
 
 /**
  * 子代理类型
@@ -195,16 +200,16 @@ export interface SubAgentResult {
  */
 export interface SubAgentExecutorContext {
     /** 渠道管理器（用于调用 AI） */
-    channelManager: any; // ChannelManager 类型
+    channelManager: ChannelManager;
     
     /** 工具注册器（用于获取内置工具） */
-    toolRegistry: any; // ToolRegistry 类型
+    toolRegistry: ToolRegistry;
     
     /** MCP 管理器（用于获取 MCP 工具） */
-    mcpManager?: any; // McpManager 类型
+    mcpManager?: McpManager;
     
     /** 设置管理器 */
-    settingsManager?: any; // SettingsManager 类型
+    settingsManager?: SettingsManager;
 
     /**
      * 配置管理器。
@@ -213,7 +218,7 @@ export interface SubAgentExecutorContext {
      * 修改方式：把 ConfigManager 注入执行上下文，由 SubAgent 在每次 run 中解析自己的 channel 配置。
      * 修改目的：避免 SubAgent 工具执行时因拿不到渠道配置而退化为 multimodalEnabled=false。
      */
-    configManager?: any; // ConfigManager 类型
+    configManager?: ConfigManager;
 
     /**
      * 共享工具执行服务。
@@ -222,7 +227,7 @@ export interface SubAgentExecutorContext {
      * 修改方式：通过上下文注入 ChatHandler 持有的 ToolExecutionService 实例；执行时仍传入 SubAgent 自己的 provider 配置。
      * 修改目的：共享工具执行内核，但保持 SubAgent 模型能力、toolMode 和多模态开关独立于主会话。
      */
-    toolExecutionService?: any; // ToolExecutionService 类型
+    toolExecutionService?: ToolExecutionService;
 
     /** 对话 ID，用于把 SubAgent 内部记录保存到 conversation 子记录 */
     conversationId?: string;

@@ -8,8 +8,6 @@ tsconfig.json
 .limcode/**
 fast-tavern-main/**
 .tmp/**
-*.ts
-!*.d.ts
 
 # 锁文件
 pnpm-lock.yaml
@@ -18,9 +16,7 @@ yarn.lock
 
 # 测试相关（不打包进扩展）
 test/**
-jest.config.cjs
 jest.backend.config.js
-tsconfig.jest.json
 tsconfig.test.json
 coverage/**
 .jest-cache/**
@@ -36,9 +32,10 @@ limcode-settings.json
 *.log.*
 logs/**
 
-# 后端源文件和文档（只需要 dist 中的编译结果）
+# 后端源文件和文档（esbuild 已打包到 dist/extension.js）
 backend/**
 webview/**
+esbuild.config.js
 
 # 前端源文件（只需要 dist）
 frontend/src/**
@@ -51,40 +48,7 @@ frontend/vite.config.ts
 frontend/pnpm-lock.yaml
 frontend/COMPONENT_ARCHITECTURE.md
 
-# 忽略所有 node_modules，但保留需要的运行时依赖
+# 依赖：保留 esbuild external 的原生包
 node_modules/**
-!node_modules/
-!node_modules/@vscode/
-!node_modules/@vscode/**
-!node_modules/@vscode/codicons/
-!node_modules/@vscode/codicons/**
-!node_modules/@vscode/codicons/dist/
-!node_modules/@vscode/codicons/dist/**
-!node_modules/fast-xml-parser/
-!node_modules/fast-xml-parser/**
-!node_modules/nanoid/
-!node_modules/nanoid/**
-!node_modules/strnum/
-!node_modules/strnum/**
-!node_modules/tree-kill/
-!node_modules/tree-kill/**
-!node_modules/ignore/
-!node_modules/ignore/**
 !node_modules/node-notifier/
 !node_modules/node-notifier/**
-!node_modules/growly/
-!node_modules/growly/**
-!node_modules/is-wsl/
-!node_modules/is-wsl/**
-!node_modules/is-docker/
-!node_modules/is-docker/**
-!node_modules/semver/
-!node_modules/semver/**
-!node_modules/shellwords/
-!node_modules/shellwords/**
-!node_modules/uuid/
-!node_modules/uuid/**
-!node_modules/which/
-!node_modules/which/**
-!node_modules/isexe/
-!node_modules/isexe/**

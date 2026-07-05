@@ -22,6 +22,9 @@ import type { SettingsManager } from '../settings/SettingsManager';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import { getDiffManager } from '../../tools/file/diffManager';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
+import { Logger } from '../../core/logger';
+
+const log = Logger.get('CheckpointManager');
 
 /**
  * 文件变更记录
@@ -286,7 +289,7 @@ export class CheckpointManager {
                     }
                 }
                 
-                console.log(`[CheckpointManager] Incremental backup: ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`);
+                log.info('incremental_backup', { added: added.length, modified: modified.length, deleted: deleted.length });
             }
             
             // 如果不是增量备份，进行完整备份
@@ -315,7 +318,7 @@ export class CheckpointManager {
                     }
                 }
                 
-                console.log(`[CheckpointManager] Full backup: ${fileCount} files`);
+                log.info('full_backup', { fileCount });
             }
             
             // 创建检查点记录
@@ -677,7 +680,7 @@ export class CheckpointManager {
                 };
             }
 
-            const targetHashes = targetState.fileHashes;
+            const targetHashes = targetState!.fileHashes;
              
             // 获取增量链（从基准点到目标点）
             const chain = this.getIncrementalChain(checkpoints, checkpoint);
@@ -794,7 +797,7 @@ export class CheckpointManager {
             skipped = Object.keys(targetHashes).length - added.length - modified.length;
              
             // 恢复空目录时使用已经过滤后的目标集合，避免重建当前已忽略目录。
-            const targetEmptyDirs = targetState.emptyDirs;
+            const targetEmptyDirs = targetState!.emptyDirs;
             for (const relativePath of targetEmptyDirs) {
                 try {
                     const destPath = path.join(workspaceRoot.fsPath, relativePath);
@@ -821,7 +824,7 @@ export class CheckpointManager {
             }
             vscode.window.setStatusBarMessage(message, 5000);
             
-            console.log(`[CheckpointManager] Restore from chain: ${chain.length} checkpoints, restored=${restored}, deleted=${deleted}, skipped=${skipped}`);
+            log.info('restore_from_chain', { chainLength: chain.length, restored, deleted, skipped });
             
             return {
                 success: true,

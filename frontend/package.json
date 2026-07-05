@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:local": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

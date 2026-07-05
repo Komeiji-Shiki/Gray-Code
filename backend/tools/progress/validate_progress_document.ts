@@ -59,35 +59,35 @@ export function createValidateProgressDocumentTool(): Tool {
         const content = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
         const progressValidation = buildProgressValidationSummary(content);
 
-        return {
-          success: true,
-          data: {
-            path: targetPath,
-            ...(progressValidation.metadata
-              ? projectProgressToolResultData({
+        const progressData = progressValidation.metadata
+            ? projectProgressToolResultData({
                 path: targetPath,
                 metadata: progressValidation.metadata,
                 delta: {
-                  type: 'validated',
-                  changedFields: []
+                    type: 'validated' as const,
+                    changedFields: []
                 }
-              })
-              : {
+            })
+            : {
                 path: targetPath,
                 progressDelta: {
-                  type: 'validated',
-                  changedFields: []
+                    type: 'validated' as const,
+                    changedFields: []
                 }
-              }
-            ),
-            progressValidation,
-            formatVersion: progressValidation.formatVersion,
-            isValid: progressValidation.isValid,
-            issueCount: progressValidation.issueCount,
-            errorCount: progressValidation.errorCount,
-            warningCount: progressValidation.warningCount,
-            issues: progressValidation.issues,
-          }
+            };
+
+        return {
+            success: true,
+            data: {
+                ...progressData,
+                progressValidation,
+                formatVersion: progressValidation.formatVersion,
+                isValid: progressValidation.isValid,
+                issueCount: progressValidation.issueCount,
+                errorCount: progressValidation.errorCount,
+                warningCount: progressValidation.warningCount,
+                issues: progressValidation.issues,
+            }
         };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };

@@ -7,6 +7,7 @@
  */
 
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -124,6 +125,46 @@ function generateTerminalId(): string {
 }
 
 /**
+ * 在 Windows 上解析 shell 可执行文件的路径。
+ *
+ * 优先使用用户配置的自定义路径。未配置时返回简短文件名（如 'powershell.exe'、'cmd.exe'），
+ * 让 Windows 的 CreateProcessW 通过内置的系统目录搜索来定位可执行文件。
+ *
+ * CreateProcessW 的搜索顺序保证 System32 始终在 PATH 之前被搜索，
+ * 因此不需要拼接完整路径，避免了 fs.existsSync 与实际 spawn 之间可能的不一致
+ * （例如 WOW64 重定向、文件系统过滤驱动干扰等边缘场景）。
+ *
+ * @param shellType  shell 类型（如 'powershell', 'cmd'）
+ * @param customPath 用户在设置中配置的自定义路径（可选）
+ * @returns shell 可执行文件路径
+ */
+function resolveWindowsShellExecutable(shellType: string, customPath?: string): string {
+    // 用户显式配置的路径优先
+    if (customPath) {
+        return customPath;
+    }
+
+    switch (shellType) {
+        case 'cmd':
+            // ComSpec 通常指向 C:\Windows\System32\cmd.exe，优先使用
+            if (process.env.ComSpec) {
+                return process.env.ComSpec;
+            }
+            return 'cmd.exe';
+
+        case 'powershell':
+            // 直接使用简短文件名，让 Windows 的 CreateProcessW 通过内置搜索找到它。
+            // CreateProcessW 总是优先搜索 System32，不依赖 PATH。
+            // 如果系统安装了 PowerShell 7 且 PATH 中有 pwsh，CreateProcessW 也会找到。
+            return 'powershell.exe';
+
+        default:
+            // 其他 shell（bash.exe, sh.exe 等）保持原逻辑
+            return `${shellType}.exe`;
+    }
+}
+
+/**
  * 获取 shell 配置（从设置中读取）
  */
 function getShellConfig(shellType: ShellType): {
@@ -152,7 +193,7 @@ function getShellConfig(shellType: ShellType): {
             if (platform === 'win32') {
                 // PowerShell 需要设置输出编码为 UTF-8，同时设置控制台编码
                 return {
-                    shell: customPath || 'powershell.exe',
+                    shell: resolveWindowsShellExecutable('powershell', customPath),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
                     prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
                 };
@@ -165,7 +206,7 @@ function getShellConfig(shellType: ShellType): {
                 // 不再使用 PowerShell 包装，避免命令语法不兼容问题（如 && 运算符）
                 // 使用 /s /c 参数确保命令中的引号被正确处理
                 return {
-                    shell: customPath || 'cmd.exe',
+                    shell: resolveWindowsShellExecutable('cmd', customPath),
                     shellArgs: ['/s', '/c'],
                     prependCommand: 'chcp 65001 >nul &&'
                 };
@@ -190,7 +231,7 @@ function getShellConfig(shellType: ShellType): {
             if (platform === 'win32') {
                 // Windows 无 zsh，降级到 PowerShell（带 UTF-8 编码）
                 return {
-                    shell: 'powershell.exe',
+                    shell: resolveWindowsShellExecutable('powershell'),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
                     prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
                 };
@@ -222,7 +263,7 @@ function getShellConfig(shellType: ShellType): {
             if (platform === 'win32') {
                 // Windows 默认使用 PowerShell（带 UTF-8 编码）
                 return {
-                    shell: 'powershell.exe',
+                    shell: resolveWindowsShellExecutable('powershell'),
                     shellArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command'],
                     prependCommand: '$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8;'
                 };
@@ -249,8 +290,14 @@ function getDefaultShellPath(shellType: string): string {
     
     switch (shellType) {
         case 'powershell':
-            return platform === 'win32' ? 'powershell.exe' : 'pwsh';
+            if (platform === 'win32') {
+                return resolveWindowsShellExecutable('powershell');
+            }
+            return 'pwsh';
         case 'cmd':
+            if (platform === 'win32') {
+                return resolveWindowsShellExecutable('cmd');
+            }
             return 'cmd.exe';
         case 'bash':
             // Windows 使用 PATH 中的 bash
@@ -961,6 +1008,17 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                 workingDir = workspaces[0].fsPath;
             }
 
+            // 验证工作目录是否存在。Windows 上 CreateProcessW 的 lpCurrentDirectory
+            // 指向不存在的目录时会返回 ERROR_DIRECTORY，Node.js 映射为 ENOENT，
+            // 错误消息却是 "spawn <shell> ENOENT"，极易误导为找不到 shell。
+            // 在 spawn 之前主动检查，给出明确的目录错误。
+            if (!fs.existsSync(workingDir)) {
+                return {
+                    success: false,
+                    error: `Working directory does not exist: ${workingDir}. Please check the cwd parameter or create the directory first.`
+                };
+            }
+
             // 获取 shell 配置
             const shellConfig = getShellConfig(shell);
 
@@ -1317,7 +1375,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                                 shell,
                                 output: lastOutput.join('\n')
                             },
-                            error: `Failed to execute command: ${err.message}`
+                            error: `Failed to execute command: ${err.message} (cwd: ${workingDir})`
                         });
                     });
 
@@ -1462,8 +1520,8 @@ export function getActiveTerminalProcesses(): Array<{
     running: boolean;
     startTime: number;
 }> {
-    const result = [];
-    for (const [id, proc] of activeProcesses) {
+    const result: Array<{id: string; command: string; cwd: string; shell: ShellType; running: boolean; startTime: number}> = [];
+    for (const [id, proc] of (activeProcesses as Map<string, TerminalProcess>)) {
         result.push({
             id,
             command: proc.command,
@@ -1480,7 +1538,7 @@ export function getActiveTerminalProcesses(): Array<{
  * 清理已完成的终端进程
  */
 export function cleanupTerminals(): void {
-    for (const [id, proc] of activeProcesses) {
+    for (const [id, proc] of (activeProcesses as Map<string, TerminalProcess>)) {
         if (proc.endTime !== undefined) {
             activeProcesses.delete(id);
         }

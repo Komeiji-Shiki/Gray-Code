@@ -60,7 +60,7 @@ export function createProxyFetch(proxyUrl?: string) {
             },
             body: init?.body as string | undefined,
             timeout: 120000,
-            signal: init?.signal  // 传递 abort signal
+            signal: init?.signal ?? undefined  // 传递 abort signal，null→undefined
         };
         
         const response = await fetchWithProxy(targetUrl, options, proxyUrl);

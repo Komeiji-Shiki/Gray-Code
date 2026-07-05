@@ -36,8 +36,11 @@ const en: BackendLanguageMessages = {
                 temperatureRange: 'temperature must be between 0.0 and 2.0',
                 maxOutputTokensMin: 'maxOutputTokens must be greater than 0',
                 maxOutputTokensHigh: 'maxOutputTokens is too high, may cause high latency',
-                openaiNotImplemented: 'OpenAI configuration validation not implemented yet',
-                anthropicNotImplemented: 'Anthropic configuration validation not implemented yet'
+                temperatureRangeAnthropic: 'temperature must be between 0.0 and 1.0 (Anthropic)',
+                maxTokensMin: 'max_tokens must be greater than 0',
+                topPRange: 'top_p must be between 0.0 and 1.0',
+                topKMin: 'top_k must be greater than or equal to 0',
+                thinkingBudgetMin: 'thinking.budget_tokens must be at least 1024'
             }
         },
 

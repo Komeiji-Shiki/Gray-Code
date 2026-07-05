@@ -18,7 +18,6 @@ import { useChatStore } from '../../stores'
 import { sendToExtension, onExtensionCommand, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
-import { isPerfEnabled } from '../../utils/perf'
 import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
 
 const { t } = useI18n()
@@ -30,14 +29,6 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 
-
-const todoDebugPrinted = new Set<string>()
-function debugToolOnce(key: string, data: Record<string, unknown>) {
-  if (!isPerfEnabled()) return
-  if (todoDebugPrinted.has(key)) return
-  todoDebugPrinted.add(key)
-  console.debug('[todo-debug][ToolMessage]', data)
-}
 
 
 // --- Apply Diff 确认逻辑 ---
@@ -458,31 +449,6 @@ watchEffect(() => {
 
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
-  // TODO 排查：检测同一 ToolMessage 内是否出现重复 toolId
-  const toolIds = props.tools.map(t => t.id).filter(id => typeof id === 'string' && id.trim())
-  const duplicateToolIds = toolIds.filter((id, idx) => toolIds.indexOf(id) !== idx)
-  if (duplicateToolIds.length > 0) {
-    const key = `dup-${duplicateToolIds.join('|')}-${props.tools.map(t => t.name).join('|')}`
-    debugToolOnce(key, {
-      message: 'Duplicate tool ids found in ToolMessage props.tools',
-      duplicateToolIds,
-      toolNames: props.tools.map(t => t.name),
-      toolStatuses: props.tools.map(t => t.status || null)
-    })
-    if (isPerfEnabled()) {
-      console.warn('[todo-debug][ToolMessage] duplicate tool ids in props.tools', {
-        duplicateToolIds,
-        tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status }))
-      })
-    }
-  }
-
-  debugToolOnce(`tools-${props.tools.map(t => `${t.id}:${t.name}`).join('|')}`, {
-    message: 'Render tools in ToolMessage',
-    toolCount: props.tools.length,
-    tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status || null }))
-  })
-
   return props.tools.map((tool) => {
     const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
     let isDiffApplicable = true

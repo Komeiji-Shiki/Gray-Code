@@ -36,8 +36,11 @@ const ja: BackendLanguageMessages = {
                 temperatureRange: 'temperature は 0.0 から 2.0 の間である必要があります',
                 maxOutputTokensMin: 'maxOutputTokens は 0 より大きい必要があります',
                 maxOutputTokensHigh: 'maxOutputTokens が大きすぎます。高遅延の原因になる可能性があります',
-                openaiNotImplemented: 'OpenAI 設定の検証はまだ実装されていません',
-                anthropicNotImplemented: 'Anthropic 設定の検証はまだ実装されていません'
+                temperatureRangeAnthropic: 'temperature は 0.0 〜 1.0 の範囲でなければなりません（Anthropic）',
+                maxTokensMin: 'max_tokens は 0 より大きくなければなりません',
+                topPRange: 'top_p は 0.0 〜 1.0 の範囲でなければなりません',
+                topKMin: 'top_k は 0 以上でなければなりません',
+                thinkingBudgetMin: 'thinking.budget_tokens は 1024 以上でなければなりません'
             }
         },
 

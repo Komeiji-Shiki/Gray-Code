@@ -1,8 +1,8 @@
 /**
- * LimCode - 娴佸紡鍝嶅簲绱姞鍣?
+ * LimCode - 流式响应累加器
  *
- * 鐢ㄤ簬绱姞娴佸紡鍝嶅簲鍧楋紝鐢熸垚瀹屾暣鐨?Content
- * 鍙傝€?Gemini 娴佸紡鍝嶅簲鏍煎紡璁捐
+ * 用于累加流式响应块，生成完整的Content
+ * 参考Gemini 流式响应格式设计
  */
 
 import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../conversation/types';
@@ -11,11 +11,11 @@ import type { ToolMode } from '../config/configs/base';
 import { parseXMLToolCalls } from '../../tools/xmlFormatter';
 import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
 
-// JSON 宸ュ叿璋冪敤杈圭晫鏍囪
+// JSON 工具调用边界标记
 const TOOL_CALL_START = '<<<TOOL_CALL>>>';
 const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 
-// XML 宸ュ叿璋冪敤鏍囪
+// XML 工具调用标记
 const XML_TOOL_START = '<tool_use>';
 const XML_TOOL_END = '</tool_use>';
 
@@ -31,77 +31,77 @@ export interface StreamingContentOptions {
 }
 
 /**
- * 娴佸紡绱姞鍣?
+ * 流式累加器
  *
- * 璐熻矗鎺ユ敹鍜岀疮鍔犳祦寮忓搷搴斿潡锛屾渶缁堢敓鎴愬畬鏁寸殑 Content
+ * 负责接收和累加流式响应块，最终生成完整的 Content
  *
- * 璁捐鍘熷垯锛?
- * - 鍙傝€?Gemini 娴佸紡鍝嶅簲鏍煎紡
- * - 鏀寔鎬濊€冨唴瀹癸紙thought: true锛夊拰鏅€氬唴瀹圭殑鍒嗙
- * - 鑷姩鍚堝苟鐩稿悓绫诲瀷鐨勮繛缁?parts
- * - 姝ｇ‘澶勭悊 token 缁熻淇℃伅
- * - 鏀寔澶氭牸寮忔€濊€冪鍚嶅瓨鍌?
+ * 设计原则：
+ * - 参考Gemini 流式响应格式
+ * - 支持思考内容（thought: true）和普通内容的分离
+ * - 自动合并相同类型的连续parts
+ * - 正确处理 token 统计信息
+ * - 支持多格式思考签名存储
  */
 export class StreamAccumulator {
-    /** 绱姞鐨?parts */
+    /** 累加的parts */
     private parts: ContentPart[] = [];
 
     /**
-     * 宸查€氳繃 getNewCompletedFunctionCalls() 杩斿洖杩囩殑 functionCall 绱㈠紩闆嗗悎銆?
-     * 鐢ㄤ簬娴佸紡杈规墽琛屽伐鍏凤細鍙繑鍥炶嚜涓婃璋冪敤浠ユ潵鏂板畬鎴愶紙args 瑙ｆ瀽鎴愬姛锛夌殑 functionCall銆?
+     * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall 索引集合。
+     * 用于流式边执行工具：只返回自上次调用以来新完成（args 解析成功）的 functionCall。
      */
     private reportedFunctionCallIndices = new Set<number>();
 
 
-    /** 鏄惁瀹屾垚 */
+    /** 是否完成 */
     private isDone: boolean = false;
 
-    /** 瀹屾暣鐨?Token 浣跨敤缁熻 */
+    /** 完整的Token 使用统计 */
     private usageMetadata?: UsageMetadata;
 
-    /** 鏄惁鏀跺埌杩囨笭閬撳師鐢熺殑 totalTokenCount */
+    /** 是否收到过渠道原生的 totalTokenCount */
     private hasProviderTotalTokenCount: boolean = false;
 
-    /** 缁撴潫鍘熷洜 */
+    /** 结束原因 */
     private finishReason?: string;
 
-    /** 妯″瀷鐗堟湰 */
+    /** 模型版本 */
     private modelVersion?: string;
 
-    /** 澶氭牸寮忔€濊€冪鍚?*/
+    /** 多格式思考签名*/
     private thoughtSignatures: ThoughtSignatures = {};
 
-    /** API 鎻愪緵鍟嗙被鍨嬶紙鐢ㄤ簬纭畾绛惧悕鏍煎紡锛?*/
+    /** API 提供商类型（用于确定签名格式）*/
     private providerType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' = 'gemini';
 
-    /** 鎬濊€冨紑濮嬫椂闂存埑锛堟绉掞級 */
+    /** 思考开始时间戳（毫秒） */
     private thinkingStartTime?: number;
 
-    /** 鎬濊€冩寔缁椂闂达紙姣锛?*/
+    /** 思考持续时间（毫秒）*/
     private thinkingDuration?: number;
 
-    /** 鏄惁宸茬粡鏀跺埌闈炴€濊€冪殑鏅€氭枃鏈?*/
+    /** 是否已经收到非思考的普通文本*/
     private hasReceivedNormalText: boolean = false;
 
-    /** 娴佸紡鍧楄鏁?*/
+    /** 流式块计数*/
     private chunkCount: number = 0;
 
-    /** 绗竴涓祦寮忓潡鏃堕棿鎴筹紙姣锛?*/
+    /** 第一个流式块时间戳（毫秒）*/
     private firstChunkTime?: number;
 
-    /** 鏈€鍚庝竴涓祦寮忓潡鏃堕棿鎴筹紙姣锛?*/
+    /** 最后一个流式块时间戳（毫秒）*/
     private lastChunkTime?: number;
 
-    /** 璇锋眰寮€濮嬫椂闂存埑锛堟绉掞級 - 鐢卞閮ㄨ缃?*/
+    /** 请求开始时间戳（毫秒） - 由外部设置*/
     private requestStartTime?: number;
 
-    /** 褰撳墠璇锋眰鐨勫伐鍏锋ā寮?*/
+    /** 当前请求的工具模式*/
     private readonly toolMode: ToolMode;
 
-    /** 褰撳墠璇锋眰鐨勫伐鍏疯皟鐢?ID 宸ュ巶 */
+    /** 当前请求的工具调用ID 工厂 */
     private readonly createToolCallId: () => string;
 
-    /** Prompt 妯″紡涓嬬殑澧為噺宸ュ叿瑙ｆ瀽鍣?*/
+    /** Prompt 模式下的增量工具解析器*/
     private promptToolParser?: IncrementalPromptToolParser;
 
     constructor(
@@ -117,17 +117,17 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鑾峰彇宸ュ叿妯″紡
+     * 获取工具模式
      */
     private getToolMode(): ToolMode {
         return this.toolMode;
     }
 
     /**
-     * 鍚堝苟澧為噺 usage 淇℃伅
+     * 合并增量 usage 信息
      *
-     * 鏌愪簺娓犻亾锛堝 Anthropic锛変細鎶婅緭鍏?杈撳嚭 token 鍒嗗埆鏀惧湪涓嶅悓浜嬩欢閲岋紝
-     * 杩欓噷闇€瑕佸仛澧為噺鍚堝苟锛岄伩鍏嶅悗鍒拌揪鐨勫瓧娈佃鐩栧厛鍒拌揪鐨勫瓧娈点€?
+     * 某些渠道（如 Anthropic）会把输入输出 token 分别放在不同事件里，
+     * 这里需要做增量合并，避免后到达的字段覆盖先到达的字段。
      */
     private mergeUsageMetadata(usage: StreamUsageMetadata): void {
         const previous = this.usageMetadata;
@@ -150,9 +150,9 @@ export class StreamAccumulator {
             merged.candidatesTokenCount !== undefined ||
             merged.thoughtsTokenCount !== undefined;
 
-        // 鏌愪簺娴佸紡娓犻亾锛堝 Anthropic锛変笉浼氱洿鎺ョ粰 totalTokenCount銆?
-        // 褰撴湭鏀跺埌杩囨笭閬撳師鐢?total 鏃讹紝姣忔鍚堝苟鍚庨兘鐢ㄥ凡鐭ュ瓧娈甸噸绠楋紝
-        // 閬垮厤鍑虹幇鍏堟敹鍒?prompt锛屽悗鏀跺埌 candidates 鏃?total 浠嶅仠鐣欏湪 prompt 鐨勯棶棰樸€?
+        // 某些流式渠道（如 Anthropic）不会直接给 totalTokenCount。
+        // 当未收到过渠道原生total 时，每次合并后都用已知字段重算，
+        // 避免出现先收到prompt，后收到 candidates 时total 仍停留在 prompt 的问题。
         if (hasAnyTokenField) {
             const prompt = merged.promptTokenCount ?? 0;
             const candidates = merged.candidatesTokenCount ?? 0;
@@ -161,7 +161,7 @@ export class StreamAccumulator {
             if (!this.hasProviderTotalTokenCount) {
                 merged.totalTokenCount = prompt + candidates + thoughts;
             } else if (merged.totalTokenCount === undefined) {
-                // 鐞嗚涓婃湁鍘熺敓 total 鏃朵笉搴旇繘鍏ユ鍒嗘敮锛屼絾涓虹ǔ鍋ユ€т繚搴曘€?
+                // 理论上有原生 total 时不应进入此分支，但为稳健性保底。
                 merged.totalTokenCount = prompt + candidates + thoughts;
             }
         }
@@ -170,36 +170,36 @@ export class StreamAccumulator {
     }
 
     /**
-     * 娣诲姞娴佸紡鍝嶅簲鍧?
+     * 添加流式响应块
      *
-     * 澶勭悊娴佺▼锛?
-     * 1. 绱姞澧為噺鍐呭锛坉elta锛?
-     * 2. 鏇存柊 usage銆乫inishReason銆乵odelVersion 绛夊厓鏁版嵁
-     * 3. 鏍囪瀹屾垚鐘舵€?
+     * 处理流程：
+     * 1. 累加增量内容（delta）
+     * 2. 更新 usage、finishReason、modelVersion 等元数据
+     * 3. 标记完成状态
      *
-     * 娉ㄦ剰锛歄penAI 鏍煎紡鐨勬祦寮忓搷搴斾腑锛寀sage 鍙兘鍦ㄥ崟鐙殑 chunk 涓彂閫?
-     * 锛坈hoices 涓虹┖鏁扮粍浣嗘湁 usage 鏁版嵁锛夛紝鎵€浠ュ嵆浣垮凡缁?done锛?
-     * 浠嶇劧闇€瑕佹帴鏀?usage 鏇存柊銆?
+     * 注意：OpenAI 格式的流式响应中，usage 可能在单独的 chunk 中发送
+     * （choices 为空数组但有 usage 数据），所以即使已经done，
+     * 仍然需要接收usage 更新。
      *
-     * @param chunk 娴佸紡鍝嶅簲鍧?
+     * @param chunk 流式响应块
      */
     add(chunk: StreamChunk): ContentPart[] {
         const now = Date.now();
         const visibleDelta: ContentPart[] = [];
 
-        // 澧炲姞鍧楄鏁?
+        // 增加块计数
         this.chunkCount++;
 
-        // 璁板綍绗竴涓潡鐨勬椂闂?
+        // 记录第一个块的时间
         if (this.chunkCount === 1) {
             this.firstChunkTime = now;
         }
 
-        // 鏇存柊鏈€鍚庝竴涓潡鐨勬椂闂?
+        // 更新最后一个块的时间
         this.lastChunkTime = now;
 
-        // 绱姞澧為噺鍐呭锛堝鏋滄湁锛?
-        // 鍗充娇宸茬粡 done锛屼篃瑕佸鐞?delta锛堣櫧鐒堕€氬父 done 鍚?delta 涓虹┖锛?
+        // 累加增量内容（如果有）
+        // 即使已经 done，也要处理delta（虽然通常 done 后delta 为空）
         if (chunk.delta && chunk.delta.length > 0) {
             for (const part of chunk.delta) {
                 this.addPart(part, { visibleDelta });
@@ -213,18 +213,18 @@ export class StreamAccumulator {
             }
         }
 
-        // 淇濆瓨瀹屾暣鐨?token 浣跨敤缁熻锛堝寘鎷妯℃€佽鎯咃級
-        // 杩欎釜鍙兘鍦ㄧ涓€涓?done chunk 涓紝涔熷彲鑳藉湪鍚庣画鐨?usage chunk 涓?
+        // 保存完整的token 使用统计（包括多模态详情）
+        // 这个可能在第一个done chunk 中，也可能在后续的usage chunk 中
         if (chunk.usage) {
             this.mergeUsageMetadata(chunk.usage);
         }
 
-        // 淇濆瓨缁撴潫鍘熷洜锛堝鏋滄湁锛?
+        // 保存结束原因（如果有）
         if (chunk.finishReason) {
             this.finishReason = chunk.finishReason;
         }
 
-        // 淇濆瓨妯″瀷鐗堟湰锛堝鏋滄湁锛?
+        // 保存模型版本（如果有）
         if (chunk.modelVersion) {
             this.modelVersion = chunk.modelVersion;
         }
@@ -239,8 +239,8 @@ export class StreamAccumulator {
             (this.providerType === 'anthropic' && chunk.providerEvent?.type === 'message_stop');
         if (shouldEmitStructuralSnapshot) {
             const stoppedIndex = stoppedAnthropicFunctionCallBlock ? chunk.providerEvent?.contentIndex : undefined;
-            // Anthropic 鐨?content_block_stop 鍙粓缁撳搴?content_block.index锛沵essage_stop 鎵嶆竻鐞嗘墍鏈夊唴閮ㄥ瓧娈点€?
-            // 鍓嶇浠嶉€氳繃缁熶竴 snapshot 鍚堝苟鍏ュ彛鏀舵潫宸ュ叿鍗★紝涓嶅仛 provider 鐗瑰垽銆?
+            // Anthropic 的content_block_stop 只终结对应content_block.index；message_stop 才清理所有内部字段。
+            // 前端仍通过统一 snapshot 合并入口收束工具卡，不做 provider 特判。
             chunk.contentSnapshot = this.buildContent({
                 parsePartialArgs: stoppedIndex === undefined,
                 includeInternalFunctionCallFields: stoppedIndex !== undefined,
@@ -249,7 +249,7 @@ export class StreamAccumulator {
             });
         }
 
-        // 鏇存柊瀹屾垚鐘舵€?
+        // 更新完成状态
         if (chunk.done) {
             this.isDone = true;
         }
@@ -258,26 +258,26 @@ export class StreamAccumulator {
     }
 
     /**
-     * 璁剧疆 API 鎻愪緵鍟嗙被鍨?
-     * 鐢ㄤ簬纭畾鎬濊€冪鍚嶇殑瀛樺偍鏍煎紡
+     * 设置 API 提供商类型
+     * 用于确定思考签名的存储格式
      */
     setProviderType(type: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom'): void {
         this.providerType = type;
     }
 
     /**
-     * 鑾峰彇 API 鎻愪緵鍟嗙被鍨?
+     * 获取 API 提供商类型
      */
     getProviderType(): 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' {
         return this.providerType;
     }
 
     /**
-     * 娣诲姞鍗曚釜 part
+     * 添加单个 part
      *
-     * 绠€鍖栫瓥鐣ワ細鐩存帴瀛樺偍 API 杩斿洖鐨勫師濮?part 鏍煎紡
-     * - 鏂囨湰 part锛氬皾璇曚笌鐩稿悓绫诲瀷鐨勬渶鍚庝竴涓?part 鍚堝苟
-     * - 闈炴枃鏈?part锛坒unctionCall銆乼houghtSignature 绛夛級锛氱洿鎺ユ坊鍔狅紝淇濇寔鍘熷缁撴瀯
+     * 简化策略：直接存储 API 返回的原始part 格式
+     * - 文本 part：尝试与相同类型的最后一个part 合并
+     * - 非文本part（functionCall、thoughtSignature 等）：直接添加，保持原始结构
      */
     private addPart(
         part: ContentPart,
@@ -297,15 +297,15 @@ export class StreamAccumulator {
             return;
         }
 
-        // 娉ㄦ剰锛氫笉鍦ㄦ澶勪负 functionCall 鐢熸垚 id銆?
-        // id 鐨勭敓鎴愭帹杩熷埌鍚堝苟閫昏緫纭鏃犳硶鍚堝苟銆侀渶瑕佷綔涓烘柊 Part 鎺ㄥ叆鏃跺啀鎵ц锛堣涓嬫柟 newPart 鏋勫缓澶勶級銆?
+        // 注意：不在此处为 functionCall 生成 id。
+        // id 的生成推迟到合并逻辑确认无法合并、需要作为新 Part 推入时再执行（见下方 newPart 构建处）。
 
-        // 渚嬪锛歱rompt 妯″紡锛坖son/xml锛夌殑澧為噺瑙ｆ瀽鍣ㄥ彧浼氫骇鍑衡€滃畬鏁村伐鍏疯皟鐢ㄥ潡鈥濓紝
-        // 涓嶄細鍐嶈蛋 partialArgs/index 鐨勬祦寮忓悎骞惰矾寰勩€?
-        // 杩欓噷鎻愬墠琛ヤ竴涓ǔ瀹?id锛屼繚璇侊細
-        // 1. visibleDelta 閲岀殑 functionCall 甯︽湁 id
-        // 2. 鍚庣画鍐欏叆 this.parts 鏃舵部鐢ㄥ悓涓€涓?id
-        // 3. 涓嶅奖鍝?function_call 妯″紡涓嬬殑澧為噺鍚堝苟鍒ゆ柇
+        // 例外：prompt 模式（json/xml）的增量解析器只会产出“完整工具调用块”，
+        // 不会再走 partialArgs/index 的流式合并路径。
+        // 这里提前补一个稳定id，保证：
+        // 1. visibleDelta 里的 functionCall 带有 id
+        // 2. 后续写入 this.parts 时沿用同一个id
+        // 3. 不影响function_call 模式下的增量合并判断
         if (
             this.promptToolParser &&
             part.functionCall &&
@@ -322,7 +322,7 @@ export class StreamAccumulator {
             options.visibleDelta.push({ functionCall: { ...(part.functionCall as any) } });
         }
 
-        // 鎻愬彇 thoughtSignature 鐢ㄤ簬鍐呴儴杩借釜
+        // 提取 thoughtSignature 用于内部追踪
         if ((part as any).thoughtSignature) {
             this.thoughtSignatures[this.providerType] = (part as any).thoughtSignature;
         }
@@ -332,7 +332,7 @@ export class StreamAccumulator {
 
         const isFunctionCall = !!(part as any).functionCall;
 
-        // 澶勭悊闈炴枃鏈?part
+        // 处理非文本part
         if (!('text' in part)) {
             if (part.functionCall && this.thinkingStartTime !== undefined && !this.hasReceivedNormalText) {
                 this.hasReceivedNormalText = true;
@@ -342,16 +342,16 @@ export class StreamAccumulator {
             if (part.functionCall) {
                 const fc = part.functionCall as any;
 
-                // 娉ㄦ剰锛氫笉鍦ㄦ澶勪负 fc 鐢熸垚 id锛屽惁鍒欎細鐮村潖涓嬫柟"绾閲忔ā寮?锛?fc.id锛夌殑鍚堝苟鍒ゆ柇
-                // 鍊掑簭鎼滅储鐜版湁鐨?parts锛屽鎵惧彲浠ュ悎骞剁殑宸ュ叿璋冪敤鍧?
-                // 瑙ｅ喅骞惰璋冪敤鎴栦腑闂寸┛鎻掑叾浠栨秷鎭鑷寸殑 lastPart 鍖归厤澶辫触闂
+                // 注意：不在此处为 fc 生成 id，否则会破坏下方"纯增量模式"（!fc.id）的合并判断
+                // 倒序搜索现有的parts，寻找可以合并的工具调用块
+                // 解决并行调用或中间穿插其他消息导致的 lastPart 匹配失败问题
                 for (let i = this.parts.length - 1; i >= 0; i--) {
                     const existingPart = this.parts[i];
                     if (!existingPart.functionCall) continue;
 
                     const lastFc = existingPart.functionCall as any;
 
-                    // 浼樺寲鍚堝苟鍒ゆ柇閫昏緫
+                    // 优化合并判断逻辑
                     let canMerge = false;
 
                     const incomingItemId = typeof fc.itemId === 'string' && fc.itemId.trim() ? fc.itemId.trim() : '';
@@ -363,46 +363,46 @@ export class StreamAccumulator {
 
                     const sameIndex = typeof fc.index === 'number' && typeof lastFc.index === 'number' && fc.index === lastFc.index;
 
-                    // OpenAI 妯″紡锛氫紭鍏堜娇鐢?index 鍖归厤锛堟暟瀛楃被鍨嬶紝鍖呮嫭 0锛?
+                    // OpenAI 模式：优先使用index 匹配（数字类型，包括 0）
                     if (sameIndex) {
                         canMerge = true;
                     }
-                    // OpenAI Responses 鐨?item_id 鍙敤浜庢祦寮忎簨浠跺畾浣嶏紝蹇呴』鍚堝苟鍒板崰浣?function_call锛屼笉鑳戒綔涓烘渶缁堝伐鍏?ID銆?
+                    // OpenAI Responses 的item_id 只用于流式事件定位，必须合并到占位function_call，不能作为最终工具ID。
                     else if (sameItemId) {
                         canMerge = true;
                     }
-                    // Anthropic 妯″紡锛氫娇鐢?id 鏍囪瘑
+                    // Anthropic 模式：使用id 标识
                     else if (fc.id && lastFc.id) {
                         canMerge = fc.id === lastFc.id;
                     }
-                    // 鍏煎娴佸彲鑳界渷鐣?output_index锛涙鏃舵妸鍙傛暟澧為噺鍚堝苟鍒版渶鍚庝竴涓垰鍒涘缓鐨勭┖宸ュ叿澹炽€?
+                    // 兼容流可能省略output_index；此时把参数增量合并到最后一个刚创建的空工具壳。
                     else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1 && lastIsFreshTool) {
                         canMerge = true;
                     }
-                    // 绾閲忔ā寮忥細娌℃湁 id 涔熸病鏈?index锛屼絾鏈?partialArgs锛屼笖鏄渶鍚庝竴涓?FC
+                    // 纯增量模式：没有 id 也没有index，但有partialArgs，且是最后一个FC
                     else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1) {
                         canMerge = true;
                     }
 
                     if (canMerge) {
-                        // 鍚堝苟鍚嶇О锛堝鏋滄湁锛?
+                        // 合并名称（如果有）
                         if (fc.name && !lastFc.name) {
                             lastFc.name = fc.name;
                         }
-                        // 鍚堝苟 ID锛汻esponses 鐨勫畼鏂?call_id 鍒拌揪杈冩櫄鏃讹紝鍙湪 itemId/index 宸茶瘉鏄庡悓婧愬悗瑕嗙洊鍗犱綅 id銆?
+                        // 合并 ID；Responses 的官方call_id 到达较晚时，可在 itemId/index 已证明同源后覆盖占位 id。
                         if (fc.id && (!lastFc.id || (this.providerType === 'openai-responses' && (sameItemId || sameIndex)))) {
                             lastFc.id = fc.id;
                         }
-                        // itemId 浠呯敤浜庡悗缁祦寮忕墖娈靛畾浣嶏紝鏈€缁?Content 浼氱粺涓€鍒犻櫎銆?
+                        // itemId 仅用于后续流式片段定位，最终Content 会统一删除。
                         if (fc.itemId && !lastFc.itemId) {
                             lastFc.itemId = fc.itemId;
                         }
-                        // 鍚堝苟 index锛堝鏋滄湁锛?
+                        // 合并 index（如果有）
                         if (typeof fc.index === 'number' && typeof lastFc.index !== 'number') {
                             lastFc.index = fc.index;
                         }
-                        // Anthropic delta 鍙湁 index 娌℃湁 tool_use.id锛沬ndex 鍛戒腑鏃朵繚鐣欏凡鏈夊畼鏂?id锛岀淮鎸?id/index 璇箟鍒嗙銆?
-                        // 鍚堝苟鎬濊€冪鍚嶇瓑鍏朵粬灞炴€?
+                        // Anthropic delta 只有 index 没有 tool_use.id；index 命中时保留已有官方id，维持id/index 语义分离。
+                        // 合并思考签名等其他属性
                         if (part.thoughtSignatures) {
                             existingPart.thoughtSignatures = {
                                 ...(existingPart.thoughtSignatures || {}),
@@ -415,48 +415,50 @@ export class StreamAccumulator {
                                 [this.providerType]: (part as any).thoughtSignature
                             };
                         }
-                        // 鍚堝苟 partialArgs
+                        // 合并 partialArgs
                         if (fc.partialArgs !== undefined) {
-                            // finalArgs 琛ㄧず瀹屾暣 arguments锛屽簲瑕嗙洊鑰屼笉鏄户缁拷鍔犲埌澧為噺 JSON銆?
+                            // finalArgs 表示完整 arguments，应覆盖而不是继续追加到增量 JSON。
                             lastFc.partialArgs = fc.finalArgs === true
                                 ? fc.partialArgs
                                 : (lastFc.partialArgs || '') + fc.partialArgs;
 
-                            // Responses 鐨?arguments.delta 鏄崐鎴?JSON锛岄伩鍏嶅湪楂橀鐑矾寰勯€愮墖娈?JSON.parse銆?
+                            // Responses 的arguments.delta 是半截JSON，避免在高频热路径逐片段JSON.parse。
                             const shouldParseNow = this.providerType !== 'openai-responses' || fc.finalArgs === true;
                             if (shouldParseNow && lastFc.partialArgs.trim()) {
                                 try {
                                     const parsed = JSON.parse(lastFc.partialArgs);
                                     lastFc.args = parsed;
                                 } catch (e) {
-                                    // 瑙ｆ瀽澶辫触锛圝SON 涓嶅畬鏁达級锛岀户缁瓑寰呮洿澶氬閲忋€?
-                                    // 姝ゅ涓嶆墦鏃ュ織鈥斺€旀祦寮忓閲忎腑 JSON 涓嶅畬鏁存槸姝ｅ父鐜拌薄銆?
+                                    // 解析失败（JSON 不完整），继续等待更多增量。
+                                    // 此处不打日志——流式增量中 JSON 不完整是正常现象。
                                 }
                             }
                         }
-                        return; // 鎴愬姛鍚堝苟锛岀洿鎺ヨ繑鍥?
+                        return; // 成功合并，直接返回
                     }
                 }
 
-                // 鎵句笉鍒板彲鍚堝苟鍧楁椂浣滀负鏂板潡娣诲姞锛汻esponses 鍗婃埅 JSON 鍙湪 finalArgs 杈圭晫瑙ｆ瀽銆?
+                // 找不到可合并块时作为新块添加；Responses 半截 JSON 只在 finalArgs 边界解析。
                 if (fc.partialArgs && (this.providerType !== 'openai-responses' || fc.finalArgs === true)) {
                     try {
                         fc.args = JSON.parse(fc.partialArgs);
-                    } catch (e) {}
+                    } catch {
+                        // Incomplete JSON during streaming is expected; keep partialArgs and wait for more chunks.
+                    }
                 }
 
-                // 鏋勫缓鏂?Part锛屼絾鎺掗櫎 API 鍘熷鏍煎紡鐨?thoughtSignature锛堝崟鏁帮級
+                // 构建新Part，但排除 API 原始格式的thoughtSignature（单数）
                 const { thoughtSignature: rawSignature, ...restPart } = part as any;
                 const newPart: ContentPart = { ...restPart };
-                // 纭繚 functionCall 鏄繁鎷疯礉鐨勶紝涓斿鐞嗕簡 args
+                // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
-                // 鍙湪浣滀负鏂?Part 鎺ㄥ叆鏃舵墠鐢熸垚 id锛涘甫 itemId 鐨?Responses 鍗犱綅绛夊緟瀹樻柟 call_id銆?
-                if (!newPart.functionCall.id && !(this.providerType === 'openai-responses' && (newPart.functionCall as any).itemId)) {
+                // 只在作为新Part 推入时才生成 id；带 itemId 的Responses 占位等待官方 call_id。
+                if (newPart.functionCall && !newPart.functionCall.id && !(this.providerType === 'openai-responses' && (newPart.functionCall as any).itemId)) {
                     (newPart.functionCall as any).id = this.createToolCallId();
                 }
-                if (fc.args) newPart.functionCall.args = { ...fc.args };
+                if (fc.args && newPart.functionCall) newPart.functionCall.args = { ...fc.args };
 
-                // 濡傛灉鏈?API 鍘熷鏍煎紡鐨?thoughtSignature锛岃浆鎹负 thoughtSignatures 鏍煎紡
+                // 如果有API 原始格式的thoughtSignature，转换为 thoughtSignatures 格式
                 if (rawSignature) {
                     newPart.thoughtSignatures = {
                         ...(newPart.thoughtSignatures || {}),
@@ -468,8 +470,8 @@ export class StreamAccumulator {
                 return;
             }
 
-            // 鍏朵粬闈炴枃鏈?Part锛堝鍥剧墖銆佹枃浠剁瓑锛?
-            // 鎺掗櫎 API 鍘熷鏍煎紡鐨?thoughtSignature锛堝崟鏁帮級锛岃浆鎹负 thoughtSignatures 鏍煎紡
+            // 其他非文本Part（如图片、文件等）
+            // 排除 API 原始格式的thoughtSignature（单数），转换为 thoughtSignatures 格式
             const { thoughtSignature: rawSig, ...restNonTextPart } = part as any;
             const nonTextPart: ContentPart = { ...restNonTextPart };
             if (rawSig) {
@@ -482,17 +484,17 @@ export class StreamAccumulator {
             return;
         }
 
-        // 鏂囨湰 part锛氬皾璇曞悎骞?
+        // 文本 part：尝试合并
         const isThought = part.thought === true;
 
-        // 鎬濊€冭鏃堕€昏緫
+        // 思考计时逻辑
         if (isThought) {
-            // 璁板綍鎬濊€冨紑濮嬫椂闂达紙浠呴娆★級
+            // 记录思考开始时间（仅首次）
             if (this.thinkingStartTime === undefined) {
                 this.thinkingStartTime = Date.now();
             }
         } else if (part.text) {
-            // 鏀跺埌鏅€氭枃鏈椂锛岃绠楁€濊€冩寔缁椂闂?
+            // 收到普通文本时，计算思考持续时间
             if (this.thinkingStartTime !== undefined && !this.hasReceivedNormalText) {
                 this.hasReceivedNormalText = true;
                 this.thinkingDuration = Date.now() - this.thinkingStartTime;
@@ -501,20 +503,20 @@ export class StreamAccumulator {
 
         const lastPart = this.parts[this.parts.length - 1];
 
-        // 妫€鏌ユ槸鍚﹀彲浠ヤ笌鏈€鍚庝竴涓?part 鍚堝苟锛堥兘鏄枃鏈笖鎬濊€冪被鍨嬬浉鍚岋級
+        // 检查是否可以与最后一个part 合并（都是文本且思考类型相同）
         if (lastPart && 'text' in lastPart && !lastPart.functionCall) {
             const lastIsThought = lastPart.thought === true;
 
             if (lastIsThought === isThought) {
-                lastPart.text += part.text;
-                // 妫€娴嬪苟杞崲瀹屾暣鐨?JSON 宸ュ叿璋冪敤
+                lastPart.text = (lastPart.text ?? '') + (part.text ?? '');
+                // 检测并转换完整的JSON 工具调用
                 this.extractAndConvertToolCalls();
                 return;
             }
         }
 
-        // 鏃犳硶鍚堝苟锛屾坊鍔犳柊 part
-        // 鎺掗櫎 API 鍘熷鏍煎紡鐨?thoughtSignature锛堝崟鏁帮級锛岃浆鎹负 thoughtSignatures 鏍煎紡
+        // 无法合并，添加新 part
+        // 排除 API 原始格式的thoughtSignature（单数），转换为 thoughtSignatures 格式
         const { thoughtSignature: rawTextSig, ...restTextPart } = part as any;
         const textPart: ContentPart = { ...restTextPart };
         if (rawTextSig) {
@@ -524,23 +526,23 @@ export class StreamAccumulator {
             };
         }
         this.parts.push(textPart);
-        // 妫€娴嬪苟杞崲瀹屾暣鐨?JSON 宸ュ叿璋冪敤
+        // 检测并转换完整的JSON 工具调用
         this.extractAndConvertToolCalls();
     }
 
     /**
-     * 妫€娴嬪苟杞崲鏂囨湰涓殑宸ュ叿璋冪敤鏍囪涓?functionCall
-     * 鏍规嵁 toolMode 閫夋嫨瑙ｆ瀽鐨勬牸寮忥細
-     * - 'xml': 瑙ｆ瀽 <tool_use>...</tool_use>
-     * - 'json': 瑙ｆ瀽 <<<TOOL_CALL>>>...<<<END_TOOL_CALL>>>
-     * - 'function_call': 涓嶈В鏋愭枃鏈爣璁帮紙鐢?API 杩斿洖 functionCall锛?
-     * 瀹炴椂澶勭悊锛岃鍓嶇鑳界珛鍗虫樉绀哄伐鍏疯皟鐢ㄧ粍浠?
+     * 检测并转换文本中的工具调用标记为functionCall
+     * 根据 toolMode 选择解析的格式：
+     * - 'xml': 解析 <tool_use>...</tool_use>
+     * - 'json': 解析 <<<TOOL_CALL>>>...<<<END_TOOL_CALL>>>
+     * - 'function_call': 不解析文本标记（由API 返回 functionCall）
+     * 实时处理，让前端能立即显示工具调用组件
      */
     private extractAndConvertToolCalls(): void {
-        // 鑾峰彇褰撳墠宸ュ叿妯″紡
+        // 获取当前工具模式
         const toolMode = this.getToolMode();
 
-        // function_call 妯″紡涓嶉渶瑕佽В鏋愭枃鏈爣璁?
+        // function_call 模式不需要解析文本标记
         if (toolMode === 'function_call') {
             return;
         }
@@ -553,23 +555,23 @@ export class StreamAccumulator {
                 continue;
             }
 
-            // 鏍规嵁 toolMode 閫夋嫨妫€鏌ョ殑鏍囪
-            const hasJsonMarker = toolMode === 'json' && part.text.includes(TOOL_CALL_START);
-            const hasXmlMarker = toolMode === 'xml' && part.text.includes(XML_TOOL_START);
+            // 根据 toolMode 选择检查的标记
+            const hasJsonMarker = toolMode === 'json' && (part.text ?? '').includes(TOOL_CALL_START);
+            const hasXmlMarker = toolMode === 'xml' && (part.text ?? '').includes(XML_TOOL_START);
 
             if (!hasJsonMarker && !hasXmlMarker) {
                 newParts.push(part);
                 continue;
             }
 
-            let text = part.text;
+            let text = part.text ?? '';
             const isThought = part.thought === true;
 
-            // 寰幆鎻愬彇鎵€鏈夊畬鏁寸殑宸ュ叿璋冪敤
-            // 鏍规嵁 toolMode 鍙В鏋愬搴旀牸寮忥紝閬垮厤璇В鏋愪唬鐮佺ず渚嬩腑鐨勬爣璁?
+            // 循环提取所有完整的工具调用
+            // 根据 toolMode 只解析对应格式，避免误解析代码示例中的标记
             while (true) {
                 if (toolMode === 'json') {
-                    // JSON 妯″紡锛氬彧妫€鏌?JSON 鏍煎紡鏍囪
+                    // JSON 模式：只检查JSON 格式标记
                     const jsonStartIdx = text.indexOf(TOOL_CALL_START);
                     const jsonEndIdx = text.indexOf(TOOL_CALL_END);
 
@@ -577,7 +579,7 @@ export class StreamAccumulator {
                         break;
                     }
 
-                    // 澶勭悊 JSON 鏍煎紡
+                    // 处理 JSON 格式
                     const textBefore = text.substring(0, jsonStartIdx).trim();
                     if (textBefore) {
                         newParts.push(isThought ? { text: textBefore, thought: true } : { text: textBefore });
@@ -597,17 +599,17 @@ export class StreamAccumulator {
                                 }
                             });
                         } else {
-                            // 鏍煎紡涓嶆纭紝淇濈暀鍘熸枃鏈?
+                            // 格式不正确，保留原文本
                             newParts.push({ text: text.substring(jsonStartIdx, jsonEndIdx + TOOL_CALL_END.length) });
                         }
                     } catch {
-                        // JSON 瑙ｆ瀽澶辫触锛屼繚鐣欏師鏂囨湰
+                        // JSON 解析失败，保留原文本
                         newParts.push({ text: text.substring(jsonStartIdx, jsonEndIdx + TOOL_CALL_END.length) });
                     }
 
                     text = text.substring(jsonEndIdx + TOOL_CALL_END.length);
                 } else if (toolMode === 'xml') {
-                    // XML 妯″紡锛氬彧妫€鏌?XML 鏍煎紡鏍囪
+                    // XML 模式：只检查XML 格式标记
                     const xmlStartIdx = text.indexOf(XML_TOOL_START);
                     const xmlEndIdx = text.indexOf(XML_TOOL_END);
 
@@ -615,7 +617,7 @@ export class StreamAccumulator {
                         break;
                     }
 
-                    // 澶勭悊 XML 鏍煎紡
+                    // 处理 XML 格式
                     const textBefore = text.substring(0, xmlStartIdx).trim();
                     if (textBefore) {
                         newParts.push(isThought ? { text: textBefore, thought: true } : { text: textBefore });
@@ -636,22 +638,22 @@ export class StreamAccumulator {
                                 });
                             }
                         } else {
-                            // 瑙ｆ瀽澶辫触锛屼繚鐣欏師鏂囨湰
+                            // 解析失败，保留原文本
                             newParts.push({ text: xmlContent });
                         }
                     } catch {
-                        // XML 瑙ｆ瀽澶辫触锛屼繚鐣欏師鏂囨湰
+                        // XML 解析失败，保留原文本
                         newParts.push({ text: xmlContent });
                     }
 
                     text = text.substring(xmlEndIdx + XML_TOOL_END.length);
                 } else {
-                    // 鏈煡妯″紡锛岄€€鍑哄惊鐜?
+                    // 未知模式，退出循环
                     break;
                 }
             }
 
-            // 娣诲姞鍓╀綑鏂囨湰
+            // 添加剩余文本
             if (text) {
                 newParts.push(isThought ? { text, thought: true } : { text });
             }
@@ -661,8 +663,8 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鏋勯€?Content 鐨勫敮涓€鍐呴儴鍏ュ彛銆?
-     * streaming snapshot 鍙仛杞婚噺鎶曞奖锛涙渶缁堝啓鍘嗗彶鎴栧伐鍏锋墽琛屽墠鎵嶈В鏋?partialArgs 骞舵竻鐞嗗唴閮ㄥ瓧娈点€?
+     * 构造Content 的唯一内部入口。
+     * streaming snapshot 只做轻量投影；最终写历史或工具执行前才解析partialArgs 并清理内部字段。
      */
     private buildContent(options: BuildContentOptions): Content {
         let parts = this.parts
@@ -689,7 +691,7 @@ export class StreamAccumulator {
                     if (!options.includeInternalFunctionCallFields || shouldFinalizeFunctionCall) {
                         delete fc.index;
                         delete fc.partialArgs;
-                        // itemId/finalArgs 鍙槸娴佸紡鍚堝苟瀛楁锛屾渶缁?Content 鍙繚鐣欒法 provider 閫氱敤鍗忚銆?
+                        // itemId/finalArgs 只是流式合并字段，最终Content 只保留跨 provider 通用协议。
                         delete fc.itemId;
                         delete fc.finalArgs;
                     }
@@ -698,21 +700,21 @@ export class StreamAccumulator {
                 return part;
             })
             .filter(p => {
-                // 淇濈暀闈炴枃鏈?part锛坒unctionCall 绛夛級
+                // 保留非文本part（functionCall 等）
                 if (!('text' in p) || p.functionCall) return true;
-                // 杩囨护绌烘枃鏈紙浣嗕繚鐣欐湁鎰忎箟鐨勫唴瀹癸級
+                // 过滤空文本（但保留有意义的内容）
                 if ('text' in p && p.text === '' && !p.thought) return false;
                 return true;
             });
 
-        // 娣诲姞鎬濊€冪鍚嶅埌 parts 涓?
-        // 濡傛灉鏈夋敹闆嗗埌鐨勬€濊€冪鍚嶏紝闇€瑕佷綔涓哄崟鐙殑 part 娣诲姞
-        // 杩欐牱鍙互鍦ㄥ悗缁彂閫佺粰 API 鏃舵纭紶閫掔鍚?
+        // 添加思考签名到 parts 中
+        // 如果有收集到的思考签名，需要作为单独的 part 添加
+        // 这样可以在后续发送给 API 时正确传递签名
         if (Object.keys(this.thoughtSignatures).length > 0) {
-            // 妫€鏌?parts 涓槸鍚﹀凡缁忔湁鍖呭惈 thoughtSignatures 鐨?part
+            // 检查parts 中是否已经有包含 thoughtSignatures 的part
             const hasSignaturePart = parts.some(p => p.thoughtSignatures);
             if (!hasSignaturePart) {
-                // 娣诲姞涓€涓寘鍚墍鏈夋牸寮忕鍚嶇殑 part
+                // 添加一个包含所有格式签名的 part
                 parts.push({ thoughtSignatures: { ...this.thoughtSignatures } });
             }
         }
@@ -722,41 +724,41 @@ export class StreamAccumulator {
             parts
         };
 
-        // 娣诲姞妯″瀷鐗堟湰
+        // 添加模型版本
         if (this.modelVersion) {
             content.modelVersion = this.modelVersion;
         }
 
-        // 娣诲姞瀹屾暣鐨?usageMetadata
+        // 添加完整的usageMetadata
         if (this.usageMetadata) {
             content.usageMetadata = { ...this.usageMetadata };
         }
 
-        // 娣诲姞鎬濊€冨紑濮嬫椂闂达紙鐢ㄤ簬鍓嶇瀹炴椂鏄剧ず锛?
+        // 添加思考开始时间（用于前端实时显示）
         if (this.thinkingStartTime !== undefined) {
             content.thinkingStartTime = this.thinkingStartTime;
         }
 
-        // 娣诲姞鎬濊€冩寔缁椂闂?
-        // 濡傛灉鏈夋€濊€冨唴瀹逛絾娌℃湁鏅€氭枃鏈紝鍦ㄨ幏鍙?Content 鏃惰绠楁渶缁堟寔缁椂闂?
+        // 添加思考持续时间
+        // 如果有思考内容但没有普通文本，在获取Content 时计算最终持续时间
         if (this.thinkingStartTime !== undefined) {
             if (this.thinkingDuration !== undefined) {
                 content.thinkingDuration = this.thinkingDuration;
             } else if (!this.hasReceivedNormalText) {
-                // 娑堟伅鍙湁鎬濊€冨唴瀹规病鏈夋櫘閫氭枃鏈紝浣跨敤褰撳墠鏃堕棿璁＄畻
+                // 消息只有思考内容没有普通文本，使用当前时间计算
                 content.thinkingDuration = Date.now() - this.thinkingStartTime;
             }
         }
 
-        // 娣诲姞娴佸紡缁熻淇℃伅
+        // 添加流式统计信息
         content.chunkCount = this.chunkCount;
         if (this.firstChunkTime !== undefined) {
             content.firstChunkTime = this.firstChunkTime;
         }
 
-        // 淇敼鍘熷洜锛氭棫 streamDuration 鍙鐩栭鍧楀埌鏈潡绐楀彛锛屼笂娓告敀鍖呭悗浼氳 token 閫熷害鍒嗘瘝杩囧皬銆?
-        // 淇敼鏂瑰紡锛氱敤鍚屼竴涓?requestStartTime -> lastChunkTime / Date.now() 灞€閮ㄥ€煎悓鏃跺啓鍏?responseDuration 涓?streamDuration銆?
-        // 淇敼鐩殑锛氬瓧闈慨澶?streamDuration 涓哄畬鏁磋姹傚埌娴佺粨鏉熻€楁椂锛屽苟閬垮厤涓や釜瀛楁鍥犻噸澶嶉噰鏍蜂骇鐢熸绉掔骇鎶栧姩銆?
+        // 修改原因：旧 streamDuration 只覆盖首块到末块窗口，上游攒包后会让 token 速度分母过小。
+        // 修改方式：用同一个requestStartTime -> lastChunkTime / Date.now() 局部值同时写入responseDuration 与streamDuration。
+        // 修改目的：字面修复streamDuration 为完整请求到流结束耗时，并避免两个字段因重复采样产生毫秒级抖动。
         if (this.requestStartTime !== undefined) {
             const completeResponseDuration = (this.lastChunkTime ?? Date.now()) - this.requestStartTime;
             content.responseDuration = completeResponseDuration;
@@ -766,7 +768,7 @@ export class StreamAccumulator {
         return content;
     }
 
-    /** 鑾峰彇娴佸紡鏍″噯蹇収锛涗繚鐣欏唴閮ㄥ悎骞跺瓧娈碉紝浣嗕笉瑙ｆ瀽鏈畬鎴愮殑 partialArgs銆?*/
+    /** 获取流式校准快照；保留内部合并字段，但不解析未完成的 partialArgs。*/
     getStreamingContent(options?: StreamingContentOptions): Content {
         return this.buildContent({
             parsePartialArgs: false,
@@ -775,7 +777,7 @@ export class StreamAccumulator {
         });
     }
 
-    /** 鑾峰彇鏈€缁堝唴瀹癸細瑙ｆ瀽 partialArgs锛屽苟娓呯悊 itemId/index/finalArgs 绛夊唴閮ㄥ瓧娈点€?*/
+    /** 获取最终内容：解析 partialArgs，并清理 itemId/index/finalArgs 等内部字段。*/
     getFinalContent(): Content {
         return this.buildContent({
             parsePartialArgs: true,
@@ -785,20 +787,20 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鍏煎鏃ц皟鐢ㄦ柟鐨勬渶缁?Content 鍏ュ彛銆?
+     * 兼容旧调用方的最终Content 入口。
      */
     getContent(): Content {
         return this.getFinalContent();
     }
 
     /**
-     * 鑾峰彇褰撳墠鏂囨湰鍐呭锛堢敤浜庡疄鏃舵樉绀猴級
+     * 获取当前文本内容（用于实时显示）
      *
-     * @param options 閫夐」
-     * @returns 褰撳墠绱姞鐨勬枃鏈?
+     * @param options 选项
+     * @returns 当前累加的文本
      */
     getText(options?: {
-        /** 鏄惁鍖呭惈鎬濊€冨唴瀹?*/
+        /** 是否包含思考内容*/
         includeThoughts?: boolean;
     }): string {
         const includeThoughts = options?.includeThoughts ?? false;
@@ -808,7 +810,7 @@ export class StreamAccumulator {
                 if (!('text' in part)) {
                     return false;
                 }
-                // 濡傛灉涓嶅寘鍚€濊€冨唴瀹癸紝杩囨护鎺夋€濊€?part
+                // 如果不包含思考内容，过滤掉思考part
                 if (!includeThoughts && part.thought === true) {
                     return false;
                 }
@@ -819,9 +821,9 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鑾峰彇鎬濊€冨唴瀹癸紙鍗曠嫭鑾峰彇锛?
+     * 获取思考内容（单独获取）
      *
-     * @returns 鎬濊€冨唴瀹规枃鏈?
+     * @returns 思考内容文本
      */
     getThoughts(): string {
         return this.parts
@@ -831,9 +833,9 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鑾峰彇鏅€氬唴瀹癸紙涓嶅惈鎬濊€冿級
+     * 获取普通内容（不含思考）
      *
-     * @returns 鏅€氬唴瀹规枃鏈?
+     * @returns 普通内容文本
      */
     getNormalText(): string {
         return this.parts
@@ -843,35 +845,35 @@ export class StreamAccumulator {
     }
 
     /**
-     * 妫€鏌ユ槸鍚﹀畬鎴?
+     * 检查是否完成
      */
     isComplete(): boolean {
         return this.isDone;
     }
 
     /**
-     * 鑾峰彇缁撴潫鍘熷洜
+     * 获取结束原因
      */
     getFinishReason(): string | undefined {
         return this.finishReason;
     }
 
     /**
-     * 鑾峰彇妯″瀷鐗堟湰
+     * 获取模型版本
      */
     getModelVersion(): string | undefined {
         return this.modelVersion;
     }
 
     /**
-     * 璁剧疆妯″瀷鐗堟湰
+     * 设置模型版本
      */
     setModelVersion(modelVersion: string): void {
         this.modelVersion = modelVersion;
     }
 
     /**
-     * 閲嶇疆绱姞鍣?
+     * 重置累加器
      */
     reset(): void {
         this.parts = [];
@@ -896,61 +898,61 @@ export class StreamAccumulator {
     }
 
     /**
-     * 璁剧疆璇锋眰寮€濮嬫椂闂?
-     * 淇敼鍘熷洜锛歵oken 閫熷害闇€瑕佸畬鏁磋姹傝€楁椂锛岃€屼笉鏄鍧楀埌鏈潡鐨勭煭娴佸嚭绐楀彛銆?
-     * 淇敼鏂瑰紡锛氬悓涓€涓?requestStartTime 鍚屾椂椹卞姩 responseDuration 涓?streamDuration 鐨勫畬鏁磋€楁椂璁＄畻銆?
-     * 淇敼鐩殑锛氫繚璇佸悗缁瀯閫?Content 鏃朵袱涓€楁椂瀛楁鍚屾簮锛岄伩鍏?SSE 鏀掑寘瀵艰嚧鐣搁珮閫熺巼銆?
+     * 设置请求开始时间
+     * 修改原因：token 速度需要完整请求耗时，而不是首块到末块的短流出窗口。
+     * 修改方式：同一个requestStartTime 同时驱动 responseDuration 与streamDuration 的完整耗时计算。
+     * 修改目的：保证后续构造Content 时两个耗时字段同源，避免SSE 攒包导致畸高速率。
      */
     setRequestStartTime(time: number): void {
         this.requestStartTime = time;
     }
 
     /**
-     * 鑾峰彇娴佸紡鍧楄鏁?
+     * 获取流式块计数
      */
     getChunkCount(): number {
         return this.chunkCount;
     }
 
     /**
-     * 鑾峰彇绗竴涓祦寮忓潡鏃堕棿
+     * 获取第一个流式块时间
      */
     getFirstChunkTime(): number | undefined {
         return this.firstChunkTime;
     }
 
     /**
-     * 鑾峰彇鏈€鍚庝竴涓祦寮忓潡鏃堕棿
+     * 获取最后一个流式块时间
      */
     getLastChunkTime(): number | undefined {
         return this.lastChunkTime;
     }
 
     /**
-     * 鑾峰彇鎬濊€冪鍚嶏紙澶氭牸寮忥級
+     * 获取思考签名（多格式）
      */
     getThoughtSignatures(): ThoughtSignatures {
         return { ...this.thoughtSignatures };
     }
 
     /**
-     * 鑾峰彇鎸囧畾鏍煎紡鐨勬€濊€冪鍚?
+     * 获取指定格式的思考签名
      */
     getThoughtSignature(format: string = 'gemini'): string | undefined {
         return this.thoughtSignatures[format];
     }
 
     /**
-     * 鑾峰彇 token 浣跨敤缁熻
+     * 获取 token 使用统计
      */
     getUsageMetadata(): UsageMetadata | undefined {
         return this.usageMetadata ? { ...this.usageMetadata } : undefined;
     }
 
     /**
-     * 鑾峰彇鍔犲瘑鎬濊€冨唴瀹?
+     * 获取加密思考内容
      *
-     * @returns 鍔犲瘑鎬濊€冨唴瀹规暟缁勶紙鍙兘鏈夊涓潡锛?
+     * @returns 加密思考内容数组（可能有多个块）
      */
     getRedactedThinking(): string[] {
         return this.parts
@@ -958,13 +960,13 @@ export class StreamAccumulator {
             .map(part => part.redactedThinking!);
     }
 
-    /** 鑾峰彇鎬濊€冨紑濮嬫椂闂达紱閬垮厤鍙负鍙戦€?thinkingStartTime 鑰屾瀯閫犲畬鏁?Content銆?*/
+    /** 获取思考开始时间；避免只为发送thinkingStartTime 而构造完整Content。*/
     getThinkingStartTime(): number | undefined {
         return this.thinkingStartTime;
     }
 
     /**
-     * 鑾峰彇鎬濊€冩寔缁椂闂?
+     * 获取思考持续时间
      */
     getThinkingDuration(): number | undefined {
         if (this.thinkingDuration !== undefined) {
@@ -977,7 +979,7 @@ export class StreamAccumulator {
     }
 
     /**
-     * 鑾峰彇缁熻淇℃伅
+     * 获取统计信息
      */
     getStats(): {
         partCount: number;
@@ -1013,14 +1015,14 @@ export class StreamAccumulator {
     }
 
     /**
-     * 杩斿洖鑷笂娆¤皟鐢ㄤ互鏉ユ柊瀹屾垚锛坅rgs 宸茶В鏋愭垚鍔燂級鐨?functionCall銆?
+     * 返回自上次调用以来新完成（args 已解析成功）的functionCall。
      *
-     * 鐢ㄤ簬娴佸紡杈规墽琛屽伐鍏凤細ToolIterationLoopService 鍦ㄦ祦寮忔秷璐瑰惊鐜腑
-     * 姣忓鐞嗕竴涓?chunk 鍚庤皟鐢ㄦ鏂规硶锛屾娴嬫槸鍚︽湁鏂扮殑 functionCall 瀹屾垚锛?
-     * 瀵逛笉闇€瑕佺‘璁ょ殑宸ュ叿绔嬪嵆鍚姩寮傛鎵ц銆?
+     * 用于流式边执行工具：ToolIterationLoopService 在流式消费循环中
+     * 每处理一个chunk 后调用此方法，检测是否有新的 functionCall 完成）
+     * 对不需要确认的工具立即启动异步执行。
      *
-     * "瀹屾垚"鐨勫垽瀹氾細functionCall.args 宸叉湁鍊硷紙partialArgs 宸叉垚鍔?JSON.parse锛夈€?
-     * 姣忎釜 functionCall 鍙細琚繑鍥炰竴娆★紙閫氳繃 reportedFunctionCallIndices 鍘婚噸锛夈€?
+     * "完成"的判定：functionCall.args 已有值（partialArgs 已成功JSON.parse）。
+     * 每个 functionCall 只会被返回一次（通过 reportedFunctionCallIndices 去重）。
      */
     getNewCompletedFunctionCalls(): Array<{
         index: number;
@@ -1037,18 +1039,18 @@ export class StreamAccumulator {
             if (!part.functionCall) continue;
 
             const fc = part.functionCall as any;
-            // "瀹屾垚"鍒ゅ畾锛歛rgs 蹇呴』鍖呭惈鑷冲皯涓€涓敭锛屾帓闄ゅ垵濮嬪崰浣嶇┖澹?{}銆?
+            // "完成"判定：args 必须包含至少一个键，排除初始占位空壳{}。
             //
-            // Anthropic content_block_start 鍙戦€?input: {}锛宖ormatter 瀛樹负
-            // args: {}锛汷penAI 棣栦釜 tool_call chunk 涔熻 args: {}銆?
-            // 鐪熸鐨勫弬鏁伴€氳繃鍚庣画澧為噺锛坕nput_json_delta / arguments delta锛?
-            // 鎷兼帴鍒?partialArgs锛孞SON.parse 鎴愬姛鍚庢墠鏇存柊 args銆?
-            // 浠呮鏌?args 鏄惁涓哄璞′細鍦ㄥ垵濮嬮樁娈佃鍒や负瀹屾垚锛屽鑷翠互绌哄弬鏁版墽琛屻€?
+            // Anthropic content_block_start 发送input: {}，formatter 存为
+            // args: {}；OpenAI 首个 tool_call chunk 也设 args: {}。
+            // 真正的参数通过后续增量（input_json_delta / arguments delta）
+            // 拼接到partialArgs，JSON.parse 成功后才更新 args。
+            // 仅检查args 是否为对象会在初始阶段误判为完成，导致以空参数执行。
             //
-            // 鍙湁 partialArgs 琚垚鍔?JSON.parse 鍚庯紝args 鎵嶄細鍚湁瀹為檯鐨勯敭銆?
+            // 只有 partialArgs 被成功JSON.parse 后，args 才会含有实际的键。
             const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
             const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
-            // Responses 蹇呴』绛夊畼鏂?call_id 绋冲畾鍚庡啀鎻愬墠鎵ц锛屽惁鍒?functionResponse.id 浼氫笌鍚庣画涓婁笅鏂囪姹備笉涓€鑷淬€?
+            // Responses 必须等官方call_id 稳定后再提前执行，否则functionResponse.id 会与后续上下文要求不一致。
             if (hasRealArgs && fc.name && (this.providerType !== 'openai-responses' || hasStableToolCallId)) {
                 this.reportedFunctionCallIndices.add(i);
                 result.push({

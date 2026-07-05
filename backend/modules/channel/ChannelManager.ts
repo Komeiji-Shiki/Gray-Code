@@ -633,7 +633,7 @@ export class ChannelManager {
         
         // 使用可重置的超时机制
         // 每次收到有效内容时重置超时，避免模型慢速生成时被误判为超时
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: NodeJS.Timeout | undefined;
         let isTimedOut = false;
         
         const resetTimeout = () => {

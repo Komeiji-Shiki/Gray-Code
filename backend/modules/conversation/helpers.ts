@@ -409,10 +409,10 @@ export function cleanContentForAPI(content: Content): Content {
 
             cleanedPart.functionResponse = {
                 name: part.functionResponse.name,
-                response: cleanedResponse
+                response: cleanedResponse as Record<string, unknown>
             };
             if (part.functionResponse.id) {
-                cleanedPart.functionResponse.id = part.functionResponse.id;
+                cleanedPart.functionResponse!.id = part.functionResponse.id;
             }
             // 不包含 parts（嵌套多模态内容由 ConversationManager 单独处理）
         }

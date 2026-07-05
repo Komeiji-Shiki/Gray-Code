@@ -224,9 +224,19 @@ const diffLoadErrors = ref<Map<string, string>>(new Map())
 const viewModes = ref<Map<string, 'content' | 'diff'>>(new Map())
 
 // 获取文件列表（从参数中）
+// 兼容批量格式 (files 数组) 和单文件格式 (path + content)
 const fileList = computed((): WriteFileEntry[] => {
   const files = props.args.files as WriteFileEntry[] | undefined
-  return files && Array.isArray(files) ? files : []
+  if (files && Array.isArray(files) && files.length > 0) {
+    return files
+  }
+  // 回退到单文件参数格式
+  const singlePath = props.args.path as string | undefined
+  const singleContent = props.args.content as string | undefined
+  if (singlePath) {
+    return [{ path: singlePath, content: singleContent || '' }]
+  }
+  return []
 })
 
 // 获取写入结果列表（从结果中）

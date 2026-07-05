@@ -17,7 +17,8 @@ import type {
     ConfigFilter,
     ConfigSortOptions,
     GeminiConfig,
-    OpenAIConfig
+    OpenAIConfig,
+    AnthropicConfig
 } from './types';
 import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
@@ -398,8 +399,7 @@ export class ConfigManager {
                 break;
             
             case 'anthropic':
-                // TODO: 实现 Anthropic 验证
-                warnings.push(t('modules.config.validation.anthropicNotImplemented'));
+                this.validateAnthropicConfig(config as AnthropicConfig, errors, warnings);
                 break;
         }
         
@@ -482,6 +482,59 @@ export class ConfigManager {
         const models = config.models || [];
         if (models.length > 0 && (!config.model || config.model.trim().length === 0)) {
             warnings.push(t('modules.config.validation.modelNotSelected'));
+        }
+    }
+
+    /**
+     * 验证 Anthropic 配置
+     */
+    private validateAnthropicConfig(
+        config: AnthropicConfig,
+        errors: string[],
+        warnings: string[]
+    ): void {
+        // URL 验证
+        if (!config.url || !this.isValidUrl(config.url)) {
+            errors.push(t('modules.config.validation.invalidUrl'));
+        }
+
+        // API Key 验证 - 仅警告，不阻止创建
+        if (!config.apiKey || config.apiKey.trim().length === 0) {
+            warnings.push(t('modules.config.validation.apiKeyEmpty'));
+        }
+
+        // 模型名称验证
+        const models = config.models || [];
+        if (models.length > 0 && (!config.model || config.model.trim().length === 0)) {
+            warnings.push(t('modules.config.validation.modelNotSelected'));
+        }
+
+        // 选项验证
+        const opts = config.options;
+        if (opts) {
+            // Anthropic 的 temperature 范围是 0.0 - 1.0
+            if (opts.temperature !== undefined && (opts.temperature < 0 || opts.temperature > 1)) {
+                errors.push(t('modules.config.validation.temperatureRangeAnthropic'));
+            }
+
+            if (opts.max_tokens !== undefined && opts.max_tokens < 1) {
+                errors.push(t('modules.config.validation.maxTokensMin'));
+            }
+
+            if (opts.top_p !== undefined && (opts.top_p < 0 || opts.top_p > 1)) {
+                errors.push(t('modules.config.validation.topPRange'));
+            }
+
+            if (opts.top_k !== undefined && opts.top_k < 0) {
+                errors.push(t('modules.config.validation.topKMin'));
+            }
+
+            // 思考预算：Anthropic 要求 budget_tokens 至少为 1024
+            if (opts.thinking?.type === 'enabled' &&
+                opts.thinking.budget_tokens !== undefined &&
+                opts.thinking.budget_tokens < 1024) {
+                warnings.push(t('modules.config.validation.thinkingBudgetMin'));
+            }
         }
     }
 

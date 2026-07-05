@@ -19,6 +19,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { Logger } from '../../core/logger';
+
+const log = Logger.get('DiffStorageManager');
 
 /**
  * Diff 内容记录
@@ -150,7 +153,7 @@ export class DiffStorageManager {
         const filePath = this.getDiffFilePath(conversationId, id);
         await fs.promises.writeFile(filePath, JSON.stringify(diffContent, null, 2), 'utf8');
         
-        console.log(`[DiffStorageManager] Saved diff ${id} for conversation ${conversationId}`);
+        log.debug('diff_saved', { diffId: id, conversationId });
         
         return {
             diffId: id,
@@ -190,7 +193,7 @@ export class DiffStorageManager {
         const filePath = path.join(diffsDir, `${id}.json`);
         await fs.promises.writeFile(filePath, JSON.stringify(diffContent, null, 2), 'utf8');
         
-        console.log(`[DiffStorageManager] Saved global diff ${id}`);
+        log.debug('global_diff_saved', { diffId: id });
         
         return {
             diffId: id,
@@ -253,7 +256,7 @@ export class DiffStorageManager {
         
         try {
             await fs.promises.unlink(filePath);
-            console.log(`[DiffStorageManager] Deleted diff ${diffId}`);
+            log.debug('diff_deleted', { diffId });
             return true;
         } catch (error) {
             return false;
@@ -271,7 +274,7 @@ export class DiffStorageManager {
         try {
             // 递归删除目录
             await fs.promises.rm(diffsDir, { recursive: true, force: true });
-            console.log(`[DiffStorageManager] Deleted all diffs for conversation ${conversationId}`);
+            log.debug('conversation_diffs_deleted', { conversationId });
         } catch (error) {
             // 目录可能不存在
         }
@@ -376,7 +379,7 @@ export class DiffStorageManager {
                     const convDirPath = path.join(diffsBaseDir, convDir);
                     await fs.promises.rm(convDirPath, { recursive: true, force: true });
                     cleaned++;
-                    console.log(`[DiffStorageManager] Cleaned up orphaned diffs for: ${convDir}`);
+                    log.debug('orphaned_diffs_cleaned', { conversationDir: convDir });
                 }
             }
         } catch (error) {
@@ -438,7 +441,7 @@ export class DiffStorageManager {
             // 更新基础路径
             this.basePath = newBasePath;
             
-            console.log(`[DiffStorageManager] Migrated ${processed} conversation diffs to: ${newBasePath}`);
+            log.info('diffs_migrated', { processed, newBasePath });
         } catch (error) {
             // 旧目录不存在，只需更新路径
             this.basePath = newBasePath;

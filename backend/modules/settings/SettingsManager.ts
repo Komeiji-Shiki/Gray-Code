@@ -989,9 +989,10 @@ export class SettingsManager {
     async updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
         const oldValue = this.settings.proxy;
         this.settings.proxy = {
+            enabled: true,
             ...this.settings.proxy,
             ...proxySettings
-        };
+        } as ProxySettings;
         this.settings.lastUpdated = Date.now();
         
         await this.storage.save(this.settings);

@@ -59,7 +59,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
 
     constructor(options: VSCodeSettingsStorageOptions = {}) {
         this.options = {
-            legacySettingsDir: options.legacySettingsDir,
+            legacySettingsDir: options.legacySettingsDir!,
             enableLegacyMigration: options.enableLegacyMigration ?? true,
             backupLegacyFile: options.backupLegacyFile ?? true
         };

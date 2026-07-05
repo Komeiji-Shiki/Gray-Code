@@ -134,7 +134,11 @@ export class StdioMcpClient extends EventEmitter {
             env: processEnv,
             cwd: this.cwd,
             stdio: ['pipe', 'pipe', 'pipe'],
-            shell: process.platform === 'win32'  // Windows 需要 shell 来执行 .cmd/.bat 文件（如 npx）
+            // Windows: 使用 ComSpec 或简短文件名 cmd.exe，
+            // 让 CreateProcessW 通过系统目录搜索来定位，避免硬编码路径导致 ENOENT。
+            shell: process.platform === 'win32'
+                ? (process.env.ComSpec || 'cmd.exe')
+                : false
         });
         
         // 设置错误处理

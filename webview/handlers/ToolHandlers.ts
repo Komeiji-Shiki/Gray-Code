@@ -73,7 +73,7 @@ export const getMcpTools: MessageHandler = async (data, requestId, ctx) => {
     }> = [];
     
     for (const serverTools of allMcpTools) {
-      for (const tool of serverTools.tools) {
+      for (const tool of (serverTools.tools ?? [])) {
         const fullToolName = `mcp__${serverTools.serverId}__${tool.name}`;
         mcpTools.push({
           name: fullToolName,

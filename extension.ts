@@ -22,14 +22,16 @@ let diffCodeLensDisposable: vscode.Disposable | undefined;
 // DiffInlineProvider 注册
 let diffInlineDisposable: vscode.Disposable | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
-    console.log('LimCode extension is now active!');
+const log = Logger.get('extension');
 
+export function activate(context: vscode.ExtensionContext) {
     // 初始化日志系统：创建 OutputChannel 让日志同时输出到 VS Code 输出面板
     const outputChannel = vscode.window.createOutputChannel('LimCode');
     context.subscriptions.push(outputChannel);
     Logger.setOutputChannel((line) => outputChannel.appendLine(line));
     // Logger.setLevel(LogLevel.DEBUG); // 取消注释以启用 DEBUG 级别日志
+
+    log.info('LimCode extension is now active!');
 
     // Allow i18n to follow VS Code display language until settings load.
     setDetectedLanguage(vscode.env.language);
@@ -61,21 +63,21 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册命令：新建对话
     context.subscriptions.push(
         vscode.commands.registerCommand('limcode.newChat', () => {
-            chatViewProvider.sendCommand('newChat');
+            chatViewProvider?.sendCommand('newChat');
         })
     );
 
     // 注册命令：显示历史
     context.subscriptions.push(
         vscode.commands.registerCommand('limcode.showHistory', () => {
-            chatViewProvider.sendCommand('showHistory');
+            chatViewProvider?.sendCommand('showHistory');
         })
     );
 
     // 注册命令：显示设置
     context.subscriptions.push(
         vscode.commands.registerCommand('limcode.showSettings', () => {
-            chatViewProvider.sendCommand('showSettings');
+            chatViewProvider?.sendCommand('showSettings');
         })
     );
 
@@ -260,14 +262,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Hover: selected text -> "Add to LimCode input"
     const selectionHoverDisposable = vscode.languages.registerHoverProvider(
-        [{ scheme: 'file' }],
+        [{ scheme: 'file' }, { scheme: 'untitled' }],
         selectionContextProvider
     );
     context.subscriptions.push(selectionHoverDisposable);
 
     // Lightbulb: add selection as context snippet
     const selectionCodeActionDisposable = vscode.languages.registerCodeActionsProvider(
-        [{ scheme: 'file' }],
+        [{ scheme: 'file' }, { scheme: 'untitled' }],
         selectionContextProvider,
         {
             providedCodeActionKinds: SelectionContextProvider.providedCodeActionKinds
@@ -348,7 +350,7 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.commands.executeCommand('limcode.openChat');
                 chatViewProvider?.sendCommand('input.addContext', { contextItem });
             } catch (err: any) {
-                console.error('Failed to add selection context:', err);
+                log.error('Failed to add selection context:', err);
                 vscode.window.showErrorMessage(t('tools.file.selectionContext.failedToAddSelection', { error: err?.message || String(err) }));
             }
         })
@@ -466,11 +468,11 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    console.log('LimCode extension activated successfully!');
+    log.info('LimCode extension activated successfully!');
 }
 
 export function deactivate() {
-    console.log('LimCode extension deactivating...');
+    log.info('LimCode extension deactivating...');
     
     // 清理 DiffCodeLensProvider
     if (diffCodeLensDisposable) {
@@ -494,5 +496,5 @@ export function deactivate() {
         chatViewProvider = undefined;
     }
     
-    console.log('LimCode extension deactivated');
+    log.info('LimCode extension deactivated');
 }

@@ -1,10 +1,11 @@
 /**
  * LimCode Backend - 中文语言包
+ *
+ * 注意：本文件是基准语言包，BackendLanguageMessages 类型由此文件自动推导，
+ * 因此这里不做类型标注（避免循环定义）。修改结构后 en/ja 会自动受到类型约束。
  */
 
-import type { BackendLanguageMessages } from '../types';
-
-const zhCN: BackendLanguageMessages = {
+const zhCN = {
     core: {
         registry: {
             moduleAlreadyRegistered: '模块 "{moduleId}" 已经注册',
@@ -36,8 +37,11 @@ const zhCN: BackendLanguageMessages = {
                 temperatureRange: 'temperature 必须在 0.0 - 2.0 之间',
                 maxOutputTokensMin: 'maxOutputTokens 必须大于 0',
                 maxOutputTokensHigh: 'maxOutputTokens 过大，可能导致高延迟',
-                openaiNotImplemented: 'OpenAI 配置验证尚未实现',
-                anthropicNotImplemented: 'Anthropic 配置验证尚未实现'
+                temperatureRangeAnthropic: 'temperature 必须在 0.0 - 1.0 之间（Anthropic）',
+                maxTokensMin: 'max_tokens 必须大于 0',
+                topPRange: 'top_p 必须在 0.0 - 1.0 之间',
+                topKMin: 'top_k 必须大于等于 0',
+                thinkingBudgetMin: 'thinking.budget_tokens 不能小于 1024'
             }
         },
 

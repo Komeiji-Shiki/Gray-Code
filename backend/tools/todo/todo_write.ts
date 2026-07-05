@@ -40,9 +40,9 @@ function validateTodos(value: unknown): { ok: true; todos: TodoItem[] } | { ok: 
         if (!item || typeof item !== 'object') {
             return { ok: false, error: 'each todo must be an object' };
         }
-        const id = (item as any).id;
-        const content = (item as any).content;
-        const status = (item as any).status;
+        const id = (item as Record<string, unknown>).id;
+        const content = (item as Record<string, unknown>).content;
+        const status = (item as Record<string, unknown>).status;
 
         if (typeof id !== 'string' || !id.trim()) {
             return { ok: false, error: 'todo.id must be a non-empty string' };
@@ -61,10 +61,8 @@ function validateTodos(value: unknown): { ok: true; todos: TodoItem[] } | { ok: 
 }
 
 async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
-    const store = (context as any).conversationStore as
-        | { getCustomMetadata: (conversationId: string, key: string) => Promise<unknown> }
-        | undefined;
-    const conversationId = (context as any).conversationId as string | undefined;
+    const store = context.conversationStore;
+    const conversationId = context.conversationId;
 
     if (!store || !conversationId) {
         return [];
@@ -79,9 +77,9 @@ async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
     const normalized: TodoItem[] = [];
     for (const item of raw) {
         if (!item || typeof item !== 'object') continue;
-        const id = (item as any).id;
-        const content = (item as any).content;
-        const status = (item as any).status;
+        const id = (item as Record<string, unknown>).id;
+        const content = (item as Record<string, unknown>).content;
+        const status = (item as Record<string, unknown>).status;
         if (typeof id === 'string' && typeof content === 'string' && isTodoStatus(status)) {
             normalized.push({ id, content, status });
         }
@@ -90,10 +88,8 @@ async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
 }
 
 async function saveTodos(context: ToolContext, todos: TodoItem[]): Promise<void> {
-    const store = (context as any).conversationStore as
-        | { setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void> }
-        | undefined;
-    const conversationId = (context as any).conversationId as string | undefined;
+    const store = context.conversationStore;
+    const conversationId = context.conversationId;
 
     if (!store || !conversationId) {
         throw new Error('conversationStore and conversationId are required');
@@ -169,8 +165,8 @@ async function todoWriteHandler(args: Record<string, unknown>, context?: ToolCon
         return { success: false, error: 'tool context is required' };
     }
 
-    const conversationId = (context as any).conversationId as string | undefined;
-    const conversationStore = (context as any).conversationStore as unknown | undefined;
+    const conversationId = context.conversationId;
+    const conversationStore = context.conversationStore;
     if (!conversationId) {
         return { success: false, error: 'conversationId is required in tool context' };
     }
@@ -178,7 +174,7 @@ async function todoWriteHandler(args: Record<string, unknown>, context?: ToolCon
         return { success: false, error: 'conversationStore is required in tool context' };
     }
 
-    const validated = validateTodos((args as any).todos);
+    const validated = validateTodos(args.todos);
     if (validated.ok === false) {
         return { success: false, error: validated.error };
     }

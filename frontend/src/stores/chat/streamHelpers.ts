@@ -1,22 +1,22 @@
 /**
- * 娴佸紡澶勭悊杈呭姪鍑芥暟
+ * 流式处理辅助函数
  *
  * @module streamHelpers
- * 鍖呭惈娑堟伅鎿嶄綔銆佸伐鍏疯皟鐢ㄨВ鏋愮瓑杈呭姪鍑芥暟
+ * 包含消息操作、工具调用解析等辅助函数
  *
- * WP15: functionCall merge 绾嚱鏁板凡鏀舵暃鍒?utils/functionCallMerge.ts锛?
- * 鏈枃浠朵粎淇濈暀 Main Chat 鐗规湁鐨勮妭娴佹帶鍒躲€乀oolEntry 鍚屾鍜?handleFunctionCallPart 鍏ュ彛銆?
+ * WP15: functionCall merge 纯函数已收敛到utils/functionCallMerge.ts，
+ * 本文件仅保留 Main Chat 特有的节流控制、ToolEntry 同步和handleFunctionCallPart 入口。
  */
 
 import type { Message } from '../../types'
 import type { ChatStoreState } from './types'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
-// WP15: 缁熶竴 functionCall merge 绾嚱鏁板叆鍙ｃ€?
-// 涓轰粈涔堜粠鐙珛妯″潡瀵煎叆锛歁ain Chat 鍜?SubAgent Monitor 涔嬪墠鍚勮嚜缁存姢浜嗙浉鍚岀殑 normalizeNonEmptyString銆?
-// hasNonEmptyArgs銆乼ryParseArgs銆乬etFunctionCallMergeReason銆乵ergeFunctionCall銆?
-// 鎬庝箞鏀癸細鍏ㄩ儴鏀舵暃鍒?frontend/src/utils/functionCallMerge.ts锛屼袱杈逛繚鎸佸悎骞惰涔変竴鑷淬€?
-// 鐩殑锛氬悗缁?WP20 AgentRunEvent 缁熶竴 reducer 鍙互鐩存帴渚濊禆杩欎釜妯″潡銆?
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：Main Chat 和SubAgent Monitor 之前各自维护了相同的 normalizeNonEmptyString。
+// hasNonEmptyArgs、tryParseArgs、getFunctionCallMergeReason、mergeFunctionCall。
+// 怎么改：全部收敛到frontend/src/utils/functionCallMerge.ts，两边保持合并语义一致。
+// 目的：后续WP20 AgentRunEvent 统一 reducer 可以直接依赖这个模块。
 import {
   type StreamFunctionCall,
   normalizeNonEmptyString,
@@ -40,7 +40,7 @@ function isTodoToolName(name: unknown): boolean {
 }
 
 /**
- * 娣诲姞 functionCall 鍒版秷鎭?
+ * 添加 functionCall 到消息
  */
 export function addFunctionCallToMessage(
   message: Message,
@@ -53,7 +53,7 @@ export function addFunctionCallToMessage(
     itemId?: string
   }
 ): void {
-  // 鏇存柊 tools 鏁扮粍
+  // 更新 tools 数组
   if (!message.tools) {
     message.tools = []
   }
@@ -61,19 +61,19 @@ export function addFunctionCallToMessage(
     id: call.id,
     name: call.name,
     args: call.args,
-    // 涓轰粈涔堝悓姝?itemId/index锛歮essage.tools 鏄?ToolMessage 鐨勪富瑕佹暟鎹簮锛屽繀椤诲拰 parts 浣跨敤鍚屼竴濂楁祦寮忓悎骞堕敭銆?
-    // 鎬庝箞鏀癸細鎶?provider 鐨勫唴閮ㄥ畾浣嶅瓧娈靛彧淇濈暀鍦ㄥ墠绔姇褰遍噷锛屼笉鍙備笌宸ュ叿缁撴灉鍥炰紶銆?
-    // 鐩殑锛歝ontentSnapshot 瑕嗙洊鏃跺彲浠ヨ瘑鍒苟鏇挎崲 0 鍙傛暟鍗犱綅宸ュ叿锛岃€屼笉鏄妸瀹冭拷鍔犳垚绗簩寮犲崱銆?
+    // 为什么同步itemId/index：message.tools 是ToolMessage 的主要数据源，必须和 parts 使用同一套流式合并键。
+    // 怎么改：把provider 的内部定位字段只保留在前端投影里，不参与工具结果回传。
+    // 目的：contentSnapshot 覆盖时可以识别并替换 0 参数占位工具，而不是把它追加成第二张卡。
     itemId: call.itemId,
     index: call.index,
-    // 浼犻€?partialArgs 浠ヤ究 ToolMessage 缁勪欢鏄剧ず娴佸紡棰勮
+    // 传递partialArgs 以便 ToolMessage 组件显示流式预览
     partialArgs: call.partialArgs,
-    // 鍒氫粠娴佸紡鍐呭閲岃В鏋?鎷兼帴鍑烘潵鐨勫伐鍏疯皟鐢紝瑙嗕负"AI 杩樺湪杈撳嚭/瀹屽杽宸ュ叿鍐呭"
-    // 鏈?partialArgs 璇存槑鍙傛暟浠嶅湪娴佸紡绱Н涓紱鏃?partialArgs 璇存槑宸叉嬁鍒板畬鏁村弬鏁?
+    // 刚从流式内容里解析拼接出来的工具调用，视为"AI 还在输出/完善工具内容"
+    // 有partialArgs 说明参数仍在流式累积中；无partialArgs 说明已拿到完整参数
     status: typeof call.partialArgs === 'string' ? 'streaming' : 'queued'
   })
 
-  // 鏇存柊 parts锛堢敤浜庢覆鏌擄級
+  // 更新 parts（用于渲染）
   if (!message.parts) {
     message.parts = []
   }
@@ -84,19 +84,19 @@ export function addFunctionCallToMessage(
       args: call.args,
       partialArgs: call.partialArgs,
       index: call.index,
-      // 涓轰粈涔堝悓姝?itemId锛歱arts 涓?tools 閮藉彲鑳藉弬涓庢覆鏌撳拰蹇収閲嶅缓锛屼袱涓姇褰卞繀椤诲叡浜悓涓€鍐呴儴鍚堝苟閿€?
-      // 鎬庝箞鏀癸細鍙湪鍓嶇娴佸紡 part 涓婁繚瀛?itemId锛屽悗绔渶缁堝巻鍙蹭細娓呯悊璇ュ瓧娈点€?
-      // 鐩殑锛氳鏈€鍚庡埌杈剧殑瀹屾暣鍙傛暟浜嬩欢鑳借鐩栧垵濮嬪崰浣?part锛岃€屼笉鏄敓鎴?鍙傛暟 0"鐨勫亣宸ュ叿銆?
+      // 为什么同步itemId：parts 与tools 都可能参与渲染和快照重建，两个投影必须共享同一内部合并键。
+      // 怎么改：只在前端流式 part 上保存itemId，后端最终历史会清理该字段。
+      // 目的：让最后到达的完整参数事件能覆盖初始占位part，而不是生成参数 0"的假工具。
       itemId: call.itemId
     }
   })
 }
 
 /**
- * 娣诲姞鏂囨湰鍒版秷鎭紙鍚堝苟杩炵画鐨勬枃鏈?part锛?
+ * 添加文本到消息（合并连续的文本part）
  */
 export function addTextToMessage(message: Message, text: string, isThought: boolean = false): void {
-  // 鏅€氭枃鏈墠绱姞鍒?content
+  // 普通文本才累加到content
   if (!isThought) {
     message.content += text
   }
@@ -106,7 +106,7 @@ export function addTextToMessage(message: Message, text: string, isThought: bool
   }
 
   const lastPart = message.parts[message.parts.length - 1]
-  // 鍙湁鐩稿悓绫诲瀷锛堥兘鏄€濊€冩垨閮戒笉鏄€濊€冿級鎵嶅悎骞?
+  // 只有相同类型（都是思考或都不是思考）才合并
   const lastIsThought = lastPart?.thought === true
   if (lastPart && lastPart.text !== undefined && !lastPart.functionCall && lastIsThought === isThought) {
     lastPart.text += text
@@ -116,10 +116,10 @@ export function addTextToMessage(message: Message, text: string, isThought: bool
 }
 
 /**
- * 澶勭悊娴佸紡鏂囨湰
+ * 处理流式文本
  *
- * Prompt 妯″紡宸ュ叿璋冪敤鐜板湪浠ュ悗绔В鏋愮粨鏋滀负鍑嗐€?
- * 鍓嶇杩欓噷鍙礋璐ｆ妸鍙鏂囨湰杩藉姞鍒版秷鎭腑銆?
+ * Prompt 模式工具调用现在以后端解析结果为准。
+ * 前端这里只负责把可见文本追加到消息中。
  */
 export function processStreamingText(
   message: Message,
@@ -130,29 +130,29 @@ export function processStreamingText(
 }
 
 /**
- * 鍏煎鏃ц皟鐢ㄩ摼銆?
- * Prompt 妯″紡宸ュ叿缂撳啿鐜板湪浣嶄簬鍚庣锛屾澶勪笉鍐嶉渶瑕侀澶栧鐞嗐€?
+ * 兼容旧调用链。
+ * Prompt 模式工具缓冲现在位于后端，此处不再需要额外处理。
  */
 export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): void {
 }
 
 /**
- * 澶勭悊宸ュ叿璋冪敤 part锛堝師鐢?function call format锛?
+ * 处理工具调用 part（原生function call format）
  */
 
 /**
- * partialArgs JSON.parse 鑺傛祦鎺у埗
+ * partialArgs JSON.parse 节流控制
  *
- * 闂锛氭瘡涓閲忕墖娈甸兘瀵规暣涓疮绉瓧绗︿覆鍋?JSON.parse锛屽綋鍙傛暟寰堝ぇ鏃讹紙濡?write_file 鍐欓暱浠ｇ爜锛夛紝
- * 澶嶆潅搴﹂€€鍖栦负 O(N虏)锛屽鑷翠富绾跨▼鍗℃銆?
+ * 问题：每个增量片段都对整个累积字符串做JSON.parse，当参数很大时（如write_file 写长代码），
+ * 复杂度退化为 O(N²)，导致主线程卡死。
  *
- * 绛栫暐锛?
- * - 璺熻釜涓婃鎴愬姛/灏濊瘯 parse 鏃剁殑瀛楃涓查暱搴?
- * - 姣忔澧為噺鍚庯紝鍙湁褰撴柊澧炴暟鎹噺瓒呰繃闃堝€兼椂鎵嶅啀娆″皾璇?parse
- * - 闃堝€奸殢瀛楃涓查暱搴﹀姩鎬佸闀匡細鐭瓧绗︿覆棰戠箒 parse锛堜繚璇佸皬鍙傛暟鐨勯瑙堜綋楠岋級锛?
- *   闀垮瓧绗︿覆澶у箙鍑忓皯 parse 娆℃暟锛堥伩鍏?O(N虏) 鍗￠】锛?
+ * 策略：
+ * - 跟踪上次成功/尝试 parse 时的字符串长度
+ * - 每次增量后，只有当新增数据量超过阈值时才再次尝试parse
+ * - 阈值随字符串长度动态增长：短字符串频繁 parse（保证小参数的预览体验），
+ *   长字符串大幅减少 parse 次数（避免O(N²) 卡顿）
  *
- * WP15: 杩欐槸 Main Chat 鐗规湁鐨勮妭娴佺瓥鐣ワ紝Monitor 鍐呭澧為噺 reducer 涓嶉渶瑕佹閫昏緫銆?
+ * WP15: 这是 Main Chat 特有的节流策略，Monitor 内容增量 reducer 不需要此逻辑。
  */
 const partialArgsParseState = new WeakMap<object, { lastParseLen: number }>()
 
@@ -162,8 +162,8 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
     state = { lastParseLen: 0 }
     partialArgsParseState.set(fcRef, state)
   }
-  // 鍔ㄦ€侀槇鍊硷細鐭瓧绗︿覆(<1KB) 姣?200 瀛楃 parse 涓€娆★紱
-  // 涓瓑瀛楃涓?1-10KB) 姣?1KB parse 涓€娆★紱闀垮瓧绗︿覆 姣?4KB parse 涓€娆?
+  // 动态阈值：短字符串(<1KB) 每200 字符 parse 一次；
+  // 中等字符串1-10KB) 每1KB parse 一次；长字符串 每4KB parse 一次
   const threshold = currentLen < 1024 ? 200 : currentLen < 10240 ? 1024 : 4096
   const delta = currentLen - state.lastParseLen
   if (delta < threshold) return false
@@ -172,9 +172,9 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
 }
 
 // WP15: StreamFunctionCall, normalizeNonEmptyString, hasNonEmptyArgs, tryParseArgs,
-// getFunctionCallMergeReason 宸插叏閮ㄦ敹鏁涘埌 utils/functionCallMerge.ts銆?
-// 浠呬繚鐣?Main Chat 鐗规湁鐨?findToolEntry銆乻yncToolEntryFromFunctionCall銆?
-// normalizeNewFunctionCall 鍜?handleFunctionCallPart銆?
+// getFunctionCallMergeReason 已全部收敛到 utils/functionCallMerge.ts。
+// 仅保留Main Chat 特有的findToolEntry、syncToolEntryFromFunctionCall。
+// normalizeNewFunctionCall 和handleFunctionCallPart。
 
 function findToolEntry(message: Message, fc: StreamFunctionCall, previousId?: string) {
   const tools = message.tools || []
@@ -225,19 +225,19 @@ function syncToolEntryFromFunctionCall(message: Message, fc: StreamFunctionCall,
 }
 
 /**
- * WP15: Main Chat 涓撶敤鐨?mergeFunctionCall 钖勫寘瑁呫€?
+ * WP15: Main Chat 专用的mergeFunctionCall 薄包装。
  *
- * 涓轰粈涔堥渶瑕佽繖涓寘瑁咃細Main Chat 娴佸紡璺緞鏈夌壒鏈夌殑 partialArgs JSON.parse 鑺傛祦绛栫暐锛坰houldAttemptParse锛夛紝
- * 鑰?SubAgent Monitor 鐨?contentDelta 鍙湪 finalArgs=true 鏃惰В鏋愩€?
- * 鎬庝箞鏀癸細鎶婅妭娴佸洖璋冧紶鍏?unifiedMergeFunctionCall锛屼繚鎸?Main Chat 娴佸紡鎬ц兘浼樺寲涓嶄涪澶便€?
- * 鐩殑锛氱粺涓€鍚堝苟璇箟鐨勫悓鏃讹紝淇濈暀 Main Chat 鐗规湁鐨?O(N虏) 闃叉姢銆?
+ * 为什么需要这个包装：Main Chat 流式路径有特有的 partialArgs JSON.parse 节流策略（shouldAttemptParse），
+ * 而SubAgent Monitor 的contentDelta 只在 finalArgs=true 时解析。
+ * 怎么改：把节流回调传入unifiedMergeFunctionCall，保持Main Chat 流式性能优化不丢失。
+ * 目的：统一合并语义的同时，保留 Main Chat 特有的O(N²) 防护。
  */
 function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): string | undefined {
   return unifiedMergeFunctionCall(target, incoming, {
     shouldParseArgs: (_incoming, combinedPartialArgs) => {
-      // 涓轰粈涔?finalArgs=true 鏃剁粫杩囪妭娴侊細arguments.done 浼犵殑鏄畬鏁?JSON锛?
-      // 蹇呴』绔嬪嵆瑙ｆ瀽鎵嶈兘璁╁伐鍏疯繘鍏?queued 鐘舵€佸苟瑙﹀彂鍚庣画鎵ц銆?
-      // 鎬庝箞鏀癸細finalArgs 鎴栬妭娴侀槇鍊奸€氳繃鍗宠В鏋愩€?
+      // 为什么finalArgs=true 时绕过节流：arguments.done 传的是完整JSON，
+      // 必须立即解析才能让工具进入queued 状态并触发后续执行。
+      // 怎么改：finalArgs 或节流阈值通过即解析。
       if (_incoming.finalArgs === true) return true
       return shouldAttemptParse(target, combinedPartialArgs.length)
     }
@@ -265,9 +265,9 @@ export function handleFunctionCallPart(part: any, message: Message): void {
   let matched: { fc: StreamFunctionCall; reason: string } | null = null
   let isLastFunctionCall = true
 
-  // 涓轰粈涔堜粠鍚庡線鍓嶆壘锛岃€屼笉鏄彧鐪嬫渶鍚庝竴涓?part锛氭祦寮忓搷搴旈噷鍙兘绌挎彃鎬濊€冪鍚嶃€佹枃鏈垨鐘舵€佸揩鐓с€?
-  // 鎬庝箞鏀癸細鎸?itemId銆乮ndex銆乮d銆乫resh placeholder 鐨勭粺涓€浼樺厛绾у鎵惧悓涓€閫昏緫宸ュ叿璋冪敤銆?
-  // 鐩殑锛氳鍓嶇鍜屽悗绔?StreamAccumulator 浣跨敤鍚屼竴濂楀悎骞舵ā鍨嬶紝閬垮厤 MCP 宸ュ叿涓存椂閲嶅鏄剧ず銆?
+  // 为什么从后往前找，而不是只看最后一个part：流式响应里可能穿插思考签名、文本或状态快照。
+  // 怎么改：按itemId、index、id、fresh placeholder 的统一优先级寻找同一逻辑工具调用。
+  // 目的：让前端和后端StreamAccumulator 使用同一套合并模型，避免 MCP 工具临时重复显示。
   for (let i = (message.parts?.length || 0) - 1; i >= 0; i--) {
     const existing = message.parts?.[i]?.functionCall as StreamFunctionCall | undefined
     if (!existing) continue

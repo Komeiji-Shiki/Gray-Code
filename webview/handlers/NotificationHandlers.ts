@@ -4,8 +4,9 @@ import type {
   WindowsNotificationPreviewPayload
 } from '../../backend/modules/notifications/types'
 import type { MessageHandler } from '../types'
+import { Logger } from '../../backend/core/logger'
 
-const LOG_PREFIX = '[windows-agent-stop-notification][handler]'
+const log = Logger.get('NotificationHandlers')
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? value as Record<string, unknown> : null
@@ -114,7 +115,7 @@ function normalizePreviewPayload(data: unknown): WindowsNotificationPreviewPaylo
 export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
   const payload = normalizePayload(data)
   if (!payload) {
-    console.log(LOG_PREFIX, 'invalid notifications.agentStop payload', data)
+    log.warn('agent_stop_invalid_payload', { data })
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -125,7 +126,7 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
   }
 
   if (!ctx.windowsAgentStopNotificationService) {
-    console.log(LOG_PREFIX, 'notifications.agentStop skipped because service is unavailable')
+    log.debug('agent_stop_skipped_service_unavailable')
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -136,9 +137,9 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
   }
 
   try {
-    console.log(LOG_PREFIX, 'dispatching notifications.agentStop', payload)
+    log.debug('agent_stop_dispatching', { ...payload })
     const result = await ctx.windowsAgentStopNotificationService.notify(payload)
-    console.log(LOG_PREFIX, 'notifications.agentStop finished', {
+    log.debug('agent_stop_finished', {
       payload,
       result
     })
@@ -160,7 +161,7 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
 export const previewWindowsNotification: MessageHandler = async (data, requestId, ctx) => {
   const payload = normalizePreviewPayload(data)
   if (!payload) {
-    console.log(LOG_PREFIX, 'invalid notifications.preview payload', data)
+    log.warn('preview_invalid_payload', { data })
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -171,7 +172,7 @@ export const previewWindowsNotification: MessageHandler = async (data, requestId
   }
 
   if (!ctx.windowsAgentStopNotificationService) {
-    console.log(LOG_PREFIX, 'notifications.preview skipped because service is unavailable')
+    log.debug('preview_skipped_service_unavailable')
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -182,9 +183,9 @@ export const previewWindowsNotification: MessageHandler = async (data, requestId
   }
 
   try {
-    console.log(LOG_PREFIX, 'dispatching notifications.preview', payload)
+    log.debug('preview_dispatching', { ...payload })
     const result = await ctx.windowsAgentStopNotificationService.preview(payload)
-    console.log(LOG_PREFIX, 'notifications.preview finished', {
+    log.debug('preview_finished', {
       payload,
       result
     })

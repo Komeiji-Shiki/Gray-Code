@@ -46,9 +46,9 @@ function normalizeTodos(raw: unknown): TodoItem[] {
     const out: TodoItem[] = [];
     for (const item of raw) {
         if (!item || typeof item !== 'object') continue;
-        const id = (item as any).id;
-        const content = (item as any).content;
-        const status = (item as any).status;
+        const id = (item as Record<string, unknown>).id;
+        const content = (item as Record<string, unknown>).content;
+        const status = (item as Record<string, unknown>).status;
         if (typeof id === 'string' && id.trim() && typeof content === 'string' && isTodoStatus(status)) {
             out.push({ id: id.trim(), content, status });
         }
@@ -57,10 +57,8 @@ function normalizeTodos(raw: unknown): TodoItem[] {
 }
 
 async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
-    const store = (context as any).conversationStore as
-        | { getCustomMetadata: (conversationId: string, key: string) => Promise<unknown> }
-        | undefined;
-    const conversationId = (context as any).conversationId as string | undefined;
+    const store = context.conversationStore;
+    const conversationId = context.conversationId;
 
     if (!store || !conversationId) {
         return [];
@@ -71,10 +69,8 @@ async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
 }
 
 async function saveTodos(context: ToolContext, todos: TodoItem[]): Promise<void> {
-    const store = (context as any).conversationStore as
-        | { setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void> }
-        | undefined;
-    const conversationId = (context as any).conversationId as string | undefined;
+    const store = context.conversationStore;
+    const conversationId = context.conversationId;
 
     if (!store || !conversationId) {
         throw new Error('conversationStore and conversationId are required');
@@ -122,8 +118,8 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
             continue;
         }
 
-        const op = (opAny as any).op;
-        const id = (opAny as any).id;
+        const op = (opAny as Record<string, unknown>).op;
+        const id = (opAny as Record<string, unknown>).id;
 
         if (typeof op !== 'string') {
             invalidOps++;
@@ -139,8 +135,8 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
 
         if (op === 'add') {
             const addId = (typeof id === 'string' && id.trim()) ? id.trim() : '';
-            const content = (opAny as any).content;
-            const status = (opAny as any).status;
+            const content = (opAny as Record<string, unknown>).content;
+            const status = (opAny as Record<string, unknown>).status;
             if (!addId || typeof content !== 'string') {
                 invalidOps++;
                 continue;
@@ -179,7 +175,7 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
         }
 
         if (op === 'set_status') {
-            const status = (opAny as any).status;
+            const status = (opAny as Record<string, unknown>).status;
             if (!isTodoStatus(status)) {
                 invalidOps++;
                 continue;
@@ -192,7 +188,7 @@ function applyOps(existing: TodoItem[], rawOps: unknown): {
         }
 
         if (op === 'set_content') {
-            const content = (opAny as any).content;
+            const content = (opAny as Record<string, unknown>).content;
             if (typeof content !== 'string') {
                 invalidOps++;
                 continue;
@@ -279,8 +275,8 @@ async function todoUpdateHandler(args: Record<string, unknown>, context?: ToolCo
         return { success: false, error: 'tool context is required' };
     }
 
-    const conversationId = (context as any).conversationId as string | undefined;
-    const conversationStore = (context as any).conversationStore as unknown | undefined;
+    const conversationId = context.conversationId;
+    const conversationStore = context.conversationStore;
     if (!conversationId) {
         return { success: false, error: 'conversationId is required in tool context' };
     }
@@ -288,7 +284,7 @@ async function todoUpdateHandler(args: Record<string, unknown>, context?: ToolCo
         return { success: false, error: 'conversationStore is required in tool context' };
     }
 
-    const rawOps = (args as any).ops;
+    const rawOps = args.ops;
     if (!Array.isArray(rawOps)) {
         return { success: false, error: 'ops must be an array' };
     }

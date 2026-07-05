@@ -46,7 +46,7 @@ export const updateUISettings: MessageHandler = async (data, requestId, ctx) => 
     
     // 如果语言设置变更，同步到后端 i18n
     if (ui.language) {
-      ctx.syncLanguageToBackend();
+      ctx.syncLanguageToBackend?.();
     }
     
     ctx.sendResponse(requestId, { success: true });
@@ -319,7 +319,9 @@ function getExtensionVersion(ctx: HandlerContext): string {
             const packageJson = JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf-8'));
             return packageJson.version || '0.0.0';
         }
-    } catch {}
+    } catch (error) {
+        console.warn('[SettingsHandlers] Failed to read extension version from package.json:', error);
+    }
     return '0.0.0';
 }
 

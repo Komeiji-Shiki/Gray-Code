@@ -46,6 +46,9 @@ import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
+import { Logger } from '../backend/core/logger';
+
+const log = Logger.get('ChatViewProvider');
 
 /**
  * Diff 预览内容提供者
@@ -131,9 +134,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const webviewAssetsSource = this.webviewDevServerUrl
             ? `vite-dev-server(${this.webviewDevServerUrl})`
             : 'frontend/dist';
-        console.log(
-            `[LimCode][Startup] mode=${startupMode}, extensionPath=${this.context.extensionPath}, webviewAssets=${webviewAssetsSource}`
-        );
+        log.info('startup', {
+            mode: startupMode,
+            extensionPath: this.context.extensionPath,
+            webviewAssets: webviewAssetsSource
+        });
 
         // 初始化 Diff 预览内容提供者
         this.diffPreviewProvider = new DiffPreviewContentProvider();
@@ -186,12 +191,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
         void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {
-            console.log(`[LimCode][ConversationMigration] migrated=${result.migrated}, skipped=${result.skipped}, failed=${result.failed.length}`);
+            log.info('conversation_migration.finished', {
+                migrated: result.migrated,
+                skipped: result.skipped,
+                failedCount: result.failed.length
+            });
             if (result.failed.length > 0) {
-                console.warn('[LimCode][ConversationMigration] failed conversations:', result.failed);
+                log.warn('conversation_migration.failed_conversations', { failed: result.failed });
             }
         }).catch(error => {
-            console.warn('[LimCode][ConversationMigration] background migration failed:', error);
+            log.warn('conversation_migration.background_failed', { error: error?.message || String(error) });
         });
         
         // 7. 初始化配置管理器（使用Memento存储）
@@ -371,8 +380,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.conversationManager
         );
         
-        console.log('LimCode backend initialized with global context');
-        console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
+        log.info('backend_initialized', {
+            effectiveDataPath: this.storagePathManager.getEffectiveDataPath()
+        });
     }
     
     /**
@@ -518,12 +528,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             toolRegistry: toolRegistry,
             settingsHandler: this.settingsHandler,
             conversationManager: this.conversationManager,
+            chatHandler: this.chatHandler,
+            modelsHandler: this.modelsHandler,
+            checkpointManager: this.checkpointManager,
             mcpManager: this.mcpManager,
             dependencyManager: this.dependencyManager,
             storagePathManager: this.storagePathManager,
             diffStorageManager: this.diffStorageManager,
             streamAbortControllers: this.messageRouter.getAbortManager() as any,
             diffPreviewProvider: this.diffPreviewProvider,
+            getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             postMessage: (message: any) => {
@@ -807,7 +821,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     public cancelAllStreams(): void {
         this.messageRouter?.cancelAllStreams();
-        console.log('All active streams cancelled');
+        log.info('all_streams_cancelled');
     }
     
     /**
@@ -855,7 +869,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
 
-        console.log('ChatViewProvider disposed');
+        log.info('disposed');
     }
     
     /**
@@ -1127,7 +1141,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const builtinSoundAssetsScript = `<script>window.__LIMCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
-            console.log(`[LimCode][Webview] load source=vite-dev-server, url=${devServerUrl}`);
+            log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
             return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1146,7 +1160,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </html>`;
         }
 
-        console.log('[LimCode][Webview] load source=frontend/dist');
+        log.info('webview_load', { source: 'frontend/dist' });
         return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

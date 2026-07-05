@@ -829,7 +829,7 @@ export function createSearchInFilesTool(): Tool {
             const maxResults = (args.maxResults as number) || 100;
             
             // 替换模式参数（仅在替换模式下使用）
-            const replacement = isReplaceMode ? (args.replace as string || '') : undefined;
+            const replacement = isReplaceMode ? ((args.replace as string) ?? '') : '';
             const maxFiles = isReplaceMode ? ((args.maxFiles as number) || 50) : 50;
 
             if (!query) {

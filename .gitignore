@@ -2,8 +2,7 @@ node_modules
 dist
 .limcode
 
-# tests (keep local; do not track in git)
-test/
+# legacy local-only jest configs (superseded by jest.backend.config.js)
 jest.config.cjs
 tsconfig.jest.json
 

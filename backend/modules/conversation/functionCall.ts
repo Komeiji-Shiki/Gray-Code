@@ -179,7 +179,7 @@ export function extractFunctionCalls(
             }
             
             if (includeThoughtSignatures && part.thoughtSignatures) {
-                result.thoughtSignatures = part.thoughtSignatures;
+                result.thoughtSignatures = part.thoughtSignatures as Record<string, string>;
             }
             
             return result;

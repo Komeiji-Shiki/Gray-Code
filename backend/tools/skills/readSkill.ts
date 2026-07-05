@@ -10,7 +10,7 @@
  * - Layer 2：AI 调用 read_skill 时返回 SKILL.md 全文内容
  */
 
-import type { Tool, ToolDeclaration, ToolResult, ToolRegistration } from '../types';
+import type { Tool, ToolArgs, ToolDeclaration, ToolResult, ToolRegistration } from '../types';
 import { getSkillsManager } from '../../modules/skills';
 
 /** 工具描述中 Skill 列表的最大字符预算（参考 Claude Code 的 15,000 字符上限） */
@@ -90,7 +90,8 @@ Pass the skill name to read its full content.`
  * 根据 name 查找 Skill 并返回其完整内容。
  * 返回的 basePath 让 AI 能定位同目录下的脚本等资源文件。
  */
-async function handleReadSkill(args: { name: string }): Promise<ToolResult> {
+async function handleReadSkill(args: ToolArgs): Promise<ToolResult> {
+    const name = typeof args?.name === 'string' ? args.name : '';
     const skillsManager = getSkillsManager();
     
     if (!skillsManager) {
@@ -100,18 +101,18 @@ async function handleReadSkill(args: { name: string }): Promise<ToolResult> {
         };
     }
     
-    const skill = skillsManager.getSkillByName(args.name);
+    const skill = skillsManager.getSkillByName(name);
     if (!skill) {
         return {
             success: false,
-            error: `Skill not found: "${args.name}". Use the available skills listed in the tool description.`,
+            error: `Skill not found: "${name}". Use the available skills listed in the tool description.`,
         };
     }
     
     if (!skill.enabled) {
         return {
             success: false,
-            error: `Skill "${args.name}" is disabled by user. Do not attempt to read it again.`,
+            error: `Skill "${name}" is disabled by user. Do not attempt to read it again.`,
         };
     }
     

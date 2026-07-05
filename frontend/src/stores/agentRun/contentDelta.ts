@@ -1,21 +1,21 @@
 /**
- * WP15: SubAgent Monitor Content[] delta reducer銆?
+ * WP15: SubAgent Monitor Content[] delta reducer。
  *
- * 涓轰粈涔堥渶瑕佽繖涓枃浠讹細SubAgent Monitor 涓嶈兘鐩存帴浣跨敤涓昏亰澶╃殑 handleFunctionCallPart锛堝畠鑰﹀悎浜?Message 绫诲瀷鍜?
- * Pinia store 鐘舵€侊級锛屼絾闇€瑕佺浉鍚岀殑 functionCall 鍚堝苟璇箟锛坕temId > index > id > freshPlaceholder > legacyPartial锛夈€?
+ * 为什么需要这个文件：SubAgent Monitor 不能直接使用主聊天的 handleFunctionCallPart（它耦合了Message 类型和
+ * Pinia store 状态），但需要相同的 functionCall 合并语义（itemId > index > id > freshPlaceholder > legacyPartial）。
  *
- * 鎬庝箞鏀癸細鍚堝苟閫昏緫锛坣ormalizeNonEmptyString銆乭asNonEmptyArgs銆乼ryParseArgs銆乬etFunctionCallMergeReason銆?
- * mergeFunctionCall锛夊凡鏀舵暃鍒?utils/functionCallMerge.ts銆傛湰鏂囦欢鍙繚鐣?Monitor 鐗规湁鐨?Content[] 鎶曞奖閫昏緫锛?
- * cloneContent銆乤ppendContentPart銆乪nsureLastModelContent銆乤pplyStreamChunkToContents銆?
+ * 怎么改：合并逻辑（normalizeNonEmptyString、hasNonEmptyArgs、tryParseArgs、getFunctionCallMergeReason。
+ * mergeFunctionCall）已收敛到utils/functionCallMerge.ts。本文件只保留Monitor 特有的Content[] 投影逻辑：
+ * cloneContent、appendContentPart、ensureLastModelContent、applyStreamChunkToContents。
  *
- * 鐩殑锛歁ain Chat 鍜?SubAgent Monitor 鍏变韩鍚屼竴濂?functionCall 鍚堝苟瑙勫垯锛屽悗缁?WP20 缁熶竴 reducer 鍙洿鎺ヤ緷璧栥€?
+ * 目的：Main Chat 和SubAgent Monitor 共享同一套functionCall 合并规则，后续WP20 统一 reducer 可直接依赖。
  */
 
 import type { Content, ContentPart } from '../../types'
-// WP15: 缁熶竴 functionCall merge 绾嚱鏁板叆鍙ｃ€?
-// 涓轰粈涔堜粠鐙珛妯″潡瀵煎叆锛氭秷闄や笌 streamHelpers.ts / parsers.ts 鐨勪笁浠介噸澶嶃€?
-// 鎬庝箞鏀癸細getFunctionCallMergeReason 鍜?mergeFunctionCall 鐩存帴寮曠敤缁熶竴妯″潡銆?
-// 鐩殑锛歁onitor 瀹炴椂宸ュ叿鍗″悎骞惰涓轰笌涓昏亰澶╁畬鍏ㄤ竴鑷淬€?
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：消除与 streamHelpers.ts / parsers.ts 的三份重复。
+// 怎么改：getFunctionCallMergeReason 和mergeFunctionCall 直接引用统一模块。
+// 目的：Monitor 实时工具卡合并行为与主聊天完全一致。
 import {
   type StreamFunctionCall,
   hasNonEmptyArgs,
@@ -24,9 +24,9 @@ import {
 } from '../../utils/functionCallMerge'
 
 function cloneContent(content: Content): Content {
-  // 淇敼鍘熷洜锛氬彧鏈夊嵆灏嗚鏇挎崲鎴栬 delta 鏇存柊鐨?Content 闇€瑕佹繁鎷疯礉 parts锛屾湭鍙樺寲鐨勫巻鍙叉ゼ灞傚簲淇濇寔寮曠敤鍏变韩銆?
-  // 淇敼鏂瑰紡锛氫繚鐣欏崟 Content 娣辨嫹璐濆伐鍏凤紝浣嗕笉鍐嶅湪 applyStreamChunkToContents 涓鏁翠釜 contents 鍏ㄩ噺 map 璋冪敤銆?
-  // 鐩殑锛氬ぇ杈撳嚭娴佸紡闃舵閬垮厤姣忎釜 delta clone 鎵€鏈夋棫娑堟伅瀵硅薄锛岄檷浣?Monitor 鏈湴 reducer 鐨?O(n虏) 椋庨櫓銆?
+  // 修改原因：只有即将被替换或被 delta 更新的Content 需要深拷贝 parts，未变化的历史楼层应保持引用共享。
+  // 修改方式：保留单 Content 深拷贝工具，但不再在 applyStreamChunkToContents 中对整个 contents 全量 map 调用。
+  // 目的：大输出流式阶段避免每个 delta clone 所有旧消息对象，降低Monitor 本地 reducer 的O(n²) 风险。
   return {
     ...content,
     parts: (content.parts || []).map(part => {
@@ -39,12 +39,12 @@ function cloneContent(content: Content): Content {
 }
 
 /**
- * WP15: Monitor 涓撶敤鐨?mergeFunctionCall 钖勫寘瑁呫€?
+ * WP15: Monitor 专用的mergeFunctionCall 薄包装。
  *
- * 涓轰粈涔堥渶瑕佽繖涓寘瑁咃細Monitor 鐨?live delta 涓嶉渶瑕?Main Chat 鐨?JSON.parse 鑺傛祦绛栫暐锛?
- * 鍙湪 finalArgs=true锛堟祦寮忓畬鎴愪簨浠讹級鏃惰В鏋?partialArgs銆?
- * 鎬庝箞鏀癸細涓嶄紶 shouldParseArgs锛岃缁熶竴妯″潡浣跨敤榛樿鐨?finalArgs-only 瑙ｆ瀽绛栫暐銆?
- * 鐩殑锛歁onitor 澶у伐鍏峰弬鏁颁笉璺戜笉蹇呰鐨?JSON.parse 寰幆锛屽悓鏃跺叡浜悓涓€鍚堝苟璇箟銆?
+ * 为什么需要这个包装：Monitor 的live delta 不需要Main Chat 的JSON.parse 节流策略，
+ * 只在 finalArgs=true（流式完成事件）时解析partialArgs。
+ * 怎么改：不传 shouldParseArgs，让统一模块使用默认的finalArgs-only 解析策略。
+ * 目的：Monitor 大工具参数不跑不必要的JSON.parse 循环，同时共享同一合并语义。
  */
 function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): void {
   unifiedMergeFunctionCall(target, incoming)
@@ -104,16 +104,16 @@ function ensureLastModelContent(contents: Content[], timestamp: number, baseInde
     return last
   }
 
-  // 淇敼鍘熷洜锛歋ubAgent Monitor 鍙兘鍏堟敹鍒?llm_delta锛屽啀鏀跺埌鏈€缁?content_snapshot锛涙病鏈?model 妤煎眰鏃跺繀椤诲厛鍒涘缓涓€涓湰鍦?live baseline銆?
-  // 淇敼鏂瑰紡锛氬湪 contents 鏈熬琛ヤ竴涓?role=model 鐨勭┖ Content锛屽苟鍙綔涓哄墠绔疄鏃舵姇褰变娇鐢ㄣ€?
-  // 鐩殑锛氳 Monitor 鑳藉儚涓昏亰澶╀竴鏍疯竟鏀惰竟娓叉煋锛岃€屼笉鏄瓑 run 瀹屾垚鍚庢墠鏄剧ず AI 杈撳嚭銆?
+  // 修改原因：SubAgent Monitor 可能先收到llm_delta，再收到最终content_snapshot；没有model 楼层时必须先创建一个本地live baseline。
+  // 修改方式：在 contents 末尾补一个role=model 的空 Content，并只作为前端实时投影使用。
+  // 目的：让 Monitor 能像主聊天一样边收边渲染，而不是等 run 完成后才显示 AI 输出。
   const created = {
     role: 'model' as const,
     parts: [],
     timestamp,
-    // 淇敼鍘熷洜锛歁onitor window 鍙兘涓嶆槸浠?0 寮€濮嬶紱鏂板缓 live model 妤煎眰蹇呴』淇濈暀瀹屾暣 transcript 鐨勭粷瀵?index銆?
-    // 淇敼鏂瑰紡锛氱敱璋冪敤鏂逛紶鍏?window.startIndex 浣滀负 baseIndex锛岄粯璁?0 鍏煎鍗曞厓娴嬭瘯鍜屾棫璋冪敤銆?
-    // 鐩殑锛歞elete/retry/backendIndex 涓嶅洜瀹炴椂 delta 鍦ㄥ垎椤电獥鍙ｅ唴鐢熸垚灞€閮?index 鑰岄敊浣嶃€?
+    // 修改原因：Monitor window 可能不是从0 开始；新建 live model 楼层必须保留完整 transcript 的绝对index。
+    // 修改方式：由调用方传入window.startIndex 作为 baseIndex，默认0 兼容单元测试和旧调用。
+    // 目的：delete/retry/backendIndex 不因实时 delta 在分页窗口内生成局部index 而错位。
     index: baseIndex + contents.length
   } as Content
   contents.push(created)
@@ -121,16 +121,16 @@ function ensureLastModelContent(contents: Content[], timestamp: number, baseInde
 }
 
 export function applyStreamChunkToContents(contents: Content[], chunk: any, timestamp: number = Date.now(), baseIndex: number = 0): Content[] {
-  // 淇敼鍘熷洜锛歋ubAgent Monitor 涓嶈兘缁х画渚濊禆姣忎釜 llm_delta 闄勫甫瀹屾暣 snapshot锛屽惁鍒?events 鍜?contents 閮戒細闅忚緭鍑洪暱搴?O(n虏) 鑶ㄨ儉銆?
-  // 淇敼鏂瑰紡锛氭妸涓昏亰澶╂祦寮?reducer 鐨勬牳蹇冭涔夋敹鏁涗负 Content[] delta reducer锛屾敮鎸?text銆乼hought銆乫unctionCall銆乧ontentSnapshot 鍜?usage銆?
-  // 鐩殑锛歁onitor 瀹炴椂鏄剧ず SubAgent 杈撳嚭锛屽悓鏃朵繚鎸佸悗绔彧鍙戦€佽交閲?delta銆?
+  // 修改原因：SubAgent Monitor 不能继续依赖每个 llm_delta 附带完整 snapshot，否则events 和contents 都会随输出长度O(n²) 膨胀。
+  // 修改方式：把主聊天流式reducer 的核心语义收敛为 Content[] delta reducer，支持text、thought、functionCall、contentSnapshot 和usage。
+  // 目的：Monitor 实时显示 SubAgent 输出，同时保持后端只发送轻量delta。
   const source = contents || []
   const next = [...source]
   const snapshot = chunk?.contentSnapshot as Content | undefined
   if (snapshot?.parts) {
-    // 淇敼鍘熷洜锛歝ontentSnapshot 鏄粨鏋勮竟鐣屾牎鍑嗭紝鍙渶瑕佹浛鎹㈡渶鍚庝竴涓?model content锛屼笉搴?clone 鍏跺畠鏈彉鍖栨ゼ灞傘€?
-    // 淇敼鏂瑰紡锛氬鍒?contents 鏁扮粍骞舵繁鎷疯礉 replacement锛屾棫 Content 瀵硅薄寮曠敤淇濇寔鍏变韩銆?
-    // 鐩殑锛氫繚鎸佸揩鐓ц涔夋纭紝鍚屾椂閬垮厤浣庨鏍″噯涔熼€€鍖栨垚鍏ㄩ噺 clone銆?
+    // 修改原因：contentSnapshot 是结构边界校准，只需要替换最后一个model content，不应clone 其它未变化楼层。
+    // 修改方式：复制contents 数组并深拷贝 replacement，旧 Content 对象引用保持共享。
+    // 目的：保持快照语义正确，同时避免低频校准也退化成全量 clone。
     const replacement = cloneContent({
       ...snapshot,
       timestamp: snapshot.timestamp || timestamp,
@@ -155,9 +155,9 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
   const lastIndex = next.length - 1
   let modelContent: Content
   if (lastIndex >= 0 && next[lastIndex]?.role === 'model') {
-    // 淇敼鍘熷洜锛歞elta 鍙細鏀规渶鍚庝竴涓?model Content锛屾棫瀹炵幇姣忔鍏嬮殕鎵€鏈?Content 浼氳澶?transcript 鏈湴澶勭悊鎴愭湰闅忓巻鍙查暱搴﹀闀裤€?
-    // 淇敼鏂瑰紡锛氬彧娣辨嫹璐濇渶鍚庝竴涓?model Content/parts锛屽啀鍘熷湴杩藉姞 delta 鍒拌繖涓柊瀵硅薄銆?
-    // 鐩殑锛氭湭琚洿鏂扮殑鏃?content 瀵硅薄寮曠敤淇濇寔涓嶅彉锛孷ue 涔熷彧闇€瑕佽拷韪湡姝ｅ彉鍖栫殑灏鹃儴娑堟伅銆?
+    // 修改原因：delta 只会改最后一个model Content，旧实现每次克隆所有Content 会让大transcript 本地处理成本随历史长度增长。
+    // 修改方式：只深拷贝最后一个model Content/parts，再原地追加 delta 到这个新对象。
+    // 目的：未被更新的旧content 对象引用保持不变，Vue 也只需要追踪真正变化的尾部消息。
     modelContent = cloneContent(next[lastIndex])
     next[lastIndex] = modelContent
   } else {

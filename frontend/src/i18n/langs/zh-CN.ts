@@ -1,11 +1,12 @@
 /**
  * LimCode - 简体中文语言包
  * 按组件目录结构组织翻译
+ *
+ * 注意：本文件是基准语言包，LanguageMessages 类型由此文件自动推导，
+ * 因此这里不做类型标注（避免循环定义）。修改结构后 en/ja 会自动受到类型约束。
  */
 
-import type { LanguageMessages } from '../types';
-
-const zhCN: LanguageMessages = {
+const zhCN = {
     common: {
         save: '保存',
         cancel: '取消',

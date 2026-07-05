@@ -578,7 +578,7 @@ async function executeRemoveTask(
             success: true,
             outputPath: output_path,
             maskPath: mask_path,
-            dimensions,
+            dimensions: dimensions ?? undefined,
             multimodal
         };
 

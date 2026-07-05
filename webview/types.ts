@@ -32,11 +32,11 @@ export interface HandlerContext {
   configManager: ConfigManager;
   channelManager: ChannelManager;
   conversationManager: ConversationManager;
-  chatHandler?: ChatHandler;
-  modelsHandler?: ModelsHandler;
+  chatHandler: ChatHandler;
+  modelsHandler: ModelsHandler;
   settingsManager: SettingsManager;
   settingsHandler: SettingsHandler;
-  checkpointManager?: CheckpointManager;
+  checkpointManager: CheckpointManager;
   mcpManager: McpManager;
   dependencyManager: DependencyManager;
   storagePathManager: StoragePathManager;
@@ -57,7 +57,7 @@ export interface HandlerContext {
   openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
   
   // 工具函数
-  getCurrentWorkspaceUri?: () => string | null;
+  getCurrentWorkspaceUri: () => string | null;
   syncLanguageToBackend?: () => void;
 }
 

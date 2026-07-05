@@ -1,7 +1,8 @@
 import * as vscode from 'vscode'
 import type { WindowsToastAdapter, WindowsToastRequest, WindowsToastShowResult } from './types'
+import { Logger } from '../../core/logger'
 
-const LOG_PREFIX = '[windows-agent-stop-notification][toast]'
+const log = Logger.get('WindowsToastAdapter')
 
 const DEFAULT_VSCODE_WINDOWS_APP_ID = 'Microsoft.VisualStudioCode'
 
@@ -49,7 +50,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
   ) {}
 
   async show(request: WindowsToastRequest): Promise<WindowsToastShowResult> {
-    console.log(LOG_PREFIX, 'show called', {
+    log.debug('show_called', {
       title: request.title,
       message: request.message,
       silent: request.silent,
@@ -59,7 +60,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
     })
 
     if (process.platform !== 'win32') {
-      console.log(LOG_PREFIX, 'skip show because platform is not win32', { platform: process.platform })
+      log.debug('skip_show_not_win32', { platform: process.platform })
       return {
         shown: false,
         skippedReason: 'unsupported_platform'
@@ -69,9 +70,9 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
     let toaster: WindowsToasterLike
     try {
       toaster = this.createWindowsToaster()
-      console.log(LOG_PREFIX, 'created Windows toaster instance')
+      log.debug('toaster_instance_created')
     } catch (error) {
-      console.error(LOG_PREFIX, 'failed to create Windows toaster instance', error)
+      log.error('toaster_instance_create_failed', { error: toErrorMessage(error) })
       return {
         shown: false,
         error: toErrorMessage(error)
@@ -101,7 +102,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
       }
 
       const handleClick = () => {
-        console.log(LOG_PREFIX, 'toast click event received')
+        log.debug('toast_click_received')
         void Promise.resolve(request.onClick?.()).catch((error) => {
           this.logger.error('[windows-toast] Failed to handle click:', error)
         }).finally(() => {
@@ -110,12 +111,12 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
       }
 
       const handleTimeout = () => {
-        console.log(LOG_PREFIX, 'toast timeout event received')
+        log.debug('toast_timeout_received')
         cleanup()
       }
 
       const handleReply = () => {
-        console.log(LOG_PREFIX, 'toast replied event received')
+        log.debug('toast_replied_received')
         cleanup()
       }
 
@@ -127,7 +128,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
       cleanupTimer = setTimeout(cleanup, this.cleanupDelayMs)
 
       try {
-        console.log(LOG_PREFIX, 'calling toaster.notify')
+        log.debug('calling_toaster_notify')
         toaster.notify(
           {
             title: request.title,
@@ -138,7 +139,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
           },
           (error, response, metadata) => {
             if (error) {
-              console.error(LOG_PREFIX, 'toaster.notify callback returned error', error)
+              log.error('toaster_notify_callback_error', { error: toErrorMessage(error) })
               cleanup()
               resolve({
                 shown: false,
@@ -147,7 +148,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
               return
             }
 
-            console.log(LOG_PREFIX, 'toaster.notify callback reported success', {
+            log.debug('toaster_notify_callback_success', {
               response,
               metadata
             })
@@ -160,7 +161,7 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
           }
         )
       } catch (error) {
-        console.error(LOG_PREFIX, 'toaster.notify threw synchronously', error)
+        log.error('toaster_notify_threw', { error: toErrorMessage(error) })
         cleanup()
         resolve({
           shown: false,

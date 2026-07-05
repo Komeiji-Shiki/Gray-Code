@@ -796,7 +796,15 @@ function mapToolStatus(tool: ToolUsage): CardStatus {
 // ============ 文档数据提取 ============
 function getWriteFileTaskEntries(tool: ToolUsage): TaskEntry[] {
   const args = tool.args as any
-  const files = Array.isArray(args?.files) ? args.files : []
+  // 兼容批量格式 (files 数组) 和单文件格式 (path + content)
+  let files = Array.isArray(args?.files) ? args.files : []
+  if (files.length === 0) {
+    const singlePath = args?.path as string | undefined
+    const singleContent = args?.content as string | undefined
+    if (singlePath) {
+      files = [{ path: singlePath, content: singleContent || '' }]
+    }
+  }
 
   const result = getToolResult(tool)
   const resultList = Array.isArray(result?.data?.results) ? result.data.results : []

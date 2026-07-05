@@ -1422,7 +1422,7 @@ export class ConversationManager {
                 ...part,
                 functionResponse: {
                     ...part.functionResponse,
-                    response: cleanedResponse
+                    response: cleanedResponse as Record<string, unknown>
                 }
             };
         };

@@ -13,8 +13,9 @@ import type {
   WindowsNotificationPreviewPayload,
   WindowsToastAdapter
 } from './types'
+import { Logger } from '../../core/logger'
 
-const LOG_PREFIX = '[windows-agent-stop-notification][host]'
+const log = Logger.get('WindowsAgentStopNotification')
 const APP_NAME = 'LimCode'
 
 interface ResolvedWindowsAgentStopNotificationContentSettings {
@@ -124,14 +125,14 @@ export class WindowsAgentStopNotificationService {
     this.settingsManager = options.settingsManager
 
     this.windowFocused = !!this.getWindowState().focused
-    console.log(LOG_PREFIX, 'service initialized', {
+    log.debug('service_initialized', {
       platform: this.platform,
       windowFocused: this.windowFocused
     })
 
     this.windowStateDisposable = this.onDidChangeWindowState((state) => {
       this.windowFocused = !!state.focused
-      console.log(LOG_PREFIX, 'window focus changed', {
+      log.debug('window_focus_changed', {
         windowFocused: this.windowFocused
       })
     })
@@ -286,16 +287,16 @@ export class WindowsAgentStopNotificationService {
 
   private async handleNotificationClick(): Promise<void> {
     try {
-      console.log(LOG_PREFIX, 'handling notification click by executing limcode.openChat')
+      log.debug('notification_click_execute_open_chat')
       await this.executeCommand('limcode.openChat')
-      console.log(LOG_PREFIX, 'limcode.openChat executed successfully')
+      log.debug('open_chat_executed')
     } catch (error) {
       this.logger.error('[windows-agent-stop-notification] Failed to focus chat view:', error)
     }
   }
 
   private async showToast(title: string, message: string): Promise<AgentStopNotificationDispatchResult> {
-    console.log(LOG_PREFIX, 'showToast invoked', {
+    log.debug('show_toast_invoked', {
       title,
       message,
       windowFocused: this.windowFocused
@@ -310,7 +311,7 @@ export class WindowsAgentStopNotificationService {
     })
 
     if (!toastResult.shown) {
-      console.log(LOG_PREFIX, 'toast adapter reported not shown', toastResult)
+      log.debug('toast_not_shown', { ...toastResult })
 
       if (toastResult.error) {
         this.logger.warn('[windows-agent-stop-notification] Failed to show toast:', toastResult.error)
@@ -323,7 +324,7 @@ export class WindowsAgentStopNotificationService {
       }
     }
 
-    console.log(LOG_PREFIX, 'toast adapter reported success')
+    log.debug('toast_shown')
 
     return {
       shown: true,
@@ -335,7 +336,7 @@ export class WindowsAgentStopNotificationService {
     const now = Date.now()
     this.cleanupExpiredDedupes(now)
 
-    console.log(LOG_PREFIX, 'notify called', {
+    log.debug('notify_called', {
       reason: payload.reason,
       dedupeKey: payload.dedupeKey,
       conversationId: payload.conversationId,
@@ -344,7 +345,7 @@ export class WindowsAgentStopNotificationService {
     })
 
     if (this.platform !== 'win32') {
-      console.log(LOG_PREFIX, 'skip notify because platform is not win32', { platform: this.platform })
+      log.debug('skip_notify_not_win32', { platform: this.platform })
       return {
         shown: false,
         skipped: true,
@@ -353,10 +354,10 @@ export class WindowsAgentStopNotificationService {
     }
 
     const settings = this.getSettings()
-    console.log(LOG_PREFIX, 'resolved host notification settings', settings)
+    log.debug('resolved_notification_settings', { ...settings })
 
     if (!settings.enabled) {
-      console.log(LOG_PREFIX, 'skip notify because feature is disabled in settings')
+      log.debug('skip_notify_disabled')
       return {
         shown: false,
         skipped: true,
@@ -365,7 +366,7 @@ export class WindowsAgentStopNotificationService {
     }
 
     if (!this.isReasonEnabled(payload.reason, settings)) {
-      console.log(LOG_PREFIX, 'skip notify because reason is disabled in settings', {
+      log.debug('skip_notify_reason_disabled', {
         reason: payload.reason
       })
       return {
@@ -376,7 +377,7 @@ export class WindowsAgentStopNotificationService {
     }
 
     if (settings.onlyWhenWindowNotFocused && this.windowFocused) {
-      console.log(LOG_PREFIX, 'skip notify because originating window is focused')
+      log.debug('skip_notify_window_focused')
       return {
         shown: false,
         skipped: true,
@@ -386,7 +387,7 @@ export class WindowsAgentStopNotificationService {
 
     const dedupeKey = normalizeText(payload.dedupeKey)
     if (!dedupeKey) {
-      console.log(LOG_PREFIX, 'skip notify because dedupeKey is missing')
+      log.debug('skip_notify_missing_dedupe_key')
       return {
         shown: false,
         skipped: true,
@@ -395,7 +396,7 @@ export class WindowsAgentStopNotificationService {
     }
 
     if (this.isDuplicate(dedupeKey)) {
-      console.log(LOG_PREFIX, 'skip notify because dedupeKey is duplicated', {
+      log.debug('skip_notify_duplicate_dedupe_key', {
         dedupeKey
       })
       return {
@@ -409,7 +410,7 @@ export class WindowsAgentStopNotificationService {
       actionType: payload.actionType,
       actionLabel: payload.actionLabel
     })
-    console.log(LOG_PREFIX, 'rendered notification content', {
+    log.debug('rendered_notification_content', {
       reason: payload.reason,
       title: rendered.title,
       message: rendered.message,
@@ -420,12 +421,12 @@ export class WindowsAgentStopNotificationService {
 
     const result = await this.showToast(rendered.title, rendered.message)
     if (!result.shown) {
-      console.log(LOG_PREFIX, 'notify finished without showing toast', result)
+      log.debug('notify_finished_without_toast', { ...result })
       return result
     }
 
     this.rememberDedupe(dedupeKey, now)
-    console.log(LOG_PREFIX, 'remembered dedupeKey after successful toast', {
+    log.debug('dedupe_key_remembered', {
       dedupeKey,
       storedAt: now
     })
@@ -434,7 +435,7 @@ export class WindowsAgentStopNotificationService {
   }
 
   async preview(payload: WindowsNotificationPreviewPayload): Promise<AgentStopNotificationDispatchResult> {
-    console.log(LOG_PREFIX, 'preview called', {
+    log.debug('preview_called', {
       reason: payload.reason,
       actionType: payload.actionType,
       hasContentOverride: !!payload.content,
@@ -442,7 +443,7 @@ export class WindowsAgentStopNotificationService {
     })
 
     if (this.platform !== 'win32') {
-      console.log(LOG_PREFIX, 'skip preview because platform is not win32', { platform: this.platform })
+      log.debug('skip_preview_not_win32', { platform: this.platform })
       return {
         shown: false,
         skipped: true,
@@ -457,7 +458,7 @@ export class WindowsAgentStopNotificationService {
       actionLabel: payload.actionLabel
     })
 
-    console.log(LOG_PREFIX, 'rendered preview content', {
+    log.debug('rendered_preview_content', {
       reason: payload.reason,
       title: rendered.title,
       message: rendered.message,
@@ -467,7 +468,7 @@ export class WindowsAgentStopNotificationService {
     })
 
     const result = await this.showToast(rendered.title, rendered.message)
-    console.log(LOG_PREFIX, 'preview finished', result)
+    log.debug('preview_finished', { ...result })
     return result
   }
 
@@ -475,6 +476,6 @@ export class WindowsAgentStopNotificationService {
     this.windowStateDisposable?.dispose()
     this.windowStateDisposable = undefined
     this.dedupeByKey.clear()
-    console.log(LOG_PREFIX, 'service disposed')
+    log.debug('service_disposed')
   }
 }
