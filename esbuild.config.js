@@ -53,7 +53,10 @@ function copyNativePackages() {
         const src = path.join(__dirname, 'node_modules', pkg);
         const dest = path.join(outdir, 'node_modules', pkg);
         if (fs.existsSync(src)) {
-            fs.cpSync(src, dest, { recursive: true });
+            // pnpm 下 src 可能是 symlink：先清理旧目标，再解引用复制真实文件，
+            // 避免重复构建 EEXIST，也避免 dist 中残留无效链接影响 vsix 打包
+            fs.rmSync(dest, { recursive: true, force: true });
+            fs.cpSync(src, dest, { recursive: true, dereference: true });
             console.log(`[esbuild] copied native package: ${pkg} → dist/node_modules/${pkg}`);
         }
     }

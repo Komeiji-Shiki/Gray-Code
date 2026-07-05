@@ -3,11 +3,13 @@
 .vscode-test/**
 .gitignore
 tsconfig.json
-*.map
+**/*.map
 *.vsix
 .limcode/**
 fast-tavern-main/**
 .tmp/**
+extension.ts
+index.ts
 
 # 锁文件
 pnpm-lock.yaml
