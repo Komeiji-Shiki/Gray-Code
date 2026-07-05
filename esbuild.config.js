@@ -46,19 +46,54 @@ const buildOptions = {
 };
 
 /**
- * 复制原生包的 node_modules 到 dist（保持 require 路径）
+ * 复制原生包及其全部传递依赖到 dist/node_modules（保持 require 路径）
+ *
+ * node-notifier 被标记为 external，不会被 esbuild 打进 bundle，
+ * 因此它自身的运行时依赖（growly/semver/uuid 等）也必须一并复制，
+ * 否则安装 vsix 后 require 会找不到模块。
  */
 function copyNativePackages() {
-    for (const pkg of nativePackages) {
-        const src = path.join(__dirname, 'node_modules', pkg);
-        const dest = path.join(outdir, 'node_modules', pkg);
-        if (fs.existsSync(src)) {
-            // pnpm 下 src 可能是 symlink：先清理旧目标，再解引用复制真实文件，
-            // 避免重复构建 EEXIST，也避免 dist 中残留无效链接影响 vsix 打包
-            fs.rmSync(dest, { recursive: true, force: true });
-            fs.cpSync(src, dest, { recursive: true, dereference: true });
-            console.log(`[esbuild] copied native package: ${pkg} → dist/node_modules/${pkg}`);
+    /** 已处理的包名集合，避免循环依赖重复复制 */
+    const visited = new Set();
+
+    /** 从某个目录开始向上查找包（模拟 Node 的模块解析） */
+    function resolvePackageDir(pkgName, fromDir) {
+        let dir = fromDir;
+        while (true) {
+            const candidate = path.join(dir, 'node_modules', pkgName);
+            if (fs.existsSync(path.join(candidate, 'package.json'))) {
+                return fs.realpathSync(candidate);
+            }
+            const parent = path.dirname(dir);
+            if (parent === dir) return null;
+            dir = parent;
         }
+    }
+
+    function copyWithDeps(pkgName, fromDir) {
+        if (visited.has(pkgName)) return;
+        visited.add(pkgName);
+
+        const src = resolvePackageDir(pkgName, fromDir);
+        if (!src) {
+            console.warn(`[esbuild] WARNING: cannot resolve package: ${pkgName}`);
+            return;
+        }
+
+        const dest = path.join(outdir, 'node_modules', pkgName);
+        fs.rmSync(dest, { recursive: true, force: true });
+        // dereference: pnpm 下包内部可能含 symlink，复制真实文件
+        fs.cpSync(src, dest, { recursive: true, dereference: true });
+        console.log(`[esbuild] copied: ${pkgName} → dist/node_modules/${pkgName}`);
+
+        const pkgJson = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf8'));
+        for (const dep of Object.keys(pkgJson.dependencies || {})) {
+            copyWithDeps(dep, src);
+        }
+    }
+
+    for (const pkg of nativePackages) {
+        copyWithDeps(pkg, __dirname);
     }
 }
 
