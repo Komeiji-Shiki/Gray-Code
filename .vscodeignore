@@ -50,7 +50,6 @@ frontend/vite.config.ts
 frontend/pnpm-lock.yaml
 frontend/COMPONENT_ARCHITECTURE.md
 
-# 依赖：保留 esbuild external 的原生包
+# 依赖：运行时依赖已由 esbuild 打包进 dist/（bundle + dist/node_modules），
+# codicons 等静态资源使用 resources/ 目录，根 node_modules 不需要进包
 node_modules/**
-!node_modules/node-notifier/
-!node_modules/node-notifier/**
