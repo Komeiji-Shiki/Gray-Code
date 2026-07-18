@@ -15,7 +15,7 @@ import { MarkdownRenderer } from '../../common'
 import ChannelSelector from '../../input/ChannelSelector.vue'
 import ModelSelector from '../../input/ModelSelector.vue'
 import type { ChannelOption, ModelInfo } from '../../input/types'
-import { useI18n } from '@/composables'
+import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { generateId } from '@/utils/format'
@@ -29,6 +29,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { openFile } = useOpenWorkspaceFile()
 const chatStore = useChatStore()
 
 // ============ Plan 执行相关 ============
@@ -783,8 +784,8 @@ onBeforeUnmount(() => {
               'codicon',
               file.result?.success === false ? 'codicon-error' : getActionIcon(file.result?.action)
             ]"></span>
-            <span class="file-name">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext">.{{ getFileExtension(file.path) }}</span>
+            <span class="file-name clickable" :title="file.path" @click.stop="openFile(file.path)">{{ getFileNameWithoutExt(file.path) }}</span>
+            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFile(file.path)">.{{ getFileExtension(file.path) }}</span>
             <span v-if="file.result?.action" :class="['action-badge', file.result.action]">
               {{ getActionLabel(file.result.action) }}
             </span>
@@ -1197,6 +1198,17 @@ onBeforeUnmount(() => {
 
 .file-panel.is-error .file-icon {
   color: var(--vscode-inputValidation-errorForeground);
+}
+
+.file-name.clickable,
+.file-ext.clickable {
+  cursor: pointer;
+}
+
+.file-name.clickable:hover,
+.file-ext.clickable:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 .file-name {

@@ -300,6 +300,14 @@ export interface EditAndRetryRequestData {
 
     /** Prompt 模式 ID（可选） */
     promptModeId?: string;
+
+    /**
+     * 可选，保留的检查点 ID（含其增量基链）
+     *
+     * 回档并编辑场景下传入刚用于恢复的存档点，
+     * 使其不随检查点清理而消失，支持反复回档到同一位置。
+     */
+    preserveCheckpointId?: string;
 }
 
 // ==================== 删除消息 ====================
@@ -313,6 +321,14 @@ export interface DeleteToMessageRequestData {
     
     /** 目标消息索引（删除到这个索引为止，包括该消息） */
     targetIndex: number;
+
+    /**
+     * 可选，保留的检查点 ID（含其增量基链）
+     *
+     * 回档场景下传入刚用于恢复的存档点，使其不随消息删除而消失，
+     * 支持用户反复回档到同一位置。
+     */
+    preserveCheckpointId?: string;
 }
 
 /**

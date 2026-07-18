@@ -10,12 +10,15 @@
  */
 
 import { computed } from 'vue'
+import { useOpenWorkspaceFile } from '@/composables'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
 }>()
+
+const { openFileAt } = useOpenWorkspaceFile()
 
 // 单个删除条目
 interface DeleteEntry {
@@ -146,15 +149,15 @@ function getFileNameWithoutExt(fp: string): string {
         <div class="file-header">
           <div class="file-info">
             <span class="codicon codicon-diff-removed file-icon"></span>
-            <span class="file-name">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext">.{{ getFileExtension(file.path) }}</span>
+            <span class="file-name clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ getFileNameWithoutExt(file.path) }}</span>
+            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">.{{ getFileExtension(file.path) }}</span>
             <span class="delete-badge">删除第 {{ file.start_line }}~{{ file.end_line }} 行</span>
             <span class="line-count">{{ file.deletedCount }} 行</span>
           </div>
         </div>
 
         <!-- 文件路径 -->
-        <div class="file-path">{{ file.path }}</div>
+        <div class="file-path clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ file.path }}</div>
 
         <!-- 状态显示 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
@@ -295,6 +298,19 @@ function getFileNameWithoutExt(fp: string): string {
 
 .file-panel.is-error .file-icon {
   color: var(--vscode-inputValidation-errorForeground);
+}
+
+.file-name.clickable,
+.file-ext.clickable,
+.file-path.clickable {
+  cursor: pointer;
+}
+
+.file-name.clickable:hover,
+.file-ext.clickable:hover,
+.file-path.clickable:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 .file-name {

@@ -41,6 +41,11 @@
         "icon": "$(history)"
       },
       {
+        "command": "limcode.showUsage",
+        "title": "用量统计",
+        "icon": "$(graph)"
+      },
+      {
         "command": "limcode.showSettings",
         "title": "设置",
         "icon": "$(settings-gear)"
@@ -121,9 +126,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "limcode.showSettings",
+          "command": "limcode.showUsage",
           "when": "view == limcode.chatView",
           "group": "navigation@3"
+        },
+        {
+          "command": "limcode.showSettings",
+          "when": "view == limcode.chatView",
+          "group": "navigation@4"
         }
       ],
       "editor/title": [
@@ -306,10 +316,10 @@
     "lim code",
     "limcode"
   ],
-  "author": "Limerence",
+  "author": "Komeiji-Shiki",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Lianues/Lim-Code"
+    "url": "https://github.com/Komeiji-Shiki/Lim-Code"
   }
 }

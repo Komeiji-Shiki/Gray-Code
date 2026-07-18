@@ -222,7 +222,7 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, streamId: clientStreamId } = data;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
@@ -237,6 +237,7 @@ export class StreamRequestHandler {
         configId,
         modelOverride,
         attachments,
+        preserveCheckpointId,
         promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal

@@ -2,32 +2,110 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
-
 ## [Unreleased]
 
 ### Added
+  - 新增用量统计页面：从已落盘对话历史回溯聚合 token 用量，支持总览 + 按对话 / 按模型 / 按日期三个维度，包含 CSS 条形图可视化；入口位于历史页头部图表按钮
+  - 用量统计页新增 VSCode 视图标题栏入口（`limcode.showUsage` 命令 + graph 图标按钮，位于历史与设置之间），不再只能从历史页右上角的隐藏入口进入
+  - 用量统计页新增时间范围筛选（全部 / 今天 / 近 7 天 / 近 30 天），后端 `aggregateUsageStats` 支持按消息时间戳过滤（`UsageStatsOptions.startTime/endTime`），总览与三个维度均为筛选后口径；筛选激活时缺失时间戳的消息不参与统计
+  - 用量统计页新增成本估算：「按模型」维度可就地配置模型单价（美元/百万 token，思考 token 按输出价计），行上显示单模型估算成本，总览卡片显示总估算成本；单价持久化在 `ui.usagePricing`，随设置导出/导入一同迁移
+  - 用量统计页「按对话」维度支持点击行直接打开对应对话并返回聊天视图
+  - 新增后端用量聚合器 `usageStats.ts`，从 model 消息的 `usageMetadata` 提取输入/输出/思考 token，兼容旧字段格式，单对话读取失败自动跳过不影响整体
+  - 新增 `UsageHandlers` webview 处理器，注册 `usage.getStats` 消息
+  - 新增用量统计聚合的后端单元测试（`backend/__tests__/conversation/usageStats.test.ts`，覆盖聚合正确性 / 旧字段兼容 / 读取失败跳过计数 / 双边与单边时间范围筛选，共 5 个用例）
+  - 用量统计页三语 i18n（zh-CN / en / ja）
+  - 文件工具卡片（apply_diff / write_file / insert_code / delete_code / read_file / delete_file）文件名与路径支持点击跳转到编辑器；insert_code 和 delete_code 还会自动定位到插入/删除行并高亮
+  - 新增文件跳转公共 composable `useOpenWorkspaceFile`，封装 `openWorkspaceFile` / `openWorkspaceFileAt` 扩展桥接
+  - Anthropic 渠道新增 Prompt Caching 缓存 TTL 选择（5 分钟 / 1 小时），可在渠道设置中选择缓存保持时间；1 小时 TTL 写入价格为 2x 基础输入价格
+  - Anthropic 渠道新增 Prompt Caching 缓存保活开关（循环保活 + 退出保活）：当 TTL 为 5 分钟时，流式请求期间每 4 分 30 秒自动发送 max_tokens=5 的保活请求循环刷新 TTL；流正常结束且无工具调用时，若距请求开始已过 4 分钟则额外保活一次，防止用户下一轮输入时缓存刚好过期
+  - Anthropic 渠道新增思考内容显示模式开关（隐藏 / 摘要），控制 API 响应中是否返回可见的思考内容；Opus 4.7+ 默认隐藏思考，选择「摘要」可恢复思维链输出；该开关与思考启用状态独立
+  - Anthropic 渠道新增 xhigh 思考努力级别，位于 high 和 max 之间（Opus 4.7+）
   - OpenAI 兼容渠道新增 DeepSeek `user_id` 开关，用户可在渠道设置中显式启用，启用后主聊天请求会基于当前对话 ID 生成稳定且不包含隐私信息的 `user_id`，用于 DeepSeek KVCache 按对话隔离；默认关闭，避免误判中转或其他兼容服务
-  - 新增设置导入/导出功能（`limcode.exportSettings` / `limcode.importSettings`），可在设置面板中将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复；支持跳过已存在项和覆盖全部两种导入模式
+  - 新增设置导入/导出功能：可在设置 → 通用设置中将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复；支持跳过已存在项和覆盖全部两种导入模式，导入时弹出覆盖确认对话框
+  - 新增 `SettingsExporter` 后端模块（`backend/modules/settings/SettingsExporter.ts`），负责收集导出数据（VSCode 设置、渠道配置、MCP 服务器、Skills）并序列化/反序列化，排除对话历史与检查点
+  - 设置导入/导出支持设置页「通用设置」按钮和命令面板（`limcode.exportSettings` / `limcode.importSettings`）两种入口
+  - 新增设置导入/导出三语 i18n（zh-CN / en / ja）
+  - 新增 `settings.export` / `settings.import` webview 消息处理器，前端按钮通过消息桥接调用扩展端文件对话框与导出/导入逻辑
+  - 类型安全渐进启用：tsconfig 新增 `strictNullChecks` + `alwaysStrict` + `noImplicitThis` + `strictBindCallApply` + `strictFunctionTypes` + `noFallthroughCasesInSwitch`，backend + webview 零严格错误
+  - 大段提示词模板从 `backend/modules/settings/types.ts`（2675 行）拆分到独立的 `promptModes.ts`，类型文件只保留类型定义与 re-export，旧 import 路径 100% 兼容
+  - 新增 i18n 语言包 key 一致性校验测试（`backend/__tests__/i18n/languageParity.test.ts`），递归比对 backend + frontend 各三份语言文件的 key 集合与 `{placeholder}` 占位符
+  - 新增渠道 formatter 核心解析测试（`backend/__tests__/channel/formatterParsing.test.ts`），覆盖 OpenAI / Gemini / Anthropic 三个 formatter 的 parseResponse / convertTools / 非法响应报错（13 个用例）
+  - 前端构建新增 `vue-tsc --noEmit` 类型检查步骤（`pnpm run build:frontend` 自动执行），根 package.json 新增 `typecheck` 脚本
+  - 引入 esbuild 打包方案（`esbuild.config.js`），扩展入口 `extension.ts` → `dist/extension.js` 单文件 bundle（2.1 MB），node-notifier 作为 external 保留原生文件；vscode:prepublish 与 compile 脚本指向 esbuild
 
 ### Fixed
+  - 修复 write_file / apply_diff 等写入工具打开 diff 预览时强制抢占键盘焦点的问题（`preserveFocus` 改为 true），用户输入框未完成内容不再意外掉入代码文件
+  - 修复检查点回档后存档点消失无法二次回档的问题：回档流程在删除消息时保留刚用于恢复的存档点及其增量基链，新增 `preserveCheckpointId` 参数贯穿前端 store → webview handler → ChatFlowService → CheckpointService → CheckpointManager 全链路
   - 修复聊天消息列表右侧滚动条在长对话、工具卡片和流式输出场景下抽搐、跳位的问题
   - 修复用户消息滚动条标记在滚动过程中可能消失的问题，保留已加载消息窗口内的用户消息标记和预览文本
-  - 修复提示词模式导入时工具策略过滤的 TypeScript 类型问题
-  - 修复 MCP 工具名包含双下划线时前端解析错误的问题
+  - 修复 search_in_files replace 模式下「实际已替换但报告未找到匹配」的 false positive：匹配统计从逐行 exec 改为全文 exec，与 `String.replace` 语义对齐，消除跨行正则的漏报
   - 同步上游 search_in_files / history_search 正则诊断能力：非正则零命中时识别疑似正则查询并提示显式启用 isRegex / is_regex，避免 `foo|bar`、`ssh.*root`、`38\\.12` 等查询被静默按字面量搜索
   - 修复 apply_diff / insert_code / delete_code 在工作区外且 autoSave 开启时，用户手动确认工具调用后仍需等待 diff 自动保存计时器的问题，现在确认后直接应用保存
+  - 修复 MCP 工具名包含双下划线时前端解析错误的问题
+  - 修复 Anthropic 流式请求未从 `message_start` 事件提取并传递 `modelVersion`，导致落盘消息缺少模型版本字段、用量统计「按模型」维度所有 Anthropic 用量被归类为 unknown 的问题
+  - 修复 Anthropic 渠道在部分第三方代理（OpenRouter、one-api 等）下无法正确获取 token 用量的问题：统一 usage 提取逻辑，覆盖 message_start / message_delta / message_stop 三个流式事件；新增 thoughtsTokenCount 提取（output_tokens_details.thinking_tokens），区分思考 token 与输出 token；非流式响应复用同一提取逻辑，消除重复代码
+  - 删除 openai formatter 流式热路径上的 `console.log` 调试残留（每收到 tool_call 分片即 JSON 打印），降低长参数场景下的日志刷屏与 CPU 消耗
+  - 修复提示词模式导入时工具策略过滤的 TypeScript 类型问题
+  - 修正历史页头部「用量统计」与「返回聊天」按钮的样式类名语义（close-btn → header-btn，与用量页命名对齐）
+  - 修复 esbuild 在 pnpm symlink 环境下重复构建时 `cpSync` 抛出 EEXIST 的错误：`copyNativePackages` 先 rm 旧目标再 dereference 复制真实文件
+  - 修复 esbuild 只复制 `node-notifier` 自身而未带上传递依赖（growly/semver/uuid/which/shellwords/is-wsl/is-docker/isexe），导致 vsix 安装后运行时 `require` 找不到模块
+  - 修复 webview（ChatViewProvider / SubAgentMonitorPanel）中 codicons CSS 引用指向 `node_modules/@vscode/codicons`，经过 `.vscodeignore` 排除后打包丢失，界面图标全部消失；引用改为包内自带的 `resources/codicons`
+  - 修复 jest 配置依赖被 `.gitignore` 排除的 `test/` 目录导致干净环境 `npm test` 无法运行的问题：移除 `.gitignore` 中对 `test/` 的排除，19 个原有测试文件入库
+  - 修复 `typescript` / `undici-types` 被错误放置在 `dependencies` 而非 `devDependencies` 的分类问题
+  - 修复 `backend/tools/skills/readSkill.ts` handler 参数类型不兼容 `ToolHandler` 的问题（strictFunctionTypes 暴露）
+  - 修复 `backend/modules/channel/StreamAccumulator.ts` 18 处 `text` / `functionCall` 可能为 `undefined` 的类型错误（strictNullChecks 暴露）
+  - 修复 `backend/modules/channel/ChannelManager.ts` `timeoutId` 未初始化被引用的错误
+  - 修复 `backend/modules/channel/proxyFetch.ts` `AbortSignal | null` 无法赋值给 `AbortSignal | undefined` 的类型冲突
+  - 修复 `backend/modules/checkpoint/CheckpointManager.ts` `targetState` 可能为 `undefined` 的错误（添加非空断言）
+  - 修复 `backend/modules/conversation/ConversationManager.ts` 与 `helpers.ts` 中 `cleanedResponse` 返回类型可能为 `undefined` 的问题
+  - 修复 `backend/modules/conversation/functionCall.ts` `ThoughtSignatures` 与 `Record<string, string>` 类型不兼容问题
+  - 修复 `webview/handlers/SettingsHandlers.ts` `syncLanguageToBackend` 可能为 `undefined` 的调用错误
+  - 修复 `webview/handlers/ToolHandlers.ts` `serverTools.tools` 可能为 `undefined` 的空值访问
+  - 修复 `webview/ChatViewProvider.ts` `initializeSubAgents` 构造 HandlerContext 缺漏必填字段导致类型不匹配
+  - 修复 `backend/tools/progress/validate_progress_document.ts` `path` 重复声明与 `ProjectProgressToolResultOptions` 参数缺漏问题
+  - 修复 `backend/tools/search/search_in_files.ts` `replacement` 参数可能为 `undefined` 传递给替换引擎的类型错误
+  - 修复 `backend/tools/terminal/execute_command.ts` `activeProcesses` Map 在 `getActiveTerminalProcesses` 中类型退化为 `never[]` 的问题
+  - 修复 `backend/modules/settings/SettingsManager.ts` `ProxySettings` 更新 spread 合并后类型不完整的问题
+  - 修复 `backend/modules/settings/VSCodeSettingsStorage.ts` `legacySettingsDir` 可能为 `undefined` 的赋值错误
+  - 修复 `backend/tools/media/remove_background.ts` `dimensions` 返回值 `null` 与接口 `undefined` 类型不兼容问题
+  - 修复 `webview/types.ts` HandlerContext 中 `chatHandler` / `modelsHandler` / `checkpointManager` / `getCurrentWorkspaceUri` 错误标记为可选字段导致 20+ 处判空不一致（改为必选）
+  - 修复 `extension.ts` 中 `newChat` / `showHistory` / `showSettings` 命令回调未对 `chatViewProvider` 判空的不一致（统一改为可选链）
+  - 修复 selection hover 与 code action 只注册 `scheme: 'file'`，未涵盖 `untitled` 未保存文件的问题
+  - 清理 `.tmp/` 目录中 80+ 个上游同步遗留物（diff patch、python 脚本、旧版文件副本）
+  - 删除 `package.json` 中指向不存在文件的 `test:diagnose-execute-command-order` 脚本
 
 ### Improved
   - 优化自定义滚动条的尺寸、内容和 marker 更新时机，合并到浏览器渲染帧中处理，降低重复布局计算导致的抖动
+  - 历史 / 用量 / 设置三个页面从 v-if 互斥渲染改为惰性挂载 + v-show 保活：首次访问才创建组件（不影响首屏），切换视图不再丢失滚动位置和表单编辑状态；用量页保活后重新进入时自动刷新统计
+  - MarkdownRenderer 的 mermaid 图表库改为按需动态导入：首屏 bundle 不再包含 ~1MB 的 mermaid，仅在内容中出现 mermaid 代码块时才加载
   - 优化 search_in_files 替换结果的 diff 预览，仅折叠大段未变化内容并保留变更附近上下文
-  - 优化 history_search 与 execute_command 的工具描述，减少历史读取、正则搜索和工作目录参数误用
-  - 同步上游 search_in_files / history_search 多关键词搜索兜底：非正则搜索先匹配完整短语，零命中后再尝试空格分隔关键词，提高自然语言式关键词输入的召回率
   - search_in_files 工具结果面板新增查询诊断展示，直接显示 suspected_regex、关键词兜底和疑似多个 path 的纠错建议
+  - 同步上游 search_in_files / history_search 多关键词搜索兜底：非正则搜索先匹配完整短语，零命中后再尝试空格分隔关键词，提高自然语言式关键词输入的召回率
+  - 优化 history_search 与 execute_command 的工具描述，减少历史读取、正则搜索和工作目录参数误用
   - 增强 execute_command 的 cwd 工作目录说明，明确单根/多根工作区相对路径、workspace 外绝对路径和避免在 command 中嵌入 cd 的规则
   - 主聊天接入 functionCallMerge，统一流式工具调用的 itemId/index/finalArgs 合并逻辑，降低重复工具卡、空参数工具卡和分片参数错位问题
   - diff 预览按钮迁移到 ToolConfig.actions，移除 ToolMessage 对 hasDiffPreview/getDiffFilePath 的旧特判依赖
   - read_file 前端组件适配 path 参数，支持 startLine/endLine 行范围显示
   - resolveUri / resolveUriWithInfo 增强绝对路径处理，自动匹配所属工作区
+  - 实现 Anthropic 渠道配置验证（`validateAnthropicConfig`），替换原有的 TODO 占位：校验 URL / apiKey / model / temperature(0-1) / max_tokens / top_p / top_k / thinking.budget_tokens(>=1024)，新增对应 i18n 键
+  - 用量统计的前端类型抽取到共享文件 `frontend/src/types/usage.ts`（与后端 `usageStats.ts` 聚合结构对齐），不再手写在组件内
+  - 补齐用量页新功能的 i18n 文案（zh-CN / en / ja，时间范围 / 单价编辑 / 估算成本 / 对话跳转等 11 个 key）
+  - 重构 SettingsManager 工具/模块配置的 getter/update 方法：新增私有 `getToolsConfigEntry` / `saveToolsConfigEntry` 泛型帮助方法统一 22 组样板逻辑的 merge-保存-通知流程，文件从 2447 行缩至 2063 行，公开 API 不变
+  - 重构前端五个媒体工具展示组件（crop / resize / rotate / remove_background / generate_image）：提取共享骨架 `MediaToolPanel.vue` 和类型模块 `mediaToolTypes.ts`，五个组件从合计 4394 行缩减为 1744 行（净减约 2650 行），主题色/任务解析/取消通道等差异参数化；补充 crop/resize/rotate 三面板的 `tasksFailed` 三语 i18n 键
+  - i18n 类型定义从手写接口（frontend 3075 行 + backend 714 行）改为从基准语言包（zh-CN）`typeof` 推导，新增翻译键只需修改语言文件即可，en/ja 因保留 `LanguageMessages` 类型标注会在结构不一致时 typecheck 报错
+  - todo 工具清理 `(context as any)` 类型逃逸和 `require()` 双重导入：直接使用 `ToolContext` 已有的 `conversationStore` / `conversationId` 类型字段，index.ts 改为静态 import
+  - 清理 ToolMessage.vue 中的重复 toolId 排查调试代码（debugToolOnce / isPerfEnabled / console.warn），约 30 行临时代码
+  - 4 处空 catch 块补日志：ToolIterationLoopService 两处移除冗余 try/catch（Logger 自身已安全序列化）、StreamAccumulator 一处添加英文注释说明流式 JSON 不完整是正常现象、SettingsHandlers 一处 catch 读版本失败时输出 console.warn
+  - backend/webview 共 53 处 `console.log`/`console.debug` 统一迁移到结构化 `Logger`（含通知模块 31 处、ChatViewProvider 8 处、DiffStorageManager 6 处、CheckpointManager 3 处、DependencyManager / ToolExecutionService / ModuleRegistry 等）
+  - 通知模块（WindowsAgentStopNotificationService / WindowsToastAdapter / NotificationHandlers）移除模块级 `LOG_PREFIX` 常量，改用 `Logger.get()` 实例化命名日志器
+  - `extension.ts` 中 `console.log` / `console.error` 全部替换为 `Logger.get('extension')` 统一日志输出
+  - `esbuild.config.js` 新增 `--watch` 参数支持（使用 `esbuild.context().watch()`），内置 rebuild 日志插件；`package.json` watch 脚本从无用的 `tsc -watch` 改为 `node esbuild.config.js --watch`
+  - esbuild `copyNativePackages` 重写为递归复制 + 循环依赖保护，确保 external 原生包的所有传递依赖被打进 `dist/node_modules`，模拟安装后加载验证全部通过
+  - `package.json` engines.vscode 从 `^1.74.0` 升级到 `^1.84.0`，与 esbuild target `node18` 和 `@types/vscode ^1.84.0` 保持一致，消除运行时 API 版本不匹配风险
+  - `.vscodeignore` 移除不存在的旧版 jest 配置条目（jest.config.cjs / tsconfig.jest.json），保留实际存在的 `jest.backend.config.js` 和 `tsconfig.test.json`
+  - `.vscodeignore` 的 `*.map` 改为 `**/*.map`，覆盖子目录 sourcemap；新增排除入口源码文件 `extension.ts`、`index.ts`；清理过时的 `!node_modules/node-notifier` 例外规则（运行时依赖已移入 `dist/node_modules`）
+  - webview 的 `localResourceRoots` 移除 `node_modules/@vscode/codicons` 条目，统一到 `resources/` 根目录
+  - `package.json` license 字段从 `ISC` 改为 `MIT`，与仓库根目录 `LICENSE` 文件内容一致
 
 ### Synced from upstream (1.1.28 → 1.2.5)
 
@@ -187,7 +265,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ### Added
   - 补齐 design 文档产出与 design 到 plan 联动链路
 
-### Fix
+### Fixed
   - 修复由于ai输出工具调用结构不齐导致的前端渲染崩溃
   - 修复非function call格式的解析
   - 修复skill不支持claude api的问题
@@ -338,7 +416,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Added
   - 添加了Anthropic格式里自适应思考模式和思考effort参数的配置支持
-  - 添加了两个diff类工具：插入代码（insert_code），删除代码（elete_code）
+  - 添加了两个diff类工具：插入代码（insert_code），删除代码（delete_code）
   - 添加了diff类工具，自动应用diff时是否显示diff标签页的功能
   - 添加了diff类工具，diff警戒值的功能，只会在开启自动应用diff时显示
   - 添加了聊天界面右侧滚动条节点的功能，可以快速跳转和定位不同的用户消息
@@ -418,7 +496,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Improved
   - 优化网络空回问题和报错
-  
+
 ### Fixed
   - 修复todo列表导致的消息列表无法正确滚动到底部问题
 
@@ -757,7 +835,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ## [1.0.29] - 2026-01-01
 
-### Backed
+### Changed
   - 暂时回档到1.0.26
 
 ## [1.0.28] - 2025-12-31
@@ -842,7 +920,6 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 大幅优化token计数方法
   - 大幅优化裁剪上下文功能
 
-
 ## [1.0.15] - 2025-12-21
 
 ### Fixed
@@ -857,8 +934,8 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [1.0.13] - 2025-12-21
 
 ### Fixed
-- 修复提示词的刷新规则，每次循环都刷新
-- 修复总结对话问题
+  - 修复提示词的刷新规则，每次循环都刷新
+  - 修复总结对话问题
 
 ## [1.0.12] - 2025-12-21
 
@@ -875,7 +952,6 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ### Improved
   - 优化了历史思维链回传说明
   - 优化了写入文件，应用差异工具的diff预览问题
-
 
 ## [1.0.11] - 2025-12-21
 
@@ -918,7 +994,6 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ### Fixed
   - 修复增量存档，始终使用
 
-
 ## [1.0.7] - 2025-12-20
 
 ### Added
@@ -946,48 +1021,48 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [1.0.6] - 2025-12-19
 
 ### Fixed
-- 修复上下文总结功能发送给 API 时包含无效字段的问题（如 `functionCall.rejected`、`inlineData.id/name` 等内部字段）
-- 修复 apply_diff 工具前端面板中行号从 0 开始显示的问题，现在正确使用 `start_line` 作为起始行号
+  - 修复上下文总结功能发送给 API 时包含无效字段的问题（如 `functionCall.rejected`、`inlineData.id/name` 等内部字段）
+  - 修复 apply_diff 工具前端面板中行号从 0 开始显示的问题，现在正确使用 `start_line` 作为起始行号
 
 ### Improved
-- 优化总结请求的字段清理，过滤思考内容和思考签名，保持与 `getHistoryForAPI` 一致的清理逻辑
-- 改进 apply_diff 工具的"查看差异"按钮功能，现在点击后在 VSCode 中显示完整文件的差异视图（包含完整代码上下文），而不仅仅是 search/replace 块
-- 改进切换对话时的自动滚动逻辑
-- 前端添加取消兜底机制，避免一直显示等待
+  - 优化总结请求的字段清理，过滤思考内容和思考签名，保持与 `getHistoryForAPI` 一致的清理逻辑
+  - 改进 apply_diff 工具的"查看差异"按钮功能，现在点击后在 VSCode 中显示完整文件的差异视图（包含完整代码上下文），而不仅仅是 search/replace 块
+  - 改进切换对话时的自动滚动逻辑
+  - 前端添加取消兜底机制，避免一直显示等待
 
 ## [1.0.5] - 2025-12-19
 
 ### Improved
-- 优化生图工具（generate_image）描述，添加提示说明生成的图片是实色背景而非透明底图
+  - 优化生图工具（generate_image）描述，添加提示说明生成的图片是实色背景而非透明底图
 
 ## [1.0.4] - 2025-12-19
 
 ### Fixed
-- 修复工具执行完成后点击终止按钮无法正常结束的问题（循环开始时检测取消信号后需发送 cancelled 消息给前端）
+  - 修复工具执行完成后点击终止按钮无法正常结束的问题（循环开始时检测取消信号后需发送 cancelled 消息给前端）
 
 ### Improved
-- 优化搜索工具（find_files、search_in_files）忽略问题，添加默认排除模式配置
+  - 优化搜索工具（find_files、search_in_files）忽略问题，添加默认排除模式配置
 
 ## [1.0.3] - 2025-12-19
 
 ### Added
-- 添加了向 AI 发送诊断信息功能
+  - 添加了向 AI 发送诊断信息功能
 
 ### Fixed
-- 修复上下文感知页面保存问题
+  - 修复上下文感知页面保存问题
 
 ### Note
-- ⚠️ 旧版本使用者建议重置系统提示词以添加诊断信息功能
+  - ⚠️ 旧版本使用者建议重置系统提示词以添加诊断信息功能
 
 ## [1.0.0] - 2025-12-19
 
 ### Added
-- 🎉 首次发布
-- AI 编程助手核心功能
-- 多模态支持
-- 对话历史管理
-- 多语言支持（中文、英文、日文）
-- MCP 服务器集成
-- 文件操作工具
-- 终端命令执行
-- 图像处理功能
+  - 🎉 首次发布
+  - AI 编程助手核心功能
+  - 多模态支持
+  - 对话历史管理
+  - 多语言支持（中文、英文、日文）
+  - MCP 服务器集成
+  - 文件操作工具
+  - 终端命令执行
+  - 图像处理功能

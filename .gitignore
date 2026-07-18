@@ -28,6 +28,29 @@ tmp-*.err.log
 # packaged extension bundles
 *.vsix
 
+# env files (may contain API keys)
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editor swap / backup files
+*.swp
+*.swo
+*~
+
+# JetBrains IDE
+.idea/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
 # temp artifacts
 .tmp/
 diff_analyzer.py

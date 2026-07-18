@@ -214,6 +214,39 @@ const ja: LanguageMessages = {
             closeTab: 'タブを閉じる'
         },
 
+        usage: {
+            title: '使用量統計',
+            backToChat: 'チャットに戻る',
+            refresh: '更新',
+            loading: '集計中…',
+            loadFailed: '使用量統計の読み込みに失敗しました',
+            retry: '再試行',
+            empty: '使用量データはまだありません',
+            totalTokens: '合計トークン',
+            promptTokens: '入力',
+            candidatesTokens: '出力',
+            thoughtsTokens: '思考',
+            conversations: '会話数',
+            modelMessages: '応答数',
+            byConversation: '会話別',
+            byModel: 'モデル別',
+            byDay: '日付別',
+            unknownModel: '不明なモデル',
+            skippedHint: '{count} 件の会話は読み取りエラーのためスキップされました',
+            generatedAt: '集計時刻',
+            rangeAll: 'すべて',
+            rangeToday: '今日',
+            range7d: '過去 7 日',
+            range30d: '過去 30 日',
+            estimatedCost: '推定コスト',
+            editPricing: '単価を設定（$ / 100万トークン）',
+            inputPrice: '入力単価',
+            outputPrice: '出力単価',
+            save: '保存',
+            cancel: 'キャンセル',
+            openConversation: 'クリックしてこの会話を開く'
+        },
+
         history: {
             title: '会話履歴',
             empty: '会話履歴がありません',
@@ -2240,15 +2273,30 @@ const ja: LanguageMessages = {
                     budgetHint: '思考プロセスに使用する最大トークン数、5000-50000 を推奨',
                     effortLabel: '思考エフォートレベル (Effort)',
                     effortMax: '最大（Opus 4.6 のみ）',
+                    effortXHigh: '超高（Opus 4.7+）',
                     effortHigh: '高（デフォルト）',
                     effortMedium: '中',
                     effortLow: '低',
-                    effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます'
+                    effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます',
+                    displayLabel: '思考内容の表示',
+                    displayHint: 'Opus 4.7+ ではデフォルトで思考内容が非表示。「要約」を選択すると可視化された推論出力が復元されます',
+                    displayOmitted: '非表示',
+                    displayOmittedHint: '思考内容は返されず、後続の会話用の署名のみ保持（Opus 4.7+ のデフォルト）',
+                    displaySummarized: '要約',
+                    displaySummarizedHint: '思考プロセスの要約が返され、チャットパネルでモデルの推論を確認できます'
                 },
                 promptCaching: {
                     title: 'Prompt Caching',
                     enable: 'Prompt Caching を有効化（手動キャッシュブレークポイント）',
-                    hint: 'system、tools、messages のキーコンテンツブロックにキャッシュマーカーを自動追加し、Anthropic の Prompt Caching でコストとレイテンシを削減'
+                    hint: 'system、tools、messages のキーコンテンツブロックにキャッシュマーカーを自動追加し、Anthropic の Prompt Caching でコストとレイテンシを削減',
+                    ttlLabel: 'キャッシュ保持時間',
+                    ttlHint: '5分: 書込価格 1.25x | 1時間: 書込価格 2x（キャッシュ読取は常に 0.1x）',
+                    ttl5m: '5 分',
+                    ttl5mHint: 'デフォルト。キャッシュ読取ごとに TTL が更新され、頻繁な会話に最適',
+                    ttl1h: '1 時間',
+                    ttl1hHint: '書込価格は基本入力価格の 2 倍。断続的な長会話に最適',
+                    keepAlive: 'キャッシュキープアライブ（4分30秒で自動更新）',
+                    keepAliveHint: 'ストリーミングリクエストが4分30秒を超えた場合、max_tokens=5 のキープアライブリクエストを自動送信してキャッシュ TTL を更新します'
                 }
             },
             gemini: {
@@ -2682,6 +2730,7 @@ const ja: LanguageMessages = {
                 saveFailed: '保存に失敗しました',
                 cropImagePanel: {
                     title: '画像をトリミング',
+                    tasksFailed: '{count} タスクが失敗しました',
                     cancel: 'キャンセル',
                     cancelCrop: 'トリミングをキャンセル',
                     status: {
@@ -2784,6 +2833,7 @@ const ja: LanguageMessages = {
                 },
                 resizeImagePanel: {
                     title: '画像をリサイズ',
+                    tasksFailed: '{count} タスクが失敗しました',
                     cancel: 'キャンセル',
                     cancelResize: 'リサイズをキャンセル',
                     status: {
@@ -2818,6 +2868,7 @@ const ja: LanguageMessages = {
                 },
                 rotateImagePanel: {
                     title: '画像を回転',
+                    tasksFailed: '{count} タスクが失敗しました',
                     cancel: 'キャンセル',
                     cancelRotate: '回転をキャンセル',
                     status: {

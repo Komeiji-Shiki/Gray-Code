@@ -135,7 +135,8 @@ LimCode 会根据设置把当前环境信息发送给模型：
 - 工具执行状态、token 使用、思考内容、响应耗时等信息可视化。
 - 自动存档点，可按策略为关键消息或工具执行创建恢复点。
 - 声音提醒和 Windows 通知，适合长时间任务完成或等待确认时提醒你。
-- 中英文界面与外观设置。
+- 中英日文界面与外观设置。
+- 用量统计页面：从对话历史回溯聚合 token 用量，支持总览 + 按对话 / 按模型 / 按日期三个维度，含条形图可视化和成本估算，支持时间范围筛选。
 
 ## 快速开始
 
@@ -222,6 +223,7 @@ LimCode: 打开聊天面板
 - `frequency_penalty`、`presence_penalty`。
 - Reasoning 参数：如 effort、summary。
 - 自定义 Headers / Body，适配中转站特殊参数。
+- DeepSeek `user_id` 开关：启用后基于对话 ID 生成稳定标识，用于 DeepSeek KVCache 按对话隔离；默认关闭，避免误判中转或其他兼容服务。
 
 ### OpenAI Responses
 
@@ -244,7 +246,9 @@ LimCode: 打开聊天面板
 - 可选择是否使用 `Authorization: Bearer` 替代默认 key header。
 - `temperature`、`max_tokens`、`top_p`、`top_k`。
 - 扩展思考：`enabled`、`adaptive`、`disabled`。
-- Prompt Caching，用于降低长上下文成本和延迟。
+- Prompt Caching：用于降低长上下文成本和延迟，支持缓存 TTL 选择（5 分钟 / 1 小时）和缓存保活开关。
+- 思考内容显示模式：隐藏 / 摘要，控制 API 响应中是否返回可见的思考内容（Opus 4.7+）。
+- 思考努力级别：支持 `low` / `medium` / `high` / `xhigh` / `max` 五档。
 
 ## 常用工作流
 
@@ -398,7 +402,7 @@ LimCode: 打开聊天面板
 | Token 计数 | 配置不同渠道的 token 计数方法 |
 | 声音 | 配置任务完成、错误、警告等提示音 |
 | 外观 | 配置界面语言、加载文字、选中代码入口等 UI 偏好 |
-| 通用 | 代理、数据存储路径迁移等通用设置 |
+| 通用 | 代理、数据存储路径迁移、设置导入/导出等通用功能 |
 
 ## 上下文与提示词
 
@@ -606,6 +610,10 @@ Sub-Agents 适合把任务拆给“专门角色”，例如：
 
 从旧版本升级时，LimCode 会尝试把旧的 `globalStorage/settings/settings.json` 迁移到 VS Code Settings，并备份旧文件为 `settings.json.bak`。
 
+### 设置导入/导出
+
+在 **设置 → 通用** 中可以将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复。支持跳过已存在项和覆盖全部两种导入模式。也可通过命令面板执行 `LimCode: 导出设置` / `LimCode: 导入设置`。
+
 ## 安装与更新
 
 ### 从 VS Code 插件市场安装
@@ -631,7 +639,7 @@ LimCode
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Lianues/Lim-Code.git
+git clone https://github.com/Komeiji-Shiki/Lim-Code.git
 cd Lim-Code
 
 # 安装后端/扩展依赖

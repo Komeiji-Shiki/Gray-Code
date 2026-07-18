@@ -563,34 +563,59 @@ async function searchAndReplaceInDirectory(
             const relativePath = toRelativePath(fileUri, workspaceName !== null);
             
             // 收集该文件的匹配信息
-            let fileReplacementCount = 0;
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                let match;
-                searchRegex.lastIndex = 0;
-                
-                while ((match = searchRegex.exec(line)) !== null) {
-                    const rawMatchText = match[0] ?? '';
-                    const matchText = rawMatchText.length > maxMatchPreviewChars
-                        ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
-                        : rawMatchText;
-
-                    matches.push({
-                        file: relativePath,
-                        workspace: workspaceName || undefined,
-                        line: i + 1,
-                        column: match.index + 1,
-                        match: matchText,
-                        // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
-                        context: ''
-                    });
-                    
-                    fileReplacementCount++;
-
-                    // 防止空匹配导致死循环
-                    if ((match[0] ?? '').length === 0) {
-                        searchRegex.lastIndex++;
+            //
+            // 重要：必须在全文上匹配（而非逐行），与下方实际执行替换的
+            // originalText.replace(searchRegex, ...) 保持完全一致的语义。
+            // 否则跨行正则（如 foo[\s\S]*?bar）会出现“报告 0 匹配但实际已替换”的误导结果。
+            // 行号/列号通过行起始偏移二分换算。
+            const lineOffsets: number[] = new Array(lines.length);
+            {
+                let offset = 0;
+                for (let i = 0; i < lines.length; i++) {
+                    lineOffsets[i] = offset;
+                    offset += lines[i].length + 1; // +1 为换行符（已统一为 LF）
+                }
+            }
+            const offsetToLineCol = (index: number): { line: number; column: number } => {
+                let lo = 0;
+                let hi = lineOffsets.length - 1;
+                while (lo < hi) {
+                    const mid = (lo + hi + 1) >> 1;
+                    if (lineOffsets[mid] <= index) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
                     }
+                }
+                return { line: lo + 1, column: index - lineOffsets[lo] + 1 };
+            };
+
+            let fileReplacementCount = 0;
+            let match;
+            searchRegex.lastIndex = 0;
+
+            while ((match = searchRegex.exec(originalText)) !== null) {
+                const rawMatchText = match[0] ?? '';
+                const matchText = rawMatchText.length > maxMatchPreviewChars
+                    ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
+                    : rawMatchText;
+                const pos = offsetToLineCol(match.index);
+
+                matches.push({
+                    file: relativePath,
+                    workspace: workspaceName || undefined,
+                    line: pos.line,
+                    column: pos.column,
+                    match: matchText,
+                    // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
+                    context: ''
+                });
+
+                fileReplacementCount++;
+
+                // 防止空匹配导致死循环
+                if (rawMatchText.length === 0) {
+                    searchRegex.lastIndex++;
                 }
             }
             

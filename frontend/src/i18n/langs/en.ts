@@ -214,6 +214,39 @@ const en: LanguageMessages = {
             closeTab: 'Close Tab'
         },
 
+        usage: {
+            title: 'Usage Statistics',
+            backToChat: 'Back to Chat',
+            refresh: 'Refresh',
+            loading: 'Calculating…',
+            loadFailed: 'Failed to load usage stats',
+            retry: 'Retry',
+            empty: 'No usage data yet',
+            totalTokens: 'Total Tokens',
+            promptTokens: 'Input',
+            candidatesTokens: 'Output',
+            thoughtsTokens: 'Thinking',
+            conversations: 'Conversations',
+            modelMessages: 'Responses',
+            byConversation: 'By Conversation',
+            byModel: 'By Model',
+            byDay: 'By Date',
+            unknownModel: 'Unknown model',
+            skippedHint: '{count} conversation(s) skipped due to read errors',
+            generatedAt: 'Generated at',
+            rangeAll: 'All',
+            rangeToday: 'Today',
+            range7d: 'Last 7 days',
+            range30d: 'Last 30 days',
+            estimatedCost: 'Est. Cost',
+            editPricing: 'Set pricing ($ per 1M tokens)',
+            inputPrice: 'Input price',
+            outputPrice: 'Output price',
+            save: 'Save',
+            cancel: 'Cancel',
+            openConversation: 'Click to open this conversation'
+        },
+
         history: {
             title: 'Chat History',
             empty: 'No conversations yet',
@@ -2240,15 +2273,30 @@ const en: LanguageMessages = {
                     budgetHint: 'Maximum token count for thinking process, recommended 5000-50000',
                     effortLabel: 'Thinking Effort',
                     effortMax: 'Maximum (Opus 4.6 only)',
+                    effortXHigh: 'Extra High (Opus 4.7+)',
                     effortHigh: 'High (default)',
                     effortMedium: 'Medium',
                     effortLow: 'Low',
-                    effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens'
+                    effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens',
+                    displayLabel: 'Thinking Display',
+                    displayHint: 'Opus 4.7+ hides thinking by default. Choose "Summarized" to restore visible reasoning output',
+                    displayOmitted: 'Omitted',
+                    displayOmittedHint: 'No visible thinking content, only signature retained for follow-up turns (Opus 4.7+ default)',
+                    displaySummarized: 'Summarized',
+                    displaySummarizedHint: 'Returns a thinking summary visible in the chat panel'
                 },
                 promptCaching: {
                     title: 'Prompt Caching',
                     enable: 'Enable Prompt Caching (manual cache breakpoints)',
-                    hint: 'Automatically adds cache markers on key content blocks of system, tools, and messages to leverage Anthropic Prompt Caching for cost and latency reduction'
+                    hint: 'Automatically adds cache markers on key content blocks of system, tools, and messages to leverage Anthropic Prompt Caching for cost and latency reduction',
+                    ttlLabel: 'Cache TTL',
+                    ttlHint: '5 min: 1.25x write price | 1 hour: 2x write price (cache reads are always 0.1x)',
+                    ttl5m: '5 Minutes',
+                    ttl5mHint: 'Default option, TTL refreshes on each cache read. Best for frequent conversations',
+                    ttl1h: '1 Hour',
+                    ttl1hHint: '2x base input price for writes. Best for intermittent long conversations',
+                    keepAlive: 'Cache Keep-Alive (auto-refresh at 4m30s)',
+                    keepAliveHint: 'When a streaming request exceeds 4m30s, automatically sends a max_tokens=5 keep-alive request to refresh the cache TTL'
                 }
             },
             gemini: {
@@ -2682,6 +2730,7 @@ const en: LanguageMessages = {
                 saveFailed: 'Save failed',
                 cropImagePanel: {
                     title: 'Crop Image',
+                    tasksFailed: '{count} tasks failed',
                     cancel: 'Cancel',
                     cancelCrop: 'Cancel Crop',
                     status: {
@@ -2784,6 +2833,7 @@ const en: LanguageMessages = {
                 },
                 resizeImagePanel: {
                     title: 'Resize Image',
+                    tasksFailed: '{count} tasks failed',
                     cancel: 'Cancel',
                     cancelResize: 'Cancel Resize',
                     status: {
@@ -2818,6 +2868,7 @@ const en: LanguageMessages = {
                 },
                 rotateImagePanel: {
                     title: 'Rotate Image',
+                    tasksFailed: '{count} tasks failed',
                     cancel: 'Cancel',
                     cancelRotate: 'Cancel Rotate',
                     status: {

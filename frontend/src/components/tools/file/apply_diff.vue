@@ -10,7 +10,7 @@
 
 import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
-import { useI18n } from '@/composables'
+import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { onExtensionCommand } from '../../../utils/vscode'
 
 const props = defineProps<{
@@ -21,6 +21,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { openFile } = useOpenWorkspaceFile()
 
 // 加载配置
 onMounted(async () => {
@@ -515,7 +516,7 @@ onBeforeUnmount(() => {
         <span class="title">{{ t('components.tools.file.applyDiffPanel.title') }}</span>
       </div>
       <div class="header-stats">
-        <span class="stat">
+        <span class="stat clickable" :title="filePath" @click.stop="openFile(filePath)">
           <span class="codicon codicon-file"></span>
           {{ getFileNameWithoutExt(filePath) }}<span v-if="getFileExtension(filePath)" class="file-ext">.{{ getFileExtension(filePath) }}</span>
         </span>
@@ -524,7 +525,7 @@ onBeforeUnmount(() => {
     </div>
     
     <!-- 文件路径 -->
-    <div class="file-path-bar">
+    <div class="file-path-bar clickable" :title="filePath" @click.stop="openFile(filePath)">
       <span class="codicon codicon-file-code"></span>
       <span class="path">{{ filePath }}</span>
     </div>
@@ -714,6 +715,17 @@ onBeforeUnmount(() => {
 
 .file-ext {
   opacity: 0.7;
+}
+
+.stat.clickable,
+.file-path-bar.clickable {
+  cursor: pointer;
+}
+
+.stat.clickable:hover,
+.file-path-bar.clickable:hover .path {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 /* 文件路径栏 */

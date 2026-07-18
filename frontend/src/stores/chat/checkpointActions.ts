@@ -42,9 +42,9 @@ export function addCheckpoint(state: ChatStoreState, checkpoint: CheckpointRecor
 /**
  * 清理指定索引及之后的检查点
  */
-export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendIndex: number): void {
-  // CheckpointRecord.messageIndex 是后端历史中的绝对索引
-  state.checkpoints.value = state.checkpoints.value.filter(cp => cp.messageIndex < fromBackendIndex)
+export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendIndex: number, excludeCheckpointId?: string): void {
+  // CheckpointRecord.messageIndex 是后端历史中的绝对索引；回档场景下保留刚用于恢复的存档点
+  state.checkpoints.value = state.checkpoints.value.filter(cp => cp.messageIndex < fromBackendIndex || cp.id === excludeCheckpointId)
 }
 
 /**
@@ -146,14 +146,15 @@ export async function restoreAndRetry(
     
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-    clearCheckpointsFromIndex(state, backendIndex)
+    clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
     
     // 4. 删除后端的消息
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: state.currentConversationId.value,
-        targetIndex: backendIndex
+        targetIndex: backendIndex,
+        preserveCheckpointId: checkpointId
       })
       if (!resp?.success) {
         console.error('[checkpointActions] restoreAndRetry: backend deleteMessage returned error:', resp)
@@ -255,14 +256,15 @@ export async function restoreAndDelete(
     
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
-    clearCheckpointsFromIndex(state, backendIndex)
+    clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
     
     // 4. 删除后端的消息
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: state.currentConversationId.value,
-        targetIndex: backendIndex
+        targetIndex: backendIndex,
+        preserveCheckpointId: checkpointId
       })
       if (!resp?.success) {
         console.error('[checkpointActions] restoreAndDelete: backend deleteMessage returned error:', resp)
@@ -343,7 +345,7 @@ export async function restoreAndEdit(
     
     // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
-    clearCheckpointsFromIndex(state, backendMessageIndex)
+    clearCheckpointsFromIndex(state, backendMessageIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
     // 5. 开始流式编辑重试
@@ -389,6 +391,7 @@ export async function restoreAndEdit(
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
+      preserveCheckpointId: checkpointId,
       newMessage: newContent,
       attachments: attachmentData,
       configId: state.configId.value,

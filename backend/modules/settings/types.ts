@@ -1598,6 +1598,14 @@ export interface GlobalSettings {
          * 声音提醒
          */
         sound?: UISoundSettings;
+
+        /**
+         * 用量页模型单价（美元 / 每百万 token）
+         *
+         * key 为 modelVersion；input = 输入单价，output = 输出单价（思考 token 按输出计）。
+         * 两项均为 0 时视为未配置。
+         */
+        usagePricing?: Record<string, { input?: number; output?: number }>;
     };
     
     /**

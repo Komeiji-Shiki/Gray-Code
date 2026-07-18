@@ -50,6 +50,11 @@ const effortOptions = computed<SelectOption[]>(() => [
     description: t('components.channels.anthropic.thinking.effortMax')
   },
   {
+    value: 'xhigh',
+    label: 'xhigh',
+    description: t('components.channels.anthropic.thinking.effortXHigh')
+  },
+  {
     value: 'high',
     label: 'high',
     description: t('components.channels.anthropic.thinking.effortHigh')
@@ -63,6 +68,34 @@ const effortOptions = computed<SelectOption[]>(() => [
     value: 'low',
     label: 'low',
     description: t('components.channels.anthropic.thinking.effortLow')
+  }
+])
+
+// Prompt Caching TTL 选项
+const promptCachingTtlOptions = computed<SelectOption[]>(() => [
+  {
+    value: '5m',
+    label: t('components.channels.anthropic.promptCaching.ttl5m'),
+    description: t('components.channels.anthropic.promptCaching.ttl5mHint')
+  },
+  {
+    value: '1h',
+    label: t('components.channels.anthropic.promptCaching.ttl1h'),
+    description: t('components.channels.anthropic.promptCaching.ttl1hHint')
+  }
+])
+
+// 思考内容显示选项
+const thinkingDisplayOptions = computed<SelectOption[]>(() => [
+  {
+    value: 'omitted',
+    label: t('components.channels.anthropic.thinking.displayOmitted'),
+    description: t('components.channels.anthropic.thinking.displayOmittedHint')
+  },
+  {
+    value: 'summarized',
+    label: t('components.channels.anthropic.thinking.displaySummarized'),
+    description: t('components.channels.anthropic.thinking.displaySummarizedHint')
   }
 ])
 
@@ -305,6 +338,18 @@ function handleThinkingNumberChange(field: string, event: any) {
             {{ t('components.channels.anthropic.thinking.budgetHint') }}
           </span>
         </div>
+
+        <!-- 思考内容显示 -->
+        <div class="option-item">
+          <label>{{ t('components.channels.anthropic.thinking.displayLabel') }}</label>
+          <CustomSelect
+            :model-value="getThinkingValue('display', 'omitted')"
+            :options="thinkingDisplayOptions"
+            :disabled="!isOptionEnabled('thinking')"
+            @update:model-value="(v: string) => updateThinking('display', v)"
+          />
+          <span class="option-hint">{{ t('components.channels.anthropic.thinking.displayHint') }}</span>
+        </div>
       </div>
     </div>
     
@@ -417,7 +462,32 @@ function handleThinkingNumberChange(field: string, event: any) {
         </label>
       </div>
       
-      <div class="option-section-content">
+      <div class="option-section-content" :class="{ disabled: !(config.promptCachingEnabled ?? false) }">
+        <!-- TTL 选择 -->
+        <div class="option-item">
+          <label>{{ t('components.channels.anthropic.promptCaching.ttlLabel') }}</label>
+          <CustomSelect
+            :model-value="config.promptCachingTtl ?? '5m'"
+            :options="promptCachingTtlOptions"
+            :disabled="!(config.promptCachingEnabled ?? false)"
+            @update:model-value="(v: string) => emit('update:field', 'promptCachingTtl', v)"
+          />
+          <span class="option-hint">{{ t('components.channels.anthropic.promptCaching.ttlHint') }}</span>
+        </div>
+        <!-- 保活开关（仅 TTL 为 5m 时显示） -->
+        <div v-if="(config.promptCachingTtl ?? '5m') === '5m'" class="option-item checkbox-option">
+          <label class="custom-checkbox">
+            <input
+              type="checkbox"
+              :checked="config.promptCachingKeepAlive ?? false"
+              :disabled="!(config.promptCachingEnabled ?? false)"
+              @change="(e: any) => emit('update:field', 'promptCachingKeepAlive', e.target.checked)"
+            />
+            <span class="checkmark"></span>
+            <span class="checkbox-text">{{ t('components.channels.anthropic.promptCaching.keepAlive') }}</span>
+          </label>
+          <span class="option-hint">{{ t('components.channels.anthropic.promptCaching.keepAliveHint') }}</span>
+        </div>
         <span class="option-hint">{{ t('components.channels.anthropic.promptCaching.hint') }}</span>
       </div>
     </div>

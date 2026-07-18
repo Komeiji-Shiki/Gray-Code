@@ -9,7 +9,7 @@
  */
 
 import { computed } from 'vue'
-import { useI18n } from '@/composables'
+import { useI18n, useOpenWorkspaceFile } from '@/composables'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -18,6 +18,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { openFile } = useOpenWorkspaceFile()
 
 // 获取删除的文件路径列表
 const pathList = computed(() => {
@@ -118,8 +119,8 @@ function getFileName(filePath: string): string {
           item.success ? 'codicon-check' : 'codicon-error'
         ]"></span>
         <div class="file-info">
-          <span class="file-name">{{ getFileName(item.path) }}</span>
-          <span class="file-path">{{ item.path }}</span>
+          <span class="file-name clickable" :title="item.path" @click.stop="openFile(item.path)">{{ getFileName(item.path) }}</span>
+          <span class="file-path clickable" :title="item.path" @click.stop="openFile(item.path)">{{ item.path }}</span>
           <span v-if="!item.success && item.error" class="file-error">
             {{ item.error }}
           </span>
@@ -260,6 +261,17 @@ function getFileName(filePath: string): string {
   gap: 2px;
   flex: 1;
   min-width: 0;
+}
+
+.file-name.clickable,
+.file-path.clickable {
+  cursor: pointer;
+}
+
+.file-name.clickable:hover,
+.file-path.clickable:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 .file-name {

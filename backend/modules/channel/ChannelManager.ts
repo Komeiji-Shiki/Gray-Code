@@ -439,6 +439,19 @@ export class ChannelManager {
         // 5. 构建请求
         const httpRequest = formatter.buildRequest(request, config, tools);
         
+        // 5.5 缓存保活：当 promptCachingKeepAlive 启用时，若流式请求在 4 分 30 秒内未完成则自动发送保活请求
+        const keepAliveEnabled = config.type === 'anthropic'
+            && (config as any).promptCachingEnabled
+            && (config as any).promptCachingKeepAlive
+            && ((config as any).promptCachingTtl || '5m') === '5m';
+        // 保活请求：max_tokens=5, stream=false，其余参数与主请求一致
+        const buildKeepAliveBody = () => {
+            const body = JSON.parse(JSON.stringify(httpRequest.body));
+            body.max_tokens = 5;
+            body.stream = false;
+            return body;
+        };
+        
         // 6. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
@@ -449,6 +462,9 @@ export class ChannelManager {
         // 7. 执行流式请求（带重试）
         let lastError: any;
         for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+            // 缓存保活定时器（每次重试都重新计时）
+            let keepAliveTimer: NodeJS.Timeout | undefined;
+            
             try {
                 const stream = await this.executeStreamRequest(httpRequest, request.abortSignal);
                 
@@ -463,10 +479,33 @@ export class ChannelManager {
                     });
                 }
                 
+                // 启动缓存保活循环定时器（每 4 分 30 秒 = 270000ms 发一次保活请求）
+                const requestStartTime = Date.now();
+                let keepAliveFiredCount = 0;
+                let hasToolUse = false;
+                
+                if (keepAliveEnabled) {
+                    keepAliveTimer = setInterval(async () => {
+                        keepAliveFiredCount++;
+                        this.log.info('prompt_caching_keepalive_sending', { count: keepAliveFiredCount });
+                        try {
+                            const keepAliveBody = buildKeepAliveBody();
+                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                            this.log.info('prompt_caching_keepalive_sent', { count: keepAliveFiredCount });
+                        } catch (err: any) {
+                            this.log.warn('prompt_caching_keepalive_failed', { error: err.message });
+                        }
+                    }, 270000);
+                }
+                
                 // 逐块解析和产出
                 for await (const rawChunk of stream) {
                     try {
                         const chunk = formatter.parseStreamChunk(rawChunk);
+                        // 检测是否有工具调用（用于决定流结束时是否需要退出保活）
+                        if (!hasToolUse && chunk.delta.some(p => p.functionCall)) {
+                            hasToolUse = true;
+                        }
                         yield chunk;
                     } catch (error) {
                         throw new ChannelError(
@@ -474,6 +513,22 @@ export class ChannelManager {
                             t('modules.channel.errors.parseStreamChunkFailed', { error: error instanceof Error ? error.message : t('errors.unknown') }),
                             { chunk: rawChunk, error }
                         );
+                    }
+                }
+                
+                // 流正常结束：如果无工具调用且保活未触发过且已过 4 分钟，额外保活一次
+                // 防止用户下一轮输入时缓存刚好过期
+                if (keepAliveEnabled && !hasToolUse && keepAliveFiredCount === 0) {
+                    const elapsed = Date.now() - requestStartTime;
+                    if (elapsed >= 240000) {  // 4 分钟 = 240000ms
+                        this.log.info('prompt_caching_exit_keepalive_sending', { elapsed });
+                        try {
+                            const keepAliveBody = buildKeepAliveBody();
+                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                            this.log.info('prompt_caching_exit_keepalive_sent');
+                        } catch (err: any) {
+                            this.log.warn('prompt_caching_exit_keepalive_failed', { error: err.message });
+                        }
                     }
                 }
                 
@@ -527,6 +582,11 @@ export class ChannelManager {
                 
                 // 等待后重试（支持取消）
                 await this.delay(retryInterval, request.abortSignal);
+            } finally {
+                // 清理保活循环定时器
+                if (keepAliveTimer) {
+                    clearInterval(keepAliveTimer);
+                }
             }
         }
         
@@ -546,6 +606,41 @@ export class ChannelManager {
      */
     private getProxyUrl(): string | undefined {
         return this.settingsManager?.getEffectiveProxyUrl();
+    }
+
+    /**
+     * 发送缓存保活请求（fire-and-forget）
+     *
+     * 用于在流式请求进行中刷新 Anthropic Prompt Caching 的 5 分钟 TTL。
+     * 保活请求使用与主请求相同的 headers/URL，但 max_tokens=5、stream=false。
+     *
+     * @param httpRequest 主请求选项（用于复用 URL 和 headers）
+     * @param keepAliveBody 保活请求体（已设置 max_tokens=5, stream=false）
+     */
+    private async sendKeepAliveRequest(
+        httpRequest: HttpRequestOptions,
+        keepAliveBody: any
+    ): Promise<void> {
+        const { url, method, headers } = httpRequest;
+        const proxyUrl = this.getProxyUrl();
+        const fetchFn = createProxyFetch(proxyUrl);
+
+        // 保活请求有独立的短超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        try {
+            const response = await fetchFn(url, {
+                method,
+                headers,
+                body: JSON.stringify(keepAliveBody),
+                signal: controller.signal
+            });
+            // 读取并丢弃响应体，确保连接正常关闭
+            await response.text().catch(() => {});
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     
     /**

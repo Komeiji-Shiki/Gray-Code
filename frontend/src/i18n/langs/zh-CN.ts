@@ -215,6 +215,39 @@ const zhCN = {
             closeTab: '关闭标签页'
         },
 
+        usage: {
+            title: '用量统计',
+            backToChat: '返回聊天',
+            refresh: '刷新',
+            loading: '正在统计…',
+            loadFailed: '统计加载失败',
+            retry: '重试',
+            empty: '暂无用量数据',
+            totalTokens: '总 Token',
+            promptTokens: '输入',
+            candidatesTokens: '输出',
+            thoughtsTokens: '思考',
+            conversations: '对话数',
+            modelMessages: '回复数',
+            byConversation: '按对话',
+            byModel: '按模型',
+            byDay: '按日期',
+            unknownModel: '未知模型',
+            skippedHint: '{count} 个对话读取失败已跳过',
+            generatedAt: '统计时间',
+            rangeAll: '全部',
+            rangeToday: '今天',
+            range7d: '近 7 天',
+            range30d: '近 30 天',
+            estimatedCost: '估算成本',
+            editPricing: '设置单价（美元 / 每百万 Token）',
+            inputPrice: '输入单价',
+            outputPrice: '输出单价',
+            save: '保存',
+            cancel: '取消',
+            openConversation: '点击打开此对话'
+        },
+
         history: {
             title: '对话历史',
             empty: '暂无对话记录',
@@ -2241,15 +2274,30 @@ const zhCN = {
                     budgetHint: '思考过程使用的最大 Token 数量，建议 5000-50000',
                     effortLabel: '思考努力级别 (Effort)',
                     effortMax: '最大努力（仅 Opus 4.6）',
+                    effortXHigh: '极高努力（Opus 4.7+）',
                     effortHigh: '高努力（默认）',
                     effortMedium: '中等努力',
                     effortLow: '低努力',
-                    effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token'
+                    effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token',
+                    displayLabel: '思考内容显示',
+                    displayHint: 'Opus 4.7+ 默认隐藏思考内容。选择「摘要」可恢复可见的思维链输出',
+                    displayOmitted: '隐藏',
+                    displayOmittedHint: '不返回思考内容，仅保留签名用于后续对话（Opus 4.7+ 默认）',
+                    displaySummarized: '摘要',
+                    displaySummarizedHint: '返回思考过程摘要，可在聊天面板中查看模型的推理思路'
                 },
                 promptCaching: {
                     title: 'Prompt Caching',
                     enable: '启用 Prompt Caching（手动缓存断点）',
-                    hint: '在 system、tools、messages 的关键内容块上自动添加缓存标记，利用 Anthropic 的 Prompt Caching 降低成本和延迟'
+                    hint: '在 system、tools、messages 的关键内容块上自动添加缓存标记，利用 Anthropic 的 Prompt Caching 降低成本和延迟',
+                    ttlLabel: '缓存保持时间',
+                    ttlHint: '5 分钟：写入价格 1.25x | 1 小时：写入价格 2x（缓存读取均为 0.1x）',
+                    ttl5m: '5 分钟',
+                    ttl5mHint: '默认选项，每次缓存读取会刷新 TTL，适合频繁对话',
+                    ttl1h: '1 小时',
+                    ttl1hHint: '写入价格为 2x 基础输入价格，适合间歇性长对话',
+                    keepAlive: '缓存保活（4 分 30 秒自动续期）',
+                    keepAliveHint: '当流式请求超过 4 分 30 秒未完成时，自动发送 max_tokens=5 的保活请求以刷新缓存 TTL'
                 }
             },
             gemini: {
@@ -2581,6 +2629,7 @@ const zhCN = {
                 saveFailed: '保存失败',
                 cropImagePanel: {
                     title: '裁切图片',
+                    tasksFailed: '{count} 个任务失败',
                     cancel: '终止',
                     cancelCrop: '终止裁切',
                     status: {
@@ -2683,6 +2732,7 @@ const zhCN = {
                 },
                 resizeImagePanel: {
                     title: '缩放图片',
+                    tasksFailed: '{count} 个任务失败',
                     cancel: '终止',
                     cancelResize: '终止缩放',
                     status: {
@@ -2717,6 +2767,7 @@ const zhCN = {
                 },
                 rotateImagePanel: {
                     title: '旋转图片',
+                    tasksFailed: '{count} 个任务失败',
                     cancel: '终止',
                     cancelRotate: '终止旋转',
                     status: {

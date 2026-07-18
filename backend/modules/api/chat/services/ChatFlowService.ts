@@ -1062,7 +1062,7 @@ export class ChatFlowService {
   async *handleEditAndRetryStream(
     request: EditAndRetryRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride } = request;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, preserveCheckpointId } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -1127,8 +1127,8 @@ export class ChatFlowService {
     // 4.5 拒绝所有未响应的工具调用
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-    // 5. 删除该消息及后续所有消息的检查点
-    await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex);
+    // 5. 删除该消息及后续所有消息的检查点（回档场景下保留刚用于恢复的存档点）
+    await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex, preserveCheckpointId);
 
     // 6. 为编辑后的用户消息创建存档点（执行前）
     const beforeEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
@@ -1657,7 +1657,7 @@ export class ChatFlowService {
   async handleDeleteToMessage(
     request: DeleteToMessageRequestData,
   ): Promise<DeleteToMessageSuccessData | DeleteToMessageErrorData> {
-    const { conversationId, targetIndex } = request;
+    const { conversationId, targetIndex, preserveCheckpointId } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -1674,8 +1674,8 @@ export class ChatFlowService {
     await this.clearPendingApprovalGateIfPresent(conversationId, 'delete_to_message');
 
     try {
-      // 5. 删除关联的检查点
-      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex);
+      // 5. 删除关联的检查点（回档场景下保留刚用于恢复的存档点，支持反复回档）
+      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex, preserveCheckpointId);
 
       // 6. 删除消息
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);

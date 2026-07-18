@@ -1046,9 +1046,10 @@ export class DiffManager {
         if (!isPending()) {
             return;
         }
+        // preserveFocus: true —— 打开预览时不抢占用户焦点（用户可能正在输入框打字）
         const editor = await vscode.window.showTextDocument(document, {
             preview: false,
-            preserveFocus: false
+            preserveFocus: true
         });
         if (!isPending()) {
             return;
@@ -1085,7 +1086,8 @@ export class DiffManager {
             return;
         }
         await vscode.commands.executeCommand('vscode.diff', originalUri, fileUri, title, {
-            preview: false
+            preview: false,
+            preserveFocus: true
         });
 
         // 若在打开 diff 视图期间被取消拒绝，关闭diff 并恢复原始内容，避免 UI 残留

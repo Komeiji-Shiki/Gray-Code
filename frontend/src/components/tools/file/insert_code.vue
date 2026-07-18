@@ -12,12 +12,15 @@
 
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import { useOpenWorkspaceFile } from '@/composables'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
 }>()
+
+const { openFileAt } = useOpenWorkspaceFile()
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
@@ -224,8 +227,8 @@ onBeforeUnmount(() => {
         <div class="file-header">
           <div class="file-info">
             <span class="codicon codicon-diff-added file-icon"></span>
-            <span class="file-name">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext">.{{ getFileExtension(file.path) }}</span>
+            <span class="file-name clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ getFileNameWithoutExt(file.path) }}</span>
+            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">.{{ getFileExtension(file.path) }}</span>
             <span class="insert-badge">第 {{ file.line }} 行前插入</span>
             <span class="line-count">{{ getContentLines(file.content).length }} 行</span>
           </div>
@@ -392,6 +395,17 @@ onBeforeUnmount(() => {
 
 .file-panel.is-error .file-icon {
   color: var(--vscode-inputValidation-errorForeground);
+}
+
+.file-name.clickable,
+.file-ext.clickable {
+  cursor: pointer;
+}
+
+.file-name.clickable:hover,
+.file-ext.clickable:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 .file-name {

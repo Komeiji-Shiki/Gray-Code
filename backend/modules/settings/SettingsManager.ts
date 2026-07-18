@@ -457,32 +457,60 @@ export class SettingsManager {
     }
     
     /**
+     * 读取 toolsConfig.<key> 配置，并与默认配置浅合并。
+     *
+     * 与默认配置 merge 可避免历史配置缺少后续版本新增的字段。
+     */
+    private getToolsConfigEntry<T extends object>(key: string, defaults: Readonly<T>): Readonly<T> {
+        const cfg = this.settings.toolsConfig?.[key] as unknown as Partial<T> | undefined;
+        return {
+            ...defaults,
+            ...(cfg || {})
+        };
+    }
+
+    /**
+     * 写回 toolsConfig.<key> 配置并广播变更事件。
+     *
+     * 所有 toolsConfig 下的配置保存/通知逻辑统一收口于此。
+     */
+    private async saveToolsConfigEntry<T extends object>(key: string, oldConfig: Readonly<T>, newConfig: T): Promise<void> {
+        if (!this.settings.toolsConfig) {
+            this.settings.toolsConfig = {};
+        }
+        this.settings.toolsConfig[key] = newConfig as unknown as Record<string, unknown>;
+        this.settings.lastUpdated = Date.now();
+
+        await this.storage.save(this.settings);
+
+        this.notifyChange({
+            type: 'tools',
+            path: `toolsConfig.${key}`,
+            oldValue: oldConfig,
+            newValue: newConfig,
+            settings: this.settings
+        });
+    }
+
+    /**
      * 获取 read_file 工具配置
      */
     getReadFileConfig(): Readonly<ReadFileToolConfig> {
-        const cfg = this.settings.toolsConfig?.read_file;
-        return {
-            ...DEFAULT_READ_FILE_CONFIG,
-            ...(cfg || {})
-        };
+        return this.getToolsConfigEntry('read_file', DEFAULT_READ_FILE_CONFIG);
     }
 
     /**
      * 获取 write_file 工具配置
      */
     getWriteFileConfig(): Readonly<WriteFileToolConfig> {
-        const cfg = this.settings.toolsConfig?.write_file;
-        return {
-            ...DEFAULT_WRITE_FILE_CONFIG,
-            ...(cfg || {})
-        };
+        return this.getToolsConfigEntry('write_file', DEFAULT_WRITE_FILE_CONFIG);
     }
 
     /**
      * 获取 list_files 工具配置
      */
     getListFilesConfig(): Readonly<ListFilesToolConfig> {
-        return this.settings.toolsConfig?.list_files || DEFAULT_LIST_FILES_CONFIG;
+        return this.getToolsConfigEntry('list_files', DEFAULT_LIST_FILES_CONFIG);
     }
     
     /**
@@ -490,33 +518,14 @@ export class SettingsManager {
      */
     async updateListFilesConfig(config: Partial<ListFilesToolConfig>): Promise<void> {
         const oldConfig = this.getListFilesConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.list_files = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.list_files',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('list_files', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
      * 获取 find_files 工具配置
      */
     getFindFilesConfig(): Readonly<FindFilesToolConfig> {
-        return this.settings.toolsConfig?.find_files || DEFAULT_FIND_FILES_CONFIG;
+        return this.getToolsConfigEntry('find_files', DEFAULT_FIND_FILES_CONFIG);
     }
     
     /**
@@ -524,38 +533,14 @@ export class SettingsManager {
      */
     async updateFindFilesConfig(config: Partial<FindFilesToolConfig>): Promise<void> {
         const oldConfig = this.getFindFilesConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.find_files = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.find_files',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('find_files', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
      * 获取 search_in_files 工具配置
      */
     getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
-        // 与默认配置 merge，避免历史配置缺少新增字段（如二进制检测/输出裁剪参数）
-        const cfg = this.settings.toolsConfig?.search_in_files;
-        return {
-            ...DEFAULT_SEARCH_IN_FILES_CONFIG,
-            ...(cfg || {})
-        };
+        return this.getToolsConfigEntry('search_in_files', DEFAULT_SEARCH_IN_FILES_CONFIG);
     }
     
     /**
@@ -563,26 +548,7 @@ export class SettingsManager {
      */
     async updateSearchInFilesConfig(config: Partial<SearchInFilesToolConfig>): Promise<void> {
         const oldConfig = this.getSearchInFilesConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.search_in_files = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.search_in_files',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('search_in_files', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -590,38 +556,14 @@ export class SettingsManager {
      */
     async updateToolConfig(toolName: string, config: Record<string, unknown>): Promise<void> {
         const oldConfig = this.settings.toolsConfig?.[toolName] || {};
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig[toolName] = newConfig as any;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: `toolsConfig.${toolName}`,
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry(toolName, oldConfig, { ...oldConfig, ...config });
     }
     
     /**
      * 获取 apply_diff 工具配置
      */
     getApplyDiffConfig(): Readonly<ApplyDiffToolConfig> {
-        // 这里需要与默认配置 merge，避免历史配置缺少新增字段（如 format）
-        const cfg = this.settings.toolsConfig?.apply_diff;
-        return {
-            ...DEFAULT_APPLY_DIFF_CONFIG,
-            ...(cfg || {})
-        };
+        return this.getToolsConfigEntry('apply_diff', DEFAULT_APPLY_DIFF_CONFIG);
     }
     
     /**
@@ -636,33 +578,14 @@ export class SettingsManager {
         if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
             newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
         }
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.apply_diff = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.apply_diff',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('apply_diff', oldConfig, newConfig);
     }
 
     /**
      * 获取 history_search 工具配置
      */
     getHistorySearchConfig(): Readonly<HistorySearchToolConfig> {
-        const cfg = this.settings.toolsConfig?.history_search;
-        return {
-            ...DEFAULT_HISTORY_SEARCH_CONFIG,
-            ...(cfg || {})
-        };
+        return this.getToolsConfigEntry('history_search', DEFAULT_HISTORY_SEARCH_CONFIG);
     }
 
     /**
@@ -670,26 +593,7 @@ export class SettingsManager {
      */
     async updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
         const oldConfig = this.getHistorySearchConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.history_search = newConfig;
-        this.settings.lastUpdated = Date.now();
-
-        await this.storage.save(this.settings);
-
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.history_search',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('history_search', oldConfig, { ...oldConfig, ...config });
     }
 
     
@@ -697,7 +601,7 @@ export class SettingsManager {
      * 获取 delete_file 工具配置
      */
     getDeleteFileConfig(): Readonly<DeleteFileToolConfig> {
-        return this.settings.toolsConfig?.delete_file || DEFAULT_DELETE_FILE_CONFIG;
+        return this.getToolsConfigEntry('delete_file', DEFAULT_DELETE_FILE_CONFIG);
     }
     
     /**
@@ -705,33 +609,14 @@ export class SettingsManager {
      */
     async updateDeleteFileConfig(config: Partial<DeleteFileToolConfig>): Promise<void> {
         const oldConfig = this.getDeleteFileConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.delete_file = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.delete_file',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('delete_file', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
      * 获取 execute_command 工具配置
      */
     getExecuteCommandConfig(): Readonly<ExecuteCommandToolConfig> {
-        return this.settings.toolsConfig?.execute_command || getDefaultExecuteCommandConfig();
+        return this.getToolsConfigEntry('execute_command', getDefaultExecuteCommandConfig());
     }
     
     /**
@@ -739,26 +624,7 @@ export class SettingsManager {
      */
     async updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
         const oldConfig = this.getExecuteCommandConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.execute_command = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.execute_command',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('execute_command', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -807,7 +673,7 @@ export class SettingsManager {
      * 获取存档点配置
      */
     getCheckpointConfig(): Readonly<CheckpointConfig> {
-        return this.settings.toolsConfig?.checkpoint || DEFAULT_CHECKPOINT_CONFIG;
+        return this.getToolsConfigEntry('checkpoint', DEFAULT_CHECKPOINT_CONFIG);
     }
     
     /**
@@ -815,26 +681,7 @@ export class SettingsManager {
      */
     async updateCheckpointConfig(config: Partial<CheckpointConfig>): Promise<void> {
         const oldConfig = this.getCheckpointConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.checkpoint = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.checkpoint',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('checkpoint', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -1026,7 +873,7 @@ export class SettingsManager {
      * 获取总结配置
      */
     getSummarizeConfig(): Readonly<SummarizeConfig> {
-        return this.settings.toolsConfig?.summarize || DEFAULT_SUMMARIZE_CONFIG;
+        return this.getToolsConfigEntry('summarize', DEFAULT_SUMMARIZE_CONFIG);
     }
     
     // ========== 图像生成配置管理 ==========
@@ -1035,7 +882,7 @@ export class SettingsManager {
      * 获取图像生成工具配置
      */
     getGenerateImageConfig(): Readonly<GenerateImageToolConfig> {
-        return this.settings.toolsConfig?.generate_image || DEFAULT_GENERATE_IMAGE_CONFIG;
+        return this.getToolsConfigEntry('generate_image', DEFAULT_GENERATE_IMAGE_CONFIG);
     }
     
     /**
@@ -1043,26 +890,7 @@ export class SettingsManager {
      */
     async updateGenerateImageConfig(config: Partial<GenerateImageToolConfig>): Promise<void> {
         const oldConfig = this.getGenerateImageConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.generate_image = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.generate_image',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('generate_image', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 抠图工具配置管理 ==========
@@ -1071,7 +899,7 @@ export class SettingsManager {
      * 获取抠图工具配置
      */
     getRemoveBackgroundConfig(): Readonly<RemoveBackgroundToolConfig> {
-        return this.settings.toolsConfig?.remove_background || DEFAULT_REMOVE_BACKGROUND_CONFIG;
+        return this.getToolsConfigEntry('remove_background', DEFAULT_REMOVE_BACKGROUND_CONFIG);
     }
     
     /**
@@ -1079,26 +907,7 @@ export class SettingsManager {
      */
     async updateRemoveBackgroundConfig(config: Partial<RemoveBackgroundToolConfig>): Promise<void> {
         const oldConfig = this.getRemoveBackgroundConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.remove_background = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.remove_background',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('remove_background', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 裁切图片工具配置管理 ==========
@@ -1107,7 +916,7 @@ export class SettingsManager {
      * 获取裁切图片工具配置
      */
     getCropImageConfig(): Readonly<CropImageToolConfig> {
-        return this.settings.toolsConfig?.crop_image || DEFAULT_CROP_IMAGE_CONFIG;
+        return this.getToolsConfigEntry('crop_image', DEFAULT_CROP_IMAGE_CONFIG);
     }
     
     /**
@@ -1115,26 +924,7 @@ export class SettingsManager {
      */
     async updateCropImageConfig(config: Partial<CropImageToolConfig>): Promise<void> {
         const oldConfig = this.getCropImageConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.crop_image = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.crop_image',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('crop_image', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 缩放图片工具配置管理 ==========
@@ -1143,7 +933,7 @@ export class SettingsManager {
      * 获取缩放图片工具配置
      */
     getResizeImageConfig(): Readonly<ResizeImageToolConfig> {
-        return this.settings.toolsConfig?.resize_image || DEFAULT_RESIZE_IMAGE_CONFIG;
+        return this.getToolsConfigEntry('resize_image', DEFAULT_RESIZE_IMAGE_CONFIG);
     }
     
     /**
@@ -1151,26 +941,7 @@ export class SettingsManager {
      */
     async updateResizeImageConfig(config: Partial<ResizeImageToolConfig>): Promise<void> {
         const oldConfig = this.getResizeImageConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.resize_image = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.resize_image',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('resize_image', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 旋转图片工具配置管理 ==========
@@ -1179,7 +950,7 @@ export class SettingsManager {
      * 获取旋转图片工具配置
      */
     getRotateImageConfig(): Readonly<RotateImageToolConfig> {
-        return this.settings.toolsConfig?.rotate_image || DEFAULT_ROTATE_IMAGE_CONFIG;
+        return this.getToolsConfigEntry('rotate_image', DEFAULT_ROTATE_IMAGE_CONFIG);
     }
     
     /**
@@ -1187,26 +958,7 @@ export class SettingsManager {
      */
     async updateRotateImageConfig(config: Partial<RotateImageToolConfig>): Promise<void> {
         const oldConfig = this.getRotateImageConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.rotate_image = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.rotate_image',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('rotate_image', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -1214,26 +966,7 @@ export class SettingsManager {
      */
     async updateSummarizeConfig(config: Partial<SummarizeConfig>): Promise<void> {
         const oldConfig = this.getSummarizeConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.summarize = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.summarize',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('summarize', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 上下文感知配置管理 ==========
@@ -1242,7 +975,7 @@ export class SettingsManager {
      * 获取上下文感知配置
      */
     getContextAwarenessConfig(): Readonly<ContextAwarenessConfig> {
-        return this.settings.toolsConfig?.context_awareness || DEFAULT_CONTEXT_AWARENESS_CONFIG;
+        return this.getToolsConfigEntry('context_awareness', DEFAULT_CONTEXT_AWARENESS_CONFIG);
     }
     
     /**
@@ -1250,26 +983,7 @@ export class SettingsManager {
      */
     async updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
         const oldConfig = this.getContextAwarenessConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.context_awareness = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.context_awareness',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('context_awareness', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -1376,7 +1090,7 @@ export class SettingsManager {
      * 获取固定文件配置
      */
     getPinnedFilesConfig(): Readonly<PinnedFilesConfig> {
-        return this.settings.toolsConfig?.pinned_files || DEFAULT_PINNED_FILES_CONFIG;
+        return this.getToolsConfigEntry('pinned_files', DEFAULT_PINNED_FILES_CONFIG);
     }
     
     /**
@@ -1384,26 +1098,7 @@ export class SettingsManager {
      */
     async updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
         const oldConfig = this.getPinnedFilesConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.pinned_files = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.pinned_files',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('pinned_files', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -1525,7 +1220,7 @@ export class SettingsManager {
      * 获取 Skills 配置
      */
     getSkillsConfig(): Readonly<SkillsConfig> {
-        return this.settings.toolsConfig?.skills || DEFAULT_SKILLS_CONFIG;
+        return this.getToolsConfigEntry('skills', DEFAULT_SKILLS_CONFIG);
     }
     
     /**
@@ -1533,26 +1228,7 @@ export class SettingsManager {
      */
     async updateSkillsConfig(config: Partial<SkillsConfig>): Promise<void> {
         const oldConfig = this.getSkillsConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.skills = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.skills',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('skills', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -1891,26 +1567,7 @@ export class SettingsManager {
      */
     async updateSystemPromptConfig(config: Partial<SystemPromptConfig>): Promise<void> {
         const oldConfig = this.getSystemPromptConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.system_prompt = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.system_prompt',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('system_prompt', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -2104,7 +1761,7 @@ export class SettingsManager {
      * 获取 Token 计数配置
      */
     getTokenCountConfig(): Readonly<TokenCountConfig> {
-        return this.settings.toolsConfig?.token_count || DEFAULT_TOKEN_COUNT_CONFIG;
+        return this.getToolsConfigEntry('token_count', DEFAULT_TOKEN_COUNT_CONFIG);
     }
     
     /**
@@ -2112,26 +1769,7 @@ export class SettingsManager {
      */
     async updateTokenCountConfig(config: Partial<TokenCountConfig>): Promise<void> {
         const oldConfig = this.getTokenCountConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig.token_count = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.token_count',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('token_count', oldConfig, { ...oldConfig, ...config });
     }
     
     /**
@@ -2421,27 +2059,6 @@ export class SettingsManager {
      */
     async updateSubAgentsConfig(config: Partial<SubAgentsConfig>): Promise<void> {
         const oldConfig = this.getSubAgentsConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        this.settings = {
-            ...this.settings,
-            toolsConfig: {
-                ...this.settings.toolsConfig,
-                subagents: newConfig
-            }
-        };
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsConfig.subagents',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        await this.saveToolsConfigEntry('subagents', oldConfig, { ...oldConfig, ...config });
     }
 }

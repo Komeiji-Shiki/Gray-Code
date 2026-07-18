@@ -19,17 +19,22 @@ import type Renderer from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import hljs from 'highlight.js'
 import katex from 'katex'
-import mermaid from 'mermaid'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
-// 初始化 Mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'dark', // 默认为暗色，后续可根据 VS Code 主题动态调整
-  securityLevel: 'loose',
-  fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
-})
+/**
+ * Mermaid 按需加载：mermaid 体积很大，静态导入会拖慢 webview 首屏加载。
+ * 只有内容中真的出现 mermaid 代码块时才动态加载，首次加载后复用同一实例。
+ * 主题相关配置在每次 renderMermaid 时通过 initialize 重新应用，无需顶层初始化。
+ */
+let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null
+
+function loadMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import('mermaid').then(m => m.default)
+  }
+  return mermaidPromise
+}
 
 // 插件导入
 import footnote from 'markdown-it-footnote'
@@ -212,6 +217,7 @@ async function renderMermaid() {
                  document.body.classList.contains('vscode-high-contrast')
   
   try {
+    const mermaid = await loadMermaid()
     // 重新初始化以应用可能的颜色变化
     mermaid.initialize({
       startOnLoad: false,

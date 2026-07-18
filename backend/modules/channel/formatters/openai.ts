@@ -840,12 +840,6 @@ export class OpenAIFormatter extends BaseFormatter {
             if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
                 for (const toolCall of delta.tool_calls) {
                     if (toolCall.function) {
-                        console.log('[OpenAI Stream] tool_call chunk:', JSON.stringify({
-                            index: toolCall.index,
-                            id: toolCall.id,
-                            name: toolCall.function.name,
-                            arguments: toolCall.function.arguments
-                        }));
                         parts.push({
                             functionCall: {
                                 name: toolCall.function.name || '',

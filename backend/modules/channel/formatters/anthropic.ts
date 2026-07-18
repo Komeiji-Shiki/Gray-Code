@@ -205,9 +205,11 @@ export class AnthropicFormatter extends BaseFormatter {
         
         // 如果启用了 Prompt Caching，注入手动缓存断点
         // 缓存层级顺序：tools -> system -> messages
-        // 在每个层级的最后一个内容块上添加 cache_control: { type: "ephemeral" }
+        // 在每个层级的最后一个内容块上添加 cache_control 标记
+        // 支持 5 分钟（默认）或 1 小时 TTL
         if ((config as any).promptCachingEnabled) {
-            this.injectCacheBreakpoints(body);
+            const ttl = (config as any).promptCachingTtl || '5m';
+            this.injectCacheBreakpoints(body, ttl);
         }
         
         // 应用自定义 body（如果启用）
@@ -524,12 +526,18 @@ export class AnthropicFormatter extends BaseFormatter {
         
         if (thinkingEnabled && thinking) {
             const thinkingType = thinking.type || 'enabled';
+            const thinkingDisplay = thinking.display;  // 'omitted' | 'summarized' | undefined
             
             if (thinkingType === 'adaptive') {
                 // 自适应思考模式（Opus 4.6+）
                 genConfig.thinking = {
                     type: 'adaptive'
                 };
+                
+                // 思考内容显示模式（Opus 4.7+ 默认 omitted）
+                if (thinkingDisplay) {
+                    genConfig.thinking.display = thinkingDisplay;
+                }
                 
                 // effort 通过 output_config 发送
                 if (thinking.effort) {
@@ -542,6 +550,11 @@ export class AnthropicFormatter extends BaseFormatter {
                 const thinkingConfig: any = {
                     type: 'enabled'
                 };
+                
+                // 思考内容显示模式
+                if (thinkingDisplay) {
+                    thinkingConfig.display = thinkingDisplay;
+                }
                 
                 // 思考预算（budget_tokens）
                 if (thinking.budget_tokens && thinking.budget_tokens > 0) {
@@ -562,15 +575,21 @@ export class AnthropicFormatter extends BaseFormatter {
      * 注入手动缓存断点
      *
      * 根据 Anthropic Prompt Caching 的缓存前缀层级（tools -> system -> messages），
-     * 在各层级的最后一个可缓存内容块上添加 cache_control: { type: "ephemeral" }。
+     * 在各层级的最后一个可缓存内容块上添加 cache_control 标记。
      *
      * 最多使用 4 个缓存断点（Anthropic 限制），当前策略使用最多 3 个：
      * 1. tools 数组的最后一个工具
      * 2. system 内容（转为数组格式后的最后一个块）
      * 3. messages 中最后一条 user 消息的最后一个 content block
+     *
+     * @param body - 请求体
+     * @param ttl - 缓存 TTL：'5m'（默认，1.25x 写入价格）或 '1h'（2x 写入价格）
      */
-    private injectCacheBreakpoints(body: any): void {
-        const cacheControl = { type: 'ephemeral' as const };
+    private injectCacheBreakpoints(body: any, ttl: string = '5m'): void {
+        const cacheControl: any = { type: 'ephemeral' as const };
+        if (ttl === '1h') {
+            cacheControl.ttl = '1h';
+        }
 
         // 1. 在 tools 的最后一个工具上添加缓存断点
         if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
@@ -715,18 +734,7 @@ export class AnthropicFormatter extends BaseFormatter {
         
         // 存储 usageMetadata
         if (response.usage) {
-            const inputBase = response.usage.input_tokens ?? 0;
-            const cacheCreation = response.usage.cache_creation_input_tokens ?? 0;
-            const cacheRead = response.usage.cache_read_input_tokens ?? 0;
-            const promptTotal = inputBase + cacheCreation + cacheRead;
-            const cachedTotal = cacheCreation + cacheRead;
-
-            content.usageMetadata = {
-                promptTokenCount: promptTotal,
-                candidatesTokenCount: response.usage.output_tokens,
-                totalTokenCount: promptTotal + (response.usage.output_tokens || 0),
-                ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
-            };
+            content.usageMetadata = this.extractUsageMetadata(response.usage);
         }
         
         // 提取结束原因
@@ -865,11 +873,39 @@ export class AnthropicFormatter extends BaseFormatter {
      * - content_block_delta: { type: "thinking_delta", thinking: "..." }
      * - content_block_delta: { type: "signature_delta", signature: "..." }
      */
+    /**
+     * 统一从 Anthropic usage 对象中提取 UsageMetadata
+     *
+     * 兼容官方 Anthropic API 和第三方代理（OpenRouter、one-api 等）的 usage 格式差异：
+     * - 标准字段：input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
+     * - thinking 模型：output_tokens_details.thinking_tokens
+     * - 部分代理可能在任意事件中返回完整 usage，统一处理避免遗漏
+     */
+    private extractUsageMetadata(usage: any): Content['usageMetadata'] {
+        const inputBase = usage.input_tokens ?? 0;
+        const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+        const cacheRead = usage.cache_read_input_tokens ?? 0;
+        const promptTotal = inputBase + cacheCreation + cacheRead;
+        const cachedTotal = cacheCreation + cacheRead;
+        const outputTokens = usage.output_tokens ?? 0;
+        const thinkingTokens = usage.output_tokens_details?.thinking_tokens ?? 0;
+        const candidatesTokens = thinkingTokens > 0 ? outputTokens - thinkingTokens : outputTokens;
+
+        return {
+            promptTokenCount: promptTotal || undefined,
+            candidatesTokenCount: candidatesTokens > 0 ? candidatesTokens : (outputTokens > 0 ? outputTokens : undefined),
+            totalTokenCount: promptTotal + outputTokens || undefined,
+            ...(thinkingTokens > 0 ? { thoughtsTokenCount: thinkingTokens } : {}),
+            ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
+        };
+    }
+
     parseStreamChunk(chunk: any): StreamChunk {
         const parts: ContentPart[] = [];
         let done = false;
         let usage: any;
         let finishReason: string | undefined;
+        let modelVersion: string | undefined;
         
         // 处理不同的事件类型
         if (chunk.type === 'content_block_delta') {
@@ -943,26 +979,24 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         } else if (chunk.type === 'message_delta') {
             finishReason = chunk.delta?.stop_reason;
-            
             if (chunk.usage) {
-                usage = {
-                    candidatesTokenCount: chunk.usage.output_tokens
-                };
+                usage = this.extractUsageMetadata(chunk.usage);
             }
         } else if (chunk.type === 'message_stop') {
             done = true;
+            // 部分代理（OpenRouter 等）在 message_stop 中返回完整 usage
+            if (chunk.usage) {
+                usage = this.extractUsageMetadata(chunk.usage);
+            } else if (chunk.message?.usage) {
+                usage = this.extractUsageMetadata(chunk.message.usage);
+            }
         } else if (chunk.type === 'message_start') {
-            // 消息开始，可能包含 usage 信息
+            // 消息开始，包含模型名称和 usage 信息
+            if (chunk.message?.model) {
+                modelVersion = chunk.message.model;
+            }
             if (chunk.message?.usage) {
-                const u = chunk.message.usage;
-                const inputBase = u.input_tokens ?? 0;
-                const cacheCreation = u.cache_creation_input_tokens ?? 0;
-                const cacheRead = u.cache_read_input_tokens ?? 0;
-                const cachedTotal = cacheCreation + cacheRead;
-                usage = {
-                    promptTokenCount: inputBase + cachedTotal,
-                    ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
-                };
+                usage = this.extractUsageMetadata(chunk.message.usage);
             }
         }
         
@@ -977,6 +1011,10 @@ export class AnthropicFormatter extends BaseFormatter {
         
         if (usage) {
             streamChunk.usage = usage;
+        }
+
+        if (modelVersion) {
+            streamChunk.modelVersion = modelVersion;
         }
         
         return streamChunk;

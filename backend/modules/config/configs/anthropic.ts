@@ -121,11 +121,23 @@ export interface AnthropicConfig extends BaseChannelConfig {
              * 思考努力级别
              * 仅在 type 为 'adaptive' 时使用
              * - max: 最大努力（仅 Opus 4.6）
+             * - xhigh: 极高努力（Opus 4.7+）
              * - high: 高努力（默认）
              * - medium: 中等努力
              * - low: 低努力
              */
-            effort?: 'max' | 'high' | 'medium' | 'low';
+            effort?: 'max' | 'xhigh' | 'high' | 'medium' | 'low';
+
+            /**
+             * 思考内容显示模式
+             *
+             * 控制 API 响应中是否返回可见的思考内容。
+             * - omitted: 不返回思考内容（仅保留签名，Opus 4.7+ 默认行为）
+             * - summarized: 返回思考摘要
+             *
+             * 与 thinking 的启用状态独立：即使启用了思考，也可以选择是否显示内容。
+             */
+            display?: 'omitted' | 'summarized';
         };
     };
     
@@ -141,10 +153,30 @@ export interface AnthropicConfig extends BaseChannelConfig {
      * 是否启用 Prompt Caching（手动缓存断点）
      *
      * 启用后，会在 system、tools、messages 的关键位置
-     * 自动插入 cache_control: { type: "ephemeral" } 标记，
+     * 自动插入 cache_control 标记，
      * 以利用 Anthropic 的 Prompt Caching 功能降低成本和延迟。
      *
      * 注意：这不是最外层的自动缓存，而是手动在内容块上设置缓存断点。
      */
     promptCachingEnabled?: boolean;
+
+    /**
+     * Prompt Caching 缓存保持时间
+     *
+     * - '5m': 5 分钟（默认），缓存写入价格为 1.25x 基础输入价格
+     * - '1h': 1 小时，缓存写入价格为 2x 基础输入价格
+     *
+     * 仅在 promptCachingEnabled 为 true 时生效。
+     */
+    promptCachingTtl?: '5m' | '1h';
+
+    /**
+     * Prompt Caching 缓存保活
+     *
+     * 启用后，当流式请求在 4 分 30 秒内未完成时，自动发送一个保活请求
+     * （max_tokens=5，其他参数与主请求一致），以触发缓存读取来刷新 5 分钟 TTL。
+     *
+     * 仅在 promptCachingEnabled 为 true 且 promptCachingTtl 为 '5m' 时有意义。
+     */
+    promptCachingKeepAlive?: boolean;
 }

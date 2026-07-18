@@ -10,6 +10,7 @@ import { MessageList } from './components/message'
 import { InputArea } from './components/input'
 import { WelcomePanel } from './components/home'
 import { HistoryPage } from './components/history'
+import { UsagePage } from './components/usage'
 import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
@@ -343,6 +344,19 @@ function handleShowHistory() {
   settingsStore.showHistory()
 }
 
+// 显示用量统计
+function handleShowUsage() {
+  settingsStore.showUsage()
+}
+
+// 子页面惰性挂载标记：首次访问后保持挂载（v-show 切换），保留滚动位置与表单状态
+const visitedViews = reactive({ history: false, usage: false, settings: false })
+watch(() => settingsStore.currentView, (view) => {
+  if (view === 'history') visitedViews.history = true
+  else if (view === 'usage') visitedViews.usage = true
+  else if (view === 'settings') visitedViews.settings = true
+}, { immediate: true })
+
 // 加载语言设置
 function resolveSelectionContextEnabled(appearance: any): boolean {
   if (!appearance) return true
@@ -419,6 +433,9 @@ onMounted(async () => {
           break
         case 'showHistory':
           handleShowHistory()
+          break
+        case 'showUsage':
+          handleShowUsage()
           break
         case 'showSettings':
           handleShowSettings()
@@ -593,11 +610,14 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <!-- 历史页面 -->
-    <HistoryPage v-if="languageLoaded && settingsStore.currentView === 'history'" />
+    <!-- 历史页面（惰性挂载 + v-show 保活，保留滚动位置） -->
+    <HistoryPage v-if="languageLoaded && visitedViews.history" v-show="settingsStore.currentView === 'history'" />
 
-    <!-- 设置面板 -->
-    <SettingsPanel v-if="languageLoaded && settingsStore.currentView === 'settings'" />
+    <!-- 用量统计页面（惰性挂载 + v-show 保活） -->
+    <UsagePage v-if="languageLoaded && visitedViews.usage" v-show="settingsStore.currentView === 'usage'" />
+
+    <!-- 设置面板（惰性挂载 + v-show 保活，保留表单状态） -->
+    <SettingsPanel v-if="languageLoaded && visitedViews.settings" v-show="settingsStore.currentView === 'settings'" />
   </div>
 </template>
 

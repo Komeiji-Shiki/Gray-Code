@@ -182,14 +182,17 @@ export class CheckpointService {
 
     /**
      * 删除指定索引及之后的所有检查点
+     *
+     * @param excludeCheckpointId 可选，保留该检查点（回档场景：支持反复回档到同一存档点）
      */
     async deleteCheckpointsFromIndex(
         conversationId: string,
-        startIndex: number
+        startIndex: number,
+        excludeCheckpointId?: string
     ): Promise<void> {
         if (!this.checkpointManager) {
             return;
         }
-        await this.checkpointManager.deleteCheckpointsFromIndex(conversationId, startIndex);
+        await this.checkpointManager.deleteCheckpointsFromIndex(conversationId, startIndex, excludeCheckpointId);
     }
 }

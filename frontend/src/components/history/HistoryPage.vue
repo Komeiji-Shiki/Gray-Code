@@ -107,9 +107,14 @@ async function handleDelete(id: string) {
     <!-- 页面标题栏 -->
     <div class="page-header">
       <h3>{{ t('components.history.title') }}</h3>
-      <button class="close-btn" :title="t('components.history.backToChat')" @click="settingsStore.showChat">
-        <i class="codicon codicon-close"></i>
-      </button>
+      <div class="header-actions">
+        <button class="header-btn" :title="t('components.usage.title')" @click="settingsStore.showUsage">
+          <i class="codicon codicon-graph"></i>
+        </button>
+        <button class="header-btn" :title="t('components.history.backToChat')" @click="settingsStore.showChat">
+          <i class="codicon codicon-close"></i>
+        </button>
+      </div>
     </div>
     
     <!-- 搜索输入框 -->
@@ -190,6 +195,11 @@ async function handleDelete(id: string) {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
 }
 
 /* 筛选栏 */
@@ -291,7 +301,7 @@ async function handleDelete(id: string) {
   opacity: 0.5;
 }
 
-.close-btn {
+.header-btn {
   background: transparent;
   border: none;
   color: var(--vscode-foreground);
@@ -303,7 +313,7 @@ async function handleDelete(id: string) {
   border-radius: 4px;
 }
 
-.close-btn:hover {
+.header-btn:hover {
   background: var(--vscode-toolbar-hoverBackground);
 }
 

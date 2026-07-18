@@ -9,7 +9,7 @@ import { ref, computed } from 'vue'
 export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'general'
 
 /** 应用页面视图类型 */
-export type AppView = 'chat' | 'history' | 'settings'
+export type AppView = 'chat' | 'history' | 'settings' | 'usage'
 
 /** 支持的语言 */
 export type Language = 'zh-CN' | 'en'
@@ -44,6 +44,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // 切换到历史视图
   function showHistory() {
     currentView.value = 'history'
+  }
+
+  // 切换到用量统计视图
+  function showUsage() {
+    currentView.value = 'usage'
   }
 
   // 显示设置面板
@@ -96,6 +101,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // 方法
     showChat,
     showHistory,
+    showUsage,
     showSettings,
     hideSettings,
     setActiveTab,

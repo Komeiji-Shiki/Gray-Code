@@ -10,7 +10,7 @@
 
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
-import { useI18n } from '@/composables'
+import { useI18n, useOpenWorkspaceFile } from '@/composables'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -19,6 +19,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { openFile } = useOpenWorkspaceFile()
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
@@ -265,8 +266,8 @@ onBeforeUnmount(() => {
               'codicon',
               result.success ? 'codicon-file-text' : 'codicon-error'
             ]"></span>
-            <span class="file-name">{{ getFileName(result.path) }}</span>
-            <span v-if="getFileExtension(result.path)" class="file-ext">.{{ getFileExtension(result.path) }}</span>
+            <span class="file-name clickable" :title="result.path" @click.stop="openFile(result.path)">{{ getFileName(result.path) }}</span>
+            <span v-if="getFileExtension(result.path)" class="file-ext clickable" :title="result.path" @click.stop="openFile(result.path)">.{{ getFileExtension(result.path) }}</span>
             <span v-if="result.lineCount" class="line-count">{{ t('components.tools.file.readFilePanel.lines', { count: result.lineCount }) }}</span>
           </div>
           <div class="file-actions">
@@ -283,7 +284,7 @@ onBeforeUnmount(() => {
         </div>
         
         <!-- 文件路径 -->
-        <div class="file-path">{{ result.path }}</div>
+        <div class="file-path clickable" :title="result.path" @click.stop="openFile(result.path)">{{ result.path }}</div>
         
         <!-- 行范围信息（仅当使用行范围时显示） -->
         <div v-if="getLineRangeSummary(result)" class="line-range-info">
@@ -457,6 +458,19 @@ onBeforeUnmount(() => {
 
 .file-panel.is-error .file-icon {
   color: var(--vscode-inputValidation-errorForeground);
+}
+
+.file-name.clickable,
+.file-ext.clickable,
+.file-path.clickable {
+  cursor: pointer;
+}
+
+.file-name.clickable:hover,
+.file-ext.clickable:hover,
+.file-path.clickable:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
 }
 
 .file-name {

@@ -1064,14 +1064,28 @@ export class CheckpointManager {
      * 删除指定消息索引及之后的检查点
      *
      * 用于重试/编辑消息时清理关联的检查点
+     *
+     * @param excludeCheckpointId 可选，保留该检查点（含其增量基链）。
+     *                            用于回档场景：刚用于恢复的存档点应保留，支持反复回档到同一位置。
      */
-    async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number): Promise<number> {
+    async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
         try {
             const checkpoints = await this.getCheckpoints(conversationId);
-            
-            // 筛选出需要删除的检查点（消息索引 >= fromIndex）
-            const toDelete = checkpoints.filter(cp => cp.messageIndex >= fromIndex);
-            const toKeep = checkpoints.filter(cp => cp.messageIndex < fromIndex);
+
+            // 需要保留的检查点 ID 集合：目标检查点及其增量基链（否则保留的检查点会因基快照被删而无法恢复）
+            const excludeIds = new Set<string>();
+            if (excludeCheckpointId) {
+                let cur = checkpoints.find(cp => cp.id === excludeCheckpointId);
+                while (cur && !excludeIds.has(cur.id)) {
+                    excludeIds.add(cur.id);
+                    const baseId = cur.baseCheckpointId;
+                    cur = baseId ? checkpoints.find(cp => cp.id === baseId) : undefined;
+                }
+            }
+
+            // 筛选出需要删除的检查点（消息索引 >= fromIndex 且不在保留集合中）
+            const toDelete = checkpoints.filter(cp => cp.messageIndex >= fromIndex && !excludeIds.has(cp.id));
+            const toKeep = checkpoints.filter(cp => cp.messageIndex < fromIndex || excludeIds.has(cp.id));
             
             // 删除备份目录
             for (const cp of toDelete) {
