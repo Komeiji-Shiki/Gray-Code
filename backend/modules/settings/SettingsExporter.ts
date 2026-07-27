@@ -16,7 +16,8 @@ import type { ConfigManager } from '../config/ConfigManager';
 import type { ChannelConfig } from '../config/types';
 import type { McpManager } from '../mcp/McpManager';
 import type { McpServerConfig } from '../mcp/types';
-import type { SkillsManager } from '../skills/SkillsManager';
+import { SkillsManager } from '../skills/SkillsManager';
+import { MACHINE_SCOPE_KEYS } from './types';
 
 /** 导出包的版本号 */
 const EXPORT_FORMAT_VERSION = '1.0';
@@ -160,7 +161,7 @@ export class SettingsExporter {
      */
     async importFromData(
         data: SettingsExportData,
-        options: { overwriteChannelConfigs?: boolean; overwriteMcpServers?: boolean; overwriteSkills?: boolean } = {}
+        options: { overwriteChannelConfigs?: boolean; overwriteMcpServers?: boolean; overwriteSkills?: boolean; overwriteVscodeSettings?: boolean } = {}
     ): Promise<ImportResult> {
         const result: ImportResult = {
             success: true,
@@ -175,7 +176,9 @@ export class SettingsExporter {
 
         // 1. 导入 VSCode 设置
         try {
-            await this.importVSCodeSettings(data.vscodeSettings);
+            await this.importVSCodeSettings(data.vscodeSettings, {
+                overwrite: options.overwriteVscodeSettings ?? false
+            });
             result.imported.vscodeSettings = true;
         } catch (error: any) {
             result.errors.push(`导入 VSCode 设置失败：${error.message}`);
@@ -217,6 +220,13 @@ export class SettingsExporter {
             }
         }
 
+        // 5. 导入完成后通知 SettingsManager 重载并广播变更事件
+        try {
+            await this.settingsManager.reloadAndNotify();
+        } catch (error: any) {
+            result.errors.push(`重载设置失败：${error.message}`);
+        }
+
         if (result.errors.length > 0) {
             result.success = false;
         }
@@ -228,6 +238,10 @@ export class SettingsExporter {
 
     /**
      * 收集所有 VSCode limcode.* 设置
+     *
+     * 只导出用户真实设定过的值（globalValue > workspaceValue > workspaceFolderValue），
+     * 不导出 defaultValue（避免将包默认值固化为用户值）。
+     * 自动跳过 MACHINE_SCOPE_KEYS 中的键（proxy、storagePath 等）。
      */
     private collectVSCodeSettings(): Record<string, unknown> {
         const config = vscode.workspace.getConfiguration('limcode');
@@ -243,14 +257,20 @@ export class SettingsExporter {
             'defaultToolMode',
             'activeChannelId',
             'lastReadAnnouncementVersion',
-            'proxy',
-            'storagePath'
         ];
 
+        const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
+
         for (const key of knownKeys) {
+            // 跳过机器作用域键
+            if (machineScopeSet.has(key)) continue;
+
             const inspected = config.inspect(key);
-            // 优先取 globalValue（用户全局设置），其次是 workspaceValue
-            const value = inspected?.globalValue ?? inspected?.workspaceValue ?? inspected?.defaultValue;
+            // 只取用户真实设定的值：globalValue > workspaceValue > workspaceFolderValue
+            // 不使用 defaultValue，避免将包默认值固化为用户值导出
+            const value = inspected?.globalValue
+                ?? inspected?.workspaceValue
+                ?? inspected?.workspaceFolderValue;
             if (value !== undefined) {
                 result[key] = value;
             }
@@ -261,14 +281,37 @@ export class SettingsExporter {
 
     /**
      * 导入 VSCode 设置
+     *
+     * @param settings 待导入的设置键值对
+     * @param options.overwrite 是否覆盖已存在的键
+     *
+     * - 自动跳过 MACHINE_SCOPE_KEYS 中的键（proxy、storagePath），
+     *   防止跨机器导入打断网络或数据目录
+     * - 当 overwrite=false 时，跳过本地已有值的键
      */
-    private async importVSCodeSettings(settings: Record<string, unknown>): Promise<void> {
+    private async importVSCodeSettings(
+        settings: Record<string, unknown>,
+        options: { overwrite: boolean } = { overwrite: false }
+    ): Promise<void> {
         const config = vscode.workspace.getConfiguration('limcode');
+        const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
 
         const updates: Array<Promise<void>> = [];
         for (const [key, value] of Object.entries(settings)) {
-            // 跳过不存在的键或 undefined 值
+            // 跳过 undefined 值
             if (value === undefined) continue;
+
+            // 跳过机器作用域键（proxy、storagePath 等）
+            if (machineScopeSet.has(key)) continue;
+
+            // 非覆盖模式下：跳过已存在的项
+            if (!options.overwrite) {
+                const inspected = config.inspect(key);
+                const existingValue = inspected?.globalValue
+                    ?? inspected?.workspaceValue
+                    ?? inspected?.workspaceFolderValue;
+                if (existingValue !== undefined) continue;
+            }
 
             // 使用 Global target 写入（和现有保存逻辑一致）
             // VSCode 的 Thenable 需要通过 Promise.resolve 转换为标准 Promise
@@ -279,8 +322,6 @@ export class SettingsExporter {
 
         if (updates.length > 0) {
             await Promise.all(updates);
-            // 通知 SettingsManager 重新加载
-            await this.settingsManager.initialize();
         }
     }
 
@@ -368,15 +409,26 @@ export class SettingsExporter {
 
     /**
      * 导入 Skills
+     *
+     * 导入前校验 skill id 合法性（复用 SkillsManager.validateSkillId），
+     * 非法项跳过并在结果中告知用户。
+     * 写入路径前做边界断言：resolve 后必须在 skills 根目录内，防止路径穿越。
      */
     private async importSkills(
         skills: SkillExportData[],
         options: { overwrite: boolean }
     ): Promise<number> {
         let imported = 0;
+        const skillsRoot = path.resolve(this.legacySkillsDir);
 
         for (const skillData of skills) {
             try {
+                // 校验 skill id 合法性
+                if (!SkillsManager.validateSkillId(skillData.id)) {
+                    console.warn(`[SettingsExporter] Skipping skill with invalid id: "${skillData.id}"`);
+                    continue;
+                }
+
                 const existing = this.skillsManager.getSkill(skillData.id);
 
                 if (existing && !options.overwrite) {
@@ -384,7 +436,14 @@ export class SettingsExporter {
                 }
 
                 // 将 skill 写入 legacy skills 目录
-                const skillDir = path.join(this.legacySkillsDir, skillData.id);
+                const skillDir = path.resolve(this.legacySkillsDir, skillData.id);
+
+                // 边界断言：resolve 后必须在 skills 根目录内，防止路径穿越
+                if (!skillDir.startsWith(skillsRoot + path.sep) && skillDir !== skillsRoot) {
+                    console.warn(`[SettingsExporter] Skipping skill with path traversal: "${skillData.id}"`);
+                    continue;
+                }
+
                 await fs.mkdir(skillDir, { recursive: true });
 
                 const skillFile = path.join(skillDir, 'SKILL.md');

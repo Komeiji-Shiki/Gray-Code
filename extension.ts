@@ -22,6 +22,9 @@ let diffCodeLensDisposable: vscode.Disposable | undefined;
 // DiffInlineProvider 注册
 let diffInlineDisposable: vscode.Disposable | undefined;
 
+// DiffManager 状态监听器（保存句柄以便 deactivate 时摘除）
+let diffStatusListener: (() => void) | undefined;
+
 const log = Logger.get('extension');
 
 export function activate(context: vscode.ExtensionContext) {
@@ -249,10 +252,11 @@ export function activate(context: vscode.ExtensionContext) {
     const diffCodeLensProvider = getDiffCodeLensProvider();
     
     // 监听 DiffManager 状态变化，刷新相关 UI（CodeLens、内联高亮、标题栏按钮）
-    getDiffManager().addStatusListener(() => {
+    diffStatusListener = () => {
         getDiffEditorActionsProvider().refresh();
         getDiffInlineProvider().refreshAllDecorations();
-    });
+    };
+    getDiffManager().addStatusListener(diffStatusListener);
     
     // 注册 CodeLens 提供者
     diffCodeLensDisposable = vscode.languages.registerCodeLensProvider(
@@ -480,28 +484,38 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     log.info('LimCode extension deactivating...');
-    
+
+    // 最先摘除 DiffManager 状态监听器——在任何 dispose 之前同步阻断
+    // 微任务里的 notifyStatusChange，避免停用过程复活已 dispose 的 provider
+    if (diffStatusListener) {
+        getDiffManager().removeStatusListener(diffStatusListener);
+        diffStatusListener = undefined;
+    }
+
     // 清理 DiffCodeLensProvider
     if (diffCodeLensDisposable) {
         diffCodeLensDisposable.dispose();
         diffCodeLensDisposable = undefined;
     }
-    
+
     // 清理 DiffInlineProvider
     if (diffInlineDisposable) {
         diffInlineDisposable.dispose();
         diffInlineDisposable = undefined;
     }
     getDiffInlineProvider().dispose();
-    
+
     // 清理 DiffEditorActionsProvider
     getDiffEditorActionsProvider().dispose();
-    
+
     // 清理 ChatViewProvider 资源（取消所有流式请求、断开 MCP 连接等）
     if (chatViewProvider) {
         chatViewProvider.dispose();
         chatViewProvider = undefined;
     }
-    
+
+    // 最后释放 DiffManager 单例（内部监听器/定时器/diffSessions）
+    getDiffManager().dispose();
+
     log.info('LimCode extension deactivated');
 }

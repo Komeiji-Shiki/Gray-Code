@@ -1,6 +1,6 @@
 import { ConversationManager } from '../../modules/conversation/ConversationManager';
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, ConversationMetadata } from '../../modules/conversation/types';
+import type { ConversationHistory, ConversationMetadata, ContentPart } from '../../modules/conversation/types';
 
 describe('ConversationManager createBranchConversation', () => {
     test('copies history through target message and only carries stable metadata', async () => {
@@ -76,5 +76,109 @@ describe('ConversationManager createBranchConversation', () => {
         const sourceCustom = sourceMetadata.custom as Record<string, any>;
         expect(copiedCustom.inputPinnedFiles).not.toBe(sourceCustom.inputPinnedFiles);
         expect(copiedCustom.todoList).not.toBe(sourceCustom.todoList);
+    });
+});
+
+describe('ConversationManager rejectToolCalls with findFunctionResponseInsertIndex', () => {
+    /** 构造一段历史：model 消息（含 tool calls），后续可能已有部分 functionResponse */
+    function buildHistoryWithToolCalls(
+        toolCalls: Array<{ id: string; name: string }>,
+        existingResponses: Array<{ id: string; name: string }> = []
+    ): ConversationHistory {
+        const modelParts: ContentPart[] = toolCalls.map(tc => ({
+            functionCall: { id: tc.id, name: tc.name, args: {} }
+        }));
+        const history: ConversationHistory = [
+            { role: 'user', parts: [{ text: 'hello' }], timestamp: 100 },
+            { role: 'model', parts: modelParts, timestamp: 200 }
+        ];
+        // 同批次已落库的 functionResponse（模拟部分工具先完成）
+        for (const resp of existingResponses) {
+            history.push({
+                role: 'user',
+                parts: [{
+                    functionResponse: { id: resp.id, name: resp.name, response: { success: true } }
+                }],
+                isFunctionResponse: true,
+                timestamp: 300
+            });
+        }
+        return history;
+    }
+
+    test('inserts rejected response after existing function responses (same batch order)', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const convId = 'test-conv';
+
+        // model 输出 A, B, C 三个 tool call，B 和 C 已先落库
+        const history = buildHistoryWithToolCalls(
+            [{ id: 'A', name: 'toolA' }, { id: 'B', name: 'toolB' }, { id: 'C', name: 'toolC' }],
+            [{ id: 'B', name: 'toolB' }, { id: 'C', name: 'toolC' }]
+        );
+        await storage.saveHistory(convId, history);
+
+        // 拒绝 tool A
+        await manager.rejectToolCalls(convId, 1, ['A']);
+
+        const result = await storage.loadHistory(convId);
+        // messages 2, 3: existing B, C responses; message 4: rejected A response
+        expect(result!.length).toBe(5);
+        expect(result![1].parts![0].functionCall!.rejected).toBe(true);
+        expect(result![2].parts![0].functionResponse!.id).toBe('B');
+        expect(result![3].parts![0].functionResponse!.id).toBe('C');
+        expect(result![4].parts![0].functionResponse!.id).toBe('A');
+        expect(result![4].parts![0].functionResponse!.response).toMatchObject({ success: false, rejected: true });
+        expect(result![2].isFunctionResponse).toBe(true);
+        expect(result![3].isFunctionResponse).toBe(true);
+        expect(result![4].isFunctionResponse).toBe(true);
+    });
+
+    test('inserts rejected response right after tool call when no existing responses', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const convId = 'test-conv';
+
+        const history = buildHistoryWithToolCalls([{ id: 'A', name: 'toolA' }]);
+        await storage.saveHistory(convId, history);
+
+        await manager.rejectToolCalls(convId, 1, ['A']);
+
+        const result = await storage.loadHistory(convId);
+        expect(result!.length).toBe(3);
+        expect(result![2].parts![0].functionResponse!.id).toBe('A');
+        expect(result![2].isFunctionResponse).toBe(true);
+    });
+
+    test('rejectAllPendingToolCalls inserts responses preserving tool call order', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const convId = 'test-conv';
+
+        const history = buildHistoryWithToolCalls([
+            { id: 'X', name: 'toolX' },
+            { id: 'Y', name: 'toolY' },
+            { id: 'Z', name: 'toolZ' }
+        ], [{ id: 'Y', name: 'toolY' }]); // Y already responded
+        await storage.saveHistory(convId, history);
+
+        await manager.rejectAllPendingToolCalls(convId);
+
+        const result = await storage.loadHistory(convId);
+        // messages: 0=user, 1=model, 2=resp Y(existing), 3=resp X+Z(rejected in one message, 2 parts)
+        expect(result!.length).toBe(4);
+        // Only pending (unresponded) calls X and Z are rejected; Y already has a response
+        const calls = result![1].parts!.filter(p => p.functionCall);
+        expect(calls.length).toBe(3);
+        expect(calls.find(p => p.functionCall!.id === 'X')!.functionCall!.rejected).toBe(true);
+        expect(calls.find(p => p.functionCall!.id === 'Z')!.functionCall!.rejected).toBe(true);
+        // Y already had response, so it was NOT marked as rejected
+        expect(calls.find(p => p.functionCall!.id === 'Y')!.functionCall!.rejected).toBeFalsy();
+        // Y response remains (was already in history before rejectAll)
+        expect(result![2].parts![0].functionResponse!.id).toBe('Y');
+        // X and Z rejected responses: inserted after Y, grouped in one message
+        expect(result![3].parts!.length).toBe(2);
+        expect(result![3].parts![0].functionResponse!.id).toBe('X');
+        expect(result![3].parts![1].functionResponse!.id).toBe('Z');
     });
 });

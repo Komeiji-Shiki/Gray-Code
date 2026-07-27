@@ -8,6 +8,7 @@ import { onMounted, onBeforeUnmount, ref, watch, reactive } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
+import BackgroundTaskBar from './components/backgroundTasks/BackgroundTaskBar.vue'
 import { WelcomePanel } from './components/home'
 import { HistoryPage } from './components/history'
 import { UsagePage } from './components/usage'
@@ -402,6 +403,12 @@ async function loadLanguageSettings() {
 onMounted(async () => {
   if (isSubAgentMonitor) {
     console.log('LimCode SubAgent Monitor 已加载')
+    // 修改原因：Monitor 复用同一前端入口但过去直接 return，从不加载语言设置；
+    //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，
+    //          英文和日文用户看到的子代理详情是混合语言。
+    // 修改方式：Monitor 模式同样加载语言设置，只是继续跳过主聊天时间线的初始化。
+    // 修改目的：主窗口与 Monitor 面板共享同一套语言配置。
+    await loadLanguageSettings()
     return
   }
 
@@ -596,6 +603,9 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <!-- 后台任务状态条（有任务时显示） -->
+      <BackgroundTaskBar />
 
       <!-- 输入区域（始终显示） -->
       <InputArea

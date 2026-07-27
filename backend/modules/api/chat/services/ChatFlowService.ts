@@ -48,7 +48,6 @@ import type { TokenEstimationService } from './TokenEstimationService';
 import type { ToolIterationLoopService } from './ToolIterationLoopService';
 import type { CheckpointService } from './CheckpointService';
 import type { DiffInterruptService } from './DiffInterruptService';
-import type { OrphanedToolCallService } from './OrphanedToolCallService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { ToolCallParserService } from './ToolCallParserService';
 import {
@@ -87,7 +86,6 @@ export class ChatFlowService {
     private toolIterationLoopService: ToolIterationLoopService,
     private checkpointService: CheckpointService,
     private diffInterruptService: DiffInterruptService,
-    private orphanedToolCallService: OrphanedToolCallService,
     private toolExecutionService: ToolExecutionService,
     private toolCallParserService: ToolCallParserService,
   ) {}
@@ -870,8 +868,8 @@ export class ChatFlowService {
 
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
-    this.diffInterruptService.markUserInterrupt();
-    await this.diffInterruptService.cancelAllPending();
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    await this.diffInterruptService.cancelAllPending(conversationId);
     
     // 3.5 拒绝所有未响应的工具调用（在添加用户消息之前）
     // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
@@ -921,7 +919,7 @@ export class ChatFlowService {
     }
     
     // 7. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt();
+    this.diffInterruptService.resetUserInterrupt(conversationId);
 
     // 8. 判断是否是首条消息（需要刷新动态系统提示词）
     const currentHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
@@ -988,45 +986,15 @@ export class ChatFlowService {
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry_stream');
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
-    this.diffInterruptService.markUserInterrupt();
-    await this.diffInterruptService.cancelAllPending();
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    await this.diffInterruptService.cancelAllPending(conversationId);
     
-    // 3.5 拒绝所有未响应的工具调用
+    // 3.5 拒绝所有未响应的工具调用（会把悬空 functionCall 标记为 rejected 并补 functionResponse，
+    // 所以后面不需要再单独检测孤立调用了——历史里永远不会有带 functionCall 但没有 functionResponse 的消息）
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-    // 4. 检查并处理孤立的函数调用
-    const orphanedFunctionCalls =
-      await this.orphanedToolCallService.checkAndExecuteOrphanedFunctionCalls(conversationId, promptModeSnapshot);
-    if (orphanedFunctionCalls) {
-      // 注：工具响应消息的 token 计数将在 getHistoryWithContextTrimInfo 中并行计算
-      
-      // 发送孤立函数调用的执行结果到前端
-      yield {
-        conversationId,
-        content: orphanedFunctionCalls.functionCallContent,
-        toolIteration: true as const,
-        toolResults: orphanedFunctionCalls.toolResults,
-      } satisfies ChatStreamToolIterationData;
-
-      const orphanedStopState = await resolveAndPersistPostToolStopState(
-        this.conversationManager,
-        conversationId,
-        this.toolCallParserService.extractFunctionCalls(orphanedFunctionCalls.functionCallContent),
-        orphanedFunctionCalls.toolResults,
-        {
-          logger: this.log,
-          logContext: { executionPath: 'retry_stream_orphaned' }
-        }
-      );
-
-      if (orphanedStopState.shouldStop) {
-        this.diffInterruptService.resetUserInterrupt();
-        return;
-      }
-    }
-
-    // 5. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt();
+    // 4. 重置中断标记
+    this.diffInterruptService.resetUserInterrupt(conversationId);
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
@@ -1121,8 +1089,8 @@ export class ChatFlowService {
     }
 
     // 4. 中断之前未完成的 diff 等待并关闭编辑器
-    this.diffInterruptService.markUserInterrupt();
-    await this.diffInterruptService.cancelAllPending();
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    await this.diffInterruptService.cancelAllPending(conversationId);
     
     // 4.5 拒绝所有未响应的工具调用
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
@@ -1181,7 +1149,7 @@ export class ChatFlowService {
     }
 
     // 10. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt();
+    this.diffInterruptService.resetUserInterrupt(conversationId);
 
     // 11. 判断是否是编辑首条消息（需要刷新动态系统提示词）
     const isEditFirstMessage = messageIndex === 0;
@@ -1531,29 +1499,17 @@ export class ChatFlowService {
       }
     }
 
-    // 5. 检查是否已被中断
-    // cancelStream 会先触发 abort 信号再调用 rejectAllPendingToolCalls，
-    // 后者可能已经为尚未返回结果的工具调用插入了 rejected functionResponse。
-    // 此处跳过持久化以避免同一 tool_use_id 出现重复的 functionResponse。
-    if (request.abortSignal?.aborted) {
-      yield {
-        conversationId,
-        cancelled: true as const,
-      } as any;
-      return;
-    }
-
-    // 6. 持久化本轮执行产生的 functionResponse（rejectToolCalls 已经持久化了拒绝结果）
+    // 5. 持久化本轮已执行工具的真实结果。
+    // 必须在 abort 检查之前执行：cancelStream 的 rejectAllPendingToolCalls
+    // 会抢先写入「用户拒绝」占位，若等 abort 检查后再写，addContent 的去重
+    // 会把真实结果丢弃（副作用已发生：文件已写、命令已跑、检查点已建）。
+    // settleFunctionResponses 会用真实结果就地覆盖占位，同时清除 functionCall.rejected 标记。
     if (responseParts.length > 0 || multimodalAttachments.length > 0) {
-      const confirmFunctionResponseParts = multimodalAttachments.length > 0
+      const settleParts = multimodalAttachments.length > 0
         ? [...multimodalAttachments, ...responseParts]
         : responseParts;
 
-      await this.conversationManager.addContent(conversationId, {
-        role: 'user',
-        parts: confirmFunctionResponseParts,
-        isFunctionResponse: true,
-      });
+      await this.conversationManager.settleFunctionResponses(conversationId, settleParts);
     }
 
     // 5.5 如果有用户批注，添加为新的用户消息
@@ -1562,6 +1518,17 @@ export class ChatFlowService {
         role: 'user',
         parts: [{ text: request.annotation.trim() }],
       });
+    }
+
+    // 6. 检查是否已被中断。持久化（上方的 settleFunctionResponses / annotation）
+    // 必须在 abort 检查之前执行，否则真实执行产生的工具结果会被丢弃，
+    // 历史里只剩 rejectAllPendingToolCalls 写下的「用户拒绝」占位。
+    if (request.abortSignal?.aborted) {
+      yield {
+        conversationId,
+        cancelled: true as const,
+      } as any;
+      return;
     }
 
     const postToolStopState = await resolveAndPersistPostToolStopState(
@@ -1663,10 +1630,10 @@ export class ChatFlowService {
     await this.ensureConversation(conversationId);
 
     // 2. 中断之前未完成的 diff 等待
-    this.diffInterruptService.markUserInterrupt();
+    this.diffInterruptService.markUserInterrupt(conversationId);
     
     // 3. 取消所有待处理的 diff（关闭编辑器并恢复文件）
-    await this.diffInterruptService.cancelAllPending();
+    await this.diffInterruptService.cancelAllPending(conversationId);
     
     // 4. 拒绝所有未响应的工具调用并持久化
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
@@ -1692,7 +1659,7 @@ export class ChatFlowService {
       };
     } finally {
       // 8. 重置 diff 中断标记
-      this.diffInterruptService.resetUserInterrupt();
+      this.diffInterruptService.resetUserInterrupt(conversationId);
     }
   }
 }

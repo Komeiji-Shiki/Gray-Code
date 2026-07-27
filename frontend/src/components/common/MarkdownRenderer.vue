@@ -21,6 +21,25 @@ import hljs from 'highlight.js'
 import katex from 'katex'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
+import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
+
+// ===================== 模块级单例（跨消息块共享） =====================
+
+/** 工作区文件存在性缓存：路径 → 是否存在 */
+const fileExistenceCache = new Map<string, boolean>()
+
+/** 工作区图片 data URL 缓存：路径 → data: URL */
+const imageCache = new Map<string, string>()
+
+/** highlightAuto 结果缓存：避免相同无标注代码块重复遍历 192 种语法 */
+const codeHighlightCache = new Map<string, string>()
+
+/** Mermaid 渲染串行队列（替代布尔锁 isMermaidRendering，防止并发竞争） */
+let mermaidQueue: Promise<void> = Promise.resolve()
+
+/** markdown-it 实例模块级懒初始化单例 */
+let _defaultMd: MarkdownIt | null = null
+let _artifactSafeMd: MarkdownIt | null = null
 
 /**
  * Mermaid 按需加载：mermaid 体积很大，静态导入会拖慢 webview 首屏加载。
@@ -129,9 +148,6 @@ function splitHighlightedHtmlByNewline(highlightedHtml: string): string[] {
   return lines
 }
 
-// Mermaid 渲染锁定
-let isMermaidRendering = false
-
 // 放大查看状态
 const isZoomModalVisible = ref(false)
 const zoomedContent = ref('')
@@ -204,52 +220,60 @@ onUnmounted(() => {
 
 /**
  * 渲染 Mermaid 图表
+ *
+ * 使用 promise 串行队列（替代布尔锁），避免并发 renderMermaid
+ * 导致 isMermaidRendering 提前返回后图片/mermaid 永久不渲染。
+ * doRender 内部 await 后重新 querySelectorAll 并过滤 !node.isConnected，
+ * 跳过已被 Vue 移除的 DOM 节点。
  */
 async function renderMermaid() {
-  if (!containerRef.value || isMermaidRendering) return
-  
-  const mermaidElements = containerRef.value.querySelectorAll('.mermaid')
-  if (mermaidElements.length === 0) return
+  mermaidQueue = mermaidQueue.then(async () => {
+    if (!containerRef.value) return
 
-  isMermaidRendering = true
-  // 检查当前主题
-  const isDark = document.body.classList.contains('vscode-dark') || 
-                 document.body.classList.contains('vscode-high-contrast')
-  
-  try {
-    const mermaid = await loadMermaid()
-    // 重新初始化以应用可能的颜色变化
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: isDark ? 'dark' : 'default',
-      themeVariables: isDark ? {
-        background: 'transparent',
-        mainBkg: '#2d2d30',
-        sequenceNumberColor: '#fff',
-        lineColor: '#858585',
-        textColor: '#cccccc',
-      } : {},
-      flowchart: {
-        htmlLabels: true,
-        curve: 'basis',
-        useMaxWidth: true
-      },
-      securityLevel: 'loose',
-      fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
-    })
+    await nextTick()
 
-    await mermaid.run({
-      nodes: Array.from(mermaidElements) as HTMLElement[]
-    })
-  } catch (error) {
-    console.error('Mermaid 渲染失败:', error)
-  } finally {
-    isMermaidRendering = false
-  }
+    const mermaidElements = Array.from(
+      containerRef.value.querySelectorAll('.mermaid')
+    ).filter(node => node.isConnected && !node.querySelector('svg'))
+
+    if (mermaidElements.length === 0) return
+
+    // 检查当前主题
+    const isDark = document.body.classList.contains('vscode-dark') ||
+                   document.body.classList.contains('vscode-high-contrast')
+
+    try {
+      const mermaid = await loadMermaid()
+      // 重新初始化以应用可能的颜色变化
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isDark ? 'dark' : 'default',
+        themeVariables: isDark ? {
+          background: 'transparent',
+          mainBkg: '#2d2d30',
+          sequenceNumberColor: '#fff',
+          lineColor: '#858585',
+          textColor: '#cccccc',
+        } : {},
+        flowchart: {
+          htmlLabels: true,
+          curve: 'basis',
+          useMaxWidth: true
+        },
+        securityLevel: 'loose',
+        fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
+      })
+
+      await mermaid.run({
+        nodes: mermaidElements as HTMLElement[]
+      })
+    } catch (error) {
+      console.error('Mermaid 渲染失败:', error)
+    }
+  }).catch(() => { /* 吞掉队列中的错误，避免阻塞后续调用 */ })
+
+  return mermaidQueue
 }
-
-// 图片加载状态
-const imageCache = new Map<string, string>()
 
 // ===================== 工作区文件引用（可点击跳转） =====================
 
@@ -621,10 +645,12 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     if (lang === 'mermaid') {
       const encodedCode = btoa(encodeURIComponent(code))
       const titleCopy = t('components.common.markdownRenderer.mermaid.copyCode')
-      return `<div class="mermaid-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">mermaid</span><div class="code-block-toolbar"><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><div class="mermaid-wrapper"><div class="mermaid">${code}</div></div></div>`
+      return `<div class="mermaid-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">mermaid</span><div class="code-block-toolbar"><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><div class="mermaid-wrapper"><div class="mermaid">${escapeHtml(code)}</div></div></div>`
     }
 
     // 代码高亮
+    // #64：无语言标注的代码块跳过 highlightAuto（避免流式期间遍历 192 种语法卡顿主线程）
+    // 有标注但 hljs 不识别的语言仍会尝试 highlightAuto，但结果加入 codeHighlightCache
     let highlighted: string
     let langClass = ''
     if (lang && hljs.getLanguage(lang)) {
@@ -632,10 +658,21 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         highlighted = hljs.highlight(code, { language: lang }).value
         langClass = `language-${lang}`
       } catch {
+        highlighted = escapeHtml(code)
+      }
+    } else if (lang) {
+      // 标注了语言但 hljs 不识别的，尝试 auto + 缓存
+      const cacheKey = `auto:${code}`
+      const cached = codeHighlightCache.get(cacheKey)
+      if (cached !== undefined) {
+        highlighted = cached
+      } else {
         highlighted = hljs.highlightAuto(code).value
+        codeHighlightCache.set(cacheKey, highlighted)
       }
     } else {
-      highlighted = hljs.highlightAuto(code).value
+      // 完全无标注：跳过 auto，仅转义原文
+      highlighted = escapeHtml(code)
     }
 
     const encodedCode = btoa(encodeURIComponent(code))
@@ -683,12 +720,15 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
   return md
 }
 
-// 创建 markdown-it 实例
-const defaultMd = createMarkdownIt({ allowHtml: true })
-const artifactSafeMd = createMarkdownIt({ allowHtml: false })
-
+// markdown-it 实例：模块级懒初始化，跨消息块复用
+// 首次组件挂载时通过 getMarkdownItInstance 触发初始化
 function getMarkdownItInstance(renderProfile: RenderProfile): MarkdownIt {
-  return renderProfile === 'artifactSafe' ? artifactSafeMd : defaultMd
+  if (renderProfile === 'artifactSafe') {
+    if (!_artifactSafeMd) _artifactSafeMd = createMarkdownIt({ allowHtml: false })
+    return _artifactSafeMd
+  }
+  if (!_defaultMd) _defaultMd = createMarkdownIt({ allowHtml: true })
+  return _defaultMd
 }
 
 /**
@@ -703,7 +743,7 @@ function renderLatexOnly(content: string): string {
   let processed = content
   
   // 提取并渲染块级公式 $$...$$
-  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+  processed = processed.replace(RENDER_LATEX_ONLY_BLOCK_RE, (match, formula) => {
     const placeholder = `MS_LATEX_BLOCK_${formulas.length}`
     try {
       formulas.push({
@@ -725,7 +765,8 @@ function renderLatexOnly(content: string): string {
   })
   
   // 提取并渲染行内公式 $...$
-  processed = processed.replace(/(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g, (match, formula) => {
+  // #69：添加空格护栏 (?!\s)/(?<!\s) 避免货币金额 $100 误判为公式
+  processed = processed.replace(RENDER_LATEX_ONLY_INLINE_RE, (match, formula) => {
     const placeholder = `MS_LATEX_INLINE_${formulas.length}`
     try {
       formulas.push({
@@ -766,18 +807,6 @@ function renderLatexOnly(content: string): string {
   })
   
   return processed
-}
-
-/**
- * 转义 HTML 特殊字符
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
 }
 
 /**
@@ -924,6 +953,12 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
   // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
   let html = markdownIt.render(content, {})
+
+  // #66：html:true 模式下净化产物，避免模型正文中的原始 HTML（script/on*）在 webview 执行
+  // artifactSafe 模式已使用 html:false，无需重复净化
+  if (renderProfile !== 'artifactSafe') {
+    html = sanitizeHtml(html)
+  }
   
   // 保留多个连续空格（在段落内容中）
   html = html.replace(/(<(?:p|li|td|th|dd|dt)[^>]*>)([\s\S]*?)(<\/(?:p|li|td|th|dd|dt)>)/g,
@@ -1122,18 +1157,21 @@ function scheduleRender() {
     renderCurrentContent()
 
     // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
+    // #67：回调开头捕获 source/profile，await 后比对再写 postProcessed，防止并发更新时覆盖
     renderTimer = window.setTimeout(async () => {
+      const source = props.content
+      const profile = props.renderProfile
       await nextTick()
       applyCodeBlockWrapStates()
       if (
-        postProcessedSource !== props.content ||
-        postProcessedProfile !== props.renderProfile
+        postProcessedSource !== source ||
+        postProcessedProfile !== profile
       ) {
-        await prevalidateFilePaths(props.content)
+        await prevalidateFilePaths(source)
 
         // 为什么这里要在预校验后再尝试一次 render：
         // 首次同步渲染时，工作区文件存在性缓存可能还是未知状态，
-        // 预校验完成后需要让“是否生成文件链接”这个边界重新收敛一次。
+        // 预校验完成后需要让”是否生成文件链接”这个边界重新收敛一次。
         const rerenderedAfterPrevalidate = renderCurrentContent()
         if (rerenderedAfterPrevalidate) {
           await nextTick()
@@ -1142,24 +1180,27 @@ function scheduleRender() {
 
         await loadWorkspaceImages()
         await renderMermaid()
-        postProcessedSource = props.content
-        postProcessedProfile = props.renderProfile
+        postProcessedSource = source
+        postProcessedProfile = profile
       }
     }, 0)
     return
   }
 
   renderTimer = window.setTimeout(async () => {
+    // #67：回调开头捕获 source/profile，await 后比对再写 postProcessed，防止并发更新时覆盖
+    const source = props.content
+    const profile = props.renderProfile
     // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询。
-    // 这样 memoized render 也能感知“文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
-    await prevalidateFilePaths(props.content)
+    // 这样 memoized render 也能感知”文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
+    await prevalidateFilePaths(source)
 
     const rendered = renderCurrentContent()
 
     // 需要后处理（图片/Mermaid）且尚未完成
     const needsPostProcess = (
-      postProcessedSource !== props.content ||
-      postProcessedProfile !== props.renderProfile
+      postProcessedSource !== source ||
+      postProcessedProfile !== profile
     )
 
     await applyPostRenderDomState(rendered, needsPostProcess)
@@ -1169,8 +1210,8 @@ function scheduleRender() {
     await loadWorkspaceImages()
     await renderMermaid()
 
-    postProcessedSource = props.content
-    postProcessedProfile = props.renderProfile
+    postProcessedSource = source
+    postProcessedProfile = profile
   }, 0)
 }
 
@@ -1262,9 +1303,6 @@ function handleCodeToolbarClick(event: Event) {
  * 渲染时，markdown-it 插件 / fence 渲染器查缓存决定是否生成 <a> 标签。
  * 不存在（或未缓存）的路径直接输出为纯文本，无任何闪烁。
  */
-
-/** 路径 → 是否存在 */
-const fileExistenceCache = new Map<string, boolean>()
 
 /**
  * 从原始 Markdown 内容中提取所有可能的工作区文件路径

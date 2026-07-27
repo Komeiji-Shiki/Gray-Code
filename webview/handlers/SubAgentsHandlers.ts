@@ -3,12 +3,28 @@
  */
 
 import { t } from '../../backend/i18n';
-import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus } from '../../backend/tools/subagents';
+import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus, subAgentConcurrencyLimiter, SUB_AGENT_PRESETS } from '../../backend/tools/subagents';
 import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation/TranscriptMutation';
 import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
+
+/**
+ * 控制类响应统一附带 run 的可控制性与最新状态。
+ *
+ * 修改原因：pause / resume / exit 过去只回 `{ success }`，Monitor 拿到 false 后既不知道是"run 已经结束"
+ *          还是"当前状态不允许该操作"，只能静默无反应——用户点了按钮什么都没发生。
+ * 修改方式：把后端运行控制器的权威判断一起回传。
+ * 修改目的：前端能据此纠正控制按钮的可见性并给出明确提示，而不是自己猜。
+ */
+function describeRunControl(runId: string) {
+  const state = subAgentRunController.getState(runId);
+  return {
+    active: !!state,
+    status: state?.status || subAgentRunEventBus.getManifest(runId)?.status
+  };
+}
 
 function createRunMutationResponse(runId: string, anchorIndex?: number) {
   const manifest = subAgentRunEventBus.getManifest(runId);
@@ -39,10 +55,26 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const agents = config.agents || [];
     const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
     const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
+    const generalWorkerEnabled = config.generalWorkerEnabled !== false;
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
+  }
+};
+
+/**
+ * 获取预设模板列表
+ *
+ * 修改原因：设置界面需要一键从模板创建子代理，模板定义在后端统一维护。
+ * 修改方式：返回内置模板全量字段，前端根据 presetId 解析本地化文案并预填创建表单。
+ * 修改目的：创建仍走现有 subagents.create 流程，模板只是预填来源。
+ */
+export const getSubAgentPresets: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    ctx.sendResponse(requestId, { presets: SUB_AGENT_PRESETS });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_SUBAGENT_PRESETS_ERROR', error.message || 'Failed to get subagent presets');
   }
 };
 
@@ -70,9 +102,21 @@ export const getSubAgent: MessageHandler = async (data, requestId, ctx) => {
  */
 export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
   try {
+    const type = typeof data.type === 'string' ? data.type.trim() : '';
+    const name = typeof data.name === 'string' ? data.name.trim() : '';
+
+    if (!type) {
+      ctx.sendError(requestId, 'SUBAGENT_TYPE_REQUIRED', 'SubAgent type is required');
+      return;
+    }
+    if (!name) {
+      ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
+      return;
+    }
+
     const config: SubAgentConfigItem = {
-      type: data.type,
-      name: data.name,
+      type,
+      name,
       description: data.description || '',
       systemPrompt: data.systemPrompt || '',
       channel: data.channel || { channelId: '' },
@@ -124,14 +168,21 @@ export const updateSubAgent: MessageHandler = async (data, requestId, ctx) => {
       return;
     }
     
-    // 如果更新名称，检查是否重复
-    if (updates.name) {
+    // 如果更新名称，检查非空与重复；空名称会让 agent 在选择器里变成看不见的条目
+    if ('name' in updates) {
+      const nextName = typeof updates.name === 'string' ? updates.name.trim() : '';
+      if (!nextName) {
+        ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
+        return;
+      }
+      updates.name = nextName;
+
       const existingAgents = ctx.settingsManager.getSubAgents();
       const nameExists = existingAgents.some(
-        a => a.type !== type && a.name.toLowerCase() === updates.name.toLowerCase()
+        a => a.type !== type && a.name.toLowerCase() === nextName.toLowerCase()
       );
       if (nameExists) {
-        ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${updates.name}" already exists`);
+        ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${nextName}" already exists`);
         return;
       }
     }
@@ -162,12 +213,28 @@ export const updateSubAgent: MessageHandler = async (data, requestId, ctx) => {
 export const deleteSubAgent: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { type } = data;
-    
-    if (!ctx.settingsManager.getSubAgent(type)) {
+
+    const existing = ctx.settingsManager.getSubAgent(type);
+    if (!existing) {
       ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
       return;
     }
-    
+
+    // 有正在跑的 run 时拒绝删除：配置一旦消失，run 结束后 Monitor 只能显示一个查不到定义的孤儿
+    // （agent 名称在 create/update 两处都做了唯一性校验，可用来定位活跃 run）
+    const activeRunIds = subAgentRunController.getActiveRunIds();
+    const busyRunId = activeRunIds.find(
+      runId => subAgentRunController.getState(runId)?.agentName === existing.name
+    );
+    if (busyRunId) {
+      ctx.sendError(
+        requestId,
+        'SUBAGENT_RUN_ACTIVE',
+        `SubAgent "${existing.name}" still has a running task. Stop it in the monitor before deleting.`
+      );
+      return;
+    }
+
     // 从 SettingsManager 删除
     const success = await ctx.settingsManager.deleteSubAgent(type);
     
@@ -250,7 +317,7 @@ export const pauseRun: MessageHandler = async (data, requestId, ctx) => {
     }
 
     const success = subAgentRunController.pause(runId);
-    ctx.sendResponse(requestId, { success });
+    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
   } catch (error: any) {
     ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_ERROR', error.message || 'Failed to pause SubAgent run');
   }
@@ -265,7 +332,7 @@ export const resumeRun: MessageHandler = async (data, requestId, ctx) => {
     }
 
     const success = subAgentRunController.resume(runId);
-    ctx.sendResponse(requestId, { success });
+    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
   } catch (error: any) {
     ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_ERROR', error.message || 'Failed to resume SubAgent run');
   }
@@ -283,7 +350,7 @@ export const exitRun: MessageHandler = async (data, requestId, ctx) => {
     }
 
     const success = subAgentRunController.exit(runId, reason);
-    ctx.sendResponse(requestId, { success });
+    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
   } catch (error: any) {
     ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_ERROR', error.message || 'Failed to exit SubAgent run');
   }
@@ -359,7 +426,7 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const updates: Record<string, unknown> = {};
-    
+
     // 支持的全局配置字段
     if (data.maxConcurrentAgents !== undefined) {
       updates.maxConcurrentAgents = data.maxConcurrentAgents;
@@ -368,14 +435,23 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
     if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {
       updates.failureModeAfterRetries = data.failureModeAfterRetries;
     }
-    
+
+    if (data.generalWorkerEnabled !== undefined && typeof data.generalWorkerEnabled === 'boolean') {
+      updates.generalWorkerEnabled = data.generalWorkerEnabled;
+    }
+
     if (Object.keys(updates).length > 0) {
       await ctx.settingsManager.updateSubAgentsConfig(updates);
-      
-      // 通知工具定义刷新（因为工具描述中包含限制信息）
+
+      if (updates.maxConcurrentAgents !== undefined) {
+        // 并发上限调大时立刻唤醒排队中的 run，而不是等某个运行中的 run 结束
+        subAgentConcurrencyLimiter.onCapacityChanged();
+      }
+
+      // 通知工具定义刷新（因为工具描述中包含限制信息和 General Worker 可见性）
       refreshSubAgentsTool();
     }
-    
+
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', error.message || 'Failed to update global config');
@@ -408,6 +484,7 @@ export function initializeSubAgentsFromSettings(ctx: HandlerContext): void {
 export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('subagents.list', listSubAgents);
   registry.set('subagents.get', getSubAgent);
+  registry.set('subagents.getPresets', getSubAgentPresets);
   registry.set('subagents.create', createSubAgent);
   registry.set('subagents.update', updateSubAgent);
   registry.set('subagents.delete', deleteSubAgent);

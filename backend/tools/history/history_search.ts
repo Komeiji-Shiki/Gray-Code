@@ -415,6 +415,7 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 export function createHistorySearchToolDeclaration(): ToolDeclaration {
     const declaration: ToolDeclaration = {
         name: 'history_search',
+        readOnly: true,
         description: '', // Will be overridden by getter
         category: 'history',
         parameters: {

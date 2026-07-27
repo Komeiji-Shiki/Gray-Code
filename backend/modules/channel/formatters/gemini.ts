@@ -12,6 +12,7 @@ import type { ToolDeclaration } from '../../../tools/types';
 import { convertToolsToXML, convertFunctionCallToXML, convertFunctionResponseToXML } from '../../../tools/xmlFormatter';
 import { convertToolsToJSON, convertFunctionCallToJSON, convertFunctionResponseToJSON } from '../../../tools/jsonFormatter';
 import { applyCustomBody } from '../../config/configs/base';
+import { throwIfStreamError } from './streamError';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -290,6 +291,10 @@ export class GeminiFormatter extends BaseFormatter {
      * 解析 Gemini API 响应
      */
     parseResponse(response: any): GenerateResponse {
+        // 上游用 HTTP 200 + 错误体回应时，先把它的原文抛出来，
+        // 否则下面只会报一句「没有候选结果」，用户根本看不到真正的原因
+        throwIfStreamError(response, 'Gemini');
+
         // 验证响应格式
         if (!response || !response.candidates || response.candidates.length === 0) {
             throw new Error(t('modules.channel.formatters.gemini.errors.invalidResponse'));
@@ -350,15 +355,10 @@ export class GeminiFormatter extends BaseFormatter {
      * 解析流式响应块
      */
     parseStreamChunk(chunk: any): StreamChunk {
-        // 检查是否是错误响应（与非流式保持一致的错误格式）
-        if (chunk.error) {
-            throw new ChannelError(
-                ErrorType.API_ERROR,
-                t('modules.channel.formatters.gemini.errors.apiError', { code: chunk.error.code || 'UNKNOWN' }),
-                chunk  // 保留完整的错误响应体
-            );
-        }
-        
+        // 检查是否是错误响应（与非流式保持一致的错误格式）。
+        // 过去只把 error.code 放进消息里，上游写清楚的原因（配额、地区限制等）全被丢掉。
+        throwIfStreamError(chunk, 'Gemini');
+
         // Gemini 流式响应格式：每个块都是一个完整的响应对象
         const candidate = chunk.candidates?.[0];
         

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
@@ -9,6 +10,7 @@ import { shouldApplyEventFocus } from './monitorFocusPolicy'
 import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import {
   createPreviousRunWindowRequestOptions,
+  isRunContentWindowStale,
   isRunWindowTailAuthoritative,
   prependRunContentWindow,
   replaceRunContentWindow,
@@ -33,7 +35,7 @@ import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
 // 修改方式：与后端 SubAgentRunStatus 保持同构的前端状态联合类型。
 // 修改目的：后续顶部控制按钮可以根据状态判断是否允许继续、退出或仅查看历史。
-type RunStatus = 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+type RunStatus = 'queued' | 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
 interface SubAgentRunEvent {
   runId: string
@@ -77,7 +79,12 @@ interface SubAgentRunSnapshot {
   eventSequence?: number
 }
 
+const { t } = useI18n()
+
 const DEFAULT_RUN_WINDOW_LIMIT = 20
+
+/** 距底部多少像素以内视为"贴着底部"，用于决定是否自动跟随新内容 */
+const AUTO_FOLLOW_THRESHOLD_PX = 80
 
 // 修改原因：Monitor 首屏不再接收完整 snapshots，否则大输出会卡在传输、反序列化、Vue state 和 Markdown 渲染。
 // 修改方式：状态拆成轻量 manifests 与按 run 缓存的 transcript window，只有聚焦 run 才加载 Content[]。
@@ -219,9 +226,16 @@ function appendEvent(event: SubAgentRunEvent) {
   applyToolStatusEvent(event)
 }
 
+function isRunWindowStale(runId: string): boolean {
+  return isRunContentWindowStale(
+    windowsByRunId.value[runId],
+    manifests.value.find(item => item.runId === runId)
+  )
+}
+
 async function requestRunWindow(runId: string | undefined, force = false) {
   if (!runId) return
-  if (!force && windowsByRunId.value[runId]) return
+  if (!force && !isRunWindowStale(runId)) return
   if (loadingRunWindows.value.has(runId)) {
     if (force) {
       // 修改原因：强制校准通常由 content_snapshot/run_completed 触发，不能因为已有请求在飞就丢弃。
@@ -312,6 +326,11 @@ async function loadOlderMessages() {
     if (response?.manifest) upsertManifest(response.manifest)
     if (response?.window) prependWindow(response.window)
     updateActiveRunIds(response?.activeRunIds)
+  } catch (error) {
+    // 修改原因：请求失败时旧实现只留下一个未处理的 rejection，用户看到按钮转完就没反应，不知道发生了什么。
+    // 修改方式：失败转为顶部一次性提示，加载状态仍由 finally 释放，可以直接重试。
+    // 修改目的：加载历史失败是可见、可重试的状态。
+    showControlNotice(error instanceof Error ? error.message : String(error))
   } finally {
     const nextLoading = new Set(loadingOlderRunWindows.value)
     nextLoading.delete(run.runId)
@@ -499,7 +518,7 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   const toolOverlay = toolStatusOverlaysByRunId.value[run.runId]
   const contentWindow = windowsByRunId.value[run.runId]
   const isLiveRun = activeRunIds.value.has(run.runId)
-    && (run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
+    && (run.status === 'queued' || run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
 
   return (run.contents || [])
     .map((content, windowOffset) => ({ content, windowOffset }))
@@ -544,6 +563,64 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
 }
 
 const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
+
+// 修改原因：Monitor 是实时监视面板，但过去从不跟随新内容，用户必须一直手动往下拖才能看到 SubAgent 正在输出什么。
+// 修改方式：复用主聊天 MessageList 的做法——监听滚动容器判断是否贴底，贴底时随尾部内容增长自动滚到底部。
+// 修改目的：默认跟随实时输出，同时用户一旦向上翻阅历史就不再被强行拽回底部。
+const scrollbarRef = ref<{ scrollToBottom: (options?: { instant?: boolean }) => void; getContainer: () => HTMLElement | undefined } | null>(null)
+const shouldAutoFollow = ref(true)
+let detachScrollListener: (() => void) | undefined
+
+function handleScroll() {
+  const container = scrollbarRef.value?.getContainer()
+  if (!container) return
+  const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+  shouldAutoFollow.value = distanceToBottom <= AUTO_FOLLOW_THRESHOLD_PX
+}
+
+/**
+ * 尾部内容指纹。
+ *
+ * 使用尾部消息的全局 index 而不是窗口内数组长度，这样「加载更早消息」向前 prepend 时指纹不变，
+ * 不会把正在阅读历史的用户弹回底部。
+ */
+const tailSignature = computed(() => {
+  const run = focusedRun.value
+  const contents = run?.contents || []
+  if (!run || contents.length === 0) return ''
+  const last = contents[contents.length - 1]
+  const parts = last?.parts || []
+  const lastPart = parts[parts.length - 1]
+  return [
+    run.runId,
+    last?.index ?? contents.length - 1,
+    parts.length,
+    (lastPart?.text || '').length
+  ].join('|')
+})
+
+watch(tailSignature, () => {
+  if (!shouldAutoFollow.value) return
+  // 流式过程中用 instant，避免每个增量都触发一次被立刻打断的平滑滚动
+  void nextTick(() => scrollbarRef.value?.scrollToBottom({ instant: true }))
+})
+
+const RUN_STATUS_LABEL_KEYS: Record<RunStatus, string> = {
+  queued: 'queued',
+  running: 'running',
+  paused: 'paused',
+  awaiting_monitor_action: 'awaitingMonitorAction',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  interrupted: 'interrupted'
+}
+
+function statusLabel(status: RunStatus | undefined): string {
+  if (!status) return ''
+  const key = RUN_STATUS_LABEL_KEYS[status]
+  return key ? t(`components.subagents.monitor.status.${key}`) : status
+}
 const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.value.has(focusedRun.value.runId))
 const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
 const focusedOlderLoading = computed(() => !!focusedRun.value && loadingOlderRunWindows.value.has(focusedRun.value.runId))
@@ -569,6 +646,19 @@ function selectRun(runId: string) {
   void requestRunWindow(runId)
 }
 
+/** 控制操作未生效时的一次性提示（数秒后自动消失） */
+const controlNotice = ref('')
+let controlNoticeTimer: ReturnType<typeof setTimeout> | undefined
+
+function showControlNotice(message: string) {
+  controlNotice.value = message
+  if (controlNoticeTimer) clearTimeout(controlNoticeTimer)
+  controlNoticeTimer = setTimeout(() => {
+    controlNotice.value = ''
+    controlNoticeTimer = undefined
+  }, 4000)
+}
+
 function updateActiveRunIds(raw: unknown) {
   // 修改原因：activeRunIds 来自后端运行控制器，是判断顶部控制按钮是否可用的权威来源。
   // 修改方式：只接受字符串数组并转换为 Set，非法载荷回退为空集合。
@@ -588,10 +678,22 @@ async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
   // 修改原因：Monitor 顶部按钮要控制当前活跃 run，而不是改前端本地状态。
   // 修改方式：把 pause/resume/exit 意图发送给后端 runController handler，等待事件总线回推新状态。
   // 修改目的：保持后端为控制语义的 source of truth，避免主工具 Promise 与 UI 状态不一致。
-  await sendToExtension(type, {
+  const response = await sendToExtension<{ success?: boolean; active?: boolean; status?: RunStatus }>(type, {
     runId: run.runId,
     reason: action === 'exit' ? '用户主动终止 SubAgent 执行' : undefined
   })
+
+  // 修改原因：控制请求失败时前端过去完全无反馈——按钮还在，点了却什么都不发生（run 刚好结束时必然如此）。
+  // 修改方式：后端回传该 run 当前是否仍被运行控制器持有；不再活跃就本地摘掉控制按钮，并提示操作未生效。
+  // 修改目的：按钮的可见性与可用性始终反映后端真实控制权。
+  if (response?.active === false) {
+    const next = new Set(activeRunIds.value)
+    next.delete(run.runId)
+    activeRunIds.value = next
+  }
+  if (response?.success === false) {
+    showControlNotice(t('components.subagents.monitor.controlUnavailable'))
+  }
 }
 
 function pauseFocusedRun() {
@@ -682,11 +784,15 @@ async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retr
 }
 
 function handleDelete(messageId: string) {
-  void mutateRunMessage(messageId, 'delete')
+  void mutateRunMessage(messageId, 'delete').catch(error => {
+    showControlNotice(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function handleRetry(messageId: string) {
-  void mutateRunMessage(messageId, 'retry')
+  void mutateRunMessage(messageId, 'retry').catch(error => {
+    showControlNotice(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function noop() {
@@ -698,7 +804,11 @@ function noop() {
 watch(
   () => focusedManifest.value?.runId,
   runId => {
-    if (runId) void requestRunWindow(runId)
+    if (!runId) return
+    // 切换 run 视为重新进入该会话：恢复跟随并滚到最新一条
+    shouldAutoFollow.value = true
+    void requestRunWindow(runId)
+    void nextTick(() => scrollbarRef.value?.scrollToBottom({ instant: true }))
   }
 )
 
@@ -729,18 +839,29 @@ onMounted(async () => {
           )
         }
         if (message.data.event.type !== 'llm_delta' && message.data.event.runId === focusedRun.value?.runId) {
-          // 修改原因：content_snapshot/run_completed 等低频事件代表后端真源可能已校准，当前聚焦窗口需要刷新但不能接收完整 snapshot。
-          // 修改方式：只对当前聚焦 run 强制重新拉取窗口；非聚焦 run 等用户切换时再拉。
-          // 修改目的：保证当前可见内容最终一致，同时避免后台 run 大 transcript 进入前端。
-          void requestRunWindow(message.data.event.runId, true)
+          // 修改原因：低频事件代表后端真源可能已推进，聚焦窗口需要跟上，但不能接收完整 snapshot。
+          // 修改方式：交给 requestRunWindow 内部的 revision 判据决定是否真的发起请求——
+          //          transcript 真的变了才拉，tool_started 这类纯状态事件不再触发无谓往返。
+          // 修改目的：保证当前可见内容最终一致，同时避免高频工具调用把窗口请求打成风暴。
+          void requestRunWindow(message.data.event.runId)
         }
       }
       updateActiveRunIds(message.data?.activeRunIds)
     }
     if (message.type === 'subagentMonitor.manifest') {
       applyManifestPayload(message.data)
+      // 修改原因：面板从后台标签页回到前台时，扩展端会补推一次 manifest——期间被丢弃的正文增量必须在这里补回来。
+      // 修改方式：按同一套 revision 判据校准当前聚焦窗口；没有落后就是一次空操作。
+      // 修改目的：不可见期间零推送，恢复可见后立刻与后端 transcript 一致。
+      void requestRunWindow(focusedManifest.value?.runId)
     }
   })
+
+  const container = scrollbarRef.value?.getContainer()
+  if (container) {
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    detachScrollListener = () => container.removeEventListener('scroll', handleScroll)
+  }
 
   const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {})
   applyManifestPayload(initial)
@@ -748,11 +869,19 @@ onMounted(async () => {
   if (initialFocus) {
     focusedRunId.value = initialFocus
     await requestRunWindow(initialFocus)
+    await nextTick()
+    scrollbarRef.value?.scrollToBottom({ instant: true })
   }
 })
 
 onBeforeUnmount(() => {
   disposeMessageListener?.()
+  detachScrollListener?.()
+  detachScrollListener = undefined
+  if (controlNoticeTimer) {
+    clearTimeout(controlNoticeTimer)
+    controlNoticeTimer = undefined
+  }
 })
 </script>
 
@@ -761,10 +890,10 @@ onBeforeUnmount(() => {
   <div class="monitor-root">
     <header class="monitor-header">
       <div>
-        <h1>SubAgent Monitor</h1>
-        <p>以聊天窗口形式展示 SubAgent 的 System、Context、Prompt、AI 输出、思维过程和工具调用。</p>
+        <h1>{{ t('components.subagents.monitor.title') }}</h1>
+        <p>{{ t('components.subagents.monitor.subtitle') }}</p>
       </div>
-      <span class="run-count">{{ orderedRuns.length }} runs</span>
+      <span class="run-count">{{ t('components.subagents.monitor.runCount', { count: orderedRuns.length }) }}</span>
     </header>
 
     <div v-if="orderedRuns.length > 1" class="run-tabs">
@@ -776,59 +905,87 @@ onBeforeUnmount(() => {
         type="button"
         @click="selectRun(run.runId)"
       >
-        <span class="run-name">{{ run.agentName || 'Sub-Agent' }}</span>
-        <span class="run-meta">{{ run.status }} · {{ formatTime(run.updatedAt) }}</span>
+        <span class="run-name">{{ run.agentName || t('components.subagents.monitor.defaultAgentName') }}</span>
+        <span class="run-meta">{{ statusLabel(run.status) }} · {{ formatTime(run.updatedAt) }}</span>
       </button>
     </div>
 
-    <CustomScrollbar class="message-scroll" :max-height="'calc(100vh - 96px)'">
+    <!--
+      修改原因：写死的 max-height: calc(100vh - 96px) 与外层 flex 布局冲突——run tabs 行出现时头部实际高度
+                超过 96px，滚动区会溢出到视口以外，底部消息被裁掉。
+      修改方式：去掉 max-height，让 CustomScrollbar 回到 height:100% 模式，由 .message-scroll 的 flex:1 决定高度。
+      修改目的：无论是否显示 run tabs、重试状态行，滚动区都精确占满剩余空间。
+    -->
+    <CustomScrollbar ref="scrollbarRef" class="message-scroll">
       <div v-if="!focusedRun" class="empty">
         <i class="codicon codicon-hubot"></i>
-        <span>暂无 SubAgent 子对话记录。</span>
+        <span>{{ t('components.subagents.monitor.empty') }}</span>
       </div>
 
       <div v-else class="message-shell">
         <div class="run-title-row">
           <div>
-            <div class="run-title">{{ focusedRun.agentName || 'Sub-Agent' }}</div>
-            <div class="run-subtitle">{{ focusedRun.runId }} · {{ focusedRun.status }} · {{ formatTime(focusedRun.updatedAt) }}</div>
+            <div class="run-title">{{ focusedRun.agentName || t('components.subagents.monitor.defaultAgentName') }}</div>
+            <div class="run-subtitle">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ formatTime(focusedRun.updatedAt) }}</div>
             <div v-if="focusedWindow?.hasMoreBefore" class="run-window-note">
               <!--
                 修改原因：当前窗口可能由多次向前分页拼接而来，文案不能继续暗示只显示“最近”尾部。
                 修改方式：按当前窗口实际 contents.length / totalCount 展示已加载数量，顶部按钮负责继续加载更早。
                 修改目的：让用户知道还有历史可取，同时不为首屏恢复全量加载。
               -->
-              已加载 {{ focusedWindow.contents.length }} / {{ focusedWindow.totalCount }} 条记录
+              {{ t('components.subagents.monitor.loadedCount', { loaded: focusedWindow.contents.length, total: focusedWindow.totalCount }) }}
             </div>
             <div v-if="latestRetryEvent" class="run-retry-status" :class="`retry-${latestRetryEvent.type}`">
               <span class="codicon" :class="latestRetryEvent.type === 'retrying' ? 'codicon-sync codicon-modifier-spin' : latestRetryEvent.type === 'retrySuccess' ? 'codicon-check' : 'codicon-warning'"></span>
               <span>
                 {{ latestRetryEvent.type === 'retrying'
-                  ? `自动重试 ${latestRetryEvent.payload?.attempt ?? ''}/${latestRetryEvent.payload?.maxAttempts ?? ''}`
+                  ? t('components.subagents.monitor.retrying', { attempt: latestRetryEvent.payload?.attempt ?? '', maxAttempts: latestRetryEvent.payload?.maxAttempts ?? '' })
                   : latestRetryEvent.type === 'retrySuccess'
-                    ? '自动重试成功'
-                    : `自动重试失败：${latestRetryEvent.payload?.error || ''}` }}
+                    ? t('components.subagents.monitor.retrySuccess')
+                    : t('components.subagents.monitor.retryFailed', { error: latestRetryEvent.payload?.error || '' }) }}
               </span>
             </div>
           </div>
-          <div v-if="focusedRunIsActive" class="run-control-buttons">
+          <!--
+            修改原因：历史 run 的控制按钮整组消失，界面上没有任何说明，用户会以为按钮加载失败或功能坏了。
+            修改方式：非活跃 run 显示只读徽标，明确"这是历史运行，只能查看"。
+            修改目的：控制能力的缺失是有解释的状态，而不是无声的空白。
+          -->
+          <div class="run-title-actions">
+            <!-- 提示独立于控制按钮组：历史 run 上的删除/重试失败同样需要被看见 -->
+            <span v-if="controlNotice" class="control-notice">
+              <span class="codicon codicon-warning"></span>
+              {{ controlNotice }}
+            </span>
+            <span v-if="focusedRun && !focusedRunIsActive" class="run-readonly-badge">
+              <span class="codicon codicon-history"></span>
+              {{ t('components.subagents.monitor.readOnly') }}
+            </span>
+            <div v-if="focusedRunIsActive" class="run-control-buttons">
             <!--
               修改原因：活跃 SubAgent run 需要能从 Monitor 顶部暂停、继续或退出。
               修改方式：按钮只在 activeRunIds 包含当前 run 时显示，并把操作发送给后端 runController。
               修改目的：历史 run 只可查看，活跃 run 才能影响主窗口工具调用。
             -->
+            <!--
+              修改原因：按钮文案与实际语义不符——pause 标成「中止」容易和下面的「退出」混淆，resume 标成「重试」
+                        更是误导（它是从暂停处继续同一个 run，不会重跑）。
+              修改方式：改用与动作一致的「暂停 / 继续」文案，并全部走 i18n。
+              修改目的：用户能从按钮直接判断后果，不会误触真正终止 run 的操作。
+            -->
             <button v-if="focusedRun.status === 'running'" class="control-btn" type="button" @click="pauseFocusedRun">
               <span class="codicon codicon-debug-pause"></span>
-              中止
+              {{ t('components.subagents.monitor.pause') }}
             </button>
             <button v-if="focusedRun.status === 'paused' || focusedRun.status === 'awaiting_monitor_action'" class="control-btn primary" type="button" @click="resumeFocusedRun">
               <span class="codicon codicon-debug-continue"></span>
-              重试
+              {{ t('components.subagents.monitor.resume') }}
             </button>
             <button class="control-btn danger" type="button" @click="exitFocusedRun">
               <span class="codicon codicon-debug-stop"></span>
-              退出并让主工具失败
+              {{ t('components.subagents.monitor.exit') }}
             </button>
+            </div>
           </div>
         </div>
 
@@ -841,7 +998,7 @@ onBeforeUnmount(() => {
           <button class="load-older-btn" type="button" :disabled="focusedOlderLoading" @click="loadOlderMessages">
             <span v-if="focusedOlderLoading" class="codicon codicon-sync codicon-modifier-spin"></span>
             <span v-else class="codicon codicon-arrow-up"></span>
-            {{ focusedOlderLoading ? '加载中…' : '加载更早消息' }}
+            {{ focusedOlderLoading ? t('components.subagents.monitor.loadingOlder') : t('components.subagents.monitor.loadOlder') }}
           </button>
         </div>
 
@@ -1054,6 +1211,35 @@ onBeforeUnmount(() => {
 .control-btn.danger {
   border-color: var(--vscode-errorForeground);
   color: var(--vscode-errorForeground);
+}
+
+.run-title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.control-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+}
+
+.run-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .run-title {

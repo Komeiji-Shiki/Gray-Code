@@ -25,6 +25,7 @@ import type {
 } from './types';
 import { StdioMcpClient } from './StdioClient';
 import { HttpMcpClient } from './HttpClient';
+import { MCP_SERVER_ID_PATTERN } from './mcpToolNameCodec';
 
 /**
  * 生成唯一 ID
@@ -155,8 +156,8 @@ export class McpManager {
      * @param excludeId 排除的 ID（用于更新时排除自身）
      */
     async validateServerId(id: string, excludeId?: string): Promise<{ valid: boolean; error?: string }> {
-        // 验证 ID 格式（只允许字母、数字、下划线、中划线）
-        if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+        // 验证 ID 格式（只允许字母、数字、下划线、中划线，禁止双下划线）
+        if (!MCP_SERVER_ID_PATTERN.test(id)) {
             return { valid: false, error: t('modules.mcp.errors.invalidServerId') };
         }
         
@@ -621,26 +622,32 @@ export class McpManager {
                     transport.command,
                     transport.args || [],
                     transport.env,
-                    undefined // cwd
+                    undefined, // cwd
+                    info.config.timeout
                 );
-                
+
                 // 设置错误处理
                 client.on('error', (err) => {
                     info.lastError = err.message;
                     this.updateServerStatus(info.config.id, 'error');
                 });
-                
+
                 client.on('exit', () => {
                     this.clients.delete(info.config.id);
                     this.updateServerStatus(info.config.id, 'disconnected');
                 });
-                
-                // 连接
-                await client.connect();
-                
-                // 保存客户端
+
+                // 提前注册到管理 map，确保连接过程中的 delete/disable/disconnect 能找到它
                 this.clients.set(info.config.id, client);
-                
+
+                try {
+                    await client.connect();
+                } catch (_e) {
+                    this.clients.delete(info.config.id);
+                    await client.disconnect();
+                    throw _e;
+                }
+
                 // 获取能力
                 info.capabilities = {
                     tools: client.getTools().map(t => ({
@@ -661,7 +668,7 @@ export class McpManager {
                     }))
                 };
                 info.protocolVersion = client.getProtocolVersion();
-                
+
                 const serverInfo = client.getServerInfo();
                 if (serverInfo) {
                     info.serverVersion = serverInfo.version;
@@ -669,7 +676,7 @@ export class McpManager {
                 }
                 break;
             }
-            
+
             case 'sse': {
                 const sseClient = new HttpMcpClient(
                     transport.url,
@@ -677,11 +684,18 @@ export class McpManager {
                     transport.headers || {},
                     info.config.timeout || 30000
                 );
-                
-                await sseClient.connect();
-                
+
+                // 提前注册到管理 map
                 this.clients.set(info.config.id, sseClient);
-                
+
+                try {
+                    await sseClient.connect();
+                } catch (_e) {
+                    this.clients.delete(info.config.id);
+                    await sseClient.disconnect();
+                    throw _e;
+                }
+
                 info.capabilities = {
                     tools: sseClient.getTools().map(t => ({
                         name: t.name,
@@ -701,7 +715,7 @@ export class McpManager {
                     }))
                 };
                 info.protocolVersion = sseClient.getProtocolVersion();
-                
+
                 const sseServerInfo = sseClient.getServerInfo();
                 if (sseServerInfo) {
                     info.serverVersion = sseServerInfo.version;
@@ -709,7 +723,7 @@ export class McpManager {
                 }
                 break;
             }
-            
+
             case 'streamable-http': {
                 const httpClient = new HttpMcpClient(
                     transport.url,
@@ -717,11 +731,18 @@ export class McpManager {
                     transport.headers || {},
                     info.config.timeout || 30000
                 );
-                
-                await httpClient.connect();
-                
+
+                // 提前注册到管理 map
                 this.clients.set(info.config.id, httpClient);
-                
+
+                try {
+                    await httpClient.connect();
+                } catch (_e) {
+                    this.clients.delete(info.config.id);
+                    await httpClient.disconnect();
+                    throw _e;
+                }
+
                 info.capabilities = {
                     tools: httpClient.getTools().map(t => ({
                         name: t.name,
@@ -741,7 +762,7 @@ export class McpManager {
                     }))
                 };
                 info.protocolVersion = httpClient.getProtocolVersion();
-                
+
                 const httpServerInfo = httpClient.getServerInfo();
                 if (httpServerInfo) {
                     info.serverVersion = httpServerInfo.version;

@@ -187,6 +187,16 @@ export class SubAgentMonitorPanel {
     private focusConversationId?: string;
     private readonly unsubscribe: () => void;
     private clientRegistration?: vscode.Disposable;
+    /**
+     * 当前面板实例的事件订阅。
+     *
+     * 修改原因：过去把 onDidReceiveMessage / onDidDispose 注册到 context.subscriptions，
+     *          那个数组的生命周期是整个扩展，面板关闭后这些已失效的订阅不会被移除，
+     *          反复开关 Monitor 会持续累积。
+     * 修改方式：改为面板级数组，onDidDispose 时一次性清空。
+     * 修改目的：订阅生命周期与面板实例严格对齐。
+     */
+    private panelDisposables: vscode.Disposable[] = [];
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -244,15 +254,42 @@ export class SubAgentMonitorPanel {
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
         this.panel.webview.onDidReceiveMessage(message => {
             this.handleMessage(message).catch(error => {
+                // 修改原因：处理器抛异常时旧实现只打日志，带 requestId 的请求便永远收不到回复——
+                //          前端那个 Promise 永久 pending，"加载更早消息"之类的 loading 状态再也不会结束。
+                // 修改方式：异常统一转成错误响应回传，与主聊天 ChatViewProvider 的路由保底行为一致。
+                // 修改目的：任何一次请求都有终结状态，失败也是终结。
                 console.error('[SubAgentMonitorPanel] Failed to handle webview message:', error);
+                const requestId = typeof message?.requestId === 'string' ? message.requestId : '';
+                if (!requestId) return;
+                this.postRoutedMessage({
+                    type: 'error',
+                    requestId,
+                    success: false,
+                    error: {
+                        code: 'SUBAGENT_MONITOR_HANDLER_ERROR',
+                        message: error instanceof Error ? error.message : String(error)
+                    }
+                }, this.resolveClientId(message));
             });
-        }, undefined, this.context.subscriptions);
+        }, undefined, this.panelDisposables);
+
+        // 修改原因：面板切到后台标签页期间高频 llm_delta 被主动丢弃（见 postEvent），窗口内容会停在当时的修订号。
+        // 修改方式：重新可见时补推一次 manifest，前端据此发现窗口落后并自行拉取权威窗口。
+        // 修改目的：不可见期间零推送成本，恢复可见后仍然与后端 transcript 一致。
+        this.panel.onDidChangeViewState(() => {
+            if (this.panel?.visible) {
+                this.postManifest({ navigate: false });
+            }
+        }, undefined, this.panelDisposables);
 
         this.panel.onDidDispose(() => {
             this.clientRegistration?.dispose();
             this.clientRegistration = undefined;
             this.panel = undefined;
-        }, undefined, this.context.subscriptions);
+            for (const disposable of this.panelDisposables.splice(0)) {
+                disposable.dispose();
+            }
+        }, undefined, this.panelDisposables);
     }
 
     dispose(): void {
@@ -261,13 +298,20 @@ export class SubAgentMonitorPanel {
         this.clientRegistration = undefined;
         this.panel?.dispose();
         this.panel = undefined;
+        for (const disposable of this.panelDisposables.splice(0)) {
+            disposable.dispose();
+        }
+    }
+
+    private resolveClientId(message: any): string {
+        return typeof message?.clientId === 'string' && message.clientId.trim()
+            ? message.clientId.trim()
+            : WEBVIEW_CLIENT_IDS.subagentMonitor;
     }
 
     private async handleMessage(message: any): Promise<void> {
         if (!message || typeof message !== 'object') return;
-        const clientId = typeof message.clientId === 'string' && message.clientId.trim()
-            ? message.clientId.trim()
-            : WEBVIEW_CLIENT_IDS.subagentMonitor;
+        const clientId = this.resolveClientId(message);
 
         if (message.type === 'subagents.monitorReady') {
             // 修改原因：monitorReady 是打开 Monitor 的首包，不能继续返回包含完整 contents 的 snapshots。
@@ -278,7 +322,7 @@ export class SubAgentMonitorPanel {
                 type: 'response',
                 requestId: message.requestId,
                 success: true,
-                data: this.createManifestPayload()
+                data: this.createManifestPayload(true)
             }, clientId);
             return;
         }
@@ -341,7 +385,8 @@ export class SubAgentMonitorPanel {
         }
     }
 
-    private postRoutedMessage(message: Record<string, any>, clientId = WEBVIEW_CLIENT_IDS.subagentMonitor): void {
+    // clientId 来自前端消息，是任意字符串；默认值只是缺省归属，不应把参数收窄成该字面量类型
+    private postRoutedMessage(message: Record<string, any>, clientId: string = WEBVIEW_CLIENT_IDS.subagentMonitor): void {
         this.panel?.webview.postMessage({
             ...message,
             clientId
@@ -349,6 +394,20 @@ export class SubAgentMonitorPanel {
     }
 
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
+        // 修改原因：事件总线订阅在面板关闭后依然存在，旧实现对每个 llm_delta 都完整执行 payload 清洗、
+        //          manifest 派生和 activeRunIds 收集，然后在 postRoutedMessage 里因为没有 panel 被整个丢弃。
+        // 修改方式：没有活跃面板时直接短路，不构造任何事件载荷。
+        // 修改目的：Monitor 未打开时，SubAgent 流式输出不再为不可见的 UI 支付逐 chunk 的序列化成本。
+        if (!this.panel) {
+            return;
+        }
+        // 修改原因：retainContextWhenHidden 让面板切到后台标签页后依然存在，于是 SubAgent 的每个流式 chunk
+        //          仍要走一遍 payload 清洗、manifest 派生、序列化和 postMessage，最终画在一个用户看不见的 UI 上。
+        // 修改方式：不可见时只丢弃高频正文增量；run 状态、工具状态等低频事件继续推送，成本可忽略且能让面板一回到前台就是最新状态。
+        // 修改目的：Monitor 开着但不在前台时，子代理输出不再为不可见的界面付出逐 chunk 的传输代价。
+        if (!this.panel.visible && event.type === 'llm_delta') {
+            return;
+        }
         this.postRoutedMessage({
             type: 'subagentMonitor.event',
             data: {
@@ -375,20 +434,24 @@ export class SubAgentMonitorPanel {
         await subAgentRunEventBus.loadConversationSnapshots(conversationId, this.conversationStore);
     }
 
-    private createManifestPayload(): Record<string, any> {
+    /**
+     * @param navigate 是否携带导航意图。true 表示"用户从主聊天打开了某个 run"，前端会据此切换焦点；
+     *                 false 用于纯状态同步（如面板重新可见），不得覆盖用户在 Monitor 内手动选中的 run。
+     */
+    private createManifestPayload(navigate: boolean): Record<string, any> {
         return {
             manifests: subAgentRunEventBus.getManifests(),
-            focusRunId: this.focusRunId,
+            focusRunId: navigate ? this.focusRunId : undefined,
             focusConversationId: this.focusConversationId,
             // 历史 run 只允许查看；控制按钮以仍有主工具 Promise 等待的 activeRunIds 为准。
             activeRunIds: subAgentRunController.getActiveRunIds()
         };
     }
 
-    private postManifest(): void {
+    private postManifest(options: { navigate: boolean } = { navigate: true }): void {
         this.postRoutedMessage({
             type: 'subagentMonitor.manifest',
-            data: this.createManifestPayload()
+            data: this.createManifestPayload(options.navigate)
         });
     }
 

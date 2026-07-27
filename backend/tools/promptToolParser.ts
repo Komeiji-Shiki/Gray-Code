@@ -1,8 +1,22 @@
+import { XMLValidator } from 'fast-xml-parser';
 import type { ContentPart } from '../modules/conversation/types';
-import { parseJSONToolCalls, TOOL_CALL_END, TOOL_CALL_START } from './jsonFormatter';
-import { parseXMLToolCalls } from './xmlFormatter';
+import { parseJsonLenient, parseJSONToolCalls, TOOL_CALL_END, TOOL_CALL_START } from './jsonFormatter';
+import { findToolUseEnd, parseXMLToolCalls } from './xmlFormatter';
 
 export type PromptToolMode = 'json' | 'xml';
+
+/**
+ * 解析失败的工具调用块会被转换为携带此参数的合成 functionCall，
+ * 执行层（ToolExecutionService）检测到该参数后不会真正执行工具，
+ * 而是直接把解析错误作为工具结果回传给模型。
+ *
+ * 为什么需要：以前解析失败的块会静默降级为普通文本，模型发出的
+ * 工具调用意图直接消失——没有工具响应也没有错误提示，模型只能靠猜。
+ */
+export const TOOL_CALL_PARSE_ERROR_ARG_KEY = '__toolCallParseError';
+
+/** 提取不到意图工具名时使用的占位名称 */
+export const MALFORMED_TOOL_CALL_NAME = 'malformed_tool_call';
 
 const XML_TOOL_START = '<tool_use>';
 const XML_TOOL_END = '</tool_use>';
@@ -69,6 +83,74 @@ function pushTextPart(parts: ContentPart[], text: string): void {
     }
 }
 
+function extractInnerBlockContent(blockText: string, mode: PromptToolMode): string {
+    const markers = getMarkers(mode);
+    return blockText.slice(markers.start.length, blockText.length - markers.end.length).trim();
+}
+
+function extractIntendedToolName(inner: string, mode: PromptToolMode): string | null {
+    const match = mode === 'json'
+        ? inner.match(/"tool"\s*:\s*"([^"]+)"/)
+        : inner.match(/<tool_name>\s*([\s\S]*?)\s*<\/tool_name>/);
+    const name = match?.[1]?.trim();
+    return name && /^[\w.\-\/]+$/.test(name) ? name : null;
+}
+
+function describeJsonBlockFailure(inner: string): string {
+    try {
+        parseJsonLenient(inner);
+        return 'the JSON is valid but does not contain a {"tool": "...", "parameters": {...}} object with a string `tool` field';
+    } catch (e) {
+        return `invalid JSON (${e instanceof Error ? e.message : String(e)})`;
+    }
+}
+
+/**
+ * 为 XML 块解析失败给出具体原因。
+ * 以前只有一句笼统的 "not valid XML"，模型难以定位问题；
+ * 现在借助 XMLValidator 报出具体语法错误和行号，缺 <tool_name> 时单独指出。
+ */
+function describeXmlBlockFailure(inner: string): string {
+    if (!inner.includes('<tool_name>')) {
+        return 'the <tool_use> block is missing a <tool_name> element';
+    }
+
+    const validation = XMLValidator.validate(`<tool_use>${inner}</tool_use>`);
+    if (validation !== true) {
+        return `invalid XML (${validation.err.msg} at line ${validation.err.line})`;
+    }
+
+    return 'the <tool_use> block is valid XML but could not be interpreted as a tool call '
+        + '(check that <tool_name> is not empty and parameters use the documented element structure)';
+}
+
+/**
+ * 为解析失败但存在完整边界标记的块构造合成 functionCall part。
+ * 块内容为空时返回 null（视为非调用意图，保持文本处理）。
+ */
+function buildParseFailurePart(blockText: string, mode: PromptToolMode): ContentPart | null {
+    const inner = extractInnerBlockContent(blockText, mode);
+    if (inner.length === 0) {
+        return null;
+    }
+
+    const intendedTool = extractIntendedToolName(inner, mode);
+    const reason = mode === 'json'
+        ? describeJsonBlockFailure(inner)
+        : describeXmlBlockFailure(inner);
+
+    return {
+        functionCall: {
+            name: intendedTool ?? MALFORMED_TOOL_CALL_NAME,
+            args: {
+                [TOOL_CALL_PARSE_ERROR_ARG_KEY]:
+                    `Your tool call block was detected but could not be parsed (${mode.toUpperCase()} mode): ${reason}. ` +
+                    'Fix the syntax and send the tool call again. Common causes: unescaped newlines or quotes inside JSON string values, trailing commas, or malformed XML tags.'
+            }
+        }
+    };
+}
+
 export function detectPromptToolMode(text: string): PromptToolMode | null {
     const jsonIndex = text.indexOf(TOOL_CALL_START);
     const xmlIndex = text.indexOf(XML_TOOL_START);
@@ -86,6 +168,15 @@ export class IncrementalPromptToolParser {
     private readonly startMarker: string;
     private readonly endMarker: string;
     private buffer = '';
+    /**
+     * 未完成块的续扫状态：pos 为下次搜索结束标记的起点（相对当前 buffer），
+     * inCdata 表示该位置是否处于未闭合的 CDATA 段内（仅 XML 模式使用）。
+     *
+     * 修改原因：以前每个新 chunk 到来都从块头重新 indexOf 结束标记，
+     * 大块（几 MB 的 write_file 内容 × 上千 chunk）时累计成本 O(n²)。
+     * 修改方式：记录安全的续扫位置与 CDATA 状态，累计成本降为 O(n)。
+     */
+    private pendingScan: { pos: number; inCdata: boolean } | null = null;
 
     constructor(private readonly mode: PromptToolMode) {
         const markers = getMarkers(mode);
@@ -111,6 +202,27 @@ export class IncrementalPromptToolParser {
 
     reset(): void {
         this.buffer = '';
+        this.pendingScan = null;
+    }
+
+    /**
+     * 在 buffer 中查找结束标记。
+     * XML 模式使用 CDATA 感知扫描（CDATA 内的 </tool_use> 不算块结束）；
+     * JSON 模式没有转义语法，退化为带游标的 indexOf。
+     */
+    private findEndMarker(from: number, inCdata: boolean): { endIndex: number; resumePos: number; inCdata: boolean } {
+        if (this.mode === 'xml') {
+            return findToolUseEnd(this.buffer, from, { inCdata });
+        }
+        const endIndex = this.buffer.indexOf(this.endMarker, from);
+        if (endIndex !== -1) {
+            return { endIndex, resumePos: endIndex, inCdata: false };
+        }
+        return {
+            endIndex: -1,
+            resumePos: Math.max(from, this.buffer.length - (this.endMarker.length - 1)),
+            inCdata: false
+        };
     }
 
     private consume(flushIncompleteTailAsText: boolean): ContentPart[] {
@@ -120,6 +232,7 @@ export class IncrementalPromptToolParser {
             const startIndex = this.buffer.indexOf(this.startMarker);
 
             if (startIndex === -1) {
+                this.pendingScan = null;
                 if (flushIncompleteTailAsText) {
                     pushTextPart(parts, this.buffer);
                     this.buffer = '';
@@ -137,26 +250,39 @@ export class IncrementalPromptToolParser {
             if (startIndex > 0) {
                 pushTextPart(parts, this.buffer.slice(0, startIndex));
                 this.buffer = this.buffer.slice(startIndex);
+                this.pendingScan = null;
             }
 
-            const endIndex = this.buffer.indexOf(this.endMarker, this.startMarker.length);
-            if (endIndex === -1) {
+            const scanFrom = Math.max(this.startMarker.length, this.pendingScan?.pos ?? 0);
+            const scan = this.findEndMarker(scanFrom, this.pendingScan?.inCdata ?? false);
+            if (scan.endIndex === -1) {
                 if (flushIncompleteTailAsText) {
                     pushTextPart(parts, this.buffer);
                     this.buffer = '';
+                    this.pendingScan = null;
+                } else {
+                    this.pendingScan = { pos: scan.resumePos, inCdata: scan.inCdata };
                 }
                 break;
             }
 
-            const blockText = this.buffer.slice(0, endIndex + this.endMarker.length);
+            const blockText = this.buffer.slice(0, scan.endIndex + this.endMarker.length);
             const functionCallParts = toFunctionCallParts(blockText, this.mode);
             if (functionCallParts && functionCallParts.length > 0) {
                 parts.push(...functionCallParts);
             } else {
-                pushTextPart(parts, blockText);
+                // 解析失败的非空块转为合成错误调用，让模型能收到可读的失败反馈；
+                // 仅空块保持原文本处理
+                const failurePart = buildParseFailurePart(blockText, this.mode);
+                if (failurePart) {
+                    parts.push(failurePart);
+                } else {
+                    pushTextPart(parts, blockText);
+                }
             }
 
-            this.buffer = this.buffer.slice(endIndex + this.endMarker.length);
+            this.buffer = this.buffer.slice(scan.endIndex + this.endMarker.length);
+            this.pendingScan = null;
         }
 
         return parts;

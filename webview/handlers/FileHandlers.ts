@@ -19,6 +19,34 @@ import {
   type PendingApprovalGateExpectation
 } from '../../backend/modules/conversation/pendingApprovalGate';
 
+// ========== 工作区包含校验 ==========
+
+/**
+ * 纯路径包含性校验：判断 URI 是否位于任意已打开的工作区内。
+ *
+ * 与 validateFileInWorkspace 不同：该函数不访问文件系统（不 stat），
+ * 因此可用于尚未创建的新文件场景（如 saveImageToPath）。
+ */
+export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
+  // 优先使用 VSCode API
+  const wsFolder = vscode.workspace.getWorkspaceFolder(uri);
+  if (wsFolder) return true;
+
+  // 兜底：手动前缀匹配（处理远程 SSH scheme 不一致等场景）
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return false;
+
+  const fsPath = uri.fsPath;
+  for (const folder of folders) {
+    const folderFsPath = folder.uri.fsPath;
+    if (fsPath === folderFsPath || fsPath.startsWith(folderFsPath + path.sep)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ========== 工作区信息 ==========
 
 export const getWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
@@ -462,6 +490,12 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
     }
 
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
+
+    if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
     const content = await vscode.workspace.fs.readFile(fileUri);
     if (!isLikelyTextFile(relativePath, content)) {
       ctx.sendResponse(requestId, {
@@ -504,6 +538,12 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
     }
 
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
+
+    if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
     const content = await vscode.workspace.fs.readFile(fileUri);
     const isText = isLikelyTextFile(relativePath, content);
 
@@ -645,8 +685,14 @@ export const readWorkspaceImage: MessageHandler = async (data, requestId, ctx) =
     }
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, imgPath);
+
+    if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
     const content = await vscode.workspace.fs.readFile(fileUri);
-    
+
     const ext = path.extname(imgPath).toLowerCase();
     let mimeType = 'image/png';
     if (ext === '.jpg' || ext === '.jpeg') {
@@ -686,7 +732,11 @@ export const openWorkspaceFile: MessageHandler = async (data, requestId, ctx) =>
     }
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
-    
+
+    if (!isUriInsideWorkspace(fileUri)) {
+      throw new Error(t('webview.errors.fileNotInWorkspace'));
+    }
+
     try {
       await vscode.workspace.fs.stat(fileUri);
     } catch {
@@ -878,7 +928,16 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
     }
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, imgPath);
-    
+
+    // 防止路径穿越：imgPath 含 `..` 可逃逸工作区覆写任意文件
+    if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.fileNotInWorkspace')
+      });
+      return;
+    }
+
     const dirUri = vscode.Uri.joinPath(fileUri, '..');
     try {
       await vscode.workspace.fs.createDirectory(dirUri);

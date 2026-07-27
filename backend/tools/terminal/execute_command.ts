@@ -59,6 +59,15 @@ interface TerminalProcess {
 const activeProcesses: Map<string, TerminalProcess> = new Map();
 
 /**
+ * 前台命令的 detach 回调表：terminalId -> detach 函数。
+ *
+ * 用户在命令运行期间发送新消息时，把等待中的前台命令转为后台任务：
+ * 工具立即返回、模型先响应用户；进程继续运行，完成后结果经 TaskManager
+ * 完成事件回流为 [Background task completed] 回执消息。
+ */
+const detachHandlers: Map<string, () => boolean> = new Map();
+
+/**
  * 终端事件发射器
  * 用于实时推送终端输出到前端
  */
@@ -935,6 +944,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         type: 'number',
                         description: '超时时间（毫秒）。0 表示不超时，默认 60000（60 秒）。',
                         default: 60000
+                    },
+                    background: {
+                        type: 'boolean',
+                        description: 'Run this command in the BACKGROUND. Use ONLY for long-running commands (builds, servers, batch jobs) when the user should not have to wait. The tool returns immediately with a taskId; the final output will arrive later as a "[Background task completed]" user message. Do NOT wait or poll for it. Background commands ignore the timeout parameter.'
                     }
                 },
                 required: ['command']
@@ -945,6 +958,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             const cwd = args.cwd as string | undefined;
             const shell = (args.shell as ShellType) || 'default';
             const timeout = (args.timeout as number) ?? 60000;
+            // 修改原因：长耗时命令会阻塞主对话，用户只能干等。
+            // 修改方式：background=true 时进程启动后立即返回；不挂外部 abortSignal、不设 timeout，
+            //          退出时结果经 TaskManager 完成事件回流。
+            // 修改目的：等待期间用户可继续互动；停止当前对话流不会连带杀掉后台命令。
+            const background = args.background === true;
             
             // 使用 context 中的 toolId 或生成新的
             const terminalId = context?.toolId as string || generateTerminalId();
@@ -994,14 +1012,19 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             let workspaceName: string | undefined;
             
             if (cwd) {
-                // 解析带工作区前缀的路径
-                const { workspace, relativePath } = parseWorkspacePath(cwd);
-                if (workspace) {
-                    workingDir = path.join(workspace.fsPath, relativePath);
-                    workspaceName = workspaces.length > 1 ? workspace.name : undefined;
+                // 如果 cwd 已经是绝对路径，直接使用，不再拼接到 workspace 根目录
+                if (path.isAbsolute(cwd)) {
+                    workingDir = cwd;
                 } else {
-                    // 使用默认工作区
-                    workingDir = path.join(workspaces[0].fsPath, cwd);
+                    // 解析带工作区前缀的路径
+                    const { workspace, relativePath } = parseWorkspacePath(cwd);
+                    if (workspace) {
+                        workingDir = path.join(workspace.fsPath, relativePath);
+                        workspaceName = workspaces.length > 1 ? workspace.name : undefined;
+                    } else {
+                        // 使用默认工作区
+                        workingDir = path.join(workspaces[0].fsPath, cwd);
+                    }
                 }
             } else {
                 // 默认使用第一个工作区
@@ -1087,7 +1110,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     };
 
                     activeProcesses.set(terminalId, terminalProcess);
-                    
+
+                    // 命令的“有效后台标记”：background 参数为真，或运行中被 detach 转后台。
+                    // close/error 上报 TaskManager 时使用该标记，保证转后台的命令完成事件能回流为回执。
+                    let effectiveBackground = background;
+
                     // 使用 TaskManager 注册任务
                     // 创建一个 AbortController 用于统一取消
                     const taskAbortController = new AbortController();
@@ -1110,21 +1137,31 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     TaskManager.registerTask(terminalId, TASK_TYPE_TERMINAL, taskAbortController, {
                         command,
                         cwd: workingDir,
-                        shell
+                        shell,
+                        background,
+                        conversationId: context?.conversationId
                     });
                     
                     // 监听外部的 abortSignal（用户取消对话时触发）
-                    if (externalAbortSignal) {
+                    // 后台命令不挂外部 signal：用户停止当前对话流不得连带杀掉后台命令（任务条可单独取消）
+                    // detach 转后台时也会移除该监听，保持同样的脱钩语义
+                    let removeExternalAbortListener: (() => void) | undefined;
+                    if (externalAbortSignal && !background) {
                         const abortHandler = () => {
                             // 调用 killTerminalProcess 终止进程
                             killTerminalProcess(terminalId);
                         };
-                        
+
                         externalAbortSignal.addEventListener('abort', abortHandler, { once: true });
-                        
+
+                        removeExternalAbortListener = () => {
+                            externalAbortSignal.removeEventListener('abort', abortHandler);
+                            removeExternalAbortListener = undefined;
+                        };
+
                         // 进程结束时移除监听器
                         proc.on('close', () => {
-                            externalAbortSignal.removeEventListener('abort', abortHandler);
+                            removeExternalAbortListener?.();
                         });
                     }
                     
@@ -1224,9 +1261,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         }
                     });
 
-                    // 设置超时
+                    // 设置超时（后台命令不受 timeout 约束）
                     let timeoutHandle: NodeJS.Timeout | undefined;
-                    if (timeout > 0) {
+                    if (timeout > 0 && !background) {
                         timeoutHandle = setTimeout(() => {
                             terminalProcess.killed = true;
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
@@ -1267,12 +1304,17 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         // 从活动进程中移除
                         activeProcesses.delete(terminalId);
                         
-                        // 使用 TaskManager 注销任务
+                        // 使用 TaskManager 注销任务；后台任务的完成事件携带输出与会话信息，供前端回流为 [Background task completed] 消息
                         const status = terminalProcess.killed ? 'cancelled' : (code === 0 ? 'completed' : 'error');
                         TaskManager.unregisterTask(terminalId, status, {
                             exitCode: code,
                             duration,
-                            killed: terminalProcess.killed
+                            killed: terminalProcess.killed,
+                            background: effectiveBackground,
+                            conversationId: context?.conversationId,
+                            command,
+                            output: lastOutput.join('\n'),
+                            error: terminalProcess.error
                         });
 
                         // 检查是否是外部 abortSignal 触发的终止
@@ -1353,7 +1395,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         // 使用 TaskManager 注销任务
                         TaskManager.unregisterTask(terminalId, 'error', {
                             error: err.message,
-                            duration
+                            duration,
+                            background: effectiveBackground,
+                            conversationId: context?.conversationId,
+                            command,
+                            output: lastOutput.join('\n')
                         });
 
                         // 推送错误退出事件
@@ -1378,6 +1424,77 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             error: `Failed to execute command: ${err.message} (cwd: ${workingDir})`
                         });
                     });
+
+                    // 后台模式：监听器全部就绪后立即返回；后续 close/error 的 resolve 是 no-op（Promise 仅 resolve 一次），
+                    // 最终结果由 TaskManager 完成事件携带输出回流。
+                    if (background) {
+                        resolve({
+                            success: true,
+                            data: {
+                                background: true,
+                                taskId: terminalId,
+                                terminalId,
+                                command,
+                                cwd: workingDir,
+                                shell,
+                                note: 'Command started in background. Do NOT wait or poll; the output will arrive later as a "[Background task completed]" user message. Continue with other work or end your turn.'
+                            }
+                        });
+                    }
+
+                    // 前台模式：注册 detach 回调。
+                    // 用户在命令运行期间发送新消息时（webview 调 terminal.detachToBackground），
+                    // 把该命令转入后台：工具立即返回、模型先响应用户，进程继续运行，
+                    // 完成后结果经 TaskManager 完成事件回流为 [Background task completed] 回执。
+                    if (!background) {
+                        const detach = (): boolean => {
+                            if (terminalProcess.endTime !== undefined || effectiveBackground) {
+                                return false;
+                            }
+                            effectiveBackground = true;
+
+                            // 转后台后不再受前台超时与对话取消约束（与 background=true 语义对齐）
+                            if (timeoutHandle) {
+                                clearTimeout(timeoutHandle);
+                                timeoutHandle = undefined;
+                            }
+                            removeExternalAbortListener?.();
+
+                            // 更新任务元数据并补发带 background 标记的 start 事件：
+                            // 前端任务条按该标记登记任务，之后的完成事件才能回流为回执消息
+                            const task = TaskManager.getTask(terminalId);
+                            if (task) {
+                                task.metadata = { ...(task.metadata || {}), background: true, detached: true };
+                                TaskManager.emitEvent({
+                                    taskId: terminalId,
+                                    taskType: TASK_TYPE_TERMINAL,
+                                    type: 'start',
+                                    data: task.metadata,
+                                    createdAt: task.startTime
+                                });
+                            }
+
+                            resolve({
+                                success: true,
+                                data: {
+                                    background: true,
+                                    detached: true,
+                                    taskId: terminalId,
+                                    terminalId,
+                                    command,
+                                    cwd: workingDir,
+                                    shell,
+                                    note: 'The user sent a new message while this command was still running. The command has been MOVED TO BACKGROUND and keeps running; its final output will arrive later as a "[Background task completed]" user message. Do NOT wait or poll for it. The user\'s new message will be delivered right after this turn — address it now and end your turn promptly.'
+                                }
+                            });
+                            return true;
+                        };
+
+                        detachHandlers.set(terminalId, detach);
+                        proc.on('close', () => {
+                            detachHandlers.delete(terminalId);
+                        });
+                    }
 
                 } catch (error) {
                     resolve({
@@ -1477,6 +1594,32 @@ export function cancelTerminalTask(terminalId: string): {
     
     // 如果进程不存在，尝试通过 TaskManager 取消
     return TaskManager.cancelTask(terminalId);
+}
+
+/**
+ * 将正在前台等待的终端命令转入后台。
+ *
+ * 用户在命令执行期间发送新消息时调用：等待中的 execute_command 立即返回
+ * “已转后台”结果，模型得以先响应用户；命令完成后结果经 TaskManager 完成事件
+ * 回流为 [Background task completed] 回执消息。
+ *
+ * @param conversationId 只转移属于该会话的命令；不传则转移全部前台命令
+ */
+export function detachRunningTerminalsToBackground(conversationId?: string): { detached: string[] } {
+    const detached: string[] = [];
+    for (const [id, detach] of [...detachHandlers]) {
+        if (conversationId) {
+            const taskConvId = TaskManager.getTask(id)?.metadata?.conversationId;
+            if (typeof taskConvId === 'string' && taskConvId && taskConvId !== conversationId) {
+                continue;
+            }
+        }
+        if (detach()) {
+            detached.push(id);
+            detachHandlers.delete(id);
+        }
+    }
+    return { detached };
 }
 
 /**

@@ -11,6 +11,8 @@ import type { Content, ContentPart } from '../../conversation/types';
 import type { OpenAIResponsesConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
 import { applyCustomBody } from '../../config/configs/base';
+import { throwIfStreamError } from './streamError';
+import { ChannelError, ErrorType } from '../types';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -374,6 +376,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      * Responses API 使用 SSE 发送事件，每个 chunk 是一个完整的 JSON 事件
      */
     parseStreamChunk(chunk: any): StreamChunk {
+        // 流内联错误统一在这里归一为 ChannelError，并带上上游给出的原文
+        throwIfStreamError(chunk, 'OpenAI Responses');
+
         const parts: ContentPart[] = [];
         let done = false;
         let usage: any;
@@ -472,18 +477,20 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.failed':
-                // 响应失败
-                throw new Error(chunk.response?.error?.message || 'Response failed');
-            
+                // 响应失败：错误体挂在 response 下，顶层判错拦不到，这里单独归一
+                throwIfStreamError(chunk.response, 'OpenAI Responses');
+                throw new ChannelError(
+                    ErrorType.API_ERROR,
+                    t('modules.channel.formatters.streamError', { provider: 'OpenAI Responses', message: 'Response failed' }),
+                    chunk
+                );
+
             case 'response.incomplete':
                 // 响应不完整
                 done = true;
                 finishReason = chunk.response?.incomplete_details?.reason || 'incomplete';
                 break;
                 
-            case 'error':
-                // 处理流中的错误
-                throw new Error(chunk.error?.message || 'Unknown stream error');
         }
 
         return {

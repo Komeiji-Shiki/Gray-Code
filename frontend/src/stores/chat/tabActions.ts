@@ -46,7 +46,8 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     editorNodes: [...state.editorNodes.value],
     attachments: [...state.attachments.value],
     messageQueue: [...state.messageQueue.value],
-    currentPromptModeId: state.currentPromptModeId.value
+    currentPromptModeId: state.currentPromptModeId.value,
+    toolResponseCache: Array.from(state.toolResponseCache.value.entries())
   }
 }
 
@@ -82,6 +83,10 @@ export function restoreSessionFromSnapshot(
   state.attachments.value = [...snapshot.attachments]
   state.messageQueue.value = [...snapshot.messageQueue]
   state.currentPromptModeId.value = snapshot.currentPromptModeId
+  // 恢复工具响应缓存快照；旧快照无此字段时回退空 Map
+  state.toolResponseCache.value = Array.isArray(snapshot.toolResponseCache)
+    ? new Map(snapshot.toolResponseCache)
+    : new Map()
 }
 
 /**

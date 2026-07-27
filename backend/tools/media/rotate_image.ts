@@ -19,6 +19,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { TaskManager, type TaskEvent } from '../taskManager';
+import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
 
 /** 旋转任务类型常量 */
@@ -421,18 +422,11 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
                 }
             }
         },
-        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+        handler: withLinkedAbort(async (args, context: ToolContext | undefined, abortController): Promise<ToolResult> => {
             const toolId = context?.toolId || TaskManager.generateTaskId('rotate');
             const config = (context?.config || {}) as RotateImageConfig;
 
-            const abortController = new AbortController();
             const abortSignal = abortController.signal;
-
-            if (context?.abortSignal) {
-                context.abortSignal.addEventListener('abort', () => {
-                    abortController.abort();
-                });
-            }
 
             // 检查使用哪种模式
             const imagesArray = args.images as RotateTask[] | undefined;
@@ -594,7 +588,7 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
                     error: `Rotate failed: ${errorMessage}`
                 };
             }
-        }
+        })
     };
 }
 

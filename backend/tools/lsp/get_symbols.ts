@@ -184,6 +184,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
     return {
         declaration: {
             name: 'get_symbols',
+            readOnly: true,
             description,
             category: 'lsp',
             parameters: {

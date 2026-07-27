@@ -285,6 +285,7 @@ const zhCN = {
             send: '发送消息',
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
+            sendWhileBusy: '发送新消息（正在运行的命令将转入后台，AI 优先响应）',
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
             skills: 'Skills',
@@ -1052,7 +1053,12 @@ const zhCN = {
                 badges: {
                     dangerous: '危险'
                 },
+                diffReview: {
+                    label: 'Diff 审阅管理',
+                    tooltip: '此工具的修改经由 Diff 审阅机制确认，不使用聊天内确认框。是否自动应用请在「工具设置 → Apply Diff → 自动应用修改」中配置。'
+                },
                 tips: {
+                    diffReviewNote: '• 写入类工具（write_file / apply_diff / insert_code / delete_code）由 Diff 审阅机制确认：在 Apply Diff 工具设置中开启"自动应用"后即完全自动，无需在本页勾选',
                     dangerousDefault: '• 标记为"危险"的工具默认需要用户确认后才能执行',
                     deleteFileWarning: '• delete_file: 删除文件操作不可恢复，建议保持需确认',
                     executeCommandWarning: '• execute_command: 执行终端命令可能对系统造成影响',
@@ -1467,9 +1473,12 @@ const zhCN = {
                 delete: '删除',
                 disabled: '已禁用',
                 enabled: '启用此子代理',
+                saveFailed: '保存失败：{error}',
                 globalConfig: '全局配置',
                 maxConcurrentAgents: '最大并发数',
-                maxConcurrentAgentsHint: 'AI 一次性可调用的最大子代理数量（-1 表示无限制）',
+                maxConcurrentAgentsHint: '同时运行的子代理数量上限，超出的自动排队等待（-1 表示无限制）',
+                generalWorker: '启用通用 Worker（傻瓜模式）',
+                generalWorkerHint: '主模型可直接派发零配置的 "General Worker"：继承当前渠道与全部工具权限，数量由主模型自行决定，无需手动配置任何 agent',
                 basicInfo: '基本信息',
                 description: '描述',
                 descriptionPlaceholder: '向主 AI 说明何时使用此子代理',
@@ -1510,7 +1519,30 @@ const zhCN = {
                     nameLabel: '名称',
                     namePlaceholder: '例如：代码审查专家',
                     nameRequired: '请输入子代理名称',
-                    nameDuplicate: '已存在同名的子代理'
+                    nameDuplicate: '已存在同名的子代理',
+                    templateLabel: '模板'
+                },
+                presets: {
+                    blank: {
+                        name: '空白',
+                        description: '从零开始配置一个子代理'
+                    },
+                    codeReviewer: {
+                        name: '代码审核者',
+                        description: '只读审核指定范围的代码，输出结构化审查结论，不修改任何文件'
+                    },
+                    deepResearcher: {
+                        name: '深度研究员',
+                        description: '深入调研代码库与外部资料，返回带出处的研究报告'
+                    },
+                    parallelEditor: {
+                        name: '并行修改者',
+                        description: '在指定范围内执行代码修改并自行验证，适合多区域并行修改'
+                    },
+                    webSearcher: {
+                        name: '联网搜索员',
+                        description: '仅使用联网/MCP 工具搜索资料，返回带来源链接的摘要'
+                    }
                 }
             },
             modelManager: {
@@ -1728,9 +1760,11 @@ const zhCN = {
                 },
                 optionsSection: {
                     title: '总结选项',
-                    keepRounds: '保留最近轮数',
+                    keepRounds: '最少保留轮数',
                     keepRoundsUnit: '轮',
-                    keepRoundsHint: '保留最近 N 轮对话不参与总结，确保上下文连贯',
+                    keepRoundsHint: '作为保留预算的下限保护，至少保留最近 N 轮对话不参与总结',
+                    keepTokens: '保留内容预算',
+                    keepTokensHint: '总结时保留最近约多少上下文不被压缩：填 token 数（如 30000）或相对模型最大上下文的百分比（如 25%），实际范围按此预算对齐到轮边界',
                     manualPrompt: '手动总结提示词',
                     manualPromptPlaceholder: '输入手动总结时使用的提示词...',
                     manualPromptHint: '点击“总结上下文”按钮时使用此提示词',
@@ -2220,6 +2254,47 @@ const zhCN = {
             }
         },
 
+        backgroundTasks: {
+            running: '运行中',
+            completed: '已完成',
+            failed: '失败',
+            cancelled: '已取消',
+            cancel: '取消任务',
+            dismiss: '清除',
+            pendingReport: '结果待汇报给模型',
+            outputTitle: '命令输出',
+            noOutput: '暂无输出'
+        },
+        subagents: {
+            monitor: {
+                title: 'SubAgent Monitor',
+                subtitle: '以聊天窗口形式展示 SubAgent 的 System、Context、Prompt、AI 输出、思维过程和工具调用。',
+                runCount: '{count} 个运行',
+                empty: '暂无 SubAgent 子对话记录。',
+                defaultAgentName: 'Sub-Agent',
+                loadedCount: '已加载 {loaded} / {total} 条记录',
+                loadOlder: '加载更早消息',
+                loadingOlder: '加载中…',
+                pause: '暂停',
+                resume: '继续',
+                exit: '退出并让主工具失败',
+                retrying: '自动重试 {attempt}/{maxAttempts}',
+                retrySuccess: '自动重试成功',
+                retryFailed: '自动重试失败：{error}',
+                readOnly: '历史运行 · 仅可查看',
+                controlUnavailable: '该运行已不在可控制状态，操作未生效',
+                status: {
+                    queued: '排队中',
+                    running: '运行中',
+                    paused: '已暂停',
+                    awaitingMonitorAction: '等待处理',
+                    completed: '已完成',
+                    failed: '失败',
+                    cancelled: '已取消',
+                    interrupted: '已中断'
+                }
+            }
+        },
         channels: {
             common: {
                 temperature: {
@@ -2298,6 +2373,11 @@ const zhCN = {
                     ttl1hHint: '写入价格为 2x 基础输入价格，适合间歇性长对话',
                     keepAlive: '缓存保活（4 分 30 秒自动续期）',
                     keepAliveHint: '当流式请求超过 4 分 30 秒未完成时，自动发送 max_tokens=5 的保活请求以刷新缓存 TTL'
+                },
+                userId: {
+                    title: '请求用户标识（metadata.user_id）',
+                    enable: '启用后为每个请求注入稳定的 metadata.user_id',
+                    hint: '基于对话 ID（子代理为运行 ID）生成哈希标识，让主会话与各子代理的请求在服务端按运行域区分，缓存互不混淆；不包含任何隐私信息'
                 }
             },
             gemini: {
@@ -2905,7 +2985,8 @@ const zhCN = {
                 completed: '执行完成',
                 failed: '执行失败',
                 executing: '正在执行...',
-                partialResponse: '部分响应'
+                partialResponse: '部分响应',
+                background: '后台'
             }
         }
     },

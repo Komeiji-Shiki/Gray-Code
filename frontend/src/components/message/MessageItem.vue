@@ -66,6 +66,9 @@ const isTool = computed(() => props.message.role === 'tool')
 // 是否为总结消息
 const isSummary = computed(() => props.message.isSummary === true)
 
+// 是否为后台任务回流消息
+const isBackgroundTask = computed(() => props.message.source === 'background_task')
+
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
@@ -404,6 +407,7 @@ const modelVersion = computed(() => props.message.metadata?.modelVersion)
 
 // 角色显示名称
 const roleDisplayName = computed(() => {
+  if (isBackgroundTask.value) return t('components.backgroundTasks.completed')
   if (isUser.value) return t('components.message.roles.user')
   if (isTool.value) return t('components.message.roles.tool')
   // 助手消息显示模型版本
@@ -454,7 +458,8 @@ const messageClass = computed(() => ({
   'user-message': isUser.value,
   'assistant-message': !isUser.value,
   'streaming': isStreaming.value,
-  'summary-message': isSummary.value
+  'summary-message': isSummary.value,
+  'background-task-message': isBackgroundTask.value
 }))
 
 // 格式化时间（只有有效时间戳时才显示）
@@ -596,6 +601,15 @@ function handleRestoreAndRetry(checkpointId: string) {
         </div>
       </div>
       
+      <!-- 后台任务回流消息：紧凑卡片，与用户消息明确区分 -->
+      <div v-else-if="isBackgroundTask" class="background-task-card">
+        <div class="bg-task-header">
+          <i class="codicon codicon-hubot bg-task-icon"></i>
+          <span class="bg-task-label">{{ t('components.backgroundTasks.completed') || 'Background task completed' }}</span>
+        </div>
+        <div class="bg-task-content">{{ message.content }}</div>
+      </div>
+
       <!-- 普通消息显示 -->
       <template v-else>
         <!-- 用户消息的上下文块显示 -->
@@ -1251,6 +1265,49 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .summary-text :deep(p:first-child) {
   margin-top: 0;
+}
+
+/* 后台任务回流卡片 */
+.background-task-message .message-header {
+  opacity: 0.6;
+}
+
+.background-task-card {
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-focusBorder);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-focusBorder) 5%);
+  font-size: 12px;
+}
+
+.bg-task-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.bg-task-icon {
+  font-size: 14px;
+  color: var(--vscode-focusBorder);
+}
+
+.bg-task-label {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.bg-task-content {
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  line-height: 1.4;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
 }
 
 </style>

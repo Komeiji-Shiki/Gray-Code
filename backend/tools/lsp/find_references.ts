@@ -57,6 +57,7 @@ Returns references grouped by file, with line numbers and code content.`;
     return {
         declaration: {
             name: 'find_references',
+            readOnly: true,
             description,
             category: 'lsp',
             parameters: {

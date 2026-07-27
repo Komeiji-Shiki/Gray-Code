@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines } from '../utils';
+import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines, mapWithConcurrency } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
 /**
@@ -80,6 +80,21 @@ interface Entry {
 }
 
 /**
+ * 待填充行数的文件条目（遍历阶段收集，遍历完成后受控并发统计）。
+ *
+ * 修改原因：以前在目录遍历循环里逐个 await countTextFileLines，
+ * 递归列出大目录时等于串行把整个目录树的文件读一遍。
+ */
+interface PendingLineCount {
+    entry: Entry;
+    uri: vscode.Uri;
+    filePath: string;
+}
+
+/** 行数统计的并发上限 */
+const LINE_COUNT_CONCURRENCY = 8;
+
+/**
  * 单个目录的列出结果
  */
 interface ListResult {
@@ -99,7 +114,8 @@ async function listDirectoryRecursive(
     dirUri: vscode.Uri,
     basePath: string,
     entries: Entry[],
-    ignorePatterns: string[]
+    ignorePatterns: string[],
+    pendingLineCounts: PendingLineCount[]
 ): Promise<void> {
     const items = await vscode.workspace.fs.readDirectory(dirUri);
     
@@ -115,17 +131,13 @@ async function listDirectoryRecursive(
             entries.push({ name: relativePath + '/', type: 'directory' });
             // 递归进入子目录
             const subDirUri = vscode.Uri.joinPath(dirUri, name);
-            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns);
+            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns, pendingLineCounts);
         } else if (type === vscode.FileType.File) {
             const fileUri = vscode.Uri.joinPath(dirUri, name);
-            entries.push({
-                name: relativePath,
-                type: 'file',
-                // 修改原因：递归列表里也要给每个文本文件带行数，避免只有顶层列表可用。
-                // 修改方式：用当前目录 URI 与文件名拼出真实 URI，再通过共享工具统计文本行数。
-                // 修改目的：无论 recursive 是否开启，返回结构都一致携带可选 lineCount。
-                lineCount: await countTextFileLines(fileUri, relativePath)
-            });
+            // 行数不在遍历循环里逐个 await，而是收集后统一受控并发填充
+            const entry: Entry = { name: relativePath, type: 'file' };
+            entries.push(entry);
+            pendingLineCounts.push({ entry, uri: fileUri, filePath: relativePath });
         }
     }
 }
@@ -151,6 +163,7 @@ export function createListFilesTool(): Tool {
     return {
         declaration: {
             name: 'list_files',
+            readOnly: true,
             description: isMultiRoot
                 ? `列出一个或多个目录中的文件和子目录。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。当前是多根工作区，path 必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
                 : '列出一个或多个目录中的文件和子目录，支持批量列出。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。',
@@ -221,10 +234,11 @@ export function createListFilesTool(): Tool {
                     }
                     
                     const entries: Entry[] = [];
+                    const pendingLineCounts: PendingLineCount[] = [];
                     
                     if (recursive) {
                         // 递归列出
-                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns);
+                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns, pendingLineCounts);
                     } else {
                         // 只列出顶层
                         const items = await vscode.workspace.fs.readDirectory(dirUri);
@@ -239,17 +253,17 @@ export function createListFilesTool(): Tool {
                                 entries.push({ name: name + '/', type: 'directory' });
                             } else if (type === vscode.FileType.File) {
                                 const fileUri = vscode.Uri.joinPath(dirUri, name);
-                                entries.push({
-                                    name,
-                                    type: 'file',
-                                    // 修改原因：非递归 list_files 是最常用的目录探查入口，需要直接告诉模型每个文本文件有多少行。
-                                    // 修改方式：对文件 entry 统计 lineCount；二进制或读取失败时保持 undefined。
-                                    // 修改目的：减少模型盲目 read_file 整个大文件的概率。
-                                    lineCount: await countTextFileLines(fileUri, name)
-                                });
+                                const entry: Entry = { name, type: 'file' };
+                                entries.push(entry);
+                                pendingLineCounts.push({ entry, uri: fileUri, filePath: name });
                             }
                         }
                     }
+
+                    // 受控并发填充行数：替代遍历循环里的逐文件串行 await
+                    await mapWithConcurrency(pendingLineCounts, LINE_COUNT_CONCURRENCY, async pending => {
+                        pending.entry.lineCount = await countTextFileLines(pending.uri, pending.filePath);
+                    });
                     
                     // 排序：目录在前，文件在后，各自按名称排序
                     entries.sort((a, b) => {

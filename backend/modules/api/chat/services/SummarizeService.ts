@@ -15,7 +15,13 @@ import type { GenerateResponse, StreamChunk } from '../../../channel/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import type { ContextTrimService } from './ContextTrimService';
+import { DEFAULT_MAX_CONTEXT_TOKENS } from './ContextTrimService';
 import type { TokenEstimationService } from './TokenEstimationService';
+import {
+    planIntraRoundSplit,
+    planSummarizeRounds,
+    resolveKeepRecentTokenBudget
+} from './summarizeRangePlanner';
 import type {
     SummarizeContextRequestData,
     SummarizeContextSuccessData,
@@ -95,6 +101,7 @@ export class SummarizeService {
 
             // 从设置中读取总结配置
             let configKeepRecentRounds = 2;  // 默认值
+            let configKeepRecentTokens: number | string | undefined;  // 保留预算（缺失/非法时由 planner 回落到内置默认值）
             let configSummarizePrompt = '';  // 默认值（空则使用内置 i18n 提示词）
             let useSeparateModel = false;
             let summarizeChannelId = '';
@@ -105,6 +112,9 @@ export class SummarizeService {
                 if (summarizeConfig) {
                     if (typeof summarizeConfig.keepRecentRounds === 'number') {
                         configKeepRecentRounds = summarizeConfig.keepRecentRounds;
+                    }
+                    if (typeof summarizeConfig.keepRecentTokens === 'number' || typeof summarizeConfig.keepRecentTokens === 'string') {
+                        configKeepRecentTokens = summarizeConfig.keepRecentTokens;
                     }
                     if (typeof summarizeConfig.summarizePrompt === 'string') {
                         configSummarizePrompt = summarizeConfig.summarizePrompt;
@@ -169,39 +179,31 @@ export class SummarizeService {
             const lastSummaryIndex = this.contextTrimService.findLastSummaryIndex(fullHistory);
             const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex + 1 : 0;
 
-            // 只对总结之后的历史进行回合识别
-            const historyAfterSummary = fullHistory.slice(historyStartIndex);
-            const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
+            // 6. 基于 token 预算解析总结范围（保留最近约 keepRecentTokens 的内容，按轮边界对齐）
+            const rangeResult = await this.resolveSummarizeRange({
+                conversationId,
+                fullHistory,
+                lastSummaryIndex,
+                mainConfigId: configId,
+                keepRecentRounds,
+                keepRecentTokens: configKeepRecentTokens,
+                mode: 'manual'
+            });
 
-            if (rounds.length <= keepRecentRounds) {
-                this.log.info('manual.not_enough_rounds', { conversationId, rounds: rounds.length, keepRecentRounds });
+            if (!rangeResult.ok) {
+                this.log.info('manual.range_unavailable', { conversationId, code: rangeResult.code, rounds: rangeResult.currentRounds, keepRecentRounds });
                 return {
                     success: false,
                     error: {
-                        code: 'NOT_ENOUGH_ROUNDS',
-                        message: t('modules.api.chat.errors.notEnoughRounds', { currentRounds: rounds.length, keepRounds: keepRecentRounds })
+                        code: rangeResult.code,
+                        message: rangeResult.code === 'NOT_ENOUGH_ROUNDS'
+                            ? t('modules.api.chat.errors.notEnoughRounds', { currentRounds: rangeResult.currentRounds, keepRounds: keepRecentRounds })
+                            : t('modules.api.chat.errors.notEnoughContent', { currentRounds: rangeResult.currentRounds, keepRounds: keepRecentRounds })
                     }
                 };
             }
 
-            // 6. 确定总结范围
-            const roundsToSummarize = rounds.length - keepRecentRounds;
-
-            if (roundsToSummarize <= 0) {
-                return {
-                    success: false,
-                    error: {
-                        code: 'NOT_ENOUGH_CONTENT',
-                        message: t('modules.api.chat.errors.notEnoughContent', { currentRounds: rounds.length, keepRounds: keepRecentRounds })
-                    }
-                };
-            }
-
-            // 计算总结范围的结束索引
-            const summarizeEndIndexRelative = roundsToSummarize >= rounds.length
-                ? historyAfterSummary.length
-                : rounds[roundsToSummarize].startIndex;
-            const summarizeEndIndex = historyStartIndex + summarizeEndIndexRelative;
+            const summarizeEndIndex = rangeResult.summarizeEndIndex;
 
             // 提取需要总结的消息：
             // - 如果存在旧总结，则用“旧总结 + 总结之后的新消息”作为输入，避免每次都把最早的原始对话重新发给 AI。
@@ -512,6 +514,7 @@ export class SummarizeService {
 
             // 从设置中读取总结配置
             let keepRecentRounds = 2;
+            let configKeepRecentTokens: number | string | undefined;  // 保留预算（缺失/非法时由 planner 回落到内置默认值）
             let useSeparateModel = false;
             let summarizeChannelId = '';
             let configAutoSummarizePrompt = '';
@@ -522,6 +525,9 @@ export class SummarizeService {
                 if (summarizeConfig) {
                     if (typeof summarizeConfig.keepRecentRounds === 'number') {
                         keepRecentRounds = summarizeConfig.keepRecentRounds;
+                    }
+                    if (typeof summarizeConfig.keepRecentTokens === 'number' || typeof summarizeConfig.keepRecentTokens === 'string') {
+                        configKeepRecentTokens = summarizeConfig.keepRecentTokens;
                     }
                     useSeparateModel = !!summarizeConfig.useSeparateModel;
                     summarizeChannelId = summarizeConfig.summarizeChannelId || '';
@@ -579,27 +585,32 @@ export class SummarizeService {
             const lastSummaryIndex = this.contextTrimService.findLastSummaryIndex(fullHistory);
             const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex + 1 : 0;
 
-            // 只对总结之后的历史进行回合识别
-            const historyAfterSummary = fullHistory.slice(historyStartIndex);
-            const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
+            // 5. 基于 token 预算解析总结范围（保留最近约 keepRecentTokens 的内容，按轮边界对齐；
+            //    极端场景下对单个超大轮做轮内截断，防止总结反复失败死锁）
+            const rangeResult = await this.resolveSummarizeRange({
+                conversationId,
+                fullHistory,
+                lastSummaryIndex,
+                mainConfigId: configId,
+                keepRecentRounds,
+                keepRecentTokens: configKeepRecentTokens,
+                mode: 'auto'
+            });
 
-            if (rounds.length <= keepRecentRounds) {
-                this.log.info('auto.not_enough_rounds', { conversationId, rounds: rounds.length, keepRecentRounds });
+            if (!rangeResult.ok) {
+                this.log.info('auto.range_unavailable', { conversationId, code: rangeResult.code, rounds: rangeResult.currentRounds, keepRecentRounds });
                 return {
                     success: false,
                     error: {
-                        code: 'NOT_ENOUGH_ROUNDS',
-                        message: t('modules.api.chat.errors.notEnoughRounds', { currentRounds: rounds.length, keepRounds: keepRecentRounds })
+                        code: rangeResult.code,
+                        message: rangeResult.code === 'NOT_ENOUGH_ROUNDS'
+                            ? t('modules.api.chat.errors.notEnoughRounds', { currentRounds: rangeResult.currentRounds, keepRounds: keepRecentRounds })
+                            : t('modules.api.chat.errors.notEnoughContent', { currentRounds: rangeResult.currentRounds, keepRounds: keepRecentRounds })
                     }
                 };
             }
 
-            // 5. 确定总结范围
-            const roundsToSummarize = rounds.length - keepRecentRounds;
-            const summarizeEndIndexRelative = roundsToSummarize >= rounds.length
-                ? historyAfterSummary.length
-                : rounds[roundsToSummarize].startIndex;
-            const summarizeEndIndex = historyStartIndex + summarizeEndIndexRelative;
+            const summarizeEndIndex = rangeResult.summarizeEndIndex;
 
             // 提取需要总结的消息（包含旧总结以实现增量总结）
             const summarizeInputStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
@@ -618,7 +629,7 @@ export class SummarizeService {
 
             // 6. 检查待总结内容是否超出总结模型的上下文
             // 获取总结模型的最大上下文（预留 50% 给输出）
-            const summarizeModelMaxContext = config.maxContextTokens ?? 128000;
+            const summarizeModelMaxContext = config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
             const maxInputTokens = Math.floor(summarizeModelMaxContext * 0.5);
 
             // 估算待总结消息的 token 量
@@ -831,6 +842,140 @@ export class SummarizeService {
     }
 
     /**
+     * 基于 token 预算解析总结范围
+     *
+     * 从最后一轮往前累计 token，能装进保留预算的轮保留，更早的轮纳入总结范围。
+     * keepRecentRounds 作为最少保留轮数下限；只有一个超大轮时回退到轮内截断。
+     *
+     * @returns summarizeEndIndex 为总结范围结束索引（fullHistory 绝对索引，同时也是总结消息插入位置）
+     */
+    private async resolveSummarizeRange(options: {
+        conversationId: string;
+        fullHistory: Content[];
+        lastSummaryIndex: number;
+        /** 主对话渠道 ID（保留预算的百分比基数与 token 口径都以主对话模型为准） */
+        mainConfigId: string;
+        keepRecentRounds: number;
+        keepRecentTokens?: number | string;
+        mode: 'manual' | 'auto';
+    }): Promise<
+        | { ok: true; summarizeEndIndex: number; intraRoundSplit: boolean; currentRounds: number }
+        | { ok: false; code: 'NOT_ENOUGH_ROUNDS' | 'NOT_ENOUGH_CONTENT'; currentRounds: number }
+    > {
+        const { conversationId, fullHistory, lastSummaryIndex, mode } = options;
+        const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex + 1 : 0;
+        const historyAfterSummary = fullHistory.slice(historyStartIndex);
+        const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
+
+        // 保留预算以主对话模型的最大上下文为基数解析
+        const mainConfig = await this.configManager.getConfig(options.mainConfigId);
+        const maxContextTokens = typeof mainConfig?.maxContextTokens === 'number' && mainConfig.maxContextTokens > 0
+            ? mainConfig.maxContextTokens
+            : DEFAULT_MAX_CONTEXT_TOKENS;
+        const channelType = mainConfig?.type || 'custom';
+        const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, maxContextTokens);
+
+        // 逐轮估算 token
+        const roundTokens = rounds.map(round => {
+            let total = 0;
+            for (let i = round.startIndex; i < round.endIndex; i++) {
+                total += this.estimateMessageTokensForBudget(historyAfterSummary[i], channelType);
+            }
+            return total;
+        });
+
+        const plan = planSummarizeRounds({
+            roundTokens,
+            keepBudgetTokens,
+            minKeepRounds: options.keepRecentRounds,
+            mode
+        });
+
+        this.log.info(`${mode}.range_plan`, {
+            conversationId,
+            rounds: rounds.length,
+            roundTokens,
+            keepBudgetTokens,
+            minKeepRounds: options.keepRecentRounds,
+            planType: plan.type,
+            keepFromRound: plan.type === 'rounds' ? plan.keepFromRound : null
+        });
+
+        if (plan.type === 'rounds') {
+            const summarizeEndIndex = historyStartIndex + rounds[plan.keepFromRound].startIndex;
+            return { ok: true, summarizeEndIndex, intraRoundSplit: false, currentRounds: rounds.length };
+        }
+
+        if (plan.type === 'intra_round') {
+            // 单个超大轮：在轮内选择不拆散工具交互配对的切点，把前半段纳入总结
+            const roundStartAbs = historyStartIndex + rounds[0].startIndex;
+            const roundMessages = fullHistory.slice(roundStartAbs);
+            const messageTokens = roundMessages.map(message => this.estimateMessageTokensForBudget(message, channelType));
+            const split = planIntraRoundSplit({ messages: roundMessages, messageTokens, keepBudgetTokens });
+
+            if (split) {
+                const summarizeEndIndex = roundStartAbs + split.cutIndex;
+                this.log.info(`${mode}.intra_round_split`, {
+                    conversationId,
+                    roundStartIndex: roundStartAbs,
+                    cutIndex: split.cutIndex,
+                    summarizeEndIndex,
+                    keepBudgetTokens
+                });
+                return { ok: true, summarizeEndIndex, intraRoundSplit: true, currentRounds: rounds.length };
+            }
+            return { ok: false, code: 'NOT_ENOUGH_CONTENT', currentRounds: rounds.length };
+        }
+
+        return { ok: false, code: 'NOT_ENOUGH_ROUNDS', currentRounds: rounds.length };
+    }
+
+    /**
+     * 估算单条消息的 token 数（用于保留预算计算）
+     *
+     * 口径与 ContextTrimService.accumulateTokens 对齐：
+     * - user 消息优先当前渠道的 tokenCountByChannel，其次 estimatedTokenCount，最后本地估算
+     * - model 消息优先 usageMetadata（输出 token 扣除思考部分），否则本地估算
+     */
+    private estimateMessageTokensForBudget(message: Content, channelType: string): number {
+        if (message.role === 'user') {
+            const byChannel = message.tokenCountByChannel?.[channelType];
+            if (typeof byChannel === 'number') {
+                return byChannel;
+            }
+            if (typeof message.estimatedTokenCount === 'number') {
+                return message.estimatedTokenCount;
+            }
+            return this.estimateSingleMessageTokensLocally(message);
+        }
+
+        const usage = message.usageMetadata;
+        if (usage) {
+            if (typeof usage.totalTokenCount === 'number' && typeof usage.promptTokenCount === 'number') {
+                const outputTokens = Math.max(0, usage.totalTokenCount - usage.promptTokenCount);
+                const thoughtsTokens = Math.min(Math.max(0, usage.thoughtsTokenCount ?? 0), outputTokens);
+                return Math.max(0, outputTokens - thoughtsTokens);
+            }
+            if (typeof usage.candidatesTokenCount === 'number') {
+                return Math.max(0, usage.candidatesTokenCount);
+            }
+        }
+        return this.estimateSingleMessageTokensLocally(message);
+    }
+
+    /**
+     * 本地估算单条消息的 token 数
+     */
+    private estimateSingleMessageTokensLocally(message: Content): number {
+        if (this.tokenEstimationService) {
+            return this.tokenEstimationService.estimateMessageTokens(message);
+        }
+        // 兜底：无 tokenEstimationService 时按统一安全系数 1.5 偏大估算
+        const text = message.parts.map(p => p.text || '').join('');
+        return Math.ceil(Math.ceil(text.length / 4) * 1.5) || 1;
+    }
+
+    /**
      * 估算一组消息的 token 数
      *
      * 用于判断待总结内容是否超出总结模型上下文。
@@ -839,13 +984,7 @@ export class SummarizeService {
     private estimateMessagesTokens(messages: Content[]): number {
         let total = 0;
         for (const msg of messages) {
-            if (this.tokenEstimationService) {
-                total += this.tokenEstimationService.estimateMessageTokens(msg);
-            } else {
-                // 兜底：无 tokenEstimationService 时按统一安全系数 1.5 偏大估算
-                const text = msg.parts.map(p => p.text || '').join('')
-                total += Math.ceil(Math.ceil(text.length / 4) * 1.5) || 1
-            }
+            total += this.estimateSingleMessageTokensLocally(msg);
         }
         return total;
     }

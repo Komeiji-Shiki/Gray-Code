@@ -137,18 +137,24 @@ async function toggleAutoExec(toolName: string, autoExec: boolean) {
   }
 }
 
-// 全部自动执行
+// 全部自动执行（Diff 审阅类工具不受本页控制，跳过）
 async function enableAllAutoExec() {
   for (const tool of tools.value) {
+    if (isDiffReviewTool(tool.name)) {
+      continue
+    }
     if (!isAutoExec(tool.name)) {
       await toggleAutoExec(tool.name, true)
     }
   }
 }
 
-// 全部需要确认
+// 全部需要确认（Diff 审阅类工具不受本页控制，跳过）
 async function disableAllAutoExec() {
   for (const tool of tools.value) {
+    if (isDiffReviewTool(tool.name)) {
+      continue
+    }
     if (isAutoExec(tool.name)) {
       await toggleAutoExec(tool.name, false)
     }
@@ -175,6 +181,14 @@ function getCategoryIcon(category: string): string {
 function isDangerousTool(toolName: string): boolean {
   const dangerousTools = ['delete_file', 'execute_command', 'create_plan']
   return dangerousTools.includes(toolName)
+}
+
+// Diff 审阅类工具：确认行为由 Diff 审阅机制管理（Apply Diff 工具设置中的“自动应用”），
+// 本页的勾选对它们不生效。与后端 services/diffReviewTools.ts 的 DIFF_REVIEW_TOOL_NAMES 保持一致。
+const DIFF_REVIEW_TOOLS = new Set(['write_file', 'apply_diff', 'insert_code', 'delete_code'])
+
+function isDiffReviewTool(toolName: string): boolean {
+  return DIFF_REVIEW_TOOLS.has(toolName)
 }
 
 // 检查工具是否是 MCP 工具
@@ -262,7 +276,14 @@ onMounted(() => {
               <div class="tool-description">{{ tool.description }}</div>
             </div>
             
-            <div class="tool-toggle" :class="{ saving: savingTools.has(tool.name) }">
+            <!-- Diff 审阅类工具：显示真实生效状态而非误导性勾选框 -->
+            <div v-if="isDiffReviewTool(tool.name)" class="tool-toggle">
+              <span class="diff-review-badge" :title="t('components.settings.autoExec.diffReview.tooltip')">
+                <i class="codicon codicon-git-compare"></i>
+                {{ t('components.settings.autoExec.diffReview.label') }}
+              </span>
+            </div>
+            <div v-else class="tool-toggle" :class="{ saving: savingTools.has(tool.name) }">
               <span class="toggle-label" :class="{ 'auto-exec': isAutoExec(tool.name) }">
                 {{ isAutoExec(tool.name) ? t('components.settings.autoExec.status.autoExecute') : t('components.settings.autoExec.status.needConfirm') }}
               </span>
@@ -281,6 +302,7 @@ onMounted(() => {
     <div class="settings-tips">
       <i class="codicon codicon-info"></i>
       <div class="tips-content">
+        <p>{{ t('components.settings.autoExec.tips.diffReviewNote') }}</p>
         <p>{{ t('components.settings.autoExec.tips.dangerousDefault') }}</p>
         <p>{{ t('components.settings.autoExec.tips.deleteFileWarning') }}</p>
         <p>{{ t('components.settings.autoExec.tips.executeCommandWarning') }}</p>
@@ -540,6 +562,25 @@ onMounted(() => {
 
 .toggle-label.auto-exec {
   color: var(--vscode-terminal-ansiGreen);
+}
+
+/* Diff 审阅类工具的状态徽标 */
+.diff-review-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--vscode-textBlockQuote-background);
+  color: var(--vscode-textLink-foreground);
+  border: 1px solid var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+.diff-review-badge .codicon {
+  font-size: 12px;
 }
 
 /* 提示信息 */

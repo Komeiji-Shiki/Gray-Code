@@ -5,6 +5,7 @@
  */
 
 import { t } from '../../backend/i18n';
+import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -72,10 +73,22 @@ export const cancelSummarizeRequest: MessageHandler = async (data, requestId, ct
 };
 
 /**
+ * 聊天输入框焦点状态上报
+ *
+ * 前端输入框 focus/blur 时调用；扩展端在关闭 diff 标签页前据此判断
+ * 是否需要在关闭后把焦点归还给聊天输入框（见 backend/core/chatFocusGuard.ts）。
+ */
+export const chatInputFocusState: MessageHandler = async (data, requestId, ctx) => {
+  setChatInputFocused(data?.focused === true);
+  ctx.sendResponse(requestId, { success: true });
+};
+
+/**
  * 注册聊天处理器
  */
 export function registerChatHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('deleteMessage', deleteMessage);
   registry.set('deleteSingleMessage', deleteSingleMessage);
   registry.set('cancelSummarizeRequest', cancelSummarizeRequest);
+  registry.set('chatInput.focusState', chatInputFocusState);
 }

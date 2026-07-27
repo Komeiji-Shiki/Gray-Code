@@ -3,7 +3,7 @@
  */
 
 import { t } from '../../backend/i18n';
-import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager } from '../../backend/tools';
+import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
 
 // ========== 工具列表和配置 ==========
@@ -268,6 +268,21 @@ export const terminalGetOutput: MessageHandler = async (data, requestId, ctx) =>
   }
 };
 
+/**
+ * 用户在命令执行期间发送新消息：把当前会话正在前台等待的命令转入后台。
+ * 工具立即返回“已转后台”结果，模型得以尽快收尾并响应用户的新消息；
+ * 命令完成后结果经任务事件回流为 [Background task completed] 回执。
+ */
+export const terminalDetachToBackground: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+    const result = detachRunningTerminalsToBackground(conversationId);
+    ctx.sendResponse(requestId, { success: true, detached: result.detached });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'TERMINAL_DETACH_ERROR', error.message || 'Failed to detach running terminal to background');
+  }
+};
+
 // ========== 图像生成 ==========
 
 export const imageGenerationCancel: MessageHandler = async (data, requestId, ctx) => {
@@ -362,6 +377,7 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   // 终端管理
   registry.set('terminal.kill', terminalKill);
   registry.set('terminal.getOutput', terminalGetOutput);
+  registry.set('terminal.detachToBackground', terminalDetachToBackground);
   
   // 图像生成
   registry.set('imageGeneration.cancel', imageGenerationCancel);

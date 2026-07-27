@@ -450,7 +450,8 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
         const importResult = await exporter.importFromData(data_, {
             overwriteChannelConfigs: shouldOverwrite,
             overwriteMcpServers: shouldOverwrite,
-            overwriteSkills: shouldOverwrite
+            overwriteSkills: shouldOverwrite,
+            overwriteVscodeSettings: shouldOverwrite
         });
 
         ctx.sendResponse(requestId, {

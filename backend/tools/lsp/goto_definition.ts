@@ -44,6 +44,7 @@ Returns the complete definition code with line numbers.`;
     return {
         declaration: {
             name: 'goto_definition',
+            readOnly: true,
             description,
             category: 'lsp',
             parameters: {

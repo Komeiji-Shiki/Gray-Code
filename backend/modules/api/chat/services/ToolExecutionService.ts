@@ -7,9 +7,12 @@
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore, ToolProgressEmitter } from '../../../../tools/types';
-import { coerceToolArgs, getToolArgsArrayValidationError, type ToolParameterSchema } from '../../../../tools/coerceToolArgs';
+import { normalizeToolArgs } from '../../../../tools/coerceToolArgs';
 
 import { validateToolArgs } from '../../../../tools/validateToolArgs';
+import { TOOL_CALL_PARSE_ERROR_ARG_KEY } from '../../../../tools/promptToolParser';
+import { REPEATED_CALL_GUARD_ARG_KEY } from './repeatedCallGuard';
+import { isDiffReviewToolCall } from './diffReviewTools';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
@@ -26,6 +29,7 @@ import {
     getOutsideWorkspaceRejectionReason,
     toolCallNeedsOutsideWorkspaceConfirmation
 } from '../../../../tools/file/outsideWorkspaceAccess';
+import { fileWriteLockManager, getWritePathsForCall, type LockHolder } from '../../../../core/fileWriteLockManager';
 
 /**
  * 工具执行完整结果
@@ -50,6 +54,20 @@ export interface ToolExecutionFullResult {
     checkpoints: CheckpointRecord[];
     /** 多模态附件（仅 xml/json 模式时使用） */
     multimodalAttachments?: ContentPart[];
+}
+
+/**
+ * 深拷贝工具响应，用于历史记录与前端展示的数据隔离。
+ *
+ * structuredClone 比 JSON 序列化往返快得多（大文本 / 多模态 base64 场景尤其明显）；
+ * 遇到不可结构化克隆的值（如函数）时回退到 JSON 方式，保持与旧行为一致。
+ */
+function cloneToolResponse(response: Record<string, unknown>): Record<string, unknown> {
+    try {
+        return structuredClone(response);
+    } catch {
+        return JSON.parse(JSON.stringify(response));
+    }
 }
 
 /**
@@ -138,14 +156,11 @@ export class ToolExecutionService {
     /**
      * 执行函数调用并返回完整结果
      *
-     * 检查点策略：
-     * - 在所有工具执行前创建一个检查点（使用 'tool_batch' 作为 toolName）
-     * - 在所有工具执行后创建一个检查点
-     * - 这样一条消息无论有多少个工具调用，只会创建一对检查点
+     * 实现说明：内部直接驱动 executeFunctionCallsWithProgress 到完成并丢弃进度事件，
+     * 与带进度版本共享同一份执行逻辑（检查点、参数规范化、策略过滤、多模态处理），
+     * 避免两处几乎相同的实现各自漂移。
      *
-     * 多模态数据处理：
-     * - 对于 function_call 模式：使用 functionResponse.parts 包含多模态数据
-     * - 对于 xml/json 模式：将多模态数据作为用户消息的 inlineData 附件发送
+     * 检查点策略与多模态处理的具体说明见 executeFunctionCallsWithProgress。
      *
      * @param calls 函数调用列表
      * @param conversationId 对话 ID（用于创建检查点）
@@ -162,212 +177,28 @@ export class ToolExecutionService {
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         executionOptions?: Set<string> | ToolProgressEmitter,
-        progressEmitter?: ToolProgressEmitter
+        progressEmitter?: ToolProgressEmitter,
+        attribution?: LockHolder
     ): Promise<ToolExecutionFullResult> {
-        const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
-        const resolvedProgressEmitter = typeof executionOptions === 'function'
-            ? executionOptions
-            : progressEmitter;
+        const generator = this.executeFunctionCallsWithProgress(
+            calls,
+            conversationId,
+            messageIndex,
+            config,
+            abortSignal,
+            promptModeSnapshot,
+            executionOptions,
+            progressEmitter,
+            attribution
+        );
 
-        const responseParts: ContentPart[] = [];
-        const toolResults: ToolExecutionResult[] = [];
-        const checkpoints: CheckpointRecord[] = [];
-        const multimodalAttachments: ContentPart[] = [];
-
-        // 获取工具调用模式
-        const toolMode = config?.toolMode || 'function_call';
-        const isPromptMode = toolMode === 'xml' || toolMode === 'json';
-
-        // 处理 subagents 调用数量限制
-        const processedCalls = this.applySubagentsLimit(calls);
-
-        // 确定检查点的工具名称
-        // 如果只有一个工具调用，使用该工具名称
-        // 如果有多个工具调用，使用 'tool_batch'
-        const toolNameForCheckpoint = processedCalls.allowed.length === 1 ? processedCalls.allowed[0].name : 'tool_batch';
-
-        // 在所有工具执行前创建一个检查点
-        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
-            const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
-                conversationId,
-                messageIndex,
-                toolNameForCheckpoint,
-                'before'
-            );
-            if (beforeCheckpoint) {
-                checkpoints.push(beforeCheckpoint);
-            }
+        let next = await generator.next();
+        while (!next.done) {
+            next = await generator.next();
         }
-
-        // 处理被限制的 subagents 调用（直接返回拒绝结果）
-        for (const call of processedCalls.rejected) {
-            const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
-            const response: Record<string, unknown> = {
-                success: false,
-                error: `Exceeded maximum concurrent sub-agents limit (${maxConcurrent}). This call was automatically rejected.`,
-                rejected: true
-            };
-
-            toolResults.push({
-                id: call.id,
-                name: call.name,
-                args: call.args,
-                result: response
-            });
-
-            responseParts.push({
-                functionResponse: {
-                    id: call.id,
-                    name: call.name,
-                    response
-                }
-            });
-        }
-
-        // 执行允许的工具
-        for (const call of processedCalls.allowed) {
-            // 检查是否已取消
-            if (abortSignal?.aborted) {
-                break;
-            }
-
-            const preparedCall = this.prepareToolCallForExecution(call);
-            if (preparedCall.error) {
-                const response: Record<string, unknown> = {
-                    success: false,
-                    error: preparedCall.error
-                };
-
-                toolResults.push({
-                    id: preparedCall.call.id,
-                    name: preparedCall.call.name,
-                    args: preparedCall.call.args,
-                    result: JSON.parse(JSON.stringify(response))
-                });
-
-                responseParts.push({
-                    functionResponse: {
-                        id: preparedCall.call.id,
-                        name: preparedCall.call.name,
-                        response
-                    }
-                });
-                continue;
-            }
-
-            const executionCall = preparedCall.call;
-
-            // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args, promptModeSnapshot);
-            if (rejectionReason) {
-                const response: Record<string, unknown> = {
-                    success: false,
-                    error: rejectionReason,
-                    rejected: true
-                };
-
-                toolResults.push({
-                    id: executionCall.id,
-                    name: executionCall.name,
-                    args: executionCall.args,
-                    result: JSON.parse(JSON.stringify(response))
-                });
-
-                responseParts.push({
-                    functionResponse: {
-                        id: executionCall.id,
-                        name: executionCall.name,
-                        response
-                    }
-                });
-                continue;
-            }
-
-            let response: Record<string, unknown>;
-
-            try {
-                if (isMcpToolName(executionCall.name) && this.mcpManager) {
-                    response = await this.executeMcpTool(executionCall);
-                } else {
-                    response = await this.executeBuiltinTool(
-                        executionCall,
-                        conversationId,
-                        config,
-                        abortSignal,
-                        promptModeSnapshot,
-                        approvedToolCallIds?.has(executionCall.id) === true,
-                        resolvedProgressEmitter
-                    );
-                }
-            } catch (error) {
-                const err = error as Error;
-                response = {
-                    success: false,
-                    error: err.message || t('modules.api.chat.errors.toolExecutionFailed')
-                };
-            }
-
-            // 添加到工具结果（使用深拷贝，保留完整数据供前端显示）
-            // 注意：后续会删除 response.multimodal，但 toolResults 需要保留原始数据
-            toolResults.push({
-                id: executionCall.id,
-                name: executionCall.name,
-                args: executionCall.args,
-                result: JSON.parse(JSON.stringify(response))
-            });
-
-            // 处理多模态数据
-            const multimodalData = (response as any).multimodal as Array<{
-                mimeType: string;
-                data: string;
-                name?: string;
-            }> | undefined;
-
-            // 根据工具模式和渠道类型处理多模态数据
-            if (multimodalData && multimodalData.length > 0) {
-                this.processMultimodalData(
-                    multimodalData,
-                    response,
-                    executionCall,
-                    config,
-                    toolMode,
-                    isPromptMode,
-                    responseParts,
-                    multimodalAttachments
-                );
-                continue; // 已在 processMultimodalData 中处理了 responseParts
-            }
-
-            // 构建函数响应 part（包含 id 用于 Anthropic API）
-            responseParts.push({
-                functionResponse: {
-                    name: executionCall.name,
-                    response,
-                    id: executionCall.id
-                }
-            });
-        }
-
-        // 在所有工具执行后创建一个检查点
-        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
-            const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
-                conversationId,
-                messageIndex,
-                toolNameForCheckpoint,
-                'after'
-            );
-            if (afterCheckpoint) {
-                checkpoints.push(afterCheckpoint);
-            }
-        }
-
-        return {
-            responseParts,
-            toolResults,
-            checkpoints,
-            multimodalAttachments: multimodalAttachments.length > 0 ? multimodalAttachments : undefined
-        };
+        return next.value;
     }
+
 
     /**
      * 执行函数调用（带进度事件）
@@ -386,7 +217,8 @@ export class ToolExecutionService {
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         executionOptions?: Set<string> | ToolProgressEmitter,
-        progressEmitter?: ToolProgressEmitter
+        progressEmitter?: ToolProgressEmitter,
+        attribution?: LockHolder
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
         const resolvedProgressEmitter = typeof executionOptions === 'function'
@@ -402,10 +234,7 @@ export class ToolExecutionService {
         const toolMode = config?.toolMode || 'function_call';
         const isPromptMode = toolMode === 'xml' || toolMode === 'json';
 
-        // 处理 subagents 调用数量限制
-        const processedCalls = this.applySubagentsLimit(calls);
-
-        const toolNameForCheckpoint = processedCalls.allowed.length === 1 ? processedCalls.allowed[0].name : 'tool_batch';
+        const toolNameForCheckpoint = calls.length === 1 ? calls[0].name : 'tool_batch';
 
         // 在所有工具执行前创建一个检查点
         if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
@@ -420,75 +249,72 @@ export class ToolExecutionService {
             }
         }
 
-        // 处理被限制的 subagents 调用（直接返回拒绝结果）
-        for (const call of processedCalls.rejected) {
-            const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
-            const response: Record<string, unknown> = {
-                success: false,
-                error: `Exceeded maximum concurrent sub-agents limit (${maxConcurrent}). This call was automatically rejected.`,
-                rejected: true
+        // 执行工具。
+        // 相邻的纯只读工具（declaration.readOnly === true）会被并行执行，
+        // 降低“一次响应携带多个读取/搜索调用”时的累计延迟；
+        // 相邻的 subagents 调用同样并行执行（实际并发由全局信号量控制，超出上限的排队）；
+        // 写类工具、被策略过滤的调用和 MCP 工具保持严格串行。
+        const preparedList = calls.map(call => {
+            const prepared = this.prepareToolCallForExecution(call);
+            const rejectionReason = prepared.error
+                ? null
+                : this.getToolRejectionReason(prepared.call.name, prepared.call.args, promptModeSnapshot);
+            const runnable = !prepared.error && !rejectionReason;
+            return {
+                executionCall: prepared.call,
+                warnings: prepared.warnings,
+                error: prepared.error,
+                rejectionReason,
+                parallelSafe: runnable && this.isParallelSafeTool(prepared.call.name),
+                // 修改原因：多个 subagents 调用过去严格串行，模型一次派发多个子代理无法真正并行。
+                // 修改方式：把连续的 subagents 调用识别为专用并行组，与 readOnly 并行组互不混合。
+                // 修改目的：一次响应内的多个子代理同时执行，并发上限交给 SubAgentConcurrencyLimiter 排队控制。
+                isSubAgentCall: runnable && prepared.call.name === 'subagents'
             };
+        });
 
-            const tr: ToolExecutionResult = {
-                id: call.id,
-                name: call.name,
-                args: call.args,
-                result: response
-            };
-
-            toolResults.push(tr);
-            responseParts.push({
-                functionResponse: {
-                    id: call.id,
-                    name: call.name,
-                    response
-                }
-            });
-
-            // 对于被自动拒绝的工具，直接给一个 end 事件（不发 start，避免 UI 把它当作“执行中”）
-            yield { type: 'end', call, toolResult: tr };
-        }
-
-        // 执行允许的工具
-        for (const call of processedCalls.allowed) {
+        let index = 0;
+        while (index < preparedList.length) {
             if (abortSignal?.aborted) {
                 break;
             }
 
-            const preparedCall = this.prepareToolCallForExecution(call);
-            if (preparedCall.error) {
+            const current = preparedList[index];
+            const executionCall = current.executionCall;
+
+            // 参数错误（含解析失败/护栏拦截的合成错误）：直接回传错误结果
+            if (current.error) {
                 const response: Record<string, unknown> = {
                     success: false,
-                    error: preparedCall.error
+                    error: current.error,
+                    ...(current.warnings.length > 0 ? { parameterWarnings: current.warnings } : {})
                 };
 
                 const toolResult: ToolExecutionResult = {
-                    id: preparedCall.call.id,
-                    name: preparedCall.call.name,
-                    args: preparedCall.call.args,
-                    result: JSON.parse(JSON.stringify(response))
+                    id: executionCall.id,
+                    name: executionCall.name,
+                    args: executionCall.args,
+                    result: cloneToolResponse(response)
                 };
                 toolResults.push(toolResult);
                 responseParts.push({
                     functionResponse: {
-                        id: preparedCall.call.id,
-                        name: preparedCall.call.name,
+                        id: executionCall.id,
+                        name: executionCall.name,
                         response
                     }
                 });
 
-                yield { type: 'end', call: preparedCall.call, toolResult };
+                yield { type: 'end', call: executionCall, toolResult };
+                index++;
                 continue;
             }
 
-            const executionCall = preparedCall.call;
-
             // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args, promptModeSnapshot);
-            if (rejectionReason) {
+            if (current.rejectionReason) {
                 const response: Record<string, unknown> = {
                     success: false,
-                    error: rejectionReason,
+                    error: current.rejectionReason,
                     rejected: true
                 };
 
@@ -496,7 +322,7 @@ export class ToolExecutionService {
                     id: executionCall.id,
                     name: executionCall.name,
                     args: executionCall.args,
-                    result: JSON.parse(JSON.stringify(response))
+                    result: cloneToolResponse(response)
                 };
                 toolResults.push(toolResult);
                 responseParts.push({
@@ -509,74 +335,93 @@ export class ToolExecutionService {
 
                 // 被策略拒绝的工具：直接给 end 事件（不发 start，避免 UI 把它当作“执行中”）
                 yield { type: 'end', call: executionCall, toolResult };
+                index++;
                 continue;
             }
 
-            yield { type: 'start', call: executionCall };
+            // 收集从当前位置开始的连续可并行段：
+            // - subagents 段：同一响应中的多个子代理并行执行（信号量负责限流与排队）；
+            // - 只读工具段：维持原有 readOnly 并行规则。两类分组互不混合。
+            let groupEnd = index;
+            if (current.isSubAgentCall) {
+                while (groupEnd < preparedList.length && preparedList[groupEnd].isSubAgentCall) {
+                    groupEnd++;
+                }
+            } else {
+                while (groupEnd < preparedList.length && preparedList[groupEnd].parallelSafe) {
+                    groupEnd++;
+                }
+            }
 
-            let response: Record<string, unknown>;
+            if (groupEnd - index > 1) {
+                const group = preparedList.slice(index, groupEnd);
 
-            try {
-                if (isMcpToolName(executionCall.name) && this.mcpManager) {
-                    response = await this.executeMcpTool(executionCall);
-                } else {
-                    response = await this.executeBuiltinTool(
-                        executionCall,
+                for (const item of group) {
+                    yield { type: 'start', call: item.executionCall };
+                }
+
+                const responses = await Promise.all(group.map(item =>
+                    this.runSingleToolCall(
+                        item.executionCall,
                         conversationId,
                         config,
                         abortSignal,
                         promptModeSnapshot,
-                        approvedToolCallIds?.has(executionCall.id) === true,
-                        resolvedProgressEmitter
+                        approvedToolCallIds,
+                        resolvedProgressEmitter,
+                        attribution
+                    )
+                ));
+
+                for (let k = 0; k < group.length; k++) {
+                    const toolResult = this.finalizeToolResponse(
+                        group[k].executionCall,
+                        responses[k],
+                        group[k].warnings,
+                        config,
+                        toolMode,
+                        isPromptMode,
+                        responseParts,
+                        toolResults,
+                        multimodalAttachments
                     );
+                    yield { type: 'end', call: group[k].executionCall, toolResult };
                 }
-            } catch (error) {
-                const err = error as Error;
-                response = {
-                    success: false,
-                    error: err.message || t('modules.api.chat.errors.toolExecutionFailed')
-                };
+
+                index = groupEnd;
+                continue;
             }
 
-            const toolResult: ToolExecutionResult = {
-                id: executionCall.id,
-                name: executionCall.name,
-                args: executionCall.args,
-                // 深拷贝：保留完整数据供前端显示
-                result: JSON.parse(JSON.stringify(response))
-            };
-            toolResults.push(toolResult);
+            // 串行执行
+            yield { type: 'start', call: executionCall };
 
-            // 处理多模态数据
-            const multimodalData = (response as any).multimodal as Array<{
-                mimeType: string;
-                data: string;
-                name?: string;
-            }> | undefined;
+            const response = await this.runSingleToolCall(
+                executionCall,
+                conversationId,
+                config,
+                abortSignal,
+                promptModeSnapshot,
+                approvedToolCallIds,
+                resolvedProgressEmitter,
+                attribution
+            );
 
-            if (multimodalData && multimodalData.length > 0) {
-                this.processMultimodalData(
-                    multimodalData,
-                    response,
-                    executionCall,
-                    config,
-                    toolMode,
-                    isPromptMode,
-                    responseParts,
-                    multimodalAttachments
-                );
-            } else {
-                responseParts.push({
-                    functionResponse: {
-                        name: executionCall.name,
-                        response,
-                        id: executionCall.id
-                    }
-                });
-            }
+            const toolResult = this.finalizeToolResponse(
+                executionCall,
+                response,
+                current.warnings,
+                config,
+                toolMode,
+                isPromptMode,
+                responseParts,
+                toolResults,
+                multimodalAttachments
+            );
 
             yield { type: 'end', call: executionCall, toolResult };
+            index++;
         }
+
 
         // 在所有工具执行后创建一个检查点
         if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
@@ -650,84 +495,158 @@ export class ToolExecutionService {
         }
     }
 
-    private stripKnownUpdatePlanContinuationFields(
-        args: Record<string, any>,
-        schema: ToolParameterSchema | undefined
-    ): Record<string, any> {
-        if (!args || typeof args !== 'object' || !schema?.properties) {
-            return args;
-        }
-
-        const knownCarryOverFields = [
-            'continuationApproved',
-            'continuationIntent',
-            'continuationPrompt',
-            'sourceArtifactType',
-            'sourcePath',
-            'sourceContent',
-            'planExecutionPrompt',
-            'planGenerationPrompt',
-            'planPath',
-            'planContent',
-            'designPath',
-            'designContent',
-            'reviewPath',
-            'reviewContent'
-        ];
-
-        const nextArgs = { ...args };
-        let modified = false;
-        for (const key of knownCarryOverFields) {
-            if (key in nextArgs && !(key in schema.properties)) {
-                delete nextArgs[key];
-                modified = true;
-            }
-        }
-        return modified ? nextArgs : args;
-    }
-
     private prepareToolCallForExecution(
         call: FunctionCallInfo
-    ): { call: FunctionCallInfo; error: string | null } {
+    ): { call: FunctionCallInfo; error: string | null; warnings: string[] } {
+        // 合成错误调用拦截：
+        // - prompt 模式（JSON/XML）下解析失败的块（携带解析错误）
+        // - 重复失败调用护栏拦截的调用（携带护栏提示）
+        // 这些调用不进入真实执行，直接把错误作为工具结果回传给模型
+        for (const syntheticErrorKey of [TOOL_CALL_PARSE_ERROR_ARG_KEY, REPEATED_CALL_GUARD_ARG_KEY]) {
+            const syntheticError = call.args && typeof call.args[syntheticErrorKey] === 'string'
+                ? call.args[syntheticErrorKey] as string
+                : null;
+            if (syntheticError) {
+                return { call, error: syntheticError, warnings: [] };
+            }
+        }
+
         if (isMcpToolName(call.name)) {
-            return { call, error: null };
+            return { call, error: null, warnings: [] };
         }
 
         const tool = this.toolRegistry?.getTool(call.name);
         if (!tool) {
-            return { call, error: null };
+            return { call, error: null, warnings: [] };
         }
 
         const schema = tool.declaration?.parameters;
 
-        // 1. 类型容错：将 "true"→true, "30"→30, "[...]"字符串→数组
-        const normalizedArgs = coerceToolArgs(call.args, schema);
-        const preparedArgs = call.name === 'update_plan'
-            ? this.stripKnownUpdatePlanContinuationFields(normalizedArgs, schema)
-            : normalizedArgs;
+        // 1. 规范化：单数别名提升（path→paths）、递归类型容错（"true"→true 等）、
+        //    未知参数剥离（含 update_plan 的 carry-over 字段等）。
+        //    所有自动纠正都会生成警告，随工具结果回传给模型。
+        const { args: preparedArgs, warnings } = normalizeToolArgs(call.name, call.args, schema, {
+            paramAliases: tool.declaration?.paramAliases,
+            compatParams: tool.declaration?.compatParams
+        });
 
-        // 2. 数组专项校验：coerceToolArgs 处理后仍不是数组的，直接报错
-        const error = getToolArgsArrayValidationError(
-            call.name,
-            preparedArgs,
-            schema
-        );
-        if (error) {
-            return {
-                call: preparedArgs === call.args ? call : { ...call, args: preparedArgs },
-                error
-            };
-        }
-
-        // 3. 完整 schema 校验：检查必需字段、类型匹配、多余字段
-        
+        // 2. schema 校验：必需字段缺失、类型不匹配（规范化后仍无法修复的才报错）
         const schemaError = validateToolArgs(call.name, preparedArgs, schema);
 
         return {
             call: preparedArgs === call.args ? call : { ...call, args: preparedArgs },
-            error: schemaError
+            error: schemaError,
+            warnings
         };
     }
+
+    /**
+     * 工具是否可以与相邻只读工具并行执行。
+     * 仅内置工具且声明 readOnly: true 的才允许；MCP 工具行为未知，一律串行。
+     */
+    private isParallelSafeTool(toolName: string): boolean {
+        if (isMcpToolName(toolName)) {
+            return false;
+        }
+        return this.toolRegistry?.getTool(toolName)?.declaration?.readOnly === true;
+    }
+
+    /**
+     * 执行单个工具调用（MCP 或内置），异常统一转为错误响应。
+     */
+    private async runSingleToolCall(
+        executionCall: FunctionCallInfo,
+        conversationId: string | undefined,
+        config: BaseChannelConfig | undefined,
+        abortSignal: AbortSignal | undefined,
+        promptModeSnapshot: ResolvedPromptModeSnapshot | undefined,
+        approvedToolCallIds: Set<string> | undefined,
+        progressEmitter: ToolProgressEmitter | undefined,
+        attribution?: LockHolder
+    ): Promise<Record<string, unknown>> {
+        try {
+            if (isMcpToolName(executionCall.name) && this.mcpManager) {
+                return await this.executeMcpTool(executionCall);
+            }
+            return await this.executeBuiltinTool(
+                executionCall,
+                conversationId,
+                config,
+                abortSignal,
+                promptModeSnapshot,
+                approvedToolCallIds?.has(executionCall.id) === true,
+                progressEmitter,
+                attribution
+            );
+        } catch (error) {
+            const err = error as Error;
+            return {
+                success: false,
+                error: err.message || t('modules.api.chat.errors.toolExecutionFailed')
+            };
+        }
+    }
+
+    /**
+     * 把工具响应落入 toolResults / responseParts / multimodalAttachments，
+     * 并附加参数规范化警告。返回构造好的 ToolExecutionResult。
+     */
+    private finalizeToolResponse(
+        executionCall: FunctionCallInfo,
+        response: Record<string, unknown>,
+        warnings: string[],
+        config: BaseChannelConfig | undefined,
+        toolMode: string,
+        isPromptMode: boolean,
+        responseParts: ContentPart[],
+        toolResults: ToolExecutionResult[],
+        multimodalAttachments: ContentPart[]
+    ): ToolExecutionResult {
+        // 参数规范化警告随结果回传，帮助模型在后续调用中修正参数写法
+        if (warnings.length > 0 && response.parameterWarnings === undefined) {
+            response.parameterWarnings = warnings;
+        }
+
+        const toolResult: ToolExecutionResult = {
+            id: executionCall.id,
+            name: executionCall.name,
+            args: executionCall.args,
+            // 深拷贝：保留完整数据供前端显示
+            result: cloneToolResponse(response)
+        };
+        toolResults.push(toolResult);
+
+        // 处理多模态数据
+        const multimodalData = (response as any).multimodal as Array<{
+            mimeType: string;
+            data: string;
+            name?: string;
+        }> | undefined;
+
+        if (multimodalData && multimodalData.length > 0) {
+            this.processMultimodalData(
+                multimodalData,
+                response,
+                executionCall,
+                config,
+                toolMode,
+                isPromptMode,
+                responseParts,
+                multimodalAttachments
+            );
+        } else {
+            responseParts.push({
+                functionResponse: {
+                    name: executionCall.name,
+                    response,
+                    id: executionCall.id
+                }
+            });
+        }
+
+        return toolResult;
+    }
+
 
 
     /**
@@ -740,7 +659,8 @@ export class ToolExecutionService {
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         approvedByToolConfirmation?: boolean,
-        progressEmitter?: ToolProgressEmitter
+        progressEmitter?: ToolProgressEmitter,
+        attribution?: LockHolder
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -749,6 +669,31 @@ export class ToolExecutionService {
                 success: false,
                 error: t('modules.api.chat.errors.toolNotFound', { toolName: call.name })
             };
+        }
+
+        // 修改原因：SubAgent 并行执行后，多个执行方可能同时写同一文件导致互相覆盖。
+        // 修改方式：写类工具执行前按目标路径尝试加全局互斥锁；撞车时立即返回带 lockConflict 标志的失败结果（非阻塞）。
+        // 修改目的：后来者的 LLM 收到"先做其他部分，稍后再回来"的提示自行调度；diff 预览确认期间锁保持持有。
+        const writePaths = getWritePathsForCall(call.name, call.args as Record<string, unknown>);
+        const lockHolder: LockHolder = attribution ?? {
+            kind: 'main',
+            id: conversationId ? `conversation_${conversationId}` : 'main',
+            label: 'main session'
+        };
+        let lockedPaths: string[] | null = null;
+        if (writePaths && writePaths.length > 0) {
+            const lockResult = fileWriteLockManager.tryAcquire(writePaths, lockHolder);
+            if (!lockResult.acquired) {
+                const conflictText = lockResult.conflicts
+                    .map(c => `'${c.path}' is currently being modified by ${c.holder.kind === 'subagent' ? `agent "${c.holder.label}"` : c.holder.label}`)
+                    .join('; ');
+                return {
+                    success: false,
+                    error: `File write conflict: ${conflictText}. Do NOT wait or retry this file immediately. Work on other parts of your task first, then come back to this file after the current holder finishes.`,
+                    lockConflict: true
+                };
+            }
+            lockedPaths = writePaths;
         }
 
         // 获取渠道多模态能力
@@ -769,6 +714,10 @@ export class ToolExecutionService {
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
             conversationStore: this.conversationStore,
+            // 修改原因：General Worker 虚拟子代理需要继承主会话当前渠道，而渠道 id 只在这一层可见。
+            // 修改方式：把当前请求渠道配置 id 注入 toolContext，供 subagents handler 构造动态 worker 配置。
+            // 修改目的：用户零配置即可让主模型派发与自己同渠道同权限的 worker。
+            channelConfigId: config?.id,
             // 让 SubAgent Monitor 和长耗时工具复用同一工具执行链路上报进度。
             emitProgress: progressEmitter
                 ? (event: Parameters<ToolProgressEmitter>[0]) => progressEmitter({
@@ -785,8 +734,14 @@ export class ToolExecutionService {
         // 为特定工具添加配置
         this.addToolSpecificConfig(call.name, toolContext);
 
-        const result = await tool.handler(call.args, toolContext);
-        return result as unknown as Record<string, unknown>;
+        try {
+            const result = await tool.handler(call.args, toolContext);
+            return result as unknown as Record<string, unknown>;
+        } finally {
+            if (lockedPaths) {
+                fileWriteLockManager.release(lockedPaths, lockHolder);
+            }
+        }
     }
 
     /**
@@ -948,7 +903,11 @@ export class ToolExecutionService {
             return true;
         }
 
-        if (this.isManualDiffReviewWriteTool(toolName)) {
+        // diff 审阅类调用（write_file/apply_diff/insert_code/delete_code/search_in_files replace）
+        // 不走聊天确认：diff 机制本身就是它们的确认层——
+        // autoSave 关闭时用户在 diff 视图中手动确认；autoSave 开启时用户已明确选择自动应用。
+        // 确认行为的唯一数据源是 apply_diff 工具设置，避免“两个设置页都要配置”的困惑。
+        if (isDiffReviewToolCall(toolName, args)) {
             return false;
         }
 
@@ -956,13 +915,6 @@ export class ToolExecutionService {
         // isToolAutoExec 返回 true 表示自动执行，不需要确认
         // isToolAutoExec 返回 false 表示需要确认
         return !this.settingsManager.isToolAutoExec(toolName);
-    }
-
-    private isManualDiffReviewWriteTool(toolName: string): boolean {
-        if (toolName !== 'write_file' && toolName !== 'apply_diff') {
-            return false;
-        }
-        return this.settingsManager?.getApplyDiffConfig().autoSave !== true;
     }
 
     /**
@@ -973,51 +925,6 @@ export class ToolExecutionService {
      */
     getToolsNeedingConfirmation(calls: FunctionCallInfo[], promptModeSnapshot?: ResolvedPromptModeSnapshot): FunctionCallInfo[] {
         return calls.filter(call => this.toolNeedsConfirmation(call.name, call.args, promptModeSnapshot));
-    }
-
-    /**
-     * 应用 subagents 数量限制
-     * 
-     * 检查工具调用列表中的 subagents 调用数量，
-     * 如果超过 maxConcurrentAgents 限制，将超出的调用标记为拒绝
-     * 
-     * @param calls 工具调用列表
-     * @returns 分离后的允许和拒绝调用列表
-     */
-    private applySubagentsLimit(calls: FunctionCallInfo[]): {
-        allowed: FunctionCallInfo[];
-        rejected: FunctionCallInfo[];
-    } {
-        // 获取配置
-        const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
-        
-        // -1 表示无限制
-        if (maxConcurrent === -1) {
-            return { allowed: calls, rejected: [] };
-        }
-        
-        const allowed: FunctionCallInfo[] = [];
-        const rejected: FunctionCallInfo[] = [];
-        let subagentsCount = 0;
-        
-        for (const call of calls) {
-            if (call.name === 'subagents') {
-                if (subagentsCount < maxConcurrent) {
-                    allowed.push(call);
-                    subagentsCount++;
-                } else {
-                    rejected.push(call);
-                }
-            } else {
-                allowed.push(call);
-            }
-        }
-        
-        if (rejected.length > 0) {
-            console.log(`[ToolExecution] Rejected ${rejected.length} subagents calls due to maxConcurrentAgents limit (${maxConcurrent})`);
-        }
-        
-        return { allowed, rejected };
     }
 
     /**
@@ -1061,41 +968,18 @@ export class ToolExecutionService {
     private validatePlanModeWriteFileArgs(
         args?: Record<string, unknown>
     ): { ok: true } | { ok: false; error: string } {
+        // write_file 的 schema 只有单文件 path 形式；旧的 files[] 数组分支是死代码
+        //（schema 校验会先拒绝无 path 的调用），这里保持与 schema 一致的单一路径。
         const rawPath = (args as any)?.path;
-        const files = typeof rawPath === 'string'
-            ? [{ path: rawPath }]
-            : (args as any)?.files;
-
-        if (!Array.isArray(files) || files.length === 0) {
+        if (typeof rawPath !== 'string' || !rawPath.trim()) {
             return { ok: false, error: 'In plan mode, write_file requires a non-empty "path" string.' };
         }
-
-        const pathLabel = typeof rawPath === 'string'
-            ? 'write_file.path'
-            : 'write_file.files[].path';
-
-        for (const entry of files) {
-            if (!entry || typeof entry !== 'object') {
-                return {
-                    ok: false,
-                    error: 'In plan mode, write_file file entries must be objects.'
-                };
-            }
-            const path = (entry as any).path;
-            if (typeof path !== 'string' || !path.trim()) {
-                return {
-                    ok: false,
-                    error: `In plan mode, ${pathLabel} must be a non-empty string.`
-                };
-            }
-            if (!this.isPlanModeWriteFilePathAllowed(path)) {
-                return {
-                    ok: false,
-                    error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${path}`
-                };
-            }
+        if (!this.isPlanModeWriteFilePathAllowed(rawPath)) {
+            return {
+                ok: false,
+                error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${rawPath}`
+            };
         }
-
         return { ok: true };
     }
 

@@ -8,7 +8,7 @@
  * - 部分内容保存
  */
 
-import type { Content, ContentPart } from '../../../conversation/types';
+import type { Content } from '../../../conversation/types';
 import type { StreamChunk, GenerateResponse } from '../../../channel/types';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import { ChannelError, ErrorType } from '../../../channel/types';
@@ -67,7 +67,12 @@ export class StreamResponseProcessor {
     private accumulator: StreamAccumulator;
     private config: StreamProcessorConfig;
     private cancelled: boolean = false;
-    private previousContent?: Content;
+    /**
+     * 上一个 chunk 处理完时的内容结构修订号。
+     * 修订号变化 = 发生了纯文本追加无法表达的结构性变化，需要下发 contentSnapshot 校准前端。
+     * 替代以前每个 chunk 全量重建 Content 并逐 part JSON.stringify 深比较的 O(n²) 方案。
+     */
+    private lastContentRevision?: number;
 
     constructor(config: StreamProcessorConfig) {
         this.config = config;
@@ -102,9 +107,11 @@ export class StreamResponseProcessor {
 
                 const normalizedDelta = this.accumulator.add(chunk);
 
-                // 获取累加器处理后的 parts（实时转换工具调用标记）
-                const currentContent = this.accumulator.getContent();
-                const shouldSendSnapshot = this.shouldSendContentSnapshot(this.previousContent, currentContent);
+                // 结构修订号未变 = 本 chunk 只有纯文本/参数增量追加，前端可由 delta 自行还原；
+                // 仅在结构性变化时才构建完整 Content 快照下发（首个 chunk 不发，与旧行为一致）。
+                const revision = this.accumulator.getContentRevision();
+                const shouldSendSnapshot = this.lastContentRevision !== undefined && revision !== this.lastContentRevision;
+                this.lastContentRevision = revision;
 
                 // 构建处理后的 chunk
                 const processedChunk: StreamChunk & { thinkingStartTime?: number } = {
@@ -113,16 +120,16 @@ export class StreamResponseProcessor {
                 };
 
                 if (shouldSendSnapshot) {
-                    processedChunk.contentSnapshot = currentContent;
+                    // 使用 getStreamingContent 保留 index/itemId 内部字段，确保前端能通过 index 匹配工具调用。
+                    // getFinalContent 会清理这些字段，导致 Anthropic 等 id 延迟到达的渠道出现重复工具调用框。
+                    processedChunk.contentSnapshot = this.accumulator.getStreamingContent({ parsePartialArgs: true });
                 }
 
-                // 如果有思考开始时间，添加到 chunk
-                const thinkingStartTime = currentContent.thinkingStartTime;
+                // 如果有思考开始时间，添加到 chunk（直接从累加器读，避免为此构建完整 Content）
+                const thinkingStartTime = this.accumulator.getThinkingStartTime();
                 if (thinkingStartTime !== undefined) {
                     processedChunk.thinkingStartTime = thinkingStartTime;
                 }
-
-                this.previousContent = currentContent;
 
                 yield {
                     conversationId: this.config.conversationId,
@@ -210,63 +217,6 @@ export class StreamResponseProcessor {
         return { content, chunkData };
     }
 
-    private shouldSendContentSnapshot(previousContent: Content | undefined, currentContent: Content): boolean {
-        if (!previousContent) {
-            return false;
-        }
-
-        const previousParts = previousContent.parts || [];
-        const currentParts = currentContent.parts || [];
-
-        if (currentParts.length < previousParts.length) {
-            return true;
-        }
-
-        for (let i = 0; i < previousParts.length; i++) {
-            const previousPart = previousParts[i];
-            const currentPart = currentParts[i];
-
-            if (!currentPart) {
-                return true;
-            }
-
-            if (this.arePartsEqual(previousPart, currentPart)) {
-                continue;
-            }
-
-            if (i !== previousParts.length - 1) {
-                return true;
-            }
-
-            if (this.isSafeTextAppend(previousPart, currentPart)) {
-                return false;
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-
-    private isSafeTextAppend(previousPart: ContentPart, currentPart: ContentPart): boolean {
-        if (!('text' in previousPart) || !('text' in currentPart)) {
-            return false;
-        }
-        if (previousPart.functionCall || currentPart.functionCall) {
-            return false;
-        }
-        if (previousPart.thought !== currentPart.thought) {
-            return false;
-        }
-        if (typeof previousPart.text !== 'string' || typeof currentPart.text !== 'string') {
-            return false;
-        }
-        return currentPart.text.startsWith(previousPart.text);
-    }
-
-    private arePartsEqual(a: ContentPart, b: ContentPart): boolean {
-        return JSON.stringify(a) === JSON.stringify(b);
-    }
 }
 
 /**

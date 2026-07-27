@@ -23,6 +23,7 @@ export type RunScope = ConversationRunScope | SubAgentRunScope;
 /** 可覆盖 conversation 与 subagent controller 的最小共同状态面；完整 TurnSession 状态机仍暂缓。 */
 export type RunControllerStatus =
   | 'inactive'
+  | 'queued'
   | 'running'
   | 'paused'
   | 'awaiting_monitor_action'

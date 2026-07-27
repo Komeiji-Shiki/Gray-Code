@@ -16,7 +16,8 @@ export {
     getEnabledShellTypes,
     checkShellAvailability,
     checkAllShellsAvailability,
-    onTerminalOutput
+    onTerminalOutput,
+    detachRunningTerminalsToBackground
 } from './execute_command';
 
 // 导出类型

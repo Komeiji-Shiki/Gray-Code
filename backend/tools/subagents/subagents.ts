@@ -6,17 +6,33 @@
  */
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
-import type { SubAgentRequest, SubAgentResult, SubAgentConfig } from './types';
+import type { SubAgentConfig } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 
+/** 通用 Worker 虚拟子代理的标识常量 */
+const GENERAL_WORKER_NAME = 'General Worker';
+const GENERAL_WORKER_TYPE = 'general-worker';
+
 /**
- * 获取可用的子代理名称列表
+ * 获取可用的子代理名称列表（包含动态 General Worker）
  */
 function getAvailableAgentNames(): string[] {
-    return subAgentRegistry.getNames();
+    const names = subAgentRegistry.getNames();
+    const settings = getSubAgentsSettings();
+    if (settings.generalWorkerEnabled !== false && !names.includes(GENERAL_WORKER_NAME)) {
+        names.push(GENERAL_WORKER_NAME);
+    }
+    return names;
+}
+
+/**
+ * 判断是否为 General Worker 虚拟子代理
+ */
+function isGeneralWorker(agentName: string): boolean {
+    return agentName === GENERAL_WORKER_NAME;
 }
 
 /**
@@ -111,22 +127,47 @@ function formatLimit(value: number | undefined, defaultValue: number): string {
  */
 function generateAgentNameDescription(): string {
     const configs = subAgentRegistry.getAllConfigs();
-    
-    if (configs.length === 0) {
+    const settings = getSubAgentsSettings();
+    const hasGeneralWorker = settings.generalWorkerEnabled !== false;
+
+    if (configs.length === 0 && !hasGeneralWorker) {
         return 'The name of sub-agent to invoke. Currently no sub-agents available.';
     }
-    
-    const agentDescriptions = configs
-        .map(config => {
-            const tools = getAgentAvailableTools(config);
-            const toolsStr = formatToolsList(tools, 8);
-            const maxIterStr = formatLimit(config.maxIterations, 20);
-            const maxRuntimeStr = formatLimit(config.maxRuntime, 300);
-            return `  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`;
-        })
-        .join('\n');
-    
-    return `The name of sub-agent to invoke. Available options:\n${agentDescriptions}`;
+
+    const entries: string[] = [];
+
+    // 静态注册的子代理
+    for (const config of configs) {
+        const tools = getAgentAvailableTools(config);
+        const toolsStr = formatToolsList(tools, 8);
+        const maxIterStr = formatLimit(config.maxIterations, 20);
+        const maxRuntimeStr = formatLimit(config.maxRuntime, 300);
+        entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
+    }
+
+    // 动态 General Worker（启用时追加）
+    if (hasGeneralWorker) {
+        const builtinToolNames: string[] = [];
+        const toolRegistry = getGlobalToolRegistry();
+        if (toolRegistry) {
+            builtinToolNames.push(...toolRegistry.getToolNames().filter(name => name !== 'subagents'));
+        }
+        const mcpToolNames: string[] = [];
+        const mcpManager = getGlobalMcpManager();
+        if (mcpManager) {
+            const mcpTools = mcpManager.getAllTools();
+            for (const serverTools of mcpTools) {
+                for (const tool of serverTools.tools || []) {
+                    mcpToolNames.push(encodeMcpToolName(serverTools.serverId, tool.name));
+                }
+            }
+        }
+        const allTools = [...builtinToolNames, ...mcpToolNames];
+        const toolsStr = formatToolsList(allTools, 8);
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and full tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 40 iterations, max 900s runtime`);
+    }
+
+    return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
 }
 
 /**
@@ -135,19 +176,20 @@ function generateAgentNameDescription(): string {
 function generateToolDescription(): string {
     const configs = subAgentRegistry.getAllConfigs();
     const settings = getSubAgentsSettings();
+    const hasGeneralWorker = settings.generalWorkerEnabled !== false;
     const maxConcurrent = settings.maxConcurrentAgents ?? 3;
     const maxConcurrentStr = formatLimit(maxConcurrent, 3);
-    
-    if (configs.length === 0) {
+
+    if (configs.length === 0 && !hasGeneralWorker) {
         return `Invoke a specialized sub-agent to handle a specific task.
 
 **Note:** No sub-agents are currently configured. Please configure sub-agents in settings first.`;
     }
-    
+
     const limitsSection = maxConcurrent === -1
         ? '- Each sub-agent has its own max iterations limit (see agent descriptions)'
         : `- Maximum ${maxConcurrentStr} sub-agent(s) can be invoked in a single response\n- Each sub-agent has its own max iterations limit (see agent descriptions)`;
-    
+
     return `Invoke a specialized sub-agent to handle a specific task. The sub-agent has its own tools and can perform complex operations autonomously.
 
 **Limits:**
@@ -212,73 +254,114 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
     const runId = getPreallocatedRunId(context);
-    
+
     if (!agentName || !prompt) {
         return { success: false, error: `${!agentName ? 'agentName' : 'prompt'} is required` };
     }
-    
+
+    const settings = getSubAgentsSettings();
+
+    // General Worker 虚拟子代理：运行时动态构造配置，无需用户手动创建
+    if (isGeneralWorker(agentName)) {
+        if (settings.generalWorkerEnabled === false) {
+            return { success: false, error: 'General Worker is disabled. Enable it in SubAgents settings.' };
+        }
+
+        const channelConfigId = context?.channelConfigId as string | undefined;
+        if (!channelConfigId) {
+            return { success: false, error: 'General Worker requires an active channel (no channelConfigId in tool context).' };
+        }
+
+        const dynamicConfig: SubAgentConfig = {
+            type: GENERAL_WORKER_TYPE,
+            name: GENERAL_WORKER_NAME,
+            description: 'Zero-config general-purpose worker that inherits the current session channel and full tool permissions.',
+            systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
+            channel: { channelId: channelConfigId },
+            tools: { mode: 'all' },
+            maxIterations: 40,
+            maxRuntime: 900,
+            enabled: true
+        };
+
+        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, runId, context);
+    }
+
     const agentEntry = subAgentRegistry.getByName(agentName);
     if (!agentEntry) {
         const availableNames = getAvailableAgentNames();
         return { success: false, error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
     }
-    
+
     if (!agentEntry.executor) {
         return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
     }
 
+    return executeSubAgent(agentEntry.config, agentName, prompt, additionalContext, runId, context);
+}
+
+/**
+ * 执行子代理（抽取为独立函数，供静态注册和动态构造的 agent 共用）
+ */
+async function executeSubAgent(
+    config: SubAgentConfig,
+    agentName: string,
+    prompt: string,
+    additionalContext: string | undefined,
+    runId: string | undefined,
+    context?: ToolContext
+): Promise<ToolResult> {
     const promptModeSnapshot = context?.promptModeSnapshot as any;
     const baseExecutorContext = getSubAgentExecutorContext();
     const runtimeExecutor = baseExecutorContext
-        ? createDefaultExecutor(agentEntry.config, {
+        ? createDefaultExecutor(config, {
             ...baseExecutorContext,
             conversationId: context?.conversationId as string | undefined,
             conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
         })
-        : agentEntry.executor;
+        : undefined;
 
     if (!runtimeExecutor) {
         return { success: false, error: `SubAgent "${agentName}" has no runtime executor context.` };
     }
-    
+
     const abortSignal = context?.abortSignal;
     if (abortSignal?.aborted) {
         return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
     }
-    
+
     try {
         const result = await runtimeExecutor({
-            agentType: agentEntry.config.type,
+            agentType: config.type,
             prompt,
             context: additionalContext,
             runId
         }, abortSignal);
-        
+
         if (result.cancelled || abortSignal?.aborted) {
             return { success: false, error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
         }
-        
+
         // 构建公共 data：子代理运行信息
         // channelName / modelId / steps 仅供前端 UI 展示，cleanFunctionResponseForAPI 会将其过滤掉不发给 AI
-        
-        // 通过 ConfigManager 获取渠道显示名称（channelId 是随机分配的，对前端无意义）
+
         let channelName = '';
         const configManager = getGlobalConfigManager();
         if (configManager) {
-            const channelConfig = await configManager.getConfig(agentEntry.config.channel.channelId);
-            channelName = channelConfig?.name || agentEntry.config.channel.channelId;
+            const channelConfig = await configManager.getConfig(config.channel.channelId);
+            channelName = channelConfig?.name || config.channel.channelId;
         }
-        
+
         const data: Record<string, unknown> = {
             agentName,
             runId: result.runId,
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
-            modelId: agentEntry.config.channel.modelId,
+            modelId: config.channel.modelId,
             steps: result.steps
         };
-        
+
         return result.success
             ? { success: true, data }
             : { success: false, error: result.error || 'SubAgent execution failed', data };

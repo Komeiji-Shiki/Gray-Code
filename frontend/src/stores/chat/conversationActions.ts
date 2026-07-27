@@ -17,6 +17,7 @@ import {
   type ConversationPromptModeConfig
 } from './configActions'
 import { countVisibleChatMessages } from './visibilityUtils'
+import { validateSessionIdentity } from './utils'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -566,17 +567,24 @@ export async function loadOlderMessagesPage(
   if (state.windowStartIndex.value <= 0) return false
 
   const pageSize = options.pageSize ?? MESSAGES_PAGE_SIZE
+
+  // 一次性锁定请求发起时的对话身份与窗口起点
+  const originConversationId = state.currentConversationId.value
+  const originWindowStart = state.windowStartIndex.value
+
   state.isLoadingMoreMessages.value = true
 
   try {
-    const beforeIndex = state.windowStartIndex.value
     const result = await perfMeasureAsync('conversation.loadOlderMessagesPage', () =>
       sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-        conversationId: state.currentConversationId.value,
-        beforeIndex,
+        conversationId: originConversationId,
+        beforeIndex: originWindowStart,
         limit: pageSize
       })
     )
+
+    // 校验归属：await 后当前会话可能已切换
+    if (!validateSessionIdentity(state, originConversationId)) return false
 
     const older = result?.messages || []
     if (older.length === 0) {
@@ -594,7 +602,7 @@ export async function loadOlderMessagesPage(
     state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
 
     // 这是用户主动上拉恢复更早历史，不能立刻从顶部裁剪；
-    // 否则刚拉回来的旧消息会被马上丢掉，表现为“继续上拉无法加载”。
+    // 否则刚拉回来的旧消息会被马上丢掉，表现为”继续上拉无法加载”。
     // 后续发送/重试等向底部追加新消息时仍会通过 trimWindowFromTop 控制窗口大小。
     syncFoldedHistoryHint(state)
 
@@ -609,7 +617,10 @@ export async function loadOlderMessagesPage(
     console.error('[conversationActions] loadOlderMessagesPage failed:', err)
     return false
   } finally {
-    state.isLoadingMoreMessages.value = false
+    // 仅当会话未切换时才复位加载标志
+    if (validateSessionIdentity(state, originConversationId)) {
+      state.isLoadingMoreMessages.value = false
+    }
   }
 }
 
@@ -676,23 +687,34 @@ export async function switchConversation(
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
-  
+  state.messageQueue.value = []
+  state.attachments.value = []
+  state.editorNodes.value = []
+
+  const requestedId = id
+
   // 如果是已持久化的对话，从后端加载历史和检查点
   try {
     if (conv.isPersisted) {
       state.isLoading.value = true
       const view = await perfMeasureAsync('conversation.loadConversationForView', () =>
         sendToExtension<ConversationViewPayload>('conversation.loadConversationForView', {
-          conversationId: id,
+          conversationId: requestedId,
           limit: MESSAGES_PAGE_SIZE
         })
       )
 
+      // 校验归属：await 后当前会话可能已切换
+      if (!validateSessionIdentity(state, requestedId)) return
+
       await Promise.all([
-        applyConversationModelConfig(state, id, view?.modelConfig ?? {}),
+        applyConversationModelConfig(state, requestedId, view?.modelConfig ?? {}),
         // 恢复该对话保存的 Prompt 模式（若无则回落到默认 'code'）
-        applyConversationPromptMode(state, id, view?.promptMode ?? {})
+        applyConversationPromptMode(state, requestedId, view?.promptMode ?? {})
       ])
+
+      // 校验归属：配置应用完成后可能已切换
+      if (!validateSessionIdentity(state, requestedId)) return
 
       const page = view?.messages || []
       const initialWindow = await buildInitialVisibleMessageWindow(
@@ -700,12 +722,15 @@ export async function switchConversation(
         view?.totalMessages ?? page.length,
         async (beforeIndex) => perfMeasureAsync('conversation.loadConversationForView.backfill', () =>
           sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-            conversationId: id,
+            conversationId: requestedId,
             beforeIndex,
             limit: MESSAGES_PAGE_SIZE
           })
         )
       )
+
+      // 校验归属：buildInitialVisibleMessageWindow 可能涉及多次网络请求
+      if (!validateSessionIdentity(state, requestedId)) return
 
       state.totalMessages.value = initialWindow.totalMessages
       state.allMessages.value = initialWindow.messages
@@ -713,7 +738,7 @@ export async function switchConversation(
       syncTotalMessagesFromWindow(state)
 
       state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
-      state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, id)
+      state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, requestedId)
 
       if (view?.metadata?.workspaceUri) {
         conv.workspaceUri = view.metadata.workspaceUri
@@ -723,18 +748,24 @@ export async function switchConversation(
       conv.messageCount = state.totalMessages.value || state.allMessages.value.length
 
       // 工作区同步不阻塞切换主链路
-      void syncConversationWorkspaceUri(state, id)
+      void syncConversationWorkspaceUri(state, requestedId)
     } else {
       state.activeBuild.value = null
     }
   } catch (err: any) {
     console.error('[conversationActions] Failed to switch conversation:', err)
-    state.error.value = {
-      code: err?.code || 'SWITCH_CONVERSATION_ERROR',
-      message: err?.message || 'Failed to switch conversation'
+    // 仅当会话未切换时才写入错误
+    if (validateSessionIdentity(state, requestedId)) {
+      state.error.value = {
+        code: err?.code || 'SWITCH_CONVERSATION_ERROR',
+        message: err?.message || 'Failed to switch conversation'
+      }
     }
   } finally {
-    state.isLoading.value = false
+    // 仅当会话未切换时才复位加载状态
+    if (validateSessionIdentity(state, requestedId)) {
+      state.isLoading.value = false
+    }
   }
 }
 

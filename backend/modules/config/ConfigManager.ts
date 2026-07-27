@@ -211,11 +211,11 @@ export class ConfigManager {
      * });
      * ```
      */
-    async createConfig(input: CreateConfigInput): Promise<string> {
+    async createConfig(input: CreateConfigInput, idOverride?: string): Promise<string> {
         await this.ensureLoaded();
-        
-        // 生成唯一 ID
-        const id = randomBytes(16).toString('hex');
+
+        // 生成唯一 ID（允许调用方覆盖，用于导入场景保留原始 id）
+        const id = idOverride || randomBytes(16).toString('hex');
         const now = Date.now();
         
         // 获取默认配置并与输入合并
@@ -636,9 +636,9 @@ export class ConfigManager {
             return id;
         }
         
-        // 创建新配置
-        const { id, createdAt, updatedAt, ...input } = configData;
-        return this.createConfig(input);
+        // 创建新配置（保留原始 id，防止 activeChannelId 悬空）
+        const { createdAt, updatedAt, ...input } = configData;
+        return this.createConfig(input, configData.id);
     }
     
     /**

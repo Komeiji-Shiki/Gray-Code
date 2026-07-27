@@ -17,6 +17,7 @@ import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
+import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
 
 /** 抠图任务类型常量 */
@@ -697,18 +698,11 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
                 }
             }
         },
-        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+        handler: withLinkedAbort(async (args, context: ToolContext | undefined, abortController): Promise<ToolResult> => {
             const config = (context?.config || {}) as RemoveBackgroundConfig;
             const toolId = context?.toolId || TaskManager.generateTaskId('rmbg');
 
-            const abortController = new AbortController();
             const abortSignal = abortController.signal;
-
-            if (context?.abortSignal) {
-                context.abortSignal.addEventListener('abort', () => {
-                    abortController.abort();
-                });
-            }
 
             // 验证配置
             if (!config.apiKey) {
@@ -899,7 +893,7 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
                     error: `Background removal failed: ${errorMessage}`
                 };
             }
-        }
+        })
     };
 }
 

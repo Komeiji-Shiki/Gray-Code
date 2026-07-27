@@ -491,6 +491,27 @@ function handleThinkingNumberChange(field: string, event: any) {
         <span class="option-hint">{{ t('components.channels.anthropic.promptCaching.hint') }}</span>
       </div>
     </div>
+
+    <!-- metadata.user_id 请求标识（主会话与 SubAgent 运行域区分） -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-person"></i>
+          {{ t('components.channels.anthropic.userId.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.anthropic.userId.enable')">
+          <input
+            type="checkbox"
+            :checked="config.anthropicUserIdEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'anthropicUserIdEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.anthropic.userId.hint') }}</span>
+      </div>
+    </div>
   </div>
 </template>
 

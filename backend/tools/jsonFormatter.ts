@@ -19,6 +19,24 @@ export const TOOL_CALL_START = '<<<TOOL_CALL>>>';
 export const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 
 /**
+ * 转义正则表达式特殊字符。
+ *
+ * 说明：与 tools/utils.ts 的 escapeRegExp 重复是有意为之——
+ * utils.ts 依赖 vscode 模块，本文件保持无 vscode 依赖以便纯单元测试。
+ */
+function escapeRegExp(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 预编译的边界标记正则（避免每次调用都重新转义/拼接 source）。
+ * String.prototype.match 搭配 /g 标志不依赖 lastIndex，模块级共享安全。
+ */
+const TOOL_CALL_BLOCK_REGEX_SOURCE = `${escapeRegExp(TOOL_CALL_START)}\\s*([\\s\\S]*?)\\s*${escapeRegExp(TOOL_CALL_END)}`;
+const TOOL_CALL_START_COUNT_REGEX = new RegExp(escapeRegExp(TOOL_CALL_START), 'g');
+const TOOL_CALL_END_COUNT_REGEX = new RegExp(escapeRegExp(TOOL_CALL_END), 'g');
+
+/**
  * JSON 工具调用的格式定义
  */
 export interface JSONToolCall {
@@ -199,6 +217,10 @@ export function convertFunctionResponseToJSON(name: string, response: Record<str
 /**
  * 从文本中提取所有 JSON 工具调用
  *
+ * 解析策略：先严格 JSON.parse，失败后尝试修复模型高频错误
+ * （字符串内的裸换行/制表符、尾逗号）后重试，减少因细小语法瑕疵
+ * 导致整个工具调用丢失的情况。
+ *
  * @param text 包含工具调用边界标记的文本
  * @returns 解析出的工具调用数组
  */
@@ -207,26 +229,24 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
     
     // 匹配 <<<TOOL_CALL>>> ... <<<END_TOOL_CALL>>> 边界
     // 使用非贪婪匹配，确保正确处理多个工具调用
-    const toolCallRegex = new RegExp(
-        `${escapeRegExp(TOOL_CALL_START)}\\s*([\\s\\S]*?)\\s*${escapeRegExp(TOOL_CALL_END)}`,
-        'g'
-    );
+    // （/g 正则有 lastIndex 状态，每次调用基于预编译 source 新建实例，避免跨调用串状态）
+    const toolCallRegex = new RegExp(TOOL_CALL_BLOCK_REGEX_SOURCE, 'g');
     let match;
     
     while ((match = toolCallRegex.exec(text)) !== null) {
         try {
             const jsonStr = match[1].trim();
-            const parsed = JSON.parse(jsonStr);
+            const parsed = parseJsonLenient(jsonStr);
             
             // 验证是否是有效的工具调用格式
-            if (parsed.tool && typeof parsed.tool === 'string') {
+            if (parsed && typeof parsed === 'object' && typeof (parsed as any).tool === 'string' && (parsed as any).tool) {
                 results.push({
-                    tool: parsed.tool,
-                    parameters: parsed.parameters || {}
+                    tool: (parsed as any).tool,
+                    parameters: (parsed as any).parameters || {}
                 });
             }
         } catch (error) {
-            // JSON 解析失败，跳过这个块
+            // JSON 解析失败，跳过这个块（上层 promptToolParser 会生成解析失败反馈）
             console.warn('Failed to parse JSON tool call:', error);
         }
     }
@@ -235,10 +255,86 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
 }
 
 /**
- * 转义正则表达式特殊字符
+ * 宽松 JSON 解析：严格解析失败后修复常见模型错误再重试一次。
+ * 修复也失败时抛出原始错误（保留真实的诊断信息）。
  */
-function escapeRegExp(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function parseJsonLenient(jsonStr: string): unknown {
+    try {
+        return JSON.parse(jsonStr);
+    } catch (firstError) {
+        const repaired = repairCommonJsonMistakes(jsonStr);
+        if (repaired !== jsonStr) {
+            try {
+                return JSON.parse(repaired);
+            } catch {
+                throw firstError;
+            }
+        }
+        throw firstError;
+    }
+}
+
+/**
+ * 修复模型输出 JSON 时的两类高频错误：
+ *
+ * 1. 字符串值内的裸控制字符（换行/回车/制表符）→ 转义序列
+ *    （模型在 content 类参数里最容易直接输出真实换行）
+ * 2. 字符串外的尾逗号（, 后紧跟 } 或 ]）→ 删除
+ *
+ * 单引号 JSON 等高风险修复不做（会误伤内容中的撇号）。
+ */
+function repairCommonJsonMistakes(input: string): string {
+    let out = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+
+        if (inString) {
+            if (escaped) {
+                out += ch;
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                out += ch;
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+                out += ch;
+                continue;
+            }
+            if (ch === '\n') { out += '\\n'; continue; }
+            if (ch === '\r') { out += '\\r'; continue; }
+            if (ch === '\t') { out += '\\t'; continue; }
+            out += ch;
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            out += ch;
+            continue;
+        }
+
+        // 字符串外的尾逗号：向前看下一个非空白字符，若是 } 或 ] 则丢弃该逗号
+        if (ch === ',') {
+            let j = i + 1;
+            while (j < input.length && /\s/.test(input[j])) {
+                j++;
+            }
+            if (j < input.length && (input[j] === '}' || input[j] === ']')) {
+                continue;
+            }
+        }
+
+        out += ch;
+    }
+
+    return out;
 }
 
 /**
@@ -270,8 +366,8 @@ export function hasJSONToolCallStart(text: string): boolean {
  * @returns 是否包含完整的工具调用块
  */
 export function hasCompleteJSONBlock(text: string): boolean {
-    const startCount = (text.match(new RegExp(escapeRegExp(TOOL_CALL_START), 'g')) || []).length;
-    const endCount = (text.match(new RegExp(escapeRegExp(TOOL_CALL_END), 'g')) || []).length;
+    const startCount = (text.match(TOOL_CALL_START_COUNT_REGEX) || []).length;
+    const endCount = (text.match(TOOL_CALL_END_COUNT_REGEX) || []).length;
     return startCount > 0 && endCount >= startCount;
 }
 

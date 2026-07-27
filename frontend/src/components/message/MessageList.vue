@@ -526,10 +526,13 @@ async function loadMore() {
   const container = scrollbarRef.value.getContainer()
   if (!container) return
 
+  // 固化发起时的标签页与会话身份
+  const originTabId = props.tabId
+
   isLoadingMore.value = true
   const oldScrollHeight = container.scrollHeight
   const oldScrollTop = container.scrollTop
-  
+
   try {
     if (!hasMoreHistory.value) return
 
@@ -543,12 +546,17 @@ async function loadMore() {
       await nextTick()
     }
 
+    // 校验归属：await 期间可能已切换标签页或对话
+    if (props.tabId !== originTabId) return
+
     if (props.messages.length <= prevLen && hasMoreHistory.value) {
       // 如果这一页没有新增可见消息，继续尝试下一页，避免 functionResponse 密集区卡住顶部加载。
-      while (hasMoreHistory.value) {
+      while (hasMoreHistory.value && props.tabId === originTabId) {
         const currentLen = props.messages.length
         const loaded = await chatStore.loadOlderMessagesPage()
         await nextTick()
+
+        if (props.tabId !== originTabId) break
 
         if (!loaded || props.messages.length > currentLen) {
           break
@@ -556,10 +564,12 @@ async function loadMore() {
       }
     }
   } finally {
-    // 保持滚动位置：顶部插入内容会导致滚动跳动，这里手动修正
-    const newScrollHeight = container.scrollHeight
-    container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
-    isLoadingMore.value = false
+    // 仅当标签页未切换时才修正滚动位置
+    if (props.tabId === originTabId) {
+      const newScrollHeight = container.scrollHeight
+      container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
+      isLoadingMore.value = false
+    }
   }
 }
 

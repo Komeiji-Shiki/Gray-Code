@@ -57,7 +57,8 @@ async function deleteSingleFile(
     entry: DeleteCodeEntry,
     toolId?: string,
     abortSignal?: AbortSignal,
-    approvedByToolConfirmation?: boolean
+    approvedByToolConfirmation?: boolean,
+    conversationId?: string
 ): Promise<DeleteResult> {
     const { path: filePath, start_line: startLine, end_line: endLine } = entry;
 
@@ -132,7 +133,7 @@ async function deleteSingleFile(
             blocks,
             undefined,
             toolId,
-            { confirmedByToolConfirmation: approvedByToolConfirmation === true }
+            { confirmedByToolConfirmation: approvedByToolConfirmation === true, conversationId }
         );
 
         // 等待用户处理
@@ -260,7 +261,7 @@ export function createDeleteCodeTool(): Tool {
             let failCount = 0;
 
             for (const entry of fileList) {
-                const result = await deleteSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation);
+                const result = await deleteSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation, context?.conversationId);
                results.push(result);
                 if (result.success) {
                     successCount++;

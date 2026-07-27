@@ -463,8 +463,11 @@ export function createReadFileTool(
     // 行号格式说明
     const lineNumberNote = '\n\n说明：读取文本文件时，返回内容会带行号前缀（例如 "   1 | code here"）。这些数字和 "|" 只是定位标记，不属于文件正文；编辑文件时不要把它们写回去。';
     
-    // 行范围说明
-    const lineRangeNote = '\n\n行范围：只有已经知道准确行号时才填写 startLine/endLine（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。如果没有提供任何行数参数，read_file 会读取整个文本文件。兼容别名：line=N 表示只读取第 N 行；maxLine=N 等同于 endLine=N；maxLines=N 或 limit=N 表示最多读取 N 行，并从 startLine/line 或第 1 行开始计算。推荐优先使用 startLine/endLine。';
+    // 行范围说明。
+    // 兼容别名（line/maxLine/maxLines/limit）不再写进描述和 schema 向模型宣传：
+    // 每轮请求都会携带工具声明，别名参数既烧 token 又鼓励旧写法。
+    // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见下方声明）。
+    const lineRangeNote = '\n\n行范围：只有已经知道准确行号时才填写 startLine/endLine（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。如果没有提供任何行数参数，read_file 会读取整个文本文件。';
 
     // 多模态/二进制行范围限制说明（多模态开启时强调）
     const lineRangeBinaryRestrictionNote =
@@ -501,9 +504,15 @@ export function createReadFileTool(
     return {
         declaration: {
             name: 'read_file',
+            readOnly: true,
             strict: true,  // API 端强制 schema 校验
             description,
             category: 'file',
+            // maxLine 与 endLine 完全等价 → 纯改名别名
+            paramAliases: { maxLine: 'endLine' },
+            // line / maxLines / limit 需要组合计算语义（见 resolveLineRangeArgs），
+            // 不剥离、由 handler 解释
+            compatParams: ['line', 'maxLines', 'limit'],
             parameters: {
                 type: 'object',
                 properties: {
@@ -520,26 +529,6 @@ export function createReadFileTool(
                         type: 'integer',
                         minimum: 1,
                         description: '结束行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。未指定 startLine 时，从文件开头读取到该行。'
-                    },
-                    line: {
-                        type: 'integer',
-                        minimum: 1,
-                        description: '兼容别名：读取单独某一行，1-based。若同时提供 maxLines，则从该行开始读取最多 maxLines 行。推荐新调用优先使用 startLine/endLine。'
-                    },
-                    maxLine: {
-                        type: 'integer',
-                        minimum: 1,
-                        description: '兼容别名：最大行号，等同于 endLine。用于容错模型把 endLine 写成 maxLine 的情况。'
-                    },
-                    maxLines: {
-                        type: 'integer',
-                        minimum: 1,
-                        description: '兼容别名：最多读取多少行。从 startLine/line 开始；如果未提供起始行，则从第 1 行开始。'
-                    },
-                    limit: {
-                        type: 'integer',
-                        minimum: 1,
-                        description: '兼容别名：等同于 maxLines。用于容错模型常见的 limit 参数；推荐新调用使用 endLine 或 maxLines。'
                     }
                 },
                 required: ['path']

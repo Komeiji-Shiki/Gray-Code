@@ -27,7 +27,11 @@ function getNextBackendIndex(state: ChatStoreState): number {
  * 合并工具列表：以 incoming（按 AI 输出顺序）为基准，尽量保留 existing 中的运行态字段。
  *
  * 目标：避免 toolsExecuting/awaitingConfirmation/toolIteration 阶段用 contentToMessage 生成的
- * “queued” 覆盖掉 toolStatus 写入的真实状态/结果。
+ * "queued" 覆盖掉 toolStatus 写入的真实状态/结果。
+ *
+ * 匹配策略（按优先级）：id > index > itemId。
+ * 当 id 不一致但 index/itemId 一致时（Anthropic 等渠道 id 延迟到达），仍能正确合并，
+ * 避免流式过程中出现重复的工具调用框。
  */
 function mergeToolsPreferExisting(
   existing: ToolUsage[] | undefined,
@@ -38,18 +42,41 @@ function mergeToolsPreferExisting(
   if (a.length === 0) return b.length > 0 ? b : undefined
   if (b.length === 0) return a.length > 0 ? a : undefined
 
+  // 构建多维度索引
   const byId = new Map<string, ToolUsage>()
+  const byIndex = new Map<number, ToolUsage>()
+  const byItemId = new Map<string, ToolUsage>()
   for (const t of a) {
     if (t && typeof t.id === 'string') byId.set(t.id, t)
+    const idx = (t as any).index
+    if (typeof idx === 'number') byIndex.set(idx, t)
+    const iid = typeof (t as any).itemId === 'string' && (t as any).itemId.trim() ? (t as any).itemId.trim() : ''
+    if (iid) byItemId.set(iid, t)
   }
 
+  const consumed = new Set<ToolUsage>()
   const merged: ToolUsage[] = []
+
   for (const t of b) {
-    const e = byId.get(t.id)
+    // 1) 按 id 匹配
+    let e = byId.get(t.id)
+    // 2) 按 index 匹配（type number，包括 0）
+    if (!e) {
+      const idx = (t as any).index
+      if (typeof idx === 'number') e = byIndex.get(idx)
+    }
+    // 3) 按 itemId 匹配
+    if (!e) {
+      const iid = typeof (t as any).itemId === 'string' && (t as any).itemId.trim() ? (t as any).itemId.trim() : ''
+      if (iid) e = byItemId.get(iid)
+    }
+
     if (!e) {
       merged.push(t)
       continue
     }
+
+    consumed.add(e)
 
     const incomingHasArgs = !!(t.args && Object.keys(t.args).length > 0)
     const partialArgs = typeof t.partialArgs === 'string'
@@ -61,7 +88,7 @@ function mergeToolsPreferExisting(
       status = 'queued'
     }
 
-    // incoming 提供更完整的 name/args；existing 提供更可信的 status/result/error/duration
+    // incoming 提供更完整的 name/args/id；existing 提供更可信的 status/result/error/duration
     merged.push({
       ...e,
       ...t,
@@ -72,12 +99,13 @@ function mergeToolsPreferExisting(
       awaitingConfirmation: e.awaitingConfirmation ?? t.awaitingConfirmation,
       partialArgs
     })
-    byId.delete(t.id)
   }
 
-  // 兜底：append 可能存在但不在 incoming 中的 existing 工具（极端竞态）
-  for (const t of byId.values()) {
-    merged.push(t)
+  // 兜底：只保留 existing 中未被任何 incoming 匹配到的工具
+  for (const t of a) {
+    if (!consumed.has(t)) {
+      merged.push(t)
+    }
   }
 
   return merged.length > 0 ? merged : undefined

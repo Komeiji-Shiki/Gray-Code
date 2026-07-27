@@ -323,37 +323,50 @@ export class HttpMcpClient extends EventEmitter {
     }
     
     /**
-     * 处理 SSE 响应
+     * 处理 SSE 响应（空闲超时：每次收到数据重置计时器，避免误杀合法长任务）
      */
     private async handleSseResponse<T>(response: Response): Promise<T> {
         const reader = response.body?.getReader();
         if (!reader) {
             throw new Error('No response body');
         }
-        
+
         const decoder = new TextDecoder();
         let buffer = '';
         let result: T | undefined;
-        
+
+        // 空闲超时控制：每次收到数据重置计时器
+        let idleTimer: ReturnType<typeof setTimeout> | null = null;
+        const resetIdleTimer = () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                reader.cancel();
+            }, this.timeout);
+        };
+
+        resetIdleTimer();
+
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                
+
+                resetIdleTimer();
+
                 buffer += decoder.decode(value, { stream: true });
-                
+
                 // 处理 SSE 事件
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                
+
                 for (const line of lines) {
                     if (line.startsWith('data:')) {
                         const jsonStr = line.slice(5).trim();
                         if (!jsonStr || jsonStr === '[DONE]') continue;
-                        
+
                         try {
                             const event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
-                            
+
                             // 检查是否是最终结果
                             if (event.jsonrpc === '2.0' && event.id !== undefined) {
                                 if (event.error) {
@@ -368,13 +381,14 @@ export class HttpMcpClient extends EventEmitter {
                 }
             }
         } finally {
+            if (idleTimer) clearTimeout(idleTimer);
             reader.releaseLock();
         }
-        
+
         if (result === undefined) {
-            throw new Error('No result received from SSE stream');
+            throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
         }
-        
+
         return result;
     }
     

@@ -183,7 +183,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // ============ 消息操作 ============
   
-  const sendMessage = (messageText: string, attachments?: Attachment[], options?: SendMessageOptions) =>
+  const sendMessage = (messageText: string, attachments?: Attachment[], options?: SendMessageOptions): Promise<boolean> =>
     sendMessageFn(state, computed, messageText, attachments, options)
   
   const retryLastMessage = () => retryLastMessageFn(state, computed, cancelStream)
@@ -334,9 +334,17 @@ export const useChatStore = defineStore('chat', () => {
       content,
       attachments: [...attachments],
       timestamp: Date.now(),
-      sendOptions
+      sendOptions,
+      conversationId: state.currentConversationId.value
     }
     state.messageQueue.value = [...state.messageQueue.value, item]
+
+    // 用户在响应期间发话：若当前会话正有前台命令在等待，将其转入后台，
+    // 让本轮尽快结束、排队消息尽快送达（命令结果稍后以回执回流唤醒模型）。
+    // fire-and-forget：后端没有可转移的命令时是 no-op。
+    void sendToExtension('terminal.detachToBackground', {
+      conversationId: state.currentConversationId.value
+    }).catch(() => {})
   }
 
   /**
@@ -412,6 +420,12 @@ export const useChatStore = defineStore('chat', () => {
 
     const next = dequeueMessage()
     if (!next) return
+
+    // 跨会话投递防护：若排队消息不属于当前会话，放回队列头部并中止
+    if (typeof next.conversationId === 'string' && next.conversationId !== state.currentConversationId.value) {
+      state.messageQueue.value = [next, ...state.messageQueue.value]
+      return
+    }
 
     // 发送下一条排队消息
     await sendMessage(next.content, next.attachments, next.sendOptions)

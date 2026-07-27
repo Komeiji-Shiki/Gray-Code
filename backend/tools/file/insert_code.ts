@@ -59,7 +59,8 @@ async function insertSingleFile(
     entry: InsertCodeEntry,
     toolId?: string,
     abortSignal?: AbortSignal,
-    approvedByToolConfirmation?: boolean
+    approvedByToolConfirmation?: boolean,
+    conversationId?: string
 ): Promise<InsertResult> {
     const { path: filePath, line, content } = entry;
 
@@ -124,7 +125,7 @@ async function insertSingleFile(
             blocks,
             undefined,
             toolId,
-            { confirmedByToolConfirmation: approvedByToolConfirmation === true }
+            { confirmedByToolConfirmation: approvedByToolConfirmation === true, conversationId }
         );
 
         // 等待用户处理
@@ -250,7 +251,7 @@ export function createInsertCodeTool(): Tool {
             let failCount = 0;
 
             for (const entry of fileList) {
-                const result = await insertSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation);
+                const result = await insertSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation, context?.conversationId);
                 results.push(result);
                 if (result.success) {
                     successCount++;

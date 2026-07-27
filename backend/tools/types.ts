@@ -14,7 +14,7 @@ export interface ToolProgressEvent {
     /** 事件所属运行实例；SubAgent 使用 runId，普通工具可不填 */
     runId?: string;
     /** 事件类型，覆盖运行级、内容级和工具级进度 */
-    type: 'run_created' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
+    type: 'run_created' | 'run_queued' | 'run_started' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
         | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted'
         | 'retrying' | 'retrySuccess' | 'retryFailed'
         | 'llm_delta' | 'content_snapshot'
@@ -71,6 +71,24 @@ export interface ToolDeclaration {
     aliases?: string[];
 
     /**
+     * 参数改名别名（alias → canonical）
+     *
+     * 仅适用于与规范参数语义完全等价的纯改名（如 read_file 的 maxLine → endLine）。
+     * normalizeToolArgs 在规范参数缺失且别名出现时自动改名并附警告。
+     * 需要计算/组合的语义转换请使用 compatParams 由 handler 自行处理。
+     */
+    paramAliases?: Record<string, string>;
+
+    /**
+     * 兼容透传参数
+     *
+     * 不写进 parameters 向模型宣传（节省 token、避免鼓励旧写法），
+     * 但不会被未知参数剥离，由 handler 自行解释语义
+     * （如 read_file 的 line/maxLines/limit 行范围兼容参数）。
+     */
+    compatParams?: string[];
+
+    /**
      * 是否启用 strict 模式（API 端强制 schema 校验）
      *
      * 开启后，API 会使用 grammar-constrained sampling 保证模型输出
@@ -83,6 +101,17 @@ export interface ToolDeclaration {
      * - Gemini: 不支持，此字段无效
      */
     strict?: boolean;
+
+    /**
+     * 是否为纯只读工具（不修改文件系统/会话状态/外部环境）。
+     *
+     * 标记为 true 的工具在同一批调用中相邻出现时会被并行执行，
+     * 降低多个读取/搜索调用的累计延迟。
+     *
+     * 注意：只有“任何参数组合下都只读”的工具才能标记（如 read_file）；
+     * 像 search_in_files 这种有 replace 模式的工具不能标记。
+     */
+    readOnly?: boolean;
 }
 
 /**
@@ -214,6 +243,15 @@ export interface ToolContext {
      * 当前对话的唯一标识符
      */
     conversationId?: string;
+
+    /**
+     * 当前请求使用的渠道配置 ID
+     *
+     * 修改原因：General Worker 虚拟子代理需要继承主会话当前渠道，而渠道 id 只在工具执行层可见。
+     * 修改方式：executeBuiltinTool 把当前请求的渠道配置 id 注入 toolContext。
+     * 修改目的：用户零配置即可让主模型按需派发与自己同渠道同权限的 worker。
+     */
+    channelConfigId?: string;
     
     /**
      * 对话存储

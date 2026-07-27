@@ -8,16 +8,7 @@
 import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../conversation/types';
 import type { StreamChunk, StreamUsageMetadata } from './types';
 import type { ToolMode } from '../config/configs/base';
-import { parseXMLToolCalls } from '../../tools/xmlFormatter';
 import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
-
-// JSON 工具调用边界标记
-const TOOL_CALL_START = '<<<TOOL_CALL>>>';
-const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
-
-// XML 工具调用标记
-const XML_TOOL_START = '<tool_use>';
-const XML_TOOL_END = '</tool_use>';
 
 interface BuildContentOptions {
     parsePartialArgs: boolean;
@@ -28,6 +19,8 @@ interface BuildContentOptions {
 
 export interface StreamingContentOptions {
     includeInternalFields?: boolean;
+    /** 是否尝试解析未完成的 partialArgs 为 args（默认 false，流式过程中 JSON 通常不完整） */
+    parsePartialArgs?: boolean;
 }
 
 /**
@@ -47,10 +40,26 @@ export class StreamAccumulator {
     private parts: ContentPart[] = [];
 
     /**
-     * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall 索引集合。
+     * 已通过 getNewCompletedFunctionCalls() 返回过的 functionCall id 集合。
      * 用于流式边执行工具：只返回自上次调用以来新完成（args 解析成功）的 functionCall。
+     *
+     * 用 id 而不是 parts 数组索引去重：parts 的结构可能在流式过程中调整，
+     * 索引漂移会导致同一工具被重复上报，进而被重复执行。
      */
-    private reportedFunctionCallIndices = new Set<number>();
+    private reportedFunctionCallIds = new Set<string>();
+
+    /**
+     * 内容结构修订号。
+     *
+     * 只在“前端无法通过纯文本追加 delta 还原”的结构性变化时递增：
+     * 新 part 入列、functionCall 合并出投影可见的字段变化
+     * （name/id 补全、args 从增量 JSON 解析成功、思考签名合并）。
+     * 纯文本追加与 partialArgs 追加不递增。
+     *
+     * StreamResponseProcessor 据此判断是否随 chunk 下发 contentSnapshot，
+     * 替代以前每个 chunk 对全部 parts 做 JSON.stringify 深比较的 O(n²) 方案。
+     */
+    private contentRevision = 0;
 
 
     /** 是否完成 */
@@ -385,13 +394,22 @@ export class StreamAccumulator {
                     }
 
                     if (canMerge) {
+                        // 跟踪本次合并是否产生“最终投影可见”的字段变化，
+                        // 只有可见变化才需要递增结构修订号（触发 snapshot 校准）。
+                        // partialArgs 纯追加在最终投影中不可见，不算。
+                        let visibleFieldChanged = false;
+
                         // 合并名称（如果有）
                         if (fc.name && !lastFc.name) {
                             lastFc.name = fc.name;
+                            visibleFieldChanged = true;
                         }
                         // 合并 ID；Responses 的官方call_id 到达较晚时，可在 itemId/index 已证明同源后覆盖占位 id。
                         if (fc.id && (!lastFc.id || (this.providerType === 'openai-responses' && (sameItemId || sameIndex)))) {
-                            lastFc.id = fc.id;
+                            if (lastFc.id !== fc.id) {
+                                lastFc.id = fc.id;
+                                visibleFieldChanged = true;
+                            }
                         }
                         // itemId 仅用于后续流式片段定位，最终Content 会统一删除。
                         if (fc.itemId && !lastFc.itemId) {
@@ -408,12 +426,14 @@ export class StreamAccumulator {
                                 ...(existingPart.thoughtSignatures || {}),
                                 ...part.thoughtSignatures
                             };
+                            visibleFieldChanged = true;
                         }
                         if ((part as any).thoughtSignature) {
                             existingPart.thoughtSignatures = {
                                 ...(existingPart.thoughtSignatures || {}),
                                 [this.providerType]: (part as any).thoughtSignature
                             };
+                            visibleFieldChanged = true;
                         }
                         // 合并 partialArgs
                         if (fc.partialArgs !== undefined) {
@@ -428,11 +448,17 @@ export class StreamAccumulator {
                                 try {
                                     const parsed = JSON.parse(lastFc.partialArgs);
                                     lastFc.args = parsed;
+                                    // args 解析成功意味着工具调用“完成”，属于投影可见变化
+                                    visibleFieldChanged = true;
                                 } catch (e) {
                                     // 解析失败（JSON 不完整），继续等待更多增量。
                                     // 此处不打日志——流式增量中 JSON 不完整是正常现象。
                                 }
                             }
+                        }
+
+                        if (visibleFieldChanged) {
+                            this.contentRevision++;
                         }
                         return; // 成功合并，直接返回
                     }
@@ -467,6 +493,7 @@ export class StreamAccumulator {
                 }
 
                 this.parts.push(newPart);
+                this.contentRevision++;
                 return;
             }
 
@@ -481,6 +508,7 @@ export class StreamAccumulator {
                 };
             }
             this.parts.push(nonTextPart);
+            this.contentRevision++;
             return;
         }
 
@@ -508,9 +536,8 @@ export class StreamAccumulator {
             const lastIsThought = lastPart.thought === true;
 
             if (lastIsThought === isThought) {
+                // 纯文本追加：前端可通过 delta 自行还原，不递增结构修订号
                 lastPart.text = (lastPart.text ?? '') + (part.text ?? '');
-                // 检测并转换完整的JSON 工具调用
-                this.extractAndConvertToolCalls();
                 return;
             }
         }
@@ -526,141 +553,16 @@ export class StreamAccumulator {
             };
         }
         this.parts.push(textPart);
-        // 检测并转换完整的JSON 工具调用
-        this.extractAndConvertToolCalls();
+        this.contentRevision++;
     }
 
-    /**
-     * 检测并转换文本中的工具调用标记为functionCall
-     * 根据 toolMode 选择解析的格式：
-     * - 'xml': 解析 <tool_use>...</tool_use>
-     * - 'json': 解析 <<<TOOL_CALL>>>...<<<END_TOOL_CALL>>>
-     * - 'function_call': 不解析文本标记（由API 返回 functionCall）
-     * 实时处理，让前端能立即显示工具调用组件
-     */
-    private extractAndConvertToolCalls(): void {
-        // 获取当前工具模式
-        const toolMode = this.getToolMode();
-
-        // function_call 模式不需要解析文本标记
-        if (toolMode === 'function_call') {
-            return;
-        }
-
-        const newParts: ContentPart[] = [];
-
-        for (const part of this.parts) {
-            if (!('text' in part)) {
-                newParts.push(part);
-                continue;
-            }
-
-            // 根据 toolMode 选择检查的标记
-            const hasJsonMarker = toolMode === 'json' && (part.text ?? '').includes(TOOL_CALL_START);
-            const hasXmlMarker = toolMode === 'xml' && (part.text ?? '').includes(XML_TOOL_START);
-
-            if (!hasJsonMarker && !hasXmlMarker) {
-                newParts.push(part);
-                continue;
-            }
-
-            let text = part.text ?? '';
-            const isThought = part.thought === true;
-
-            // 循环提取所有完整的工具调用
-            // 根据 toolMode 只解析对应格式，避免误解析代码示例中的标记
-            while (true) {
-                if (toolMode === 'json') {
-                    // JSON 模式：只检查JSON 格式标记
-                    const jsonStartIdx = text.indexOf(TOOL_CALL_START);
-                    const jsonEndIdx = text.indexOf(TOOL_CALL_END);
-
-                    if (jsonStartIdx === -1 || jsonEndIdx === -1 || jsonEndIdx <= jsonStartIdx) {
-                        break;
-                    }
-
-                    // 处理 JSON 格式
-                    const textBefore = text.substring(0, jsonStartIdx).trim();
-                    if (textBefore) {
-                        newParts.push(isThought ? { text: textBefore, thought: true } : { text: textBefore });
-                    }
-
-                    const jsonStart = jsonStartIdx + TOOL_CALL_START.length;
-                    const jsonStr = text.substring(jsonStart, jsonEndIdx).trim();
-
-                    try {
-                        const toolCall = JSON.parse(jsonStr);
-                        if (toolCall.tool && toolCall.parameters) {
-                            newParts.push({
-                                functionCall: {
-                                    name: toolCall.tool,
-                                    args: toolCall.parameters,
-                                    id: this.createToolCallId()
-                                }
-                            });
-                        } else {
-                            // 格式不正确，保留原文本
-                            newParts.push({ text: text.substring(jsonStartIdx, jsonEndIdx + TOOL_CALL_END.length) });
-                        }
-                    } catch {
-                        // JSON 解析失败，保留原文本
-                        newParts.push({ text: text.substring(jsonStartIdx, jsonEndIdx + TOOL_CALL_END.length) });
-                    }
-
-                    text = text.substring(jsonEndIdx + TOOL_CALL_END.length);
-                } else if (toolMode === 'xml') {
-                    // XML 模式：只检查XML 格式标记
-                    const xmlStartIdx = text.indexOf(XML_TOOL_START);
-                    const xmlEndIdx = text.indexOf(XML_TOOL_END);
-
-                    if (xmlStartIdx === -1 || xmlEndIdx === -1 || xmlEndIdx <= xmlStartIdx) {
-                        break;
-                    }
-
-                    // 处理 XML 格式
-                    const textBefore = text.substring(0, xmlStartIdx).trim();
-                    if (textBefore) {
-                        newParts.push(isThought ? { text: textBefore, thought: true } : { text: textBefore });
-                    }
-
-                    const xmlContent = text.substring(xmlStartIdx, xmlEndIdx + XML_TOOL_END.length);
-
-                    try {
-                        const xmlCalls = parseXMLToolCalls(xmlContent);
-                        if (xmlCalls.length > 0) {
-                            for (const xmlCall of xmlCalls) {
-                                newParts.push({
-                                    functionCall: {
-                                        name: xmlCall.name,
-                                        args: xmlCall.args,
-                                        id: this.createToolCallId()
-                                    }
-                                });
-                            }
-                        } else {
-                            // 解析失败，保留原文本
-                            newParts.push({ text: xmlContent });
-                        }
-                    } catch {
-                        // XML 解析失败，保留原文本
-                        newParts.push({ text: xmlContent });
-                    }
-
-                    text = text.substring(xmlEndIdx + XML_TOOL_END.length);
-                } else {
-                    // 未知模式，退出循环
-                    break;
-                }
-            }
-
-            // 添加剩余文本
-            if (text) {
-                newParts.push(isThought ? { text, thought: true } : { text });
-            }
-        }
-
-        this.parts = newParts;
-    }
+    // 注意：这里以前有一个 extractAndConvertToolCalls()，在每次文本合并后
+    // 全量重扫所有 parts、把文本中的工具调用标记转换为 functionCall。
+    // 该职责已完全由 IncrementalPromptToolParser（addPart 入口处）接管：
+    // - 非思考文本在进入 parts 前就被增量解析器消费，不会残留完整标记；
+    // - 思考（thought）文本中的标记按系统语义不视为真实调用
+    //   （ToolCallParserService.extractFunctionCalls 同样跳过 thought part）。
+    // 旧路径除了 O(n²) 的重复扫描外，还会重建 parts 数组导致索引漂移，故删除。
 
     /**
      * 构造Content 的唯一内部入口。
@@ -768,10 +670,11 @@ export class StreamAccumulator {
         return content;
     }
 
-    /** 获取流式校准快照；保留内部合并字段，但不解析未完成的 partialArgs。*/
+    /** 获取流式校准快照；保留内部合并字段（index/itemId），便于前端通过 index 匹配工具调用。
+     *  默认不解析未完成的 partialArgs；设置 options.parsePartialArgs=true 可解析。*/
     getStreamingContent(options?: StreamingContentOptions): Content {
         return this.buildContent({
-            parsePartialArgs: false,
+            parsePartialArgs: options?.parsePartialArgs ?? false,
             includeInternalFunctionCallFields: options?.includeInternalFields ?? true,
             warnOnParseFailure: false
         });
@@ -890,7 +793,8 @@ export class StreamAccumulator {
         this.firstChunkTime = undefined;
         this.lastChunkTime = undefined;
         this.requestStartTime = undefined;
-        this.reportedFunctionCallIndices.clear();
+        this.reportedFunctionCallIds.clear();
+        this.contentRevision = 0;
 
         if (this.promptToolParser) {
             this.promptToolParser.reset();
@@ -966,6 +870,15 @@ export class StreamAccumulator {
     }
 
     /**
+     * 获取内容结构修订号。
+     * 修订号未变化 = 自上次读取以来只发生了纯文本/partialArgs 追加，
+     * 前端可完全依赖 delta 还原，无需 contentSnapshot 校准。
+     */
+    getContentRevision(): number {
+        return this.contentRevision;
+    }
+
+    /**
      * 获取思考持续时间
      */
     getThinkingDuration(): number | undefined {
@@ -1033,8 +946,6 @@ export class StreamAccumulator {
         const result: Array<{ index: number; name: string; id: string; args: Record<string, unknown> }> = [];
 
         for (let i = 0; i < this.parts.length; i++) {
-            if (this.reportedFunctionCallIndices.has(i)) continue;
-
             const part = this.parts[i];
             if (!part.functionCall) continue;
 
@@ -1049,17 +960,22 @@ export class StreamAccumulator {
             //
             // 只有 partialArgs 被成功JSON.parse 后，args 才会含有实际的键。
             const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
+            // 所有 provider 都要求稳定 id 才允许提前执行：
+            // - 常规路径下 functionCall 在入列时就会生成 id，此条件恒满足；
+            // - openai-responses 的占位调用要等官方 call_id 到达；
+            // - 没有稳定 id 的调用交给最终统一执行路径兜底，
+            //   避免 id 后补时与提前执行结果对不上号导致重复执行。
             const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
-            // Responses 必须等官方call_id 稳定后再提前执行，否则functionResponse.id 会与后续上下文要求不一致。
-            if (hasRealArgs && fc.name && (this.providerType !== 'openai-responses' || hasStableToolCallId)) {
-                this.reportedFunctionCallIndices.add(i);
-                result.push({
-                    index: i,
-                    name: fc.name,
-                    id: fc.id || '',
-                    args: fc.args,
-                });
-            }
+            if (!hasRealArgs || !fc.name || !hasStableToolCallId) continue;
+            if (this.reportedFunctionCallIds.has(fc.id)) continue;
+
+            this.reportedFunctionCallIds.add(fc.id);
+            result.push({
+                index: i,
+                name: fc.name,
+                id: fc.id,
+                args: fc.args,
+            });
         }
 
         return result;

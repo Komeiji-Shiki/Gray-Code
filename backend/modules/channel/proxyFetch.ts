@@ -11,8 +11,86 @@ import * as tls from 'tls';
 import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
 
+/**
+ * 从上游 API 的非 2xx 响应体中提取人类可读错误消息。
+ */
+export function extractUpstreamErrorMessage(body: unknown): string | undefined {
+    if (!body || typeof body !== 'object') {
+        if (typeof body === 'string' && body.trim()) return body.trim();
+        return undefined;
+    }
+
+    const obj = body as Record<string, any>;
+    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
+        return obj.error.message.trim();
+    }
+    if (typeof obj.error === 'string') {
+        return obj.error.trim();
+    }
+    if (typeof obj.message === 'string') {
+        return obj.message.trim();
+    }
+    return undefined;
+}
+
 // User-Agent 标识
 const USER_AGENT = 'LimCode';
+
+/**
+ * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。
+ * 多处 onAbort / finally 共用同一个实现。
+ */
+export function closeSocketGracefully(socket: import('net').Socket): Promise<void> {
+    return new Promise<void>((resolve) => {
+        if (socket.destroyed || !socket.writable) {
+            resolve();
+            return;
+        }
+        const closeTimeout = setTimeout(() => {
+            if (!socket.destroyed) {
+                socket.destroy();
+            }
+            resolve();
+        }, 5000);
+        socket.once('close', () => {
+            clearTimeout(closeTimeout);
+            resolve();
+        });
+        socket.end();
+    });
+}
+
+/**
+ * 解析代理 URL → 连接参数。
+ *
+ * - 正确区分 https://（https.request + 默认 443）和 http://（http.request + 默认 80）
+ * - 提取用户名/密码并生成 Proxy-Authorization Basic 头
+ */
+export function parseProxyLeg(proxyUrl: string): {
+    request: typeof http.request;
+    hostname: string;
+    port: number;
+    proxyAuthHeader?: string;
+} {
+    const parsed = new URL(proxyUrl);
+    const isHttps = parsed.protocol === 'https:';
+    const port = parsed.port ? parseInt(parsed.port, 10) : (isHttps ? 443 : 80);
+
+    let proxyAuthHeader: string | undefined;
+    if (parsed.username || parsed.password) {
+        const auth = Buffer.from(
+            `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`
+        ).toString('base64');
+        proxyAuthHeader = `Basic ${auth}`;
+    }
+
+    return {
+        request: isHttps ? https.request : http.request,
+        hostname: parsed.hostname,
+        port,
+        proxyAuthHeader
+    };
+}
 
 /**
  * Fetch 选项
@@ -83,44 +161,60 @@ async function fetchWithProxy(
     init: FetchOptions,
     proxyUrl: string
 ): Promise<FetchResponse> {
-    const proxyParsed = new URL(proxyUrl);
+    const proxyLeg = parseProxyLeg(proxyUrl);
     const targetHost = targetUrl.hostname;
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
-    
+
     // 检查是否已取消
     if (init.signal?.aborted) {
         throw new Error('Request cancelled');
     }
-    
+
     return new Promise((resolve, reject) => {
         const timeout = init.timeout || 120000;
-        
+        let tunnelSocket: import('net').Socket | undefined;
+
+        // 构建 CONNECT 请求头（含 Proxy-Authorization）
+        const reqHeaders: Record<string, string> = {};
+        if (proxyLeg.proxyAuthHeader) {
+            reqHeaders['Proxy-Authorization'] = proxyLeg.proxyAuthHeader;
+        }
+
         // 创建到代理的连接
-        const proxyReq = http.request({
-            hostname: proxyParsed.hostname,
-            port: proxyParsed.port || 80,
+        const proxyReq = proxyLeg.request({
+            hostname: proxyLeg.hostname,
+            port: proxyLeg.port,
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
-            timeout
+            timeout,
+            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            headers: reqHeaders
         });
-        
-        // 监听取消信号
+
+        // 监听取消信号（#35 修复：握手阶段取消时正确清理隧道 socket）
         const onAbort = () => {
-            proxyReq.destroy();
+            if (!proxyReq.destroyed) {
+                proxyReq.destroy();
+            }
+            if (tunnelSocket) {
+                closeSocketGracefully(tunnelSocket);
+            }
             reject(new Error('Request cancelled'));
         };
         if (init.signal) {
             init.signal.addEventListener('abort', onAbort, { once: true });
         }
-        
+
         proxyReq.on('connect', (res, socket) => {
+            tunnelSocket = socket;
+
             if (res.statusCode !== 200) {
                 socket.destroy();
                 reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
                 return;
             }
-            
+
             if (isHttps) {
                 // 在隧道上建立 TLS 连接
                 const tlsSocket = tls.connect({
@@ -130,7 +224,7 @@ async function fetchWithProxy(
                 }, () => {
                     sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
                 });
-                
+
                 tlsSocket.on('error', (error: Error) => {
                     reject(new Error(`TLS error: ${error.message}`));
                 });
@@ -139,14 +233,14 @@ async function fetchWithProxy(
                 sendRequestOverSocket(socket, targetUrl, init, resolve, reject);
             }
         });
-        
+
         proxyReq.on('error', (error) => {
             if (init.signal) {
                 init.signal.removeEventListener('abort', onAbort);
             }
             reject(new Error(`Proxy request failed: ${error.message}`));
         });
-        
+
         proxyReq.on('timeout', () => {
             if (init.signal) {
                 init.signal.removeEventListener('abort', onAbort);
@@ -154,13 +248,13 @@ async function fetchWithProxy(
             proxyReq.destroy();
             reject(new Error('Proxy request timeout'));
         });
-        
+
         proxyReq.end();
     });
 }
 
 /**
- * 通过 socket 发送 HTTP 请求
+ * 通过 socket 发送 HTTP 请求（非流式路径）
  */
 function sendRequestOverSocket(
     socket: tls.TLSSocket | import('net').Socket,
@@ -175,32 +269,32 @@ function sendRequestOverSocket(
         reject(new Error('Request cancelled'));
         return;
     }
-    
+
     const body = init.body || '';
     const bodyBuffer = Buffer.from(body, 'utf8');
-    
-    // 监听取消信号
+
+    // 监听取消信号（#34 修复：使用 closeSocketGracefully 优雅关闭）
     let aborted = false;
     const onAbort = () => {
         if (aborted) return;
         aborted = true;
-        socket.destroy();
+        closeSocketGracefully(socket);
         reject(new Error('Request cancelled'));
     };
     if (init.signal) {
         init.signal.addEventListener('abort', onAbort, { once: true });
     }
-    
+
     // 清理函数
     const cleanup = () => {
         if (init.signal) {
             init.signal.removeEventListener('abort', onAbort);
         }
     };
-    
+
     // 发送实际的 HTTP 请求
     const requestLine = `${init.method} ${targetUrl.pathname}${targetUrl.search} HTTP/1.1\r\n`;
-    
+
     // 确保 User-Agent 被包含
     const headersWithUserAgent = { 'User-Agent': USER_AGENT, ...init.headers };
     const headers = [
@@ -211,14 +305,15 @@ function sendRequestOverSocket(
         '',
         ''
     ].join('\r\n');
-    
+
     socket.write(requestLine + headers);
     if (body) {
         socket.write(bodyBuffer);
     }
-    
-    // 收集响应数据
+
+    // 收集响应数据（#38 修复：延迟 concat，用 receivedLength 做快速判定）
     const chunks: Buffer[] = [];
+    let receivedLength = 0;
     let headersParsed = false;
     let responseFinished = false;
     let statusCode = 0;
@@ -227,30 +322,30 @@ function sendRequestOverSocket(
     let isChunked = false;
     let headerEndIndex = -1;
     let responseHeaders: Record<string, string> = {};
-    
+
     const tryParseHeaders = (fullBuffer: Buffer): boolean => {
         const headerEndMarker = Buffer.from('\r\n\r\n');
         headerEndIndex = fullBuffer.indexOf(headerEndMarker);
-        
+
         if (headerEndIndex === -1) {
             return false;
         }
-        
+
         const headerPart = fullBuffer.subarray(0, headerEndIndex).toString('utf8');
-        
+
         const lines = headerPart.split('\r\n');
         const statusLine = lines[0];
         const statusMatch = statusLine.match(/HTTP\/\d\.\d (\d+) (.+)/);
         statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
         statusText = statusMatch ? statusMatch[2] : '';
-        
+
         for (const line of lines.slice(1)) {
             const colonIndex = line.indexOf(':');
             if (colonIndex > 0) {
                 const key = line.substring(0, colonIndex).trim().toLowerCase();
                 const value = line.substring(colonIndex + 1).trim();
                 responseHeaders[key] = value;
-                
+
                 if (key === 'content-length') {
                     contentLength = parseInt(value);
                 } else if (key === 'transfer-encoding' && value.includes('chunked')) {
@@ -258,48 +353,73 @@ function sendRequestOverSocket(
                 }
             }
         }
-        
+
         headersParsed = true;
         return true;
     };
-    
-    const isResponseComplete = (fullBuffer: Buffer): boolean => {
+
+    const isResponseComplete = (): boolean => {
         if (!headersParsed) {
             return false;
         }
-        
-        const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-        
+
+        if (contentLength >= 0) {
+            return receivedLength - headerEndIndex - 4 >= contentLength;
+        }
+
         if (isChunked) {
+            const fullBuffer = Buffer.concat(chunks);
+            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
             const endMarker = Buffer.from('0\r\n\r\n');
             const hasEnd = bodyBuffer.includes(endMarker);
             const hasEndAlt = bodyBuffer.toString('utf8').includes('\r\n0\r\n');
             return hasEnd || hasEndAlt;
-        } else if (contentLength >= 0) {
-            return bodyBuffer.length >= contentLength;
         }
-        
+
         return false;
     };
-    
+
+    // #40 修复：检查响应体是否完整，防止截断响应被当作成功
+    const hasValidBody = (): boolean => {
+        if (!headersParsed) {
+            return false;
+        }
+
+        const bodyReceived = receivedLength - headerEndIndex - 4;
+
+        if (contentLength >= 0) {
+            return bodyReceived >= contentLength;
+        }
+
+        if (isChunked) {
+            const fullBuffer = Buffer.concat(chunks);
+            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
+            const endMarker = Buffer.from('0\r\n\r\n');
+            return bodyBuffer.includes(endMarker) || bodyBuffer.toString('utf8').includes('\r\n0\r\n');
+        }
+
+        // 未声明 content-length 也非 chunked —— 假定连接断开时即为完整
+        return true;
+    };
+
     const finishResponse = () => {
         if (responseFinished || aborted) {
             return;
         }
         responseFinished = true;
         cleanup();
-        
+
         const fullBuffer = Buffer.concat(chunks);
         const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-        
+
         let finalBody: string;
-        
+
         if (isChunked) {
             finalBody = decodeChunkedBuffer(bodyBuffer);
         } else {
             finalBody = bodyBuffer.toString('utf8');
         }
-        
+
         resolve({
             ok: statusCode >= 200 && statusCode < 300,
             status: statusCode,
@@ -310,48 +430,59 @@ function sendRequestOverSocket(
             body: null
         });
     };
-    
+
     socket.on('data', (chunk: Buffer) => {
         // 检查是否已取消
         if (aborted) return;
-        
+
+        // #38 修复：只累积，不做全量 concat
         chunks.push(chunk);
-        
-        const fullBuffer = Buffer.concat(chunks);
-        
+        receivedLength += chunk.length;
+
         if (!headersParsed) {
-            if (tryParseHeaders(fullBuffer) && isResponseComplete(fullBuffer)) {
+            const fullBuffer = Buffer.concat(chunks);
+            if (tryParseHeaders(fullBuffer) && isResponseComplete()) {
                 // 使用 end() 进行优雅关闭，避免 ECONNRESET
                 socket.end();
                 finishResponse();
             }
         } else {
-            if (isResponseComplete(fullBuffer)) {
+            if (isResponseComplete()) {
                 // 使用 end() 进行优雅关闭，避免 ECONNRESET
                 socket.end();
                 finishResponse();
             }
         }
     });
-    
+
     socket.on('end', () => {
         if (aborted) return;
         cleanup();
         if (headersParsed) {
-            finishResponse();
+            // #40 修复：只有 body 完整才成功返回
+            if (hasValidBody()) {
+                finishResponse();
+            } else {
+                reject(new Error('Connection closed with incomplete response body'));
+            }
         } else {
             reject(new Error('Connection closed before headers received'));
         }
     });
-    
+
     socket.on('close', () => {
         if (aborted) return;
         cleanup();
         if (headersParsed && !responseFinished) {
-            finishResponse();
+            // #40 修复：只有 body 完整才成功返回
+            if (hasValidBody()) {
+                finishResponse();
+            } else {
+                reject(new Error('Connection closed with incomplete response body'));
+            }
         }
     });
-    
+
     socket.on('error', (err) => {
         if (aborted) return;
         cleanup();
@@ -362,7 +493,7 @@ function sendRequestOverSocket(
 /**
  * 解码 chunked transfer encoding
  */
-function decodeChunkedBuffer(data: Buffer): string {
+export function decodeChunkedBuffer(data: Buffer): string {
     const resultChunks: Buffer[] = [];
     let offset = 0;
     
@@ -433,9 +564,12 @@ export async function* proxyStreamFetch(
             } catch {
                 errorBody = await response.text();
             }
+            const upstreamMessage = extractUpstreamErrorMessage(errorBody);
             throw new ChannelError(
                 ErrorType.API_ERROR,
-                t('modules.channel.errors.apiError', { status: response.status }),
+                upstreamMessage
+                    ? `HTTP ${response.status}: ${upstreamMessage}`
+                    : t('modules.channel.errors.apiError', { status: response.status }),
                 errorBody
             );
         }
@@ -464,18 +598,18 @@ export async function* proxyStreamFetch(
         return;
     }
     
-    // 使用代理
+    // 使用代理（#36 修复：正确解析 proxy URL 的协议/端口/认证）
     const targetUrl = new URL(url);
-    const proxyParsed = new URL(proxyUrl);
+    const proxyLeg = parseProxyLeg(proxyUrl);
     const targetHost = targetUrl.hostname;
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
-    
+
     // 检查是否已取消
     if (init.signal?.aborted) {
         throw new Error('Request cancelled');
     }
-    
+
     const socket = await new Promise<tls.TLSSocket | import('net').Socket>((resolve, reject) => {
         const timeout = init.timeout || 120000;
         let settled = false;
@@ -500,7 +634,7 @@ export async function* proxyStreamFetch(
             cleanupAbortListener();
             reject(error);
         };
-        
+
         // 监听取消信号
         const onAbort = () => {
             proxyReq?.destroy();
@@ -514,13 +648,21 @@ export async function* proxyStreamFetch(
             }
             init.signal.addEventListener('abort', onAbort, { once: true });
         }
-        
-        proxyReq = http.request({
-            hostname: proxyParsed.hostname,
-            port: proxyParsed.port || 80,
+
+        // 构建 CONNECT 请求头（含 Proxy-Authorization）
+        const reqHeaders: Record<string, string> = {};
+        if (proxyLeg.proxyAuthHeader) {
+            reqHeaders['Proxy-Authorization'] = proxyLeg.proxyAuthHeader;
+        }
+
+        proxyReq = proxyLeg.request({
+            hostname: proxyLeg.hostname,
+            port: proxyLeg.port,
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
-            timeout
+            timeout,
+            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            headers: reqHeaders
         });
         
         proxyReq.on('connect', (res, socket) => {
@@ -588,9 +730,9 @@ export async function* proxyStreamFetch(
     let isChunked = false;
     let chunkedBuffer = Buffer.alloc(0);  // chunked 解码缓冲区
     
-    // 监听取消信号
+    // 监听取消信号（#34 修复：优雅关闭而不是裸 end）
     const onAbort = () => {
-        socket.end();
+        closeSocketGracefully(socket);
     };
     if (init.signal) {
         init.signal.addEventListener('abort', onAbort, { once: true });
@@ -686,60 +828,120 @@ export async function* proxyStreamFetch(
                     reject(error);
                 };
 
+                // #37 修复：非 2xx 错误体累积状态，避免取半截 chunk 框架字节
+                let errorMode = false;
+                let errorBodyBytes: Buffer[] = [];
+                let errorContentLength = -1;
+                let errorIsChunked = false;
+
+                const isErrorBodyComplete = (): boolean => {
+                    const totalBytes = errorBodyBytes.reduce((sum, b) => sum + b.length, 0);
+                    if (errorContentLength >= 0) {
+                        return totalBytes >= errorContentLength;
+                    }
+                    if (errorIsChunked) {
+                        const fullBody = Buffer.concat(errorBodyBytes);
+                        const endMarker = Buffer.from('0\r\n\r\n');
+                        return fullBody.includes(endMarker) || fullBody.toString('utf8').includes('\r\n0\r\n');
+                    }
+                    // 未声明 content-length 也非 chunked → 连接关闭判定
+                    return false;
+                };
+
+                const finalizeError = () => {
+                    if (settled) return;
+
+                    let errorBody: string;
+                    if (errorIsChunked && errorBodyBytes.length > 0) {
+                        const fullBody = Buffer.concat(errorBodyBytes);
+                        errorBody = decodeChunkedBuffer(fullBody);
+                    } else {
+                        errorBody = Buffer.concat(errorBodyBytes).toString('utf8');
+                    }
+
+                    let parsedError: any;
+                    try {
+                        parsedError = JSON.parse(errorBody);
+                    } catch {
+                        parsedError = errorBody;
+                    }
+
+                    const upstreamMessage = extractUpstreamErrorMessage(parsedError);
+                    finishReject(new ChannelError(
+                        ErrorType.API_ERROR,
+                        upstreamMessage
+                            ? `HTTP ${statusCode}: ${upstreamMessage}`
+                            : t('modules.channel.errors.apiError', { status: statusCode }),
+                        parsedError
+                    ));
+                };
+
                 const onData = (chunk: Buffer) => {
                     // 检查是否已取消
                     if (init.signal?.aborted) {
                         finishResolve();
                         return;
                     }
-                    
+
                     rawBuffer = Buffer.concat([rawBuffer, chunk]);
-                    
+
                     if (!headersParsed) {
                         const headerEndMarker = Buffer.from('\r\n\r\n');
                         const headerEnd = rawBuffer.indexOf(headerEndMarker);
-                        
+
                         if (headerEnd !== -1) {
                             const headerPart = rawBuffer.subarray(0, headerEnd).toString('utf8');
                             const statusMatch = headerPart.match(/HTTP\/\d\.\d (\d+)/);
                             statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
-                            
+
                             // 检查是否是 chunked 编码
                             if (headerPart.toLowerCase().includes('transfer-encoding: chunked')) {
                                 isChunked = true;
                             }
-                            
+
                             if (statusCode < 200 || statusCode >= 300) {
-                                // 解析错误响应体
-                                const errorBody = rawBuffer.subarray(headerEnd + 4).toString('utf8');
-                                let parsedError: any;
-                                try {
-                                    parsedError = JSON.parse(errorBody);
-                                } catch {
-                                    parsedError = errorBody;
+                                // #37 修复：切换到错误体累积模式，不立即用半截数据构造错误
+                                headersParsed = true;
+                                errorMode = true;
+
+                                // 解析错误体的 content-length
+                                const clMatch = headerPart.match(/content-length:\s*(\d+)/i);
+                                errorContentLength = clMatch ? parseInt(clMatch[1], 10) : -1;
+                                errorIsChunked = isChunked;
+
+                                // 把 header 之后已收到的 body 字节移到错误体缓冲区
+                                const bodyBytes = rawBuffer.subarray(headerEnd + 4);
+                                if (bodyBytes.length > 0) {
+                                    errorBodyBytes.push(bodyBytes);
                                 }
-                                finishReject(new ChannelError(
-                                    ErrorType.API_ERROR,
-                                    t('modules.channel.errors.apiError', { status: statusCode }),
-                                    parsedError
-                                ));
+
+                                if (isErrorBodyComplete()) {
+                                    finalizeError();
+                                }
                                 return;
                             }
-                            
+
                             headersParsed = true;
                             rawBuffer = rawBuffer.subarray(headerEnd + 4);
                         }
+                    } else if (errorMode) {
+                        // 累积错误体字节
+                        errorBodyBytes.push(chunk);
+                        if (isErrorBodyComplete()) {
+                            finalizeError();
+                        }
+                        return;
                     }
-                    
+
                     if (headersParsed && rawBuffer.length > 0) {
                         if (isChunked) {
                             // 实时解码 chunked 数据
                             chunkedBuffer = Buffer.concat([chunkedBuffer, rawBuffer]);
                             rawBuffer = Buffer.alloc(0);
-                            
+
                             const { decoded, remaining } = decodeChunkedStream(chunkedBuffer);
                             chunkedBuffer = Buffer.from(remaining);
-                            
+
                             if (decoded) {
                                 // 使用队列存储数据，稍后 yield
                                 dataQueue.push(decoded);
@@ -751,31 +953,39 @@ export async function* proxyStreamFetch(
                         }
                     }
                 };
-                
+
                 const onEnd = () => {
                     if (init.signal?.aborted) {
                         finishResolve();
                         return;
                     }
+                    if (errorMode) {
+                        finalizeError();
+                        return;
+                    }
                     if (!headersParsed) {
                         finishReject(new Error('Connection closed before response headers received'));
                         return;
                     }
                     finishResolve();
                 };
-                
+
                 const onClose = () => {
                     if (init.signal?.aborted) {
                         finishResolve();
                         return;
                     }
+                    if (errorMode) {
+                        finalizeError();
+                        return;
+                    }
                     if (!headersParsed) {
                         finishReject(new Error('Connection closed before response headers received'));
                         return;
                     }
                     finishResolve();
                 };
-                
+
                 const onError = (err: Error) => {
                     if (init.signal?.aborted) {
                         finishResolve();
@@ -851,31 +1061,8 @@ export async function* proxyStreamFetch(
         if (init.signal) {
             init.signal.removeEventListener('abort', onAbort);
         }
-        
-        // 优雅关闭 socket，等待完全关闭避免 ECONNRESET
-        await new Promise<void>((resolve) => {
-            // 如果 socket 已经关闭或销毁，直接返回
-            if (socket.destroyed || !socket.writable) {
-                resolve();
-                return;
-            }
-            
-            // 设置超时，防止无限等待
-            const closeTimeout = setTimeout(() => {
-                if (!socket.destroyed) {
-                    socket.destroy();
-                }
-                resolve();
-            }, 1000);
-            
-            // 监听 close 事件
-            socket.once('close', () => {
-                clearTimeout(closeTimeout);
-                resolve();
-            });
-            
-            // 发送 FIN 开始优雅关闭
-            socket.end();
-        });
+
+        // #34 修复：统一使用 closeSocketGracefully 优雅关闭
+        await closeSocketGracefully(socket);
     }
 }

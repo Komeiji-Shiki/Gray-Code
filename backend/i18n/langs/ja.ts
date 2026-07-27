@@ -88,7 +88,9 @@ const ja: BackendLanguageMessages = {
                 success: '"{toolName}" {phase}の状態に復元しました',
                 filesUpdated: '{count} 個のファイルが更新されました',
                 filesDeleted: '{count} 個のファイルが削除されました',
-                filesUnchanged: '{count} 個のファイルは変更なし'
+                filesUnchanged: '{count} 個のファイルは変更なし',
+                chainBroken: '増分チェーンが破損しています：参照先のベースチェックポイントが見つかりません',
+                partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります'
             },
             defaultConversationTitle: '会話 {conversationId}',
             errors: {
@@ -139,6 +141,7 @@ const ja: BackendLanguageMessages = {
 
         channel: {
             formatters: {
+                streamError: '{provider} がストリーム中にエラーを返しました: {message}',
                 gemini: {
                     errors: {
                         invalidResponse: '無効な Gemini API レスポンス: 候補がありません',
@@ -258,6 +261,7 @@ const ja: BackendLanguageMessages = {
                     lastMessageNotModel: '最後のメッセージがモデルメッセージではありません',
                     noFunctionCalls: '保留中のファンクション呼び出しがありません',
                     userRejectedTool: 'ユーザーがツールの実行を拒否しました',
+                    toolCallCancelled: 'ユーザーがリクエストをキャンセルしたため、このツール呼び出しは実行されませんでした',
                     notEnoughRounds: '会話ラウンド数が不足しています。現在 {currentRounds} ラウンド、{keepRounds} ラウンド保持、要約は不要です',
                     notEnoughContent: '会話ラウンド数が不足しています。現在 {currentRounds} ラウンド、{keepRounds} ラウンド保持、要約するコンテンツがありません',
                     noMessagesToSummarize: '要約するメッセージがありません',

@@ -62,10 +62,24 @@ interface ToolInfo {
   serverId?: string
 }
 
+// 预设模板（与后端 backend/tools/subagents/presets.ts 同构）
+interface SubAgentPreset {
+  presetId: string
+  defaultName: string
+  defaultDescription: string
+  icon: string
+  systemPrompt: string
+  tools: SubAgentToolsConfig
+  maxIterations?: number
+  maxRuntime?: number
+}
+
 // ==================== 状态 ====================
 
 // 全局配置
 const maxConcurrentAgents = ref(3)
+// 通用 Worker（傻瓜式多 agent 模式）开关，默认开启
+const generalWorkerEnabled = ref(true)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -83,9 +97,17 @@ const newAgentName = ref('')
 const isCreating = ref(false)
 const createError = ref('')
 
+// 预设模板：新建对话框中可选择模板预填全部字段，创建后仍可在现有编辑界面调整
+const presets = ref<SubAgentPreset[]>([])
+const selectedPresetId = ref('')
+const newAgentChannelId = ref('')
+
 // 删除确认
 const showDeleteConfirm = ref(false)
 const deleteAgentType = ref('')
+
+// 字段保存 / 删除失败的提示（成功保存后自动清空）
+const saveError = ref('')
 
 // 渠道列表
 const channels = ref<ChannelConfig[]>([])
@@ -203,13 +225,14 @@ async function toggleTool(toolName: string, selected: boolean) {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number }>('subagents.list', {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean }>('subagents.list', {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
       if (response.maxConcurrentAgents !== undefined) {
         maxConcurrentAgents.value = response.maxConcurrentAgents
       }
+      generalWorkerEnabled.value = response.generalWorkerEnabled !== false
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
         currentAgentType.value = subAgents.value[0].type
@@ -222,12 +245,22 @@ async function loadSubAgents() {
   }
 }
 
+// 提取可读的错误文案，供保存失败横幅使用
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  const message = (error as { message?: unknown } | null)?.message
+  return typeof message === 'string' ? message : String(error)
+}
+
 // 更新全局配置
 async function updateGlobalConfig(key: string, value: unknown) {
   try {
     await sendToExtension('subagents.updateGlobalConfig', { [key]: value })
+    saveError.value = ''
   } catch (error) {
     console.error('Failed to update global config:', error)
+    saveError.value = errorText(error)
   }
 }
 
@@ -287,23 +320,33 @@ function selectAgent(agentType: string) {
   currentAgentType.value = agentType
 }
 
-// 更新当前代理配置
-async function updateAgentField(field: string, value: any) {
-  if (!currentAgent.value) return
-  
+/**
+ * 更新当前代理的单个字段。
+ *
+ * 返回保存结果而不是抛出：模板里的 @change / @update:modelValue 都不接 catch，
+ * 抛出会变成 unhandled rejection；而原先直接吞掉错误则让 saveRename 的失败分支成了死代码，
+ * 后端拒绝保存时编辑框照常关闭，用户看到的是「改成功了但值没变」。
+ */
+async function updateAgentField(field: string, value: any): Promise<{ ok: boolean; error?: unknown }> {
+  if (!currentAgent.value) return { ok: false }
+
   try {
     await sendToExtension('subagents.update', {
       type: currentAgentType.value,
       updates: { [field]: value }
     })
-    
+
     // 更新本地状态
     const agent = subAgents.value.find(a => a.type === currentAgentType.value)
     if (agent) {
       (agent as any)[field] = value
     }
+    saveError.value = ''
+    return { ok: true }
   } catch (error) {
     console.error('Failed to update subagent:', error)
+    saveError.value = errorText(error)
+    return { ok: false, error }
   }
 }
 
@@ -311,7 +354,55 @@ async function updateAgentField(field: string, value: any) {
 function openCreateDialog() {
   newAgentName.value = ''
   createError.value = ''
+  selectedPresetId.value = ''
+  // 默认选中第一个可用渠道，创建后可在编辑界面调整
+  newAgentChannelId.value = channelOptions.value[0]?.value || ''
   showNewDialog.value = true
+}
+
+// 加载预设模板列表
+async function loadPresets() {
+  try {
+    const response = await sendToExtension<{ presets: SubAgentPreset[] }>('subagents.getPresets', {})
+    presets.value = response?.presets || []
+  } catch (error) {
+    console.error('Failed to load subagent presets:', error)
+  }
+}
+
+// presetId（kebab-case）转 i18n 键名（camelCase）
+function presetI18nKey(presetId: string): string {
+  return presetId.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+}
+
+// 模板本地化名称（缺失时回退英文默认名）
+function presetName(preset: SubAgentPreset): string {
+  const key = `components.settings.subagents.presets.${presetI18nKey(preset.presetId)}.name`
+  const localized = t(key)
+  return localized === key ? preset.defaultName : localized
+}
+
+// 模板本地化描述（缺失时回退英文默认描述）
+function presetDescription(preset: SubAgentPreset): string {
+  const key = `components.settings.subagents.presets.${presetI18nKey(preset.presetId)}.description`
+  const localized = t(key)
+  return localized === key ? preset.defaultDescription : localized
+}
+
+// 选择模板：名称为空或仍是其他模板的默认名时自动预填；切换回空白模板则清空名称
+function selectPreset(presetId: string) {
+  selectedPresetId.value = presetId
+  const preset = presets.value.find(p => p.presetId === presetId)
+  if (!preset) {
+    // 空白模板：清空名称，让用户自行输入
+    newAgentName.value = ''
+    return
+  }
+  const currentName = newAgentName.value.trim()
+  const isAutoName = !currentName || presets.value.some(p => presetName(p) === currentName)
+  if (isAutoName) {
+    newAgentName.value = presetName(preset)
+  }
 }
 
 // 生成唯一的子代理类型 ID
@@ -346,15 +437,24 @@ async function createAgent() {
   const agentTypeId = generateAgentTypeId()
   
   try {
-    await sendToExtension('subagents.create', {
+    // 选中模板时预填全部字段；description/systemPrompt 使用英文原文（面向模型），UI 展示才用本地化文案
+    const preset = presets.value.find(p => p.presetId === selectedPresetId.value)
+    // 修改原因：preset 来自 Vue ref 响应式数组，其子对象（如 tools）是 Proxy，
+    //           vscode.postMessage 的 structured clone 无法序列化 Proxy，会抛 DataCloneError。
+    // 修改方式：通过 JSON 往返解包所有 Proxy，确保 payload 是纯 JSON 兼容对象。
+    // 修改目的：选择预设模板创建子代理时不再报 "could not be cloned"。
+    const payload = JSON.parse(JSON.stringify({
       type: agentTypeId,
       name: trimmedName,
-      description: '',
-      systemPrompt: '',
-      channel: { channelId: '' },
-      tools: { mode: 'all' },
+      description: preset?.defaultDescription || '',
+      systemPrompt: preset?.systemPrompt || '',
+      channel: { channelId: newAgentChannelId.value || '' },
+      tools: preset ? preset.tools : { mode: 'all' },
+      maxIterations: preset?.maxIterations,
+      maxRuntime: preset?.maxRuntime,
       enabled: true
-    })
+    }))
+    await sendToExtension('subagents.create', payload)
     
     // 重新加载并选中新创建的
     await loadSubAgents()
@@ -399,17 +499,21 @@ async function saveRename() {
     return
   }
   
-  try {
-    await updateAgentField('name', trimmedName)
+  const result = await updateAgentField('name', trimmedName)
+  if (result.ok) {
     isEditing.value = false
     renameError.value = ''
-  } catch (error: any) {
-    if (error?.message?.includes('SUBAGENT_NAME_EXISTS') || error?.code === 'SUBAGENT_NAME_EXISTS') {
-      renameError.value = t('components.settings.subagents.createDialog.nameDuplicate')
-    } else {
-      renameError.value = error?.message || String(error)
-    }
+    return
   }
+
+  const error = result.error as { message?: string; code?: string } | undefined
+  if (error?.message?.includes('SUBAGENT_NAME_EXISTS') || error?.code === 'SUBAGENT_NAME_EXISTS') {
+    renameError.value = t('components.settings.subagents.createDialog.nameDuplicate')
+  } else {
+    renameError.value = errorText(error)
+  }
+  // 重命名失败已就地提示，不重复占用顶部横幅
+  saveError.value = ''
 }
 
 // 取消重命名
@@ -425,16 +529,18 @@ async function deleteAgent() {
   
   try {
     await sendToExtension('subagents.delete', { type: deleteAgentType.value })
-    
+
     // 从列表中移除
     subAgents.value = subAgents.value.filter(a => a.type !== deleteAgentType.value)
-    
+
     // 如果删除的是当前选中的，选择第一个
     if (currentAgentType.value === deleteAgentType.value) {
       currentAgentType.value = subAgents.value[0]?.type || ''
     }
+    saveError.value = ''
   } catch (error) {
     console.error('Failed to delete subagent:', error)
+    saveError.value = errorText(error)
   } finally {
     showDeleteConfirm.value = false
     deleteAgentType.value = ''
@@ -443,6 +549,7 @@ async function deleteAgent() {
 
 // 初始化
 onMounted(async () => {
+  await loadPresets()
   await Promise.all([
     loadSubAgents(),
     loadChannels(),
@@ -461,6 +568,15 @@ onMounted(async () => {
     
     <!-- 主内容 -->
     <div v-else class="settings-content">
+      <!-- 保存失败提示：配置写入被后端拒绝时不再静默 -->
+      <div v-if="saveError" class="save-error-banner">
+        <i class="codicon codicon-error"></i>
+        <span>{{ t('components.settings.subagents.saveFailed', { error: saveError }) }}</span>
+        <button class="dismiss-btn" @click="saveError = ''" :title="t('common.close')">
+          <i class="codicon codicon-close"></i>
+        </button>
+      </div>
+
       <!-- 全局配置 -->
       <div class="config-section global-config">
         <h5>{{ t('components.settings.subagents.globalConfig') }}</h5>
@@ -475,6 +591,14 @@ onMounted(async () => {
             />
             <span class="field-hint">{{ t('components.settings.subagents.maxConcurrentAgentsHint') }}</span>
           </div>
+        </div>
+        <div class="form-group">
+          <CustomCheckbox
+            :modelValue="generalWorkerEnabled"
+            :label="t('components.settings.subagents.generalWorker')"
+            @update:modelValue="(v: boolean) => { generalWorkerEnabled = v; updateGlobalConfig('generalWorkerEnabled', v) }"
+          />
+          <span class="field-hint">{{ t('components.settings.subagents.generalWorkerHint') }}</span>
         </div>
       </div>
       
@@ -704,6 +828,37 @@ onMounted(async () => {
         </div>
         
         <div class="dialog-body">
+          <!-- 预设模板选择：空白 + 内置模板；选中后预填名称/提示词/工具配置，创建后均可在编辑界面调整 -->
+          <div class="form-group">
+            <label>{{ t('components.settings.subagents.createDialog.templateLabel') }}</label>
+            <div class="preset-list">
+              <div
+                class="preset-card"
+                :class="{ selected: selectedPresetId === '' }"
+                @click="selectPreset('')"
+              >
+                <i class="codicon codicon-file"></i>
+                <div class="preset-info">
+                  <span class="preset-name">{{ t('components.settings.subagents.presets.blank.name') }}</span>
+                  <span class="preset-desc">{{ t('components.settings.subagents.presets.blank.description') }}</span>
+                </div>
+              </div>
+              <div
+                v-for="preset in presets"
+                :key="preset.presetId"
+                class="preset-card"
+                :class="{ selected: selectedPresetId === preset.presetId }"
+                @click="selectPreset(preset.presetId)"
+              >
+                <i class="codicon" :class="preset.icon"></i>
+                <div class="preset-info">
+                  <span class="preset-name">{{ presetName(preset) }}</span>
+                  <span class="preset-desc">{{ presetDescription(preset) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="form-group">
             <label>{{ t('components.settings.subagents.createDialog.nameLabel') }}</label>
             <input
@@ -711,6 +866,15 @@ onMounted(async () => {
               type="text"
               :placeholder="t('components.settings.subagents.createDialog.namePlaceholder')"
               @keyup.enter="createAgent"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>{{ t('components.settings.subagents.channel') }}</label>
+            <CustomSelect
+              v-model="newAgentChannelId"
+              :options="channelOptions"
+              :placeholder="t('components.settings.subagents.selectChannel')"
             />
           </div>
           
@@ -800,6 +964,41 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 保存失败横幅 */
+.save-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  border-radius: 4px;
+  color: var(--vscode-errorForeground);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.save-error-banner span {
+  flex: 1;
+  min-width: 0;
+}
+
+.save-error-banner .dismiss-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  opacity: 0.75;
+}
+
+.save-error-banner .dismiss-btn:hover {
+  opacity: 1;
 }
 
 /* 子代理选择器 */
@@ -1051,6 +1250,59 @@ input[type="number"]::-webkit-inner-spin-button {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+}
+
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.preset-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--vscode-editor-background);
+}
+
+.preset-card:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.preset-card.selected {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.preset-card > .codicon {
+  margin-top: 2px;
+  font-size: 16px;
+  color: var(--vscode-symbolIcon-classForeground);
+}
+
+.preset-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.preset-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.preset-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
 }
 
 .dialog {

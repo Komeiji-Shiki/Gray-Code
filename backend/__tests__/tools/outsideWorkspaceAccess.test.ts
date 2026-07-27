@@ -148,4 +148,35 @@ describe('outside workspace file access policy', () => {
         expect(ensureOutsideWorkspaceAccessApproved('apply_diff', args, { approvedByToolConfirmation: true })).toBeNull();
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
+
+    it('denies outside-workspace delete_file by default (previously bypassed policy entirely)', () => {
+        const error = getOutsideWorkspaceRejectionReason('delete_file', { paths: [outsidePath] }, settingsManager);
+
+        expect(error).toContain('disabled in settings');
+    });
+
+    it('covers the read_file paths-array form (previously only path/files were checked)', () => {
+        const result = getOutsideWorkspaceAccessCheck('read_file', { paths: [outsidePath] }, settingsManager);
+
+        expect(result.isOutsideWorkspace).toBe(true);
+        expect(result.denied).toBe(true);
+    });
+
+    it('uses manual diff review as the outside-workspace confirmation for insert_code when configured as ask', async () => {
+        await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
+
+        const args = { files: [{ path: outsidePath, line: 1, content: 'x' }] };
+
+        expect(toolCallNeedsOutsideWorkspaceConfirmation('insert_code', args, settingsManager)).toBe(false);
+        expect(ensureOutsideWorkspaceAccessApproved('insert_code', args)).toBeNull();
+    });
+
+    it('routes outside-workspace create_directory through tool confirmation when configured as ask', async () => {
+        await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
+
+        const args = { paths: [path.resolve('/tmp/newdir')] };
+
+        expect(toolCallNeedsOutsideWorkspaceConfirmation('create_directory', args, settingsManager)).toBe(true);
+        expect(ensureOutsideWorkspaceAccessApproved('create_directory', args)).toContain('needs user confirmation');
+    });
 });

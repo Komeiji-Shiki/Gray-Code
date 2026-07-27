@@ -90,8 +90,9 @@ function findAllExactMatchLineNumbers(
 
 function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: string): number[] {
     // 为什么要单独返回索引：结构化 hunks 需要先判断 oldContent 是否唯一，唯一时必须忽略 startLine，避免 stale line number 让本来正确的内容替换失败。
-    // 怎么改：使用非重叠 indexOf 扫描，和 legacy search/replace 的匹配语义保持一致。
-    // 目的：让“内容唯一优先，重复时才看 startLine”的规则有稳定、可测试的实现边界。
+    // 怎么改：使用重叠 indexOf 扫描（每次只推进 1 个字符），重叠出现的 oldContent 也必须计入候选。
+    // 目的：旧实现按 match.length 非重叠推进，会把 "aaa" 中两个重叠的 "aa" 误判为唯一匹配并忽略 startLine；
+    // 完整索引数组同时服务于唯一性计数与 startLine 定位，二者必须看到同一份真实匹配集。
     if (!normalizedSearch) return [];
 
     const result: number[] = [];
@@ -102,7 +103,7 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
         if (pos === -1) break;
 
         result.push(pos);
-        fromIndex = pos + Math.max(1, normalizedSearch.length);
+        fromIndex = pos + 1;
     }
 
     return result;
@@ -139,6 +140,43 @@ function getLineNumberAtIndex(normalizedContent: string, index: number): number 
         }
     }
     return line;
+}
+
+function getLineNumbersAtIndexes(normalizedContent: string, indexes: number[]): number[] {
+    // 为什么要单次扫描：结构化 hunk 的候选索引可能很多（重叠扫描进一步放大候选集），逐个 getLineNumberAtIndex 反算是 O(n·m)。
+    // 怎么改：indexes 由 indexOf 扫描产生、天然升序，用单调游标一遍扫出全部行号，总复杂度 O(n + m)。
+    // 目的：多匹配场景的行号计算不再产生平方级开销。
+    const result: number[] = [];
+    if (indexes.length === 0) return result;
+
+    let line = 1;
+    let cursor = 0;
+
+    for (const index of indexes) {
+        while (cursor < index) {
+            if (normalizedContent.charCodeAt(cursor) === 10) {
+                line++;
+            }
+            cursor++;
+        }
+        result.push(line);
+    }
+
+    return result;
+}
+
+/** 错误消息中最多展示的候选行号数量 */
+const CANDIDATE_LINES_MESSAGE_LIMIT = 20;
+
+function formatCandidateLinesForMessage(candidateLines: number[]): string {
+    // 修改原因：重叠扫描后候选行号可能成百上千，全量拼进错误消息会撑爆返回给模型的工具响应。
+    // 修改方式：仅在生成错误消息时截断展示（前 20 个 + 剩余数量）；matches 完整集合仍用于 startLine 定位。
+    // 修改目的：限制错误消息体积，同时不破坏“从完整匹配集里按 startLine 选块”的定位语义。
+    if (candidateLines.length <= CANDIDATE_LINES_MESSAGE_LIMIT) {
+        return candidateLines.join(', ');
+    }
+    const shown = candidateLines.slice(0, CANDIDATE_LINES_MESSAGE_LIMIT).join(', ');
+    return `${shown}, ... and ${candidateLines.length - CANDIDATE_LINES_MESSAGE_LIMIT} more`;
 }
 
 function countTextLines(normalizedText: string): number {
@@ -463,11 +501,11 @@ function resolveStructuredHunkMatch(
     }
 
     if (matches.length > 1) {
-        const candidateLines = matches.map(index => getLineNumberAtIndex(currentContent, index));
+        const candidateLines = getLineNumbersAtIndexes(currentContent, matches);
         if (hunk.startLine === undefined) {
             return {
                 success: false,
-                error: `Multiple matches found (${matches.length}). Provide startLine to choose which oldContent occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
+                error: `Multiple matches found (${matches.length}). Provide startLine to choose which oldContent occurrence to replace. Candidate match lines: ${formatCandidateLinesForMessage(candidateLines)}.`,
                 matchCount: matches.length,
                 candidateLines
             };
@@ -488,7 +526,7 @@ function resolveStructuredHunkMatch(
         if (startIndex === undefined) {
             return {
                 success: false,
-                error: `Multiple matches found (${matches.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
+                error: `Multiple matches found (${matches.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${formatCandidateLinesForMessage(candidateLines)}.`,
                 matchCount: matches.length,
                 candidateLines
             };
@@ -535,7 +573,7 @@ function resolveStructuredHunkMatch(
         if (hunk.startLine === undefined) {
             return {
                 success: false,
-                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}). Provide startLine to choose which occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
+                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}). Provide startLine to choose which occurrence to replace. Candidate match lines: ${formatCandidateLinesForMessage(candidateLines)}.`,
                 matchCount: fallback.candidates.length,
                 candidateLines
             };
@@ -556,7 +594,7 @@ function resolveStructuredHunkMatch(
         if (!candidate) {
             return {
                 success: false,
-                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
+                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${formatCandidateLinesForMessage(candidateLines)}.`,
                 matchCount: fallback.candidates.length,
                 candidateLines
             };
@@ -979,8 +1017,12 @@ export function applyDiffToContent(
     const textBeforeMatch = normalizedContent.substring(0, matchIndex);
     const actualMatchedLine = textBeforeMatch.split('\n').length;
 
-    // 精确替换
-    const result = normalizedContent.replace(normalizedSearch, normalizedReplace);
+    // 精确替换（不能用 String.replace：replacement 字符串里的 $& / $` / $' / $$ 会被当作替换模式展开，
+    // 模型输出的代码里恰好含有这些字符时会静默写坏文件。用切片拼接彻底绕开 replacement 模式语义）
+    const result =
+        normalizedContent.substring(0, matchIndex) +
+        normalizedReplace +
+        normalizedContent.substring(matchIndex + normalizedSearch.length);
 
     return {
         success: true,
@@ -1425,7 +1467,7 @@ ${descriptionSuffix}`,
                         blocks,
                         rawDiffs,
                         context?.toolId,
-                        { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
+                        { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true, conversationId: context?.conversationId }
                     );
 
                     // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
@@ -1600,7 +1642,7 @@ ${descriptionSuffix}`,
                     blocks,
                     diffs as any[],
                     context?.toolId,
-                    { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true }
+                    { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true, conversationId: context?.conversationId }
                 );
 
                 // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。

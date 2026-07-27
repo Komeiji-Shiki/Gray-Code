@@ -185,6 +185,10 @@ export interface Message {
   content: string
   timestamp: number
   /**
+   * 消息来源：'user' 为正常用户输入，'background_task' 为后台任务回流
+   */
+  source?: 'user' | 'background_task'
+  /**
    * 该消息在后端历史中的绝对索引（Content.index）
    *
    * - 从后端加载的历史消息：应当有值

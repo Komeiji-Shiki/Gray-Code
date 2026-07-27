@@ -33,6 +33,20 @@ export {
     defaultExecutorFactory
 } from './executor';
 
+// 导出并发信号量
+export {
+    SubAgentConcurrencyLimiter,
+    SubAgentQueueCancelledError,
+    subAgentConcurrencyLimiter
+} from './concurrencyLimiter';
+
+// 导出预设模板
+export {
+    SUB_AGENT_PRESETS,
+    getSubAgentPreset,
+    type SubAgentPreset
+} from './presets';
+
 // 导出运行事件总线和控制器
 export {
     subAgentRunEventBus,

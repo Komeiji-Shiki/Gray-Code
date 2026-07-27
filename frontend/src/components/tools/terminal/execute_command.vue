@@ -345,8 +345,8 @@ watch(isRunning, (running) => {
       <span class="error-text">{{ error || resultData.error }}</span>
     </div>
     
-    <!-- 输出内容 -->
-    <div v-else-if="output || isRunning" class="output-section">
+    <!-- 输出内容（即使有错误也显示，方便用户查看具体报错） -->
+    <div v-if="output || isRunning" class="output-section">
       <div class="output-header">
         <span class="output-title">{{ t('components.tools.terminal.executeCommandPanel.output') }}</span>
         <div class="output-header-right">

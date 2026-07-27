@@ -112,6 +112,8 @@ export interface QueuedMessage {
   attachments: Attachment[]
   /** 入队时间戳 */
   timestamp: number
+  /** 入队时的会话 ID（null 表示无会话归属，兜底兼容旧队列项） */
+  conversationId: string | null
 }
 
 /**
@@ -238,6 +240,12 @@ export interface ChatStoreState {
 
   /** 工具响应缓存：toolCallId -> response，避免 getToolResponseById 的 O(M) 线性扫描 */
   toolResponseCache: Ref<Map<string, Record<string, unknown>>>
+
+  /**
+   * functionResponse.id -> allMessages 数组下标。
+   * 随消息写入维护的权威索引，让 getToolResponseById 退化为纯 O(1) 查表。
+   */
+  toolResponseIndex: Ref<Map<string, number>>
 }
 
 /**
@@ -328,6 +336,8 @@ export interface ConversationSessionSnapshot {
   messageQueue: QueuedMessage[]
   /** Prompt 模式 ID */
   currentPromptModeId: string
+  /** 工具响应缓存快照（toolCallId -> response 条目数组，用于新 Map 重建） */
+  toolResponseCache: Array<[string, Record<string, unknown>]>
 }
 
 /**

@@ -32,8 +32,10 @@ const summarizeConfig = reactive({
   summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
   // 自动总结提示词
   autoSummarizePrompt: '',
-  // 保留最近 N 轮不总结
+  // 最少保留最近 N 轮不总结（保留预算的下限保护）
   keepRecentRounds: 2,
+  // 总结时保留最近内容的 token 预算（token 数或百分比字符串），默认值由后端下发
+  keepRecentTokens: '' as string | number,
   // 使用专门的总结模型
   useSeparateModel: false,
   // 总结用的渠道 ID
@@ -42,10 +44,11 @@ const summarizeConfig = reactive({
   summarizeModelId: ''
 })
 
-// 内置默认总结配置（用于“恢复内置默认”）
+// 内置默认总结配置（用于“恢复内置默认”与空值回落，由后端 DEFAULT_SUMMARIZE_CONFIG 下发）
 const defaultSummarizeConfig = ref({
   summarizePrompt: summarizeConfig.summarizePrompt,
-  autoSummarizePrompt: summarizeConfig.autoSummarizePrompt
+  autoSummarizePrompt: summarizeConfig.autoSummarizePrompt,
+  keepRecentTokens: '' as string | number
 })
 
 const hasManualDefaultPrompt = computed(() =>
@@ -147,7 +150,11 @@ async function loadDefaultConfig() {
         autoSummarizePrompt:
           typeof response.autoSummarizePrompt === 'string'
             ? response.autoSummarizePrompt
-            : summarizeConfig.autoSummarizePrompt
+            : summarizeConfig.autoSummarizePrompt,
+        keepRecentTokens:
+          typeof response.keepRecentTokens === 'string' || typeof response.keepRecentTokens === 'number'
+            ? response.keepRecentTokens
+            : defaultSummarizeConfig.value.keepRecentTokens
       }
     }
   } catch (error) {
@@ -168,6 +175,17 @@ async function updateConfigField(field: string, value: any) {
   } catch (error) {
     console.error('Failed to save summarize config:', error)
   }
+}
+
+// 保存保留预算（空值回落到后端下发的内置默认值，纯数字转 number）
+async function updateKeepRecentTokens(raw: string) {
+  const text = raw.trim()
+  if (!text) {
+    await updateConfigField('keepRecentTokens', defaultSummarizeConfig.value.keepRecentTokens)
+    return
+  }
+  const value = /^\d+$/.test(text) ? Number(text) : text
+  await updateConfigField('keepRecentTokens', value)
 }
 
 // 更新渠道选择
@@ -258,7 +276,20 @@ onMounted(async () => {
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsHint') }}</p>
       </div>
-      
+
+      <div class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.optionsSection.keepTokens') }}</label>
+        <div class="rounds-input">
+          <input
+            type="text"
+            :value="String(summarizeConfig.keepRecentTokens ?? '')"
+            :placeholder="String(defaultSummarizeConfig.keepRecentTokens ?? '')"
+            @change="(e: any) => updateKeepRecentTokens(e.target.value)"
+          />
+        </div>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepTokensHint') }}</p>
+      </div>
+
       <div class="form-group">
         <div class="prompt-label-row">
           <label>{{ t('components.settings.summarizeSettings.optionsSection.manualPrompt') }}</label>
@@ -483,6 +514,7 @@ onMounted(async () => {
 }
 
 .form-group input[type="number"],
+.form-group input[type="text"],
 .form-group textarea {
   padding: 6px 10px;
   font-size: 13px;
@@ -508,6 +540,7 @@ onMounted(async () => {
 }
 
 .form-group input[type="number"]:focus,
+.form-group input[type="text"]:focus,
 .form-group textarea:focus {
   border-color: var(--vscode-focusBorder);
 }

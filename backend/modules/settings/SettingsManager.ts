@@ -73,6 +73,8 @@ import {
     DEFAULT_SYSTEM_PROMPT_CONFIG,
     DEFAULT_MODE_ID,
     DESIGN_MODE_ID,
+    PLAN_MODE_ID,
+    ASK_MODE_ID,
     REVIEW_MODE_ID,
     CODE_PROMPT_MODE,
     DESIGN_PROMPT_MODE,
@@ -84,6 +86,7 @@ import {
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
     DEFAULT_HISTORY_SEARCH_CONFIG,
+    BUILTIN_MODE_TOOL_POLICIES,
     getDefaultExecuteCommandConfig
 } from './types';
 
@@ -146,10 +149,34 @@ export class SettingsManager {
         if (stored) {
             // 使用深度合并处理所有配置，确保默认值不会因用户配置部分子字段而丢失
             this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
-            
+
             // lastUpdated 需要使用最新的或当前时间
             this.settings.lastUpdated = stored.lastUpdated || Date.now();
+
+            // 显式迁移内置模式的 toolPolicy（幂等，仅未定制时填充默认值）
+            await this.migratePromptModeToolPolicies();
         }
+    }
+
+    /**
+     * 从存储重新加载设置并广播变更事件。
+     *
+     * 用于导入设置后通知 PromptManager 等缓存持有者刷新。
+     * 事件形态与 updateSettings 一致，确保现有监听器能识别。
+     */
+    async reloadAndNotify(): Promise<void> {
+        const oldSettings = { ...this.settings };
+        const stored = await this.storage.load();
+        if (stored) {
+            this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
+            this.settings.lastUpdated = stored.lastUpdated || Date.now();
+        }
+        this.notifyChange({
+            type: 'full',
+            oldValue: oldSettings,
+            newValue: this.settings,
+            settings: this.settings
+        });
     }
 
     /**
@@ -1345,24 +1372,15 @@ export class SettingsManager {
             needsUpdate = true;
         }
 
-        const builtInModes = [
-            DESIGN_PROMPT_MODE,
-            PLAN_PROMPT_MODE,
-            ASK_PROMPT_MODE,
-            REVIEW_PROMPT_MODE,
-        ];
-
-        for (const builtInMode of builtInModes) {
-            const currentMode = modes[builtInMode.id];
-            if (!currentMode) continue;
-            if (!this.arraysEqual(currentMode.toolPolicy, builtInMode.toolPolicy)) {
-                modes[builtInMode.id] = {
-                    ...currentMode,
-                    toolPolicy: builtInMode.toolPolicy ? [...builtInMode.toolPolicy] : undefined,
-                };
-                needsUpdate = true;
-            }
-        }
+        // 内置模式的 toolPolicy 不再在 getter 中强制回滚。
+        // 迁移由 migratePromptModeToolPolicies() 显式处理，
+        // 运行时由 normalizePromptModeSnapshot() 按 toolPolicyCustomized 标记回退。
+        const builtInModeIds = new Set([
+            DESIGN_MODE_ID,
+            PLAN_MODE_ID,
+            ASK_MODE_ID,
+            REVIEW_MODE_ID,
+        ]);
 
         const dynamicContextStrategy = this.normalizeDynamicContextStrategy(config.dynamicContextStrategy);
         for (const [modeId, mode] of Object.entries(modes)) {
@@ -1648,7 +1666,13 @@ export class SettingsManager {
      */
     async savePromptMode(mode: PromptMode): Promise<void> {
         const config = this.getSystemPromptConfig();
-        const modes = { ...config.modes, [mode.id]: this.normalizePromptModeSnapshot(mode) };
+        // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
+        // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值
+        if ('toolPolicy' in (mode as any)) {
+            (mode as PromptMode).toolPolicyCustomized = true;
+        }
+        const snapshot = this.normalizePromptModeSnapshot(mode);
+        const modes = { ...config.modes, [mode.id]: snapshot };
         await this.updateSystemPromptConfig({ modes });
     }
 
@@ -1684,16 +1708,75 @@ export class SettingsManager {
     private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
         const promptAssemblyMode = this.normalizePromptAssemblyMode(mode.promptAssemblyMode);
         const promptEntries = this.normalizePromptEntries(mode.promptEntries, promptAssemblyMode);
+
+        // 用户未定制 toolPolicy 的内置模式，运行时回退到内置默认值
+        let toolPolicy: string[] | undefined;
+        if (mode.toolPolicyCustomized !== true && BUILTIN_MODE_TOOL_POLICIES[mode.id]) {
+            toolPolicy = [...BUILTIN_MODE_TOOL_POLICIES[mode.id]];
+        } else if (Array.isArray(mode.toolPolicy)) {
+            toolPolicy = [...mode.toolPolicy];
+        }
+
         return {
             ...mode,
             promptAssemblyMode,
-            toolPolicy: Array.isArray(mode.toolPolicy)
-                ? [...mode.toolPolicy]
-                : undefined,
+            toolPolicy,
             ...(promptEntries ? { promptEntries } : {})
         };
     }
     
+    /**
+     * 显式迁移内置提示词模式的 toolPolicy（幂等）。
+     *
+     * 仅对 toolPolicyCustomized !== true 的内置模式生效：
+     * 将其 toolPolicy 设置为 BUILTIN_MODE_TOOL_POLICIES 中的默认值，
+     * 设置 toolPolicyCustomized = false 标记为「未定制」。
+     *
+     * 迁移完成后立即落盘。后续 initialize() 调用可重复执行——已定制的模式不会受影响。
+     */
+    private async migratePromptModeToolPolicies(): Promise<void> {
+        const config = this.settings.toolsConfig?.system_prompt;
+        if (!config?.modes) return;
+
+        const modes = { ...config.modes };
+        let changed = false;
+
+        const builtInModeIds = new Set([
+            DESIGN_MODE_ID,
+            PLAN_MODE_ID,
+            ASK_MODE_ID,
+            REVIEW_MODE_ID,
+        ]);
+
+        for (const modeId of builtInModeIds) {
+            const mode = modes[modeId];
+            if (!mode) continue;
+            if (mode.toolPolicyCustomized === true) continue;
+
+            const builtInPolicy = BUILTIN_MODE_TOOL_POLICIES[modeId];
+            if (!this.arraysEqual(mode.toolPolicy, builtInPolicy as string[])) {
+                modes[modeId] = {
+                    ...mode,
+                    toolPolicy: builtInPolicy ? [...builtInPolicy] : undefined,
+                    toolPolicyCustomized: false,
+                };
+                changed = true;
+            } else if (mode.toolPolicyCustomized !== false) {
+                // toolPolicy 已匹配但标记未设置，补齐标记
+                modes[modeId] = { ...mode, toolPolicyCustomized: false };
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.settings.toolsConfig = {
+                ...this.settings.toolsConfig,
+                system_prompt: { ...config, modes },
+            };
+            await this.storage.save(this.settings);
+        }
+    }
+
     /**
      * 删除模式
      */
