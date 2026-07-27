@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  多模型渠道 · 工具调用 · MCP · 设计/计划/审查工作流 · 多模态上下文
+  多模型渠道 · 工具调用 · MCP · 设计/计划/审查工作流 · 多模态上下文 · 具体变更详见[changelog](https://github.com/Komeiji-Shiki/Lim-Code/blob/main/CHANGELOG.md)
 </p>
 
 ---
