@@ -89,7 +89,9 @@ const zhCN = {
                 success: '已恢复到 "{toolName}" {phase}的状态',
                 filesUpdated: '{count} 个文件已更新',
                 filesDeleted: '{count} 个文件已删除',
-                filesUnchanged: '{count} 个文件未变化'
+                filesUnchanged: '{count} 个文件未变化',
+                chainBroken: '增量链断裂：引用的基准检查点缺失',
+                partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败'
             },
             defaultConversationTitle: '对话 {conversationId}',
             errors: {
@@ -140,6 +142,7 @@ const zhCN = {
 
         channel: {
             formatters: {
+                streamError: '{provider} 在流式响应中返回错误: {message}',
                 gemini: {
                     errors: {
                         invalidResponse: '无效的 Gemini API 响应: 没有候选结果',
@@ -259,6 +262,7 @@ const zhCN = {
                     lastMessageNotModel: '最后一条消息不是模型消息',
                     noFunctionCalls: '没有待确认的工具调用',
                     userRejectedTool: '用户拒绝执行此工具',
+                    toolCallCancelled: '用户取消了本次请求，该工具调用未执行',
                     notEnoughRounds: '对话回合数不足，当前 {currentRounds} 轮，保留 {keepRounds} 轮，无需总结',
                     notEnoughContent: '对话回合数不足，当前 {currentRounds} 轮，保留 {keepRounds} 轮，没有可总结的内容',
                     noMessagesToSummarize: '没有需要总结的消息',

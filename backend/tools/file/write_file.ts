@@ -59,7 +59,8 @@ async function writeSingleFile(
     isMultiRoot: boolean,
     toolId?: string,
     abortSignal?: AbortSignal,
-    approvedByToolConfirmation?: boolean
+    approvedByToolConfirmation?: boolean,
+    conversationId?: string
 ): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
@@ -101,13 +102,13 @@ async function writeSingleFile(
         }
 
         // 如果文件不存在，需要先创建目录
+        // 异步 IO：避免在 extension host 主线程上做同步磁盘操作；
+        // mkdir recursive 幂等，无需先 existsSync 探测
         if (!fileExists) {
             const dirPath = path.dirname(absolutePath);
-            if (!fs.existsSync(dirPath)) {
-                fs.mkdirSync(dirPath, { recursive: true });
-            }
+            await fs.promises.mkdir(dirPath, { recursive: true });
             // 创建空文件以便 DiffManager 可以操作
-            fs.writeFileSync(absolutePath, '', 'utf8');
+            await fs.promises.writeFile(absolutePath, '', 'utf8');
         }
 
         // 使用 DiffManager 创建待审阅的 diff
@@ -129,7 +130,11 @@ async function writeSingleFile(
             blocks,  // 传递 blocks 信息以启用 CodeLens 和 inline decorations
             undefined,  // diffs
             toolId,  // 传递 toolId 以便前端跟踪
-            { confirmedByToolConfirmation: approvedByToolConfirmation === true }
+            {
+                confirmedByToolConfirmation: approvedByToolConfirmation === true,
+                newFile: !fileExists,
+                conversationId,
+            }
         );
 
         // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
@@ -284,7 +289,8 @@ export function createWriteFileTool(): Tool {
                 isMultiRoot,
                 context?.toolId,
                 context?.abortSignal,
-                context?.approvedByToolConfirmation === true
+                context?.approvedByToolConfirmation === true,
+                context?.conversationId
             );
             results.push(result);
 

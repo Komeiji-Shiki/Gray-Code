@@ -21,6 +21,7 @@
  * - 与 OpenAI 类似，工具转换为提示词
  */
 
+import { createHash } from 'crypto';
 import { t } from '../../../i18n';
 import { BaseFormatter, ensureStrictSchema } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
@@ -45,12 +46,15 @@ import {
     IncrementalPromptToolParser
 } from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
+import { throwIfStreamError } from './streamError';
 import type {
     GenerateRequest,
     GenerateResponse,
     StreamChunk,
     HttpRequestOptions
 } from '../types';
+
+const ANTHROPIC_USER_ID_PREFIX = 'limcode-conversation-';
 
 /**
  * Anthropic 格式转换器
@@ -203,6 +207,15 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         }
         
+        // 修改原因：并行 SubAgent 与主会话共用同一 API Key 时，provider/网关侧需要区分不同运行域的请求。
+        // 修改方式：启用 anthropicUserIdEnabled 且请求携带 conversationId（SubAgent 传 runId）时，
+        //          注入 Anthropic 官方 metadata.user_id 字段（sha256 哈希，不泄露原始 ID）。
+        // 修改目的：与 OpenAI 渠道的 DeepSeek user_id 机制对齐，主会话与各 SubAgent 的缓存/风控域互不混淆。
+        const anthropicUserId = this.buildAnthropicUserId(request, config);
+        if (anthropicUserId) {
+            body.metadata = { ...(body.metadata || {}), user_id: anthropicUserId };
+        }
+
         // 如果启用了 Prompt Caching，注入手动缓存断点
         // 缓存层级顺序：tools -> system -> messages
         // 在每个层级的最后一个内容块上添加 cache_control 标记
@@ -226,6 +239,30 @@ export class AnthropicFormatter extends BaseFormatter {
         };
     }
     
+    /**
+     * Anthropic Messages API 支持 metadata.user_id 官方字段。
+     *
+     * 只有渠道启用 anthropicUserIdEnabled 且调用方传入 conversationId 时才生成。
+     * 主聊天请求传真实对话 ID，SubAgent 传 runId，各运行域彼此区分。
+     * user_id 使用 ID 的 sha256 哈希，稳定且不包含原始对话信息。
+     */
+    private buildAnthropicUserId(request: GenerateRequest, config: AnthropicConfig): string | undefined {
+        if (!(config as any).anthropicUserIdEnabled) {
+            return undefined;
+        }
+
+        const conversationId = request.conversationId?.trim();
+        if (!conversationId) {
+            return undefined;
+        }
+
+        const digest = createHash('sha256')
+            .update(conversationId, 'utf8')
+            .digest('hex');
+
+        return `${ANTHROPIC_USER_ID_PREFIX}${digest}`;
+    }
+
     /**
      * 转换为 Anthropic 消息格式
      *
@@ -647,6 +684,10 @@ export class AnthropicFormatter extends BaseFormatter {
      * }
      */
     parseResponse(response: any): GenerateResponse {
+        // 上游用 HTTP 200 + 错误体回应时，先把它的原文抛出来，
+        // 否则下面只会报一句「没有内容」，用户根本看不到真正的原因
+        throwIfStreamError(response, 'Anthropic');
+
         // 验证响应格式
         if (!response || !response.content) {
             throw new Error(t('modules.channel.formatters.anthropic.errors.invalidResponse'));
@@ -901,6 +942,10 @@ export class AnthropicFormatter extends BaseFormatter {
     }
 
     parseStreamChunk(chunk: any): StreamChunk {
+        // Anthropic SSE 有独立的 `event: error`（overloaded_error / rate_limit_error 等），
+        // 之前这里没有分支处理，整条错误事件被静默丢弃，界面上只剩「模型返回空内容」
+        throwIfStreamError(chunk, 'Anthropic');
+
         const parts: ContentPart[] = [];
         let done = false;
         let usage: any;
@@ -1015,6 +1060,12 @@ export class AnthropicFormatter extends BaseFormatter {
 
         if (modelVersion) {
             streamChunk.modelVersion = modelVersion;
+        }
+
+        // 回退：部分第三方代理将 model 放在顶层 chunk.model（类似 OpenAI 格式），
+        // 而不是标准的 message_start.message.model。与 OpenAI formatter 对齐。
+        if (!streamChunk.modelVersion && chunk.model) {
+            streamChunk.modelVersion = chunk.model;
         }
         
         return streamChunk;

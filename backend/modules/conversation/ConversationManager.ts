@@ -345,8 +345,9 @@ export class ConversationManager {
                     }
                 }));
 
-                // 在工具调用消息的紧接后面插入
-                history.splice(messageIndex + 1, 0, {
+                // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
+                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
+                history.splice(insertAt, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
@@ -642,6 +643,16 @@ export class ConversationManager {
         conversationId: string,
         options: { beforeIndex?: number; offset?: number; limit?: number } = {}
     ): Promise<{ total: number; messages: Content[] }> {
+        // 分段存储的分页读取只拿到一个窗口，判断不了跨窗口的工具调用配对，因此下面的快路径
+        // 无法复用 normalizeHistoryForDisplay。若不在这里补齐，取消/中断留下的悬空 functionCall
+        // 会一直留在历史里，下一次请求直接被 provider 以 400 拒绝。
+        // 只在首次加载（默认页）做一次全量补齐：上拉加载更早消息时跳过，避免每翻一页读一次全量。
+        // 补齐会插入消息、改变 index，必须发生在分页取数之前。
+        const isInitialPage = options.beforeIndex === undefined && options.offset === undefined;
+        if (isInitialPage) {
+            await this.normalizeHistoryForDisplay(conversationId, await this.loadHistory(conversationId));
+        }
+
         const pagedHistory = await this.storage.loadHistoryPage(conversationId, options);
         if (pagedHistory.value && pagedHistory.value.format === 'paged') {
             return {
@@ -1640,6 +1651,24 @@ export class ConversationManager {
     // ==================== 工具调用管理 ====================
 
     /**
+     * 查找 functionResponse 消息的正确插入位置。
+     *
+     * 工具响应必须紧跟对应的工具调用消息。若该位置之后已存在同批次
+     * functionResponse 消息，则插到它们之后，保持与 functionCall 输出顺序一致。
+     *
+     * @param history 当前对话历史
+     * @param messageIndex 工具调用消息的索引
+     * @returns functionResponse 应插入的位置索引
+     */
+    private findFunctionResponseInsertIndex(history: ConversationHistory, messageIndex: number): number {
+        let insertAt = messageIndex + 1;
+        while (insertAt < history.length && history[insertAt]?.isFunctionResponse) {
+            insertAt++;
+        }
+        return insertAt;
+    }
+
+    /**
      * 标记指定消息中的工具调用为拒绝状态
      *
      * 当用户在等待工具确认时点击终止按钮，需要将等待中的工具标记为拒绝
@@ -1713,15 +1742,16 @@ export class ConversationManager {
                 }
             }));
             
-            // 在工具调用消息的紧接后面插入 functionResponse
-            history.splice(messageIndex + 1, 0, {
+            // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
+            const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
+            history.splice(insertAt, 0, {
                 role: 'user',
                 parts: rejectedResponseParts,
                 isFunctionResponse: true
             });
             modified = true;
         }
-        
+
         if (modified) {
             await repository.replaceContents(history);
             await this.invalidateContextManagementState(conversationId, 'tool_calls_rejected');
@@ -1794,17 +1824,101 @@ export class ConversationManager {
                     }
                 }));
                 
-                // 在工具调用消息的紧接后面插入
-                history.splice(messageIndex + 1, 0, {
+                // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
+                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
+                history.splice(insertAt, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
                 });
             }
-            
+
             await repository.replaceContents(history);
             await this.invalidateContextManagementState(conversationId, 'pending_tool_calls_rejected');
         }
+    }
+
+    /**
+     * 结算工具执行结果：用真实 functionResponse 覆盖占位拒绝。
+     *
+     * 与 {@link addContent} 不同的是：当历史中已存在同 id 的 functionResponse 且它是
+     * rejected/cancelled 占位时，**就地替换**为真实结果，同时清除 model 消息上对应
+     * functionCall 的 rejected 标记。
+     *
+     * 用于 handleToolConfirmation 的中止路径：cancelStream 的 rejectAllPendingToolCalls
+     * 已经写入了拒绝占位，但工具其实已经执行完且产生了真实副作用——此时 addContent 的去重
+     * 会把真实结果丢弃；此方法保证真实结果永远覆盖占位。
+     */
+    async settleFunctionResponses(conversationId: string, parts: ContentPart[]): Promise<void> {
+        if (parts.length === 0) return;
+
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
+
+        // 索引现有响应 & 拒绝占位的位置
+        const responseIdx = new Map<string, number>();     // id → historyIndex
+        const placeholderIds = new Set<string>();           // id 是占位
+        for (let i = 0; i < history.length; i++) {
+            const msg = history[i];
+            if (!msg.parts) continue;
+            for (const part of msg.parts) {
+                const fr = part.functionResponse;
+                if (!fr?.id) continue;
+                responseIdx.set(fr.id, i);
+                if (fr.response?.rejected || fr.response?.cancelled) {
+                    placeholderIds.add(fr.id);
+                }
+            }
+        }
+
+        const newParts: ContentPart[] = [];
+
+        for (const part of parts) {
+            const id = part.functionResponse?.id;
+            if (!id) {
+                // 无 id 的 part（如多模态附件）一律走追加
+                newParts.push(part);
+                continue;
+            }
+
+            const existingIdx = responseIdx.get(id);
+
+            if (existingIdx !== undefined && placeholderIds.has(id)) {
+                // 占位 → 就地替换为真实结果
+                const msg = history[existingIdx];
+                const partIdx = msg.parts!.findIndex(
+                    (p) => p.functionResponse?.id === id
+                );
+                if (partIdx !== -1) {
+                    msg.parts![partIdx] = part;
+                }
+                // 清除 model 消息上对应 functionCall 的 rejected 标记
+                for (const hmsg of history) {
+                    if (!hmsg.parts) continue;
+                    for (const hp of hmsg.parts) {
+                        if (hp.functionCall && hp.functionCall.id === id) {
+                            hp.functionCall.rejected = false;
+                        }
+                    }
+                }
+                placeholderIds.delete(id);
+            } else if (existingIdx === undefined) {
+                // 全新响应 → 收集后追加
+                newParts.push(part);
+            }
+            // else: 已有真实响应 → 跳过（幂等）
+        }
+
+        if (newParts.length > 0) {
+            history.push({
+                role: 'user',
+                parts: newParts,
+                isFunctionResponse: true,
+            });
+        }
+
+        await repository.replaceContents(history);
+        await this.invalidateContextManagementState(conversationId, 'tool_calls_settled');
     }
 }
 

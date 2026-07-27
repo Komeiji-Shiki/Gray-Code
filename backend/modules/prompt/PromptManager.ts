@@ -521,9 +521,12 @@ export class PromptManager {
      * 避免把 binary 徽章按文本内容解析。
      */
     private generateContextBadgeFormatSection(): string {
+        // 修改原因：旧示例使用了 "新建文件夹 (10).zip" 这种看起来像真实用户文件的名称，
+        //          导致模型在 system prompt 中看到后误以为用户实际附加了该文件。
+        // 修改方式：改用明显虚构的 "example-report.pdf"，并标注 "(example)"。
         return [
-            'Context chips are serialized inline with this XML-like structure:',
-            '<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">',
+            'Context chips are serialized inline with this XML-like structure (example):',
+            '<lim-context type="file" path="example-report.pdf" binary="true" title="example-report.pdf (example)">',
             '',
             '</lim-context>',
             '',

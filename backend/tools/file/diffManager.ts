@@ -13,6 +13,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
+import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../../core/chatFocusGuard';
 import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
@@ -30,6 +31,8 @@ import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
 export interface PendingDiff {
     /** 唯一 ID */
     id: string;
+    /** 所属会话 ID（用于防止 A 会话中断强杀 B 会话的 pending diff） */
+    conversationId?: string;
     /** 文件路径（相对路径） */
     filePath: string;
     /** 文件绝对路径 */
@@ -61,6 +64,8 @@ export interface PendingDiff {
     rawDiffs?: any[];
     /** 关联的工具ID */
     toolId?: string;
+    /** 原本不存在的文件（write_file 新建）：拒绝或取消时需删除残留空文件 */
+    newFile?: boolean;
     /** diff 警戒值警告信息（当删除行数超过阈值时设置）*/
     diffGuardWarning?: string;
     /** 删除行占比（0-100，用于前端显示） */
@@ -105,20 +110,26 @@ type DiffSaveListener = (diff: PendingDiff) => void;
 export type DiffResolutionReason = 'none' | 'abort' | 'user';
 
 /**
- * 用户中断标记
+ * 用户中断跟踪（按会话隔离，防止标签页 A 的请求中断强杀 B 会话的 pending diff）。
+ * 不传 conversationId 时退化为全局中断（向后兼容）。
  */
-let userInterruptFlag = false;
+let globalUserInterrupt = false;
+const interruptedConversationIds = new Set<string>();
 
 /**
  * Diff 管理器
  */
-type DiffOp = {
+export type DiffOp = {
     type: 'equal' | 'insert' | 'delete';
     line: string;
 };
 
 export interface CreatePendingDiffOptions {
     confirmedByToolConfirmation?: boolean;
+    /** 原本不存在的文件（write_file 新建）：拒绝或取消时需删除残留空文件 */
+    newFile?: boolean;
+    /** 会话 ID：用于中断判定的会话隔离，避免全局中断标记泄漏误伤 */
+    conversationId?: string;
 }
 
 function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
@@ -158,95 +169,260 @@ function splitLines(text: string): string[] {
 }
 
 /**
- * Myers 差分（按行），返回操作序列
+ * Myers 差分的运算预算：
+ * - 精确 Myers 的时间开销随编辑距离 D 增长（O((N+M)·D)），带回溯 trace 时内存也随层数累积；
+ * - write_file 全量重写大文件时 D 接近 N+M，旧实现（逐层拷贝 Map 状态）会同步阻塞 extension host 数秒；
+ * - 超过预算时走线性开销的估算/降级路径，保证任何输入下都不会卡住 UI。
+ * countDeletedLines 无需 trace（内存 O(D)），预算可以给得更高；带回溯的 myersDiffCore 每层保留状态快照，预算更保守。
  */
-function myersDiffLines(a: string[], b: string[]): DiffOp[] {
-    const n = a.length;
-    const m = b.length;
-    const max = n + m;
+const MYERS_COUNT_D_LIMIT = 2048;
+const MYERS_TRACE_D_LIMIT = 1024;
 
-    // v[k] = x
-    let v = new Map<number, number>();
-    v.set(1, 0);
-    const trace: Array<Map<number, number>> = [];
+/**
+ * 裁剪公共前后缀，返回前缀/后缀行数（后缀不与前缀重叠）。
+ * 绝大多数 diff 的变化集中在文件局部，先裁剪能把核心差分的输入规模降低几个量级。
+ */
+function trimCommonEdges(a: string[], b: string[]): { prefix: number; suffix: number } {
+    const minLen = Math.min(a.length, b.length);
+    let prefix = 0;
+    while (prefix < minLen && a[prefix] === b[prefix]) {
+        prefix++;
+    }
 
-    for (let d = 0; d <= max; d++) {
-        trace.push(new Map(v));
+    let suffix = 0;
+    const maxSuffix = minLen - prefix;
+    while (suffix < maxSuffix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) {
+        suffix++;
+    }
 
-        const vNext = new Map<number, number>();
+    return { prefix, suffix };
+}
+
+/**
+ * 行内容映射为整数 id，把差分内层循环的逐字符字符串比较降为整数比较。
+ */
+function toLineIds(a: string[], b: string[]): { aIds: Int32Array; bIds: Int32Array } {
+    const idMap = new Map<string, number>();
+    const assign = (line: string): number => {
+        let id = idMap.get(line);
+        if (id === undefined) {
+            id = idMap.size;
+            idMap.set(line, id);
+        }
+        return id;
+    };
+
+    const aIds = new Int32Array(a.length);
+    for (let i = 0; i < a.length; i++) {
+        aIds[i] = assign(a[i]);
+    }
+    const bIds = new Int32Array(b.length);
+    for (let i = 0; i < b.length; i++) {
+        bIds[i] = assign(b[i]);
+    }
+    return { aIds, bIds };
+}
+
+/**
+ * 快速统计“被删除的行数”（diff 警戒专用）。
+ *
+ * 为什么不复用 myersDiffLines：警戒只需要删除行数，而删除数可由编辑距离直接推出
+ * （delete + insert = D 且 delete - insert = N - M，故 deleted = (D + N - M) / 2），
+ * 无需保留每层状态做回溯，内存从随层数累积降到单个 O(D) 数组。
+ * 编辑距离超出预算（超大规模重写）时用 multiset 差集估算，退化为 O(N+M)；
+ * 该场景下行级删除量与 multiset 结果几乎一致，用于警戒百分比精度足够。
+ */
+export function countDeletedLines(aAll: string[], bAll: string[]): number {
+    const { prefix, suffix } = trimCommonEdges(aAll, bAll);
+    const n = aAll.length - prefix - suffix;
+    const m = bAll.length - prefix - suffix;
+    if (n <= 0) {
+        return 0;
+    }
+    if (m <= 0) {
+        return n;
+    }
+
+    const a = aAll.slice(prefix, aAll.length - suffix);
+    const b = bAll.slice(prefix, bAll.length - suffix);
+    const { aIds, bIds } = toLineIds(a, b);
+
+    const dLimit = Math.min(n + m, MYERS_COUNT_D_LIMIT);
+    const offset = dLimit;
+    const v = new Int32Array(2 * dLimit + 1);
+
+    for (let d = 0; d <= dLimit; d++) {
         for (let k = -d; k <= d; k += 2) {
-            const vKMinus = v.get(k - 1) ?? 0;
-            const vKPlus = v.get(k + 1) ?? 0;
-
             let x: number;
-            if (k === -d || (k !== d && vKMinus < vKPlus)) {
-                x = vKPlus; // down
+            if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
+                x = v[offset + k + 1]; // down
             } else {
-                x = vKMinus + 1; // right
+                x = v[offset + k - 1] + 1; // right
             }
             let y = x - k;
 
-            while (x < n && y < m && a[x] === b[y]) {
+            while (x < n && y < m && aIds[x] === bIds[y]) {
                 x++;
                 y++;
             }
 
-            vNext.set(k, x);
+            v[offset + k] = x;
 
             if (x >= n && y >= m) {
-                // backtrack
-                const ops: DiffOp[] = [];
-                let bx = n;
-                let by = m;
+                return (d + n - m) >> 1;
+            }
+        }
+    }
 
-                for (let bd = d; bd >= 0; bd--) {
-                    const vv = trace[bd];
-                    const kk = bx - by;
+    // 编辑距离超出预算：multiset 差集估算（不再区分行移动；大规模重写的警戒判断足够）
+    const counts = new Map<number, number>();
+    for (let i = 0; i < n; i++) {
+        counts.set(aIds[i], (counts.get(aIds[i]) ?? 0) + 1);
+    }
+    for (let j = 0; j < m; j++) {
+        const remain = counts.get(bIds[j]);
+        if (remain !== undefined && remain > 0) {
+            counts.set(bIds[j], remain - 1);
+        }
+    }
+    let deleted = 0;
+    for (const remain of counts.values()) {
+        deleted += remain;
+    }
+    return deleted;
+}
 
-                    const vvKMinus2 = vv.get(kk - 1) ?? 0;
-                    const vvKPlus2 = vv.get(kk + 1) ?? 0;
+/**
+ * Myers 差分（按行），返回操作序列。
+ *
+ * 性能设计（对齐 countDeletedLines 的预算思路）：
+ * - 先裁剪公共前后缀并直接以 equal 补齐，核心差分只处理中间变化区；
+ * - 行 id 化 + Int32Array 状态数组，替换旧版逐层拷贝 Map 的 O(D²) 分配；
+ * - 编辑距离超过预算时降级为“整段删除 + 整段插入”，避免超大重写阻塞主线程。
+ */
+export function myersDiffLines(a: string[], b: string[]): DiffOp[] {
+    const { prefix, suffix } = trimCommonEdges(a, b);
 
-                    let prevK: number;
-                    if (kk === -bd || (kk !== bd && vvKMinus2 < vvKPlus2)) {
-                        prevK = kk + 1;
-                    } else {
-                        prevK = kk - 1;
-                    }
+    const ops: DiffOp[] = [];
+    for (let i = 0; i < prefix; i++) {
+        ops.push({ type: 'equal', line: a[i] });
+    }
 
-                    const prevX = vv.get(prevK) ?? 0;
-                    const prevY = prevX - prevK;
+    ops.push(...myersDiffCore(
+        a.slice(prefix, a.length - suffix),
+        b.slice(prefix, b.length - suffix)
+    ));
 
-                    while (bx > prevX && by > prevY) {
-                        ops.push({ type: 'equal', line: a[bx - 1] });
-                        bx--;
-                        by--;
-                    }
+    for (let i = a.length - suffix; i < a.length; i++) {
+        ops.push({ type: 'equal', line: a[i] });
+    }
+    return ops;
+}
 
-                    if (bd === 0) {
-                        break;
-                    }
+function myersDiffCore(a: string[], b: string[]): DiffOp[] {
+    const n = a.length;
+    const m = b.length;
+    if (n === 0 && m === 0) {
+        return [];
+    }
+    if (n === 0) {
+        return b.map(line => ({ type: 'insert' as const, line }));
+    }
+    if (m === 0) {
+        return a.map(line => ({ type: 'delete' as const, line }));
+    }
 
-                    if (bx === prevX) {
-                        // insert
-                        ops.push({ type: 'insert', line: b[by - 1] });
-                        by--;
-                    } else {
-                        // delete
-                        ops.push({ type: 'delete', line: a[bx - 1] });
-                        bx--;
-                    }
-                }
+    const { aIds, bIds } = toLineIds(a, b);
+    const dLimit = Math.min(n + m, MYERS_TRACE_D_LIMIT);
+    const offset = dLimit;
+    let v = new Int32Array(2 * dLimit + 1);
+    // trace[d] 保存进入第 d 层前的状态（未被更高层写过的位置保持 0，与旧版 Map 缺省值语义一致）
+    const trace: Int32Array[] = [];
 
-                ops.reverse();
-                return ops;
+    let foundD = -1;
+    for (let d = 0; d <= dLimit && foundD < 0; d++) {
+        trace.push(v);
+        const vNext = v.slice();
+
+        for (let k = -d; k <= d; k += 2) {
+            let x: number;
+            if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
+                x = v[offset + k + 1]; // down
+            } else {
+                x = v[offset + k - 1] + 1; // right
+            }
+            let y = x - k;
+
+            while (x < n && y < m && aIds[x] === bIds[y]) {
+                x++;
+                y++;
+            }
+
+            vNext[offset + k] = x;
+
+            if (x >= n && y >= m) {
+                foundD = d;
+                break;
             }
         }
 
         v = vNext;
     }
 
-    // 未找到编辑脚本时返回空变更，由调用方按无差异处理。
-    return [];
+    if (foundD < 0) {
+        // 编辑距离超出预算：降级为整段替换，保证不阻塞主线程
+        const fallback: DiffOp[] = [];
+        for (const line of a) {
+            fallback.push({ type: 'delete', line });
+        }
+        for (const line of b) {
+            fallback.push({ type: 'insert', line });
+        }
+        return fallback;
+    }
+
+    // backtrack
+    const ops: DiffOp[] = [];
+    let bx = n;
+    let by = m;
+
+    for (let bd = foundD; bd >= 0; bd--) {
+        const vv = trace[bd];
+        const kk = bx - by;
+
+        let prevK: number;
+        if (kk === -bd || (kk !== bd && vv[offset + kk - 1] < vv[offset + kk + 1])) {
+            prevK = kk + 1;
+        } else {
+            prevK = kk - 1;
+        }
+
+        const prevX = vv[offset + prevK];
+        const prevY = prevX - prevK;
+
+        while (bx > prevX && by > prevY) {
+            ops.push({ type: 'equal', line: a[bx - 1] });
+            bx--;
+            by--;
+        }
+
+        if (bd === 0) {
+            break;
+        }
+
+        if (bx === prevX) {
+            // insert
+            ops.push({ type: 'insert', line: b[by - 1] });
+            by--;
+        } else {
+            // delete
+            ops.push({ type: 'delete', line: a[bx - 1] });
+            bx--;
+        }
+    }
+
+    ops.reverse();
+    return ops;
 }
 
 function computeUserEditedNewLinesSummary(baseContent: string, userContent: string): string {
@@ -287,6 +463,12 @@ function computeUserEditedNewLinesSummary(baseContent: string, userContent: stri
         newLine++;
     }
 
+    // 摘要会写入工具响应发给模型：超大编辑（如差分降级为整段替换）时截断，避免把整份文件塞进上下文
+    const MAX_SUMMARY_LINES = 500;
+    if (result.length > MAX_SUMMARY_LINES) {
+        const omitted = result.length - MAX_SUMMARY_LINES;
+        return [...result.slice(0, MAX_SUMMARY_LINES), `... (${omitted} more edited lines omitted)`].join('\n');
+    }
     return result.join('\n');
 }
 
@@ -329,8 +511,12 @@ export class DiffManager {
     /** 文档关闭事件监听器*/
     private closeListeners: Map<string, vscode.Disposable> = new Map();
 
-    /** 被非手动保存打断后，需要在保存完成后恢复的草稿内容 */
-    private suppressedNonManualSaveDrafts: Map<string, string> = new Map();
+    /** 非手动保存（如 auto-save）已直接落盘的 diff；跳过保存后的回退恢复，避免死循环 */
+    private nonManualSaveFlushed: Set<string> = new Set();
+
+    /** 已终结 diff 的 FIFO 淘汰队列（延迟删除，终态条目仍可能被工具链路读一次） */
+    private finalizedDiffOrder: string[] = [];
+    private static readonly MAX_FINALIZED_DIFFS = 50;
 
     /** 正在执行接受动作的diff */
     private acceptingDiffIds: Set<string> = new Set();
@@ -507,29 +693,7 @@ export class DiffManager {
             this.closeListeners.delete(id);
         }
 
-        this.suppressedNonManualSaveDrafts.delete(id);
-    }
-
-    private async restorePendingDraftAfterNonManualSave(diff: PendingDiff, draftContent: string): Promise<void> {
-        const fileUri = vscode.Uri.file(diff.absolutePath);
-        const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath)
-            || await vscode.workspace.openTextDocument(fileUri);
-
-        const currentContent = doc.getText();
-        if (currentContent === draftContent) {
-            return;
-        }
-
-        const edit = new vscode.WorkspaceEdit();
-        const fullRange = new vscode.Range(
-            doc.positionAt(0),
-            doc.positionAt(currentContent.length)
-        );
-        edit.replace(fileUri, fullRange, draftContent);
-        const applied = await vscode.workspace.applyEdit(edit);
-        if (!applied) {
-            throw new Error(`Failed to restore pending diff draft for ${diff.filePath}`);
-        }
+        this.nonManualSaveFlushed.delete(id);
     }
 
     private finalizeAcceptedDiff(diff: PendingDiff, options?: { partial?: boolean }): void {
@@ -545,6 +709,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.evictOldFinalizedDiffs(diff.id);
         this.notifyStatusChange();
         this.notifySaveComplete(diff);
     }
@@ -562,6 +727,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.evictOldFinalizedDiffs(diff.id);
         this.notifyStatusChange();
     }
 
@@ -578,6 +744,20 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.evictOldFinalizedDiffs(diff.id);
+    }
+
+    /**
+     * FIFO 延迟淘汰：终态条目可能仍被工具链路读一次，不在 cleanup 里同步删除；
+     * 当已终结 diff 超过上限时回收最老的。
+     */
+    private evictOldFinalizedDiffs(id: string): void {
+        this.finalizedDiffOrder.push(id);
+        while (this.finalizedDiffOrder.length > DiffManager.MAX_FINALIZED_DIFFS) {
+            const oldest = this.finalizedDiffOrder.shift()!;
+            this.pendingDiffs.delete(oldest);
+            this.diffSessions.delete(oldest);
+        }
     }
 
     private finalizeLegacyPendingDiff(diff: PendingDiff, status: PendingDiff['status']): boolean {
@@ -618,14 +798,8 @@ export class DiffManager {
         // 计算“真实删除行数”（而非净行数变化）：
         // - 例如 3 行被删除，同时插入1 行，净减少 2 行；
         //   但删除行数应记为 3 行。
-        // 这里基于 Myers diff 统计 delete 操作数量。
-        const ops = myersDiffLines(originalLines, newLines);
-        let deletedLineCount = ops.filter(op => op.type === 'delete').length;
-
-        // 极端兜底：如果差分异常返回空，退化为净行数变化（至少保证有值）
-        if (ops.length === 0 && originalLines.length !== newLines.length) {
-            deletedLineCount = Math.max(0, totalOriginalLines - newLines.length);
-        }
+        // 基于编辑距离直接推导删除行数（无需完整 diff 回溯），超大重写自动退化为线性估算。
+        const deletedLineCount = countDeletedLines(originalLines, newLines);
 
         const deletePercent = Math.round((deletedLineCount / totalOriginalLines) * 100);
 
@@ -671,6 +845,18 @@ export class DiffManager {
         this.diffSessions.set(id, session);
         this.pendingDiffs.set(id, pendingDiff);
 
+        // 提前标记 newFile：避免 createPendingDiff 返回后、write_file 设置前
+        // 取消路径无法识别并清理空文件（#14）。
+        if (options?.newFile) {
+            pendingDiff.newFile = true;
+        }
+
+        // 绑定会话 ID：让 waitForDiffResolution 的中断判定能按会话隔离，
+        // 避免全局中断标记泄漏导致 autoSave 已应用后仍返回 "cancelled by user"。
+        if (options?.conversationId) {
+            pendingDiff.conversationId = options.conversationId;
+        }
+
         // 检查diff 警戒值
         const guardResult = this.checkDiffGuard(originalContent, newContent);
         if (guardResult.warning) {
@@ -679,21 +865,20 @@ export class DiffManager {
         pendingDiff.diffGuardDeletePercent = guardResult.deletePercent;
 
         // 获取完整配置以决定是否跳过diff 视图
-        // 如果工具调用已经经过原始工具确认，并且当前处于自动应用模式，说明用户已经批准这次写入。
-        // 此时直接保存，避免“工具确认一次+ diff 自动保存再等待一次”的双重确认链路。
+        // 当 confirmedByToolConfirmation 为 true 时，说明上层（如 SubAgent 或工具确认弹窗）
+        // 已经批准了本次写入，此时直接应用保存，不再要求 autoSave 也必须开启。
+        // autoSave 是控制”diff 预览中是否自动保存内容”的独立设置，与”用户是否已确认”正交。
         const currentSettings = this.getSettings();
         const fullConfig = this.getFullApplyDiffConfig();
         const shouldDirectApplyConfirmedToolDiff =
-            options?.confirmedByToolConfirmation === true && currentSettings.autoSave === true;
+            options?.confirmedByToolConfirmation === true;
         const shouldSkipDiffView = shouldDirectApplyConfirmedToolDiff ||
             (fullConfig?.autoSave && fullConfig?.autoApplyWithoutDiffView);
 
-        // 注册原始内容到提供者（仅在需要显示diff 视图时）
-        if (!shouldSkipDiffView) {
-            this.contentProvider.setContent(id, originalContent);
-        }
+        // 无条件注册虚拟文档内容（只是 Map 写入；cleanup 的 removeContent 已处理回收）
+        this.contentProvider.setContent(id, originalContent);
 
-        // 如果有块信息且不跳过 diff 视图，注册到 CodeLens 提供者
+        // 如果有块信息且不跳过 diff 视图，懒注册 CodeLens 会话
         if (blocks && !shouldSkipDiffView) {
             const provider = getDiffCodeLensProvider();
             provider.addSession({
@@ -767,11 +952,14 @@ export class DiffManager {
             const uri = vscode.Uri.file(diff.absolutePath);
             const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
             if (openDoc) {
-                // revert 让VSCode 从磁盘重新加载
+                // 磁盘已写入新内容：优先 doc.save() 静默清 dirty（不弹确认对话框），
+                // 回退到 revert 重新加载磁盘内容（仅在 save 失败时）
                 try {
-                    // 先focus 到该文档，然后revert
-                    await vscode.window.showTextDocument(openDoc, { preview: false, preserveFocus: true });
-                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                    if (openDoc.isDirty) {
+                        const saved = await openDoc.save();
+                        if (saved) return;
+                    }
+                    await vscode.commands.executeCommand('workbench.action.files.revert', openDoc.uri);
                 } catch {
                     // ignore
                 }
@@ -1041,29 +1229,22 @@ export class DiffManager {
             return;
         }
 
-        // 1. 打开并修改目标文件（不保存）
+        // 1. 打开并修改目标文档（不保存）。
+        // 用 WorkspaceEdit 而非 showTextDocument + editor.edit：
+        // - 不需要打开可见的文件本体 tab（后面只展示 diff tab），
+        //   避免多开一个 tab 并把焦点从聊天输入框抢走（用户可能正在打字）
         const document = await vscode.workspace.openTextDocument(fileUri);
         if (!isPending()) {
             return;
         }
-        // preserveFocus: true —— 打开预览时不抢占用户焦点（用户可能正在输入框打字）
-        const editor = await vscode.window.showTextDocument(document, {
-            preview: false,
-            preserveFocus: true
-        });
-        if (!isPending()) {
-            return;
-        }
 
-        // 应用修改
         const fullRange = new vscode.Range(
             document.positionAt(0),
             document.positionAt(document.getText().length)
         );
-
-        await editor.edit((editBuilder) => {
-            editBuilder.replace(fullRange, diff.newContent);
-        });
+        const applyModificationEdit = new vscode.WorkspaceEdit();
+        applyModificationEdit.replace(fileUri, fullRange, diff.newContent);
+        await vscode.workspace.applyEdit(applyModificationEdit);
 
         // 若在 apply edit 过程中被取消/拒绝，立即恢复原始内容并退出，避免留下脏文档
         if (!isPending()) {
@@ -1116,17 +1297,9 @@ export class DiffManager {
                 return;
             }
 
-            const currentDraftContent = event.document.getText();
-            this.suppressedNonManualSaveDrafts.set(diff.id, currentDraftContent);
-
-            const fullRange = new vscode.Range(
-                event.document.positionAt(0),
-                event.document.positionAt(currentDraftContent.length)
-            );
-
-            event.waitUntil(Promise.resolve([
-                vscode.TextEdit.replace(fullRange, diff.originalContent)
-            ]));
+            // 非手动保存（如 files.autoSave）：记标记让自动保存直接落盘，
+            // 不再触发 event.waitUntil 回退 + restorePendingDraft 的回写循环。
+            this.nonManualSaveFlushed.add(diff.id);
         });
 
         // 6. 监听文档保存事件
@@ -1139,17 +1312,9 @@ export class DiffManager {
                 return;
             }
 
-            const suppressedDraft = this.suppressedNonManualSaveDrafts.get(diff.id);
-            if (suppressedDraft !== undefined) {
-                this.suppressedNonManualSaveDrafts.delete(diff.id);
-                try {
-                    await this.restorePendingDraftAfterNonManualSave(diff, suppressedDraft);
-                } catch (error) {
-                    console.warn(
-                        `[DiffManager] Failed to restore pending diff draft after non-manual save for ${diff.filePath}:`,
-                        error
-                    );
-                }
+            // 非手动保存（auto-save 等）已直接落盘：跳过回退恢复，保持 diff pending
+            if (this.nonManualSaveFlushed.has(diff.id)) {
+                this.nonManualSaveFlushed.delete(diff.id);
                 return;
             }
 
@@ -1199,7 +1364,11 @@ export class DiffManager {
                     this.finalizeRejectedDiff(diff);
                 }
             } catch (e) {
-                // 忽略错误
+                // 读文件失败（文件被删除、权限问题等）：收敛 diff 为拒绝，避免永久 pending
+                this.finalizeRejectedDiff(diff);
+                if (diff.newFile) {
+                    try { fs.unlinkSync(diff.absolutePath); } catch { /* ignore */ }
+                }
             }
         });
 
@@ -1344,9 +1513,17 @@ export class DiffManager {
 
             const revertOpenDocumentToDisk = async (): Promise<void> => {
                 try {
-                    // 关键：使用revert 丢弃脏状态并从磁盘重新加载，避免 VSCode “文件内容较新”保存冲突提示
-                    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
-                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                    // 优先用 doc.save() 静默清 dirty（不会弹确认对话框）。
+                    // workbench.action.files.revert 在文档 dirty 时会弹出 VSCode 原生
+                    // “是否放弃对文件的更改？”确认框，阻塞整个 diff 流程。
+                    if (doc.isDirty) {
+                        const saved = await doc.save();
+                        if (!saved) {
+                            // doc.save 失败（比如磁盘在 openTextDocument 和 save 之间被外部改了），
+                            // 此时才回退到 revert 命令作为最后手段
+                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                        }
+                    }
                 } catch {
                     // ignore
                 }
@@ -1364,10 +1541,18 @@ export class DiffManager {
             const diskNormalized = diskContent !== undefined ? normalizeToLF(diskContent) : undefined;
             const originalNormalized = normalizeToLF(diff.originalContent);
 
-            // 1) 若磁盘内容已经等于要保存的内容：无需保存，直接revert 清理 dirty（避免冲突提示）
+            // 1) 若磁盘内容已经等于要保存的内容：用 doc.save() 静默清 dirty。
+            // 不能用 workbench.action.files.revert——文档 dirty 时 revert 会弹出
+            // VSCode 原生确认对话框（"是否放弃对文件的更改？"），阻塞 diff 流程。
+            // save() 是同步静默的：磁盘内容与内存一致时它只是清掉 dirty 标记，不写磁盘。
             if (diskNormalized !== undefined && diskNormalized === saveNormalized) {
                 if (doc.isDirty) {
-                    await revertOpenDocumentToDisk();
+                    try {
+                        await doc.save();
+                    } catch {
+                        // doc.save 失败时回退到 revert（日志记录但不阻塞）
+                        await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                    }
                 }
             }
             // 2) 若磁盘内容已不同于diff 创建时的 originalContent：说明中途被外部写入/回滚，绕过doc.save 强制写入后再 revert
@@ -1422,17 +1607,59 @@ export class DiffManager {
 
     /**
      * 关闭指定文件的diff 标签页
+     *
+     * preserveFocus 必须为 true：关闭活动的 diff 标签后 VSCode 会激活相邻标签，
+     * 不保留焦点时光标会直接跳进新激活的代码编辑器。
+     *
+     * 但 preserveFocus 只能阻止焦点跳进编辑器，无法阻止 workbench 把焦点
+     * 从侧边栏 webview 收走（聊天输入框仍会失焦）。因此关闭前采样
+     * 输入框焦点状态，关闭后按需把焦点归还给聊天视图。
      */
     private async closeDiffTab(filePath: string): Promise<void> {
+        // 安全网：关 diff tab 前确保底层文档不被 WorkspaceEdit 残留的 dirty 标记
+        // 拖累出"是否保存更改？"VSCode 原生确认弹窗。save() 是静默的，不弹窗。
+        const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === filePath);
+        if (doc && doc.isDirty) {
+            try {
+                await doc.save();
+            } catch {
+                // ignore — 接受/拒绝路径已各自处理过保存，这里只是兜底
+            }
+        }
+
         for (const tabGroup of vscode.window.tabGroups.all) {
             for (const tab of tabGroup.tabs) {
                 if (tab.input instanceof vscode.TabInputTextDiff) {
                     const diffInput = tab.input as vscode.TabInputTextDiff;
                     if (diffInput.modified.fsPath === filePath) {
-                        await vscode.window.tabGroups.close(tab);
+                        // 采样必须在关闭前：关闭动作本身就是抓焦点的来源
+                        const restoreFocus = shouldRestoreChatInputFocus();
+                        await vscode.window.tabGroups.close(tab, true);
+                        await restoreChatInputFocus(restoreFocus);
                         return;
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 关标签页并删除新建文件残留（所有拒绝/取消路径的统一收敛点）。
+     *
+     * 为什么不在同步 finalize* 方法里做 unlink：finalize 不负责 I/O，
+     * 把删文件逻辑集中在一个异步辅助方法里，避免各取消路径重复实现。
+     */
+    private async closeDiffTabAndCleanNewFile(id: string, diff: PendingDiff): Promise<void> {
+        try {
+            await this.closeDiffTab(diff.absolutePath);
+        } catch (err) {
+            console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
+        }
+        if (diff.newFile) {
+            try {
+                fs.unlinkSync(diff.absolutePath);
+            } catch (e) {
+                console.warn(`[DiffManager] Failed to remove new file ${diff.filePath}:`, e);
             }
         }
     }
@@ -1469,11 +1696,31 @@ export class DiffManager {
                     throw new Error(`Failed to restore original content for ${diff.filePath}`);
                 }
 
-                // 如果文件曾经被保存过（脏了），这里我们不强制保存，因为用户拒绝了 AI 的修改。
-                // 但如果文件在 AI 修改前就是干净的，AI 修改让它变脏了，我们现在恢复了原始内容，它应该变回干净（或者通过 undo）。
+                // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
+                // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
+                // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
+                // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
+                try {
+                    await doc.save();
+                } catch {
+                    // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
+                    try {
+                        await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                    } catch {
+                        // ignore
+                    }
+                }
             } else {
                 // 如果文档没打开，直接写回原始文件内容确保万无一失
                 fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
+            }
+
+            // write_file 新建文件被拒绝：关 tab 并删除残留空文件
+            if (diff.newFile) {
+                await this.closeDiffTabAndCleanNewFile(id, diff);
+                this.finalizeRejectedDiff(diff);
+                this.rejectingDiffIds.delete(id);
+                return true;
             }
 
             this.finalizeRejectedDiff(diff);
@@ -1646,12 +1893,14 @@ export class DiffManager {
             const checkStatus = () => {
                 if (resolved) return;
 
-                if (this.isUserInterrupted()) {
+                const diff = this.getDiff(id);
+
+                // 按会话隔离检查中断标记
+                if (this.isUserInterrupted(diff?.conversationId)) {
                     rejectAndFinish('user');
                     return;
                 }
 
-                const diff = this.getDiff(id);
                 if (!diff || diff.status !== 'pending') {
                     finish('none');
                     return;
@@ -1686,35 +1935,65 @@ export class DiffManager {
     /**
      * 标记用户中断（用户发送了新消息）
      * 这会让所有等待中的工具立即返回
+     * @param conversationId 可选：按会话隔离中断，避免跨标签页强杀
      */
-    public markUserInterrupt(): void {
-        userInterruptFlag = true;
-        // 取消所有自动保存定时器
-        for (const timer of this.autoSaveTimers.values()) {
-            clearTimeout(timer);
+    public markUserInterrupt(conversationId?: string): void {
+        globalUserInterrupt = true;
+        if (conversationId) {
+            interruptedConversationIds.add(conversationId);
         }
-        this.autoSaveTimers.clear();
+        // 取消匹配会话的自动保存定时器
+        const timersToClear: string[] = [];
+        for (const [id, timer] of this.autoSaveTimers.entries()) {
+            const diff = this.pendingDiffs.get(id);
+            if (!conversationId || diff?.conversationId === conversationId) {
+                clearTimeout(timer);
+                timersToClear.push(id);
+            }
+        }
+        for (const id of timersToClear) {
+            this.autoSaveTimers.delete(id);
+        }
     }
 
     /**
      * 重置用户中断标记
      */
-    public resetUserInterrupt(): void {
-        userInterruptFlag = false;
+    public resetUserInterrupt(conversationId?: string): void {
+        if (conversationId) {
+            interruptedConversationIds.delete(conversationId);
+            // 当所有会话都已重置时，同步清理全局标记。
+            // 没有这个兜底，无 conversationId 的 diff 会被残留的 globalUserInterrupt 误伤。
+            if (interruptedConversationIds.size === 0) {
+                globalUserInterrupt = false;
+            }
+        } else {
+            globalUserInterrupt = false;
+            interruptedConversationIds.clear();
+        }
     }
 
     /**
      * 检查是否被用户中断
+     * @param conversationId 可选：按会话隔离检查
      */
-    public isUserInterrupted(): boolean {
-        return userInterruptFlag;
+    public isUserInterrupted(conversationId?: string): boolean {
+        if (!globalUserInterrupt) {
+            return false;
+        }
+        if (conversationId) {
+            return interruptedConversationIds.has(conversationId);
+        }
+        // 未传 conversationId：退化为全局中断判定（向后兼容）
+        return true;
     }
 
     /**
      * 取消所有待处理的diff（标记为已取消）
      * 用于用户发送新消息或删除消息时清理未确认的 diff
+     * @param conversationId 可选：只取消该会话的 pending diff
      */
-    public async cancelAllPending(): Promise<{ cancelled: PendingDiff[] }> {
+    public async cancelAllPending(conversationId?: string): Promise<{ cancelled: PendingDiff[] }> {
         const cancelled: PendingDiff[] = [];
 
         const pendingIds = Array.from(this.pendingDiffs.entries())
@@ -1727,18 +2006,19 @@ export class DiffManager {
                 continue;
             }
 
+            // 按会话隔离：只取消匹配会话的 pending diff
+            if (conversationId && diff.conversationId !== conversationId) {
+                continue;
+            }
+
             // 1. 标记为取消（公开 PendingDiff 状态仍映射为rejected，以保持既有 API/前端判断不变）
             this.finalizeCancelledDiff(diff);
             cancelled.push({ ...diff });
 
-            // 2. 关闭 diff 编辑器标签页
-            try {
-                await this.closeDiffTab(diff.absolutePath);
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
-            }
+            // 2. 关标签页并删除新建文件残留
+            await this.closeDiffTabAndCleanNewFile(id, diff);
 
-            // 6. 尝试恢复文件到原始状态
+            // 3. 尝试恢复文件到原始状态
             try {
                 const uri = vscode.Uri.file(diff.absolutePath);
                 const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
@@ -1751,6 +2031,17 @@ export class DiffManager {
                     );
                     edit.replace(uri, fullRange, diff.originalContent);
                     await vscode.workspace.applyEdit(edit);
+                    // 必须 save() 清理 dirty——否则 VSCode 弹出"是否保存更改？"对话框
+                    try {
+                        await doc.save();
+                    } catch {
+                        // doc.save 失败时回退到 revert
+                        try {
+                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                        } catch {
+                            // ignore
+                        }
+                    }
                 }
             } catch (err) {
                 console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
@@ -1800,11 +2091,13 @@ export class DiffManager {
         }
         this.diffSessions.clear();
 
-        this.suppressedNonManualSaveDrafts.clear();
+        this.nonManualSaveFlushed.clear();
 
         if (this.providerDisposable) {
             this.providerDisposable.dispose();
         }
+
+        this.statusListeners.clear();
 
         DiffManager.instance = null;
     }

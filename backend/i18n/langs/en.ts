@@ -88,7 +88,9 @@ const en: BackendLanguageMessages = {
                 success: 'Restored to "{toolName}" {phase} state',
                 filesUpdated: '{count} files updated',
                 filesDeleted: '{count} files deleted',
-                filesUnchanged: '{count} files unchanged'
+                filesUnchanged: '{count} files unchanged',
+                chainBroken: 'Incremental chain is broken: a referenced base checkpoint is missing',
+                partialFailure: 'Restored to "{toolName}" {phase} state with {count} failure(s)'
             },
             defaultConversationTitle: 'Conversation {conversationId}',
             errors: {
@@ -139,6 +141,7 @@ const en: BackendLanguageMessages = {
 
         channel: {
             formatters: {
+                streamError: '{provider} returned an error in the stream: {message}',
                 gemini: {
                     errors: {
                         invalidResponse: 'Invalid Gemini API response: no candidates',
@@ -258,6 +261,7 @@ const en: BackendLanguageMessages = {
                     lastMessageNotModel: 'Last message is not a model message',
                     noFunctionCalls: 'No pending function calls',
                     userRejectedTool: 'User rejected tool execution',
+                    toolCallCancelled: 'User cancelled the request; this tool call was not executed',
                     notEnoughRounds: 'Not enough conversation rounds, current {currentRounds}, keeping {keepRounds}, no summary needed',
                     notEnoughContent: 'Not enough conversation rounds, current {currentRounds}, keeping {keepRounds}, no content to summarize',
                     noMessagesToSummarize: 'No messages to summarize',

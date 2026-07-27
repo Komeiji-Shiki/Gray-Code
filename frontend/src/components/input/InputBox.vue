@@ -12,6 +12,7 @@ import type { EditorNode } from '../../types/editorNode'
 import { getPlainText } from '../../types/editorNode'
 import { getFileIcon } from '../../utils/fileIcons'
 import { extractVscodeDropItems } from '../../utils/vscodeDragDrop'
+import { sendToExtension, onExtensionCommand } from '../../utils/vscode'
 import { createContextChipElement } from './inputBox/ContextChipFactory'
 import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNodesDom'
 import {
@@ -510,6 +511,29 @@ function handleDrop(e: DragEvent) {
   }
 }
 
+// ========== 焦点跟踪与恢复 ==========
+// 为什么：关闭 diff 标签页会把键盘焦点从 webview 收走（VSCode 行为，
+// tabGroups.close 的 preserveFocus 也拦不住），正在输入框打字的用户会失焦。
+// 怎么做：输入框把 focus/blur 状态上报给扩展端；扩展端关闭 diff 后若输入框
+// 此前持有焦点，会归还 webview 焦点并推送 chat.restoreInputFocus 命令，
+// 这里收到命令后把光标放回输入框，用户可以无缝继续打字。
+
+function postChatInputFocusState(focused: boolean) {
+  sendToExtension('chatInput.focusState', { focused }).catch(() => {
+    // 状态上报失败不影响输入功能
+  })
+}
+
+function handleEditorFocus() {
+  postChatInputFocusState(true)
+}
+
+function handleEditorBlur() {
+  postChatInputFocusState(false)
+}
+
+let disposeRestoreFocusListener: (() => void) | null = null
+
 // ========== public methods ==========
 
 function focus() {
@@ -650,11 +674,21 @@ onMounted(() => {
     renderNodesToDom()
     adjustHeight()
   })
+
+  // 扩展端关闭 diff 标签归还焦点后，把光标放回输入框。
+  // rAF 双保险：等 webview iframe 真正拿到 workbench 焦点后再聚焦 DOM。
+  disposeRestoreFocusListener = onExtensionCommand('chat.restoreInputFocus', () => {
+    nextTick(() => {
+      requestAnimationFrame(() => editorRef.value?.focus())
+    })
+  })
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
+  disposeRestoreFocusListener?.()
+  disposeRestoreFocusListener = null
 })
 
 defineExpose({
@@ -687,6 +721,8 @@ defineExpose({
       @dragleave="handleDragLeave"
       @dragover="handleDragOver"
       @drop="handleDrop"
+      @focus="handleEditorFocus"
+      @blur="handleEditorBlur"
     ></div>
 
     <!-- 悬浮预览弹窗 -->

@@ -11,6 +11,7 @@ import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
+import { validateSessionIdentity } from './utils'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
@@ -120,39 +121,49 @@ export async function restoreAndRetry(
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
   }
-  
+
+  // await cancelStream() 之前固化 originConvId 与 targetMessageId
+  const originConvId = state.currentConversationId.value
+  const targetMessageId = state.allMessages.value[messageIndex]?.id
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
-  
+
+  // 校验归属
+  if (!validateSessionIdentity(state, originConvId)) return
+  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+
   state.error.value = null
   state.isLoading.value = true
-  
+
   try {
     // 1. 先恢复检查点
     const restoreResult = await restoreCheckpoint(state, checkpointId)
     if (!restoreResult.success) {
-      state.error.value = {
-        code: 'RESTORE_ERROR',
-        message: restoreResult.error || '恢复检查点失败'
+      if (validateSessionIdentity(state, originConvId)) {
+        state.error.value = {
+          code: 'RESTORE_ERROR',
+          message: restoreResult.error || '恢复检查点失败'
+        }
       }
       state.isLoading.value = false
       return
     }
-    
+
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-    
+
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
-    
+
     // 4. 删除后端的消息
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
-        conversationId: state.currentConversationId.value,
+        conversationId: originConvId,
         targetIndex: backendIndex,
         preserveCheckpointId: checkpointId
       })
@@ -162,11 +173,14 @@ export async function restoreAndRetry(
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
     }
-    
+
+    // 再次校验归属
+    if (!validateSessionIdentity(state, originConvId)) return
+
     // 5. 开始流式重试
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
-    
+
     const assistantMessageId = generateId()
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -184,21 +198,21 @@ export async function restoreAndRetry(
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
-    
+
     // 6. 调用后端重试
     const modelOverride = resolveConversationModelOverride(state)
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     await sendToExtension('retryStream', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       configId: state.configId.value,
       modelOverride,
       streamId
     })
-    
+
   } catch (err: any) {
-    if (state.isStreaming.value) {
+    if (state.isStreaming.value && validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_RETRY_ERROR',
         message: err.message || '回档并重试失败'
@@ -230,39 +244,49 @@ export async function restoreAndDelete(
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
   }
-  
+
+  // await cancelStream() 之前固化 originConvId 与 targetMessageId
+  const originConvId = state.currentConversationId.value
+  const targetMessageId = state.allMessages.value[messageIndex]?.id
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
-  
+
+  // 校验归属
+  if (!validateSessionIdentity(state, originConvId)) return
+  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+
   state.error.value = null
   state.isLoading.value = true
-  
+
   try {
     // 1. 先恢复检查点
     const restoreResult = await restoreCheckpoint(state, checkpointId)
     if (!restoreResult.success) {
-      state.error.value = {
-        code: 'RESTORE_ERROR',
-        message: restoreResult.error || '恢复检查点失败'
+      if (validateSessionIdentity(state, originConvId)) {
+        state.error.value = {
+          code: 'RESTORE_ERROR',
+          message: restoreResult.error || '恢复检查点失败'
+        }
       }
       state.isLoading.value = false
       return
     }
-    
+
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-    
+
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
-    
+
     // 4. 删除后端的消息
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
-        conversationId: state.currentConversationId.value,
+        conversationId: originConvId,
         targetIndex: backendIndex,
         preserveCheckpointId: checkpointId
       })
@@ -275,11 +299,13 @@ export async function restoreAndDelete(
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
     }
-    
+
   } catch (err: any) {
-    state.error.value = {
-      code: err.code || 'RESTORE_DELETE_ERROR',
-      message: err.message || '回档并删除失败'
+    if (validateSessionIdentity(state, originConvId)) {
+      state.error.value = {
+        code: err.code || 'RESTORE_DELETE_ERROR',
+        message: err.message || '回档并删除失败'
+      }
     }
   } finally {
     state.isLoading.value = false
@@ -309,19 +335,27 @@ export async function restoreAndEdit(
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
   }
-  
+
   if (!newContent.trim() && (!attachments || attachments.length === 0)) {
     return
   }
-  
+
+  // await cancelStream() 之前固化 originConvId 与 targetMessageId
+  const originConvId = state.currentConversationId.value
+  const targetMessageId = state.allMessages.value[messageIndex]?.id
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
-  
+
+  // 校验归属
+  if (!validateSessionIdentity(state, originConvId)) return
+  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+
   state.error.value = null
   state.isLoading.value = true
-  
+
   // 计算后端索引（在修改数组之前）
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
@@ -389,7 +423,7 @@ export async function restoreAndEdit(
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     await sendToExtension('editAndRetryStream', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       messageIndex: backendMessageIndex,
       preserveCheckpointId: checkpointId,
       newMessage: newContent,

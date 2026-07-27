@@ -56,7 +56,7 @@ import {
     type ContextTrimInfo,
     type FunctionCallInfo
 } from './utils';
-import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, OrphanedToolCallService, DiffInterruptService, ChatFlowService } from './services';
+import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 
 /** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
@@ -89,7 +89,6 @@ export class ChatHandler {
     private summarizeService: SummarizeService;
     private toolIterationLoopService: ToolIterationLoopService;
     private checkpointService: CheckpointService;
-    private orphanedToolCallService: OrphanedToolCallService;
     private diffInterruptService: DiffInterruptService;
     private chatFlowService: ChatFlowService;
     
@@ -140,11 +139,6 @@ export class ChatHandler {
             this.toolExecutionService,
             this.checkpointService
         );
-        this.orphanedToolCallService = new OrphanedToolCallService(
-            this.conversationManager,
-            this.toolCallParserService,
-            this.toolExecutionService
-        );
         this.diffInterruptService = new DiffInterruptService();
         this.chatFlowService = new ChatFlowService(
             this.configManager,
@@ -155,7 +149,6 @@ export class ChatHandler {
             this.toolIterationLoopService,
             this.checkpointService,
             this.diffInterruptService,
-            this.orphanedToolCallService,
             this.toolExecutionService,
             this.toolCallParserService
         );
@@ -225,7 +218,6 @@ export class ChatHandler {
             this.toolIterationLoopService,
             this.checkpointService,
             this.diffInterruptService,
-            this.orphanedToolCallService,
             this.toolExecutionService,
             this.toolCallParserService
         );

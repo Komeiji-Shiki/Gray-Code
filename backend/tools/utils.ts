@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fsp from 'fs/promises';
 import { t } from '../i18n';
 
 // ==================== 文本工具（换行符统一） ====================
@@ -19,7 +20,8 @@ const IS_WINDOWS = process.platform === 'win32';
  * - legacy CR (\r) -> \n
  */
 export function normalizeLineEndingsToLF(text: string): string {
-    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // 单次扫描同时处理 CRLF 与孤立 CR，避免两次全量 replace 各复制一遍字符串
+    return text.replace(/\r\n?/g, '\n');
 }
 // ==================== 多工作区支持 ====================
 
@@ -528,20 +530,101 @@ export function isBinaryFile(filePath: string): boolean {
     return BINARY_EXTENSIONS.has(ext);
 }
 
+/** 行数统计的文件大小上限：超过后 lineCount 的参考价值很低，不值得付出读取成本 */
+const MAX_LINE_COUNT_FILE_SIZE_BYTES = 4 * 1024 * 1024;
+
+/** 分块读取统计行数时的块大小 */
+const LINE_COUNT_CHUNK_SIZE = 64 * 1024;
+
+function countLineFeeds(bytes: Uint8Array, length: number): number {
+    let newlines = 0;
+    for (let i = 0; i < length; i++) {
+        if (bytes[i] === 0x0A) {
+            newlines++;
+        }
+    }
+    return newlines;
+}
+
 export async function countTextFileLines(uri: vscode.Uri, filePath: string): Promise<number | undefined> {
     // 文件发现类工具需要在不读取完整内容到返回值的前提下提示文本文件规模。
     // 二进制文件或读取失败时保持 undefined，避免把该能力变成硬失败。
+    //
+    // 修改原因：旧实现为了数行数把整个文件读入内存、解码、两次全量 replace
+    // 再 split 建数组，且没有大小护栏（大 .log/.csv 会全量进内存）。
+    // 修改方式：先用 stat 做大小护栏；本地文件分块读取直接统计 0x0A 字节，
+    // 无需解码与字符串分配。行数 = LF 数 + 1，与旧实现 split('\n').length 一致
+    //（CRLF 含 LF 仍正确；古老的 CR-only 文件会低估，作为辅助元数据可接受）。
     if (isBinaryFile(filePath)) {
         return undefined;
     }
 
     try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (typeof stat.size === 'number') {
+            if (stat.size > MAX_LINE_COUNT_FILE_SIZE_BYTES) {
+                return undefined;
+            }
+            if (stat.size === 0) {
+                return 1;
+            }
+        }
+
+        // 本地文件：分块读取，峰值内存只有一个 64KB 缓冲区
+        if (uri.scheme === 'file' && uri.fsPath) {
+            const handle = await fsp.open(uri.fsPath, 'r');
+            try {
+                const buffer = Buffer.alloc(LINE_COUNT_CHUNK_SIZE);
+                let newlines = 0;
+                while (true) {
+                    const { bytesRead } = await handle.read(buffer, 0, LINE_COUNT_CHUNK_SIZE, null);
+                    if (bytesRead <= 0) {
+                        break;
+                    }
+                    newlines += countLineFeeds(buffer, bytesRead);
+                }
+                return newlines + 1;
+            } finally {
+                await handle.close();
+            }
+        }
+
+        // 非 file scheme：无法部分读取，退化为整体读取后按字节统计（已有大小护栏）
         const content = await vscode.workspace.fs.readFile(uri);
-        const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
-        return text.split('\n').length;
+        return countLineFeeds(content, content.length) + 1;
     } catch {
         return undefined;
     }
+}
+
+/**
+ * 带并发上限的 map：按输入顺序返回结果，同时最多 runner 个任务在飞。
+ *
+ * 修改原因：find_files 对最多 500 个文件用裸 Promise.all 无上限并发读取，
+ * list_files 则完全串行；两者都需要一个统一的受控并发工具。
+ */
+export async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    limit: number,
+    mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    if (items.length === 0) {
+        return [];
+    }
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const runnerCount = Math.max(1, Math.min(Math.floor(limit), items.length));
+    const runners = Array.from({ length: runnerCount }, async () => {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= items.length) {
+                break;
+            }
+            results[index] = await mapper(items[index], index);
+        }
+    });
+    await Promise.all(runners);
+    return results;
 }
 
 /**
@@ -833,10 +916,17 @@ export interface ImageDimensions {
 }
 
 /**
- * 计算最大公约数
+ * 计算最大公约数（迭代实现 + 整数化防御，避免浮点输入导致递归不收敛）
  */
 export function gcd(a: number, b: number): number {
-    return b === 0 ? a : gcd(b, a % b);
+    let x = Math.abs(Math.trunc(a));
+    let y = Math.abs(Math.trunc(b));
+    while (y !== 0) {
+        const remainder = x % y;
+        x = y;
+        y = remainder;
+    }
+    return x;
 }
 
 /**

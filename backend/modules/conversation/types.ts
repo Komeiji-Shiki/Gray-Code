@@ -328,6 +328,14 @@ export interface Content {
      * - promptTokensDetails: prompt token 详情
      */
     usageMetadata?: UsageMetadata;
+
+    /**
+     * usageMetadata 是否来自未终结的流（被用户取消/网络中断时截断的半截数据）。
+     *
+     * 流被中止时 usageMetadata 只覆盖已收到的 chunk，token 数可能严重偏低；
+     * 上下文裁剪与用量统计在遇到此标记时应回退到估算而非信任 usageMetadata。
+     */
+    usageMetadataPartial?: boolean;
     
     /**
      * 思考持续时间（毫秒）

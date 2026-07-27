@@ -7,7 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, toRelativePath, countTextFileLines } from '../utils';
+import { getWorkspaceRoot, getAllWorkspaces, toRelativePath, countTextFileLines, mapWithConcurrency } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
 /**
@@ -77,16 +77,15 @@ async function findInWorkspace(
         const relativePattern = new vscode.RelativePattern(workspace.uri, pattern);
         const files = await vscode.workspace.findFiles(relativePattern, exclude, maxResults);
         
-        const fileDetails = await Promise.all(files.map(async (fileUri: vscode.Uri): Promise<FoundFileDetail> => {
+        // 受控并发：以前用裸 Promise.all 对最多 500 个文件无上限并发全量读取，
+        // 同时打开数百文件句柄且内存峰值不可控；行数统计本身也已改为字节流。
+        const fileDetails = await mapWithConcurrency(files, 8, async (fileUri: vscode.Uri): Promise<FoundFileDetail> => {
             const relativePath = toRelativePath(fileUri, includeWorkspacePrefix);
             return {
                 path: relativePath,
-                // 修改原因：find_files 返回路径后，模型通常下一步会读文件；提前给出行数能帮助它选择 startLine/endLine。
-                // 修改方式：按文件 URI 读取文本内容并统计行数，二进制或失败时省略 lineCount。
-                // 修改目的：在保留原 files 数组的同时提供更丰富的文件规模元数据。
                 lineCount: await countTextFileLines(fileUri, relativePath)
             };
-        }));
+        });
         fileDetails.sort((a, b) => a.path.localeCompare(b.path));
         const relativePaths = fileDetails.map(file => file.path);
 
@@ -176,6 +175,7 @@ export function createFindFilesTool(): Tool {
     return {
         declaration: {
             name: 'find_files',
+            readOnly: true,
             // 修改原因：用户要求 find_files 与 list_files 的新工具描述统一改为中文，并强调新增 lineCount 元数据。
             // 修改方式：主描述说明 glob、fileDetails.lineCount、数组参数和多根工作区规则，参数描述也同步中文化。
             // 修改目的：减少中文会话中模型误用 pattern 单字符串或忽略行数元数据的概率。

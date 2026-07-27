@@ -10,15 +10,17 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type Component, type ComponentPublicInstance } from 'vue'
+import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
+import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
 import { sendToExtension, onExtensionCommand, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
-import { generateId } from '../../utils/format'
+import { generateId, decodeUnicodeEscapes } from '../../utils/format'
 import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
+import { computeTaskCardStatus } from '../../utils/tools/subagents/backgroundStatus'
 
 const { t } = useI18n()
 
@@ -28,6 +30,20 @@ const props = defineProps<{
 }>()
 
 const chatStore = useChatStore()
+const backgroundTaskStore = useBackgroundTaskStore()
+
+// ===========================================================================
+// 模块级 Diff 倒计时单例
+//
+// 修复原因：每个 ToolMessage 实例会为同一组 pending diff 分别启动定时器，
+//          导致 N 个组件同时发送 diff.accept。
+// 修复方式：将所有 diff 倒计时状态提升到模块级，所有实例共享读剩余时间，
+//          按 diff 单例收敛，到点只发一次 diff.accept。
+// ===========================================================================
+
+const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
+const applyDiffProgress = ref<Map<string, number>>(new Map())
+const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 
 
@@ -46,10 +62,6 @@ type PendingDiffSession = {
   diffGuardWarning?: string
   diffGuardDeletePercent?: number
 }
-
-const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
-const applyDiffProgress = ref<Map<string, number>>(new Map())
-const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 // apply_diff 的全局配置（应用到所有支持 diff 的工具）
 const globalApplyDiffConfig = ref<ApplyDiffAutoSaveConfig>({ autoSave: false, autoSaveDelay: 3000 })
@@ -70,6 +82,14 @@ const seenDiffToolIds = ref<Set<string>>(new Set())
 // 为避免 UI 闪烁（先 error 再 success），这里给一个宽限期。
 const pendingDiffOrphanedAt = ref<Map<string, number>>(new Map())
 const DIFF_ORPHAN_GRACE_MS = 800
+
+/**
+ * 孤儿宽限期重估触发器（#59 修复）。
+ *
+ * 宽限期用 Date.now() 判定，但没有任何重估调度，超时纠正分支实际不可达。
+ * 在进入宽限期时设 setTimeout，届满后 bump 此 ref 触发 enhancedTools 重新计算。
+ */
+const orphanCheckTick = ref(0)
 
 const processingDiffSessionIds = ref<Set<string>>(new Set())
 const diffActionErrors = ref<Map<string, string>>(new Map())
@@ -309,8 +329,127 @@ async function rejectDiff(sessionId: string) {
   }
 }
 
+// ===========================================================================
+// 同步生命周期注册（#54 修复：从 onMounted(async) 中移出，确保 Vue 正确追踪）
+// ===========================================================================
+
+// 监听后端推送的配置变更（无需刷新页面即可生效）
+const unregisterApplyDiffConfigChanged = onExtensionCommand('tools.applyDiffConfigChanged', (data: any) => {
+  applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(data?.config), { restartTimers: true })
+})
+
+// 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
+// 注意：applyDiffTimers 为模块级单例（#55 修复），多个 ToolMessage 的 watchEffect
+// 会尝试为同一 session 启动计时器，但 startDiffTimer 内部的 has 检查会跳过已存在的。
+watchEffect(() => {
+  const cfg = globalApplyDiffConfig.value
+  if (!cfg.autoSave) {
+    return
+  }
+
+  for (const session of getAllPendingDiffSessions()) {
+    if (!applyDiffTimers.has(session.id) && !processingDiffSessionIds.value.has(session.id) && !diffActionErrors.value.has(session.id)) {
+      startDiffTimer(session.id, cfg.autoSaveDelay)
+    }
+  }
+})
+
+// 监听 diff 状态变化同步
+const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: any) => {
+  // 更新工具 ID 映射
+  const newMapping = new Map<string, PendingDiffSession[]>()
+  for (const d of data.pendingDiffs) {
+    if (d.toolId) {
+      const existing = newMapping.get(d.toolId) || []
+      existing.push({
+        id: d.id,
+        toolId: d.toolId,
+        filePath: d.filePath,
+        diffGuardWarning: d.diffGuardWarning,
+        diffGuardDeletePercent: d.diffGuardDeletePercent
+      })
+      newMapping.set(d.toolId, existing)
+    }
+  }
+  toolIdToPendingDiffs.value = newMapping
+
+  // 更新 diff 警戒值警告映射
+  const newWarnings = new Map<string, { warning: string; deletePercent: number }>()
+  for (const d of data.pendingDiffs) {
+    if (d.toolId && d.diffGuardWarning) {
+      const nextWarning = {
+        warning: d.diffGuardWarning,
+        deletePercent: d.diffGuardDeletePercent ?? 0
+      }
+      const currentWarning = newWarnings.get(d.toolId)
+      if (!currentWarning || nextWarning.deletePercent >= currentWarning.deletePercent) {
+        newWarnings.set(d.toolId, nextWarning)
+      }
+    }
+  }
+
+  // 实时警告（仅当前 pending）
+  diffGuardWarnings.value = newWarnings
+
+  // 持久化警告（工具结束后继续显示在消息上）
+  if (newWarnings.size > 0) {
+    const nextPersisted = new Map(persistedDiffGuardWarnings.value)
+    for (const [toolId, warning] of newWarnings.entries()) {
+      nextPersisted.set(toolId, warning)
+    }
+    persistedDiffGuardWarnings.value = nextPersisted
+  }
+
+  // 记录已出现过的 diff 工具 ID
+  const nextSeen = new Set(seenDiffToolIds.value)
+  for (const toolId of newMapping.keys()) {
+    nextSeen.add(toolId)
+  }
+  seenDiffToolIds.value = nextSeen
+
+  const activeSessionIds = new Set<string>(data.pendingDiffs.map((d: any) => d.id))
+
+  const nextProcessingDiffs = new Set(processingDiffSessionIds.value)
+  let processingChanged = false
+  for (const sessionId of Array.from(nextProcessingDiffs)) {
+    if (!activeSessionIds.has(sessionId)) {
+      nextProcessingDiffs.delete(sessionId)
+      processingChanged = true
+    }
+  }
+  if (processingChanged) {
+    processingDiffSessionIds.value = nextProcessingDiffs
+  }
+
+  const nextDiffErrors = new Map(diffActionErrors.value)
+  let errorsChanged = false
+  for (const sessionId of Array.from(nextDiffErrors.keys())) {
+    if (!activeSessionIds.has(sessionId)) {
+      nextDiffErrors.delete(sessionId)
+      errorsChanged = true
+    }
+  }
+  if (errorsChanged) {
+    diffActionErrors.value = nextDiffErrors
+  }
+
+  // 清理已完成工具的计时器（模块级单例，由 diff.statusChanged 统一清理）
+  for (const sessionId of Array.from(applyDiffTimers.keys())) {
+    if (!activeSessionIds.has(sessionId)) {
+      stopDiffTimer(sessionId)
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  // 只注销本组件注册的事件监听器
+  // 注意：模块级 applyDiffTimers 不在此清理，由 diff.statusChanged 统一维护
+  unregisterApplyDiffConfigChanged()
+  unregisterStatusChanged()
+})
+
+// 异步初始化：获取 diff 工具配置（仅此一步需要 await，留在 onMounted 内）
 onMounted(async () => {
-  // 获取 diff 工具配置（apply_diff 的配置应用到所有支持 diff 的工具）
   try {
     const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>('tools.getToolConfig', {
       toolName: 'apply_diff'
@@ -321,121 +460,6 @@ onMounted(async () => {
   } catch (err) {
     console.error('Failed to get diff tool config:', err)
   }
-
-  // 监听后端推送的配置变更（无需刷新页面即可生效）
-  const unregisterApplyDiffConfigChanged = onExtensionCommand('tools.applyDiffConfigChanged', (data: any) => {
-    applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(data?.config), { restartTimers: true })
-  })
-  onBeforeUnmount(unregisterApplyDiffConfigChanged)
-
-  // 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
-  watchEffect(() => {
-    const cfg = globalApplyDiffConfig.value
-    if (!cfg.autoSave) {
-      return
-    }
-
-    for (const session of getAllPendingDiffSessions()) {
-      if (!applyDiffTimers.has(session.id) && !processingDiffSessionIds.value.has(session.id) && !diffActionErrors.value.has(session.id)) {
-        startDiffTimer(session.id, cfg.autoSaveDelay)
-      }
-    }
-  })
-  
-  // 监听状态变化同步
-  const unregister = onExtensionCommand('diff.statusChanged', (data: any) => {
-    // 更新工具 ID 映射
-    const newMapping = new Map<string, PendingDiffSession[]>()
-    for (const d of data.pendingDiffs) {
-      if (d.toolId) {
-        const existing = newMapping.get(d.toolId) || []
-        existing.push({
-          id: d.id,
-          toolId: d.toolId,
-          filePath: d.filePath,
-          diffGuardWarning: d.diffGuardWarning,
-          diffGuardDeletePercent: d.diffGuardDeletePercent
-        })
-        newMapping.set(d.toolId, existing)
-      }
-    }
-    toolIdToPendingDiffs.value = newMapping
-
-    // 更新 diff 警戒值警告映射
-    const newWarnings = new Map<string, { warning: string; deletePercent: number }>()
-    for (const d of data.pendingDiffs) {
-      if (d.toolId && d.diffGuardWarning) {
-        const nextWarning = {
-          warning: d.diffGuardWarning,
-          deletePercent: d.diffGuardDeletePercent ?? 0
-        }
-        const currentWarning = newWarnings.get(d.toolId)
-        if (!currentWarning || nextWarning.deletePercent >= currentWarning.deletePercent) {
-          newWarnings.set(d.toolId, nextWarning)
-        }
-      }
-    }
-
-    // 实时警告（仅当前 pending）
-    diffGuardWarnings.value = newWarnings
-
-    // 持久化警告（工具结束后继续显示在消息上）
-    if (newWarnings.size > 0) {
-      const nextPersisted = new Map(persistedDiffGuardWarnings.value)
-      for (const [toolId, warning] of newWarnings.entries()) {
-        nextPersisted.set(toolId, warning)
-      }
-      persistedDiffGuardWarnings.value = nextPersisted
-    }
-
-    // 记录已出现过的 diff 工具 ID
-    const nextSeen = new Set(seenDiffToolIds.value)
-    for (const toolId of newMapping.keys()) {
-      nextSeen.add(toolId)
-    }
-    seenDiffToolIds.value = nextSeen
-
-    const activeSessionIds = new Set<string>(data.pendingDiffs.map((d: any) => d.id))
-
-    const nextProcessingDiffs = new Set(processingDiffSessionIds.value)
-    let processingChanged = false
-    for (const sessionId of Array.from(nextProcessingDiffs)) {
-      if (!activeSessionIds.has(sessionId)) {
-        nextProcessingDiffs.delete(sessionId)
-        processingChanged = true
-      }
-    }
-    if (processingChanged) {
-      processingDiffSessionIds.value = nextProcessingDiffs
-    }
-
-    const nextDiffErrors = new Map(diffActionErrors.value)
-    let errorsChanged = false
-    for (const sessionId of Array.from(nextDiffErrors.keys())) {
-      if (!activeSessionIds.has(sessionId)) {
-        nextDiffErrors.delete(sessionId)
-        errorsChanged = true
-      }
-    }
-    if (errorsChanged) {
-      diffActionErrors.value = nextDiffErrors
-    }
-
-    // 清理已完成工具的计时器
-    for (const sessionId of Array.from(applyDiffTimers.keys())) {
-      if (!activeSessionIds.has(sessionId)) {
-        stopDiffTimer(sessionId)
-      }
-    }
-  })
-  
-  onBeforeUnmount(() => {
-    unregister()
-    for (const timer of applyDiffTimers.values()) {
-      clearInterval(timer)
-    }
-    applyDiffTimers.clear()
-  })
 })
 
 // ---------------------------
@@ -449,6 +473,9 @@ watchEffect(() => {
 
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
+  // 读取孤儿重估触发器（#59 修复），确保宽限期届满时 computed 重新求值
+  void orphanCheckTick.value
+
   return props.tools.map((tool) => {
     const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
     let isDiffApplicable = true
@@ -482,6 +509,30 @@ const enhancedTools = computed<ToolUsage[]>(() => {
           result: response || undefined,
           error: undefined,
           status: isAnyDiffProcessing ? ('executing' as const) : ('awaiting_apply' as const),
+          awaitingConfirmation: false
+        }
+      }
+
+      // 后台派发子代理（#58 修复）：按 backgroundTaskStore 中的真实任务状态推导头部图标
+      if (tool.name === 'subagents' && (data as any)?.background === true) {
+        const taskId = (data as any)?.taskId as string | undefined
+        const bgStatus = computeTaskCardStatus(taskId, backgroundTaskStore.tasks, response as Record<string, unknown>)
+        let bgMappedStatus: ToolUsage['status']
+        switch (bgStatus) {
+          case 'running': bgMappedStatus = 'executing'; break
+          case 'completed': bgMappedStatus = 'success'; break
+          case 'failed': case 'cancelled': bgMappedStatus = 'error'; break
+          default: bgMappedStatus = 'executing'; break
+        }
+        const bgTask = taskId ? backgroundTaskStore.tasks[taskId] : undefined
+        const bgError = bgStatus === 'failed' || bgStatus === 'cancelled'
+          ? (bgTask?.error || tool.error || t('components.tools.cancelled'))
+          : undefined
+        return {
+          ...tool,
+          result: response || undefined,
+          error: bgError,
+          status: bgMappedStatus,
           awaitingConfirmation: false
         }
       }
@@ -536,6 +587,13 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       if (!existed) {
         pendingDiffOrphanedAt.value.set(tool.id, now)
         pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
+        // 安排宽限期届满后的重估（#59 修复）
+        const capturedToolId = tool.id
+        setTimeout(() => {
+          if (pendingDiffOrphanedAt.value.has(capturedToolId)) {
+            orphanCheckTick.value++
+          }
+        }, DIFF_ORPHAN_GRACE_MS)
       }
 
       // 宽限期内保持原状态，避免 UI 闪烁（先 error 再 success）。
@@ -943,6 +1001,13 @@ function shouldShowStreamingPreview(tool: ToolUsage): boolean {
   return shouldShowToolArgumentPreview(tool)
 }
 
+// 流式参数预览文本：对模型以 ASCII-safe 形式输出的 \uXXXX 转义做实时解码，
+// 否则中文参数在预览阶段会显示为满屏 \u4e2d\u6587 转义序列。
+// 解码只影响展示；实际 partialArgs 保持原样，最终仍由 JSON.parse 权威解析。
+function getStreamingPreviewText(tool: ToolUsage): string {
+  return decodeUnicodeEscapes(tool.partialArgs || '')
+}
+
 // 流式预览元素引用（用于自动滚动到底部）
 const streamingPreviewRefs = new Map<string, HTMLElement>()
 
@@ -1042,6 +1107,23 @@ function renderToolContent(tool: ToolUsage) {
     ])
   ])
 }
+
+/**
+ * 身份稳定的宿主组件（#56 修复）。
+ *
+ * 原先模板使用内联箭头函数 `<component :is="() => renderToolContent(tool)">`，
+ * 每次渲染都换新 vnode type，导致已展开的面板被整棵卸载重建。
+ * ToolContentHost 通过 defineComponent + props 保持 vnode type 恒定，
+ * 重渲染仅走 props patch 而非 unmount/remount。
+ */
+const ToolContentHost = defineComponent({
+  props: {
+    tool: { type: Object as PropType<ToolUsage>, required: true }
+  },
+  setup(hostProps) {
+    return () => renderToolContent(hostProps.tool)
+  }
+})
 </script>
 
 <template>
@@ -1146,12 +1228,12 @@ function renderToolContent(tool: ToolUsage) {
         class="streaming-preview"
         :ref="setStreamingPreviewRef(tool.id)"
       >
-        <pre class="streaming-preview-content">{{ tool.partialArgs }}</pre>
+        <pre class="streaming-preview-content">{{ getStreamingPreviewText(tool) }}</pre>
       </div>
 
       <!-- 工具详细内容 - 展开时显示（仅当可展开时） -->
       <div v-if="shouldShowToolContent(tool)" class="tool-content">
-        <component :is="() => renderToolContent(tool)" />
+        <component :is="ToolContentHost" :tool="tool" />
       </div>
 
       <!-- Diff 警戒值警告（pending 或已结束都可展示） -->

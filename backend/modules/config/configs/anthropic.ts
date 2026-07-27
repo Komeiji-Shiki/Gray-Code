@@ -179,4 +179,14 @@ export interface AnthropicConfig extends BaseChannelConfig {
      * 仅在 promptCachingEnabled 为 true 且 promptCachingTtl 为 '5m' 时有意义。
      */
     promptCachingKeepAlive?: boolean;
+
+    /**
+     * 是否为 Anthropic Messages 请求发送 metadata.user_id。
+     *
+     * 启用后，会基于请求的 conversationId（主聊天传对话 ID，SubAgent 传 runId）
+     * 生成稳定且不含隐私信息的 user_id，让主会话与各 SubAgent、SubAgent 彼此之间
+     * 的请求在 provider/网关侧可按运行域区分，缓存与风控域互不混淆。
+     * 与 OpenAI 渠道的 deepSeekUserIdEnabled 机制对齐，默认关闭。
+     */
+    anthropicUserIdEnabled?: boolean;
 }

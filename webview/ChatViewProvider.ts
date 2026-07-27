@@ -39,6 +39,7 @@ import {
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
+import { setChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
@@ -124,6 +125,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // 消息处理队列，用于确保消息按顺序处理（解决技能切换与对话请求的竞态问题）
     private messageHandlingQueue: Promise<void> = Promise.resolve();
+
+    /**
+     * 当前 webview view 实例的事件订阅。
+     *
+     * resolveWebviewView 可能被多次调用（视图重建），每次调用前需先清理
+     * 上一轮订阅，避免旧监听器累积。参考 SubAgentMonitorPanel.panelDisposables。
+     */
+    private viewDisposables: vscode.Disposable[] = [];
 
     // 本地开发模式：前端 Vite 开发服务器地址（仅在 ExtensionMode.Development 生效）
     private readonly webviewDevServerUrl?: string;
@@ -645,6 +654,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
+        // 每次重建视图前清理上一轮视图级订阅，避免监听器累积
+        for (const d of this.viewDisposables.splice(0)) {
+            d.dispose();
+        }
+
         this._view = webviewView;
         this.webviewReady = false;
         this.mainChatClientDisposable?.dispose();
@@ -668,14 +682,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(
             async (message) => {
                 // 将消息处理包装在队列中，确保按顺序执行
-                this.messageHandlingQueue = this.messageHandlingQueue.then(() => 
+                this.messageHandlingQueue = this.messageHandlingQueue.then(() =>
                     this.handleMessage(message)
                 ).catch(err => {
                     console.error('[ChatViewProvider] Error in message handling queue:', err);
                 });
             },
             undefined,
-            this.context.subscriptions
+            this.viewDisposables
         );
 
         // 监听 Diff 状态变化并同步到前端
@@ -700,12 +714,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             });
         };
         diffManager.addStatusListener(diffStatusListener);
-        this.context.subscriptions.push({
+        this.viewDisposables.push({
             dispose: () => diffManager.removeStatusListener(diffStatusListener)
+        });
+
+        // 关闭 diff 标签归还 workbench 焦点后，通知前端把光标放回聊天输入框
+        // （见 backend/core/chatFocusGuard.ts）
+        setChatFocusRestoreNotifier(() => {
+            this.sendCommand('chat.restoreInputFocus', {});
+        });
+        this.viewDisposables.push({
+            dispose: () => setChatFocusRestoreNotifier(undefined)
         });
 
         // 立即发送一次当前状态
         diffStatusListener(diffManager.getPendingDiffs(), diffManager.areAllProcessed());
+
+        // webview 面板关闭/销毁时清理视图级订阅
+        this.viewDisposables.push(
+            webviewView.onDidDispose(() => {
+                for (const d of this.viewDisposables.splice(0)) {
+                    d.dispose();
+                }
+            })
+        );
     }
 
     /**

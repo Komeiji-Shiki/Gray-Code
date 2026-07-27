@@ -203,3 +203,24 @@ export function formatNumber(num: number): string {
   }
   return num.toLocaleString()
 }
+
+/**
+ * 解码文本中的 \uXXXX Unicode 转义序列（用于流式 JSON 参数预览）。
+ *
+ * 为什么需要：部分模型在 function calling 中以 ASCII-safe 形式输出 JSON
+ * （等价于 Python 的 ensure_ascii=True），中文会变成 \u4e2d\u6587。
+ * 解析层 JSON.parse 不受影响，但流式预览直接展示原始文本会满屏转义符。
+ *
+ * 解码规则：
+ * 1. 成对的反斜杠 `\\` 原样保留，避免把字面量 "\\u0041" 误解码；
+ * 2. 只解码完整的 \uXXXX（恰好 4 位十六进制），流式截断的尾部（如 "\u4e"）
+ *    保持原样，等下一帧数据补全后全量重解；
+ * 3. 代理对（如 \ud83d\ude00）逐个解码为 UTF-16 code unit 后，
+ *    由 JS 字符串自然组合为完整字符（emoji 等）。
+ */
+export function decodeUnicodeEscapes(text: string): string {
+  if (!text.includes('\\u')) return text
+  return text.replace(/\\\\|\\u([0-9a-fA-F]{4})/g, (match, hex: string | undefined) =>
+    hex === undefined ? match : String.fromCharCode(parseInt(hex, 16))
+  )
+}

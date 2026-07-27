@@ -3,8 +3,22 @@
  */
 
 import type { Message } from '../../types'
+import type { ChatStoreState } from './types'
 import { translate } from '../../composables/useI18n'
 import { useSettingsStore } from '../settingsStore'
+
+/**
+ * 竞态统一守护：校验当前活跃会话是否仍是请求发起时的会话。
+ *
+ * 所有在 await 后需要写 state 的 async 函数都应在 await 后调用此函数进行归属校验。
+ * 返回 false 表示会话已切换，调用方应中止后续写操作。
+ */
+export function validateSessionIdentity(
+  state: ChatStoreState,
+  expectedConversationId: string | null
+): boolean {
+  return state.currentConversationId.value === expectedConversationId
+}
 
 /**
  * 格式化时间

@@ -284,6 +284,7 @@ const en: LanguageMessages = {
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
+            sendWhileBusy: 'Send new message (a running command moves to background, AI responds first)',
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
@@ -1051,7 +1052,12 @@ const en: LanguageMessages = {
                 badges: {
                     dangerous: 'Dangerous'
                 },
+                diffReview: {
+                    label: 'Managed by Diff review',
+                    tooltip: 'Changes from this tool are confirmed through the Diff review flow instead of the in-chat confirmation dialog. Configure auto-apply in "Tools Settings → Apply Diff → Auto Apply".'
+                },
                 tips: {
+                    diffReviewNote: '• Write tools (write_file / apply_diff / insert_code / delete_code) are confirmed via Diff review: enable "Auto Apply" in the Apply Diff tool settings to make them fully automatic — no checkbox needed on this page',
                     dangerousDefault: '• Tools marked as "Dangerous" require user confirmation by default before execution',
                     deleteFileWarning: '• delete_file: File deletion is irreversible, recommend keeping confirmation enabled',
                     executeCommandWarning: '• execute_command: Executing terminal commands may affect the system',
@@ -1466,9 +1472,12 @@ const en: LanguageMessages = {
                 delete: 'Delete',
                 disabled: 'Disabled',
                 enabled: 'Enable this sub-agent',
+                saveFailed: 'Save failed: {error}',
                 globalConfig: 'Global Configuration',
                 maxConcurrentAgents: 'Max Concurrent Agents',
-                maxConcurrentAgentsHint: 'Maximum number of sub-agents AI can invoke at once (-1 for unlimited)',
+                maxConcurrentAgentsHint: 'Maximum number of sub-agents running at the same time; extra ones wait in a queue (-1 for unlimited)',
+                generalWorker: 'Enable General Worker (easy mode)',
+                generalWorkerHint: 'Lets the main model dispatch zero-config "General Worker" agents that inherit the current channel and full tool permissions; the model decides how many to use, no manual agent setup needed',
                 basicInfo: 'Basic Info',
                 description: 'Description',
                 descriptionPlaceholder: 'Describe when the main AI should use this sub-agent',
@@ -1509,7 +1518,30 @@ const en: LanguageMessages = {
                     nameLabel: 'Name',
                     namePlaceholder: 'e.g., Code Review Expert',
                     nameRequired: 'Please enter a name for the sub-agent',
-                    nameDuplicate: 'A sub-agent with this name already exists'
+                    nameDuplicate: 'A sub-agent with this name already exists',
+                    templateLabel: 'Template'
+                },
+                presets: {
+                    blank: {
+                        name: 'Blank',
+                        description: 'Configure a sub-agent from scratch'
+                    },
+                    codeReviewer: {
+                        name: 'Code Reviewer',
+                        description: 'Read-only review of code in a given scope with structured findings; never modifies files'
+                    },
+                    deepResearcher: {
+                        name: 'Deep Researcher',
+                        description: 'In-depth investigation of the codebase and external resources, returning a sourced research report'
+                    },
+                    parallelEditor: {
+                        name: 'Parallel Editor',
+                        description: 'Applies and verifies code changes within an assigned scope; designed for parallel editing'
+                    },
+                    webSearcher: {
+                        name: 'Web Searcher',
+                        description: 'Searches the web via MCP tools only, returning summaries with source links'
+                    }
                 }
             },
             modelManager: {
@@ -1727,9 +1759,11 @@ const en: LanguageMessages = {
                 },
                 optionsSection: {
                     title: 'Summarization Options',
-                    keepRounds: 'Keep Recent Rounds',
+                    keepRounds: 'Minimum Rounds to Keep',
                     keepRoundsUnit: 'rounds',
-                    keepRoundsHint: 'Keep the most recent N rounds of conversation from being summarized to ensure context continuity',
+                    keepRoundsHint: 'Lower-bound protection for the keep budget: at least the most recent N rounds are never summarized',
+                    keepTokens: 'Keep Recent Budget',
+                    keepTokensHint: 'How much recent context to keep unsummarized: a token count (e.g. 30000) or a percentage of the model context window (e.g. 25%). The actual range aligns to round boundaries within this budget',
                     manualPrompt: 'Manual Summarization Prompt',
                     manualPromptPlaceholder: 'Enter the prompt used for manual summarization...',
                     manualPromptHint: 'Used when you click the "Summarize context" button',
@@ -2219,6 +2253,47 @@ const en: LanguageMessages = {
             }
         },
 
+        backgroundTasks: {
+            running: 'Running',
+            completed: 'Completed',
+            failed: 'Failed',
+            cancelled: 'Cancelled',
+            cancel: 'Cancel task',
+            dismiss: 'Dismiss',
+            pendingReport: 'Result pending report to the model',
+            outputTitle: 'Command output',
+            noOutput: 'No output yet'
+        },
+        subagents: {
+            monitor: {
+                title: 'SubAgent Monitor',
+                subtitle: 'Shows each SubAgent run as a chat: system prompt, context, AI output, reasoning and tool calls.',
+                runCount: '{count} runs',
+                empty: 'No SubAgent transcripts yet.',
+                defaultAgentName: 'Sub-Agent',
+                loadedCount: 'Loaded {loaded} / {total} messages',
+                loadOlder: 'Load earlier messages',
+                loadingOlder: 'Loading…',
+                pause: 'Pause',
+                resume: 'Resume',
+                exit: 'Exit and fail the parent tool',
+                retrying: 'Auto-retry {attempt}/{maxAttempts}',
+                retrySuccess: 'Auto-retry succeeded',
+                retryFailed: 'Auto-retry failed: {error}',
+                readOnly: 'Historical run · view only',
+                controlUnavailable: 'This run is no longer controllable; the action had no effect',
+                status: {
+                    queued: 'Queued',
+                    running: 'Running',
+                    paused: 'Paused',
+                    awaitingMonitorAction: 'Awaiting action',
+                    completed: 'Completed',
+                    failed: 'Failed',
+                    cancelled: 'Cancelled',
+                    interrupted: 'Interrupted'
+                }
+            }
+        },
         channels: {
             common: {
                 temperature: {
@@ -2297,6 +2372,11 @@ const en: LanguageMessages = {
                     ttl1hHint: '2x base input price for writes. Best for intermittent long conversations',
                     keepAlive: 'Cache Keep-Alive (auto-refresh at 4m30s)',
                     keepAliveHint: 'When a streaming request exceeds 4m30s, automatically sends a max_tokens=5 keep-alive request to refresh the cache TTL'
+                },
+                userId: {
+                    title: 'Request User ID (metadata.user_id)',
+                    enable: 'Inject a stable metadata.user_id into each request',
+                    hint: 'Generates a hashed identifier from the conversation ID (run ID for sub-agents), so the main session and each sub-agent are distinguished server-side and caches never mix; contains no private information'
                 }
             },
             gemini: {
@@ -2713,7 +2793,8 @@ const en: LanguageMessages = {
                 completed: 'Completed',
                 failed: 'Failed',
                 executing: 'Executing...',
-                partialResponse: 'Partial Response'
+                partialResponse: 'Partial Response',
+                background: 'Background'
             },
             media: {
                 generateImage: 'Generate Image',

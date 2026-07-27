@@ -132,6 +132,15 @@ export interface SubAgentRequest {
      * 修改目的：pending、完成态和历史态都用同一个 runId 打开同一次 Monitor 运行。
      */
     runId?: string;
+
+    /**
+     * 延续之前的子代理对话的 runId。
+     *
+     * 当指定此参数时，新子代理会继承旧 run 的完整对话历史（transcript），
+     * 而不是从零开始。旧 run 必须处于终态（completed / failed / cancelled），
+     * 如果仍在运行中则拒绝延续。
+     */
+    continueFromRunId?: string;
 }
 
 /**

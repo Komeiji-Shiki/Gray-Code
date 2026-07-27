@@ -10,7 +10,7 @@ jest.mock('../../tools/file/diffManager', () => ({
     })
 }));
 
-import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 
 /**
  * CheckpointManager restore 测试
@@ -236,6 +236,261 @@ describe('CheckpointManager restore ignore semantics', () => {
             await expect(fs.readFile(path.join(workspaceRoot, 'visible.txt'), 'utf-8')).resolves.toBe(visibleContent);
             await expect(fs.readFile(path.join(workspaceRoot, 'ignored/secret.txt'), 'utf-8')).resolves.toBe('keep current ignored\n');
             await expect(pathExists(path.join(workspaceRoot, 'ignored/empty'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('#28: restore fails when incremental chain is broken', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-chain-broken';
+        const baseId = 'cp-base';
+        const targetId = 'cp-target';
+
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'base content\n');
+
+            // base checkpoint: full backup
+            const baseCheckpoint: CheckpointRecord = {
+                id: baseId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: 1000,
+                backupDir: baseId,
+                fileCount: 1,
+                contentHash: 'hash-base',
+                type: 'full',
+                fileHashes: { 'a.txt': hashContent('base content\n') }
+            };
+
+            // target checkpoint: incremental, references baseId (which won't be in the list)
+            const targetCheckpoint: CheckpointRecord = {
+                id: targetId,
+                conversationId,
+                messageIndex: 1,
+                toolName: 'apply_diff',
+                phase: 'after',
+                timestamp: 2000,
+                backupDir: targetId,
+                fileCount: 1,
+                contentHash: 'hash-target',
+                type: 'incremental',
+                baseCheckpointId: baseId,
+                fileHashes: { 'a.txt': hashContent('modified content\n') }
+            };
+
+            // backup dirs on disk
+            const backupRootBase = path.join(storageRoot, 'checkpoints', baseId);
+            await writeFile(backupRootBase, 'a.txt', 'base content\n');
+            const backupRootTarget = path.join(storageRoot, 'checkpoints', targetId);
+            await writeFile(backupRootTarget, 'a.txt', 'modified content\n');
+
+            // Only target in the list — base is missing → chain broken
+            const manager = await createCheckpointManager(
+                workspaceRoot,
+                storageRoot,
+                [targetCheckpoint],
+                []
+            );
+
+            const result = await manager.restoreCheckpoint(conversationId, targetId);
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBeDefined();
+            expect(result.error!.length).toBeGreaterThan(0);  // message depends on locale
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('#29: restore does not delete files that were not in checkpoint fileHashes', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-no-delete-untracked';
+        const checkpointId = 'cp-untracked';
+
+        try {
+            // Workspace has an extra file that the checkpoint never recorded
+            await writeFile(workspaceRoot, 'tracked.txt', 'tracked\n');
+            await writeFile(workspaceRoot, 'untracked.txt', 'do not delete me\n');
+
+            const trackedContent = 'tracked checkpoint\n';
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'hash-untracked',
+                type: 'full',
+                // Only tracked.txt was recorded; untracked.txt was not in fileHashes
+                fileHashes: { 'tracked.txt': hashContent(trackedContent) }
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'tracked.txt', trackedContent);
+
+            const manager = await createCheckpointManager(
+                workspaceRoot,
+                storageRoot,
+                [checkpoint],
+                []
+            );
+
+            const result = await manager.restoreCheckpoint(conversationId, checkpointId);
+
+            expect(result.success).toBe(true);
+            // untracked.txt was NOT in fileHashes → should survive (#29)
+            await expect(fs.readFile(path.join(workspaceRoot, 'untracked.txt'), 'utf-8')).resolves.toBe('do not delete me\n');
+            await expect(fs.readFile(path.join(workspaceRoot, 'tracked.txt'), 'utf-8')).resolves.toBe(trackedContent);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('#30: restore collects failures for missing-in-chain, hash-mismatch, copy-failed', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-failures';
+        const checkpointId = 'cp-failures';
+
+        try {
+            // Two files tracked in checkpoint; a.txt has backup copy, b.txt does not (missing_in_chain)
+            // c.txt: backup content hash mismatches declared hash (hash_mismatch)
+            // d.txt: backup file has correct hash but restore will work fine
+            await writeFile(workspaceRoot, 'a.txt', 'current a\n');
+            await writeFile(workspaceRoot, 'b.txt', 'current b\n');
+            await writeFile(workspaceRoot, 'c.txt', 'current c\n');
+            await writeFile(workspaceRoot, 'd.txt', 'current d\n');
+
+            const correctHashD = hashContent('restored d\n');
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'apply_diff',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 2,
+                contentHash: 'hash-failures',
+                type: 'full',
+                fileHashes: {
+                    'a.txt': hashContent('missing in chain a\n'),
+                    'b.txt': hashContent('missing in chain b\n'),
+                    'c.txt': hashContent('mismatch c\n'),
+                    'd.txt': correctHashD
+                }
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            // a.txt: NOT created in backup → missing_in_chain
+            // b.txt: NOT created in backup → missing_in_chain
+            // c.txt: created but with WRONG content → hash_mismatch
+            await writeFile(backupRoot, 'c.txt', 'wrong content for c\n');
+            // d.txt: backup has correct content → should succeed
+            await writeFile(backupRoot, 'd.txt', 'restored d\n');
+
+            const manager = await createCheckpointManager(
+                workspaceRoot,
+                storageRoot,
+                [checkpoint],
+                []
+            );
+
+            const result = await manager.restoreCheckpoint(conversationId, checkpointId);
+
+            expect(result.success).toBe(false);
+            expect(result.failures).toBeDefined();
+            const failures = result.failures!;
+
+            // a.txt and b.txt are missing_in_chain
+            const missing = failures.filter(f => f.reason === 'missing_in_chain');
+            expect(missing.length).toBe(2);
+            const missingPaths = missing.map(f => f.path).sort();
+            expect(missingPaths).toEqual(['a.txt', 'b.txt']);
+
+            // c.txt is hash_mismatch
+            const mismatches = failures.filter(f => f.reason === 'hash_mismatch');
+            expect(mismatches.length).toBe(1);
+            expect(mismatches[0].path).toBe('c.txt');
+
+            // d.txt should have been restored successfully
+            expect(result.restored).toBe(1);
+            await expect(fs.readFile(path.join(workspaceRoot, 'd.txt'), 'utf-8')).resolves.toBe('restored d\n');
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('#28: intact chain (no missing base) restores successfully', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-chain-intact';
+        const baseId = 'cp-base-intact';
+        const targetId = 'cp-target-intact';
+
+        try {
+            await writeFile(workspaceRoot, 'file.txt', 'current\n');
+
+            const baseCheckpoint: CheckpointRecord = {
+                id: baseId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: 1000,
+                backupDir: baseId,
+                fileCount: 1,
+                contentHash: 'hash-base-intact',
+                type: 'full',
+                fileHashes: { 'file.txt': hashContent('base\n') }
+            };
+
+            const targetContent = 'target\n';
+            const targetCheckpoint: CheckpointRecord = {
+                id: targetId,
+                conversationId,
+                messageIndex: 1,
+                toolName: 'apply_diff',
+                phase: 'after',
+                timestamp: 2000,
+                backupDir: targetId,
+                fileCount: 1,
+                contentHash: 'hash-target-intact',
+                type: 'incremental',
+                baseCheckpointId: baseId,
+                fileHashes: { 'file.txt': hashContent(targetContent) },
+                changes: [{ path: 'file.txt', type: 'modified', hash: hashContent(targetContent) }]
+            };
+
+            const backupRootBase = path.join(storageRoot, 'checkpoints', baseId);
+            await writeFile(backupRootBase, 'file.txt', 'base\n');
+            const backupRootTarget = path.join(storageRoot, 'checkpoints', targetId);
+            await writeFile(backupRootTarget, 'file.txt', targetContent);
+
+            const manager = await createCheckpointManager(
+                workspaceRoot,
+                storageRoot,
+                [baseCheckpoint, targetCheckpoint],
+                []
+            );
+
+            const result = await manager.restoreCheckpoint(conversationId, targetId);
+
+            expect(result.success).toBe(true);
+            expect(result.restored).toBe(1);
+            await expect(fs.readFile(path.join(workspaceRoot, 'file.txt'), 'utf-8')).resolves.toBe(targetContent);
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });

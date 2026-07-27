@@ -8,7 +8,12 @@ import { SettingsManager, MemorySettingsStorage } from '../../modules/settings';
 jest.mock('fs', () => ({
     existsSync: jest.fn(),
     mkdirSync: jest.fn(),
-    writeFileSync: jest.fn()
+    writeFileSync: jest.fn(),
+    // write_file 已改用异步 IO（fs.promises），避免阻塞 extension host 主线程
+    promises: {
+        mkdir: jest.fn().mockResolvedValue(undefined),
+        writeFile: jest.fn().mockResolvedValue(undefined)
+    }
 }));
 
 const mockDiffManager = {
@@ -65,8 +70,8 @@ describe('write_file outside-workspace flow', () => {
         );
 
         expect(result.success).toBe(true);
-        expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(expectedAbsolutePath), { recursive: true });
-        expect(fs.writeFileSync).toHaveBeenCalledWith(expectedAbsolutePath, '', 'utf8');
+        expect(fs.promises.mkdir).toHaveBeenCalledWith(path.dirname(expectedAbsolutePath), { recursive: true });
+        expect(fs.promises.writeFile).toHaveBeenCalledWith(expectedAbsolutePath, '', 'utf8');
 
         expect(mockDiffManager.createPendingDiff).toHaveBeenCalledTimes(1);
         const [, diffAbsolutePath, originalContent, newContent, _blocks, _diffs, toolId, options] =
@@ -77,7 +82,7 @@ describe('write_file outside-workspace flow', () => {
         expect(originalContent).toBe('');
         expect(newContent).toBe('hello outside');
         expect(toolId).toBe('tool-1');
-        expect(options).toEqual({ confirmedByToolConfirmation: false });
+        expect(options).toEqual({ confirmedByToolConfirmation: false, newFile: true });
     });
 
     it('marks confirmed write calls so auto-save does not wait for a second confirmation', async () => {
@@ -91,6 +96,6 @@ describe('write_file outside-workspace flow', () => {
 
         expect(mockDiffManager.createPendingDiff).toHaveBeenCalledTimes(1);
         const options = mockDiffManager.createPendingDiff.mock.calls[0][7];
-        expect(options).toEqual({ confirmedByToolConfirmation: true });
+        expect(options).toEqual({ confirmedByToolConfirmation: true, newFile: true });
     });
 });

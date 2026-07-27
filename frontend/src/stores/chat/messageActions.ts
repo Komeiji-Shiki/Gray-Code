@@ -21,6 +21,7 @@ import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
+import { validateSessionIdentity } from './utils'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -71,6 +72,8 @@ export interface SendMessageOptions {
   modelOverride?: string
   hidden?: { functionResponse: HiddenFunctionResponsePayload }
   dynamicContextStrategyOverride?: 'single' | 'preserve'
+  /** 消息来源，'background_task' 时前端渲染为后台任务卡片而非普通用户消息 */
+  source?: 'user' | 'background_task'
 }
 
 /**
@@ -212,13 +215,13 @@ export async function sendMessage(
   messageText: string,
   attachments?: Attachment[],
   options?: SendMessageOptions
-): Promise<void> {
+): Promise<boolean> {
   const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
-  if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return
-  
+  if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return false
+
   state.error.value = null
-  if (state.isWaitingForResponse.value) return
+  if (state.isWaitingForResponse.value) return false
   
   state.isLoading.value = true
   state.isStreaming.value = true
@@ -245,7 +248,13 @@ export async function sendMessage(
       await persistConversationModelConfig(state)
       await persistConversationPromptMode(state)
     }
-    
+
+    // 固化目标会话 ID：此后所有会话标识读写以此为准，避免多次 await 后重读 currentConversationId
+    const targetConvId = state.currentConversationId.value
+    if (!targetConvId) {
+      throw new Error('No conversation ID after creation')
+    }
+
     if (hiddenFunctionResponse) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
       upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
@@ -256,11 +265,12 @@ export async function sendMessage(
         content: messageText,
         timestamp: Date.now(),
         backendIndex: getNextBackendIndex(state),
-        attachments: attachments && attachments.length > 0 ? attachments : undefined
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
+        source: options?.source
       }
       state.allMessages.value.push(userMessage)
     }
-    
+
     const assistantMessageId = generateId()
     const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
@@ -279,11 +289,11 @@ export async function sendMessage(
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
-    
-    const conv = state.conversations.value.find(c => c.id === state.currentConversationId.value)
+
+    const conv = state.conversations.value.find(c => c.id === targetConvId)
     if (conv) {
       conv.updatedAt = Date.now()
-      // 使用窗口推导的“已知总数”，避免窗口化后 messageCount 变小
+      // 使用窗口推导的”已知总数”，避免窗口化后 messageCount 变小
       const knownTotal = Math.max(state.totalMessages.value, state.windowStartIndex.value + state.allMessages.value.length)
       state.totalMessages.value = knownTotal
       conv.messageCount = knownTotal
@@ -292,16 +302,18 @@ export async function sendMessage(
       }
     }
 
-    if (state.currentConversationId.value) {
-      await syncConversationWorkspaceUri(state, state.currentConversationId.value)
-    }
+    await syncConversationWorkspaceUri(state, targetConvId)
+
+    // 写入全局状态前校验会话归属，防止跨会话投递
+    if (!validateSessionIdentity(state, targetConvId)) return false
+
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastApprovalGatedStreamId.value = null
 
     state._lastCancelledStreamId.value = null
-    
+
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
       ? attachments.map(att => ({
           // 隐藏模式默认不带附件（这里保留原有结构以兼容调用）
@@ -314,9 +326,9 @@ export async function sendMessage(
           thumbnail: att.thumbnail
         }))
       : undefined
-    
+
     await sendToExtension('chatStream', {
-      conversationId: state.currentConversationId.value,
+      conversationId: targetConvId,
       configId: state.configId.value,
       message: messageText,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
@@ -338,9 +350,12 @@ export async function sendMessage(
       state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
+    return false
   } finally {
     state.isLoading.value = false
   }
+
+  return true
 }
 
 /**
@@ -376,18 +391,24 @@ export async function retryFromMessage(
   if (!state.currentConversationId.value || state.allMessages.value.length === 0) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
 
-  // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
+  // await cancelStream() 之前固化 key 参数
   const originConvId = state.currentConversationId.value
-  
+  const targetMessageId = state.allMessages.value[messageIndex]?.id
+  const isLocalPlaceholder = isLocalOnlyAssistant(state.allMessages.value[messageIndex]) || isEmptyAssistantPlaceholder(state.allMessages.value[messageIndex])
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
 
-  // 如果目标是“本地空占位 assistant”（后端并不存在），不要调用 deleteMessage 到后端，
+  // 校验归属：cancel 期间当前会话可能已切换
+  if (state.currentConversationId.value !== originConvId) return
+  // 校验消息标识：cancel 后目标消息可能已变化
+  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+
+  // 如果目标是”本地空占位 assistant”（后端并不存在），不要调用 deleteMessage 到后端，
   // 否则会触发 messageIndexOutOfBounds。这里直接本地清理并走 retryStream。
-  const target = state.allMessages.value[messageIndex]
-  if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
+  if (isLocalPlaceholder) {
     state.error.value = null
     state.isLoading.value = true
     state.isStreaming.value = true
@@ -449,17 +470,17 @@ export async function retryFromMessage(
   state.isLoading.value = true
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
-  
+
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-  
+
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
-  
+
   try {
     const resp = await sendToExtension<any>('deleteMessage', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       targetIndex: backendIndex
     })
 
@@ -471,10 +492,10 @@ export async function retryFromMessage(
         message: err?.message || 'Failed to delete messages in backend'
       })
 
-      // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
+      // 尝试回滚：重新从后端拉取”最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
       try {
         const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-          conversationId: state.currentConversationId.value,
+          conversationId: originConvId,
           limit: MESSAGES_PAGE_SIZE
         })
         const page = result?.messages || []
@@ -521,7 +542,7 @@ export async function retryFromMessage(
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     await sendToExtension('retryStream', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       configId: state.configId.value,
       modelOverride,
       streamId,
@@ -621,20 +642,26 @@ export async function editAndRetry(
 ): Promise<void> {
   if ((!newMessage.trim() && (!attachments || attachments.length === 0)) || !state.currentConversationId.value) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
-  
-  // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
+
+  // await cancelStream() 之前固化 key 参数
   const originConvId = state.currentConversationId.value
+  const targetMessageId = state.allMessages.value[messageIndex]?.id
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
-  
+
+  // 校验归属：cancel 期间当前会话可能已切换
+  if (state.currentConversationId.value !== originConvId) return
+  // 校验消息标识：cancel 后目标消息可能已变化
+  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+
   state.error.value = null
   state.isLoading.value = true
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
-  
+
   // 计算后端索引（在修改数组之前）
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
@@ -684,7 +711,7 @@ export async function editAndRetry(
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
     await sendToExtension('editAndRetryStream', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       messageIndex: backendMessageIndex,
       newMessage,
       attachments: attachmentData,
@@ -720,21 +747,30 @@ export async function deleteMessage(
   if (!state.currentConversationId.value) return
   if (targetIndex < 0 || targetIndex >= state.allMessages.value.length) return
 
-  // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
+  // await cancelStream() 之前固化 originConvId、targetMessageId、backendIndex
   const originConvId = state.currentConversationId.value
-  
+  const targetMessageId = state.allMessages.value[targetIndex]?.id
+  const isLocalPlaceholder = isLocalOnlyAssistant(state.allMessages.value[targetIndex]) || isEmptyAssistantPlaceholder(state.allMessages.value[targetIndex])
+  const backendIndex = !isLocalPlaceholder
+    ? calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+    : -1
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
 
-  // 如果删除目标是“本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
-  const target = state.allMessages.value[targetIndex]
-  if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
+  // 校验归属：cancel 期间当前会话可能已切换，目标消息可能已变化
+  if (state.currentConversationId.value !== originConvId) return
+  if (!isLocalPlaceholder && state.allMessages.value[targetIndex]?.id !== targetMessageId) return
+
+  // 如果删除目标是”本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
+  if (isLocalPlaceholder) {
     const msgId = state.allMessages.value[targetIndex]?.id
-    const backendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+    // 重新计算（可能因为 cancel 导致窗口变化）
+    const currentBackendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
-    clearCheckpointsFromIndex(state, backendFrom)
+    clearCheckpointsFromIndex(state, currentBackendFrom)
     setTotalMessagesFromWindow(state)
     if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
       state.streamingMessageId.value = null
@@ -747,15 +783,15 @@ export async function deleteMessage(
     await refreshCurrentConversationBuildSession(state)
     return
   }
-  
-  // 计算后端实际索引
-  const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
-  
+
   try {
     const response = await sendToExtension<any>('deleteMessage', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       targetIndex: backendIndex
     })
+
+    // 再次校验归属
+    if (state.currentConversationId.value !== originConvId) return
 
     if (response?.success) {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
@@ -788,31 +824,40 @@ export async function deleteSingleMessage(
 ): Promise<void> {
   if (!state.currentConversationId.value) return
 
-  // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
+  // await cancelStream() 之前固化 originConvId 与 backendIndex
   const originConvId = state.currentConversationId.value
 
   // 注意：deleteSingleMessage 会导致后续消息索引整体前移。
-  // 因此这里把 targetIndex 视为“后端绝对索引（backendIndex）”，并在成功后重新加载窗口，避免索引错位。
+  // 因此这里把 targetIndex 视为”后端绝对索引（backendIndex）”，并在成功后重新加载窗口，避免索引错位。
   const backendIndex = targetIndex
   if (backendIndex < 0) return
-  
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
-  
+
+  // 校验归属：cancel 期间当前会话可能已切换
+  if (state.currentConversationId.value !== originConvId) return
+
   try {
     const response = await sendToExtension<{ success: boolean }>('deleteSingleMessage', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConvId,
       targetIndex: backendIndex
     })
-    
+
+    // 再次校验归属
+    if (state.currentConversationId.value !== originConvId) return
+
     if (response.success) {
       // 重新加载最后一页，确保 backendIndex 与 checkpoints 的 messageIndex 不错位
       const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-        conversationId: state.currentConversationId.value,
+        conversationId: originConvId,
         limit: MESSAGES_PAGE_SIZE
       })
+      // 再次校验归属
+      if (state.currentConversationId.value !== originConvId) return
+
       const page = result?.messages || []
       state.totalMessages.value = result?.total ?? page.length
       state.windowStartIndex.value = page[0]?.index ?? 0

@@ -127,6 +127,26 @@ export function replaceRunContentWindow(
   return shouldApplyRunContentWindow(current, incoming) ? incoming : current
 }
 
+/**
+ * 当前窗口是否已落后于后端 transcript。
+ *
+ * 修改原因：Monitor 过去只判断"有没有窗口缓存"，于是两个相反的毛病同时存在：
+ *          每个非 llm_delta 事件（含完全不改 transcript 的 tool_started/tool_completed）都强制重拉一次完整窗口；
+ *          而切回此前看过的 run 时又因为缓存命中直接沿用旧窗口，显示的是上次离开时的内容。
+ * 修改方式：以 manifest 的 contentRevision / contentCount 作为唯一新鲜度判据——它随每个事件一起下发，
+ *          是后端 transcript 真源的投影。
+ * 修改目的：真正变化时才拉取，而变化了就一定会拉取。
+ */
+export function isRunContentWindowStale(
+  current: SubAgentRunContentWindowState | undefined,
+  manifest?: SubAgentRunFreshnessManifest
+): boolean {
+  if (!current) return true
+  if (!manifest) return false
+  if (revisionOf(manifest) > revisionOf(current)) return true
+  return typeof manifest.contentCount === 'number' && manifest.contentCount > current.totalCount
+}
+
 export function isRunWindowTailAuthoritative(
   current: SubAgentRunContentWindowState | undefined,
   manifest?: SubAgentRunFreshnessManifest

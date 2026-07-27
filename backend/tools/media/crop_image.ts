@@ -15,6 +15,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext, CropImageToolOptions } from '../types';
 import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { TaskManager, type TaskEvent } from '../taskManager';
+import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
 
 /** 裁切任务类型常量 */
@@ -484,7 +485,7 @@ export function createCropImageTool(maxBatchTasks: number = 10, defaultOptions?:
                 }
             }
         },
-        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+        handler: withLinkedAbort(async (args, context: ToolContext | undefined, abortController): Promise<ToolResult> => {
             const toolId = context?.toolId || TaskManager.generateTaskId('crop');
             const config = (context?.config || {}) as CropImageConfig;
             
@@ -495,14 +496,7 @@ export function createCropImageTool(maxBatchTasks: number = 10, defaultOptions?:
                 useNormalizedCoordinates: options.useNormalizedCoordinates ?? defaultOptions?.useNormalizedCoordinates ?? true
             };
 
-            const abortController = new AbortController();
             const abortSignal = abortController.signal;
-
-            if (context?.abortSignal) {
-                context.abortSignal.addEventListener('abort', () => {
-                    abortController.abort();
-                });
-            }
 
             // 检查使用哪种模式
             const imagesArray = args.images as CropTask[] | undefined;
@@ -669,7 +663,7 @@ export function createCropImageTool(maxBatchTasks: number = 10, defaultOptions?:
                     error: `Crop failed: ${errorMessage}`
                 };
             }
-        }
+        })
     };
 }
 

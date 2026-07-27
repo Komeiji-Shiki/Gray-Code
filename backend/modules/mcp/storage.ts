@@ -181,6 +181,7 @@ interface McpServerJsonEntry {
     enabled?: boolean;  // 兼容
     autoConnect?: boolean;
     timeout?: number;
+    cleanSchema?: boolean;
 }
 
 interface McpServersJson {
@@ -256,6 +257,7 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
             enabled: json.isActive !== false && json.enabled !== false,
             autoConnect: json.autoConnect || false,
             timeout: json.timeout,
+            cleanSchema: json.cleanSchema,
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
@@ -296,7 +298,8 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
         if (!config.enabled) json.isActive = false;
         if (config.autoConnect) json.autoConnect = true;
         if (config.timeout) json.timeout = config.timeout;
-        
+        if (config.cleanSchema === false) json.cleanSchema = false;
+
         return json;
     }
 

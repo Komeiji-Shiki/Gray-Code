@@ -93,6 +93,7 @@ describe('review mode config', () => {
     await manager.initialize()
 
     const config = manager.getSystemPromptConfig()
-    expect(config.modes.review).toEqual(REVIEW_PROMPT_MODE)
+    // After migration, toolPolicyCustomized is set to false for built-in modes
+    expect(config.modes.review).toEqual({ ...REVIEW_PROMPT_MODE, toolPolicyCustomized: false })
   })
 })

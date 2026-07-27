@@ -17,8 +17,13 @@ export interface ComputeVirtualRowsResult<T> {
   reason?: 'below_threshold' | 'invalid_estimate' | 'invalid_viewport' | 'empty_slice' | 'clamped'
 }
 
-export function resolveLoadedVisibleMessages<T>(messages: T[], _visibleCount: number): T[] {
-  return Array.isArray(messages) ? messages : []
+export function resolveLoadedVisibleMessages<T>(messages: T[], visibleCount: number): T[] {
+  if (!Array.isArray(messages) || messages.length === 0) return []
+  // 尾部窗口切片：仅取最近 visibleCount 条消息参与 enhance/重排，
+  // 避免旧消息在每 chunk 都被重新计算导致性能退化
+  const count = Math.max(1, typeof visibleCount === 'number' && Number.isFinite(visibleCount) ? visibleCount : 1)
+  if (messages.length <= count) return messages
+  return messages.slice(messages.length - count)
 }
 
 export function computeVirtualRows<T>(rows: T[], options: ComputeVirtualRowsOptions): ComputeVirtualRowsResult<T> {

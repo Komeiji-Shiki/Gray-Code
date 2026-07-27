@@ -36,16 +36,26 @@ function handleCancel() {
 </script>
 
 <template>
-  <!-- 取消按钮 - loading 状态下显示 -->
-  <button
-    v-if="loading"
-    class="send-button"
-    :title="t('components.input.stopGenerating')"
-    @click="handleCancel"
-  >
-    <i class="codicon codicon-primitive-square stop-icon"></i>
-  </button>
-  
+  <!-- loading 状态：保留发送入口（消息会入队；若正在等待命令完成，命令转入后台、AI 优先响应） + 停止按钮 -->
+  <div v-if="loading" class="send-button-group">
+    <button
+      class="send-button"
+      :disabled="disabled"
+      :title="t('components.input.sendWhileBusy')"
+      @click="handleClick"
+    >
+      <i class="codicon codicon-send send-icon"></i>
+    </button>
+
+    <button
+      class="send-button"
+      :title="t('components.input.stopGenerating')"
+      @click="handleCancel"
+    >
+      <i class="codicon codicon-primitive-square stop-icon"></i>
+    </button>
+  </div>
+
   <div v-else class="send-button-group">
     <button
       class="send-button preserve-send-button"

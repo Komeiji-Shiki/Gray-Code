@@ -5,6 +5,8 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [Unreleased]
 
 ### Added
+  - SubAgent 对话延续：主模型调用 `subagents` 工具时可传入 `continueFromRunId` 参数，将新子代理接续到之前已完成子代理的对话上，新子代理自动继承旧 run 的完整 transcript（对话历史），实现跨调用的对话接力；对仍在运行中的旧 run 会拒绝延续并返回明确错误
+  - 新增 StreamAccumulator 回归测试（`backend/__tests__/channel/streamAccumulator.test.ts`，覆盖结构修订号递增语义 / 完成工具调用 id 去重 / prompt 模式分片块解析 / thought 文本不解析 / 未闭合块 flush，9 用例）与 xmlFormatter 解析测试（`backend/__tests__/tools/xmlFormatter.test.ts`，tool_name 形态容错 / 带属性参数节点，5 用例）
   - 新增用量统计页面：从已落盘对话历史回溯聚合 token 用量，支持总览 + 按对话 / 按模型 / 按日期三个维度，包含 CSS 条形图可视化；入口位于历史页头部图表按钮
   - 用量统计页新增 VSCode 视图标题栏入口（`limcode.showUsage` 命令 + graph 图标按钮，位于历史与设置之间），不再只能从历史页右上角的隐藏入口进入
   - 用量统计页新增时间范围筛选（全部 / 今天 / 近 7 天 / 近 30 天），后端 `aggregateUsageStats` 支持按消息时间戳过滤（`UsageStatsOptions.startTime/endTime`），总览与三个维度均为筛选后口径；筛选激活时缺失时间戳的消息不参与统计
@@ -32,8 +34,78 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 新增渠道 formatter 核心解析测试（`backend/__tests__/channel/formatterParsing.test.ts`），覆盖 OpenAI / Gemini / Anthropic 三个 formatter 的 parseResponse / convertTools / 非法响应报错（13 个用例）
   - 前端构建新增 `vue-tsc --noEmit` 类型检查步骤（`pnpm run build:frontend` 自动执行），根 package.json 新增 `typecheck` 脚本
   - 引入 esbuild 打包方案（`esbuild.config.js`），扩展入口 `extension.ts` → `dist/extension.js` 单文件 bundle（2.1 MB），node-notifier 作为 external 保留原生文件；vscode:prepublish 与 compile 脚本指向 esbuild
+  - 新增工具参数规范化统一入口 `normalizeToolArgs`（`backend/tools/coerceToolArgs.ts`）：单数别名提升（模型误传 `path` 自动转为 `paths: [...]`）、递归嵌套类型容错（`files[].line: "5"` 等嵌套字段也能修正，兼容 Python 风格 `"True"/"False"`）、未知参数剥离；所有自动纠正通过 `parameterWarnings` 字段随工具结果回传，帮助模型在后续调用中自行修正参数写法
+  - search_in_files 新增 `caseSensitive` 参数（search 默认不区分大小写、replace 默认区分，可显式覆盖）；replace 模式 0 命中时返回 `zeroMatchHint` 诊断提示两种模式的大小写语义差异，终结“search 搜得到、replace 替不了”的困惑
+  - prompt 模式（JSON/XML）工具调用解析失败反馈：有完整边界标记但解析失败的块不再静默降级为普通文本，而是转为携带具体语法错误的合成调用，模型能收到可读的失败原因并重试（含意图工具名提取）
+  - JSON 工具调用宽松解析：严格解析失败后自动修复模型高频语法错误（字符串值内的裸换行/制表符、尾逗号）后重试一次，减少细小瑕疵导致整个调用丢失
+  - XML 工具模式 CDATA 支持：提示词新增 CDATA 用法说明与代码示例，历史重放时含特殊字符的参数自动 CDATA 包裹（含 `]]>` 分段处理），写入代码类内容不再因 `<` `>` `&` 解析失败
+  - 只读工具并行执行：`ToolDeclaration` 新增 `readOnly` 标记（read_file / list_files / find_files / get_symbols / goto_definition / find_references / history_search / read_skill），同一批调用中相邻的只读工具 Promise.all 并行，降低多读取/搜索调用的累计延迟；写类、MCP 和需确认工具保持严格串行
+  - 新增同参数重复失败调用护栏 `RepeatedCallGuard`（turn 级别）：相同 name+args 连续失败 2 次后第 3 次相同调用短路返回“换个思路”提示，不再真实执行；成功的重复调用（重跑测试等）完全不干预，阻止小模型烧完 maxIterations 的失败循环
+  - 新增工具调用链路测试：`promptToolParser.test.ts`（宽松解析/失败反馈/CDATA/类型保护 12 用例）、`repeatedCallGuard.test.ts`（7 用例）、`diffReviewConfirmation.test.ts`（确认语义 14 用例），`coerceToolArgs.test.ts` / `validateToolArgs.test.ts` 同步新契约
+  - 工具参数校验升级为递归校验（`validateToolArgs` 重写）：required 与类型检查深入 array items 和嵌套 object，错误带完整路径（如 `files[0].line`）；新增 enum 值校验，报错时附全部可选值（如 `must be one of "revision" | "progress_sync"`）；校验失败时回显从 schema 生成的 TypeScript 风格参数签名（Expected parameters），模型一轮即可修正参数结构；问题超过 10 条自动截断并提示剩余数量
+  - 新增 SubAgent 运行事件总线测试（`backend/__tests__/tools/subagentRunEventBus.test.ts`，13 用例）：manifest 预览截断与超长单条消息不被完整拼接、事件 journal 有界与 llm_delta 不入 journal、`updateLastModelContent` 落盘一致性与 contentRevision 同步、连续写入合并且不丢内容、快照淘汰只作用于已终态且可恢复的 run（运行中与无持久化归属的 run 不被淘汰）
+  - 新增 SubAgent 运行控制器测试（`backend/__tests__/tools/subagentRunController.test.ts`，7 用例）：暂停后挂起 / 继续返回 running、退出唤醒并返回 cancelled、反复暂停继续后唤醒列表必须为空、resume 重建 AbortController、暂停时长不计入活跃运行时间、非活跃 run 的控制操作一律失败
+  - 新增 Monitor 窗口新鲜度判据测试（`test/unit/frontend/components/subagents/monitorWindowState.test.ts`，7 用例）：无窗口必拉、无 manifest 不拉、manifest 修订号领先判定过期、修订号相同不拉（纯状态事件不触发窗口请求）、本地 delta 领先时不回头拉旧窗口、条数领先仍判定过期、缺失协议字段按 0 处理
+  - 新增扩展消息分类规则测试（`test/unit/frontend/utils/extensionMessageRouting.test.ts`，6 用例）：成功/失败响应兑现且不广播、兑现后摘除 requestId、无人等待的响应不得被当作推送消息广播、非对象与无 type 消息忽略
+  - 新增事件载荷瘦身与落盘节流测试（补充进 `subagentRunEventBus.test.ts`，4 用例）：`content_snapshot` 只携带计数、journal 不再引用被替换的 contents 数组、节流窗口内连续变更只落盘一次、终态事件跳过节流并写入最新全量内容
+  - 新增 SubAgent executor 终态收敛测试（`backend/__tests__/tools/subagentExecutorTermination.test.ts`，4 用例）：早退路径必须发出终态事件并返回 runId、run 结束后从活跃控制器注销、释放并发席位、清理超时轮询定时器不留下常驻 interval
+  - 新增工具参数兼容别名通用机制：`ToolDeclaration.paramAliases`（纯改名别名，如 read_file 的 maxLine → endLine，自动改名 + 警告）与 `ToolDeclaration.compatParams`（语义透传参数，不写进 schema 向模型宣传但不被未知参数剥离，由 handler 解释语义），由 normalizeToolArgs 统一消化
+  - 新增流式错误归一模块 `backend/modules/channel/formatters/streamError.ts`：把 Anthropic 的 `{ type: 'error', error: {...} }`、OpenAI / Gemini 的 `{ error: {...} }`、简化代理的 `{ error: '文本' }` 三种形态统一识别为 `ChannelError`，结构不认识但确实带内容时原样透出；只有能提取出非空文本才算数，正常 chunk 上的 `error: null` / `error: {}` 不会被误判
+  - 新增回合信号桥接包装器 `backend/tools/abortLink.ts`（`withLinkedAbort`），统一处理「进入时父信号已中止」与「退出时摘除监听器」两件事
+  - 流式缓冲区解析从 `ChannelManager`（1300+ 行）提取为独立模块 `backend/modules/channel/streamBufferParser.ts`：它是纯函数却埋在类里，既无法单独测试，也让「上游到底回了什么」这一层的行为难以推敲；新增 `unparsed` 字段承载流结束后仍解析不出的原始内容
+  - 新增本轮修复的回归测试共 36 个用例：`streamErrorDetection.test.ts`（12，四个 formatter 的流内联错误识别 + 非流式 HTTP 200 错误体 + 正常 chunk 不误判）、`streamBufferParser.test.ts`（11，SSE / JSON 行 / 纯文本三类格式与 unparsed 语义）、`abortLink.test.ts`（5，含监听器不累积与抛出时仍摘除）、`pagedHistoryIntegrity.test.ts`（4，分段存储的悬空工具调用补齐与幂等）、`subagentRunEventBus.test.ts` 补充（4，runId 冲突分配）
+
+### Changed
+  - SubAgent transcript 落盘改为节流合并：每次内容变更都要「读整份 conversation metadata → 改 → 写回」，而 metadata 里装着该对话全部 run 的完整 contents，一个多轮子代理跑下来会把同一份大 JSON 反复 parse/stringify 几十次；现在内容类写入按 1.5 秒窗口合并，run 状态变更（含所有终态）仍然立即落盘，落盘次数与真实时间挂钩而不是与 token 产出速度挂钩
+  - SubAgent Monitor 面板切到后台标签页时不再推送高频正文增量：`retainContextWhenHidden` 让面板隐藏后依然存在，于是每个流式 chunk 仍要走一遍 payload 清洗、manifest 派生、序列化和 postMessage，最终画在一个用户看不见的 UI 上；现在不可见时只丢弃 `llm_delta`（run 状态、工具状态等低频事件继续推送），重新可见时补推一次 manifest 让前端自行校准窗口
+  - SubAgent Monitor 窗口刷新改为 revision 驱动：过去每个非 `llm_delta` 事件（含完全不改 transcript 的 tool_started/tool_completed）都强制重拉一次完整窗口，高频调用工具的子代理会把窗口请求打成风暴；现在以 manifest 的 `contentRevision`/`contentCount` 作为唯一新鲜度判据，真正变化时才拉取
+  - 前端扩展消息分发改为单一全局分发器：过去每次 `onMessageFromExtension` 都往 window 挂一个独立监听器，十几个组件订阅后，流式期间每个 chunk 都要走十几遍相同的分类逻辑；现在只保留一个分发器，消息只解析和分类一次
+  - SubAgent Monitor 顶部新增控制反馈与历史 run 只读标识：暂停/继续/退出失败时给出明确提示（后端同时回传该 run 是否仍被运行控制器持有，前端据此纠正按钮可见性），非活跃 run 显示「历史运行 · 仅可查看」徽标而不是让控制按钮整组无声消失
+  - 后台子代理回流改为轻量卡片：后台任务完成后不再作为普通用户消息渲染，而是在对话中显示为带 `codicon-hubot` 图标和 "COMPLETED" 标签的紧凑卡片（左边框色条 + 浅色背景），与用户自己的消息视觉上明确区分；回执除元数据摘要（状态 / 步数 / 耗时）外仍内联子代理结果正文，超过 4000 字符时截断并提示剩余字符数与「可在 SubAgent Monitor 查看完整 transcript」
+  - SubAgent Monitor 顶部控制按钮文案改为与实际动作一致的「暂停 / 继续」：原「中止」（实为 pause）容易与同排的「退出并让主工具失败」混淆，原「重试」（实为 resume）会让用户误以为会重跑整个 run，实际只是从暂停处继续同一个 runId
 
 ### Fixed
+  - 修复上游返回报错却只显示「模型返回空内容」的问题：这条链路上有三处都在丢信息。其一，OpenAI / Anthropic 两个 formatter 的 `parseStreamChunk` 完全不认流里内联的错误（Anthropic 官方的 `event: error`、兼容代理的 `{"error": {...}}`）——这类 chunk 没有 `choices`/`content_block`，被当成空块跳过，累加器什么也没累加；其二，上游用非 JSON 的纯文本或 HTML 报错（网关 502、代理的纯文本错误）时，缓冲区里的内容在流结束时被静默丢弃，只报一句「没有响应体」；其三，formatter 主动抛出的 `ChannelError` 被外层无条件重新包装成 `PARSE_ERROR`，把「上游返回 429」说成「解析失败」，还改变了重试判定。现在四个 formatter（含 Gemini / OpenAI Responses）统一走 `throwIfStreamError` 识别并归一错误、原样带出上游文案，非流式的 `parseResponse` 同样处理 HTTP 200 + 错误体，未能解析的原始响应作为 `rawResponse` 附在错误详情里，`ChannelError` 直接透传不再被改写类型
+  - 修复流式中途取消后，下一次请求被 provider 以 400 拒绝的问题：取消时累加器里的部分内容会直接写进历史，其中可能已经包含**完整**的 `functionCall`，但对应的 `functionResponse` 永远不会补上，历史里就留下悬空的 tool_use；现在取消路径会就地结算这些调用——流式提前执行已经跑完的工具用真实结果（它们的写文件、跑命令等副作用已经发生，丢掉结果等于对模型隐瞒），其余标记为已取消
+  - 修复分段存储下悬空工具调用永远不被补齐的问题：`getMessages`（全量）一直会把未响应的 `functionCall` 标记为 rejected 并补 `functionResponse`，但 `getMessagesPaged` 的分段存储快路径直接返回窗口、跳过了这一步，而分段存储正是当前的主存储格式；现在首次加载（默认页）会先做一次全量补齐再分页，上拉加载更早消息时跳过以免每翻一页读一次全量
+  - 修复五个媒体工具（crop / generate / remove_background / resize / rotate image）的 abort 监听器泄漏，同时修掉一个更实际的缺陷：父信号在工具启动前就已中止时，`abort` 事件早已派发完毕，新挂的监听器永远不会触发，子信号会停留在未中止状态、工具照常跑完整个任务。现在统一由 `withLinkedAbort` 高阶包装器注入 AbortController——进入时若父信号已中止则立即同步中止，退出时无条件摘除监听器
+  - 修复子代理配置界面保存失败时 UI 假装成功的问题：`updateAgentField` 内部吞掉了错误，于是 `saveRename` 的失败分支成了死代码——后端拒绝保存（重名等）时编辑框照常关闭，用户看到的是「改成功了但值没变」；现在保存结果由返回值传递（模板里的 `@change` 不接 catch，抛出会变成 unhandled rejection），失败在顶部横幅明示，删除失败同样不再静默
+  - 修复子代理配置写入缺少校验：`createSubAgent` 不拦截空的 `type` / `name`，`updateSubAgent` 传空名称会跳过重名检查直接写入（agent 在选择器里变成看不见的条目）；`deleteSubAgent` 也不检查该 agent 是否还有正在跑的 run——配置一旦消失，run 结束后 Monitor 只剩一个查不到定义的孤儿
+  - 修复子代理 runId 撞车会覆盖内存快照的问题：runId 由主工具调用 id 推导，同一 toolId 二次执行时会重复，`createRun` 直接覆盖旧快照，而 `runController.register` 又把旧 AbortController 交给新 run，于是在 Monitor 里暂停其中一个会连带暂停另一个；现在冲突且旧 run **仍活跃**时追加后缀（旧 run 已终态则沿用同名，前端在 pending 阶段正是按 toolId 推导 runId 关联工具卡的）
+  - 修复子代理撞上下文上限时错误不可读的问题：子代理没有接主链路的 `ContextTrimService`，history 只增不减，工具结果一大、迭代一多就会撞上限，而用户只看到一句原样透传的 `AI call failed: ...`；现在识别各家 provider 的上下文超限措辞，附上已迭代轮数、累积消息数和可操作的建议
+  - 修复自动总结在回合级 abortSignal 上累积监听器：`mergeAbortSignals` 在两个信号都没触发时监听器不会自行摘除，而 `abortSignal` 的生命周期是整个回合，一轮里多次自动总结会持续累积；现在返回 dispose 并在总结结束的 finally 中摘除
+  - 修复 `MessageRouter.requestClients` 无上界增长：`requestId → clientId` 的映射只在 `sendResponse` / `sendError` 时删除，但过去无论如何都先登记——未命中处理器而回退的消息、以及 handler 抛异常的请求都会留下永不清理的条目；现在只为确实由本 router 处理的请求登记，handler 抛出时就地清理
+  - 修复 `sendToExtension` 无超时导致调用方永久 pending：「后端渠道配置已有超时」这个理由只覆盖 LLM 请求，任何因处理器异常、面板销毁等原因不回复的普通消息都会让调用方永远挂着，UI 上是一个再也不会停下来的加载态；现在非流式请求有 180 秒兜底超时（流式对话、依赖安装、存储迁移等长任务豁免，调用方也可显式覆盖）
+  - 修复用户中止子代理后主聊天卡片「打开详情」按钮消失的问题：同步执行路径的取消分支和异常分支都只返回 error，不带 `data.runId`，而按钮可见性依赖 runId——run 明明已经真实创建并留下了 transcript，用户最需要进 Monitor 查看已完成部分时反而点不进去；现在两条路径都回填 runId、agentName 与已产出的部分响应
+  - 修复子代理每轮模型输出被重复写入 transcript 三次的问题：流结束后写一次、额外 emit 一次裸 `content_snapshot`、prompt 模式工具调用解析后再写一次，每次都递增 `contentRevision`、广播事件、入队全量落盘，并让 Monitor 前端强制重拉一次窗口；现在统一由解析完成后的唯一写入口落盘，写入的是工具调用已还原为 functionCall 的权威版本
+  - 修复子代理在父 abortSignal 上累积 abort 监听器的问题：`maxRuntime > 0` 时挂上去的超时桥接监听器从不摘除，而父信号（主会话 AbortController）生命周期远长于单个 run，一轮对话里派发 N 个子代理就会永久累积 N 个监听器，触发 MaxListenersExceededWarning 且长期驻留内存；现在在 executor 最外层 finally 统一摘除
+  - 修复 SubAgent 暂停/继续循环在退出唤醒列表累积僵尸回调的问题：`waitUntilRunnable` 会同时向 resumeWaiters 和 exitWaiters 各注册一次 resolve，而 resume 只清空前者；现在合并为单一唤醒列表（退出原因本就由 `record.exitReason` 承载，旧 exitWaiters 的 reason 参数在调用点被忽略），注册与清空严格一一对应
+  - 修复事件 journal 长期引用已被替换的 contents 数组的问题：三个 transcript 写入口都把整份 `snapshot.contents` 塞进 `content_snapshot` 事件 payload，该 payload 没有任何消费者（Monitor 面板一律从 snapshot 自行派生 contentCount），却让内存事件 journal 持有旧数组，`replaceContents` 之后被替换掉的数组因此无法回收；现在事件只携带 contentCount，三个写入口共用同一个提交入口
+  - 修复 SubAgent Monitor 面板关闭后事件订阅仍留在扩展生命周期里的问题：`onDidReceiveMessage`/`onDidDispose` 过去注册到 `context.subscriptions`，面板关闭后这些已失效的订阅不会被移除，反复开关 Monitor 会持续累积；现在改为面板级 disposables，随面板一次性清空
+  - 修复 SubAgent Monitor 消息处理异常导致前端请求永久挂起的问题：处理器抛异常时旧实现只打日志，带 requestId 的请求便永远收不到回复，前端那个 Promise 永久 pending——「加载更早消息」的 loading 状态再也不会结束，按钮永久转圈；现在异常统一转成错误响应回传，与主聊天路由的保底行为一致，前端同时把失败呈现为可重试的顶部提示
+  - 修复 SubAgent Monitor 切回此前查看过的 run 时显示过期内容的问题：窗口请求的早退条件只判断「有没有缓存」，缓存命中就直接沿用，于是切回去看到的是上次离开时的 transcript，要等下一个事件到达才刷新；现在与窗口刷新共用同一套 revision 新鲜度判据
+  - 修复扩展响应消息会被误当作主动推送消息投递给业务 handler 的问题：响应只会被第一个 window 监听器兑现（它随即删掉 requestId），其余监听器查不到该 requestId，就把这条响应交给了推送处理链路
+  - 修复 SubAgent Monitor「加载更早消息」失败后只留下一个未处理的 Promise rejection、用户看不到任何原因的问题后台调用的工具结果只是含 `taskId` / `runId` 的派发 stub，主模型不会通过 functionResponse 拿到任何产出，回执消息是结果回流的唯一通道；而 `buildSubAgentSection` 基于「主模型已通过 functionResponse 拿到完整输出」的错误前提丢弃了 `response` 字段（该前提只对同步执行的子代理成立），导致后台派发的全部工作被静默丢弃。现在回执内联结果正文并按 4000 字符上限截断
+  - 修复子代理在超时 / 超出最大迭代次数 / AI 调用失败等早退路径下 run 状态永久停留在 `running` 的问题：这些路径直接 return 裸结果对象，既不向事件总线广播终态事件也不携带 `runId`，Monitor 中对应 run 永远显示为运行中；更关键的是主聊天工具卡片的「Open details」按钮可见性依赖 `result.data.runId`，缺失时按钮恰好在子代理运行失败时消失，用户最需要查看 Monitor 排查时反而点不进去。现在所有返回路径统一经由 `finalizeRun` 收敛，补齐 runId 并在事件总线尚未进入终态时补发 run_completed / run_failed / run_cancelled
+  - 修复每次子代理运行都泄漏一个常驻定时器的问题：`maxRuntime > 0` 时创建的 500ms 超时轮询 `setInterval` 只在父 abortSignal 触发时才清理，正常完成、失败、取消的 run 均不清理，泄漏的定时器会持续调用 checkTimeout 并在超过 maxRuntime 后反复 abort 已废弃的控制器；现在在 executor 最外层 finally 无条件清理
+  - 修复后台任务回执发送失败后结果永久丢失的问题：`flushReports` 先把任务乐观标记为 `reported: true` 再 `await sendMessage`，发送抛异常时标记不回滚，该任务再也不会被补发；现在捕获异常并回滚标记，等待下一次 flush 时机重试
+  - 修复 SubAgent Monitor 面板始终以中文渲染、不跟随语言设置的问题：Monitor 复用同一前端入口，但 `onMounted` 在 Monitor 模式下直接 return，跳过了 `loadLanguageSettings()`，导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文；英文与日文用户看到的子代理详情是混合语言
+  - 修复后台派发的子代理工具卡片显示为「成功」的问题：卡片按 `result.success` 判定状态，而后台调用的 stub 结果恒为 success，导致子代理刚进入队列卡片就显示绿色成功态，且运行完成后卡片里永远看不到产出；现在后台卡片跟随 backgroundTaskStore 中对应 taskId 的真实任务状态，并回填结果正文、错误与步数，同时标记「后台」chip
+  - 修复 SubAgent Monitor 消息区底部内容被裁切的问题：滚动容器写死 `max-height: calc(100vh - 96px)`，该值与外层 flex 布局冲突且未计入 run tabs 行、重试状态行的实际高度，多个并发 run 时滚动区会溢出视口；现在移除该覆盖，交由 `flex: 1` 精确分配剩余空间
+  - 修复调大子代理并发上限后排队中的 run 不会立即启动的问题：`drainQueue` 仅在 release 时触发，`maxConcurrentAgents` 的「立即生效」语义实际要等到某个运行中的 run 结束才成立；新增 `onCapacityChanged` 入口由设置更新处调用
+  - 修复请求在进入流式前就失败时后台任务回执不被补发的问题：`flushReports` 的忙闲判断同时看 `isStreaming` 与 `isWaitingForResponse`，但补发只监听前者，`isWaitingForResponse` 单独由 true 转 false 时不会触发补发，挂起的回执要一直等到下一次流结束或切换会话
+  - 修复子代理 transcript 的 `updateLastModelContent` 写入口不落盘的问题：三个写入口中仅此路径不入队持久化，持久记录的 `contentRevision` 会落后于内存快照，扩展在 run 进行中重载时最后一轮模型输出无法恢复
+  - 修复用户新建子代理时选择预设模板（如"代码审查者"）必定报错 `Failed to execute 'postMessage' on 'MessagePort': [object Object] could not be cloned.` 的问题：前端 `createAgent()` 中预设模板对象来自 Vue `ref` 响应式数组，其嵌套对象（`tools` 等）为 Proxy，无法被 `vscode.postMessage` 的 structured clone 序列化；修复方式为发送前通过 `JSON.parse(JSON.stringify(payload))` 解包所有响应式代理
+  - 修复模型频繁幻觉"用户附加了 新建文件夹 (10).zip"的问题：system prompt 的 `CONTEXT BADGE FORMAT` 示例硬编码了 `新建文件夹 (10).zip` 这个看起来像真实用户文件的名称，模型将示例中的文件名误判为实际附件；三处默认值（`PromptManager.ts` / `PromptSettings.vue` / `settings/types.ts`）统一替换为 `example-report.pdf (example)` 并标注 `(example)`
+  - 修复上游 API 错误消息被吞掉：非 200 响应现在从 Anthropic/OpenAI/OpenRouter 通用 `{error:{message}}` 格式提取具体错误消息，前端错误面板直接显示如 `HTTP 429: Provider returned error`，不再仅展示无信息的 HTTP 状态码
+  - 修复 write_file 新建文件被用户拒绝或中断后磁盘残留空文件的问题，拒绝/取消时自动删除原先创建的空文件
+  - 修复命令执行期间无法继续对话的问题：前台命令现在支持运行时转移至后台（detach），用户发送新消息时自动触发；SendButton 在响应期间仍保留发送入口，消息以排队方式进入队列，命令结果稍后以回执消息回流唤醒模型
+  - 修复应用差异/写入代码后用户光标跑进代码编辑器的问题：关闭 diff 标签页的 `tabGroups.close` 未传 `preserveFocus`，关闭活动标签后 VSCode 激活相邻编辑器并把光标带进去；现在 diff 应用/拒绝（diffManager）与检查点回档清理 diff 视图（CheckpointManager）均保持焦点原位
+  - 修复关闭 diff 标签后聊天输入框仍会失焦的问题（`preserveFocus` 只能阻止焦点跳进编辑器，无法阻止 workbench 把焦点从侧边栏 webview 收走）：新增焦点守卫 `chatFocusGuard`，前端输入框通过 `chatInput.focusState` 消息上报焦点状态，扩展端在关闭 diff 标签前采样、关闭后若输入框此前持有焦点则执行 `limcode.chatView.focus` 归还 webview 焦点并推送 `chat.restoreInputFocus` 命令让光标回到输入框；焦点在编辑器/终端等其他位置时不干预，连续关闭多个 diff 的 blur 上报竞态由 1.5s 宽限期兜底
+  - 修复流式提前执行工具的多模态附件（`multimodalAttachments`）从未被写入历史的问题：xml/json 模式下提前执行的 generate_image / MCP 图片结果不再静默丢失，提前执行与串行执行两条路径的附件统一合并后随函数响应写入
+  - 修复流式边执行工具可能被重复执行的隐患：`getNewCompletedFunctionCalls` 改用稳定工具调用 id 去重（原 parts 数组索引在结构调整时会漂移，导致同一工具被重复上报并重复执行）；无稳定 id 的调用交给最终统一执行路径兜底
+  - 修复 XML 工具调用 `<tool_name>` 带属性时工具名以对象形态流入执行层导致查找必然失败的问题（提取 `#text` 并校验为非空字符串）
+  - 修复 XML 工具调用带属性的纯文本参数节点（如 `<content lang="en">xxx</content>`）内容整个丢失变 `{}` 的问题：无子元素时 `#text` 文本内容作为参数值本身保留
   - 修复 write_file / apply_diff 等写入工具打开 diff 预览时强制抢占键盘焦点的问题（`preserveFocus` 改为 true），用户输入框未完成内容不再意外掉入代码文件
   - 修复检查点回档后存档点消失无法二次回档的问题：回档流程在删除消息时保留刚用于恢复的存档点及其增量基链，新增 `preserveCheckpointId` 参数贯穿前端 store → webview handler → ChatFlowService → CheckpointService → CheckpointManager 全链路
   - 修复聊天消息列表右侧滚动条在长对话、工具卡片和流式输出场景下抽搐、跳位的问题
@@ -55,6 +127,22 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 修复 `backend/tools/skills/readSkill.ts` handler 参数类型不兼容 `ToolHandler` 的问题（strictFunctionTypes 暴露）
   - 修复 `backend/modules/channel/StreamAccumulator.ts` 18 处 `text` / `functionCall` 可能为 `undefined` 的类型错误（strictNullChecks 暴露）
   - 修复 `backend/modules/channel/ChannelManager.ts` `timeoutId` 未初始化被引用的错误
+  - 修复 MCP stdio 连接失败时子进程永不回收泄漏进程树的问题：connect 外套 try/catch，失败时 await disconnect() + 从管理 map 移除
+  - 修复 Windows 上 MCP kill() 只杀 cmd.exe 真正 server 进程逃逸的问题：StdioClient 改用 tree-kill 杀整棵进程树（复用项目已有依赖），等待进程真正退出后再 cleanup
+  - 修复 MCP 连接进行中的 delete/disable/disconnect 全部落空进程成孤儿的问题：client 提前在 connect 之前 eager 注册进管理 map
+  - 修复 MCP HTTP/SSE 传输超时只覆盖响应头、SSE 正文无限等待无法取消的问题：SSE 读取循环内添加 idle-based 空闲计时器，超时 cancel 底层流避免误杀合法长任务
+  - 修复 MCP stdout 按 chunk 调 Buffer.toString() 截断多字节 UTF-8 工具结果静默损坏的问题：spawn 后立即 setEncoding('utf8')，移除逐 chunk toString
+  - 修复 MCP validateServerId 允许双下划线违反 mcpToolNameCodec 解析前提的问题：提取 MCP_SERVER_ID_PATTERN 为唯一事实源统一校验
+  - 修复 MCP cleanSchema 开关不被持久化每次重载静默回到 true 的问题：storage 读写持久化 cleanSchema 字段
+  - 修复 MCP stdio 传输完全忽略用户配置 timeout 硬编码 30 秒的问题：构造函数加 timeout 参数并贯穿到 sendRequest
+  - 修复 SSE 缓冲区解析对非 SSE 格式的误判：`buffer.includes('data:')` 改为按行判定（只有存在以 `data:` 开头的行才算 SSE），避免 JSON 错误体恰好包含该子串时被整块丢弃
+  - 修复 HistoryIntegrityValidator 不检测悬空 functionCall 的盲区：新增 `orphan_function_call` 检测（由 `detectOrphanFunctionCall` 选项控制），ChannelManager 前置校验启用，裁剪/总结等切片调用跳过以避免配对断裂假阳性——这种悬空调用会导致 Anthropic/OpenAI 直接 400
+  - 修复 calculateThreshold 把 "0%" 解析为 80% 最大上下文的 bug：`percent > 0` 放宽为 `percent >= 0`（使 "0%" 合法），新增 `fallbackRatio` 参数使额外裁剪调用在非法值时回退到 0 而非 0.8，防止一次裁剪清空整段对话；targetTokens 为 0 时记 debug 日志
+  - 修复 countAndUpdateMessageTokens 的精确计数结果被丢弃，accumulateTokens 退化到粗估（chars÷4）的问题：捕获 `Promise.all` 的第二个返回值并回填 fullHistory 快照，使本轮裁剪判定读到刚算好的精确 token 数
+  - 修复 ConversationManager.types 缺失 `usageMetadataPartial` 标记：流被中断时 usageMetadata 只覆盖已收到 chunk 的 token 数（可能严重偏低），现在打显式标记供上下文裁剪和用量统计回退到估算
+  - 修复 `applyDiffToContent` 使用 `String.replace` 拼接时 replacement 文本里的 `$&` / `$`` / `$'` / `$$` 被当作替换模式展开导致静默写坏文件的问题：改为基于索引的切片拼接完全绕开 replacement 模式语义
+  - 新增 ConversationManager.settleFunctionResponses：用真实工具结果就地覆盖 cancelStream 提前写入的「用户拒绝」占位，同时清除对应 functionCall 的 rejected 标记；handleToolConfirmation 的持久化上移到 abort 检查之前以阻止真实副作用结果被丢弃
+  - 删除 OrphanedToolCallService 死代码：retry_stream 路径上 rejectAllPendingToolCalls（995 行）已将所有悬空调用标记为 rejected 并补 functionResponse，紧随其后的 checkAndExecuteOrphanedFunctionCalls（998 行）永不触发——删除该服务文件、ChatFlowService/ChatHandler 注入点与 services/index 导出
   - 修复 `backend/modules/channel/proxyFetch.ts` `AbortSignal | null` 无法赋值给 `AbortSignal | undefined` 的类型冲突
   - 修复 `backend/modules/checkpoint/CheckpointManager.ts` `targetState` 可能为 `undefined` 的错误（添加非空断言）
   - 修复 `backend/modules/conversation/ConversationManager.ts` 与 `helpers.ts` 中 `cleanedResponse` 返回类型可能为 `undefined` 的问题
@@ -73,8 +161,84 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 修复 selection hover 与 code action 只注册 `scheme: 'file'`，未涵盖 `untitled` 未保存文件的问题
   - 清理 `.tmp/` 目录中 80+ 个上游同步遗留物（diff patch、python 脚本、旧版文件副本）
   - 删除 `package.json` 中指向不存在文件的 `test:diagnose-execute-command-order` 脚本
+  - 彻底修复用户在聊天输入框打字时 AI 写入/修改文件导致焦点丢失的问题：diff 预览不再打开多余的文件本体 tab（`showTextDocument` + `editor.edit` 改为 `WorkspaceEdit` 直接修改文档，每次写入从两个 tab 减为一个 diff tab）
+  - 修复 diff 自动保存/检查点回滚时 revert 操作切换活动编辑器抢占用户焦点的问题：`workbench.action.files.revert` 改为传显式 URI，删除三处（diffManager 两处 + CheckpointManager 一处）`showTextDocument` 前置步骤
+  - 修复 search_in_files 的 search 与 replace 模式大小写语义不一致（`gim` vs `g`）导致“搜索命中但同一 query 替换 0 命中”的问题（新增 caseSensitive 参数 + 诊断提示）
+  - 修复 search_in_files replace 模式文件级异常被静默吞掉的问题：diff 创建/审阅/写入失败、超大文件跳过、“有匹配但替换无变化”等情况现在通过 `skippedFiles: [{file, reason}]` 明确返回，模型能区分“没匹配”和“处理失败”
+  - 修复 search_in_files 多工作区 replace 时 maxFiles 扣减语义漂移的问题（按实际处理文件数而非产生修改的文件数扣减）
+  - 修复 XML 工具模式下 fast-xml-parser 自动类型转换破坏字符串参数的问题（`"1.10"` → `1.1`、纯数字文件内容变 number）：`parseTagValue`/`parseAttributeValue` 关闭，类型还原交给 schema 驱动的递归 coerce 层
+  - 修复模型多传无害未知参数导致整个工具调用失败、白白浪费一轮迭代的问题：未知参数改为剥离 + 警告回传，仅必需字段缺失或类型无法修复时才真正报错；顺带清理 validateToolArgs 死代码分支
+  - 修复流式期间早启动执行的工具（含 execute_command）不创建任何检查点的问题：早启动路径现在把检查点正确挂到即将写入的模型消息索引上，回滚不再缺档
+  - 修复 insert_code / delete_code / search_in_files(replace) 在自动应用关闭时被聊天确认框 + diff 审阅双重确认的问题
+  - 修复 write_file / apply_diff 在自动应用开启后仍需在”自动执行”页单独勾选才能真正自动的双重配置问题：diff 审阅类调用一律不再叠加聊天确认，确认行为的唯一数据源是 Apply Diff 工具设置（autoSave / 延迟 / 跳过差异视图）；工作区外 ask 策略的安全确认优先级不变
+  - 修复 proxyFetch 流式取消后生成器可能永久挂起的问题：新增 `closeSocketGracefully` 统一优雅关闭 socket（先 FIN 后 destroy 超时兜底），onAbort 与 finally 共用避免定时器泄漏与重复代码
+  - 修复代理握手阶段取消泄漏隧道 socket：`proxyReq.destroy()` 仅在 CONNECT 未完成时有效，connect 之后的隧道 socket 现在在 `finishReject` 一处统一清理
+  - 修复代理 URL 认证信息被丢弃、https 代理按明文 80 端口连接的问题：新增 `parseProxyLeg` 共享 helper 正确解析 https/http 协议、默认端口与 Basic 认证头
+  - 修复代理流式非 2xx 错误体取到半截/未解 chunk 框架字节的问题：累积错误体字节并按 transfer-encoding 正确解 chunk 框架后再构造 ChannelError
+  - 修复非流式代理响应每 data 事件全量 Buffer.concat + utf8 解码导致的 O(n²) 问题：改为 `chunks[]` + `receivedLength` 增量维护，完成判定时一次性 concat
+  - 修复代理隧道中途断开时截断响应当成功返回的问题：socket close/end 路径上按 contentLength 或 chunked 终止块判定 body 完整性
+  - 修复 CheckpointManager `computeFileHashes` 方法被调用但缺失实现导致整个测试套件编译失败的问题：实现增量哈希（stat mtime+size 不变时复用旧哈希）
+  - 修复增量链断裂后 restore 静默降级为部分恢复仍返回 success 的问题：`getIncrementalChain` 返回 `{ chain, broken }`，broken 时显式失败
+  - 修复 restore 会删除检查点从未备份过的工作区文件的问题：删除集合只包含 `fileHashes` 中记录的路径，不删快照时被 ignore 的文件
+  - 修复 restore 无法恢复的文件被静默跳过仍返回 success 的问题：四类失败场景（missing_in_chain/hash_mismatch/copy_failed/delete_failed）显式收集并体现在返回值中
+  - 修复备份复制失败被吞掉但 fileHashes 声称已备份的问题：复制失败从 fileHashes 剔除 + 恢复侧 detect missing_in_chain
+  - 修复检查点元数据写入失败返回幽灵检查点并泄漏备份目录的问题：save 失败 rethrow + catch 中回收 backupDir
+  - 修复每个检查点全量 MD5 整个工作区（每次工具调用两遍扫描）的问题：stat 增量哈希 + 避免 createCheckpoint 重复扫描
+  - 修复导入设置时 VSCode 配置被无条件整块覆盖、无视用户选择「跳过已存在项」的问题：导出侧移除 machine-local 键 + 导入侧按合并策略跳过已有项
+  - 修复渠道配置导入丢弃原始 id 导致 activeChannelId 悬空与重复导入产生重复渠道的问题：getImport 改为保留原始 id
+  - 修复导出/导入包含 machine scope（proxy/storagePath）跨机器导入打断网络与数据目录的问题：新增 `MACHINE_SCOPE_KEYS` 常量统一定义，导出与导入两端过滤
+  - 修复内置提示词模式自定义 toolPolicy 每次读取被强制回滚并落盘的问题：getter 移除隐式变更，新增 `toolPolicyCustomized` 标记区分「未定制」与「主动定制」，迁移显式幂等
+  - 修复导入 Skill 用未校验 id 拼路径、导出文件可写任意目录的问题：skill id 校验收敛到 SkillsManager 单一来源 + resolve 后边界断言防路径穿越
+  - 修复 collectVSCodeSettings 用 defaultValue 兜底把包默认值当用户值导出固化的问题：去掉 defaultValue + 补 workspaceFolderValue 三层解析
+  - 修复导入后 initialize() 不触发变更事件导致 PromptManager 缓存过期的问题：新增 `reloadAndNotify()` 重新加载并广播 type:full 变更事件
+  - 修复 rejectToolCalls 拒绝响应插入位置错误导致 tool_result 与 tool_use 顺序错乱的问题：新增 `findFunctionResponseInsertIndex` 跳过同批次已有响应
+  - 修复 markUserInterrupt/cancelAllPending 全局中断 A 会话强杀 B 会话 pending diff 的问题：中断语义改为按 conversationId 隔离
+  - 修复 VSCode files.autoSave + pending diff = 死循环（每 autosave tick 全量回写磁盘）的问题：willSave 改为标记 `nonManualSaveFlushed` 直接落盘不再触发回写循环
+  - 修复 pendingDiffs/diffSessions 条目永不删除内存泄漏的问题：新增 `finalizedDiffOrder` FIFO 队列 + `MAX_FINALIZED_DIFFS=50` 延迟淘汰
+  - 修复关闭标签页拒绝新建文件 diff 后磁盘残留空文件的问题：抽取 `closeDiffTabAndCleanNewFile` 统一关 tab + 删残留
+  - 修复 directApplyAndSave fallback 打开 diff 视图 original 侧为空且无 CodeLens 的问题：contentProvider.setContent 改为无条件执行，addSession 保持懒注册
+  - 修复 Close 监听器吞掉文件读取失败导致 diff 永久 pending 的问题：catch 到读文件失败时按 reject 收敛 diff
+  - 修复 newFile 标记在 createPendingDiff resolve 之后才设置导致 showDiffView 期间取消泄漏空文件的问题：改为通过 CreatePendingDiffOptions 传入提前标记
+  - 修复 MarkdownRenderer 未标注语言代码块每次渲染 hljs.highlightAuto 遍历 192 种语法导致流式期间主线程秒级冻结的问题：完全无标注的跳过高亮，有标注但不识别的走缓存
+  - 修复 mermaid 代码块 fence 原文未转义拼进 HTML 造成 v-html 注入执行且绕过 artifactSafe 配置的问题：源码插入 HTML 前 HTML 转义，渲染走 DOM API
+  - 修复默认档位 html:true 产物未经净化直接 v-html，模型正文原始 HTML 可在 webview 内执行脚本的问题：新增 `sanitizeHtml` DOM 净化器（去危险标签+事件+js 协议），非 artifactSafe 档位启用
+  - 修复后处理完成标记在 await 后读 props.content 叠加 isMermaidRendering 提前返回导致 mermaid/图片永久不渲染的问题：renderMermaid 改 promise 串行化 + scheduleRender 快照校验
+  - 修复 markdown-it 实例/文件缓存/图片缓存每个消息块各造两份的问题：提升到模块级单例跨消息共享
+  - 修复 renderLatexOnly 行内正则缺空格护栏导致货币金额 `$5 to $10` 被当公式渲染的问题：正则新增 `(?!\\s)...(?<!\\s)` 首尾空白护栏
+  - 修复消息队列串行等待长任务导致总结中「取消总结」永不执行、整条 webview 消息通道冻结的问题：MessageRouter 新增 NON_BLOCKING_MESSAGE_TYPES，fire-and-forget 不占住队列
+  - 修复 saveImageToPath 未做工作区包含校验、webview 消息可用 `..` 覆写工作区外任意文件的问题：新增 `isUriInsideWorkspace` 路径包含性 helper，越界拒绝并回错误
+  - 修复 extension.ts deactivate 未摘除 DiffManager 状态监听器导致停用过程中复活已 dispose provider 单例永久泄漏的问题：监听器提为模块级，deactivate 最前面同步摘除
+  - 修复 ChatViewProvider 每次重建视图追加 diff 状态监听器旧的不摘除的问题：新增 `viewDisposables` 数组每次 resolve 清空并重新注册
+  - 修复 ToolMessage onMounted 内 await 后注册的 onBeforeUnmount/watchEffect 全部失效、每个实例永久泄漏 2 个全局消息订阅者的问题：生命周期注册搬到同步 setup 作用域
+  - 修复每个 ToolMessage 为全局 pending diff 启动自动保存倒计时、N 个组件到点同时发 diff.accept 的问题：倒计时提升为模块级单例按 sessionId 去重
+  - 修复 ToolMessage 内联箭头函数组件 `<component :is=”()=>renderToolContent(tool)”>` 每次渲染换 vnode type 导致展开面板整棵卸载重建的问题：用 defineComponent 创建恒定 ToolContentHost
+  - 修复未完成工具每个 chunk 触发全量消息线性扫描、enhancedTools 订阅整个消息列表的问题：toolResponseCache 改造为随写入维护的 O(1) 权威索引
+  - 修复后台派发 subagents 工具卡头部状态恒为「成功」、后台任务失败仍显示绿色对勾的问题：新增 `computeTaskCardStatus` 单一数据源 helper，头部与卡片共用
+  - 修复 diff 孤儿宽限期 Date.now() 判定但无重估调度导致超时纠正分支不可达的问题：补 setTimeout 到达宽限期触发 computed 重求值
+  - 修复排队消息在流出错/取消后永不重发、输入框进入死循环的问题：cancelled/error 分支补齐 `nextTick(processQueue)`
+  - 修复 sendMessage 在多次 await 后重读 currentConversationId 导致消息被发进另一个会话的问题：固化 targetConvId + 写 state 前归属校验
+  - 修复 switchConversation 在 await 后无条件覆盖 allMessages/checkpoints 把 A 历史灌进 B 视图的问题：每个 await 后 validateSessionIdentity 守卫
+  - 修复 switchConversation 不清空 messageQueue 导致排队消息被自动灌进新会话的问题：清理块追加清空 + QueuedMessage 加 conversationId 字段 processQueue 校验
+  - 修复 deleteMessage/retryFromMessage 在 await cancelStream() 后才算索引可能截断另一个会话历史的问题：await 前固化索引 + await 后校验未变
+  - 修复 sendMessage 吞掉发送异常导致后台任务回执乐观标记回滚永不生效的问题：改返回 `Promise<boolean>` + backgroundTaskStore 按返回值回滚 reported
+  - 修复切换标签页恢复快照不重置 toolResponseCache 导致工具响应全文永久驻留内存的问题：纳入 ConversationSessionSnapshot 按会话存取
+  - 修复 loadOlderMessagesPage prepend 了会话 A 历史到会话 B 的问题：锁定请求发起时对话身份 + await 后校验
+  - 修复 loadMore scroll-anchor fix-up 在 finally 把上一标签页几何应用到新标签页的问题：归属校验 + finally scroll 恢复仅在归属未变时执行
+  - 修复 Message windowing 失效每个 loaded message 在每个 chunk 被重新 enhance/重排的问题：resolveLoadedVisibleMessages 恢复尾部窗口切片
 
 ### Improved
+  - SubAgent Monitor 未打开时不再为不可见 UI 支付流式序列化成本：事件总线订阅在面板关闭后依然存在，`postEvent` 过去对每个 `llm_delta` 都完整执行 payload 白名单清洗、manifest 派生与 activeRunIds 收集，再在 `postRoutedMessage` 中因没有 panel 被整个丢弃；现在无活跃面板时直接短路
+  - 子代理 manifest 预览派生从 O(消息长度) 降为 O(预览长度)：`extractContentPreview` 过去先把整条消息的全部 parts 拼成完整字符串再截断到 160 字，而 manifest 会在每个 `llm_delta` 事件上重新派生，上一轮若是数万字符的模型输出则每个增量都要重跑一次全量拼接；现在逐 part 累积、超过上限立即停止读取
+  - 子代理 transcript 持久化写入合并：`enqueuePersist` 过去为每一次 transcript 变更都排一次完整的「读元数据 → 改 → 写回」，流式期间队列被同一 run 的连续写入撑满；现在用脏标记合并尚未开始执行的排队写入（写入前清除标记，写入期间的新变更会正常排下一次），同一 tick 内 30 次变更由 30 次落盘降至个位数
+  - 子代理运行时内存改为有界：单个 run 的内存事件 journal 上限 500 条（超出丢弃最旧），事件总线内存快照上限 200 个 run；淘汰只作用于「已进入终态且已持久化到 conversation metadata」的 run，运行中的 run 与无持久化归属的 run 永不淘汰，被淘汰的 run 仍可通过 `loadConversationSnapshots` 从元数据恢复查看
+  - 修正子代理组合中止信号的监听器生命周期：`createOperationSignal` 过去把 abort 监听器永久挂在父 abortSignal 与 run 控制器信号上且从不摘除，一个 20 轮带工具调用的 run 会累积上百个监听器并触发 Node 的 MaxListenersExceededWarning；现在返回 release 句柄，由每次 LLM 调用与工具调用在 finally 中摘除，信号生命周期与单次操作对齐
+  - 后台任务状态条的 1 秒计时器改为按需启停：`now` 只被运行中任务的耗时显示消费，但 ticker 过去在组件整个生命周期内无条件运行，没有任何后台任务时也会每秒触发一次响应式更新与重渲染，且持续整个 VS Code 会话；现在按 `runningCount` 启停
+  - SubAgent Monitor 新增实时输出自动跟随：作为实时监视面板过去从不跟随新内容，用户必须持续手动下拉才能看到子代理正在输出什么；现在复用主聊天 MessageList 的贴底判定，贴底时随尾部内容增长自动滚动，用户向上翻阅历史后不再被拽回底部；尾部指纹使用消息的全局 index 而非窗口内数组长度，因此「加载更早消息」向前 prepend 不会误触发跳底
+  - SubAgent Monitor 界面文案接入 i18n（zh-CN / en / ja）：标题、副标题、run 计数、空状态、已加载条数、加载更早、控制按钮、自动重试状态与全部 8 个 run 状态（queued / running / paused / awaiting_monitor_action / completed / failed / cancelled / interrupted）此前均为硬编码中文
+  - 流式热路径 O(n²) 性能优化：StreamAccumulator 新增结构修订号 `contentRevision`（仅在新 part 入列、工具参数解析完成等结构性变化时递增），StreamResponseProcessor 据此决定是否下发 contentSnapshot，移除每个 chunk 全量重建 Content + 逐 part `JSON.stringify` 深比较 + 尾部大文本 `startsWith` 比较；长回复/大参数工具调用场景 CPU 开销显著降低，`thinkingStartTime` 也改为直接从累加器读取
+  - 删除 StreamAccumulator 旧解析路径 `extractAndConvertToolCalls`：json/xml 模式下每次文本合并都全量重扫所有 parts（O(n²)），职责早已由 IncrementalPromptToolParser 在入口处全量接管；顺带修正 thought 文本中的工具标记被误当真实调用的行为（与 ToolCallParserService 跳过 thought 的语义对齐）
+  - jsonFormatter 边界标记正则预编译为模块级常量，`hasCompleteJSONBlock` / `parseJSONToolCalls` 不再每次调用重新转义拼接
+  - 清理 ToolIterationLoopService 流式提前执行结果收集中被后续整体覆盖的 `earlyResponseParts.push` 死代码
   - 优化自定义滚动条的尺寸、内容和 marker 更新时机，合并到浏览器渲染帧中处理，降低重复布局计算导致的抖动
   - 历史 / 用量 / 设置三个页面从 v-if 互斥渲染改为惰性挂载 + v-show 保活：首次访问才创建组件（不影响首屏），切换视图不再丢失滚动位置和表单编辑状态；用量页保活后重新进入时自动刷新统计
   - MarkdownRenderer 的 mermaid 图表库改为按需动态导入：首屏 bundle 不再包含 ~1MB 的 mermaid，仅在内容中出现 mermaid 代码块时才加载
@@ -106,6 +270,19 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - `.vscodeignore` 的 `*.map` 改为 `**/*.map`，覆盖子目录 sourcemap；新增排除入口源码文件 `extension.ts`、`index.ts`；清理过时的 `!node_modules/node-notifier` 例外规则（运行时依赖已移入 `dist/node_modules`）
   - webview 的 `localResourceRoots` 移除 `node_modules/@vscode/codicons` 条目，统一到 `resources/` 根目录
   - `package.json` license 字段从 `ISC` 改为 `MIT`，与仓库根目录 `LICENSE` 文件内容一致
+  - 合并 ToolExecutionService 的 `executeFunctionCallsWithResults` / `executeFunctionCallsWithProgress` 孪生方法（约 210 行逐行重复）：前者改为驱动后者的 generator 到底并丢弃进度事件，检查点/参数规范化/策略过滤/多模态处理只剩一份实现；执行循环抽取 `runSingleToolCall` / `finalizeToolResponse` 共用方法
+  - 删除 update_plan 硬编码的 14 个 carry-over 字段剥离特例（`stripKnownUpdatePlanContinuationFields`），由通用未知参数剥离规则覆盖；`getToolArgsArrayValidationError` 的友好错误措辞合并进 validateToolArgs，参数校验从两次遍历合并为一次
+  - 新建共享 `diffReviewTools.ts` 判定模块（write_file / apply_diff / insert_code / delete_code / search_in_files replace），消除 ToolIterationLoopService 与 ToolExecutionService 各自维护的重复工具集定义
+  - 自动执行设置页对 diff 审阅类工具不再显示无效的勾选框，改为“Diff 审阅管理”状态徽标（悬停说明指向 Apply Diff 设置），批量操作自动跳过这些工具，页面新增配置关系说明（三语 i18n）
+  - 清理从未被执行链路消费的僵尸配置字段 `DeleteFileToolConfig.autoExecute` / `ExecuteCommandToolConfig.autoExecute`，避免与统一自动执行配置（toolAutoExec）混淆
+  - delete_file / get_symbols / list_files 等工具描述中的“MUST be an array”强调不再是唯一防线，参数层通用别名提升从根源上消化单复数误用
+  - read_file 工具声明瘦身：line/maxLine/maxLines/limit 四个兼容别名参数从 schema 和描述中移除（每轮请求少发一大段别名说明），通过 paramAliases/compatParams 机制继续接受旧写法，行范围语义不变
+  - RepeatedCallGuard 签名改用键排序的稳定序列化，键顺序不同的语义等价参数不再绕过护栏；rejected:true 的结果（并发超限、策略过滤等）不再计入连续失败，避免“换个思路”提示误导本可稍后重试的场景
+  - coerceToolArgs 类型容错补齐 object 分支：JSON 字符串 → 对象（双重编码容错，与 array 分支对称），解析后继续递归修正内部类型；单数别名提升支持 -ies 复数（query → queries）
+  - 工具响应深拷贝从 `JSON.parse(JSON.stringify(...))` 换成 `structuredClone`（不可克隆值回退旧方式），大文本 / 多模态 base64 场景显著降低序列化开销
+  - ToolRegistry 新增别名索引（alias → 主名），getTool 的别名查找从 O(n) 遍历降为 O(1)，注销 / 刷新工具时同步维护，保持先注册者优先语义
+  - XML 工具调用解析失败反馈具体化：借助 XMLValidator 报出具体语法错误与行号，缺失 `<tool_name>` 时单独指出，不再是一句笼统的 "not valid XML"
+  - 工具调用链路测试扩充：validateToolArgs 嵌套/enum/签名回显 11 个新用例、coerceToolArgs 对象解析与别名机制 9 个新用例、repeatedCallGuard 稳定签名与 rejected 语义 4 个新用例，新增 `toolRegistryAliases.test.ts`（6 用例）
 
 ### Synced from upstream (1.1.28 → 1.2.5)
 
@@ -836,6 +1013,9 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [1.0.29] - 2026-01-01
 
 ### Changed
+  - Myers 差分算法重构：`myersDiffLines` 从逐层拷贝 Map（O(D²) 内存）替换为公共前后缀裁剪 + 行 id 化 + Int32Array 状态数组；超预算自动降级为线性路径；全量重写大文件（5000+ 行）从数十秒降至毫秒级，不再阻塞 extension host
+  - diff 警戒检测（`checkDiffGuard`）改用快速删除行统计 `countDeletedLines`：只计算编辑距离而不回溯全 diff 操作序列，每次创建 diff 预览时不再触发全文件差异计算
+  - `computeUserEditedNewLinesSummary` 新增 500 行截断上限，防止超大编辑生成的摘要膨胀塞满模型上下文
   - 暂时回档到1.0.26
 
 ## [1.0.28] - 2025-12-31

@@ -216,6 +216,25 @@ ${content}
     }
     
     /**
+     * Skill ID 合法性校验规则（与 loadSkill 内联校验保持一致）。
+     *
+     * 规则：
+     * - 1-64 个字符
+     * - 仅允许小写字母、数字和连字符
+     * - 不能以连字符开头或结尾
+     * - 不能包含连续连字符
+     *
+     * @returns 合法返回 true，非法返回 false
+     */
+    static validateSkillId(id: string): boolean {
+        if (!id || typeof id !== 'string') return false;
+        if (id.length < 1 || id.length > 64) return false;
+        if (id.startsWith('-') || id.endsWith('-')) return false;
+        if (id.includes('--')) return false;
+        return /^[a-z0-9-]+$/.test(id);
+    }
+
+    /**
      * 加载单个 skill
      *
      * @param id Skill ID（文件夹名称）
@@ -226,7 +245,7 @@ ${content}
         try {
             const content = await fs.promises.readFile(filePath, 'utf-8');
             const { frontmatter, body } = this.parseFrontmatter(content);
-            
+
             if (!frontmatter.name || !frontmatter.description) {
                 console.warn(`[SkillsManager] Skill ${id} missing required frontmatter fields`);
                 return null;
@@ -238,9 +257,8 @@ ${content}
                 return null;
             }
 
-            // 新增：name 格式校验
-            const nameRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-            if (!nameRegex.test(frontmatter.name) || frontmatter.name.length > 64 || frontmatter.name.includes('--')) {
+            // 新增：name 格式校验（复用统一的校验函数）
+            if (!SkillsManager.validateSkillId(frontmatter.name)) {
                 console.warn(`[SkillsManager] Skill ${id} name "${frontmatter.name}" is invalid. Must be 1-64 chars, lowercase, digits, and hyphens only, no consecutive hyphens. Skipping.`);
                 return null;
             }

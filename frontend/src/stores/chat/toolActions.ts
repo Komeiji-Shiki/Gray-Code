@@ -9,55 +9,49 @@ import type { ChatStoreState, ChatStoreComputed } from './types'
 import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
-import { isPerfEnabled } from '../../utils/perf'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
-const duplicateFunctionResponseWarned = new Set<string>()
-
 /**
  * 根据工具调用 ID 获取工具响应。
- * 优先从 toolResponseCache 中 O(1) 查询，cache miss 时回退到线性扫描并回填缓存。
+ * 优先从 toolResponseCache 中 O(1) 查询；cache miss 时通过 toolResponseIndex（权威索引）
+ * 直接定位消息，无需线性扫描 allMessages。
+ *
+ * 索引由 state.ts 随消息写入/整体替换时维护，未命中直接返回 null。
  */
 export function getToolResponseById(
   state: ChatStoreState,
   toolCallId: string
 ): Record<string, unknown> | null {
-  // 1) 优先查缓存
+  // 1) 优先查值缓存
   const cached = state.toolResponseCache.value.get(toolCallId)
   if (cached !== undefined) return cached
 
-  // 2) 缓存未命中：线性扫描
+  // 2) 通过权威索引定位消息
+  if (!state.toolResponseIndex?.value) return null
+
+  const messageIdx = state.toolResponseIndex.value.get(toolCallId)
+  if (typeof messageIdx !== 'number' || messageIdx < 0) return null
+
+  const messages = state.allMessages.value
+  if (messageIdx >= messages.length) return null
+
+  const message = messages[messageIdx]
+  if (!message?.isFunctionResponse || !Array.isArray(message.parts)) return null
+
+  // 3) 在消息 parts 中查找匹配的 functionResponse（O(parts)，parts 数量通常很小）
   let latest: Record<string, unknown> | null = null
-  let matchCount = 0
-  for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
-    const message = state.allMessages.value[i]
-    if (message.isFunctionResponse && message.parts) {
-      for (let j = message.parts.length - 1; j >= 0; j--) {
-        const part = message.parts[j]
-        if (part.functionResponse && part.functionResponse.id === toolCallId) {
-          matchCount += 1
-          if (!latest) {
-            latest = part.functionResponse.response
-          }
-        }
-      }
-    }
-  }
-  if (matchCount > 1 && !duplicateFunctionResponseWarned.has(toolCallId)) {
-    duplicateFunctionResponseWarned.add(toolCallId)
-    if (isPerfEnabled()) {
-      console.warn('[todo-debug][toolActions] duplicate functionResponse id detected', {
-        toolCallId,
-        matchCount
-      })
+  for (let j = message.parts.length - 1; j >= 0; j--) {
+    const part = message.parts[j]
+    if (part.functionResponse?.id === toolCallId) {
+      latest = part.functionResponse.response
+      break
     }
   }
 
-  // 3) 回填缓存（包括 null，避免重复扫描）
+  // 4) 回填值缓存
   if (latest !== null) {
     state.toolResponseCache.value.set(toolCallId, latest)
-    // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
     triggerRef(state.toolResponseCache)
   }
 

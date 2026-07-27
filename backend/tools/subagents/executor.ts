@@ -21,7 +21,10 @@ import type { Content, ContentPart } from '../../modules/conversation/types';
 import type { ToolExecutionResult } from '../../modules/api/chat/utils';
 import type { GenerateRequest } from '../../modules/channel/types';
 import { subAgentRunEventBus } from './runEventBus';
+import type { SubAgentRunStatus } from './runEventBus';
 import { subAgentRunController } from './runController';
+import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from './concurrencyLimiter';
+import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 /**
  * 子代理内部工具执行结果。
@@ -208,7 +211,12 @@ async function executeToolCall(
                     ...event,
                     runId: actualRunId,
                     agentName
-                })
+                }),
+                undefined,
+                // 修改原因：文件写锁需要知道执行归属，才能在撞车提示中告知对方是哪个 agent 在占用。
+                // 修改方式：SubAgent 链路显式传入 subagent 归属（runId + agent 名称）。
+                // 修改目的：主会话与各 SubAgent 在同一把全局锁上互斥，提示文案可追溯到具体持有者。
+                { kind: 'subagent', id: actualRunId, label: agentName || 'sub-agent' }
             );
 
             const toolResult = fullResult.toolResults?.[0];
@@ -293,6 +301,24 @@ function extractTextContent(response: any): string {
 }
 
 /**
+ * 识别「上下文超限」类错误。
+ *
+ * 子代理没有接主链路的 ContextTrimService，它的 history 只增不减：工具结果一大、迭代一多就会撞上
+ * 模型的上下文上限。各家 provider 措辞不同但都认得出来。不做识别的话，用户只能看到一句原样透传的
+ * `AI call failed: ...`，既不知道是撞了上下文，也不知道该去调哪个配置。
+ */
+function isContextLengthError(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return message.includes('context length')
+        || message.includes('context_length')
+        || message.includes('maximum context')
+        || message.includes('context window')
+        || message.includes('too many tokens')
+        || message.includes('prompt is too long')
+        || message.includes('reduce the length of the messages');
+}
+
+/**
  * 创建默认子代理执行器
  */
 export function createDefaultExecutor(
@@ -307,7 +333,35 @@ export function createDefaultExecutor(
         // 修改方式：优先使用 handler 根据主工具调用 id 预分配的 runId；没有外部 runId 时才回退为本地随机 runId。
         // 修改目的：让 pending、完成态和历史态的 Open details 都能定位同一次运行，同时兼容非主聊天入口。
         const requestedRunId = typeof request.runId === 'string' && request.runId.trim() ? request.runId.trim() : undefined;
-        const runId = requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        // 预分配的 runId 可能撞上同一 toolId 上一次仍在运行的 run，交给事件总线判重
+        const runId = subAgentRunEventBus.allocateRunId(
+            requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        );
+
+        // 修改原因：子代理对话延续——允许新子代理继承旧 run 的完整 transcript，实现跨调用的对话接力。
+        // 修改方式：从 runEventBus 读取旧 run 的 contents 作为 baseContents；校验旧 run 已处于终态。
+        // 修改目的：主模型可通过 continueFromRunId 参数指定延续目标，避免每次从零开始。
+        const terminalStatuses: SubAgentRunStatus[] = ['completed', 'failed', 'cancelled', 'interrupted'];
+        let baseContents: Content[] = [];
+        if (request.continueFromRunId) {
+            const oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
+            if (!oldSnapshot) {
+                return {
+                    success: false,
+                    runId,
+                    error: `Cannot continue from run "${request.continueFromRunId}": run not found. It may have been cleared or never existed.`
+                };
+            }
+            if (!terminalStatuses.includes(oldSnapshot.status)) {
+                return {
+                    success: false,
+                    runId,
+                    error: `Cannot continue from run "${request.continueFromRunId}": the run is still ${oldSnapshot.status}. Only terminal runs (completed / failed / cancelled) can be continued.`
+                };
+            }
+            baseContents = oldSnapshot.contents || [];
+        }
+
         const initialPromptContent: Content = {
             role: 'user',
             parts: [{
@@ -334,12 +388,51 @@ export function createDefaultExecutor(
         }, {
             conversationId: context.conversationId,
             conversationStore: context.conversationStore,
-            initialContents: [initialPromptContent]
+            initialContents: [...baseContents, initialPromptContent]
         });
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
         // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
         subAgentRunController.register(runId, config.name);
+
+        // 修改原因：多个 SubAgent 并行派发时需要全局并发上限，超出的 run 必须排队而不是被拒绝。
+        // 修改方式：createRun 后先 emit run_queued 进入排队状态，acquire 全局信号量成功后 emit run_started 恢复 running。
+        // 修改目的：Monitor 能显示排队中；计时起点在 acquire 之后，排队时间不计入 maxRuntime。
+        subAgentRunEventBus.emit({
+            runId,
+            agentName: config.name,
+            type: 'run_queued',
+            payload: {
+                runningCount: subAgentConcurrencyLimiter.getRunningCount(),
+                queueLength: subAgentConcurrencyLimiter.getQueueLength()
+            }
+        });
+        try {
+            await subAgentConcurrencyLimiter.acquire(runId, abortSignal);
+        } catch (queueError) {
+            subAgentRunController.unregister(runId);
+            const message = queueError instanceof SubAgentQueueCancelledError
+                ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
+                : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
+            subAgentRunEventBus.emit({
+                runId,
+                agentName: config.name,
+                type: 'run_cancelled',
+                payload: { error: message }
+            });
+            return {
+                success: false,
+                runId,
+                error: message,
+                cancelled: true
+            };
+        }
+        subAgentRunEventBus.emit({
+            runId,
+            agentName: config.name,
+            type: 'run_started'
+        });
+
         const maxIterations = config.maxIterations ?? 20;
         const maxRuntime = config.maxRuntime ?? 300; // 默认 5 分钟
         const startTime = Date.now();
@@ -348,7 +441,16 @@ export function createDefaultExecutor(
         // 创建超时控制器
         let timeoutController: AbortController | null = null;
         let timeoutId: ReturnType<typeof setInterval> | undefined;
-        
+        /**
+         * 摘除挂在父 abortSignal 上的超时桥接监听器。
+         *
+         * 修改原因：父信号（主会话 AbortController）生命周期远长于单个 run，一轮对话里派发 N 个子代理
+         *          就会在同一个信号上永久累积 N 个监听器，触发 MaxListenersExceededWarning 且长期驻留内存。
+         * 修改方式：保留 handler 引用，run 退出时在最外层 finally 统一摘除。
+         * 修改目的：桥接监听器的生命周期与它服务的那次 run 严格对齐。
+         */
+        let releaseParentAbortBridge: (() => void) | undefined;
+
         // 检查是否超时的辅助函数
         const checkTimeout = (): { exceeded: boolean; elapsed: number } => {
             const elapsed = Math.floor(getActiveElapsedMs() / 1000);
@@ -369,32 +471,88 @@ export function createDefaultExecutor(
                 }
             }, 500);
             if (abortSignal) {
-                abortSignal.addEventListener('abort', () => {
-                    if (timeoutId) clearInterval(timeoutId);
+                const onParentAbort = () => {
+                    if (timeoutId) {
+                        clearInterval(timeoutId);
+                        timeoutId = undefined;
+                    }
                     timeoutController?.abort();
-                });
+                };
+                abortSignal.addEventListener('abort', onParentAbort, { once: true });
+                releaseParentAbortBridge = () => abortSignal.removeEventListener('abort', onParentAbort);
             }
         }
 
-        const createOperationSignal = (): AbortSignal | undefined => {
+        /**
+         * 单次操作（一次 LLM 调用或一次工具调用）的组合中止信号句柄。
+         *
+         * 修改原因：旧实现每轮迭代都把 abort 监听器永久挂在父 abortSignal 和 run 控制器信号上，
+         *          一个 20 轮带工具的 run 会累积上百个监听器，触发 MaxListenersExceededWarning 并长期驻留内存。
+         * 修改方式：返回 release 句柄，由调用方在操作结束后摘除监听器。
+         * 修改目的：组合信号的生命周期与它服务的那次操作严格对齐。
+         */
+        interface OperationSignalHandle {
+            signal: AbortSignal | undefined;
+            release: () => void;
+        }
+
+        const createOperationSignal = (): OperationSignalHandle => {
             const signals = [abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
                 .filter((signal): signal is AbortSignal => !!signal);
-            if (signals.length === 0) return undefined;
+            if (signals.length === 0) return { signal: undefined, release: () => undefined };
             const controller = new AbortController();
             const abort = () => controller.abort();
+            const attached: AbortSignal[] = [];
             for (const signal of signals) {
                 if (signal.aborted) {
                     controller.abort();
                     break;
                 }
                 signal.addEventListener('abort', abort, { once: true });
+                attached.push(signal);
             }
-            return controller.signal;
+            return {
+                signal: controller.signal,
+                release: () => {
+                    for (const signal of attached) {
+                        signal.removeEventListener('abort', abort);
+                    }
+                    attached.length = 0;
+                }
+            };
         };
 
         let lastResponse: string = '';
 
-        const buildCancelledResult = (error: string): SubAgentResult => ({
+        /**
+         * SubAgent run 的唯一终态出口。
+         *
+         * 修改原因：超时、超迭代、AI 调用失败等早退路径过去既不发终态事件也不带 runId，
+         *          导致 Monitor 里这些 run 永远停留在 running，主聊天卡片也无法定位运行详情。
+         * 修改方式：所有返回路径统一经过本函数补齐 runId，并在事件总线尚未进入终态时补发对应终态事件。
+         * 修改目的：run 状态机只有一个收敛点，新增早退分支不会再遗漏状态广播。
+         */
+        const finalizeRun = (result: SubAgentResult): SubAgentResult => {
+            const finalized: SubAgentResult = { ...result, runId };
+            const snapshot = subAgentRunEventBus.getSnapshot(runId);
+            if (!snapshot || !terminalStatuses.includes(snapshot.status)) {
+                subAgentRunEventBus.emit({
+                    runId,
+                    agentName: config.name,
+                    type: finalized.cancelled
+                        ? 'run_cancelled'
+                        : (finalized.success ? 'run_completed' : 'run_failed'),
+                    payload: {
+                        error: finalized.error,
+                        steps: finalized.steps,
+                        modelVersion: finalized.modelVersion
+                    }
+                });
+            }
+            return finalized;
+        };
+
+        const buildCancelledResult = (error: string): SubAgentResult => finalizeRun({
             success: false,
             response: lastResponse,
             modelVersion,
@@ -444,11 +602,11 @@ export function createDefaultExecutor(
         try {
             // 检查是否取消
             if (abortSignal?.aborted || timeoutController?.signal.aborted) {
-                return {
+                return finalizeRun({
                     success: false,
                     error: 'Cancelled before execution',
                     cancelled: true
-                };
+                });
             }
             
             if (!context.configManager) {
@@ -478,7 +636,11 @@ export function createDefaultExecutor(
             }
             
             // 构建对话历史（Content 格式）
+            // 修改原因：子代理延续——当 continueFromRunId 指定时，将旧 run 的完整 transcript 前置。
+            // 修改方式：展开 baseContents 到 history 数组头部，新 user prompt 追加在末尾。
+            // 修改目的：新子代理可以直接看到旧子代理完成了什么，实现跨调用接力。
             const history: Content[] = [
+                ...baseContents,
                 { role: 'user', parts: [{ text: userPrompt }] }
             ];
             
@@ -494,48 +656,49 @@ export function createDefaultExecutor(
                 if (abortSignal?.aborted || timeoutController?.signal.aborted) {
                     const timeoutCheck = checkTimeout();
                     const isTimeout = timeoutCheck.exceeded;
-                    return {
+                    return finalizeRun({
                         success: false,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         toolCalls,
-                        error: isTimeout 
+                        error: isTimeout
                             ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
                             : 'Cancelled during execution',
                         cancelled: !isTimeout
-                    };
+                    });
                 }
-                
+
                 // 检查超时
                 const timeoutCheck = checkTimeout();
                 if (timeoutCheck.exceeded) {
-                    return {
+                    return finalizeRun({
                         success: false,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         toolCalls,
                         error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
-                    };
+                    });
                 }
-                
+
                 // 检查迭代次数
                 if (checkIterations()) {
-                    return {
+                    return finalizeRun({
                         success: false,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         toolCalls,
                         error: `Exceeded maximum iterations (${maxIterations})`
-                    };
+                    });
                 }
                 
                 steps++;
                 
                 // 调用 AI
-                const operationSignal = createOperationSignal();
+                const operation = createOperationSignal();
+                const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
                 const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
@@ -544,6 +707,10 @@ export function createDefaultExecutor(
                     abortSignal: operationSignal,
                     toolOverrides: availableTools.length > 0 ? availableTools : undefined,
                     suppressRetryNotification: true,
+                    // 修改原因：DeepSeek KVCache 按 user_id 隔离、Anthropic metadata.user_id 区分运行域都依赖请求携带稳定标识。
+                    // 修改方式：SubAgent 用 runId 作为 conversationId，每个 run 拥有独立缓存域（formatter 会哈希，不泄露原始 ID）。
+                    // 修改目的：主会话与各 SubAgent、SubAgent 彼此之间的 provider 侧缓存互不污染。
+                    conversationId: runId,
                     retryStatusCallback: (status) => {
                         if (status.type === 'retryFailed') {
                             retryFailedInThisCall = true;
@@ -607,14 +774,12 @@ export function createDefaultExecutor(
                         response = {
                             content: streamProcessor.getContent()
                         };
-                        subAgentRunEventBus.updateLastModelContent(runId, response.content);
                     } else {
                         const processed = streamProcessor.processNonStream(result as any);
                         response = {
                             ...(result as any),
                             content: processed.content
                         };
-                        subAgentRunEventBus.updateLastModelContent(runId, response.content);
                         subAgentRunEventBus.emit({
                             runId,
                             agentName: config.name,
@@ -622,25 +787,22 @@ export function createDefaultExecutor(
                             payload: processed.chunkData.chunk
                         });
                     }
-
-                    subAgentRunEventBus.emit({
-                        runId,
-                        agentName: config.name,
-                        type: 'content_snapshot',
-                        payload: response?.content
-                    });
+                    // 修改原因：本轮模型输出过去被写入 transcript 三次（流结束一次、裸 content_snapshot 一次、解析后再一次），
+                    //          每次都递增 contentRevision、广播事件、入队全量落盘，并让 Monitor 前端强制重拉一次窗口。
+                    // 修改方式：删除这里的早写与裸事件，统一由下方"prompt 模式工具调用解析完成后"的唯一写入口落盘。
+                    // 修改目的：每轮只产生一次 transcript 修订，且写入的是工具调用已还原为 functionCall 的权威版本。
                 } catch (e) {
                     // 检查是否是超时导致的错误
                     const timeoutCheck = checkTimeout();
                     if (timeoutCheck.exceeded) {
-                        return {
+                        return finalizeRun({
                             success: false,
                             response: lastResponse,
                             modelVersion,
                             steps,
                             toolCalls,
                             error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
-                        };
+                        });
                     }
                     if (operationSignal?.aborted && isControlInterruption()) {
                         const controlResult = await waitForControlIfNeeded();
@@ -656,14 +818,23 @@ export function createDefaultExecutor(
                         continue;
                     }
 
-                    return {
+                    const failureMessage = e instanceof Error ? e.message : String(e);
+                    return finalizeRun({
                         success: false,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         toolCalls,
-                        error: `AI call failed: ${e instanceof Error ? e.message : String(e)}`
-                    };
+                        error: isContextLengthError(e)
+                            ? `SubAgent ran out of context after ${steps} tool iteration(s) (${history.length} messages accumulated). `
+                            + `Sub-agents do not trim their context: lower this agent's maxIterations, narrow the task, `
+                            + `avoid tools that return very large results, or split the work across several sub-agent calls. `
+                            + `Original error: ${failureMessage}`
+                            : `AI call failed: ${failureMessage}`
+                    });
+                } finally {
+                    // 本轮 LLM 调用结束，摘除组合信号挂在父信号上的 abort 监听器
+                    operation.release();
                 }
                 
                 // 修改原因：SubAgent 过去自己解析各 provider 的工具调用，主流程支持 XML/JSON prompt tool mode 后容易漏同步。
@@ -691,39 +862,33 @@ export function createDefaultExecutor(
                     lastResponse = textContent;
                 }
                 
-                // 将 AI 响应添加到历史（过滤掉思考内容）
+                // 将 AI 响应完整添加到历史（保留思维链）
                 if (response?.content) {
-                    // 修改原因：Monitor 需要显示完整模型消息，包括主窗口允许展示的 thought、工具调用、计时和 usage 信息。
-                    // 修改方式：Monitor 子记录保存完整 response.content；发回子模型的历史仍过滤 thought，保持现有请求安全语义。
-                    // 修改目的：UI 展示和模型续传各走正确数据，不再为了续传牺牲 Monitor 的完整聊天体验。
+                    // 修改原因：主链路对 assistant 历史始终回传思维链（openai formatter 永远携带 reasoning_content，
+                    //          anthropic formatter 会把 thought/signature 重建为 thinking block）；旧实现在这里过滤 thought，
+                    //          导致 SubAgent 的 DeepSeek 思维链断裂、缓存前缀错乱，Anthropic extended thinking + tool_use 直接报错。
+                    // 修改方式：history 保留完整 parts（含 thought/signature/redactedThinking），与主会话请求语义对齐。
+                    // 修改目的：SubAgent 的思维链回传与缓存行为和主窗口完全一致。
                     subAgentRunEventBus.updateLastModelContent(runId, response.content);
-                    const filteredParts = (response.content.parts || []).filter(
-                        (part: any) => !part.thought
-                    );
-                    if (filteredParts.length > 0) {
+                    const responseParts = response.content.parts || [];
+                    if (responseParts.length > 0) {
                         history.push({
                             role: 'model',
-                            parts: filteredParts
+                            parts: responseParts
                         });
                     }
                 }
                 
                 // 如果没有工具调用，说明代理已完成任务
                 if (currentToolCalls.length === 0) {
-                    subAgentRunEventBus.emit({
-                        runId,
-                        agentName: config.name,
-                        type: 'run_completed',
-                        payload: { response: lastResponse, steps, modelVersion }
-                    });
-                    return {
+                    return finalizeRun({
                         success: true,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         runId,
                         toolCalls
-                    };
+                    });
                 }
                 
                 // 执行工具调用
@@ -732,30 +897,37 @@ export function createDefaultExecutor(
                 for (const call of currentToolCalls) {
                     // 执行工具前检查超时
                     const timeoutCheck = checkTimeout();
-                    const toolOperationSignal = createOperationSignal();
                     if (timeoutCheck.exceeded || abortSignal?.aborted || timeoutController?.signal.aborted) {
-                        return {
+                        return finalizeRun({
                             success: false,
                             response: lastResponse,
                             modelVersion,
                             steps,
                             toolCalls,
-                            error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
-                        };
+                            error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`,
+                            cancelled: !timeoutCheck.exceeded
+                        });
                     }
-                    
+
+                    // 组合信号在早退检查之后创建，避免为不会执行的工具调用注册监听器
+                    const toolOperation = createOperationSignal();
                     const toolStartTime = Date.now();
-                    const result = await executeToolCall(
-                        call.name,
-                        call.args,
-                        context,
-                        toolOperationSignal,
-                        allowedToolNames,
-                        config,
-                        call.id,
-                        runId,
-                        config.name
-                    );
+                    let result: SubAgentExecutedToolCall;
+                    try {
+                        result = await executeToolCall(
+                            call.name,
+                            call.args,
+                            context,
+                            toolOperation.signal,
+                            allowedToolNames,
+                            config,
+                            call.id,
+                            runId,
+                            config.name
+                        );
+                    } finally {
+                        toolOperation.release();
+                    }
                     const duration = Date.now() - toolStartTime;
                     
                     toolCalls.push({
@@ -810,33 +982,37 @@ export function createDefaultExecutor(
         } catch (e) {
             // 检查是否是超时导致的错误
             const timeoutCheck = checkTimeout();
-            if (timeoutCheck.exceeded) {
-                const error = `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`;
-                subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'run_failed', payload: { error } });
-                return {
-                    success: false,
-                    modelVersion,
-                    steps,
-                    runId,
-                    toolCalls,
-                    error
-                };
-            }
-            const error = e instanceof Error ? e.message : String(e);
-            subAgentRunEventBus.emit({ runId, agentName: config.name, type: 'run_failed', payload: { error } });
-            return {
+            const error = timeoutCheck.exceeded
+                ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
+                : (e instanceof Error ? e.message : String(e));
+            return finalizeRun({
                 success: false,
+                response: lastResponse,
                 modelVersion,
                 steps,
                 runId,
                 toolCalls,
                 error
-            };
+            });
         } finally {
-            // 修改原因：run 完成、失败或取消后不能继续显示为可控制的活跃执行。
-            // 修改方式：executor 最外层 finally 注销 runController 中的活跃记录，事件总线快照仍保留历史。
-            // 修改目的：避免 Monitor 对历史 run 展示“中止/退出”等会影响主工具的按钮。
+            // 修改原因：超时轮询定时器过去只在父 abortSignal 触发时才清理，正常完成的 run 会永久泄漏一个 500ms 定时器。
+            // 修改方式：在最外层 finally 无条件清理，覆盖成功、失败、取消和异常所有退出路径。
+            // 修改目的：run 结束后不再有后台定时器持续调用 checkTimeout 并反复 abort 已废弃的控制器。
+            if (timeoutId) {
+                clearInterval(timeoutId);
+                timeoutId = undefined;
+            }
+            releaseParentAbortBridge?.();
+            releaseParentAbortBridge = undefined;
+            // 修改原因：run 完成、失败或取消后不能继续显示为可控制的活跃执行，也不能继续占用并发席位。
+            // 修改方式：executor 最外层 finally 注销 runController 活跃记录并释放全局信号量席位（release 幂等）。
+            // 修改目的：避免历史 run 卡死并发队列或展示会影响主工具的控制按钮。
             subAgentRunController.unregister(runId);
+            subAgentConcurrencyLimiter.release(runId);
+            // 修改原因：run 异常退出时可能残留未释放的文件写锁（正常路径已在工具执行 finally 中释放）。
+            // 修改方式：按 runId 兜底清理该 run 持有的全部锁。
+            // 修改目的：避免锁泄漏导致其他 agent 永久无法修改相关文件。
+            fileWriteLockManager.releaseAllByHolder(runId);
         }
     };
 }

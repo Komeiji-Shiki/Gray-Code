@@ -12,7 +12,34 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { resolveFileToolPathWithInfo } from '../utils';
 
 export type OutsideWorkspaceAccessAction = 'read' | 'write';
-export type OutsideWorkspaceAwareToolName = 'read_file' | 'write_file' | 'apply_diff';
+
+/**
+ * 修改原因：delete_file/create_directory/insert_code/delete_code 同样通过
+ * resolveUri 接受绝对路径，但之前完全不受工作区外策略管控——
+ * “禁止工作区外写入”设置对它们形同虚设（例如 delete_file 传绝对路径可直接删除工作区外文件）。
+ * 修改方式：将四个写类工具纳入策略覆盖，写策略复用 write_file 的配置（apply_diff 用自己的）。
+ */
+export type OutsideWorkspaceAwareToolName =
+    | 'read_file'
+    | 'write_file'
+    | 'apply_diff'
+    | 'delete_file'
+    | 'create_directory'
+    | 'insert_code'
+    | 'delete_code';
+
+const OUTSIDE_WORKSPACE_AWARE_TOOLS = new Set<string>([
+    'read_file',
+    'write_file',
+    'apply_diff',
+    'delete_file',
+    'create_directory',
+    'insert_code',
+    'delete_code'
+]);
+
+/** 自身带 diff 审阅确认层的写类工具 */
+const DIFF_REVIEW_WRITE_TOOLS = new Set<string>(['write_file', 'apply_diff', 'insert_code', 'delete_code']);
 
 export interface OutsideWorkspaceAccessCheck {
     isOutsideWorkspace: boolean;
@@ -58,15 +85,50 @@ function getPolicy(toolName: OutsideWorkspaceAwareToolName, settingsManager?: Se
         : getWritePolicy(toolName, settingsManager);
 }
 
+function extractNonEmptyStrings(values: unknown): string[] {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+    return values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+}
+
 function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Record<string, unknown> | undefined): string[] {
     if (!args || typeof args !== 'object') {
         return [];
+    }
+
+    // delete_file/create_directory：paths 字符串数组
+    if (toolName === 'delete_file' || toolName === 'create_directory') {
+        const fromArray = extractNonEmptyStrings((args as any).paths);
+        if (fromArray.length > 0) {
+            return fromArray;
+        }
+        const single = (args as any).path;
+        return typeof single === 'string' && single.trim().length > 0 ? [single] : [];
+    }
+
+    // insert_code/delete_code：files[].path
+    if (toolName === 'insert_code' || toolName === 'delete_code') {
+        const files = (args as any).files;
+        if (!Array.isArray(files)) {
+            return [];
+        }
+        return files
+            .map(item => item?.path)
+            .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
     }
 
     if (toolName === 'read_file' || toolName === 'write_file') {
         const singlePath = (args as any).path;
         if (typeof singlePath === 'string' && singlePath.trim().length > 0) {
             return [singlePath];
+        }
+
+        // read_file 的实际 schema 是 paths 数组；以前只认 path/files，
+        // paths 形式的工作区外读取会绕过策略检查
+        const fromPathsArray = extractNonEmptyStrings((args as any).paths);
+        if (fromPathsArray.length > 0) {
+            return fromPathsArray;
         }
 
         const files = (args as any).files;
@@ -110,7 +172,7 @@ function getApplyDiffConfig(settingsManager?: SettingsManager): Readonly<ApplyDi
  * 防止工作区外文件被静默写入。
  */
 export function isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName: string, settingsManager?: SettingsManager): boolean {
-    if (toolName !== 'write_file' && toolName !== 'apply_diff') {
+    if (!DIFF_REVIEW_WRITE_TOOLS.has(toolName)) {
         return false;
     }
     return getApplyDiffConfig(settingsManager).autoSave !== true;
@@ -221,5 +283,5 @@ export function ensureOutsideWorkspaceAccessApproved(
 }
 
 export function isOutsideWorkspaceAwareTool(toolName: string): toolName is OutsideWorkspaceAwareToolName {
-    return toolName === 'read_file' || toolName === 'write_file' || toolName === 'apply_diff';
+    return OUTSIDE_WORKSPACE_AWARE_TOOLS.has(toolName);
 }

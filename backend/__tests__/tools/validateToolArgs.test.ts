@@ -125,15 +125,28 @@ describe('validateToolArgs', () => {
 
     // ==================== 多余字段 ====================
 
-    it('提供了 schema 中未定义的参数时报错', () => {
+    it('schema 中未定义的参数不再导致报错（由 normalizeToolArgs 剥离+警告）', () => {
         const s = schema(
             { path: { type: 'string' } },
             ['path']
         );
 
-        const error = validateToolArgs('read_file', { path: 'a.txt', nonexistent: 123 }, s);
+        expect(validateToolArgs('read_file', { path: 'a.txt', nonexistent: 123 }, s)).toBeNull();
+    });
 
-        expect(error).toContain('unexpected parameter `nonexistent`');
+    // ==================== array 参数的详细指引 ====================
+
+    it('array 参数收到无法解析的字符串时给出具体指引', () => {
+        const s = schema(
+            { files: { type: 'array' } },
+            ['files']
+        );
+
+        const error = validateToolArgs('write_file', { files: '{"path":"a.txt"}' }, s);
+
+        expect(error).not.toBeNull();
+        expect(error).toContain('`files`');
+        expect(error).toContain('could not be parsed into a JSON array');
     });
 
     // ==================== 混合场景 ====================
@@ -147,14 +160,13 @@ describe('validateToolArgs', () => {
             ['path', 'line']
         );
 
-        // 缺少 path，line 类型错，多了 extra
-        const error = validateToolArgs('insert_code', { line: 'abc', extra: true }, s);
+        // 缺少 path，line 类型错
+        const error = validateToolArgs('insert_code', { line: 'abc' }, s);
 
         expect(error).not.toBeNull();
         expect(error).toContain('`path` is missing');
         expect(error).toContain('`line`');
         expect(error).toContain('expected as `number`');
-        expect(error).toContain('unexpected parameter `extra`');
     });
 
     // ==================== 边界情况 ====================
@@ -187,5 +199,251 @@ describe('validateToolArgs', () => {
         );
 
         expect(validateToolArgs('read_file', {}, s)).toBeNull();
+    });
+
+    // ==================== 嵌套结构递归校验 ====================
+
+    it('数组元素缺少必需字段时报出带路径的错误', () => {
+        const s = schema(
+            {
+                files: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string' },
+                            line: { type: 'number' },
+                            content: { type: 'string' }
+                        },
+                        required: ['path', 'line', 'content']
+                    }
+                }
+            },
+            ['files']
+        );
+
+        const error = validateToolArgs('insert_code', {
+            files: [{ path: 'a.ts', content: 'x' }]
+        }, s);
+
+        expect(error).toContain('The required parameter `files[0].line` is missing');
+    });
+
+    it('数组元素字段类型不匹配时报出带路径的错误', () => {
+        const s = schema(
+            {
+                hunks: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            oldContent: { type: 'string' },
+                            newContent: { type: 'string' },
+                            startLine: { type: 'number' }
+                        },
+                        required: ['oldContent', 'newContent']
+                    }
+                }
+            },
+            ['hunks']
+        );
+
+        const error = validateToolArgs('apply_diff', {
+            hunks: [
+                { oldContent: 'a', newContent: 'b' },
+                { oldContent: 'a', newContent: 'b', startLine: { line: 3 } }
+            ]
+        }, s);
+
+        expect(error).toContain('`hunks[1].startLine`');
+        expect(error).toContain('expected as `number`');
+    });
+
+    it('嵌套 object 的必需字段缺失时报出带路径的错误', () => {
+        const s = schema(
+            {
+                sourceArtifact: {
+                    type: 'object',
+                    properties: {
+                        type: { type: 'string' },
+                        path: { type: 'string' }
+                    },
+                    required: ['type', 'path']
+                }
+            },
+            []
+        );
+
+        const error = validateToolArgs('create_plan', {
+            sourceArtifact: { type: 'design' }
+        }, s);
+
+        expect(error).toContain('The required parameter `sourceArtifact.path` is missing');
+    });
+
+    it('嵌套结构完全正确时通过', () => {
+        const s = schema(
+            {
+                files: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string' },
+                            line: { type: 'number' },
+                            content: { type: 'string' }
+                        },
+                        required: ['path', 'line', 'content']
+                    }
+                }
+            },
+            ['files']
+        );
+
+        expect(validateToolArgs('insert_code', {
+            files: [{ path: 'a.ts', line: 1, content: 'x' }]
+        }, s)).toBeNull();
+    });
+
+    it('类型错误的值不再深入检查（避免误导性的连锁错误）', () => {
+        const s = schema(
+            {
+                files: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: { path: { type: 'string' } },
+                        required: ['path']
+                    }
+                }
+            },
+            ['files']
+        );
+
+        // files 是 object 而非 array：只报顶层类型错误，不报 files[0].path missing
+        const error = validateToolArgs('write_file', { files: { path: 'a' } }, s) as string;
+
+        expect(error).toContain('expected as `array`');
+        expect(error).not.toContain('files[0]');
+    });
+
+    // ==================== enum 校验 ====================
+
+    it('enum 值不合法时报错并列出全部可选值', () => {
+        const s = schema(
+            { updateMode: { type: 'string', enum: ['revision', 'progress_sync'] } },
+            []
+        );
+
+        const error = validateToolArgs('update_plan', { updateMode: 'rewrite' }, s);
+
+        expect(error).toContain('`updateMode`');
+        expect(error).toContain('"revision" | "progress_sync"');
+        expect(error).toContain('`rewrite`');
+    });
+
+    it('嵌套数组元素的 enum 值不合法时报出带路径的错误', () => {
+        const s = schema(
+            {
+                todos: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }
+                        },
+                        required: ['id', 'status']
+                    }
+                }
+            },
+            ['todos']
+        );
+
+        const error = validateToolArgs('todo_write', {
+            todos: [{ id: '1', status: 'done' }]
+        }, s);
+
+        expect(error).toContain('`todos[0].status`');
+        expect(error).toContain('"pending"');
+        expect(error).toContain('`done`');
+    });
+
+    it('enum 值合法时通过', () => {
+        const s = schema(
+            { updateMode: { type: 'string', enum: ['revision', 'progress_sync'] } },
+            []
+        );
+
+        expect(validateToolArgs('update_plan', { updateMode: 'revision' }, s)).toBeNull();
+    });
+
+    // ==================== 参数签名回显 ====================
+
+    it('校验失败时附带 Expected parameters 参数签名', () => {
+        const s = schema(
+            {
+                path: { type: 'string' },
+                startLine: { type: 'integer' }
+            },
+            ['path']
+        );
+
+        const error = validateToolArgs('read_file', {}, s);
+
+        expect(error).toContain('Expected parameters for `read_file`:');
+        expect(error).toContain('- path: string (required)');
+        expect(error).toContain('- startLine: integer (optional)');
+    });
+
+    it('签名内联展开嵌套数组元素形状与 enum 联合', () => {
+        const s = schema(
+            {
+                todos: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            status: { type: 'string', enum: ['pending', 'completed'] }
+                        },
+                        required: ['id', 'status']
+                    }
+                }
+            },
+            ['todos']
+        );
+
+        const error = validateToolArgs('todo_write', {}, s);
+
+        expect(error).toContain('todos: Array<{ id: string; status: "pending" | "completed" }> (required)');
+    });
+
+    it('问题条数过多时截断并提示剩余数量', () => {
+        const s = schema(
+            {
+                files: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string' },
+                            line: { type: 'number' },
+                            content: { type: 'string' }
+                        },
+                        required: ['path', 'line', 'content']
+                    }
+                }
+            },
+            ['files']
+        );
+
+        // 12 个空元素 × 3 个缺失字段 = 36 条问题，应只报告前 10 条 + 1 条截断提示
+        const files = Array.from({ length: 12 }, () => ({}));
+        const error = validateToolArgs('insert_code', { files }, s) as string;
+
+        expect(error).toContain('more similar issues');
+        const reportedLines = error.split('\n\nExpected parameters')[0].split('\n').slice(1);
+        expect(reportedLines).toHaveLength(11);
     });
 });

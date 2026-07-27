@@ -423,6 +423,20 @@ export const REVIEW_PROMPT_MODE: PromptMode = {
 export const DEFAULT_PROMPT_MODE = CODE_PROMPT_MODE;
 
 /**
+ * 内置模式的默认 toolPolicy 映射。
+ *
+ * key 为内置模式 ID，value 为默认工具策略列表。
+ * 当用户未主动定制 toolPolicy（toolPolicyCustomized !== true）时，
+ * 运行时从该映射拉取默认值。
+ */
+export const BUILTIN_MODE_TOOL_POLICIES: Record<string, readonly string[]> = {
+    [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE.toolPolicy || [],
+    [PLAN_MODE_ID]: PLAN_PROMPT_MODE.toolPolicy || [],
+    [ASK_MODE_ID]: ASK_PROMPT_MODE.toolPolicy || [],
+    [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE.toolPolicy || [],
+};
+
+/**
  * 默认系统提示词配置
  */
 export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {

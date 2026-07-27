@@ -45,25 +45,12 @@ import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgre
 import type { SummarizeService } from './SummarizeService';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
 import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './streamingToolProgress';
+import { RepeatedCallGuard } from './repeatedCallGuard';
+import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
-
-const DIFF_REVIEW_TOOL_NAMES = new Set(['apply_diff', 'write_file', 'insert_code', 'delete_code']);
-
-function isDiffReviewToolCall(call: FunctionCallInfo): boolean {
-    if (DIFF_REVIEW_TOOL_NAMES.has(call.name)) {
-        return true;
-    }
-
-    if (call.name === 'search_in_files') {
-        const mode = typeof call.args?.mode === 'string' ? call.args.mode : 'search';
-        return mode === 'replace';
-    }
-
-    return false;
-}
 
 function shouldStartToolDuringModelStream(
     call: FunctionCallInfo,
@@ -71,7 +58,7 @@ function shouldStartToolDuringModelStream(
     promptModeSnapshot?: ResolvedPromptModeSnapshot
 ): boolean {
     return !toolExecutionService.toolNeedsConfirmation(call.name, call.args, promptModeSnapshot)
-        && !isDiffReviewToolCall(call);
+        && !isDiffReviewToolCall(call.name, call.args);
 }
 
 /**
@@ -328,24 +315,31 @@ export class ToolIterationLoopService {
      * 用于自动总结场景：
      * - 主请求取消（abortSignal）
      * - 仅取消总结（summarizeAbortSignal）
+     *
+     * 返回 dispose 而不是裸信号：两个信号都没触发时监听器不会自行摘除，
+     * 而 abortSignal 的生命周期是整个回合，一轮里多次自动总结会持续累积。
      */
     private mergeAbortSignals(
         primary?: AbortSignal,
         secondary?: AbortSignal
-    ): AbortSignal | undefined {
-        if (!primary) return secondary;
-        if (!secondary) return primary;
+    ): { signal?: AbortSignal; dispose: () => void } {
+        const noop = () => { };
+        if (!primary) return { signal: secondary, dispose: noop };
+        if (!secondary) return { signal: primary, dispose: noop };
 
         if (primary.aborted || secondary.aborted) {
             const controller = new AbortController();
             controller.abort();
-            return controller.signal;
+            return { signal: controller.signal, dispose: noop };
         }
 
         const controller = new AbortController();
-        const onAbort = () => {
+        const dispose = () => {
             primary.removeEventListener('abort', onAbort);
             secondary.removeEventListener('abort', onAbort);
+        };
+        const onAbort = () => {
+            dispose();
             if (!controller.signal.aborted) {
                 controller.abort();
             }
@@ -353,7 +347,55 @@ export class ToolIterationLoopService {
 
         primary.addEventListener('abort', onAbort, { once: true });
         secondary.addEventListener('abort', onAbort, { once: true });
-        return controller.signal;
+        return { signal: controller.signal, dispose };
+    }
+
+    /**
+     * 取消时结算模型消息里已经落地的工具调用。
+     *
+     * 流式取消会把累加器中的部分内容直接写进历史，其中可能已经包含**完整**的 functionCall。
+     * 不补对应的 functionResponse，历史里就留下悬空的 tool_use：Anthropic / OpenAI 在下一次
+     * 请求时会直接以 400 拒绝，而用户看到的是一句和「我刚才按了停止」毫无关系的报错。
+     *
+     * 流式提前执行已经跑完的工具用真实结果结算——它们的副作用（写文件、跑命令）已经发生，
+     * 丢掉结果等于对模型隐瞒；其余标记为已取消。
+     */
+    private async settleCancelledToolCalls(
+        conversationId: string,
+        cancelledContent: Content,
+        settledResults: Map<string, ToolExecutionFullResult>
+    ): Promise<void> {
+        const cancelledCalls = cancelledContent.parts
+            .map(part => part.functionCall)
+            .filter((call): call is NonNullable<ContentPart['functionCall']> & { id: string } => !!call?.id);
+
+        if (cancelledCalls.length === 0) {
+            return;
+        }
+
+        const responseParts: ContentPart[] = cancelledCalls.map(call => {
+            const settledPart = settledResults.get(call.id)
+                ?.responseParts
+                .find(part => part.functionResponse?.id === call.id);
+
+            return settledPart ?? {
+                functionResponse: {
+                    id: call.id,
+                    name: call.name || 'unknown',
+                    response: {
+                        success: false,
+                        error: t('modules.api.chat.errors.toolCallCancelled'),
+                        cancelled: true
+                    }
+                }
+            };
+        });
+
+        await this.conversationManager.addContent(conversationId, {
+            role: 'user',
+            parts: responseParts,
+            isFunctionResponse: true
+        });
     }
 
     /**
@@ -385,6 +427,9 @@ export class ToolIterationLoopService {
         let dynamicContextStrategy: DynamicContextStrategy = loopConfig.dynamicContextStrategy ?? 'single';
 
         let iteration = startIteration;
+
+        // 同参数重复失败调用护栏（turn 级别，跨工具迭代存活）
+        const repeatedCallGuard = new RepeatedCallGuard();
 
         // 动态上下文在回合开始时生成一次，回合内所有迭代（包括工具确认后的继续）复用
         // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件、TODO、Skills
@@ -493,13 +538,18 @@ export class ToolIterationLoopService {
                     status: 'started' as const
                 } satisfies ChatStreamAutoSummaryStatusData;
 
-                const autoSummarizeAbortSignal = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
+                const merged = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
 
-                const summarizeResult = await this.summarizeService.handleAutoSummarize(
-                    conversationId,
-                    configId,
-                    autoSummarizeAbortSignal
-                );
+                let summarizeResult: Awaited<ReturnType<SummarizeService['handleAutoSummarize']>>;
+                try {
+                    summarizeResult = await this.summarizeService.handleAutoSummarize(
+                        conversationId,
+                        configId,
+                        merged.signal
+                    );
+                } finally {
+                    merged.dispose();
+                }
 
                 if (summarizeResult.success) {
                     this.log.info('stream.auto_summarize_completed', { conversationId, iteration });
@@ -641,10 +691,14 @@ export class ToolIterationLoopService {
                                     }
                                 } satisfies ChatStreamToolStatusData;
 
+                                // 检查点挂到“即将写入的模型消息”索引上（与 createModelMessageCheckpoint
+                                // 的 before 语义一致）。以前这里传 undefined，导致流式早启动的工具
+                                // （含 execute_command 等会改变文件系统的工具）完全没有检查点保护。
+                                const earlyCheckpointIndex = (await this.conversationManager.getHistoryRef(conversationId)).length;
                                 const rawPromise = this.toolExecutionService.executeFunctionCallsWithResults(
-                                    [{ id: fc.id, name: fc.name, args: fc.args }],
+                                    [repeatedCallGuard.guardCall({ id: fc.id, name: fc.name, args: fc.args })],
                                     conversationId,
-                                    undefined,
+                                    earlyCheckpointIndex,
                                     config,
                                     abortSignal,
                                     promptModeSnapshot
@@ -681,6 +735,7 @@ export class ToolIterationLoopService {
                     const partialContent = processor.getContent();
                     if (partialContent.parts.length > 0) {
                         await this.conversationManager.addContent(conversationId, partialContent);
+                        await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
                     }
                     // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理
                     yield processor.getCancelledData() as any;
@@ -706,6 +761,12 @@ export class ToolIterationLoopService {
             // 9. 转换工具调用格式
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
+
+            // 9.5 确保 modelVersion 来自配置而非依赖 API 返回（第三方代理可能不返回 model 字段）
+            const configuredModel = modelOverride || (config as any).model;
+            if (!finalContent.modelVersion && configuredModel) {
+                finalContent.modelVersion = configuredModel;
+            }
 
             // 10. 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
@@ -753,9 +814,7 @@ export class ToolIterationLoopService {
             let executionResult: ToolExecutionFullResult | undefined;
 
             // 流式边执行工具：等待流式期间已启动的异步工具完成，
-            // 将其结果从 autoPrefix 中移除（避免重复执行）。
-            let earlyResponseParts: ContentPart[] = [];
-
+            // 将其从 autoPrefix 中移除（避免重复执行）。
             if (streamingToolPromises.size > 0) {
                 while (earlyToolProgressQueue.hasPending()) {
                     const readyStatuses = drainSettledEarlyToolStatuses();
@@ -771,16 +830,10 @@ export class ToolIterationLoopService {
                     yield statusChunk;
                 }
 
-                // 从 autoPrefix 中移除已在流式期间执行完的工具（避免重复执行），
-                // 同时收集它们的 functionResponse parts（后续统一写入历史）。
                 const remainingAutoPrefix: FunctionCallInfo[] = [];
 
                 for (const call of autoPrefix) {
                     if (streamingToolResults.has(call.id)) {
-                        // streamingToolResults 现在存储的是 ToolExecutionFullResult，
-                        // 从中提取 responseParts 用于写入历史。
-                        const fullResult = streamingToolResults.get(call.id)!;
-                        earlyResponseParts.push(...fullResult.responseParts);
                         this.log.info('stream.early_tool_done', { conversationId, toolName: call.name, toolId: call.id });
                     } else {
                         remainingAutoPrefix.push(call);
@@ -791,15 +844,19 @@ export class ToolIterationLoopService {
                 autoPrefix.push(...remainingAutoPrefix);
             }
 
+            const earlyFullResults = Array.from(streamingToolResults.values());
             const earlyToolResults = this.orderToolResultsByCallSequence(
                 functionCalls,
-                [Array.from(streamingToolResults.values()).flatMap(result => result.toolResults)]
+                [earlyFullResults.flatMap(result => result.toolResults)]
             );
-            const orderedEarlyResponseParts = this.orderFunctionResponsePartsByCallSequence(
+            repeatedCallGuard.recordResults(earlyToolResults);
+            const earlyResponseParts = this.orderFunctionResponsePartsByCallSequence(
                 functionCalls,
-                [Array.from(streamingToolResults.values()).flatMap(result => result.responseParts)]
+                [earlyFullResults.flatMap(result => result.responseParts)]
             );
-            earlyResponseParts = orderedEarlyResponseParts;
+            // 流式提前执行的工具产生的多模态附件（xml/json prompt 模式）。
+            // 以前这些附件被完全忽略，提前执行的 generate_image / MCP 图片结果会静默丢失。
+            const earlyMultimodalAttachments = earlyFullResults.flatMap(result => result.multimodalAttachments ?? []);
 
             // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
             // 但 earlyResponseParts 中有结果需要写入历史。
@@ -808,7 +865,9 @@ export class ToolIterationLoopService {
             if (autoPrefix.length === 0 && earlyResponseParts.length > 0) {
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',
-                    parts: earlyResponseParts,
+                    parts: earlyMultimodalAttachments.length > 0
+                        ? [...earlyMultimodalAttachments, ...earlyResponseParts]
+                        : earlyResponseParts,
                     isFunctionResponse: true
                 });
 
@@ -872,9 +931,10 @@ export class ToolIterationLoopService {
                 const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
                 const messageIndex = currentHistory.length - 1;
 
-                // 执行工具调用（按顺序），并实时发送每个工具的开始/结束状态
+                // 执行工具调用（按顺序），并实时发送每个工具的开始/结束状态；
+                // 达到连续失败阈值的重复调用会被护栏替换为短路错误调用
                 const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
-                    autoPrefix,
+                    repeatedCallGuard.guardCalls(autoPrefix),
                     conversationId,
                     messageIndex,
                     config,
@@ -930,6 +990,8 @@ export class ToolIterationLoopService {
 
                 // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
 
+                repeatedCallGuard.recordResults(executionResult.toolResults);
+
                 const combinedToolResults = this.orderToolResultsByCallSequence(
                     functionCalls,
                     [earlyToolResults, executionResult.toolResults]
@@ -938,15 +1000,20 @@ export class ToolIterationLoopService {
                     functionCalls,
                     [earlyResponseParts, executionResult.responseParts]
                 );
-                const functionResponseParts = executionResult.multimodalAttachments
-                    ? [...executionResult.multimodalAttachments, ...orderedFunctionResponseParts]
+                // 合并流式提前执行与后续串行执行两条路径的多模态附件，缺一不可
+                const combinedMultimodalAttachments = [
+                    ...earlyMultimodalAttachments,
+                    ...(executionResult.multimodalAttachments ?? [])
+                ];
+                const functionResponseParts = combinedMultimodalAttachments.length > 0
+                    ? [...combinedMultimodalAttachments, ...orderedFunctionResponseParts]
                     : orderedFunctionResponseParts;
 
                 executionResult = {
                     ...executionResult,
                     responseParts: orderedFunctionResponseParts,
                     toolResults: combinedToolResults,
-                    multimodalAttachments: executionResult.multimodalAttachments
+                    multimodalAttachments: combinedMultimodalAttachments.length > 0 ? combinedMultimodalAttachments : undefined
                 };
 
                 await this.conversationManager.addContent(conversationId, {
@@ -1040,6 +1107,7 @@ export class ToolIterationLoopService {
         isNewTurn: boolean = true
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
+        const repeatedCallGuard = new RepeatedCallGuard();
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
         // 在回合开始时一次性生成动态上下文，回合内所有迭代复用，并存到回合起始用户消息上。
@@ -1176,6 +1244,12 @@ export class ToolIterationLoopService {
             // 为没有 id 的 functionCall 添加唯一 id（Gemini 格式不返回 id）
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
 
+            // 确保 modelVersion 来自配置而非依赖 API 返回（第三方代理可能不返回 model 字段）
+            const configuredModel = modelOverride || (config as any).model;
+            if (!finalContent.modelVersion && configuredModel) {
+                finalContent.modelVersion = configuredModel;
+            }
+
             // 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
                 await this.conversationManager.addContent(conversationId, finalContent);
@@ -1198,13 +1272,14 @@ export class ToolIterationLoopService {
             const messageIndex = currentHistory.length - 1;
 
             const executionResult = await this.toolExecutionService.executeFunctionCallsWithResults(
-                functionCalls,
+                repeatedCallGuard.guardCalls(functionCalls),
                 conversationId,
                 messageIndex,
                 config,
                 undefined,
                 promptModeSnapshot
             );
+            repeatedCallGuard.recordResults(executionResult.toolResults);
 
             const functionResponseParts = executionResult.multimodalAttachments
                 ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]

@@ -69,6 +69,7 @@ Pass the skill name to read its full content.`
     
     return {
         name: 'read_skill',
+        readOnly: true,
         description,
         category: 'skills',
         parameters: {

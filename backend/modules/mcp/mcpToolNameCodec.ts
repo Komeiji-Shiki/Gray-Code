@@ -24,6 +24,14 @@ export const MCP_TOOL_PREFIX = 'mcp__';
 export const MCP_TOOL_SEPARATOR = '__';
 
 /**
+ * MCP 服务器 ID 合法模式
+ *
+ * 允许：字母、数字、单下划线、中划线
+ * 禁止：连续双下划线 __（否则 decodeMcpToolName 的 indexOf('__') 会产生歧义）
+ */
+export const MCP_SERVER_ID_PATTERN = /^(?!.*__)[a-zA-Z0-9_-]+$/;
+
+/**
  * 编码：将 serverId 和 toolName 组合为完整的 MCP 工具名。
  *
  * 格式：mcp__<serverId>__<toolName>

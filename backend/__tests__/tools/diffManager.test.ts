@@ -110,7 +110,8 @@ function createPendingDiff(manager: DiffManager, overrides?: Partial<PendingDiff
         toolId: overrides?.toolId,
         userEditedContent: overrides?.userEditedContent,
         diffGuardWarning: overrides?.diffGuardWarning,
-        diffGuardDeletePercent: overrides?.diffGuardDeletePercent
+        diffGuardDeletePercent: overrides?.diffGuardDeletePercent,
+        conversationId: overrides?.conversationId
     };
 
     ((manager as any).pendingDiffs as Map<string, PendingDiff>).set(diff.id, diff);
@@ -367,7 +368,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });
 
-    it('non-manual save keeps the diff pending and restores the draft in manual mode', async () => {
+    it('non-manual save lets auto-save flush to disk without triggering draft restore loop', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -410,29 +411,248 @@ describe('DiffManager lifecycle closure', () => {
         expect(typeof willSaveHandler).toBe('function');
         expect(typeof didSaveHandler).toBe('function');
 
-        let pendingWillSaveEdits: Promise<Array<{ newText: string }>> | undefined;
+        // Simulate non-manual save (e.g., auto-save): willSave should just mark flushed, not block save
+        let waitUntilCalled = false;
         willSaveHandler?.({
             document: doc,
             reason: (vscode as any).TextDocumentSaveReason.FocusOut,
-            waitUntil: (thenable: Promise<Array<{ newText: string }>>) => {
-                pendingWillSaveEdits = Promise.resolve(thenable);
+            waitUntil: (_thenable: any) => {
+                waitUntilCalled = true;
             }
         });
 
-        const willSaveEdits = await pendingWillSaveEdits;
-        expect(willSaveEdits).toEqual([
-            expect.objectContaining({ newText: 'original' })
-        ]);
+        // New behavior: willSave does NOT call event.waitUntil (no content blocking)
+        expect(waitUntilCalled).toBe(false);
+        expect((manager as any).nonManualSaveFlushed.has(diff.id)).toBe(true);
 
-        doc.setText('original');
-        doc.isDirty = false;
+        // After save, diff should remain pending (not auto-accepted)
         await didSaveHandler?.(doc);
 
         expect(diff.status).toBe('pending');
         expect(statusChanges).toBe(0);
-        expect(doc.getText()).toBe('accepted');
-        expect(doc.isDirty).toBe(true);
+        expect((manager as any).nonManualSaveFlushed.has(diff.id)).toBe(false);
         expect((manager as any).saveListeners.has(diff.id)).toBe(true);
         expect((manager as any).willSaveListeners.has(diff.id)).toBe(true);
+    });
+});
+
+describe('DiffManager conversationId scoping (#48)', () => {
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        (vscode as any).EventEmitter = class {
+            public event = jest.fn();
+            public fire = jest.fn();
+            public dispose = jest.fn();
+        };
+        (vscode as any).WorkspaceEdit = MockWorkspaceEdit;
+        (vscode as any).Range = jest.fn().mockImplementation(() => ({ start: 0, end: 0 }));
+        (vscode as any).TabInputTextDiff = class {};
+        (vscode as any).TextEdit = { replace: jest.fn(() => ({})) };
+        (vscode.Uri as any).parse = (v: string) => ({ fsPath: v, scheme: 'file', path: v });
+        (vscode.Uri as any).file = (v: string) => ({ fsPath: v, scheme: 'file', path: v });
+        (vscode as any).TextDocumentSaveReason = { Manual: 1, AfterDelay: 2, FocusOut: 3 };
+
+        (vscode.workspace as any).textDocuments = [];
+        (vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).openTextDocument = jest.fn();
+        (vscode.workspace as any).applyEdit = jest.fn(async () => true);
+        (vscode.workspace as any).onDidSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onDidCloseTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(async () => ({})),
+            setStatusBarMessage: jest.fn(),
+            showErrorMessage: jest.fn(),
+            tabGroups: {
+                all: [],
+                close: jest.fn(async () => undefined)
+            }
+        };
+
+        (fs.readFileSync as jest.Mock).mockReturnValue('original');
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        resetDiffManagerSingleton();
+    });
+
+    it('cancelAllPending with conversationId only cancels matching diffs', async () => {
+        const manager = getManager();
+        const diffA = createPendingDiff(manager, { id: 'diff-A', conversationId: 'conv-A' });
+        const diffB = createPendingDiff(manager, { id: 'diff-B', conversationId: 'conv-B' });
+
+        // Cancel only conv-A's diffs
+        const result = await manager.cancelAllPending('conv-A');
+
+        expect(result.cancelled.length).toBe(1);
+        expect(result.cancelled[0].id).toBe('diff-A');
+        expect(diffA.status).toBe('rejected');
+        // conv-B's diff should remain untouched
+        expect(diffB.status).toBe('pending');
+    });
+
+    it('cancelAllPending without conversationId cancels all diffs', async () => {
+        const manager = getManager();
+        const diffA = createPendingDiff(manager, { id: 'diff-A', conversationId: 'conv-A' });
+        const diffB = createPendingDiff(manager, { id: 'diff-B', conversationId: 'conv-B' });
+
+        const result = await manager.cancelAllPending();
+
+        expect(result.cancelled.length).toBe(2);
+        expect(diffA.status).toBe('rejected');
+        expect(diffB.status).toBe('rejected');
+    });
+
+    it('markUserInterrupt scoped by conversationId', () => {
+        const manager = getManager();
+        // No conversationId means global interrupt
+        manager.markUserInterrupt();
+        expect(manager.isUserInterrupted()).toBe(true);
+        manager.resetUserInterrupt();
+        expect(manager.isUserInterrupted()).toBe(false);
+
+        // With conversationId
+        manager.markUserInterrupt('conv-A');
+        expect(manager.isUserInterrupted('conv-A')).toBe(true);
+        expect(manager.isUserInterrupted('conv-B')).toBe(false);
+        // Without conversationId still returns true (global interrupt is on)
+        expect(manager.isUserInterrupted()).toBe(true);
+
+        manager.resetUserInterrupt('conv-A');
+        expect(manager.isUserInterrupted('conv-A')).toBe(false);
+        // Global flag still true since other conversations might be interrupted
+        expect(manager.isUserInterrupted()).toBe(true);
+
+        manager.resetUserInterrupt();
+        expect(manager.isUserInterrupted()).toBe(false);
+    });
+});
+
+describe('DiffManager fifo eviction (#10)', () => {
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        (vscode as any).EventEmitter = class { public event = jest.fn(); public fire = jest.fn(); public dispose = jest.fn(); };
+        (vscode as any).WorkspaceEdit = MockWorkspaceEdit;
+        (vscode as any).Range = jest.fn().mockImplementation();
+        (vscode as any).TextEdit = { replace: jest.fn(() => ({})) };
+        (vscode.Uri as any).parse = (v: string) => ({ fsPath: v });
+        (vscode.Uri as any).file = (v: string) => ({ fsPath: v });
+        (vscode.workspace as any).textDocuments = [];
+        (vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).openTextDocument = jest.fn();
+        (vscode.workspace as any).applyEdit = jest.fn(async () => true);
+        (vscode.workspace as any).onDidSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onDidCloseTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(),
+            setStatusBarMessage: jest.fn(),
+            showErrorMessage: jest.fn(),
+            tabGroups: { all: [], close: jest.fn(async () => undefined) }
+        };
+
+        (fs.readFileSync as jest.Mock).mockReturnValue('original');
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        resetDiffManagerSingleton();
+    });
+
+    it('evicts oldest finalized diffs when queue exceeds MAX_FINALIZED_DIFFS', async () => {
+        const manager = getManager();
+        const MAX = (DiffManager as any).MAX_FINALIZED_DIFFS;
+
+        // Create more than MAX diffs and reject them
+        for (let i = 0; i < MAX + 5; i++) {
+            const diff = createPendingDiff(manager, { id: `diff-${i}` });
+            await manager.rejectDiff(diff.id);
+        }
+
+        const finalizedOrder: string[] = (manager as any).finalizedDiffOrder;
+        expect(finalizedOrder.length).toBeLessThanOrEqual(MAX);
+
+        // Oldest should be evicted from pendingDiffs
+        expect((manager as any).pendingDiffs.has('diff-0')).toBe(false);
+        expect((manager as any).pendingDiffs.has('diff-1')).toBe(false);
+        expect((manager as any).pendingDiffs.has('diff-2')).toBe(false);
+        expect((manager as any).pendingDiffs.has('diff-3')).toBe(false);
+        expect((manager as any).pendingDiffs.has('diff-4')).toBe(false);
+
+        // Newest entries should still be available (for tool chain to read)
+        const lastIdx = MAX + 4;
+        expect((manager as any).pendingDiffs.has(`diff-${lastIdx}`)).toBe(true);
+    });
+});
+
+describe('DiffManager newFile through CreatePendingDiffOptions (#14)', () => {
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        (vscode as any).EventEmitter = class { public event = jest.fn(); };
+        (vscode as any).WorkspaceEdit = MockWorkspaceEdit;
+        (vscode as any).Range = jest.fn().mockImplementation();
+        (vscode as any).TextEdit = { replace: jest.fn() };
+        (vscode.Uri as any).parse = (v: string) => ({ fsPath: v });
+        (vscode.Uri as any).file = (v: string) => ({ fsPath: v });
+        (vscode.workspace as any).textDocuments = [];
+        (vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).openTextDocument = jest.fn();
+        (vscode.workspace as any).applyEdit = jest.fn(async () => true);
+        (vscode.workspace as any).onDidSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onDidCloseTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(),
+            setStatusBarMessage: jest.fn(),
+            tabGroups: { all: [], close: jest.fn(async () => undefined) }
+        };
+        (fs.readFileSync as jest.Mock).mockReturnValue('original');
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        resetDiffManagerSingleton();
+    });
+
+    it('sets newFile flag during createPendingDiff, before showDiffView', async () => {
+        const manager = getManager();
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/newfile.ts',
+            'C:/tmp/newfile.ts',
+            '',
+            'new content',
+            undefined, undefined, undefined,
+            { newFile: true }
+        );
+
+        expect(pendingDiff.newFile).toBe(true);
+
+        // Cancel: should try to delete the new file
+        await manager.rejectDiff(pendingDiff.id);
+        expect(fs.unlinkSync).toHaveBeenCalledWith('C:/tmp/newfile.ts');
     });
 });

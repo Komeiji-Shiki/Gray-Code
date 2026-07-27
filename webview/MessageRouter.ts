@@ -27,6 +27,23 @@ const STREAM_MESSAGE_TYPES = [
 type StreamMessageType = typeof STREAM_MESSAGE_TYPES[number];
 
 /**
+ * 非阻塞消息类型。
+ *
+ * 这些 handler 可能执行数秒到数分钟（LLM 请求、依赖安装等），
+ * 若在 messageHandlingQueue 中串行 await 会阻塞取消类消息，
+ * 导致 webview 消息通道整体冻结。
+ *
+ * 修改方式：route() 命中这些类型时采用 fire-and-forget，
+ * 不 await handler，catch 中就地清理 requestClients 并回传错误。
+ */
+const NON_BLOCKING_MESSAGE_TYPES = new Set([
+  'summarizeContext',
+  'dependencies.install',
+  'dependencies.uninstall',
+  'storagePath.migrate'
+]);
+
+/**
  * 消息路由器
  */
 export class MessageRouter {
@@ -78,27 +95,58 @@ export class MessageRouter {
    */
   async route(type: string, data: any, requestId: string, ctx: HandlerContext, clientId?: string): Promise<boolean> {
     const resolvedClientId = this.clientRegistry.resolveClientId(clientId, ctx.clientId);
-    if (requestId && resolvedClientId) {
-      this.requestClients.set(requestId, resolvedClientId);
-    }
 
-    const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
+    // requestId → clientId 的映射只在 sendResponse / sendError 时删除，因此只能为「确实会被本
+    // router 处理」的请求登记：以前无论如何都先 set，未命中处理器而回退的消息、以及 handler
+    // 抛异常的请求都会留下一条永不清理的条目，这个 Map 没有上界。
+    const trackRequestClient = () => {
+      if (requestId && resolvedClientId) {
+        this.requestClients.set(requestId, resolvedClientId);
+      }
+    };
 
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
+      trackRequestClient();
       await this.handleStreamMessage(type as StreamMessageType, data, requestId);
       return true;
     }
 
     // 检查注册表中是否有处理器
     const handler = this.registry.get(type);
-    if (handler) {
-      await handler(data, requestId, routedCtx);
+    if (!handler) {
+      // 未找到处理器，返回 false 表示需要回退
+      return false;
+    }
+
+    // 非阻塞消息：fire-and-forget，不占住消息队列。
+    // 长任务（总结、依赖安装等）耗时数十秒到数分钟，串行 await 会让
+    // 取消类消息排不到队，导致 webview 消息通道整体冻结。
+    if (NON_BLOCKING_MESSAGE_TYPES.has(type)) {
+      trackRequestClient();
+      const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
+      handler(data, requestId, routedCtx).catch((error) => {
+        console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
+        this.requestClients.delete(requestId);
+        try {
+          this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
+        } catch {
+          // 发送错误失败则静默忽略
+        }
+      });
       return true;
     }
 
-    // 未找到处理器，返回 false 表示需要回退
-    return false;
+    trackRequestClient();
+    const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
+    try {
+      await handler(data, requestId, routedCtx);
+    } catch (error) {
+      // handler 抛出时没有任何一方会回复，映射必须就地清理
+      this.requestClients.delete(requestId);
+      throw error;
+    }
+    return true;
   }
 
   private createRoutedContext(ctx: HandlerContext, clientId?: WebviewClientId): HandlerContext {

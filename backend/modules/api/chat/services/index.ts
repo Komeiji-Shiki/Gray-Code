@@ -11,7 +11,6 @@ export { ContextTrimService } from './ContextTrimService';
 export { ToolExecutionService, type ToolExecutionFullResult } from './ToolExecutionService';
 export { SummarizeService } from './SummarizeService';
 export { CheckpointService } from './CheckpointService';
-export { OrphanedToolCallService, type OrphanedToolCallResult } from './OrphanedToolCallService';
 export { DiffInterruptService } from './DiffInterruptService';
 export { ChatFlowService, type ChatStreamOutput } from './ChatFlowService';
 export {

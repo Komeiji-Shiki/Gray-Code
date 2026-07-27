@@ -44,11 +44,11 @@ function getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
 /**
  * 获取排除模式
  *
- * 从设置管理器获取用户配置的排除模式，如果未配置则使用默认值
- * 将多个模式合并为单个 glob 模式（用大括号语法）
+ * 从已解析的工具配置取用户配置的排除模式，未配置时使用默认值；
+ * 多个模式合并为单个 glob 模式（大括号语法）。
+ * handler 直接复用本函数，避免两处重复维护相同逻辑。
  */
-function getExcludePattern(): string {
-    const config = getSearchInFilesConfig();
+function getExcludePattern(config: Readonly<SearchInFilesToolConfig>): string {
     if (config.excludePatterns && config.excludePatterns.length > 0) {
         // 多个模式用 {} 语法组合
         if (config.excludePatterns.length === 1) {
@@ -337,13 +337,16 @@ function estimateMatchCost(relativePath: string, matchText: string, context: str
 async function searchInDirectory(
     searchRoot: vscode.Uri,
     filePattern: string,
-    searchRegex: RegExp,
+    searchRegexInput: RegExp,
     maxResults: number,
     workspaceName: string | null,
     excludePattern: string,
     config: Readonly<SearchInFilesToolConfig>,
     budget?: SearchBudget
 ): Promise<SearchMatch[]> {
+    // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
+    // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
+    const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
     const results: SearchMatch[] = [];
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
@@ -480,25 +483,42 @@ async function searchInDirectory(
  * 在单个目录中搜索并替换
  * 使用 DiffManager 创建待审阅的 diff
  */
+/**
+ * 替换模式下被跳过的文件及原因。
+ *
+ * 为什么需要：以前文件处理异常被静默吞掉，模型看到的结果是
+ * “这个文件没有匹配”，实际是“处理失败”，导致结果与现实对不上。
+ */
+interface SkippedFileInfo {
+    file: string;
+    reason: string;
+}
+
 async function searchAndReplaceInDirectory(
     searchRoot: vscode.Uri,
     filePattern: string,
-    searchRegex: RegExp,
+    searchRegexInput: RegExp,
     replacement: string,
     maxFiles: number,
     workspaceName: string | null,
     excludePattern: string,
     config: Readonly<SearchInFilesToolConfig>,
     toolId?: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    conversationId?: string
 ): Promise<{
     matches: SearchMatch[];
     replacements: ReplaceResult[];
     totalReplacements: number;
+    processedFiles: number;
+    skippedFiles: SkippedFileInfo[];
     cancelled: boolean;
 }> {
+    // 本地克隆，理由同 searchInDirectory：隔离 g 标志正则的 lastIndex 状态
+    const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
     const matches: SearchMatch[] = [];
     const replacements: ReplaceResult[] = [];
+    const skippedFiles: SkippedFileInfo[] = [];
     let totalReplacements = 0;
     let cancelledBySignal = false;
     
@@ -529,6 +549,10 @@ async function searchAndReplaceInDirectory(
             if (maxReplaceFileSizeBytes > 0) {
                 const size = await tryGetFileSizeBytes(fileUri);
                 if (typeof size === 'number' && size > maxReplaceFileSizeBytes) {
+                    skippedFiles.push({
+                        file: toRelativePath(fileUri, workspaceName !== null),
+                        reason: `File exceeds the replace-mode size limit (${size} > ${maxReplaceFileSizeBytes} bytes)`
+                    });
                     continue;
                 }
             }
@@ -645,7 +669,8 @@ async function searchAndReplaceInDirectory(
                     newText,
                     blocks,
                     undefined,
-                    toolId
+                    toolId,
+                    { conversationId }
                 );
 
                 const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
@@ -687,13 +712,24 @@ async function searchAndReplaceInDirectory(
                     autoSaveError,
                     pendingDiffId
                 });
+            } else if (fileReplacementCount > 0) {
+                // 有匹配但替换后内容无变化（替换文本与原文相同），
+                // 明确告知而不是让 matches 与 filesModified 矛盾得让模型困惑
+                skippedFiles.push({
+                    file: relativePath,
+                    reason: `Matched ${fileReplacementCount} time(s) but the replacement produced no changes (replacement text equals the original)`
+                });
             }
-        } catch {
-            // 跳过无法读取/写入的文件
+        } catch (e) {
+            // 文件处理失败不再静默吞掉，记录原因让模型能区分“没匹配”和“处理失败”
+            skippedFiles.push({
+                file: toRelativePath(fileUri, workspaceName !== null),
+                reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
+            });
         }
     }
     
-    return { matches, replacements, totalReplacements, cancelled: cancelledBySignal };
+    return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal };
 }
 
 /**
@@ -822,6 +858,10 @@ export function createSearchInFilesTool(): Tool {
                         description: 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
                         default: false
                     },
+                    caseSensitive: {
+                        type: 'boolean',
+                        description: 'Whether matching is case-sensitive. Defaults differ by mode: search mode defaults to false (case-insensitive), replace mode defaults to true (conservative exact replacement). Pass explicitly to override, e.g. set caseSensitive=false in replace mode to replace matches found by a case-insensitive search.'
+                    },
                     maxResults: {
                         type: 'number',
                         description: '[Search mode] Maximum number of match results',
@@ -849,12 +889,25 @@ export function createSearchInFilesTool(): Tool {
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = (args.mode as string) || 'search';
             const isReplaceMode = mode === 'replace';
+
+            // 大小写语义：search 默认不区分（方便定位），replace 默认区分（保守替换）。
+            // 支持显式覆盖，并在 0 命中时通过诊断信息提醒模型两种模式的默认差异，
+            // 避免“search 搜得到、replace 替不了”的困惑。
+            const caseSensitive = typeof args.caseSensitive === 'boolean'
+                ? (args.caseSensitive as boolean)
+                : isReplaceMode;
             
             // 搜索模式参数
             const maxResults = (args.maxResults as number) || 100;
             
-            // 替换模式参数（仅在替换模式下使用）
-            const replacement = isReplaceMode ? ((args.replace as string) ?? '') : '';
+            // 替换模式参数（仅在替换模式下使用）。
+            // isRegex=false 时 query 按字面量匹配，替换串也必须按字面量写入：
+            // 转义 $ 序列，防止 $&/$1/$$ 被 String.replace 解释为特殊替换模式
+            //（工具描述承诺捕获组仅在 isRegex=true 时生效）。
+            const rawReplacement = isReplaceMode ? ((args.replace as string) ?? '') : '';
+            const replacement = isReplaceMode && !isRegex
+                ? rawReplacement.replace(/\$/g, '$$$$')
+                : rawReplacement;
             const maxFiles = isReplaceMode ? ((args.maxFiles as number) || 50) : 50;
 
             if (!query) {
@@ -867,21 +920,16 @@ export function createSearchInFilesTool(): Tool {
             }
 
             try {
-                // 创建搜索正则表达式
-                // 对于搜索模式，使用 'gim' 标志（全局、不区分大小写、多行）
-                // 对于替换模式，使用 'g' 标志（全局匹配）确保替换所有匹配项
-                const flags = isReplaceMode ? 'g' : 'gim';
+                // 创建搜索正则表达式（均为全局匹配）
+                // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
+                const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
                 const searchRegex = isRegex
                     ? new RegExp(query, flags)
                     : new RegExp(escapeRegExp(query), flags);
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
-                const excludePattern = (searchConfig.excludePatterns && searchConfig.excludePatterns.length > 0)
-                    ? (searchConfig.excludePatterns.length === 1
-                        ? searchConfig.excludePatterns[0]
-                        : `{${searchConfig.excludePatterns.join(',')}}`)
-                    : DEFAULT_EXCLUDE;
+                const excludePattern = getExcludePattern(searchConfig);
                 
                 // 解析路径，确定搜索范围
                 const { workspace: targetWorkspace, relativePath, isExplicit } = parseWorkspacePath(searchPath);
@@ -891,6 +939,7 @@ export function createSearchInFilesTool(): Tool {
                     // 替换模式
                     let allMatches: SearchMatch[] = [];
                     let allReplacements: ReplaceResult[] = [];
+                    let allSkippedFiles: SkippedFileInfo[] = [];
                     let totalReplacements = 0;
                     let anyCancelled = false;
                     
@@ -911,10 +960,12 @@ export function createSearchInFilesTool(): Tool {
                             excludePattern,
                             searchConfig,
                             context?.toolId,
-                            context?.abortSignal
+                            context?.abortSignal,
+                            context?.conversationId
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
+                        allSkippedFiles = result.skippedFiles;
                         totalReplacements = result.totalReplacements;
                         anyCancelled = result.cancelled;
                     } else if (searchPath === '.' && workspaces.length > 1) {
@@ -933,12 +984,16 @@ export function createSearchInFilesTool(): Tool {
                                 excludePattern,
                                 searchConfig,
                                 context?.toolId,
-                                context?.abortSignal
+                                context?.abortSignal,
+                                context?.conversationId
                             );
                             allMatches.push(...result.matches);
                             allReplacements.push(...result.replacements);
+                            allSkippedFiles.push(...result.skippedFiles);
                             totalReplacements += result.totalReplacements;
-                            remainingFiles -= result.replacements.length;
+                            // 按”实际处理过的文件数”扣减（含有匹配但未产生变化的文件），
+                            // 与 searchAndReplaceInDirectory 内部的 maxFiles 语义保持一致
+                            remainingFiles -= result.processedFiles;
 
                             anyCancelled = anyCancelled || result.cancelled;
                             if (anyCancelled) {
@@ -963,14 +1018,24 @@ export function createSearchInFilesTool(): Tool {
                             excludePattern,
                             searchConfig,
                             context?.toolId,
-                            context?.abortSignal
+                            context?.abortSignal,
+                            context?.conversationId
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
+                        allSkippedFiles = result.skippedFiles;
                         totalReplacements = result.totalReplacements;
                         anyCancelled = result.cancelled;
                     }
-                    
+
+                    // 0 命中诊断：帮模型区分“真没匹配”和“大小写语义差异导致的漏匹配”
+                    let zeroMatchHint: string | undefined;
+                    if (!anyCancelled && allMatches.length === 0 && allReplacements.length === 0) {
+                        zeroMatchHint = caseSensitive
+                            ? 'No matches found. Note: replace mode matches case-sensitively by default while search mode is case-insensitive by default. If you located the target via a search-mode query, retry with caseSensitive=false or adjust the query casing.'
+                            : 'No matches found even with case-insensitive matching. Verify the query text, target path and file pattern.';
+                    }
+
                     return {
                         success: !anyCancelled,
                         cancelled: anyCancelled,
@@ -987,6 +1052,9 @@ export function createSearchInFilesTool(): Tool {
                             results: allReplacements,
                             filesModified: allReplacements.length,
                             totalReplacements,
+                            caseSensitive,
+                            skippedFiles: allSkippedFiles.length > 0 ? allSkippedFiles : undefined,
+                            zeroMatchHint,
                             multiRoot: workspaces.length > 1,
                             pathWarning: allMatches.length === 0 && allReplacements.length === 0 ? pathWarning : undefined
                         },

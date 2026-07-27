@@ -12,6 +12,7 @@ import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
+import { withLinkedAbort } from '../abortLink';
 
 /** 图像生成任务类型常量 */
 const TASK_TYPE_IMAGE_GEN = 'image_generation';
@@ -880,22 +881,13 @@ Generated images will be saved to the specified path and returned for viewing.`;
                 }
             }
         },
-        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+        handler: withLinkedAbort(async (args, context: ToolContext | undefined, abortController): Promise<ToolResult> => {
             // 从 context 获取配置和工具 ID
             const config = (context?.config || {}) as GenerateImageConfig;
             const toolId = context?.toolId || generateToolId();
-            
-            // 创建本地取消控制器
-            const abortController = new AbortController();
+
             const abortSignal = abortController.signal;
-            
-            // 如果外部传入了取消信号，将其连接到本地控制器
-            if (context?.abortSignal) {
-                context.abortSignal.addEventListener('abort', () => {
-                    abortController.abort();
-                });
-            }
-            
+
             // 使用 TaskManager 注册任务
             TaskManager.registerTask(toolId, TASK_TYPE_IMAGE_GEN, abortController, {
                 prompt: args.prompt,
@@ -1090,7 +1082,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
                 
                 throw error;
             }
-        }
+        })
     };
 }
 

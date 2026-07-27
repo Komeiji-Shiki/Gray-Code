@@ -35,7 +35,7 @@ import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/prompt
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
-const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
+export const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
 
 /**
@@ -401,23 +401,25 @@ export class ContextTrimService {
      *
      * @param threshold 阈值配置（数值或百分比字符串）
      * @param maxContextTokens 最大上下文 token 数
+     * @param fallbackRatio 当阈值配置为非法值时的兜底比例（0-1，如 0.8 表示按最大上下文 80%）
+     *                      传 0 表示非法值时回退到 0（不裁剪/不额外裁剪）
      * @returns 计算后的阈值
      */
-    calculateThreshold(threshold: number | string, maxContextTokens: number): number {
+    calculateThreshold(threshold: number | string, maxContextTokens: number, fallbackRatio = 0.8): number {
         if (typeof threshold === 'number') {
             return threshold;
         }
-        
+
         // 百分比格式，如 "80%"
         if (threshold.endsWith('%')) {
             const percent = parseFloat(threshold.replace('%', ''));
-            if (!isNaN(percent) && percent > 0 && percent <= 100) {
+            if (!isNaN(percent) && percent >= 0 && percent <= 100) {
                 return Math.floor(maxContextTokens * percent / 100);
             }
         }
-        
-        // 默认返回 80% 的最大上下文
-        return Math.floor(maxContextTokens * 0.8);
+
+        // 非法值：回退到 fallbackRatio * maxContextTokens
+        return Math.floor(maxContextTokens * fallbackRatio);
     }
 
     /**
@@ -688,14 +690,31 @@ export class ContextTrimService {
         const textsToCount = [systemPrompt, dynamicContextText];
 
         // 并行执行文本计数和消息计数
-        const [textTokenResults] = await Promise.all([
+        const [textTokenResults, messageTokenResults] = await Promise.all([
             this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
             missingTokenMessages.length > 0
                 ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
-                : Promise.resolve([])
+                : Promise.resolve([] as number[])
         ]);
-        
+
         const [systemPromptTokens, dynamicContextTokens] = textTokenResults;
+
+        // 把精确计数结果回填到 fullHistory 快照，使 accumulateTokens 读到精确值而非粗估。
+        // 计数结果已通过 preCountUserMessageTokensBatch 写回存储（下一轮生效），
+        // 但本轮 accumulateTokens 读的是计数前的 fullHistory，需要就地修正。
+        if (messageTokenResults.length > 0) {
+            for (let i = 0; i < missingTokenMessages.length; i++) {
+                const { index } = missingTokenMessages[i];
+                const count = messageTokenResults[i];
+                if (count !== undefined && fullHistory[index]) {
+                    const existing = fullHistory[index].tokenCountByChannel;
+                    fullHistory[index].tokenCountByChannel = {
+                        ...existing,
+                        [channelType]: count
+                    };
+                }
+            }
+        }
         
         // 系统提示词和动态上下文的总 token 数
         const promptTokens = systemPromptTokens + dynamicContextTokens;
@@ -1213,10 +1232,20 @@ export class ContextTrimService {
         // 当超过 160k 时触发裁剪，裁剪目标 = 160k - 60k = 100k
         // 这样下次从 100k 增长到 160k 需要更多回合，避免频繁触发裁剪
         const extraCutConfig = config.contextTrimExtraCut ?? 0;
-        const extraCut = this.calculateThreshold(extraCutConfig, maxContextTokens);
+        const extraCut = this.calculateThreshold(extraCutConfig, maxContextTokens, 0);
         
         // 实际保留目标 = 阈值 - 额外裁剪
         const targetTokens = Math.max(0, threshold - extraCut);
+
+        // 额外裁剪 >= 阈值 → targetTokens=0，一次裁剪会清空整段对话；记警告防止静默全裁
+        if (targetTokens === 0 && extraCut > 0) {
+            this.logDebug('trim.extraCut.zeroTarget', {
+                threshold,
+                extraCut,
+                extraCutConfig,
+                maxContextTokens,
+            });
+        }
 
         this.logDebug('trim.perform.start', {
             conversationId,

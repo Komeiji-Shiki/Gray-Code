@@ -35,10 +35,11 @@ export interface SubAgentRunEvent extends ToolProgressEvent {
  * SubAgent run 的显式状态机。
  *
  * 修改原因：原有 running/completed/failed/cancelled 无法区分 Monitor 暂停、等待用户处理和扩展重载中断。
- * 修改方式：增加 paused、awaiting_monitor_action、interrupted，并作为持久快照的唯一状态类型。
+ * 修改方式：增加 paused、awaiting_monitor_action、interrupted，并作为持久快照的唯一状态类型；
+ *          并发排队能力引入后新增 queued，表示 run 已创建但正在等待全局并发信号量席位。
  * 修改目的：让 UI 控制按钮、主工具等待语义和历史 run 展示不再混用 failed/cancelled。
  */
-export type SubAgentRunStatus = 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+export type SubAgentRunStatus = 'queued' | 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 
 export interface SubAgentRunPersistedRecord {
     runId: string;
@@ -112,6 +113,42 @@ type SubAgentRunListener = (event: SubAgentRunEvent, snapshot: SubAgentRunSnapsh
 const DEFAULT_CONTENT_WINDOW_LIMIT = 20;
 const MANIFEST_PREVIEW_MAX_LENGTH = 160;
 
+/**
+ * 单个 run 内存事件 journal 的上限。
+ *
+ * 修改原因：事件 journal 从不持久化也从不裁剪，长 run（大量工具调用与重试）会让它无限增长。
+ * 修改方式：超出上限时丢弃最旧事件，只保留最近一段用于 Monitor 审计与重试状态展示。
+ * 修改目的：内存占用与 run 时长解耦。
+ */
+const MAX_EVENTS_PER_RUN = 500;
+
+/**
+ * 内存中保留的 run 快照上限。
+ *
+ * 修改原因：snapshots Map 只增不减，每个条目持有完整 Content[]；长时间开着的窗口跑过几百个 SubAgent 后会持续占用内存。
+ * 修改方式：超出上限时按 updatedAt 淘汰最旧的、已进入终态且已持久化到 conversation metadata 的 run。
+ * 修改目的：内存有界，同时被淘汰的 run 仍可通过 loadConversationSnapshots 从元数据恢复查看。
+ */
+const MAX_RETAINED_SNAPSHOTS = 200;
+
+/**
+ * 流式期间 transcript 落盘的最小间隔（毫秒）。
+ *
+ * 修改原因：每次 transcript 变更都要"读整份 conversation metadata → 改 → 写回"，而 metadata 里装着该对话
+ *          全部 run 的完整 contents；一个多轮子代理跑下来会把同一份大 JSON 反复 parse/stringify 几十次。
+ * 修改方式：内容类写入按固定窗口节流合并，run 状态变更（含所有终态）仍然立即落盘。
+ * 修改目的：落盘次数与真实时间挂钩而不是与 token 产出速度挂钩，同时不牺牲崩溃恢复能力——
+ *          终态事件总会立即写入当时最新的 snapshot。
+ */
+const PERSIST_THROTTLE_MS = 1500;
+
+const TERMINAL_RUN_STATUSES: ReadonlySet<SubAgentRunStatus> = new Set<SubAgentRunStatus>([
+    'completed',
+    'failed',
+    'cancelled',
+    'interrupted'
+]);
+
 function cloneContentsForWindow(contents: Content[]): Content[] {
     // 修改原因：按需 transcript window 会被前端本地流式 delta 临时修改，不能把事件总线内存对象引用直接交出去。
     // 修改方式：只对窗口切片做 JSON 深拷贝，而不是像旧 snapshots 首包那样复制所有 run 的完整 contents。
@@ -121,17 +158,31 @@ function cloneContentsForWindow(contents: Content[]): Content[] {
 
 function extractContentPreview(content: Content | undefined): string | undefined {
     if (!content) return undefined;
-    const text = (content.parts || [])
-        .map(part => {
-            if (typeof part.text === 'string' && part.text.trim()) return part.text.trim();
-            if (part.functionCall?.name) return `调用工具 ${part.functionCall.name}`;
-            if (part.functionResponse?.name) return `工具结果 ${part.functionResponse.name}`;
-            return '';
-        })
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+    // 修改原因：manifest 会在每个 llm_delta 事件上重新派生，旧实现先把整条消息的全部 parts 拼成完整字符串
+    //          再截断到 160 字，对动辄数万字符的模型输出构成流式热路径上的 O(正文长度) 重复开销。
+    // 修改方式：逐 part 累积，一旦超过预览上限立即停止读取后续内容。
+    // 修改目的：预览成本与预览长度成正比，而不是与消息长度成正比。
+    const segments: string[] = [];
+    let length = 0;
+    for (const part of content.parts || []) {
+        let segment = '';
+        if (typeof part.text === 'string' && part.text.trim()) {
+            segment = part.text.trim();
+        } else if (part.functionCall?.name) {
+            segment = `调用工具 ${part.functionCall.name}`;
+        } else if (part.functionResponse?.name) {
+            segment = `工具结果 ${part.functionResponse.name}`;
+        }
+        if (!segment) continue;
+        // 单个 part 就可能远超上限，先按上限裁剪再累积
+        segments.push(segment.length > MANIFEST_PREVIEW_MAX_LENGTH + 1
+            ? segment.slice(0, MANIFEST_PREVIEW_MAX_LENGTH + 1)
+            : segment);
+        length += segment.length + 1;
+        if (length > MANIFEST_PREVIEW_MAX_LENGTH) break;
+    }
+
+    const text = segments.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return undefined;
     return text.length > MANIFEST_PREVIEW_MAX_LENGTH
         ? `${text.slice(0, MANIFEST_PREVIEW_MAX_LENGTH)}…`
@@ -202,7 +253,7 @@ function normalizePersistedMap(raw: unknown): Record<string, SubAgentRunPersiste
     return raw as Record<string, SubAgentRunPersistedRecord>;
 }
 
-class SubAgentRunEventBus {
+export class SubAgentRunEventBus {
     getTranscriptRepository(runId: string): ITranscriptRepository {
         // 修改原因：SubAgent 子 transcript 需要与主聊天共享同一仓储抽象，而不暴露事件总线内部的 snapshot/persist 细节。
         // 修改方式：为指定 runId 创建一个绑定当前事件总线的 SubAgentTranscriptRepository。
@@ -214,6 +265,97 @@ class SubAgentRunEventBus {
     private readonly snapshots = new Map<string, SubAgentRunSnapshot>();
     private readonly stores = new Map<string, SubAgentRunConversationStore>();
     private readonly persistQueues = new Map<string, Promise<void>>();
+    /** 已排队但尚未开始写入的 run，用于合并连续的持久化请求 */
+    private readonly pendingPersists = new Set<string>();
+    /** 节流窗口内待落盘的 run 定时器 */
+    private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /** 各 run 上一次真正发起落盘的时刻 */
+    private readonly lastPersistAt = new Map<string, number>();
+
+    /**
+     * 追加事件到 run 的内存 journal，并保持长度有界。
+     */
+    private pushEvent(snapshot: SubAgentRunSnapshot, event: SubAgentRunEvent): void {
+        snapshot.events.push(event);
+        if (snapshot.events.length > MAX_EVENTS_PER_RUN) {
+            snapshot.events.splice(0, snapshot.events.length - MAX_EVENTS_PER_RUN);
+        }
+    }
+
+    /**
+     * transcript 变更的统一提交尾巴：递增修订号、广播 content_snapshot、入队落盘。
+     *
+     * 修改原因：append / updateLast / replace 三个写入口各自复制了同一段"改时间 → bump revision → stamp → push →
+     *          notify → persist"逻辑，且都把整个 snapshot.contents 塞进事件 payload。该 payload 没有任何消费者
+     *          （Monitor 面板一律从 snapshot 自行派生 contentCount），却会让内存事件 journal 长期引用旧 contents 数组，
+     *          replaceContents 之后被替换掉的数组因此无法回收。
+     * 修改方式：抽成单一提交入口，事件只携带 contentCount 等轻量状态字段。
+     * 修改目的：写入口只描述"改了什么"，提交语义与事件瘦身在一处维护。
+     */
+    private commitContentChange(snapshot: SubAgentRunSnapshot, timestamp: number): void {
+        snapshot.updatedAt = timestamp;
+        bumpContentRevision(snapshot);
+        const event = stampRunEvent(snapshot, {
+            runId: snapshot.runId,
+            agentName: snapshot.agentName,
+            type: 'content_snapshot',
+            timestamp,
+            payload: { contentCount: snapshot.contents.length }
+        });
+        this.pushEvent(snapshot, event);
+        this.notify(event, snapshot);
+        this.enqueuePersist(snapshot.runId);
+    }
+
+    /**
+     * 按容量淘汰内存中最旧的可恢复 run 快照。
+     *
+     * 只淘汰同时满足以下条件的 run：已进入终态、拥有 conversationId 与 store（即已持久化，可再次恢复）。
+     * 运行中的 run 和无持久化归属的 run 永不淘汰。
+     */
+    private evictSnapshotsIfNeeded(): void {
+        if (this.snapshots.size <= MAX_RETAINED_SNAPSHOTS) {
+            return;
+        }
+        const evictable = Array.from(this.snapshots.values())
+            .filter(snapshot => TERMINAL_RUN_STATUSES.has(snapshot.status)
+                && !!snapshot.conversationId
+                && this.stores.has(snapshot.runId))
+            .sort((a, b) => a.updatedAt - b.updatedAt);
+
+        let overflow = this.snapshots.size - MAX_RETAINED_SNAPSHOTS;
+        for (const snapshot of evictable) {
+            if (overflow <= 0) break;
+            // 仍有未完成的持久化写入时跳过，避免丢失尚未落盘的内容
+            if (this.pendingPersists.has(snapshot.runId) || this.persistTimers.has(snapshot.runId)) continue;
+            this.snapshots.delete(snapshot.runId);
+            this.stores.delete(snapshot.runId);
+            this.persistQueues.delete(snapshot.runId);
+            this.lastPersistAt.delete(snapshot.runId);
+            overflow--;
+        }
+    }
+
+    /**
+     * 分配一个不会撞上**仍然活跃**的 run 的 runId。
+     *
+     * 预分配的 runId 由主工具调用 id 推导，同一个 toolId 二次执行时会重复。旧 run 已终态时沿用
+     * 同名是刻意的：前端在 pending 阶段就是按 toolId 推导 runId 来关联工具卡与 Monitor 的。
+     * 但旧 run 还活着时沿用就有实害——createRun 会覆盖它的内存快照，runController.register 又会
+     * 把旧 AbortController 交给新 run，于是在 Monitor 里暂停其中一个会连带暂停另一个。
+     */
+    allocateRunId(preferredRunId: string): string {
+        const existing = this.snapshots.get(preferredRunId);
+        if (!existing || TERMINAL_RUN_STATUSES.has(existing.status)) {
+            return preferredRunId;
+        }
+
+        let suffix = 2;
+        while (this.snapshots.has(`${preferredRunId}__${suffix}`)) {
+            suffix++;
+        }
+        return `${preferredRunId}__${suffix}`;
+    }
 
     createRun(
         runId: string,
@@ -245,6 +387,7 @@ class SubAgentRunEventBus {
         if (options?.conversationId && options.conversationStore) {
             this.stores.set(runId, options.conversationStore);
         }
+        this.evictSnapshotsIfNeeded();
         this.emit({
             runId,
             agentName,
@@ -252,7 +395,6 @@ class SubAgentRunEventBus {
             timestamp: now,
             payload
         });
-        this.enqueuePersist(runId);
         return snapshot;
     }
 
@@ -287,7 +429,7 @@ class SubAgentRunEventBus {
         snapshot.updatedAt = timestamp;
         const stamped = stampRunEvent(snapshot, normalized);
         if (!isLiveOnlyEvent(stamped)) {
-            snapshot.events.push(stamped);
+            this.pushEvent(snapshot, stamped);
         }
 
         if (stamped.type === 'run_completed') {
@@ -303,6 +445,13 @@ class SubAgentRunEventBus {
             snapshot.status = 'paused';
         } else if (stamped.type === 'run_resumed') {
             snapshot.status = 'running';
+        } else if (stamped.type === 'run_queued') {
+            // 修改原因：并发排队时 Monitor 需要区分“排队中”和“执行中”，否则用户会误以为 run 卡死。
+            // 修改方式：executor 在 acquire 信号量前发 run_queued，acquire 成功后发 run_started 恢复 running。
+            // 修改目的：排队状态可视化，且排队时间不计入 maxRuntime。
+            snapshot.status = 'queued';
+        } else if (stamped.type === 'run_started') {
+            snapshot.status = 'running';
         } else if (stamped.type === 'run_awaiting_monitor_action') {
             snapshot.status = 'awaiting_monitor_action';
         } else if (stamped.type === 'run_interrupted') {
@@ -311,7 +460,8 @@ class SubAgentRunEventBus {
 
         this.notify(stamped, snapshot);
         if (stamped.type.startsWith('run_')) {
-            this.enqueuePersist(stamped.runId);
+            // run 状态变更是低频且关键的（尤其终态），不参与内容写入的节流窗口
+            this.enqueuePersist(stamped.runId, true);
         }
     }
 
@@ -327,19 +477,7 @@ class SubAgentRunEventBus {
             timestamp: content.timestamp || now,
             index: snapshot.contents.length
         } as Content);
-        snapshot.updatedAt = now;
-        bumpContentRevision(snapshot);
-
-        const event = stampRunEvent(snapshot, {
-            runId,
-            agentName: snapshot.agentName,
-            type: 'content_snapshot',
-            timestamp: now,
-            payload: { contents: snapshot.contents }
-        });
-        snapshot.events.push(event);
-        this.notify(event, snapshot);
-        this.enqueuePersist(runId);
+        this.commitContentChange(snapshot, now);
     }
 
     updateLastModelContent(runId: string, content: Content): void {
@@ -360,18 +498,11 @@ class SubAgentRunEventBus {
             return;
         }
 
-        const now = Date.now();
-        snapshot.updatedAt = now;
-        bumpContentRevision(snapshot);
-        const event = stampRunEvent(snapshot, {
-            runId,
-            agentName: snapshot.agentName,
-            type: 'content_snapshot',
-            timestamp: now,
-            payload: { contents: snapshot.contents }
-        });
-        snapshot.events.push(event);
-        this.notify(event, snapshot);
+        // 修改原因：这里过去是三个 transcript 写入口中唯一不落盘的，持久记录的 contentRevision 会落后于内存快照，
+        //          扩展在 run 进行中重载时最后一轮模型输出也无法恢复。
+        // 修改方式：与 appendContent/replaceContents 走同一个 commitContentChange 提交尾巴。
+        // 修改目的：transcript 的三个写入口具有一致的广播与持久化语义。
+        this.commitContentChange(snapshot, Date.now());
     }
 
     replaceContents(runId: string, contents: Content[]): SubAgentRunSnapshot | undefined {
@@ -390,19 +521,7 @@ class SubAgentRunEventBus {
             index,
             timestamp: content.timestamp || now
         } as Content));
-        snapshot.updatedAt = now;
-        bumpContentRevision(snapshot);
-
-        const event = stampRunEvent(snapshot, {
-            runId,
-            agentName: snapshot.agentName,
-            type: 'content_snapshot',
-            timestamp: now,
-            payload: { contents: snapshot.contents }
-        });
-        snapshot.events.push(event);
-        this.notify(event, snapshot);
-        this.enqueuePersist(runId);
+        this.commitContentChange(snapshot, now);
         return snapshot;
     }
 
@@ -529,6 +648,7 @@ class SubAgentRunEventBus {
             this.stores.set(record.runId, store);
             snapshots.push(snapshot);
         }
+        this.evictSnapshotsIfNeeded();
 
         return snapshots.sort((a, b) => b.updatedAt - a.updatedAt);
     }
@@ -539,17 +659,62 @@ class SubAgentRunEventBus {
         }
     }
 
-    private enqueuePersist(runId: string): void {
+    /**
+     * 请求把 run 落盘。
+     *
+     * @param immediate run 状态变更（含终态）跳过节流窗口立即写入；内容类变更按 PERSIST_THROTTLE_MS 合并。
+     */
+    private enqueuePersist(runId: string, immediate = false): void {
+        if (immediate) {
+            const timer = this.persistTimers.get(runId);
+            if (timer) {
+                clearTimeout(timer);
+                this.persistTimers.delete(runId);
+            }
+            this.flushPersist(runId);
+            return;
+        }
+
+        // 已有待落盘窗口时无需重复排期：定时器到期时读取的是届时最新的 snapshot
+        if (this.persistTimers.has(runId)) {
+            return;
+        }
+        const elapsed = Date.now() - (this.lastPersistAt.get(runId) ?? 0);
+        if (elapsed >= PERSIST_THROTTLE_MS) {
+            this.flushPersist(runId);
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.persistTimers.delete(runId);
+            this.flushPersist(runId);
+        }, PERSIST_THROTTLE_MS - elapsed);
+        // 待落盘窗口不应成为进程存活理由：真正的数据安全由终态事件的立即落盘保证
+        (timer as { unref?: () => void }).unref?.();
+        this.persistTimers.set(runId, timer);
+    }
+
+    private flushPersist(runId: string): void {
         const snapshot = this.snapshots.get(runId);
         const store = this.stores.get(runId);
         if (!snapshot?.conversationId || !store) {
             return;
         }
+        this.lastPersistAt.set(runId, Date.now());
+
+        // 修改原因：流式期间每次 transcript 写入都排一次完整的「读元数据 → 改 → 写回」，队列会被同一个 run 的连续写入撑满。
+        // 修改方式：已排队但尚未开始执行的写入会读取写入时刻的最新 snapshot 状态，因此期间的重复请求直接合并掉。
+        // 修改目的：持久化次数与实际写入时机相关，而不是与 transcript 变更次数线性相关。
+        if (this.pendingPersists.has(runId)) {
+            return;
+        }
+        this.pendingPersists.add(runId);
 
         const previous = this.persistQueues.get(runId) || Promise.resolve();
         const next = previous
             .catch(() => undefined)
             .then(async () => {
+                // 进入真正写入前清除脏标记：写入期间发生的新变更会重新排队一次后续写入
+                this.pendingPersists.delete(runId);
                 const raw = await store.getCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY);
                 const persistedMap = normalizePersistedMap(raw);
                 ensureSnapshotProtocolFields(snapshot);
@@ -567,6 +732,7 @@ class SubAgentRunEventBus {
                 await store.setCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
             })
             .catch(error => {
+                this.pendingPersists.delete(runId);
                 console.warn('[SubAgentRunEventBus] Failed to persist SubAgent run:', error);
             });
 

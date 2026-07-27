@@ -249,14 +249,11 @@ export interface ApplyDiffToolConfig {
 
 /**
  * Delete File 工具配置
+ *
+ * 注：是否需要确认由统一的自动执行配置（toolAutoExec）控制，
+ * 此处不再重复定义 autoExecute（旧字段从未被执行链路消费，已移除）。
  */
 export interface DeleteFileToolConfig {
-    /**
-     * 是否自动执行（无需确认）
-     * 默认 false，需要用户确认后才执行
-     */
-    autoExecute: boolean;
-    
     [key: string]: unknown;
 }
 
@@ -313,12 +310,6 @@ export interface ExecuteCommandToolConfig {
      * 默认超时时间（毫秒）
      */
     defaultTimeout: number;
-    
-    /**
-     * 是否自动执行（无需确认）
-     * 默认 false，需要用户确认后才执行
-     */
-    autoExecute?: boolean;
     
     /**
      * 返回给 AI 的最大输出行数
@@ -818,6 +809,16 @@ export interface PromptMode {
      * 未设置时继承 code 工具集
      */
     toolPolicy?: string[];
+
+    /**
+     * 用户是否主动定制过 toolPolicy。
+     *
+     * - false / undefined：未定制，运行时由内置默认 toolPolicy 填充
+     * - true：用户主动设定过（含主动设为 undefined 以继承上游）
+     *
+     * 由 savePromptMode 在保存时由前端传入或推断设置。
+     */
+    toolPolicyCustomized?: boolean;
 }
 
 /**
@@ -1153,10 +1154,19 @@ export interface SummarizeConfig {
     autoSummarizePrompt: string;
     
     /**
-     * 保留最近 N 轮不总结
+     * 最少保留最近 N 轮不总结（作为 keepRecentTokens 预算的下限保护）
      */
     keepRecentRounds: number;
-    
+
+    /**
+     * 总结时保留最近内容的 token 预算
+     *
+     * 支持绝对 token 数（number 或数字字符串）或相对主对话模型最大上下文的
+     * 百分比字符串（如 '25%'）。总结范围按轮边界对齐：从最近一轮往前累计，
+     * 超出预算的更早轮次会被纳入总结。
+     */
+    keepRecentTokens?: number | string;
+
     /**
      * 是否使用专门的总结模型
      */
@@ -1265,7 +1275,7 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     agents: SubAgentConfigItem[];
     
     /**
-     * AI 一次性可调用的最大子代理数量
+     * 同时运行的子代理数量上限，超出的自动排队（-1 表示无限制）
      * 默认: 3
      */
     maxConcurrentAgents?: number;
@@ -1274,6 +1284,15 @@ export interface SubAgentsConfig extends Record<string, unknown> {
      * 全局默认的 Provider 自动重试耗尽处理策略。
      */
     failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
+
+    /**
+     * 是否启用通用 Worker（傻瓜式多 agent 模式）。
+     *
+     * 启用后主模型可直接派发零配置的 "General Worker"：
+     * 继承主会话当前渠道与全部工具权限，数量由主模型自行决定，
+     * 用户无需配置任何 agent。默认开启。
+     */
+    generalWorkerEnabled?: boolean;
 }
 
 /**
@@ -1282,7 +1301,8 @@ export interface SubAgentsConfig extends Record<string, unknown> {
 export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     agents: [],
     maxConcurrentAgents: 3,
-    failureModeAfterRetries: 'fail_parent_tool'
+    failureModeAfterRetries: 'fail_parent_tool',
+    generalWorkerEnabled: true
 };
 
 /**
@@ -1622,6 +1642,14 @@ export interface GlobalSettings {
 }
 
 /**
+ * 机器作用域键（仅本机有效，导出/导入时必须跳过）
+ *
+ * 这些键的值与特定机器绑定（如代理设置中的本地代理端口、
+ * 数据存储路径等），跨机器导入会打断网络或数据目录。
+ */
+export const MACHINE_SCOPE_KEYS: readonly string[] = ['proxy', 'storagePath'];
+
+/**
  * 设置变更事件
  */
 export interface SettingsChangeEvent {
@@ -1799,9 +1827,7 @@ export const DEFAULT_APPLY_DIFF_CONFIG: ApplyDiffToolConfig = {
 /**
  * 默认 delete_file 配置
  */
-export const DEFAULT_DELETE_FILE_CONFIG: DeleteFileToolConfig = {
-    autoExecute: false
-};
+export const DEFAULT_DELETE_FILE_CONFIG: DeleteFileToolConfig = {};
 
 /**
  * 默认 history_search 配置
@@ -1848,7 +1874,6 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
         defaultShell: isWindows ? 'powershell' : (isMac ? 'zsh' : 'bash'),
         shells,
         defaultTimeout: 60000,
-        autoExecute: false,
         maxOutputLines: 50
     };
 }
@@ -1913,6 +1938,14 @@ export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
 };
 
 /**
+ * 内置默认的总结保留预算（keepRecentTokens 的默认值，单一事实来源）
+ *
+ * 用户可在总结设置中修改实际生效值；配置缺失或非法时，
+ * 后端解析（summarizeRangePlanner）与前端展示都回落到该值。
+ */
+export const DEFAULT_KEEP_RECENT_TOKENS = '25%';
+
+/**
  * 默认总结配置
  */
 export const DEFAULT_SUMMARIZE_CONFIG: SummarizeConfig = {
@@ -1937,6 +1970,7 @@ Constraints, preferences, and technical requirements raised by the user (e.g., "
 
 Output content directly without any prefix.`,
     keepRecentRounds: 2,
+    keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS,
     useSeparateModel: false,
     summarizeChannelId: '',
     summarizeModelId: ''
@@ -2104,7 +2138,7 @@ The following are pinned files...
 
 CONTEXT BADGE FORMAT
 
-<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">
+<lim-context type="file" path="example-report.pdf" binary="true" title="example-report.pdf (example)">
 
 </lim-context>
 

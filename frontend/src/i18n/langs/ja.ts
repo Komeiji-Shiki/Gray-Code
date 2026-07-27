@@ -284,6 +284,7 @@ const ja: LanguageMessages = {
             send: 'メッセージを送信',
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
+            sendWhileBusy: '新しいメッセージを送信（実行中のコマンドはバックグラウンドへ、AI が先に応答）',
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
@@ -1051,7 +1052,12 @@ const ja: LanguageMessages = {
                 badges: {
                     dangerous: '危険'
                 },
+                diffReview: {
+                    label: 'Diff レビューで管理',
+                    tooltip: 'このツールの変更はチャット内の確認ダイアログではなく、Diff レビューで確認されます。自動適用は「ツール設定 → Apply Diff → 自動適用」で設定してください。'
+                },
                 tips: {
+                    diffReviewNote: '• 書き込み系ツール（write_file / apply_diff / insert_code / delete_code）は Diff レビューで確認されます。Apply Diff ツール設定で「自動適用」を有効にすると完全自動になります（このページでのチェックは不要）',
                     dangerousDefault: '• 「危険」とマークされたツールは、デフォルトでユーザーの確認が必要です',
                     deleteFileWarning: '• delete_file: ファイル削除は元に戻せないため、確認を有効にすることをお勧めします',
                     executeCommandWarning: '• execute_command: ターミナルコマンドの実行はシステムに影響を与える可能性があります',
@@ -1466,9 +1472,12 @@ const ja: LanguageMessages = {
                 delete: '削除',
                 disabled: '無効',
                 enabled: 'このサブエージェントを有効化',
+                saveFailed: '保存に失敗しました：{error}',
                 globalConfig: 'グローバル設定',
                 maxConcurrentAgents: '最大同時実行数',
-                maxConcurrentAgentsHint: 'AI が一度に呼び出せるサブエージェントの最大数（-1 で無制限）',
+                maxConcurrentAgentsHint: '同時に実行できるサブエージェントの上限。超過分は順番待ちになります（-1 で無制限）',
+                generalWorker: '汎用ワーカーを有効化（お手軽モード）',
+                generalWorkerHint: 'メインモデルが設定不要の "General Worker" を直接派遣できます。現在のチャンネルと全ツール権限を継承し、数はモデルが自分で決定。エージェントの手動設定は不要です',
                 basicInfo: '基本情報',
                 description: '説明',
                 descriptionPlaceholder: 'メイン AI がこのサブエージェントを使用すべき状況を説明',
@@ -1509,7 +1518,30 @@ const ja: LanguageMessages = {
                     nameLabel: '名前',
                     namePlaceholder: '例：コードレビューエキスパート',
                     nameRequired: 'サブエージェントの名前を入力してください',
-                    nameDuplicate: '同じ名前のサブエージェントが既に存在します'
+                    nameDuplicate: '同じ名前のサブエージェントが既に存在します',
+                    templateLabel: 'テンプレート'
+                },
+                presets: {
+                    blank: {
+                        name: '空白',
+                        description: 'ゼロからサブエージェントを設定'
+                    },
+                    codeReviewer: {
+                        name: 'コードレビュアー',
+                        description: '指定範囲のコードを読み取り専用でレビューし、構造化された指摘を返します。ファイルは変更しません'
+                    },
+                    deepResearcher: {
+                        name: 'ディープリサーチャー',
+                        description: 'コードベースと外部資料を深く調査し、出典付きの調査レポートを返します'
+                    },
+                    parallelEditor: {
+                        name: '並列エディター',
+                        description: '割り当てられた範囲内でコード変更を適用・検証します。複数範囲の並列編集向け'
+                    },
+                    webSearcher: {
+                        name: 'ウェブサーチャー',
+                        description: 'MCP ツールのみでウェブ検索を行い、出典リンク付きの要約を返します'
+                    }
                 }
             },
             modelManager: {
@@ -1727,9 +1759,11 @@ const ja: LanguageMessages = {
                 },
                 optionsSection: {
                     title: '要約オプション',
-                    keepRounds: '最近のラウンドを保持',
+                    keepRounds: '最少保持ラウンド数',
                     keepRoundsUnit: 'ラウンド',
-                    keepRoundsHint: '最近の N ラウンドの会話を要約から除外し、コンテキストの連続性を確保',
+                    keepRoundsHint: '保持バジェットの下限保護として、少なくとも最近の N ラウンドは要約されません',
+                    keepTokens: '直近保持バジェット',
+                    keepTokensHint: '要約時に圧縮せず保持する直近コンテキストの量：トークン数（例 30000）またはモデル最大コンテキストに対する割合（例 25%）。実際の範囲はこのバジェット内でラウンド境界に揃えられます',
                     manualPrompt: '手動要約プロンプト',
                     manualPromptPlaceholder: '手動要約で使用するプロンプトを入力...',
                     manualPromptHint: '「コンテキストを要約」ボタンを押したときに使用されます',
@@ -2219,6 +2253,47 @@ const ja: LanguageMessages = {
             }
         },
 
+        backgroundTasks: {
+            running: '実行中',
+            completed: '完了',
+            failed: '失敗',
+            cancelled: 'キャンセル済み',
+            cancel: 'タスクをキャンセル',
+            dismiss: '削除',
+            pendingReport: '結果はモデルへの報告待ち',
+            outputTitle: 'コマンド出力',
+            noOutput: '出力はまだありません'
+        },
+        subagents: {
+            monitor: {
+                title: 'SubAgent Monitor',
+                subtitle: 'SubAgent のシステムプロンプト、コンテキスト、AI 出力、思考過程、ツール呼び出しをチャット形式で表示します。',
+                runCount: '{count} 件の実行',
+                empty: 'SubAgent の会話記録はまだありません。',
+                defaultAgentName: 'Sub-Agent',
+                loadedCount: '{loaded} / {total} 件を読み込み済み',
+                loadOlder: '以前のメッセージを読み込む',
+                loadingOlder: '読み込み中…',
+                pause: '一時停止',
+                resume: '再開',
+                exit: '終了して親ツールを失敗させる',
+                retrying: '自動リトライ {attempt}/{maxAttempts}',
+                retrySuccess: '自動リトライ成功',
+                retryFailed: '自動リトライ失敗：{error}',
+                readOnly: '過去の実行 · 閲覧のみ',
+                controlUnavailable: 'この実行は制御可能な状態ではないため、操作は反映されませんでした',
+                status: {
+                    queued: '待機中',
+                    running: '実行中',
+                    paused: '一時停止中',
+                    awaitingMonitorAction: '操作待ち',
+                    completed: '完了',
+                    failed: '失敗',
+                    cancelled: 'キャンセル済み',
+                    interrupted: '中断'
+                }
+            }
+        },
         channels: {
             common: {
                 temperature: {
@@ -2297,6 +2372,11 @@ const ja: LanguageMessages = {
                     ttl1hHint: '書込価格は基本入力価格の 2 倍。断続的な長会話に最適',
                     keepAlive: 'キャッシュキープアライブ（4分30秒で自動更新）',
                     keepAliveHint: 'ストリーミングリクエストが4分30秒を超えた場合、max_tokens=5 のキープアライブリクエストを自動送信してキャッシュ TTL を更新します'
+                },
+                userId: {
+                    title: 'リクエストユーザー識別子（metadata.user_id）',
+                    enable: '各リクエストに安定した metadata.user_id を注入します',
+                    hint: '会話 ID（サブエージェントは実行 ID）からハッシュ識別子を生成し、メインセッションと各サブエージェントのリクエストをサーバー側で区別し、キャッシュの混在を防ぎます。個人情報は含みません'
                 }
             },
             gemini: {
@@ -2713,7 +2793,8 @@ const ja: LanguageMessages = {
                 completed: '完了',
                 failed: '失敗',
                 executing: '実行中...',
-                partialResponse: '部分レスポンス'
+                partialResponse: '部分レスポンス',
+                background: 'バックグラウンド'
             },
             media: {
                 generateImage: '画像を生成',

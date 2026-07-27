@@ -43,6 +43,7 @@ import {
     extractPromptToolParts
 } from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
+import { throwIfStreamError } from './streamError';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -572,6 +573,10 @@ export class OpenAIFormatter extends BaseFormatter {
      * - 否则尝试从 content 中检测 XML/JSON 工具调用
      */
     parseResponse(response: any): GenerateResponse {
+        // 上游用 HTTP 200 + 错误体回应时（兼容代理很常见），先把它的原文抛出来，
+        // 否则下面只会报一句「没有选项」，用户根本看不到真正的原因
+        throwIfStreamError(response, 'OpenAI');
+
         // 验证响应格式
         if (!response || !response.choices || response.choices.length === 0) {
             throw new Error(t('modules.channel.formatters.openai.errors.invalidResponse'));
@@ -815,6 +820,10 @@ export class OpenAIFormatter extends BaseFormatter {
      * 3. 结束标记: data: [DONE]（在 ChannelManager 中处理）
      */
     parseStreamChunk(chunk: any): StreamChunk {
+        // 兼容代理常在 HTTP 200 的 SSE 流里内联错误（余额不足、模型不存在、上游超时等），
+        // 这类 chunk 没有 choices，不识别就会被当成空块跳过，最终只剩一句「模型返回空内容」
+        throwIfStreamError(chunk, 'OpenAI');
+
         // OpenAI 流式响应格式
         const choice = chunk.choices?.[0];
         const parts: ContentPart[] = [];

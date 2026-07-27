@@ -113,7 +113,7 @@ Description: Read file content
 
 CONTEXT BADGE FORMAT
 
-<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">
+<lim-context type="file" path="example-report.pdf" binary="true" title="example-report.pdf (示例)">
 
 </lim-context>
 

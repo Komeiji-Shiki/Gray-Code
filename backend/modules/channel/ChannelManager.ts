@@ -25,6 +25,37 @@ import { ChannelError, ErrorType } from './types';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
+import { parseStreamBuffer } from './streamBufferParser';
+
+/**
+ * 从上游 API 的非 2xx 响应体中提取人类可读的错误消息。
+ *
+ * 支持格式：
+ * - Anthropic:         { error: { message: "..." } }
+ * - OpenAI/OpenRouter: { error: { message: "...", code: 429, metadata: {...} } }
+ * - 简化 JSON:         { message: "..." } / { error: "..." }
+ * - 纯文本:            直接返回文本
+ */
+function extractUpstreamErrorMessage(body: unknown): string | undefined {
+    if (!body || typeof body !== 'object') {
+        if (typeof body === 'string' && body.trim()) return body.trim();
+        return undefined;
+    }
+    const obj = body as Record<string, any>;
+    // Anthropic/OpenAI/OpenRouter 的 { error: { message: "..." } }
+    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
+        return obj.error.message.trim();
+    }
+    // { error: "..." }
+    if (typeof obj.error === 'string') {
+        return obj.error.trim();
+    }
+    // { message: "..." }
+    if (typeof obj.message === 'string') {
+        return obj.message.trim();
+    }
+    return undefined;
+}
 
 /**
  * 重试状态回调类型
@@ -175,7 +206,7 @@ export class ChannelManager {
      * 在请求发送前验证工具调用与工具结果的配对完整性
      */
     private validateHistoryBeforeRequest(request: GenerateRequest, channelType: string): void {
-        const validation = validateHistoryIntegrity(request.history);
+        const validation = validateHistoryIntegrity(request.history, { detectOrphanFunctionCall: true });
         if (validation.valid) {
             return;
         }
@@ -293,9 +324,12 @@ export class ChannelManager {
                 
                 // 检查 HTTP 状态
                 if (httpResponse.status !== 200) {
+                    const upstreamMessage = extractUpstreamErrorMessage(httpResponse.body);
                     throw new ChannelError(
                         ErrorType.API_ERROR,
-                        t('modules.channel.errors.apiError', { status: httpResponse.status }),
+                        upstreamMessage
+                            ? `HTTP ${httpResponse.status}: ${upstreamMessage}`
+                            : t('modules.channel.errors.apiError', { status: httpResponse.status }),
                         httpResponse.body
                     );
                 }
@@ -508,6 +542,12 @@ export class ChannelManager {
                         }
                         yield chunk;
                     } catch (error) {
+                        // formatter 主动抛出的 ChannelError（如上游在 SSE 流里内联的 error 事件）
+                        // 已经带了准确的类型和上游原文，再包一层 PARSE_ERROR 会把「上游返回 429」
+                        // 说成「解析失败」，也会改变重试判定
+                        if (error instanceof ChannelError) {
+                            throw error;
+                        }
                         throw new ChannelError(
                             ErrorType.PARSE_ERROR,
                             t('modules.channel.errors.parseStreamChunkFailed', { error: error instanceof Error ? error.message : t('errors.unknown') }),
@@ -752,6 +792,8 @@ export class ChannelManager {
         
         try {
             let parsedChunkCount = 0;
+            // 流结束时仍无法解析的原始内容（上游用纯文本 / HTML 报错时就落在这里）
+            let unparsedTail = '';
 
             // 使用代理流式请求
             if (proxyUrl) {
@@ -775,7 +817,7 @@ export class ChannelManager {
                     buffer += chunk;
                     
                     // 处理流式响应
-                    const result = this.parseStreamBuffer(buffer);
+                    const result = parseStreamBuffer(buffer);
                     buffer = result.remaining;
                     parsedChunkCount += result.chunks.length;
 
@@ -787,8 +829,9 @@ export class ChannelManager {
                 
                 // 处理剩余的 buffer
                 if (buffer.trim()) {
-                    const result = this.parseStreamBuffer(buffer, true);
+                    const result = parseStreamBuffer(buffer, true);
                     parsedChunkCount += result.chunks.length;
+                    unparsedTail = result.unparsed || '';
 
                     for (const chunk of result.chunks) {
                         yield chunk;
@@ -819,9 +862,12 @@ export class ChannelManager {
                     } catch {
                         errorBody = await response.text();
                     }
+                    const upstreamMessage = extractUpstreamErrorMessage(errorBody);
                     throw new ChannelError(
                         ErrorType.API_ERROR,
-                        t('modules.channel.errors.apiError', { status: response.status }),
+                        upstreamMessage
+                            ? `HTTP ${response.status}: ${upstreamMessage}`
+                            : t('modules.channel.errors.apiError', { status: response.status }),
                         errorBody
                     );
                 }
@@ -848,7 +894,7 @@ export class ChannelManager {
                         buffer += decoder.decode(value, { stream: true });
                         
                         // 处理流式响应
-                        const result = this.parseStreamBuffer(buffer);
+                        const result = parseStreamBuffer(buffer);
                         buffer = result.remaining;
                         parsedChunkCount += result.chunks.length;
 
@@ -860,8 +906,9 @@ export class ChannelManager {
                     
                     // 处理剩余的 buffer
                     if (buffer.trim()) {
-                        const result = this.parseStreamBuffer(buffer, true);
+                        const result = parseStreamBuffer(buffer, true);
                         parsedChunkCount += result.chunks.length;
+                        unparsedTail = result.unparsed || '';
 
                         for (const chunk of result.chunks) {
                             yield chunk;
@@ -883,12 +930,20 @@ export class ChannelManager {
             // 流式连接结束但未解析出任何有效 chunk：
             // 常见于本地代理/抓包链路提前断开，被误判为“正常结束”。
             // 显式抛网络错误，触发上层重试并避免前端出现空消息。
+            //
+            // 另一种同样常见的情况是上游根本没按约定格式回：网关的 502 HTML、代理的纯文本错误。
+            // 这些内容过去在缓冲区里被静默丢弃，用户只能看到一句「没有响应体」，再往前端走就成了
+            // 「模型返回空内容」——上游其实已经说明了原因。这里把原文一并带出去。
             if (!externalSignal?.aborted && parsedChunkCount === 0) {
+                const rawResponse = unparsedTail.trim();
                 throw new ChannelError(
                     ErrorType.NETWORK_ERROR,
                     t('modules.channel.errors.streamRequestFailed', {
-                        error: t('modules.channel.errors.noResponseBody')
-                    })
+                        error: rawResponse
+                            ? (rawResponse.length > 800 ? `${rawResponse.slice(0, 800)}…` : rawResponse)
+                            : t('modules.channel.errors.noResponseBody')
+                    }),
+                    rawResponse ? { rawResponse } : undefined
                 );
             }
         } catch (error) {
@@ -928,166 +983,6 @@ export class ChannelManager {
             if (externalSignal) {
                 externalSignal.removeEventListener('abort', onExternalAbort);
             }
-        }
-    }
-    
-    /**
-     * 解析流式响应缓冲区
-     *
-     * 支持两种格式：
-     * 1. SSE (Server-Sent Events): data: {...}\n\n (Gemini ?alt=sse, OpenAI, Anthropic)
-     * 2. JSON 数组格式（逐步发送）
-     */
-    private parseStreamBuffer(buffer: string, final = false): { chunks: any[], remaining: string } {
-        const chunks: any[] = [];
-        let remaining = '';
-        
-        // 检查是否包含 SSE 格式的 data: 行
-        // Gemini 使用 ?alt=sse 时返回这种格式
-        if (buffer.includes('data:')) {
-            // 稳健的 SSE 解析策略：
-            // 1. 只提取以 "data:" 开头的有效行
-            // 2. 忽略 chunked 编码大小指示器、空行、注释等
-            // 3. 累积不完整的 data: 行直到可以解析
-            
-            // 按行分割（同时处理 \r\n 和 \n）
-            const lines = buffer.split(/\r?\n/);
-            
-            // 累积当前正在处理的 data 内容
-            let currentData = '';
-            let lastDataLineIndex = -1;
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // 只处理以 "data:" 开头的行
-                if (line.startsWith('data:')) {
-                    // 如果有之前累积的数据，先尝试解析
-                    if (currentData) {
-                        try {
-                            const parsed = JSON.parse(currentData);
-                            chunks.push(parsed);
-                        } catch (e) {
-                            // 之前的数据不完整，继续累积
-                        }
-                    }
-                    
-                    // 开始新的数据
-                    currentData = line.slice(5).trim();
-                    lastDataLineIndex = i;
-                    
-                    // 跳过结束标记
-                    if (currentData === '[DONE]') {
-                        currentData = '';
-                        continue;
-                    }
-                    
-                    // 尝试立即解析
-                    if (currentData) {
-                        try {
-                            const parsed = JSON.parse(currentData);
-                            chunks.push(parsed);
-                            currentData = '';
-                        } catch (e) {
-                            // 不完整，需要继续累积
-                        }
-                    }
-                } else if (currentData && line.trim()) {
-                    // 非 data: 行但有内容，可能是 JSON 的延续
-                    // 检查是否像是 JSON 的一部分（不是 chunked 大小指示器）
-                    // chunked 大小指示器通常是纯十六进制数字
-                    const isChunkedSize = /^[0-9a-fA-F]+$/.test(line.trim());
-                    
-                    if (!isChunkedSize) {
-                        currentData += line;
-                        
-                        // 尝试解析
-                        try {
-                            const parsed = JSON.parse(currentData);
-                            chunks.push(parsed);
-                            currentData = '';
-                        } catch (e) {
-                            // 继续累积
-                        }
-                    }
-                }
-                // 忽略：空行、注释行(:开头)、chunked 大小指示器
-            }
-            
-            // 处理剩余的未完成数据
-            if (currentData) {
-                if (final) {
-                    // 最后一次调用，尝试解析
-                    try {
-                        const parsed = JSON.parse(currentData);
-                        chunks.push(parsed);
-                    } catch (e) {
-                        // 数据损坏，丢弃
-                    }
-                } else {
-                    // 保留为 remaining，等待更多数据
-                    // 需要保留原始的 data: 前缀
-                    remaining = 'data: ' + currentData;
-                }
-            }
-            
-            return { chunks, remaining };
-        }
-        
-        // 检测格式
-        const trimmedBuffer = buffer.trim();
-        
-        // JSON 格式：每行一个完整的 JSON 对象
-        if (trimmedBuffer.startsWith('{') || trimmedBuffer.startsWith('[')) {
-            // 尝试按换行符分割并解析 JSON
-            const lines = buffer.split('\n');
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-                
-                // 跳过空行
-                if (!line) continue;
-                
-                // 处理 JSON 数组的开始/结束符号
-                let jsonStr = line;
-                if (jsonStr.startsWith('[')) {
-                    jsonStr = jsonStr.slice(1);
-                }
-                if (jsonStr.endsWith(']')) {
-                    jsonStr = jsonStr.slice(0, -1);
-                }
-                if (jsonStr.startsWith(',')) {
-                    jsonStr = jsonStr.slice(1);
-                }
-                if (jsonStr.endsWith(',')) {
-                    jsonStr = jsonStr.slice(0, -1);
-                }
-                jsonStr = jsonStr.trim();
-                
-                if (!jsonStr) continue;
-                
-                try {
-                    const parsed = JSON.parse(jsonStr);
-                    chunks.push(parsed);
-                } catch (e) {
-                    // 如果是最后一行且不是 final，保留作为 remaining
-                    if (i === lines.length - 1 && !final) {
-                        remaining = lines[i];
-                    }
-                    // 否则尝试作为不完整的 JSON 继续累积
-                }
-            }
-            
-            return { chunks, remaining };
-        }
-        
-        // 无法识别的格式，尝试直接解析为 JSON
-        try {
-            const parsed = JSON.parse(trimmedBuffer);
-            return { chunks: [parsed], remaining: '' };
-        } catch (e) {
-            // 保留等待更多数据
-            return { chunks: [], remaining: buffer };
         }
     }
     

@@ -35,5 +35,7 @@ export {
     DEFAULT_WRITE_FILE_CONFIG,
     DEFAULT_LIST_FILES_CONFIG,
     DEFAULT_APPLY_DIFF_CONFIG,
-    getDefaultExecuteCommandConfig
+    getDefaultExecuteCommandConfig,
+    MACHINE_SCOPE_KEYS
 } from './types';
+export { BUILTIN_MODE_TOOL_POLICIES } from './promptModes';

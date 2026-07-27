@@ -3,8 +3,11 @@ import { computed } from 'vue'
 import { useI18n } from '@/composables'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
 import { extractPreviewText, formatSubAgentRuntimeBadge } from '../../../utils/taskCards'
+import { useBackgroundTaskStore } from '../../../stores/backgroundTaskStore'
+import { computeTaskCardStatus } from '../../../utils/tools/subagents/backgroundStatus'
 
 const { t } = useI18n()
+const backgroundStore = useBackgroundTaskStore()
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -16,12 +19,43 @@ const prompt = computed(() => (props.args.prompt as string) || '')
 const context = computed(() => (props.args.context as string) || '')
 
 const resultData = computed(() => ((props.result as any)?.data || {}) as any)
-const responseText = computed(() => (resultData.value.response || resultData.value.partialResponse || '') as string)
-const errorMessage = computed(() => (props.result as any)?.error as string | undefined)
+
+// 修改原因：background=true 时工具立即返回的只是「已派发」的 stub，里面没有任何执行结果；
+//          卡片过去直接按 result.success 判定，导致子代理刚入队就显示为绿色成功，跑完后也永远看不到产出。
+// 修改方式：后台派发的卡片改为跟随 backgroundTaskStore 中该 taskId 的真实任务状态与结果。
+// 修改目的：卡片状态反映子代理真实进展，而不是「派发动作成功」。
+const isBackground = computed(() => resultData.value.background === true)
+const backgroundTask = computed(() => {
+  const taskId = resultData.value.taskId as string | undefined
+  return taskId ? backgroundStore.tasks[taskId] : undefined
+})
+
+const responseText = computed(() => {
+  const direct = (resultData.value.response || resultData.value.partialResponse || '') as string
+  if (direct) return direct
+  return isBackground.value ? (backgroundTask.value?.response || '') : ''
+})
+
+const errorMessage = computed(() => {
+  const direct = (props.result as any)?.error as string | undefined
+  if (direct) return direct
+  return isBackground.value ? backgroundTask.value?.error : undefined
+})
 
 const cardStatus = computed<'pending' | 'running' | 'success' | 'error'>(() => {
   const r = props.result as any
   if (!r) return 'running'
+
+  if (isBackground.value) {
+    const taskId = resultData.value.taskId as string | undefined
+    const status = computeTaskCardStatus(taskId, backgroundStore.tasks, r as Record<string, unknown>)
+    switch (status) {
+      case 'running': return 'running'
+      case 'completed': return 'success'
+      case 'failed': case 'cancelled': return 'error'
+    }
+  }
+
   return r.success === true ? 'success' : 'error'
 })
 
@@ -34,8 +68,10 @@ const runtimeBadge = computed(() => {
 
 const chips = computed(() => {
   const list: string[] = []
-  const steps = resultData.value.steps
+  const steps = resultData.value.steps ?? (isBackground.value ? backgroundTask.value?.steps : undefined)
   if (typeof steps === 'number') list.push(`Steps: ${steps}`)
+  // 后台派发的子代理在卡片上标明「后台」，避免与同步执行的调用混淆
+  if (isBackground.value) list.push(t('components.tools.subagents.background'))
   return list
 })
 

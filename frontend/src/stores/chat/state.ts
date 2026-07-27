@@ -21,8 +21,8 @@ import type {
   QueuedMessage
 } from './types'
 
-export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById'>
-export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById'>>
+export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
+export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById' | 'toolResponseIndex'>>
 
 function hasMessageIndexState(state: MessageIndexLookupState): state is MessageIndexState {
   return state.messageIndexById?.value instanceof Map
@@ -77,11 +77,36 @@ export function buildMessageIndexById(messages: Message[]): Map<string, number> 
   return indexById
 }
 
-/** 集中重建索引，供数组整体替换、tab restore、历史重载等路径校正 messageIndexById。 */
+/**
+ * 为当前 allMessages 重建 functionResponse.id -> 消息下标 的索引。
+ * 只收录首命中记录，保持 O(1) 查表时的一致性语义。
+ */
+export function buildToolResponseIndex(messages: Message[]): Map<string, number> {
+  const index = new Map<string, number>()
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]
+    if (!message?.isFunctionResponse || !Array.isArray(message.parts)) continue
+
+    for (const part of message.parts) {
+      const frId = part.functionResponse?.id
+      if (typeof frId === 'string' && frId.length > 0 && !index.has(frId)) {
+        index.set(frId, i)
+      }
+    }
+  }
+
+  return index
+}
+
+/** 集中重建索引，供数组整体替换、tab restore、历史重载等路径校正 messageIndexById 与 toolResponseIndex。 */
 export function rebuildMessageIndexById(state: MessageIndexLookupState): void {
   if (!hasMessageIndexState(state)) return
 
   state.messageIndexById.value = buildMessageIndexById(state.allMessages.value)
+  if (state.toolResponseIndex) {
+    state.toolResponseIndex.value = buildToolResponseIndex(state.allMessages.value)
+  }
   assertMessageIndexInvariant(state)
 }
 
@@ -99,6 +124,20 @@ export function appendMessage(state: MessageIndexLookupState, message: Message):
   const messageId = message?.id
   if (typeof messageId === 'string' && messageId.length > 0 && !state.messageIndexById.value.has(messageId)) {
     state.messageIndexById.value.set(messageId, nextIndex)
+  }
+
+  // 增量维护 toolResponseIndex：新写入的 functionResponse 消息直接注册
+  if (
+    state.toolResponseIndex &&
+    message?.isFunctionResponse &&
+    Array.isArray(message.parts)
+  ) {
+    for (const part of message.parts) {
+      const frId = part.functionResponse?.id
+      if (typeof frId === 'string' && frId.length > 0 && !state.toolResponseIndex.value.has(frId)) {
+        state.toolResponseIndex.value.set(frId, nextIndex)
+      }
+    }
   }
 
   assertMessageIndexInvariant(state)
@@ -310,6 +349,9 @@ export function createChatState(): ChatStoreState {
   /** 工具响应缓存：toolCallId -> response，避免 O(M) 线性扫描 */
   const toolResponseCache = ref<Map<string, Record<string, unknown>>>(new Map())
 
+  /** functionResponse.id -> 消息下标，随消息写入维护的权威索引 */
+  const toolResponseIndex = ref<Map<string, number>>(new Map())
+
   return {
     conversations,
     persistedConversationIds,
@@ -318,6 +360,7 @@ export function createChatState(): ChatStoreState {
     currentConversationId,
     allMessages,
     messageIndexById,
+    toolResponseIndex,
     windowStartIndex,
     totalMessages,
     isLoadingMoreMessages,

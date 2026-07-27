@@ -25,6 +25,8 @@ export interface DependencyChecker {
 export class ToolRegistry {
     private tools = new Map<string, Tool>();
     private registrations = new Map<string, ToolRegistration>();
+    /** alias -> 主工具名。注册时构建，让 getTool 的别名查找保持 O(1) */
+    private aliasIndex = new Map<string, string>();
     private dependencyChecker: DependencyChecker | null = null;
     
     /**
@@ -51,6 +53,30 @@ export class ToolRegistry {
         
         this.tools.set(name, tool);
         this.registrations.set(name, registration);
+        this.indexAliases(tool);
+    }
+
+    /**
+     * 把工具声明的别名写入索引。
+     * 与旧的线性查找语义一致：先注册的工具优先占用别名。
+     */
+    private indexAliases(tool: Tool): void {
+        for (const alias of tool.declaration.aliases ?? []) {
+            if (!this.aliasIndex.has(alias)) {
+                this.aliasIndex.set(alias, tool.declaration.name);
+            }
+        }
+    }
+
+    /**
+     * 移除指向指定工具的所有别名映射（注销/刷新时使用）。
+     */
+    private removeAliases(name: string): void {
+        for (const [alias, target] of this.aliasIndex) {
+            if (target === name) {
+                this.aliasIndex.delete(alias);
+            }
+        }
     }
 
     /**
@@ -77,15 +103,9 @@ export class ToolRegistry {
             return tool;
         }
 
-        // 2. 按别名查找（兼容工具重命名后的旧对话历史）
-        // 兼容工具重命名后的旧对话历史
-        for (const t of this.tools.values()) {
-            if (t.declaration.aliases?.includes(name)) {
-                return t;
-            }
-        }
-
-        return undefined;
+        // 2. 按别名索引查找（兼容工具重命名后的旧对话历史）
+        const primaryName = this.aliasIndex.get(name);
+        return primaryName ? this.tools.get(primaryName) : undefined;
     }
 
     /**
@@ -235,6 +255,7 @@ export class ToolRegistry {
      * @returns 是否成功注销
      */
     unregister(name: string): boolean {
+        this.removeAliases(name);
         this.registrations.delete(name);
         return this.tools.delete(name);
     }
@@ -256,7 +277,9 @@ export class ToolRegistry {
         
         // 重新调用工厂函数，生成包含最新状态的 Tool 实例
         const tool = registration();
+        this.removeAliases(name);
         this.tools.set(name, tool);
+        this.indexAliases(tool);
         return true;
     }
 
@@ -266,6 +289,7 @@ export class ToolRegistry {
     clear(): void {
         this.tools.clear();
         this.registrations.clear();
+        this.aliasIndex.clear();
     }
 }
 

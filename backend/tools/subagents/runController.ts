@@ -25,8 +25,16 @@ interface ActiveRunRecord {
     agentName?: string;
     status: SubAgentRunStatus;
     controller: AbortController;
-    resumeWaiters: Array<() => void>;
-    exitWaiters: Array<(reason: string) => void>;
+    /**
+     * 等待 run 重新变得可运行（resume）或被终止（exit）的唤醒器。
+     *
+     * 修改原因：过去拆成 resumeWaiters / exitWaiters 两份，waitUntilRunnable 会同时向两份注册同一个 resolve，
+     *          而 resume 只清空 resumeWaiters，于是每次 pause→resume 循环都在 exitWaiters 留下一个僵尸回调。
+     * 修改方式：合并为单一唤醒列表——两种事件都表示"等待结束"，退出原因由 record.exitReason 承载，
+     *          唤醒器本身从不需要参数（旧 exitWaiters 的 reason 参数本就被调用点忽略）。
+     * 修改目的：唤醒器的注册与清空严格一一对应，长时间暂停/继续不再累积回调。
+     */
+    waiters: Array<() => void>;
     pausedStartedAt?: number;
     inactiveDurationMs: number;
     exitReason?: string;
@@ -54,12 +62,21 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
             agentName,
             status: 'running',
             controller: new AbortController(),
-            resumeWaiters: [],
-            exitWaiters: [],
+            waiters: [],
             inactiveDurationMs: 0
         };
         this.activeRuns.set(runId, record);
         return record.controller.signal;
+    }
+
+    /**
+     * 唤醒所有等待该 run 变得可运行或终止的调用方。
+     *
+     * 一次性取出并清空，保证同一个 waiter 不会被重复持有。
+     */
+    private notifyWaiters(record: ActiveRunRecord): void {
+        const waiters = record.waiters.splice(0);
+        for (const resolve of waiters) resolve();
     }
 
     unregister(runId: string): void {
@@ -197,8 +214,7 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
             record.pausedStartedAt = undefined;
         }
         record.status = 'running';
-        const waiters = record.resumeWaiters.splice(0);
-        for (const resolve of waiters) resolve();
+        this.notifyWaiters(record);
         subAgentRunEventBus.emit({
             runId,
             agentName: record.agentName,
@@ -227,10 +243,7 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         record.status = 'cancelled';
         record.exitReason = reason;
         record.controller.abort();
-        const exitWaiters = record.exitWaiters.splice(0);
-        for (const reject of exitWaiters) reject(reason);
-        const resumeWaiters = record.resumeWaiters.splice(0);
-        for (const resolve of resumeWaiters) resolve();
+        this.notifyWaiters(record);
         subAgentRunEventBus.emit({
             runId,
             agentName: record.agentName,
@@ -250,8 +263,7 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         // 修改方式：等待 resume/exit 事件；resume 返回 running，exit 返回 cancelled。
         // 修改目的：让 Monitor 顶部控制按钮可以决定同一个 run 的后续命运。
         await new Promise<void>((resolve) => {
-            record.resumeWaiters.push(resolve);
-            record.exitWaiters.push(() => resolve());
+            record.waiters.push(resolve);
         });
         const latest = this.activeRuns.get(runId);
         if (!latest) return 'inactive';
