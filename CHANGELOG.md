@@ -2,7 +2,7 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
-## [Unreleased]
+## [1.2.6] - 2026-07-27
 
 ### Added
   - SubAgent 对话延续：主模型调用 `subagents` 工具时可传入 `continueFromRunId` 参数，将新子代理接续到之前已完成子代理的对话上，新子代理自动继承旧 run 的完整 transcript（对话历史），实现跨调用的对话接力；对仍在运行中的旧 run 会拒绝延续并返回明确错误
@@ -324,6 +324,8 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 #### 新增文件统计
   - 后端新增 13 个模块/工具文件，前端新增 14 个组件/工具文件
   - 核心工具 4 个文件同步至上游最新，语法验证通过
+
+## [Unreleased]
 
 ## [1.1.27] - 2026-05-01
 
