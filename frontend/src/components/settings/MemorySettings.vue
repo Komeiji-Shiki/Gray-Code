@@ -1,6 +1,10 @@
 <script setup lang="ts">
 /**
  * MemorySettings - 永久记忆系统配置组件
+ *
+ * 包含两部分：
+ * 1. 提示词 & 运行时参数配置
+ * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
@@ -48,6 +52,19 @@ const entryChars = ref(280)
 const partChars = ref(20000)
 const partLines = ref(500)
 
+// ─── 记忆条目管理 ───
+interface LogEntry {
+  id: number
+  date: string
+  text: string
+}
+const entries = ref<LogEntry[]>([])
+const entriesLoading = ref(false)
+const entriesTotal = ref(0)
+const editingId = ref<number | null>(null)
+const editingText = ref('')
+const editSaving = ref(false)
+
 // 加载配置
 async function loadConfig() {
   isLoading.value = true
@@ -55,7 +72,6 @@ async function loadConfig() {
   try {
     const config = await sendToExtension<any>('getMemoryConfig', {})
     if (config) {
-      // systemPrompt: 用户有自定义就用自定义，否则保留默认文本
       if (typeof config.systemPrompt === 'string' && config.systemPrompt.trim()) {
         systemPrompt.value = config.systemPrompt
       }
@@ -71,12 +87,64 @@ async function loadConfig() {
   }
 }
 
+// 加载记忆条目
+async function loadEntries() {
+  entriesLoading.value = true
+  try {
+    const result = await sendToExtension<any>('getMemoryEntries', {})
+    if (result?.entries) {
+      entries.value = result.entries
+      entriesTotal.value = result.total ?? result.entries.length
+    } else {
+      entries.value = []
+      entriesTotal.value = 0
+    }
+  } catch {
+    entries.value = []
+  } finally {
+    entriesLoading.value = false
+  }
+}
+
+// 开始编辑
+function startEdit(entry: LogEntry) {
+  editingId.value = entry.id
+  editingText.value = entry.text
+}
+
+// 取消编辑
+function cancelEdit() {
+  editingId.value = null
+  editingText.value = ''
+}
+
+// 保存编辑
+async function saveEdit() {
+  if (editingId.value === null) return
+  editSaving.value = true
+  try {
+    await sendToExtension('updateMemoryEntry', {
+      id: editingId.value,
+      text: editingText.value,
+    })
+    // 更新本地缓存
+    const idx = entries.value.findIndex(e => e.id === editingId.value)
+    if (idx !== -1) {
+      entries.value[idx] = { ...entries.value[idx], text: editingText.value.trim() }
+    }
+    cancelEdit()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to update entry'
+  } finally {
+    editSaving.value = false
+  }
+}
+
 // 保存配置
 async function saveConfig() {
   isSaving.value = true
   statusMessage.value = ''
   try {
-    // 如果用户没改默认提示词，保存空字符串让后端用内置默认
     const promptToSave = systemPrompt.value === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt.value
     await sendToExtension('updateMemoryConfig', {
       config: {
@@ -107,6 +175,7 @@ function resetToDefault() {
 
 onMounted(() => {
   loadConfig()
+  loadEntries()
 })
 </script>
 
@@ -145,7 +214,6 @@ onMounted(() => {
         </p>
 
         <div class="params-grid">
-          <!-- wakeLines -->
           <div class="form-group">
             <label class="param-label">
               {{ t('components.settings.settingsPanel.memory.runtime.wakeLines.label') }}
@@ -154,18 +222,10 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.wakeLines.description') }}
             </p>
             <div class="number-input-row">
-              <input
-                type="number"
-                v-model.number="wakeLines"
-                min="1"
-                max="500"
-                class="form-input-number"
-              />
+              <input type="number" v-model.number="wakeLines" min="1" max="500" class="form-input-number" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.wakeLines.unit') }}</span>
             </div>
           </div>
-
-          <!-- entryChars -->
           <div class="form-group">
             <label class="param-label">
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.label') }}
@@ -174,18 +234,10 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
             </p>
             <div class="number-input-row">
-              <input
-                type="number"
-                v-model.number="entryChars"
-                min="1"
-                max="280"
-                class="form-input-number"
-              />
+              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
             </div>
           </div>
-
-          <!-- partChars -->
           <div class="form-group">
             <label class="param-label">
               {{ t('components.settings.settingsPanel.memory.runtime.partChars.label') }}
@@ -194,19 +246,10 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.partChars.description') }}
             </p>
             <div class="number-input-row">
-              <input
-                type="number"
-                v-model.number="partChars"
-                min="100"
-                max="100000"
-                step="100"
-                class="form-input-number"
-              />
+              <input type="number" v-model.number="partChars" min="100" max="100000" step="100" class="form-input-number" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partChars.unit') }}</span>
             </div>
           </div>
-
-          <!-- partLines -->
           <div class="form-group">
             <label class="param-label">
               {{ t('components.settings.settingsPanel.memory.runtime.partLines.label') }}
@@ -215,14 +258,7 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.partLines.description') }}
             </p>
             <div class="number-input-row">
-              <input
-                type="number"
-                v-model.number="partLines"
-                min="10"
-                max="2000"
-                step="10"
-                class="form-input-number"
-              />
+              <input type="number" v-model.number="partLines" min="10" max="2000" step="10" class="form-input-number" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partLines.unit') }}</span>
             </div>
           </div>
@@ -240,11 +276,66 @@ onMounted(() => {
           <i class="codicon codicon-discard"></i>
           {{ t('components.settings.settingsPanel.memory.reset') }}
         </button>
+        <button class="btn btn-secondary" @click="loadEntries" :disabled="entriesLoading">
+          <i :class="entriesLoading ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-refresh'"></i>
+          Refresh entries
+        </button>
       </div>
 
       <!-- 状态消息 -->
       <div v-if="statusMessage" class="status-message" :class="{ 'status-error': statusMessage.includes('Failed') || statusMessage.includes('失败') }">
         {{ statusMessage }}
+      </div>
+
+      <!-- ─── 记忆条目管理 ─── -->
+      <div class="section">
+        <h5 class="section-title">
+          <i class="codicon codicon-list-flat"></i>
+          Raw Memory Entries
+          <span v-if="entriesTotal > 0" class="badge">{{ entriesTotal }}</span>
+        </h5>
+        <p class="field-description" style="margin-bottom: 12px;">
+          View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).
+        </p>
+
+        <!-- 空状态 -->
+        <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
+          <i class="codicon codicon-info"></i>
+          No memory entries yet.
+        </div>
+
+        <!-- 条目列表 -->
+        <div v-else class="entries-list">
+          <div v-for="entry in entries" :key="entry.id" class="entry-row">
+            <span class="entry-id">#{{ entry.id }}</span>
+            <span class="entry-date">{{ entry.date }}</span>
+            <div class="entry-text-wrap">
+              <pre v-if="editingId !== entry.id" class="entry-text">{{ entry.text }}</pre>
+              <div v-else class="entry-edit-row">
+                <textarea
+                  v-model="editingText"
+                  class="entry-textarea"
+                  rows="3"
+                  :maxlength="entryChars"
+                ></textarea>
+                <div class="entry-edit-actions">
+                  <button class="btn btn-sm btn-primary" @click="saveEdit" :disabled="editSaving">
+                    <i v-if="editSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
+                    <i v-else class="codicon codicon-check"></i>
+                    Save
+                  </button>
+                  <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">Cancel</button>
+                  <span class="char-count">{{ editingText.length }}/{{ entryChars }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="entry-actions" v-if="editingId !== entry.id">
+              <button class="btn-icon" title="Edit" @click="startEdit(entry)">
+                <i class="codicon codicon-edit"></i>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 提示 -->
@@ -313,10 +404,6 @@ onMounted(() => {
   border-color: var(--vscode-focusBorder);
 }
 
-.form-textarea::placeholder {
-  color: var(--vscode-input-placeholderForeground);
-}
-
 /* 分区 */
 .section {
   background: var(--vscode-editor-background);
@@ -337,6 +424,21 @@ onMounted(() => {
 
 .section-title i {
   font-size: 13px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 9px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  margin-left: 4px;
 }
 
 /* 参数网格 */
@@ -389,6 +491,7 @@ onMounted(() => {
 .form-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .btn {
@@ -428,6 +531,29 @@ onMounted(() => {
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
+.btn-icon {
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.btn-icon i {
+  font-size: 14px;
 }
 
 .status-message {
@@ -479,5 +605,110 @@ onMounted(() => {
   font-size: 13px;
   color: var(--vscode-descriptionForeground);
   justify-content: center;
+}
+
+/* ─── 条目列表 ─── */
+.empty-entries {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground);
+  justify-content: center;
+}
+
+.entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entry-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.entry-row:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.entry-id {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--vscode-charts-blue);
+  min-width: 28px;
+  flex-shrink: 0;
+}
+
+.entry-date {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  min-width: 72px;
+  flex-shrink: 0;
+  font-family: var(--vscode-editor-font-family), monospace;
+}
+
+.entry-text-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-text {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--vscode-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.entry-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.entry-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-editor-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 3px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.entry-textarea:focus {
+  outline: none;
+}
+
+.entry-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.char-count {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  margin-left: auto;
+}
+
+.entry-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  align-self: center;
 }
 </style>

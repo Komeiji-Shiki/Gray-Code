@@ -44,6 +44,7 @@ import {
 } from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
+import { serializeToolResultForLLM } from './toolResponseFormatter';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -329,7 +330,7 @@ export class OpenAIFormatter extends BaseFormatter {
                         role: 'tool',
                         tool_call_id: resp.id || `call_${Date.now()}`,
                         name: resp.name,  // 工具名称是 OpenAI API 必需的
-                        content: JSON.stringify(resp.response)
+                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
             } else if (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0) {

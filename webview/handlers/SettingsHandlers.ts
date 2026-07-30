@@ -165,6 +165,43 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
 };
 
 /**
+ * 获取所有原始记忆条目列表（用于设置页面管理）
+ */
+export const getMemoryEntries: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendResponse(requestId, { entries: [], initialized: false });
+    }
+    const entries = await mgr.listEntries();
+    const total = entries.length;
+    ctx.sendResponse(requestId, { entries, total, initialized: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_MEMORY_ENTRIES_ERROR', error.message || 'Failed to get memory entries');
+  }
+};
+
+/**
+ * 更新单条原始记忆的文本
+ */
+export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { id, text } = data;
+    if (typeof id !== 'number' || typeof text !== 'string') {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (number) and text (string) are required.');
+    }
+    await mgr.updateEntry(id, text);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_MEMORY_ENTRY_ERROR', error.message || 'Failed to update memory entry');
+  }
+};
+
+/**
  * 获取图像生成配置
  */
 export const getGenerateImageConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -320,6 +357,8 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('updateSummarizeConfig', updateSummarizeConfig);
   registry.set('getMemoryConfig', getMemoryConfig);
   registry.set('updateMemoryConfig', updateMemoryConfig);
+  registry.set('getMemoryEntries', getMemoryEntries);
+  registry.set('updateMemoryEntry', updateMemoryEntry);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);
