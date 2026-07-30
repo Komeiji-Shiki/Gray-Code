@@ -1,5 +1,5 @@
 /**
- * LimCode - 日本語言語パック
+ * GrayCode - 日本語言語パック
  * コンポーネントディレクトリ構造に従って翻訳を編成
  */
 
@@ -269,7 +269,7 @@ const ja: LanguageMessages = {
         },
 
         home: {
-            welcome: 'LimCode へようこそ',
+            welcome: 'GrayCode へようこそ',
             welcomeMessage: 'より効率的にコードを書くための AI コーディングアシスタント',
             welcomeHint: '下の入力欄にメッセージを入力して会話を開始',
             quickStart: 'クイックスタート',
@@ -1228,7 +1228,7 @@ const ja: LanguageMessages = {
                 },
                 appInfo: {
                     title: 'アプリケーション情報',
-                    name: 'LimCode - Vibe Coding アシスタント',
+                    name: 'GrayCode - Vibe Coding アシスタント',
                     version: 'バージョン',
                     repository: 'リポジトリ',
                     developer: '開発者'
@@ -1609,7 +1609,7 @@ const ja: LanguageMessages = {
                     exportSuccess: 'エクスポートしてクリップボードにコピーしました',
                     exportDownloadOnly: 'ファイルをエクスポートしましたが、クリップボードへのコピーに失敗しました',
                     import: 'モードをインポート',
-                    importDescription: 'LimCode プロンプトモード JSON を貼り付けるか、ファイルから読み込みます。インポート時は新しい ID が生成され、既存のモードは上書きされません。',
+                    importDescription: 'GrayCode プロンプトモード JSON を貼り付けるか、ファイルから読み込みます。インポート時は新しい ID が生成され、既存のモードは上書きされません。',
                     importFromFile: 'ファイルから読み込み',
                     importPlaceholder: 'エクスポートしたプロンプトモード JSON を貼り付け...',
                     importConfirm: 'インポート',
@@ -3136,20 +3136,20 @@ const ja: LanguageMessages = {
             cancelTooltip: '要約をキャンセル'
         },
         agentStopNotification: {
-            errorTitle: 'LimCode Agent が停止しました',
+            errorTitle: 'GrayCode Agent が停止しました',
             errorMessage: '現在の会話は失敗しました。通知をクリックすると元のウィンドウに戻れます。',
             errorMessageWithConversation: '会話「{title}」は失敗しました。通知をクリックすると元のウィンドウに戻れます。',
-            awaitingUserActionTitle: 'LimCode は操作を待っています',
+            awaitingUserActionTitle: 'GrayCode は操作を待っています',
             awaitingUserActionMessage: '現在の会話では「{action}」が必要です。通知をクリックすると元のウィンドウに戻れます。',
             awaitingUserActionMessageWithConversation: '会話「{title}」では「{action}」が必要です。通知をクリックすると元のウィンドウに戻れます。',
-            continueRequiredTitle: 'LimCode は続行を待っています',
+            continueRequiredTitle: 'GrayCode は続行を待っています',
             continueRequiredMessage: '現在の会話は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
             continueRequiredMessageWithConversation: '会話「{title}」は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
             actions: {
                 generatePlan: 'プランを生成',
                 executePlan: 'プランを実行',
                 continue: '続行',
-                genericConfirmation: 'LimCode に戻って続行'
+                genericConfirmation: 'GrayCode に戻って続行'
             }
         }
     },

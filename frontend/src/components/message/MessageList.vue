@@ -1244,7 +1244,7 @@ function formatCheckpointTime(timestamp: number): string {
   overflow: hidden;
 }
 
-/* ============ Build 顶部卡片（Cursor-like，保持 LimCode 面板风格） ============ */
+/* ============ Build 顶部卡片（Cursor-like，保持 GrayCode 面板风格） ============ */
 .build-sticky-shell {
   position: sticky;
   top: 0;

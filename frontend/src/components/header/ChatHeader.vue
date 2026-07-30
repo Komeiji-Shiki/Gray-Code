@@ -17,7 +17,7 @@ defineEmits<{
 <template>
   <header class="chat-header">
     <div class="header-left">
-      <span class="header-title">LimCode</span>
+      <span class="header-title">GrayCode</span>
     </div>
 
     <div class="header-right">

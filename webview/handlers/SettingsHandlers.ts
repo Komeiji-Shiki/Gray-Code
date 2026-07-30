@@ -423,7 +423,7 @@ export const exportSettings: MessageHandler = async (data, requestId, ctx) => {
                 'JSON Files': ['json'],
                 'All Files': ['*']
             },
-            title: '导出 LimCode 设置'
+            title: '导出 GrayCode 设置'
         });
 
         if (!result) {
@@ -466,7 +466,7 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
                 'JSON Files': ['json'],
                 'All Files': ['*']
             },
-            title: '导入 LimCode 设置'
+            title: '导入 GrayCode 设置'
         });
 
         if (!result || result.length === 0) {
@@ -489,7 +489,7 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
                 ],
                 {
                     placeHolder: '选择导入方式',
-                    title: 'LimCode 导入设置'
+                    title: 'GrayCode 导入设置'
                 }
             );
             if (!choice) {

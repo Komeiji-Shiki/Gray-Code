@@ -1,5 +1,8 @@
-# LimCode
+# GrayCode
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Komeiji-Shiki/GrayWill-ST/main/picture/2.png" alt="GrayCode" />
+</p>
 
 <p align="center">
   <strong>一个面向 VS Code 的 AI 编程助手扩展</strong>
@@ -13,9 +16,9 @@
 
 ## 目录
 
-- [changelog](https://github.com/Komeiji-Shiki/Lim-Code/blob/main/CHANGELOG.md)
+- [changelog](https://github.com/Komeiji-Shiki/Gray-Code/blob/main/CHANGELOG.md)
 
-- [LimCode 是什么？](#limcode-是什么)
+- [GrayCode 是什么？](#graycode-是什么)
 - [核心能力](#核心能力)
 - [快速开始](#快速开始)
 - [模型渠道配置](#模型渠道配置)
@@ -31,9 +34,9 @@
 - [常见问题](#常见问题)
 - [许可证](#许可证)
 
-## LimCode 是什么？
+## GrayCode 是什么？
 
-LimCode 是一个运行在 VS Code 里的 AI 编程助手。它可以在聊天中理解当前工作区、读取和修改文件、搜索代码、执行命令、查看符号引用、管理任务计划，也可以通过 MCP 接入外部工具。
+GrayCode 是一个运行在 VS Code 里的 AI 编程助手。它可以在聊天中理解当前工作区、读取和修改文件、搜索代码、执行命令、查看符号引用、管理任务计划，也可以通过 MCP 接入外部工具。
 
 它适合这些场景：
 
@@ -49,7 +52,7 @@ LimCode 是一个运行在 VS Code 里的 AI 编程助手。它可以在聊天�
 
 ### 多渠道模型支持
 
-LimCode 支持多种主流 API 格式：
+GrayCode 支持多种主流 API 格式：
 
 | 渠道类型 | 适用场景 | 说明 |
 | --- | --- | --- |
@@ -77,18 +80,18 @@ AI 可以调用内置工具完成真实操作，包括：
 
 ### 设计、计划、审查工作流
 
-LimCode 内置面向复杂任务的文档工具：
+GrayCode 内置面向复杂任务的文档工具：
 
-- **Design**：把需求、约束、方案、接口和风险整理到 `.limcode/design/**.md`。
-- **Plan**：把已确认设计拆成可执行步骤和 TODO，写入 `.limcode/plans/**.md`。
-- **Progress**：维护项目级进度台账 `.limcode/progress.md`，记录当前阶段、风险、里程碑和下一步。
-- **Review**：把代码审查过程、证据、发现、结论固化到 `.limcode/review/**.md`。
+- **Design**：把需求、约束、方案、接口和风险整理到 `.graycode/design/**.md`。
+- **Plan**：把已确认设计拆成可执行步骤和 TODO，写入 `.graycode/plans/**.md`。
+- **Progress**：维护项目级进度台账 `.graycode/progress.md`，记录当前阶段、风险、里程碑和下一步。
+- **Review**：把代码审查过程、证据、发现、结论固化到 `.graycode/review/**.md`。
 
 这套工作流适合多人协作或长周期任务：先想清楚，再执行，再检查，不容易在长对话里丢上下文。
 
 ### 智能上下文
 
-LimCode 会根据设置把当前环境信息发送给模型：
+GrayCode 会根据设置把当前环境信息发送给模型：
 
 - 工作区文件树。
 - 当前打开的标签页。
@@ -123,7 +126,7 @@ LimCode 会根据设置把当前环境信息发送给模型：
 
 ### 永久记忆（OptMem）
 
-LimCode 内置了 OptMem 永久记忆系统，让 AI 跨会话记住重要信息：
+GrayCode 内置了 OptMem 永久记忆系统，让 AI 跨会话记住重要信息：
 
 - 每次新会话开始时，AI 通过 `memory_wake` 自动恢复之前的约定、决策和知识。
 - AI 工作时会自动调用 `memory_note` 记录值得保留的事：任务成果、用户教的知识、关键决策等。
@@ -149,12 +152,12 @@ Sub-Agent 模式下自动禁用记忆工具，避免子代理写入重复或错�
 
 ## 快速开始
 
-### 1. 打开 LimCode
+### 1. 打开 GrayCode
 
-安装后点击 VS Code 左侧活动栏的 **Lim Code** 图标，或在命令面板执行：
+安装后点击 VS Code 左侧活动栏的 **Gray Code** 图标，或在命令面板执行：
 
 ```text
-LimCode: 打开聊天面板
+GrayCode: 打开聊天面板
 ```
 
 ### 2. 新建模型渠道
@@ -452,7 +455,7 @@ LimCode: 打开聊天面板
 
 ### 传统模板与预设条目
 
-LimCode 目前支持两种提示词组装方式：
+GrayCode 目前支持两种提示词组装方式：
 
 | 组装方式 | 适合场景 | 工作方式 |
 | --- | --- | --- |
@@ -499,7 +502,7 @@ LimCode 目前支持两种提示词组装方式：
 
 动态上下文是“每次请求临时生成的上下文”，例如文件树、打开标签页、当前活动文件、诊断、TODO、固定文件等。它通常不会写入真实对话历史，避免历史越来越脏。
 
-LimCode 支持两种动态上下文保留策略：
+GrayCode 支持两种动态上下文保留策略：
 
 | 策略 | 说明 | 适合场景 |
 | --- | --- | --- |
@@ -605,7 +608,7 @@ Sub-Agents 适合把任务拆给“专门角色”，例如：
 
 #### SubAgent Monitor
 
-LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子代理运行状态：
+GrayCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子代理运行状态：
 
 - 多 run 标签页，可同时监控多个子代理。
 - 实时输出自动跟随，贴底时随内容增长自动滚动。
@@ -618,7 +621,7 @@ LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子
 
 ### VS Code Settings Sync
 
-大部分设置已经迁移到 VS Code Settings 的 `limcode.*` 命名空间，因此开启 VS Code Settings Sync 后可自动同步到其他设备，包括：
+大部分设置已经迁移到 VS Code Settings 的 `graycode.*` 命名空间，因此开启 VS Code Settings Sync 后可自动同步到其他设备，包括：
 
 - 工具开关。
 - 工具自动执行策略。
@@ -629,9 +632,9 @@ LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子
 
 以下设置是机器级别，不参与同步：
 
-- `limcode.proxy`
-- `limcode.storagePath`
-- `limcode.activeChannelId`
+- `graycode.proxy`
+- `graycode.storagePath`
+- `graycode.activeChannelId`
 
 这样可以避免不同机器之间代理端口、存储路径和当前渠道互相覆盖。
 
@@ -641,11 +644,11 @@ LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子
 
 ### 旧版本迁移
 
-从旧版本升级时，LimCode 会尝试把旧的 `globalStorage/settings/settings.json` 迁移到 VS Code Settings，并备份旧文件为 `settings.json.bak`。
+从旧版本升级时，GrayCode 会尝试把旧的 `globalStorage/settings/settings.json` 迁移到 VS Code Settings，并备份旧文件为 `settings.json.bak`。
 
 ### 设置导入/导出
 
-在 **设置 → 通用** 中可以将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复。支持跳过已存在项和覆盖全部两种导入模式。也可通过命令面板执行 `LimCode: 导出设置` / `LimCode: 导入设置`。
+在 **设置 → 通用** 中可以将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复。支持跳过已存在项和覆盖全部两种导入模式。也可通过命令面板执行 `GrayCode: 导出设置` / `GrayCode: 导入设置`。
 
 ## 安装与更新
 
@@ -656,14 +659,14 @@ LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子
 在扩展市场搜索：
 
 ```text
-LimCode
+GrayCode
 ```
 
 找到扩展后安装即可。
 
 ### 从 VSIX 安装
 
-1. 下载对应版本的 `limcode-*.vsix` 文件。
+1. 下载对应版本的 `graycode-*.vsix` 文件。
 2. 在 VS Code 中打开命令面板：`Ctrl+Shift+P` / `Cmd+Shift+P`。
 3. 执行 `Extensions: Install from VSIX...`。
 4. 选择下载的 VSIX 文件。
@@ -674,8 +677,8 @@ LimCode
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Komeiji-Shiki/Lim-Code.git
-cd Lim-Code
+git clone https://github.com/Komeiji-Shiki/Gray-Code.git
+cd Gray-Code
 
 # 安装后端/扩展依赖
 npm install
@@ -713,7 +716,7 @@ Run Extension (Local Vite Dev)
 
 1. 启动后端 TypeScript watch。
 2. 启动前端 Vite Dev Server，固定端口 `5173`。
-3. 通过 `LIMCODE_WEBVIEW_DEV_SERVER_URL=http://127.0.0.1:5173` 让 Webview 加载本地前端资源。
+3. 通过 `GRAYCODE_WEBVIEW_DEV_SERVER_URL=http://127.0.0.1:5173` 让 Webview 加载本地前端资源。
 
 Vite Dev Server 只在扩展开发模式下生效；生产构建仍使用 `frontend/dist`。
 
@@ -727,7 +730,7 @@ npm run watch
 npm run dev:frontend
 ```
 
-然后使用普通 `Run Extension`，或自定义带 `LIMCODE_WEBVIEW_DEV_SERVER_URL` 的调试配置。
+然后使用普通 `Run Extension`，或自定义带 `GRAYCODE_WEBVIEW_DEV_SERVER_URL` 的调试配置。
 
 ### 常用脚本
 
@@ -744,7 +747,7 @@ npm run dev:frontend
 ## 项目结构
 
 ```text
-Lim-Code/
+Gray-Code/
 ├── backend/                 # 扩展后端能力
 │   ├── core/                # 核心上下文、日志等
 │   ├── modules/             # 渠道、配置、会话、MCP、提示词、设置等模块
@@ -802,10 +805,10 @@ Lim-Code/
 
 也可以使用命令：
 
-- `LimCode: Accept All Changes`
-- `LimCode: Reject All Changes`
-- `LimCode: Accept Diff Block...`
-- `LimCode: Reject Diff Block...`
+- `GrayCode: Accept All Changes`
+- `GrayCode: Reject All Changes`
+- `GrayCode: Accept Diff Block...`
+- `GrayCode: Reject Diff Block...`
 
 ### Windows 通知或声音没有出现？
 

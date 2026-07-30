@@ -440,7 +440,7 @@ describe('normalizeToolArgs', () => {
         const { args, warnings } = normalizeToolArgs(
             'update_plan',
             {
-                path: '.limcode/plans/x.md',
+                path: '.graycode/plans/x.md',
                 todos: [],
                 sourceArtifactType: 'design',
                 planContent: '...',
@@ -449,7 +449,7 @@ describe('normalizeToolArgs', () => {
             s
         );
 
-        expect(args).toEqual({ path: '.limcode/plans/x.md', todos: [] });
+        expect(args).toEqual({ path: '.graycode/plans/x.md', todos: [] });
         expect(warnings).toHaveLength(3);
     });
 

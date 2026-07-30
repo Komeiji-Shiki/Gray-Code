@@ -1,5 +1,5 @@
 /**
- * LimCode - English Language Pack
+ * GrayCode - English Language Pack
  * Organized by component directory structure
  */
 
@@ -269,7 +269,7 @@ const en: LanguageMessages = {
         },
 
         home: {
-            welcome: 'Welcome to LimCode',
+            welcome: 'Welcome to GrayCode',
             welcomeMessage: 'AI coding assistant helping you write code more efficiently',
             welcomeHint: 'Type a message in the input box below to start a conversation',
             quickStart: 'Quick Start',
@@ -1228,7 +1228,7 @@ const en: LanguageMessages = {
                 },
                 appInfo: {
                     title: 'Application Info',
-                    name: 'LimCode - Vibe Coding Assistant',
+                    name: 'GrayCode - Vibe Coding Assistant',
                     version: 'Version',
                     repository: 'Repository',
                     developer: 'Developer'
@@ -1609,7 +1609,7 @@ const en: LanguageMessages = {
                     exportSuccess: 'Exported and copied to clipboard',
                     exportDownloadOnly: 'Exported file, but clipboard copy failed',
                     import: 'Import Modes',
-                    importDescription: 'Paste LimCode prompt mode JSON, or read it from a file. Imported modes will receive new IDs and will not overwrite existing modes.',
+                    importDescription: 'Paste GrayCode prompt mode JSON, or read it from a file. Imported modes will receive new IDs and will not overwrite existing modes.',
                     importFromFile: 'Read from file',
                     importPlaceholder: 'Paste exported prompt mode JSON...',
                     importConfirm: 'Import',
@@ -3136,20 +3136,20 @@ const en: LanguageMessages = {
             cancelTooltip: 'Cancel summarize request'
         },
         agentStopNotification: {
-            errorTitle: 'LimCode Agent stopped',
+            errorTitle: 'GrayCode Agent stopped',
             errorMessage: 'The current conversation failed. Click the notification to return to the originating window.',
             errorMessageWithConversation: 'Conversation "{title}" failed. Click the notification to return to the originating window.',
-            awaitingUserActionTitle: 'LimCode is waiting for your action',
+            awaitingUserActionTitle: 'GrayCode is waiting for your action',
             awaitingUserActionMessage: 'The current conversation needs you to click "{action}". Click the notification to return to the originating window.',
             awaitingUserActionMessageWithConversation: 'Conversation "{title}" needs you to click "{action}". Click the notification to return to the originating window.',
-            continueRequiredTitle: 'LimCode is waiting to continue',
+            continueRequiredTitle: 'GrayCode is waiting to continue',
             continueRequiredMessage: 'The current conversation needs to continue. Click the notification to return to the originating window.',
             continueRequiredMessageWithConversation: 'Conversation "{title}" needs to continue. Click the notification to return to the originating window.',
             actions: {
                 generatePlan: 'Generate Plan',
                 executePlan: 'Execute Plan',
                 continue: 'Continue',
-                genericConfirmation: 'Return to LimCode and continue'
+                genericConfirmation: 'Return to GrayCode and continue'
             }
         }
     },

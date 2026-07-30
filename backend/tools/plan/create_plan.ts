@@ -1,7 +1,7 @@
 /**
  * create_plan 工具
  *
- * 目标：把计划文档写入 .limcode/plans/**.md（或 multi-root: workspace/.limcode/plans/**.md）。
+ * 目标：把计划文档写入 .graycode/plans/**.md（或 multi-root: workspace/.graycode/plans/**.md）。
  * 注意：这是“生成计划”工具，不负责执行。
  */
 
@@ -36,7 +36,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_plan',
     description:
-      'Create a plan document (markdown) and write it under .limcode/plans/**.md. This tool only creates the plan; it does NOT execute it.',
+      'Create a plan document (markdown) and write it under .graycode/plans/**.md. This tool only creates the plan; it does NOT execute it.',
     category: 'plan',
     parameters: {
       type: 'object',
@@ -69,7 +69,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .limcode/plans/**.md (or multi-root: workspace/.limcode/plans/**.md).'
+            'Optional output path. Must be under .graycode/plans/**.md (or multi-root: workspace/.graycode/plans/**.md).'
         }
       },
       required: ['plan', 'todos']
@@ -88,11 +88,11 @@ export function createCreatePlanTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.limcode/plans/${slugify(title || 'plan')}.plan.md`;
+      const defaultPath = `.graycode/plans/${slugify(title || 'plan')}.plan.md`;
       const outPath = (typeof args.path === 'string' && args.path.trim()) ? args.path.trim() : defaultPath;
 
       if (!isPlanModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid plan path. Only ".limcode/plans/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(outPath);

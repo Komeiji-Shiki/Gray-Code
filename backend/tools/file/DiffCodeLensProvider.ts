@@ -225,13 +225,13 @@ export class DiffCodeLensProvider implements vscode.CodeLensProvider {
             
             codeLenses.push(new vscode.CodeLens(topRange, {
                 title: `$(check-all) ${t('tools.file.diffCodeLens.acceptAll')}`,
-                command: 'limcode.diff.confirmBlock',
+                command: 'graycode.diff.confirmBlock',
                 arguments: [session.id]
             }));
             
             codeLenses.push(new vscode.CodeLens(topRange, {
                 title: `$(clear-all) ${t('tools.file.diffCodeLens.rejectAll')}`,
-                command: 'limcode.diff._rejectBlockFromCodeLens',
+                command: 'graycode.diff._rejectBlockFromCodeLens',
                 arguments: [session.id]
             }));
         }
@@ -260,14 +260,14 @@ export class DiffCodeLensProvider implements vscode.CodeLensProvider {
             // 接受按钮
             const confirmLens = new vscode.CodeLens(range, {
                 title: `$(check) ${t('tools.file.diffCodeLens.accept')}`,
-                command: 'limcode.diff.confirmBlock',
+                command: 'graycode.diff.confirmBlock',
                 arguments: [session.id, block.index]
             });
             
             // 拒绝按钮
             const rejectLens = new vscode.CodeLens(range, {
                 title: `$(x) ${t('tools.file.diffCodeLens.reject')}`,
-                command: 'limcode.diff._rejectBlockFromCodeLens',
+                command: 'graycode.diff._rejectBlockFromCodeLens',
                 arguments: [session.id, block.index]
             });
             

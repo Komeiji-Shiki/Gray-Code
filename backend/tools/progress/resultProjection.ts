@@ -24,7 +24,7 @@ export function buildProgressSummarySnapshot(
   const latestMilestone = getLatestProgressMilestone(metadata);
   return {
     formatVersion: 1,
-    kind: 'limcode.progress',
+    kind: 'graycode.progress',
     path,
     projectId: metadata.projectId,
     projectName: metadata.projectName,

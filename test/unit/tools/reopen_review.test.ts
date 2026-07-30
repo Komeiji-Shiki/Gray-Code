@@ -36,7 +36,7 @@ describe('reopen_review tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/review/workspace-review.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/review/workspace-review.md' },
       error: undefined
     })
   })
@@ -63,13 +63,13 @@ describe('reopen_review tool', () => {
     const tool = createReopenReviewTool()
     const setCustomMetadata = jest.fn().mockResolvedValue(undefined)
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md'
+      path: '.graycode/review/workspace-review.md'
     }, {
       conversationId: 'conversation-1',
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-1',
-          reviewPath: '.limcode/review/workspace-review.md',
+          reviewPath: '.graycode/review/workspace-review.md',
           status: 'completed',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: '2026-03-17T01:00:00.000Z'
@@ -91,28 +91,28 @@ describe('reopen_review tool', () => {
       'conversation-1',
       'reviewSession',
       expect.objectContaining({
-        reviewPath: '.limcode/review/workspace-review.md',
+        reviewPath: '.graycode/review/workspace-review.md',
         status: 'in_progress',
         finalizedAt: null
       })
     )
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({
-      reviewPath: '.limcode/review/workspace-review.md',
+      reviewPath: '.graycode/review/workspace-review.md',
       title: 'Workspace Review',
-      eventMessage: '重新打开审查：.limcode/review/workspace-review.md'
+      eventMessage: '重新打开审查：.graycode/review/workspace-review.md'
     })
   })
 
   it('rejects reopen when another active review session already exists', async () => {
     const tool = createReopenReviewTool()
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md'
+      path: '.graycode/review/workspace-review.md'
     }, {
       conversationId: 'conversation-1',
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-2',
-          reviewPath: '.limcode/review/other-review.md',
+          reviewPath: '.graycode/review/other-review.md',
           status: 'in_progress',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: null
@@ -129,11 +129,11 @@ describe('reopen_review tool', () => {
   it('rejects invalid review paths', async () => {
     const tool = createReopenReviewTool()
     const result = await tool.handler({
-      path: '.limcode/design/not-allowed.md'
+      path: '.graycode/design/not-allowed.md'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/review/**.md')
+    expect(result.error).toContain('.graycode/review/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

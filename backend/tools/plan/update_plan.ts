@@ -41,14 +41,14 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
     name: 'update_plan',
     strict: true,
     description:
-      'Update an existing plan document (markdown) under .limcode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, or continuationPrompt.',
+      'Update an existing plan document (markdown) under .graycode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, or continuationPrompt.',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target existing plan document path under .limcode/plans/**.md. Reuse the approved plan path here; do not send separate sourcePath or planPath fields.'
+          description: 'Target existing plan document path under .graycode/plans/**.md. Reuse the approved plan path here; do not send separate sourcePath or planPath fields.'
         },
         title: { type: 'string', description: 'Optional updated plan title.' },
         overview: { type: 'string', description: 'Optional updated one-line overview.' },
@@ -114,7 +114,7 @@ export function createUpdatePlanTool(): Tool {
       }
 
       if (!isPlanModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid plan path. Only ".limcode/plans/**.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${targetPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath);

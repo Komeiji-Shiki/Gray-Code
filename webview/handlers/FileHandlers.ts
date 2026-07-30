@@ -588,7 +588,7 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     const { title, content, language } = data;
     
     // 创建临时文件来显示内容
-    const tempDir = path.join(os.tmpdir(), 'limcode-context-preview');
+    const tempDir = path.join(os.tmpdir(), 'graycode-context-preview');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -653,7 +653,7 @@ export const previewAttachment: MessageHandler = async (data, requestId, ctx) =>
   try {
     const { name, mimeType, data: base64Data } = data;
     
-    const tempDir = path.join(os.tmpdir(), 'limcode-preview');
+    const tempDir = path.join(os.tmpdir(), 'graycode-preview');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -1258,7 +1258,7 @@ function buildPlanExecutionPrompt(modified: boolean): string {
     'Do not create another plan unless the user explicitly asks to revise it.',
     'Start implementation immediately.',
     'Use todo_update to track progress as you work.',
-    'Use update_progress and record_progress_milestone to keep .limcode/progress.md current at the project level when progress changes in a meaningful way.',
+    'Use update_progress and record_progress_milestone to keep .graycode/progress.md current at the project level when progress changes in a meaningful way.',
     "When TODO status changes in a meaningful way, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the plan document.",
     "When calling update_plan with updateMode: 'progress_sync', never pass sourceArtifact. Only send path, todos, updateMode, and optional changeSummary."
   ].join('\n');

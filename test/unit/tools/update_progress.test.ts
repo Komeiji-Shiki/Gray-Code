@@ -46,7 +46,7 @@ describe('update_progress tool', () => {
       currentFocus: '旧焦点',
       nextAction: '继续整理方案',
       activeArtifacts: {
-        plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+        plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
       },
       todos: [
         { id: 'progress-01', content: '实现后端基础层', status: 'pending' }
@@ -73,7 +73,7 @@ describe('update_progress tool', () => {
 
     expect(result.success).toBe(true)
     expect((result.data as any).progressSnapshot).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       phase: 'implementation',
       currentFocus: '实现后端 Progress 工具',
       latestConclusion: '后端结构已经开始实现。',
@@ -106,12 +106,12 @@ describe('update_progress tool', () => {
   it('rejects invalid progress path values', async () => {
     const tool = createUpdateProgressTool()
     const result = await tool.handler({
-      path: '.limcode/plans/not-allowed.md',
+      path: '.graycode/plans/not-allowed.md',
       currentFocus: '非法路径'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/progress.md')
+    expect(result.error).toContain('.graycode/progress.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
   })
 })

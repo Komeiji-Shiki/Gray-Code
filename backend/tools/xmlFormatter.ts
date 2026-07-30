@@ -1,5 +1,5 @@
 /**
- * LimCode - XML 工具格式转换器
+ * GrayCode - XML 工具格式转换器
  *
  * 将工具声明转换为 XML 提示词格式
  * 使用 fast-xml-parser 进行 XML 解析

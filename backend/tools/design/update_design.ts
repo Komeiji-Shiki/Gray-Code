@@ -22,14 +22,14 @@ export function createUpdateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'update_design',
     description:
-      'Update an existing design document (markdown) under .limcode/design/**.md. Use this when the user wants to revise the current design instead of creating a new one.',
+      'Update an existing design document (markdown) under .graycode/design/**.md. Use this when the user wants to revise the current design instead of creating a new one.',
     category: 'design',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target existing design document path under .limcode/design/**.md.'
+          description: 'Target existing design document path under .graycode/design/**.md.'
         },
         title: { type: 'string', description: 'Optional updated design title.' },
         overview: { type: 'string', description: 'Optional updated one-line overview.' },
@@ -62,7 +62,7 @@ export function createUpdateDesignTool(): Tool {
       }
 
       if (!isDesignModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid design path. Only ".limcode/design/**.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: `Invalid design path. Only ".graycode/design/**.md" is allowed. Rejected path: ${targetPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath);

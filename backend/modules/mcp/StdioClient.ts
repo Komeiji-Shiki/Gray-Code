@@ -181,7 +181,7 @@ export class StdioMcpClient extends EventEmitter {
                 roots: { listChanged: true }
             },
             clientInfo: {
-                name: 'LimCode',
+                name: 'GrayCode',
                 version: '1.0.5'
             }
         });

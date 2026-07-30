@@ -102,7 +102,7 @@ export interface ReviewFindingRecordV4 {
 
 export interface ReviewSnapshotV4 {
   formatVersion: 4;
-  kind: 'limcode.review';
+  kind: 'graycode.review';
   reviewRunId: string;
   createdAt: string;
   updatedAt: string;
@@ -315,14 +315,14 @@ export const REVIEW_MILESTONES_SECTION_TITLE = '## Review Milestones';
 export const REVIEW_FINAL_CONCLUSION_SECTION_TITLE = '## Review Final Conclusion';
 export const REVIEW_SNAPSHOT_SECTION_TITLE = '## Review Snapshot';
 
-export const REVIEW_SUMMARY_START = '<!-- LIMCODE_REVIEW_SUMMARY_START -->';
-export const REVIEW_SUMMARY_END = '<!-- LIMCODE_REVIEW_SUMMARY_END -->';
-export const REVIEW_FINDINGS_START = '<!-- LIMCODE_REVIEW_FINDINGS_START -->';
-export const REVIEW_FINDINGS_END = '<!-- LIMCODE_REVIEW_FINDINGS_END -->';
-export const REVIEW_MILESTONES_START = '<!-- LIMCODE_REVIEW_MILESTONES_START -->';
-export const REVIEW_MILESTONES_END = '<!-- LIMCODE_REVIEW_MILESTONES_END -->';
-export const REVIEW_METADATA_START = '<!-- LIMCODE_REVIEW_METADATA_START -->';
-export const REVIEW_METADATA_END = '<!-- LIMCODE_REVIEW_METADATA_END -->';
+export const REVIEW_SUMMARY_START = '<!-- GRAYCODE_REVIEW_SUMMARY_START -->';
+export const REVIEW_SUMMARY_END = '<!-- GRAYCODE_REVIEW_SUMMARY_END -->';
+export const REVIEW_FINDINGS_START = '<!-- GRAYCODE_REVIEW_FINDINGS_START -->';
+export const REVIEW_FINDINGS_END = '<!-- GRAYCODE_REVIEW_FINDINGS_END -->';
+export const REVIEW_MILESTONES_START = '<!-- GRAYCODE_REVIEW_MILESTONES_START -->';
+export const REVIEW_MILESTONES_END = '<!-- GRAYCODE_REVIEW_MILESTONES_END -->';
+export const REVIEW_METADATA_START = '<!-- GRAYCODE_REVIEW_METADATA_START -->';
+export const REVIEW_METADATA_END = '<!-- GRAYCODE_REVIEW_METADATA_END -->';
 
 export const REVIEW_SNAPSHOT_RENDERER_VERSION = 4;
 export const NO_MILESTONES_PLACEHOLDER = '<!-- no milestones -->';

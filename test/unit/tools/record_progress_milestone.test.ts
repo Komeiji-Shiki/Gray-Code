@@ -45,7 +45,7 @@ describe('record_progress_milestone tool', () => {
       phase: 'implementation',
       currentFocus: '实现 Progress 工具',
       activeArtifacts: {
-        plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+        plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
       },
       todos: [
         { id: 'progress-01', content: '实现后端基础层', status: 'in_progress' }
@@ -75,7 +75,7 @@ describe('record_progress_milestone tool', () => {
       milestoneId: 'PG1'
     })
     expect((result.data as any).progressSnapshot).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       currentProgress: '1/1 个里程碑已完成；最新：PG1',
       latestConclusion: '后端基础层已经完成。',
       nextAction: '开始接入前端摘要卡片。',
@@ -132,13 +132,13 @@ describe('record_progress_milestone tool', () => {
   it('rejects invalid progress path values', async () => {
     const tool = createRecordProgressMilestoneTool()
     const result = await tool.handler({
-      path: '.limcode/review/not-allowed.md',
+      path: '.graycode/review/not-allowed.md',
       title: '非法路径',
       summary: '非法路径'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/progress.md')
+    expect(result.error).toContain('.graycode/progress.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
   })
 })

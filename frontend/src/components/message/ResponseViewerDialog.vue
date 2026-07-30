@@ -33,7 +33,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const MODE_STORAGE_KEY = 'limcode.responseViewer.mode'
+const MODE_STORAGE_KEY = 'graycode.responseViewer.mode'
 
 const visible = computed({
   get: () => props.modelValue,

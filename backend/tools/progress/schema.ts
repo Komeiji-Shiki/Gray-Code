@@ -61,7 +61,7 @@ export interface ProgressStats {
 
 export interface ProgressDocumentMetadataV1 {
   formatVersion: 1;
-  kind: 'limcode.progress';
+  kind: 'graycode.progress';
   projectId: string;
   projectName?: string;
   createdAt: string;
@@ -87,7 +87,7 @@ export interface ProgressDocumentMetadataV1 {
 
 export interface ProgressSummarySnapshotV1 {
   formatVersion: 1;
-  kind: 'limcode.progress';
+  kind: 'graycode.progress';
   path: string;
   projectId: string;
   projectName?: string;
@@ -169,17 +169,17 @@ export const PROGRESS_MILESTONES_SECTION_TITLE = '## 项目里程碑';
 export const PROGRESS_RISKS_SECTION_TITLE = '## 风险与阻塞';
 export const PROGRESS_LOG_SECTION_TITLE = '## 最近更新';
 
-export const PROGRESS_SUMMARY_START = '<!-- LIMCODE_PROGRESS_SUMMARY_START -->';
-export const PROGRESS_SUMMARY_END = '<!-- LIMCODE_PROGRESS_SUMMARY_END -->';
-export const PROGRESS_ARTIFACTS_START = '<!-- LIMCODE_PROGRESS_ARTIFACTS_START -->';
-export const PROGRESS_ARTIFACTS_END = '<!-- LIMCODE_PROGRESS_ARTIFACTS_END -->';
-export const PROGRESS_TODOS_START = '<!-- LIMCODE_PROGRESS_TODOS_START -->';
-export const PROGRESS_TODOS_END = '<!-- LIMCODE_PROGRESS_TODOS_END -->';
-export const PROGRESS_MILESTONES_START = '<!-- LIMCODE_PROGRESS_MILESTONES_START -->';
-export const PROGRESS_MILESTONES_END = '<!-- LIMCODE_PROGRESS_MILESTONES_END -->';
-export const PROGRESS_RISKS_START = '<!-- LIMCODE_PROGRESS_RISKS_START -->';
-export const PROGRESS_RISKS_END = '<!-- LIMCODE_PROGRESS_RISKS_END -->';
-export const PROGRESS_LOG_START = '<!-- LIMCODE_PROGRESS_LOG_START -->';
-export const PROGRESS_LOG_END = '<!-- LIMCODE_PROGRESS_LOG_END -->';
-export const PROGRESS_METADATA_START = '<!-- LIMCODE_PROGRESS_METADATA_START -->';
-export const PROGRESS_METADATA_END = '<!-- LIMCODE_PROGRESS_METADATA_END -->';
+export const PROGRESS_SUMMARY_START = '<!-- GRAYCODE_PROGRESS_SUMMARY_START -->';
+export const PROGRESS_SUMMARY_END = '<!-- GRAYCODE_PROGRESS_SUMMARY_END -->';
+export const PROGRESS_ARTIFACTS_START = '<!-- GRAYCODE_PROGRESS_ARTIFACTS_START -->';
+export const PROGRESS_ARTIFACTS_END = '<!-- GRAYCODE_PROGRESS_ARTIFACTS_END -->';
+export const PROGRESS_TODOS_START = '<!-- GRAYCODE_PROGRESS_TODOS_START -->';
+export const PROGRESS_TODOS_END = '<!-- GRAYCODE_PROGRESS_TODOS_END -->';
+export const PROGRESS_MILESTONES_START = '<!-- GRAYCODE_PROGRESS_MILESTONES_START -->';
+export const PROGRESS_MILESTONES_END = '<!-- GRAYCODE_PROGRESS_MILESTONES_END -->';
+export const PROGRESS_RISKS_START = '<!-- GRAYCODE_PROGRESS_RISKS_START -->';
+export const PROGRESS_RISKS_END = '<!-- GRAYCODE_PROGRESS_RISKS_END -->';
+export const PROGRESS_LOG_START = '<!-- GRAYCODE_PROGRESS_LOG_START -->';
+export const PROGRESS_LOG_END = '<!-- GRAYCODE_PROGRESS_LOG_END -->';
+export const PROGRESS_METADATA_START = '<!-- GRAYCODE_PROGRESS_METADATA_START -->';
+export const PROGRESS_METADATA_END = '<!-- GRAYCODE_PROGRESS_METADATA_END -->';

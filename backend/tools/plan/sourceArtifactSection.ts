@@ -29,8 +29,8 @@ export interface PlanSourceStatusResult {
   sourceArtifact?: PlanSourceArtifact;
 }
 
-export const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- LIMCODE_SOURCE_ARTIFACT_START -->';
-export const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- LIMCODE_SOURCE_ARTIFACT_END -->';
+export const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- GRAYCODE_SOURCE_ARTIFACT_START -->';
+export const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- GRAYCODE_SOURCE_ARTIFACT_END -->';
 
 function isPlanSourceArtifactType(value: unknown): value is PlanSourceArtifactType {
   return value === 'design' || value === 'review';

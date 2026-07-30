@@ -56,11 +56,11 @@ function isScopedMarkdownPathAllowed(path: string, scopeRoot: string): boolean {
  * 检查路径是否允许在 Plan 模式下写入
  * 
  * 允许的路径：
- * - .limcode/plans/xxx.plan.md
- * - .limcode/plans/sub/xxx.md
+ * - .graycode/plans/xxx.plan.md
+ * - .graycode/plans/sub/xxx.md
  * 
  * 拒绝的路径：
- * - 不在 .limcode/plans/ 下的路径
+ * - 不在 .graycode/plans/ 下的路径
  * - 绝对路径
  * - 包含路径穿越（..）的路径
  * - 非 .md 或 .plan.md 扩展名的文件
@@ -70,18 +70,18 @@ function isScopedMarkdownPathAllowed(path: string, scopeRoot: string): boolean {
  * @returns 如果路径允许则返回 true，否则返回 false
  */
 export function isPlanPathAllowed(path: string): boolean {
-    return isScopedMarkdownPathAllowed(path, '.limcode/plans/');
+    return isScopedMarkdownPathAllowed(path, '.graycode/plans/');
 }
 
 /**
  * 检查路径是否允许在 Design 模式下写入
  *
  * 允许的路径：
- * - .limcode/design/xxx.md
- * - .limcode/design/sub/xxx.md
+ * - .graycode/design/xxx.md
+ * - .graycode/design/sub/xxx.md
  *
  * 拒绝的路径：
- * - 不在 .limcode/design/ 下的路径
+ * - 不在 .graycode/design/ 下的路径
  * - 绝对路径
  * - 包含路径穿越（..）的路径
  * - 非 .md 扩展名的文件
@@ -91,32 +91,32 @@ export function isPlanPathAllowed(path: string): boolean {
  * @returns 如果路径允许则返回 true，否则返回 false
  */
 export function isDesignPathAllowed(path: string): boolean {
-    return isScopedMarkdownPathAllowed(path, '.limcode/design/');
+    return isScopedMarkdownPathAllowed(path, '.graycode/design/');
 }
 
 /**
  * 检查路径是否允许在 Review 模式下写入
  *
  * 允许的路径：
- * - .limcode/review/xxx.md
- * - .limcode/review/sub/xxx.md
+ * - .graycode/review/xxx.md
+ * - .graycode/review/sub/xxx.md
  *
  * 拒绝的路径：
- * - 不在 .limcode/review/ 下的路径
+ * - 不在 .graycode/review/ 下的路径
  * - 绝对路径
  * - 包含路径穿越（..）的路径
  * - 非 .md 扩展名的文件
  * - 空字符串或目录路径
  */
 export function isReviewPathAllowed(path: string): boolean {
-    return isScopedMarkdownPathAllowed(path, '.limcode/review/');
+    return isScopedMarkdownPathAllowed(path, '.graycode/review/');
 }
 
 /**
  * 检查路径是否允许在 Progress 能力下写入
  *
  * 首版仅允许固定文件：
- * - .limcode/progress.md
+ * - .graycode/progress.md
  *
  * 拒绝：
  * - 绝对路径
@@ -128,7 +128,7 @@ export function isProgressPathAllowed(path: string): boolean {
     if (!normalizedPath || normalizedPath.startsWith('/') || normalizedPath.includes('..') || normalizedPath.endsWith('/')) {
         return false;
     }
-    return normalizedPath === '.limcode/progress.md';
+    return normalizedPath === '.graycode/progress.md';
 }
 
 /**

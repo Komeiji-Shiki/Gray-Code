@@ -1,6 +1,12 @@
 # Change Log
 
-All notable changes to the "Lim Code" extension will be documented in this file.
+
+## [1.3.0] - 2026-01-21
+
+### Changed
+- **品牌更名**：LimCode → GrayCode。扩展 ID 由 `limcode` 改为 `graycode`。所有 VSCode 命令已更名（`limcode.*` → `graycode.*`），配置命名空间已变更（`limcode.*` → `graycode.*`）。从旧 LimCode 导出的 JSON 文件导入时会自动迁移。
+
+All notable changes to the "Gray Code" extension will be documented in this file.
 
 ## [Unreleased]
 
@@ -10,9 +16,6 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - MemoryToolConfig 类型扩展，新增 wakeLines / entryChars / partChars / partLines 可选字段，默认值与 DEFAULT_MEMORY_CONFIG 对齐
   - getMemoryConfig / updateMemoryConfig 处理器合并 MemoryManager 运行时配置：读取时自动合并文件系统的运行时参数，保存时同步到 MemoryManager（若已初始化）
 
-### Fixed
-  - 修复工具调用结果展开区域的背景色过于突兀的问题：`.tool-content` 从 `inactiveSelectionBackground`（暗色主题下呈浅灰）改为 `transparent`，与工具卡片整体风格保持一致
-
 ## [1.2.7] - 2026-07-28
 
 ### Added
@@ -20,9 +23,9 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 新增 7 个记忆工具：`memory_wake`（唤醒记忆）、`memory_note`（记录记忆）、`memory_recall`（正则搜索记忆）、`memory_compress`（执行压缩合并）、`memory_zoom`（展开树节点）、`memory_forget`（丢弃错误摘要）、`memory_config`（查看/修改参数）
   - 新增 `MemoryManager` 核心引擎（`backend/modules/memory/`）：TypeScript 原生实现的固定宽度记录存储、二叉树 cover 算法、分页输出、异步锁并发控制，完全兼容 OptMem 数据格式
   - 新增 `{{$MEMORY}}` 系统提示词模板变量：在内置 DEFAULT 和 CODE 模板中默认引用，用户可在 设置 → 记忆 中自定义记忆使用说明，或在提示词设置中删除此变量以关闭记忆系统
-  - 新增记忆设置页面（设置 → 记忆）：可视化编辑自定义记忆提示词，保存/重置按钮，MemoryToolConfig 类型持久化到 `limcode.toolsConfig.memory`
+  - 新增记忆设置页面（设置 → 记忆）：可视化编辑自定义记忆提示词，保存/重置按钮，MemoryToolConfig 类型持久化到 `graycode.toolsConfig.memory`
   - 提示词设置「插入变量」列表新增 `{{$MEMORY}}`（静态分组）
-  - 记忆数据默认存储在 `globalStorage/memory/`，随 LimCode 自定义存储路径迁移
+  - 记忆数据默认存储在 `globalStorage/memory/`，随 GrayCode 自定义存储路径迁移
   - 新增 MemoryManager 初始化集成（ChatViewProvider.initializeBackend 步骤 25.6）
 
 ### Fixed
@@ -35,7 +38,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - SubAgent 对话延续：主模型调用 `subagents` 工具时可传入 `continueFromRunId` 参数，将新子代理接续到之前已完成子代理的对话上，新子代理自动继承旧 run 的完整 transcript（对话历史），实现跨调用的对话接力；对仍在运行中的旧 run 会拒绝延续并返回明确错误
   - 新增 StreamAccumulator 回归测试（`backend/__tests__/channel/streamAccumulator.test.ts`，覆盖结构修订号递增语义 / 完成工具调用 id 去重 / prompt 模式分片块解析 / thought 文本不解析 / 未闭合块 flush，9 用例）与 xmlFormatter 解析测试（`backend/__tests__/tools/xmlFormatter.test.ts`，tool_name 形态容错 / 带属性参数节点，5 用例）
   - 新增用量统计页面：从已落盘对话历史回溯聚合 token 用量，支持总览 + 按对话 / 按模型 / 按日期三个维度，包含 CSS 条形图可视化；入口位于历史页头部图表按钮
-  - 用量统计页新增 VSCode 视图标题栏入口（`limcode.showUsage` 命令 + graph 图标按钮，位于历史与设置之间），不再只能从历史页右上角的隐藏入口进入
+  - 用量统计页新增 VSCode 视图标题栏入口（`graycode.showUsage` 命令 + graph 图标按钮，位于历史与设置之间），不再只能从历史页右上角的隐藏入口进入
   - 用量统计页新增时间范围筛选（全部 / 今天 / 近 7 天 / 近 30 天），后端 `aggregateUsageStats` 支持按消息时间戳过滤（`UsageStatsOptions.startTime/endTime`），总览与三个维度均为筛选后口径；筛选激活时缺失时间戳的消息不参与统计
   - 用量统计页新增成本估算：「按模型」维度可就地配置模型单价（美元/百万 token，思考 token 按输出价计），行上显示单模型估算成本，总览卡片显示总估算成本；单价持久化在 `ui.usagePricing`，随设置导出/导入一同迁移
   - 用量统计页「按对话」维度支持点击行直接打开对应对话并返回聊天视图
@@ -52,7 +55,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - OpenAI 兼容渠道新增 DeepSeek `user_id` 开关，用户可在渠道设置中显式启用，启用后主聊天请求会基于当前对话 ID 生成稳定且不包含隐私信息的 `user_id`，用于 DeepSeek KVCache 按对话隔离；默认关闭，避免误判中转或其他兼容服务
   - 新增设置导入/导出功能：可在设置 → 通用设置中将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复；支持跳过已存在项和覆盖全部两种导入模式，导入时弹出覆盖确认对话框
   - 新增 `SettingsExporter` 后端模块（`backend/modules/settings/SettingsExporter.ts`），负责收集导出数据（VSCode 设置、渠道配置、MCP 服务器、Skills）并序列化/反序列化，排除对话历史与检查点
-  - 设置导入/导出支持设置页「通用设置」按钮和命令面板（`limcode.exportSettings` / `limcode.importSettings`）两种入口
+  - 设置导入/导出支持设置页「通用设置」按钮和命令面板（`graycode.exportSettings` / `graycode.importSettings`）两种入口
   - 新增设置导入/导出三语 i18n（zh-CN / en / ja）
   - 新增 `settings.export` / `settings.import` webview 消息处理器，前端按钮通过消息桥接调用扩展端文件对话框与导出/导入逻辑
   - 类型安全渐进启用：tsconfig 新增 `strictNullChecks` + `alwaysStrict` + `noImplicitThis` + `strictBindCallApply` + `strictFunctionTypes` + `noFallthroughCasesInSwitch`，backend + webview 零严格错误
@@ -129,7 +132,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 修复 write_file 新建文件被用户拒绝或中断后磁盘残留空文件的问题，拒绝/取消时自动删除原先创建的空文件
   - 修复命令执行期间无法继续对话的问题：前台命令现在支持运行时转移至后台（detach），用户发送新消息时自动触发；SendButton 在响应期间仍保留发送入口，消息以排队方式进入队列，命令结果稍后以回执消息回流唤醒模型
   - 修复应用差异/写入代码后用户光标跑进代码编辑器的问题：关闭 diff 标签页的 `tabGroups.close` 未传 `preserveFocus`，关闭活动标签后 VSCode 激活相邻编辑器并把光标带进去；现在 diff 应用/拒绝（diffManager）与检查点回档清理 diff 视图（CheckpointManager）均保持焦点原位
-  - 修复关闭 diff 标签后聊天输入框仍会失焦的问题（`preserveFocus` 只能阻止焦点跳进编辑器，无法阻止 workbench 把焦点从侧边栏 webview 收走）：新增焦点守卫 `chatFocusGuard`，前端输入框通过 `chatInput.focusState` 消息上报焦点状态，扩展端在关闭 diff 标签前采样、关闭后若输入框此前持有焦点则执行 `limcode.chatView.focus` 归还 webview 焦点并推送 `chat.restoreInputFocus` 命令让光标回到输入框；焦点在编辑器/终端等其他位置时不干预，连续关闭多个 diff 的 blur 上报竞态由 1.5s 宽限期兜底
+  - 修复关闭 diff 标签后聊天输入框仍会失焦的问题（`preserveFocus` 只能阻止焦点跳进编辑器，无法阻止 workbench 把焦点从侧边栏 webview 收走）：新增焦点守卫 `chatFocusGuard`，前端输入框通过 `chatInput.focusState` 消息上报焦点状态，扩展端在关闭 diff 标签前采样、关闭后若输入框此前持有焦点则执行 `graycode.chatView.focus` 归还 webview 焦点并推送 `chat.restoreInputFocus` 命令让光标回到输入框；焦点在编辑器/终端等其他位置时不干预，连续关闭多个 diff 的 blur 上报竞态由 1.5s 宽限期兜底
   - 修复流式提前执行工具的多模态附件（`multimodalAttachments`）从未被写入历史的问题：xml/json 模式下提前执行的 generate_image / MCP 图片结果不再静默丢失，提前执行与串行执行两条路径的附件统一合并后随函数响应写入
   - 修复流式边执行工具可能被重复执行的隐患：`getNewCompletedFunctionCalls` 改用稳定工具调用 id 去重（原 parts 数组索引在结构调整时会漂移，导致同一工具被重复上报并重复执行）；无稳定 id 的调用交给最终统一执行路径兜底
   - 修复 XML 工具调用 `<tool_name>` 带属性时工具名以对象形态流入执行层导致查找必然失败的问题（提取 `#text` 并校验为非空字符串）
@@ -342,7 +345,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 新增 WebviewClientRegistry 实现 client-aware Webview routing，让 Main Chat 与 SubAgent Monitor 响应回到正确 Webview
   - 新增 agentRun store（events/reducer/selectors/contentDelta）为 Monitor 前端数据流提供状态管理
   - Monitor 前端组件：实时输出、工具卡参数显示、多 run 标签页、窗口状态管理
-  - 接入 App 独立面板模式：`__LIMCODE_VIEW_MODE = 'subagentMonitor'` 时渲染 SubAgent Monitor，并跳过主聊天初始化链路
+  - 接入 App 独立面板模式：`__GRAYCODE_VIEW_MODE = 'subagentMonitor'` 时渲染 SubAgent Monitor，并跳过主聊天初始化链路
   - SubAgent 工具卡新增“打开详情 / Open details”操作，复用 `ToolConfig.actions` 和 `ToolMessage` 通用工具操作按钮渲染
   - Webview 侧补齐 `subagents.openMonitor`、pause/resume/exit、delete/retry message 等 Monitor 操作 handler，并在 `ChatViewProvider` 中完成最小路由接线
   - 补齐 SubAgent Monitor 相关 i18n key（zh-CN / en / ja）和前后端通信类型

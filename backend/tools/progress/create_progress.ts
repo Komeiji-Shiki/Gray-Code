@@ -54,14 +54,14 @@ export function createCreateProgressToolDeclaration(): ToolDeclaration {
     name: 'create_progress',
     strict: true,
     description:
-      'Create the project progress document at .limcode/progress.md. This initializes the project-level status ledger and returns a lightweight progress snapshot instead of the full markdown body.',
+      'Create the project progress document at .graycode/progress.md. This initializes the project-level status ledger and returns a lightweight progress snapshot instead of the full markdown body.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional output path. Must be .limcode/progress.md (or multi-root: workspace/.limcode/progress.md).'
+          description: 'Optional output path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
         },
         projectName: { type: 'string', description: 'Optional human-readable project name.' },
         projectId: { type: 'string', description: 'Optional stable project id. Defaults to a slug from the project name.' },
@@ -116,10 +116,10 @@ export function createCreateProgressTool(): Tool {
       const args = rawArgs as unknown as CreateProgressArgs;
       const outPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
-        : '.limcode/progress.md';
+        : '.graycode/progress.md';
 
       if (!isProgressModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid progress path. Only ".limcode/progress.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${outPath}` };
       }
 
       if (Object.prototype.hasOwnProperty.call(rawArgs, 'status') && !isProgressStatus(args.status)) {

@@ -1,7 +1,7 @@
 {
-  "name": "limcode",
-  "displayName": "Lim Code",
-  "description": "Lim Code 是一个AI编程助手插件，支持多模态和复杂功能。",
+  "name": "graycode",
+  "displayName": "Gray Code",
+  "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
   "version": "1.2.7",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
@@ -23,227 +23,227 @@
   "contributes": {
     "commands": [
       {
-        "command": "limcode.openChat",
-        "title": "LimCode: 打开聊天面板"
+        "command": "graycode.openChat",
+        "title": "GrayCode: 打开聊天面板"
       },
       {
-        "command": "limcode.context.addSelectionToInput",
-        "title": "LimCode: 添加选中代码到输入框"
+        "command": "graycode.context.addSelectionToInput",
+        "title": "GrayCode: 添加选中代码到输入框"
       },
       {
-        "command": "limcode.newChat",
+        "command": "graycode.newChat",
         "title": "新建对话",
         "icon": "$(add)"
       },
       {
-        "command": "limcode.showHistory",
+        "command": "graycode.showHistory",
         "title": "对话历史",
         "icon": "$(history)"
       },
       {
-        "command": "limcode.showUsage",
+        "command": "graycode.showUsage",
         "title": "用量统计",
         "icon": "$(graph)"
       },
       {
-        "command": "limcode.showSettings",
+        "command": "graycode.showSettings",
         "title": "设置",
         "icon": "$(settings-gear)"
       },
       {
-        "command": "limcode.exportSettings",
+        "command": "graycode.exportSettings",
         "title": "导出设置",
         "icon": "$(export)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.importSettings",
+        "command": "graycode.importSettings",
         "title": "导入设置",
         "icon": "$(import)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.migrateConversationHistories",
+        "command": "graycode.migrateConversationHistories",
         "title": "迁移旧对话历史",
         "icon": "$(history)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.acceptAll",
+        "command": "graycode.diff.acceptAll",
         "title": "Accept All Changes",
         "icon": "$(check-all)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.rejectAll",
+        "command": "graycode.diff.rejectAll",
         "title": "Reject All Changes",
         "icon": "$(close-all)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.acceptBlock",
+        "command": "graycode.diff.acceptBlock",
         "title": "Accept Diff Block...",
         "icon": "$(check)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.rejectBlock",
+        "command": "graycode.diff.rejectBlock",
         "title": "Reject Diff Block...",
         "icon": "$(close)",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.acceptCurrentBlock",
+        "command": "graycode.diff.acceptCurrentBlock",
         "title": "Accept Current Diff Block",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.rejectCurrentBlock",
+        "command": "graycode.diff.rejectCurrentBlock",
         "title": "Reject Current Diff Block",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.nextBlock",
+        "command": "graycode.diff.nextBlock",
         "title": "Go to Next Diff Block",
-        "category": "LimCode"
+        "category": "GrayCode"
       },
       {
-        "command": "limcode.diff.prevBlock",
+        "command": "graycode.diff.prevBlock",
         "title": "Go to Previous Diff Block",
-        "category": "LimCode"
+        "category": "GrayCode"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "limcode.newChat",
-          "when": "view == limcode.chatView",
+          "command": "graycode.newChat",
+          "when": "view == graycode.chatView",
           "group": "navigation@1"
         },
         {
-          "command": "limcode.showHistory",
-          "when": "view == limcode.chatView",
+          "command": "graycode.showHistory",
+          "when": "view == graycode.chatView",
           "group": "navigation@2"
         },
         {
-          "command": "limcode.showUsage",
-          "when": "view == limcode.chatView",
+          "command": "graycode.showUsage",
+          "when": "view == graycode.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "limcode.showSettings",
-          "when": "view == limcode.chatView",
+          "command": "graycode.showSettings",
+          "when": "view == graycode.chatView",
           "group": "navigation@4"
         }
       ],
       "editor/title": [
         {
-          "command": "limcode.diff.acceptAll",
-          "when": "limcode.hasPendingDiff",
+          "command": "graycode.diff.acceptAll",
+          "when": "graycode.hasPendingDiff",
           "group": "navigation@1"
         },
         {
-          "command": "limcode.diff.rejectAll",
-          "when": "limcode.hasPendingDiff",
+          "command": "graycode.diff.rejectAll",
+          "when": "graycode.hasPendingDiff",
           "group": "navigation@2"
         },
         {
-          "command": "limcode.diff.acceptBlock",
-          "when": "limcode.hasPendingDiff",
+          "command": "graycode.diff.acceptBlock",
+          "when": "graycode.hasPendingDiff",
           "group": "navigation@3"
         },
         {
-          "command": "limcode.diff.rejectBlock",
-          "when": "limcode.hasPendingDiff",
+          "command": "graycode.diff.rejectBlock",
+          "when": "graycode.hasPendingDiff",
           "group": "navigation@4"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "limcode.diff.acceptCurrentBlock",
+        "command": "graycode.diff.acceptCurrentBlock",
         "key": "ctrl+shift+y",
         "mac": "cmd+shift+y",
-        "when": "limcode.hasPendingDiff && editorTextFocus"
+        "when": "graycode.hasPendingDiff && editorTextFocus"
       },
       {
-        "command": "limcode.diff.rejectCurrentBlock",
+        "command": "graycode.diff.rejectCurrentBlock",
         "key": "ctrl+shift+n",
         "mac": "cmd+shift+n",
-        "when": "limcode.hasPendingDiff && editorTextFocus"
+        "when": "graycode.hasPendingDiff && editorTextFocus"
       },
       {
-        "command": "limcode.diff.nextBlock",
+        "command": "graycode.diff.nextBlock",
         "key": "alt+]",
         "mac": "alt+]",
-        "when": "limcode.hasPendingDiff && editorTextFocus"
+        "when": "graycode.hasPendingDiff && editorTextFocus"
       },
       {
-        "command": "limcode.diff.prevBlock",
+        "command": "graycode.diff.prevBlock",
         "key": "alt+[",
         "mac": "alt+[",
-        "when": "limcode.hasPendingDiff && editorTextFocus"
+        "when": "graycode.hasPendingDiff && editorTextFocus"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "limcode",
-          "title": "Lim Code",
+          "id": "graycode",
+          "title": "Gray Code",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "views": {
-      "limcode": [
+      "graycode": [
         {
           "type": "webview",
-          "id": "limcode.chatView",
-          "name": "Lim Code",
+          "id": "graycode.chatView",
+          "name": "Gray Code",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "configuration": {
-      "title": "Lim Code",
+      "title": "Gray Code",
       "properties": {
-        "limcode.activeChannelId": {
+        "graycode.activeChannelId": {
           "type": "string",
           "default": "",
           "scope": "machine",
           "description": "当前激活的模型渠道 ID（按机器保存，不参与 Settings Sync）"
         },
-        "limcode.lastReadAnnouncementVersion": {
+        "graycode.lastReadAnnouncementVersion": {
           "type": "string",
           "default": "",
           "description": "用户上次查看的公告版本（可同步）"
         },
-        "limcode.toolsConfig": {
+        "graycode.toolsConfig": {
           "type": "object",
           "default": {},
-          "description": "LimCode 工具与提示词等配置（可同步）"
+          "description": "GrayCode 工具与提示词等配置（可同步）"
         },
-        "limcode.ui": {
+        "graycode.ui": {
           "type": "object",
           "default": {},
-          "description": "LimCode UI 配置（可同步）"
+          "description": "GrayCode UI 配置（可同步）"
         },
-        "limcode.toolsEnabled": {
+        "graycode.toolsEnabled": {
           "type": "object",
           "default": {},
           "description": "工具启用状态（可同步）"
         },
-        "limcode.toolAutoExec": {
+        "graycode.toolAutoExec": {
           "type": "object",
           "default": {},
           "description": "工具自动执行配置（可同步）"
         },
-        "limcode.maxToolIterations": {
+        "graycode.maxToolIterations": {
           "type": "number",
           "default": 50,
           "description": "单回合最大工具调用次数（可同步，-1 表示无限制）"
         },
-        "limcode.defaultToolMode": {
+        "graycode.defaultToolMode": {
           "type": "string",
           "default": "function_call",
           "enum": [
@@ -253,7 +253,7 @@
           ],
           "description": "默认工具模式（可同步）"
         },
-        "limcode.proxy": {
+        "graycode.proxy": {
           "type": "object",
           "default": {
             "enabled": false
@@ -261,7 +261,7 @@
           "scope": "machine",
           "description": "代理设置（按机器保存，不参与 Settings Sync）"
         },
-        "limcode.storagePath": {
+        "graycode.storagePath": {
           "type": "object",
           "default": {},
           "scope": "machine",
@@ -313,13 +313,13 @@
     "dev",
     "keybindings",
     "mcp",
-    "lim code",
-    "limcode"
+    "gray code",
+    "graycode"
   ],
   "author": "Komeiji-Shiki",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Komeiji-Shiki/Lim-Code"
+    "url": "https://github.com/Komeiji-Shiki/Gray-Code"
   }
 }

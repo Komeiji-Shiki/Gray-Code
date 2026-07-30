@@ -56,7 +56,7 @@ describe('create_plan tool', () => {
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBe(true)
     expect(result.data).toEqual({
-      path: '.limcode/plans/api-plan.plan.md',
+      path: '.graycode/plans/api-plan.plan.md',
       content: expect.stringContaining('# API Plan\n\n- implement endpoint'),
       todos: [
         { id: 'api-1', content: '实现接口', status: 'pending' },
@@ -69,12 +69,12 @@ describe('create_plan tool', () => {
     expect((result.data as any).content).toContain('`#api-2`')
 
     expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.limcode/plans'
+      fsPath: 'D:/workspace/.graycode/plans'
     })
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.limcode/plans/api-plan.plan.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/plans/api-plan.plan.md')
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({
-      planPath: '.limcode/plans/api-plan.plan.md',
+      planPath: '.graycode/plans/api-plan.plan.md',
       title: 'API Plan',
       todos: [
         { id: 'api-1', content: '实现接口', status: 'pending' },
@@ -94,32 +94,32 @@ describe('create_plan tool', () => {
       ],
       sourceArtifact: {
         type: 'design',
-        path: '.limcode/design/tracked.md'
+        path: '.graycode/design/tracked.md'
       }
     })
 
     expect(result.success).toBe(true)
     expect((result.data as any).sourceArtifact).toEqual({
       type: 'design',
-      path: '.limcode/design/tracked.md',
+      path: '.graycode/design/tracked.md',
       contentHash: expect.stringMatching(/^sha256:/)
     })
-    expect((result.data as any).content).toContain('<!-- LIMCODE_SOURCE_ARTIFACT_START -->')
+    expect((result.data as any).content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
     expect((result.data as any).content).toContain('"type":"design"')
-    expect((result.data as any).content).toContain('"path":".limcode/design/tracked.md"')
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.limcode/design/tracked.md')
+    expect((result.data as any).content).toContain('"path":".graycode/design/tracked.md"')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/tracked.md')
   })
 
-  it('rejects paths outside .limcode/plans', async () => {
+  it('rejects paths outside .graycode/plans', async () => {
     const tool = createCreatePlanTool()
     const result = await tool.handler({
       plan: '# Invalid',
       todos: [{ id: 'x', content: 'x', status: 'pending' }],
-      path: '.limcode/design/not-allowed.md'
+      path: '.graycode/design/not-allowed.md'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/plans/**.md')
+    expect(result.error).toContain('.graycode/plans/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

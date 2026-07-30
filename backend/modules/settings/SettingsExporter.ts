@@ -1,9 +1,9 @@
 /**
- * LimCode - 设置导出/导入器
+ * GrayCode - 设置导出/导入器
  *
  * 将插件设置打包为单个 JSON 文件，支持导出和导入。
  * 导出内容排除对话历史记录和检查点，仅包含：
- * - VSCode 设置 (limcode.*)
+ * - VSCode 设置 (graycode.*)
  * - 渠道配置 (Channel Configs)
  * - MCP 服务器配置
  * - Skills（自定义技能）
@@ -29,8 +29,8 @@ export interface SettingsExportData {
     /** 导出时间戳 */
     exportedAt: number;
     /** 插件版本 */
-    limcodeVersion: string;
-    /** VSCode 设置 (limcode.*) */
+    graycodeVersion: string;
+    /** VSCode 设置 (graycode.*) */
     vscodeSettings: Record<string, unknown>;
     /** 渠道配置列表 */
     channelConfigs: ChannelConfig[];
@@ -81,7 +81,7 @@ export class SettingsExporter {
      * 收集所有需要导出的数据
      */
     async collectExportData(): Promise<SettingsExportData> {
-        // 1. 读取 VSCode 设置 (limcode.*)
+        // 1. 读取 VSCode 设置 (graycode.*)
         const vscodeSettings = this.collectVSCodeSettings();
 
         // 2. 读取渠道配置
@@ -96,7 +96,7 @@ export class SettingsExporter {
         return {
             version: EXPORT_FORMAT_VERSION,
             exportedAt: Date.now(),
-            limcodeVersion: this.extensionVersion,
+            graycodeVersion: this.extensionVersion,
             vscodeSettings,
             channelConfigs,
             mcpServers,
@@ -113,7 +113,7 @@ export class SettingsExporter {
     }
 
     /**
-     * 从 JSON 字符串解析导出数据
+     * 从 JSON 字符串解析导出数据，并自动迁移旧 LimCode 格式
      */
     parseExportData(json: string): SettingsExportData {
         let data: unknown;
@@ -128,6 +128,9 @@ export class SettingsExporter {
         }
 
         const obj = data as Record<string, unknown>;
+
+        // 自动迁移旧 LimCode 导出格式
+        this.migrateFromLimCode(obj);
 
         // 基本结构验证
         if (!obj.version || typeof obj.version !== 'string') {
@@ -151,6 +154,52 @@ export class SettingsExporter {
         }
 
         return obj as unknown as SettingsExportData;
+    }
+
+    /**
+     * 迁移旧 LimCode 导出格式到 GrayCode
+     *
+     * 检测 limcodeVersion 字段，如果存在则执行自动转换：
+     * - VSCode 设置键名 limcode.* → graycode.*
+     * - Skills source 标记 user-limcode → user-graycode
+     * - 版本标记 limcodeVersion → graycodeVersion
+     */
+    private migrateFromLimCode(obj: Record<string, unknown>): void {
+        // 检测是否为旧 LimCode 格式
+        if (!obj.limcodeVersion || typeof obj.limcodeVersion !== 'string') {
+            return; // 不是旧格式，无需迁移
+        }
+
+        // 1. 迁移 VSCode 设置键名
+        if (obj.vscodeSettings && typeof obj.vscodeSettings === 'object') {
+            const settings = obj.vscodeSettings as Record<string, unknown>;
+            const migrated: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(settings)) {
+                if (key.startsWith('limcode.')) {
+                    migrated[key.replace('limcode.', 'graycode.')] = value;
+                } else {
+                    migrated[key] = value;
+                }
+            }
+            obj.vscodeSettings = migrated;
+        }
+
+        // 2. 迁移 Skills source 标记
+        if (Array.isArray(obj.skills)) {
+            for (const skill of obj.skills) {
+                if (skill && typeof skill === 'object') {
+                    if ((skill as any).source === 'user-limcode') {
+                        (skill as any).source = 'user-graycode';
+                    } else if ((skill as any).source === 'project-limcode') {
+                        (skill as any).source = 'project-graycode';
+                    }
+                }
+            }
+        }
+
+        // 3. 迁移版本标记
+        obj.graycodeVersion = obj.limcodeVersion;
+        delete obj.limcodeVersion;
     }
 
     /**
@@ -237,17 +286,17 @@ export class SettingsExporter {
     // ========== 私有方法 ==========
 
     /**
-     * 收集所有 VSCode limcode.* 设置
+     * 收集所有 VSCode graycode.* 设置
      *
      * 只导出用户真实设定过的值（globalValue > workspaceValue > workspaceFolderValue），
      * 不导出 defaultValue（避免将包默认值固化为用户值）。
      * 自动跳过 MACHINE_SCOPE_KEYS 中的键（proxy、storagePath 等）。
      */
     private collectVSCodeSettings(): Record<string, unknown> {
-        const config = vscode.workspace.getConfiguration('limcode');
+        const config = vscode.workspace.getConfiguration('graycode');
         const result: Record<string, unknown> = {};
 
-        // 列出所有 limcode.* 配置键
+        // 列出所有 graycode.* 配置键
         const knownKeys = [
             'toolsConfig',
             'ui',
@@ -293,7 +342,7 @@ export class SettingsExporter {
         settings: Record<string, unknown>,
         options: { overwrite: boolean } = { overwrite: false }
     ): Promise<void> {
-        const config = vscode.workspace.getConfiguration('limcode');
+        const config = vscode.workspace.getConfiguration('graycode');
         const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
 
         const updates: Array<Promise<void>> = [];

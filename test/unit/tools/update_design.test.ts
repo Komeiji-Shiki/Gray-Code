@@ -36,7 +36,7 @@ describe('update_design tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/design/api-design.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/design/api-design.md' },
       error: undefined
     })
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# Existing Design'))
@@ -45,7 +45,7 @@ describe('update_design tool', () => {
   it('rewrites an existing design document and returns requiresUserConfirmation', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
-      path: '.limcode/design/api-design.md',
+      path: '.graycode/design/api-design.md',
       design: '# Revised Design\r\n\r\n- scope',
       changeSummary: '补充边界说明'
     })
@@ -53,14 +53,14 @@ describe('update_design tool', () => {
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBe(true)
     expect(result.data).toEqual({
-      path: '.limcode/design/api-design.md',
+      path: '.graycode/design/api-design.md',
       content: '# Revised Design\n\n- scope',
       changeSummary: '补充边界说明'
     })
-    expect(mockReadFile).toHaveBeenCalledWith({ fsPath: 'D:/workspace/.limcode/design/api-design.md' })
+    expect(mockReadFile).toHaveBeenCalledWith({ fsPath: 'D:/workspace/.graycode/design/api-design.md' })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromDesignArtifact).toHaveBeenCalledWith({
-      designPath: '.limcode/design/api-design.md',
+      designPath: '.graycode/design/api-design.md',
       title: undefined
     })
   })
@@ -70,7 +70,7 @@ describe('update_design tool', () => {
 
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
-      path: '.limcode/design/api-design.md',
+      path: '.graycode/design/api-design.md',
       design: '# Revised Design'
     })
 
@@ -79,15 +79,15 @@ describe('update_design tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .limcode/design', async () => {
+  it('rejects paths outside .graycode/design', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
-      path: '.limcode/plans/not-allowed.md',
+      path: '.graycode/plans/not-allowed.md',
       design: '# Invalid'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/design/**.md')
+    expect(result.error).toContain('.graycode/design/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

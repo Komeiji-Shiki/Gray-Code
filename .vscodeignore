@@ -5,7 +5,7 @@
 tsconfig.json
 **/*.map
 *.vsix
-.limcode/**
+.graycode/**
 fast-tavern-main/**
 .tmp/**
 extension.ts
@@ -27,7 +27,7 @@ coverage/**
 
 # 临时/本地文件（不打包）
 diff_analyzer.py
-limcode-settings.json
+graycode-settings.json
 
 # Claude Code 本地工作区配置（不打包）
 .claude/**

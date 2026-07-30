@@ -47,12 +47,12 @@ export function createFinalizeReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'finalize_review',
     description:
-      'Finalize an existing review document under .limcode/review/**.md, normalize its structure, and update the final review summary.',
+      'Finalize an existing review document under .graycode/review/**.md, normalize its structure, and update the final review summary.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .limcode/review/**.md' },
+        path: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
         conclusion: { type: 'string', description: 'Final review conclusion' },
         overallDecision: {
           type: 'string',
@@ -90,7 +90,7 @@ export function createFinalizeReviewTool(): Tool {
       }
 
       if (!isReviewModePathAllowedWithMultiRoot(path)) {
-        return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
+        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
       const sessionCheck = await ensureMatchingActiveReviewSession(context, path);

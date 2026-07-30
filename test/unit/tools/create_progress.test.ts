@@ -47,7 +47,7 @@ describe('create_progress tool', () => {
       latestConclusion: '已确认需要新增 Progress 能力。',
       nextAction: '开始实现后端基础结构。',
       activeArtifacts: {
-        plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+        plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
       },
       todos: [
         { id: 'progress-01', content: '实现后端基础层', status: 'pending' }
@@ -60,7 +60,7 @@ describe('create_progress tool', () => {
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBeUndefined()
     expect(result.data).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       status: 'active',
       phase: 'plan',
       currentFocus: '整理项目实现范围',
@@ -68,7 +68,7 @@ describe('create_progress tool', () => {
       nextAction: '开始实现后端基础结构。'
     })
     expect((result.data as any).progressSnapshot).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       projectName: 'Workspace',
       status: 'active',
       phase: 'plan',
@@ -89,7 +89,7 @@ describe('create_progress tool', () => {
     expect(writtenContent).toContain('## 项目里程碑')
     expect(writtenContent).toContain('## 风险与阻塞')
     expect(writtenContent).toContain('## 最近更新')
-    expect(writtenContent).toContain('<!-- LIMCODE_PROGRESS_METADATA_START -->')
+    expect(writtenContent).toContain('<!-- GRAYCODE_PROGRESS_METADATA_START -->')
   })
 
   it('returns the existing snapshot when the progress document already exists and is valid', async () => {
@@ -112,21 +112,21 @@ describe('create_progress tool', () => {
     const result = await tool.handler({ projectName: 'Workspace' })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressSnapshot).toMatchObject({ path: '.limcode/progress.md', projectName: 'Workspace' })
+    expect((result.data as any).progressSnapshot).toMatchObject({ path: '.graycode/progress.md', projectName: 'Workspace' })
     expect((result.data as any).warnings).toEqual([
-      'Progress document already exists at .limcode/progress.md. Returned the existing snapshot instead of creating a second file.'
+      'Progress document already exists at .graycode/progress.md. Returned the existing snapshot instead of creating a second file.'
     ])
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid paths outside .limcode/progress.md', async () => {
+  it('rejects invalid paths outside .graycode/progress.md', async () => {
     const tool = createCreateProgressTool()
     const result = await tool.handler({
-      path: '.limcode/review/not-allowed.md'
+      path: '.graycode/review/not-allowed.md'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/progress.md')
+    expect(result.error).toContain('.graycode/progress.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

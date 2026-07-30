@@ -1,5 +1,5 @@
 /**
- * LimCode - JSON 工具格式转换器
+ * GrayCode - JSON 工具格式转换器
  *
  * 将工具声明转换为 JSON 提示词格式
  * 使用动态边界（类似 heredoc）避免内容中的代码块干扰解析

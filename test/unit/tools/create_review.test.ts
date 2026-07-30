@@ -32,7 +32,7 @@ describe('create_review tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/review/workspace-review.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/review/workspace-review.md' },
       error: undefined
     })
   })
@@ -54,7 +54,7 @@ describe('create_review tool', () => {
 
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBeUndefined()
-    expect((result.data as any).path).toBe('.limcode/review/workspace-review.md')
+    expect((result.data as any).path).toBe('.graycode/review/workspace-review.md')
     expect((result.data as any).content).toContain('# Workspace Review')
     expect((result.data as any).content).toContain('## 评审快照')
     expect((result.data as any).content).toContain('```json')
@@ -72,19 +72,19 @@ describe('create_review tool', () => {
       'conversation-1',
       'reviewSession',
       expect.objectContaining({
-        reviewPath: '.limcode/review/workspace-review.md',
+        reviewPath: '.graycode/review/workspace-review.md',
         status: 'in_progress'
       })
     )
     expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.limcode/review'
+      fsPath: 'D:/workspace/.graycode/review'
     })
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.limcode/review/workspace-review.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/review/workspace-review.md')
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({
-      reviewPath: '.limcode/review/workspace-review.md',
+      reviewPath: '.graycode/review/workspace-review.md',
       title: 'Workspace Review',
-      eventMessage: '同步审查文档：.limcode/review/workspace-review.md'
+      eventMessage: '同步审查文档：.graycode/review/workspace-review.md'
     })
   })
 
@@ -97,7 +97,7 @@ describe('create_review tool', () => {
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-1',
-          reviewPath: '.limcode/review/existing.md',
+          reviewPath: '.graycode/review/existing.md',
           status: 'in_progress',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: null
@@ -111,15 +111,15 @@ describe('create_review tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .limcode/review', async () => {
+  it('rejects paths outside .graycode/review', async () => {
     const tool = createCreateReviewTool()
     const result = await tool.handler({
       review: '# Invalid',
-      path: '.limcode/plans/not-allowed.md'
+      path: '.graycode/plans/not-allowed.md'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/review/**.md')
+    expect(result.error).toContain('.graycode/review/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

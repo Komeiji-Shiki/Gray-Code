@@ -385,8 +385,8 @@ async function openDiffView(
   previewId?: string
 ): Promise<void> {
   const id = previewId && String(previewId).trim() ? String(previewId).trim() : `${filePath}:${Date.now()}`;
-  const originalUri = vscode.Uri.parse(`limcode-diff-preview:original/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
-  const newUri = vscode.Uri.parse(`limcode-diff-preview:modified/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
+  const originalUri = vscode.Uri.parse(`graycode-diff-preview:original/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
+  const newUri = vscode.Uri.parse(`graycode-diff-preview:modified/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
   
   ctx.diffPreviewProvider.setContent(originalUri.toString(), originalContent);
   ctx.diffPreviewProvider.setContent(newUri.toString(), newContent);

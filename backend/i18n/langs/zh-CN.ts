@@ -447,8 +447,8 @@ description: "简要描述该技能的功能及使用场景"
 
 ## Skills 目录位置
 
-- 项目级：\\\`.limcode/skills/\\\` 或 \\\`.agents/skills/\\\`
-- 用户级：\\\`~/.limcode/skills/\\\` 或 \\\`~/.agents/skills/\\\`
+- 项目级：\\\`.graycode/skills/\\\` 或 \\\`.agents/skills/\\\`
+- 用户级：\\\`~/.graycode/skills/\\\` 或 \\\`~/.agents/skills/\\\`
 
 项目级优先级高于用户级。同名 Skill 只加载优先级最高的那个。
 

@@ -1,5 +1,5 @@
 /**
- * LimCode VSCode Extension 入口
+ * GrayCode VSCode Extension 入口
  */
 
 import * as vscode from 'vscode';
@@ -29,12 +29,12 @@ const log = Logger.get('extension');
 
 export function activate(context: vscode.ExtensionContext) {
     // 初始化日志系统：创建 OutputChannel 让日志同时输出到 VS Code 输出面板
-    const outputChannel = vscode.window.createOutputChannel('LimCode');
+    const outputChannel = vscode.window.createOutputChannel('GrayCode');
     context.subscriptions.push(outputChannel);
     Logger.setOutputChannel((line) => outputChannel.appendLine(line));
     // Logger.setLevel(LogLevel.DEBUG); // 取消注释以启用 DEBUG 级别日志
 
-    log.info('LimCode extension is now active!');
+    log.info('GrayCode extension is now active!');
 
     // Allow i18n to follow VS Code display language until settings load.
     setDetectedLanguage(vscode.env.language);
@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
-            'limcode.chatView',
+            'graycode.chatView',
             chatViewProvider,
             {
                 // 保持 webview 状态，切换视图时不销毁
@@ -58,56 +58,56 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 注册命令：打开聊天面板
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.openChat', () => {
-            vscode.commands.executeCommand('limcode.chatView.focus');
+        vscode.commands.registerCommand('graycode.openChat', () => {
+            vscode.commands.executeCommand('graycode.chatView.focus');
         })
     );
 
     // 注册命令：新建对话
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.newChat', () => {
+        vscode.commands.registerCommand('graycode.newChat', () => {
             chatViewProvider?.sendCommand('newChat');
         })
     );
 
     // 注册命令：显示历史
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.showHistory', () => {
+        vscode.commands.registerCommand('graycode.showHistory', () => {
             chatViewProvider?.sendCommand('showHistory');
         })
     );
 
     // 注册命令：显示用量统计
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.showUsage', () => {
+        vscode.commands.registerCommand('graycode.showUsage', () => {
             chatViewProvider?.sendCommand('showUsage');
         })
     );
 
     // 注册命令：显示设置
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.showSettings', () => {
+        vscode.commands.registerCommand('graycode.showSettings', () => {
             chatViewProvider?.sendCommand('showSettings');
         })
     );
 
     // 注册命令：导出设置
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.exportSettings', async () => {
+        vscode.commands.registerCommand('graycode.exportSettings', async () => {
             if (!chatViewProvider) {
-                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法导出设置。');
+                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法导出设置。');
                 return;
             }
 
             try {
                 // 让用户选择保存位置
                 const result = await vscode.window.showSaveDialog({
-                    defaultUri: vscode.Uri.file('limcode-settings.json'),
+                    defaultUri: vscode.Uri.file('graycode-settings.json'),
                     filters: {
                         'JSON Files': ['json'],
                         'All Files': ['*']
                     },
-                    title: '导出 LimCode 设置'
+                    title: '导出 GrayCode 设置'
                 });
 
                 if (!result) {
@@ -116,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 const json = await vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
-                    title: 'LimCode：正在导出设置...',
+                    title: 'GrayCode：正在导出设置...',
                     cancellable: false
                 }, async () => {
                     return await chatViewProvider!.exportSettings();
@@ -127,16 +127,16 @@ export function activate(context: vscode.ExtensionContext) {
 
                 vscode.window.showInformationMessage(`设置已成功导出到：${result.fsPath}`);
             } catch (error: any) {
-                vscode.window.showErrorMessage(`LimCode 导出设置失败：${error?.message || String(error)}`);
+                vscode.window.showErrorMessage(`GrayCode 导出设置失败：${error?.message || String(error)}`);
             }
         })
     );
 
     // 注册命令：导入设置
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.importSettings', async () => {
+        vscode.commands.registerCommand('graycode.importSettings', async () => {
             if (!chatViewProvider) {
-                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法导入设置。');
+                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法导入设置。');
                 return;
             }
 
@@ -150,7 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
                         'JSON Files': ['json'],
                         'All Files': ['*']
                     },
-                    title: '导入 LimCode 设置'
+                    title: '导入 GrayCode 设置'
                 });
 
                 if (!result || result.length === 0) {
@@ -170,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
                     ],
                     {
                         placeHolder: '选择导入方式',
-                        title: 'LimCode 导入设置'
+                        title: 'GrayCode 导入设置'
                     }
                 );
 
@@ -182,7 +182,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 const importResult = await vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
-                    title: 'LimCode：正在导入设置...',
+                    title: 'GrayCode：正在导入设置...',
                     cancellable: false
                 }, async () => {
                     return await chatViewProvider!.importSettings(json, {
@@ -208,23 +208,23 @@ export function activate(context: vscode.ExtensionContext) {
                     vscode.window.showWarningMessage(`设置导入部分完成。${importedItems}错误：${errorSummary}`);
                 }
             } catch (error: any) {
-                vscode.window.showErrorMessage(`LimCode 导入设置失败：${error?.message || String(error)}`);
+                vscode.window.showErrorMessage(`GrayCode 导入设置失败：${error?.message || String(error)}`);
             }
         })
     );
 
     // 注册命令：迁移旧版单文件对话历史到分段存储格式
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.migrateConversationHistories', async () => {
+        vscode.commands.registerCommand('graycode.migrateConversationHistories', async () => {
             if (!chatViewProvider) {
-                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法迁移旧对话历史。');
+                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法迁移旧对话历史。');
                 return;
             }
 
             try {
                 const result = await vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
-                    title: 'LimCode：正在迁移旧对话历史',
+                    title: 'GrayCode：正在迁移旧对话历史',
                     cancellable: false
                 }, async progress => {
                     return await chatViewProvider!.migrateConversationHistories(({ current, total, conversationId }) => {
@@ -243,7 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
                     vscode.window.showInformationMessage(summary);
                 }
             } catch (error: any) {
-                vscode.window.showErrorMessage(`LimCode 迁移旧对话历史失败：${error?.message || String(error)}`);
+                vscode.window.showErrorMessage(`GrayCode 迁移旧对话历史失败：${error?.message || String(error)}`);
             }
         })
     );
@@ -271,7 +271,7 @@ export function activate(context: vscode.ExtensionContext) {
     // ========== Selection Context (Hover + Code Actions) ==========
     const selectionContextProvider = getSelectionContextProvider();
 
-    // Hover: selected text -> "Add to LimCode input"
+    // Hover: selected text -> "Add to GrayCode input"
     const selectionHoverDisposable = vscode.languages.registerHoverProvider(
         [{ scheme: 'file' }, { scheme: 'untitled' }],
         selectionContextProvider
@@ -290,7 +290,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Command used by hover/code actions
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.context.addSelectionToInput', async (args?: SelectionContextCommandArgs) => {
+        vscode.commands.registerCommand('graycode.context.addSelectionToInput', async (args?: SelectionContextCommandArgs) => {
             try {
                 const editor = vscode.window.activeTextEditor;
                 if (!editor) {
@@ -358,7 +358,7 @@ export function activate(context: vscode.ExtensionContext) {
                 };
 
                 // Ensure chat view is visible, then send to webview.
-                await vscode.commands.executeCommand('limcode.openChat');
+                await vscode.commands.executeCommand('graycode.openChat');
                 chatViewProvider?.sendCommand('input.addContext', { contextItem });
             } catch (err: any) {
                 log.error('Failed to add selection context:', err);
@@ -380,7 +380,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(diffInlineDisposable);
 
-    // 注册 Code Action 提供者（灯泡操作，自定义来源 "LimCode Diff"）
+    // 注册 Code Action 提供者（灯泡操作，自定义来源 "GrayCode Diff"）
     const diffCodeActionDisposable = vscode.languages.registerCodeActionsProvider(
         [
             { scheme: 'file' },
@@ -394,7 +394,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(diffCodeActionDisposable);
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.confirmBlock', async (sessionId: string, blockIndex?: number) => {
+        vscode.commands.registerCommand('graycode.diff.confirmBlock', async (sessionId: string, blockIndex?: number) => {
             await diffCodeLensProvider.confirmBlock(sessionId, blockIndex);
             // 刷新编辑器操作提供者状态
             getDiffEditorActionsProvider().refresh();
@@ -405,7 +405,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册 diff 拒绝命令（CodeLens 和 Code Actions 使用）
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff._rejectBlockFromCodeLens', async (sessionId: string, blockIndex?: number) => {
+        vscode.commands.registerCommand('graycode.diff._rejectBlockFromCodeLens', async (sessionId: string, blockIndex?: number) => {
             await diffCodeLensProvider.rejectBlock(sessionId, blockIndex);
             // 刷新编辑器操作提供者状态
             getDiffEditorActionsProvider().refresh();
@@ -419,7 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：接受所有修改
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.acceptAll', async () => {
+        vscode.commands.registerCommand('graycode.diff.acceptAll', async () => {
             await diffEditorActionsProvider.acceptAll();
             diffInlineProvider.refreshAllDecorations();
         })
@@ -427,7 +427,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：拒绝所有修改
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.rejectAll', async () => {
+        vscode.commands.registerCommand('graycode.diff.rejectAll', async () => {
             await diffEditorActionsProvider.rejectAll();
             diffInlineProvider.refreshAllDecorations();
         })
@@ -435,7 +435,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：选择并接受 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.acceptBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.acceptBlock', async () => {
             await diffEditorActionsProvider.showBlockPicker('accept');
             diffInlineProvider.refreshAllDecorations();
         })
@@ -443,7 +443,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：选择并拒绝 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.rejectBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.rejectBlock', async () => {
             await diffEditorActionsProvider.showBlockPicker('reject');
             diffInlineProvider.refreshAllDecorations();
         })
@@ -451,7 +451,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：接受当前光标位置的 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.acceptCurrentBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.acceptCurrentBlock', async () => {
             await diffEditorActionsProvider.acceptCurrentBlock();
             diffInlineProvider.refreshAllDecorations();
         })
@@ -459,7 +459,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：拒绝当前光标位置的 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.rejectCurrentBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.rejectCurrentBlock', async () => {
             await diffEditorActionsProvider.rejectCurrentBlock();
             diffInlineProvider.refreshAllDecorations();
         })
@@ -467,23 +467,23 @@ export function activate(context: vscode.ExtensionContext) {
     
     // 注册命令：跳转到下一个 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.nextBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.nextBlock', async () => {
             await diffEditorActionsProvider.goToNextBlock();
         })
     );
     
     // 注册命令：跳转到上一个 diff 块
     context.subscriptions.push(
-        vscode.commands.registerCommand('limcode.diff.prevBlock', async () => {
+        vscode.commands.registerCommand('graycode.diff.prevBlock', async () => {
             await diffEditorActionsProvider.goToPrevBlock();
         })
     );
 
-    log.info('LimCode extension activated successfully!');
+    log.info('GrayCode extension activated successfully!');
 }
 
 export function deactivate() {
-    log.info('LimCode extension deactivating...');
+    log.info('GrayCode extension deactivating...');
 
     // 最先摘除 DiffManager 状态监听器——在任何 dispose 之前同步阻断
     // 微任务里的 notifyStatusChange，避免停用过程复活已 dispose 的 provider
@@ -517,5 +517,5 @@ export function deactivate() {
     // 最后释放 DiffManager 单例（内部监听器/定时器/diffSessions）
     getDiffManager().dispose();
 
-    log.info('LimCode extension deactivated');
+    log.info('GrayCode extension deactivated');
 }

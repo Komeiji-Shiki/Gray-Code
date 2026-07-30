@@ -1,7 +1,7 @@
 /**
  * Progress 自动联动辅助函数
  *
- * 用于在 design / plan 文档成功写入后，自动同步 `.limcode/progress.md`。
+ * 用于在 design / plan 文档成功写入后，自动同步 `.graycode/progress.md`。
  * 该同步是 best-effort：失败时只返回 warning，不阻断主工具成功。
  */
 
@@ -62,12 +62,12 @@ function resolveProgressPathForArtifact(artifactPath: string): string {
       workspacePrefix !== '.' &&
       workspacePrefix !== '..' &&
       !workspacePrefix.includes(':') &&
-      rest.startsWith('.limcode/')
+      rest.startsWith('.graycode/')
     ) {
-      return `${workspacePrefix}/.limcode/progress.md`;
+      return `${workspacePrefix}/.graycode/progress.md`;
     }
   }
-  return '.limcode/progress.md';
+  return '.graycode/progress.md';
 }
 
 async function loadExistingProgress(progressPath: string): Promise<{
@@ -99,7 +99,7 @@ async function loadExistingProgress(progressPath: string): Promise<{
 
 async function writeProgress(progressPath: string, metadata: Partial<ProgressDocumentMetadataV1>, now: string): Promise<void> {
   if (!isProgressModePathAllowedWithMultiRoot(progressPath)) {
-    throw new Error(`Invalid progress path. Only ".limcode/progress.md" is allowed. Rejected path: ${progressPath}`);
+    throw new Error(`Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${progressPath}`);
   }
 
   const { uri, error } = resolveUriWithInfo(progressPath);

@@ -111,7 +111,7 @@ const pendingForcedRunWindowRefreshes = new Set<string>()
 const liveDeltaBuffersByRunId = new Map<string, MonitorLiveDeltaEvent[]>()
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
-const focusedRunId = ref<string | undefined>((window as any).__LIMCODE_INITIAL_RUN_ID || undefined)
+const focusedRunId = ref<string | undefined>((window as any).__GRAYCODE_INITIAL_RUN_ID || undefined)
 // 修改原因：顶部控制按钮只能作用于后端仍持有活跃主工具 Promise 的 run。
 // 修改方式：由 SubAgentMonitorPanel 随 ready/manifest/event 消息下发 activeRunIds，前端只按该集合决定按钮可见性。
 // 修改目的：历史 run 不会错误显示“中止/退出”等会影响主工具的操作。

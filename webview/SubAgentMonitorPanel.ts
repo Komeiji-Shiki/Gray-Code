@@ -230,7 +230,7 @@ export class SubAgentMonitorPanel {
         }
 
         this.panel = vscode.window.createWebviewPanel(
-            'limcode.subAgentMonitor',
+            'graycode.subAgentMonitor',
             'SubAgent Monitor',
             vscode.ViewColumn.Beside,
             {
@@ -476,7 +476,7 @@ export class SubAgentMonitorPanel {
             `script-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
             `connect-src ${devServerOrigin || ''}`
         ].join('; ');
-        const bootstrap = `<script>window.__LIMCODE_VIEW_MODE = 'subagentMonitor'; window.__LIMCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__LIMCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
+        const bootstrap = `<script>window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
 
         if (devServerUrl) {
             return `<!DOCTYPE html>

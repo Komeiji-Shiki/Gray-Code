@@ -16,7 +16,7 @@ import type {
 import { Logger } from '../../core/logger'
 
 const log = Logger.get('WindowsAgentStopNotification')
-const APP_NAME = 'LimCode'
+const APP_NAME = 'GrayCode'
 
 interface ResolvedWindowsAgentStopNotificationContentSettings {
   titleTemplate: string
@@ -39,11 +39,11 @@ interface ResolvedWindowsAgentStopNotificationSettings {
 }
 
 const DEFAULT_WINDOWS_AGENT_STOP_NOTIFICATION_CONTENT: ResolvedWindowsAgentStopNotificationContentSettings = {
-  titleTemplate: '{windowTitle} · LimCode',
+  titleTemplate: '{windowTitle} · GrayCode',
   bodyTemplates: {
-    error: 'LimCode 已停止，请返回处理。',
-    awaitingUserAction: 'LimCode 正在等待：{actionLabel}。',
-    continueRequired: 'LimCode 已暂停，可继续处理。'
+    error: 'GrayCode 已停止，请返回处理。',
+    awaitingUserAction: 'GrayCode 正在等待：{actionLabel}。',
+    continueRequired: 'GrayCode 已暂停，可继续处理。'
   }
 }
 

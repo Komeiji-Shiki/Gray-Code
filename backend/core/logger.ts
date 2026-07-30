@@ -1,5 +1,5 @@
 /**
- * LimCode - 生产环境日志系统
+ * GrayCode - 生产环境日志系统
  *
  * 轻量级、结构化日志，专为 VS Code 扩展环境设计：
  * - 支持日志级别过滤（DEBUG / INFO / WARN / ERROR）
@@ -88,7 +88,7 @@ export class Logger {
      *
      * @example
      * // 在 extension.ts 的 activate 中：
-     * const channel = vscode.window.createOutputChannel('LimCode');
+     * const channel = vscode.window.createOutputChannel('GrayCode');
      * Logger.setOutputChannel((line) => channel.appendLine(line));
      */
     static setOutputChannel(writer: ((line: string) => void) | undefined): void {

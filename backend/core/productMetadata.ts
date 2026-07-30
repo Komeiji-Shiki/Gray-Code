@@ -15,8 +15,8 @@ export interface ProductMetadata {
 }
 
 const FALLBACK_METADATA: ProductMetadata = {
-    name: 'LimCode',
-    displayName: 'Lim Code',
+    name: 'GrayCode',
+    displayName: 'Gray Code',
     version: '0.0.0'
 };
 
@@ -51,7 +51,7 @@ export function getProductMetadata(): ProductMetadata {
         // 修改方式：兜底从 VS Code extension registry 读取已安装扩展的 packageJSON，不从文件系统或 workspace 猜测。
         // 修改目的：保持运行时版本来源仍然是扩展宿主元数据，同时让旧调用路径具备安全退路。
         const vscodeApi = require('vscode') as typeof import('vscode');
-        const extension = vscodeApi.extensions?.getExtension?.('Lianues.limcode');
+        const extension = vscodeApi.extensions?.getExtension?.('Lianues.graycode');
         if (extension?.packageJSON) {
             productMetadata = normalizePackageMetadata(extension.packageJSON);
             return productMetadata;
@@ -67,12 +67,12 @@ export function getProductVersion(): string {
     return getProductMetadata().version;
 }
 
-export function createLimCodeMcpClientInfo(): { name: string; version: string } {
+export function createGrayCodeMcpClientInfo(): { name: string; version: string } {
     // 修改原因：HTTP MCP 和 Stdio MCP 原来各自硬编码 clientInfo.version，容易出现协议元数据分叉。
     // 修改方式：统一由产品元数据生成 MCP clientInfo，name 保持协议里已有的 LimCode，version 来自扩展 packageJSON。
     // 修改目的：让所有 MCP transport 对外报告同一个当前扩展版本。
     return {
-        name: 'LimCode',
+        name: 'GrayCode',
         version: getProductVersion()
     };
 }

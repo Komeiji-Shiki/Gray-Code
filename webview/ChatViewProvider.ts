@@ -1,5 +1,5 @@
 /**
- * LimCode - 完整的聊天视图提供者
+ * GrayCode - 完整的聊天视图提供者
  * 
  * 集成后端API模块，提供完整功能
  */
@@ -153,7 +153,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 初始化 Diff 预览内容提供者
         this.diffPreviewProvider = new DiffPreviewContentProvider();
         this.diffPreviewProviderDisposable = vscode.workspace.registerTextDocumentContentProvider(
-            'limcode-diff-preview',
+            'graycode-diff-preview',
             this.diffPreviewProvider
         );
         context.subscriptions.push(this.diffPreviewProviderDisposable);
@@ -216,7 +216,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 7. 初始化配置管理器（使用Memento存储）
         const configStorage = new MementoStorageAdapter(
             this.context.globalState,
-            'limcode.configs'
+            'graycode.configs'
         );
         this.configManager = new ConfigManager(configStorage);
         
@@ -1065,13 +1065,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private resolveWebviewDevServerUrl(): string | undefined {
-        const raw = process.env.LIMCODE_WEBVIEW_DEV_SERVER_URL?.trim();
+        const raw = process.env.GRAYCODE_WEBVIEW_DEV_SERVER_URL?.trim();
         if (!raw) {
             return undefined;
         }
 
         if (this.context.extensionMode !== vscode.ExtensionMode.Development) {
-            console.warn('[ChatViewProvider] LIMCODE_WEBVIEW_DEV_SERVER_URL 仅在开发模式下生效，当前已忽略。');
+            console.warn('[ChatViewProvider] GRAYCODE_WEBVIEW_DEV_SERVER_URL 仅在开发模式下生效，当前已忽略。');
             return undefined;
         }
 
@@ -1083,7 +1083,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             return parsed.toString().replace(/\/$/, '');
         } catch (error) {
-            console.warn('[ChatViewProvider] 无效的 LIMCODE_WEBVIEW_DEV_SERVER_URL:', raw, error);
+            console.warn('[ChatViewProvider] 无效的 GRAYCODE_WEBVIEW_DEV_SERVER_URL:', raw, error);
             return undefined;
         }
     }
@@ -1177,7 +1177,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
         const cspContent = this.buildCsp(webview, devServerOrigin);
-        const builtinSoundAssetsScript = `<script>window.__LIMCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
+        const builtinSoundAssetsScript = `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
@@ -1189,7 +1189,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <meta http-equiv="Content-Security-Policy" content="${cspContent}">
     <link href="${codiconsUri}" rel="stylesheet">
     ${builtinSoundAssetsScript}
-    <title>LimCode Chat (Dev)</title>
+    <title>GrayCode Chat (Dev)</title>
 </head>
 <body>
     <div id="app"></div>
@@ -1209,7 +1209,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${styleUri}" rel="stylesheet">
     ${builtinSoundAssetsScript}
-    <title>LimCode Chat</title>
+    <title>GrayCode Chat</title>
 </head>
 <body>
     <div id="app"></div>

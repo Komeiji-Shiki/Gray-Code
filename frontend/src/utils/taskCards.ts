@@ -57,10 +57,10 @@ function isScopedMarkdownDocPath(path: string, scopeRoot: string): boolean {
   // (avoid path traversal patterns showing up as document cards in UI)
   if (lower.includes('..')) return false
 
-  // Single-root: .limcode/.../...md
+  // Single-root: .graycode/.../...md
   if (lower.startsWith(scopeLower)) return true
 
-  // Multi-root: workspaceName/.limcode/.../...md
+  // Multi-root: workspaceName/.graycode/.../...md
   // Only allow a single path segment as workspace prefix.
   const slashIndex = normalized.indexOf('/')
   if (slashIndex <= 0) return false
@@ -75,38 +75,38 @@ function isScopedMarkdownDocPath(path: string, scopeRoot: string): boolean {
 }
 
 /**
- * Whether a path looks like a plan doc under .limcode/plans and ends with .md
- * (supports multi-root prefix like "workspace/.limcode/plans/x.plan.md").
+ * Whether a path looks like a plan doc under .graycode/plans and ends with .md
+ * (supports multi-root prefix like "workspace/.graycode/plans/x.plan.md").
  */
 export function isPlanDocPath(path: string): boolean {
-  return isScopedMarkdownDocPath(path, '.limcode/plans/')
+  return isScopedMarkdownDocPath(path, '.graycode/plans/')
 }
 
 /**
- * Whether a path looks like a design doc under .limcode/design and ends with .md
- * (supports multi-root prefix like "workspace/.limcode/design/x.md").
+ * Whether a path looks like a design doc under .graycode/design and ends with .md
+ * (supports multi-root prefix like "workspace/.graycode/design/x.md").
  */
 export function isDesignDocPath(path: string): boolean {
-  return isScopedMarkdownDocPath(path, '.limcode/design/')
+  return isScopedMarkdownDocPath(path, '.graycode/design/')
 }
 
 /**
- * Whether a path looks like a review doc under .limcode/review and ends with .md
- * (supports multi-root prefix like "workspace/.limcode/review/x.md").
+ * Whether a path looks like a review doc under .graycode/review and ends with .md
+ * (supports multi-root prefix like "workspace/.graycode/review/x.md").
  */
 export function isReviewDocPath(path: string): boolean {
-  return isScopedMarkdownDocPath(path, '.limcode/review/')
+  return isScopedMarkdownDocPath(path, '.graycode/review/')
 }
 
 /**
- * Whether a path looks like the fixed progress doc at .limcode/progress.md
- * (supports multi-root prefix like "workspace/.limcode/progress.md").
+ * Whether a path looks like the fixed progress doc at .graycode/progress.md
+ * (supports multi-root prefix like "workspace/.graycode/progress.md").
  */
 export function isProgressDocPath(path: string): boolean {
   const normalized = (path || '').replace(/\\/g, '/')
   const lower = normalized.toLowerCase()
 
-  if (lower === '.limcode/progress.md') return true
+  if (lower === '.graycode/progress.md') return true
 
   const slashIndex = normalized.indexOf('/')
   if (slashIndex <= 0) return false
@@ -115,11 +115,11 @@ export function isProgressDocPath(path: string): boolean {
   if (workspacePrefix === '.' || workspacePrefix === '..') return false
   if (workspacePrefix.includes(':')) return false
 
-  return normalized.slice(slashIndex + 1).toLowerCase() === '.limcode/progress.md'
+  return normalized.slice(slashIndex + 1).toLowerCase() === '.graycode/progress.md'
 }
 
-const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- LIMCODE_SOURCE_ARTIFACT_START -->'
-const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- LIMCODE_SOURCE_ARTIFACT_END -->'
+const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- GRAYCODE_SOURCE_ARTIFACT_START -->'
+const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- GRAYCODE_SOURCE_ARTIFACT_END -->'
 
 /**
  * Hide the tracked source metadata block from plan markdown when rendering task cards.

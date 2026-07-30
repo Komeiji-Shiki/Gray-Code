@@ -2,12 +2,12 @@
  * 轻量性能埋点工具（默认关闭）
  *
  * 启用方式（Webview DevTools 控制台执行其一）：
- * - localStorage.setItem('limcode.perf', '1')
- * - localStorage.removeItem('limcode.perf')
+ * - localStorage.setItem('graycode.perf', '1')
+ * - localStorage.removeItem('graycode.perf')
  */
 export function isPerfEnabled(): boolean {
   try {
-    return localStorage.getItem('limcode.perf') === '1'
+    return localStorage.getItem('graycode.perf') === '1'
   } catch {
     return false
   }

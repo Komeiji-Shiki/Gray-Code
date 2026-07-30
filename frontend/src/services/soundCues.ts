@@ -25,7 +25,7 @@ function loadBuiltinSoundAssetsFromWindow(): void {
   try {
     if (typeof window === 'undefined') return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = (window as any).__LIMCODE_BUILTIN_SOUND_ASSETS
+    const raw = (window as any).__GRAYCODE_BUILTIN_SOUND_ASSETS
     if (!raw || typeof raw !== 'object') return
 
     const out: Partial<Record<SoundCue, BuiltinSoundAsset>> = {}
@@ -189,11 +189,11 @@ export const DEFAULT_UI_SOUND_SETTINGS: NormalizedUISoundSettings = {
       continueRequired: true
     },
     content: {
-      titleTemplate: '{windowTitle} · LimCode',
+      titleTemplate: '{windowTitle} · GrayCode',
       bodyTemplates: {
-        error: 'LimCode 已停止，请返回处理。',
-        awaitingUserAction: 'LimCode 正在等待：{actionLabel}。',
-        continueRequired: 'LimCode 已暂停，可继续处理。'
+        error: 'GrayCode 已停止，请返回处理。',
+        awaitingUserAction: 'GrayCode 正在等待：{actionLabel}。',
+        continueRequired: 'GrayCode 已暂停，可继续处理。'
       }
     }
   }

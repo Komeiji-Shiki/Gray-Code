@@ -933,7 +933,7 @@ export class ToolExecutionService {
      * 强制策略：
      * - 全局 toolsEnabled（SettingsManager.isToolEnabled）
      * - 当前模式 allowlist（mode.toolPolicy 仅当为非空数组时启用过滤）
-     * - Plan 模式 write_file 仅允许写入 .limcode/plans/**.md（多工作区支持 workspaceName/.limcode/plans/**.md）
+     * - Plan 模式 write_file 仅允许写入 .graycode/plans/**.md（多工作区支持 workspaceName/.graycode/plans/**.md）
      */
     private getToolRejectionReason(toolName: string, args?: Record<string, unknown>, promptModeSnapshot?: ResolvedPromptModeSnapshot): string | null {
         // 1) 全局 toolsEnabled
@@ -949,7 +949,7 @@ export class ToolExecutionService {
             return `Tool "${toolName}" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}".`;
         }
 
-        // 3) Plan 模式 write_file 受控例外：只允许写入 .limcode/plans/**.md
+        // 3) Plan 模式 write_file 受控例外：只允许写入 .graycode/plans/**.md
         if (promptModeSnapshot?.id === 'plan' && toolName === 'write_file') {
             const validation = this.validatePlanModeWriteFileArgs(args);
             if (validation.ok === false) {
@@ -977,19 +977,19 @@ export class ToolExecutionService {
         if (!this.isPlanModeWriteFilePathAllowed(rawPath)) {
             return {
                 ok: false,
-                error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${rawPath}`
+                error: `In plan mode, write_file is only allowed to write ".graycode/plans/**.md". Rejected path: ${rawPath}`
             };
         }
         return { ok: true };
     }
 
     private isPlanModeWriteFilePathAllowed(path: string): boolean {
-        // 先尝试单工作区格式：.limcode/plans/...
+        // 先尝试单工作区格式：.graycode/plans/...
         if (isPlanPathAllowed(path)) {
             return true;
         }
 
-        // 多工作区：允许 workspaceName/.limcode/plans/...
+        // 多工作区：允许 workspaceName/.graycode/plans/...
         let isMultiRoot = false;
         try {
             isMultiRoot = getAllWorkspaces().length > 1;

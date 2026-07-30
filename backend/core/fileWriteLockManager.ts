@@ -98,7 +98,7 @@ const WRITE_PATH_EXTRACTORS: Record<string, (args: Record<string, unknown>) => s
     record_review_milestone: extractSinglePath,
     finalize_review: extractSinglePath,
     reopen_review: extractSinglePath,
-    // progress 三工具的默认目标固定为 .limcode/progress.md，缺省时锁默认路径
+    // progress 三工具的默认目标固定为 .graycode/progress.md，缺省时锁默认路径
     create_progress: extractProgressPath,
     update_progress: extractProgressPath,
     record_progress_milestone: extractProgressPath
@@ -109,7 +109,7 @@ function extractSinglePath(args: Record<string, unknown>): string[] {
     return typeof args.path === 'string' && args.path.trim() ? [args.path] : [];
 }
 
-const DEFAULT_PROGRESS_PATH = '.limcode/progress.md';
+const DEFAULT_PROGRESS_PATH = '.graycode/progress.md';
 
 function extractProgressPath(args: Record<string, unknown>): string[] {
     return [typeof args.path === 'string' && args.path.trim() ? args.path : DEFAULT_PROGRESS_PATH];

@@ -223,7 +223,7 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
     }
     
     /**
-     * 提供 Code Actions - 灯泡操作（自定义来源 "LimCode Diff"）
+     * 提供 Code Actions - 灯泡操作（自定义来源 "GrayCode Diff"）
      */
     public provideCodeActions(
         document: vscode.TextDocument,
