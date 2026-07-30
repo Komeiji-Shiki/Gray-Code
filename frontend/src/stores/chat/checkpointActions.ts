@@ -12,6 +12,7 @@ import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
 import { validateSessionIdentity } from './utils'
+import { rebuildMessageIndexById } from './state'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
@@ -157,6 +158,7 @@ export async function restoreAndRetry(
 
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
@@ -280,6 +282,7 @@ export async function restoreAndDelete(
 
     // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
@@ -379,6 +382,7 @@ export async function restoreAndEdit(
     
     // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+    rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendMessageIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 

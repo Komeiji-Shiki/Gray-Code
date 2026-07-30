@@ -8,6 +8,7 @@ import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from './typ
 import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
+import { rebuildMessageIndexById } from './state'
 
 /** 最大标签页数量 */
 const MAX_TABS = 100
@@ -60,6 +61,7 @@ export function restoreSessionFromSnapshot(
 ): void {
   state.currentConversationId.value = snapshot.conversationId
   state.allMessages.value = [...snapshot.allMessages]
+  rebuildMessageIndexById(state)
   state.windowStartIndex.value = snapshot.windowStartIndex
   state.totalMessages.value = snapshot.totalMessages
   state.configId.value = snapshot.configId
