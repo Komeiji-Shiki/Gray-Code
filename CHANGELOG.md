@@ -1,14 +1,17 @@
 # Change Log
 
 
-## [1.3.0] - 2026-01-21
+## [Unreleased]
+
+## [1.2.8] - 2026-01-21
 
 ### Changed
 - **品牌更名**：LimCode → GrayCode。扩展 ID 由 `limcode` 改为 `graycode`。所有 VSCode 命令已更名（`limcode.*` → `graycode.*`），配置命名空间已变更（`limcode.*` → `graycode.*`）。从旧 LimCode 导出的 JSON 文件导入时会自动迁移。
-
-All notable changes to the "Gray Code" extension will be documented in this file.
-
-## [Unreleased]
+- `DiffHandlers.ts` 中 `buildPreviewContentsFromUnifiedPatch` 的 `flush()` 优化：只在 hunk 有实质内容时才追加空行分隔，减少预览中的多余空行
+- 工具设置页面新增工具名称和描述的中文/日文翻译：42 个工具的名称和描述现在会根据界面语言切换显示，覆盖文件和目录操作、终端命令、代码智能、媒体处理、TODO、设计/计划/进度/审查文档、历史搜索、Windows 通知、永久记忆等全部工具
+- 记忆设置页面新增 4 个运行时参数配置项：wakeLines（唤醒输出行数）、entryChars（单条记忆最大字节）、partChars（分页最大字符数）、partLines（分页最大行数），用户可直接在设置界面调整记忆系统的输出格式和容量，无需通过 AI 工具
+- MemoryToolConfig 类型扩展，新增 wakeLines / entryChars / partChars / partLines 可选字段，默认值与 DEFAULT_MEMORY_CONFIG 对齐
+- getMemoryConfig / updateMemoryConfig 处理器合并 MemoryManager 运行时配置：读取时自动合并文件系统的运行时参数，保存时同步到 MemoryManager（若已初始化）
 
 ### Fixed
   - 修复 `read_file` 等工具返回给 LLM 时文件内容反斜杠被二次转义的问题（`\` → `\\`），根因在 `anthropic.ts` / `openai.ts` / `openai-responses.ts` 三个 formatter 中对 `functionResponse.response` 统一做了 `JSON.stringify`，导致 JSON-in-JSON 嵌套编码。现改为共享的 `serializeToolResultForLLM` 函数，大段文本内容原样透出，元数据用纯文本前缀。修复后 AI 在 `apply_diff` 等工具中不再因反斜杠翻倍而写出错误的转义序列
@@ -21,13 +24,6 @@ All notable changes to the "Gray Code" extension will be documented in this file
   - 记忆系列工具（memory_wake / memory_note / memory_recall / memory_compress / memory_zoom / memory_forget / memory_config）前端自定义展示组件 `MemoryResult.vue` 重构：展开工具卡片后同时展示模型传入的参数（Parameters 区）和工具返回的文本结果（Result 区），区分原始记忆块与摘要块的颜色，展示统计标签（Memories / Hits / Part / ID / Removed 等）；移除硬编码 max-height 限制，内容完整可见
   - `memory_forget` 新增原始记忆截断模式：传入单个数字 ID（如 `"0"`）可截断原始 LOG，删除 ID >= 该值的所有原始记忆及关联树摘要；传入范围 ID（如 `"16-31"`）保持原有仅删摘要行为。`MemoryManager` 新增 `truncateLog(keepId)` 方法支持物理截断固定宽度记录文件
   - 记忆设置页面新增「Raw Memory Entries」管理面板：用户可直接查看所有原始记忆条目（ID / 日期 / 文本），支持原地编辑单条记忆文本（后端 `MemoryManager.listEntries` / `updateEntry` 新增固定宽度原地覆写能力），编辑后自动清理相关树摘要
-
-### Changed
-  - `DiffHandlers.ts` 中 `buildPreviewContentsFromUnifiedPatch` 的 `flush()` 优化：只在 hunk 有实质内容时才追加空行分隔，减少预览中的多余空行
-  - 工具设置页面新增工具名称和描述的中文/日文翻译：42 个工具的名称和描述现在会根据界面语言切换显示，覆盖文件和目录操作、终端命令、代码智能、媒体处理、TODO、设计/计划/进度/审查文档、历史搜索、Windows 通知、永久记忆等全部工具
-  - 记忆设置页面新增 4 个运行时参数配置项：wakeLines（唤醒输出行数）、entryChars（单条记忆最大字节）、partChars（分页最大字符数）、partLines（分页最大行数），用户可直接在设置界面调整记忆系统的输出格式和容量，无需通过 AI 工具
-  - MemoryToolConfig 类型扩展，新增 wakeLines / entryChars / partChars / partLines 可选字段，默认值与 DEFAULT_MEMORY_CONFIG 对齐
-  - getMemoryConfig / updateMemoryConfig 处理器合并 MemoryManager 运行时配置：读取时自动合并文件系统的运行时参数，保存时同步到 MemoryManager（若已初始化）
 
 ## [1.2.7] - 2026-07-28
 
