@@ -132,6 +132,23 @@ MCP TOOLS
 Additional tools from MCP servers:
 ...`,
     requiresConfig: 'MCP 设置中需要配置并连接服务器'
+  },
+  {
+    id: 'MEMORY',
+    name: '记忆系统',
+    description: '永久记忆系统（OptMem）的使用说明，告诉 AI 如何跨会话记录和回忆信息。可在 设置 → 记忆 中自定义内容。',
+    example: `====
+
+MEMORY
+
+Your memory is OptMem, a permanent memory system that survives every session.
+
+### At startup: activating memory (mandatory)
+Run memory_wake before any other tool call...
+
+### While working: register memories (mandatory)
+Call memory_note whenever you learn something new...`,
+    requiresConfig: '设置 → 记忆 中可自定义此提示词'
   }
 ]
 
@@ -275,6 +292,7 @@ GUIDELINES
 - If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
 - For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
+- You can use Mermaid syntax in fenced code blocks (\`\`\`mermaid) to create diagrams and flowcharts when explaining complex concepts.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`
 

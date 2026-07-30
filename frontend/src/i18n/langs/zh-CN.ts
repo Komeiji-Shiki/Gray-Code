@@ -828,6 +828,7 @@ const zhCN = {
                 tokenCount: 'Token 计数',
                 sound: '提示系统',
                 appearance: '外观',
+                memory: '记忆',
                 general: '通用'
             },
             channelSettings: {
@@ -1843,6 +1844,10 @@ const zhCN = {
                         title: '外观设置',
                         description: '配置界面外观相关选项'
                     },
+                    memory: {
+                        title: '永久记忆',
+                        description: '配置 AI 跨会话永久记忆系统（OptMem）'
+                    },
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
@@ -1888,7 +1893,48 @@ const zhCN = {
                     channelConfigs: '个渠道配置',
                     mcpServers: '个 MCP 服务器',
                     skills: '个 Skills'
-                }
+                },
+                memory: {
+                    loading: '正在加载记忆配置...',
+                    saved: '保存成功',
+                    saving: '正在保存...',
+                    save: '保存配置',
+                    reset: '恢复默认',
+                    systemPrompt: {
+                        title: '自定义提示词',
+                        description: '上方为当前生效的提示词，可直接编辑。点击「恢复默认」可还原为内置默认值。修改后在下一次会话生效。',
+                        placeholder: ''
+                    },
+                    runtime: {
+                        title: '运行时参数',
+                        description: '精细调整记忆系统的输出格式和容量。修改仅影响展示效果，无需重新计算。',
+                        wakeLines: {
+                            label: '唤醒输出行数',
+                            description: 'wake 最多输出多少行。越大 = 越多细节，但 token 消耗也越高。',
+                            unit: '行'
+                        },
+                        entryChars: {
+                            label: '单条记忆最大字节',
+                            description: '每条记忆的最大字节数。超过此限制的文本将被截断。',
+                            unit: '字节'
+                        },
+                        partChars: {
+                            label: '分页最大字符数',
+                            description: '每页输出的最大字符数。超限时自动分页。',
+                            unit: '字符'
+                        },
+                        partLines: {
+                            label: '分页最大行数',
+                            description: '每页输出的最大行数。超限时自动分页。',
+                            unit: '行'
+                        }
+                    },
+                    info: {
+                        title: '关于永久记忆',
+                        text: '记忆系统（OptMem）让 AI 在每次会话开始时自动回忆之前的约定、决策和知识。AI 会在工作过程中自动记录重要事项，旧记忆会被智能压缩为摘要以节省 token。'
+                    }
+                },
+
             },
             toolSettings: {
                 files: {
@@ -2086,7 +2132,95 @@ const zhCN = {
                 },
                 config: {
                     tooltip: '配置工具'
-                }
+                },
+                toolDisplayNames: {
+                    read_file: '读取文件',
+                    write_file: '写入文件',
+                    delete_file: '删除文件',
+                    create_directory: '创建目录',
+                    list_files: '列出文件',
+                    apply_diff: '应用差异',
+                    execute_command: '执行命令',
+                    find_files: '查找文件',
+                    search_in_files: '在文件中搜索',
+                    history_search: '历史搜索',
+                    get_symbols: '获取符号',
+                    goto_definition: '跳转定义',
+                    find_references: '查找引用',
+                    generate_image: '生成图片',
+                    resize_image: '缩放图片',
+                    crop_image: '裁切图片',
+                    rotate_image: '旋转图片',
+                    remove_background: '去除背景',
+                    todo_write: '创建 TODO',
+                    todo_update: '更新 TODO',
+                    create_design: '创建设计',
+                    update_design: '更新设计',
+                    create_plan: '创建计划',
+                    update_plan: '更新计划',
+                    create_progress: '创建进度',
+                    update_progress: '更新进度',
+                    record_progress_milestone: '记录进度里程碑',
+                    validate_progress_document: '校验进度文档',
+                    create_review: '创建审查',
+                    record_review_milestone: '记录审查里程碑',
+                    finalize_review: '完成审查',
+                    validate_review_document: '校验审查文档',
+                    reopen_review: '重新打开审查',
+                    compare_review_documents: '比较审查文档',
+                    show_windows_notification: '显示 Windows 通知',
+                    memory_wake: '唤醒记忆',
+                    memory_note: '记录记忆',
+                    memory_recall: '搜索记忆',
+                    memory_compress: '压缩记忆',
+                    memory_zoom: '展开记忆',
+                    memory_forget: '丢弃记忆',
+                    memory_config: '记忆配置',
+                },
+                toolDescriptions: {
+                    read_file: '读取工作区文件，支持文本和二进制文件，可指定行范围。',
+                    write_file: '将内容写入文件。文件不存在则创建，存在则覆盖。',
+                    delete_file: '删除文件或目录，支持非空目录。',
+                    create_directory: '在工作区创建目录（自动创建父目录）。',
+                    list_files: '列出目录中的文件和子目录，支持递归和行数统计。',
+                    apply_diff: '对文件应用结构化内容替换，使用 hunks 数组格式进行精确修改。',
+                    execute_command: '执行 Shell 命令并返回输出。支持 PowerShell、CMD、Bash、WSL 等多种 Shell。',
+                    find_files: '根据一个或多个 glob 模式查找文件，返回匹配的文件列表及行数详情。',
+                    search_in_files: '在工作区文件中搜索或搜索替换内容，支持正则表达式。',
+                    history_search: '搜索和读取对话历史记录。支持搜索关键词和按行读取两种模式。',
+                    get_symbols: '获取文件中的所有符号（类、函数、变量等），返回层级符号列表及行号。',
+                    goto_definition: '跳转到符号定义位置并返回完整定义代码（含行号）。',
+                    find_references: '查找符号在代码库中的所有引用位置及上下文。',
+                    generate_image: '使用 AI 模型生成图片。支持单张和批量生成模式，生成图片为实色背景。',
+                    resize_image: '将图片缩放到指定目标尺寸，使用拉伸填充模式（不保持宽高比）。',
+                    crop_image: '使用归一化坐标 (0-1000) 裁切图片，自动转换为实际像素坐标。',
+                    rotate_image: '旋转图片到任意角度，正角度顺时针，负角度逆时针。',
+                    remove_background: '去除图片背景生成透明 PNG。使用 AI 生成遮罩后去除背景。',
+                    todo_write: '创建或替换当前对话的 TODO 列表，用于初始化任务清单。',
+                    todo_update: '增量更新 TODO 列表的状态和内容，无需重写整个列表。',
+                    create_design: '创建 Markdown 设计文档。仅创建设计，不创建计划或实现代码。',
+                    update_design: '更新已有的 Markdown 设计文档。',
+                    create_plan: '创建 Markdown 计划文档（含 TODO 清单）。仅创建计划，不执行。',
+                    update_plan: '更新计划文档，支持修订模式和进度同步模式。',
+                    create_progress: '创建项目进度文档并初始化状态记录。',
+                    update_progress: '更新项目进度文档的摘要、TODO、风险等信息。',
+                    record_progress_milestone: '向项目进度文档记录一个里程碑节点。',
+                    validate_progress_document: '校验项目进度文档的元数据、结构和基本约束。',
+                    create_review: '创建 Markdown 审查文档，用于代码审查场景。',
+                    record_review_milestone: '向审查文档追加一个里程碑并更新结构化摘要。',
+                    finalize_review: '完成审查文档，规范化结构并更新最终审查摘要。',
+                    validate_review_document: '校验审查文档的格式、元数据和结构完整性。',
+                    reopen_review: '重新打开已完成的审查文档以继续记录里程碑。',
+                    compare_review_documents: '比较两个审查文档，返回问题差异和统计变化。',
+                    show_windows_notification: '显示 Windows 系统通知，用于长任务完成或需要用户操作时提醒。',
+                    memory_wake: '唤醒永久记忆，在会话开始时获取记忆摘要。',
+                    memory_note: '记录一条永久记忆，用于保存重要信息和约定。',
+                    memory_recall: '搜索全部永久记忆，支持正则表达式匹配。',
+                    memory_compress: '执行待处理的记忆压缩合并，优化记忆存储。',
+                    memory_zoom: '展开记忆树节点查看详细内容。',
+                    memory_forget: '丢弃错误的记忆树摘要（不删除原始记忆）。',
+                    memory_config: '查看或修改永久记忆系统的配置参数。',
+                },
             },
             tokenCountSettings: {
                 description: '配置用于精确计算 Token 数量的 API。启用后，将在发送请求前调用对应渠道的 Token 计数 API 来获取准确的 Token 数量，用于更精准的上下文管理。',

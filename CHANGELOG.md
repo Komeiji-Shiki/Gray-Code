@@ -2,6 +2,33 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+  - 工具设置页面新增工具名称和描述的中文/日文翻译：42 个工具的名称和描述现在会根据界面语言切换显示，覆盖文件和目录操作、终端命令、代码智能、媒体处理、TODO、设计/计划/进度/审查文档、历史搜索、Windows 通知、永久记忆等全部工具
+  - 记忆设置页面新增 4 个运行时参数配置项：wakeLines（唤醒输出行数）、entryChars（单条记忆最大字节）、partChars（分页最大字符数）、partLines（分页最大行数），用户可直接在设置界面调整记忆系统的输出格式和容量，无需通过 AI 工具
+  - MemoryToolConfig 类型扩展，新增 wakeLines / entryChars / partChars / partLines 可选字段，默认值与 DEFAULT_MEMORY_CONFIG 对齐
+  - getMemoryConfig / updateMemoryConfig 处理器合并 MemoryManager 运行时配置：读取时自动合并文件系统的运行时参数，保存时同步到 MemoryManager（若已初始化）
+
+### Fixed
+  - 修复工具调用结果展开区域的背景色过于突兀的问题：`.tool-content` 从 `inactiveSelectionBackground`（暗色主题下呈浅灰）改为 `transparent`，与工具卡片整体风格保持一致
+
+## [1.2.7] - 2026-07-28
+
+### Added
+  - 永久记忆系统（OptMem）：AI 跨会话自动记住约定、决策和知识，每次新会话开始时通过 `memory_wake` 自动恢复记忆上下文；记忆以追加式日志 + 二叉树摘要存储，旧记忆智能压缩为摘要节省 token
+  - 新增 7 个记忆工具：`memory_wake`（唤醒记忆）、`memory_note`（记录记忆）、`memory_recall`（正则搜索记忆）、`memory_compress`（执行压缩合并）、`memory_zoom`（展开树节点）、`memory_forget`（丢弃错误摘要）、`memory_config`（查看/修改参数）
+  - 新增 `MemoryManager` 核心引擎（`backend/modules/memory/`）：TypeScript 原生实现的固定宽度记录存储、二叉树 cover 算法、分页输出、异步锁并发控制，完全兼容 OptMem 数据格式
+  - 新增 `{{$MEMORY}}` 系统提示词模板变量：在内置 DEFAULT 和 CODE 模板中默认引用，用户可在 设置 → 记忆 中自定义记忆使用说明，或在提示词设置中删除此变量以关闭记忆系统
+  - 新增记忆设置页面（设置 → 记忆）：可视化编辑自定义记忆提示词，保存/重置按钮，MemoryToolConfig 类型持久化到 `limcode.toolsConfig.memory`
+  - 提示词设置「插入变量」列表新增 `{{$MEMORY}}`（静态分组）
+  - 记忆数据默认存储在 `globalStorage/memory/`，随 LimCode 自定义存储路径迁移
+  - 新增 MemoryManager 初始化集成（ChatViewProvider.initializeBackend 步骤 25.6）
+
+### Fixed
+  - 修复消息列表滚动到顶部后无法加载更早消息的问题：`hasMore` 条件只看后端是否还有数据，忽略了前端已加载但未渲染的消息；`loadMore()` 在后端无更多数据时直接 return，导致 `visibleCount` 永远不增长。现拆开前端渲染展开与后端分页加载两个步骤，即使全部消息已在内存中也能正常展开渲染
+  - 修复 `insert_code` 和 `write_file` 工具结果中文件路径不可点击跳转的问题，补充 `clickable` 样式和点击事件，与其他文件工具（delete_code、read_file、apply_diff 等）行为一致
+
 ## [1.2.6] - 2026-07-27
 
 ### Added
@@ -65,6 +92,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - SubAgent Monitor 顶部控制按钮文案改为与实际动作一致的「暂停 / 继续」：原「中止」（实为 pause）容易与同排的「退出并让主工具失败」混淆，原「重试」（实为 resume）会让用户误以为会重跑整个 run，实际只是从暂停处继续同一个 runId
 
 ### Fixed
+  - 修复 `execute_command` 的 `cwd` 参数在传入绝对路径时被 `path.join` 错误拼接到 workspace 根目录导致 "Working directory does not exist" 的问题：`cwd` 解析逻辑新增 `path.isAbsolute()` 判断，绝对路径直接使用不再拼接
   - 修复上游返回报错却只显示「模型返回空内容」的问题：这条链路上有三处都在丢信息。其一，OpenAI / Anthropic 两个 formatter 的 `parseStreamChunk` 完全不认流里内联的错误（Anthropic 官方的 `event: error`、兼容代理的 `{"error": {...}}`）——这类 chunk 没有 `choices`/`content_block`，被当成空块跳过，累加器什么也没累加；其二，上游用非 JSON 的纯文本或 HTML 报错（网关 502、代理的纯文本错误）时，缓冲区里的内容在流结束时被静默丢弃，只报一句「没有响应体」；其三，formatter 主动抛出的 `ChannelError` 被外层无条件重新包装成 `PARSE_ERROR`，把「上游返回 429」说成「解析失败」，还改变了重试判定。现在四个 formatter（含 Gemini / OpenAI Responses）统一走 `throwIfStreamError` 识别并归一错误、原样带出上游文案，非流式的 `parseResponse` 同样处理 HTTP 200 + 错误体，未能解析的原始响应作为 `rawResponse` 附在错误详情里，`ChannelError` 直接透传不再被改写类型
   - 修复流式中途取消后，下一次请求被 provider 以 400 拒绝的问题：取消时累加器里的部分内容会直接写进历史，其中可能已经包含**完整**的 `functionCall`，但对应的 `functionResponse` 永远不会补上，历史里就留下悬空的 tool_use；现在取消路径会就地结算这些调用——流式提前执行已经跑完的工具用真实结果（它们的写文件、跑命令等副作用已经发生，丢掉结果等于对模型隐瞒），其余标记为已取消
   - 修复分段存储下悬空工具调用永远不被补齐的问题：`getMessages`（全量）一直会把未响应的 `functionCall` 标记为 rejected 并补 `functionResponse`，但 `getMessagesPaged` 的分段存储快路径直接返回窗口、跳过了这一步，而分段存储正是当前的主存储格式；现在首次加载（默认页）会先做一次全量补齐再分页，上拉加载更早消息时跳过以免每翻一页读一次全量
@@ -324,8 +352,6 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 #### 新增文件统计
   - 后端新增 13 个模块/工具文件，前端新增 14 个组件/工具文件
   - 核心工具 4 个文件同步至上游最新，语法验证通过
-
-## [Unreleased]
 
 ## [1.1.27] - 2026-05-01
 

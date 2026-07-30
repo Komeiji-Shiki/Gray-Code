@@ -416,8 +416,8 @@ const visibleCount = ref(VISIBLE_INCREMENT)
 
 // 是否还有更多“未加载到窗口”的历史消息
 const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
-// 顶部加载指示器：只要仍有更早历史就显示
-const hasMore = computed(() => hasMoreHistory.value)
+// 顶部加载指示器：后端有更多消息 或 前端还有已加载但未渲染的消息
+const hasMore = computed(() => hasMoreHistory.value || visibleCount.value < props.messages.length)
 
 // 增强的消息对象接口
 interface EnhancedMessage {
@@ -534,32 +534,37 @@ async function loadMore() {
   const oldScrollTop = container.scrollTop
 
   try {
-    if (!hasMoreHistory.value) return
+    const needBackendLoad = hasMoreHistory.value
+    const needFrontendExpand = visibleCount.value < props.messages.length
 
-    const prevLen = props.messages.length
-
-    visibleCount.value += VISIBLE_INCREMENT
-    await nextTick()
-
-    if (hasMoreHistory.value) {
-      await chatStore.loadOlderMessagesPage()
-      await nextTick()
+    // 优先展开前端已加载但未渲染的消息
+    if (needFrontendExpand) {
+      visibleCount.value += VISIBLE_INCREMENT
     }
 
-    // 校验归属：await 期间可能已切换标签页或对话
-    if (props.tabId !== originTabId) return
+    // 如果后端还有更多消息，再拉取
+    if (needBackendLoad) {
+      const prevLen = props.messages.length
+      await nextTick()
 
-    if (props.messages.length <= prevLen && hasMoreHistory.value) {
-      // 如果这一页没有新增可见消息，继续尝试下一页，避免 functionResponse 密集区卡住顶部加载。
-      while (hasMoreHistory.value && props.tabId === originTabId) {
-        const currentLen = props.messages.length
-        const loaded = await chatStore.loadOlderMessagesPage()
-        await nextTick()
+      await chatStore.loadOlderMessagesPage()
+      await nextTick()
 
-        if (props.tabId !== originTabId) break
+      // 校验归属：await 期间可能已切换标签页或对话
+      if (props.tabId !== originTabId) return
 
-        if (!loaded || props.messages.length > currentLen) {
-          break
+      if (props.messages.length <= prevLen) {
+        // 如果这一页没有新增可见消息，继续尝试下一页
+        while (hasMoreHistory.value && props.tabId === originTabId) {
+          const currentLen = props.messages.length
+          const loaded = await chatStore.loadOlderMessagesPage()
+          await nextTick()
+
+          if (props.tabId !== originTabId) break
+
+          if (!loaded || props.messages.length > currentLen) {
+            break
+          }
         }
       }
     }

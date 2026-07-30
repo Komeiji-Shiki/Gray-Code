@@ -827,6 +827,7 @@ const en: LanguageMessages = {
                 tokenCount: 'Token Count',
                 sound: 'Notification System',
                 appearance: 'Appearance',
+                memory: 'Memory',
                 general: 'General'
             },
             channelSettings: {
@@ -1842,6 +1843,10 @@ const en: LanguageMessages = {
                         title: 'Appearance',
                         description: 'Configure UI appearance options'
                     },
+                    memory: {
+                        title: 'Permanent Memory',
+                        description: 'Configure cross-session AI memory system (OptMem)'
+                    },
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
@@ -1887,7 +1892,48 @@ const en: LanguageMessages = {
                     channelConfigs: ' channel config(s)',
                     mcpServers: ' MCP server(s)',
                     skills: ' skill(s)'
-                }
+                },
+                memory: {
+                    loading: 'Loading memory config...',
+                    saved: 'Saved',
+                    saving: 'Saving...',
+                    save: 'Save Config',
+                    reset: 'Reset to Default',
+                    systemPrompt: {
+                        title: 'Custom Prompt',
+                        description: 'The prompt shown above is currently active and can be edited directly. Click "Reset to Default" to restore the built-in default. Changes take effect in the next session.',
+                        placeholder: ''
+                    },
+                    runtime: {
+                        title: 'Runtime Parameters',
+                        description: 'Fine-tune the memory system output format and capacity. Changing these only affects display; no recomputation is needed.',
+                        wakeLines: {
+                            label: 'Wake Output Lines',
+                            description: 'How many lines wake prints at most. Larger values = more detail, but higher token cost.',
+                            unit: 'lines'
+                        },
+                        entryChars: {
+                            label: 'Max Entry Bytes',
+                            description: 'Maximum bytes per single memory entry. Entries exceeding this limit will be truncated.',
+                            unit: 'bytes'
+                        },
+                        partChars: {
+                            label: 'Part Max Characters',
+                            description: 'Maximum characters per output page. Output is split into parts when this limit is exceeded.',
+                            unit: 'chars'
+                        },
+                        partLines: {
+                            label: 'Part Max Lines',
+                            description: 'Maximum lines per output page. Output is split into parts when this limit is exceeded.',
+                            unit: 'lines'
+                        }
+                    },
+                    info: {
+                        title: 'About Permanent Memory',
+                        text: 'The memory system (OptMem) lets the AI automatically recall past agreements, decisions, and knowledge at the start of each session. The AI records important things as it works, and older memories are intelligently compressed into summaries to save tokens.'
+                    }
+                },
+
             },
             toolSettings: {
                 files: {
@@ -2085,7 +2131,95 @@ const en: LanguageMessages = {
                 },
                 config: {
                     tooltip: 'Configure Tool'
-                }
+                },
+                toolDisplayNames: {
+                    read_file: 'Read File',
+                    write_file: 'Write File',
+                    delete_file: 'Delete File',
+                    create_directory: 'Create Directory',
+                    list_files: 'List Files',
+                    apply_diff: 'Apply Diff',
+                    execute_command: 'Execute Command',
+                    find_files: 'Find Files',
+                    search_in_files: 'Search in Files',
+                    history_search: 'History Search',
+                    get_symbols: 'Get Symbols',
+                    goto_definition: 'Goto Definition',
+                    find_references: 'Find References',
+                    generate_image: 'Generate Image',
+                    resize_image: 'Resize Image',
+                    crop_image: 'Crop Image',
+                    rotate_image: 'Rotate Image',
+                    remove_background: 'Remove Background',
+                    todo_write: 'Todo Write',
+                    todo_update: 'Todo Update',
+                    create_design: 'Create Design',
+                    update_design: 'Update Design',
+                    create_plan: 'Create Plan',
+                    update_plan: 'Update Plan',
+                    create_progress: 'Create Progress',
+                    update_progress: 'Update Progress',
+                    record_progress_milestone: 'Record Progress Milestone',
+                    validate_progress_document: 'Validate Progress Document',
+                    create_review: 'Create Review',
+                    record_review_milestone: 'Record Review Milestone',
+                    finalize_review: 'Finalize Review',
+                    validate_review_document: 'Validate Review Document',
+                    reopen_review: 'Reopen Review',
+                    compare_review_documents: 'Compare Review Documents',
+                    show_windows_notification: 'Show Windows Notification',
+                    memory_wake: 'Memory Wake',
+                    memory_note: 'Memory Note',
+                    memory_recall: 'Memory Recall',
+                    memory_compress: 'Memory Compress',
+                    memory_zoom: 'Memory Zoom',
+                    memory_forget: 'Memory Forget',
+                    memory_config: 'Memory Config',
+                },
+                toolDescriptions: {
+                    read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
+                    write_file: 'Write content to a file. Creates if not exists, overwrites if exists.',
+                    delete_file: 'Delete one or more files or directories. Supports non-empty directories.',
+                    create_directory: 'Create one or more directories in the workspace (auto-creates parents).',
+                    list_files: 'List files and subdirectories in directories, supports recursion and line counts.',
+                    apply_diff: 'Apply structured content replacements to a file using hunks array format.',
+                    execute_command: 'Execute a shell command and return output. Supports PowerShell, CMD, Bash, WSL and more.',
+                    find_files: 'Find files by glob patterns. Returns matched file list with details.',
+                    search_in_files: 'Search or search-and-replace content in workspace files. Supports regex.',
+                    history_search: 'Search and read conversation history. Supports keyword search and line-range read modes.',
+                    get_symbols: 'Get all symbols (classes, functions, variables, etc.) in files. Returns hierarchical symbol list with line numbers.',
+                    goto_definition: 'Go to the definition of a symbol and return the complete definition code with line numbers.',
+                    find_references: 'Find all references to a symbol across the codebase with context.',
+                    generate_image: 'Generate images using AI model. Supports single and batch generation modes with solid backgrounds.',
+                    resize_image: 'Resize images to specified target dimensions using stretch fill mode.',
+                    crop_image: 'Crop images using normalized coordinates (0-1000), auto-converted to actual pixel coordinates.',
+                    rotate_image: 'Rotate images to any angle. Positive for clockwise, negative for counter-clockwise.',
+                    remove_background: 'Remove background from images to generate transparent PNG. Uses AI-generated masks.',
+                    todo_write: 'Create or replace the per-conversation TODO list to initialize task tracking.',
+                    todo_update: 'Incrementally update TODO list status and content without rewriting the entire list.',
+                    create_design: 'Create a Markdown design document. Only creates the design, not a plan or implementation.',
+                    update_design: 'Update an existing Markdown design document.',
+                    create_plan: 'Create a Markdown plan document with TODO checklist. Only creates the plan.',
+                    update_plan: 'Update a plan document. Supports revision mode and progress sync mode.',
+                    create_progress: 'Create the project progress document and initialize the status ledger.',
+                    update_progress: 'Update the project progress document summary, TODOs, risks, and log entries.',
+                    record_progress_milestone: 'Record a milestone into the project progress document.',
+                    validate_progress_document: 'Validate the progress document metadata, structure, and basic invariants.',
+                    create_review: 'Create a Markdown review document for code review scenarios.',
+                    record_review_milestone: 'Append a milestone to a review document and update structured summaries.',
+                    finalize_review: 'Finalize a review document, normalize its structure, and update the final summary.',
+                    validate_review_document: 'Validate a review document format, metadata, and structural integrity.',
+                    reopen_review: 'Reopen a finalized review document to continue recording milestones.',
+                    compare_review_documents: 'Compare two review documents and return finding deltas and statistics.',
+                    show_windows_notification: 'Show a Windows system notification for long task completion or user action alerts.',
+                    memory_wake: 'Wake permanent memory to retrieve memory summary at session start.',
+                    memory_note: 'Record a permanent memory entry for important information and conventions.',
+                    memory_recall: 'Search all permanent memories with regex support.',
+                    memory_compress: 'Execute pending memory compression and merging.',
+                    memory_zoom: 'Expand a memory tree node to view details.',
+                    memory_forget: 'Discard an incorrect memory tree summary (original memories preserved).',
+                    memory_config: 'View or modify the permanent memory system configuration parameters.',
+                },
             },
             tokenCountSettings: {
                 description: 'Configure API for accurate token counting. When enabled, the corresponding channel\'s token counting API will be called before sending requests to get accurate token counts for more precise context management.',

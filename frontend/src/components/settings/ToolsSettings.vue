@@ -219,10 +219,21 @@ async function disableAll() {
   }
 }
 
-// 获取工具显示名称
+// 获取工具显示名称（优先 i18n，fallback 机械转换）
 function getToolDisplayName(name: string): string {
-  // 将 snake_case 转换为可读格式
+  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
+  // fallback: snake_case → Title Case
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// 获取工具描述（优先 i18n，fallback 后端原文）
+function getToolDescription(name: string, fallback: string): string {
+  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
+  return fallback
 }
 
 // 获取分类显示名称
@@ -369,7 +380,7 @@ onMounted(() => {
                     {{ t('components.settings.toolsSettings.dependency.required') }}
                   </span>
                 </div>
-                <div class="tool-description">{{ tool.description }}</div>
+                <div class="tool-description">{{ getToolDescription(tool.name, tool.description) }}</div>
               </div>
               
               <div class="tool-actions">

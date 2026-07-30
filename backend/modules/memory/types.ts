@@ -1,0 +1,118 @@
+/**
+ * LimCode - Memory 模块类型定义
+ *
+ * OptMem 风格的永久记忆系统：追加式日志 + 二叉树摘要
+ */
+
+/** 单条日志记录 */
+export interface LogEntry {
+    /** 记录 ID（在 LOG 中的序号） */
+    id: number;
+    /** 日期，ISO 格式 YYYY-MM-DD */
+    date: string;
+    /** 记忆文本 */
+    text: string;
+}
+
+/** wake 输出中的一个块 */
+export interface WakeBlock {
+    /** 起始 ID（包含） */
+    lo: number;
+    /** 结束 ID（包含，如果是原始记忆则 lo === hi） */
+    hi: number;
+    /** 块内容（原始记忆文本或摘要文本） */
+    text: string;
+    /** 是否为原始记忆（非摘要） */
+    isRaw: boolean;
+}
+
+/** wake 的结果 */
+export interface WakeResult {
+    /** 当前部分的块列表 */
+    blocks: WakeBlock[];
+    /** 当前部分号（1-based） */
+    part: number;
+    /** 总部分数 */
+    totalParts: number;
+    /** 总记忆数 */
+    totalMemories: number;
+    /** 是否已完成唤醒 */
+    awake: boolean;
+    /** 待处理的压缩提示（如果有） */
+    pendingCompression?: NapPrompt;
+}
+
+/** note 的结果 */
+export interface NoteResult {
+    /** 分配的 ID */
+    id: number;
+    /** 待处理的压缩提示（如果有） */
+    pendingCompression?: NapPrompt;
+}
+
+/** recall 的结果 */
+export interface RecallResult {
+    /** 匹配的行列表 */
+    lines: string[];
+    /** 总命中数 */
+    totalHits: number;
+    /** 是否被截断 */
+    truncated: boolean;
+}
+
+/** compress (nap) 的结果 */
+export interface CompressResult {
+    /** 已完成的压缩数 */
+    done: number;
+    /** 下一个待处理的压缩提示（如果有） */
+    pendingCompression?: NapPrompt;
+}
+
+/** zoom 的结果 */
+export interface ZoomResult {
+    /** 左半部分 */
+    left: WakeBlock;
+    /** 右半部分 */
+    right: WakeBlock;
+}
+
+/** 压缩提示 */
+export interface NapPrompt {
+    /** 要压缩的块 ID 字符串（如 "0-1"） */
+    blockId: string;
+    /** lo */
+    lo: number;
+    /** hi（不包含） */
+    hi: number;
+    /** 提示文本 */
+    prompt: string;
+    /** 剩余待压缩数量 */
+    remaining: number;
+}
+
+/** 记忆配置 */
+export interface MemoryConfig {
+    /** WAKE_LINES: wake 输出的最大行数 */
+    wakeLines: number;
+    /** ENTRY_CHARS: 单条记忆最大字节数 */
+    entryChars: number;
+    /** PART_CHARS: 输出分页的最大字符数 */
+    partChars: number;
+    /** PART_LINES: 输出分页的最大行数 */
+    partLines: number;
+}
+
+/** 默认配置 */
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+    wakeLines: 96,
+    entryChars: 280,
+    partChars: 20000,
+    partLines: 500,
+};
+
+/** 固定宽度记录大小 */
+export const LOG_REC = 320;
+export const TREE_REC = 288;
+
+/** 最多直接从原始日志压缩的记忆条数 */
+export const RAW_MAX = 16;

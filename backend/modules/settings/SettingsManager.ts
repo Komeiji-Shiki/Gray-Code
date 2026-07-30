@@ -47,7 +47,8 @@ import type {
     SkillConfigItem,
     SubAgentsConfig,
     SubAgentConfigItem,
-    HistorySearchToolConfig
+    HistorySearchToolConfig,
+    MemoryToolConfig
 } from './types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
@@ -86,6 +87,7 @@ import {
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
     DEFAULT_HISTORY_SEARCH_CONFIG,
+    DEFAULT_MEMORY_TOOL_CONFIG,
     BUILTIN_MODE_TOOL_POLICIES,
     getDefaultExecuteCommandConfig
 } from './types';
@@ -901,6 +903,23 @@ export class SettingsManager {
      */
     getSummarizeConfig(): Readonly<SummarizeConfig> {
         return this.getToolsConfigEntry('summarize', DEFAULT_SUMMARIZE_CONFIG);
+    }
+    
+    // ========== 记忆配置管理 ==========
+    
+    /**
+     * 获取记忆工具配置
+     */
+    getMemoryConfig(): Readonly<MemoryToolConfig> {
+        return this.getToolsConfigEntry('memory', DEFAULT_MEMORY_TOOL_CONFIG);
+    }
+    
+    /**
+     * 更新记忆工具配置
+     */
+    async updateMemoryConfig(config: Partial<MemoryToolConfig>): Promise<void> {
+        const oldConfig = this.getMemoryConfig();
+        await this.saveToolsConfigEntry('memory', oldConfig, { ...oldConfig, ...config });
     }
     
     // ========== 图像生成配置管理 ==========

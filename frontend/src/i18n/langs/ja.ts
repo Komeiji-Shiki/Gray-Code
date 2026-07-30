@@ -827,6 +827,7 @@ const ja: LanguageMessages = {
                 tokenCount: 'トークンカウント',
                 sound: '通知システム',
                 appearance: '外観',
+                memory: '記憶',
                 general: '一般'
             },
             channelSettings: {
@@ -1842,6 +1843,10 @@ const ja: LanguageMessages = {
                         title: '外観',
                         description: 'UI の外観に関する設定'
                     },
+                    memory: {
+                        title: '永久記憶',
+                        description: 'セッションを超えた AI 記憶システム（OptMem）の設定'
+                    },
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
@@ -1887,7 +1892,48 @@ const ja: LanguageMessages = {
                     channelConfigs: ' 件のチャンネル設定',
                     mcpServers: ' 件の MCP サーバー',
                     skills: ' 件のスキル'
-                }
+                },
+                memory: {
+                    loading: '記憶設定を読み込み中...',
+                    saved: '保存しました',
+                    saving: '保存中...',
+                    save: '設定を保存',
+                    reset: 'デフォルトに戻す',
+                    systemPrompt: {
+                        title: 'カスタムプロンプト',
+                        description: '上に表示されているプロンプトが現在有効です。直接編集できます。「デフォルトに戻す」で組み込みのデフォルトに戻せます。変更は次のセッションで有効になります。',
+                        placeholder: ''
+                    },
+                    runtime: {
+                        title: '実行時パラメータ',
+                        description: '記憶システムの出力形式と容量を微調整します。変更は表示にのみ影響し、再計算は不要です。',
+                        wakeLines: {
+                            label: 'Wake 出力行数',
+                            description: 'wake が最大で出力する行数。大きいほど詳細になりますが、トークン消費も増えます。',
+                            unit: '行'
+                        },
+                        entryChars: {
+                            label: 'エントリ最大バイト',
+                            description: '1 エントリあたりの最大バイト数。制限を超えると切り詰められます。',
+                            unit: 'バイト'
+                        },
+                        partChars: {
+                            label: 'ページ最大文字数',
+                            description: '出力 1 ページあたりの最大文字数。超過時は自動的に分割されます。',
+                            unit: '文字'
+                        },
+                        partLines: {
+                            label: 'ページ最大行数',
+                            description: '出力 1 ページあたりの最大行数。超過時は自動的に分割されます。',
+                            unit: '行'
+                        }
+                    },
+                    info: {
+                        title: '永久記憶について',
+                        text: '記憶システム（OptMem）を使用すると、AI は各セッションの開始時に過去の合意、決定、知識を自動的に思い出すことができます。AI は作業中に重要なことを記録し、古い記憶はトークンを節約するためにインテリジェントに要約に圧縮されます。'
+                    }
+                },
+
             },
             toolSettings: {
                 files: {
@@ -2085,7 +2131,95 @@ const ja: LanguageMessages = {
                 },
                 config: {
                     tooltip: 'ツールを設定'
-                }
+                },
+                toolDisplayNames: {
+                    read_file: 'ファイルを読む',
+                    write_file: 'ファイルに書く',
+                    delete_file: 'ファイルを削除',
+                    create_directory: 'ディレクトリを作成',
+                    list_files: 'ファイル一覧',
+                    apply_diff: '差分を適用',
+                    execute_command: 'コマンドを実行',
+                    find_files: 'ファイルを検索',
+                    search_in_files: 'ファイル内を検索',
+                    history_search: '履歴を検索',
+                    get_symbols: 'シンボルを取得',
+                    goto_definition: '定義に移動',
+                    find_references: '参照を検索',
+                    generate_image: '画像を生成',
+                    resize_image: '画像をリサイズ',
+                    crop_image: '画像を切り抜き',
+                    rotate_image: '画像を回転',
+                    remove_background: '背景を除去',
+                    todo_write: 'TODO 作成',
+                    todo_update: 'TODO 更新',
+                    create_design: '設計を作成',
+                    update_design: '設計を更新',
+                    create_plan: '計画を作成',
+                    update_plan: '計画を更新',
+                    create_progress: '進捗を作成',
+                    update_progress: '進捗を更新',
+                    record_progress_milestone: '進捗マイルストーンを記録',
+                    validate_progress_document: '進捗ドキュメントを検証',
+                    create_review: 'レビューを作成',
+                    record_review_milestone: 'レビューマイルストーンを記録',
+                    finalize_review: 'レビューを完了',
+                    validate_review_document: 'レビュードキュメントを検証',
+                    reopen_review: 'レビューを再開',
+                    compare_review_documents: 'レビュードキュメントを比較',
+                    show_windows_notification: 'Windows 通知を表示',
+                    memory_wake: '記憶を呼び覚ます',
+                    memory_note: '記憶を記録',
+                    memory_recall: '記憶を検索',
+                    memory_compress: '記憶を圧縮',
+                    memory_zoom: '記憶を展開',
+                    memory_forget: '記憶を破棄',
+                    memory_config: '記憶を設定',
+                },
+                toolDescriptions: {
+                    read_file: 'ワークスペース内のファイルを読み取ります。テキストとバイナリファイルに対応。',
+                    write_file: 'ファイルにコンテンツを書き込みます。存在しない場合は作成、存在する場合は上書き。',
+                    delete_file: 'ファイルまたはディレクトリを削除します。空でないディレクトリも対応。',
+                    create_directory: 'ワークスペースにディレクトリを作成します（親ディレクトリも自動生成）。',
+                    list_files: 'ディレクトリ内のファイルとサブディレクトリを一覧表示します。',
+                    apply_diff: 'Hunks 配列形式でファイルに構造化された置換を適用します。',
+                    execute_command: 'シェルコマンドを実行し出力を返します。PowerShell、CMD、Bash、WSL 等に対応。',
+                    find_files: 'Glob パターンでファイルを検索します。一致したファイル一覧を返します。',
+                    search_in_files: 'ワークスペースファイル内で検索または置換を行います。正規表現対応。',
+                    history_search: '会話履歴を検索・読み取りします。キーワード検索と行範囲読み取りに対応。',
+                    get_symbols: 'ファイル内のシンボル（クラス、関数、変数等）を取得します。階層リストと行番号を返します。',
+                    goto_definition: 'シンボルの定義に移動し、完全な定義コードを行番号付きで返します。',
+                    find_references: 'コードベース全体でシンボルへの参照を検索します。',
+                    generate_image: 'AI モデルで画像を生成します。単一生成とバッチ生成に対応。',
+                    resize_image: '画像を指定サイズにリサイズします。ストレッチフィルモードを使用。',
+                    crop_image: '正規化座標 (0-1000) で画像を切り抜きます。実際のピクセル座標に自動変換。',
+                    rotate_image: '任意の角度に画像を回転します。正角度は右回り、負角度は左回り。',
+                    remove_background: '画像の背景を除去し透明 PNG を生成します。AI 生成マスクを使用。',
+                    todo_write: '現在の会話の TODO リストを作成・置換します。',
+                    todo_update: 'TODO リストの状態と内容を増分的に更新します。',
+                    create_design: 'Markdown 設計ドキュメントを作成します。設計のみ作成し、計画や実装は行いません。',
+                    update_design: '既存の Markdown 設計ドキュメントを更新します。',
+                    create_plan: 'TODO チェックリスト付きの Markdown 計画ドキュメントを作成します。',
+                    update_plan: '計画ドキュメントを更新します。改訂モードと進捗同期モードに対応。',
+                    create_progress: 'プロジェクト進捗ドキュメントを作成し状態を初期化します。',
+                    update_progress: '進捗ドキュメントのサマリー、TODO、リスク等を更新します。',
+                    record_progress_milestone: 'プロジェクト進捗ドキュメントにマイルストーンを記録します。',
+                    validate_progress_document: '進捗ドキュメントのメタデータと構造を検証します。',
+                    create_review: 'コードレビュー用の Markdown レビュードキュメントを作成します。',
+                    record_review_milestone: 'レビュードキュメントにマイルストーンを追加し構造化サマリーを更新します。',
+                    finalize_review: 'レビュードキュメントを完了し、構造を正規化して最終サマリーを更新します。',
+                    validate_review_document: 'レビュードキュメントの形式とメタデータを検証します。',
+                    reopen_review: '完了したレビューを再開してマイルストーンの記録を続行します。',
+                    compare_review_documents: '2つのレビュードキュメントを比較し差分と統計を返します。',
+                    show_windows_notification: '長時間タスクの完了やユーザー操作が必要な場合に Windows 通知を表示します。',
+                    memory_wake: 'セッション開始時に永続記憶を呼び覚まし、記憶のサマリーを取得します。',
+                    memory_note: '重要な情報や取り決めを永続記憶として記録します。',
+                    memory_recall: 'すべての永続記憶を正規表現で検索します。',
+                    memory_compress: '保留中の記憶の圧縮とマージを実行します。',
+                    memory_zoom: '記憶ツリーノードを展開して詳細を表示します。',
+                    memory_forget: '誤った記憶ツリーのサマリーを破棄します（元の記憶は保持）。',
+                    memory_config: '永続記憶システムの設定パラメータを表示または変更します。',
+                },
             },
             tokenCountSettings: {
                 description: '正確なトークン数を計算するための API を設定します。有効にすると、リクエストを送信する前に対応するチャンネルのトークンカウント API を呼び出して、より正確なコンテキスト管理のために正確なトークン数を取得します。',
