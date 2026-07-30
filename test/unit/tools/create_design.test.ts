@@ -34,12 +34,12 @@ describe('create_design tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/design/api-design.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/design/api-design.md' },
       error: undefined
     })
   })
 
-  it('writes design markdown under .limcode/design and returns requiresUserConfirmation', async () => {
+  it('writes design markdown under .graycode/design and returns requiresUserConfirmation', async () => {
     const tool = createCreateDesignTool()
     const result = await tool.handler({
       title: 'API Design',
@@ -49,17 +49,17 @@ describe('create_design tool', () => {
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBe(true)
     expect(result.data).toEqual({
-      path: '.limcode/design/api-design.md',
+      path: '.graycode/design/api-design.md',
       content: '# API Design\n\n- scope'
     })
 
     expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.limcode/design'
+      fsPath: 'D:/workspace/.graycode/design'
     })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.limcode/design/api-design.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/api-design.md')
     expect(mockSyncProgressFromDesignArtifact).toHaveBeenCalledWith({
-      designPath: '.limcode/design/api-design.md',
+      designPath: '.graycode/design/api-design.md',
       title: 'API Design'
     })
 
@@ -67,15 +67,15 @@ describe('create_design tool', () => {
     expect(new TextDecoder().decode(writtenBytes)).toBe('# API Design\n\n- scope')
   })
 
-  it('rejects paths outside .limcode/design', async () => {
+  it('rejects paths outside .graycode/design', async () => {
     const tool = createCreateDesignTool()
     const result = await tool.handler({
       design: '# Invalid',
-      path: '.limcode/plans/not-allowed.md'
+      path: '.graycode/plans/not-allowed.md'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/design/**.md')
+    expect(result.error).toContain('.graycode/design/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

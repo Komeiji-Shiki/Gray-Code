@@ -446,8 +446,8 @@ description: "Brief description of what this skill does and when to use it"
 
 ## Skills Directory Locations
 
-- Project-level: \\\`.limcode/skills/\\\` or \\\`.agents/skills/\\\`
-- User-level: \\\`~/.limcode/skills/\\\` or \\\`~/.agents/skills/\\\`
+- Project-level: \\\`.graycode/skills/\\\` or \\\`.agents/skills/\\\`
+- User-level: \\\`~/.graycode/skills/\\\` or \\\`~/.agents/skills/\\\`
 
 Project-level takes priority. Duplicate skill names only load the highest-priority one.
 

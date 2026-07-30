@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills Read Tool
+ * GrayCode - Skills Read Tool
  *
  * 替代原有的 toggle_skills 工具。
  * AI 通过 read_skill 工具按需读取 Skill 内容，

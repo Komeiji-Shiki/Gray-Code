@@ -55,8 +55,13 @@ export class SkillsManager {
         // 1. 项目级目录 (优先级最高)
         if (options.workspacePath) {
             this.scanDirs.push({ 
+                path: path.join(options.workspacePath, '.graycode', 'skills'), 
+                source: 'project-graycode' 
+            });
+            // fallback: 兼容旧 LimCode 项目技能目录
+            this.scanDirs.push({ 
                 path: path.join(options.workspacePath, '.limcode', 'skills'), 
-                source: 'project-limcode' 
+                source: 'project-graycode' 
             });
             this.scanDirs.push({ 
                 path: path.join(options.workspacePath, '.agents', 'skills'), 
@@ -72,8 +77,13 @@ export class SkillsManager {
 
         // 3. 用户全局目录
         this.scanDirs.push({ 
+            path: path.join(os.homedir(), '.graycode', 'skills'), 
+            source: 'user-graycode' 
+        });
+        // fallback: 兼容旧 LimCode 用户技能目录
+        this.scanDirs.push({ 
             path: path.join(os.homedir(), '.limcode', 'skills'), 
-            source: 'user-limcode' 
+            source: 'user-graycode' 
         });
         this.scanDirs.push({ 
             path: path.join(os.homedir(), '.agents', 'skills'), 
@@ -156,7 +166,7 @@ ${content}
      * 获取第一个用户级目录路径（用于打开目录功能）
      */
     getSkillsDirectory(): string {
-        const userDir = this.scanDirs.find(d => d.source === 'user-limcode');
+        const userDir = this.scanDirs.find(d => d.source === 'user-graycode');
         return userDir ? userDir.path : this.legacySkillsDir;
     }
     

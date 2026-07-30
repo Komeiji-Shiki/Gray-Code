@@ -400,7 +400,7 @@ function guessHighlightLanguageFromPath(filePath: string): string {
  * 注意：仅做 UI/交互增强，是否能打开由扩展侧校验决定。
  */
 function markdownItWorkspaceFileLinks(md: MarkdownIt) {
-  md.core.ruler.push('limcode_workspace_file_links', (state: any) => {
+  md.core.ruler.push('graycode_workspace_file_links', (state: any) => {
     const TokenCtor = state.Token
 
     for (const tok of state.tokens as any[]) {
@@ -637,9 +637,9 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     const lang = codeRef?.path ? (guessHighlightLanguageFromPath(codeRef.path) || '') : firstWord
 
     // 为同一次 render 分配稳定序号（相同内容的多次渲染：顺序不变则 id 不变）
-    if (!env.__limCode) env.__limCode = { codeBlockSeq: 0 }
-    env.__limCode.codeBlockSeq = (env.__limCode.codeBlockSeq || 0) + 1
-    const blockId = String(env.__limCode.codeBlockSeq)
+    if (!env.__grayCode) env.__grayCode = { codeBlockSeq: 0 }
+    env.__grayCode.codeBlockSeq = (env.__grayCode.codeBlockSeq || 0) + 1
+    const blockId = String(env.__grayCode.codeBlockSeq)
 
     // Mermaid：保留 .mermaid-wrapper/.mermaid 结构，继续支持点击放大与 mermaid.run()
     if (lang === 'mermaid') {

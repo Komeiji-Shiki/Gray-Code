@@ -371,7 +371,7 @@ function normalizeProgressMetadataInput(
 
   return {
     formatVersion: 1,
-    kind: 'limcode.progress',
+    kind: 'graycode.progress',
     projectId: normalizeSingleLineText(value.projectId) || 'project',
     projectName: normalizeOptionalProgressSingleLineText(value.projectName) || undefined,
     createdAt: normalizeTimestamp(value.createdAt, now),
@@ -657,8 +657,8 @@ function validateRawMetadata(value: unknown): string | null {
   if (record.formatVersion !== 1) {
     return 'Progress metadata formatVersion must be 1';
   }
-  if (record.kind !== 'limcode.progress') {
-    return 'Progress metadata kind must be "limcode.progress"';
+  if (record.kind !== 'graycode.progress') {
+    return 'Progress metadata kind must be "graycode.progress"';
   }
 
   const duplicateTodoIds = getDuplicateIds(record.todos, 'todo');

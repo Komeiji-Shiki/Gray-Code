@@ -1,7 +1,7 @@
 /**
  * create_design 工具
  *
- * 目标：把设计文档写入 .limcode/design/**.md（或 multi-root: workspace/.limcode/design/**.md）。
+ * 目标：把设计文档写入 .graycode/design/**.md（或 multi-root: workspace/.graycode/design/**.md）。
  * 注意：这是“生成设计”工具，不负责创建 plan 或执行代码。
  */
 
@@ -32,7 +32,7 @@ export function createCreateDesignToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_design',
     description:
-      'Create a design document (markdown) and write it under .limcode/design/**.md. This tool only creates the design; it does NOT create a plan or implement code.',
+      'Create a design document (markdown) and write it under .graycode/design/**.md. This tool only creates the design; it does NOT create a plan or implement code.',
     category: 'design',
     parameters: {
       type: 'object',
@@ -43,7 +43,7 @@ export function createCreateDesignToolDeclaration(): ToolDeclaration {
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .limcode/design/**.md (or multi-root: workspace/.limcode/design/**.md).'
+            'Optional output path. Must be under .graycode/design/**.md (or multi-root: workspace/.graycode/design/**.md).'
         }
       },
       required: ['design']
@@ -62,11 +62,11 @@ export function createCreateDesignTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.limcode/design/${slugify(title || 'design')}.md`;
+      const defaultPath = `.graycode/design/${slugify(title || 'design')}.md`;
       const outPath = (typeof args.path === 'string' && args.path.trim()) ? args.path.trim() : defaultPath;
 
       if (!isDesignModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid design path. Only ".limcode/design/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: `Invalid design path. Only ".graycode/design/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(outPath);

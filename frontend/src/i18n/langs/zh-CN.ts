@@ -1,5 +1,5 @@
 /**
- * LimCode - 简体中文语言包
+ * GrayCode - 简体中文语言包
  * 按组件目录结构组织翻译
  *
  * 注意：本文件是基准语言包，LanguageMessages 类型由此文件自动推导，
@@ -270,7 +270,7 @@ const zhCN = {
         },
 
         home: {
-            welcome: '欢迎使用 LimCode',
+            welcome: '欢迎使用 GrayCode',
             welcomeMessage: 'AI 编程助手，帮助您更高效地编写代码',
             welcomeHint: '在下方输入框中输入消息开始对话',
             quickStart: '快速开始',
@@ -1229,7 +1229,7 @@ const zhCN = {
                 },
                 appInfo: {
                     title: '应用信息',
-                    name: 'LimCode - Vibe Coding 助手',
+                    name: 'GrayCode - Vibe Coding 助手',
                     version: '版本',
                     repository: '项目仓库',
                     developer: '开发者'
@@ -1610,7 +1610,7 @@ const zhCN = {
                     exportSuccess: '已导出并复制到剪贴板',
                     exportDownloadOnly: '已导出文件，剪贴板复制失败',
                     import: '导入模式',
-                    importDescription: '粘贴 LimCode 提示词模式 JSON，或从文件读取。导入时会自动生成新 ID，并避免覆盖现有模式。',
+                    importDescription: '粘贴 GrayCode 提示词模式 JSON，或从文件读取。导入时会自动生成新 ID，并避免覆盖现有模式。',
                     importFromFile: '从文件读取',
                     importPlaceholder: '粘贴导出的提示词模式 JSON...',
                     importConfirm: '导入',
@@ -3137,20 +3137,20 @@ const zhCN = {
             cancelTooltip: '取消总结'
         },
         agentStopNotification: {
-            errorTitle: 'LimCode Agent 已停止',
+            errorTitle: 'GrayCode Agent 已停止',
             errorMessage: '当前对话执行失败。点击通知可回到对应窗口继续处理。',
             errorMessageWithConversation: '对话“{title}”执行失败。点击通知可回到对应窗口继续处理。',
-            awaitingUserActionTitle: 'LimCode 等待您的操作',
+            awaitingUserActionTitle: 'GrayCode 等待您的操作',
             awaitingUserActionMessage: '当前对话需要您点击“{action}”。点击通知可回到对应窗口继续处理。',
             awaitingUserActionMessageWithConversation: '对话“{title}”需要您点击“{action}”。点击通知可回到对应窗口继续处理。',
-            continueRequiredTitle: 'LimCode 等待继续',
+            continueRequiredTitle: 'GrayCode 等待继续',
             continueRequiredMessage: '当前对话需要继续。点击通知可回到对应窗口继续处理。',
             continueRequiredMessageWithConversation: '对话“{title}”需要继续。点击通知可回到对应窗口继续处理。',
             actions: {
                 generatePlan: '生成计划',
                 executePlan: '执行计划',
                 continue: '继续',
-                genericConfirmation: '回到 LimCode 继续'
+                genericConfirmation: '回到 GrayCode 继续'
             }
         }
     },

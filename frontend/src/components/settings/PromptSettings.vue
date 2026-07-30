@@ -344,7 +344,7 @@ DESIGN MODE BEHAVIOR
 
 6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.
 
-7. **Create or Update Design Docs via Tool**: Use create_design for a new design document and update_design when revising an existing design document under .limcode/design/**.md.
+7. **Create or Update Design Docs via Tool**: Use create_design for a new design document and update_design when revising an existing design document under .graycode/design/**.md.
 
 8. **Stop After Writing Design Doc**: After calling create_design or update_design, STOP and wait for the user to review the design and decide whether to generate or update a plan.
 
@@ -376,8 +376,8 @@ PLAN MODE
 - When generating a plan from a confirmed design, include a clear section near the top of the plan that references the source design document path.
 - When generating a plan from a confirmed review, include a clear section near the top of the plan that references the source review document path and the findings or follow-up items you are implementing.
 - When generating a new plan from a confirmed design or review, call create_plan and pass sourceArtifact with the confirmed source type and path.
-- Use create_plan to write the plan document in .limcode/plans/**.md.
-- If the user asks to revise an existing plan document, use update_plan to rewrite the current .limcode/plans/**.md file instead of creating a second plan document.
+- Use create_plan to write the plan document in .graycode/plans/**.md.
+- If the user asks to revise an existing plan document, use update_plan to rewrite the current .graycode/plans/**.md file instead of creating a second plan document.
 - Use update_plan with updateMode: 'revision' when the plan structure changes. Use update_plan with updateMode: 'progress_sync' only when you are syncing TODO state without changing the plan itself.
 - When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
 - In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
@@ -704,7 +704,7 @@ function buildPromptModeExportPayload(target: 'current' | 'all'): string {
     : modes.value.map(mode => getModeSnapshotForExport(mode))
 
   const payload = {
-    schema: 'limcode.promptModes.v1',
+    schema: 'graycode.promptModes.v1',
     exportedAt: new Date().toISOString(),
     modes: exportedModes
   }
@@ -728,8 +728,8 @@ function downloadTextFile(filename: string, content: string) {
 async function exportPromptModes(target: 'current' | 'all') {
   const payload = buildPromptModeExportPayload(target)
   const filename = target === 'current'
-    ? `limcode-prompt-mode-${selectedModeId.value || 'current'}.json`
-    : 'limcode-prompt-modes.json'
+    ? `graycode-prompt-mode-${selectedModeId.value || 'current'}.json`
+    : 'graycode-prompt-modes.json'
 
   downloadTextFile(filename, payload)
   const copied = await copyToClipboard(payload)

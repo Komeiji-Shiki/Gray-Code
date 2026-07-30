@@ -11,8 +11,8 @@ export interface PlanTodoItem {
 }
 
 const TODO_SECTION_TITLE = '## TODO LIST';
-const TODO_SECTION_START = '<!-- LIMCODE_TODO_LIST_START -->';
-const TODO_SECTION_END = '<!-- LIMCODE_TODO_LIST_END -->';
+const TODO_SECTION_START = '<!-- GRAYCODE_TODO_LIST_START -->';
+const TODO_SECTION_END = '<!-- GRAYCODE_TODO_LIST_END -->';
 
 function normalizeTodoStatus(value: unknown): PlanTodoStatus {
   if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value;

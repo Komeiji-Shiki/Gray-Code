@@ -1,5 +1,5 @@
 /**
- * LimCode esbuild bundle 配置
+ * GrayCode esbuild bundle 配置
  *
  * 将 extension.ts 打包为 dist/extension.js，替代原有的 tsc 直出方案。
  * node-notifier 等含原生二进制的包使用 copy loader 保留在 node_modules 中。

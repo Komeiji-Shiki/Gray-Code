@@ -40,12 +40,12 @@ export function createValidateReviewDocumentToolDeclaration(): ToolDeclaration {
   return {
     name: 'validate_review_document',
     description:
-      'Validate an existing review document under .limcode/review/**.md without modifying it. Reports format, metadata health, and invariant issues.',
+      'Validate an existing review document under .graycode/review/**.md without modifying it. Reports format, metadata health, and invariant issues.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .limcode/review/**.md' }
+        path: { type: 'string', description: 'Target review document path under .graycode/review/**.md' }
       },
       required: ['path']
     }
@@ -64,7 +64,7 @@ export function createValidateReviewDocumentTool(): Tool {
       }
 
       if (!isReviewModePathAllowedWithMultiRoot(path)) {
-        return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
+        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
       const { uri, error } = resolveUriWithInfo(path);

@@ -200,7 +200,7 @@ export function extractProgressCardData(
   const validation = asRecord(data.progressValidation)
   const latestMilestone = asRecord(snapshot?.latestMilestone || data.latestMilestone)
 
-  const rawPath = asString(data.path) || asString(snapshot?.path) || asString(args.path) || '.limcode/progress.md'
+  const rawPath = asString(data.path) || asString(snapshot?.path) || asString(args.path) || '.graycode/progress.md'
   const path = isProgressDocPath(rawPath) ? rawPath : undefined
 
   const projectName = asString(snapshot?.projectName) || asString(data.projectName) || asString(args.projectName)

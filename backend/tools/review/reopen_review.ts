@@ -42,12 +42,12 @@ export function createReopenReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'reopen_review',
     description:
-      'Reopen a finalized review document under .limcode/review/**.md so the same review run can continue recording milestones.',
+      'Reopen a finalized review document under .graycode/review/**.md so the same review run can continue recording milestones.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target finalized review document path under .limcode/review/**.md' }
+        path: { type: 'string', description: 'Target finalized review document path under .graycode/review/**.md' }
       },
       required: ['path']
     }
@@ -66,7 +66,7 @@ export function createReopenReviewTool(): Tool {
       }
 
       if (!isReviewModePathAllowedWithMultiRoot(path)) {
-        return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
+        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
       const session = await loadReviewSessionState(context);

@@ -20,14 +20,14 @@ export function createValidateProgressDocumentToolDeclaration(): ToolDeclaration
     name: 'validate_progress_document',
     strict: true,
     description:
-      'Validate the fixed progress document at .limcode/progress.md without modifying it. Reports metadata health, section ordering, and basic invariants.',
+      'Validate the fixed progress document at .graycode/progress.md without modifying it. Reports metadata health, section ordering, and basic invariants.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target progress document path. Must be .limcode/progress.md (or multi-root: workspace/.limcode/progress.md).'
+          description: 'Target progress document path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
         }
       },
       required: ['path']
@@ -46,7 +46,7 @@ export function createValidateProgressDocumentTool(): Tool {
         return { success: false, error: 'path is required and must be a non-empty string' };
       }
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".limcode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath);

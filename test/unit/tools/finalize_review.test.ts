@@ -32,7 +32,7 @@ describe('finalize_review tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/review/workspace-review.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/review/workspace-review.md' },
       error: undefined
     })
   })
@@ -62,7 +62,7 @@ describe('finalize_review tool', () => {
     const tool = createFinalizeReviewTool()
     const setCustomMetadata = jest.fn().mockResolvedValue(undefined)
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md',
+      path: '.graycode/review/workspace-review.md',
       conclusion: 'Static review passed with one medium-risk follow-up item.',
       overallDecision: 'conditionally_accepted',
       recommendedNextAction: 'Fix the medium-risk item and run manual browser validation.',
@@ -72,7 +72,7 @@ describe('finalize_review tool', () => {
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-1',
-          reviewPath: '.limcode/review/workspace-review.md',
+          reviewPath: '.graycode/review/workspace-review.md',
           status: 'in_progress',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: null
@@ -99,28 +99,28 @@ describe('finalize_review tool', () => {
       'conversation-1',
       'reviewSession',
       expect.objectContaining({
-        reviewPath: '.limcode/review/workspace-review.md',
+        reviewPath: '.graycode/review/workspace-review.md',
         status: 'completed'
       })
     )
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({
-      reviewPath: '.limcode/review/workspace-review.md',
+      reviewPath: '.graycode/review/workspace-review.md',
       title: 'Workspace Review',
       latestConclusion: 'Static review passed with one medium-risk follow-up item.',
       nextAction: 'Fix the medium-risk item and run manual browser validation.',
-      eventMessage: '同步审查结论：.limcode/review/workspace-review.md'
+      eventMessage: '同步审查结论：.graycode/review/workspace-review.md'
     })
   })
 
   it('rejects invalid review paths', async () => {
     const tool = createFinalizeReviewTool()
     const result = await tool.handler({
-      path: '.limcode/design/not-allowed.md',
+      path: '.graycode/design/not-allowed.md',
       conclusion: 'Should fail.'
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('.limcode/review/**.md')
+    expect(result.error).toContain('.graycode/review/**.md')
     expect(mockResolveUriWithInfo).not.toHaveBeenCalled()
     expect(mockWriteFile).not.toHaveBeenCalled()
   })

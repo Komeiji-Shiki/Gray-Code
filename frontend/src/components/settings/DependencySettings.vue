@@ -128,7 +128,7 @@ const progressMessage = ref<string>('');
 const progressType = ref<'info' | 'success' | 'error'>('info');
 
 // 展开的面板（记住状态）
-const STORAGE_KEY = 'limcode.dependencyPanels.expanded';
+const STORAGE_KEY = 'graycode.dependencyPanels.expanded';
 const expandedPanels = ref<Set<string>>(new Set());
 
 // 从 localStorage 恢复展开状态

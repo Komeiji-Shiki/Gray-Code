@@ -55,4 +55,6 @@ desktop.ini
 # temp artifacts
 .tmp/
 diff_analyzer.py
-limcode-settings.json
+graycode-settings.json
+graycode-settings*.json
+limcode-settings*.json

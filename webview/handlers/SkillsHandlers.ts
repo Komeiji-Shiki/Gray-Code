@@ -322,7 +322,7 @@ export const getSkillsDirectory: MessageHandler = async (data, requestId, ctx) =
  * 打开目录
  * 
  * 如果目录不存在则先创建，防止 vscode.env.openExternal 报错
- * （用户点击"打开 Skills 目录"时，~/.limcode/skills/ 可能尚未创建）
+ * （用户点击"打开 Skills 目录"时，~/.graycode/skills/ 可能尚未创建）
  */
 export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
     try {

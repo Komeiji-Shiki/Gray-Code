@@ -77,14 +77,14 @@ export function createRecordProgressMilestoneToolDeclaration(): ToolDeclaration 
     name: 'record_progress_milestone',
     strict: true,
     description:
-      'Record a project milestone into .limcode/progress.md and refresh the latest progress snapshot. This is for project-level progress nodes, not for full review findings or plan documents.',
+      'Record a project milestone into .graycode/progress.md and refresh the latest progress snapshot. This is for project-level progress nodes, not for full review findings or plan documents.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. Must be .limcode/progress.md (or multi-root: workspace/.limcode/progress.md).'
+          description: 'Optional target path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
         },
         milestoneId: { type: 'string' },
         title: { type: 'string' },
@@ -118,12 +118,12 @@ export function createRecordProgressMilestoneTool(): Tool {
       const args = rawArgs as unknown as RecordProgressMilestoneArgs;
       const targetPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
-        : '.limcode/progress.md';
+        : '.graycode/progress.md';
       const title = typeof args.title === 'string' ? args.title.trim() : '';
       const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
 
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".limcode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
       }
       if (!title) {
         return { success: false, error: 'title is required and must be a non-empty string' };

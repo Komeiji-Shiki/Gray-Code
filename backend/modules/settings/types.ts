@@ -1,5 +1,5 @@
 /**
- * LimCode - 全局设置类型定义
+ * GrayCode - 全局设置类型定义
  * 
  * 定义全局设置的类型和接口
  */
@@ -1419,7 +1419,7 @@ export interface StoragePathConfig {
      * 自定义数据存储根目录
      *
      * 如果为空或未设置，使用默认的 globalStorageUri
-     * 例如: "D:\\LimCodeData" 或 "/home/user/limcode-data"
+     * 例如: "D:\\GrayCodeData" 或 "/home/user/GrayCode-data"
      */
     customDataPath?: string;
     
@@ -2331,11 +2331,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
                     continueRequired: true
                 },
                 content: {
-                    titleTemplate: '{windowTitle} · LimCode',
+                    titleTemplate: '{windowTitle} · GrayCode',
                     bodyTemplates: {
-                        error: 'LimCode 已停止，请返回处理。',
-                        awaitingUserAction: 'LimCode 正在等待：{actionLabel}。',
-                        continueRequired: 'LimCode 已暂停，可继续处理。'
+                        error: 'GrayCode 已停止，请返回处理。',
+                        awaitingUserAction: 'GrayCode 正在等待：{actionLabel}。',
+                        continueRequired: 'GrayCode 已暂停，可继续处理。'
                     }
                 }
             }

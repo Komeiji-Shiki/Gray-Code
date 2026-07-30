@@ -150,15 +150,15 @@ describe('FileWriteLockManager', () => {
 
 describe('getWritePathsForCall - 文档类工具', () => {
     it('update_plan 提取 path', () => {
-        expect(getWritePathsForCall('update_plan', { path: '.limcode/plans/x.md' }))
-            .toEqual(['.limcode/plans/x.md']);
+        expect(getWritePathsForCall('update_plan', { path: '.graycode/plans/x.md' }))
+            .toEqual(['.graycode/plans/x.md']);
     });
 
     it('progress 工具缺省 path 时锁默认 progress 文档', () => {
-        expect(getWritePathsForCall('update_progress', {})).toEqual(['.limcode/progress.md']);
-        expect(getWritePathsForCall('record_progress_milestone', {})).toEqual(['.limcode/progress.md']);
-        expect(getWritePathsForCall('create_progress', { path: 'ws/.limcode/progress.md' }))
-            .toEqual(['ws/.limcode/progress.md']);
+        expect(getWritePathsForCall('update_progress', {})).toEqual(['.graycode/progress.md']);
+        expect(getWritePathsForCall('record_progress_milestone', {})).toEqual(['.graycode/progress.md']);
+        expect(getWritePathsForCall('create_progress', { path: 'ws/.graycode/progress.md' }))
+            .toEqual(['ws/.graycode/progress.md']);
     });
 
     it('create_plan 无 path 时不加锁（生成路径不可预知）', () => {

@@ -32,7 +32,7 @@ describe('record_review_milestone tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/review/workspace-review.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/review/workspace-review.md' },
       error: undefined
     })
   })
@@ -50,7 +50,7 @@ describe('record_review_milestone tool', () => {
     const setCustomMetadata = jest.fn().mockResolvedValue(undefined)
 
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md',
+      path: '.graycode/review/workspace-review.md',
       milestoneTitle: 'Review settings module',
       summary: 'Checked mode config and sync logic.',
       status: 'completed',
@@ -70,7 +70,7 @@ describe('record_review_milestone tool', () => {
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-1',
-          reviewPath: '.limcode/review/workspace-review.md',
+          reviewPath: '.graycode/review/workspace-review.md',
           status: 'in_progress',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: null
@@ -102,12 +102,12 @@ describe('record_review_milestone tool', () => {
       'conversation-1',
       'reviewSession',
       expect.objectContaining({
-        reviewPath: '.limcode/review/workspace-review.md',
+        reviewPath: '.graycode/review/workspace-review.md',
         status: 'in_progress'
       })
     )
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({
-      reviewPath: '.limcode/review/workspace-review.md',
+      reviewPath: '.graycode/review/workspace-review.md',
       title: 'Workspace Review',
       latestConclusion: 'Settings review completed',
       nextAction: 'Review backend tools next.',
@@ -132,7 +132,7 @@ describe('record_review_milestone tool', () => {
 
     const tool = createRecordReviewMilestoneTool()
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md',
+      path: '.graycode/review/workspace-review.md',
       milestoneTitle: 'Review legacy document',
       summary: 'Backfilled structured sections.'
     })
@@ -161,7 +161,7 @@ describe('record_review_milestone tool', () => {
 
     const tool = createRecordReviewMilestoneTool()
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md',
+      path: '.graycode/review/workspace-review.md',
       milestoneTitle: 'Should fail',
       summary: 'Should fail.'
     })
@@ -174,7 +174,7 @@ describe('record_review_milestone tool', () => {
   it('rejects path mismatches against the active review session', async () => {
     const tool = createRecordReviewMilestoneTool()
     const result = await tool.handler({
-      path: '.limcode/review/workspace-review.md',
+      path: '.graycode/review/workspace-review.md',
       milestoneTitle: 'Invalid session path',
       summary: 'Should fail.'
     }, {
@@ -182,7 +182,7 @@ describe('record_review_milestone tool', () => {
       conversationStore: {
         getCustomMetadata: jest.fn().mockResolvedValue({
           reviewRunId: 'review-1',
-          reviewPath: '.limcode/review/other-review.md',
+          reviewPath: '.graycode/review/other-review.md',
           status: 'in_progress',
           createdAt: '2026-03-17T00:00:00.000Z',
           finalizedAt: null

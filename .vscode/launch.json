@@ -20,7 +20,7 @@
             "args": [
                 "--extensionDevelopmentPath=${workspaceFolder}",
                 "--new-window",
-                "${workspaceFolder}/../Lim-Code-playground"
+                "${workspaceFolder}/../Gray-Code-playground"
             ],
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
@@ -38,7 +38,7 @@
                 "${workspaceFolder}/dist/**/*.js"
             ],
             "env": {
-                "LIMCODE_WEBVIEW_DEV_SERVER_URL": "http://127.0.0.1:5173"
+                "GRAYCODE_WEBVIEW_DEV_SERVER_URL": "http://127.0.0.1:5173"
             },
             "preLaunchTask": "Local Dev (Backend Watch + Vite)",
             "presentation": {

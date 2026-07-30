@@ -34,7 +34,7 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
 }
 
 // User-Agent 标识
-const USER_AGENT = 'LimCode';
+const USER_AGENT = 'GrayCode';
 
 /**
  * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。

@@ -44,9 +44,9 @@ function getArtifactPathValidator(kind: ProgressArtifactKey): (path: string) => 
 }
 
 function getArtifactScopeLabel(kind: ProgressArtifactKey): string {
-  if (kind === 'design') return '.limcode/design/**.md';
-  if (kind === 'plan') return '.limcode/plans/**.md';
-  return '.limcode/review/**.md';
+  if (kind === 'design') return '.graycode/design/**.md';
+  if (kind === 'plan') return '.graycode/plans/**.md';
+  return '.graycode/review/**.md';
 }
 
 export function isProgressModePathAllowedWithMultiRoot(pathStr: string): boolean {

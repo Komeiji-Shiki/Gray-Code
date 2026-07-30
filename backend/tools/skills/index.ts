@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills Tools
+ * GrayCode - Skills Tools
  *
  * Export all skills-related tools
  */

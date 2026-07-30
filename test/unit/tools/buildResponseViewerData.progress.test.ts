@@ -26,11 +26,11 @@ describe('buildResponseViewerData progress integration', () => {
       result: {
         success: true,
         data: {
-          path: '.limcode/progress.md',
+          path: '.graycode/progress.md',
           progressSnapshot: {
             formatVersion: 1,
             kind: 'limcode.progress',
-            path: '.limcode/progress.md',
+            path: '.graycode/progress.md',
             projectId: 'workspace',
             projectName: 'Workspace',
             status: 'active',
@@ -42,7 +42,7 @@ describe('buildResponseViewerData progress integration', () => {
             nextAction: '开始接入前端摘要卡片。',
             updatedAt: '2026-04-03T12:00:00.000Z',
             activeArtifacts: {
-              plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+              plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
             },
             stats: {
               milestonesTotal: 1,
@@ -69,7 +69,7 @@ describe('buildResponseViewerData progress integration', () => {
 
     expect(progressTool.resultSource).toBe('tool')
     expect(progressTool.progressCardData).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       title: 'Workspace',
       phase: 'implementation',
       currentProgress: '1/1 个里程碑已完成；最新：PG1',
@@ -86,7 +86,7 @@ describe('buildResponseViewerData progress integration', () => {
         id: 'progress-tool-2',
         name: 'validate_progress_document',
         args: {
-          path: '.limcode/progress.md'
+          path: '.graycode/progress.md'
         }
       }]
     })
@@ -105,7 +105,7 @@ describe('buildResponseViewerData progress integration', () => {
           response: {
             success: true,
             data: {
-              path: '.limcode/progress.md',
+              path: '.graycode/progress.md',
               progressValidation: {
                 isValid: true,
                 formatVersion: 1,
@@ -117,7 +117,7 @@ describe('buildResponseViewerData progress integration', () => {
               progressSnapshot: {
                 formatVersion: 1,
                 kind: 'limcode.progress',
-                path: '.limcode/progress.md',
+                path: '.graycode/progress.md',
                 projectId: 'workspace',
                 projectName: 'Workspace',
                 status: 'active',
@@ -149,7 +149,7 @@ describe('buildResponseViewerData progress integration', () => {
     expect(progressTool.resultSource).toBe('hiddenFunctionResponse')
     expect(progressTool.sourceBackendIndex).toBe(18)
     expect(progressTool.progressCardData).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       status: 'active',
       phase: 'plan',
       isValid: true,

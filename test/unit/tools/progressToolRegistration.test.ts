@@ -38,6 +38,6 @@ describe('progress tool frontend registration', () => {
     const config = getToolConfig('validate_progress_document')
     expect(config).toBeDefined()
     expect(config?.name).toBe('validate_progress_document')
-    expect(config?.descriptionFormatter({ path: '.limcode/progress.md' })).toBe('.limcode/progress.md')
+    expect(config?.descriptionFormatter({ path: '.graycode/progress.md' })).toBe('.graycode/progress.md')
   })
 })

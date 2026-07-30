@@ -27,7 +27,7 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
   private static instance: SelectionContextProvider | null = null;
 
   // Put it under refactor to match existing LimCode diff actions.
-  public static readonly actionKind = vscode.CodeActionKind.Refactor.append('limcode.context');
+  public static readonly actionKind = vscode.CodeActionKind.Refactor.append('graycode.context');
   public static readonly providedCodeActionKinds = [SelectionContextProvider.actionKind];
 
   public static getInstance(): SelectionContextProvider {
@@ -39,7 +39,7 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
 
   private isSelectionContextEnabled(): boolean {
     // Read the latest setting at runtime so changes take effect without re-registering providers.
-    const ui = vscode.workspace.getConfiguration('limcode').get<{
+    const ui = vscode.workspace.getConfiguration('graycode').get<{
       appearance?: SelectionContextAppearanceSettings;
     }>('ui');
     const appearance = ui?.appearance;
@@ -87,7 +87,7 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
     };
     const encodedArgs = encodeURIComponent(JSON.stringify([args]));
 
-    contents.appendMarkdown(`[${t('tools.file.selectionContext.hoverAddToInput')}](command:limcode.context.addSelectionToInput?${encodedArgs})`);
+    contents.appendMarkdown(`[${t('tools.file.selectionContext.hoverAddToInput')}](command:graycode.context.addSelectionToInput?${encodedArgs})`);
 
     return new vscode.Hover(contents, hit);
   }
@@ -120,7 +120,7 @@ export class SelectionContextProvider implements vscode.HoverProvider, vscode.Co
 
     action.command = {
       title: t('tools.file.selectionContext.codeActionAddToInput'),
-      command: 'limcode.context.addSelectionToInput',
+      command: 'graycode.context.addSelectionToInput',
       arguments: [args]
     };
 

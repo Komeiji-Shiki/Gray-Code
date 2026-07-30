@@ -1647,7 +1647,7 @@ const ToolContentHost = defineComponent({
 .tool-content {
   padding: 4px var(--spacing-sm, 8px);
   border-top: 1px solid var(--vscode-panel-border);
-  background: transparent;
+  background: var(--vscode-editor-inactiveSelectionBackground);
 }
 
 /* 默认内容样式 */

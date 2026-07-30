@@ -30,7 +30,7 @@ import { createAgentStopNotificationController, type AgentStopNotificationContro
 const { t } = useI18n()
 
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
-const isSubAgentMonitor = (window as any).__LIMCODE_VIEW_MODE === 'subagentMonitor'
+const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMonitor'
 
 // 语言是否已加载
 const languageLoaded = ref(false)
@@ -402,7 +402,7 @@ async function loadLanguageSettings() {
 // 组件挂载
 onMounted(async () => {
   if (isSubAgentMonitor) {
-    console.log('LimCode SubAgent Monitor 已加载')
+    console.log('GrayCode SubAgent Monitor 已加载')
     // 修改原因：Monitor 复用同一前端入口但过去直接 return，从不加载语言设置；
     //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，
     //          英文和日文用户看到的子代理详情是混合语言。
@@ -412,7 +412,7 @@ onMounted(async () => {
     return
   }
 
-  console.log('LimCode Chat 已加载')
+  console.log('GrayCode Chat 已加载')
   
   // Notify the extension that the webview is ready to receive command messages.
   sendToExtension('webviewReady', {}).catch(() => {})

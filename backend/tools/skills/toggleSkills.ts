@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills Toggle Tool
+ * GrayCode - Skills Toggle Tool
  *
  * Allows AI to dynamically enable or disable skills
  * Tool parameters are dynamically generated, each parameter corresponds to a skill

@@ -32,7 +32,7 @@ export interface VSCodeSettingsStorageOptions {
     backupLegacyFile?: boolean;
 }
 
-const LIMCODE_CONFIG_SECTION = 'limcode';
+const GRAYCODE_CONFIG_SECTION = 'graycode';
 
 // 这些 key 参与 Settings Sync（默认 scope）
 const SYNCABLE_KEYS = [
@@ -66,7 +66,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     }
 
     async load(): Promise<GlobalSettings | null> {
-        const config = vscode.workspace.getConfiguration(LIMCODE_CONFIG_SECTION);
+        const config = vscode.workspace.getConfiguration(GRAYCODE_CONFIG_SECTION);
 
         const hasAnySyncable = this.hasAnyUserValue(config, SYNCABLE_KEYS);
         const hasAnyMachine = this.hasAnyUserValue(config, MACHINE_KEYS);
@@ -79,7 +79,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             }
         }
 
-        // 如果用户没有设置过任何 limcode.*（包括 machine），返回 null 让 SettingsManager 使用默认值
+        // 如果用户没有设置过任何 graycode.*（包括 machine），返回 null 让 SettingsManager 使用默认值
         if (!hasAnySyncable && !hasAnyMachine) {
             return null;
         }
@@ -91,7 +91,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     }
 
     async save(settings: GlobalSettings): Promise<void> {
-        const config = vscode.workspace.getConfiguration(LIMCODE_CONFIG_SECTION);
+        const config = vscode.workspace.getConfiguration(GRAYCODE_CONFIG_SECTION);
 
         try {
             // 使用 Promise.all 并行写入配置，显著提升保存性能，并减小更新期间处于不一致状态的时间窗口

@@ -3,7 +3,7 @@ import type { Tool, ToolDeclaration, ToolResult } from '../types'
 import { NodeNotifierWindowsToastAdapter } from '../../modules/notifications/WindowsToastAdapter'
 import type { WindowsToastAdapter } from '../../modules/notifications/types'
 
-const DEFAULT_TITLE = 'LimCode'
+const DEFAULT_TITLE = 'GrayCode'
 const MAX_TITLE_LENGTH = 120
 const MAX_MESSAGE_LENGTH = 1000
 
@@ -50,7 +50,7 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
         },
         openChatOnClick: {
           type: 'boolean',
-          description: 'Whether clicking the notification should open the LimCode chat view. Default: true.'
+          description: 'Whether clicking the notification should open the GrayCode chat view. Default: true.'
         }
       },
       required: ['title', 'message']
@@ -98,7 +98,7 @@ export function createShowWindowsNotificationTool(
           waitForAction: openChatOnClick,
           onClick: openChatOnClick
             ? async () => {
-                await executeCommand('limcode.openChat')
+                await executeCommand('GrayCode.openChat')
               }
             : undefined
         })

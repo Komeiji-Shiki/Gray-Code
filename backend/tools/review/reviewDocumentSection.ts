@@ -1636,7 +1636,7 @@ function normalizeReviewSnapshot(raw: unknown, fallbacks?: {
 
   const snapshot: ReviewSnapshotV4 = {
     formatVersion: 4,
-    kind: 'limcode.review',
+    kind: 'graycode.review',
     reviewRunId: normalizeSingleLineText(source.reviewRunId) || normalizeSingleLineText(fallbacks?.reviewRunId) || createReviewRunId(),
     createdAt,
     updatedAt,
@@ -1788,7 +1788,7 @@ function convertV3StateToSnapshot(state: ReviewDocumentV3State): ReviewSnapshotV
   const latestMilestone = state.metadata.milestones[state.metadata.milestones.length - 1];
   return normalizeReviewSnapshot({
     formatVersion: 4,
-    kind: 'limcode.review',
+    kind: 'graycode.review',
     reviewRunId: state.metadata.reviewRunId,
     createdAt: state.metadata.createdAt,
     updatedAt: state.metadata.finalizedAt || latestMilestone?.recordedAt || state.metadata.createdAt,
@@ -2258,7 +2258,7 @@ function createInitialSnapshot(input: ReviewDocumentTemplateInput, locale: Revie
 
   return normalizeReviewSnapshot({
     formatVersion: 4,
-    kind: 'limcode.review',
+    kind: 'graycode.review',
     reviewRunId: createReviewRunId(),
     createdAt,
     updatedAt: createdAt,
@@ -2296,7 +2296,7 @@ export function detectReviewDocumentFormat(content: string): ReviewDocumentForma
     try {
       const parsed = JSON.parse(v4Match[1].trim());
       const record = asRecord(parsed);
-      if (record?.kind === 'limcode.review' && record?.formatVersion === 4) {
+      if (record?.kind === 'graycode.review' && record?.formatVersion === 4) {
         return 'v4';
       }
     } catch {

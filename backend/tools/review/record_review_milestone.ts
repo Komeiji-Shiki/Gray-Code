@@ -55,12 +55,12 @@ export function createRecordReviewMilestoneToolDeclaration(): ToolDeclaration {
   return {
     name: 'record_review_milestone',
     description:
-      'Append a milestone to an existing review document under .limcode/review/**.md and update the structured summary sections.',
+      'Append a milestone to an existing review document under .graycode/review/**.md and update the structured summary sections.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .limcode/review/**.md' },
+        path: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
         milestoneId: { type: 'string', description: 'Optional milestone identifier. If omitted, it is generated automatically.' },
         milestoneTitle: { type: 'string', description: 'Milestone title' },
         summary: { type: 'string', description: 'Milestone summary in markdown' },
@@ -162,7 +162,7 @@ export function createRecordReviewMilestoneTool(): Tool {
       }
 
       if (!isReviewModePathAllowedWithMultiRoot(path)) {
-        return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
+        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
       const sessionCheck = await ensureMatchingActiveReviewSession(context, path);

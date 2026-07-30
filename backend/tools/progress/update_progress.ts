@@ -64,14 +64,14 @@ export function createUpdateProgressToolDeclaration(): ToolDeclaration {
     name: 'update_progress',
     strict: true,
     description:
-      'Update the project progress document at .limcode/progress.md. This refreshes summary fields, artifacts, TODO snapshot, risks, and recent log entries while returning a lightweight progress snapshot.',
+      'Update the project progress document at .graycode/progress.md. This refreshes summary fields, artifacts, TODO snapshot, risks, and recent log entries while returning a lightweight progress snapshot.',
     category: 'progress',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Optional target path. Must be .limcode/progress.md (or multi-root: workspace/.limcode/progress.md).'
+          description: 'Optional target path. Must be .graycode/progress.md (or multi-root: workspace/.graycode/progress.md).'
         },
         status: { type: 'string', enum: ['active', 'blocked', 'completed', 'archived'] },
         phase: { type: 'string', enum: ['design', 'plan', 'implementation', 'review', 'maintenance'] },
@@ -136,10 +136,10 @@ export function createUpdateProgressTool(): Tool {
       const args = rawArgs as unknown as UpdateProgressArgs;
       const targetPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
-        : '.limcode/progress.md';
+        : '.graycode/progress.md';
 
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".limcode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
       }
 
       if (Object.prototype.hasOwnProperty.call(rawArgs, 'status') && !isProgressStatus(args.status)) {

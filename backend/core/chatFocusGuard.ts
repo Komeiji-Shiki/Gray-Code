@@ -13,7 +13,7 @@
  *    shouldRestoreChatInputFocus() 采样（采样必须在关闭前——关闭动作本身
  *    就是抢焦点的来源）；
  * 3. 关闭后调用 restoreChatInputFocus()：若输入框此前持有焦点，执行
- *    `limcode.chatView.focus` 把 workbench 焦点还给聊天视图，并通过
+ *    `graycode.chatView.focus` 把 workbench 焦点还给聊天视图，并通过
  *    ChatViewProvider 注入的通知器推送 `chat.restoreInputFocus` 命令，
  *    让前端把 DOM 光标放回输入框；若焦点原本在编辑器/终端等其他位置，
  *    什么都不做（不打扰正在写代码的用户）。
@@ -25,8 +25,8 @@
 
 import * as vscode from 'vscode';
 
-/** VSCode 为 package.json 中的 limcode.chatView 视图自动注册的聚焦命令 */
-const CHAT_VIEW_FOCUS_COMMAND = 'limcode.chatView.focus';
+/** VSCode 为 package.json 中的 graycode.chatView 视图自动注册的聚焦命令 */
+const CHAT_VIEW_FOCUS_COMMAND = 'graycode.chatView.focus';
 
 /** blur 上报竞态宽限期（毫秒） */
 const RECENT_BLUR_GRACE_MS = 1500;

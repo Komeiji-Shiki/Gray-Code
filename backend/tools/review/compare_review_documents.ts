@@ -235,13 +235,13 @@ export function createCompareReviewDocumentsToolDeclaration(): ToolDeclaration {
   return {
     name: 'compare_review_documents',
     description:
-      'Compare two review documents under .limcode/review/**.md without modifying them. Returns finding deltas, tracking changes, and snapshot statistics differences.',
+      'Compare two review documents under .graycode/review/**.md without modifying them. Returns finding deltas, tracking changes, and snapshot statistics differences.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        basePath: { type: 'string', description: 'Base review document path under .limcode/review/**.md' },
-        targetPath: { type: 'string', description: 'Target review document path under .limcode/review/**.md' },
+        basePath: { type: 'string', description: 'Base review document path under .graycode/review/**.md' },
+        targetPath: { type: 'string', description: 'Target review document path under .graycode/review/**.md' },
         includeUnchanged: { type: 'boolean', description: 'Whether to include unchanged persisted findings in the result' }
       },
       required: ['basePath', 'targetPath']
@@ -265,7 +265,7 @@ export function createCompareReviewDocumentsTool(): Tool {
       if (!isReviewModePathAllowedWithMultiRoot(basePath) || !isReviewModePathAllowedWithMultiRoot(targetPath)) {
         return {
           success: false,
-          error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Received: ${basePath}, ${targetPath}`
+          error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Received: ${basePath}, ${targetPath}`
         };
       }
 

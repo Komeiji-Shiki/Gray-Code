@@ -1,7 +1,7 @@
 /**
  * create_review 工具
  *
- * 目标：把 review 文档写入 .limcode/review/**.md（或 multi-root: workspace/.limcode/review/**.md）。
+ * 目标：把 review 文档写入 .graycode/review/**.md（或 multi-root: workspace/.graycode/review/**.md）。
  * 注意：这是 Review 模式专用文档工具，不负责修改业务代码。
  */
 
@@ -63,7 +63,7 @@ export function createCreateReviewToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_review',
     description:
-      'Create a review document (markdown) and write it under .limcode/review/**.md. This tool is for Review mode and must not modify business code.',
+      'Create a review document (markdown) and write it under .graycode/review/**.md. This tool is for Review mode and must not modify business code.',
     category: 'review',
     parameters: {
       type: 'object',
@@ -74,7 +74,7 @@ export function createCreateReviewToolDeclaration(): ToolDeclaration {
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .limcode/review/**.md (or multi-root: workspace/.limcode/review/**.md).'
+            'Optional output path. Must be under .graycode/review/**.md (or multi-root: workspace/.graycode/review/**.md).'
         }
       },
       required: ['review']
@@ -93,11 +93,11 @@ export function createCreateReviewTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.limcode/review/${slugify(title || 'review')}.md`;
+      const defaultPath = `.graycode/review/${slugify(title || 'review')}.md`;
       const outPath = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : defaultPath;
 
       if (!isReviewModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
       const sessionCheck = await ensureNoActiveReviewSession(context, outPath);

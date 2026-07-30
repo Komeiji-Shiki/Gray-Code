@@ -11,11 +11,11 @@ describe('progressCards utility', () => {
       {
         success: true,
         data: {
-          path: '.limcode/progress.md',
+          path: '.graycode/progress.md',
           progressSnapshot: {
             formatVersion: 1,
             kind: 'limcode.progress',
-            path: '.limcode/progress.md',
+            path: '.graycode/progress.md',
             projectId: 'workspace',
             projectName: 'Workspace',
             status: 'active',
@@ -27,7 +27,7 @@ describe('progressCards utility', () => {
             nextAction: '开始实现后端。',
             updatedAt: '2026-04-03T12:00:00.000Z',
             activeArtifacts: {
-              plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+              plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
             },
             stats: {
               milestonesTotal: 0,
@@ -44,7 +44,7 @@ describe('progressCards utility', () => {
     )
 
     expect(card).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       title: 'Workspace',
       projectId: 'workspace',
       projectName: 'Workspace',
@@ -58,7 +58,7 @@ describe('progressCards utility', () => {
       todosTotal: 2,
       todosInProgress: 1,
       activeRisks: 1,
-      activePlanPath: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md',
+      activePlanPath: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md',
       sourceTool: 'create_progress'
     })
   })
@@ -70,11 +70,11 @@ describe('progressCards utility', () => {
       {
         success: true,
         data: {
-          path: '.limcode/progress.md',
+          path: '.graycode/progress.md',
           progressSnapshot: {
             formatVersion: 1,
             kind: 'limcode.progress',
-            path: '.limcode/progress.md',
+            path: '.graycode/progress.md',
             projectId: 'workspace',
             projectName: 'Workspace',
             status: 'active',
@@ -85,7 +85,7 @@ describe('progressCards utility', () => {
             nextAction: '开始接入前端摘要卡片。',
             updatedAt: '2026-04-03T12:10:00.000Z',
             activeArtifacts: {
-              review: '.limcode/review/project-progress-review.md'
+              review: '.graycode/review/project-progress-review.md'
             },
             stats: {
               milestonesTotal: 1,
@@ -112,7 +112,7 @@ describe('progressCards utility', () => {
     )
 
     expect(card).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       status: 'active',
       phase: 'implementation',
       currentProgress: '1/1 个里程碑已完成；最新：PG1',
@@ -123,7 +123,7 @@ describe('progressCards utility', () => {
       latestMilestoneId: 'PG1',
       latestMilestoneTitle: '完成后端基础层',
       latestMilestoneStatus: 'completed',
-      activeReviewPath: '.limcode/review/project-progress-review.md',
+      activeReviewPath: '.graycode/review/project-progress-review.md',
       sourceTool: 'record_progress_milestone'
     })
     expect(card?.latestConclusionPreview).toContain('后端基础层已经完成。')
@@ -132,11 +132,11 @@ describe('progressCards utility', () => {
   it('extracts validate_progress_document card data from validation summary', () => {
     const card = extractProgressCardData(
       'validate_progress_document',
-      { path: '.limcode/progress.md' },
+      { path: '.graycode/progress.md' },
       {
         success: true,
         data: {
-          path: '.limcode/progress.md',
+          path: '.graycode/progress.md',
           progressValidation: {
             isValid: false,
             formatVersion: 1,
@@ -150,7 +150,7 @@ describe('progressCards utility', () => {
           progressSnapshot: {
             formatVersion: 1,
             kind: 'limcode.progress',
-            path: '.limcode/progress.md',
+            path: '.graycode/progress.md',
             projectId: 'workspace',
             projectName: 'Workspace',
             status: 'blocked',
@@ -165,7 +165,7 @@ describe('progressCards utility', () => {
     )
 
     expect(card).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       status: 'blocked',
       phase: 'plan',
       isValid: false,

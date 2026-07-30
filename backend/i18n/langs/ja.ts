@@ -446,8 +446,8 @@ description: "このスキルの機能と使用場面の簡単な説明"
 
 ## Skills ディレクトリの場所
 
-- プロジェクトレベル：\\\`.limcode/skills/\\\` または \\\`.agents/skills/\\\`
-- ユーザーレベル：\\\`~/.limcode/skills/\\\` または \\\`~/.agents/skills/\\\`
+- プロジェクトレベル：\\\`.graycode/skills/\\\` または \\\`.agents/skills/\\\`
+- ユーザーレベル：\\\`~/.graycode/skills/\\\` または \\\`~/.agents/skills/\\\`
 
 プロジェクトレベルが優先されます。同名の Skill は優先度が最も高いもののみ読み込まれます。
 

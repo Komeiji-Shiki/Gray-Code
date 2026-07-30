@@ -35,7 +35,7 @@ describe('validate_progress_document tool', () => {
     jest.clearAllMocks()
     mockGetAllWorkspaces.mockReturnValue([{ name: 'workspace' }])
     mockResolveUriWithInfo.mockReturnValue({
-      uri: { fsPath: 'D:/workspace/.limcode/progress.md' },
+      uri: { fsPath: 'D:/workspace/.graycode/progress.md' },
       error: undefined
     })
   })
@@ -52,7 +52,7 @@ describe('validate_progress_document tool', () => {
       latestConclusion: '准备开始实现。',
       nextAction: '先补后端，再补前端。',
       activeArtifacts: {
-        plan: '.limcode/plans/project-progress-document-tools-and-summary-card.plan.md'
+        plan: '.graycode/plans/project-progress-document-tools-and-summary-card.plan.md'
       },
       todos: [
         { id: 'progress-01', content: '实现后端基础层', status: 'pending' }
@@ -66,7 +66,7 @@ describe('validate_progress_document tool', () => {
 
     const tool = createValidateProgressDocumentTool()
     const result = await tool.handler({
-      path: '.limcode/progress.md'
+      path: '.graycode/progress.md'
     })
 
     expect(result.success).toBe(true)
@@ -78,7 +78,7 @@ describe('validate_progress_document tool', () => {
       formatVersion: 1
     })
     expect((result.data as any).progressSnapshot).toMatchObject({
-      path: '.limcode/progress.md',
+      path: '.graycode/progress.md',
       projectName: 'Workspace',
       status: 'active',
       phase: 'plan'
@@ -90,7 +90,7 @@ describe('validate_progress_document tool', () => {
 
     const tool = createValidateProgressDocumentTool()
     const result = await tool.handler({
-      path: '.limcode/progress.md'
+      path: '.graycode/progress.md'
     })
 
     expect(result.success).toBe(true)
