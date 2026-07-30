@@ -10,7 +10,7 @@
  */
 
 /** 提取对象中可能是大段文本内容的关键字段名 */
-const TEXT_CONTENT_KEYS = new Set(['content', 'originalContent', 'newContent', 'search', 'replace', 'oldContent']);
+const TEXT_CONTENT_KEYS = new Set(['content', 'originalContent', 'newContent', 'search', 'replace', 'oldContent', 'lineContent', 'context', 'output']);
 
 /**
  * 递归检测对象中是否有「可能包含原始文本」的字段。
@@ -70,9 +70,6 @@ function formatResultItem(result: Record<string, unknown>): string {
             summaryParts.push('FAILED');
         }
         delete metaFields.success;
-    }
-    if (metaFields.type !== undefined) {
-        delete metaFields.type;
     }
 
     // 剩余元数据 → JSON 片段
