@@ -66,7 +66,10 @@ function formatResultItem(result: Record<string, unknown>): string {
         delete metaFields.totalLines;
     }
     if (metaFields.success !== undefined) {
-        delete metaFields.success; // 顶层已有
+        if (metaFields.success === false) {
+            summaryParts.push('FAILED');
+        }
+        delete metaFields.success;
     }
     if (metaFields.type !== undefined) {
         delete metaFields.type;
@@ -122,6 +125,13 @@ export function serializeToolResultForLLM(
         if (response.cancelled) {
             parts.push('[cancelled by user]');
         }
+        // 附上 data 中的输出文本（如 execute_command 的 stderr/stdout），
+        // 避免 AI 只看到 "Command exited with code 1" 却不知道具体原因
+        if (data?.output && typeof data.output === 'string' && data.output.trim()) {
+            parts.push('');
+            parts.push('Output:');
+            parts.push(data.output.trimEnd());
+        }
         return parts.join('\n');
     }
 
@@ -136,8 +146,8 @@ export function serializeToolResultForLLM(
             return formatted.join('\n\n').trimEnd();
         }
 
-        // 纯结构化数组（如 list_files 的文件列表）→ JSON
-        return JSON.stringify(data.results, null, 2);
+        // 纯结构化数组（如 list_files 的文件列表）→ JSON（包含 data 中全部字段，而非仅 results）
+        return JSON.stringify(data, null, 2);
     }
 
     // 检测顶层的 data 是否直接含文本字段
