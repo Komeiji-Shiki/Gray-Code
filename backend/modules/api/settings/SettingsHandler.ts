@@ -951,7 +951,7 @@ export class SettingsHandler {
     private getCurrentVersion(): string {
         try {
             const vscode = require('vscode');
-            const extension = vscode.extensions.getExtension('Lianues.graycode');
+            const extension = vscode.extensions.getExtension('Komeiji-Shiki.graycode');
             if (extension) {
                 return extension.packageJSON.version || '';
             }
@@ -992,7 +992,7 @@ export class SettingsHandler {
             const path = require('path');
             
             // 获取插件路径
-            const extension = vscode.extensions.getExtension('Lianues.graycode');
+            const extension = vscode.extensions.getExtension('Komeiji-Shiki.graycode');
             if (!extension) {
                 return '';
             }

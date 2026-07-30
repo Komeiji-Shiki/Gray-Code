@@ -51,7 +51,7 @@ export function getProductMetadata(): ProductMetadata {
         // 修改方式：兜底从 VS Code extension registry 读取已安装扩展的 packageJSON，不从文件系统或 workspace 猜测。
         // 修改目的：保持运行时版本来源仍然是扩展宿主元数据，同时让旧调用路径具备安全退路。
         const vscodeApi = require('vscode') as typeof import('vscode');
-        const extension = vscodeApi.extensions?.getExtension?.('Lianues.graycode');
+        const extension = vscodeApi.extensions?.getExtension?.('Komeiji-Shiki.graycode');
         if (extension?.packageJSON) {
             productMetadata = normalizePackageMetadata(extension.packageJSON);
             return productMetadata;
