@@ -606,6 +606,45 @@ export class SettingsHandler {
     }
     
     /**
+     * 获取记忆工具配置
+     */
+    async getMemoryConfig(): Promise<GetToolConfigResponse> {
+        try {
+            const config = this.settingsManager.getMemoryConfig();
+            return { success: true, config };
+        } catch (error) {
+            const err = error as any;
+            return {
+                success: false,
+                error: {
+                    code: err.code || 'UNKNOWN_ERROR',
+                    message: err.message || 'Failed to get memory config'
+                }
+            };
+        }
+    }
+    
+    /**
+     * 更新记忆工具配置
+     */
+    async updateMemoryConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {
+        try {
+            await this.settingsManager.updateMemoryConfig(request.config);
+            const settings = this.settingsManager.getSettings();
+            return { success: true, settings };
+        } catch (error) {
+            const err = error as any;
+            return {
+                success: false,
+                error: {
+                    code: err.code || 'UNKNOWN_ERROR',
+                    message: err.message || 'Failed to update memory config'
+                }
+            };
+        }
+    }
+    
+    /**
      * 更新总结配置
      */
     async updateSummarizeConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {

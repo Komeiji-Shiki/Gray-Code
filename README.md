@@ -1,21 +1,12 @@
 # LimCode
 
-<p align="center">
-  <a href="https://discord.gg/FJxTrsZRPQ">
-    <img src="https://img.shields.io/badge/Join%20in-Discord-5865F2?logo=discord&logoColor=white" alt="Join in Discord">
-  </a>
-</p>
-
-<p align="center">
-  <img src="resources/icon.png" alt="LimCode Logo" width="128">
-</p>
 
 <p align="center">
   <strong>一个面向 VS Code 的 AI 编程助手扩展</strong>
 </p>
 
 <p align="center">
-  多模型渠道 · 工具调用 · MCP · 设计/计划/审查工作流 · 多模态上下文
+  多模型渠道 · 工具调用 · MCP · 设计/计划/审查工作流 · 永久记忆 · 多模态上下文
 </p>
 
 ---
@@ -52,6 +43,7 @@ LimCode 是一个运行在 VS Code 里的 AI 编程助手。它可以在聊天�
 - 对已有改动进行 Review，生成结构化审查记录。
 - 在长对话中自动总结上下文，降低重复解释成本。
 - 通过 MCP、Skills、Sub-Agents 扩展专用能力。
+- 让 AI 跨会话记住项目约定、设计决策和个人偏好，下次打开自动恢复上下文。
 
 ## 核心能力
 
@@ -129,6 +121,19 @@ LimCode 会根据设置把当前环境信息发送给模型：
 - **Skills**：用户自定义知识模块。AI 可通过 `read_skill` 按需加载专用说明、约定或领域知识。
 - **Sub-Agents**：可配置专用子代理，限定工具集和提示词，让复杂任务中的某些子任务由更专门的代理完成。
 
+### 永久记忆（OptMem）
+
+LimCode 内置了 OptMem 永久记忆系统，让 AI 跨会话记住重要信息：
+
+- 每次新会话开始时，AI 通过 `memory_wake` 自动恢复之前的约定、决策和知识。
+- AI 工作时会自动调用 `memory_note` 记录值得保留的事：任务成果、用户教的知识、关键决策等。
+- 旧记忆通过二叉树结构智能压缩为一行摘要，既省 token 又不丢信息。
+- 支持 `memory_recall` 正则搜索全部记忆、`memory_zoom` 展开树节点逐层查看。
+- 记忆数据以追加式日志 + 固定宽度记录存储，不依赖任何外部服务，完全本地化。
+- 可在 设置 → 记忆 中自定义记忆系统的使用提示词，或通过 `{{$MEMORY}}` 模板变量精细控制。
+
+Sub-Agent 模式下自动禁用记忆工具，避免子代理写入重复或错误的记忆。
+
 ### 对话与体验
 
 - 多对话标签页，支持同时保留多个工作现场。
@@ -139,6 +144,8 @@ LimCode 会根据设置把当前环境信息发送给模型：
 - 声音提醒和 Windows 通知，适合长时间任务完成或等待确认时提醒你。
 - 中英日文界面与外观设置。
 - 用量统计页面：从对话历史回溯聚合 token 用量，支持总览 + 按对话 / 按模型 / 按日期三个维度，含条形图可视化和成本估算，支持时间范围筛选。
+- Mermaid 图表渲染：Markdown 代码块中的 Mermaid 语法自动渲染为流程图、时序图等图表。
+- 永久记忆：AI 跨会话记住约定和决策，下次打开自动恢复上下文。记忆自动压缩为摘要以节省 token。
 
 ## 快速开始
 
@@ -384,6 +391,18 @@ LimCode: 打开聊天面板
 | `read_skill` | 读取已启用 Skill 的完整内容 |
 | `show_windows_notification` | 在 Windows 上显示系统通知 |
 
+### 记忆工具
+
+| 工具 | 说明 |
+| --- | --- |
+| `memory_wake` | 唤醒永久记忆，每次会话开始时必须先调用 |
+| `memory_note` | 记录一条永久记忆（一行，≤280 字节） |
+| `memory_recall` | 正则搜索全部记忆（逐字匹配，包括已压缩的） |
+| `memory_compress` | 执行记忆压缩合并（将相邻记忆合并为一行摘要） |
+| `memory_zoom` | 展开记忆树节点查看两个半部分 |
+| `memory_forget` | 丢弃错误摘要，下次压缩会重建 |
+| `memory_config` | 查看或修改记忆系统参数 |
+
 ## 设置页面说明
 
 点击聊天面板右上角设置按钮，可以看到这些页面：
@@ -404,6 +423,7 @@ LimCode: 打开聊天面板
 | Token 计数 | 配置不同渠道的 token 计数方法 |
 | 声音 | 配置任务完成、错误、警告等提示音 |
 | 外观 | 配置界面语言、加载文字、选中代码入口等 UI 偏好 |
+| 记忆 | 配置永久记忆系统（OptMem），自定义 AI 记忆使用提示词 |
 | 通用 | 代理、数据存储路径迁移、设置导入/导出等通用功能 |
 
 ## 上下文与提示词
@@ -581,7 +601,18 @@ Sub-Agents 适合把任务拆给“专门角色”，例如：
 - 安全审查代理。
 - 前端样式代理。
 
-每个子代理可以设置自己的提示词和允许使用的工具范围。
+每个子代理可以设置自己的提示词和允许使用的工具范围。主模型调用子代理时可传入 `continueFromRunId` 将新任务接续到之前已完成的子代理对话上，实现跨调用的对话接力。
+
+#### SubAgent Monitor
+
+LimCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理子代理运行状态：
+
+- 多 run 标签页，可同时监控多个子代理。
+- 实时输出自动跟随，贴底时随内容增长自动滚动。
+- 暂停 / 继续 / 退出控制，可中途干预子代理执行。
+- 历史 run 只读回看，已完成或已取消的 run 标记为「历史运行 · 仅可查看」。
+- 「加载更早消息」支持翻看完整 transcript。
+- 后台派发的子代理完成后以紧凑卡片回流到主聊天，内联结果正文并支持跳转 Monitor 查看完整记录。
 
 ## 数据存储与同步
 
@@ -617,6 +648,8 @@ Sub-Agents 适合把任务拆给“专门角色”，例如：
 在 **设置 → 通用** 中可以将渠道配置、MCP 服务器、Skills 和 VSCode 设置导出为 JSON 文件，或从文件导入恢复。支持跳过已存在项和覆盖全部两种导入模式。也可通过命令面板执行 `LimCode: 导出设置` / `LimCode: 导入设置`。
 
 ## 安装与更新
+
+> **要求：** VS Code `^1.84.0` 或更高版本。
 
 ### 从 VS Code 插件市场安装
 
@@ -700,8 +733,8 @@ npm run dev:frontend
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm run compile` | 编译扩展后端 TypeScript |
-| `npm run watch` | 后端 TypeScript watch |
+| `npm run compile` | 通过 esbuild 打包扩展后端 |
+| `npm run watch` | esbuild watch 模式，自动重新打包 |
 | `npm run build:frontend` | 构建前端 Webview |
 | `npm run dev:frontend` | 启动前端本地开发服务器 |
 | `npm run build` | 组合构建脚本；当前脚本内部调用 pnpm，无 pnpm 时请手动执行 `npm run compile` + `cd frontend && npm run build` |
@@ -797,9 +830,3 @@ npm test
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)。
-
----
-
-<p align="center">
-  Made with ❤️ by LimCode Team
-</p>

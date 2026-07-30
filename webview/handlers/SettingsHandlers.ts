@@ -11,6 +11,7 @@ import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
 import { getSkillsManager } from '../../backend/modules/skills';
+import { getGlobalMemoryManager } from '../../backend/modules/memory';
 
 /**
  * 获取设置
@@ -109,6 +110,57 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
     ctx.sendResponse(requestId, DEFAULT_SUMMARIZE_CONFIG);
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_DEFAULT_SUMMARIZE_CONFIG_ERROR', error.message || t('webview.errors.getSummarizeConfigFailed'));
+  }
+};
+
+/**
+ * 获取记忆配置
+ * 合并 SettingsManager 中的用户设置和 MemoryManager 的运行时配置。
+ */
+export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const config = ctx.settingsManager.getMemoryConfig();
+    // 合并 MemoryManager 的运行时配置（如果已初始化）
+    const mgr = getGlobalMemoryManager();
+    if (mgr) {
+      const runtimeConfig = mgr.getConfig();
+      return ctx.sendResponse(requestId, {
+        ...config,
+        wakeLines: config.wakeLines ?? runtimeConfig.wakeLines,
+        entryChars: config.entryChars ?? runtimeConfig.entryChars,
+        partChars: config.partChars ?? runtimeConfig.partChars,
+        partLines: config.partLines ?? runtimeConfig.partLines,
+      });
+    }
+    ctx.sendResponse(requestId, config);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_MEMORY_CONFIG_ERROR', error.message || 'Failed to get memory config');
+  }
+};
+
+/**
+ * 更新记忆配置
+ * 同时更新 SettingsManager（持久化）和 MemoryManager（运行时生效）。
+ */
+export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { config } = data;
+    await ctx.settingsManager.updateMemoryConfig(config);
+    // 同步运行时参数到 MemoryManager（如果已初始化）
+    const mgr = getGlobalMemoryManager();
+    if (mgr) {
+      const runtimeUpdates: Record<string, number> = {};
+      if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
+      if (typeof config.entryChars === 'number') runtimeUpdates.entryChars = config.entryChars;
+      if (typeof config.partChars === 'number') runtimeUpdates.partChars = config.partChars;
+      if (typeof config.partLines === 'number') runtimeUpdates.partLines = config.partLines;
+      if (Object.keys(runtimeUpdates).length > 0) {
+        await mgr.updateConfig(runtimeUpdates);
+      }
+    }
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_MEMORY_CONFIG_ERROR', error.message || 'Failed to update memory config');
   }
 };
 
@@ -266,6 +318,8 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getSummarizeConfig', getSummarizeConfig);
   registry.set('getDefaultSummarizeConfig', getDefaultSummarizeConfig);
   registry.set('updateSummarizeConfig', updateSummarizeConfig);
+  registry.set('getMemoryConfig', getMemoryConfig);
+  registry.set('updateMemoryConfig', updateMemoryConfig);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);

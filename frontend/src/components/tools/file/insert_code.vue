@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
         </div>
 
      <!-- 文件路径 -->
-        <div class="file-path">{{ file.path }}</div>
+        <div class="file-path clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ file.path }}</div>
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
@@ -476,6 +476,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-path.clickable {
+  cursor: pointer;
+}
+
+.file-path.clickable:hover {
+  color: var(--vscode-textLink-foreground);
 }
 
 /* 文件错误 */

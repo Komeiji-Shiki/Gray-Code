@@ -39,6 +39,7 @@ export * from './progress';
 export * from './review';
 export * from './history';
 export * from './notification';
+export * from './memory';
 
 // 导出工具辅助函数
 export * from './utils';
@@ -77,6 +78,7 @@ export function getAllTools(): Tool[] {
     const { getReviewToolRegistrations } = require('./review');
     const { getHistoryToolRegistrations } = require('./history');
     const { getNotificationToolRegistrations } = require('./notification');
+    const { getMemoryToolRegistrations } = require('./memory');
     
     const registrations = [
         ...getFileToolRegistrations(),
@@ -90,7 +92,8 @@ export function getAllTools(): Tool[] {
         ...getProgressToolRegistrations(),
         ...getReviewToolRegistrations(),
         ...getHistoryToolRegistrations(),
-        ...getNotificationToolRegistrations()
+        ...getNotificationToolRegistrations(),
+        ...getMemoryToolRegistrations()
     ];
     
     const tools = registrations.map(reg => reg());

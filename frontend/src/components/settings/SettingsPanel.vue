@@ -13,6 +13,7 @@ import ContextSettings from './ContextSettings.vue'
 import PromptSettings from './PromptSettings.vue'
 import TokenCountSettings from './TokenCountSettings.vue'
 import SubAgentsSettings from './SubAgentsSettings.vue'
+import MemorySettings from './MemorySettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
@@ -51,6 +52,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
   { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-notifications' },
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
+  { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
 ])
 
@@ -517,6 +519,14 @@ onMounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.appearance.description') }}</p>
 
             <AppearanceSettings />
+          </div>
+
+          <!-- 记忆设置 -->
+          <div v-if="settingsStore.activeTab === 'memory'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.memory.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.memory.description') }}</p>
+
+            <MemorySettings />
           </div>
           
           <!-- 通用设置 -->

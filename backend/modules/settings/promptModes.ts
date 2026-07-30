@@ -21,6 +21,8 @@ export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a professional programmin
 
 {{$MCP_TOOLS}}
 
+{{$MEMORY}}
+
 ====
 
 GUIDELINES
@@ -32,6 +34,7 @@ GUIDELINES
 - For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
 - For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
+- You can use Mermaid syntax in fenced code blocks (\`\`\`mermaid) to create diagrams and flowcharts when explaining complex concepts.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`;
 
@@ -90,6 +93,8 @@ export const CODE_MODE_TEMPLATE = `You are a professional programming assistant,
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
+
+{{$MEMORY}}
 
 ====
 

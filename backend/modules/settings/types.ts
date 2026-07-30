@@ -193,6 +193,58 @@ export interface HistorySearchToolConfig {
 }
 
 /**
+ * Memory 工具配置（永久记忆系统）
+ */
+export interface MemoryToolConfig {
+    /**
+     * 自定义记忆系统提示词。
+     *
+     * 如果设置，将替换内置的 {{$MEMORY}} 模板变量内容。
+     * 可以在这里自定义 AI 如何使用记忆系统的行为规则。
+     * 留空则使用内置默认值。
+     */
+    systemPrompt?: string;
+
+    /**
+     * wake 输出的行数预算（默认 96，≈8k tokens）。
+     * 更大的值 = 更多细节，但也消耗更多 token。
+     */
+    wakeLines?: number;
+
+    /**
+     * 单条记忆最大字节数（默认 280）。
+     * 超过此长度的记忆文本将被截断。最大值 280。
+     */
+    entryChars?: number;
+
+    /**
+     * 输出分页的最大字符数（默认 20000）。
+     * 当 wake 输出超过此值时自动分页。
+     */
+    partChars?: number;
+
+    /**
+     * 输出分页的最大行数（默认 500）。
+     * 当 wake 输出行数超过此值时自动分页。
+     */
+    partLines?: number;
+
+    [key: string]: unknown;
+}
+
+/**
+ * 默认 Memory 工具配置
+ */
+export const DEFAULT_MEMORY_TOOL_CONFIG: MemoryToolConfig = {
+    // systemPrompt 为空时，PromptManager 使用内置默认值
+    wakeLines: 96,
+    entryChars: 280,
+    partChars: 20000,
+    partLines: 500,
+};
+
+
+/**
  * Apply Diff 工具配置
  */
 export interface ApplyDiffToolConfig {
@@ -1334,6 +1386,7 @@ export interface ToolsConfig {
     token_count?: TokenCountConfig;
     subagents?: SubAgentsConfig;
     history_search?: HistorySearchToolConfig;
+    memory?: MemoryToolConfig;
     [toolName: string]: Record<string, unknown> | undefined;
 }
 
@@ -2242,7 +2295,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         context_awareness: DEFAULT_CONTEXT_AWARENESS_CONFIG,
         pinned_files: DEFAULT_PINNED_FILES_CONFIG,
         system_prompt: DEFAULT_SYSTEM_PROMPT_CONFIG,
-        token_count: DEFAULT_TOKEN_COUNT_CONFIG
+        token_count: DEFAULT_TOKEN_COUNT_CONFIG,
+        memory: DEFAULT_MEMORY_TOOL_CONFIG
     },
     defaultToolMode: 'function_call',
     proxy: {
