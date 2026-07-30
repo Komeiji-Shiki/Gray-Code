@@ -672,6 +672,118 @@ export class MemoryManager {
     }
 
     /**
+     * listEntries: 返回所有原始记忆条目。
+     */
+    async listEntries(): Promise<LogEntry[]> {
+        const T = await this.logLen();
+        if (T === 0) return [];
+        return this.logSlice(0, T);
+    }
+
+    /**
+     * updateEntry: 原地覆写单条原始记忆的文本。
+     * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 319 字节）。
+     */
+    async updateEntry(id: number, text: string): Promise<void> {
+        const T = await this.logLen();
+        if (id < 0 || id >= T) {
+            die(`No memory at index ${id}.`);
+        }
+        const trimmed = text.trim();
+        if (!trimmed) die('Empty. A memory is one line of text.');
+        if (trimmed.includes('\n') || trimmed.includes('\r')) {
+            die('A memory is one line.');
+        }
+        const byteLen = Buffer.byteLength(trimmed, 'utf-8');
+        if (byteLen > this.config.entryChars) {
+            die(`Too long: ${byteLen} bytes, limit ${this.config.entryChars}.`);
+        }
+
+        // 读取原条目以保留 ID 和日期
+        const entry = await this.logGet(id);
+        const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
+
+        const release = await this.lock.acquire();
+        try {
+            const buf = pad(newLine, LOG_REC);
+            const logPath = this.logPath();
+            const handle = await fs.open(logPath, 'r+');
+            try {
+                await handle.write(buf, 0, buf.length, id * LOG_REC);
+            } finally {
+                await handle.close();
+            }
+
+            // 编辑后所有覆盖该 ID 的树摘要失效，丢弃之
+            await this.dropSummariesCovering(id);
+        } finally {
+            release();
+        }
+    }
+
+    /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */
+    private async dropSummariesCovering(id: number): Promise<void> {
+        const T = await this.logLen();
+        let size = 2;
+        while (size <= T) {
+            const lo = Math.floor(id / size) * size;
+            const hi = lo + size;
+            // 用 treeDrop 丢弃该块及上层
+            await this.treeDrop(lo, hi).catch(() => {});
+            size *= 2;
+        }
+    }
+
+    /**
+     * truncateLog: 截断原始 LOG，删除 ID >= keepId 的所有记忆及其相关树摘要。
+     * keepId=0 表示清空全部记忆。
+     */
+    async truncateLog(keepId: number): Promise<{ removed: number }> {
+        const T = await this.logLen();
+        if (keepId >= T) {
+            return { removed: 0 };
+        }
+        if (keepId < 0) {
+            die(`Invalid keepId: ${keepId}.`);
+        }
+
+        const release = await this.lock.acquire();
+        try {
+            // 1. 截断 LOG 文件
+            const logPath = this.logPath();
+            await this.repair(logPath, LOG_REC);
+            const logHandle = await fs.open(logPath, 'r+');
+            try {
+                await logHandle.truncate(keepId * LOG_REC);
+            } finally {
+                await logHandle.close();
+            }
+
+            // 2. 清理所有树摘要：每个 size 截断到 floor(keepId/size) 条
+            let size = 2;
+            while (size <= T) {
+                const p = this.treePath(size);
+                const keep = Math.floor(keepId / size);
+                const n = await this.count(p, TREE_REC);
+                if (n > keep) {
+                    await this.repair(p, TREE_REC);
+                    const th = await fs.open(p, 'r+');
+                    try {
+                        await th.truncate(keep * TREE_REC);
+                    } finally {
+                        await th.close();
+                    }
+                }
+                size *= 2;
+            }
+
+            return { removed: T - keepId };
+        } finally {
+            release();
+        }
+    }
+
+    /**
      * 获取/设置配置。
      */
     getConfig(): MemoryConfig {

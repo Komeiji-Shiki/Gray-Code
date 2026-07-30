@@ -159,6 +159,8 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
   const flush = () => {
     if (!inHunk) return
 
+    const hasContent = oldBlock.length > 0 || newBlock.length > 0
+
     if (currentHeader) {
       oldOut.push(`// ${currentHeader}`)
       newOut.push(`// ${currentHeader}`)
@@ -167,8 +169,11 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
     oldOut.push(...oldBlock)
     newOut.push(...newBlock)
 
-    oldOut.push('')
-    newOut.push('')
+    // 只在 hunk 有实质内容时才加空行分隔，避免连续空行噪声
+    if (hasContent) {
+      oldOut.push('')
+      newOut.push('')
+    }
 
     oldBlock = []
     newBlock = []
@@ -193,7 +198,8 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
       continue
     }
 
-    // 忽略纯空行（一般是 patch 末尾 split 出来的噪声）
+    // 纯空行（无前缀）：unified diff 的空行上下文总是以 " " 开头，
+    // 所以 line === '' 只会是 patch 头尾 split 噪声或分隔空行，安全跳过
     if (line === '') {
       continue
     }

@@ -12,6 +12,7 @@ import type { OpenAIResponsesConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
+import { serializeToolResultForLLM } from './toolResponseFormatter';
 import { ChannelError, ErrorType } from '../types';
 import type {
     GenerateRequest,
@@ -209,7 +210,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         call_id: part.functionResponse.id,
                         output: typeof part.functionResponse.response === 'string'
                             ? part.functionResponse.response
-                            : JSON.stringify(part.functionResponse.response)
+                            : serializeToolResultForLLM(part.functionResponse.name, part.functionResponse.response as Record<string, unknown>)
                     });
                     
                     // 如果工具返回了多模态内容（如图片），这些需要作为紧随其后的新 message 项

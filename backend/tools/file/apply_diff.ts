@@ -467,6 +467,26 @@ function remapNewContentIndentation(
     }).join('');
 }
 
+/**
+ * 检测 oldContent 中 AI 常见的 JSON 转义过度问题。
+ * 当 oldContent 包含字面 "\\n" / "\\t" / "\\"" 序列时，很可能是模型在 JSON 参数中多转义了一层，
+ * 导致实际匹配的是反斜杠字面量而非换行/制表/引号。
+ */
+function detectEscapeIssues(text: string): string | undefined {
+    const issues: string[] = [];
+    if (/\\n/.test(text)) {
+        issues.push('literal "\\n" (backslash-n) found in oldContent — if the file uses real newlines, you may have double-escaped: remove the extra backslash before "n"');
+    }
+    if (/\\t/.test(text)) {
+        issues.push('literal "\\t" (backslash-t) found in oldContent — if the file uses real tab characters, you may have double-escaped');
+    }
+    if (/\\"/.test(text)) {
+        issues.push('literal "\\"" found in oldContent — in JSON string values double quotes should be just \", but the file content likely has plain " characters');
+    }
+    if (issues.length === 0) return undefined;
+    return `Escape hint: ${issues.join('; ')}.`;
+}
+
 function resolveStructuredHunkMatch(
     currentContent: string,
     oldContent: string,
@@ -547,11 +567,13 @@ function resolveStructuredHunkMatch(
         };
     }
 
+    const escapeDiagnosis = detectEscapeIssues(oldContent);
+
     const fallback = findIndentFallbackCandidates(currentContent, oldContent);
     if (fallback.disabledReason) {
         return {
             success: false,
-            error: `No exact match found for oldContent. Indentation fallback was not attempted: ${fallback.disabledReason}`,
+            error: `No exact match found for oldContent. Indentation fallback was not attempted: ${fallback.disabledReason}.${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
             matchCount: 0
         };
     }
@@ -559,7 +581,7 @@ function resolveStructuredHunkMatch(
     if (fallback.candidates.length === 0) {
         return {
             success: false,
-            error: 'No exact match found for oldContent. Also tried indentation-tolerant line matching (leading spaces/tabs only), but no candidate block matched. Please verify the non-indentation content exactly.',
+            error: `No exact match found for oldContent. Also tried indentation-tolerant line matching (leading spaces/tabs only), but no candidate block matched. Please verify the non-indentation content exactly.${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
             matchCount: 0
         };
     }

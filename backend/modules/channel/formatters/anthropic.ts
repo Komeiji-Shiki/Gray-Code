@@ -47,6 +47,7 @@ import {
 } from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
+import { serializeToolResultForLLM } from './toolResponseFormatter';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -349,7 +350,7 @@ export class AnthropicFormatter extends BaseFormatter {
                     contentArray.push({
                         type: 'tool_result',
                         tool_use_id: resp.id || `toolu_${Date.now()}`,
-                        content: JSON.stringify(resp.response)
+                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
                 

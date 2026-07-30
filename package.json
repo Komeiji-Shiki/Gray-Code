@@ -271,7 +271,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "node esbuild.config.js",
+    "vscode:prepublish": "pnpm run build",
     "compile": "node esbuild.config.js",
     "typecheck": "tsc -p ./ --noEmit",
     "build:backend": "node esbuild.config.js",

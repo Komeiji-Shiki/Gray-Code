@@ -68,6 +68,15 @@ import './progress/validate_progress_document'
 // History 工具
 import './history/history_search'
 
+// Memory 工具
+import './memory/memory_wake'
+import './memory/memory_note'
+import './memory/memory_recall'
+import './memory/memory_compress'
+import './memory/memory_zoom'
+import './memory/memory_forget'
+import './memory/memory_config'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

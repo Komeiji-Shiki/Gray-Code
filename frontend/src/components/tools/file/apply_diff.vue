@@ -656,6 +656,10 @@ onBeforeUnmount(() => {
         <!-- 失败时的内容预览 -->
         <div v-if="diff.success === false" class="diff-content-failed">
           <div class="failed-section">
+            <div class="failed-error" v-if="diff.error">
+              <span class="codicon codicon-error"></span>
+              {{ diff.error }}
+            </div>
             <div class="failed-label">{{ t('components.message.tool.parameters') }} (search):</div>
             <CustomScrollbar :horizontal="true" :max-height="150">
               <pre class="failed-code search">{{ diff.search }}</pre>
@@ -1077,10 +1081,7 @@ onBeforeUnmount(() => {
 
 .error-msg {
   font-size: 10px;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .diff-number {
@@ -1170,6 +1171,26 @@ onBeforeUnmount(() => {
   color: var(--vscode-descriptionForeground);
   font-weight: 600;
   font-size: 10px;
+}
+
+.failed-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  border-radius: var(--radius-sm, 2px);
+  font-size: 11px;
+  color: var(--vscode-inputValidation-errorForeground);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.failed-error .codicon {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .failed-code {
