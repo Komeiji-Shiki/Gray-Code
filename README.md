@@ -1,7 +1,7 @@
 # GrayCode
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Komeiji-Shiki/GrayWill-ST/main/picture/2.png" alt="GrayCode" />
+  <img src="https://raw.githubusercontent.com/Komeiji-Shiki/GrayWill-ST/main/picture/2.png" alt="GrayCode" width="480" />
 </p>
 
 <p align="center">
