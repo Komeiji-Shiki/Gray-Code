@@ -22,6 +22,7 @@ import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
+import { rebuildMessageIndexById } from './state'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -502,6 +503,7 @@ export async function retryFromMessage(
         state.totalMessages.value = result?.total ?? page.length
         state.windowStartIndex.value = page[0]?.index ?? 0
         state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+        rebuildMessageIndexById(state)
       } catch (reloadErr) {
         console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
       }
@@ -862,6 +864,7 @@ export async function deleteSingleMessage(
       state.totalMessages.value = result?.total ?? page.length
       state.windowStartIndex.value = page[0]?.index ?? 0
       state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+      rebuildMessageIndexById(state)
 
       state.isLoadingMoreMessages.value = false
       state.historyFolded.value = false

@@ -18,6 +18,7 @@ import {
 } from './configActions'
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
+import { rebuildMessageIndexById } from './state'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -537,6 +538,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
 
     // 转换所有消息，包括 functionResponse 消息
     state.allMessages.value = initialWindow.messages
+    rebuildMessageIndexById(state)
     state.windowStartIndex.value = initialWindow.windowStartIndex
     syncTotalMessagesFromWindow(state)
 
@@ -597,6 +599,7 @@ export async function loadOlderMessagesPage(
     const olderMsgs = older.map(c => contentToMessageEnhanced(c))
     // 追加到窗口顶部
     state.allMessages.value = [...olderMsgs, ...state.allMessages.value]
+    rebuildMessageIndexById(state)
 
     state.totalMessages.value = result?.total ?? state.totalMessages.value
     state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
@@ -734,6 +737,7 @@ export async function switchConversation(
 
       state.totalMessages.value = initialWindow.totalMessages
       state.allMessages.value = initialWindow.messages
+      rebuildMessageIndexById(state)
       state.windowStartIndex.value = initialWindow.windowStartIndex
       syncTotalMessagesFromWindow(state)
 

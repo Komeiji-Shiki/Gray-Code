@@ -13,6 +13,7 @@ All notable changes to the "Gray Code" extension will be documented in this file
 ### Fixed
   - 修复 `read_file` 等工具返回给 LLM 时文件内容反斜杠被二次转义的问题（`\` → `\\`），根因在 `anthropic.ts` / `openai.ts` / `openai-responses.ts` 三个 formatter 中对 `functionResponse.response` 统一做了 `JSON.stringify`，导致 JSON-in-JSON 嵌套编码。现改为共享的 `serializeToolResultForLLM` 函数，大段文本内容原样透出，元数据用纯文本前缀。修复后 AI 在 `apply_diff` 等工具中不再因反斜杠翻倍而写出错误的转义序列
   - 修复 `apply_diff` 前端组件中 diff 块失败原因被 CSS 截断不显示的问题：`.error-msg` 移除 `max-width: 200px` + `text-overflow: ellipsis` + `white-space: nowrap`，失败原因完整展示；失败 diff 块新增错误摘要区直接显示具体失败原因，不再只有参数预览
+  - 修复加载历史对话时前端工具调用卡片显示状态不正确、搜索结果缺失的问题：根因是前端 `toolResponseIndex`（functionResponse.id → 消息下标 O(1) 索引）在历史加载路径（`loadHistory` / `loadOlderMessagesPage` / `switchConversation` / tab 恢复 / 检查点回档 / 重试重载）中未被重建，导致 `getToolResponseById()` 始终返回 null，工具卡片无法匹配到对应的 `functionResponse` 数据。修复方式为在以上路径的 `allMessages.value` 直接赋值后统一调用 `rebuildMessageIndexById(state)` 重建索引
 
 ### Added
   - `apply_diff` 结构化 hunk 匹配失败时新增转义诊断（`detectEscapeIssues`）：当 `oldContent` 包含字面 `\n` / `\t` / `\"` 序列时，错误消息自动追加诊断提示，帮助 AI 识别 JSON 参数中的过度转义
