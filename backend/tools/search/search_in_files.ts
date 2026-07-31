@@ -904,7 +904,12 @@ export function createSearchInFilesTool(): Tool {
             // isRegex=false 时 query 按字面量匹配，替换串也必须按字面量写入：
             // 转义 $ 序列，防止 $&/$1/$$ 被 String.replace 解释为特殊替换模式
             //（工具描述承诺捕获组仅在 isRegex=true 时生效）。
-            const rawReplacement = isReplaceMode ? ((args.replace as string) ?? '') : '';
+            if (isReplaceMode && typeof args.replace !== 'string') {
+                // 严格校验：replace 模式漏传 replace 会把所有匹配内容静默删除，
+                // 这是数据修改操作，必须显式给出替换串。
+                return { success: false, error: "mode='replace' requires the 'replace' parameter (the replacement string). Refusing to delete all matches with an empty replacement." };
+            }
+            const rawReplacement = isReplaceMode ? (args.replace as string) : '';
             const replacement = isReplaceMode && !isRegex
                 ? rawReplacement.replace(/\$/g, '$$$$')
                 : rawReplacement;

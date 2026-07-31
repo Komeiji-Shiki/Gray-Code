@@ -4,6 +4,29 @@
  * 负责全局设置的管理、持久化和通知
  */
 
+/**
+ * 深合并纯对象（用于 toolsConfig 默认值与用户配置合并）。
+ * - 普通对象递归合并；数组/其他值整体覆盖（用户配置优先）。
+ * - 不处理原型链、Date、Map 等复杂类型（配置数据均为 JSON 形态）。
+ */
+function deepMergePlainObjects(base: unknown, override: unknown): unknown {
+    if (isPlainObject(base) && isPlainObject(override)) {
+        const result: Record<string, unknown> = { ...base };
+        for (const key of Object.keys(override)) {
+            result[key] = deepMergePlainObjects(base[key], override[key]);
+        }
+        return result;
+    }
+    if (override === undefined) {
+        return base;
+    }
+    return override;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 import type {
     GlobalSettings,
     SettingsChangeEvent,
@@ -486,16 +509,15 @@ export class SettingsManager {
     }
     
     /**
-     * 读取 toolsConfig.<key> 配置，并与默认配置浅合并。
+     * 读取 toolsConfig.<key> 配置，并与默认配置深合并。
      *
      * 与默认配置 merge 可避免历史配置缺少后续版本新增的字段。
+     * 深合并：用户只写嵌套子字段（如 checkpoint.messageCheckpoint.afterMessages）时，
+     * 不能把整个嵌套默认对象替换掉，否则其余默认子字段静默丢失。
      */
     private getToolsConfigEntry<T extends object>(key: string, defaults: Readonly<T>): Readonly<T> {
         const cfg = this.settings.toolsConfig?.[key] as unknown as Partial<T> | undefined;
-        return {
-            ...defaults,
-            ...(cfg || {})
-        };
+        return deepMergePlainObjects(defaults, cfg || {}) as Readonly<T>;
     }
 
     /**

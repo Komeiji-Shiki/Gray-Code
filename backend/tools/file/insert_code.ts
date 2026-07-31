@@ -39,10 +39,25 @@ interface InsertResult {
 }
 
 /**
+ * 按行拆分插入内容。
+ *
+ * content 以 \n 结尾时 split 会多出一个尾部空串元素——直接展开会把空串也插进
+ * 文件中间，产生一个多余空行（模型生成的插入代码经常带尾部换行，最常见用法即触发）。
+ * 这里把尾部空串去掉；insertedLineCount 也基于去除后的行数计算，保证 CodeLens 高亮区间不错位。
+ */
+function splitInsertContent(content: string): string[] {
+    const lines = content.split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    return lines;
+}
+
+/**
  * 在指定行前插入代码
  */
 function insertAtLine(lines: string[], line: number, content: string): string {
-    const insertLines = content.split('\n');
+    const insertLines = splitInsertContent(content);
     const idx = line - 1; // 转为 0-based
     const newLines = [
         ...lines.slice(0, idx),
@@ -89,6 +104,7 @@ async function insertSingleFile(
         const originalContent = normalizeLineEndingsToLF(
             fs.readFileSync(absolutePath, 'utf8')
         );
+        const normalizedContent = normalizeLineEndingsToLF(content);
         const originalLines = originalContent.split('\n');
         const totalLines = originalLines.length;
 
@@ -101,14 +117,14 @@ async function insertSingleFile(
             };
         }
 
-        const newContent = insertAtLine(originalLines, line, content);
+        const newContent = insertAtLine(originalLines, line, normalizedContent);
 
         if (originalContent === newContent) {
             return { path: filePath, success: true, line, insertedLines: 0, status: 'accepted' };
         }
 
         // 计算插入块的行范围（用于 CodeLens 高亮）
-        const insertedLineCount = content.split('\n').length;
+        const insertedLineCount = splitInsertContent(normalizedContent).length;
         const blocks = [{
             index: 0,
             startLine: line,

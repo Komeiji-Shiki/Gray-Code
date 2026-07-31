@@ -10,6 +10,16 @@ import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 
 /**
+ * 大小写不敏感路径比较（Windows/macOS 默认大小写不敏感）
+ */
+function pathEqualsCaseInsensitive(a: string, b: string): boolean {
+    if (!a || !b) return false;
+    const na = a.replace(/\\/g, '/').toLowerCase();
+    const nb = b.replace(/\\/g, '/').toLowerCase();
+    return na === nb;
+}
+
+/**
  * 删除结果
  */
 interface DeleteResult {
@@ -68,12 +78,39 @@ export function createDeleteFileTool(): Tool {
             let failCount = 0;
 
             for (const filePath of pathList) {
+                if (typeof filePath !== 'string' || !filePath.trim() || filePath === '.' || filePath === '..') {
+                    results.push({
+                        path: filePath,
+                        success: false,
+                        error: `Invalid path: ${JSON.stringify(filePath)}. Refusing to delete workspace root or empty paths.`
+                    });
+                    failCount++;
+                    continue;
+                }
+
                 const uri = resolveUri(filePath);
                 if (!uri) {
                     results.push({
                         path: filePath,
                         success: false,
                         error: 'No workspace folder open'
+                    });
+                    failCount++;
+                    continue;
+                }
+
+                // 防护：禁止删除任何工作区根目录（含 "." / "" 解析到根的情况）。
+                // 否则一次误调用会递归销毁整个工作区，且无法恢复。
+                const targetFsPath = uri.fsPath;
+                const workspaces = getAllWorkspaces();
+                const isWorkspaceRoot = workspaces.some(ws =>
+                    pathEqualsCaseInsensitive(ws.uri.fsPath, targetFsPath)
+                );
+                if (isWorkspaceRoot) {
+                    results.push({
+                        path: filePath,
+                        success: false,
+                        error: `Refusing to delete the workspace root directory: ${filePath}`
                     });
                     failCount++;
                     continue;

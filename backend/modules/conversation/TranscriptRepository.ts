@@ -30,48 +30,109 @@ export function cloneTranscriptContents(contents: ReadonlyArray<Content> = []): 
     return JSON.parse(JSON.stringify(contents || [])) as Content[];
 }
 
+// ─── 每键串行锁 ─────────────────────────────────────
+//
+// 修改原因：同一对话的 transcript 写操作（工具执行循环 addContent / 用户中断
+// rejectAllPendingToolCalls / settleFunctionResponses 等）会并发执行，且仓储的
+// mutate 是"读取快照 → 变更 → 整体写回"，两个并发调用基于同一旧快照时后写覆盖先写，
+// 先写的内容静默丢失（详见审查报告 M1/M2）。
+// 修改方式：按锁键（主聊天 conversationId / SubAgent runId）串行化全部公开操作，
+// 内部变体不重复加锁，避免不可重入死锁。
+// 修改目的：让 get→mutate→replace 在单会话内原子化，从根上消除并发写覆盖。
+
+const repositoryLockChains = new Map<string, Promise<void>>();
+const REPOSITORY_LOCK_MAX_KEYS = 10000;
+
+function acquireRepositoryLock(key: string): Promise<() => void> {
+    // 防止长时间运行后 Map 无限增长（锁对象很小，对话数量级也远低于上限，此处仅兜底）
+    if (repositoryLockChains.size >= REPOSITORY_LOCK_MAX_KEYS) {
+        const oldest = repositoryLockChains.keys().next().value as string | undefined;
+        if (oldest !== undefined) {
+            repositoryLockChains.delete(oldest);
+        }
+    }
+
+    const prev = repositoryLockChains.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>(r => { release = r; });
+    repositoryLockChains.set(key, prev.then(() => next));
+    return prev.then(() => release);
+}
+
 export class DelegatingTranscriptRepository implements ITranscriptRepository {
-    constructor(private readonly delegate: TranscriptRepositoryDelegate) {}
+    constructor(
+        private readonly delegate: TranscriptRepositoryDelegate,
+        /** 串行锁键：同一键（对话/run）的 transcript 读写按顺序执行；不传则不加锁（保持旧行为） */
+        private readonly lockKey?: string
+    ) {}
+
+    protected async withLock<T>(action: () => Promise<T>): Promise<T> {
+        if (!this.lockKey) {
+            return action();
+        }
+        const release = await acquireRepositoryLock(this.lockKey);
+        try {
+            return await action();
+        } finally {
+            release();
+        }
+    }
 
     async getContents(): Promise<Content[]> {
+        return this.withLock(() => this.getContentsUnlocked());
+    }
+
+    protected async getContentsUnlocked(): Promise<Content[]> {
         return cloneTranscriptContents(await this.delegate.loadContents());
     }
 
     async appendContent(content: Content): Promise<Content[]> {
+        return this.withLock(() => this.appendContentUnlocked(content));
+    }
+
+    protected async appendContentUnlocked(content: Content): Promise<Content[]> {
         // 修改原因：append 是最常见的 transcript 写操作，调用方不应自己重复 load -> push -> save 样板代码。
         // 修改方式：append 在仓储内部转成 mutate，从而与 replace/mutate 共用同一条保存路径。
         // 修改目的：任何 append 的后续增强（审计、校验、监控）都能自动覆盖主聊天和 SubAgent。
         const [contentCopy] = cloneTranscriptContents([content]);
-        return await this.mutateContents(contents => {
+        return await this.mutateContentsUnlocked(contents => {
             contents.push(contentCopy as Content);
             return contents;
         });
     }
 
     async replaceContents(contents: Content[]): Promise<Content[]> {
+        return this.withLock(() => this.replaceContentsUnlocked(contents));
+    }
+
+    protected async replaceContentsUnlocked(contents: Content[]): Promise<Content[]> {
         // 修改原因：不同适配器在 save 时可能补 timestamp/index 或触发持久化副作用，直接返回传入数组会丢失“真实已保存快照”。
         // 修改方式：保存后重新走一次 getContents，返回适配器最终落地的数据形态。
         // 修改目的：调用方拿到的结果与真实 transcript 状态一致，避免主聊天与 SubAgent 对返回值语义产生分叉。
         await this.delegate.saveContents(cloneTranscriptContents(contents));
-        return await this.getContents();
+        return await this.getContentsUnlocked();
     }
 
     async mutateContents(mutator: TranscriptContentsMutator): Promise<Content[]> {
+        return this.withLock(() => this.mutateContentsUnlocked(mutator));
+    }
+
+    protected async mutateContentsUnlocked(mutator: TranscriptContentsMutator): Promise<Content[]> {
         // 修改原因：删除、截断、批量追加等操作都属于“读取当前 transcript 后生成新数组”的同一语义，不应在调用方各写一套流程。
         // 修改方式：仓储统一负责 get -> mutate -> replace，mutator 只关注纯数组变换。
         // 修改目的：把 TranscriptMutation 这类纯函数自然接到统一入口，主聊天和 SubAgent 共享同一套变更方式。
-        const currentContents = await this.getContents();
+        const currentContents = await this.getContentsUnlocked();
         const nextContents = mutator(currentContents);
-        return await this.replaceContents(nextContents);
+        return await this.replaceContentsUnlocked(nextContents);
     }
 }
 
 export class ConversationTranscriptRepository extends DelegatingTranscriptRepository {
-    constructor(delegate: TranscriptRepositoryDelegate) {
+    constructor(delegate: TranscriptRepositoryDelegate, conversationId: string) {
         // 修改原因：主聊天 transcript 的真实读取语义需要由 ConversationManager 决定，例如缺失历史时自动创建会话并补元数据。
         // 修改方式：主聊天 adapter 只接收已经绑定好 load/save 语义的委托，而不是直接假设某种 storage 接口。
         // 修改目的：仓储抽象保持通用，ConversationManager 可以在不暴露内部规则的情况下接入统一 transcript 入口。
-        super(delegate);
+        super(delegate, conversationId);
     }
 
     async appendContent(content: Content): Promise<Content[]> {

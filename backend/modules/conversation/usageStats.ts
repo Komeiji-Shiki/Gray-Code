@@ -99,6 +99,20 @@ async function loadOne(source: UsageStatsSource, conversationId: string): Promis
 /** 从消息中提取 token 计数（优先 usageMetadata，向后兼容旧字段） */
 function extractMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number } | null {
     const usage = message.usageMetadata;
+
+    // usageMetadataPartial：流被取消/中断时 usageMetadata 只覆盖已收到的 chunk，
+    // token 数可能严重偏低（types.ts 注释要求统计侧回退到估算而非信任）。
+    // prompt 在请求开始时已计全、通常完整，保留；candidates 用已收到的文本长度
+    // 估算做下限保障，避免中断流被计成极低的 token 数。
+    if (message.usageMetadataPartial === true) {
+        const estimated = estimateTextTokens(message);
+        return {
+            prompt: usage?.promptTokenCount ?? 0,
+            candidates: Math.max(usage?.candidatesTokenCount ?? 0, estimated),
+            thoughts: usage?.thoughtsTokenCount ?? 0
+        };
+    }
+
     const prompt = usage?.promptTokenCount ?? 0;
     const candidates = usage?.candidatesTokenCount ?? message.candidatesTokenCount ?? 0;
     const thoughts = usage?.thoughtsTokenCount ?? message.thoughtsTokenCount ?? 0;
@@ -107,6 +121,14 @@ function extractMessageTokens(message: Content): { prompt: number; candidates: n
         return null;
     }
     return { prompt, candidates, thoughts };
+}
+
+/** 按已收到文本长度粗略估算输出 token（中英文混合约 4 字符/token） */
+function estimateTextTokens(message: Content): number {
+    const textLength = (message.parts ?? [])
+        .filter(part => typeof part.text === 'string')
+        .reduce((sum, part) => sum + (part.text as string).length, 0);
+    return Math.ceil(textLength / 4);
 }
 
 function createBucket(): UsageBucket {

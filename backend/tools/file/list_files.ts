@@ -6,7 +6,6 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines, mapWithConcurrency } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
@@ -125,7 +124,9 @@ async function listDirectoryRecursive(
             continue;
         }
         
-        const relativePath = basePath ? path.join(basePath, name) : name;
+        // 统一用 / 拼接路径（不用 path.join）：Windows 上 path.join 产生反斜杠，
+        // 与其他工具约定的正斜杠路径格式冲突，模型把该路径回传给 read_file 等工具时会解析失败。
+        const relativePath = basePath ? `${basePath}/${name}` : name;
         
         if (type === vscode.FileType.Directory) {
             entries.push({ name: relativePath + '/', type: 'directory' });

@@ -182,7 +182,10 @@ export class GeminiFormatter extends BaseFormatter {
             : 'generateContent';
         
         // 流式请求需要添加 ?alt=sse 参数以获取 SSE 格式响应
-        const queryParams = useStream ? '?alt=sse' : '';
+        // baseUrl 可能已带查询参数（网关地址如 https://gw.example.com/gemini?key=xxx），
+        // 此时要用 & 拼接而非直接追加 ?，否则生成 ...?key=xxx?alt=sse 的坏 URL。
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        const queryParams = useStream ? `${separator}alt=sse` : '';
         const url = `${baseUrl}/models/${config.model}:${method}${queryParams}`;
         
         // 构建请求头
@@ -302,8 +305,16 @@ export class GeminiFormatter extends BaseFormatter {
         
         const candidate = response.candidates[0];
         
-        // 提取完整的 Content（Gemini 已经是标准格式）
+        // Gemini 在 SAFETY/STOP 等终止原因下可能返回 content: undefined 的候选。
+        // 直接访问 content.parts 会抛裸 TypeError 并被误报为"解析失败"，
+        // 用户看不到真实的终止原因（如内容安全拦截）。显式报出候选的 finishReason。
         const content = candidate.content;
+        if (!content) {
+            const reason = candidate.finishReason || 'unknown';
+            throw new Error(
+                t('modules.channel.formatters.gemini.errors.emptyCandidate', { finishReason: reason })
+            );
+        }
         
         // 提取思考签名并转换为内部格式，同时删除原始单数格式
         if (content.parts) {

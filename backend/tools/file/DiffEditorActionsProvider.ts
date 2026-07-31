@@ -78,7 +78,7 @@ export class DiffEditorActionsProvider {
      */
     private setActiveSession(sessionId: string | null): void {
         this.activeSessionId = sessionId;
-        vscode.commands.executeCommand('setContext', 'limcode.hasPendingDiff', sessionId !== null);
+        vscode.commands.executeCommand('setContext', 'graycode.hasPendingDiff', sessionId !== null);
     }
     
     /**

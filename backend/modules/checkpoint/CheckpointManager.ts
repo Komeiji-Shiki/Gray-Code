@@ -46,7 +46,7 @@ export interface FileChange {
  * - copy_failed: 备份内容复制回工作区失败
  * - delete_failed: 应删除的多余文件删除失败
  */
-export type RestoreFailureReason = 'missing_in_chain' | 'hash_mismatch' | 'copy_failed' | 'delete_failed';
+export type RestoreFailureReason = 'missing_in_chain' | 'hash_mismatch' | 'copy_failed' | 'delete_failed' | 'dirty_document_skipped';
 
 /**
  * 单个文件的恢复失败记录
@@ -959,7 +959,10 @@ export class CheckpointManager {
             }
 
             // 刷新 VSCode 中被修改的文档
-            await this.refreshAffectedDocuments(modifiedFiles, deletedFiles);
+            const skippedDirtyFiles = await this.refreshAffectedDocuments(modifiedFiles, deletedFiles);
+            for (const dirtyPath of skippedDirtyFiles) {
+                failures.push({ path: dirtyPath, reason: 'dirty_document_skipped' });
+            }
 
             const hasFailures = failures.length > 0;
 
@@ -1135,7 +1138,10 @@ export class CheckpointManager {
             }
         }
         
-        await this.refreshAffectedDocuments(modifiedFiles, deletedFiles);
+        const skippedDirtyFiles = await this.refreshAffectedDocuments(modifiedFiles, deletedFiles);
+        if (skippedDirtyFiles.length > 0) {
+            vscode.window.showWarningMessage(t('modules.checkpoint.restore.dirtyDocumentSkipped', { count: skippedDirtyFiles.length }));
+        }
         
         const phaseText = checkpoint.phase === 'before'
             ? t('modules.checkpoint.description.before')
@@ -1172,8 +1178,19 @@ export class CheckpointManager {
                 // 按时间排序（旧的在前）
                 const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
                 const toDelete = sorted.slice(0, checkpoints.length - config.maxCheckpoints);
-                
+
+                // 检查点总是增量且链到上一个（baseCheckpointId）：
+                // 删除仍被其他检查点引用的基准会让整条增量链断裂，剩余检查点全部无法恢复。
+                // 被依赖的检查点跳过删除（宁可略微超过 maxCheckpoints，也不能让回档功能失效）。
+                const referencedBaseIds = new Set(
+                    checkpoints
+                        .map(cp => cp.baseCheckpointId)
+                        .filter((id): id is string => !!id)
+                );
                 for (const cp of toDelete) {
+                    if (referencedBaseIds.has(cp.id)) {
+                        continue;
+                    }
                     await this.deleteCheckpoint(conversationId, cp.id);
                 }
             }
@@ -1192,6 +1209,13 @@ export class CheckpointManager {
             const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
             
             if (!checkpoint) {
+                return false;
+            }
+
+            // 检查点总是增量且链到上一个：若该检查点仍被其他增量检查点引用为基准，
+            // 删除会导致增量链断裂、剩余检查点无法恢复。拒绝删除。
+            const isReferencedBase = checkpoints.some(cp => cp.baseCheckpointId === checkpointId);
+            if (isReferencedBase) {
                 return false;
             }
             
@@ -1278,11 +1302,13 @@ export class CheckpointManager {
      *
      * @param modifiedFiles 被修改或新增的文件路径列表
      * @param deletedFiles 被删除的文件路径列表
+     * @returns 因编辑器中有未保存修改而被跳过的文件列表
      */
-    private async refreshAffectedDocuments(modifiedFiles: string[], deletedFiles: string[]): Promise<void> {
+    private async refreshAffectedDocuments(modifiedFiles: string[], deletedFiles: string[]): Promise<string[]> {
         // 创建快速查找集合
         const modifiedSet = new Set(modifiedFiles.map(f => f.toLowerCase()));
         const deletedSet = new Set(deletedFiles.map(f => f.toLowerCase()));
+        const skippedDirtyFiles: string[] = [];
         
         try {
             // 获取所有已打开的文本文档
@@ -1295,13 +1321,15 @@ export class CheckpointManager {
                 
                 // 检查文档是否在受影响列表中
                 if (modifiedSet.has(docPath)) {
-                    // 优先 doc.save() 静默清理 dirty 状态（不弹确认对话框）；
-                    // files.revert 在文档 dirty 时弹出"是否放弃更改？"，阻塞流程。
+                    // 文档有未保存修改：跳过刷新，绝不静默 doc.save()——
+                    // 恢复流程已把检查点内容写回磁盘，此时 save() 会用用户缓冲区覆盖刚恢复的内容，
+                    // 导致回档静默失败（典型场景正是用户改坏了文件想撤销）。
+                    if (doc.isDirty) {
+                        skippedDirtyFiles.push(doc.uri.fsPath);
+                        continue;
+                    }
+                    // 干净文档直接 revert，从磁盘重载检查点内容
                     try {
-                        if (doc.isDirty) {
-                            const saved = await doc.save();
-                            if (saved) continue;
-                        }
                         await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
                     } catch (err) {
                         console.warn(`[CheckpointManager] Failed to revert ${doc.uri.fsPath}:`, err);
@@ -1336,6 +1364,7 @@ export class CheckpointManager {
         } catch (err) {
             console.error('[CheckpointManager] Failed to refresh affected documents:', err);
         }
+        return skippedDirtyFiles;
     }
     
     /**

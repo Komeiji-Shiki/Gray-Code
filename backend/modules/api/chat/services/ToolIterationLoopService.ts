@@ -399,6 +399,58 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * 中止路径的统一结算：为模型消息中的**全部** functionCall 补齐 functionResponse。
+     *
+     * 与 settleCancelledToolCalls 语义一致，但覆盖"流结束后中止"路径：
+     * - 已完成（流式提前执行 / 串行执行）的工具用真实结果结算，副作用已发生，结果不应丢弃；
+     * - 未执行完的工具补 cancelled 占位，避免历史留下悬空 tool_use。
+     */
+    private async settleAbortedToolCalls(
+        conversationId: string,
+        content: Content,
+        settledParts: Array<ContentPart[] | undefined>
+    ): Promise<void> {
+        const byId = new Map<string, ContentPart>();
+        for (const group of settledParts) {
+            if (!group) continue;
+            for (const part of group) {
+                const id = part.functionResponse?.id;
+                if (id && !byId.has(id)) {
+                    byId.set(id, part);
+                }
+            }
+        }
+
+        const calls = content.parts
+            .map(part => part.functionCall)
+            .filter((call): call is NonNullable<ContentPart['functionCall']> & { id: string } => !!call?.id);
+
+        if (calls.length === 0) {
+            return;
+        }
+
+        const responseParts: ContentPart[] = calls.map(call =>
+            byId.get(call.id) ?? {
+                functionResponse: {
+                    id: call.id,
+                    name: call.name || 'unknown',
+                    response: {
+                        success: false,
+                        error: t('modules.api.chat.errors.toolCallCancelled'),
+                        cancelled: true
+                    }
+                }
+            }
+        );
+
+        await this.conversationManager.addContent(conversationId, {
+            role: 'user',
+            parts: responseParts,
+            isFunctionResponse: true
+        });
+    }
+
+    /**
      * 运行工具迭代循环（流式）
      *
      * 这是核心方法，封装了工具调用循环的完整逻辑
@@ -734,6 +786,9 @@ export class ToolIterationLoopService {
                 if (processor.isCancelled()) {
                     const partialContent = processor.getContent();
                     if (partialContent.parts.length > 0) {
+                        // 被取消流的 usageMetadata 只覆盖已收到的 chunk，token 数可能严重偏低。
+                        // 标记 usageMetadataPartial，让用量统计/上下文裁剪回退到估算而非信任。
+                        partialContent.usageMetadataPartial = true;
                         await this.conversationManager.addContent(conversationId, partialContent);
                         await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
                     }
@@ -817,6 +872,11 @@ export class ToolIterationLoopService {
             // 将其从 autoPrefix 中移除（避免重复执行）。
             if (streamingToolPromises.size > 0) {
                 while (earlyToolProgressQueue.hasPending()) {
+                    // 中止后不再等待剩余提前执行工具：未完成的调用会由中止分支补 cancelled 占位。
+                    // 否则某个不响应 abortSignal 且永不结束的工具会让整个请求永久挂起。
+                    if (abortSignal?.aborted) {
+                        break;
+                    }
                     const readyStatuses = drainSettledEarlyToolStatuses();
                     if (readyStatuses.length > 0) {
                         for (const statusChunk of readyStatuses) {
@@ -857,6 +917,20 @@ export class ToolIterationLoopService {
             // 流式提前执行的工具产生的多模态附件（xml/json prompt 模式）。
             // 以前这些附件被完全忽略，提前执行的 generate_image / MCP 图片结果会静默丢失。
             const earlyMultimodalAttachments = earlyFullResults.flatMap(result => result.multimodalAttachments ?? []);
+
+            // 中止检查（autoPrefix 为空路径）：等待循环因 abort 提前退出后，
+            // 已执行的工具结果必须结算进历史，不能直接返回 cancelled。
+            if (abortSignal?.aborted) {
+                await this.settleAbortedToolCalls(conversationId, finalContent, [
+                    earlyResponseParts,
+                    executionResult?.responseParts
+                ]);
+                yield {
+                    conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
 
             // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
             // 但 earlyResponseParts 中有结果需要写入历史。
@@ -981,6 +1055,14 @@ export class ToolIterationLoopService {
 
                 // 检查是否已取消
                 if (abortSignal?.aborted) {
+                    // 结算已执行工具的结果：模型消息已含 functionCall 写入历史，
+                    // 不补 functionResponse 会留下悬空 tool_use（Anthropic/OpenAI 下次请求 400）；
+                    // 提前执行/串行已完成的工具已产生真实副作用，结果不应丢弃。
+                    // 语义与流中取消路径（settleCancelledToolCalls）一致：已完成用真实结果，未完成补 cancelled 占位。
+                    await this.settleAbortedToolCalls(conversationId, finalContent, [
+                        earlyResponseParts,
+                        executionResult?.responseParts
+                    ]);
                     yield {
                         conversationId,
                         cancelled: true as const

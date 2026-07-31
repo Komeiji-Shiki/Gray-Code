@@ -127,9 +127,15 @@ export class MessageRouter {
       const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
       handler(data, requestId, routedCtx).catch((error) => {
         console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
+        // 先取回 clientId 再删除条目：若先 delete，sendRoutedError 必然落入回退分支
+        // 把错误发到主聊天，请求来源面板（如 subagent-monitor）会永久挂起。
+        const clientId = this.requestClients.get(requestId);
         this.requestClients.delete(requestId);
+        if (clientId && this.clientRegistry.sendError(clientId, requestId, 'HANDLER_ERROR', error?.message || String(error))) {
+          return;
+        }
         try {
-          this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
+          this.sendError(requestId, 'HANDLER_ERROR', error?.message || String(error));
         } catch {
           // 发送错误失败则静默忽略
         }
@@ -184,7 +190,8 @@ export class MessageRouter {
       this.requestClients.delete(requestId);
       return;
     }
-
+    // 回退路径同样必须清理条目，否则 requestClients 无界增长（见 route 注释）
+    this.requestClients.delete(requestId);
     this.sendResponse(requestId, data);
   }
 
@@ -194,7 +201,7 @@ export class MessageRouter {
       this.requestClients.delete(requestId);
       return;
     }
-
+    this.requestClients.delete(requestId);
     this.sendError(requestId, code, message);
   }
 

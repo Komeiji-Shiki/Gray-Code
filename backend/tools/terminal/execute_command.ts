@@ -1065,7 +1065,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     // CMD /s /c 特殊处理：需要将整个命令用双引号包裹
                     // /s 参数会去除最外层引号，同时保留命令中的内层引号
                     // 这解决了 FINDSTR 等命令中多个搜索词被错误解析的问题
-                    const isCmdWithS = shellConfig.shell.toLowerCase().includes('cmd') &&
+                    // 用 basename 判断 shell 类型：includes('cmd') 会把
+                    // "C:\mycmdsh\custom-shell.exe" 这类路径目录名误判成 cmd。
+                    const shellBaseName = shellConfig.shell.split(/[\\/]/).pop()?.toLowerCase() || '';
+                    const isCmdWithS = (shellBaseName === 'cmd' || shellBaseName === 'cmd.exe' || shellBaseName.endsWith('.cmd')) &&
                         shellConfig.shellArgs?.includes('/s');
                     const isWindows = os.platform() === 'win32';
                     if (isCmdWithS) {
@@ -1262,9 +1265,13 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     });
 
                     // 设置超时（后台命令不受 timeout 约束）
+                    // timedOut 与 killed 分离：killed 表示"用户/任务条主动终止"（算成功），
+                    // timedOut 是超时强制终止（必须算失败，否则模型会把超时命令当成功执行）。
+                    let timedOut = false;
                     let timeoutHandle: NodeJS.Timeout | undefined;
                     if (timeout > 0 && !background) {
                         timeoutHandle = setTimeout(() => {
+                            timedOut = true;
                             terminalProcess.killed = true;
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
                             // 使用 tree-kill 终止整个进程树，而非仅杀父进程
@@ -1320,8 +1327,8 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         // 检查是否是外部 abortSignal 触发的终止
                         const isExternalAbort = externalAbortSignal?.aborted && terminalProcess.killed;
                         
-                        // 被用户杀死的进程也算成功（不显示错误）
-                        const success = code === 0 || terminalProcess.killed === true;
+                        // 被用户杀死的进程也算成功（不显示错误）；超时强制终止不算成功
+                        const success = code === 0 || (terminalProcess.killed === true && !timedOut);
                         
                         // 确定错误信息
                         let error: string | undefined;

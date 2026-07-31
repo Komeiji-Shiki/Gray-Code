@@ -91,7 +91,8 @@ const zhCN = {
                 filesDeleted: '{count} 个文件已删除',
                 filesUnchanged: '{count} 个文件未变化',
                 chainBroken: '增量链断裂：引用的基准检查点缺失',
-                partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败'
+                partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败',
+                dirtyDocumentSkipped: '{count} 个文件因编辑器中有未保存修改而未恢复'
             },
             defaultConversationTitle: '对话 {conversationId}',
             errors: {
@@ -146,7 +147,8 @@ const zhCN = {
                 gemini: {
                     errors: {
                         invalidResponse: '无效的 Gemini API 响应: 没有候选结果',
-                        apiError: 'API 返回错误状态: {code}'
+                        apiError: 'API 返回错误状态: {code}',
+                        emptyCandidate: 'Gemini 返回了无内容的候选（终止原因: {finishReason}，可能是内容安全拦截）'
                     }
                 },
                 anthropic: {

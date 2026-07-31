@@ -750,11 +750,29 @@ export class DiffManager {
     /**
      * FIFO 延迟淘汰：终态条目可能仍被工具链路读一次，不在 cleanup 里同步删除；
      * 当已终结 diff 超过上限时回收最老的。
+     *
+     * 被淘汰的终态仍保留一份"状态墓碑"（有限容量）：
+     * 工具等待链（write_file/insert_code 等）会以 `getDiff(id) === undefined` 判断
+     * "从未存在"，若被拒绝的 diff 恰好被淘汰，`!finalDiff` 会被误判为"已接受"，
+     * 向模型报告写入成功。墓碑让淘汰后的状态查询仍可区分 accepted/rejected/cancelled。
      */
+    private readonly evictedDiffStatuses = new Map<string, PendingDiff['status']>();
+    private static readonly MAX_EVICTED_STATUS_TOMBSTONES = 200;
+
     private evictOldFinalizedDiffs(id: string): void {
         this.finalizedDiffOrder.push(id);
         while (this.finalizedDiffOrder.length > DiffManager.MAX_FINALIZED_DIFFS) {
             const oldest = this.finalizedDiffOrder.shift()!;
+            const evicted = this.pendingDiffs.get(oldest);
+            if (evicted) {
+                this.evictedDiffStatuses.set(oldest, evicted.status);
+                if (this.evictedDiffStatuses.size > DiffManager.MAX_EVICTED_STATUS_TOMBSTONES) {
+                    const oldestTombstone = this.evictedDiffStatuses.keys().next().value as string | undefined;
+                    if (oldestTombstone !== undefined) {
+                        this.evictedDiffStatuses.delete(oldestTombstone);
+                    }
+                }
+            }
             this.pendingDiffs.delete(oldest);
             this.diffSessions.delete(oldest);
         }
@@ -1480,6 +1498,12 @@ export class DiffManager {
                 doc = await vscode.workspace.openTextDocument(uri);
             }
 
+            // await 期间可能已被 cancelAllPending 等路径 finalize（非 pending），
+            // 此时不得继续写入磁盘，否则取消后的 AI 内容仍会落盘。
+            if (diff.status !== 'pending') {
+                return false;
+            }
+
             const currentContent = doc.getText();
 
             // 自动保存：强制保存AI 计算出来的finalContent。
@@ -1530,6 +1554,10 @@ export class DiffManager {
             };
 
             // 读取磁盘内容，用于判断是否需要绕过doc.save（doc.save 在磁盘变更时会触发VSCode 冲突提示）
+            // 落盘前最后一次状态复查：await applyEdit 期间若已被 cancel/reject finalize，直接放弃写入。
+            if (diff.status !== 'pending') {
+                return false;
+            }
             let diskContent: string | undefined;
             try {
                 diskContent = fs.readFileSync(diff.absolutePath, 'utf8');
@@ -1994,6 +2022,14 @@ export class DiffManager {
      * @param conversationId 可选：只取消该会话的 pending diff
      */
     public async cancelAllPending(conversationId?: string): Promise<{ cancelled: PendingDiff[] }> {
+        // 必须与 accept/reject/auto-save 共用同一串行队列：此前 cancelAllPending 直接执行，
+        // 会与队列中正在进行的 acceptDiff（await 期间）并发交错——用户取消后，
+        // accept 后续的 doc.save/writeFileSync 仍会把 AI 内容写回磁盘。
+        // 入队后顺序确定：先入队的 accept 先完成，cancel 再恢复文件，最终状态收敛为"已取消"。
+        return this.runDiffActionSerialized(() => this.cancelAllPendingUnlocked(conversationId));
+    }
+
+    private async cancelAllPendingUnlocked(conversationId?: string): Promise<{ cancelled: PendingDiff[] }> {
         const cancelled: PendingDiff[] = [];
 
         const pendingIds = Array.from(this.pendingDiffs.entries())
@@ -2057,9 +2093,20 @@ export class DiffManager {
 
     /**
      * 获取指定 ID 的diff
+     *
+     * 已从 pendingDiffs 淘汰（终态且超过上限）的 diff 会返回带状态的墓碑占位，
+     * 供等待链区分"已接受/已拒绝/已取消"，避免被淘汰的 rejected diff 被误判为已接受。
      */
     public getDiff(id: string): PendingDiff | undefined {
-        return this.pendingDiffs.get(id);
+        const diff = this.pendingDiffs.get(id);
+        if (diff) {
+            return diff;
+        }
+        const tombstoneStatus = this.evictedDiffStatuses.get(id);
+        if (tombstoneStatus) {
+            return { id, status: tombstoneStatus } as PendingDiff;
+        }
+        return undefined;
     }
 
     /**
@@ -2092,6 +2139,8 @@ export class DiffManager {
         this.diffSessions.clear();
 
         this.nonManualSaveFlushed.clear();
+
+        this.evictedDiffStatuses.clear();
 
         if (this.providerDisposable) {
             this.providerDisposable.dispose();

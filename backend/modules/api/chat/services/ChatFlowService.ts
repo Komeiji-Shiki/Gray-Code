@@ -868,58 +868,63 @@ export class ChatFlowService {
 
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
+    // markUserInterrupt 与 resetUserInterrupt 之间有多处 await（checkpoint 创建、addMessage 等），
+    // 中途抛错时必须用 finally 复位中断标记，否则 globalUserInterrupt 残留，
+    // 会让之后无 conversationId 的 diff 工具调用被误取消。
     this.diffInterruptService.markUserInterrupt(conversationId);
-    await this.diffInterruptService.cancelAllPending(conversationId);
-    
-    // 3.5 拒绝所有未响应的工具调用（在添加用户消息之前）
-    // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
-    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+      
+      // 3.5 拒绝所有未响应的工具调用（在添加用户消息之前）
+      // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-    // 4/5/6. 写入输入到历史：
-    // - 普通模式：用户文本消息 + before/after checkpoint
-    // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
-    if (!hiddenFunctionResponse) {
-      // 4. 为用户消息创建存档点（如果配置了执行前）
-      const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-        conversationId,
-        'before',
-      );
-      if (beforeUserCheckpoint) {
-        // 立即发送用户消息前存档点到前端
-        yield {
+      // 4/5/6. 写入输入到历史：
+      // - 普通模式：用户文本消息 + before/after checkpoint
+      // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
+      if (!hiddenFunctionResponse) {
+        // 4. 为用户消息创建存档点（如果配置了执行前）
+        const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
           conversationId,
-          checkpoints: [beforeUserCheckpoint],
-          checkpointOnly: true as const,
-        } satisfies ChatStreamCheckpointsData;
-      }
+          'before',
+        );
+        if (beforeUserCheckpoint) {
+          // 立即发送用户消息前存档点到前端
+          yield {
+            conversationId,
+            checkpoints: [beforeUserCheckpoint],
+            checkpointOnly: true as const,
+          } satisfies ChatStreamCheckpointsData;
+        }
 
-      // 5. 添加用户消息到历史（包含附件）
-      const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-      await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-        isUserInput: true
-      });
+        // 5. 添加用户消息到历史（包含附件）
+        const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+        await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+          isUserInput: true
+        });
 
-      // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
-      // 与系统提示词、动态上下文一起并行计算，节省时间
+        // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
+        // 与系统提示词、动态上下文一起并行计算，节省时间
 
-      // 6. 为用户消息创建存档点（如果配置了执行后）
-      const afterUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-        conversationId,
-        'after',
-      );
-      if (afterUserCheckpoint) {
-        yield {
+        // 6. 为用户消息创建存档点（如果配置了执行后）
+        const afterUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
           conversationId,
-          checkpoints: [afterUserCheckpoint],
-          checkpointOnly: true as const,
-        } satisfies ChatStreamCheckpointsData;
+          'after',
+        );
+        if (afterUserCheckpoint) {
+          yield {
+            conversationId,
+            checkpoints: [afterUserCheckpoint],
+            checkpointOnly: true as const,
+          } satisfies ChatStreamCheckpointsData;
+        }
+      } else {
+        await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
       }
-    } else {
-      await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
+    } finally {
+      // 7. 重置中断标记
+      this.diffInterruptService.resetUserInterrupt(conversationId);
     }
-    
-    // 7. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt(conversationId);
 
     // 8. 判断是否是首条消息（需要刷新动态系统提示词）
     const currentHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
@@ -1089,67 +1094,70 @@ export class ChatFlowService {
     }
 
     // 4. 中断之前未完成的 diff 等待并关闭编辑器
+    // 与 handleChatStream 一致：mark/reset 之间有多处 await，中途抛错必须复位中断标记。
     this.diffInterruptService.markUserInterrupt(conversationId);
-    await this.diffInterruptService.cancelAllPending(conversationId);
-    
-    // 4.5 拒绝所有未响应的工具调用
-    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+      
+      // 4.5 拒绝所有未响应的工具调用
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-    // 5. 删除该消息及后续所有消息的检查点（回档场景下保留刚用于恢复的存档点）
-    await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex, preserveCheckpointId);
+      // 5. 删除该消息及后续所有消息的检查点（回档场景下保留刚用于恢复的存档点）
+      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex, preserveCheckpointId);
 
-    // 6. 为编辑后的用户消息创建存档点（执行前）
-    const beforeEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-      conversationId,
-      'before',
-      messageIndex,
-    );
-    if (beforeEditCheckpoint) {
-      yield {
+      // 6. 为编辑后的用户消息创建存档点（执行前）
+      const beforeEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
         conversationId,
-        checkpoints: [beforeEditCheckpoint],
-        checkpointOnly: true as const,
-      } satisfies ChatStreamCheckpointsData;
-    }
+        'before',
+        messageIndex,
+      );
+      if (beforeEditCheckpoint) {
+        yield {
+          conversationId,
+          checkpoints: [beforeEditCheckpoint],
+          checkpointOnly: true as const,
+        } satisfies ChatStreamCheckpointsData;
+      }
 
-    // 7. 更新消息内容（包含附件），并标记为动态提示词插入点
-    const editParts = this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments);
-    await this.conversationManager.updateMessage(conversationId, messageIndex, {
-      parts: editParts,
-      isUserInput: true,
-      // 清除旧的 token 计数，强制重新计算
-      tokenCountByChannel: {}
-    });
-    
-    // 注：编辑后消息的 token 计数将在 getHistoryWithContextTrimInfo 中
-    // 与系统提示词、动态上下文一起并行计算
+      // 7. 更新消息内容（包含附件），并标记为动态提示词插入点
+      const editParts = this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments);
+      await this.conversationManager.updateMessage(conversationId, messageIndex, {
+        parts: editParts,
+        isUserInput: true,
+        // 清除旧的 token 计数，强制重新计算
+        tokenCountByChannel: {}
+      });
+      
+      // 注：编辑后消息的 token 计数将在 getHistoryWithContextTrimInfo 中
+      // 与系统提示词、动态上下文一起并行计算
 
-    // 8. 删除后续所有消息
-    const historyRef = await this.conversationManager.getHistoryRef(conversationId);
-    if (messageIndex + 1 < historyRef.length) {
-      await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
-      await this.rebuildTodoListMetadataFromHistory(conversationId);
-    }
-    
-    // 8.5 清除裁剪状态（编辑后应重新计算裁剪）
-    await this.toolIterationLoopService.clearTrimState(conversationId);
+      // 8. 删除后续所有消息
+      const historyRef = await this.conversationManager.getHistoryRef(conversationId);
+      if (messageIndex + 1 < historyRef.length) {
+        await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
+        await this.rebuildTodoListMetadataFromHistory(conversationId);
+      }
+      
+      // 8.5 清除裁剪状态（编辑后应重新计算裁剪）
+      await this.toolIterationLoopService.clearTrimState(conversationId);
 
-    // 9. 为编辑后的用户消息创建存档点（执行后）
-    const afterEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-      conversationId,
-      'after',
-      messageIndex,
-    );
-    if (afterEditCheckpoint) {
-      yield {
+      // 9. 为编辑后的用户消息创建存档点（执行后）
+      const afterEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
         conversationId,
-        checkpoints: [afterEditCheckpoint],
-        checkpointOnly: true as const,
-      } satisfies ChatStreamCheckpointsData;
+        'after',
+        messageIndex,
+      );
+      if (afterEditCheckpoint) {
+        yield {
+          conversationId,
+          checkpoints: [afterEditCheckpoint],
+          checkpointOnly: true as const,
+        } satisfies ChatStreamCheckpointsData;
+      }
+    } finally {
+      // 10. 重置中断标记
+      this.diffInterruptService.resetUserInterrupt(conversationId);
     }
-
-    // 10. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt(conversationId);
 
     // 11. 判断是否是编辑首条消息（需要刷新动态系统提示词）
     const isEditFirstMessage = messageIndex === 0;

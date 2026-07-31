@@ -168,17 +168,23 @@ export class ChannelManager {
                 return;
             }
             
-            const timeoutId = setTimeout(resolve, ms);
+            const timeoutId = setTimeout(() => {
+                // 正常超时路径：移除 abort 监听器，避免每次重试等待都在同一信号上累积监听器
+                if (signal) {
+                    signal.removeEventListener('abort', onAbort);
+                }
+                resolve();
+            }, ms);
             
             // 监听取消信号
+            const onAbort = () => {
+                clearTimeout(timeoutId);
+                reject(new ChannelError(
+                    ErrorType.CANCELLED_ERROR,
+                    t('modules.channel.errors.requestCancelled')
+                ));
+            };
             if (signal) {
-                const onAbort = () => {
-                    clearTimeout(timeoutId);
-                    reject(new ChannelError(
-                        ErrorType.CANCELLED_ERROR,
-                        t('modules.channel.errors.requestCancelled')
-                    ));
-                };
                 signal.addEventListener('abort', onAbort, { once: true });
             }
         });
@@ -495,6 +501,9 @@ export class ChannelManager {
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
+        // 已向下游产出过 chunk：一旦产出过内容就不可重试——
+        // 已 yield 的文本/工具卡无法撤回，重试会从零开始重复整段响应（内容重复、历史重复）。
+        let hasYieldedChunk = false;
         for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             // 缓存保活定时器（每次重试都重新计时）
             let keepAliveTimer: NodeJS.Timeout | undefined;
@@ -540,6 +549,7 @@ export class ChannelManager {
                         if (!hasToolUse && chunk.delta.some(p => p.functionCall)) {
                             hasToolUse = true;
                         }
+                        hasYieldedChunk = true;
                         yield chunk;
                     } catch (error) {
                         // formatter 主动抛出的 ChannelError（如上游在 SSE 流里内联的 error 事件）
@@ -582,7 +592,8 @@ export class ChannelManager {
                 const errorDetails = error instanceof ChannelError ? error.details : undefined;
                 
                 // 检查是否可重试
-                if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
+                // hasYieldedChunk：流已产出过内容，重试会从零开始重复整段响应（已 yield 的内容无法撤回），禁止重试
+                if (!retryEnabled || hasYieldedChunk || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
                     if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                         this.retryStatusCallback({

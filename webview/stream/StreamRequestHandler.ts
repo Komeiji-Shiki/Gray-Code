@@ -168,7 +168,7 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
       this.deps.abortManager.deleteSummary(conversationId);
     }
   }
@@ -213,7 +213,7 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
       this.deps.abortManager.deleteSummary(conversationId);
     }
   }
@@ -262,7 +262,7 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
       this.deps.abortManager.deleteSummary(conversationId);
     }
   }
@@ -309,7 +309,7 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
       this.deps.abortManager.deleteSummary(conversationId);
     }
   }

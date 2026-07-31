@@ -204,7 +204,15 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
             while (i < lines.length) {
                 const l = lines[i];
 
-                if (l.startsWith('@@') || l.startsWith('--- ') || l.startsWith('diff --git ') || l.startsWith('+++ ')) {
+                // hunk 内容里以 "-" 开头的删除行，如果内容本身以 "-- " 开头（SQL/YAML 注释、
+                // shell "--flag" 写法等），原始行就是 "--- xxx"，会与文件头 "--- " 混淆。
+                // 只有"--- 后面紧跟着 +++ 文件头"（真正的文件头成对出现）才视为新文件头断开当前 hunk；
+                // 否则按普通删除行解析。
+                const next = lines[i + 1];
+                const isRealFileHeader = (l.startsWith('--- ') || l.startsWith('+++ '))
+                    && next !== undefined
+                    && (l.startsWith('--- ') ? next.startsWith('+++ ') : next.startsWith('--- '));
+                if (l.startsWith('@@') || l.startsWith('diff --git ') || isRealFileHeader) {
                     break;
                 }
 

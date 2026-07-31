@@ -33,7 +33,7 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
     private decoratedEditors: Set<string> = new Set();
     
     /** 自定义 CodeActionKind - 使用 Refactor 类型，会显示在灯泡的 "重构..." 分类下 */
-    public static readonly diffActionKind = vscode.CodeActionKind.Refactor.append('limcode');
+    public static readonly diffActionKind = vscode.CodeActionKind.Refactor.append('graycode');
     
     public static readonly providedCodeActionKinds = [
         DiffInlineProvider.diffActionKind
@@ -210,9 +210,9 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
         const acceptBlockArgs = encodeURIComponent(JSON.stringify([session.id, block.index]));
         const rejectBlockArgs = encodeURIComponent(JSON.stringify([session.id, block.index]));
         
-        contents.appendMarkdown(`[✅ ${t('tools.file.diffInline.acceptBlock', { index: block.index + 1 })}](command:limcode.diff.confirmBlock?${acceptBlockArgs})`);
+        contents.appendMarkdown(`[✅ ${t('tools.file.diffInline.acceptBlock', { index: block.index + 1 })}](command:graycode.diff.confirmBlock?${acceptBlockArgs})`);
         contents.appendMarkdown(`   |   `);
-        contents.appendMarkdown(`[❌ ${t('tools.file.diffInline.rejectBlock', { index: block.index + 1 })}](command:limcode.diff._rejectBlockFromCodeLens?${rejectBlockArgs})`);
+        contents.appendMarkdown(`[❌ ${t('tools.file.diffInline.rejectBlock', { index: block.index + 1 })}](command:graycode.diff._rejectBlockFromCodeLens?${rejectBlockArgs})`);
         
         // 返回 Hover，范围是整个块
         const startLine = Math.max(0, block.startLine - 1);
@@ -262,7 +262,7 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
         );
         acceptAction.command = {
             title: 'Accept Block',
-            command: 'limcode.diff.confirmBlock',
+            command: 'graycode.diff.confirmBlock',
             arguments: [session.id, block.index]
         };
         acceptAction.isPreferred = true;
@@ -275,7 +275,7 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
         );
         rejectAction.command = {
             title: 'Reject Block',
-            command: 'limcode.diff._rejectBlockFromCodeLens',
+            command: 'graycode.diff._rejectBlockFromCodeLens',
             arguments: [session.id, block.index]
         };
         actions.push(rejectAction);

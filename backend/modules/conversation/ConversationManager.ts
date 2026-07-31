@@ -29,6 +29,7 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorag
 import { cleanFunctionResponseForAPI } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
+import { getDiffStorageManager } from './DiffStorageManager';
 
 /**
  * 多模态能力（用于过滤历史中的多模态数据）
@@ -128,6 +129,27 @@ export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
 
     /**
+     * 每会话元数据写串行队列。
+     * setCustomMetadata 是"读 metadata → 改 custom[key] → 整体写回"，两个并发调用
+     * （如 checkpoints 落盘与 trimState 失效）会互相覆盖整个 custom 对象，
+     * 后写者丢失先写者的 key。按会话串行化后读写原子化。
+     */
+    private metadataWriteChains = new Map<string, Promise<void>>();
+
+    private async runMetadataWriteSerialized<T>(conversationId: string, action: () => Promise<T>): Promise<T> {
+        const prev = this.metadataWriteChains.get(conversationId) ?? Promise.resolve();
+        let release!: () => void;
+        const next = new Promise<void>(r => { release = r; });
+        this.metadataWriteChains.set(conversationId, prev.then(() => next));
+        try {
+            await prev;
+            return await action();
+        } finally {
+            release();
+        }
+    }
+
+    /**
      * 修改原因：上下文裁剪状态是由 transcript 结构推导出的派生状态，删除/插入/回档后继续复用旧 trimState 会造成上下文异常缺失。
      * 修改方式：在 ConversationManager 暴露统一失效入口，由所有结构性历史变更调用；普通追加和 token 计数更新不触发。
      * 修改目的：让上下文管理状态跟随 transcript 结构变化重新计算，而不是依赖各个 Webview handler 手动清理。
@@ -155,7 +177,7 @@ export class ConversationManager {
         return new ConversationTranscriptRepository({
             loadContents: async () => await this.loadHistory(conversationId),
             saveContents: async contents => await this.storage.saveHistory(conversationId, contents)
-        });
+        }, conversationId);
     }
 
     async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation | null> {
@@ -486,6 +508,26 @@ export class ConversationManager {
      */
     async deleteConversation(conversationId: string): Promise<void> {
         await this.storage.deleteHistory(conversationId);
+
+        // 清理孤儿数据：快照与 diff 目录不会随历史删除，放任不管会永久占用磁盘。
+        // 逐个删除失败不影响主删除结果（各自 try/catch 由实现保证）。
+        try {
+            const snapshots = await this.storage.listSnapshots(conversationId);
+            for (const snapshotId of snapshots) {
+                await this.storage.deleteSnapshot(snapshotId);
+            }
+        } catch {
+            // 忽略快照清理失败
+        }
+
+        try {
+            const diffStorage = getDiffStorageManager();
+            if (diffStorage) {
+                await diffStorage.deleteConversationDiffs(conversationId);
+            }
+        } catch {
+            // 忽略 diff 清理失败
+        }
     }
 
     /**
@@ -966,12 +1008,14 @@ export class ConversationManager {
         description?: string
     ): Promise<HistorySnapshot> {
         const history = await this.loadHistory(conversationId);
+        const now = Date.now();
         const snapshot: HistorySnapshot = {
-            id: `snapshot_${conversationId}_${Date.now()}`,
+            // 追加随机后缀：同一毫秒内连续创建快照不会互相覆盖
+            id: `snapshot_${conversationId}_${now}_${Math.random().toString(36).slice(2, 8)}`,
             conversationId,
             name,
             description,
-            timestamp: Date.now(),
+            timestamp: now,
             history: JSON.parse(JSON.stringify(history))
         };
         await this.storage.saveSnapshot(snapshot);
@@ -1045,8 +1089,17 @@ export class ConversationManager {
             }
             
             // 统计 token（优先使用 usageMetadata，向后兼容旧格式）
+            // usageMetadataPartial：流被取消/中断，usage 只覆盖已收到的 chunk，
+            // 按约定回退到估算——candidates 用已收到文本长度做下限保障。
             const thoughtsTokens = message.usageMetadata?.thoughtsTokenCount ?? message.thoughtsTokenCount;
-            const candidatesTokens = message.usageMetadata?.candidatesTokenCount ?? message.candidatesTokenCount;
+            let candidatesTokens = message.usageMetadata?.candidatesTokenCount ?? message.candidatesTokenCount;
+            if (message.usageMetadataPartial === true && candidatesTokens !== undefined) {
+                const textLength = (message.parts ?? [])
+                    .filter(part => typeof part.text === 'string')
+                    .reduce((sum, part) => sum + (part.text as string).length, 0);
+                const estimated = Math.ceil(textLength / 4);
+                candidatesTokens = Math.max(candidatesTokens, estimated);
+            }
             
             if (thoughtsTokens !== undefined) {
                 totalThoughtsTokens += thoughtsTokens;
@@ -1162,9 +1215,11 @@ export class ConversationManager {
             : options;
         
         // 应用起始索引（用于上下文裁剪）
+        // startIndex >= history.length 时裁剪到空：不能把整个历史原样返回，
+        // 否则"应裁剪到空/极少"的语义会变成发送全部历史，浪费 token 且可能超上下文窗口。
         const startIndex = opts.startIndex ?? 0;
-        if (startIndex > 0 && startIndex < history.length) {
-            history = history.slice(startIndex);
+        if (startIndex > 0) {
+            history = startIndex < history.length ? history.slice(startIndex) : [];
         }
         
         const includeThoughts = opts.includeThoughts ?? false;
@@ -1620,24 +1675,27 @@ export class ConversationManager {
         key: string,
         value: unknown
     ): Promise<void> {
-        let meta = await this.loadMetadataForWrite(conversationId);
-        if (!meta) {
-            meta = {
-                id: conversationId,
-                title: t('modules.conversation.defaultTitle', { conversationId }),
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                custom: {}
-            };
-        }
-        
-        if (!meta.custom) {
-            meta.custom = {};
-        }
-        meta.custom[key] = value;
-        meta.updatedAt = Date.now();
-        
-        await this.storage.saveMetadata(meta);
+        // 串行化 read-modify-write，避免并发 setCustomMetadata 互相覆盖整个 custom 对象
+        await this.runMetadataWriteSerialized(conversationId, async () => {
+            let meta = await this.loadMetadataForWrite(conversationId);
+            if (!meta) {
+                meta = {
+                    id: conversationId,
+                    title: t('modules.conversation.defaultTitle', { conversationId }),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    custom: {}
+                };
+            }
+
+            if (!meta.custom) {
+                meta.custom = {};
+            }
+            meta.custom[key] = value;
+            meta.updatedAt = Date.now();
+
+            await this.storage.saveMetadata(meta);
+        });
     }
 
     /**

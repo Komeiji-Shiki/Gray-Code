@@ -632,21 +632,18 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         const conversationDir = this.getConversationDir(conversationId);
         const historyDir = this.getHistoryDir(conversationId);
         const historyIndexPath = this.getHistoryIndexPath(conversationId);
+        const tmpDir = this.vscode.Uri.joinPath(conversationDir, '.history.tmp');
+        const tmpIndexPath = this.vscode.Uri.joinPath(conversationDir, '.history.index.json.tmp');
 
-        await this.vscode.workspace.fs.createDirectory(conversationDir);
-        try {
-            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
-        } catch {
-            // ignore
-        }
-        await this.vscode.workspace.fs.createDirectory(historyDir);
-
+        // 先写临时目录/临时索引，全部成功后一次性替换，避免"删旧目录→写 segment→写 index"的
+        // 非原子窗口：进程中途崩溃时旧目录与旧索引仍完整存在，历史不会损坏。
+        await this.vscode.workspace.fs.createDirectory(tmpDir);
         const segments: FileHistorySegmentIndexEntry[] = [];
         for (let startIndex = 0; startIndex < history.length; startIndex += FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE) {
             const endExclusive = Math.min(history.length, startIndex + FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE);
             const chunk = history.slice(startIndex, endExclusive);
             const file = `${String(segments.length).padStart(6, '0')}.ndjson`;
-            const uri = this.vscode.Uri.joinPath(historyDir, file);
+            const uri = this.vscode.Uri.joinPath(tmpDir, file);
             const content = chunk.map(item => JSON.stringify(item)).join('\n');
             await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
             segments.push({ file, startIndex, endIndex: endExclusive - 1, count: chunk.length });
@@ -658,8 +655,47 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             totalMessages: history.length,
             segments,
         };
+        await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
 
-        await this.vscode.workspace.fs.writeFile(historyIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
+        // 提交：先删旧产物，再原子替换为新目录/新索引
+        try {
+            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
+        } catch {
+            // rename 失败时把临时目录内容兜底搬过去，避免提交丢失
+            await this.vscode.workspace.fs.createDirectory(historyDir);
+            for (const seg of segments) {
+                await this.vscode.workspace.fs.writeFile(
+                    this.vscode.Uri.joinPath(historyDir, seg.file),
+                    Buffer.from(history.slice(seg.startIndex, seg.endIndex + 1).map(item => JSON.stringify(item)).join('\n'), 'utf8')
+                );
+            }
+        }
+        try {
+            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
+        } catch {
+            await this.vscode.workspace.fs.writeFile(historyIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
+        }
+        // 清理残留临时文件（幂等）
+        try {
+            await this.vscode.workspace.fs.delete(tmpDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.delete(tmpIndexPath, { useTrash: false });
+        } catch {
+            // ignore
+        }
 
         try {
             await this.vscode.workspace.fs.delete(this.getLegacyHistoryPath(conversationId), { useTrash: false });

@@ -776,7 +776,7 @@ export class AnthropicFormatter extends BaseFormatter {
         
         // 存储 usageMetadata
         if (response.usage) {
-            content.usageMetadata = this.extractUsageMetadata(response.usage);
+            content.usageMetadata = this.extractUsageMetadata(response.usage, true);
         }
         
         // 提取结束原因
@@ -923,7 +923,16 @@ export class AnthropicFormatter extends BaseFormatter {
      * - thinking 模型：output_tokens_details.thinking_tokens
      * - 部分代理可能在任意事件中返回完整 usage，统一处理避免遗漏
      */
-    private extractUsageMetadata(usage: any): Content['usageMetadata'] {
+    /**
+     * 转换 Anthropic usage 为统一格式。
+     *
+     * @param includeTotal 是否输出 totalTokenCount：
+     * - 非流式 parseResponse 的 usage 是单事件完整统计（input+output 都在），应输出 total；
+     * - 流式事件（message_start 只有 input、message_delta 只有 output）任一半截 total 都不能输出，
+     *   否则累加器的"有原生 total 就不再重算"逻辑会让后到的半截 total（如 message_delta 的 0+output）
+     *   覆盖正确的输入+输出总量；由 StreamAccumulator.mergeUsageMetadata 用 prompt+candidates+thoughts 重算。
+     */
+    private extractUsageMetadata(usage: any, includeTotal = false): Content['usageMetadata'] {
         const inputBase = usage.input_tokens ?? 0;
         const cacheCreation = usage.cache_creation_input_tokens ?? 0;
         const cacheRead = usage.cache_read_input_tokens ?? 0;
@@ -936,7 +945,7 @@ export class AnthropicFormatter extends BaseFormatter {
         return {
             promptTokenCount: promptTotal || undefined,
             candidatesTokenCount: candidatesTokens > 0 ? candidatesTokens : (outputTokens > 0 ? outputTokens : undefined),
-            totalTokenCount: promptTotal + outputTokens || undefined,
+            ...(includeTotal ? { totalTokenCount: promptTotal + outputTokens || undefined } : {}),
             ...(thinkingTokens > 0 ? { thoughtsTokenCount: thinkingTokens } : {}),
             ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
         };
@@ -984,8 +993,12 @@ export class AnthropicFormatter extends BaseFormatter {
                         functionCall: {
                             name: '', // 名称在 block_start 中提供，这里留空供累加器合并
                             args: {},
-                            partialArgs: delta.partial_json
-                        }
+                            partialArgs: delta.partial_json,
+                            // 必须透传 content block 的 index：Anthropic 并行工具调用时，
+                            // 各 block 的 input_json_delta 交错到达，累加器靠 index 区分调用归属；
+                            // 缺 index 时增量会全部拼进最后一个工具壳，导致并行工具参数丢失/串块。
+                            index: typeof chunk.index === 'number' ? chunk.index : undefined
+                        } as any
                     });
                 }
             }
@@ -1019,8 +1032,10 @@ export class AnthropicFormatter extends BaseFormatter {
                         name: block.name,
                         args: args,
                         partialArgs: Object.keys(args).length > 0 ? JSON.stringify(args) : '',
-                        id: block.id
-                    }
+                        id: block.id,
+                        // 透传 content block index：并行工具调用的参数增量靠 index 归属
+                        index: typeof chunk.index === 'number' ? chunk.index : undefined
+                    } as any
                 });
             }
         } else if (chunk.type === 'message_delta') {

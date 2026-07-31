@@ -1783,7 +1783,10 @@ export const COMMON_IGNORE_PATTERNS = [
  * 默认 read_file 配置
  */
 export const DEFAULT_READ_FILE_CONFIG: ReadFileToolConfig = {
-    outsideWorkspaceAccess: 'deny'
+    outsideWorkspaceAccess: 'deny',
+    // 单文件读取大小上限（字节）；>0 生效，0/负数表示不限制。
+    // 防止模型对超大文件（构建日志、锁文件、生成 dump）全量读入并塞满上下文。
+    maxFileSizeBytes: 10 * 1024 * 1024
 };
 
 /**

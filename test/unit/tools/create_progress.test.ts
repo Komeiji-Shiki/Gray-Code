@@ -77,7 +77,7 @@ describe('create_progress tool', () => {
     })
 
     expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.limcode'
+      fsPath: 'D:/workspace/.graycode'
     })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
 

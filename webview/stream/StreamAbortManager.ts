@@ -22,8 +22,17 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
   /**
    * 创建并存储新的 AbortController
+   *
+   * 同一会话已有活跃流时，先中止旧控制器再替换：
+   * - 避免旧流完全不可取消（Map 覆盖后 cancel 只能取消新流）；
+   * - 避免两个流并发向同一会话历史做 read-modify-write 互相覆盖。
+   * 与 createSummary 的"先中断再替换"语义保持一致。
    */
   create(conversationId: string): AbortController {
+    const existing = this.controllers.get(conversationId);
+    if (existing) {
+      existing.abort();
+    }
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
     return controller;
@@ -141,8 +150,18 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
   /**
    * 删除指定对话的 AbortController
+   *
+   * 可选传入 controller 做身份校验：只有当 Map 中存的就是本次调用持有的
+   * 控制器时才删除。旧流先结束时其 finally 会执行 delete，若无身份校验，
+   * 会误删同会话新流的控制器，导致新流无法被取消。
    */
-  delete(conversationId: string): void {
+  delete(conversationId: string, controller?: AbortController): void {
+    if (controller) {
+      if (this.controllers.get(conversationId) === controller) {
+        this.controllers.delete(conversationId);
+      }
+      return;
+    }
     this.controllers.delete(conversationId);
   }
 
@@ -174,8 +193,14 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     return true;
   }
 
-  /** 删除总结请求控制器 */
-  deleteSummary(conversationId: string): void {
+  /** 删除总结请求控制器（带身份校验，防止旧请求 finally 误删新请求的控制器） */
+  deleteSummary(conversationId: string, controller?: AbortController): void {
+    if (controller) {
+      if (this.summaryControllers.get(conversationId) === controller) {
+        this.summaryControllers.delete(conversationId);
+      }
+      return;
+    }
     this.summaryControllers.delete(conversationId);
   }
 

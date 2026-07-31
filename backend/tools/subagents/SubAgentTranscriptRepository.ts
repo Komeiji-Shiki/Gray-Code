@@ -31,7 +31,7 @@ export class SubAgentTranscriptRepository extends DelegatingTranscriptRepository
             saveContents: async contents => {
                 store.replaceContents(runId, contents);
             }
-        });
+        }, runId);
         this.store = store;
         this.runId = runId;
     }
@@ -42,9 +42,12 @@ export class SubAgentTranscriptRepository extends DelegatingTranscriptRepository
     async appendContent(content: Content): Promise<Content[]> {
         // 修改原因：事件总线 appendContent 额外负责补 index/timestamp、广播 content_snapshot、入队 metadata 落盘；
         // 如果 SubAgent 仓储退化成 generic mutate，会绕开这条既有单一入口。
-        // 修改方式：append 特化为直接委托事件总线 appendContent，再回读保存后的 contents。
+        // 修改方式：append 特化为直接委托事件总线 appendContent，再回读保存后的 contents；
+        // 整个流程包在按 runId 的串行锁内，与基类公开操作保持一致，避免并发覆盖。
         // 修改目的：在统一仓储接口下继续保持 SubAgent append 的原始副作用与时序不变。
-        this.store.appendContent(this.runId, content);
-        return await this.getContents();
+        return this.withLock(async () => {
+            this.store.appendContent(this.runId, content);
+            return await this.getContentsUnlocked();
+        });
     }
 }

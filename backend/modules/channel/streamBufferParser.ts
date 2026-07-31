@@ -52,22 +52,20 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
         for (const line of lines) {
             // 只处理以 "data:" 开头的行
             if (line.startsWith('data:')) {
-                // 如果有之前累积的数据，先尝试解析
-                if (currentData) {
-                    try {
-                        chunks.push(JSON.parse(currentData));
-                    } catch (e) {
-                        // 之前的数据不完整，继续累积
-                    }
-                }
-
-                // 开始新的数据
-                currentData = line.slice(5).trim();
+                const lineData = line.slice(5).trim();
 
                 // 跳过结束标记
-                if (currentData === '[DONE]') {
-                    currentData = '';
+                if (lineData === '[DONE]') {
                     continue;
+                }
+
+                if (!currentData) {
+                    currentData = lineData;
+                } else {
+                    // SSE 规范允许一条事件拆成多个 data: 行（以 \n 拼接）。
+                    // 前一段未解析成功时不能覆盖丢弃，否则跨行 JSON 事件会静默丢失。
+                    // JSON 解析器允许 token 间的空白（含换行），拼接后仍可正常解析。
+                    currentData += '\n' + lineData;
                 }
 
                 // 尝试立即解析

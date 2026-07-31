@@ -77,10 +77,12 @@ export class TokenCountService {
         }
 
         let normalizedUrl = rawUrl.trim().replace(/\/+$/, '');
+        // 先去掉旧端点后缀（/complete），再规整 /v1/models → /v1。
+        // 顺序不能反：若先处理 /v1/models，`https://x/v1/models/complete` 会
+        // 残留 /complete 后缀，最终拼出 `/v1/models/v1/messages/count_tokens` 之类的畸形 URL。
         normalizedUrl = normalizedUrl
-            .replace(/\/v1\/models$/i, '/v1')
-            .replace(/\/v1\/complete$/i, '/v1')
-            .replace(/\/complete$/i, '');
+            .replace(/\/complete$/i, '')
+            .replace(/\/v1\/models$/i, '/v1');
 
         if (/\/v1\/messages\/count_tokens$/i.test(normalizedUrl) || /\/messages\/count_tokens$/i.test(normalizedUrl)) {
             return normalizedUrl;

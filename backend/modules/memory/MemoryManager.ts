@@ -713,12 +713,14 @@ export class MemoryManager {
             } finally {
                 await handle.close();
             }
-
-            // 编辑后所有覆盖该 ID 的树摘要失效，丢弃之
-            await this.dropSummariesCovering(id);
         } finally {
             release();
         }
+
+        // 编辑后所有覆盖该 ID 的树摘要失效，丢弃之。
+        // 必须在锁外执行：treeDrop 内部会再次 acquire 同一把不可重入锁，
+        // 持锁调用会形成闭环等待导致永久死锁（见 updateEntry 死锁复现）。
+        await this.dropSummariesCovering(id);
     }
 
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */

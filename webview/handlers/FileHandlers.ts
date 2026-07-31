@@ -1009,7 +1009,10 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
     ctx.sendError(requestId, 'SUMMARIZE_ERROR', error.message || t('webview.errors.summarizeFailed'));
   } finally {
     if (abortManager?.deleteSummary) {
-      abortManager.deleteSummary(data.conversationId);
+      // 身份校验：只删除自己创建的总结控制器。
+      // 并发两次 summarizeContext 时，后者的 createSummary 会先中止前者，
+      // 前者 finally 的无条件 delete 会把后者的控制器误删，导致后者无法取消。
+      abortManager.deleteSummary(data.conversationId, controller);
     }
   }
 };

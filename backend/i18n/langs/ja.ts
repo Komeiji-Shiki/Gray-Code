@@ -90,7 +90,8 @@ const ja: BackendLanguageMessages = {
                 filesDeleted: '{count} 個のファイルが削除されました',
                 filesUnchanged: '{count} 個のファイルは変更なし',
                 chainBroken: '増分チェーンが破損しています：参照先のベースチェックポイントが見つかりません',
-                partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります'
+                partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります',
+                dirtyDocumentSkipped: '{count} 個のファイルは未保存の変更があるため復元されませんでした'
             },
             defaultConversationTitle: '会話 {conversationId}',
             errors: {
@@ -145,7 +146,8 @@ const ja: BackendLanguageMessages = {
                 gemini: {
                     errors: {
                         invalidResponse: '無効な Gemini API レスポンス: 候補がありません',
-                        apiError: 'API がエラーステータスを返しました: {code}'
+                        apiError: 'API がエラーステータスを返しました: {code}',
+                        emptyCandidate: 'Gemini が内容のない候補を返しました（終了理由: {finishReason}、コンテンツ安全フィルターの可能性）'
                     }
                 },
                 anthropic: {

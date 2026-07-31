@@ -10,6 +10,7 @@ import * as path from 'path';
 import type { Tool, ToolContext, ToolResult, MultimodalData, MultimodalCapability } from '../types';
 import { t } from '../../i18n';
 import { Logger } from '../../core/logger';
+import { getGlobalSettingsManager } from '../../core/settingsContext';
 import {
     resolveUri,
     resolveUriWithInfo,
@@ -314,6 +315,24 @@ async function readSingleFile(
     try {
         const content = await vscode.workspace.fs.readFile(uri);
         const fileName = path.basename(filePath);
+
+        // 文件大小护栏：超过上限时拒绝全量读取，避免超大文件被全量塞进模型上下文。
+        // 配置 maxFileSizeBytes > 0 生效；0/负数表示不限制。
+        const readConfig = getGlobalSettingsManager()?.getReadFileConfig?.();
+        const maxFileSizeBytes = typeof readConfig?.maxFileSizeBytes === 'number' && Number.isFinite(readConfig.maxFileSizeBytes)
+            ? readConfig.maxFileSizeBytes
+            : 10 * 1024 * 1024;
+        if (maxFileSizeBytes > 0 && content.byteLength > maxFileSizeBytes) {
+            return {
+                result: {
+                    path: filePath,
+                    workspace: isMultiRoot ? workspace?.name : undefined,
+                    success: false,
+                    type: 'text',
+                    error: `File is too large to read (${(content.byteLength / (1024 * 1024)).toFixed(1)} MB, limit ${Math.floor(maxFileSizeBytes / (1024 * 1024))} MB). Use search_in_files or read a specific line range in smaller files instead.`
+                }
+            };
+        }
         
         // 检查是否支持多模态返回
         let shouldReturnMultimodal = false;
