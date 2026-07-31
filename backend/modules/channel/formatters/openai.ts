@@ -45,6 +45,13 @@ import {
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
+import {
+    isImageMimeType,
+    isPdfMimeType,
+    isTextMimeType,
+    buildTextAttachmentContent,
+    buildUnsupportedAttachmentText
+} from './mediaParts';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -132,7 +139,7 @@ export class OpenAIFormatter extends BaseFormatter {
         processedHistory = this.cleanInternalFields(processedHistory);
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
-        const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode);
+        const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, !!config.pdfAttachmentEnabled);
         
         // 构建请求体
         const body: any = {
@@ -255,7 +262,8 @@ export class OpenAIFormatter extends BaseFormatter {
     private convertToOpenAIMessages(
         history: Content[],
         systemInstruction?: string,
-        toolMode: string = 'function_call'
+        toolMode: string = 'function_call',
+        pdfAttachmentEnabled: boolean = false
     ): any[] {
         const messages: any[] = [];
         
@@ -269,10 +277,10 @@ export class OpenAIFormatter extends BaseFormatter {
         
         // 根据模式使用不同的转换策略
         if (toolMode === 'function_call') {
-            this.convertHistoryFunctionCallMode(history, messages);
+            this.convertHistoryFunctionCallMode(history, messages, pdfAttachmentEnabled);
         } else {
             // XML 或 JSON 模式
-            this.convertHistoryTextMode(history, messages, toolMode as 'xml' | 'json');
+            this.convertHistoryTextMode(history, messages, toolMode as 'xml' | 'json', pdfAttachmentEnabled);
         }
         
         return messages;
@@ -286,7 +294,7 @@ export class OpenAIFormatter extends BaseFormatter {
      * - 思考内容（thought: true）转换为 reasoning_content
      * - functionResponse 用 role: tool 发送
      */
-    private convertHistoryFunctionCallMode(history: Content[], messages: any[]): void {
+    private convertHistoryFunctionCallMode(history: Content[], messages: any[], pdfAttachmentEnabled: boolean = false): void {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -335,7 +343,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 }
             } else if (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0) {
                 // 普通消息（可能包含文本、思考内容和/或多媒体内容）
-                const messageContent = this.buildMessageContent(textParts, mediaParts);
+                const messageContent = this.buildMessageContent(textParts, mediaParts, pdfAttachmentEnabled);
                 
                 // 构建消息对象
                 const message: any = {
@@ -361,8 +369,13 @@ export class OpenAIFormatter extends BaseFormatter {
      * OpenAI 格式：
      * - 纯文本：string
      * - 多模态：[{type: "text", text: ...}, {type: "image_url", image_url: {...}}]
+     * - PDF（启用 pdfAttachmentEnabled）：{type: "file", file: {filename, file_data}}
      */
-    private buildMessageContent(textParts: ContentPart[], mediaParts: ContentPart[]): string | any[] {
+    private buildMessageContent(
+        textParts: ContentPart[],
+        mediaParts: ContentPart[],
+        pdfAttachmentEnabled: boolean = false
+    ): string | any[] {
         // 如果没有多媒体内容，直接返回拼接的文本
         if (mediaParts.length === 0) {
             return textParts.map(p => p.text).join('\n');
@@ -381,17 +394,51 @@ export class OpenAIFormatter extends BaseFormatter {
             }
         }
         
-        // 添加多媒体部分
+        // 添加多媒体部分（按 MIME 类型转换，不能一律当作图片）
         for (const part of mediaParts) {
             if (part.inlineData) {
-                // Base64 内联数据 -> data URI
-                const dataUri = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                contentArray.push({
-                    type: 'image_url',
-                    image_url: {
-                        url: dataUri
+                const { mimeType, data } = part.inlineData;
+                
+                if (isImageMimeType(mimeType)) {
+                    // 图片 -> image_url（Base64 内联数据 -> data URI）
+                    const dataUri = `data:${mimeType};base64,${data}`;
+                    contentArray.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: dataUri
+                        }
+                    });
+                } else if (isTextMimeType(mimeType)) {
+                    // 文本文件（如 txt）-> 解码为 text 块
+                    // 避免把文本附件当作 image_url 发送导致 API 400
+                    contentArray.push({
+                        type: 'text',
+                        text: buildTextAttachmentContent(data)
+                    });
+                } else if (isPdfMimeType(mimeType)) {
+                    // PDF -> file 内容块（官方 OpenAI 端点支持；兼容端点需手动开启）
+                    if (pdfAttachmentEnabled) {
+                        contentArray.push({
+                            type: 'file',
+                            file: {
+                                filename: 'attachment.pdf',
+                                file_data: `data:${mimeType};base64,${data}`
+                            }
+                        });
+                    } else {
+                        // 未开启：转为文本占位，避免不支持 file 类型的端点报 400
+                        contentArray.push({
+                            type: 'text',
+                            text: buildUnsupportedAttachmentText(mimeType)
+                        });
                     }
-                });
+                } else {
+                    // 音视频等其他 OpenAI Chat Completions 不支持直接发送，转为文本占位
+                    contentArray.push({
+                        type: 'text',
+                        text: buildUnsupportedAttachmentText(mimeType)
+                    });
+                }
             } else if (part.fileData) {
                 // 文件引用 -> URL
                 contentArray.push({
@@ -414,7 +461,7 @@ export class OpenAIFormatter extends BaseFormatter {
      * - functionResponse 作为 user 消息发送（包含多媒体附件）
      * - 支持多媒体内容
      */
-    private convertHistoryTextMode(history: Content[], messages: any[], mode: 'xml' | 'json'): void {
+    private convertHistoryTextMode(history: Content[], messages: any[], mode: 'xml' | 'json', pdfAttachmentEnabled: boolean = false): void {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -437,7 +484,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 }
                 
                 // 使用 buildMessageContent 构建多模态内容
-                const messageContent = this.buildMessageContent(responseTextParts, mediaParts);
+                const messageContent = this.buildMessageContent(responseTextParts, mediaParts, pdfAttachmentEnabled);
                 
                 messages.push({
                     role: 'user',
@@ -470,7 +517,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 }
                 
                 if (textContentParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0) {
-                    const messageContent = this.buildMessageContent(textContentParts, mediaParts);
+                    const messageContent = this.buildMessageContent(textContentParts, mediaParts, pdfAttachmentEnabled);
                     
                     // 构建消息对象
                     const message: any = {
@@ -980,17 +1027,20 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         // 转换为 OpenAI 格式（Chat Completions API）
-        // strict 默认为 false，启用 strictToolsEnabled 后读取工具声明的 strict 字段
+        // OpenAI 要求同一请求中若任一工具 strict: true 则所有工具必须 strict: true；
+        // 工具集混有 strict 与非 strict 时显式发送 strict: false 会被 API 400 拒绝，
+        // 因此整体降级为不启用（行为更安全）。
+        const allStrict = strictEnabled === true && tools.every(tool => tool.strict === true);
         
         return tools.map(tool => ({
             type: 'function',
             function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: (strictEnabled && tool.strict === true)
+                parameters: allStrict
                     ? ensureStrictSchema(tool.parameters)
                     : tool.parameters,
-                strict: (strictEnabled && tool.strict === true) ? true : false
+                strict: allStrict ? true : false
             }
         }));
     }

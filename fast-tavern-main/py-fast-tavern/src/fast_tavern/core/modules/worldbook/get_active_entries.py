@@ -16,6 +16,27 @@ def _normalize_probability(p: Any) -> float:
     return max(0.0, min(100.0, n))
 
 
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _to_recursion_limit(v: Any) -> int:
+    """Math.trunc 语义：字符串/浮点字符串可解析；NaN → -1（range 空，循环不执行）"""
+    if v is None or isinstance(v, bool):
+        return 5
+    try:
+        n = float(v)
+    except Exception:
+        return 5
+    if n != n:
+        return -1
+    if n == float("inf"):
+        return 5
+    if n == float("-inf"):
+        return 0
+    return max(0, int(n))
+
+
 def _normalize_case_sensitive(entry: WorldBookEntry, default_case_sensitive: bool) -> bool:
     if isinstance(entry.get("caseSensitive"), bool):
         return bool(entry.get("caseSensitive"))
@@ -73,13 +94,13 @@ def _keyword_triggered(entry: WorldBookEntry, text: str, case_sensitive: bool) -
     return True
 
 
-def _as_set(v: Any) -> set[int]:
+def _as_set(v: Any) -> set[Any]:
     if v is None:
         return set()
     if isinstance(v, set):
-        return set(int(x) for x in v if isinstance(x, int))
+        return set(x for x in v if _is_number(x))
     if isinstance(v, list):
-        return set(int(x) for x in v if isinstance(x, (int, float)) and float(x) == float(x))
+        return set(x for x in v if _is_number(x) and float(x) == float(x))
     return set()
 
 
@@ -99,8 +120,7 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
     options = params.get("options") or {}
 
     default_case_sensitive = bool(options.get("defaultCaseSensitive")) if "defaultCaseSensitive" in options else False
-    recursion_limit = int(options.get("recursionLimit") if options.get("recursionLimit") is not None else 5)
-    recursion_limit = max(0, recursion_limit)
+    recursion_limit = _to_recursion_limit(options.get("recursionLimit"))
 
     rng: Callable[[], float] = options.get("rng") or __import__("random").random
 
@@ -143,7 +163,7 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
         if mode == "keyword":
             return _keyword_triggered(entry, ctx, case_sensitive)
         if mode == "vector":
-            return int(entry.get("index")) in vector_hits
+            return entry.get("index") in vector_hits
         return False
 
     def pass_probability(entry: WorldBookEntry) -> bool:
@@ -161,7 +181,9 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
             entry = node.get("entry")
             if not entry:
                 continue
-            idx = int(entry.get("index"))
+            idx = entry.get("index")
+            if not _is_number(idx):
+                continue
             if idx in by_index:
                 continue
             if idx in prob_failed:
@@ -189,11 +211,15 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
 
     def sort_key(x: dict[str, Any]):
         e = x["entry"]
+        order = e.get("order")
         try:
-            order = int(e.get("order"))
+            # order 宽容解析：保留小数（对齐 TS number）
+            order_f = float(order)  # type: ignore[arg-type]
         except Exception:
-            order = 0
-        return (order, int(x.get("prio") or 0), int(x.get("seq") or 0))
+            order_f = 0.0
+        if order_f != order_f:
+            order_f = 0.0
+        return (order_f, int(x.get("prio") or 0), int(x.get("seq") or 0))
 
     active.sort(key=sort_key)
     return [x["entry"] for x in active]

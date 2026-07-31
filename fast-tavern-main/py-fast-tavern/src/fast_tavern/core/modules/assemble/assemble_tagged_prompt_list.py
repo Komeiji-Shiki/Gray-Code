@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ...types import PromptInfo, Role, TaggedContent, WorldBookEntry
+
+
+def _is_finite_number(value: Any) -> bool:
+    """排除 bool/NaN/±inf 的有限数值（bool 是 int 子类；NaN 会让 int() 抛 ValueError）"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
+def _to_finite_int(value: Any) -> int:
+    if _is_finite_number(value):
+        return int(value)
+    return 0
 
 
 def _normalize_role(raw: Any, fallback: Role = "system") -> Role:
@@ -46,7 +60,7 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
             and (not _is_fixed_worldbook_entry(e))
             and (position_map.get(str(e.get("position"))) or str(e.get("position"))) == str(prompt.get("identifier"))
         ]
-        slot_entries.sort(key=lambda x: int(x.get("order") or 0))
+        slot_entries.sort(key=lambda x: _to_finite_int(x.get("order")))
 
         for entry in slot_entries:
             result.append(
@@ -85,16 +99,16 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
                 p
                 for p in enabled_prompts
                 if _is_fixed_prompt(p)
-                and isinstance(p.get("depth"), (int, float))
-                and isinstance(p.get("order"), (int, float))
+                and _is_finite_number(p.get("depth"))
+                and _is_finite_number(p.get("order"))
             ]
             worldbook_injections = [
                 e
                 for e in (active_entries or [])
                 if e
                 and _is_fixed_worldbook_entry(e)
-                and isinstance(e.get("depth"), (int, float))
-                and isinstance(e.get("order"), (int, float))
+                and _is_finite_number(e.get("depth"))
+                and _is_finite_number(e.get("order"))
             ]
 
             all_injections: list[dict[str, Any]] = []

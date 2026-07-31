@@ -57,7 +57,7 @@ export class MessageRouter {
     private chatHandler: ChatHandler,
     private conversationManager: ConversationManager,
     private settingsManager: SettingsManager,
-    private getView: () => vscode.WebviewView | undefined,
+    private getClientView: (clientId?: string) => { webview: vscode.Webview } | undefined,
     private sendResponse: (requestId: string, data: any) => void,
     private sendError: (requestId: string, code: string, message: string) => void,
     clientRegistry: WebviewClientRegistry
@@ -72,10 +72,11 @@ export class MessageRouter {
       chatHandler: this.chatHandler,
       abortManager: this.abortManager,
       conversationManager: this.conversationManager,
-      getView: this.getView,
+      getClientView: this.getClientView,
       sendResponse: (requestId, data) => this.sendRoutedResponse(requestId, data),
       sendError: (requestId, code, message) => this.sendRoutedError(requestId, code, message),
-      settingsManager: this.settingsManager
+      settingsManager: this.settingsManager,
+      finalizeRequest: (requestId) => this.requestClients.delete(requestId)
     });
   }
 
@@ -108,7 +109,7 @@ export class MessageRouter {
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
       trackRequestClient();
-      await this.handleStreamMessage(type as StreamMessageType, data, requestId);
+      await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId);
       return true;
     }
 
@@ -215,23 +216,23 @@ export class MessageRouter {
   /**
    * 处理流式消息
    */
-  private async handleStreamMessage(type: StreamMessageType, data: any, requestId: string): Promise<void> {
+  private async handleStreamMessage(type: StreamMessageType, data: any, requestId: string, clientId?: WebviewClientId): Promise<void> {
     switch (type) {
       case 'chatStream':
         // 不阻塞消息循环，流式处理在后台进行
-        this.streamHandler.handleChatStream(data, requestId).catch(console.error);
+        this.streamHandler.handleChatStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'retryStream':
-        this.streamHandler.handleRetryStream(data, requestId).catch(console.error);
+        this.streamHandler.handleRetryStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'editAndRetryStream':
-        this.streamHandler.handleEditAndRetryStream(data, requestId).catch(console.error);
+        this.streamHandler.handleEditAndRetryStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'toolConfirmation':
-        this.streamHandler.handleToolConfirmationStream(data, requestId).catch(console.error);
+        this.streamHandler.handleToolConfirmationStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'cancelStream':

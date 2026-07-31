@@ -172,19 +172,10 @@ class TaskManagerClass {
         }
         
         try {
-            // 触发取消
+            // 只触发取消信号：不删除任务、不发事件。
+            // 终态（cancelled 事件带完整输出）由各任务完成路径的 unregisterTask 统一发出；
+            // 提前删除会让 unregisterTask 变成 no-op，终态事件丢失，前端任务条卡在「已取消但无结果」。
             task.abortController.abort();
-            
-            // 从活跃任务中移除
-            this.activeTasks.delete(id);
-            
-            // 发送取消事件
-            this.emitEvent({
-                taskId: id,
-                taskType: task.type,
-                type: 'cancelled'
-            });
-            
             return { success: true };
         } catch (error) {
             return {

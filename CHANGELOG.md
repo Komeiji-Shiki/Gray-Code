@@ -1,9 +1,10 @@
 # Change Log
 
 
-## [Unreleased]
+## [1.2.9] - 2026-08-01
 
 ### Fixed
+  - 修复上传 txt 等文本附件报 `API_ERROR: HTTP 400: unknown variant image_url, expected text`：OpenAI Chat Completions / OpenAI Responses / Anthropic 三个 formatter 把用户附件一律按图片序列化（image_url / input_image / image base64），text/plain 文件被当作图片发送被纯文本 API 拒绝；现在按 MIME 类型分发——图片保持原行为，文本附件解码为 text 块，PDF 在 OpenAI Responses 转 `input_file`（官方支持 base64 内联）、Anthropic 转 document 块；OpenAI Chat Completions 新增 `pdfAttachmentEnabled` 渠道开关（默认关闭，直连官方端点可手动开启），开启后 PDF 以 `file` 内容块发送，关闭时转文本占位避免不支持 file 类型的兼容端点报 400；TokenCountService 同步修正，新增回归测试 `formatterAttachments.test.ts`
   - 修复 MemoryManager 编辑记忆死锁：`updateEntry` 持锁期间调用 `dropSummariesCovering` → `treeDrop` 二次 acquire 同一把不可重入的 AsyncLock，形成闭环等待，记忆条目 ≥2 条时编辑操作永久挂起、整个记忆模块排队瘫痪；`dropSummariesCovering` 移出锁外执行（treeDrop 自身会加锁），新增回归测试 `h1_deadlock.test.ts`
   - 修复 Anthropic 并行工具调用参数全部丢失：formatter 未透传 `content_block_*` 事件的顶层 `index`，累加器把多个工具的 `input_json_delta` 全部拼进最后一个空工具壳导致 `JSON.parse` 失败、工具以空参数执行；现在 `content_block_start` / `input_json_delta` 均透传 `chunk.index`，新增回归测试 `formatterParallelTools.test.ts`
   - 修复 OpenAI Responses 渠道工具参数双重拼接：`function_call_arguments.done` 携带完整 arguments 但未设置 `finalArgs`，累加器把完整 JSON 追加到已累积的半截增量上形成垃圾串，工具全部空参数执行、"流式边执行工具"失效；现在 done 事件设置 `finalArgs: true`，累加器按覆盖语义解析
@@ -53,6 +54,48 @@
   - 修复 fast-tavern Python `process_content_stages` 调用 `apply_regex` 时漏传 `variableContext`：`{{getvar::...}}`/`{{setvar::...}}` 在 replaceRegex 场景端到端仍失效；现在与 TS 调用方对齐透传
   - 修复 Gemini 空候选报错信息不具体：非流式解析对 `content` 缺失的候选抛笼统错误，现在显式报出 `finishReason`（新增 `emptyCandidate` 三语言词条），内容安全拦截等场景可直接看到真实终止原因（参考 PR #1）
   - 修复 Anthropic `count_tokens` URL 归一化顺序：baseUrl 形如 `.../v1/models/complete` 时先处理 `/v1/models` 会残留 `/complete` 后缀、拼出畸形端点 URL；现在先去掉 `/complete` 再规整 `/v1/models`（参考 PR #1）
+  - 修复分段历史原子提交的临时路径类型错误：`getHistoryDir(...) + '.tmp'` 把 Uri 对象与字符串拼接成字符串后直接传给 `workspace.fs`（createDirectory/delete/writeFile/rename），扩展宿主按 UriComponents 重新解析抛 `[UriError]: Scheme contains illegal characters`，导致新建对话/保存历史失败（新建对话闪一下无变化、旧对话发消息报错）；改为 `Uri.joinPath` 构造真正的 Uri 对象，新增回归测试 `storageSegmentedWrite.test.ts`（锁定所有 workspace.fs 路径参数必须是 Uri 对象）
+  - 修复 `validateFileInWorkspace` 对 workspaceUri 的裸 `Uri.parse`：非法 URI（如旧格式 Windows 路径）抛 UriError 被外层 catch 吞成 `UNKNOWN` 错误码，或把 `C:\...` 误解析成 `scheme='c'` 导致合法文件被误判为「属于其他工作区」；现在 Windows 盘符路径按 `Uri.file` 语义解析，解析失败时跳过归属比对（不误杀合法文件）
+  - 修复会话元数据读改写互相覆盖（PR #1 A 组）：`setCustomMetadata`/`setTitle`/`setWorkspaceUri` 与各存储适配器 `saveHistory` 内部的 updatedAt 更新此前在两条独立串行链上，并发时后写者基于旧 meta 的整体写回会把先写者的 custom 字段覆盖（检查点列表/裁剪状态随机丢失）；现在 `storage.ts` 新增模块级 `withMetadataWriteSerialized` 共享链统一所有元数据读改写，`ConversationManager` 新增 `updateCustomMetadata`（链内「读 meta→updater→无变更跳过写回」，updater 支持异步）
+  - apply_diff 匹配失败报错增强：oldContent 找不到时不再只说「请核实内容」，新增最近似块诊断——在文件中定位与 oldContent 最接近的行块，逐行报告差异（含首差异字符列与期望/实际内容片段），帮助快速定位全角/半角、空格、缩进或内容已变等问题；块首行不匹配时自动尝试后续行作锚点，超长块/超大文件自动跳过诊断避免 O(m×n) 扫描卡死；结构化 hunk 与 legacy search/replace 两条失败路径均接入
+  - 修复 CheckpointManager 全部 7 处「读列表→内存改→整体写回」竞态（PR #1 A2）：并发创建互相覆盖记录、并发删除/裁剪互相丢失；全部迁移到 `updateCustomMetadata`，删除类操作在链内算好保留集合、写回成功后才删磁盘目录（竞态窗口收敛）
+  - 修复 `normalizeHistoryForDisplay` 锁外写回覆盖真实工具结果（PR #1 A3）：`getMessages`/`getMessagesPaged` 的补齐流程基于旧快照整体写回，与工具结果并发落盘互相覆盖；现在整个读-改-写移入仓储互斥执行器，`TranscriptRepository.mutateContents` 新增「返回原引用=跳过写回」无变更契约（无未响应调用时不再每次读历史都写一次盘）
+  - 修复 `addContent` 去重锁外执行导致同一 tool_use_id 出现两条 functionResponse（PR #1 A4）：去重+追加整体移入 `mutateContents`，取消流与工具执行循环之间的竞态安全网恢复有效；同步修复契约上线暴露的 9 处「原地修改+返回原引用」mutator（appendContent/addBatch/updateMessage/updateMessagesBatch/insertMessage/insertContent/deleteMessagesInRange/rejectAllPendingToolCalls/settleFunctionResponses）改为有变更时返回新引用
+  - 修复 MemoryManager.updateEntry 越界写垃圾记录（PR #1 A5）：`logLen()` 校验与 `logGet` 读取在锁外执行，并发 `truncateLog`/`logAppend` 改变日志长度后基于过期 id 的写入越过 EOF；校验与读取移入锁内
+  - 修复 `getStats` 对缺 `data`/`mimeType` 的 inlineData 抛 TypeError（PR #1 A6）：旧版本或手动编辑的历史不再导致统计面板/上下文裁剪入口崩溃
+  - 修复代理 CONNECT 隧道流式解码损坏中文（PR #1 B1）：`decodeChunkedStream` 逐 chunk `toString('utf8')` 把被 TCP/chunk 边界切开的 UTF-8 多字节字符在第一个包固化成 U+FFFD，后续 SSE 行 `JSON.parse` 永远失败；现在只收集原始字节，由流式 `TextDecoder` 跨 chunk 拼接解码，循环结束 flush 尾部字符
+  - 修复代理取消被误判为可重试（PR #1 B2）：`fetchWithProxy`/`sendRequestOverSocket` 的取消 reject 普通 Error，ChannelManager 只认 `AbortError` 导致取消变无谓重试；新增 `createAbortError` 统一 6 处取消错误，CONNECT 握手成功后移除旧 abort 监听避免重复取消
+  - 修复重试等待窗口内发送保活请求（PR #1 B3）：重试路径 delay 前未停 keepAlive 定时器，错误后到 delay 完成之间在无活动流时发出保活请求；现在 delay 前先 clearInterval
+  - 修复 OpenAI strict 工具混用被 API 400 拒绝（PR #1 B4）：任一工具 strict 时 OpenAI 要求全部工具 strict，混用显式发送 `strict: false` 被拒；现在整体降级为不启用
+  - 修复 directApplyAndSave 把编辑器旧缓冲区写回磁盘覆盖 AI 内容且 diff 永久 pending（PR #1 C1）：dirty 文档 `openDoc.save()` 会把旧内容+用户未保存编辑写回磁盘，且 `saved` 提前 return 跳过 finalizeAcceptedDiff；现在统一 revert 从磁盘重载
+  - 修复关标签页不收敛 accepted、diff 永久 pending（PR #1 C2）：磁盘已是 AI 内容（files.autoSave 直接落盘）时关闭标签页既不接受也不拒绝；现在内容相等收敛为接受
+  - 修复 legacy 多 diff 行号偏移累积（PR #1 C3）：`start_line` 相对原始文件，前序 hunk 改变行数后后续 hunk 整体错位；三处 legacy 应用路径新增 lineDelta 累计
+  - 修复 glob 元字符未转义抛 SyntaxError（PR #1 C4）：`matchGlobPattern`/`shouldIgnore` 只转义 `.`，配置含 `[`/`(`/`+`/`?` 时 `new RegExp` 抛错中断动态上下文生成；改为整体 `escapeRegExp` 后再做通配替换，并修复斜杠替换在星号替换之后导致 `[^[/\]]` 通配永不命中的顺序缺陷
+  - 修复 fsPath 大小写敏感比较失效（PR #1 C5）：diffManager 11 处 `fsPath ===` 严格比较在 Windows/macOS 上因大小写变体路径失效导致监听器/文档查找失灵；新增 `sameFsPath`（win32/darwin 折叠大小写，Linux 精确）
+  - 修复分段存储 delete+rename 提交窗口与无读重试（PR #1 D1）：删旧目录→rename 期间并发读可能看到 index 在但段文件消失；现在写前清理 tmpIndexPath 残留、提交改 overwrite rename、`loadHistoryWithStatus`/`loadHistoryPage` 对 not_found/io_error 重试一次（50ms）
+  - 修复 cancelTask 提前删任务丢终态事件（PR #1 E1）：abort() 后立即删任务+发裸 cancelled，完成路径的 `unregisterTask` 变 no-op、前端任务条卡在「已取消但无结果」；现在只 abort，终态由各完成路径统一发出（已核对 terminal/media 全部取消路径）
+  - 修复终端输出无内存护栏（PR #1 E2）：长运行进程持续输出内存无限增长；新增 `MAX_RETAINED_OUTPUT_LINES = 50000` + `pushOutputLines`（超限丢最旧并计数），截断提示用 `output.length + omittedOutputLines` 总量
+  - 修复 search_in_files / FilePickerPanel / AnnouncementModal 三处 v-html 注入（PR #1 G1/G2/G3）：搜索结果上下文、文件路径、changelog 正文未转义直接注入 HTML，工作区文件内容含 `<`/`>`/`&` 或恶意 HTML 时可执行任意脚本（远程代码执行级风险）；现在统一先 `escapeHtml` 再做高亮/markdown 标记替换
+  - 修复中文/日文输入法合成回车误发消息（PR #1 H1）：InputBox 无 IME 守卫，按 Enter 确认候选词触发发送逻辑误发半截消息；现在 `isComposing`/keyCode 229 直接 return
+  - 修复批注消息发送失败不回滚（PR #1 H2）：ToolMessage 先 push 用户批注再发送，失败时批注残留成幻影消息、前端索引与后端错位、重试会再插一份；现在失败按 id 回滚
+  - 修复 apply_diff / write_file 大文件 diff 预览卡死（PR #1 H3）：computeLCS 全量二维 DP，数千行 diff 占数百 MB 内存并阻塞 webview 主线程；现在公共前缀/后缀剥离 + 核心区域超过 100 万跳过 DP
+  - 修复 isLoadingMore 切标签页后永久禁用（PR #1 H4）：复位在 tabId 匹配分支内部，加载期间切走标签页后上拉加载被永久跳过；现在 finally 无条件复位
+  - 修复消息列表 UI 状态组件级丢失（PR #1 H5）：uiStateByTab 是组件实例级 Map，空会话过渡卸载组件后滚动位置/展开状态全丢；现在提升为模块级保存
+  - 修复切会话清空排队消息（PR #1 H6）：switchConversation 无条件清空 messageQueue，排队消息被静默丢弃；现在只清理附件，跨会话消息由队列匹配跳过机制处理
+  - 修复跨会话消息卡队头（PR #1 H7）：processQueue 取到不属于当前会话的消息放回队头并中止，该消息永久阻塞队列；现在改为查找第一条属于当前会话的消息
+  - 修复关标签页不取消流 + 废弃缓冲累积（PR #1 H8）：closeTab 不取消该会话仍在进行的流，后续 chunk 为已关闭会话重建缓冲区且无消费者，反复开关页无限累积；现在关页时按 conversationId 取消流，缓冲对已关闭会话直接丢弃不重建
+  - 修复消息 timestamp 被完成时刻覆盖（PR #1 H9）：四个流式 handler 用 `{...message, ...finalMessage}` 展开，finalMessage 的 timestamp 是完成时刻导致时间戳漂移、排序错乱；现在补 timestamp 保留
+  - 修复消息订阅者单点崩溃（PR #1 H10）：一个订阅者抛异常中断其余订阅者（backgroundTaskStore 收不到同一条消息）；现在每个订阅者单独 try/catch
+  - 修复 Markdown 渲染缓存无界增长（PR #1 H11）：codeHighlightCache/fileExistenceCache/imageCache 无上限，长会话持续增长；现在统一 `setCached` 容量 500 FIFO 淘汰
+  - 修复 ChatViewProvider.dispose 不重置 _view（PR #1 F1）：_view 仍指向已销毁 webview，重开面板后 diff 状态/终端输出等事件永久丢失；现在 dispose 置空
+  - 修复 pendingCommands 无上限（PR #1 F2）：面板长期未打开期间反复触发命令队列无界增长、打开后一次性重放陈旧命令；现在上限 100
+  - 修复 sendError 对非 Error 对象取 message 得 undefined（PR #1 F3）：改为 instanceof 判断回退 String(error)
+  - 修复 webview 已死路由判定失效（PR #1 F4）：已销毁 webview 的 postMessage resolve(false) 而不抛异常，调用方误判成功跳过回退路径、响应静默丢失；现在注册表按 isAlive 判定存活，SubAgentMonitorPanel 注册绑定 panel 实例
+  - 修复流 chunk 不按 clientId 路由（PR #1 F5）：所有流都发往主聊天，monitor 面板发起的流错投；现在 `getClientView(clientId)` 按注册表路由
+  - 修复 requestClients 泄漏（PR #1 F6）：请求结束不清理 requestId→clientId 映射；现在 4 个流式 handler 的 finally 与取消路径统一 finalizeRequest
+  - 修复 showDiffView 未入串行队列（PR #1 C7/M13）：与 accept/reject 动作并发时状态互相抢占；现在包 `runDiffActionSerialized`（原实现改 showDiffViewUnlocked）
+  - 修复被淘汰 rejected diff 墓碑 Set 无界增长（PR #1 C6）：evictedRejectedDiffIds 随会话无限累积；现在容量上限 2000 FIFO 淘汰
+  - 修复 fast-tavern Python 与 TS 语义差异（PR #1 I 组）：assemble_tagged_prompt_list 的 NaN/bool 通过 isinstance 过滤导致 int(nan) 抛 ValueError；history/factories 的 str(text or "") 把 0/False 变空串；convert_from_silly_tavern 的 isinstance(v, int) 漏 float 且 bool 误判；normalize_worldbooks 的 _to_number 未对齐 Number() 且 index/probability int 截断（2.5 与 2 是不同键）；apply_regex 的 macroMode 缺失被当 none（TS 缺失=执行替换）且 {{}}/<<>> 替换顺序与 TS 相反；variable_context 的 float(None) 抛错使已存 null 走字符串拼接；get_active_entries 的 recursionLimit/index/order 数值强转抛 ValueError/TypeError/丢小数——全部对齐 TS 语义（build_prompt 对应文件已随重构移除，不适用）
 
 ### Changed
   - `StreamChunkProcessor` 构造从持有 view 引用改为持有 `getView` 回调，视图重建后消息自动发往新视图

@@ -34,6 +34,18 @@ const imageCache = new Map<string, string>()
 /** highlightAuto 结果缓存：避免相同无标注代码块重复遍历 192 种语法 */
 const codeHighlightCache = new Map<string, string>()
 
+/** 有界缓存写入：容量超限时淘汰最旧条目（FIFO），防止长会话无界增长 */
+const CACHE_MAX_SIZE = 500
+function setCached<V>(map: Map<string, V>, key: string, value: V): void {
+  map.set(key, value)
+  if (map.size > CACHE_MAX_SIZE) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey !== undefined) {
+      map.delete(oldestKey)
+    }
+  }
+}
+
 /** Mermaid 渲染串行队列（替代布尔锁 isMermaidRendering，防止并发竞争） */
 let mermaidQueue: Promise<void> = Promise.resolve()
 
@@ -668,7 +680,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         highlighted = cached
       } else {
         highlighted = hljs.highlightAuto(code).value
-        codeHighlightCache.set(cacheKey, highlighted)
+        setCached(codeHighlightCache, cacheKey, highlighted)
       }
     } else {
       // 完全无标注：跳过 auto，仅转义原文
@@ -1350,7 +1362,7 @@ async function prevalidateFilePaths(content: string) {
     )
     if (resp?.results) {
       for (const [p, exists] of Object.entries(resp.results)) {
-        fileExistenceCache.set(p, exists)
+        setCached(fileExistenceCache, p, exists)
       }
     }
   } catch (err) {
@@ -1390,7 +1402,7 @@ async function loadWorkspaceImages() {
       
       if (response?.success && response.data) {
         const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
-        imageCache.set(imgPath, dataUrl)
+        setCached(imageCache, imgPath, dataUrl)
         img.setAttribute('src', dataUrl)
         img.classList.remove('workspace-image')
         img.classList.add('loaded-image')

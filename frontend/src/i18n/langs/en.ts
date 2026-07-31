@@ -2548,6 +2548,11 @@ const en: LanguageMessages = {
                     hint: 'Send the top-level user_id field for DeepSeek Chat Completions to isolate KVCache per conversation. It only applies when the current main chat request has a conversation ID; internal requests such as summaries and sub-agents do not send it by default. Enable this only for DeepSeek channels.',
                     toggleHint: 'Generate a stable privacy-safe user_id from the current conversation ID'
                 },
+                pdfAttachment: {
+                    title: 'PDF attachment',
+                    hint: 'Send PDF attachments as native file content blocks. Only official OpenAI endpoints and compatible endpoints that support the file type work; unsupported endpoints return a 400 error, so enable this only after confirming your endpoint supports it.',
+                    toggleHint: 'Send PDF attachments as file content blocks'
+                },
                 frequencyPenalty: {
                     label: 'Frequency Penalty',
                     hint: '-2.0 - 2.0',

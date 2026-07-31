@@ -9,6 +9,15 @@
 
 import type { Content } from './types';
 
+/**
+ * transcript 内容变换函数。
+ *
+ * 契约：
+ * - 返回【新数组引用】= 有变更，仓储会写回并回读真实落盘形态；
+ * - 返回【原引用】（即传入的 contents 本身）= 无变更，仓储跳过写回，
+ *   避免「读-改-写」路径在无实际变更时也整体落盘，覆盖并发写入的真实数据；
+ * - 返回原引用时禁止原地修改传入数组或其元素；需要原地修改时必须返回新引用。
+ */
 export type TranscriptContentsMutator = (contents: Content[]) => Content[];
 
 export interface ITranscriptRepository {
@@ -52,7 +61,7 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         const [contentCopy] = cloneTranscriptContents([content]);
         return await this.mutateContents(contents => {
             contents.push(contentCopy as Content);
-            return contents;
+            return contents.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
     }
 
@@ -82,10 +91,15 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         // 修改原因：删除、截断、批量追加等操作都属于“读取当前 transcript 后生成新数组”的同一语义，不应在调用方各写一套流程。
         // 修改方式：仓储统一负责 get -> mutate -> replace，mutator 只关注纯数组变换。
         // 修改目的：把 TranscriptMutation 这类纯函数自然接到统一入口，主聊天和 SubAgent 共享同一套变更方式。
+        // 无变更契约：mutator 返回原引用表示没有任何修改（如全量去重后无新增、
+        // 补齐函数检查后无需插入），此时跳过写回，避免基于旧快照的整体落盘覆盖并发写入的真实结果。
         const run = this.exclusive ?? ((fn: () => Promise<Content[]>) => fn());
         return run(async () => {
             const currentContents = await this.getContents();
             const nextContents = mutator(currentContents);
+            if (nextContents === currentContents) {
+                return currentContents; // 无变更，跳过写回
+            }
             return await this.saveAndReload(nextContents);
         });
     }

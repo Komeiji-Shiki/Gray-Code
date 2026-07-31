@@ -13,6 +13,7 @@ import { computed, ref, watch } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
+import { escapeHtml } from '../../common/markdownUtils'
 
 const { t } = useI18n()
 
@@ -169,11 +170,13 @@ function getFileName(filePath: string | undefined): string {
 function highlightMatch(context: string | undefined, match: string | undefined): string {
   // 安全检查
   if (!context) return ''
-  if (!match) return context
+  if (!match) return escapeHtml(context)
   
-  // 简单的转义处理
-  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return context.replace(new RegExp(escaped, 'gi'), `<mark>${match}</mark>`)
+  // 先转义再高亮，防止文件原文注入 HTML（远程代码执行风险）
+  const escapedContext = escapeHtml(context)
+  const escapedMatch = escapeHtml(match)
+  const escaped = escapedMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return escapedContext.replace(new RegExp(escaped, 'gi'), `<mark>${escapedMatch}</mark>`)
 }
 
 // ============ Diff 相关 ============

@@ -76,8 +76,9 @@ def variables_add(ctx: VariableContext, input_value: dict[str, Any]):
         next_val = add_val
     else:
         try:
-            cur_num = float(cur)  # type: ignore[arg-type]
-            add_num = float(add_val)  # type: ignore[arg-type]
+            # 对齐 TS：已存 null 时按 0 参与数值相加（null + 5 === 5），而不是走字符串拼接
+            cur_num = float(cur) if cur is not None else 0.0  # type: ignore[arg-type]
+            add_num = float(add_val) if add_val is not None else 0.0  # type: ignore[arg-type]
             if cur_num == cur_num and add_num == add_num:
                 # preserve int-ish results when possible
                 summed = cur_num + add_num

@@ -174,7 +174,8 @@ export function closeTab(
   state: ChatStoreState,
   tabId: string,
   cancelStreamAndRejectTools: () => Promise<void>,
-  streamHandlerCtx?: StreamHandlerContext
+  streamHandlerCtx?: StreamHandlerContext,
+  cancelStreamByConversationId?: (conversationId: string) => Promise<void>
 ): void {
   const tabs = state.openTabs.value
   const tabIndex = tabs.findIndex(t => t.id === tabId)
@@ -188,6 +189,12 @@ export function closeTab(
   // 清理该标签页对话的流式缓冲区
   if (tab.conversationId) {
     state.backgroundStreamBuffers.value.delete(tab.conversationId)
+    // 取消该会话仍在进行的流，避免后续 chunk 为已关闭会话重建缓冲区（M20）
+    if (cancelStreamByConversationId) {
+      cancelStreamByConversationId(tab.conversationId).catch(error => {
+        console.error('[tabActions] Failed to cancel stream for closed tab:', error)
+      })
+    }
   }
 
   // 移除标签页
@@ -295,7 +302,8 @@ export function bufferBackgroundChunk(
   // 找到该 conversationId 对应的标签页
   const tab = state.openTabs.value.find(t => t.conversationId === convId)
   if (!tab) {
-    buffers.get(convId)!.push(chunk)
+    // 会话已不在任何打开的标签页（如标签页已关闭）：丢弃缓冲，不重建
+    buffers.delete(convId)
     return
   }
 

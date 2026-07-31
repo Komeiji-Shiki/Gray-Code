@@ -18,6 +18,8 @@ export interface WebviewClientRegistration {
   /** 可选 RunScope 投影。registry 只保存元数据，不基于 scope/type 写分支。 */
   runScope?: RunScope;
   webviewHost?: { webview: vscode.Webview };
+  /** 存活判定：已销毁的 webview postMessage 会 resolve(false) 而不抛异常，仅靠 try/catch 无法识别（M8） */
+  isAlive?: () => boolean;
   postMessage(message: Record<string, unknown>): Thenable<boolean> | Promise<boolean> | boolean;
 }
 
@@ -86,6 +88,12 @@ export class WebviewClientRegistry {
   postMessage(clientId: unknown, message: Record<string, unknown>): boolean {
     const client = this.get(clientId);
     if (!client) {
+      return false;
+    }
+
+    // 路由前先做存活判定：已销毁的 webview postMessage 会 resolve(false) 而不抛异常，
+    // 仅靠 try/catch 无法识别「投递失败」，会让调用方误判成功、跳过回退路径（M8）
+    if (client.isAlive && !client.isAlive()) {
       return false;
     }
 

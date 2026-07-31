@@ -2549,6 +2549,11 @@ const zhCN = {
                     hint: '为 DeepSeek Chat Completions 请求发送顶层 user_id，用于按对话隔离 KVCache。仅在当前主聊天请求存在对话 ID 时生效；总结、子代理等内部请求默认不会发送。请只为 DeepSeek 渠道开启。',
                     toggleHint: '开启后基于当前对话 ID 生成稳定且不包含隐私信息的 user_id'
                 },
+                pdfAttachment: {
+                    title: 'PDF 附件发送',
+                    hint: '将 PDF 附件作为原生 file 内容块发送给 API。仅官方 OpenAI 端点及支持 file 类型的兼容端点可用，不支持的端点会返回 400 错误；请确认端点支持后再开启。',
+                    toggleHint: '开启后 PDF 附件将以 file 内容块发送'
+                },
                 frequencyPenalty: {
                     label: '频率惩罚 (Frequency Penalty)',
                     hint: '-2.0 - 2.0',

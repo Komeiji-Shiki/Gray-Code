@@ -214,12 +214,28 @@ export class SubAgentMonitorPanel {
         private readonly context: vscode.ExtensionContext,
         private readonly devServerUrl?: string,
         private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>,
-        private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope) => vscode.Disposable,
+        private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope, isAlive?: () => boolean) => vscode.Disposable,
         private readonly conversationStore?: SubAgentRunConversationStore
     ) {
         this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
             this.postEvent(event, snapshot);
         });
+    }
+
+    /**
+     * 统一注册 monitor 面板的 webview client（open/reveal 共用）。
+     * isAlive 绑定当前 panel 实例：面板销毁后路由立即判定失败，走回退路径（F4/M8）。
+     */
+    private registerPanelClient(runId?: string, conversationId?: string): void {
+        if (!this.panel) return;
+        const webview = this.panel.webview;
+        this.clientRegistration?.dispose();
+        this.clientRegistration = this.registerClient?.(
+            WEBVIEW_CLIENT_IDS.subagentMonitor,
+            webview,
+            runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined,
+            () => this.panel !== undefined && this.panel.webview === webview
+        );
     }
 
     open(runId?: string, conversationId?: string): void {
@@ -228,12 +244,7 @@ export class SubAgentMonitorPanel {
 
         if (this.panel) {
             this.panel.reveal(vscode.ViewColumn.Beside);
-            this.clientRegistration?.dispose();
-            this.clientRegistration = this.registerClient?.(
-                WEBVIEW_CLIENT_IDS.subagentMonitor,
-                this.panel.webview,
-                runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
-            );
+            this.registerPanelClient(runId, conversationId);
             // 修改原因：已有面板被再次 reveal 时，旧实现会重新推送完整 snapshots，导致大 transcript 二次卡顿。
             // 修改方式：只推送轻量 manifest，同步焦点后由前端按需请求当前 run window。
             // 修改目的：Monitor 任何首包/重聚焦包都不再携带所有 contents。
@@ -256,12 +267,7 @@ export class SubAgentMonitorPanel {
             }
         );
 
-        this.clientRegistration?.dispose();
-        this.clientRegistration = this.registerClient?.(
-            WEBVIEW_CLIENT_IDS.subagentMonitor,
-            this.panel.webview,
-            runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
-        );
+        this.registerPanelClient(runId, conversationId);
 
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
         this.panel.webview.onDidReceiveMessage(message => {

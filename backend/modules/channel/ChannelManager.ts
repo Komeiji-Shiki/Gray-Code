@@ -636,12 +636,18 @@ export class ChannelManager {
                     });
                 }
                 
-                // 等待后重试（支持取消）
-                await this.delay(retryInterval, request.abortSignal);
-            } finally {
-                // 清理保活循环定时器
+                // 等待后重试（支持取消）—— 先停保活定时器：错误后到 delay 完成之间定时器仍存活，
+                // 会在无活动流时发出保活请求
                 if (keepAliveTimer) {
                     clearInterval(keepAliveTimer);
+                    keepAliveTimer = undefined;
+                }
+                await this.delay(retryInterval, request.abortSignal);
+            } finally {
+                // 清理保活循环定时器（兜底）
+                if (keepAliveTimer) {
+                    clearInterval(keepAliveTimer);
+                    keepAliveTimer = undefined;
                 }
             }
         }

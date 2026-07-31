@@ -45,6 +45,9 @@ backend/**
 webview/**
 esbuild.config.js
 
+# 内部开发文档（不打包）
+docs/**
+
 # 前端源文件（只需要 dist）
 frontend/src/**
 frontend/node_modules/**

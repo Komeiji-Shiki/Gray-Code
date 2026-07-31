@@ -130,8 +130,13 @@ let dispatcherAttached = false
 function dispatchExtensionMessage(event: MessageEvent) {
   routeExtensionMessage(event.data, messageHandlers, message => {
     // 复制一份再遍历：订阅者可能在处理过程中取消订阅
+    // 单个订阅者崩溃不应中断其余订阅者（如 backgroundTaskStore 等）
     for (const subscriber of [...pushMessageSubscribers]) {
-      subscriber(message as VSCodeMessage)
+      try {
+        subscriber(message as VSCodeMessage)
+      } catch (error) {
+        console.error('[vscode] push message subscriber error:', error)
+      }
     }
   })
 }
