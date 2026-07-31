@@ -3,7 +3,7 @@
 
 ## [Unreleased]
 
-## [1.2.8] - 2026-01-21
+## [1.2.8] - 2026-07-30
 
 ### Changed
 - **品牌更名**：LimCode → GrayCode。扩展 ID 由 `limcode` 改为 `graycode`。所有 VSCode 命令已更名（`limcode.*` → `graycode.*`），配置命名空间已变更（`limcode.*` → `graycode.*`）。从旧 LimCode 导出的 JSON 文件导入时会自动迁移。
