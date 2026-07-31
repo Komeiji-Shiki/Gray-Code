@@ -53,6 +53,24 @@ interface TerminalProcess {
     /** 是否因超时被强制终止（与用户取消区分：超时算失败，不算成功/取消） */
     timedOut?: boolean;
     error?: string;
+    /** 因输出行数上限被丢弃的旧行数（长运行进程的内存护栏，配合截断提示展示总量） */
+    omittedOutputLines?: number;
+}
+
+/**
+ * 终端输出行数上限：长运行进程（服务器、日志循环、timeout=0 后台任务）持续输出时
+ * 内存无限增长；超出上限的旧行被丢弃并计数，供截断提示使用。
+ */
+const MAX_RETAINED_OUTPUT_LINES = 50000;
+
+function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
+    if (lines.length === 0) return;
+    tp.output.push(...lines);
+    if (tp.output.length > MAX_RETAINED_OUTPUT_LINES) {
+        const dropped = tp.output.length - MAX_RETAINED_OUTPUT_LINES;
+        tp.output.splice(0, dropped);
+        tp.omittedOutputLines = (tp.omittedOutputLines ?? 0) + dropped;
+    }
 }
 
 /**
@@ -1223,7 +1241,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         stdoutRemaining = lines.pop() || '';
                         
                         if (lines.length > 0) {
-                            terminalProcess.output.push(...lines);
+                            pushOutputLines(terminalProcess, lines);
                         }
                         
                         // 实时推送输出到前端
@@ -1241,7 +1259,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         stderrRemaining = lines.pop() || '';
 
                         if (lines.length > 0) {
-                            terminalProcess.output.push(...lines);
+                            pushOutputLines(terminalProcess, lines);
                         }
                         
                         // 实时推送错误输出到前端
@@ -1263,7 +1281,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             const lines = content.split(/\r?\n/);
                             stdoutRemaining = lines.pop() || '';
                             if (lines.length > 0) {
-                                terminalProcess.output.push(...lines);
+                                pushOutputLines(terminalProcess, lines);
                             }
                         }
 
@@ -1276,16 +1294,16 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             const lines = content.split(/\r?\n/);
                             stderrRemaining = lines.pop() || '';
                             if (lines.length > 0) {
-                                terminalProcess.output.push(...lines);
+                                pushOutputLines(terminalProcess, lines);
                             }
                         }
 
                         if (stdoutRemaining) {
-                            terminalProcess.output.push(stdoutRemaining);
+                            pushOutputLines(terminalProcess, [stdoutRemaining]);
                             stdoutRemaining = '';
                         }
                         if (stderrRemaining) {
-                            terminalProcess.output.push(stderrRemaining);
+                            pushOutputLines(terminalProcess, [stderrRemaining]);
                             stderrRemaining = '';
                         }
                     });
@@ -1390,10 +1408,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         });
 
                         // 简化返回结构：AI 已知 command/cwd/shell，只需返回结果
-                        // 如果输出被截断，添加简单提示
-                        const wasTruncated = maxLines !== -1 && terminalProcess.output.length > maxLines;
+                        // 如果输出被截断，添加简单提示（含内存护栏丢弃的行数）
+                        const totalOutputLines = terminalProcess.output.length + (terminalProcess.omittedOutputLines ?? 0);
+                        const wasTruncated = maxLines !== -1 && totalOutputLines > maxLines;
                         const truncatedNote = wasTruncated
-                            ? `(Output truncated: showing last ${lastOutput.length} of ${terminalProcess.output.length} lines)`
+                            ? `(Output truncated: showing last ${lastOutput.length} of ${totalOutputLines} lines)`
                             : undefined;
                         
                         resolve({

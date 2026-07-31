@@ -20,6 +20,8 @@ import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
 import {
     applyDiffToContent,
     applyStructuredDiffHunksBestEffort,
+    normalizeLineEndings,
+    countLineBreaks,
     type StructuredDiffHunk
 } from './apply_diff';
 import { DiffReviewSession } from './DiffReviewSession';
@@ -134,6 +136,20 @@ export interface CreatePendingDiffOptions {
 
 function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
     return !!d && typeof d === 'object' && typeof d.search === 'string' && typeof d.replace === 'string';
+}
+
+/**
+ * 大小写不敏感的文件路径比较（Windows/macOS）。
+ *
+ * 同一文件可能通过不同大小写的路径打开（UNC/符号链接/手输），严格比较会让监听器/文档查找失效，
+ * 导致 diff 悬挂或找不到脏文档；Linux 区分大小写，保持精确比较。
+ */
+function sameFsPath(a: string | undefined, b: string | undefined): boolean {
+    if (!a || !b) return false;
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+        return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+    }
+    return a === b; // Linux 区分大小写，保持精确
 }
 
 function isUnifiedDiffHunk(d: any): d is UnifiedDiffHunk {
@@ -517,6 +533,8 @@ export class DiffManager {
     /** 已终结 diff 的 FIFO 淘汰队列（延迟删除，终态条目仍可能被工具链路读一次） */
     private finalizedDiffOrder: string[] = [];
     private static readonly MAX_FINALIZED_DIFFS = 50;
+    /** 被淘汰 rejected diff 墓碑 Set 的容量上限（C6）：超出时 FIFO 淘汰最旧墓碑 */
+    private static readonly MAX_EVICTED_REJECTED_TOMBSTONES = 2000;
     /**
      * 被 FIFO 淘汰的 rejected diff（淘汰后 getDiff 返回 undefined，工具链路无法再查状态）。
      * 只记录 rejected：accepted 按正常结算处理，不会误报。查询后即删除，防止无界增长。
@@ -769,10 +787,24 @@ export class DiffManager {
             // 若 waitForDiffResolution 在被淘汰前已结算（如直接读到 rejected），
             // 淘汰后留痕永远无人查询，集合随会话无界增长。
             if (evicted && evicted.status === 'rejected' && this.activeDiffWaiters.has(oldest)) {
-                this.evictedRejectedDiffIds.add(oldest);
+                this.recordEvictedRejectedDiff(oldest);
             }
             this.pendingDiffs.delete(oldest);
             this.diffSessions.delete(oldest);
+        }
+    }
+
+    /**
+     * 记录被淘汰的 rejected diff 墓碑（C6）。
+     * Set 随会话无界增长会变成内存泄漏，这里加容量上限（FIFO 淘汰最旧墓碑）。
+     */
+    private recordEvictedRejectedDiff(id: string): void {
+        this.evictedRejectedDiffIds.add(id);
+        if (this.evictedRejectedDiffIds.size > DiffManager.MAX_EVICTED_REJECTED_TOMBSTONES) {
+            const oldest = this.evictedRejectedDiffIds.values().next().value;
+            if (oldest !== undefined) {
+                this.evictedRejectedDiffIds.delete(oldest);
+            }
         }
     }
 
@@ -964,17 +996,13 @@ export class DiffManager {
             // 直接写入文件到磁盘
             fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
 
-            // 如果文档已在编辑器中打开，则刷新它
+            // 如果文档已在编辑器中打开，统一 revert 从磁盘重载：
+            // 不能调用 openDoc.save() —— save 会把编辑器缓冲区（旧内容 + 用户未保存编辑）写回磁盘，
+            // 覆盖刚写入的 AI 内容；且 saved=true 提前 return 会跳过 finalizeAcceptedDiff，diff 永久 pending。
             const uri = vscode.Uri.file(diff.absolutePath);
-            const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            const openDoc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
             if (openDoc) {
-                // 磁盘已写入新内容：优先 doc.save() 静默清 dirty（不弹确认对话框），
-                // 回退到 revert 重新加载磁盘内容（仅在 save 失败时）
                 try {
-                    if (openDoc.isDirty) {
-                        const saved = await openDoc.save();
-                        if (saved) return;
-                    }
                     await vscode.commands.executeCommand('workbench.action.files.revert', openDoc.uri);
                 } catch {
                     // ignore
@@ -1088,6 +1116,7 @@ export class DiffManager {
                     }
                 } else {
                     // legacy search/replace diffs（向后兼容）
+                    let lineDelta = 0;
                     for (let i = 0; i < diff.rawDiffs.length; i++) {
                         const blockInfo = session.blocks.find(b => b.index === i);
                         const d = diff.rawDiffs[i];
@@ -1097,20 +1126,29 @@ export class DiffManager {
 
                         const replaceLines = d.replace.split('\n').length;
 
-                        const result = applyDiffToContent(tempContent, d.search, d.replace, d.start_line);
+                        // start_line 相对原始文件：前序 hunk 应用改变了行数后必须累计偏移，
+                        // 否则第二个及以后的 hunk 整体错位
+                        const adjustedStartLine = typeof d.start_line === 'number' && d.start_line > 0
+                            ? d.start_line + lineDelta
+                            : d.start_line;
+
+                        const result = applyDiffToContent(tempContent, d.search, d.replace, adjustedStartLine);
                         if (result.success && result.matchedLine !== undefined) {
                             tempContent = result.result;
 
                             // 更新此块在当前内容中的范围
                             blockInfo.startLine = result.matchedLine;
                             blockInfo.endLine = result.matchedLine + replaceLines - 1;
+
+                            // 累计行数变化：replace 行数 - search 行数（replaceLines 是展示行数，勿用于偏移）
+                            lineDelta += countLineBreaks(normalizeLineEndings(d.replace)) - countLineBreaks(normalizeLineEndings(d.search));
                         }
                     }
                 }
 
                 // 更新编辑器
                 const uri = vscode.Uri.file(diff.absolutePath);
-                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
                 if (doc) {
                     const edit = new vscode.WorkspaceEdit();
                     const fullRange = new vscode.Range(
@@ -1216,9 +1254,16 @@ export class DiffManager {
     }
 
     /**
-     * 显示内联 diff 视图
+     * 显示内联 diff 视图（入串行队列，M13/C7）
      */
     private async showDiffView(diff: PendingDiff): Promise<void> {
+        await this.runDiffActionSerialized(() => this.showDiffViewUnlocked(diff));
+    }
+
+    /**
+     * 显示内联 diff 视图（队列内执行体）
+     */
+    private async showDiffViewUnlocked(diff: PendingDiff): Promise<void> {
         const fileUri = vscode.Uri.file(diff.absolutePath);
         this.diffSessions.get(diff.id)?.markPresented();
 
@@ -1226,7 +1271,7 @@ export class DiffManager {
 
         const restoreToOriginalBestEffort = async (): Promise<void> => {
             try {
-                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
                 const targetDoc = doc || (await vscode.workspace.openTextDocument(fileUri));
                 const edit = new vscode.WorkspaceEdit();
                 const fullRange = new vscode.Range(
@@ -1300,7 +1345,7 @@ export class DiffManager {
 
         // 5. 监听文档即将保存事件
         const willSaveListener = vscode.workspace.onWillSaveTextDocument((event) => {
-            if (event.document.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+            if (!sameFsPath(event.document.uri.fsPath, diff.absolutePath) || diff.status !== 'pending') {
                 return;
             }
 
@@ -1320,7 +1365,7 @@ export class DiffManager {
 
         // 6. 监听文档保存事件
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
-            if (savedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+            if (!sameFsPath(savedDoc.uri.fsPath, diff.absolutePath) || diff.status !== 'pending') {
                 return;
             }
 
@@ -1366,7 +1411,7 @@ export class DiffManager {
 
         // 7. 监听文档关闭事件
         const closeListener = vscode.workspace.onDidCloseTextDocument((closedDoc) => {
-            if (closedDoc.uri.fsPath !== diff.absolutePath || diff.status !== 'pending') {
+            if (!sameFsPath(closedDoc.uri.fsPath, diff.absolutePath) || diff.status !== 'pending') {
                 return;
             }
 
@@ -1376,7 +1421,11 @@ export class DiffManager {
 
             try {
                 const currentContent = fs.readFileSync(diff.absolutePath, 'utf8');
-                if (currentContent !== diff.newContent) {
+                if (currentContent === diff.newContent) {
+                    // 磁盘已是 AI 内容（如 files.autoSave 直接落盘后用户关闭标签页）：
+                    // 收敛为接受，避免 diff 永久 pending 导致工具等待链悬挂
+                    this.finalizeAcceptedDiff(diff);
+                } else {
                     this.finalizeRejectedDiff(diff);
                 }
             } catch (e) {
@@ -1489,7 +1538,7 @@ export class DiffManager {
             const finalContent = this.computeFinalSuggestedContent(id, diff);
 
             const uri = vscode.Uri.file(diff.absolutePath);
-            let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            let doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
 
             // 如果文档未打开，先打开它
             if (!doc) {
@@ -1661,7 +1710,7 @@ export class DiffManager {
     private async closeDiffTab(filePath: string): Promise<void> {
         // 安全网：关 diff tab 前确保底层文档不被 WorkspaceEdit 残留的 dirty 标记
         // 拖累出"是否保存更改？"VSCode 原生确认弹窗。save() 是静默的，不弹窗。
-        const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === filePath);
+        const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, filePath));
         if (doc && doc.isDirty) {
             try {
                 await doc.save();
@@ -1674,7 +1723,7 @@ export class DiffManager {
             for (const tab of tabGroup.tabs) {
                 if (tab.input instanceof vscode.TabInputTextDiff) {
                     const diffInput = tab.input as vscode.TabInputTextDiff;
-                    if (diffInput.modified.fsPath === filePath) {
+                    if (sameFsPath(diffInput.modified.fsPath, filePath)) {
                         // 采样必须在关闭前：关闭动作本身就是抓焦点的来源
                         const restoreFocus = shouldRestoreChatInputFocus();
                         await vscode.window.tabGroups.close(tab, true);
@@ -1725,7 +1774,7 @@ export class DiffManager {
         try {
             // 1. 恢复文件内容
             const uri = vscode.Uri.file(diff.absolutePath);
-            const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
 
             if (doc) {
                 const edit = new vscode.WorkspaceEdit();
@@ -2091,7 +2140,7 @@ export class DiffManager {
             // 3. 尝试恢复文件到原始状态
             try {
                 const uri = vscode.Uri.file(diff.absolutePath);
-                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
                 if (doc && doc.isDirty) {
                     // 恢复到原始内容
                     const edit = new vscode.WorkspaceEdit();

@@ -215,8 +215,24 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
     
     if (workspaceUri && belongingWorkspace.uri.toString() !== workspaceUri) {
       // 同样需要检查路径匹配（scheme 可能不同）
-      const providedWorkspacePath = vscode.Uri.parse(workspaceUri).path;
-      if (belongingWorkspace.uri.path !== providedWorkspacePath) {
+      // 注意：workspaceUri 可能来自旧数据/外部输入，不能假设它是合法 URI。
+      // Uri.parse 遇到非法 scheme（如反斜杠路径、含非法字符的字符串）会抛
+      // [UriError]: Scheme contains illegal characters；解析失败时跳过比对，
+      // 避免把本应合法的文件误判为“属于其他工作区”。
+      let providedWorkspacePath: string | undefined;
+      try {
+        if (/^[a-zA-Z]:[\\/]/.test(workspaceUri)) {
+          // 旧格式的 Windows 绝对路径（C:\...）：按文件路径语义解析，
+          // 否则 Uri.parse 会得到 scheme='c'、path='\...' 的错误结果，比对必然失败
+          providedWorkspacePath = vscode.Uri.file(workspaceUri).path;
+        } else {
+          providedWorkspacePath = vscode.Uri.parse(workspaceUri).path;
+        }
+      } catch {
+        // 解析失败：跳过归属比对，不误杀合法文件
+        providedWorkspacePath = belongingWorkspace.uri.path;
+      }
+      if (providedWorkspacePath !== undefined && belongingWorkspace.uri.path !== providedWorkspacePath) {
         const belongingWorkspaceName = belongingWorkspace.name;
         return {
           valid: false,

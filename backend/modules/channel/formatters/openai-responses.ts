@@ -13,6 +13,13 @@ import type { ToolDeclaration } from '../../../tools/types';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
+import {
+    isImageMimeType,
+    isPdfMimeType,
+    isTextMimeType,
+    buildTextAttachmentContent,
+    buildUnsupportedAttachmentText
+} from './mediaParts';
 import { ChannelError, ErrorType } from '../types';
 import type {
     GenerateRequest,
@@ -218,9 +225,30 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         const toolContentParts = part.functionResponse.parts
                             .map(p => {
                                 if (p.inlineData) {
+                                    const { mimeType, data } = p.inlineData;
+                                    if (isImageMimeType(mimeType)) {
+                                        return {
+                                            type: 'input_image' as const,
+                                            image_url: `data:${mimeType};base64,${data}`
+                                        };
+                                    }
+                                    if (isPdfMimeType(mimeType)) {
+                                        // PDF -> input_file（Responses API 支持 base64 内联 PDF）
+                                        return {
+                                            type: 'input_file' as const,
+                                            filename: 'attachment.pdf',
+                                            file_data: `data:${mimeType};base64,${data}`
+                                        };
+                                    }
+                                    if (isTextMimeType(mimeType)) {
+                                        return {
+                                            type: 'input_text' as const,
+                                            text: buildTextAttachmentContent(data)
+                                        };
+                                    }
                                     return {
-                                        type: 'input_image',
-                                        image_url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`
+                                        type: 'input_text' as const,
+                                        text: buildUnsupportedAttachmentText(mimeType)
                                     };
                                 }
                                 return null;
@@ -245,10 +273,32 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         text: part.text
                     });
                 } else if (part.inlineData) {
-                    messageParts.push({
-                        type: 'input_image',
-                        image_url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-                    });
+                    const { mimeType, data } = part.inlineData;
+                    if (isImageMimeType(mimeType)) {
+                        messageParts.push({
+                            type: 'input_image',
+                            image_url: `data:${mimeType};base64,${data}`
+                        });
+                    } else if (isPdfMimeType(mimeType)) {
+                        // PDF -> input_file（Responses API 支持 base64 内联 PDF）
+                        messageParts.push({
+                            type: 'input_file',
+                            filename: 'attachment.pdf',
+                            file_data: `data:${mimeType};base64,${data}`
+                        });
+                    } else if (isTextMimeType(mimeType)) {
+                        // 文本文件（如 txt）-> 解码为 input_text，避免被当作图片发送
+                        messageParts.push({
+                            type: 'input_text',
+                            text: buildTextAttachmentContent(data)
+                        });
+                    } else {
+                        // 音视频等其他格式当前不支持直接发送，转为文本占位
+                        messageParts.push({
+                            type: 'input_text',
+                            text: buildUnsupportedAttachmentText(mimeType)
+                        });
+                    }
                 } else if (part.fileData) {
                     messageParts.push({
                         type: 'input_file',

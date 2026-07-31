@@ -2548,6 +2548,11 @@ const ja: LanguageMessages = {
                     hint: 'DeepSeek Chat Completions リクエストにトップレベルの user_id を送信し、会話ごとに KVCache を分離します。現在のメインチャットリクエストに会話 ID がある場合のみ有効です。要約やサブエージェントなどの内部リクエストでは既定で送信されません。DeepSeek チャンネルでのみ有効にしてください。',
                     toggleHint: '現在の会話 ID から安定したプライバシー安全な user_id を生成します'
                 },
+                pdfAttachment: {
+                    title: 'PDF 添付ファイル送信',
+                    hint: 'PDF 添付ファイルをネイティブの file コンテンツブロックとして API に送信します。公式 OpenAI エンドポイントおよび file タイプをサポートする互換エンドポイントでのみ利用できます。非対応エンドポイントでは 400 エラーが返るため、対応確認後に有効にしてください。',
+                    toggleHint: 'PDF 添付ファイルを file コンテンツブロックとして送信します'
+                },
                 frequencyPenalty: {
                     label: '頻度ペナルティ (Frequency Penalty)',
                     hint: '-2.0 - 2.0',

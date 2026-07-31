@@ -3,16 +3,16 @@ import type { MessageMetadata, UsageMetadata } from '../types'
 export const DUPLICATE_DURATION_TOLERANCE_MS = 50
 
 /**
- * 修改原因：主聊天、SubAgent Monitor 和响应详情过去各自计算 token 速度，且曾错误使用首块到末块的短窗口作分母。
- * 修改方式：把 token 数、速率和重复 duration 展示判断集中成纯函数；速率优先使用完整响应耗时 responseDuration，并保留 streamDuration 作为旧记录回退。
- * 修改目的：让所有入口共享同一套 token 速度语义，避免 SSE 一次性吐出多块时出现畸高速度，也防止后续再复制公式。
+ * 修改原因：candidatesTokenCount 在 Anthropic（output_tokens）与多数 OAI 兼容渠道（completion_tokens）
+ * 中已包含思考 token；旧实现再叠加 thoughtsTokenCount，会把思考 token 重复计入分子，
+ * 导致 token 速率虚高近一倍（例如 64768 输出 + 64657 思考被算成 129425）。
+ * 修改方式：分子只取 candidatesTokenCount，与界面 ↓ 展示的输出 token 数保持同一口径。
+ * 修改目的：让用户用界面可见的输出 token 数除以响应耗时即可复现速率，避免思考 token 被重复计算。
  */
 export function getTokenRateTokenCount(usage?: UsageMetadata): number {
   if (!usage) return 0
 
-  const outputTokens = usage.candidatesTokenCount || 0
-  const thoughtTokens = usage.thoughtsTokenCount || 0
-  return thoughtTokens > 0 ? outputTokens + thoughtTokens : outputTokens
+  return usage.candidatesTokenCount || 0
 }
 
 /**

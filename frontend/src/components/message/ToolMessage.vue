@@ -731,11 +731,12 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
   const annotation = chatStore.inputValue.trim()
 
   // 清空输入栏
+  let userMessage: Message | undefined
   if (annotation) {
     chatStore.clearInputValue()
 
     // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
-    const userMessage: Message = {
+    userMessage = {
       id: generateId(),
       role: 'user',
       content: annotation,
@@ -751,6 +752,11 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
   )
   if (!sent) {
     removeProcessingToolId(toolId)
+    // 发送失败时回滚已插入的批注消息，避免幻影消息导致前后端索引错位
+    if (userMessage) {
+      const idx = chatStore.allMessages.findIndex(m => m.id === userMessage!.id)
+      if (idx !== -1) chatStore.allMessages.splice(idx, 1)
+    }
   }
 }
 

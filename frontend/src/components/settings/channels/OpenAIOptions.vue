@@ -133,6 +133,27 @@ function handleNumberChange(optionKey: string, event: any) {
       </div>
     </div>
 
+    <!-- PDF 附件发送（file 内容块） -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-file-pdf"></i>
+          {{ t('components.channels.openai.pdfAttachment.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.openai.pdfAttachment.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="config.pdfAttachmentEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'pdfAttachmentEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.openai.pdfAttachment.hint') }}</span>
+      </div>
+    </div>
+
     <!-- 温度 -->
     <div class="option-item option-with-toggle">
       <div class="option-header">

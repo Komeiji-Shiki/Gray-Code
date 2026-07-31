@@ -373,6 +373,10 @@ function handleInput() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // IME 合成回车（确认候选词）不应触发发送逻辑
+  if (e.isComposing || e.keyCode === 229) {
+    return
+  }
   const editor = editorRef.value
   if (!editor) return
 

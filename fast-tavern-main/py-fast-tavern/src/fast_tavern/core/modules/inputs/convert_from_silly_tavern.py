@@ -44,6 +44,11 @@ def _to_num(v: Any, fallback: float) -> float:
     return n
 
 
+def _is_number(v: Any) -> bool:
+    """int/float 且非 bool：JSON 的 1.0 在 Python 是 float（JS 是 number），bool 是 int 子类需排除"""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _to_bool(v: Any, fallback: bool) -> bool:
     return v if isinstance(v, bool) else fallback
 
@@ -205,7 +210,7 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
 
 
 def _normalize_regex_target(v: Any) -> str | None:
-    if isinstance(v, int):
+    if _is_number(v):
         return REGEX_TARGET_MAP_FROM_ST.get(v)
     s = _to_str(v).strip()
     if not s:
@@ -227,7 +232,7 @@ def _normalize_regex_view(v: Any) -> str | None:
 def _normalize_regex_macro_mode(v: Any) -> str:
     if v in ("none", "raw", "escaped"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return REGEX_MACRO_MODE_MAP.get(v, "none")
     return "none"
 
@@ -382,7 +387,7 @@ def _normalize_worldbook_position(position: Any, ext_position: Any) -> str:
 def _normalize_worldbook_selective_logic(v: Any) -> str:
     if v in ("andAny", "andAll", "notAll", "notAny"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return WORLDBOOK_SELECTIVE_LOGIC_MAP_FROM_ST.get(v, "andAny")
     return "andAny"
 
@@ -390,7 +395,7 @@ def _normalize_worldbook_selective_logic(v: Any) -> str:
 def _normalize_worldbook_role(v: Any) -> str:
     if v in ("system", "user", "model"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return WORLDBOOK_ROLE_MAP_FROM_ST.get(v, "system")
     return "system"
 

@@ -8,6 +8,9 @@ import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as path from 'path'
 
+/** 转义正则元字符（glob 模式转正则前的公共前置步骤） */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 /**
  * 工作区信息
  */
@@ -50,11 +53,10 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
     for (const ignore of customIgnorePatterns) {
         if (ignore.includes('*')) {
             // 通配符模式 - 支持 ** 匹配任意目录层级
-            let regexStr = ignore
-                .replace(/\\/g, '/')
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-                .replace(/\*/g, '[^/]*')
+            // 先整体转义正则元字符（含 [ ( + ? 等，避免 SyntaxError），再做通配替换
+            const regexStr = escapeRegExp(ignore.replace(/\\/g, '/'))
+                .replace(/\\\*\\\*\\\*/g, '<<<GLOBSTAR>>>')
+                .replace(/\\\*/g, '[^/]*')
                 .replace(/<<<GLOBSTAR>>>/g, '.*')
             
             const regex = new RegExp(`^${regexStr}$|[/\\\\]${regexStr}$|^${regexStr}[/\\\\]|[/\\\\]${regexStr}[/\\\\]`, 'i')
@@ -87,8 +89,8 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
         
         // 简单的模式匹配
         if (p.includes('*')) {
-            // 通配符模式
-            const regex = new RegExp('^' + p.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$')
+            // 通配符模式：整体转义正则元字符后再把 * 展开为 .*，避免 [ ( + ? 等字符抛 SyntaxError
+            const regex = new RegExp('^' + escapeRegExp(p).replace(/\\\*/g, '.*') + '$')
             if (regex.test(baseName) || regex.test(relativePath)) {
                 return true
             }

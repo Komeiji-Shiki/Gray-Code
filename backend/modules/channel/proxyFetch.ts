@@ -154,6 +154,16 @@ export function createProxyFetch(proxyUrl?: string) {
 }
 
 /**
+ * 创建标准 AbortError：ChannelManager 按 error.name === 'AbortError' 区分「用户取消/超时」
+ * 与普通网络错误；普通 Error 会被 isRetryableError 误判为可重试，取消操作变成无谓重试。
+ */
+function createAbortError(message = 'Request cancelled'): Error {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+}
+
+/**
  * 通过 HTTP 代理发起请求（CONNECT 隧道方式）
  */
 async function fetchWithProxy(
@@ -168,7 +178,7 @@ async function fetchWithProxy(
 
     // 检查是否已取消
     if (init.signal?.aborted) {
-        throw new Error('Request cancelled');
+        throw createAbortError();
     }
 
     return new Promise((resolve, reject) => {
@@ -200,13 +210,18 @@ async function fetchWithProxy(
             if (tunnelSocket) {
                 closeSocketGracefully(tunnelSocket);
             }
-            reject(new Error('Request cancelled'));
+            reject(createAbortError());
         };
         if (init.signal) {
             init.signal.addEventListener('abort', onAbort, { once: true });
         }
 
         proxyReq.on('connect', (res, socket) => {
+            // 握手成功后移除旧监听：后续取消由 sendRequestOverSocket 自行监听清理，
+            // 避免握手后旧监听重复取消已转交的 socket
+            if (init.signal) {
+                init.signal.removeEventListener('abort', onAbort);
+            }
             tunnelSocket = socket;
 
             if (res.statusCode !== 200) {
@@ -266,7 +281,7 @@ function sendRequestOverSocket(
     // 检查是否已取消
     if (init.signal?.aborted) {
         socket.destroy();
-        reject(new Error('Request cancelled'));
+        reject(createAbortError());
         return;
     }
 
@@ -279,7 +294,7 @@ function sendRequestOverSocket(
         if (aborted) return;
         aborted = true;
         closeSocketGracefully(socket);
-        reject(new Error('Request cancelled'));
+        reject(createAbortError());
     };
     if (init.signal) {
         init.signal.addEventListener('abort', onAbort, { once: true });
@@ -607,7 +622,7 @@ export async function* proxyStreamFetch(
 
     // 检查是否已取消
     if (init.signal?.aborted) {
-        throw new Error('Request cancelled');
+        throw createAbortError();
     }
 
     const socket = await new Promise<tls.TLSSocket | import('net').Socket>((resolve, reject) => {
@@ -638,7 +653,7 @@ export async function* proxyStreamFetch(
         // 监听取消信号
         const onAbort = () => {
             proxyReq?.destroy();
-            finishReject(new Error('Request cancelled'));
+            finishReject(createAbortError());
         };
 
         if (init.signal) {
@@ -729,6 +744,9 @@ export async function* proxyStreamFetch(
     let statusCode = 0;
     let isChunked = false;
     let chunkedBuffer = Buffer.alloc(0);  // chunked 解码缓冲区
+    // 流式 TextDecoder：跨 chunk 被切开的 UTF-8 多字节字符在内部缓冲拼接，
+    // 不会在第一个包就固化成 U+FFFD 导致后续 SSE 行 JSON.parse 永远失败
+    const decoder = new TextDecoder();
     
     // 监听取消信号（#34 修复：优雅关闭而不是裸 end）
     const onAbort = () => {
@@ -742,8 +760,10 @@ export async function* proxyStreamFetch(
      * 实时解码 chunked 数据
      * 返回已解码的数据和剩余的未完成 chunk
      */
-    const decodeChunkedStream = (data: Buffer): { decoded: string, remaining: Buffer } => {
-        let decoded = '';
+    const decodeChunkedStream = (data: Buffer): { decoded: Buffer | null, remaining: Buffer } => {
+        // 只收集原始字节，不做字符串解码：被 TCP/chunk 边界切开的 UTF-8 多字节字符
+        // 若在第一个包就 toString('utf8') 会固化成 U+FFFD，中文内容损坏/流中断
+        const pieces: Buffer[] = [];
         let offset = 0;
         
         while (offset < data.length) {
@@ -786,15 +806,15 @@ export async function* proxyStreamFetch(
                 break;
             }
             
-            // 提取并解码 chunk 数据
-            decoded += data.subarray(chunkDataStart, chunkDataEnd).toString('utf8');
+            // 提取 chunk 数据（原始字节，解码由调用方的流式 TextDecoder 完成）
+            pieces.push(data.subarray(chunkDataStart, chunkDataEnd));
             
             // 移动到下一个 chunk（跳过 \r\n）
             offset = chunkDataEnd + 2;
         }
         
         return {
-            decoded,
+            decoded: pieces.length > 0 ? Buffer.concat(pieces) : null,
             remaining: data.subarray(offset)
         };
     };
@@ -943,8 +963,8 @@ export async function* proxyStreamFetch(
                             chunkedBuffer = Buffer.from(remaining);
 
                             if (decoded) {
-                                // 使用队列存储数据，稍后 yield
-                                dataQueue.push(decoded);
+                                // 流式解码：跨 chunk 的多字节字符由 TextDecoder 内部缓冲拼接
+                                dataQueue.push(decoder.decode(decoded, { stream: true }));
                             }
                         } else {
                             // 非 chunked，直接存储
@@ -1050,11 +1070,17 @@ export async function* proxyStreamFetch(
             if (isChunked && chunkedBuffer.length > 0) {
                 const { decoded } = decodeChunkedStream(chunkedBuffer);
                 if (decoded) {
-                    yield decoded;
+                    yield decoder.decode(decoded, { stream: true });
                 }
             } else if (rawBuffer.length > 0) {
                 yield rawBuffer.toString('utf8');
             }
+        }
+
+        // flush TextDecoder 内部缓冲：末块被切开的 UTF-8 字符尾部在此输出
+        const flushed = decoder.decode();
+        if (flushed) {
+            yield flushed;
         }
     } finally {
         // 移除取消信号监听

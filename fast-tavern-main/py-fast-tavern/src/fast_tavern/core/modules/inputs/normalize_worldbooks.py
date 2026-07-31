@@ -10,8 +10,13 @@ def _is_worldbook_entry_array(v: Any) -> bool:
 
 
 def _to_number(v: Any, fallback: float) -> float:
+    # 对齐 TS Number()：null → 0、true → 1 / false → 0、字符串 → 数值、无法解析 → fallback
+    if v is None:
+        return 0.0
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
     try:
-        n = float(v) if not isinstance(v, bool) else fallback
+        n = float(v)
     except Exception:
         return fallback
     return n if n == n and n not in (float("inf"), float("-inf")) else fallback
@@ -32,7 +37,8 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     index_n = _to_number(e.get("index"), float("nan"))
     if index_n != index_n:
         return None
-    index = int(index_n)
+    # 保持浮点不 int 截断：2.5 与 2 是不同键（对齐 TS number）
+    index = index_n
 
     name = str(e.get("name") or "")
     content = str(e.get("content") or "")
@@ -79,7 +85,8 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     prevent_recursion = _to_bool(e.get("preventRecursion"), False)
 
     probability_n = _to_number(e.get("probability"), 100.0)
-    probability = int(probability_n) if probability_n == probability_n else 100
+    # 保持浮点不 int 截断（对齐 TS number）
+    probability = probability_n if probability_n == probability_n else 100
 
     other = e.get("other") if isinstance(e.get("other"), dict) else {}
 

@@ -45,7 +45,7 @@ export interface StructuredDiffHunk {
 /**
  * 规范化换行符为 LF
  */
-function normalizeLineEndings(text: string): string {
+export function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
@@ -187,7 +187,7 @@ function countTextLines(normalizedText: string): number {
     return normalizedText.split('\n').length;
 }
 
-function countLineBreaks(normalizedText: string): number {
+export function countLineBreaks(normalizedText: string): number {
     // 修改原因：startLine 的 lineDelta 表示后续原始行号被前序 hunk 推动了多少行，真实变化取决于 LF 数量差，而不是展示行数差。
     // 修改方式：单独统计文本中的 LF 字符数量，避免删除 `first\n` 到空字符串时把行号多减一。
     // 修改目的：让前序插入、删除和替换都能正确调整后续重复 oldContent 的 startLine 定位。
@@ -487,6 +487,97 @@ function detectEscapeIssues(text: string): string | undefined {
     return `Escape hint: ${issues.join('; ')}.`;
 }
 
+/** 诊断用：截断并转义单行内容（JSON 字符串风格，避免控制字符破坏错误消息） */
+function truncateForDiagnosis(text: string, maxLength = 80): string {
+    const escaped = JSON.stringify(text);
+    if (escaped.length <= maxLength) return escaped;
+    return `${escaped.slice(0, maxLength)}...`;
+}
+
+/** 返回两个字符串第一个不同字符的索引（-1 表示完全一致） */
+function firstDiffCharIndex(a: string, b: string): number {
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+        if (a[i] !== b[i]) return i;
+    }
+    return a.length === b.length ? -1 : len;
+}
+
+/**
+ * 为「oldContent 无法匹配」生成定位诊断：
+ * 在文件中定位与 oldContent 最接近的行块，逐行列出差异（含首差异字符列），
+ * 帮助调用方快速修正参数而不是盲猜。带规模护栏，避免大文件 O(m×n) 扫描卡死。
+ */
+function buildClosestBlockDiagnosis(currentContent: string, oldContent: string): string | undefined {
+    // 1. 规模护栏：超大文件或超长块跳过诊断，避免引入 O(m×n) 卡死
+    const fileLines = currentContent.split('\n');
+    const blockLines = oldContent.split('\n');
+    if (fileLines.length > 20000 || blockLines.length > 200) return undefined;
+
+    // 2. 依次尝试块内足够长的非空行作为锚点，取第一个能在文件中找到匹配的。
+    //    锚点行本身有差异（如全角/半角、大小写）时继续尝试后续行，避免首行不匹配就整体失效。
+    const anchorLines: Array<{ index: number; text: string }> = [];
+    for (let i = 0; i < blockLines.length; i++) {
+        const trimmed = blockLines[i].trim();
+        if (trimmed.length >= 4) anchorLines.push({ index: i, text: trimmed });
+    }
+    if (anchorLines.length === 0) return undefined;
+
+    const candidateStarts: number[] = [];
+    for (const anchorLine of anchorLines) {
+        for (let i = 0; i < fileLines.length; i++) {
+            if (fileLines[i].trim() === anchorLine.text) {
+                // 候选起点 = 锚点在文件中的行号 - 锚点在块中的行号（对齐块首）
+                const start = i - anchorLine.index;
+                if (start >= 0) candidateStarts.push(start);
+            }
+        }
+        if (candidateStarts.length > 0) break;
+    }
+    if (candidateStarts.length === 0) return undefined;
+
+    // 3. 对每个候选起点统计逐行匹配数（trim 比较），取最佳
+    let bestStart = -1;
+    let bestMatched = -1;
+    for (const start of candidateStarts) {
+        let matched = 0;
+        const limit = Math.min(blockLines.length, fileLines.length - start);
+        for (let k = 0; k < limit; k++) {
+            if (fileLines[start + k].trim() === blockLines[k].trim()) matched++;
+        }
+        if (matched > bestMatched) {
+            bestMatched = matched;
+            bestStart = start;
+        }
+    }
+    if (bestStart === -1 || bestMatched === blockLines.length) return undefined;
+
+    // 4. 逐行列出差异（最多 5 行）
+    const details: string[] = [];
+    const compareLen = Math.max(blockLines.length, Math.min(fileLines.length - bestStart, blockLines.length));
+    for (let k = 0; k < compareLen && details.length < 5; k++) {
+        const expected = blockLines[k];
+        const actual = fileLines[bestStart + k];
+        if (actual === undefined) {
+            details.push(`  line ${bestStart + k + 1}: expected ${truncateForDiagnosis(expected)} but the block extends beyond the end of the file`);
+        } else if (expected === undefined) {
+            details.push(`  line ${bestStart + k + 1}: extra line in file: ${truncateForDiagnosis(actual)}`);
+        } else if (expected.trim() !== actual.trim()) {
+            const diffAt = firstDiffCharIndex(expected, actual);
+            const diffSuffix = diffAt >= 0
+                ? ` (first difference at character ${diffAt + 1}: ${truncateForDiagnosis(expected[diffAt] ?? '')} vs ${truncateForDiagnosis(actual[diffAt] ?? '')})`
+                : ' (line-length or leading-whitespace difference)';
+            details.push(`  line ${bestStart + k + 1}: expected ${truncateForDiagnosis(expected)} but found ${truncateForDiagnosis(actual)}${diffSuffix}`);
+        }
+    }
+
+    return [
+        `Closest block starts at line ${bestStart + 1} (${bestMatched} of ${blockLines.length} lines match):`,
+        ...details,
+        'Check for full-width vs half-width characters, whitespace differences, or content that was already modified.'
+    ].join('\n');
+}
+
 function resolveStructuredHunkMatch(
     currentContent: string,
     oldContent: string,
@@ -568,12 +659,13 @@ function resolveStructuredHunkMatch(
     }
 
     const escapeDiagnosis = detectEscapeIssues(oldContent);
+    const blockDiagnosis = buildClosestBlockDiagnosis(currentContent, oldContent);
 
     const fallback = findIndentFallbackCandidates(currentContent, oldContent);
     if (fallback.disabledReason) {
         return {
             success: false,
-            error: `No exact match found for oldContent. Indentation fallback was not attempted: ${fallback.disabledReason}.${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
+            error: `No exact match found for oldContent. Indentation fallback was not attempted: ${fallback.disabledReason}.${blockDiagnosis ? '\n' + blockDiagnosis : ''}${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
             matchCount: 0
         };
     }
@@ -581,7 +673,7 @@ function resolveStructuredHunkMatch(
     if (fallback.candidates.length === 0) {
         return {
             success: false,
-            error: `No exact match found for oldContent. Also tried indentation-tolerant line matching (leading spaces/tabs only), but no candidate block matched. Please verify the non-indentation content exactly.${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
+            error: `No exact match found for oldContent. Also tried indentation-tolerant line matching (leading spaces/tabs only), but no candidate block matched.${blockDiagnosis ? '\n' + blockDiagnosis : ''}${escapeDiagnosis ? ' ' + escapeDiagnosis : ''}`,
             matchCount: 0
         };
     }
@@ -983,10 +1075,11 @@ export function applyDiffToContent(
         const matchIndex = contentFromStart.indexOf(normalizedSearch);
 
         if (matchIndex === -1) {
+            const diagnosis = buildClosestBlockDiagnosis(normalizedContent, normalizedSearch);
             return {
                 success: false,
                 result: normalizedContent,
-                error: `No exact match found starting from line ${startLine}.`,
+                error: `No exact match found starting from line ${startLine}.${diagnosis ? '\n' + diagnosis : ''}`,
                 matchCount: 0
             };
         }
@@ -1013,10 +1106,11 @@ export function applyDiffToContent(
     const matches = normalizedContent.split(normalizedSearch).length - 1;
 
     if (matches === 0) {
+        const diagnosis = buildClosestBlockDiagnosis(normalizedContent, normalizedSearch);
         return {
             success: false,
             result: normalizedContent,
-            error: 'No exact match found. Please verify the content matches exactly.',
+            error: `No exact match found. Please verify the content matches exactly.${diagnosis ? '\n' + diagnosis : ''}`,
             matchCount: 0
         };
     }
@@ -1077,6 +1171,9 @@ function applyLegacyDiffsBestEffort(
     failedCount: number;
 } {
     let currentContent = originalContent;
+    // start_line 相对原始文件：前序 hunk 应用改变了行数后，后续 hunk 必须累计偏移，
+    // 否则第二个及以后的 hunk 整体错位
+    let lineDelta = 0;
 
     const results: Array<{
         index: number;
@@ -1100,7 +1197,11 @@ function applyLegacyDiffsBestEffort(
             continue;
         }
 
-        const r = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
+        // start_line 相对原始文件：叠加前序 hunk 的行数偏移
+        const adjustedStartLine = typeof diff.start_line === 'number' && diff.start_line > 0
+            ? diff.start_line + lineDelta
+            : diff.start_line;
+        const r = applyDiffToContent(currentContent, diff.search, diff.replace, adjustedStartLine);
         let error = r.error;
         if (!r.success && error && options?.errorSuffix) {
             error = `${error} ${options.errorSuffix}`;
@@ -1122,6 +1223,8 @@ function applyLegacyDiffsBestEffort(
 
         if (r.success) {
             currentContent = r.result;
+            // 累计行数变化：replace 行数 - search 行数（基于规范化后的 LF 数量差）
+            lineDelta += countLineBreaks(normalizeLineEndings(diff.replace)) - countLineBreaks(normalizeLineEndings(diff.search));
             if (startLine !== undefined && endLine !== undefined) {
                 blocks.push({ index: i, startLine, endLine });
             }
@@ -1588,6 +1691,8 @@ ${descriptionSuffix}`,
                 }
 
                 let currentContent = originalContent;
+                // start_line 相对原始文件：前序 hunk 应用改变了行数后，后续 hunk 必须累计偏移
+                let lineDelta = 0;
 
                 const diffResults: Array<{
                     index: number;
@@ -1608,7 +1713,10 @@ ${descriptionSuffix}`,
                         continue;
                     }
 
-                    const result = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
+                    const adjustedStartLine = typeof diff.start_line === 'number' && diff.start_line > 0
+                        ? diff.start_line + lineDelta
+                        : diff.start_line;
+                    const result = applyDiffToContent(currentContent, diff.search, diff.replace, adjustedStartLine);
                     diffResults.push({
                         index: i,
                         success: result.success,
@@ -1618,6 +1726,8 @@ ${descriptionSuffix}`,
 
                     if (result.success) {
                         currentContent = result.result;
+                        // 累计行数变化：replace 行数 - search 行数
+                        lineDelta += countLineBreaks(normalizeLineEndings(diff.replace)) - countLineBreaks(normalizeLineEndings(diff.search));
                     }
                 }
 

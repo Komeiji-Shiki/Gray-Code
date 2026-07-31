@@ -9,6 +9,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { getFileIcon as getFileIconClass } from '../../utils/fileIcons'
 import CustomScrollbar from '../common/CustomScrollbar.vue'
+import { escapeHtml } from '../common/markdownUtils'
 
 const { t } = useI18n()
 
@@ -110,12 +111,14 @@ function getFileIcon(file: FileItem): string {
   return getFileIconClass(file.name)
 }
 
-// 高亮匹配文本
+// 高亮匹配文本（路径与查询串都转义后再高亮，防止文件名注入 HTML）
 function highlightMatch(text: string, query: string): string {
-  if (!query.trim()) return text
+  const escapedText = escapeHtml(text)
+  if (!query.trim()) return escapedText
   
-  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
+  const escapedQuery = escapeHtml(query)
+  const regex = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  return escapedText.replace(regex, '<mark>$1</mark>')
 }
 
 // 计算高亮显示的路径

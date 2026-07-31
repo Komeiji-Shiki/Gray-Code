@@ -197,7 +197,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   /**
    * 取消所有活跃的流式请求
    */
-  cancelAll(view?: vscode.WebviewView): void {
+  cancelAll(view?: { webview: vscode.Webview }): void {
     for (const [conversationId, controller] of this.controllers) {
       controller.abort();
       try {

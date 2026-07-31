@@ -8,6 +8,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension } from '@/utils/vscode'
+import { escapeHtml } from './markdownUtils'
 
 const { t } = useI18n()
 
@@ -60,8 +61,8 @@ async function close() {
 const formattedChangelog = computed(() => {
   if (!changelog.value) return ''
   
-  // 简单的 markdown 解析
-  return changelog.value
+  // 先整体转义再替换 markdown 标记，防止 changelog 内容注入 HTML
+  return escapeHtml(changelog.value)
     // 处理标题
     .replace(/^### (.+)$/gm, '<h4>$1</h4>')
     .replace(/^## (.+)$/gm, '<h3>$1</h3>')

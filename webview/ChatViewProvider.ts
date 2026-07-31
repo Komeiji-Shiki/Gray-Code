@@ -380,7 +380,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.chatHandler,
             this.conversationManager,
             this.settingsManager,
-            () => this._view,
+            (clientId?: string) => this.getClientView(clientId),
             this.sendResponse.bind(this),
             this.sendError.bind(this),
             this.webviewClientRegistry
@@ -476,13 +476,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         fallbackWebview?.postMessage(routedMessage);
     }
 
-    private registerWebviewClient(clientId: string, webview: vscode.Webview, runScope?: RunScope): vscode.Disposable {
+    private registerWebviewClient(
+        clientId: string,
+        webview: vscode.Webview,
+        runScope?: RunScope,
+        isAlive?: () => boolean
+    ): vscode.Disposable {
         return this.webviewClientRegistry.register({
             clientId,
             runScope,
             webviewHost: { webview },
-            postMessage: (message) => webview.postMessage(message)
+            postMessage: (message) => webview.postMessage(message),
+            isAlive: isAlive ?? (() => this._view !== undefined && this._view.webview === webview)
         });
+    }
+
+    /** 按 clientId 获取目标 webview（F5）：monitor 面板发起的流路由到 monitor，缺省回退主聊天 */
+    private getClientView(clientId?: string): { webview: vscode.Webview } | undefined {
+        if (clientId) {
+            return this.webviewClientRegistry.getWebviewHost(clientId);
+        }
+        return this._view ? { webview: this._view.webview } : undefined;
     }
 
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
@@ -528,7 +542,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
             return await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
         } catch (error: any) {
-            sendError(requestId, error.code || 'HANDLER_ERROR', error.message || String(error));
+            sendError(requestId, error.code || 'HANDLER_ERROR', error instanceof Error ? error.message : String(error));
             return true;
         }
     }
@@ -830,7 +844,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         } catch (error: any) {
             console.error('Error handling message:', error);
-            this.sendError(requestId, error.code || 'HANDLER_ERROR', error.message);
+            this.sendError(requestId, error.code || 'HANDLER_ERROR', error instanceof Error ? error.message : String(error));
         }
     }
 
@@ -873,6 +887,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Drop queued commands.
         this.pendingCommands = [];
         this.webviewReady = false;
+        // 重置视图引用，避免重开面板后 postMessage 被静默丢弃（M7）
+        this._view = undefined;
         
         // 取消终端输出订阅
         if (this.terminalOutputUnsubscribe) {
@@ -945,6 +961,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (!this._view || !this.webviewReady) {
             // Queue until webview is ready (or view exists).
             this.pendingCommands.push({ command, data });
+            // 队列上限：面板长期未打开时反复触发命令不能让队列无界增长（F2）
+            if (this.pendingCommands.length > 100) {
+                this.pendingCommands.splice(0, this.pendingCommands.length - 100);
+            }
             return;
         }
 

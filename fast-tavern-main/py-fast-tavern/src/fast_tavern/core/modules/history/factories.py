@@ -23,6 +23,7 @@ class History:
 
     @staticmethod
     def text(text: str | list[str]) -> list[ChatMessage]:
-        joined = "\n".join(text) if isinstance(text, list) else str(text or "")
+        # 对齐 TS String(text ?? '')：0/False 不是空值，只有 None 才转空串
+        joined = "\n".join(text) if isinstance(text, list) else ("" if text is None else str(text))
         return [{"role": "user", "parts": [{"text": joined}]}]
 

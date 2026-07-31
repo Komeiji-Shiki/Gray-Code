@@ -578,37 +578,66 @@ interface LCSMatch {
 function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
   const m = oldLines.length
   const n = newLines.length
-  
-  // 创建 DP 表
-  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0))
-  
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
+
+  // 剥离公共前缀：这些行必然匹配，无需进入 DP
+  let prefixLen = 0
+  while (prefixLen < m && prefixLen < n && oldLines[prefixLen] === newLines[prefixLen]) {
+    prefixLen++
+  }
+
+  // 剥离公共后缀
+  let suffixLen = 0
+  while (
+    suffixLen < m - prefixLen &&
+    suffixLen < n - prefixLen &&
+    oldLines[m - 1 - suffixLen] === newLines[n - 1 - suffixLen]
+  ) {
+    suffixLen++
+  }
+
+  const coreOld = oldLines.slice(prefixLen, m - suffixLen)
+  const coreNew = newLines.slice(prefixLen, n - suffixLen)
+  const coreM = coreOld.length
+  const coreN = coreNew.length
+
+  // 核心区域 DP：面积过大时跳过（数千行 diff 的 O(m×n) 会占用数百 MB 内存并阻塞主线程）
+  const coreMatches: LCSMatch[] = []
+  if (coreM > 0 && coreN > 0 && coreM * coreN <= 1_000_000) {
+    // 创建 DP 表
+    const dp: number[][] = Array(coreM + 1).fill(null).map(() => Array(coreN + 1).fill(0))
+
+    for (let i = 1; i <= coreM; i++) {
+      for (let j = 1; j <= coreN; j++) {
+        if (coreOld[i - 1] === coreNew[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1
+        } else {
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+        }
+      }
+    }
+
+    // 回溯找出匹配的行（索引需加回 prefixLen 偏移）
+    let i = coreM, j = coreN
+    while (i > 0 && j > 0) {
+      if (coreOld[i - 1] === coreNew[j - 1]) {
+        coreMatches.unshift({ oldIndex: prefixLen + i - 1, newIndex: prefixLen + j - 1 })
+        i--
+        j--
+      } else if (dp[i - 1][j] > dp[i][j - 1]) {
+        i--
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+        j--
       }
     }
   }
-  
-  // 回溯找出匹配的行
+
+  // 前缀匹配（前缀中所有行都匹配）
   const result: LCSMatch[] = []
-  let i = m, j = n
-  
-  while (i > 0 && j > 0) {
-    if (oldLines[i - 1] === newLines[j - 1]) {
-      result.unshift({ oldIndex: i - 1, newIndex: j - 1 })
-      i--
-      j--
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      i--
-    } else {
-      j--
-    }
+  for (let k = 0; k < prefixLen; k++) {
+    result.push({ oldIndex: k, newIndex: k })
   }
-  
-  return result
+
+  return result.concat(coreMatches)
 }
 
 // 获取行号宽度

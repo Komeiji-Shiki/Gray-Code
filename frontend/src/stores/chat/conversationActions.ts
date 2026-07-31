@@ -690,7 +690,6 @@ export async function switchConversation(
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
-  state.messageQueue.value = []
   state.attachments.value = []
   state.editorNodes.value = []
 

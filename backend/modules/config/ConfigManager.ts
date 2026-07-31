@@ -124,6 +124,7 @@ export class ConfigManager {
                     ...baseDefaults,
                     url: 'https://api.openai.com/v1',
                     deepSeekUserIdEnabled: false,
+                    pdfAttachmentEnabled: false,
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,

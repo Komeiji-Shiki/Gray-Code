@@ -48,6 +48,13 @@ import {
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
+import {
+    isImageMimeType,
+    isPdfMimeType,
+    isTextMimeType,
+    buildTextAttachmentContent,
+    buildUnsupportedAttachmentText
+} from './mediaParts';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -425,18 +432,44 @@ export class AnthropicFormatter extends BaseFormatter {
     private buildMessageContent(textParts: ContentPart[], mediaParts: ContentPart[]): any[] {
         const contentArray: any[] = [];
         
-        // 添加多媒体部分（图片通常放在文本前面）
+        // 添加多媒体部分（按 MIME 类型转换，不能一律当作图片）
         for (const part of mediaParts) {
             if (part.inlineData) {
-                // Base64 内联数据
-                contentArray.push({
-                    type: 'image',
-                    source: {
-                        type: 'base64',
-                        media_type: part.inlineData.mimeType,
-                        data: part.inlineData.data
-                    }
-                });
+                const { mimeType, data } = part.inlineData;
+                
+                if (isImageMimeType(mimeType)) {
+                    // 图片 -> image 块（Base64 内联数据）
+                    contentArray.push({
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeType,
+                            data
+                        }
+                    });
+                } else if (isPdfMimeType(mimeType)) {
+                    // PDF -> document 块（Anthropic 支持）
+                    contentArray.push({
+                        type: 'document',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeType,
+                            data
+                        }
+                    });
+                } else if (isTextMimeType(mimeType)) {
+                    // 文本文件（如 txt）-> 解码为 text 块
+                    contentArray.push({
+                        type: 'text',
+                        text: buildTextAttachmentContent(data)
+                    });
+                } else {
+                    // 其他格式（音视频等）Anthropic 不支持直接发送，转为文本占位
+                    contentArray.push({
+                        type: 'text',
+                        text: buildUnsupportedAttachmentText(mimeType)
+                    });
+                }
             } else if (part.fileData) {
                 // 文件引用 -> URL 格式
                 contentArray.push({

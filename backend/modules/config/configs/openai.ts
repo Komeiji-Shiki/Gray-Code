@@ -55,6 +55,14 @@ export interface OpenAIConfig extends BaseChannelConfig {
      */
     deepSeekUserIdEnabled?: boolean;
 
+    /**
+     * 是否将 PDF 附件作为原生 file 内容块发送（Chat Completions 的
+     * {"type": "file", "file": {...}} 格式）。
+     * 仅官方 OpenAI 端点及支持 file 类型的兼容端点可用，默认关闭；
+     * 关闭时 PDF 附件转为文本占位，避免不支持该类型的端点报 400。
+     */
+    pdfAttachmentEnabled?: boolean;
+
     /** 可用模型列表 */
     models?: ModelInfo[];
     

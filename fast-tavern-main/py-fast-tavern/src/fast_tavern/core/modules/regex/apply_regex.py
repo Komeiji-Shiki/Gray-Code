@@ -12,7 +12,8 @@ def _escape_regexp_literal(s: str) -> str:
     return re.sub(r"[.*+?^${}()|\[\]\\]", lambda m: "\\" + m.group(0), s)
 
 
-def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str) -> str:
+def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str | None) -> str:
+    # 对齐 TS：macroMode 缺失（None）时执行替换；只有显式 "none" 才跳过
     if mode == "none":
         return pattern
 
@@ -32,7 +33,8 @@ def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str) -> st
         val = pick(key)
         return m.group(0) if val is None else encode(val)
 
-    return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", repl, re.sub(r"<<\s*([a-zA-Z0-9_]+)\s*>>", repl, pattern))
+    # 替换顺序对齐 TS：先 {{}} 后 <<>>（{{}} 展开结果中出现的 <<>> 不再二次展开）
+    return re.sub(r"<<\s*([a-zA-Z0-9_]+)\s*>>", repl, re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", repl, pattern))
 
 
 def _parse_find_regex(input_value: str) -> tuple[str, str]:
@@ -161,7 +163,7 @@ def apply_regex(
         if not _should_apply_by_depth(script, target, history_depth):
             continue
 
-        substituted = _replace_macro_tokens(str(script.get("findRegex") or ""), macros, str(script.get("macroMode") or "none"))
+        substituted = _replace_macro_tokens(str(script.get("findRegex") or ""), macros, script.get("macroMode"))
         source, flags = _parse_find_regex(substituted)
         re_flags, global_replace = _flags_to_re_flags(flags)
 

@@ -45,7 +45,7 @@ export class StreamChunkProcessor {
      * 继续发往旧 webview 会让新视图永远收不到 complete/cancelled，
      * 占位消息永久"生成中"。
      */
-    private getView: () => vscode.WebviewView | undefined,
+    private getView: () => { webview: vscode.Webview } | undefined,
     private conversationId: string,
     private streamId: string
   ) {}

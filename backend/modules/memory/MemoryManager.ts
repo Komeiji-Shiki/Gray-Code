@@ -685,10 +685,6 @@ export class MemoryManager {
      * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 319 字节）。
      */
     async updateEntry(id: number, text: string): Promise<void> {
-        const T = await this.logLen();
-        if (id < 0 || id >= T) {
-            die(`No memory at index ${id}.`);
-        }
         const trimmed = text.trim();
         if (!trimmed) die('Empty. A memory is one line of text.');
         if (trimmed.includes('\n') || trimmed.includes('\r')) {
@@ -699,12 +695,19 @@ export class MemoryManager {
             die(`Too long: ${byteLen} bytes, limit ${this.config.entryChars}.`);
         }
 
-        // 读取原条目以保留 ID 和日期
-        const entry = await this.logGet(id);
-        const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
-
+        // 校验与读取必须放在锁内：并发 truncateLog/logAppend 改变日志长度后，
+        // 基于过期 id 的写入会越过 EOF，产生零填充垃圾记录。
         const release = await this.lock.acquire();
         try {
+            const T = await this.logLen();
+            if (id < 0 || id >= T) {
+                die(`No memory at index ${id}.`);
+            }
+
+            // 读取原条目以保留 ID 和日期
+            const entry = await this.logGet(id);
+            const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
+
             const buf = pad(newLine, LOG_REC);
             const logPath = this.logPath();
             const handle = await fs.open(logPath, 'r+');

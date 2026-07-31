@@ -21,6 +21,9 @@ import { getGlobalSettingsManager } from '../../core/settingsContext'
 import type { PinnedFileItem, PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings/types'
 import { promptContextMessagesToText } from './promptContextCache'
 
+/** 转义正则元字符（glob 模式转正则前的公共前置步骤） */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
 
@@ -1216,13 +1219,15 @@ export class PromptManager {
      * 简单的 glob 模式匹配
      */
     private matchGlobPattern(path: string, pattern: string): boolean {
-        const regexPattern = pattern
-            .replace(/\\/g, '/')
-            .replace(/\./g, '\\.')
-            .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-            .replace(/\*/g, '[^/]*')
+        // 整体转义正则元字符后再做通配替换（顺序敏感）：
+        // 1) 先转义（含 . [ ( + ? 等），避免用户配置含这些字符时 new RegExp 抛 SyntaxError；
+        // 2) 斜杠替换必须先于星号替换——否则 * 展开出的 [^/] 里的 / 会被误替换成 [/\]，
+        //    产生 [^[/\]]（多一个闭合括号变成字面 ] 匹配），通配永不命中。
+        const regexPattern = escapeRegExp(pattern.replace(/\\/g, '/'))
+            .replace(/\//g, '[/\\\\]')              // 斜杠（不区分 / 与 \）
+            .replace(/\\\*\\\*\\\*/g, '<<<GLOBSTAR>>>') // 转义后的 **
+            .replace(/\\\*/g, '[^/]*')              // 转义后的 *
             .replace(/<<<GLOBSTAR>>>/g, '.*')
-            .replace(/\//g, '[/\\\\]')
         
         const regex = new RegExp(`^${regexPattern}$|[/\\\\]${regexPattern}$|^${regexPattern}[/\\\\]|[/\\\\]${regexPattern}[/\\\\]`, 'i')
         return regex.test(path.replace(/\\/g, '/'))

@@ -286,6 +286,7 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // toolsExecuting 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -477,6 +478,7 @@ export function handleAwaitingConfirmation(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // awaitingConfirmation 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -695,6 +697,7 @@ export function handleToolIteration(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // toolIteration 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -876,6 +879,7 @@ export function handleComplete(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // complete 代表后端已持久化该模型消息
       localOnly: false,
