@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from ...types import RegexScriptData, RegexTarget, RegexView
+from ..macro.replace_macros import replace_macros
 
 
 def _escape_regexp_literal(s: str) -> str:
@@ -138,6 +139,8 @@ def apply_regex(
     """
     result = "" if text is None else str(text)
     macros: dict[str, str] = params.get("macros") or {}
+    # 用于 Replace Regex 的变量宏（{{getvar::...}}/{{setvar::...}} 等），透传给 replace_macros
+    variable_context: dict[str, Any] | None = params.get("variableContext")
 
     scripts: list[RegexScriptData] = params.get("scripts") or []
     target: RegexTarget = params.get("target")
@@ -175,7 +178,14 @@ def apply_regex(
             match = m.group(0) or ""
             groups = [g if g is not None else "" for g in m.groups()]
             match_trimmed = _apply_trim(match, trims)
-            return _interpolate_replacement(replace_template, match_trimmed, groups)
+            interpolated = _interpolate_replacement(replace_template, match_trimmed, groups)
+            # 对齐 TS applyRegex（applyRegex.ts repl 内调用 replaceMacros）：
+            # 替换结果中若包含 {{user}}、{{getvar::...}}、{{setvar::...}} 等宏，必须立即展开，
+            # 否则原样保留或静默失效，产出错误 prompt。
+            return replace_macros(interpolated, {
+                "macros": macros,
+                "variableContext": variable_context,
+            })
 
         count = 0 if global_replace else 1
         result = compiled.sub(repl, result, count=count)
