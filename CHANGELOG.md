@@ -51,6 +51,8 @@
   - 修复 checkpoint cleanup 对完整链恒为 no-op、`maxCheckpoints` 静默失效的问题：删除链上中间节点前先把其备份合并进后继（不覆盖后继已有文件）、changes 合并、base 重挂，再删除
   - 修复取消流从未收到 usage 事件时（OpenAI chat/Gemini）整条 model 消息被跳过漏计的问题：`estimatePartialMessageTokens` 在 usage 缺失时也按文本长度估算（含 functionCall 参数）
   - 修复 fast-tavern Python `process_content_stages` 调用 `apply_regex` 时漏传 `variableContext`：`{{getvar::...}}`/`{{setvar::...}}` 在 replaceRegex 场景端到端仍失效；现在与 TS 调用方对齐透传
+  - 修复 Gemini 空候选报错信息不具体：非流式解析对 `content` 缺失的候选抛笼统错误，现在显式报出 `finishReason`（新增 `emptyCandidate` 三语言词条），内容安全拦截等场景可直接看到真实终止原因（参考 PR #1）
+  - 修复 Anthropic `count_tokens` URL 归一化顺序：baseUrl 形如 `.../v1/models/complete` 时先处理 `/v1/models` 会残留 `/complete` 后缀、拼出畸形端点 URL；现在先去掉 `/complete` 再规整 `/v1/models`（参考 PR #1）
 
 ### Changed
   - `StreamChunkProcessor` 构造从持有 view 引用改为持有 `getView` 回调，视图重建后消息自动发往新视图

@@ -146,7 +146,8 @@ const zhCN = {
                 gemini: {
                     errors: {
                         invalidResponse: '无效的 Gemini API 响应: 没有候选结果',
-                        apiError: 'API 返回错误状态: {code}'
+                        apiError: 'API 返回错误状态: {code}',
+                        emptyCandidate: 'Gemini 返回了无内容的候选（终止原因: {finishReason}，可能是内容安全拦截）'
                     }
                 },
                 anthropic: {

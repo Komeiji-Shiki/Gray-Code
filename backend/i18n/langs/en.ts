@@ -145,7 +145,8 @@ const en: BackendLanguageMessages = {
                 gemini: {
                     errors: {
                         invalidResponse: 'Invalid Gemini API response: no candidates',
-                        apiError: 'API returned error status: {code}'
+                        apiError: 'API returned error status: {code}',
+                        emptyCandidate: 'Gemini returned a candidate with no content (finishReason: {finishReason}, possibly a safety block)'
                     }
                 },
                 anthropic: {
