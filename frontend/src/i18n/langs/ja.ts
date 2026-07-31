@@ -1226,13 +1226,6 @@ const ja: LanguageMessages = {
                     auto: 'システムに従う',
                     autoDescription: 'VS Code の言語設定に自動的に従う'
                 },
-                appInfo: {
-                    title: 'アプリケーション情報',
-                    name: 'GrayCode - Vibe Coding アシスタント',
-                    version: 'バージョン',
-                    repository: 'リポジトリ',
-                    developer: '開発者'
-                }
             },
             contextSettings: {
                 loading: '読み込み中...',
@@ -1871,8 +1864,8 @@ const ja: LanguageMessages = {
                 },
                 appInfo: {
                     title: 'アプリケーション情報',
-                    name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.1.26',
+                    name: '{appName} - Vibe Coding アシスタント',
+                    version: 'バージョン：{version}',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 },
