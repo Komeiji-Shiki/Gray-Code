@@ -47,7 +47,7 @@ describe('show_windows_notification tool', () => {
     })
 
     await adapter.requests[0].onClick?.()
-    expect(executedCommands).toEqual(['limcode.openChat'])
+    expect(executedCommands).toEqual(['graycode.openChat'])
   })
 
   it('allows disabling click-to-open-chat and sound suppression', async () => {

@@ -530,8 +530,9 @@ describe('DiffManager conversationId scoping (#48)', () => {
 
         manager.resetUserInterrupt('conv-A');
         expect(manager.isUserInterrupted('conv-A')).toBe(false);
-        // Global flag still true since other conversations might be interrupted
-        expect(manager.isUserInterrupted()).toBe(true);
+        // 实现有意同步清理：无其他会话中断时，全局标记随最后一个会话重置
+        // （否则无 conversationId 的 diff 会被残留的 globalUserInterrupt 误伤）
+        expect(manager.isUserInterrupted()).toBe(false);
 
         manager.resetUserInterrupt();
         expect(manager.isUserInterrupted()).toBe(false);
