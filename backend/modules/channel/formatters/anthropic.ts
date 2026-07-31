@@ -933,10 +933,18 @@ export class AnthropicFormatter extends BaseFormatter {
         const thinkingTokens = usage.output_tokens_details?.thinking_tokens ?? 0;
         const candidatesTokens = thinkingTokens > 0 ? outputTokens - thinkingTokens : outputTokens;
 
+        // totalTokenCount 只在收到原生 input 侧计数时提供：Anthropic 的 message_delta
+        // usage 只含 output_tokens，若此时也输出 total（= 0 + output），累加器的
+        // mergeUsageMetadata 会把 message_start 时正确的 total 覆盖掉，输入 token 从总量中消失。
+        // （部分代理在任意事件返回完整 usage，此时 input_tokens 存在，仍会正常输出 total。）
+        const hasInputSideTokens = usage.input_tokens !== undefined
+            || usage.cache_creation_input_tokens !== undefined
+            || usage.cache_read_input_tokens !== undefined;
+
         return {
             promptTokenCount: promptTotal || undefined,
             candidatesTokenCount: candidatesTokens > 0 ? candidatesTokens : (outputTokens > 0 ? outputTokens : undefined),
-            totalTokenCount: promptTotal + outputTokens || undefined,
+            totalTokenCount: hasInputSideTokens ? (promptTotal + outputTokens || undefined) : undefined,
             ...(thinkingTokens > 0 ? { thoughtsTokenCount: thinkingTokens } : {}),
             ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
         };
@@ -984,7 +992,10 @@ export class AnthropicFormatter extends BaseFormatter {
                         functionCall: {
                             name: '', // 名称在 block_start 中提供，这里留空供累加器合并
                             args: {},
-                            partialArgs: delta.partial_json
+                            partialArgs: delta.partial_json,
+                            // 透传事件级 index：Anthropic 每个 content_block_* 事件顶层都带 index，
+                            // 累加器依赖它区分并行工具调用，缺 index 时参数增量会被全部拼进最后一个空工具壳。
+                            index: chunk.index
                         }
                     });
                 }
@@ -1019,7 +1030,9 @@ export class AnthropicFormatter extends BaseFormatter {
                         name: block.name,
                         args: args,
                         partialArgs: Object.keys(args).length > 0 ? JSON.stringify(args) : '',
-                        id: block.id
+                        id: block.id,
+                        // 透传事件级 index（同 input_json_delta），保证与参数增量按同一 index 合并
+                        index: chunk.index
                     }
                 });
             }

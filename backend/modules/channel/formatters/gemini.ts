@@ -181,9 +181,17 @@ export class GeminiFormatter extends BaseFormatter {
             ? 'streamGenerateContent'
             : 'generateContent';
         
-        // 流式请求需要添加 ?alt=sse 参数以获取 SSE 格式响应
-        const queryParams = useStream ? '?alt=sse' : '';
-        const url = `${baseUrl}/models/${config.model}:${method}${queryParams}`;
+        // 流式请求需要添加 ?alt=sse 参数以获取 SSE 格式响应。
+        // baseUrl 可能已带 query（如 ?api-version=1）：query 必须跟在路径末尾，
+        // 直接拼接会把 query 塞进路径中间生成畸形 URL。拆出后统一追加到末尾。
+        const queryIndex = baseUrl.indexOf('?');
+        const basePath = queryIndex >= 0 ? baseUrl.slice(0, queryIndex) : baseUrl;
+        const baseQuery = queryIndex >= 0 ? baseUrl.slice(queryIndex + 1) : '';
+        const queryParts: string[] = [];
+        if (useStream) queryParts.push('alt=sse');
+        if (baseQuery) queryParts.push(baseQuery);
+        const querySuffix = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+        const url = `${basePath}/models/${config.model}:${method}${querySuffix}`;
         
         // 构建请求头
         const headers: Record<string, string> = {
@@ -303,7 +311,12 @@ export class GeminiFormatter extends BaseFormatter {
         const candidate = response.candidates[0];
         
         // 提取完整的 Content（Gemini 已经是标准格式）
+        // 注意：候选可能只有 finishReason 而没有 content（如被安全策略拦截），必须判空，
+        // 否则 content.parts 直接 TypeError（流式路径已有判空，这里对齐）。
         const content = candidate.content;
+        if (!content) {
+            throw new Error(t('modules.channel.formatters.gemini.errors.invalidResponse'));
+        }
         
         // 提取思考签名并转换为内部格式，同时删除原始单数格式
         if (content.parts) {

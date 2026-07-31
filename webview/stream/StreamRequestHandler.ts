@@ -130,7 +130,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(() => this.deps.getView(), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleChatStream({
@@ -168,8 +168,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
@@ -182,7 +182,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(() => this.deps.getView(), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleRetryStream({
@@ -213,8 +213,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
@@ -227,7 +227,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(() => this.deps.getView(), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
@@ -262,8 +262,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
@@ -276,7 +276,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(() => this.deps.getView(), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleToolConfirmation({
@@ -309,8 +309,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.delete(conversationId, controller);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 

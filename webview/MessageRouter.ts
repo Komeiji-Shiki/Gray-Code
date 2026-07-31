@@ -127,12 +127,15 @@ export class MessageRouter {
       const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
       handler(data, requestId, routedCtx).catch((error) => {
         console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
-        this.requestClients.delete(requestId);
+        // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息，
+        // 先 delete 会导致错误必然错投主聊天，Monitor 面板请求永久挂起。
         try {
           this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
         } catch {
           // 发送错误失败则静默忽略
         }
+        // sendRoutedError 内部成功路由时会删除条目；回退路径不删，这里兜底清理防泄漏。
+        this.requestClients.delete(requestId);
       });
       return true;
     }
@@ -185,6 +188,8 @@ export class MessageRouter {
       return;
     }
 
+    // 回退到主聊天：目标客户端不存在或已销毁，条目必须清理，否则 requestClients 无界泄漏
+    this.requestClients.delete(requestId);
     this.sendResponse(requestId, data);
   }
 
@@ -195,6 +200,8 @@ export class MessageRouter {
       return;
     }
 
+    // 回退到主聊天：目标客户端不存在或已销毁，条目必须清理，否则 requestClients 无界泄漏
+    this.requestClients.delete(requestId);
     this.sendError(requestId, code, message);
   }
 

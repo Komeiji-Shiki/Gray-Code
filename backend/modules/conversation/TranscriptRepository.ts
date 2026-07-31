@@ -31,7 +31,15 @@ export function cloneTranscriptContents(contents: ReadonlyArray<Content> = []): 
 }
 
 export class DelegatingTranscriptRepository implements ITranscriptRepository {
-    constructor(private readonly delegate: TranscriptRepositoryDelegate) {}
+    constructor(
+        private readonly delegate: TranscriptRepositoryDelegate,
+        /**
+         * 可选的互斥执行器：把 get→mutate→replace 整体串行化。
+         * 同一会话并发调用 mutateContents 时，若都基于同一旧快照执行
+         * 再各自写回，后写会覆盖先写（如工具结果被"用户拒绝"占位覆盖）。
+         */
+        private readonly exclusive?: <T>(fn: () => Promise<T>) => Promise<T>
+    ) {}
 
     async getContents(): Promise<Content[]> {
         return cloneTranscriptContents(await this.delegate.loadContents());
@@ -49,6 +57,20 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
     }
 
     async replaceContents(contents: Content[]): Promise<Content[]> {
+        // 修改原因：rejectAllPendingToolCalls / settleFunctionResponses 等调用方此前直接
+        // getContents + replaceContents 直写，绕过 exclusive 互斥，与原缺陷同源的
+        // “后写覆盖先写”竞态依旧可达。
+        // 修改方式：replaceContents 也纳入互斥执行器；内部实现拆成 saveAndReload，
+        // 供 mutateContents 在已持锁的上下文中复用，避免锁嵌套死锁。
+        const run = this.exclusive ?? ((fn: () => Promise<Content[]>) => fn());
+        return run(() => this.saveAndReload(contents));
+    }
+
+    /**
+     * 保存并回读真实落盘形态。必须在互斥执行器内调用（replaceContents 自带，
+     * mutateContents 在锁内复用），不能在持锁上下文外直接调用。
+     */
+    private async saveAndReload(contents: Content[]): Promise<Content[]> {
         // 修改原因：不同适配器在 save 时可能补 timestamp/index 或触发持久化副作用，直接返回传入数组会丢失“真实已保存快照”。
         // 修改方式：保存后重新走一次 getContents，返回适配器最终落地的数据形态。
         // 修改目的：调用方拿到的结果与真实 transcript 状态一致，避免主聊天与 SubAgent 对返回值语义产生分叉。
@@ -60,18 +82,24 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         // 修改原因：删除、截断、批量追加等操作都属于“读取当前 transcript 后生成新数组”的同一语义，不应在调用方各写一套流程。
         // 修改方式：仓储统一负责 get -> mutate -> replace，mutator 只关注纯数组变换。
         // 修改目的：把 TranscriptMutation 这类纯函数自然接到统一入口，主聊天和 SubAgent 共享同一套变更方式。
-        const currentContents = await this.getContents();
-        const nextContents = mutator(currentContents);
-        return await this.replaceContents(nextContents);
+        const run = this.exclusive ?? ((fn: () => Promise<Content[]>) => fn());
+        return run(async () => {
+            const currentContents = await this.getContents();
+            const nextContents = mutator(currentContents);
+            return await this.saveAndReload(nextContents);
+        });
     }
 }
 
 export class ConversationTranscriptRepository extends DelegatingTranscriptRepository {
-    constructor(delegate: TranscriptRepositoryDelegate) {
+    constructor(
+        delegate: TranscriptRepositoryDelegate,
+        exclusive?: <T>(fn: () => Promise<T>) => Promise<T>
+    ) {
         // 修改原因：主聊天 transcript 的真实读取语义需要由 ConversationManager 决定，例如缺失历史时自动创建会话并补元数据。
         // 修改方式：主聊天 adapter 只接收已经绑定好 load/save 语义的委托，而不是直接假设某种 storage 接口。
         // 修改目的：仓储抽象保持通用，ConversationManager 可以在不暴露内部规则的情况下接入统一 transcript 入口。
-        super(delegate);
+        super(delegate, exclusive);
     }
 
     async appendContent(content: Content): Promise<Content[]> {

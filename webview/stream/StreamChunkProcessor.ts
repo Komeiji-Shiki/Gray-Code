@@ -40,7 +40,12 @@ export class StreamChunkProcessor {
   private lastChunkFlushTime: number = 0;
 
   constructor(
-    private view: vscode.WebviewView | undefined,
+    /**
+     * 每次发送前实时获取 view：视图重建后旧 view 引用已销毁，
+     * 继续发往旧 webview 会让新视图永远收不到 complete/cancelled，
+     * 占位消息永久"生成中"。
+     */
+    private getView: () => vscode.WebviewView | undefined,
     private conversationId: string,
     private streamId: string
   ) {}
@@ -50,7 +55,7 @@ export class StreamChunkProcessor {
    * @returns 是否为错误类型
    */
   processChunk(chunk: any): boolean {
-    if (!this.view) return false;
+    if (!this.getView()) return false;
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
@@ -164,7 +169,10 @@ export class StreamChunkProcessor {
       clearTimeout(this.throttleTimer);
       this.throttleTimer = null;
     }
-    if (this.messageBuffer.length === 0 || !this.view) return;
+
+    // 发送前实时获取 view（视图可能已重建）
+    const view = this.getView();
+    if (this.messageBuffer.length === 0 || !view) return;
 
     const messages = this.messageBuffer;
     this.messageBuffer = [];
@@ -172,13 +180,13 @@ export class StreamChunkProcessor {
 
     if (messages.length === 1) {
       // 单条消息：保持原有格式，向前兼容
-      this.view.webview.postMessage({
+      view.webview.postMessage({
         type: 'streamChunk',
         data: messages[0]
       });
     } else {
       // 多条消息：批量发送，前端一次性同步处理以利用 Vue 响应式批量更新
-      this.view.webview.postMessage({
+      view.webview.postMessage({
         type: 'streamChunkBatch',
         data: messages
       });

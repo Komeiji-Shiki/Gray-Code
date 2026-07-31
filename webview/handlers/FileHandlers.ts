@@ -1008,8 +1008,10 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
 
     ctx.sendError(requestId, 'SUMMARIZE_ERROR', error.message || t('webview.errors.summarizeFailed'));
   } finally {
+    // 引用校验：同一会话两个 summarize 交叠时，旧者的 finally 不能误删新者的控制器
+    // （deleteSummary 仅在传入的引用仍是当前条目时才删除）。
     if (abortManager?.deleteSummary) {
-      abortManager.deleteSummary(data.conversationId);
+      abortManager.deleteSummary(data.conversationId, controller);
     }
   }
 };

@@ -167,18 +167,24 @@ export class ChannelManager {
                 ));
                 return;
             }
-            
-            const timeoutId = setTimeout(resolve, ms);
-            
+
+            const onAbort = () => {
+                clearTimeout(timeoutId);
+                reject(new ChannelError(
+                    ErrorType.CANCELLED_ERROR,
+                    t('modules.channel.errors.requestCancelled')
+                ));
+            };
+
+            const timeoutId = setTimeout(() => {
+                // 正常超时路径必须移除 abort 监听器：否则每次重试都往信号上挂一个
+                // 永不清理的监听器，长会话重试多次后累积泄漏。
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+            }, ms);
+
             // 监听取消信号
             if (signal) {
-                const onAbort = () => {
-                    clearTimeout(timeoutId);
-                    reject(new ChannelError(
-                        ErrorType.CANCELLED_ERROR,
-                        t('modules.channel.errors.requestCancelled')
-                    ));
-                };
                 signal.addEventListener('abort', onAbort, { once: true });
             }
         });
@@ -495,6 +501,8 @@ export class ChannelManager {
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
+        // 是否已向调用方产出过 chunk：已产出内容后流中途出错不再重试
+        let yieldedAny = false;
         for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             // 缓存保活定时器（每次重试都重新计时）
             let keepAliveTimer: NodeJS.Timeout | undefined;
@@ -540,6 +548,7 @@ export class ChannelManager {
                         if (!hasToolUse && chunk.delta.some(p => p.functionCall)) {
                             hasToolUse = true;
                         }
+                        yieldedAny = true;
                         yield chunk;
                     } catch (error) {
                         // formatter 主动抛出的 ChannelError（如上游在 SSE 流里内联的 error 事件）
@@ -576,6 +585,13 @@ export class ChannelManager {
                 return;
             } catch (error) {
                 lastError = error;
+                
+                // 已产出内容后不再重试：流中途出错（网络闪断等）时重试会从头重播，
+                // 已 yield 的内容无法撤回（累加器跨重试不重置），导致内容重复、
+                // 历史写入重复内容。请求建立阶段（尚未产出任何 chunk）仍可重试。
+                if (yieldedAny) {
+                    break;
+                }
                 
                 // 获取错误详情
                 const errorMessage = error instanceof Error ? error.message : '未知错误';
@@ -886,7 +902,12 @@ export class ChannelManager {
                 try {
                     while (true) {
                         const { done, value } = await reader.read();
-                        if (done) break;
+                        if (done) {
+                            // 最终冲刷：末块被切开的 UTF-8 多字节字符尾部缓存在 decoder 内部，
+                            // 缺这一步会导致最后一个字符丢失/乱码。
+                            buffer += decoder.decode();
+                            break;
+                        }
                         
                         // 收到数据，重置超时计时器
                         resetTimeout();

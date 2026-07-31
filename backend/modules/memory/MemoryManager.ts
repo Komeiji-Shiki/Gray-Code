@@ -713,12 +713,15 @@ export class MemoryManager {
             } finally {
                 await handle.close();
             }
-
-            // 编辑后所有覆盖该 ID 的树摘要失效，丢弃之
-            await this.dropSummariesCovering(id);
         } finally {
             release();
         }
+
+        // 编辑后所有覆盖该 ID 的树摘要失效，丢弃之。
+        // 必须在锁外执行：dropSummariesCovering → treeDrop 内部会再次 acquire 锁，
+        // 而 AsyncLock 不可重入，持锁调用会形成闭环等待死锁（treeDrop 等待的 release
+        // 只有 updateEntry 的 finally 才执行）。treeDrop 自身会重新加锁，锁外调用同样安全。
+        await this.dropSummariesCovering(id);
     }
 
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */

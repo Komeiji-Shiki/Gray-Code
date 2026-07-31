@@ -85,6 +85,52 @@ interface LoadedConversation {
     messages: Content[];
 }
 
+/**
+ * 对中断/取消流的半截 usageMetadata 做保守估算。
+ *
+ * usageMetadataPartial 为 true 表示 usageMetadata 只覆盖已收到的 chunk
+ * （流被取消/网络中断时截断的半截数据），token 数可能严重偏低；
+ * 统计端应回退到估算而非信任 usageMetadata。
+ * 估算基于消息文本长度：中文等 CJK 约 1 字符/token，英文约 4 字符/token，
+ * 取折中 2.5 字符/token 做粗估。
+ */
+export function estimatePartialMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number } | null {
+    const usage = message.usageMetadata;
+
+    let charCount = 0;
+    for (const part of message.parts ?? []) {
+        if (typeof part.text === 'string') {
+            charCount += part.text.length;
+        }
+        if (part.redactedThinking) {
+            charCount += part.redactedThinking.length;
+        }
+        // functionCall 的 JSON 参数也是模型输出 token（工具调用密集的取消流不应低估）
+        if (part.functionCall) {
+            try {
+                const argsStr = typeof part.functionCall.args === 'string'
+                    ? part.functionCall.args
+                    : JSON.stringify(part.functionCall.args ?? '');
+                charCount += argsStr.length;
+            } catch {
+                // 忽略序列化失败
+            }
+        }
+    }
+    const estimatedCandidates = Math.max(1, Math.ceil(charCount / 2.5));
+
+    // 取消流可能从未收到任何 usage 事件（OpenAI chat / Gemini 的 usage 只在最后
+    // 一个 chunk 送达，取消时通常没有）：此时 usageMetadata 为 undefined，也不能
+    // 返回 null——否则整条 model 消息被跳过（连 prompt 都不计），M6 声称修复的
+    // "中断/取消流 token 严重少计" 只在 Anthropic 类每 chunk 带 usage 的渠道生效。
+    // prompt 侧无法从消息文本估算（输入是全量历史+系统提示词），保守记 0。
+    return {
+        prompt: usage?.promptTokenCount ?? 0,
+        candidates: Math.max(usage?.candidatesTokenCount ?? 0, estimatedCandidates),
+        thoughts: usage?.thoughtsTokenCount ?? 0
+    };
+}
+
 /** 读取单个对话（失败返回 null，由调用方计入 skipped） */
 async function loadOne(source: UsageStatsSource, conversationId: string): Promise<LoadedConversation | null> {
     try {
@@ -98,6 +144,12 @@ async function loadOne(source: UsageStatsSource, conversationId: string): Promis
 
 /** 从消息中提取 token 计数（优先 usageMetadata，向后兼容旧字段） */
 function extractMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number } | null {
+    // 中断/取消流的 usageMetadata 只覆盖已收到的 chunk，token 严重偏低：
+    // 回退到文本长度估算，避免统计结果与真实消耗偏差过大。
+    if (message.usageMetadataPartial) {
+        return estimatePartialMessageTokens(message);
+    }
+
     const usage = message.usageMetadata;
     const prompt = usage?.promptTokenCount ?? 0;
     const candidates = usage?.candidatesTokenCount ?? message.candidatesTokenCount ?? 0;

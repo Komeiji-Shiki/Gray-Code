@@ -375,6 +375,11 @@ export class DiffStorageManager {
             const convDirs = await fs.promises.readdir(diffsBaseDir);
             
             for (const convDir of convDirs) {
+                // __global__ 是全局 diff 目录（非对话，saveGlobalDiff 写入），
+                // 不能按孤儿对话清理——否则全局 diff 会被连带删除。
+                if (convDir === '__global__') {
+                    continue;
+                }
                 if (!validConversationIds.has(convDir)) {
                     const convDirPath = path.join(diffsBaseDir, convDir);
                     await fs.promises.rm(convDirPath, { recursive: true, force: true });
