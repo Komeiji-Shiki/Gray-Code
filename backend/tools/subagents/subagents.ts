@@ -11,6 +11,7 @@ import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
+import { TaskManager } from '../taskManager';
 
 /** 通用 Worker 虚拟子代理的标识常量 */
 const GENERAL_WORKER_NAME = 'General Worker';
@@ -200,7 +201,8 @@ ${limitsSection}
 - Provide a clear and detailed prompt for the sub-agent
 - The sub-agent will execute the task and return the result
 - Sub-agents have their own tool access and can make multiple tool calls
-- Use sub-agents for complex, multi-step tasks that require focused attention`;
+- Use sub-agents for complex, multi-step tasks that require focused attention
+- For long-running tasks (batch review/research), pass \`background: true\` to start the sub-agent non-blocking: the tool returns immediately with a taskId, and the final result arrives later as a [Background task completed] message. Do NOT wait for it or poll. Background tasks keep running even if the current stream is stopped — cancel them explicitly via the background task bar.`;
 }
 
 /**
@@ -230,6 +232,10 @@ export function getSubAgentsToolDeclaration(): ToolDeclaration {
                 context: {
                     type: 'string',
                     description: 'Optional additional context or background information for the sub-agent. Include relevant file paths, code snippets, or requirements.'
+                },
+                background: {
+                    type: 'boolean',
+                    description: 'Set to true to start the sub-agent in the background (non-blocking). Use ONLY for long-running tasks (e.g. batch review/research). The tool returns immediately with a taskId; the final result will arrive later as a "[Background task completed]" user message — do NOT wait for it or poll. Background tasks are NOT cancelled when the current stream stops; cancel them explicitly via the background task bar.'
                 }
             },
             required: ['agentName', 'prompt']
@@ -253,6 +259,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const agentName = args.agentName as string;
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
+    const background = args.background === true;
     const runId = getPreallocatedRunId(context);
 
     if (!agentName || !prompt) {
@@ -284,7 +291,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             enabled: true
         };
 
-        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, runId, context);
+        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, runId, context, background);
     }
 
     const agentEntry = subAgentRegistry.getByName(agentName);
@@ -297,7 +304,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
     }
 
-    return executeSubAgent(agentEntry.config, agentName, prompt, additionalContext, runId, context);
+    return executeSubAgent(agentEntry.config, agentName, prompt, additionalContext, runId, context, background);
 }
 
 /**
@@ -309,7 +316,8 @@ async function executeSubAgent(
     prompt: string,
     additionalContext: string | undefined,
     runId: string | undefined,
-    context?: ToolContext
+    context?: ToolContext,
+    background = false
 ): Promise<ToolResult> {
     const promptModeSnapshot = context?.promptModeSnapshot as any;
     const baseExecutorContext = getSubAgentExecutorContext();
@@ -324,6 +332,54 @@ async function executeSubAgent(
 
     if (!runtimeExecutor) {
         return { success: false, error: `SubAgent "${agentName}" has no runtime executor context.` };
+    }
+
+    // 后台模式：独立 AbortController（不挂父轮 abortSignal，用户停止当前对话流不连带取消），
+    // 任务注册到 TaskManager（前端 BackgroundTaskBar 展示/取消），executor 启动后不 await，
+    // settle 时注销任务并携带完整结果载荷——前端 backgroundTaskStore 据此按混合语义回流给主模型。
+    if (background) {
+        const backgroundAbortController = new AbortController();
+        const taskId = TaskManager.generateTaskId('bgagent');
+
+        TaskManager.registerTask(taskId, 'background_subagent', backgroundAbortController, {
+            conversationId: context?.conversationId as string | undefined,
+            agentName,
+            runId,
+            promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
+        });
+
+        runtimeExecutor({
+            agentType: config.type,
+            prompt,
+            context: additionalContext,
+            runId
+        }, backgroundAbortController.signal).then(result => {
+            const status = result.cancelled ? 'cancelled' : (result.success ? 'completed' : 'error');
+            TaskManager.unregisterTask(taskId, status, {
+                runId: result.runId,
+                agentName,
+                response: result.response,
+                steps: result.steps,
+                ...(result.error ? { error: result.error } : {})
+            });
+        }).catch(error => {
+            TaskManager.unregisterTask(taskId, 'error', {
+                runId,
+                agentName,
+                error: error instanceof Error ? error.message : String(error)
+            });
+        });
+
+        return {
+            success: true,
+            data: {
+                background: true,
+                taskId,
+                runId,
+                agentName,
+                note: 'Started in background; the result will arrive as a [Background task completed] message. Do NOT wait or poll.'
+            }
+        };
     }
 
     const abortSignal = context?.abortSignal;

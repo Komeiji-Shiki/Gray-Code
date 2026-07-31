@@ -758,6 +758,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 for (const d of this.viewDisposables.splice(0)) {
                     d.dispose();
                 }
+                // 重置视图引用与就绪状态，避免关闭面板后 isAlive 仍判定存活导致消息被静默丢弃（F1）
+                // 与 dispose() 的语义保持一致；重开面板时 resolveWebviewView 会重新赋值并注册 client
+                this._view = undefined;
+                this.webviewReady = false;
+                this.mainChatClientDisposable?.dispose();
+                this.mainChatClientDisposable = undefined;
             })
         );
     }

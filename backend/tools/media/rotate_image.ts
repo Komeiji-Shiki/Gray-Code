@@ -480,11 +480,16 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
                 const failedResults = results.filter(r => !r.success && !r.cancelled);
                 const cancelledResults = results.filter(r => r.cancelled);
 
-                // 任务完成
-                TaskManager.unregisterTask(toolId, 'completed', {
-                    totalTasks: tasks.length,
-                    successCount: successResults.length
-                });
+                // 任务完成（若所有任务均被取消，终态为 cancelled）
+                const allCancelled = cancelledResults.length === results.length;
+                TaskManager.unregisterTask(
+                    toolId,
+                    allCancelled ? 'cancelled' : 'completed',
+                    allCancelled ? undefined : {
+                        totalTasks: tasks.length,
+                        successCount: successResults.length
+                    }
+                );
 
                 // 如果所有任务都被取消
                 if (cancelledResults.length === results.length) {

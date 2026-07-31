@@ -367,7 +367,7 @@ WORLDBOOK_SELECTIVE_LOGIC_MAP_FROM_ST: dict[int, str] = {
 
 def _normalize_worldbook_position(position: Any, ext_position: Any) -> str:
     p = position if position is not None else ext_position
-    if isinstance(p, int):
+    if _is_number(p):
         return WORLDBOOK_POSITION_MAP_FROM_ST.get(p, str(p))
 
     s = _to_str(p).strip()

@@ -1410,7 +1410,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         // 简化返回结构：AI 已知 command/cwd/shell，只需返回结果
                         // 如果输出被截断，添加简单提示（含内存护栏丢弃的行数）
                         const totalOutputLines = terminalProcess.output.length + (terminalProcess.omittedOutputLines ?? 0);
-                        const wasTruncated = maxLines !== -1 && totalOutputLines > maxLines;
+                        const wasTruncated = (maxLines !== -1 && totalOutputLines > maxLines) || (terminalProcess.omittedOutputLines ?? 0) > 0;
                         const truncatedNote = wasTruncated
                             ? `(Output truncated: showing last ${lastOutput.length} of ${totalOutputLines} lines)`
                             : undefined;

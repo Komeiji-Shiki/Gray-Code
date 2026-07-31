@@ -952,14 +952,19 @@ Generated images will be saved to the specified path and returned for viewing.`;
 
                 // 统计结果
                 const successResults = results.filter(r => r.success);
-                const failedResults = results.filter(r => !r.success);
+                const failedResults = results.filter(r => !r.success && !r.cancelled);
                 const cancelledResults = results.filter(r => r.cancelled);
                 
-                // 任务完成，使用 TaskManager 注销
-                TaskManager.unregisterTask(toolId, 'completed', {
-                    totalTasks: tasks.length,
-                    completedTasks: successResults.length
-                });
+                // 任务完成，使用 TaskManager 注销（若所有任务均被取消，终态为 cancelled）
+                const allCancelled = cancelledResults.length === results.length;
+                TaskManager.unregisterTask(
+                    toolId,
+                    allCancelled ? 'cancelled' : 'completed',
+                    allCancelled ? undefined : {
+                        totalTasks: tasks.length,
+                        completedTasks: successResults.length
+                    }
+                );
                 
                 // 如果所有任务都被取消，返回用户中断信息
                 if (cancelledResults.length === results.length) {

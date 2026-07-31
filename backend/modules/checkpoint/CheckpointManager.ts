@@ -1291,6 +1291,11 @@ export class CheckpointManager {
                 if (!checkpoint) {
                     return current; // 不存在：原引用=无变更跳过写回
                 }
+                // 被其他检查点引用为基快照时拒绝删除（返回原引用=无变更跳过写回），
+                // 否则会破坏增量链，恢复时 chainBroken 100% 失败
+                if (list.some(cp => cp.baseCheckpointId === checkpointId)) {
+                    return current;
+                }
                 backupDirToDelete = checkpoint.backupDir;
                 return list.filter(cp => cp.id !== checkpointId);
             });

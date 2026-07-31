@@ -1,6 +1,28 @@
 # Change Log
 
 
+## [Unreleased]
+
+### Fixed
+  - 修复 subagents 工具后台模式缺失（E3 F1.1 计划标记完成但实际未实现）：工具声明无 `background` 参数、handler 无后台分支，前端 backgroundTaskStore / BackgroundTaskBar / backgroundStatus 整套后台基建空转；现在按已确认设计补齐——`background: true` 时创建独立 AbortController（用户停止当前对话流不连带取消）、以 `background_subagent` 类型注册到 TaskManager、executor 启动后不 await、工具立即返回 `{ background: true, taskId, runId, agentName }`，executor settle 时注销任务并携带完整结果载荷（response/steps/runId/error），经现成 taskEvent 转发链路由前端混合回流（会话空闲立即发回执、正忙挂起补发）送达主模型
+  - 修复代理非 chunked 流式解码仍损坏中文（PR #1 B1 补全）：非 chunked 消费点仍逐 TCP 包 `toString('utf8')`，被包边界切开的 UTF-8 多字节字符固化成 U+FFFD；现在与 chunked 一致走流式 `TextDecoder`，flush 移入非中止分支
+  - 修复 glob globstar `**` 失效（PR #1 C4 补全）：GLOBSTAR 占位符正则匹配三个转义星号而 `**` 转义后是两个，`**/node_modules/**` 等规则永不跨目录命中；修正为匹配两个转义星号（PromptManager / fileTree 两处）
+  - 修复 diff 预览 LCS 后缀匹配丢失（PR #1 H3 补全）：computeLCS 剥离公共后缀后从不回填，任何带公共尾部的 diff 尾部公共行被标为「删除+新增」、统计虚高；现在按原始索引回填后缀匹配（apply_diff / write_file 两处）
+  - 修复 `deleteCheckpoint` 缺少基快照引用保护（PR #1 A2 补全）：updater 未检查 `baseCheckpointId` 引用，被后继检查点引用为基快照时仍删除会断增量链、恢复 100% 失败；现在被引用时返回原引用拒绝删除
+  - 修复 ChatViewProvider 关闭标签页后消息仍静默丢失（PR #1 F1 补全）：`onDidDispose` 不重置 `_view`/`webviewReady`，F4 的 isAlive 判定对已销毁 webview 仍返回 true，面板关闭期间 postMessage 静默丢弃；现在与 dispose() 语义对齐重置并释放主聊天 client 注册
+  - 修复 media 工具取消后终态恒为 `completed`（PR #1 E1 关联）：批处理末尾无条件 `unregisterTask('completed')`，用户取消的任务显示为「已完成」、后台回执误报成功；现在全部任务被取消时终态为 `cancelled`；`generate_image` 的 failedResults 同步排除 cancelled（与其余 4 个 media 工具对齐）
+  - 修复终端输出护栏丢弃行时无截断提示（PR #1 E2 补全）：显示上限关闭时 `omittedOutputLines` 不计入 `wasTruncated`，AI 看不到「输出被截断」；现在护栏丢弃同样触发截断提示
+  - 修复 search_in_files 高亮替换串 `$` 特殊语义（PR #1 G1 附带）：匹配文本含美元符特殊替换序列（$'、$`、$$）时 `String.replace` 展开特殊替换模式导致高亮内容错乱；改用替换函数
+  - 修复 MarkdownRenderer mermaid 残留注入面（PR #1 G 组补全）：`securityLevel: 'loose'` 下模型可控的图例 HTML 可经 zoomedContent 的 v-html 再次注入执行（webview CSP 含 unsafe-inline）；改为 `'strict'`
+  - 修复 fast-tavern Python 遗漏项（PR #1 I 组补全）：`build_prompt.py` 实际存在（文档误判为「已移除」）且 `recentHistoryForWorldbook` 仍 `int()` 强转、浮点字符串抛 ValueError，改为 `int(float())` + 解析失败回退 0；`convert_from_silly_tavern` 遗留 `isinstance(p, int)` 漏 float position，改 `_is_number`；`get_active_entries._to_recursion_limit` 不可解析回退 5（TS 应为 NaN→循环不执行）、负数被钳制到 0 多执行一次、`-inf` 分支多执行一次——全部对齐 TS Math.trunc/Number 语义
+  - 修复 glob 通配零段语义（PR #1 C4 补全）：`**/x` 不匹配根级 `x`、`a/**/b` 不匹配 `a/b`（`**` 展开为 `.*` 后要求至少一个目录段）；现在统一到 `backend/modules/prompt/glob.ts` 的 `globPatternToRegExp`（PromptManager / fileTree 三处共用），`**` 后跟分隔符时零段可选（gitignore 语义）、单星不跨目录段（fileTree gitignore 分支原先 `*` 跨 `/` 一并修正）；同时去掉「斜杠展开为 `[/\\]` 字符类」的 4 反斜杠魔法——三处调用点路径均已归一化为 `/`，模式里的 `/` 直接作字面 `/`，「斜杠替换必须先于星号替换」的顺序耦合随之消除
+  - 修复 fast-tavern Python normalize_worldbooks 缺字段语义与 TS 不一致（PR #1 I5 补全）：`_to_number` 的 None 分支忽略 fallback 直接返回 0.0，缺 `probability` 的条目概率变 0 永不注入、缺 `index`/`order`/`depth` 的条目被保留（TS 侧分别回退 100 / 丢弃条目）；现在 None 返回 fallback，新增 `_entry_number` 区分「键缺失」（→ fallback）与「显式 null」（→ 0，对齐 `Number(null)`），补 5 个 pytest 用例
+  - 修复关闭活跃标签页产生孤儿快照（内存泄漏）：closeTab 删快照后 switchTab 会把已关闭标签页的完整会话状态（allMessages/messageQueue 等）重新写回 sessionSnapshots 成为永不被清理的孤儿条目；现在快照仅在标签页仍存在于 openTabs 时写入，新增 3 个 vitest 用例
+  - CheckpointManager 测试补强（PR #1 A2）：测试 mock 此前缺 `updateCustomMetadata`（迁移后的 7 处调用零覆盖），且并发 mock 未模拟真实串行链；现在 mock 补链式 `updateCustomMetadata`，新增 8 个用例覆盖 saveCheckpointToConversation（含并发追加无丢失）、deleteCheckpoint（含 isReferencedBase 拒绝与磁盘目录清理）、deleteCheckpointsFromIndex（含 excludeCheckpointId 基链保留）、deleteAllCheckpoints、pruneMissingBackupCheckpointRecords、cleanupOldCheckpoints 链合并重挂
+
+### Added
+  - 新增 subagents 工具后台分支单元测试（`backend/__tests__/tools/subagentsTool.test.ts`，8 用例）：声明暴露 background 参数、后台调用立即返回 stub 且不 await、TaskManager 注册（background_subagent + 元数据）与注销载荷（response/steps/runId/error）、executor 失败/取消状态映射、父 abortSignal 已中止时后台任务仍启动（独立取消）、前台模式回归
+
 ## [1.2.9] - 2026-08-01
 
 ### Fixed
@@ -67,7 +89,7 @@
   - 修复代理取消被误判为可重试（PR #1 B2）：`fetchWithProxy`/`sendRequestOverSocket` 的取消 reject 普通 Error，ChannelManager 只认 `AbortError` 导致取消变无谓重试；新增 `createAbortError` 统一 6 处取消错误，CONNECT 握手成功后移除旧 abort 监听避免重复取消
   - 修复重试等待窗口内发送保活请求（PR #1 B3）：重试路径 delay 前未停 keepAlive 定时器，错误后到 delay 完成之间在无活动流时发出保活请求；现在 delay 前先 clearInterval
   - 修复 OpenAI strict 工具混用被 API 400 拒绝（PR #1 B4）：任一工具 strict 时 OpenAI 要求全部工具 strict，混用显式发送 `strict: false` 被拒；现在整体降级为不启用
-  - 修复 directApplyAndSave 把编辑器旧缓冲区写回磁盘覆盖 AI 内容且 diff 永久 pending（PR #1 C1）：dirty 文档 `openDoc.save()` 会把旧内容+用户未保存编辑写回磁盘，且 `saved` 提前 return 跳过 finalizeAcceptedDiff；现在统一 revert 从磁盘重载
+  - 修复 directApplyAndSave 把编辑器旧缓冲区写回磁盘覆盖 AI 内容且 diff 永久 pending（PR #1 C1）：dirty 文档 `openDoc.save()` 会把旧内容+用户未保存编辑写回磁盘，且 `saved` 提前 return 跳过 finalizeAcceptedDiff；现在先写盘，再用 WorkspaceEdit 静默替换编辑器内容为 AI 内容并 `save()` 清理 dirty（内容与磁盘一致，保存无害）——早期方案用 `workbench.action.files.revert`，但文档 dirty 时会弹 VS Code 原生确认框阻塞整个 diff 流程，已弃用
   - 修复关标签页不收敛 accepted、diff 永久 pending（PR #1 C2）：磁盘已是 AI 内容（files.autoSave 直接落盘）时关闭标签页既不接受也不拒绝；现在内容相等收敛为接受
   - 修复 legacy 多 diff 行号偏移累积（PR #1 C3）：`start_line` 相对原始文件，前序 hunk 改变行数后后续 hunk 整体错位；三处 legacy 应用路径新增 lineDelta 累计
   - 修复 glob 元字符未转义抛 SyntaxError（PR #1 C4）：`matchGlobPattern`/`shouldIgnore` 只转义 `.`，配置含 `[`/`(`/`+`/`?` 时 `new RegExp` 抛错中断动态上下文生成；改为整体 `escapeRegExp` 后再做通配替换，并修复斜杠替换在星号替换之后导致 `[^[/\]]` 通配永不命中的顺序缺陷

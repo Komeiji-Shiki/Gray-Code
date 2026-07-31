@@ -123,7 +123,15 @@ def build_prompt(params: dict[str, Any] | None = None, **kwargs: Any) -> BuildPr
     internal_history = _to_internal_history(history)
     chat_nodes = _internal_history_to_chat_nodes(internal_history)
 
-    recent_n = int(options.get("recentHistoryForWorldbook") if options.get("recentHistoryForWorldbook") is not None else 5)
+    raw_recent = options.get("recentHistoryForWorldbook")
+    if raw_recent is None:
+        recent_n = 5
+    else:
+        try:
+            recent_n = int(float(raw_recent))
+        except (TypeError, ValueError):
+            # TS: Number("abc") = NaN -> slice(NaN) 空 -> 等价 0
+            recent_n = 0
     recent_text = "\n".join(n.get("text") or "" for n in chat_nodes[-recent_n:])
 
     # 2) worldbook: global + character
