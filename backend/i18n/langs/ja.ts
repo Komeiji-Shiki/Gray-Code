@@ -145,7 +145,8 @@ const ja: BackendLanguageMessages = {
                 gemini: {
                     errors: {
                         invalidResponse: '無効な Gemini API レスポンス: 候補がありません',
-                        apiError: 'API がエラーステータスを返しました: {code}'
+                        apiError: 'API がエラーステータスを返しました: {code}',
+                        emptyCandidate: 'Gemini が内容のない候補を返しました（終了理由: {finishReason}、コンテンツ安全フィルターの可能性）'
                     }
                 },
                 anthropic: {

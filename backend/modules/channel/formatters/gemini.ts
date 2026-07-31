@@ -315,7 +315,12 @@ export class GeminiFormatter extends BaseFormatter {
         // 否则 content.parts 直接 TypeError（流式路径已有判空，这里对齐）。
         const content = candidate.content;
         if (!content) {
-            throw new Error(t('modules.channel.formatters.gemini.errors.invalidResponse'));
+            // 候选只有 finishReason 而没有 content（如安全策略拦截）时显式报出终止原因，
+            // 避免用户只看到一句笼统的"没有候选结果"。
+            const reason = candidate.finishReason || 'unknown';
+            throw new Error(
+                t('modules.channel.formatters.gemini.errors.emptyCandidate', { finishReason: reason })
+            );
         }
         
         // 提取思考签名并转换为内部格式，同时删除原始单数格式
