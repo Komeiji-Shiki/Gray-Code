@@ -14,6 +14,24 @@
 
 import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content } from './types';
 
+// 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
+// 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
+// 锁只保证写写互斥，读（load）不参与，读侧已有容错。
+const segmentedHistoryWriteQueues = new Map<string, Promise<void>>();
+
+function runSegmentedHistoryWriteSerialized<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+    const previous = segmentedHistoryWriteQueues.get(conversationId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(task);
+    const tail = current.then(() => undefined, () => undefined);
+    segmentedHistoryWriteQueues.set(conversationId, tail);
+    void tail.then(() => {
+        if (segmentedHistoryWriteQueues.get(conversationId) === tail) {
+            segmentedHistoryWriteQueues.delete(conversationId);
+        }
+    });
+    return current;
+}
+
 export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error';
 
 export interface StorageReadResult<T> {
@@ -632,21 +650,26 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         const conversationDir = this.getConversationDir(conversationId);
         const historyDir = this.getHistoryDir(conversationId);
         const historyIndexPath = this.getHistoryIndexPath(conversationId);
+        const tmpDir = this.getHistoryDir(conversationId) + '.tmp';
+        const tmpIndexPath = this.getHistoryIndexPath(conversationId) + '.tmp';
 
         await this.vscode.workspace.fs.createDirectory(conversationDir);
+
+        // 1. 先写临时目录，不触碰线上目录：中途崩溃时线上仍是完整的旧状态，
+        //    不会出现 index 缺失且 legacy 已被删的历史不可读场景。
         try {
-            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
+            await this.vscode.workspace.fs.delete(tmpDir, { recursive: true, useTrash: false });
         } catch {
-            // ignore
+            // 不存在或清理失败，忽略
         }
-        await this.vscode.workspace.fs.createDirectory(historyDir);
+        await this.vscode.workspace.fs.createDirectory(tmpDir);
 
         const segments: FileHistorySegmentIndexEntry[] = [];
         for (let startIndex = 0; startIndex < history.length; startIndex += FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE) {
             const endExclusive = Math.min(history.length, startIndex + FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE);
             const chunk = history.slice(startIndex, endExclusive);
             const file = `${String(segments.length).padStart(6, '0')}.ndjson`;
-            const uri = this.vscode.Uri.joinPath(historyDir, file);
+            const uri = this.vscode.Uri.joinPath(tmpDir, file);
             const content = chunk.map(item => JSON.stringify(item)).join('\n');
             await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
             segments.push({ file, startIndex, endIndex: endExclusive - 1, count: chunk.length });
@@ -659,8 +682,24 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             segments,
         };
 
-        await this.vscode.workspace.fs.writeFile(historyIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
+        await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
 
+        // 2. 原子切换：删旧目录/旧 index 后 rename 临时文件上位。
+        //    调用方（saveHistory）已保证同一会话的写操作串行，这里的窗口只剩毫秒级崩溃场景。
+        try {
+            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        await this.vscode.workspace.fs.rename(tmpDir, historyDir);
+        try {
+            await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
+        } catch {
+            // ignore
+        }
+        await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath);
+
+        // 3. 删除遗留的 legacy 历史文件
         try {
             await this.vscode.workspace.fs.delete(this.getLegacyHistoryPath(conversationId), { useTrash: false });
         } catch {
@@ -751,8 +790,13 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                     continue;
                 }
                 const historyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
-                if (!historyResult.value) throw new Error(historyResult.errorMessage || historyResult.errorCode || 'Failed to read legacy history');
-                await this.writeSegmentedHistory(conversationId, historyResult.value);
+                const legacyHistory = historyResult.value;
+                if (!legacyHistory) throw new Error(historyResult.errorMessage || historyResult.errorCode || 'Failed to read legacy history');
+                // 与 saveHistory 共用同一写队列：迁移与用户消息写入并发时，
+                // 两路写共用同一 history.tmp 路径，会互相删除对方刚写的临时目录。
+                await runSegmentedHistoryWriteSerialized(conversationId, async () => {
+                    await this.writeSegmentedHistory(conversationId, legacyHistory);
+                });
                 migrated++;
             } catch (error: any) {
                 failed.push({ conversationId, error: error?.message || String(error) });
@@ -764,18 +808,22 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
 
 
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
-        await this.writeSegmentedHistory(conversationId, history);
-        
-        // 更新元数据的 updatedAt
-        try {
-            const meta = await this.loadMetadata(conversationId);
-            if (meta) {
-                meta.updatedAt = Date.now();
-                await this.saveMetadata(meta);
+        // 同一会话的写操作串行化：writeSegmentedHistory 先删目录再重写，
+        // 并发写会互相删除对方刚写入的段文件（代码多处注释已承认并发写场景）。
+        await runSegmentedHistoryWriteSerialized(conversationId, async () => {
+            await this.writeSegmentedHistory(conversationId, history);
+
+            // 更新元数据的 updatedAt
+            try {
+                const meta = await this.loadMetadata(conversationId);
+                if (meta) {
+                    meta.updatedAt = Date.now();
+                    await this.saveMetadata(meta);
+                }
+            } catch {
+                // 忽略元数据更新失败
             }
-        } catch {
-            // 忽略元数据更新失败
-        }
+        });
     }
 
     async loadHistory(conversationId: string): Promise<ConversationHistory | null> {
@@ -817,24 +865,28 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
-        const historyUri = this.getLegacyHistoryPath(conversationId);
-        const metaUri = this.getMetadataPath(conversationId);
-        const conversationDir = this.getConversationDir(conversationId);
-        try {
-            await this.vscode.workspace.fs.delete(historyUri, { useTrash: false });
-        } catch {
-            // ignore
-        }
-        try {
-            await this.vscode.workspace.fs.delete(conversationDir, { recursive: true, useTrash: false });
-        } catch {
-            // ignore
-        }
-        try {
-            await this.vscode.workspace.fs.delete(metaUri, { useTrash: false });
-        } catch {
-            // ignore
-        }
+        // 入队与 saveHistory/migrateLegacy 串行：否则 delete 先完成、队列里已排队的写
+        // 随后会把已删除会话的目录重新创建（"删除后复活"），或写进行中删掉 tmp 目录导致写失败。
+        await runSegmentedHistoryWriteSerialized(conversationId, async () => {
+            const historyUri = this.getLegacyHistoryPath(conversationId);
+            const metaUri = this.getMetadataPath(conversationId);
+            const conversationDir = this.getConversationDir(conversationId);
+            try {
+                await this.vscode.workspace.fs.delete(historyUri, { useTrash: false });
+            } catch {
+                // ignore
+            }
+            try {
+                await this.vscode.workspace.fs.delete(conversationDir, { recursive: true, useTrash: false });
+            } catch {
+                // ignore
+            }
+            try {
+                await this.vscode.workspace.fs.delete(metaUri, { useTrash: false });
+            } catch {
+                // ignore
+            }
+        });
     }
 
     async listConversations(): Promise<string[]> {

@@ -391,11 +391,19 @@ export class ToolIterationLoopService {
             };
         });
 
-        await this.conversationManager.addContent(conversationId, {
-            role: 'user',
-            parts: responseParts,
-            isFunctionResponse: true
-        });
+        // 提前执行工具产生的多模态附件（xml/json prompt 模式）不能丢：
+        // 与响应 part 一并写入，否则 generate_image / MCP 图片结果静默丢失。
+        const multimodalAttachments = Array.from(settledResults.values())
+            .flatMap(result => result.multimodalAttachments ?? []);
+        const allParts = multimodalAttachments.length > 0
+            ? [...multimodalAttachments, ...responseParts]
+            : responseParts;
+
+        // 用 settleFunctionResponses 代替 addContent：cancelStream 的
+        // rejectAllPendingToolCalls 可能已写入"用户拒绝"占位，addContent 的去重
+        // 会把真实结果丢弃（真实副作用结果永久丢失）；settleFunctionResponses
+        // 保证真实结果永远覆盖占位。
+        await this.conversationManager.settleFunctionResponses(conversationId, allParts);
     }
 
     /**
@@ -734,6 +742,9 @@ export class ToolIterationLoopService {
                 if (processor.isCancelled()) {
                     const partialContent = processor.getContent();
                     if (partialContent.parts.length > 0) {
+                        // 标记半截 usage：流被取消时 usageMetadata 只覆盖已收到的 chunk，
+                        // 统计端（usageStats/getStats）据此回退到文本长度估算。
+                        partialContent.usageMetadataPartial = true;
                         await this.conversationManager.addContent(conversationId, partialContent);
                         await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
                     }
@@ -816,7 +827,9 @@ export class ToolIterationLoopService {
             // 流式边执行工具：等待流式期间已启动的异步工具完成，
             // 将其从 autoPrefix 中移除（避免重复执行）。
             if (streamingToolPromises.size > 0) {
-                while (earlyToolProgressQueue.hasPending()) {
+                // 等待循环内必须有 abort 检查：若某工具不响应 abortSignal 且永不结束，
+                // 无检查的 waitForNextSettlement 会让整个请求永久挂起，停止按钮失效。
+                while (earlyToolProgressQueue.hasPending() && !abortSignal?.aborted) {
                     const readyStatuses = drainSettledEarlyToolStatuses();
                     if (readyStatuses.length > 0) {
                         for (const statusChunk of readyStatuses) {
@@ -824,10 +837,57 @@ export class ToolIterationLoopService {
                         }
                         continue;
                     }
-                    await earlyToolProgressQueue.waitForNextSettlement();
+                    if (abortSignal?.aborted) {
+                        break;
+                    }
+                    // waitForNextSettlement 本身无 abort 监听：若某工具不响应
+                    // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
+                    // 与 abort 事件做 race，取消时立即退出等待循环。
+                    let onAbort: (() => void) | undefined;
+                    const abortPromise = abortSignal
+                        ? new Promise<void>((resolve) => {
+                            onAbort = () => resolve();
+                            abortSignal.addEventListener('abort', onAbort, { once: true });
+                        })
+                        : Promise.resolve();
+                    try {
+                        await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
+                    } finally {
+                        if (onAbort && abortSignal) {
+                            abortSignal.removeEventListener('abort', onAbort);
+                        }
+                    }
                 }
                 for (const statusChunk of drainSettledEarlyToolStatuses()) {
                     yield statusChunk;
+                }
+
+                // 等待期间被取消：已执行完的提前执行工具用真实结果结算（副作用已发生，
+                // 结果不能丢），未完成的调用标记为取消，避免悬空 tool_use 触发 API 400。
+                if (abortSignal?.aborted) {
+                    await this.settleCancelledToolCalls(conversationId, finalContent, streamingToolResults);
+                    // 与串行 abort 路径（executionPath: 'stream_abort'）语义对齐：
+                    // 结算 stop state，避免 pendingApprovalGate 等状态残留。
+                    const settledEarlyResults = Array.from(streamingToolResults.values());
+                    const settledToolResults = this.orderToolResultsByCallSequence(
+                        functionCalls,
+                        [settledEarlyResults.flatMap(result => result.toolResults)]
+                    );
+                    await resolveAndPersistPostToolStopState(
+                        this.conversationManager,
+                        conversationId,
+                        functionCalls,
+                        settledToolResults,
+                        {
+                            logger: this.log,
+                            logContext: { iteration, executionPath: 'stream_early_abort' }
+                        }
+                    );
+                    yield {
+                        conversationId,
+                        cancelled: true as const
+                    } as any;
+                    return;
                 }
 
                 const remainingAutoPrefix: FunctionCallInfo[] = [];
@@ -981,6 +1041,41 @@ export class ToolIterationLoopService {
 
                 // 检查是否已取消
                 if (abortSignal?.aborted) {
+                    // 工具已全部执行完并产生真实副作用（改文件、跑命令），
+                    // 结果必须写入历史：否则模型对磁盘状态的认知与事实不符，
+                    // 且下次请求前 rejectAllPendingToolCalls 会把悬空调用标记为"用户拒绝"，
+                    // 真实执行结果永久丢失，模型可能重复执行同一工具调用。
+                    if (executionResult) {
+                        const combinedToolResults = this.orderToolResultsByCallSequence(
+                            functionCalls,
+                            [earlyToolResults, executionResult.toolResults]
+                        );
+                        const orderedFunctionResponseParts = this.orderFunctionResponsePartsByCallSequence(
+                            functionCalls,
+                            [earlyResponseParts, executionResult.responseParts]
+                        );
+                        const combinedMultimodalAttachments = [
+                            ...earlyMultimodalAttachments,
+                            ...(executionResult.multimodalAttachments ?? [])
+                        ];
+                        const functionResponseParts = combinedMultimodalAttachments.length > 0
+                            ? [...combinedMultimodalAttachments, ...orderedFunctionResponseParts]
+                            : orderedFunctionResponseParts;
+
+                        await this.conversationManager.settleFunctionResponses(conversationId, functionResponseParts);
+
+                        await resolveAndPersistPostToolStopState(
+                            this.conversationManager,
+                            conversationId,
+                            functionCalls,
+                            combinedToolResults,
+                            {
+                                logger: this.log,
+                                logContext: { iteration, executionPath: 'stream_abort' }
+                            }
+                        );
+                    }
+
                     yield {
                         conversationId,
                         cancelled: true as const

@@ -169,6 +169,16 @@ export class StreamAccumulator {
 
             if (!this.hasProviderTotalTokenCount) {
                 merged.totalTokenCount = prompt + candidates + thoughts;
+            } else if (usage.totalTokenCount === undefined
+                && usage.candidatesTokenCount !== undefined
+                && previous?.totalTokenCount !== undefined) {
+                // Anthropic：message_start 的 total 只含 input（output 恒 0），
+                // message_delta 只带 output_tokens。若已有原生 total，把新的
+                // candidates 增量合并进去——否则输出 token 从总量中消失，
+                // 下游 ContextTrim/Summarize 的 total−prompt 恒为 0。
+                // 仅当本事件未带 total（即不是代理返回的完整 usage）时走此分支。
+                const prevCandidates = previous.candidatesTokenCount ?? 0;
+                merged.totalTokenCount = previous.totalTokenCount - prevCandidates + usage.candidatesTokenCount;
             } else if (merged.totalTokenCount === undefined) {
                 // 理论上有原生 total 时不应进入此分支，但为稳健性保底。
                 merged.totalTokenCount = prompt + candidates + thoughts;

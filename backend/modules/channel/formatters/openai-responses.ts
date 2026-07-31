@@ -450,7 +450,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         args: {}, // arguments 将在 done 之后由 StreamAccumulator 解析
                         partialArgs: chunk.arguments,
                         id: chunk.item_id,
-                        index: chunk.output_index
+                        index: chunk.output_index,
+                        // done 事件携带完整 arguments：累加器据此覆盖已累积的增量 JSON 而非继续追加，
+                        // 并在此边界解析（否则 delta 半截 JSON + 完整 JSON 会拼成垃圾串，工具全部空参数执行）。
+                        finalArgs: true
                     } as any
                 });
                 break;

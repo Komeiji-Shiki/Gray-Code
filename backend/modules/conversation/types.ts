@@ -129,6 +129,19 @@ export interface ContentPart {
          * 用于在重新加载对话时正确显示工具状态
          */
         rejected?: boolean;
+        /**
+         * 流式合并用的并行工具序号（如 Anthropic content_block 的 index、
+         * OpenAI Responses 的 output_index）。缺 index 时参数增量会被
+         * 错误地全部拼进最后一个工具壳，导致并行调用参数丢失。
+         */
+        index?: number;
+        /**
+         * 流式合并用的完整参数标记：为 true 时 partialArgs 携带完整
+         * arguments，累加器应覆盖已累积的增量 JSON 而非继续追加。
+         */
+        finalArgs?: boolean;
+        /** 流式合并用的上游 item 定位符（OpenAI Responses 等），仅用于事件归并 */
+        itemId?: string;
     };
     
     /**

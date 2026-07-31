@@ -52,22 +52,21 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
         for (const line of lines) {
             // 只处理以 "data:" 开头的行
             if (line.startsWith('data:')) {
-                // 如果有之前累积的数据，先尝试解析
-                if (currentData) {
-                    try {
-                        chunks.push(JSON.parse(currentData));
-                    } catch (e) {
-                        // 之前的数据不完整，继续累积
-                    }
-                }
-
-                // 开始新的数据
-                currentData = line.slice(5).trim();
+                const piece = line.slice(5).trim();
 
                 // 跳过结束标记
-                if (currentData === '[DONE]') {
+                if (piece === '[DONE]') {
                     currentData = '';
                     continue;
+                }
+
+                if (currentData) {
+                    // 之前累积的内容还不完整：SSE 多行 data 事件按规范用单个换行连接，
+                    // 而不是覆盖丢弃（旧实现这里直接覆盖，事件内容静默丢失）。
+                    currentData += '\n' + piece;
+                } else {
+                    // 开始新的数据
+                    currentData = piece;
                 }
 
                 // 尝试立即解析
@@ -144,8 +143,9 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                 if (i === lines.length - 1 && !final) {
                     // 最后一行且流未结束：可能只是还没收完
                     remaining = lines[i];
-                } else if (final) {
-                    // 流已结束仍解析不了：留作错误详情，不要静默丢弃
+                } else {
+                    // 中间行解析失败：不静默丢弃，流结束后进 unparsed 供错误详情
+                    // （旧实现只有 final 分支保留，非 final 的中间行错误被静默吞掉）
                     unparsedLines.push(line);
                 }
             }

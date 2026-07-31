@@ -24,6 +24,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 创建并存储新的 AbortController
    */
   create(conversationId: string): AbortController {
+    // 同一会话已有活跃流时，先中止旧流再替换（与 createSummary 语义一致）。
+    // 否则旧流完全不可取消，且旧流先结束时其 finally 的 delete 会误删新流的控制器。
+    const existing = this.controllers.get(conversationId);
+    if (existing) {
+      existing.abort();
+    }
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
     return controller;
@@ -142,7 +148,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   /**
    * 删除指定对话的 AbortController
    */
-  delete(conversationId: string): void {
+  delete(conversationId: string, controller?: AbortController): void {
+    // 引用校验：同一会话可能已启动新流，旧流结束时不能误删新流的控制器，
+    // 否则新流变孤儿，点停止无反应。
+    if (controller && this.controllers.get(conversationId) !== controller) {
+      return;
+    }
     this.controllers.delete(conversationId);
   }
 
@@ -175,7 +186,11 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   }
 
   /** 删除总结请求控制器 */
-  deleteSummary(conversationId: string): void {
+  deleteSummary(conversationId: string, controller?: AbortController): void {
+    // 与 delete 相同的引用校验：旧总结流结束时不能误删新总结流的控制器。
+    if (controller && this.summaryControllers.get(conversationId) !== controller) {
+      return;
+    }
     this.summaryControllers.delete(conversationId);
   }
 
