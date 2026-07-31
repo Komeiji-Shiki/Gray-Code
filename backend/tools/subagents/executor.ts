@@ -433,8 +433,8 @@ export function createDefaultExecutor(
             type: 'run_started'
         });
 
-        const maxIterations = config.maxIterations ?? 20;
-        const maxRuntime = config.maxRuntime ?? 300; // 默认 5 分钟
+        const maxIterations = config.maxIterations ?? 50;
+        const maxRuntime = config.maxRuntime ?? 1800; // 默认 30 分钟
         const startTime = Date.now();
         const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         

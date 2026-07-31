@@ -87,8 +87,8 @@ export const SUB_AGENT_PRESETS: SubAgentPreset[] = [
             mode: 'whitelist',
             whitelist: [...READ_ONLY_TOOLS]
         },
-        maxIterations: 30,
-        maxRuntime: 600
+        maxIterations: 60,
+        maxRuntime: 1800
     },
     {
         presetId: 'deep-researcher',
@@ -112,8 +112,8 @@ export const SUB_AGENT_PRESETS: SubAgentPreset[] = [
             mode: 'blacklist',
             blacklist: [...WRITE_TOOLS, 'execute_command']
         },
-        maxIterations: 40,
-        maxRuntime: 900
+        maxIterations: 80,
+        maxRuntime: 2400
     },
     {
         presetId: 'parallel-editor',
@@ -137,8 +137,8 @@ export const SUB_AGENT_PRESETS: SubAgentPreset[] = [
             mode: 'whitelist',
             whitelist: [...READ_ONLY_TOOLS, ...WRITE_TOOLS, 'execute_command']
         },
-        maxIterations: 40,
-        maxRuntime: 900
+        maxIterations: 80,
+        maxRuntime: 2400
     },
     {
         presetId: 'web-searcher',
@@ -161,8 +161,8 @@ export const SUB_AGENT_PRESETS: SubAgentPreset[] = [
         tools: {
             mode: 'mcp'
         },
-        maxIterations: 20,
-        maxRuntime: 600
+        maxIterations: 40,
+        maxRuntime: 1200
     }
 ];
 

@@ -140,8 +140,8 @@ function generateAgentNameDescription(): string {
     for (const config of configs) {
         const tools = getAgentAvailableTools(config);
         const toolsStr = formatToolsList(tools, 8);
-        const maxIterStr = formatLimit(config.maxIterations, 20);
-        const maxRuntimeStr = formatLimit(config.maxRuntime, 300);
+        const maxIterStr = formatLimit(config.maxIterations, 50);
+        const maxRuntimeStr = formatLimit(config.maxRuntime, 1800);
         entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
     }
 
@@ -164,7 +164,7 @@ function generateAgentNameDescription(): string {
         }
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
-        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and full tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 40 iterations, max 900s runtime`);
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and full tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 80 iterations, max 2400s runtime`);
     }
 
     return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
@@ -279,8 +279,8 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
             channel: { channelId: channelConfigId },
             tools: { mode: 'all' },
-            maxIterations: 40,
-            maxRuntime: 900,
+            maxIterations: 80,
+            maxRuntime: 2400,
             enabled: true
         };
 
