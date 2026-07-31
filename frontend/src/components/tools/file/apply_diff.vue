@@ -441,6 +441,11 @@ function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
     result.push({ oldIndex: k, newIndex: k })
   }
 
+  // 后缀匹配回填：剥离前后缀时已确认匹配，按原始索引追加到核心匹配之后
+  for (let k = 0; k < suffixLen; k++) {
+    coreMatches.push({ oldIndex: m - suffixLen + k, newIndex: n - suffixLen + k })
+  }
+
   return result.concat(coreMatches)
 }
 

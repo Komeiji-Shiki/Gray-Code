@@ -336,6 +336,59 @@ describe('DiffManager lifecycle closure', () => {
         expect(saveListener).toHaveBeenCalledWith(pendingDiff);
     });
 
+    it('directApplyAndSave syncs a dirty editor silently without files.revert', async () => {
+        const manager = getManager();
+        const doc = createDocument({ initialContent: 'original' });
+        // 模拟用户在编辑器里的未保存修改（dirty）
+        doc.setText('user uncommitted edits');
+        expect(doc.isDirty).toBe(true);
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'accepted',
+            undefined,
+            undefined,
+            'tool-1',
+            { confirmedByToolConfirmation: true }
+        );
+
+        // 磁盘写入 AI 内容
+        expect(fs.writeFileSync).toHaveBeenCalledWith('C:/tmp/file.ts', 'accepted', 'utf8');
+        // 编辑器内容被静默替换为 AI 内容（而非保留旧缓冲区）
+        expect(doc.getText()).toBe('accepted');
+        // save 被调用清理 applyEdit 造成的 dirty
+        expect(doc.save).toHaveBeenCalled();
+        expect(doc.isDirty).toBe(false);
+        // 绝不走 files.revert（dirty 时会弹原生确认框阻塞等待链）
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('workbench.action.files.revert', doc.uri);
+        // diff 正常收敛为 accepted
+        expect(pendingDiff.status).toBe('accepted');
+    });
+
+    it('directApplyAndSave still finalizes as accepted when editor sync fails', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original' });
+        (vscode.workspace as any).applyEdit = jest.fn(async () => false);
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'accepted',
+            undefined,
+            undefined,
+            'tool-1',
+            { confirmedByToolConfirmation: true }
+        );
+
+        // 磁盘写入成功即收敛，编辑器同步失败只记录警告
+        expect(fs.writeFileSync).toHaveBeenCalledWith('C:/tmp/file.ts', 'accepted', 'utf8');
+        expect(pendingDiff.status).toBe('accepted');
+        expect(console.warn).toHaveBeenCalled();
+    });
+
     it('auto-save failure finalizes the diff as rejected to unblock tool execution', async () => {
         jest.useFakeTimers();
 

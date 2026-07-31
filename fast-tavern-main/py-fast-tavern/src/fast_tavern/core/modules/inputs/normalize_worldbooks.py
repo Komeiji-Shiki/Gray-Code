@@ -10,9 +10,12 @@ def _is_worldbook_entry_array(v: Any) -> bool:
 
 
 def _to_number(v: Any, fallback: float) -> float:
-    # 对齐 TS Number()：null → 0、true → 1 / false → 0、字符串 → 数值、无法解析 → fallback
+    # 对齐 TS toNumber：true → 1 / false → 0、字符串 → 数值、无法解析 → fallback。
+    # 注意：TS 侧 Number(undefined) = NaN（→ fallback）与 Number(null) = 0 语义不同，
+    # 而 Python dict.get 无法区分“键缺失”与“显式 null”，统一按缺失处理（返回 fallback）；
+    # 需要显式 null → 0 语义的字段用 _entry_number 特判。
     if v is None:
-        return 0.0
+        return fallback
     if isinstance(v, bool):
         return 1.0 if v else 0.0
     try:
@@ -20,6 +23,13 @@ def _to_number(v: Any, fallback: float) -> float:
     except Exception:
         return fallback
     return n if n == n and n not in (float("inf"), float("-inf")) else fallback
+
+
+def _entry_number(e: dict, key: str, fallback: float) -> float:
+    """对齐 TS toNumber(e[key], fallback)：键缺失（undefined）→ fallback；显式 null → Number(null) = 0。"""
+    if key in e and e[key] is None:
+        return 0.0
+    return _to_number(e.get(key), fallback)
 
 
 def _to_bool(v: Any, fallback: bool) -> bool:
@@ -34,7 +44,7 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     if not position:
         return None
 
-    index_n = _to_number(e.get("index"), float("nan"))
+    index_n = _entry_number(e, "index", float("nan"))
     if index_n != index_n:
         return None
     # 保持浮点不 int 截断：2.5 与 2 是不同键（对齐 TS number）
@@ -60,13 +70,13 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
         else "andAny"
     )
 
-    order_n = _to_number(e.get("order"), float("nan"))
+    order_n = _entry_number(e, "order", float("nan"))
     if order_n != order_n:
         return None
     order = int(order_n)
 
     depth_default = float("nan") if position == "fixed" else 0.0
-    depth_n = _to_number(e.get("depth"), depth_default)
+    depth_n = _entry_number(e, "depth", depth_default)
     if position == "fixed" and depth_n != depth_n:
         return None
     depth = int(depth_n) if depth_n == depth_n else 0
@@ -84,7 +94,7 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     exclude_recursion = _to_bool(e.get("excludeRecursion"), False)
     prevent_recursion = _to_bool(e.get("preventRecursion"), False)
 
-    probability_n = _to_number(e.get("probability"), 100.0)
+    probability_n = _entry_number(e, "probability", 100.0)
     # 保持浮点不 int 截断（对齐 TS number）
     probability = probability_n if probability_n == probability_n else 100
 

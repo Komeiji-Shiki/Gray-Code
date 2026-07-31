@@ -272,7 +272,7 @@ async function renderMermaid() {
           curve: 'basis',
           useMaxWidth: true
         },
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         fontFamily: 'var(--vscode-editor-font-family, "Segoe UI", sans-serif)'
       })
 

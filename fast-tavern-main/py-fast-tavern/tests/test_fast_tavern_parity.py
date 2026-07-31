@@ -477,6 +477,51 @@ def test_normalize_worldbooks_multi_file():
     assert [e["name"] for e in out] == ["WB Before", "WB Keyword"]
 
 
+def test_normalize_worldbooks_missing_probability_defaults_to_100():
+    # 对齐 TS：probability 缺失（undefined）→ fallback 100，条目正常参与注入
+    out = normalize_worldbooks([
+        {"position": "keyword", "name": "NoProb", "content": "x", "key": ["k"], "order": 1, "index": 0}
+    ])
+    assert len(out) == 1
+    assert out[0]["probability"] == 100
+
+
+def test_normalize_worldbooks_explicit_null_probability_is_zero():
+    # 对齐 TS Number(null) = 0：显式 null 概率为 0（永不注入），但条目保留
+    out = normalize_worldbooks([
+        {"position": "keyword", "name": "NullProb", "content": "x", "key": ["k"], "order": 1, "index": 0, "probability": None}
+    ])
+    assert len(out) == 1
+    assert out[0]["probability"] == 0
+
+
+def test_normalize_worldbooks_missing_index_or_order_drops_entry():
+    # 对齐 TS：index/order 缺失（undefined）→ NaN → 条目丢弃（而非默默变 0 保留）
+    out = normalize_worldbooks([
+        {"position": "keyword", "name": "NoIndex", "content": "x", "key": ["k"], "order": 1},
+        {"position": "keyword", "name": "NoOrder", "content": "x", "key": ["k"], "index": 0},
+    ])
+    assert len(out) == 0
+
+
+def test_normalize_worldbooks_explicit_null_index_is_zero():
+    # 对齐 TS Number(null) = 0：显式 null 的 index 保留为 0（与缺失丢弃不同）
+    out = normalize_worldbooks([
+        {"position": "keyword", "name": "NullIndex", "content": "x", "key": ["k"], "order": 1, "index": None}
+    ])
+    assert len(out) == 1
+    assert out[0]["index"] == 0
+
+
+def test_normalize_worldbooks_index_keeps_float_precision():
+    # 对齐 TS number：index 保持浮点不 int 截断（2.5 与 2 是不同键）
+    out = normalize_worldbooks([
+        {"position": "keyword", "name": "FloatIndex", "content": "x", "key": ["k"], "order": 1, "index": 2.5}
+    ])
+    assert len(out) == 1
+    assert out[0]["index"] == 2.5
+
+
 def test_normalize_regexes_multi_file():
     out = normalize_regexes(make_regexes_multi_file())
     assert len(out) == 4

@@ -249,10 +249,14 @@ export function switchTab(
       if (conv) {
         currentTab.title = conv.title
       }
-    }
 
-    const snapshot = snapshotCurrentSession(state)
-    state.sessionSnapshots.value.set(currentTabId, snapshot)
+      // 仅当标签页仍存在时才快照：closeTab 关闭活跃标签页后（快照已删、tab 已移除）
+      // 会调用 switchTab 切到相邻标签页，此时 currentTab 已不在 openTabs——无条件快照
+      // 会把整个会话状态（allMessages/messageQueue 等）重新塞进 sessionSnapshots 成为
+      // 永不被清理的孤儿快照（内存泄漏）。
+      const snapshot = snapshotCurrentSession(state)
+      state.sessionSnapshots.value.set(currentTabId, snapshot)
+    }
   }
 
   // 2. 恢复目标标签页状态

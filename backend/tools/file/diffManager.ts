@@ -996,16 +996,33 @@ export class DiffManager {
             // 直接写入文件到磁盘
             fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
 
-            // 如果文档已在编辑器中打开，统一 revert 从磁盘重载：
+            // 如果文档已在编辑器中打开，用 WorkspaceEdit 静默替换为 AI 内容：
             // 不能调用 openDoc.save() —— save 会把编辑器缓冲区（旧内容 + 用户未保存编辑）写回磁盘，
-            // 覆盖刚写入的 AI 内容；且 saved=true 提前 return 会跳过 finalizeAcceptedDiff，diff 永久 pending。
-            const uri = vscode.Uri.file(diff.absolutePath);
+            // 覆盖刚写入的 AI 内容；也不能用 workbench.action.files.revert —— 文档 dirty 时会弹出
+            // VS Code 原生"是否放弃更改？"确认框，阻塞整个 diff 流程直到用户点击。
+            // 正确顺序：先写盘，再把编辑器内容替换为同一份 newContent，最后 save() 清理 dirty
+            // （此时缓冲区与磁盘一致，保存无害、无弹框）。
             const openDoc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
             if (openDoc) {
                 try {
-                    await vscode.commands.executeCommand('workbench.action.files.revert', openDoc.uri);
-                } catch {
-                    // ignore
+                    const fullRange = new vscode.Range(
+                        openDoc.positionAt(0),
+                        openDoc.positionAt(openDoc.getText().length)
+                    );
+                    const edit = new vscode.WorkspaceEdit();
+                    edit.replace(openDoc.uri, fullRange, diff.newContent);
+                    const applied = await vscode.workspace.applyEdit(edit);
+                    if (applied) {
+                        // applyEdit 会把文档标脏（即便内容与磁盘一致），save() 清理 dirty
+                        await openDoc.save();
+                    } else {
+                        console.warn(
+                            `[DiffManager] directApplyAndSave: failed to sync editor content for ${diff.filePath}`
+                        );
+                    }
+                } catch (error) {
+                    // 编辑器同步失败不影响已完成的磁盘写入，仅记录
+                    console.warn(`[DiffManager] directApplyAndSave: editor sync failed for ${diff.filePath}`, error);
                 }
             }
 

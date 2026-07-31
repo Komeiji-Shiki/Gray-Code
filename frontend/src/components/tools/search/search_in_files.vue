@@ -176,7 +176,8 @@ function highlightMatch(context: string | undefined, match: string | undefined):
   const escapedContext = escapeHtml(context)
   const escapedMatch = escapeHtml(match)
   const escaped = escapedMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return escapedContext.replace(new RegExp(escaped, 'gi'), `<mark>${escapedMatch}</mark>`)
+  // 使用替换函数而非替换字符串，避免匹配串含 $' / $` / $$ 时触发 replace 的特殊替换语义（G1）
+  return escapedContext.replace(new RegExp(escaped, 'gi'), () => `<mark>${escapedMatch}</mark>`)
 }
 
 // ============ Diff 相关 ============

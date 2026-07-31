@@ -27,14 +27,17 @@ def _to_recursion_limit(v: Any) -> int:
     try:
         n = float(v)
     except Exception:
-        return 5
+        # TS: Number("abc") = NaN -> Math.trunc(NaN) = NaN -> 循环不执行 -> 等价 -1
+        return -1
     if n != n:
         return -1
     if n == float("inf"):
         return 5
     if n == float("-inf"):
-        return 0
-    return max(0, int(n))
+        # TS: Math.trunc(-Infinity) = -Infinity -> range 空（0 次迭代）
+        return -1
+    # Math.trunc 语义：不钳制负数，int(-2.5) = -2 -> range(0, -1) 为空
+    return int(n)
 
 
 def _normalize_case_sensitive(entry: WorldBookEntry, default_case_sensitive: bool) -> bool:

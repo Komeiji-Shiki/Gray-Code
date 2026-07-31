@@ -967,8 +967,8 @@ export async function* proxyStreamFetch(
                                 dataQueue.push(decoder.decode(decoded, { stream: true }));
                             }
                         } else {
-                            // 非 chunked，直接存储
-                            dataQueue.push(rawBuffer.toString('utf8'));
+                            // 非 chunked：同样走流式解码，跨包多字节字符由 TextDecoder 缓冲拼接
+                            dataQueue.push(decoder.decode(rawBuffer, { stream: true }));
                             rawBuffer = Buffer.alloc(0);
                         }
                     }
@@ -1073,14 +1073,14 @@ export async function* proxyStreamFetch(
                     yield decoder.decode(decoded, { stream: true });
                 }
             } else if (rawBuffer.length > 0) {
-                yield rawBuffer.toString('utf8');
+                yield decoder.decode(rawBuffer, { stream: true });
             }
-        }
 
-        // flush TextDecoder 内部缓冲：末块被切开的 UTF-8 字符尾部在此输出
-        const flushed = decoder.decode();
-        if (flushed) {
-            yield flushed;
+            // flush TextDecoder 内部缓冲：末块被切开的 UTF-8 字符尾部在此输出
+            const flushed = decoder.decode();
+            if (flushed) {
+                yield flushed;
+            }
         }
     } finally {
         // 移除取消信号监听
