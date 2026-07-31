@@ -122,6 +122,17 @@ const activeRunIds = ref<Set<string>>(new Set())
 const hasUserSelectedRun = ref(false)
 let disposeMessageListener: (() => void) | undefined
 
+// 修改原因：llm_delta 是高频流式事件（流式输出时每秒可达数十个），若每个事件都立即触发
+//          manifests/windowsByRunId 的响应式替换，Vue 更新频率会远超渲染帧率，叠加 renderMessages
+//          全量重建与 MessageItem 重渲染，Monitor 即使只有一个 run 也会卡顿。
+// 修改方式：事件回调只把 delta 写入非响应式队列，由 rAF（setTimeout 兜底）批量 flush，
+//          每帧至多提交一次完整状态更新。
+// 修改目的：UI 更新频率与渲染帧对齐，流式成本从“每 chunk 一次全量更新”降为“每帧一次合并更新”。
+const pendingLlmDeltaEvents = new Map<string, SubAgentRunEvent[]>()
+let llmDeltaFlushScheduled = false
+let llmDeltaFlushFallbackTimer: ReturnType<typeof setTimeout> | undefined
+let llmDeltaFlushGeneration = 0
+
 const orderedRuns = computed(() => {
   // 修改原因：updatedAt 会被每个 llm_delta 和工具事件刷新，并发 run 按 updatedAt 排序会导致 tab 顺序不停跳动。
   // 修改方式：Run tab 改用创建时间的稳定顺序；updatedAt 仍只用于展示最近更新时间。
@@ -213,12 +224,21 @@ function applyToolStatusEvent(event: SubAgentRunEvent) {
   }
 }
 
+// 修改原因：事件数组只增不减且每次 append 都整体复制，长 run 的事件累积会让复制成本随事件数增长。
+// 修改方式：与后端事件 journal 上限（MAX_EVENTS_PER_RUN=500）对齐，超过后丢弃最旧事件。
+// 修改目的：前端事件列表有界，审计与重试展示只依赖最近事件。
+const MAX_MONITOR_EVENTS_PER_RUN = 500
+
 function appendEvent(event: SubAgentRunEvent) {
   if (!event?.runId || event.type === 'llm_delta') return
   const current = eventsByRunId.value[event.runId] || []
+  const next = [...current, event]
+  if (next.length > MAX_MONITOR_EVENTS_PER_RUN) {
+    next.splice(0, next.length - MAX_MONITOR_EVENTS_PER_RUN)
+  }
   eventsByRunId.value = {
     ...eventsByRunId.value,
-    [event.runId]: [...current, event]
+    [event.runId]: next
   }
   // 修改原因：工具事件不仅用于审计列表，还必须实时推进 MessageItem 内的工具卡状态。
   // 修改方式：事件入库后同步喂给 run 级工具状态 overlay reducer。
@@ -434,60 +454,113 @@ function replayBufferedLiveDeltas(runId: string) {
   setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
 }
 
-function applyLiveDeltaEvent(event: SubAgentRunEvent) {
-  if (event.type !== 'llm_delta' || !event.runId) return
-
-  const timestamp = event.timestamp || Date.now()
-  const existingWindow = windowsByRunId.value[event.runId]
-  const existingManifest = manifests.value.find(item => item.runId === event.runId)
-  upsertManifest({
-    runId: event.runId,
-    agentName: event.agentName || existingManifest?.agentName,
-    status: existingManifest?.status || 'running',
-    createdAt: existingManifest?.createdAt || timestamp,
-    updatedAt: timestamp,
-    conversationId: existingManifest?.conversationId,
-    contentCount: event.payload?.contentCount || existingManifest?.contentCount || existingWindow?.totalCount || 0,
-    eventCount: existingManifest?.eventCount || 0,
-    contentRevision: event.contentRevision ?? event.payload?.contentRevision ?? existingManifest?.contentRevision ?? existingWindow?.contentRevision,
-    eventSequence: event.eventSequence ?? event.payload?.eventSequence ?? existingManifest?.eventSequence ?? existingWindow?.eventSequence,
-    preview: existingManifest?.preview,
-    lastMessageRole: existingManifest?.lastMessageRole
-  })
-
-  if (!hasRenderableMonitorLiveDelta(event)) {
-    // 修改原因：Monitor 后端事件瘦身后，llm_delta 可能只携带 deltaCount/done 等状态计数，不再包含正文 delta。
-    // 修改方式：没有可渲染正文时只更新 manifest，不调用 Content[] reducer 创建空 model 楼层。
-    // 目的：遵守“正文走 window”原则，同时避免状态事件污染当前 transcript window。
-    return
+function enqueueLlmDelta(event: SubAgentRunEvent) {
+  if (!event?.runId) return
+  const list = pendingLlmDeltaEvents.get(event.runId)
+  if (list) {
+    list.push(event)
+  } else {
+    pendingLlmDeltaEvents.set(event.runId, [event])
   }
+  scheduleLlmDeltaFlush()
+}
 
-  if (!existingWindow) {
-    const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
-    if (isFocusedLiveRun) {
-      // 修改原因：打开 Monitor 的首个 getRunWindow 可能尚未返回；此时直接 return 会永久丢失已经到达的正文或 functionCall delta。
-      // 修改方式：只为当前聚焦 run 缓冲可渲染 live delta，并触发一次窗口请求；窗口到达后按 revision/sequence 回放。
-      // 目的：仍然避免为所有后台 run 构造 Content[]，但当前查看 run 不再缺字或缺工具卡。
-      bufferLiveDeltaEvent(event)
-      void requestRunWindow(event.runId, true)
+function scheduleLlmDeltaFlush() {
+  if (llmDeltaFlushScheduled) return
+  llmDeltaFlushScheduled = true
+  const generation = ++llmDeltaFlushGeneration
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => {
+      if (generation !== llmDeltaFlushGeneration) return
+      finishLlmDeltaFlush()
+    })
+  }
+  // rAF 在面板隐藏等极端场景可能不触发，setTimeout 兜底保证队列不会无限堆积
+  llmDeltaFlushFallbackTimer = setTimeout(() => {
+    if (generation !== llmDeltaFlushGeneration) return
+    finishLlmDeltaFlush()
+  }, 100)
+}
+
+function finishLlmDeltaFlush() {
+  llmDeltaFlushScheduled = false
+  if (llmDeltaFlushFallbackTimer) {
+    clearTimeout(llmDeltaFlushFallbackTimer)
+    llmDeltaFlushFallbackTimer = undefined
+  }
+  flushPendingLlmDeltas()
+}
+
+function flushPendingLlmDeltas() {
+  if (pendingLlmDeltaEvents.size === 0) return
+  const batches = Array.from(pendingLlmDeltaEvents.entries())
+  pendingLlmDeltaEvents.clear()
+
+  let nextManifests: SubAgentRunManifest[] | undefined
+  let nextWindows: Record<string, SubAgentRunContentWindow> | undefined
+  const needWindowRefresh: string[] = []
+
+  for (const [runId, events] of batches) {
+    const existingManifest = manifests.value.find(item => item.runId === runId)
+    const lastEvent = events[events.length - 1]
+    const timestamp = lastEvent.timestamp || Date.now()
+
+    // 合并 manifest：以最后一个事件为准，整批只提交一次
+    const mergedManifest: SubAgentRunManifest = {
+      runId,
+      agentName: lastEvent.agentName || existingManifest?.agentName,
+      status: existingManifest?.status || 'running',
+      createdAt: existingManifest?.createdAt || timestamp,
+      updatedAt: timestamp,
+      conversationId: existingManifest?.conversationId,
+      contentCount: lastEvent.payload?.contentCount || existingManifest?.contentCount || windowsByRunId.value[runId]?.totalCount || 0,
+      eventCount: existingManifest?.eventCount || 0,
+      contentRevision: lastEvent.contentRevision ?? lastEvent.payload?.contentRevision ?? existingManifest?.contentRevision,
+      eventSequence: lastEvent.eventSequence ?? lastEvent.payload?.eventSequence ?? existingManifest?.eventSequence,
+      preview: existingManifest?.preview,
+      lastMessageRole: existingManifest?.lastMessageRole
     }
-    return
+
+    // 窗口应用：在同一个工作副本上依次应用本批全部 delta，最后只提交一次
+    let workingWindow = windowsByRunId.value[runId]
+    let buffered = false
+    for (const event of events) {
+      if (!hasRenderableMonitorLiveDelta(event)) continue
+      if (!workingWindow) {
+        const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
+        if (isFocusedLiveRun) {
+          bufferLiveDeltaEvent(event)
+          buffered = true
+        }
+        continue
+      }
+      const nextWindow = applyLiveDeltaToWindow(event, workingWindow, mergedManifest)
+      if (!nextWindow) {
+        bufferLiveDeltaEvent(event)
+        buffered = true
+        continue
+      }
+      workingWindow = nextWindow
+    }
+
+    if (!nextManifests) nextManifests = [...manifests.value]
+    const index = nextManifests.findIndex(item => item.runId === runId)
+    if (index >= 0) {
+      nextManifests[index] = { ...nextManifests[index], ...mergedManifest }
+    } else {
+      nextManifests.unshift(mergedManifest)
+    }
+    if (workingWindow) {
+      if (!nextWindows) nextWindows = { ...windowsByRunId.value }
+      nextWindows[runId] = workingWindow
+    }
+    if (buffered) needWindowRefresh.push(runId)
   }
 
-  const latestManifest = manifests.value.find(item => item.runId === event.runId) || existingManifest
-  const nextWindow = applyLiveDeltaToWindow(event, existingWindow, latestManifest)
-  if (!nextWindow) {
-    // 修改原因：可渲染 delta 没有独立 content identity，只能追加到同 revision 的尾部窗口；窗口落后时不能丢弃 delta。
-    // 修改方式：先把 delta 放入有界缓冲，再强制拉取权威窗口，等待窗口 revision 匹配后回放。
-    // 目的：避免 stale window 混楼，同时修复中途窗口校准导致的实时片段丢失。
-    bufferLiveDeltaEvent(event)
-    void requestRunWindow(event.runId, true)
-    return
-  }
-
-  windowsByRunId.value = {
-    ...windowsByRunId.value,
-    [event.runId]: nextWindow
+  if (nextManifests) manifests.value = nextManifests
+  if (nextWindows) windowsByRunId.value = nextWindows
+  for (const runId of needWindowRefresh) {
+    void requestRunWindow(runId, true)
   }
 }
 
@@ -512,6 +585,20 @@ function deriveToolStatus(result: unknown): ToolUsage['status'] {
   return 'success'
 }
 
+// 修改原因：renderMessages 每次窗口更新都会对所有消息重新调用 contentToMessageEnhanced 生成新 Message 对象，
+//          MessageItem 收到新的 props 引用后即使内容未变也会重新渲染（包括重新解析 Markdown），
+//          流式输出时每个 delta 都触发窗口内全部消息的重渲染，这是 Monitor 卡顿的主要来源之一。
+// 修改方式：按 run 维护 contentIndex -> { content 引用, overlay 引用, message } 缓存；只有 content、
+//          工具 overlay 引用或 streaming 状态翻转时才重建对应消息。
+// 修改目的：未变化的楼层保持 Message 对象引用稳定，MessageItem 直接跳过渲染，流式更新成本与窗口长度解耦。
+interface RenderMessageCacheEntry {
+  contentRef: Content
+  overlayRef: MonitorToolStatusOverlay | undefined
+  message: Message
+}
+const renderMessageCacheByRun = new Map<string, Map<number, RenderMessageCacheEntry>>()
+const MAX_RENDER_MESSAGE_CACHE_ENTRIES_PER_RUN = 200
+
 function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   if (!run) return []
   const responseMap = getFunctionResponseMap(run.contents || [])
@@ -520,46 +607,79 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   const isLiveRun = activeRunIds.value.has(run.runId)
     && (run.status === 'queued' || run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
 
-  return (run.contents || [])
-    .map((content, windowOffset) => ({ content, windowOffset }))
-    .filter(item => item.content.isFunctionResponse !== true)
-    .map(({ content, windowOffset }) => {
-      // 修改原因：Monitor 现在只加载 transcript window，可见数组下标既不等于完整 Content[] 索引，也可能跳过 functionResponse。
-      // 修改方式：优先使用后端 content.index，缺失时用窗口 startIndex + offset 还原真实 contentIndex，并写入 backendIndex。
-      // 修改目的：删除/重试时仍传给后端真实 contentIndex，不会误删窗口内相邻消息。
-      const contentIndex = typeof content.index === 'number'
-        ? content.index
-        : (contentWindow?.startIndex || 0) + windowOffset
-      const message = contentToMessageEnhanced(content, `${run.runId}_${contentIndex}`)
-      message.backendIndex = contentIndex
+  let cache = renderMessageCacheByRun.get(run.runId)
+  if (!cache) {
+    cache = new Map()
+    renderMessageCacheByRun.set(run.runId, cache)
+  }
 
-      // 修改原因：Monitor 复用 MessageItem 但过去没有给活跃尾部 model 消息标记 streaming，导致它不走主窗口同一流式 Markdown 策略。
-      // 修改方式：当当前窗口覆盖 transcript 尾部，且 run 仍由后端 active controller 管理时，只把尾部 model 楼层投影为 streaming。
-      // 修改目的：SubAgent Monitor 与主聊天共享“活跃尾部消息流式渲染、历史消息完成态渲染”的统一契约。
-      if (
-        isLiveRun &&
-        content.role === 'model' &&
-        contentWindow?.hasMoreAfter !== true &&
-        contentIndex === Math.max(0, (contentWindow?.totalCount || 0) - 1)
-      ) {
-        message.streaming = true
+  const contents = run.contents || []
+  const tailContentIndex = Math.max(0, (contentWindow?.totalCount || 0) - 1)
+  const messages: Message[] = []
+  for (let windowOffset = 0; windowOffset < contents.length; windowOffset++) {
+    const content = contents[windowOffset]
+    if (content.isFunctionResponse === true) continue
+    // 修改原因：Monitor 现在只加载 transcript window，可见数组下标既不等于完整 Content[] 索引，也可能跳过 functionResponse。
+    // 修改方式：优先使用后端 content.index，缺失时用窗口 startIndex + offset 还原真实 contentIndex，并写入 backendIndex。
+    // 修改目的：删除/重试时仍传给后端真实 contentIndex，不会误删窗口内相邻消息。
+    const contentIndex = typeof content.index === 'number'
+      ? content.index
+      : (contentWindow?.startIndex || 0) + windowOffset
+
+    const cached = cache.get(contentIndex)
+    if (cached && cached.contentRef === content && cached.overlayRef === toolOverlay) {
+      const shouldStream = isLiveRun
+        && content.role === 'model'
+        && contentWindow?.hasMoreAfter !== true
+        && contentIndex === tailContentIndex
+      if (cached.message.streaming !== shouldStream) {
+        // streaming 状态翻转时浅复制一次（content/parts 引用不变），只在 run 状态转换时发生
+        const corrected = { ...cached.message, streaming: shouldStream }
+        cache.set(contentIndex, { ...cached, message: corrected })
+        messages.push(corrected)
+      } else {
+        messages.push(cached.message)
       }
+      continue
+    }
 
-      if (message.tools && message.tools.length > 0) {
-        message.tools = message.tools.map(tool => {
-          const response = responseMap.get(tool.id)
-          if (!response) return applyMonitorToolOverlay(tool, toolOverlay)
-          const result = response.response as Record<string, unknown>
-          return {
-            ...applyMonitorToolOverlay(tool, toolOverlay),
-            result,
-            status: deriveToolStatus(result)
-          }
-        })
-      }
+    const message = contentToMessageEnhanced(content, `${run.runId}_${contentIndex}`)
+    message.backendIndex = contentIndex
 
-      return message
-    })
+    // 修改原因：Monitor 复用 MessageItem 但过去没有给活跃尾部 model 消息标记 streaming，导致它不走主窗口同一流式 Markdown 策略。
+    // 修改方式：当当前窗口覆盖 transcript 尾部，且 run 仍由后端 active controller 管理时，只把尾部 model 楼层投影为 streaming。
+    // 修改目的：SubAgent Monitor 与主聊天共享“活跃尾部消息流式渲染、历史消息完成态渲染”的统一契约。
+    if (
+      isLiveRun &&
+      content.role === 'model' &&
+      contentWindow?.hasMoreAfter !== true &&
+      contentIndex === tailContentIndex
+    ) {
+      message.streaming = true
+    }
+
+    if (message.tools && message.tools.length > 0) {
+      message.tools = message.tools.map(tool => {
+        const response = responseMap.get(tool.id)
+        if (!response) return applyMonitorToolOverlay(tool, toolOverlay)
+        const result = response.response as Record<string, unknown>
+        return {
+          ...applyMonitorToolOverlay(tool, toolOverlay),
+          result,
+          status: deriveToolStatus(result)
+        }
+      })
+    }
+
+    cache.set(contentIndex, { contentRef: content, overlayRef: toolOverlay, message })
+    messages.push(message)
+  }
+
+  // 分页历史累积时缓存条目可能超过窗口大小，超限直接清空该 run 缓存（下次重建，属少见路径）
+  if (cache.size > MAX_RENDER_MESSAGE_CACHE_ENTRIES_PER_RUN) {
+    renderMessageCacheByRun.delete(run.runId)
+  }
+  return messages
 }
 
 const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
@@ -831,19 +951,25 @@ onMounted(async () => {
       }
       if (message.data?.event) {
         appendEvent(message.data.event)
-        applyLiveDeltaEvent(message.data.event)
-        if (message.data.event.type === 'content_snapshot') {
-          clearSupersededLiveDeltaBuffer(
-            message.data.event.runId,
-            message.data.event.contentRevision ?? message.data.event.payload?.contentRevision
-          )
-        }
-        if (message.data.event.type !== 'llm_delta' && message.data.event.runId === focusedRun.value?.runId) {
-          // 修改原因：低频事件代表后端真源可能已推进，聚焦窗口需要跟上，但不能接收完整 snapshot。
-          // 修改方式：交给 requestRunWindow 内部的 revision 判据决定是否真的发起请求——
-          //          transcript 真的变了才拉，tool_started 这类纯状态事件不再触发无谓往返。
-          // 修改目的：保证当前可见内容最终一致，同时避免高频工具调用把窗口请求打成风暴。
-          void requestRunWindow(message.data.event.runId)
+        if (message.data.event.type === 'llm_delta') {
+          // 修改原因：高频 llm_delta 不能每个都触发响应式更新，统一入队后由 rAF 批量 flush。
+          // 修改方式：llm_delta 只入队；content_snapshot/tool_* 等状态事件仍即时处理保证低延迟。
+          // 修改目的：事件回调变成 O(1) 入队，Vue 更新频率与帧率对齐。
+          enqueueLlmDelta(message.data.event)
+        } else {
+          if (message.data.event.type === 'content_snapshot') {
+            clearSupersededLiveDeltaBuffer(
+              message.data.event.runId,
+              message.data.event.contentRevision ?? message.data.event.payload?.contentRevision
+            )
+          }
+          if (message.data.event.runId === focusedRun.value?.runId) {
+            // 修改原因：低频事件代表后端真源可能已推进，聚焦窗口需要跟上，但不能接收完整 snapshot。
+            // 修改方式：交给 requestRunWindow 内部的 revision 判据决定是否真的发起请求——
+            //          transcript 真的变了才拉，tool_started 这类纯状态事件不再触发无谓往返。
+            // 修改目的：保证当前可见内容最终一致，同时避免高频工具调用把窗口请求打成风暴。
+            void requestRunWindow(message.data.event.runId)
+          }
         }
       }
       updateActiveRunIds(message.data?.activeRunIds)
@@ -878,6 +1004,12 @@ onBeforeUnmount(() => {
   disposeMessageListener?.()
   detachScrollListener?.()
   detachScrollListener = undefined
+  if (llmDeltaFlushFallbackTimer) {
+    clearTimeout(llmDeltaFlushFallbackTimer)
+    llmDeltaFlushFallbackTimer = undefined
+  }
+  pendingLlmDeltaEvents.clear()
+  llmDeltaFlushScheduled = false
   if (controlNoticeTimer) {
     clearTimeout(controlNoticeTimer)
     controlNoticeTimer = undefined

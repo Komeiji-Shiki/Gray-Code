@@ -198,6 +198,18 @@ export class SubAgentMonitorPanel {
      */
     private panelDisposables: vscode.Disposable[] = [];
 
+    /**
+     * llm_delta 节流合并队列。
+     *
+     * 修改原因：流式输出时每个 chunk 都触发一次跨进程 postMessage，高频输出（每秒数十 chunk）会让
+     *          Webview 通道和前端事件处理持续满载，Monitor 即使只有一个 run 也会卡顿。
+     * 修改方式：llm_delta 先按 run 入队，由短定时器批量合并后一次性 postMessage；run 状态等低频事件不受影响。
+     * 修改目的：postMessage 次数与渲染帧率对齐，而不是与 token 产出速度对齐。
+     */
+    private readonly pendingLlmDeltaEvents = new Map<string, SubAgentRunEvent[]>();
+    private llmDeltaFlushTimer?: ReturnType<typeof setTimeout>;
+    private static readonly LLM_DELTA_FLUSH_MS = 50;
+
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly devServerUrl?: string,
@@ -283,6 +295,7 @@ export class SubAgentMonitorPanel {
         }, undefined, this.panelDisposables);
 
         this.panel.onDidDispose(() => {
+            this.clearLlmDeltaQueue();
             this.clientRegistration?.dispose();
             this.clientRegistration = undefined;
             this.panel = undefined;
@@ -294,6 +307,7 @@ export class SubAgentMonitorPanel {
 
     dispose(): void {
         this.unsubscribe();
+        this.clearLlmDeltaQueue();
         this.clientRegistration?.dispose();
         this.clientRegistration = undefined;
         this.panel?.dispose();
@@ -408,6 +422,13 @@ export class SubAgentMonitorPanel {
         if (!this.panel.visible && event.type === 'llm_delta') {
             return;
         }
+        // 修改原因：高频 llm_delta 不能每 chunk 都 postMessage，否则 Webview 通道和前端事件处理会被流式输出打满。
+        // 修改方式：llm_delta 入队后由 LLM_DELTA_FLUSH_MS 定时器批量合并发送；其它事件保持即时。
+        // 修改目的：跨进程消息频率与帧率对齐，Monitor 在密集输出下依然流畅。
+        if (event.type === 'llm_delta') {
+            this.enqueueLlmDelta(event);
+            return;
+        }
         this.postRoutedMessage({
             type: 'subagentMonitor.event',
             data: {
@@ -422,6 +443,76 @@ export class SubAgentMonitorPanel {
                 activeRunIds: subAgentRunController.getActiveRunIds()
             }
         });
+    }
+
+    private enqueueLlmDelta(event: SubAgentRunEvent): void {
+        const list = this.pendingLlmDeltaEvents.get(event.runId);
+        if (list) {
+            list.push(event);
+        } else {
+            this.pendingLlmDeltaEvents.set(event.runId, [event]);
+        }
+        if (!this.llmDeltaFlushTimer) {
+            this.llmDeltaFlushTimer = setTimeout(() => this.flushLlmDeltas(), SubAgentMonitorPanel.LLM_DELTA_FLUSH_MS);
+            // 节流窗口不应成为进程存活理由
+            (this.llmDeltaFlushTimer as { unref?: () => void }).unref?.();
+        }
+    }
+
+    private flushLlmDeltas(): void {
+        this.llmDeltaFlushTimer = undefined;
+        if (!this.panel || !this.panel.visible || this.pendingLlmDeltaEvents.size === 0) {
+            this.pendingLlmDeltaEvents.clear();
+            return;
+        }
+        const batches = Array.from(this.pendingLlmDeltaEvents.entries());
+        this.pendingLlmDeltaEvents.clear();
+
+        for (const [runId, events] of batches) {
+            const snapshot = subAgentRunEventBus.getSnapshot(runId);
+            if (!snapshot) continue;
+            // 合并：delta 数组按序拼接，contentSnapshot/usage/done 等状态字段取最后一个事件的值
+            const last = events[events.length - 1];
+            const lastPayload = (last.payload || {}) as Record<string, unknown>;
+            const mergedPayload: Record<string, unknown> = { ...lastPayload };
+            const deltaParts: unknown[] = [];
+            for (const event of events) {
+                const rawDelta = (event.payload as Record<string, unknown> | undefined)?.delta;
+                if (Array.isArray(rawDelta)) {
+                    deltaParts.push(...rawDelta);
+                }
+            }
+            if (deltaParts.length > 0) {
+                mergedPayload.delta = deltaParts;
+            }
+            const mergedEvent: SubAgentRunEvent = {
+                ...last,
+                runId,
+                payload: mergedPayload
+            };
+            this.postRoutedMessage({
+                type: 'subagentMonitor.event',
+                data: {
+                    event: createMonitorEventPayload(mergedEvent, snapshot),
+                    // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
+                    // 修改方式：事件推送只携带轻量 manifest；当前聚焦 run 需要校准内容时由前端 getRunWindow 拉窗口。
+                    // 修改目的：避免 Monitor 打开后任一低频事件再次把大 transcript 全量送入前端。
+                    manifest: subAgentRunEventBus.getManifest(runId),
+                    focusRunId: this.focusRunId,
+                    focusConversationId: this.focusConversationId,
+                    // 控制按钮可见性以后端活跃运行控制器为准，不让前端猜测 run 是否仍活跃。
+                    activeRunIds: subAgentRunController.getActiveRunIds()
+                }
+            });
+        }
+    }
+
+    private clearLlmDeltaQueue(): void {
+        if (this.llmDeltaFlushTimer) {
+            clearTimeout(this.llmDeltaFlushTimer);
+            this.llmDeltaFlushTimer = undefined;
+        }
+        this.pendingLlmDeltaEvents.clear();
     }
 
     private async loadConversationSnapshotsIfPossible(conversationId?: string): Promise<void> {
