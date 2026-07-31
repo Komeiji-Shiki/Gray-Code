@@ -129,9 +129,15 @@ let dispatcherAttached = false
 
 function dispatchExtensionMessage(event: MessageEvent) {
   routeExtensionMessage(event.data, messageHandlers, message => {
-    // 复制一份再遍历：订阅者可能在处理过程中取消订阅
+    // 复制一份再遍历：订阅者可能在处理过程中取消订阅。
+    // 每个订阅者单独容错：一个订阅者抛异常不能中断其余订阅者
+    //（如 chatStore 遇畸形 chunk 抛错会让 backgroundTaskStore 等收不到同一条消息，审查报告 L）。
     for (const subscriber of [...pushMessageSubscribers]) {
-      subscriber(message as VSCodeMessage)
+      try {
+        subscriber(message as VSCodeMessage)
+      } catch (error) {
+        console.error('[vscode] Subscriber failed to handle message:', error)
+      }
     }
   })
 }

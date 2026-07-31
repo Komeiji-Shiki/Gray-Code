@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 流式响应 Chunk 处理器
  * 
  * 统一处理流式响应的 chunk 并发送到前端。
@@ -40,7 +40,7 @@ export class StreamChunkProcessor {
   private lastChunkFlushTime: number = 0;
 
   constructor(
-    private view: vscode.WebviewView | undefined,
+    private view: { webview: vscode.Webview } | undefined,
     private conversationId: string,
     private streamId: string
   ) {}
@@ -172,13 +172,13 @@ export class StreamChunkProcessor {
 
     if (messages.length === 1) {
       // 单条消息：保持原有格式，向前兼容
-      this.view.webview.postMessage({
+      this.view!.webview.postMessage({
         type: 'streamChunk',
         data: messages[0]
       });
     } else {
       // 多条消息：批量发送，前端一次性同步处理以利用 Vue 响应式批量更新
-      this.view.webview.postMessage({
+      this.view!.webview.postMessage({
         type: 'streamChunkBatch',
         data: messages
       });

@@ -172,18 +172,12 @@ class TaskManagerClass {
         }
         
         try {
-            // 触发取消
+            // 只触发取消，不在此处删除任务、也不发送裸 cancelled 事件：
+            // 各任务的完成路径（终端 proc close、媒体批次结束）在收到 abort 后会调用
+            // unregisterTask 并携带完整输出发送最终事件；若在这里提前删除/发事件，
+            // 最终事件会因 unregisterTask no-op 而丢失，前端任务条只收到无数据的
+            // cancelled，卡在"已取消但无结果"状态（审查报告 M6）。
             task.abortController.abort();
-            
-            // 从活跃任务中移除
-            this.activeTasks.delete(id);
-            
-            // 发送取消事件
-            this.emitEvent({
-                taskId: id,
-                taskType: task.type,
-                type: 'cancelled'
-            });
             
             return { success: true };
         } catch (error) {

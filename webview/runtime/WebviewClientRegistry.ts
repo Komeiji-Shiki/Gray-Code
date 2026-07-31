@@ -19,6 +19,12 @@ export interface WebviewClientRegistration {
   runScope?: RunScope;
   webviewHost?: { webview: vscode.Webview };
   postMessage(message: Record<string, unknown>): Thenable<boolean> | Promise<boolean> | boolean;
+  /**
+   * 可选存活判定：webview 已销毁时返回 false。
+   * postMessage 到已销毁的 webview 会 resolve(false) 而不是抛异常，
+   * 仅靠 try/catch 无法识别"投递失败"，路由回退契约会失效（审查报告 M8）。
+   */
+  isAlive?: () => boolean;
 }
 
 /**
@@ -86,6 +92,12 @@ export class WebviewClientRegistry {
   postMessage(clientId: unknown, message: Record<string, unknown>): boolean {
     const client = this.get(clientId);
     if (!client) {
+      return false;
+    }
+
+    // 注册条目仍存在但 webview 已销毁：postMessage 会 resolve(false) 而非抛异常，
+    // 必须在此显式识别，否则调用方误判"投递成功"，跳过回退路径且响应静默丢失。
+    if (client.isAlive && !client.isAlive()) {
       return false;
     }
 

@@ -376,6 +376,12 @@ function handleKeydown(e: KeyboardEvent) {
   const editor = editorRef.value
   if (!editor) return
 
+  // 输入法合成期间按键属于 IME 编辑（选词/上屏），不得触发任何快捷键逻辑：
+  // 否则中文/日文输入法按 Enter 确认候选词会误发消息（审查报告 M21）
+  if (e.isComposing || e.keyCode === 229) {
+    return
+  }
+
   if (atTrigger.handleKeydown(e)) return
 
   const onContextRemoved = (removedId: string) => {

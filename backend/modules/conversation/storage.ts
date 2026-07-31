@@ -14,6 +14,41 @@
 
 import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content } from './types';
 
+// ─── 每会话 metadata 写串行链 ───────────────────────
+//
+// 修改原因：saveHistory 里"loadMetadata → 改 updatedAt → saveMetadata"的
+// read-modify-write 与 ConversationManager.setCustomMetadata（checkpoints /
+// trimState 等 custom key）的 read-modify-write 若并发执行，两者都基于旧 meta
+// 整体写回，后写者会覆盖先写者的 custom 字段。
+// 修改方式：所有 metadata 的读改写统一走这条按会话串行链。
+// 修改目的：从根上消除 metadata 整体覆盖写（审查报告 M1）。
+const metadataWriteChains = new Map<string, Promise<void>>();
+const METADATA_WRITE_MAX_KEYS = 10000;
+
+export async function withMetadataWriteSerialized<T>(
+    conversationId: string,
+    action: () => Promise<T>
+): Promise<T> {
+    // 防止长时间运行后 Map 无限增长（锁对象很小，对话数量级也远低于上限，此处仅兜底）
+    if (metadataWriteChains.size >= METADATA_WRITE_MAX_KEYS) {
+        const oldest = metadataWriteChains.keys().next().value as string | undefined;
+        if (oldest !== undefined) {
+            metadataWriteChains.delete(oldest);
+        }
+    }
+
+    const prev = metadataWriteChains.get(conversationId) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>(r => { release = r; });
+    metadataWriteChains.set(conversationId, prev.then(() => next));
+    try {
+        await prev;
+        return await action();
+    } finally {
+        release();
+    }
+}
+
 export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error';
 
 export interface StorageReadResult<T> {
@@ -272,13 +307,15 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         const key = `limcode.history.${conversationId}`;
         await this.context.globalState.update(key, history);
         
-        // 更新元数据的 updatedAt
+        // 更新元数据的 updatedAt（与 setCustomMetadata 的读改写共用串行链，防止互相覆盖 custom 字段）
         const metaKey = `limcode.meta.${conversationId}`;
-        const meta = this.context.globalState.get(metaKey) as ConversationMetadata | undefined;
-        if (meta) {
-            meta.updatedAt = Date.now();
-            await this.context.globalState.update(metaKey, meta);
-        }
+        await withMetadataWriteSerialized(conversationId, async () => {
+            const meta = this.context.globalState.get(metaKey) as ConversationMetadata | undefined;
+            if (meta) {
+                meta.updatedAt = Date.now();
+                await this.context.globalState.update(metaKey, meta);
+            }
+        });
     }
 
     async loadHistory(conversationId: string): Promise<ConversationHistory | null> {
@@ -635,6 +672,20 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         const tmpDir = this.vscode.Uri.joinPath(conversationDir, '.history.tmp');
         const tmpIndexPath = this.vscode.Uri.joinPath(conversationDir, '.history.index.json.tmp');
 
+        // 先清理上次崩溃残留的临时目录：若上次写入残留了多余的段文件而本次
+        // 段数变少，残留文件会随 rename 进入 historyDir 成为 index 不引用的
+        // 孤儿文件（磁盘泄漏，审查报告 L）。
+        try {
+            await this.vscode.workspace.fs.delete(tmpDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.delete(tmpIndexPath, { useTrash: false });
+        } catch {
+            // ignore
+        }
+
         // 先写临时目录/临时索引，全部成功后一次性替换，避免"删旧目录→写 segment→写 index"的
         // 非原子窗口：进程中途崩溃时旧目录与旧索引仍完整存在，历史不会损坏。
         await this.vscode.workspace.fs.createDirectory(tmpDir);
@@ -657,33 +708,32 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         };
         await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
 
-        // 提交：先删旧产物，再原子替换为新目录/新索引
-        try {
-            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
-        } catch {
-            // ignore
-        }
-        try {
-            await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
-        } catch {
-            // ignore
-        }
+        // 提交：优先用 rename 覆盖替换（overwrite 语义）直接顶替旧目录/旧索引。
+        // 旧实现先 delete 整个 historyDir 再 rename，删除窗口内并发读取会看到
+        // index 还在但段文件已消失（或索引已删、legacy 已迁移），偶发 not_found /
+        // io_error，流式迭代中聊天请求可能中断（审查报告 M17）。
+        // rename 覆盖的窗口只有两次 rename 之间的微秒级间隙，配合读侧一次短暂
+        // 重试即可完全掩盖。
         try {
             await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
         } catch {
-            // rename 失败时把临时目录内容兜底搬过去，避免提交丢失
-            await this.vscode.workspace.fs.createDirectory(historyDir);
-            for (const seg of segments) {
-                await this.vscode.workspace.fs.writeFile(
-                    this.vscode.Uri.joinPath(historyDir, seg.file),
-                    Buffer.from(history.slice(seg.startIndex, seg.endIndex + 1).map(item => JSON.stringify(item)).join('\n'), 'utf8')
-                );
+            // 不支持覆盖 rename 的后端：兜底删除后重试
+            try {
+                await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
+            } catch {
+                // ignore
             }
+            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
         }
         try {
             await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
         } catch {
-            await this.vscode.workspace.fs.writeFile(historyIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
+            try {
+                await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
+            } catch {
+                // ignore
+            }
+            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
         }
         // 清理残留临时文件（幂等）
         try {
@@ -802,13 +852,15 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         await this.writeSegmentedHistory(conversationId, history);
         
-        // 更新元数据的 updatedAt
+        // 更新元数据的 updatedAt（与 setCustomMetadata 的读改写共用串行链，防止互相覆盖 custom 字段）
         try {
-            const meta = await this.loadMetadata(conversationId);
-            if (meta) {
-                meta.updatedAt = Date.now();
-                await this.saveMetadata(meta);
-            }
+            await withMetadataWriteSerialized(conversationId, async () => {
+                const meta = await this.loadMetadata(conversationId);
+                if (meta) {
+                    meta.updatedAt = Date.now();
+                    await this.saveMetadata(meta);
+                }
+            });
         } catch {
             // 忽略元数据更新失败
         }
@@ -820,6 +872,17 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
+        const result = await this.tryLoadHistoryWithStatus(conversationId);
+        // 写提交窗口（段目录/索引 rename 覆盖的微秒级间隙）内可能读到中间态：
+        // 短暂重试一次掩盖（审查报告 M17）
+        if (result.value === null && (result.errorCode === 'not_found' || result.errorCode === 'io_error')) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            return await this.tryLoadHistoryWithStatus(conversationId);
+        }
+        return result;
+    }
+
+    private async tryLoadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
         if (await this.exists(this.getHistoryIndexPath(conversationId))) {
             return await this.loadSegmentedHistory(conversationId);
         }
@@ -832,7 +895,13 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         options: { beforeIndex?: number; offset?: number; limit?: number } = {}
     ): Promise<StorageReadResult<StorageHistoryPage>> {
         if (await this.exists(this.getHistoryIndexPath(conversationId))) {
-            return await this.loadSegmentedHistoryPage(conversationId, options);
+            const result = await this.loadSegmentedHistoryPage(conversationId, options);
+            // 与 loadHistoryWithStatus 相同的提交窗口重试策略（审查报告 M17）
+            if (result.value === null && (result.errorCode === 'not_found' || result.errorCode === 'io_error')) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                return await this.loadSegmentedHistoryPage(conversationId, options);
+            }
+            return result;
         }
 
         const historyResult = await this.loadHistoryWithStatus(conversationId);

@@ -10,8 +10,18 @@ def _is_worldbook_entry_array(v: Any) -> bool:
 
 
 def _to_number(v: Any, fallback: float) -> float:
+    # 对齐 TS 语义（normalizeWorldbooks.ts toNumber）：
+    # Number(null) === 0、Number(true) === 1、Number(false) === 0、Number("3") === 3。
+    # 旧实现 float(None) 抛错回退 fallback，导致 null 字段在 TS 保留条目（0）而
+    # Python 整条丢弃，probability: null 更是 TS 永不注入 vs Python 总是注入
+    # （审查报告 fast-tavern #3）。
     try:
-        n = float(v) if not isinstance(v, bool) else fallback
+        if v is None:
+            n = 0.0
+        elif isinstance(v, bool):
+            n = 1.0 if v else 0.0
+        else:
+            n = float(v)
     except Exception:
         return fallback
     return n if n == n and n not in (float("inf"), float("-inf")) else fallback
@@ -32,7 +42,8 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     index_n = _to_number(e.get("index"), float("nan"))
     if index_n != index_n:
         return None
-    index = int(index_n)
+    # 保持浮点（对齐 TS：index 不经 int 截断，2.5 与 2 是不同键；截断会造成去重冲突）
+    index = index_n
 
     name = str(e.get("name") or "")
     content = str(e.get("content") or "")
@@ -79,7 +90,8 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     prevent_recursion = _to_bool(e.get("preventRecursion"), False)
 
     probability_n = _to_number(e.get("probability"), 100.0)
-    probability = int(probability_n) if probability_n == probability_n else 100
+    # 保持浮点（对齐 TS）：probability 不做 int 截断，0.5 这类小数必须保留
+    probability = probability_n if probability_n == probability_n else 100
 
     other = e.get("other") if isinstance(e.get("other"), dict) else {}
 

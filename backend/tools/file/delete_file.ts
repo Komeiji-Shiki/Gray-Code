@@ -10,12 +10,18 @@ import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 
 /**
- * 大小写不敏感路径比较（Windows/macOS 默认大小写不敏感）
+ * 大小写不敏感路径比较（Windows/macOS 默认大小写不敏感）。
+ * Linux 文件系统区分大小写，只有当前平台确实大小写不敏感时才使用
+ * 不敏感比较，否则会把大小写不同的普通目录（如 SRC vs src）误判为
+ * 根目录拒绝删除，或让真正根目录的防护失效（审查报告 L）。
  */
 function pathEqualsCaseInsensitive(a: string, b: string): boolean {
     if (!a || !b) return false;
-    const na = a.replace(/\\/g, '/').toLowerCase();
-    const nb = b.replace(/\\/g, '/').toLowerCase();
+    const na = a.replace(/\\/g, '/');
+    const nb = b.replace(/\\/g, '/');
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+        return na.toLowerCase() === nb.toLowerCase();
+    }
     return na === nb;
 }
 

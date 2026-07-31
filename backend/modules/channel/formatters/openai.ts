@@ -980,17 +980,22 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         // 转换为 OpenAI 格式（Chat Completions API）
-        // strict 默认为 false，启用 strictToolsEnabled 后读取工具声明的 strict 字段
-        
+        // strict 默认为 false，启用 strictToolsEnabled 后读取工具声明的 strict 字段。
+        // OpenAI 要求：同一请求中若任一工具 strict:true，则所有工具必须 strict:true；
+        // 工具集中混有 strict 与非 strict 工具时显式发送 strict:false 会被 API 400 拒绝
+        // （审查报告 M10）。此时整体降级为不启用 strict。
+        const allStrict = strictEnabled === true
+            && tools.every(tool => tool.strict === true);
+
         return tools.map(tool => ({
             type: 'function',
             function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: (strictEnabled && tool.strict === true)
+                parameters: allStrict
                     ? ensureStrictSchema(tool.parameters)
                     : tool.parameters,
-                strict: (strictEnabled && tool.strict === true) ? true : false
+                strict: allStrict ? true : false
             }
         }));
     }

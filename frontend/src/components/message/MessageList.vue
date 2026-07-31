@@ -1,3 +1,21 @@
+<script lang="ts">
+/**
+ * 按标签页保存的列表 UI 状态。
+ *
+ * 为什么放模块级：MessageList 组件会随"空会话过渡"（showEmptyState）卸载，
+ * 若 Map 是组件实例级，onBeforeUnmount 保存的状态会随实例销毁，切回后滚动
+ * 位置/展开状态全部重置（审查报告 L）。
+ */
+export interface MessageListUiState {
+  scrollTop: number
+  visibleCount: number
+  buildExpanded: boolean
+  todoExpanded: boolean
+}
+
+export const messageListUiStateByTab = new Map<string, MessageListUiState>()
+</script>
+
 <script setup lang="ts">
 /**
  * MessageList - 消息列表容器
@@ -569,11 +587,13 @@ async function loadMore() {
       }
     }
   } finally {
-    // 仅当标签页未切换时才修正滚动位置
+    // isLoadingMore 必须无条件复位：加载历史期间切换标签页时组件保持挂载，
+    // 若只在 tabId 匹配时才复位，该标签页的上拉加载会被 :524 提前 return 永久禁用
+    // （审查报告 M19）。滚动位置修正仍仅在标签页未切换时执行。
+    isLoadingMore.value = false
     if (props.tabId === originTabId) {
       const newScrollHeight = container.scrollHeight
       container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
-      isLoadingMore.value = false
     }
   }
 }
@@ -600,14 +620,8 @@ const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 const needsScrollToBottom = ref(false)
 const suppressConversationReset = ref(false)
 
-interface MessageListUiState {
-  scrollTop: number
-  visibleCount: number
-  buildExpanded: boolean
-  todoExpanded: boolean
-}
-
-const uiStateByTab = new Map<string, MessageListUiState>()
+// 模块级按标签页保存的 UI 状态（组件卸载不丢失，见上方 <script> 块说明）
+const uiStateByTab = messageListUiStateByTab
 
 function saveCurrentUiState(tabId?: string) {
   if (!tabId) return

@@ -991,15 +991,19 @@ export class ChatFlowService {
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry_stream');
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
+    // markUserInterrupt 与 resetUserInterrupt 之间有多处 await，必须用 try/finally
+    // 保护，否则中途抛错会残留全局中断标记，后续无会话 diff 被误取消（审查报告 H6）。
     this.diffInterruptService.markUserInterrupt(conversationId);
-    await this.diffInterruptService.cancelAllPending(conversationId);
-    
-    // 3.5 拒绝所有未响应的工具调用（会把悬空 functionCall 标记为 rejected 并补 functionResponse，
-    // 所以后面不需要再单独检测孤立调用了——历史里永远不会有带 functionCall 但没有 functionResponse 的消息）
-    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
-
-    // 4. 重置中断标记
-    this.diffInterruptService.resetUserInterrupt(conversationId);
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+      
+      // 3.5 拒绝所有未响应的工具调用（会把悬空 functionCall 标记为 rejected 并补 functionResponse，
+      // 所以后面不需要再单独检测孤立调用了——历史里永远不会有带 functionCall 但没有 functionResponse 的消息）
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+    } finally {
+      // 4. 重置中断标记
+      this.diffInterruptService.resetUserInterrupt(conversationId);
+    }
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);

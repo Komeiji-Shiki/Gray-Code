@@ -699,12 +699,18 @@ export class MemoryManager {
             die(`Too long: ${byteLen} bytes, limit ${this.config.entryChars}.`);
         }
 
-        // 读取原条目以保留 ID 和日期
-        const entry = await this.logGet(id);
-        const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
-
+        // 锁内重新校验并读取：并发 truncateLog/logAppend 可能已改变日志长度，
+        // 若基于锁外的过期 id 直接写入会越过 EOF 产生零填充垃圾记录（审查报告 M3）。
         const release = await this.lock.acquire();
         try {
+            const T = await this.logLen();
+            if (id < 0 || id >= T) {
+                die(`No memory at index ${id}.`);
+            }
+            // 读取原条目以保留 ID 和日期（锁内读取，与截断/追加串行化）
+            const entry = await this.logGet(id);
+            const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
+
             const buf = pad(newLine, LOG_REC);
             const logPath = this.logPath();
             const handle = await fs.open(logPath, 'r+');

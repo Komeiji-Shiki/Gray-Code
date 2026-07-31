@@ -731,11 +731,12 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
   const annotation = chatStore.inputValue.trim()
 
   // 清空输入栏
+  let userMessage: Message | undefined
   if (annotation) {
     chatStore.clearInputValue()
 
     // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
-    const userMessage: Message = {
+    userMessage = {
       id: generateId(),
       role: 'user',
       content: annotation,
@@ -751,6 +752,14 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
   )
   if (!sent) {
     removeProcessingToolId(toolId)
+    // 发送失败：回滚已插入的批注消息，否则它会成为幻影消息——前端索引与后端错位，
+    // 用户重试确认还会再插一份，后续删除/重试整体偏移（审查报告 M18）
+    if (userMessage) {
+      const idx = chatStore.allMessages.findIndex(m => m.id === userMessage!.id)
+      if (idx !== -1) {
+        chatStore.allMessages.splice(idx, 1)
+      }
+    }
   }
 }
 

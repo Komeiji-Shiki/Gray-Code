@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 流式请求处理器
  * 
  * 处理所有流式消息类型
@@ -18,9 +18,15 @@ export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
   abortManager: StreamAbortManager;
   conversationManager: ConversationManager;
-  getView: () => vscode.WebviewView | undefined;
+  /**
+   * 按 clientId 返回目标 webview（monitor 发起的流要把 chunk 发往 monitor 面板，
+   * 而不是一律发主聊天视图，审查报告 M23）。
+   */
+  getClientView: (clientId?: string) => { webview: vscode.Webview } | undefined;
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
+  /** 请求完结时清理路由表条目（normal complete/cancel 路径使用，错误路径自行清理） */
+  finalizeRequest: (requestId: string) => void;
   settingsManager?: SettingsManager;
 }
 
@@ -107,14 +113,14 @@ export class StreamRequestHandler {
 
   async cancelAllStreams(): Promise<void> {
     const conversationIds = this.deps.abortManager.listConversationIds();
-    this.deps.abortManager.cancelAll(this.deps.getView());
+    this.deps.abortManager.cancelAll(this.deps.getClientView());
     await this.cleanupAbortedConversations(conversationIds);
   }
 
   /**
    * 处理普通聊天流
    */
-  async handleChatStream(data: any, requestId: string): Promise<void> {
+  async handleChatStream(data: any, requestId: string, clientId?: string): Promise<void> {
     const {
       conversationId,
       message,
@@ -130,7 +136,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(this.deps.getClientView(clientId), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleChatStream({
@@ -146,7 +152,7 @@ export class StreamRequestHandler {
         summarizeAbortSignal: summarizeController.signal
       });
       
-      // 发送响应，通知前端请求已接收并开始
+      // 发送响应，通知前端请求已接收并开始（非终结响应，不清理路由条目）
       this.deps.sendResponse(requestId, { started: true });
       
       for await (const chunk of stream) {
@@ -168,21 +174,24 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
+      // 正常完成/被取消/出错都必须清理路由条目，否则 requestClients 泄漏；
+      // 错误路径的 sendError 已删除条目，这里幂等
+      this.deps.finalizeRequest(requestId);
       this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
   /**
    * 处理重试流
    */
-  async handleRetryStream(data: any, requestId: string): Promise<void> {
+  async handleRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
     const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(this.deps.getClientView(clientId), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleRetryStream({
@@ -213,21 +222,22 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
+      this.deps.finalizeRequest(requestId);
       this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
   /**
    * 处理编辑并重试流
    */
-  async handleEditAndRetryStream(data: any, requestId: string): Promise<void> {
+  async handleEditAndRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
     const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(this.deps.getClientView(clientId), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
@@ -262,21 +272,22 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
+      this.deps.finalizeRequest(requestId);
       this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
   /**
    * 处理工具确认流
    */
-  async handleToolConfirmationStream(data: any, requestId: string): Promise<void> {
+  async handleToolConfirmationStream(data: any, requestId: string, clientId?: string): Promise<void> {
     const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = new StreamChunkProcessor(this.deps.getClientView(clientId), conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleToolConfirmation({
@@ -309,8 +320,9 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
+      this.deps.finalizeRequest(requestId);
       this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
     }
   }
 
@@ -324,6 +336,8 @@ export class StreamRequestHandler {
     await this.cleanupAbortedConversations([conversationId]);
 
     this.deps.sendResponse(requestId, { cancelled: true });
+    // cancel 响应是终结响应，清理路由条目
+    this.deps.finalizeRequest(requestId);
   }
 
   /**

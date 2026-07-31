@@ -926,8 +926,10 @@ export function createSearchInFilesTool(): Tool {
 
             try {
                 // 创建搜索正则表达式（均为全局匹配）
-                // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
-                const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
+                // search 与 replace 模式统一启用多行标志 m：模型按 search 结果
+                // 写同一条正则做 replace 时，^/$ 锚点语义必须一致，否则跨行锚定
+                // 正则除文件首尾外全部静默不命中（审查报告 M14）。大小写由 caseSensitive 控制
+                const flags = 'gm' + (caseSensitive ? '' : 'i');
                 const searchRegex = isRegex
                     ? new RegExp(query, flags)
                     : new RegExp(escapeRegExp(query), flags);

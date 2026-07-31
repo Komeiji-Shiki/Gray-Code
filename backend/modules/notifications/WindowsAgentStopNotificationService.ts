@@ -110,6 +110,8 @@ export class WindowsAgentStopNotificationService {
   private readonly logger: Pick<Console, 'warn' | 'error'>
   private readonly dedupeTtlMs: number
   private readonly dedupeByKey = new Map<string, number>()
+  /** 正在展示（isDuplicate 检查与 rememberDedupe 之间的 await 窗口）中的去重键 */
+  private readonly dedupeInFlight = new Set<string>()
 
   private windowFocused = false
   private windowStateDisposable?: { dispose: () => void }
@@ -406,32 +408,51 @@ export class WindowsAgentStopNotificationService {
       }
     }
 
-    const rendered = this.buildRenderedNotification(payload.reason, settings.content, {
-      actionType: payload.actionType,
-      actionLabel: payload.actionLabel
-    })
-    log.debug('rendered_notification_content', {
-      reason: payload.reason,
-      title: rendered.title,
-      message: rendered.message,
-      windowTitle: rendered.windowTitle,
-      reasonLabel: rendered.reasonLabel,
-      actionLabel: rendered.actionLabel
-    })
-
-    const result = await this.showToast(rendered.title, rendered.message)
-    if (!result.shown) {
-      log.debug('notify_finished_without_toast', { ...result })
-      return result
+    // 并发去重：isDuplicate 检查与 rememberDedupe 之间隔着 await showToast，
+    // 两个并发 notify 同 key 会同时通过检查导致重复弹出（审查报告 L）。
+    // 用"展示中"集合覆盖该窗口；展示结束（成功已记住 / 失败未展示）后移除。
+    if (this.dedupeInFlight.has(dedupeKey)) {
+      log.debug('skip_notify_duplicate_in_flight_dedupe_key', {
+        dedupeKey
+      })
+      return {
+        shown: false,
+        skipped: true,
+        reason: 'duplicate'
+      }
     }
+    this.dedupeInFlight.add(dedupeKey)
 
-    this.rememberDedupe(dedupeKey, now)
-    log.debug('dedupe_key_remembered', {
-      dedupeKey,
-      storedAt: now
-    })
+    try {
+      const rendered = this.buildRenderedNotification(payload.reason, settings.content, {
+        actionType: payload.actionType,
+        actionLabel: payload.actionLabel
+      })
+      log.debug('rendered_notification_content', {
+        reason: payload.reason,
+        title: rendered.title,
+        message: rendered.message,
+        windowTitle: rendered.windowTitle,
+        reasonLabel: rendered.reasonLabel,
+        actionLabel: rendered.actionLabel
+      })
 
-    return result
+      const result = await this.showToast(rendered.title, rendered.message)
+      if (!result.shown) {
+        log.debug('notify_finished_without_toast', { ...result })
+        return result
+      }
+
+      this.rememberDedupe(dedupeKey, now)
+      log.debug('dedupe_key_remembered', {
+        dedupeKey,
+        storedAt: now
+      })
+
+      return result
+    } finally {
+      this.dedupeInFlight.delete(dedupeKey)
+    }
   }
 
   async preview(payload: WindowsNotificationPreviewPayload): Promise<AgentStopNotificationDispatchResult> {

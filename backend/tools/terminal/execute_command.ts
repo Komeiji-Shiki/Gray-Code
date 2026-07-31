@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 执行命令工具
  *
  * 使用 child_process 执行命令，捕获输出并返回
@@ -51,6 +51,33 @@ interface TerminalProcess {
     exitCode?: number;
     killed?: boolean;
     error?: string;
+    /** 因内存护栏被丢弃的旧输出行数（报告截断时用于还原真实总量） */
+    omittedOutputLines?: number;
+}
+
+/**
+ * 终端进程内存护栏：output 数组最多保留的行数。
+ * 长运行进程（服务器、日志循环、timeout=0 后台任务）持续输出时，
+ * 不设上限会让内存无限增长（审查报告 M5）。
+ */
+const MAX_RETAINED_OUTPUT_LINES = 50000;
+
+/**
+ * 向 terminalProcess.output 追加输出行（带内存护栏）。
+ */
+function pushOutputLines(terminalProcess: TerminalProcess, lines: string[]): void {
+    if (lines.length === 0) return;
+    pushOutputLines(terminalProcess, lines);
+    if (terminalProcess.output.length > MAX_RETAINED_OUTPUT_LINES) {
+        const dropped = terminalProcess.output.length - MAX_RETAINED_OUTPUT_LINES;
+        terminalProcess.output.splice(0, dropped);
+        terminalProcess.omittedOutputLines = (terminalProcess.omittedOutputLines ?? 0) + dropped;
+    }
+}
+
+/** 计算输出总行数（含被内存护栏丢弃的旧行） */
+function getOutputTotalLineCount(terminalProcess: TerminalProcess): number {
+    return terminalProcess.output.length + (terminalProcess.omittedOutputLines ?? 0);
 }
 
 /**
@@ -1197,7 +1224,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         stdoutRemaining = lines.pop() || '';
                         
                         if (lines.length > 0) {
-                            terminalProcess.output.push(...lines);
+                            pushOutputLines(terminalProcess, lines);
                         }
                         
                         // 实时推送输出到前端
@@ -1215,7 +1242,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         stderrRemaining = lines.pop() || '';
 
                         if (lines.length > 0) {
-                            terminalProcess.output.push(...lines);
+                            pushOutputLines(terminalProcess, lines);
                         }
                         
                         // 实时推送错误输出到前端
@@ -1237,7 +1264,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             const lines = content.split(/\r?\n/);
                             stdoutRemaining = lines.pop() || '';
                             if (lines.length > 0) {
-                                terminalProcess.output.push(...lines);
+                                pushOutputLines(terminalProcess, lines);
                             }
                         }
 
@@ -1250,16 +1277,16 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             const lines = content.split(/\r?\n/);
                             stderrRemaining = lines.pop() || '';
                             if (lines.length > 0) {
-                                terminalProcess.output.push(...lines);
+                                pushOutputLines(terminalProcess, lines);
                             }
                         }
 
                         if (stdoutRemaining) {
-                            terminalProcess.output.push(stdoutRemaining);
+                            pushOutputLines(terminalProcess, [stdoutRemaining]);
                             stdoutRemaining = '';
                         }
                         if (stderrRemaining) {
-                            terminalProcess.output.push(stderrRemaining);
+                            pushOutputLines(terminalProcess, [stderrRemaining]);
                             stderrRemaining = '';
                         }
                     });
@@ -1356,10 +1383,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         });
 
                         // 简化返回结构：AI 已知 command/cwd/shell，只需返回结果
-                        // 如果输出被截断，添加简单提示
-                        const wasTruncated = maxLines !== -1 && terminalProcess.output.length > maxLines;
+                        // 如果输出被截断，添加简单提示（总量含被内存护栏丢弃的旧行）
+                        const totalOutputLines = getOutputTotalLineCount(terminalProcess);
+                        const wasTruncated = maxLines !== -1 && totalOutputLines > maxLines;
                         const truncatedNote = wasTruncated
-                            ? `(Output truncated: showing last ${lastOutput.length} of ${terminalProcess.output.length} lines)`
+                            ? `(Output truncated: showing last ${lastOutput.length} of ${totalOutputLines} lines)`
                             : undefined;
                         
                         resolve({

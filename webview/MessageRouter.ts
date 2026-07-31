@@ -72,9 +72,11 @@ export class MessageRouter {
       chatHandler: this.chatHandler,
       abortManager: this.abortManager,
       conversationManager: this.conversationManager,
-      getView: this.getView,
+      // 按 clientId 路由流 chunk：monitor 面板发起的流发往 monitor，主聊天发往主聊天
+      getClientView: (clientId) => this.clientRegistry.get(clientId)?.webviewHost,
       sendResponse: (requestId, data) => this.sendRoutedResponse(requestId, data),
       sendError: (requestId, code, message) => this.sendRoutedError(requestId, code, message),
+      finalizeRequest: (requestId) => this.requestClients.delete(requestId),
       settingsManager: this.settingsManager
     });
   }
@@ -108,7 +110,7 @@ export class MessageRouter {
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
       trackRequestClient();
-      await this.handleStreamMessage(type as StreamMessageType, data, requestId);
+      await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId);
       return true;
     }
 
@@ -215,23 +217,23 @@ export class MessageRouter {
   /**
    * 处理流式消息
    */
-  private async handleStreamMessage(type: StreamMessageType, data: any, requestId: string): Promise<void> {
+  private async handleStreamMessage(type: StreamMessageType, data: any, requestId: string, clientId?: WebviewClientId): Promise<void> {
     switch (type) {
       case 'chatStream':
         // 不阻塞消息循环，流式处理在后台进行
-        this.streamHandler.handleChatStream(data, requestId).catch(console.error);
+        this.streamHandler.handleChatStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'retryStream':
-        this.streamHandler.handleRetryStream(data, requestId).catch(console.error);
+        this.streamHandler.handleRetryStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'editAndRetryStream':
-        this.streamHandler.handleEditAndRetryStream(data, requestId).catch(console.error);
+        this.streamHandler.handleEditAndRetryStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'toolConfirmation':
-        this.streamHandler.handleToolConfirmationStream(data, requestId).catch(console.error);
+        this.streamHandler.handleToolConfirmationStream(data, requestId, clientId).catch(console.error);
         break;
         
       case 'cancelStream':

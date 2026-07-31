@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 
 from ...types import WorldBook, WorldBookEntry
@@ -14,6 +15,22 @@ def _normalize_probability(p: Any) -> float:
     if n != n:
         return 100.0
     return max(0.0, min(100.0, n))
+
+
+def _to_recursion_limit(v: Any) -> int:
+    """对齐 TS Math.trunc(options.recursionLimit ?? 5)：字符串/浮点截断，
+    NaN/无法转换时返回 -1（循环 range(0,0) 不执行，等价 TS 的 0 <= NaN 为假）。"""
+    try:
+        if v is None:
+            return 5
+        if isinstance(v, bool):
+            return 1 if v else 0
+        n = float(v)
+    except Exception:
+        return -1
+    if n != n or n in (float("inf"), float("-inf")):
+        return -1
+    return max(0, math.trunc(n))
 
 
 def _normalize_case_sensitive(entry: WorldBookEntry, default_case_sensitive: bool) -> bool:
@@ -99,8 +116,9 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
     options = params.get("options") or {}
 
     default_case_sensitive = bool(options.get("defaultCaseSensitive")) if "defaultCaseSensitive" in options else False
-    recursion_limit = int(options.get("recursionLimit") if options.get("recursionLimit") is not None else 5)
-    recursion_limit = max(0, recursion_limit)
+    # 对齐 TS：Math.trunc(recursionLimit)（字符串 "3.5" → 3；NaN → 循环不执行返回空）。
+    # 旧实现 int("3.5") 直接抛 ValueError（审查报告 fast-tavern #2）。
+    recursion_limit = _to_recursion_limit(options.get("recursionLimit"))
 
     rng: Callable[[], float] = options.get("rng") or __import__("random").random
 
@@ -143,7 +161,9 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
         if mode == "keyword":
             return _keyword_triggered(entry, ctx, case_sensitive)
         if mode == "vector":
-            return int(entry.get("index")) in vector_hits
+            # 用原始 index 值做键（对齐 TS：不 int() 强转，缺 index 的条目键为
+            # None 不会误命中；字符串/浮点键与 vector_hits 的整数集合自然不相等）
+            return entry.get("index") in vector_hits
         return False
 
     def pass_probability(entry: WorldBookEntry) -> bool:
@@ -161,7 +181,9 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
             entry = node.get("entry")
             if not entry:
                 continue
-            idx = int(entry.get("index"))
+            # 用原始 index 值做去重键（对齐 TS：缺 index 的条目共享 None 键，只保留首个；
+            # int() 强转会因缺 index 抛 TypeError，审查报告 fast-tavern #1）
+            idx = entry.get("index")
             if idx in by_index:
                 continue
             if idx in prob_failed:
@@ -190,9 +212,9 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
     def sort_key(x: dict[str, Any]):
         e = x["entry"]
         try:
-            order = int(e.get("order"))
+            order = float(e.get("order"))
         except Exception:
-            order = 0
+            order = 0.0
         return (order, int(x.get("prio") or 0), int(x.get("seq") or 0))
 
     active.sort(key=sort_key)

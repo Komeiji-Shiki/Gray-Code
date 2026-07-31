@@ -49,12 +49,14 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
     // 检查是否在自定义忽略列表中（从配置中获取）
     for (const ignore of customIgnorePatterns) {
         if (ignore.includes('*')) {
-            // 通配符模式 - 支持 ** 匹配任意目录层级
+            // 通配符模式 - 支持 ** 匹配任意目录层级。
+            // 先整体转义正则元字符，只保留 * 的通配语义，
+            // 否则模式含 [、(、+ 等字符时 new RegExp 抛 SyntaxError（审查报告 M15）。
             let regexStr = ignore
                 .replace(/\\/g, '/')
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-                .replace(/\*/g, '[^/]*')
+                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                .replace(/\\\*\\\*/g, '<<<GLOBSTAR>>>')
+                .replace(/\\\*/g, '[^/]*')
                 .replace(/<<<GLOBSTAR>>>/g, '.*')
             
             const regex = new RegExp(`^${regexStr}$|[/\\\\]${regexStr}$|^${regexStr}[/\\\\]|[/\\\\]${regexStr}[/\\\\]`, 'i')
@@ -87,8 +89,10 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
         
         // 简单的模式匹配
         if (p.includes('*')) {
-            // 通配符模式
-            const regex = new RegExp('^' + p.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$')
+            // 通配符模式：先整体转义正则元字符，只保留 * 的通配语义（审查报告 M15）
+            const regex = new RegExp('^' + p
+                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                .replace(/\\\*/g, '.*') + '$')
             if (regex.test(baseName) || regex.test(relativePath)) {
                 return true
             }

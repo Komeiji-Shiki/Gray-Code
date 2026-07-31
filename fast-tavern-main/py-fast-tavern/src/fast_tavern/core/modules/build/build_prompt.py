@@ -123,7 +123,14 @@ def build_prompt(params: dict[str, Any] | None = None, **kwargs: Any) -> BuildPr
     internal_history = _to_internal_history(history)
     chat_nodes = _internal_history_to_chat_nodes(internal_history)
 
-    recent_n = int(options.get("recentHistoryForWorldbook") if options.get("recentHistoryForWorldbook") is not None else 5)
+    # 对齐 TS：slice(-Number(...)) 语义。字符串/浮点字符串直接 int() 会抛
+    # ValueError（审查报告 fast-tavern #2）；无法转换时按 0 处理（相当于不裁剪）。
+    try:
+        recent_raw = options.get("recentHistoryForWorldbook")
+        recent_n = int(float(recent_raw)) if recent_raw is not None else 5
+    except Exception:
+        recent_n = 0
+    recent_n = max(0, recent_n)
     recent_text = "\n".join(n.get("text") or "" for n in chat_nodes[-recent_n:])
 
     # 2) worldbook: global + character

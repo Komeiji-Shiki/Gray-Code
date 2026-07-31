@@ -286,6 +286,9 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      // 保留消息创建时间：finalMessage 由 contentToMessage 生成，其 timestamp 是"完成时刻"
+      // （Date.now()），直接展开会用完成时间覆盖创建时间，时间戳漂移（审查报告 L）
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // toolsExecuting 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -477,6 +480,9 @@ export function handleAwaitingConfirmation(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      // 保留消息创建时间：finalMessage 由 contentToMessage 生成，其 timestamp 是"完成时刻"
+      // （Date.now()），直接展开会用完成时间覆盖创建时间，时间戳漂移（审查报告 L）
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // awaitingConfirmation 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -695,6 +701,9 @@ export function handleToolIteration(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      // 保留消息创建时间：finalMessage 由 contentToMessage 生成，其 timestamp 是"完成时刻"
+      // （Date.now()），直接展开会用完成时间覆盖创建时间，时间戳漂移（审查报告 L）
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // toolIteration 阶段的 content 已写入后端历史（模型消息已持久化）
       localOnly: false,
@@ -876,6 +885,9 @@ export function handleComplete(
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
+      // 保留消息创建时间：finalMessage 由 contentToMessage 生成，其 timestamp 是"完成时刻"
+      // （Date.now()），直接展开会用完成时间覆盖创建时间，时间戳漂移（审查报告 L）
+      timestamp: message.timestamp || finalMessage.timestamp,
       streaming: false,
       // complete 代表后端已持久化该模型消息
       localOnly: false,

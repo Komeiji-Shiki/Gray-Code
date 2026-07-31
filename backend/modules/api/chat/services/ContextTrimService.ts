@@ -373,8 +373,9 @@ export class ContextTrimService {
                 currentRoundStart = i;
                 currentRoundTokenCount = undefined;
             } else if (message.role === 'model') {
-                // 记录助手消息的 token 数
-                if (message.usageMetadata?.totalTokenCount !== undefined) {
+                // 记录助手消息的 token 数（usageMetadataPartial 标记的残缺 usage 不可信，
+                // 会让总量严重低估、导致裁剪不足，审查报告 M4）
+                if (message.usageMetadata?.totalTokenCount !== undefined && !message.usageMetadataPartial) {
                     currentRoundTokenCount = message.usageMetadata.totalTokenCount;
                 }
             }
@@ -1109,7 +1110,9 @@ export class ContextTrimService {
                 estimatedTotalTokens += tokenCount;
                 usageStats.userTokensTotal += tokenCount;
                 hasEstimatedTokens = true;
-            } else if (message.role === 'model' && message.usageMetadata) {
+            } else if (message.role === 'model' && message.usageMetadata && !message.usageMetadataPartial) {
+                // usageMetadataPartial 标记的 usage 只覆盖已收到的 chunk（取消/中断流），
+                // token 数严重偏低，回退到本地估算而非信任（审查报告 M4）。
                 usageStats.modelMessagesWithUsage++;
                 // model 消息：根据用户配置、消息内容和回合位置决定是否计算思考 token
                 const isCurrentRound = i >= lastNonFunctionResponseUserIndex;

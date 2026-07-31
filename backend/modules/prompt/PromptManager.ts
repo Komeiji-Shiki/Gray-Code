@@ -1214,16 +1214,24 @@ export class PromptManager {
     
     /**
      * 简单的 glob 模式匹配
+     *
+     * 只把 `*`/`**` 解释为通配，其余正则元字符必须转义，
+     * 否则用户配置含 `[`、`(`、`+`、`?` 等的模式会让 new RegExp 抛
+     * SyntaxError，中断动态上下文生成（审查报告 M15）。
      */
     private matchGlobPattern(path: string, pattern: string): boolean {
-        const regexPattern = pattern
-            .replace(/\\/g, '/')
-            .replace(/\./g, '\\.')
-            .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-            .replace(/\*/g, '[^/]*')
+        const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // 顺序很重要：斜杠替换必须在星号替换**之前**完成。
+        // 若放最后，会把 `*` 展开出的 `[^/]` 字符类里的 `/` 替换成 `[/\\]`，
+        // 产生 `[^[/\\]]`——多出一个闭合括号变成字面 `]` 匹配，通配永不命中
+        //（既有缺陷，本应包含在 M15 修复中）。
+        const regexPattern = escapeRegExp(pattern.replace(/\\/g, '/'))
+            .replace(/\//g, '[/\\\\]')               // 斜杠（不区分 / 与 \）
+            .replace(/\\\*\\\*\\\*/g, '<<<GLOBSTAR>>>')  // 转义后的 **
+            .replace(/\\\*/g, '[^/]*')               // 转义后的 *
             .replace(/<<<GLOBSTAR>>>/g, '.*')
-            .replace(/\//g, '[/\\\\]')
-        
+
         const regex = new RegExp(`^${regexPattern}$|[/\\\\]${regexPattern}$|^${regexPattern}[/\\\\]|[/\\\\]${regexPattern}[/\\\\]`, 'i')
         return regex.test(path.replace(/\\/g, '/'))
     }

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
  *
@@ -24,6 +24,20 @@ import { useI18n } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
 
 // ===================== 模块级单例（跨消息块共享） =====================
+
+/** 模块级缓存容量上限：长会话中大量唯一代码块/图片会持续增长，必须有界（审查报告 L） */
+const CACHE_MAX_ENTRIES = 500
+
+/** 带上限的 Map 写入：超出上限时删除最旧条目（FIFO） */
+function setCached<T>(cache: Map<string, T>, key: string, value: T): void {
+  if (cache.size >= CACHE_MAX_ENTRIES && !cache.has(key)) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) {
+      cache.delete(oldest)
+    }
+  }
+  cache.set(key, value)
+}
 
 /** 工作区文件存在性缓存：路径 → 是否存在 */
 const fileExistenceCache = new Map<string, boolean>()
@@ -668,7 +682,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         highlighted = cached
       } else {
         highlighted = hljs.highlightAuto(code).value
-        codeHighlightCache.set(cacheKey, highlighted)
+        setCached(codeHighlightCache, cacheKey, highlighted)
       }
     } else {
       // 完全无标注：跳过 auto，仅转义原文
@@ -1350,7 +1364,7 @@ async function prevalidateFilePaths(content: string) {
     )
     if (resp?.results) {
       for (const [p, exists] of Object.entries(resp.results)) {
-        fileExistenceCache.set(p, exists)
+        setCached(fileExistenceCache, p, exists)
       }
     }
   } catch (err) {
@@ -1390,7 +1404,7 @@ async function loadWorkspaceImages() {
       
       if (response?.success && response.data) {
         const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
-        imageCache.set(imgPath, dataUrl)
+        setCached(imageCache, imgPath, dataUrl)
         img.setAttribute('src', dataUrl)
         img.classList.remove('workspace-image')
         img.classList.add('loaded-image')

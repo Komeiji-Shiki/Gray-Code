@@ -9,6 +9,12 @@
 
 import type { Content } from './types';
 
+/**
+ * transcript 变更函数。
+ *
+ * 契约：mutator 返回**新数组引用**表示"有变更，需要写回"；返回**原数组同一引用**
+ * 表示"无变更，跳过写回"。禁止在返回原引用时原地修改数组（会被静默丢弃）。
+ */
 export type TranscriptContentsMutator = (contents: Content[]) => Content[];
 
 export interface ITranscriptRepository {
@@ -123,6 +129,11 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         // 修改目的：把 TranscriptMutation 这类纯函数自然接到统一入口，主聊天和 SubAgent 共享同一套变更方式。
         const currentContents = await this.getContentsUnlocked();
         const nextContents = mutator(currentContents);
+        // mutator 返回原引用表示"无变更"（如去重后无需追加、无待拒绝调用等），跳过写回，
+        // 避免"读→判→写"在仓储外重复出现导致竞态（见 addContent/rejectAllPendingToolCalls 修复）。
+        if (nextContents === currentContents) {
+            return currentContents;
+        }
         return await this.replaceContentsUnlocked(nextContents);
     }
 }

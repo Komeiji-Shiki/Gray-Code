@@ -76,8 +76,10 @@ def variables_add(ctx: VariableContext, input_value: dict[str, Any]):
         next_val = add_val
     else:
         try:
-            cur_num = float(cur)  # type: ignore[arg-type]
-            add_num = float(add_val)  # type: ignore[arg-type]
+            # 对齐 TS（variableContext.ts variablesAdd）：Number(null) === 0，
+            # 已存 null 值时应做数值相加而非字符串拼接（审查报告 fast-tavern #7）
+            cur_num = float(cur) if cur is not None else 0.0
+            add_num = float(add_val) if add_val is not None else 0.0
             if cur_num == cur_num and add_num == add_num:
                 # preserve int-ish results when possible
                 summed = cur_num + add_num

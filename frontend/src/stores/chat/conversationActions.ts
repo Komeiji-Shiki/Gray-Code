@@ -690,7 +690,9 @@ export async function switchConversation(
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
-  state.messageQueue.value = []
+  // 不清空 messageQueue：其中可能还有属于本会话/其他会话的排队消息，
+  // 切走再切回后仍应发送；清空会静默丢弃用户输入（审查报告 L）。
+  // 跨会话消息由 processQueue 的会话匹配跳过机制处理，不会串发。
   state.attachments.value = []
   state.editorNodes.value = []
 

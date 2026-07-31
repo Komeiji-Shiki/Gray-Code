@@ -441,23 +441,19 @@ export class CheckpointManager {
 
     /**
      * 保存检查点到对话元数据
+     *
+     * 通过 updateCustomMetadata 在会话 metadata 串行链内完成"读列表 → 追加 → 写回"，
+     * 避免并发创建检查点时后写者覆盖先写者导致记录丢失（审查报告 M2）。
      */
     private async saveCheckpointToConversation(
         conversationId: string,
         checkpoint: CheckpointRecord
     ): Promise<void> {
         try {
-            const existingCheckpoints = await this.readCheckpointListFromConversation(conversationId);
-            
-            // 添加新检查点
-            existingCheckpoints.push(checkpoint);
-            
-            // 保存
-            await this.conversationManager.setCustomMetadata(
-                conversationId,
-                'checkpoints',
-                existingCheckpoints
-            );
+            await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
+                const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                return [...list, checkpoint];
+            });
         } catch (err) {
             console.error('[CheckpointManager] Failed to save checkpoint to conversation:', err);
             throw err;
@@ -694,13 +690,10 @@ export class CheckpointManager {
             return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
         }
 
-        const existing: CheckpointRecord[] = [];
         const missingBackupDirs: string[] = [];
 
         for (const checkpoint of checkpoints) {
-            if (await this.backupDirectoryExists(checkpoint.backupDir)) {
-                existing.push(checkpoint);
-            } else {
+            if (!(await this.backupDirectoryExists(checkpoint.backupDir))) {
                 missingBackupDirs.push(checkpoint.backupDir);
             }
         }
@@ -710,9 +703,23 @@ export class CheckpointManager {
             return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
         }
 
-        const prunedCount = checkpoints.length - existing.length;
+        const missingSet = new Set(uniqueMissing);
+        let prunedCount = 0;
         try {
-            await this.conversationManager.setCustomMetadata(conversationId, 'checkpoints', existing);
+            const remaining = await this.conversationManager.updateCustomMetadata(
+                conversationId,
+                'checkpoints',
+                current => {
+                    const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                    const kept = list.filter(cp => !missingSet.has(cp.backupDir));
+                    if (kept.length === list.length) {
+                        return current; // 无变更
+                    }
+                    prunedCount = list.length - kept.length;
+                    return kept;
+                }
+            );
+            const existing = Array.isArray(remaining) ? remaining as CheckpointRecord[] : [];
             return { checkpoints: existing, missingBackupDirs: uniqueMissing, prunedCount };
         } catch (err) {
             console.warn('[CheckpointManager] Failed to prune checkpoint metadata:', err);
@@ -842,14 +849,25 @@ export class CheckpointManager {
             }
             if (chainMissingBackupDirs.length > 0) {
                 const chainMissingSet = new Set(chainMissingBackupDirs);
-                const remained = checkpoints.filter(cp => !chainMissingSet.has(cp.backupDir));
-                if (remained.length !== checkpoints.length) {
-                    try {
-                        await this.conversationManager.setCustomMetadata(conversationId, 'checkpoints', remained);
-                        autoPrunedCheckpointCount += checkpoints.length - remained.length;
-                    } catch (err) {
-                        console.warn('[CheckpointManager] Failed to prune missing chain checkpoints:', err);
+                try {
+                    const remained = await this.conversationManager.updateCustomMetadata(
+                        conversationId,
+                        'checkpoints',
+                        current => {
+                            const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                            const filtered = list.filter(cp => !chainMissingSet.has(cp.backupDir));
+                            if (filtered.length === list.length) {
+                                return current; // 无变更
+                            }
+                            return filtered;
+                        }
+                    );
+                    const remainedList = Array.isArray(remained) ? remained as CheckpointRecord[] : [];
+                    if (remainedList.length !== checkpoints.length) {
+                        autoPrunedCheckpointCount += checkpoints.length - remainedList.length;
                     }
+                } catch (err) {
+                    console.warn('[CheckpointManager] Failed to prune missing chain checkpoints:', err);
                 }
                 const allMissingBackupDirs = Array.from(
                     new Set([...missingBackupDirs, ...chainMissingBackupDirs])
@@ -1204,39 +1222,46 @@ export class CheckpointManager {
      */
     async deleteCheckpoint(conversationId: string, checkpointId: string): Promise<boolean> {
         try {
-            // 获取检查点列表
-            const checkpoints = await this.getCheckpoints(conversationId);
-            const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
-            
-            if (!checkpoint) {
+            // 检查与"读列表→过滤→写回"都在会话 metadata 串行链内完成，
+            // 避免与并发创建/清理检查点互相覆盖（审查报告 M2）。
+            let found = false;
+            let isReferencedBase = false;
+            let backupDirToRemove: string | undefined;
+            await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
+                const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                const checkpoint = list.find(cp => cp.id === checkpointId);
+                found = !!checkpoint;
+                if (!found) {
+                    return current; // 无变更
+                }
+                backupDirToRemove = checkpoint!.backupDir;
+
+                // 检查点总是增量且链到上一个：若该检查点仍被其他增量检查点引用为基准，
+                // 删除会导致增量链断裂、剩余检查点无法恢复。拒绝删除。
+                isReferencedBase = list.some(cp => cp.baseCheckpointId === checkpointId);
+                if (isReferencedBase) {
+                    return current; // 无变更
+                }
+
+                return list.filter(cp => cp.id !== checkpointId);
+            });
+
+            if (!found || isReferencedBase) {
                 return false;
             }
 
-            // 检查点总是增量且链到上一个：若该检查点仍被其他增量检查点引用为基准，
-            // 删除会导致增量链断裂、剩余检查点无法恢复。拒绝删除。
-            const isReferencedBase = checkpoints.some(cp => cp.baseCheckpointId === checkpointId);
-            if (isReferencedBase) {
-                return false;
-            }
-            
             // 删除备份目录
-            const backupPath = path.join(this.checkpointsDir, checkpoint.backupDir);
-            try {
-                await fs.rm(backupPath, { recursive: true, force: true });
-            } catch {
-                // 忽略删除错误
+            if (backupDirToRemove) {
+                const backupPath = path.join(this.checkpointsDir, backupDirToRemove);
+                try {
+                    await fs.rm(backupPath, { recursive: true, force: true });
+                } catch {
+                    // 忽略删除错误
+                }
             }
-            
-            // 从对话元数据中移除
-            const remaining = checkpoints.filter(cp => cp.id !== checkpointId);
-            await this.conversationManager.setCustomMetadata(
-                conversationId,
-                'checkpoints',
-                remaining
-            );
-            
+
             return true;
-            
+
         } catch (err) {
             console.error('[CheckpointManager] Failed to delete checkpoint:', err);
             return false;
@@ -1253,42 +1278,51 @@ export class CheckpointManager {
      */
     async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
         try {
-            const checkpoints = await this.getCheckpoints(conversationId);
+            // 读列表 → 计算 → 写回整体在会话 metadata 串行链内完成（审查报告 M2）
+            const deletedBackupDirs: string[] = [];
+            let toDeleteCount = 0;
+            await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
+                const checkpoints = Array.isArray(current) ? current as CheckpointRecord[] : [];
 
-            // 需要保留的检查点 ID 集合：目标检查点及其增量基链（否则保留的检查点会因基快照被删而无法恢复）
-            const excludeIds = new Set<string>();
-            if (excludeCheckpointId) {
-                let cur = checkpoints.find(cp => cp.id === excludeCheckpointId);
-                while (cur && !excludeIds.has(cur.id)) {
-                    excludeIds.add(cur.id);
-                    const baseId = cur.baseCheckpointId;
-                    cur = baseId ? checkpoints.find(cp => cp.id === baseId) : undefined;
+                // 需要保留的检查点 ID 集合：目标检查点及其增量基链（否则保留的检查点会因基快照被删而无法恢复）
+                const excludeIds = new Set<string>();
+                if (excludeCheckpointId) {
+                    let cur = checkpoints.find(cp => cp.id === excludeCheckpointId);
+                    while (cur && !excludeIds.has(cur.id)) {
+                        excludeIds.add(cur.id);
+                        const baseId = cur.baseCheckpointId;
+                        cur = baseId ? checkpoints.find(cp => cp.id === baseId) : undefined;
+                    }
                 }
-            }
 
-            // 筛选出需要删除的检查点（消息索引 >= fromIndex 且不在保留集合中）
-            const toDelete = checkpoints.filter(cp => cp.messageIndex >= fromIndex && !excludeIds.has(cp.id));
-            const toKeep = checkpoints.filter(cp => cp.messageIndex < fromIndex || excludeIds.has(cp.id));
-            
-            // 删除备份目录
-            for (const cp of toDelete) {
-                const backupPath = path.join(this.checkpointsDir, cp.backupDir);
+                // 筛选出需要删除的检查点（消息索引 >= fromIndex 且不在保留集合中）
+                const toDelete = checkpoints.filter(cp => cp.messageIndex >= fromIndex && !excludeIds.has(cp.id));
+                if (toDelete.length === 0) {
+                    return current; // 无变更
+                }
+                const toKeep = checkpoints.filter(cp => cp.messageIndex < fromIndex || excludeIds.has(cp.id));
+
+                toDeleteCount = toDelete.length;
+                deletedBackupDirs.length = 0;
+                for (const cp of toDelete) {
+                    deletedBackupDirs.push(cp.backupDir);
+                }
+
+                return toKeep;
+            });
+
+            // 删除备份目录（元数据已原子更新，这里只做磁盘清理）
+            for (const backupDir of deletedBackupDirs) {
+                const backupPath = path.join(this.checkpointsDir, backupDir);
                 try {
                     await fs.rm(backupPath, { recursive: true, force: true });
                 } catch {
                     // 忽略删除错误
                 }
             }
-            
-            // 更新对话的检查点列表
-            await this.conversationManager.setCustomMetadata(
-                conversationId,
-                'checkpoints',
-                toKeep
-            );
-            
-            return toDelete.length;
-            
+
+            return toDeleteCount;
+
         } catch (err) {
             console.error('[CheckpointManager] Failed to delete checkpoints from index:', err);
             return 0;
@@ -1372,11 +1406,25 @@ export class CheckpointManager {
      */
     async deleteAllCheckpoints(conversationId: string): Promise<{ success: boolean; deletedCount: number }> {
         try {
-            const checkpoints = await this.getCheckpoints(conversationId);
+            // 读列表 → 清空 → 写回整体在会话 metadata 串行链内完成（审查报告 M2）
+            const deletedBackupDirs: string[] = [];
+            let hadCheckpoints = false;
+            await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
+                const checkpoints = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                if (checkpoints.length === 0) {
+                    return current; // 无变更
+                }
+                hadCheckpoints = true;
+                deletedBackupDirs.length = 0;
+                for (const cp of checkpoints) {
+                    deletedBackupDirs.push(cp.backupDir);
+                }
+                return [];
+            });
+
             let deletedCount = 0;
-            
-            for (const cp of checkpoints) {
-                const backupPath = path.join(this.checkpointsDir, cp.backupDir);
+            for (const backupDir of deletedBackupDirs) {
+                const backupPath = path.join(this.checkpointsDir, backupDir);
                 try {
                     await fs.rm(backupPath, { recursive: true, force: true });
                     deletedCount++;
@@ -1384,16 +1432,9 @@ export class CheckpointManager {
                     // 忽略删除错误
                 }
             }
-            
-            // 清空对话的检查点列表
-            await this.conversationManager.setCustomMetadata(
-                conversationId,
-                'checkpoints',
-                []
-            );
-            
+
             return { success: true, deletedCount };
-            
+
         } catch (err) {
             console.error('[CheckpointManager] Failed to delete all checkpoints:', err);
             return { success: false, deletedCount: 0 };

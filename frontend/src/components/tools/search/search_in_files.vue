@@ -165,15 +165,29 @@ function getFileName(filePath: string | undefined): string {
   return parts[parts.length - 1] || filePath
 }
 
+// HTML 转义：上下文来自工作区文件原文，必须转义后才能安全注入 v-html
+// （审查报告 H7：未转义的文件内容可执行任意脚本，CSP 允许 'unsafe-inline'）。
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // 高亮匹配文本
 function highlightMatch(context: string | undefined, match: string | undefined): string {
   // 安全检查
   if (!context) return ''
-  if (!match) return context
+  if (!match) return escapeHtml(context)
   
-  // 简单的转义处理
-  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return context.replace(new RegExp(escaped, 'gi'), `<mark>${match}</mark>`)
+  // 先转义文件内容，再对转义后的文本做高亮（匹配串同样需要转义，
+  // 避免文件内容中的 <mark> 标签与注入内容穿透）
+  const escapedContext = escapeHtml(context)
+  const escapedMatch = escapeHtml(match)
+  const escapedPattern = escapedMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return escapedContext.replace(new RegExp(escapedPattern, 'gi'), `<mark>${escapedMatch}</mark>`)
 }
 
 // ============ Diff 相关 ============

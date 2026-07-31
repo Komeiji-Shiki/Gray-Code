@@ -388,6 +388,11 @@ async function readSingleFile(
         // 文本文件：返回带行号的内容
         const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
         const allLines = text.split('\n');
+        // 尾部换行会让 split 多出一个空串"幻影行"：totalLines 多计 1，
+        // 模型会据此读取到不存在的行号（审查报告 L）。
+        if (allLines.length > 0 && allLines[allLines.length - 1] === '') {
+            allLines.pop();
+        }
         const totalLines = allLines.length;
         
         // 处理行范围

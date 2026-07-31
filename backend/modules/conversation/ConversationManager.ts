@@ -26,6 +26,7 @@ import {
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorageAdapter } from './storage';
+import { withMetadataWriteSerialized } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
@@ -133,20 +134,12 @@ export class ConversationManager {
      * setCustomMetadata 是"读 metadata → 改 custom[key] → 整体写回"，两个并发调用
      * （如 checkpoints 落盘与 trimState 失效）会互相覆盖整个 custom 对象，
      * 后写者丢失先写者的 key。按会话串行化后读写原子化。
+     *
+     * 与 storage.saveHistory 内部对 metadata 的 updatedAt 读改写共用同一条链
+     * （storage.withMetadataWriteSerialized），两者并发时也不会互相覆盖。
      */
-    private metadataWriteChains = new Map<string, Promise<void>>();
-
-    private async runMetadataWriteSerialized<T>(conversationId: string, action: () => Promise<T>): Promise<T> {
-        const prev = this.metadataWriteChains.get(conversationId) ?? Promise.resolve();
-        let release!: () => void;
-        const next = new Promise<void>(r => { release = r; });
-        this.metadataWriteChains.set(conversationId, prev.then(() => next));
-        try {
-            await prev;
-            return await action();
-        } finally {
-            release();
-        }
+    private runMetadataWriteSerialized<T>(conversationId: string, action: () => Promise<T>): Promise<T> {
+        return withMetadataWriteSerialized(conversationId, action);
     }
 
     /**
@@ -312,45 +305,55 @@ export class ConversationManager {
      *
      * 注意：此过程会改变 history 的长度，从而改变消息 index。
      * 前端依赖 index 进行删除/重试等操作，因此必须在返回前完成该规范化。
+     *
+     * 规范化与写回都发生在仓储锁内（mutateContents），避免只读接口（getMessages 等）
+     * 在工具结果并发落盘时用旧快照整体覆盖真实响应。
      */
-    private async normalizeHistoryForDisplay(conversationId: string, history: ConversationHistory): Promise<ConversationHistory> {
-        // 收集所有 functionResponse 的 ID
-        const respondedToolCallIds = new Set<string>();
-        for (const message of history) {
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionResponse?.id) {
-                        respondedToolCallIds.add(part.functionResponse.id);
-                    }
-                }
-            }
-        }
-
-        // 收集未响应的工具调用，记录它们所在的消息索引
-        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-        for (let i = 0; i < history.length; i++) {
-            const message = history[i];
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionCall && part.functionCall.id) {
-                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                            part.functionCall.rejected = true;
-                            const calls = unresolvedCallsByIndex.get(i) || [];
-                            calls.push({
-                                id: part.functionCall.id,
-                                name: part.functionCall.name || 'unknown'
-                            });
-                            unresolvedCallsByIndex.set(i, calls);
+    private async normalizeHistoryForDisplay(conversationId: string): Promise<ConversationHistory> {
+        const repository = this.getTranscriptRepository(conversationId);
+        return repository.mutateContents(history => {
+            // 收集所有 functionResponse 的 ID
+            const respondedToolCallIds = new Set<string>();
+            for (const message of history) {
+                if (message.parts) {
+                    for (const part of message.parts) {
+                        if (part.functionResponse?.id) {
+                            respondedToolCallIds.add(part.functionResponse.id);
                         }
                     }
                 }
             }
-        }
 
-        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
-        // 从后往前插入以避免索引偏移问题
-        if (unresolvedCallsByIndex.size > 0) {
+            // 收集未响应的工具调用，记录它们所在的消息索引
+            const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+            for (let i = 0; i < history.length; i++) {
+                const message = history[i];
+                if (message.parts) {
+                    for (const part of message.parts) {
+                        if (part.functionCall && part.functionCall.id) {
+                            // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                            if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                                part.functionCall.rejected = true;
+                                const calls = unresolvedCallsByIndex.get(i) || [];
+                                calls.push({
+                                    id: part.functionCall.id,
+                                    name: part.functionCall.name || 'unknown'
+                                });
+                                unresolvedCallsByIndex.set(i, calls);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 没有未响应的工具调用 → 无变更，跳过写回
+            if (unresolvedCallsByIndex.size === 0) {
+                return history;
+            }
+
+            // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+            // 从后往前插入以避免索引偏移问题
+            const nextHistory = [...history];
             const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
 
             for (const messageIndex of sortedIndices) {
@@ -368,18 +371,16 @@ export class ConversationManager {
                 }));
 
                 // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                history.splice(insertAt, 0, {
+                const insertAt = this.findFunctionResponseInsertIndex(nextHistory, messageIndex);
+                nextHistory.splice(insertAt, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
                 });
             }
 
-            await this.getTranscriptRepository(conversationId).replaceContents(history);
-        }
-
-        return history;
+            return nextHistory;
+        });
     }
 
     // ==================== 对话管理 ====================
@@ -598,7 +599,7 @@ export class ConversationManager {
      * 添加完整的 Content 对象（对 functionResponse 自动去重）
      */
     async addContent(conversationId: string, content: Content): Promise<void> {
-        const history = await this.loadHistory(conversationId);
+        const repository = this.getTranscriptRepository(conversationId);
         const contentCopy = JSON.parse(JSON.stringify(content));
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
@@ -608,7 +609,14 @@ export class ConversationManager {
         // 去重：如果本次添加的是 functionResponse 消息，过滤掉历史中已有响应的 tool call ID。
         // 这是一道安全网，防止 cancelStream→rejectAllPendingToolCalls 与工具执行循环之间的
         // 竞态条件导致同一 tool_use_id 出现多条 functionResponse（会触发 API 400 错误）。
-        if (contentCopy.isFunctionResponse && contentCopy.parts) {
+        // 去重必须在仓储的锁内执行（读→判→写原子化），否则两个并发 addContent 会基于
+        // 同一旧快照各自追加，安全网形同虚设。
+        await repository.mutateContents(history => {
+            if (!contentCopy.isFunctionResponse || !contentCopy.parts) {
+                history.push(contentCopy);
+                return history;
+            }
+
             const existingResponseIds = new Set<string>();
             for (const msg of history) {
                 if (msg.parts) {
@@ -620,16 +628,22 @@ export class ConversationManager {
                 }
             }
 
-            contentCopy.parts = contentCopy.parts.filter((part: any) =>
+            const dedupedParts = contentCopy.parts.filter((part: any) =>
                 !(part.functionResponse?.id && existingResponseIds.has(part.functionResponse.id))
             );
 
-            if (contentCopy.parts.length === 0) {
-                return; // 所有 parts 均已有响应，无需添加空消息
+            if (dedupedParts.length === 0) {
+                return history; // 所有 parts 均已有响应，无需添加空消息
             }
-        }
 
-        await this.getTranscriptRepository(conversationId).appendContent(contentCopy);
+            return [
+                ...history,
+                {
+                    ...contentCopy,
+                    parts: dedupedParts
+                }
+            ];
+        });
     }
 
     /**
@@ -659,8 +673,7 @@ export class ConversationManager {
      * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
     async getMessages(conversationId: string): Promise<Content[]> {
-        let history = await this.loadHistory(conversationId);
-        history = await this.normalizeHistoryForDisplay(conversationId, history);
+        let history = await this.normalizeHistoryForDisplay(conversationId);
 
         // 为每条消息添加 index 字段（绝对索引）
         return history.map((message, index) => {
@@ -692,7 +705,7 @@ export class ConversationManager {
         // 补齐会插入消息、改变 index，必须发生在分页取数之前。
         const isInitialPage = options.beforeIndex === undefined && options.offset === undefined;
         if (isInitialPage) {
-            await this.normalizeHistoryForDisplay(conversationId, await this.loadHistory(conversationId));
+            await this.normalizeHistoryForDisplay(conversationId);
         }
 
         const pagedHistory = await this.storage.loadHistoryPage(conversationId, options);
@@ -707,8 +720,7 @@ export class ConversationManager {
             };
         }
 
-        let history = await this.loadHistory(conversationId);
-        history = await this.normalizeHistoryForDisplay(conversationId, history);
+        let history = await this.normalizeHistoryForDisplay(conversationId);
 
         const total = history.length;
         const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
@@ -1134,21 +1146,26 @@ export class ConversationManager {
                 // 检查内嵌数据
                 if (part.inlineData) {
                     hasInlineData = true;
-                    
-                    // 计算 Base64 数据大小（约为原始数据的 4/3）
-                    const base64Length = part.inlineData.data.length;
+
+                    // 计算 Base64 数据大小（约为原始数据的 4/3）。
+                    // 旧版本/手动编辑过的历史可能缺 data 或 mimeType，必须判空，
+                    // 否则整个 getStats 抛 TypeError（审查报告 M16）。
+                    const inlineData = part.inlineData;
+                    const base64Length = typeof inlineData.data === 'string' ? inlineData.data.length : 0;
                     inlineDataSize += Math.ceil((base64Length * 3) / 4);
-                    
+
                     // 统计多模态类型
-                    const mimeType = part.inlineData.mimeType;
-                    if (mimeType.startsWith('image/')) {
-                        multimedia.images++;
-                    } else if (mimeType.startsWith('audio/')) {
-                        multimedia.audio++;
-                    } else if (mimeType.startsWith('video/')) {
-                        multimedia.video++;
-                    } else if (mimeType === 'application/pdf' || mimeType === 'text/plain') {
-                        multimedia.documents++;
+                    const mimeType = inlineData.mimeType;
+                    if (typeof mimeType === 'string') {
+                        if (mimeType.startsWith('image/')) {
+                            multimedia.images++;
+                        } else if (mimeType.startsWith('audio/')) {
+                            multimedia.audio++;
+                        } else if (mimeType.startsWith('video/')) {
+                            multimedia.video++;
+                        } else if (mimeType === 'application/pdf' || mimeType === 'text/plain') {
+                            multimedia.documents++;
+                        }
                     }
                 }
             }
@@ -1706,6 +1723,47 @@ export class ConversationManager {
         return meta?.custom?.[key];
     }
 
+    /**
+     * 原子更新自定义元数据：读 → updater → 写整体在同一会话的 metadata 串行链内执行，
+     * 避免"先读列表、再整体写回"的跨调用竞态（如检查点列表并发增删互相覆盖）。
+     *
+     * @param updater 接收当前值，返回新值；返回与当前值相同的引用表示"无变更"（跳过写回）
+     * @returns updater 返回的新值
+     */
+    async updateCustomMetadata(
+        conversationId: string,
+        key: string,
+        updater: (current: unknown) => unknown
+    ): Promise<unknown> {
+        return this.runMetadataWriteSerialized(conversationId, async () => {
+            let meta = await this.loadMetadataForWrite(conversationId);
+            if (!meta) {
+                meta = {
+                    id: conversationId,
+                    title: t('modules.conversation.defaultTitle', { conversationId }),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    custom: {}
+                };
+            }
+
+            if (!meta.custom) {
+                meta.custom = {};
+            }
+
+            const current = meta.custom[key];
+            const next = updater(current);
+            if (next === current) {
+                return current; // 无变更，跳过写回
+            }
+
+            meta.custom[key] = next;
+            meta.updatedAt = Date.now();
+            await this.storage.saveMetadata(meta);
+            return next;
+        });
+    }
+
     // ==================== 工具调用管理 ====================
 
     /**
@@ -1826,48 +1884,53 @@ export class ConversationManager {
      */
     async rejectAllPendingToolCalls(conversationId: string): Promise<void> {
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-        if (history.length === 0) return;
-        
-        // 收集所有 functionResponse 的 ID
-        const respondedToolCallIds = new Set<string>();
-        for (const message of history) {
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionResponse?.id) {
-                        respondedToolCallIds.add(part.functionResponse.id);
-                    }
-                }
-            }
-        }
-        
-        // 收集未响应的工具调用，记录它们所在的消息索引
-        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-        for (let i = 0; i < history.length; i++) {
-            const message = history[i];
-            if (message.parts) {
-                for (const part of message.parts) {
-                    if (part.functionCall && part.functionCall.id) {
-                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                            part.functionCall.rejected = true;
-                            const calls = unresolvedCallsByIndex.get(i) || [];
-                            calls.push({
-                                id: part.functionCall.id,
-                                name: part.functionCall.name || 'unknown'
-                            });
-                            unresolvedCallsByIndex.set(i, calls);
+        await repository.mutateContents(history => {
+            if (history.length === 0) return history;
+
+            // 收集所有 functionResponse 的 ID
+            const respondedToolCallIds = new Set<string>();
+            for (const message of history) {
+                if (message.parts) {
+                    for (const part of message.parts) {
+                        if (part.functionResponse?.id) {
+                            respondedToolCallIds.add(part.functionResponse.id);
                         }
                     }
                 }
             }
-        }
-        
-        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
-        // 从后往前插入以避免索引偏移问题
-        if (unresolvedCallsByIndex.size > 0) {
+
+            // 收集未响应的工具调用，记录它们所在的消息索引
+            const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+            for (let i = 0; i < history.length; i++) {
+                const message = history[i];
+                if (message.parts) {
+                    for (const part of message.parts) {
+                        if (part.functionCall && part.functionCall.id) {
+                            // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                            if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                                part.functionCall.rejected = true;
+                                const calls = unresolvedCallsByIndex.get(i) || [];
+                                calls.push({
+                                    id: part.functionCall.id,
+                                    name: part.functionCall.name || 'unknown'
+                                });
+                                unresolvedCallsByIndex.set(i, calls);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 没有未响应的工具调用 → 无变更，跳过写回
+            if (unresolvedCallsByIndex.size === 0) {
+                return history;
+            }
+
+            // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+            // 从后往前插入以避免索引偏移问题
+            const nextHistory = [...history];
             const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
-            
+
             for (const messageIndex of sortedIndices) {
                 const calls = unresolvedCallsByIndex.get(messageIndex)!;
                 const rejectedResponseParts: ContentPart[] = calls.map(call => ({
@@ -1881,19 +1944,20 @@ export class ConversationManager {
                         }
                     }
                 }));
-                
+
                 // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                history.splice(insertAt, 0, {
+                const insertAt = this.findFunctionResponseInsertIndex(nextHistory, messageIndex);
+                nextHistory.splice(insertAt, 0, {
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
                 });
             }
 
-            await repository.replaceContents(history);
-            await this.invalidateContextManagementState(conversationId, 'pending_tool_calls_rejected');
-        }
+            return nextHistory;
+        });
+
+        await this.invalidateContextManagementState(conversationId, 'pending_tool_calls_rejected');
     }
 
     /**
@@ -1911,71 +1975,77 @@ export class ConversationManager {
         if (parts.length === 0) return;
 
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-
-        // 索引现有响应 & 拒绝占位的位置
-        const responseIdx = new Map<string, number>();     // id → historyIndex
-        const placeholderIds = new Set<string>();           // id 是占位
-        for (let i = 0; i < history.length; i++) {
-            const msg = history[i];
-            if (!msg.parts) continue;
-            for (const part of msg.parts) {
-                const fr = part.functionResponse;
-                if (!fr?.id) continue;
-                responseIdx.set(fr.id, i);
-                if (fr.response?.rejected || fr.response?.cancelled) {
-                    placeholderIds.add(fr.id);
-                }
-            }
-        }
-
-        const newParts: ContentPart[] = [];
-
-        for (const part of parts) {
-            const id = part.functionResponse?.id;
-            if (!id) {
-                // 无 id 的 part（如多模态附件）一律走追加
-                newParts.push(part);
-                continue;
-            }
-
-            const existingIdx = responseIdx.get(id);
-
-            if (existingIdx !== undefined && placeholderIds.has(id)) {
-                // 占位 → 就地替换为真实结果
-                const msg = history[existingIdx];
-                const partIdx = msg.parts!.findIndex(
-                    (p) => p.functionResponse?.id === id
-                );
-                if (partIdx !== -1) {
-                    msg.parts![partIdx] = part;
-                }
-                // 清除 model 消息上对应 functionCall 的 rejected 标记
-                for (const hmsg of history) {
-                    if (!hmsg.parts) continue;
-                    for (const hp of hmsg.parts) {
-                        if (hp.functionCall && hp.functionCall.id === id) {
-                            hp.functionCall.rejected = false;
-                        }
+        await repository.mutateContents(history => {
+            // 索引现有响应 & 拒绝占位的位置
+            const responseIdx = new Map<string, number>();     // id → historyIndex
+            const placeholderIds = new Set<string>();           // id 是占位
+            for (let i = 0; i < history.length; i++) {
+                const msg = history[i];
+                if (!msg.parts) continue;
+                for (const part of msg.parts) {
+                    const fr = part.functionResponse;
+                    if (!fr?.id) continue;
+                    responseIdx.set(fr.id, i);
+                    if (fr.response?.rejected || fr.response?.cancelled) {
+                        placeholderIds.add(fr.id);
                     }
                 }
-                placeholderIds.delete(id);
-            } else if (existingIdx === undefined) {
-                // 全新响应 → 收集后追加
-                newParts.push(part);
             }
-            // else: 已有真实响应 → 跳过（幂等）
-        }
 
-        if (newParts.length > 0) {
-            history.push({
-                role: 'user',
-                parts: newParts,
-                isFunctionResponse: true,
-            });
-        }
+            const newParts: ContentPart[] = [];
+            let changed = false;
 
-        await repository.replaceContents(history);
+            for (const part of parts) {
+                const id = part.functionResponse?.id;
+                if (!id) {
+                    // 无 id 的 part（如多模态附件）一律走追加
+                    newParts.push(part);
+                    continue;
+                }
+
+                const existingIdx = responseIdx.get(id);
+
+                if (existingIdx !== undefined && placeholderIds.has(id)) {
+                    // 占位 → 就地替换为真实结果
+                    const msg = history[existingIdx];
+                    const partIdx = msg.parts!.findIndex(
+                        (p) => p.functionResponse?.id === id
+                    );
+                    if (partIdx !== -1) {
+                        msg.parts![partIdx] = part;
+                        changed = true;
+                    }
+                    // 清除 model 消息上对应 functionCall 的 rejected 标记
+                    for (const hmsg of history) {
+                        if (!hmsg.parts) continue;
+                        for (const hp of hmsg.parts) {
+                            if (hp.functionCall && hp.functionCall.id === id) {
+                                hp.functionCall.rejected = false;
+                                changed = true;
+                            }
+                        }
+                    }
+                    placeholderIds.delete(id);
+                } else if (existingIdx === undefined) {
+                    // 全新响应 → 收集后追加
+                    newParts.push(part);
+                }
+                // else: 已有真实响应 → 跳过（幂等）
+            }
+
+            if (newParts.length === 0 && !changed) {
+                return history; // 无变更，跳过写回
+            }
+
+            return [
+                ...history,
+                ...(newParts.length > 0 ? [{
+                    role: 'user' as const,
+                    parts: newParts,
+                    isFunctionResponse: true,
+                } as Content] : [])
+            ];
+        });
         await this.invalidateContextManagementState(conversationId, 'tool_calls_settled');
     }
 }

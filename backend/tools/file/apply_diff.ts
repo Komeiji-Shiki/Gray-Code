@@ -45,7 +45,7 @@ export interface StructuredDiffHunk {
 /**
  * 规范化换行符为 LF
  */
-function normalizeLineEndings(text: string): string {
+export function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
@@ -187,7 +187,7 @@ function countTextLines(normalizedText: string): number {
     return normalizedText.split('\n').length;
 }
 
-function countLineBreaks(normalizedText: string): number {
+export function countLineBreaks(normalizedText: string): number {
     // 修改原因：startLine 的 lineDelta 表示后续原始行号被前序 hunk 推动了多少行，真实变化取决于 LF 数量差，而不是展示行数差。
     // 修改方式：单独统计文本中的 LF 字符数量，避免删除 `first\n` 到空字符串时把行号多减一。
     // 修改目的：让前序插入、删除和替换都能正确调整后续重复 oldContent 的 startLine 定位。
@@ -1077,6 +1077,11 @@ function applyLegacyDiffsBestEffort(
     failedCount: number;
 } {
     let currentContent = originalContent;
+    // 前序 diff 已成功应用产生的行号偏移：legacy 的 start_line 相对原始文件，
+    // 若直接用它在"已被前序 diff 修改过"的内容上定位，第二个及以后的 hunk
+    // 会整体错位（审查报告 M12）。用 LF 数量差累积修正，与结构化 hunk 的
+    // lineDelta 语义保持一致。
+    let lineDelta = 0;
 
     const results: Array<{
         index: number;
@@ -1100,7 +1105,10 @@ function applyLegacyDiffsBestEffort(
             continue;
         }
 
-        const r = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
+        const adjustedStartLine = diff.start_line !== undefined && diff.start_line > 0
+            ? diff.start_line + lineDelta
+            : diff.start_line;
+        const r = applyDiffToContent(currentContent, diff.search, diff.replace, adjustedStartLine);
         let error = r.error;
         if (!r.success && error && options?.errorSuffix) {
             error = `${error} ${options.errorSuffix}`;
@@ -1122,6 +1130,9 @@ function applyLegacyDiffsBestEffort(
 
         if (r.success) {
             currentContent = r.result;
+            lineDelta +=
+                countLineBreaks(normalizeLineEndings(diff.replace)) -
+                countLineBreaks(normalizeLineEndings(diff.search));
             if (startLine !== undefined && endLine !== undefined) {
                 blocks.push({ index: i, startLine, endLine });
             }
@@ -1588,6 +1599,9 @@ ${descriptionSuffix}`,
                 }
 
                 let currentContent = originalContent;
+                // 前序 diff 成功应用产生的行号偏移：legacy 的 start_line 相对原始文件，
+                // 需随前序应用累积修正，否则第二个及以后的 hunk 定位错位（审查报告 M12）。
+                let lineDelta = 0;
 
                 const diffResults: Array<{
                     index: number;
@@ -1608,7 +1622,10 @@ ${descriptionSuffix}`,
                         continue;
                     }
 
-                    const result = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
+                    const adjustedStartLine = diff.start_line !== undefined && diff.start_line > 0
+                        ? diff.start_line + lineDelta
+                        : diff.start_line;
+                    const result = applyDiffToContent(currentContent, diff.search, diff.replace, adjustedStartLine);
                     diffResults.push({
                         index: i,
                         success: result.success,
@@ -1618,6 +1635,9 @@ ${descriptionSuffix}`,
 
                     if (result.success) {
                         currentContent = result.result;
+                        lineDelta +=
+                            countLineBreaks(normalizeLineEndings(diff.replace)) -
+                            countLineBreaks(normalizeLineEndings(diff.search));
                     }
                 }
 

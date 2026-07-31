@@ -56,12 +56,26 @@ async function close() {
   }
 }
 
+// HTML 转义：changelog 来自扩展内置，但为防注入须先转义再拼接 HTML
+//（审查报告 L：未净化内容原样注入 v-html）
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // 解析 changelog 内容为 HTML
 const formattedChangelog = computed(() => {
   if (!changelog.value) return ''
+
+  // 先转义全文，再对转义后的文本做 markdown 标记替换
+  const escaped = escapeHtml(changelog.value)
   
   // 简单的 markdown 解析
-  return changelog.value
+  return escaped
     // 处理标题
     .replace(/^### (.+)$/gm, '<h4>$1</h4>')
     .replace(/^## (.+)$/gm, '<h3>$1</h3>')

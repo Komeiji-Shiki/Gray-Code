@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import * as path from 'path';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
 import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
@@ -202,12 +202,25 @@ export class SubAgentMonitorPanel {
         private readonly context: vscode.ExtensionContext,
         private readonly devServerUrl?: string,
         private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>,
-        private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope) => vscode.Disposable,
+        private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope, isAlive?: () => boolean) => vscode.Disposable,
         private readonly conversationStore?: SubAgentRunConversationStore
     ) {
         this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
             this.postEvent(event, snapshot);
         });
+    }
+
+    private registerPanelClient(): void {
+        if (!this.panel) return;
+        const webview = this.panel.webview;
+        this.clientRegistration?.dispose();
+        this.clientRegistration = this.registerClient?.(
+            WEBVIEW_CLIENT_IDS.subagentMonitor,
+            webview,
+            this.focusRunId ? { type: 'subagent', runId: this.focusRunId, parentConversationId: this.focusConversationId } : undefined,
+            // 面板销毁后注册条目会随 onDidDispose 移除；此判定覆盖"销毁中"的竞态窗口
+            () => this.panel !== undefined && this.panel.webview === webview
+        );
     }
 
     open(runId?: string, conversationId?: string): void {
@@ -216,12 +229,7 @@ export class SubAgentMonitorPanel {
 
         if (this.panel) {
             this.panel.reveal(vscode.ViewColumn.Beside);
-            this.clientRegistration?.dispose();
-            this.clientRegistration = this.registerClient?.(
-                WEBVIEW_CLIENT_IDS.subagentMonitor,
-                this.panel.webview,
-                runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
-            );
+            this.registerPanelClient();
             // 修改原因：已有面板被再次 reveal 时，旧实现会重新推送完整 snapshots，导致大 transcript 二次卡顿。
             // 修改方式：只推送轻量 manifest，同步焦点后由前端按需请求当前 run window。
             // 修改目的：Monitor 任何首包/重聚焦包都不再携带所有 contents。
@@ -244,12 +252,7 @@ export class SubAgentMonitorPanel {
             }
         );
 
-        this.clientRegistration?.dispose();
-        this.clientRegistration = this.registerClient?.(
-            WEBVIEW_CLIENT_IDS.subagentMonitor,
-            this.panel.webview,
-            runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
-        );
+        this.registerPanelClient();
 
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
         this.panel.webview.onDidReceiveMessage(message => {

@@ -174,13 +174,21 @@ export function closeTab(
   state: ChatStoreState,
   tabId: string,
   cancelStreamAndRejectTools: () => Promise<void>,
-  streamHandlerCtx?: StreamHandlerContext
+  streamHandlerCtx?: StreamHandlerContext,
+  cancelStreamByConversationId?: (conversationId: string) => Promise<void>
 ): void {
   const tabs = state.openTabs.value
   const tabIndex = tabs.findIndex(t => t.id === tabId)
   if (tabIndex === -1) return
 
   const tab = tabs[tabIndex]
+
+  // 关闭标签页时取消该会话仍在进行的流式请求（后台标签页的流也一样要取消）：
+  // 不取消的话，后续 chunk 会经 bufferBackgroundChunk 为已关闭会话重建缓冲区，
+  // 而该缓冲区不再有任何消费者，反复"开流-关页"会无限累积废弃数据（审查报告 M20）。
+  if (tab.conversationId) {
+    void cancelStreamByConversationId?.(tab.conversationId)
+  }
 
   // 清理该标签页的快照
   state.sessionSnapshots.value.delete(tabId)
@@ -287,18 +295,20 @@ export function bufferBackgroundChunk(
   if (!convId) return
 
   const buffers = state.backgroundStreamBuffers.value
+
+  // 会话不在任何打开的标签页中（标签页已关闭）：
+  // 直接丢弃，不重建缓冲区——该缓冲区不会有消费者（审查报告 M20）
+  const tab = state.openTabs.value.find(t => t.conversationId === convId)
+  if (!tab) {
+    buffers.delete(convId)
+    return
+  }
+
   if (!buffers.has(convId)) {
     buffers.set(convId, [])
   }
 
   // 同时更新对应快照中的流式状态
-  // 找到该 conversationId 对应的标签页
-  const tab = state.openTabs.value.find(t => t.conversationId === convId)
-  if (!tab) {
-    buffers.get(convId)!.push(chunk)
-    return
-  }
-
   const snapshot = state.sessionSnapshots.value.get(tab.id)
 
   // 若快照已绑定 activeStreamId，则过滤掉旧流的迟到 chunk

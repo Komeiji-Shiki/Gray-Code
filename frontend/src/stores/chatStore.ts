@@ -418,14 +418,17 @@ export const useChatStore = defineStore('chat', () => {
     // 如果仍在响应中，不处理
     if (state.isWaitingForResponse.value) return
 
-    const next = dequeueMessage()
-    if (!next) return
-
-    // 跨会话投递防护：若排队消息不属于当前会话，放回队列头部并中止
-    if (typeof next.conversationId === 'string' && next.conversationId !== state.currentConversationId.value) {
-      state.messageQueue.value = [next, ...state.messageQueue.value]
-      return
-    }
+    // 只取出属于当前会话的排队消息：其他会话的消息保留在队列中，
+    // 等切回该会话、响应结束后再发送。否则一条跨会话消息会永久卡在
+    // 队头阻塞当前会话的所有排队消息（审查报告 L）。
+    const currentId = state.currentConversationId.value
+    const queue = state.messageQueue.value
+    const matchIndex = queue.findIndex(m =>
+      typeof m.conversationId !== 'string' || m.conversationId === currentId
+    )
+    if (matchIndex === -1) return
+    const [next] = queue.splice(matchIndex, 1)
+    state.messageQueue.value = queue
 
     // 发送下一条排队消息
     await sendMessage(next.content, next.attachments, next.sendOptions)
@@ -519,7 +522,13 @@ export const useChatStore = defineStore('chat', () => {
    * 关闭标签页
    */
   function closeTabWrapped(tabId: string): void {
-    closeTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
+    closeTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx, async (conversationId: string) => {
+      try {
+        await sendToExtension('cancelStream', { conversationId })
+      } catch (err) {
+        console.error('Failed to cancel stream for closed tab:', err)
+      }
+    })
   }
 
   /**

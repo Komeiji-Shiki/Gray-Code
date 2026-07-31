@@ -476,12 +476,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         fallbackWebview?.postMessage(routedMessage);
     }
 
-    private registerWebviewClient(clientId: string, webview: vscode.Webview, runScope?: RunScope): vscode.Disposable {
+    private registerWebviewClient(
+        clientId: string,
+        webview: vscode.Webview,
+        runScope?: RunScope,
+        isAlive?: () => boolean
+    ): vscode.Disposable {
         return this.webviewClientRegistry.register({
             clientId,
             runScope,
             webviewHost: { webview },
-            postMessage: (message) => webview.postMessage(message)
+            postMessage: (message) => webview.postMessage(message),
+            // 视图销毁后 _view 置空；webview 已死时让 registry 路由判定失败，
+            // 走回退路径而不是静默丢弃（审查报告 M8）。
+            // 默认判定仅适用于主聊天视图；monitor 面板由调用方传入自身的存活判定。
+            isAlive: isAlive ?? (() => this._view !== undefined && this._view.webview === webview)
         });
     }
 
@@ -744,6 +753,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 for (const d of this.viewDisposables.splice(0)) {
                     d.dispose();
                 }
+                // 重置视图引用与就绪标记：面板关闭后 _view 指向已销毁的 webview，
+                // 继续 postMessage 会被静默丢弃（不报错也不入队重放），
+                // 导致 diff 状态、重试、终端输出等事件在重开面板后永久丢失（审查报告 M7）。
+                this._view = undefined;
+                this.webviewReady = false;
             })
         );
     }
@@ -830,7 +844,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         } catch (error: any) {
             console.error('Error handling message:', error);
-            this.sendError(requestId, error.code || 'HANDLER_ERROR', error.message);
+            this.sendError(requestId, error.code || 'HANDLER_ERROR', error instanceof Error ? error.message : String(error));
         }
     }
 
@@ -873,6 +887,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Drop queued commands.
         this.pendingCommands = [];
         this.webviewReady = false;
+        this._view = undefined;
         
         // 取消终端输出订阅
         if (this.terminalOutputUnsubscribe) {
@@ -944,7 +959,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     public sendCommand(command: string, data?: any): void {
         if (!this._view || !this.webviewReady) {
             // Queue until webview is ready (or view exists).
+            // 上限保护：面板从未打开时反复触发命令会让队列无界增长，
+            // 且打开后一次性重放陈旧命令（审查报告 L）。
             this.pendingCommands.push({ command, data });
+            if (this.pendingCommands.length > 100) {
+                this.pendingCommands.splice(0, this.pendingCommands.length - 100);
+            }
             return;
         }
 

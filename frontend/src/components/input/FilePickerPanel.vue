@@ -110,12 +110,25 @@ function getFileIcon(file: FileItem): string {
   return getFileIconClass(file.name)
 }
 
+// HTML 转义：文件路径可能含 < > & 等字符，必须先转义再注入 v-html
+// （审查报告 L：未转义的文件名可注入任意 HTML/脚本）
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // 高亮匹配文本
 function highlightMatch(text: string, query: string): string {
-  if (!query.trim()) return text
-  
-  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
+  const escapedText = escapeHtml(text)
+  if (!query.trim()) return escapedText
+
+  const escapedQuery = escapeHtml(query)
+  const regex = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  return escapedText.replace(regex, '<mark>$1</mark>')
 }
 
 // 计算高亮显示的路径

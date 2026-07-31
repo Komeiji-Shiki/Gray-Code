@@ -11,7 +11,13 @@ def _escape_regexp_literal(s: str) -> str:
     return re.sub(r"[.*+?^${}()|\[\]\\]", lambda m: "\\" + m.group(0), s)
 
 
-def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str) -> str:
+def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str | None) -> str:
+    # 对齐 TS（applyRegex.ts replaceMacroTokens）：
+    # - mode 为 "none" 才跳过；缺失/其他值都执行替换（raw 语义）。
+    #   旧实现 str(script.get("macroMode") or "none") 把缺失当 "none"，导致
+    #   TS 替换而 Python 不替换（审查报告 fast-tavern #6）。
+    # - 替换顺序 TS 为 {{}} 先、<<>> 后（同一 replacer），旧实现顺序相反，
+    #   宏值含另一类定界符时结果不同（审查报告 fast-tavern #5）。
     if mode == "none":
         return pattern
 
@@ -31,7 +37,11 @@ def _replace_macro_tokens(pattern: str, macros: dict[str, str], mode: str) -> st
         val = pick(key)
         return m.group(0) if val is None else encode(val)
 
-    return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", repl, re.sub(r"<<\s*([a-zA-Z0-9_]+)\s*>>", repl, pattern))
+    return re.sub(
+        r"<<\s*([a-zA-Z0-9_]+)\s*>>",
+        repl,
+        re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", repl, pattern),
+    )
 
 
 def _parse_find_regex(input_value: str) -> tuple[str, str]:
@@ -158,7 +168,7 @@ def apply_regex(
         if not _should_apply_by_depth(script, target, history_depth):
             continue
 
-        substituted = _replace_macro_tokens(str(script.get("findRegex") or ""), macros, str(script.get("macroMode") or "none"))
+        substituted = _replace_macro_tokens(str(script.get("findRegex") or ""), macros, script.get("macroMode"))
         source, flags = _parse_find_regex(substituted)
         re_flags, global_replace = _flags_to_re_flags(flags)
 

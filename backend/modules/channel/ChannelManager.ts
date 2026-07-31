@@ -631,7 +631,13 @@ export class ChannelManager {
                     });
                 }
                 
-                // 等待后重试（支持取消）
+                // 等待后重试（支持取消）。
+                // 先停保活定时器再进入等待：错误后到 delay 完成之间若定时器仍存活，
+                // 会在无活动流时发出保活请求（审查报告 L）。
+                if (keepAliveTimer) {
+                    clearInterval(keepAliveTimer);
+                    keepAliveTimer = undefined;
+                }
                 await this.delay(retryInterval, request.abortSignal);
             } finally {
                 // 清理保活循环定时器
@@ -854,6 +860,14 @@ export class ChannelManager {
                     throw new ChannelError(
                         ErrorType.TIMEOUT_ERROR,
                         t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
+                    );
+                }
+                // 外部取消：代理路径的生成器在信号中止时静默结束，若不显式抛错
+                // 会被当作"正常完成"提交空内容/部分内容，前端收不到 cancelled（审查报告 H4）。
+                if (externalSignal?.aborted) {
+                    throw new ChannelError(
+                        ErrorType.CANCELLED_ERROR,
+                        t('modules.channel.errors.requestCancelled')
                     );
                 }
             } else {

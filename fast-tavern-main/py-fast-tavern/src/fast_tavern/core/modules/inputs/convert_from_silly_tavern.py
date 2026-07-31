@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import math
@@ -204,8 +204,15 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
     return out
 
 
+def _is_number(v: Any) -> bool:
+    # 对齐 TS typeof === 'number'：JSON 解析的 1.0 在 Python 是 float，在 JS 是 number。
+    # 旧实现 isinstance(v, int) 漏掉 float，导致 1.0 落进字符串分支、字段错配
+    # （审查报告 fast-tavern #4）。bool 是 int 子类，必须排除。
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _normalize_regex_target(v: Any) -> str | None:
-    if isinstance(v, int):
+    if _is_number(v):
         return REGEX_TARGET_MAP_FROM_ST.get(v)
     s = _to_str(v).strip()
     if not s:
@@ -227,7 +234,7 @@ def _normalize_regex_view(v: Any) -> str | None:
 def _normalize_regex_macro_mode(v: Any) -> str:
     if v in ("none", "raw", "escaped"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return REGEX_MACRO_MODE_MAP.get(v, "none")
     return "none"
 
@@ -362,7 +369,7 @@ WORLDBOOK_SELECTIVE_LOGIC_MAP_FROM_ST: dict[int, str] = {
 
 def _normalize_worldbook_position(position: Any, ext_position: Any) -> str:
     p = position if position is not None else ext_position
-    if isinstance(p, int):
+    if _is_number(p):
         return WORLDBOOK_POSITION_MAP_FROM_ST.get(p, str(p))
 
     s = _to_str(p).strip()
@@ -382,7 +389,7 @@ def _normalize_worldbook_position(position: Any, ext_position: Any) -> str:
 def _normalize_worldbook_selective_logic(v: Any) -> str:
     if v in ("andAny", "andAll", "notAll", "notAny"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return WORLDBOOK_SELECTIVE_LOGIC_MAP_FROM_ST.get(v, "andAny")
     return "andAny"
 
@@ -390,7 +397,7 @@ def _normalize_worldbook_selective_logic(v: Any) -> str:
 def _normalize_worldbook_role(v: Any) -> str:
     if v in ("system", "user", "model"):
         return str(v)
-    if isinstance(v, int):
+    if _is_number(v):
         return WORLDBOOK_ROLE_MAP_FROM_ST.get(v, "system")
     return "system"
 
