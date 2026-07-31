@@ -89,7 +89,8 @@ function createSettingsManagerMock(resolvedMode: ResolvedPromptModeSnapshot = mo
             ignorePatterns: []
         })),
         getPinnedFilesConfig: jest.fn(() => ({ sectionTitle: 'PINNED FILES CONTENT' })),
-        getUISettings: jest.fn(() => ({ language: 'zh-CN' }))
+        getUISettings: jest.fn(() => ({ language: 'zh-CN' })),
+        getToolsConfig: jest.fn(() => ({}))
     } as any;
 }
 

@@ -3,6 +3,66 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 修复 MemoryManager 编辑记忆死锁：`updateEntry` 持锁期间调用 `dropSummariesCovering` → `treeDrop` 二次 acquire 同一把不可重入的 AsyncLock，形成闭环等待，记忆条目 ≥2 条时编辑操作永久挂起、整个记忆模块排队瘫痪；`dropSummariesCovering` 移出锁外执行（treeDrop 自身会加锁），新增回归测试 `h1_deadlock.test.ts`
+  - 修复 Anthropic 并行工具调用参数全部丢失：formatter 未透传 `content_block_*` 事件的顶层 `index`，累加器把多个工具的 `input_json_delta` 全部拼进最后一个空工具壳导致 `JSON.parse` 失败、工具以空参数执行；现在 `content_block_start` / `input_json_delta` 均透传 `chunk.index`，新增回归测试 `formatterParallelTools.test.ts`
+  - 修复 OpenAI Responses 渠道工具参数双重拼接：`function_call_arguments.done` 携带完整 arguments 但未设置 `finalArgs`，累加器把完整 JSON 追加到已累积的半截增量上形成垃圾串，工具全部空参数执行、"流式边执行工具"失效；现在 done 事件设置 `finalArgs: true`，累加器按覆盖语义解析
+  - 修复 `delete_file` 可递归删除整个工作区的问题：handler 对 `""`/`"."`/`".."` 及解析后等于任一工作区根的路径零校验，一次误调用即删光全部文件；现在显式拒绝上述路径（工作区外策略拦不住根目录本身）
+  - 修复 limcode→graycode 改名残留导致多处功能不可用：diff 视图悬停 ✅/❌ 链接、灯泡操作、编辑器标题栏 Accept/Reject All 按钮、Windows 通知点击打开聊天全部失效（命令均未注册）；8 处 `limcode.*` 全部替换为 `graycode.*`，另修复 `show_windows_notification` 的 `GrayCode.openChat` 大小写错误（extension 注册的是小写 `graycode.openChat`，VS Code 命令名大小写敏感）
+  - 修复工具执行后中止时已执行结果被丢弃：模型消息已写入历史、流式提前执行的工具已产生真实副作用，用户停止后直接返回导致结果永久丢失、模型可能重复执行同一工具调用；现在 abort 路径把提前执行与串行执行的结果（含多模态附件）合并写回历史并结算 stop state，等待提前执行工具的循环内部增加 abort 检查避免某工具不响应信号时请求永久挂起
+  - 修复同一会话并发流：第二个流创建时静默覆盖旧控制器不中止旧流，旧流先结束时其 finally 无条件 delete 误删新流控制器，旧流不可取消、新流变孤儿、两个流并发读写同一历史文件互相覆盖；现在 `create()` 先 abort 旧控制器再替换，`delete`/`deleteSummary` 加引用校验
+  - 修复 diff 自动保存与取消竞态：auto-save 的 acceptDiff 在队列中异步执行，期间用户发送新消息触发 cancelAllPending（不走串行队列）恢复文件后，accept 后续的 `doc.save()`/`writeFileSync` 仍把 AI 内容写回磁盘；现在 `cancelAllPending` 纳入 `diffActionQueue` 串行队列，`acceptDiffUnlocked` 在 openTextDocument/applyEdit/写盘前复查 `diff.status`
+  - 修复同一会话历史写并发覆盖：分段历史写入先删整个目录再逐段重写（无锁），transcript `get→mutate→replace` 无串行化，checkpoint 元数据 read-modify-write 无锁——并发时 index 与 segment 不一致、真实执行成功的工具结果被"用户拒绝"占位覆盖、检查点/裁剪状态随机丢失；现在历史写入按会话串行化并改为"临时目录 + rename"原子切换，transcript mutate 整体互斥，`setCustomMetadata` 加 per-conversation 写锁
+  - 修复检查点增量链断裂：cleanup 按时间删最旧不检查 `baseCheckpointId` 依赖，配置 `maxCheckpoints`（如 1~2）后回档 100% 失败；现在只删除不再被任何存活检查点引用为 base 的项
+  - 修复检查点恢复时 dirty 文档把用户旧缓冲区写回磁盘覆盖刚恢复内容的问题：恢复后对 dirty 文档直接 `doc.save()` 会覆盖恢复结果，现在先把文档 buffer 替换为磁盘内容再静默保存（直接 revert 会弹原生确认框阻塞流程）
+  - 修复中断/取消流的 token 严重少计：`usageMetadataPartial` 标记此前从未被写入也从未被检查；现在取消路径写入该标记，用量统计与对话统计对半截 usage 回退到文本长度估算
+  - 修复 SSE 合法多行 `data:` 事件内容静默丢失：前一段不完整数据被无条件覆盖丢弃（注释写"继续累积"实际是覆盖）；现在按 SSE 规范用单个换行累积多行 data，解析不了的中间行保留到流结束进入 unparsed 错误详情不再静默吞掉
+  - 修复 `execute_command` 超时被误判为执行成功：超时把 `killed = true` 复用为成功标志，模型把超时命令当成功；现在新增独立 `timedOut` 标志，超时按失败返回，任务状态显示 error 而非 cancelled
+  - 修复 `insert_code` 内容以 `\n` 结尾时多出空行且 CodeLens 高亮偏移：`split('\n')` 多出的尾部空串被移除，插入行数统计同步修正
+  - 修复 `read_file` 无文件大小护栏：超大文件全量读入并全量塞进模型上下文；新增 5MB 上限（与 search_in_files 一致），超限拒绝并提示改用搜索
+  - 修复 unified diff 解析把 hunk 内以 `-- ` 开头的删除行（SQL/YAML 注释等）误判为下一个文件头，整包被当作 multi-file 拒绝；`--- ` 中断条件改为仅当与下一行 `+++ ` 成对出现（文件头对）才触发
+  - 修复被拒绝的 diff 被 FIFO 淘汰（上限 50）后 `write_file`/`insert_code`/`delete_code`/`search_in_files` 误报"写入成功"：`DiffResolutionReason` 新增 `rejected` 终态，淘汰时对 rejected 留痕，工具改为按 `interruptReason === 'none'` 判定接受
+  - 修复 ChatFlowService 主流程 `markUserInterrupt` 与 `resetUserInterrupt` 之间无 try/finally：中途抛错全局中断标记残留，无会话 diff 被误取消；现在重置放入 finally（与 delete 路径一致）
+  - 修复 MessageRouter 非阻塞消息异常兜底先删路由条目再发错误导致错误必然错投主聊天、Monitor 面板请求永久挂起；现在先 `sendRoutedError` 再清理，回退路径也补删条目防 `requestClients` 无界泄漏
+  - 修复流式处理器构造时捕获 view 引用：视图重建后 chunk 发往已销毁 webview，新视图永远收不到 complete/cancelled、占位消息永久"生成中"；改为每次发送前实时获取 view
+  - 修复 `deleteConversation` 不清理孤儿数据：snapshots/ 与 diffs/ 残留孤儿；现在删除对话时一并清理快照与 diff 目录，`cleanupOrphanedDiffs` 不再把 `__global__` 全局 diff 目录连带删除
+  - 修复 `search_in_files` replace 模式漏传 `replace` 参数时替换串为空、静默删除所有匹配内容的问题：replace 模式下参数缺失直接报错
+  - 修复 `execute_command` 用 `shell.includes('cmd')` 判断 shell 类型（自定义 shell 路径目录名含 cmd 误判）与相同 toolId 并发执行覆盖 `activeProcesses` 条目（旧进程成孤儿无法取消）；改为按 shell 文件名精确匹配，覆盖前先终止仍在运行的旧进程
+  - 修复 `list_files` Windows 递归返回 `\` 分隔路径与其余工具 `/` 约定冲突、回传给 read_file 时解析失败的问题
+  - 修复 `SettingsManager.getToolsConfigEntry` 浅合并导致用户手写部分配置整体替换嵌套默认对象的问题：改为递归深合并（数组与原始值仍直接覆盖）
+  - 修复 `getHistoryForAPI` 在 startIndex ≥ history.length 时返回完整历史而非空历史的问题
+  - 修复 `DiffEditorActionsProvider` 从翻译后的 label 文本正则提取块索引（翻译含数字时可能确认错误块）：改为 QuickPick 项结构化携带块索引
+  - 修复快照 ID 用 `Date.now()` 同一毫秒内连续创建互相覆盖的问题：追加随机后缀保证唯一
+  - 修复检查点增量哈希复用漏检：`mtimeMs + size` 在毫秒精度内同秒等长修改不触发重算；新增纳秒精度 `mtimeNs` 比较（旧记录回退旧行为）
+  - 修复 Gemini 流式 URL 拼接未处理 baseUrl 已有 query 参数的问题（生成畸形 URL）；非流式解析对 `content` 缺失的候选直接 TypeError（流式路径已判空）
+  - 修复 Anthropic `message_delta` 的 usage 只含 output_tokens 时 `totalTokenCount = 0 + output` 覆盖 message_start 的正确 total、输入 token 从总量中消失的问题：无 input 侧计数时不输出 total，累加器走重算路径
+  - 修复 `delete_file` 根目录防护可被 Windows 大小写变体绕过（盘符/目录大小写不一致时大小写敏感比较不命中、递归删除整个工作区）：根路径比较改用路径规范化（Windows 折叠大小写 + 去尾斜杠），并在 handler 内实时获取工作区集合
+  - 修复 `rejectAllPendingToolCalls` / `settleFunctionResponses` 直写仓储绕过互斥执行器、真实工具结果仍被“用户拒绝”占位覆盖的竞态：`replaceContents` 纳入 exclusive（内部拆 `saveAndReload` 防锁嵌套），两个函数整体改走 `mutateContents` 串行域
+  - 修复 `setTitle` / `setWorkspaceUri` 整对象元数据覆写未加锁：与 `setCustomMetadata` 并发时会把 custom 对象整体冲掉；现在统一走 per-conversation 写锁
+  - 修复中止路径写回与 `rejectAllPendingToolCalls` 占位竞争导致真实工具结果被丢弃：abort/等待取消路径改用 `settleFunctionResponses`（真实结果覆盖占位），补齐多模态附件与 stop state 结算；等待提前执行工具的循环与 abort 事件做 race，消除工具不响应信号时的永久挂起窗口
+  - 修复 Anthropic 流 total 仍缺输出 token：`message_start` 的 total 只含 input，`message_delta` 的 output 增量现在会合并进总量，下游上下文裁剪/汇总的 `total−prompt` 不再恒为 0
+  - 修复 `execute_command` 同 toolId 并发时旧进程 close/error 处理器无条件删除同 key 条目、把新进程变孤儿的问题：预杀分支立即注销旧任务并摘除旧条目，close/error 处理器加身份校验；`success` 前置 `!timedOut`，消除 close(code=0) 晚于超时回调时“成功 + timed out”自相矛盾
+  - 修复 retry / edit-and-retry / delete-to-message 三条流程的 `markUserInterrupt` 无 try/finally：中途抛错全局中断标记残留，无会话 diff 被误取消；现在重置统一放入 finally
+  - 修复 `summarizeContext` 的 `deleteSummary` 未传控制器引用：同一会话两个总结流交叠时旧者 finally 误删新者控制器、新流无法取消；现在传控制器引用做身份校验
+  - 修复 diff 自动保存分支 3 的 `doc.save()` 与 `writeFileSync` 之间无状态复查：取消/拒绝后 AI 内容仍可能被写回磁盘；现在写盘前补 `diff.status` 复查
+  - 修复 `evictedRejectedDiffIds` 随会话无界增长：淘汰留痕只对仍有活跃等待者的 rejected diff 生效（新增 `activeDiffWaiters` 登记）
+  - 修复 unified diff hunk 内相邻“删除行 `-- ` + 增加行 `++ `”仍被误判为文件头对、整包拒绝的问题：文件头对要求后跟 `@@` 才触发中断
+  - 修复历史迁移与删除绕过写队列：`migrateLegacyConversationsToSegmented` 与 `deleteHistory` 与 `saveHistory` 共用同一 per-conversation 写队列，消除迁移/删除与并发写互相干扰（删除后目录被复活、tmp 目录被误删）
+  - 修复 checkpoint cleanup 对完整链恒为 no-op、`maxCheckpoints` 静默失效的问题：删除链上中间节点前先把其备份合并进后继（不覆盖后继已有文件）、changes 合并、base 重挂，再删除
+  - 修复取消流从未收到 usage 事件时（OpenAI chat/Gemini）整条 model 消息被跳过漏计的问题：`estimatePartialMessageTokens` 在 usage 缺失时也按文本长度估算（含 functionCall 参数）
+  - 修复 fast-tavern Python `process_content_stages` 调用 `apply_regex` 时漏传 `variableContext`：`{{getvar::...}}`/`{{setvar::...}}` 在 replaceRegex 场景端到端仍失效；现在与 TS 调用方对齐透传
+
+### Changed
+  - `StreamChunkProcessor` 构造从持有 view 引用改为持有 `getView` 回调，视图重建后消息自动发往新视图
+  - `TranscriptRepository` 支持注入互斥执行器（`exclusive`），`mutateContents` 的 get→mutate→replace 整体串行化
+  - fast-tavern Python 版 `apply_regex` 对齐 TS 版：替换结果中的 `{{user}}`、`{{getvar::...}}`、`{{setvar::...}}` 等宏立即展开，并透传 `variableContext`
+  - SubAgent Monitor 流式卡顿优化：前端 `llm_delta` 事件改为非响应式队列 + rAF（setTimeout 兜底）批量 flush，事件回调从「每 chunk 全量更新 manifests/windowsByRunId + renderMessages 全量重建」降为 O(1) 入队、每帧至多一次合并提交；renderMessages 按 content/overlay 引用缓存 Message 对象，未变化的楼层不再触发 MessageItem 重渲染（连带避免重复解析 Markdown），流式更新成本与窗口长度解耦；前端事件数组加 500 条上限（与后端 journal 对齐）；后端 SubAgentMonitorPanel 对 `llm_delta` 做 50ms 节流合并，跨进程 postMessage 次数与渲染帧率对齐而不是与 token 产出速度对齐，并发 SubAgent 下 Monitor 不再卡顿
+  - SubAgent 默认限制放宽：迭代次数默认 20 → 50（预设 30~40 → 40~80），运行时间默认 300s → 1800s（预设 600~900s → 1200~2400s），同步更新设置面板默认显示值、工具描述与类型注释；复杂任务不再频繁触顶「超出最大迭代次数 / 运行时间」
+
+### Added
+  - 新增回归测试：`formatterParallelTools.test.ts`（H2/H3：Anthropic 并行工具参数按 index 合并、OpenAI Responses done 覆盖增量）与 `h1_deadlock.test.ts`（H1：≥2 条记忆编辑不死锁）
+  - 修正 4 处 limcode→graycode 改名遗留的过期测试断言（`show_windows_notification`、`create_progress`、`diffManager`、`PromptManager.promptEntries`）
+
 ## [1.2.8] - 2026-07-30
 
 ### Changed
