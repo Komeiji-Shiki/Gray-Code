@@ -92,10 +92,10 @@ export interface SubAgentConfig {
     /** 工具配置（使用哪些工具） */
     tools: SubAgentToolsConfig;
     
-    /** 最大迭代次数（防止无限循环，默认 20，-1 表示无限制） */
+    /** 最大迭代次数（防止无限循环，默认 50，-1 表示无限制） */
     maxIterations?: number;
     
-    /** 最大运行时间（秒，默认 300，-1 表示无限制） */
+    /** 最大运行时间（秒，默认 1800，-1 表示无限制） */
     maxRuntime?: number;
 
     /**

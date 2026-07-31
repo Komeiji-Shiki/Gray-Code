@@ -660,9 +660,9 @@ onMounted(async () => {
               <label>{{ t('components.settings.subagents.maxIterations') }}</label>
               <input
                 type="number"
-                :value="currentAgent.maxIterations ?? 20"
+                :value="currentAgent.maxIterations ?? 50"
                 min="-1"
-                @change="updateAgentField('maxIterations', parseInt(($event.target as HTMLInputElement).value) || 20)"
+                @change="updateAgentField('maxIterations', parseInt(($event.target as HTMLInputElement).value) || 50)"
               />
               <span class="field-hint">{{ t('components.settings.subagents.maxIterationsHint') }}</span>
             </div>
@@ -671,9 +671,9 @@ onMounted(async () => {
               <label>{{ t('components.settings.subagents.maxRuntime') }}</label>
               <input
                 type="number"
-                :value="currentAgent.maxRuntime ?? 300"
+                :value="currentAgent.maxRuntime ?? 1800"
                 min="-1"
-                @change="updateAgentField('maxRuntime', parseInt(($event.target as HTMLInputElement).value) || 300)"
+                @change="updateAgentField('maxRuntime', parseInt(($event.target as HTMLInputElement).value) || 1800)"
               />
               <span class="field-hint">{{ t('components.settings.subagents.maxRuntimeHint') }}</span>
             </div>
