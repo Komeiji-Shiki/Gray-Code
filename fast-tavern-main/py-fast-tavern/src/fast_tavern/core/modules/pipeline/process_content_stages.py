@@ -25,6 +25,10 @@ def process_content_stages(text: str, params: dict[str, Any]) -> dict[str, str]:
             "target": params.get("target"),
             "view": params.get("view"),
             "macros": params.get("macros") or {},
+            # 与 TS 调用方 processContentStages.ts 对齐：漏传则 apply_regex 内
+            # variableContext 恒为 None，{{getvar::...}}/{{setvar::...}} 在
+            # replaceRegex 场景端到端仍失效。
+            "variableContext": params.get("variableContext"),
             "historyDepth": params.get("historyDepth"),
         },
     )
