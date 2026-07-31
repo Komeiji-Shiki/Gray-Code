@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
-import { getDiffManager } from './diffManager';
+import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 
 /**
@@ -42,7 +42,7 @@ interface InsertResult {
  * 在指定行前插入代码
  */
 function insertAtLine(lines: string[], line: number, content: string): string {
-    const insertLines = content.split('\n');
+    const insertLines = splitContentLines(content);
     const idx = line - 1; // 转为 0-based
     const newLines = [
         ...lines.slice(0, idx),
@@ -50,6 +50,19 @@ function insertAtLine(lines: string[], line: number, content: string): string {
         ...lines.slice(idx)
     ];
     return newLines.join('\n');
+}
+
+/**
+ * content 以 \n 结尾时 split('\n') 会多出尾部空串：
+ * 插入后产生多余空行，且 insertedLineCount 多计 1 导致 CodeLens 高亮偏移。
+ * 去掉尾部空串后，结尾换行由 join('\n') 在插入点自然还原，行数统计正确。
+ */
+function splitContentLines(content: string): string[] {
+    const lines = content.split('\n');
+    if (content.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    return lines;
 }
 
 /**
@@ -108,7 +121,7 @@ async function insertSingleFile(
         }
 
         // 计算插入块的行范围（用于 CodeLens 高亮）
-        const insertedLineCount = content.split('\n').length;
+        const insertedLineCount = splitContentLines(content).length;
         const blocks = [{
             index: 0,
             startLine: line,
@@ -135,7 +148,9 @@ async function insertSingleFile(
 
         const wasInterrupted = interruptReason !== 'none';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
-        const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
+        // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
+        const wasAccepted = interruptReason === 'none';
         const autoSaveError = finalDiff?.autoSaveError;
 
         // 保存 diff 内容供前端按需加载
@@ -287,7 +302,7 @@ function waitForDiffResolution(
     diffManager: ReturnType<typeof getDiffManager>,
     diffId: string,
     abortSignal?: AbortSignal
-): Promise<'none' | 'abort' | 'user'> {
+): Promise<DiffResolutionReason> {
     return diffManager.waitForDiffResolution(diffId, abortSignal);
 }
 

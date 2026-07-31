@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
-import { getDiffManager } from './diffManager';
+import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 
 /**
@@ -143,7 +143,9 @@ async function deleteSingleFile(
 
         const wasInterrupted = interruptReason !== 'none';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
-        const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
+        // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
+        const wasAccepted = interruptReason === 'none';
         const autoSaveError = finalDiff?.autoSaveError;
 
         // 保存 diff 内容供前端按需加载
@@ -297,7 +299,7 @@ function waitForDiffResolution(
     diffManager: ReturnType<typeof getDiffManager>,
     diffId: string,
     abortSignal?: AbortSignal
-): Promise<'none' | 'abort' | 'user'> {
+): Promise<DiffResolutionReason> {
     return diffManager.waitForDiffResolution(diffId, abortSignal);
 }
 

@@ -125,7 +125,9 @@ async function listDirectoryRecursive(
             continue;
         }
         
-        const relativePath = basePath ? path.join(basePath, name) : name;
+        // 统一使用 "/" 作为分隔符：path.join 在 Windows 上返回 "\\"，
+        // 与其余工具（read_file 等）的 "/" 约定冲突，回传时解析失败。
+        const relativePath = basePath ? `${basePath}/${name}` : name;
         
         if (type === vscode.FileType.Directory) {
             entries.push({ name: relativePath + '/', type: 'directory' });

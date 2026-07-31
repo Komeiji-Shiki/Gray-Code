@@ -106,7 +106,7 @@ export interface CheckpointRecord {
     /** 所有文件的哈希映射（用于增量比较）。只包含真正备份成功的文件 */
     fileHashes?: Record<string, string>;
     /** 快照时的文件 stat 信息（用于增量哈希复用；旧记录无此字段时回退全量哈希） */
-    fileStats?: Record<string, { mtimeMs: number; size: number }>;
+    fileStats?: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }>;
     /** 快照时的自定义忽略模式（restore 据此判断“快照时该路径是否可见”） */
     ignorePatterns?: string[];
     /** 快照时可见但备份复制失败的文件（restore 绝不能删除这些文件） */
@@ -501,10 +501,10 @@ export class CheckpointManager {
         lastCheckpoint?: CheckpointRecord
     ): Promise<{
         hashes: Record<string, string>;
-        stats: Record<string, { mtimeMs: number; size: number }>;
+        stats: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }>;
     }> {
         const hashes: Record<string, string> = {};
-        const stats: Record<string, { mtimeMs: number; size: number }> = {};
+        const stats: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }> = {};
 
         const previousHashes = lastCheckpoint?.fileHashes
             ? this.normalizeFileHashMap(lastCheckpoint.fileHashes)
@@ -515,18 +515,25 @@ export class CheckpointManager {
             const relativePath = normalizeCheckpointPath(path.relative(workspaceRootPath, file));
 
             try {
-                const stat = await fs.stat(file);
-                const mtimeMs = stat.mtimeMs;
-                const size = stat.size;
-                stats[relativePath] = { mtimeMs, size };
+                // bigint stat 提供纳秒精度 mtimeNs：mtimeMs 只有毫秒精度，
+                // 同一毫秒内的等长修改会被漏检（复用旧哈希）。
+                // 旧记录没有 mtimeNs 时回退到 mtimeMs+size 比较（与旧行为一致）。
+                const stat = await fs.stat(file, { bigint: true });
+                const mtimeMs = Number(stat.mtimeMs);
+                const mtimeNs = stat.mtimeNs.toString();
+                const size = Number(stat.size);
+                stats[relativePath] = { mtimeMs, size, mtimeNs };
 
                 // 若 stat 信息与上一检查点一致，复用旧哈希
                 if (previousStats && previousHashes) {
                     const prevStat = previousStats[relativePath];
+                    const statUnchanged = prevStat
+                        ? (prevStat.mtimeNs !== undefined
+                            ? prevStat.mtimeNs === mtimeNs
+                            : prevStat.mtimeMs === mtimeMs && prevStat.size === size)
+                        : false;
                     if (
-                        prevStat &&
-                        prevStat.mtimeMs === mtimeMs &&
-                        prevStat.size === size &&
+                        statUnchanged &&
                         previousHashes[relativePath] !== undefined
                     ) {
                         hashes[relativePath] = previousHashes[relativePath];
@@ -1171,10 +1178,31 @@ export class CheckpointManager {
             if (checkpoints.length > config.maxCheckpoints) {
                 // 按时间排序（旧的在前）
                 const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
-                const toDelete = sorted.slice(0, checkpoints.length - config.maxCheckpoints);
-                
-                for (const cp of toDelete) {
+                const excess = checkpoints.length - config.maxCheckpoints;
+                const deleted = new Set<string>();
+
+                // 增量链依赖检查：检查点总是增量且链到上一个（baseCheckpointId），
+                // 直接按时间删最旧会把中间链节点删掉，后续检查点恢复时 chainBroken 100% 失败。
+                // 从最旧开始尝试删除：只有不再被任何存活检查点引用为 base 的项才可删；
+                // 被引用的项先把备份合并进后继并重挂链（mergeCheckpointIntoSuccessor），
+                // 再删除——否则完整链上每一项都被后继引用，cleanup 恒为 no-op，
+                // maxCheckpoints 静默失效、检查点无界累积。
+                // （处理顺序旧→新是自洽的：更旧的项是否可删取决于更晚存活项的引用。）
+                for (let i = 0; i < excess && i < sorted.length; i++) {
+                    const cp = sorted[i];
+                    const stillAlive = sorted.slice(i + 1).filter(c => !deleted.has(c.id));
+                    const dependent = stillAlive.find(c => c.baseCheckpointId === cp.id);
+                    if (dependent) {
+                        try {
+                            await this.mergeCheckpointIntoSuccessor(conversationId, dependent, cp, checkpoints);
+                        } catch (err) {
+                            // 合并失败（如备份目录不可读）宁可保留也不断链
+                            console.warn('[CheckpointManager] Failed to re-link checkpoint chain, keeping checkpoint:', err);
+                            continue;
+                        }
+                    }
                     await this.deleteCheckpoint(conversationId, cp.id);
+                    deleted.add(cp.id);
                 }
             }
         } catch (err) {
@@ -1182,6 +1210,49 @@ export class CheckpointManager {
         }
     }
     
+    /**
+     * 把被删除检查点的备份内容合并进其后继（链重挂），并持久化后继的元数据。
+     *
+     * 增量链 A → M → B（B.base = M）：直接删除 M 会让 B 的恢复链变成 [A, B]，
+     * 而 B 的备份目录只有 B 相对 M 变更的文件——M 独有（B 未改）的文件会从链上
+     * 消失，恢复 B 时 findFileInChain 报 missing_in_chain。
+     * 合并 = 把 M 的备份文件复制进 B 的目录（force:false 不覆盖 B 已有的更新版本），
+     * 把 M.changes 并入 B.changes（B 未涉及的路径保留），B.baseCheckpointId 改指 M.base。
+     */
+    private async mergeCheckpointIntoSuccessor(
+        conversationId: string,
+        successor: CheckpointRecord,
+        removed: CheckpointRecord,
+        allCheckpoints: CheckpointRecord[]
+    ): Promise<void> {
+        const removedBackupPath = path.join(this.checkpointsDir, removed.backupDir);
+        const successorBackupPath = path.join(this.checkpointsDir, successor.backupDir);
+
+        // 1. 文件合并：后继目录优先，不覆盖已存在的更新版本
+        try {
+            await fs.cp(removedBackupPath, successorBackupPath, { recursive: true, force: false });
+        } catch (err) {
+            console.warn(`[CheckpointManager] Failed to merge backup ${removed.backupDir} into ${successor.backupDir}:`, err);
+            throw err; // 合并失败必须中止删除，否则恢复时链上缺文件
+        }
+
+        // 2. changes 合并：后继未涉及的路径保留被删项的变更记录（元数据语义完整）
+        const successorPaths = new Set((successor.changes ?? []).map(c => c.path));
+        for (const change of removed.changes ?? []) {
+            if (!successorPaths.has(change.path)) {
+                successor.changes = [...(successor.changes ?? []), change];
+                successorPaths.add(change.path);
+            }
+        }
+
+        // 3. 链重挂
+        successor.baseCheckpointId = removed.baseCheckpointId;
+
+        // 4. 持久化更新后的后继元数据（deleteCheckpoint 随后会基于最新列表删除被删项）
+        const updated = allCheckpoints.map(cp => (cp.id === successor.id ? successor : cp));
+        await this.conversationManager.setCustomMetadata(conversationId, 'checkpoints', updated);
+    }
+
     /**
      * 删除检查点
      */
@@ -1295,13 +1366,26 @@ export class CheckpointManager {
                 
                 // 检查文档是否在受影响列表中
                 if (modifiedSet.has(docPath)) {
-                    // 优先 doc.save() 静默清理 dirty 状态（不弹确认对话框）；
-                    // files.revert 在文档 dirty 时弹出"是否放弃更改？"，阻塞流程。
+                    // 恢复场景：磁盘上已是恢复后的内容，打开着的文档 buffer 是旧内容。
+                    // 绝不能直接 doc.save()（会把用户旧 buffer 写回磁盘，覆盖刚恢复的内容），
+                    // 也不能直接 revert（dirty 时会弹 VSCode 原生"是否放弃更改？"确认框阻塞流程）。
+                    // 方案：把文档 buffer 替换为磁盘内容后静默 save，丢弃旧 buffer。
                     try {
                         if (doc.isDirty) {
-                            const saved = await doc.save();
-                            if (saved) continue;
+                            const diskText = await fs.readFile(doc.uri.fsPath, 'utf8');
+                            const edit = new vscode.WorkspaceEdit();
+                            const fullRange = new vscode.Range(
+                                doc.positionAt(0),
+                                doc.positionAt(doc.getText().length)
+                            );
+                            edit.replace(doc.uri, fullRange, diskText);
+                            const applied = await vscode.workspace.applyEdit(edit);
+                            if (applied) {
+                                await doc.save();
+                                continue;
+                            }
                         }
+                        // applyEdit 失败时回退到 revert（可能弹框，作为最后手段）
                         await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
                     } catch (err) {
                         console.warn(`[CheckpointManager] Failed to revert ${doc.uri.fsPath}:`, err);

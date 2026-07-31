@@ -78,7 +78,7 @@ export class DiffEditorActionsProvider {
      */
     private setActiveSession(sessionId: string | null): void {
         this.activeSessionId = sessionId;
-        vscode.commands.executeCommand('setContext', 'limcode.hasPendingDiff', sessionId !== null);
+        vscode.commands.executeCommand('setContext', 'graycode.hasPendingDiff', sessionId !== null);
     }
     
     /**
@@ -148,11 +148,14 @@ export class DiffEditorActionsProvider {
         }
         
         // 构建 Quick Pick 选项
-        const items: vscode.QuickPickItem[] = pendingBlocks.map(block => ({
+        // 块索引通过结构化字段携带，避免从翻译后的 label 文本正则提取
+        // （翻译含数字时可能确认错误块）。
+        const items: Array<vscode.QuickPickItem & { blockIndex?: number }> = pendingBlocks.map(block => ({
             label: `$(git-commit) ${t('tools.file.diffEditorActions.diffBlock', { index: block.index + 1 })}`,
             description: t('tools.file.diffEditorActions.lineRange', { start: block.startLine, end: block.endLine }),
             detail: this.getBlockPreview(session, block),
-            picked: false
+            picked: false,
+            blockIndex: block.index
         }));
         
         // 添加 "全部" 选项
@@ -193,10 +196,9 @@ export class DiffEditorActionsProvider {
         } else {
             // 处理选中的单个块
             for (const item of selected) {
-                // 从 label 中提取块索引
-                const match = item.label.match(/\d+/);
-                if (match) {
-                    const blockIndex = parseInt(match[0], 10) - 1; // 转回 0-based
+                // 使用结构化携带的块索引；label 是翻译文本，正则提取数字不可靠
+                const blockIndex = (item as vscode.QuickPickItem & { blockIndex?: number }).blockIndex;
+                if (typeof blockIndex === 'number') {
                     if (action === 'accept') {
                         await diffManager.confirmBlock(sessionId, blockIndex);
                     } else {

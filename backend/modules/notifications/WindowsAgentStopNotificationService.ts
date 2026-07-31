@@ -288,7 +288,7 @@ export class WindowsAgentStopNotificationService {
   private async handleNotificationClick(): Promise<void> {
     try {
       log.debug('notification_click_execute_open_chat')
-      await this.executeCommand('limcode.openChat')
+      await this.executeCommand('graycode.openChat')
       log.debug('open_chat_executed')
     } catch (error) {
       this.logger.error('[windows-agent-stop-notification] Failed to focus chat view:', error)
