@@ -30,6 +30,7 @@ coverage/**
 diff_analyzer.py
 graycode-settings*.json
 limcode-settings*.json
+report.md
 
 # Claude Code 本地工作区配置（不打包）
 .claude/**
