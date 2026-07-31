@@ -12,6 +12,7 @@ import type { HandlerContext, MessageHandler } from '../types';
 import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
 import { getSkillsManager } from '../../backend/modules/skills';
 import { getGlobalMemoryManager } from '../../backend/modules/memory';
+import { getProductMetadata } from '../../backend/core/productMetadata';
 
 /**
  * 获取设置
@@ -19,6 +20,17 @@ import { getGlobalMemoryManager } from '../../backend/modules/memory';
 export const getSettings: MessageHandler = async (data, requestId, ctx) => {
   const result = await ctx.settingsHandler.getSettings({});
   ctx.sendResponse(requestId, result);
+};
+
+/**
+ * 获取应用信息（名称/版本号来自扩展 package.json 产品元数据）
+ */
+export const getAppInfo: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    ctx.sendResponse(requestId, getProductMetadata());
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_APP_INFO_ERROR', error.message || 'Failed to get app info');
+  }
 };
 
 /**
@@ -347,6 +359,7 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('getSettings', getSettings);
+  registry.set('getAppInfo', getAppInfo);
   registry.set('updateSettings', updateSettings);
   registry.set('updateProxySettings', updateProxySettings);
   registry.set('updateUISettings', updateUISettings);

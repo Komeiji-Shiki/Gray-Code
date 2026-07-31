@@ -106,6 +106,28 @@ async function loadSettings() {
   }
 }
 
+// 应用信息（名称/版本号来自扩展 package.json）
+const appInfo = ref<{ name: string; displayName: string; version: string }>({
+  name: '',
+  displayName: '',
+  version: ''
+})
+
+async function loadAppInfo() {
+  try {
+    const response = await sendToExtension<any>('getAppInfo', {})
+    if (response) {
+      appInfo.value = {
+        name: response.name || '',
+        displayName: response.displayName || '',
+        version: response.version || ''
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load app info:', error)
+  }
+}
+
 // 加载存储路径配置
 async function loadStorageConfig() {
   try {
@@ -383,6 +405,7 @@ async function handleImportSettings() {
 // 初始化
 onMounted(() => {
   loadSettings()
+  loadAppInfo()
 })
 </script>
 
@@ -747,8 +770,8 @@ onMounted(() => {
                   {{ t('components.settings.settingsPanel.appInfo.title') }}
                 </label>
                 <div class="info-text">
-                  <p>{{ t('components.settings.settingsPanel.appInfo.name') }}</p>
-                  <p class="version">{{ t('components.settings.settingsPanel.appInfo.version') }}</p>
+                  <p>{{ t('components.settings.settingsPanel.appInfo.name', { appName: appInfo.displayName || appInfo.name }) }}</p>
+                  <p class="version">{{ t('components.settings.settingsPanel.appInfo.version', { version: appInfo.version }) }}</p>
                   <div class="github-links">
                     <a href="https://github.com/Komeiji-Shiki/Gray-Code" target="_blank" class="github-link">
                       <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor">

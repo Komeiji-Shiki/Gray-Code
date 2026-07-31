@@ -1227,13 +1227,6 @@ const zhCN = {
                     auto: '跟随系统',
                     autoDescription: '自动跟随 VS Code 语言设置'
                 },
-                appInfo: {
-                    title: '应用信息',
-                    name: 'GrayCode - Vibe Coding 助手',
-                    version: '版本',
-                    repository: '项目仓库',
-                    developer: '开发者'
-                }
             },
             contextSettings: {
                 loading: '加载中...',
@@ -1872,8 +1865,8 @@ const zhCN = {
                 },
                 appInfo: {
                     title: '应用信息',
-                    name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.1.26',
+                    name: '{appName} - Vibe Coding 助手',
+                    version: '版本：{version}',
                     repository: '项目仓库',
                     developer: '开发者'
                 },
