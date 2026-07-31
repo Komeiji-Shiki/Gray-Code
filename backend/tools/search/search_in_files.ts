@@ -681,7 +681,9 @@ async function searchAndReplaceInDirectory(
                 }
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
-                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+                // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
+                // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"替换成功"。
+                const wasAccepted = interruptReason === 'none';
                 const autoSaveError = finalDiff?.autoSaveError;
 
                 // 取消/中断视为 rejected，避免前端继续显示 waiting
@@ -869,7 +871,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     replace: {
                         type: 'string',
-                        description: '[Replace mode] Replacement string. Supports regex capture groups like $1, $2 when isRegex is true.'
+                        description: '[Replace mode] Replacement string. REQUIRED when mode is "replace"; omitting it would silently replace all matches with empty string. Supports regex capture groups like $1, $2 when isRegex is true.'
                     },
                     maxFiles: {
                         type: 'number',
@@ -889,6 +891,14 @@ export function createSearchInFilesTool(): Tool {
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
             const mode = (args.mode as string) || 'search';
             const isReplaceMode = mode === 'replace';
+
+            // replace 模式下 replace 参数必须显式提供：漏传时替换串为空会静默删除所有匹配内容
+            if (isReplaceMode && typeof args.replace !== 'string') {
+                return {
+                    success: false,
+                    error: 'replace parameter is required when mode is "replace"'
+                };
+            }
 
             // 大小写语义：search 默认不区分（方便定位），replace 默认区分（保守替换）。
             // 支持显式覆盖，并在 0 命中时通过诊断信息提醒模型两种模式的默认差异，

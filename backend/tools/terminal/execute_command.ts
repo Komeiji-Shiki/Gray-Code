@@ -50,6 +50,8 @@ interface TerminalProcess {
     endTime?: number;
     exitCode?: number;
     killed?: boolean;
+    /** 是否因超时被强制终止（与用户取消区分：超时算失败，不算成功/取消） */
+    timedOut?: boolean;
     error?: string;
 }
 
@@ -1065,7 +1067,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     // CMD /s /c 特殊处理：需要将整个命令用双引号包裹
                     // /s 参数会去除最外层引号，同时保留命令中的内层引号
                     // 这解决了 FINDSTR 等命令中多个搜索词被错误解析的问题
-                    const isCmdWithS = shellConfig.shell.toLowerCase().includes('cmd') &&
+                    // 注意：不能用 includes('cmd') 判断——自定义 shell 路径的目录名
+                    // 含 "cmd"（如 /tools/cmd-bash/）会被误判；按文件名精确匹配。
+                    const shellName = (shellConfig.shell.toLowerCase().split(/[\\/]/).pop() || '');
+                    const isCmdWithS = (shellName === 'cmd' || shellName === 'cmd.exe') &&
                         shellConfig.shellArgs?.includes('/s');
                     const isWindows = os.platform() === 'win32';
                     if (isCmdWithS) {
@@ -1109,6 +1114,30 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         startTime: Date.now()
                     };
 
+                    // 相同 toolId 并发执行时，第二次 set 会覆盖第一次的条目，
+                    // 旧进程成为孤儿、无法取消。覆盖前先终止仍在运行的旧进程。
+                    const existingProc = activeProcesses.get(terminalId);
+                    if (existingProc && existingProc.process.exitCode === null && existingProc.process.pid && existingProc.process.pid !== proc.pid) {
+                        try {
+                            treeKill(existingProc.process.pid, 'SIGTERM');
+                        } catch {
+                            // 旧进程可能已退出，忽略
+                        }
+                        // 旧进程被替换：立即注销其任务并摘除条目，否则旧进程的 close/error
+                        // 处理器会按 terminalId 把新进程的注册删掉（新进程变孤儿、无法取消）。
+                        TaskManager.unregisterTask(terminalId, 'cancelled', {
+                            exitCode: null,
+                            duration: Date.now() - existingProc.startTime,
+                            killed: true,
+                            background,
+                            conversationId: context?.conversationId,
+                            command: existingProc.command,
+                            output: ''
+                        });
+                        if (activeProcesses.get(terminalId) === existingProc) {
+                            activeProcesses.delete(terminalId);
+                        }
+                    }
                     activeProcesses.set(terminalId, terminalProcess);
 
                     // 命令的“有效后台标记”：background 参数为真，或运行中被 detach 转后台。
@@ -1266,6 +1295,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     if (timeout > 0 && !background) {
                         timeoutHandle = setTimeout(() => {
                             terminalProcess.killed = true;
+                            terminalProcess.timedOut = true;
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
                             // 使用 tree-kill 终止整个进程树，而非仅杀父进程
                             const pid = proc.pid;
@@ -1301,27 +1331,38 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             : getLastLines(terminalProcess.output, maxLines);
                         const duration = terminalProcess.endTime - terminalProcess.startTime;
 
-                        // 从活动进程中移除
-                        activeProcesses.delete(terminalId);
+                        // 从活动进程中移除（身份校验：同 toolId 并发时旧进程的 close
+                        // 不能误删新进程的条目——预杀分支已注销旧任务并摘除旧条目）
+                        const isCurrentProcess = activeProcesses.get(terminalId) === terminalProcess;
+                        if (isCurrentProcess) {
+                            activeProcesses.delete(terminalId);
+                        }
                         
                         // 使用 TaskManager 注销任务；后台任务的完成事件携带输出与会话信息，供前端回流为 [Background task completed] 消息
-                        const status = terminalProcess.killed ? 'cancelled' : (code === 0 ? 'completed' : 'error');
-                        TaskManager.unregisterTask(terminalId, status, {
-                            exitCode: code,
-                            duration,
-                            killed: terminalProcess.killed,
-                            background: effectiveBackground,
-                            conversationId: context?.conversationId,
-                            command,
-                            output: lastOutput.join('\n'),
-                            error: terminalProcess.error
-                        });
+                        // 超时是失败不是取消：status 必须区分，否则前端把超时当"已取消"展示
+                        const status = terminalProcess.timedOut
+                            ? 'error'
+                            : (terminalProcess.killed ? 'cancelled' : (code === 0 ? 'completed' : 'error'));
+                        if (isCurrentProcess) {
+                            TaskManager.unregisterTask(terminalId, status, {
+                                exitCode: code,
+                                duration,
+                                killed: terminalProcess.killed,
+                                background: effectiveBackground,
+                                conversationId: context?.conversationId,
+                                command,
+                                output: lastOutput.join('\n'),
+                                error: terminalProcess.error
+                            });
+                        }
 
                         // 检查是否是外部 abortSignal 触发的终止
                         const isExternalAbort = externalAbortSignal?.aborted && terminalProcess.killed;
                         
-                        // 被用户杀死的进程也算成功（不显示错误）
-                        const success = code === 0 || terminalProcess.killed === true;
+                        // 被用户杀死的进程也算成功（不显示错误）；
+                        // 但超时强杀的进程必须报失败（即使 close 恰以 0 退出码晚于超时回调到达），
+                        // 否则模型会把超时误判为执行成功
+                        const success = !terminalProcess.timedOut && (code === 0 || terminalProcess.killed === true);
                         
                         // 确定错误信息
                         let error: string | undefined;
@@ -1389,18 +1430,21 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             : getLastLines(terminalProcess.output, errMaxLines);
                         const duration = terminalProcess.endTime - terminalProcess.startTime;
 
-                        // 从活动进程中移除
-                        activeProcesses.delete(terminalId);
-                        
-                        // 使用 TaskManager 注销任务
-                        TaskManager.unregisterTask(terminalId, 'error', {
-                            error: err.message,
-                            duration,
-                            background: effectiveBackground,
-                            conversationId: context?.conversationId,
-                            command,
-                            output: lastOutput.join('\n')
-                        });
+                        // 从活动进程中移除（身份校验：同 toolId 并发时旧进程的 error
+                        // 不能误删新进程的条目）
+                        if (activeProcesses.get(terminalId) === terminalProcess) {
+                            activeProcesses.delete(terminalId);
+                            
+                            // 使用 TaskManager 注销任务
+                            TaskManager.unregisterTask(terminalId, 'error', {
+                                error: err.message,
+                                duration,
+                                background: effectiveBackground,
+                                conversationId: context?.conversationId,
+                                command,
+                                output: lastOutput.join('\n')
+                            });
+                        }
 
                         // 推送错误退出事件
                         emitTerminalOutput({

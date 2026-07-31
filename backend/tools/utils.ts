@@ -213,7 +213,7 @@ export function toFileUri(pathStr: string): vscode.Uri {
     return vscode.Uri.file(trimmed);
 }
 
-function normalizePathForComparison(fsPath: string): string {
+export function normalizePathForComparison(fsPath: string): string {
     let normalized = path.resolve(fsPath).replace(/\\/g, '/');
     if (normalized.length > 1) {
         normalized = normalized.replace(/\/+$/, '');

@@ -107,7 +107,7 @@ type DiffSaveListener = (diff: PendingDiff) => void;
  * 怎么改：把“正常结束、abort 取消、用户新请求中断”抽象成 DiffManager 级别的通用结果。
  * 目的：所有diff-review 工具共享同一套生命周期等待语义，避免某个工具独自遗漏中断路径。
  */
-export type DiffResolutionReason = 'none' | 'abort' | 'user';
+export type DiffResolutionReason = 'none' | 'abort' | 'user' | 'rejected';
 
 /**
  * 用户中断跟踪（按会话隔离，防止标签页 A 的请求中断强杀 B 会话的 pending diff）。
@@ -517,6 +517,13 @@ export class DiffManager {
     /** 已终结 diff 的 FIFO 淘汰队列（延迟删除，终态条目仍可能被工具链路读一次） */
     private finalizedDiffOrder: string[] = [];
     private static readonly MAX_FINALIZED_DIFFS = 50;
+    /**
+     * 被 FIFO 淘汰的 rejected diff（淘汰后 getDiff 返回 undefined，工具链路无法再查状态）。
+     * 只记录 rejected：accepted 按正常结算处理，不会误报。查询后即删除，防止无界增长。
+     */
+    private evictedRejectedDiffIds: Set<string> = new Set();
+    /** 仍有活跃 waitForDiffResolution 等待者的 diff id：淘汰留痕只对它们生效 */
+    private activeDiffWaiters: Set<string> = new Set();
 
     /** 正在执行接受动作的diff */
     private acceptingDiffIds: Set<string> = new Set();
@@ -755,6 +762,15 @@ export class DiffManager {
         this.finalizedDiffOrder.push(id);
         while (this.finalizedDiffOrder.length > DiffManager.MAX_FINALIZED_DIFFS) {
             const oldest = this.finalizedDiffOrder.shift()!;
+            const evicted = this.pendingDiffs.get(oldest);
+            // 淘汰会让工具链路的 getDiff 返回 undefined：被拒绝的必须留痕，
+            // 否则 write_file 等会把"用户拒绝"误报为"写入成功"。
+            // 淘汰留痕只对“仍有活跃等待者”的 rejected diff 生效：
+            // 若 waitForDiffResolution 在被淘汰前已结算（如直接读到 rejected），
+            // 淘汰后留痕永远无人查询，集合随会话无界增长。
+            if (evicted && evicted.status === 'rejected' && this.activeDiffWaiters.has(oldest)) {
+                this.evictedRejectedDiffIds.add(oldest);
+            }
             this.pendingDiffs.delete(oldest);
             this.diffSessions.delete(oldest);
         }
@@ -1480,6 +1496,13 @@ export class DiffManager {
                 doc = await vscode.workspace.openTextDocument(uri);
             }
 
+            // await 边界复查：openTextDocument 期间 diff 可能已被 cancelAllPending 等路径
+            // finalize（恢复文件 + 标记 rejected/cancelled），继续执行会让 AI 内容在
+            // 用户取消后仍被写回磁盘。
+            if (diff.status !== 'pending') {
+                return false;
+            }
+
             const currentContent = doc.getText();
 
             // 自动保存：强制保存AI 计算出来的finalContent。
@@ -1498,6 +1521,10 @@ export class DiffManager {
                     const applied = await vscode.workspace.applyEdit(edit);
                     if (!applied) {
                         throw new Error(`Failed to stage accepted diff content for ${diff.filePath}`);
+                    }
+                    // 复查：applyEdit 的 await 间隙内可能已被取消/拒绝，中止后续写盘
+                    if (diff.status !== 'pending') {
+                        return false;
                     }
                 }
                 contentToSave = finalContent;
@@ -1528,6 +1555,11 @@ export class DiffManager {
                     // ignore
                 }
             };
+
+            // 写盘前最终复查：任何 await 间隙都可能触发取消，不能把 AI 内容写回磁盘
+            if (diff.status !== 'pending') {
+                return false;
+            }
 
             // 读取磁盘内容，用于判断是否需要绕过doc.save（doc.save 在磁盘变更时会触发VSCode 冲突提示）
             let diskContent: string | undefined;
@@ -1562,11 +1594,22 @@ export class DiffManager {
             }
             // 3) 磁盘仍为 originalContent：走 doc.save 快路径（保留 VSCode 的编码换行等保存策略）
             else {
+                // await 边界复查：doc.save 的间隙内可能已被 saveListener/closeListener 终结，
+                // 不能在取消/拒绝后继续保存。
+                if (diff.status !== 'pending') {
+                    return false;
+                }
                 let saved = false;
                 try {
                     saved = await doc.save();
                 } catch {
                     saved = false;
+                }
+
+                // 复查：doc.save 的 await 间隙可能触发取消，此时 writeFileSync 会把 AI 内容
+                // 强写回磁盘（用户取消后内容仍落盘），必须中止。
+                if (diff.status !== 'pending') {
+                    return false;
                 }
 
                 if (!saved) {
@@ -1843,6 +1886,8 @@ export class DiffManager {
      * 避免文件已处理但工具 Promise 仍悬挂。
      */
     public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
+        // 登记活跃等待者：evictOldFinalizedDiffs 据此决定是否为被淘汰的 rejected diff 留痕。
+        this.activeDiffWaiters.add(id);
         return new Promise<DiffResolutionReason>((resolve) => {
             let resolved = false;
             let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1860,6 +1905,7 @@ export class DiffManager {
                 if (resolved) return;
                 resolved = true;
                 clearPollTimer();
+                this.activeDiffWaiters.delete(id);
 
                 if (statusListener) {
                     this.removeStatusListener(statusListener);
@@ -1901,7 +1947,24 @@ export class DiffManager {
                     return;
                 }
 
-                if (!diff || diff.status !== 'pending') {
+                if (!diff) {
+                    // diff 已被 FIFO 淘汰：查淘汰记录区分"被拒绝"与"正常结算"，
+                    // 避免被拒绝的 diff 被淘汰后误报"写入成功"。
+                    if (this.evictedRejectedDiffIds.has(id)) {
+                        this.evictedRejectedDiffIds.delete(id);
+                        finish('rejected');
+                        return;
+                    }
+                    finish('none');
+                    return;
+                }
+
+                if (diff.status === 'rejected') {
+                    finish('rejected');
+                    return;
+                }
+
+                if (diff.status !== 'pending') {
                     finish('none');
                     return;
                 }
@@ -1994,6 +2057,13 @@ export class DiffManager {
      * @param conversationId 可选：只取消该会话的 pending diff
      */
     public async cancelAllPending(conversationId?: string): Promise<{ cancelled: PendingDiff[] }> {
+        // 必须走串行队列：auto-save 的 acceptDiff 正在异步执行时（openTextDocument/applyEdit/doc.save
+        // 之间的 await 间隙），若 cancelAllPending 并行执行，accept 后续的 doc.save()/writeFileSync
+        // 会把用户已取消的 AI 内容写回磁盘。入队后两者串行，竞态消除。
+        return this.runDiffActionSerialized(() => this.cancelAllPendingUnlocked(conversationId));
+    }
+
+    private async cancelAllPendingUnlocked(conversationId?: string): Promise<{ cancelled: PendingDiff[] }> {
         const cancelled: PendingDiff[] = [];
 
         const pendingIds = Array.from(this.pendingDiffs.entries())

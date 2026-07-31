@@ -36,6 +36,10 @@ import {
 const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
     'Line ranges (startLine/endLine) are only supported for text files. Do not provide them for binary/multimodal files (PDF/images/audio/video).';
 
+// 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）：
+// 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
+const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
+
 const log = Logger.get('ReadFileTool');
 
 /**
@@ -312,6 +316,20 @@ async function readSingleFile(
     }
 
     try {
+        // 文件大小护栏：超大文件拒绝全量读取（对比 search_in_files 有 5MB 上限、
+        // list_files 有 4MB 上限，read_file 之前无任何护栏）。
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MAX_READ_FILE_BYTES) {
+            return {
+                result: {
+                    path: filePath,
+                    workspace: isMultiRoot ? workspace?.name : undefined,
+                    success: false,
+                    error: `File is too large (${formatFileSize(stat.size)}, limit ${formatFileSize(MAX_READ_FILE_BYTES)}). Use search_in_files to locate specific content instead of reading the whole file.`
+                }
+            };
+        }
+
         const content = await vscode.workspace.fs.readFile(uri);
         const fileName = path.basename(filePath);
         

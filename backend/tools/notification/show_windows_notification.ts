@@ -98,7 +98,7 @@ export function createShowWindowsNotificationTool(
           waitForAction: openChatOnClick,
           onClick: openChatOnClick
             ? async () => {
-                await executeCommand('GrayCode.openChat')
+                await executeCommand('graycode.openChat')
               }
             : undefined
         })

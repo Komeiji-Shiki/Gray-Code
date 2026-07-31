@@ -204,7 +204,20 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
             while (i < lines.length) {
                 const l = lines[i];
 
-                if (l.startsWith('@@') || l.startsWith('--- ') || l.startsWith('diff --git ') || l.startsWith('+++ ')) {
+                if (l.startsWith('@@') || l.startsWith('diff --git ')) {
+                    break;
+                }
+
+                // `--- `/`+++ ` 在 hunk 内也可能是内容行：删除行内容以 "-- " 开头时
+                // 原始行为 "--- foo"，增加行内容以 "++ " 开头时原始行为 "+++ foo"，
+                // 不能作为中断条件（旧实现把删除行误判为文件头 → 整包被当成 multi-file 拒绝）。
+                // 只有成对出现的 "--- a/x" + "+++ b/x" 才是下一个文件的头；
+                // 真实文件头对后必跟 "@@"（hunk 头），而 hunk 内相邻的
+                // "--- x"（删除行）+ "+++ y"（增加行）内容对后面是普通内容行——
+                // 据此消歧，避免把相邻删除/增加行误判为 multi-file 整包拒绝。
+                if (l.startsWith('--- ')
+                    && (lines[i + 1] ?? '').startsWith('+++ ')
+                    && (lines[i + 2] ?? '').startsWith('@@')) {
                     break;
                 }
 

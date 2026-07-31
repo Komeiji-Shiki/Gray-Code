@@ -93,6 +93,27 @@ import {
 } from './types';
 
 /**
+ * 递归深合并纯对象（数组与原始值直接覆盖），用于工具配置与默认配置合并。
+ * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
+ * 其它子字段全部丢失），这里对纯对象逐层合并。
+ */
+function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
+    const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(override)) {
+        const baseValue = (base as Record<string, unknown>)[key];
+        if (
+            value !== null && typeof value === 'object' && !Array.isArray(value) &&
+            baseValue !== null && typeof baseValue === 'object' && !Array.isArray(baseValue)
+        ) {
+            out[key] = deepMergeToolsConfig(baseValue as object, value as object);
+        } else {
+            out[key] = value;
+        }
+    }
+    return out as T;
+}
+
+/**
  * 设置存储接口
  * 
  * 抽象存储层，支持不同的存储实现
@@ -486,16 +507,15 @@ export class SettingsManager {
     }
     
     /**
-     * 读取 toolsConfig.<key> 配置，并与默认配置浅合并。
+     * 读取 toolsConfig.<key> 配置，并与默认配置深合并。
      *
      * 与默认配置 merge 可避免历史配置缺少后续版本新增的字段。
+     * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
+     * 其它子字段全部丢失），这里对纯对象递归深合并，数组与原始值仍直接覆盖。
      */
     private getToolsConfigEntry<T extends object>(key: string, defaults: Readonly<T>): Readonly<T> {
         const cfg = this.settings.toolsConfig?.[key] as unknown as Partial<T> | undefined;
-        return {
-            ...defaults,
-            ...(cfg || {})
-        };
+        return deepMergeToolsConfig(defaults, cfg || {});
     }
 
     /**
