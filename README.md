@@ -37,7 +37,7 @@
 - [内置工具一览](#内置工具一览)
 - [设置页面说明](#设置页面说明)
 - [上下文与提示词](#上下文与提示词)
-- [MCP、Skills 与 Sub-Agents](#mcp、skills-与-sub-agents)
+- [MCP Skills and Sub-Agents](#mcp-skills-and-sub-agents)
 - [数据存储与同步](#数据存储与同步)
 - [安装与更新](#安装与更新)
 - [本地开发](#本地开发)
@@ -145,7 +145,7 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 **固定文件和上下文徽章** —— 输入区支持添加上下文徽章：文件或目录、当前编辑器选区、附件、固定文件、Skill。这样可以明确告诉模型"这轮要重点看什么"。
 
-## MCP、Skills 与 Sub-Agents
+## MCP Skills and Sub-Agents
 
 **MCP** —— 在设置 → MCP 中添加服务器：stdio（填写命令、参数和环境变量）、sse（填写 SSE URL 和请求头）、streamable-http（填写 HTTP URL 和请求头）。连接成功后服务端暴露的工具会进入模型可用工具集合。某些模型对 JSON Schema 字段较挑剔，可以开启 schema 清理。
 
