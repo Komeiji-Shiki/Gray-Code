@@ -1800,6 +1800,8 @@ const zhCN = {
             settingsPanel: {
                 title: '设置',
                 backToChat: '返回对话',
+                sidebarCollapse: '收起边栏',
+                sidebarExpand: '展开边栏',
                 sections: {
                     channel: {
                         title: '渠道设置',
