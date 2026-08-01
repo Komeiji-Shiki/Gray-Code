@@ -22,7 +22,17 @@
             "presentation": {
                 "reveal": "silent"
             },
-            "problemMatcher": "$tsc-watch"
+            "problemMatcher": {
+                "owner": "esbuild-watch",
+                "pattern": {
+                    "regexp": "^$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*watching for changes.*",
+                    "endsPattern": ".*watching for changes.*\\(Ctrl\\+C to stop\\).*"
+                }
+            }
         },
         {
             "label": "Build Backend",
