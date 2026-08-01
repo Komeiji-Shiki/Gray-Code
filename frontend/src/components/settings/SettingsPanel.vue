@@ -36,6 +36,9 @@ const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(l
   description: lang.value === 'auto' ? t('components.settings.settingsPanel.language.autoDescription') : lang.nativeLabel
 })))
 
+// 侧边栏折叠状态（展开时显示图标+文字，折叠时仅图标）
+const sidebarCollapsed = ref(false)
+
 // 页签列表（使用 computed 以便语言切换时自动更新）
 const tabs = computed<TabItem[]>(() => [
   { id: 'channel', label: t('components.settings.tabs.channel'), icon: 'codicon-plug' },
@@ -419,8 +422,15 @@ onMounted(() => {
     </div>
     
     <div class="settings-content">
-      <!-- 左侧页签（仅图标，悬浮显示文字在右侧） -->
-      <div class="settings-sidebar">
+      <!-- 左侧页签（可折叠：展开显示图标+文字，折叠仅图标+tooltip；汉堡按钮在顶部） -->
+      <div class="settings-sidebar" :class="{ collapsed: sidebarCollapsed }">
+        <button
+          class="settings-tab settings-sidebar-toggle"
+          :data-tooltip="sidebarCollapsed ? t('components.settings.settingsPanel.sidebarExpand') : t('components.settings.settingsPanel.sidebarCollapse')"
+          @click="sidebarCollapsed = !sidebarCollapsed"
+        >
+          <i class="codicon codicon-menu"></i>
+        </button>
         <button
           v-for="tab in tabs"
           :key="tab.id"
@@ -429,6 +439,7 @@ onMounted(() => {
           @click="settingsStore.setActiveTab(tab.id)"
         >
           <i :class="['codicon', tab.icon]"></i>
+          <span v-if="!sidebarCollapsed" class="settings-tab-label">{{ tab.label }}</span>
         </button>
       </div>
       
@@ -868,25 +879,36 @@ onMounted(() => {
   min-height: 0;
 }
 
-/* 左侧页签（仅图标） */
+/* 左侧页签（可折叠：默认展开显示图标+文字，折叠仅图标） */
 .settings-sidebar {
-  width: 48px;
+  width: 132px;
   border-right: 1px solid var(--vscode-panel-border);
   padding: 8px 4px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 2px;
+  transition: width 0.2s ease;
+}
+
+.settings-sidebar.collapsed {
+  width: 48px;
+}
+
+/* 顶部汉堡按钮：与页签同款；margin 在展开/收起时保持一致，避免切换时列表整体跳动 */
+.settings-sidebar-toggle {
+  margin-bottom: 2px;
 }
 
 .settings-tab {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
   background: transparent;
   border: none;
   border-radius: 6px;
@@ -897,6 +919,15 @@ onMounted(() => {
 
 .settings-tab:hover {
   background: var(--vscode-list-hoverBackground);
+}
+
+.settings-tab-label {
+  flex: 1;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 自定义 tooltip 显示在右侧 */
@@ -922,7 +953,13 @@ onMounted(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-.settings-tab:hover::after {
+.settings-sidebar.collapsed .settings-tab:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 汉堡按钮在展开/收起状态下都显示 tooltip */
+.settings-sidebar-toggle:hover::after {
   opacity: 1;
   visibility: visible;
 }
