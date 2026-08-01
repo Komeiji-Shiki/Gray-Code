@@ -3,6 +3,16 @@ export interface DomPoint {
   offset: number
 }
 
+export interface InsertResult {
+  /** 插入是否成功 */
+  ok: boolean
+  /**
+   * 浏览器是否已自动派发 input 事件（execCommand 路径为 true）。
+   * 为 true 时调用方不应再手动触发 handleInput，避免重复提取节点。
+   */
+  inputFired: boolean
+}
+
 export function getRangeInEditor(editor: HTMLElement): Range | null {
   const selection = window.getSelection()
   if (!selection) return null
@@ -67,7 +77,7 @@ export function getCaretTextOffset(editor: HTMLElement): number {
   return offset
 }
 
-export function insertTextAtCaret(editor: HTMLElement, text: string): boolean {
+function insertTextAtCaretManual(editor: HTMLElement, text: string): boolean {
   const range = getRangeInEditor(editor)
   const selection = window.getSelection()
   if (!range || !selection) return false
@@ -85,7 +95,24 @@ export function insertTextAtCaret(editor: HTMLElement, text: string): boolean {
   return true
 }
 
-export function insertLineBreakAtCaret(editor: HTMLElement): boolean {
+/**
+ * 在光标处插入纯文本。
+ * 优先走 document.execCommand('insertText')：既是纯文本（不带富文本样式），
+ * 又会写入浏览器原生 undo 栈，Ctrl+Z 可以整体撤销。
+ * 浏览器不支持时回退到手动 DOM 插入（功能可用，但不会进入 undo 栈）。
+ */
+export function insertTextAtCaret(editor: HTMLElement, text: string): InsertResult {
+  getRangeInEditor(editor)
+
+  if (document.execCommand('insertText', false, text)) {
+    return { ok: true, inputFired: true }
+  }
+
+  insertTextAtCaretManual(editor, text)
+  return { ok: true, inputFired: false }
+}
+
+function insertLineBreakAtCaretManual(editor: HTMLElement): boolean {
   const range = getRangeInEditor(editor)
   const selection = window.getSelection()
   if (!range || !selection) return false
@@ -109,16 +136,56 @@ export function insertLineBreakAtCaret(editor: HTMLElement): boolean {
   return true
 }
 
-export function insertPlainTextWithLineBreaksAtCaret(editor: HTMLElement, text: string): boolean {
-  const normalized = text.replace(/\r\n/g, '\n')
-  const parts = normalized.split('\n')
+/**
+ * 在光标处插入换行。
+ * 优先走 document.execCommand('insertHTML')：一次调用写入一个 undo 条目，
+ * Ctrl+Z 可整体撤销该换行。BR 保留 data-lim-break 标记并带 ZWSP，
+ * 与现有节点提取、删除逻辑完全兼容。
+ * 浏览器不支持时回退到手动 DOM 插入。
+ */
+export function insertLineBreakAtCaret(editor: HTMLElement): InsertResult {
+  getRangeInEditor(editor)
 
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i]) insertTextAtCaret(editor, parts[i])
-    if (i < parts.length - 1) insertLineBreakAtCaret(editor)
+  if (document.execCommand('insertHTML', false, '<br data-lim-break="1">\u200B')) {
+    return { ok: true, inputFired: true }
   }
 
-  return true
+  insertLineBreakAtCaretManual(editor)
+  return { ok: true, inputFired: false }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * 把纯文本构建为可整体插入的 HTML：转义特殊字符，换行转为 lim-break BR + ZWSP。
+ * 一次 execCommand('insertHTML') 对应一个 undo 条目，粘贴可被 Ctrl+Z 整体撤销。
+ */
+export function buildPlainTextHtml(text: string): string {
+  const normalized = text.replace(/\r\n/g, '\n')
+  return escapeHtml(normalized).replace(/\n/g, '<br data-lim-break="1">\u200B')
+}
+
+/**
+ * 在光标处插入带换行的纯文本（粘贴场景）。
+ * 优先走一次 execCommand('insertHTML')：整体进入浏览器 undo 栈，Ctrl+Z 一次撤销全部。
+ * 浏览器不支持时回退到逐段手动插入。
+ */
+export function insertPlainTextWithLineBreaksAtCaret(editor: HTMLElement, text: string): InsertResult {
+  getRangeInEditor(editor)
+
+  if (document.execCommand('insertHTML', false, buildPlainTextHtml(text))) {
+    return { ok: true, inputFired: true }
+  }
+
+  const normalized = text.replace(/\r\n/g, '\n')
+  const parts = normalized.split('\n')
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]) insertTextAtCaretManual(editor, parts[i])
+    if (i < parts.length - 1) insertLineBreakAtCaretManual(editor)
+  }
+  return { ok: true, inputFired: false }
 }
 
 function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {

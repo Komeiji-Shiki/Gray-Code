@@ -116,6 +116,33 @@ export interface CheckpointRecord {
 }
 
 /**
+ * 批量删除检查点的请求项
+ */
+export interface BatchCheckpointDeleteItem {
+    /** 关联的对话 ID */
+    conversationId: string;
+    /**
+     * 要删除的检查点 ID 列表
+     * 空数组表示删除该对话的全部检查点
+     */
+    checkpointIds: string[];
+}
+
+/**
+ * 批量删除检查点的单个对话处理结果
+ */
+export interface BatchCheckpointDeleteResult {
+    /** 关联的对话 ID */
+    conversationId: string;
+    /** 实际删除的检查点 ID */
+    deletedIds: string[];
+    /** 因被其他保留的检查点引用为基快照而被拒绝删除的 ID（保护增量链完整性） */
+    rejectedIds: string[];
+    /** 该对话的处理是否成功 */
+    success: boolean;
+}
+
+/**
  * 检查点管理器
  */
 export class CheckpointManager {
@@ -460,10 +487,22 @@ export class CheckpointManager {
 
     /**
      * 获取对话的所有检查点
+     *
+     * @param options.withSize 为 true 时额外计算并附加每条检查点备份目录的磁盘占用（size 字段）
      */
-    async getCheckpoints(conversationId: string): Promise<CheckpointRecord[]> {
+    async getCheckpoints(conversationId: string, options?: { withSize?: boolean }): Promise<Array<CheckpointRecord & { size?: number }>> {
         try {
-            return await this.readCheckpointListFromConversation(conversationId);
+            const checkpoints = await this.readCheckpointListFromConversation(conversationId);
+            if (!options?.withSize) {
+                return checkpoints;
+            }
+
+            const withSize: Array<CheckpointRecord & { size?: number }> = [];
+            for (const cp of checkpoints) {
+                const backupPath = path.join(this.checkpointsDir, cp.backupDir);
+                withSize.push({ ...cp, size: await this.getDirectorySize(backupPath) });
+            }
+            return withSize;
         } catch (err) {
             console.error('[CheckpointManager] Failed to get checkpoints:', err);
             return [];
@@ -1488,6 +1527,83 @@ export class CheckpointManager {
             console.error('[CheckpointManager] Failed to delete all checkpoints:', err);
             return { success: false, deletedCount: 0 };
         }
+    }
+    
+    /**
+     * 批量删除多个对话的检查点（支持跨对话）
+     *
+     * 遵循与单删一致的增量链保护规则：被「不在本次删除集合内」的检查点
+     * 引用为基快照（baseCheckpointId）时，拒绝删除该检查点；
+     * 批量删除整条链（基与后继都在删除集合内）时不受此限制。
+     *
+     * @param items 每个对话的删除请求；checkpointIds 为空数组时表示删除该对话全部检查点
+     */
+    async deleteCheckpointsBatch(items: BatchCheckpointDeleteItem[]): Promise<BatchCheckpointDeleteResult[]> {
+        const results: BatchCheckpointDeleteResult[] = [];
+
+        for (const item of items) {
+            const result: BatchCheckpointDeleteResult = {
+                conversationId: item.conversationId,
+                deletedIds: [],
+                rejectedIds: [],
+                success: false
+            };
+
+            try {
+                // 计算与写回在链内原子完成；磁盘删除放在写回成功之后
+                let backupDirsToDelete: string[] = [];
+                await this.conversationManager.updateCustomMetadata(item.conversationId, 'checkpoints', current => {
+                    const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                    if (list.length === 0) {
+                        return current; // 无变更，跳过写回
+                    }
+
+                    // 空 ID 列表 = 删除该对话全部检查点
+                    const deleteSet = new Set(
+                        item.checkpointIds.length === 0 ? list.map(cp => cp.id) : item.checkpointIds
+                    );
+
+                    // 收集被「保留的检查点」引用为基快照的待删 ID，这些必须拒绝删除
+                    const rejectedIds = new Set<string>();
+                    for (const cp of list) {
+                        if (!deleteSet.has(cp.id) && cp.baseCheckpointId && deleteSet.has(cp.baseCheckpointId)) {
+                            rejectedIds.add(cp.baseCheckpointId);
+                        }
+                    }
+
+                    result.rejectedIds = [...rejectedIds];
+                    const toDelete = [...deleteSet].filter(id => !rejectedIds.has(id));
+                    if (toDelete.length === 0) {
+                        return current; // 无变更，跳过写回
+                    }
+
+                    result.deletedIds = toDelete;
+                    backupDirsToDelete = toDelete
+                        .map(id => list.find(cp => cp.id === id)?.backupDir)
+                        .filter((dir): dir is string => !!dir);
+
+                    return list.filter(cp => !toDelete.includes(cp.id));
+                });
+
+                // 删除备份目录（写回成功后才删）
+                for (const backupDir of backupDirsToDelete) {
+                    const backupPath = path.join(this.checkpointsDir, backupDir);
+                    try {
+                        await fs.rm(backupPath, { recursive: true, force: true });
+                    } catch {
+                        // 忽略单个目录删除错误
+                    }
+                }
+
+                result.success = true;
+            } catch (err) {
+                console.error(`[CheckpointManager] Failed to delete checkpoints batch for ${item.conversationId}:`, err);
+            }
+
+            results.push(result);
+        }
+
+        return results;
     }
     
     /**

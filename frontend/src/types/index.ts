@@ -660,6 +660,30 @@ export interface CheckpointRecord {
   
   /** 描述信息 */
   description?: string
+  
+  /** 备份类型：full=完整备份，incremental=增量备份 */
+  type?: 'full' | 'incremental'
+  
+  /** 增量备份基于的检查点 ID（仅增量备份有效） */
+  baseCheckpointId?: string
+  
+  /** 变更的文件列表（仅增量备份有效） */
+  changes?: Array<{ path: string; type: 'added' | 'modified' | 'deleted'; hash?: string }>
+  
+  /** 所有文件的哈希映射（仅包含真正备份成功的文件） */
+  fileHashes?: Record<string, string>
+  
+  /** 快照时的文件 stat 信息 */
+  fileStats?: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }>
+  
+  /** 快照时的自定义忽略模式 */
+  ignorePatterns?: string[]
+  
+  /** 快照时可见但备份复制失败的文件 */
+  unbackedPaths?: string[]
+  
+  /** 空目录列表（相对路径） */
+  emptyDirs?: string[]
 }
 
 // ============ 模型相关类型 ============
