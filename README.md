@@ -12,10 +12,23 @@
   多模型渠道 · 工具调用 · MCP · 设计/计划/审查工作流 · 永久记忆 · 多模态上下文
 </p>
 
+<p align="center">
+  <a href="README.md"><strong>简体中文</strong></a> ·
+  <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
+</p>
+
 ---
 
 ## 目录
 
+- [更新日志](CHANGELOG.md)
 - [关于 GrayCode](#关于-graycode)
 - [核心能力](#核心能力)
 - [快速开始](#快速开始)
@@ -38,8 +51,6 @@
 ## 关于 GrayCode
 
 GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解你当前的工作区，读取和修改文件，搜索代码，执行命令，查看符号引用，管理任务计划，也可以通过 MCP 接入外部工具。它适合让 AI 帮你阅读陌生项目、解释模块关系、定位 Bug，或者直接改代码并通过 VS Code Diff 预览后再接受或拒绝。你可以把需求先沉淀为设计文档，再生成执行计划，最后按计划实现，也可以对已有改动进行 Review 并生成结构化审查记录。在长对话中它可以按设置自动总结上下文，降低重复解释成本。通过 MCP、Skills、Sub-Agents 可以扩展专用能力，而永久记忆功能让 AI 跨会话记住项目约定、设计决策和个人偏好，并默认在新会话中恢复相关上下文。
-
-[changelog](https://github.com/Komeiji-Shiki/Gray-Code/blob/main/CHANGELOG.md)
 
 ## 核心能力
 
@@ -65,7 +76,10 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 ## 快速开始
 
-安装后点击 VS Code 左侧活动栏的 Gray Code 图标，或在命令面板执行 `GrayCode: 打开聊天面板`。进入右上角设置 → 渠道，点击新建渠道，选择渠道类型（Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic），填写 API URL 和 API Key，添加或拉取模型列表，选择默认模型，根据需要开启流式输出、工具模式、思考配置、自动重试等高级选项。回到聊天页，在输入框底部选择渠道、模型、Prompt 模式（Code / Design / Plan / Ask / Review），然后输入需求即可开始。
+1. **安装并打开聊天面板** —— 安装扩展后点击 VS Code 左侧活动栏的 Gray Code 图标，或在命令面板执行 `GrayCode: 打开聊天面板`。
+2. **新建并配置渠道** —— 打开聊天面板右上角设置 → 渠道，点击新建渠道，选择渠道类型（Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic），填写 API URL 和 API Key，添加或拉取模型列表，选择默认模型。流式输出、工具模式、思考配置、自动重试等高级选项按需开启。
+3. **选择对话配置** —— 回到聊天页，在输入框底部选择渠道、模型、Prompt 模式（Code / Design / Plan / Ask / Review）。
+4. **开始对话** —— 输入需求即可。
 
 第一次可以试试：「请阅读这个项目的结构，告诉我主要模块分别负责什么，并给出上手建议」，或者「请帮我定位为什么某个功能异常。先搜索相关代码，分析原因，确认方案后再修改」。
 
@@ -97,23 +111,17 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 工具是否可用取决于设置开关、依赖状态、当前渠道能力和工作区权限策略。
 
-**文件工具** —— read_file（读取一个或多个文件，单文件使用 path，批量使用 files 数组并可为每个文本文件分别指定行范围；在多模态能力开启时可读取图片/PDF 等）、write_file（写入或创建文件并展示 Diff 预览）、list_files（列出目录内容，可递归）、delete_file（删除文件或目录）、create_directory（创建目录，父目录会自动创建）、apply_diff（使用结构化 hunks 精确替换文件内容，并保留 unified diff patch 兼容入口）、insert_code（在指定行前插入内容）、delete_code（删除指定行范围）。
-
-**搜索工具** —— find_files（用 glob 搜索文件路径）、search_in_files（搜索或替换文件内容，支持正则和上下文预览）。
-
-**终端工具** —— execute_command（执行 shell 命令，支持 PowerShell、CMD、Bash、Git Bash、WSL 等可用 shell）。
-
-**LSP 代码智能工具** —— get_symbols（获取文件里的类、函数、变量等符号结构）、goto_definition（跳转并读取符号定义）、find_references（查找符号引用）。
-
-**媒体工具** —— generate_image（调用图像生成接口生成图片）、remove_background（移除图片背景）、crop_image（裁剪图片）、resize_image（调整图片尺寸）、rotate_image（旋转图片）。
-
-**任务和文档工具** —— todo_write（初始化或替换当前对话 TODO 列表）、todo_update（增量更新 TODO 状态或内容）、create_design / update_design（创建或更新设计文档）、create_plan / update_plan（创建或更新计划文档，支持 TODO 同步）、create_progress / update_progress（创建或更新项目进度台账）、record_progress_milestone（记录项目里程碑）、validate_progress_document（校验进度文档结构）、create_review（创建审查文档）、record_review_milestone（记录审查阶段性结论、证据和发现）、finalize_review（完成审查并写入最终结论）、validate_review_document（校验审查文档结构）、reopen_review（重新打开已完成的审查文档）、compare_review_documents（对比两个审查文档的发现差异）。
-
-**子代理工具** —— subagents（把任务委派给专用子代理，支持前台等待、后台运行和通过 `continueFromRunId` 接续已完成的运行；子代理不会获得永久记忆工具，完整过程可在 SubAgent Monitor 中查看）。
-
-**历史、技能和通知工具** —— history_search（搜索或读取当前可访问范围内的对话历史）、read_skill（读取已启用 Skill 的完整内容）、show_windows_notification（在 Windows 上显示系统通知）。
-
-**记忆工具** —— memory_wake（唤醒永久记忆，每次会话开始时必须先调用）、memory_note（记录一条永久记忆，一行≤280 字节）、memory_recall（正则搜索全部记忆，逐字匹配包括已压缩的）、memory_compress（执行记忆压缩合并，将相邻记忆合并为一行摘要）、memory_zoom（展开记忆树节点查看两个半部分）、memory_forget（丢弃错误摘要或物理截断原始记忆：传范围 ID 如 `"16-31"` 只删树摘要；传单个数字 ID 如 `"0"` 截断原始 LOG，删除 ID ≥ 该值的所有原始记忆及关联树摘要）、memory_config（查看或修改记忆系统参数）。
+| 分类 | 工具 | 说明 |
+| --- | --- | --- |
+| 文件工具 | read_file、write_file、list_files、delete_file、create_directory、apply_diff、insert_code、delete_code | 读取（单文件 `path` / 批量 `files`，可分别指定行范围，多模态下可读图片/PDF）、写入、目录管理、结构化替换与插入/删除行；修改会展示 Diff 预览 |
+| 搜索工具 | find_files、search_in_files | glob 搜索文件路径；搜索或替换文件内容，支持正则与上下文预览 |
+| 终端工具 | execute_command | 执行 shell 命令（PowerShell、CMD、Bash、Git Bash、WSL 等） |
+| LSP 代码智能 | get_symbols、goto_definition、find_references | 获取符号结构、跳转并读取符号定义、查找符号引用 |
+| 媒体工具 | generate_image、remove_background、crop_image、resize_image、rotate_image | 生成图片、移除背景、裁剪、缩放、旋转 |
+| 任务与文档 | todo_write、todo_update、create_design / update_design、create_plan / update_plan、create_progress / update_progress、record_progress_milestone、validate_progress_document、create_review、record_review_milestone、finalize_review、validate_review_document、reopen_review、compare_review_documents | TODO 列表与设计 / 计划 / 进度 / 审查文档的创建、更新、校验与对比 |
+| 子代理 | subagents | 委派任务给专用子代理：前台等待、后台运行、`continueFromRunId` 接续；子代理不含永久记忆工具，过程可在 SubAgent Monitor 查看 |
+| 历史 / 技能 / 通知 | history_search、read_skill、show_windows_notification | 检索对话历史、读取 Skill 内容、Windows 系统通知 |
+| 记忆 | memory_wake、memory_note、memory_recall、memory_compress、memory_zoom、memory_forget、memory_config | OptMem 永久记忆：唤醒、记录、正则搜索、压缩合并、树节点展开、丢弃摘要或截断日志、参数管理 |
 
 ## 设置页面说明
 
@@ -212,7 +220,8 @@ Gray-Code/
 ├── extension.ts             # VS Code 扩展入口
 ├── index.ts                 # 后端模块导出入口
 ├── package.json             # 扩展清单、命令、配置和脚本
-└── README.md
+├── README.md                # 中文文档
+└── README_EN.md             # English documentation
 ```
 
 ## 常见问题
