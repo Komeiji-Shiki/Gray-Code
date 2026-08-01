@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 修复用量索引文件被识别为假对话：`FileUsageIndexStore` 把索引写到 `{conversationId}.usage.json`（与历史文件同级），而 `listConversations` 只排除了 `.meta.json`，导致每个对话的 `.usage.json` 都被识别成假对话 ID（形如 `xxx.usage`）显示在历史列表，点入报 "Metadata file is missing"；现在文件识别同样排除 `.usage.json`，只返回真实对话 ID（legacy `{id}.json` 与 segmented `{id}/` 目录），新增回归测试锁定该行为
+
 ### Added
   - 用量统计新增缓存维度：此前 Anthropic 的缓存写入（cache_creation_input_tokens）与缓存命中（cache_read_input_tokens）在 formatter 被合并成 cachedContentTokenCount 后明细即丢失，聚合器也从未读取该字段，统计里完全没有缓存信息；现在 usageMetadata 拆分保存 cacheCreationTokenCount / cacheReadTokenCount（Anthropic 分别映射写入与命中，OpenAI cached_tokens / Gemini cachedContentTokenCount 映射命中），流式累加器同步合并；aggregateUsageStats 总览 / 按对话 / 按模型 / 按天各维度新增缓存写入与缓存命中两个桶——缓存是 promptTokenCount 的细分（prompt 已含缓存部分），不重复计入 totalTokens；用量统计页总览卡片与明细行新增「缓存写入 / 缓存命中」展示（有值才显示），i18n 三语补齐，新增聚合与 formatter 断言测试
   - 用量统计兼容旧数据缓存记录：旧版本只存缓存合并值（cachedContentTokenCount）无法拆分写入/命中，升级前的对话统计时近似全部记为缓存命中（OpenAI/Gemini 语义下该值本就是命中，Anthropic 实际以命中为主，偏差最小），避免旧对话的缓存贡献在统计中消失

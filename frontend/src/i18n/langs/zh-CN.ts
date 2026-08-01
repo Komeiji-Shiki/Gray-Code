@@ -828,7 +828,7 @@ const zhCN = {
                 context: '上下文',
                 prompt: '提示词',
                 tokenCount: 'Token 计数',
-                sound: '提示系统',
+                sound: '通知系统',
                 appearance: '外观',
                 memory: '记忆',
                 general: '通用'
@@ -1846,7 +1846,7 @@ const zhCN = {
                         description: '配置可由 AI 调用的专业子代理'
                     },
                     sound: {
-                        title: '提示系统',
+                        title: '通知系统',
                         description: '统一配置声音提示与 Windows Agent 停止系统通知'
                     },
                     appearance: {

@@ -469,6 +469,7 @@ interface FileHistoryIndex {
  * 文件结构:
  * - {baseDir}/conversations/{conversationId}.json        # 旧版对话历史(Gemini 格式，向后兼容)
  * - {baseDir}/conversations/{conversationId}.meta.json   # 对话元数据
+ * - {baseDir}/conversations/{conversationId}.usage.json  # 用量索引（统计加速，见 UsageIndexStore.ts）
  * - {baseDir}/conversations/{conversationId}/history.index.json
  * - {baseDir}/conversations/{conversationId}/history/*.ndjson
  * - {baseDir}/snapshots/{snapshotId}.json                # 快照
@@ -978,11 +979,18 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             const entries = await this.vscode.workspace.fs.readDirectory(dirUri);
             const ids = new Set<string>();
             for (const [name, type] of entries as Array<[string, number]>) {
-                if (type === 1 && name.endsWith('.json') && !name.endsWith('.meta.json')) {
+                // 只识别对话历史文件：{id}.json（legacy）与 {id}/ 目录（segmented）；
+                // {id}.meta.json 元数据与 {id}.usage.json 用量索引必须排除，
+                // 否则会被当成假对话 ID（如 xxx.usage）显示在历史列表并报 metadata missing。
+                if (type === 1 && name.endsWith('.json') && !name.endsWith('.meta.json') && !name.endsWith('.usage.json')) {
                     ids.add(name.replace('.json', ''));
                     continue;
                 }
                 if (type === 2) {
+                    // 排除假对话目录：旧版 bug 把 {id}.usage.json 误识别为对话 ID {id}.usage，
+                    // 用户点入后写入 segmented 历史，磁盘留下 {id}.usage/ 目录；
+                    // 目录分支必须同样排除（.usage 后缀不可能是真实对话 ID）。
+                    if (name.endsWith('.usage')) continue;
                     ids.add(name);
                 }
             }
