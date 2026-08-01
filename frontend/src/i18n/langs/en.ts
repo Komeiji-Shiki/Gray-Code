@@ -1799,6 +1799,8 @@ const en: LanguageMessages = {
             settingsPanel: {
                 title: 'Settings',
                 backToChat: 'Back to Chat',
+                sidebarCollapse: 'Collapse sidebar',
+                sidebarExpand: 'Expand sidebar',
                 sections: {
                     channel: {
                         title: 'Channel Settings',

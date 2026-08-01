@@ -1799,6 +1799,8 @@ const ja: LanguageMessages = {
             settingsPanel: {
                 title: '設定',
                 backToChat: '会話に戻る',
+                sidebarCollapse: 'サイドバーを折りたたむ',
+                sidebarExpand: 'サイドバーを展開する',
                 sections: {
                     channel: {
                         title: 'チャンネル設定',
