@@ -35,15 +35,28 @@ interface FileRequest {
   endLine?: number
 }
 
-// 获取文件请求列表（read_file 接收单个 path，这里包装为统一数组）
+// 获取文件请求列表（兼容单文件 path 与批量 files）
 const fileRequests = computed((): FileRequest[] => {
-  const path = typeof props.args.path === 'string' ? props.args.path : null
-  if (!path) {
-    return []
+  if (Array.isArray(props.args.files)) {
+    return props.args.files.flatMap(item => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) return []
+      const request = item as Record<string, unknown>
+      if (typeof request.path !== 'string') return []
+      return [{
+        path: request.path,
+        startLine: typeof request.startLine === 'number' ? request.startLine : undefined,
+        endLine: typeof request.endLine === 'number' ? request.endLine : undefined
+      }]
+    })
   }
-  const startLine = typeof props.args.startLine === 'number' ? props.args.startLine : undefined
-  const endLine = typeof props.args.endLine === 'number' ? props.args.endLine : undefined
-  return [{ path, startLine, endLine }]
+
+  const path = typeof props.args.path === 'string' ? props.args.path : null
+  if (!path) return []
+  return [{
+    path,
+    startLine: typeof props.args.startLine === 'number' ? props.args.startLine : undefined,
+    endLine: typeof props.args.endLine === 'number' ? props.args.endLine : undefined
+  }]
 })
 
 // 获取路径列表

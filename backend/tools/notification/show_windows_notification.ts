@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import type { Tool, ToolDeclaration, ToolResult } from '../types'
-import { NodeNotifierWindowsToastAdapter } from '../../modules/notifications/WindowsToastAdapter'
+import { VSCodeNotificationAdapter } from '../../modules/notifications/WindowsToastAdapter'
 import type { WindowsToastAdapter } from '../../modules/notifications/types'
 
 const DEFAULT_TITLE = 'GrayCode'
@@ -59,7 +59,7 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
 }
 
 export function createShowWindowsNotificationTool(
-  adapter: WindowsToastAdapter = new NodeNotifierWindowsToastAdapter(),
+  adapter: WindowsToastAdapter = new VSCodeNotificationAdapter(),
   platform: NodeJS.Platform = process.platform,
   executeCommand: (command: string) => Promise<unknown> | Thenable<unknown> = command => vscode.commands.executeCommand(command)
 ): Tool {

@@ -18,7 +18,6 @@ import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNo
 import {
   getCaretTextOffset,
   insertLineBreakAtCaret,
-  insertPlainTextWithLineBreaksAtCaret,
   insertTextAtCaret,
   getRangeInEditor,
   replaceTextRangeByOffsets
@@ -448,21 +447,22 @@ function handlePaste(e: ClipboardEvent) {
     return
   }
 
-  const text = e.clipboardData?.getData('text/plain')
-  if (text && editor) {
-    // Force plain-text paste to avoid bringing rich-text styles (from web pages,
-    // docs, etc.) into contenteditable. execCommand('insertHTML') keeps the text
-    // plain while writing into the browser's native undo stack, so Ctrl+Z can
-    // undo the whole paste in one step.
-    e.preventDefault()
-    const result = insertPlainTextWithLineBreaksAtCaret(editor, text)
-    if (result.ok && !result.inputFired) handleInput()
+  // 仅在本次 paste 默认动作期间启用 plaintext-only：Chromium 会按原生
+  // insertFromPaste 写入纯文本和 undo 栈。事件结束后恢复普通模式，避免影响
+  // 自定义换行使用的 insertHTML 以及不可编辑的上下文徽章。
+  if (editor) {
+    const previousContentEditable = editor.getAttribute('contenteditable')
+    editor.setAttribute('contenteditable', 'plaintext-only')
 
-    nextTick(() => {
-      if (editor) {
-        editor.scrollTop = editor.scrollHeight
+    setTimeout(() => {
+      if (editorRef.value !== editor || editor.getAttribute('contenteditable') !== 'plaintext-only') return
+
+      if (previousContentEditable === null) {
+        editor.removeAttribute('contenteditable')
+      } else {
+        editor.setAttribute('contenteditable', previousContentEditable)
       }
-    })
+    }, 0)
   }
 }
 

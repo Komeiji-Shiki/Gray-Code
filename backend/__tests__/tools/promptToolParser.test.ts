@@ -5,6 +5,7 @@ import {
     TOOL_CALL_PARSE_ERROR_ARG_KEY
 } from '../../tools/promptToolParser';
 import { TOOL_CALL_END, TOOL_CALL_START } from '../../tools/jsonFormatter';
+import { XMLValidator } from 'fast-xml-parser';
 
 function jsonBlock(inner: string): string {
     return `${TOOL_CALL_START}\n${inner}\n${TOOL_CALL_END}`;
@@ -12,19 +13,19 @@ function jsonBlock(inner: string): string {
 
 describe('extractPromptToolParts - JSON 模式', () => {
     it('解析合法的 JSON 工具调用', () => {
-        const text = jsonBlock('{"tool": "read_file", "parameters": {"paths": ["a.txt"]}}');
+        const text = jsonBlock('{"tool": "read_file", "parameters": {"path": "a.txt"}}');
 
         const { parts } = extractPromptToolParts(text, 'json');
 
         expect(parts).toHaveLength(1);
         expect(parts[0].functionCall).toEqual({
             name: 'read_file',
-            args: { paths: ['a.txt'] }
+            args: { path: 'a.txt' }
         });
     });
 
     it('宽松解析：容忍尾逗号', () => {
-        const text = jsonBlock('{"tool": "read_file", "parameters": {"paths": ["a.txt"],},}');
+        const text = jsonBlock('{"tool": "read_file", "parameters": {"path": "a.txt",},}');
 
         const { parts } = extractPromptToolParts(text, 'json');
 
@@ -34,15 +35,14 @@ describe('extractPromptToolParts - JSON 模式', () => {
 
     it('宽松解析：容忍字符串值内的裸换行', () => {
         const text = jsonBlock(
-            '{"tool": "write_file", "parameters": {"files": [{"path": "a.txt", "content": "line1\nline2"}]}}'
+            '{"tool": "write_file", "parameters": {"path": "a.txt", "content": "line1\nline2"}}'
         );
 
         const { parts } = extractPromptToolParts(text, 'json');
 
         expect(parts).toHaveLength(1);
         expect(parts[0].functionCall?.name).toBe('write_file');
-        const files = parts[0].functionCall?.args.files as Array<{ path: string; content: string }>;
-        expect(files[0].content).toBe('line1\nline2');
+        expect(parts[0].functionCall?.args.content).toBe('line1\nline2');
     });
 
     it('解析失败的非空块生成携带解析错误的合成 functionCall', () => {
@@ -58,7 +58,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
 
     it('解析失败时尽力提取意图工具名', () => {
         // JSON 语法错误（缺右括号）但 tool 字段可辨认
-        const text = jsonBlock('{"tool": "delete_file", "parameters": {"paths": ["a.txt"]');
+        const text = jsonBlock('{"tool": "delete_file", "parameters": {"path": "a.txt"');
 
         const { parts } = extractPromptToolParts(text, 'json');
 
@@ -87,7 +87,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
     });
 
     it('JSON 有效但缺 tool 字段时给出针对性错误', () => {
-        const text = jsonBlock('{"parameters": {"paths": ["a.txt"]}}');
+        const text = jsonBlock('{"parameters": {"path": "a.txt"}}');
 
         const { parts } = extractPromptToolParts(text, 'json');
 
@@ -143,20 +143,58 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
     });
 
-    it('数组参数通过 item 元素解析', () => {
+    it('对象数组参数（read_file.files）通过 item 元素解析', () => {
         const text = `<tool_use>
   <tool_name>read_file</tool_name>
   <parameters>
-    <paths>
-      <item>a.txt</item>
-      <item>b.txt</item>
-    </paths>
+    <files>
+      <item>
+        <path>a.txt</path>
+      </item>
+      <item>
+        <path>b.txt</path>
+      </item>
+    </files>
   </parameters>
 </tool_use>`;
 
         const { parts } = extractPromptToolParts(text, 'xml');
 
-        expect(parts[0].functionCall?.args.paths).toEqual(['a.txt', 'b.txt']);
+        expect(parts[0].functionCall?.args.files).toEqual([
+            { path: 'a.txt' },
+            { path: 'b.txt' }
+        ]);
+    });
+
+    it('解析器拒绝的块仍生成可读失败反馈（意图工具名保留）', () => {
+        // __proto__ 危险键名会让 fast-xml-parser 5.x 直接拒绝整个块（[SECURITY] 错误），
+        // 链路必须把解析失败转成携带意图工具名的失败反馈，而不是静默丢弃
+        const text = `<tool_use>
+  <tool_name>read_file</tool_name>
+  <parameters>
+    <__proto__><polluted>yes</polluted></__proto__>
+    <path>a.txt</path>
+  </parameters>
+</tool_use>`;
+
+        const { parts } = extractPromptToolParts(text, 'xml');
+
+        expect(parts).toHaveLength(1);
+        expect(parts[0].functionCall?.name).toBe('read_file');
+        expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
+        expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toContain('could not be parsed');
+    });
+
+    it('XMLValidator.validate 错误对象仍包含 err.msg 和 err.line（5.10.1 API 回归）', () => {
+        // 失败诊断路径依赖 validator 的报错形状；XMLParser 5.x 对语法错误很宽容，
+        // 所以直接针对 validator API 锁定 err.msg / err.line 结构
+        const result = XMLValidator.validate('<tool_use><parameters><path>a.txt</parameters></tool_use>');
+
+        expect(result).not.toBe(true);
+        if (result !== true) {
+            expect(typeof result.err.msg).toBe('string');
+            expect(typeof result.err.line).toBe('number');
+        }
     });
 });
 
@@ -199,7 +237,7 @@ describe('IncrementalPromptToolParser - 增量解析与 CDATA 边界', () => {
     });
 
     it('JSON 模式：结束标记被 chunk 边界劈开仍正确解析', () => {
-        const text = `${TOOL_CALL_START}\n{"tool": "read_file", "parameters": {"paths": ["a.txt"]}}\n${TOOL_CALL_END}after`;
+        const text = `${TOOL_CALL_START}\n{"tool": "read_file", "parameters": {"path": "a.txt"}}\n${TOOL_CALL_END}after`;
 
         for (const chunkSize of [1, 5, 11]) {
             const parser = new IncrementalPromptToolParser('json');

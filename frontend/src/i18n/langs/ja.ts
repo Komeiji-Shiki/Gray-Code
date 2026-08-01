@@ -1906,6 +1906,11 @@ const ja: LanguageMessages = {
                 },
                 memory: {
                     loading: '記憶設定を読み込み中...',
+                    enabled: {
+                        label: '永久記憶を有効にする',
+                        description: 'AI がセッションをまたいで長期情報を記憶・参照できるようにします。',
+                        disabledNotice: '無効にすると、記憶プロンプトは挿入されず、AI に記憶ツールも提供されません。既存の記憶と設定は保持され、下で引き続き表示・編集できます。'
+                    },
                     saved: '保存しました',
                     saving: '保存中...',
                     save: '設定を保存',

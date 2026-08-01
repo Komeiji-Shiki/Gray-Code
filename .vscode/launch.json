@@ -47,17 +47,17 @@
             }
         },
         {
-            "name": "Extension Tests",
-            "type": "extensionHost",
+            "name": "Debug Backend Tests (Jest)",
+            "type": "node",
             "request": "launch",
+            "program": "${workspaceFolder}/node_modules/jest/bin/jest.js",
             "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}",
-                "--extensionTestsPath=${workspaceFolder}/dist/test/suite/index"
+                "--config",
+                "jest.backend.config.js",
+                "--runInBand"
             ],
-            "outFiles": [
-                "${workspaceFolder}/dist/test/**/*.js"
-            ],
-            "preLaunchTask": "${defaultBuildTask}"
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
         }
     ]
 }

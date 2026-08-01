@@ -13,7 +13,7 @@ import type { McpManager } from '../mcp/McpManager';
 import { formatterRegistry } from './formatters';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
-import { subAgentRegistry } from '../../tools/subagents';
+import { hasAvailableSubAgent } from '../../tools/subagents';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -1177,9 +1177,9 @@ export class ChannelManager {
                     }
                     
                     // 对 subagents 工具：
-                    // 只有当有启用的子代理时才包含此工具
+                    // 有启用的配置代理或 General Worker 可用时才包含此工具（F-10）
                     if (tool.name === 'subagents') {
-                        if (subAgentRegistry.countEnabled() === 0) {
+                        if (!hasAvailableSubAgent()) {
                             continue;  // 跳过此工具
                         }
                     }

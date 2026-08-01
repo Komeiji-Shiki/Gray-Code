@@ -154,40 +154,6 @@ export function insertLineBreakAtCaret(editor: HTMLElement): InsertResult {
   return { ok: true, inputFired: false }
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-/**
- * 把纯文本构建为可整体插入的 HTML：转义特殊字符，换行转为 lim-break BR + ZWSP。
- * 一次 execCommand('insertHTML') 对应一个 undo 条目，粘贴可被 Ctrl+Z 整体撤销。
- */
-export function buildPlainTextHtml(text: string): string {
-  const normalized = text.replace(/\r\n/g, '\n')
-  return escapeHtml(normalized).replace(/\n/g, '<br data-lim-break="1">\u200B')
-}
-
-/**
- * 在光标处插入带换行的纯文本（粘贴场景）。
- * 优先走一次 execCommand('insertHTML')：整体进入浏览器 undo 栈，Ctrl+Z 一次撤销全部。
- * 浏览器不支持时回退到逐段手动插入。
- */
-export function insertPlainTextWithLineBreaksAtCaret(editor: HTMLElement, text: string): InsertResult {
-  getRangeInEditor(editor)
-
-  if (document.execCommand('insertHTML', false, buildPlainTextHtml(text))) {
-    return { ok: true, inputFired: true }
-  }
-
-  const normalized = text.replace(/\r\n/g, '\n')
-  const parts = normalized.split('\n')
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i]) insertTextAtCaretManual(editor, parts[i])
-    if (i < parts.length - 1) insertLineBreakAtCaretManual(editor)
-  }
-  return { ok: true, inputFired: false }
-}
-
 function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {
   let textCount = 0
   const children = Array.from(editor.childNodes)

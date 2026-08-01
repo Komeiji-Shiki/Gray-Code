@@ -16,6 +16,10 @@ import type { ToolDeclaration } from './types';
  * "007" → 7、纯数字文件内容变成 number），写文件场景会静默损坏内容。
  * 正确的类型还原由 schema 驱动的 normalizeToolArgs（递归 coerce）完成，
  * 那边知道每个参数应该是什么类型，而不是靠 XML 解析器猜。
+ *
+ * processEntities: false / maxNestedTags: 100 是安全加固（F-01）：
+ * 工具调用协议不需要 DOCTYPE 或自定义实体，禁止处理实体可以避免
+ * 实体展开与递归膨胀攻击；maxNestedTags 限制模型输出的嵌套深度。
  */
 const xmlParser = new XMLParser({
     ignoreAttributes: false,
@@ -23,7 +27,9 @@ const xmlParser = new XMLParser({
     textNodeName: '#text',
     parseAttributeValue: false,
     parseTagValue: false,
-    trimValues: true
+    trimValues: true,
+    processEntities: false,
+    maxNestedTags: 100
 });
 
 /**
@@ -103,27 +109,37 @@ When you need to use a tool, respond with XML format:
 <tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
-    <files>
-      <item>
-        <path>index.html</path>
-        <content><![CDATA[<html>
+    <path>index.html</path>
+    <content><![CDATA[<html>
   <body>if (a < b && c > d) { ... }</body>
 </html>]]></content>
-      </item>
-    </files>
   </parameters>
 </tool_use>
 
 ### Examples
 
-Reading files:
+Reading a single file:
 <tool_use>
   <tool_name>read_file</tool_name>
   <parameters>
-    <paths>
-      <item>file1.txt</item>
-      <item>src/main.ts</item>
-    </paths>
+    <path>src/main.ts</path>
+  </parameters>
+</tool_use>
+
+Reading multiple files (each item may optionally specify a line range):
+<tool_use>
+  <tool_name>read_file</tool_name>
+  <parameters>
+    <files>
+      <item>
+        <path>file1.txt</path>
+      </item>
+      <item>
+        <path>src/main.ts</path>
+        <startLine>10</startLine>
+        <endLine>20</endLine>
+      </item>
+    </files>
   </parameters>
 </tool_use>
 
@@ -131,12 +147,8 @@ Writing files:
 <tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
-    <files>
-      <item>
-        <path>file1.txt</path>
-        <content>Hello, World!</content>
-      </item>
-    </files>
+    <path>file1.txt</path>
+    <content>Hello, World!</content>
   </parameters>
 </tool_use>
 
@@ -170,6 +182,13 @@ function wrapXmlValue(value: string): string {
 
 /** 合法 XML 元素名（保守子集：字母/下划线开头，仅含字母数字、_ . -） */
 const XML_ELEMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.\-]*$/;
+
+/**
+ * 危险对象键名：解析出的参数键若为这些名字，直接跳过。
+ * fast-xml-parser 5.x 已有危险属性处理，这里在协议层再挡一层，
+ * 确保 `__proto__` / `constructor` 等键不会污染最终参数对象的原型。
+ */
+const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function isValidXmlElementName(name: string): boolean {
     return XML_ELEMENT_NAME_RE.test(name);
@@ -289,8 +308,8 @@ function processParameterValue(value: any): any {
     const result: Record<string, any> = {};
     let childElementCount = 0;
     for (const [key, val] of Object.entries(value)) {
-        // 跳过属性（@_前缀）与文本节点键
-        if (key.startsWith('@_') || key === '#text') {
+        // 跳过属性（@_前缀）、文本节点键与危险键名，防止原型污染
+        if (key.startsWith('@_') || key === '#text' || DANGEROUS_OBJECT_KEYS.has(key)) {
             continue;
         }
         childElementCount++;
@@ -351,8 +370,8 @@ function parseToolUseNode(toolUse: any): XMLToolCall | null {
     if (parameters && typeof parameters === 'object') {
         // 遍历所有参数
         for (const [key, value] of Object.entries(parameters)) {
-            // 跳过内部属性
-            if (key.startsWith('@_') || key === '#text') {
+            // 跳过内部属性与危险键名（__proto__ 等），防止原型污染
+            if (key.startsWith('@_') || key === '#text' || DANGEROUS_OBJECT_KEYS.has(key)) {
                 continue;
             }
             // 递归处理参数值（处理数组和嵌套对象）

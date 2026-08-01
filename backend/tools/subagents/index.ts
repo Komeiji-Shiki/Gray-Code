@@ -29,6 +29,7 @@ export { SubAgentRegistry, subAgentRegistry } from './registry';
 export {
     setSubAgentExecutorContext,
     getSubAgentExecutorContext,
+    resolveSubAgentAvailableTools,
     createDefaultExecutor,
     defaultExecutorFactory
 } from './executor';
@@ -70,6 +71,7 @@ export {
     createSubAgentsTool, 
     getSubAgentsTool,
     getSubAgentsToolDeclaration,
+    hasAvailableSubAgent,
     refreshSubAgentsTool,
     registerSubAgents 
 } from './subagents';

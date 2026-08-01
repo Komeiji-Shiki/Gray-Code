@@ -4,6 +4,23 @@
  * OptMem 风格的永久记忆系统：追加式日志 + 二叉树摘要
  */
 
+/** 长期记忆工具名称 */
+export const MEMORY_TOOL_NAMES = [
+    'memory_wake',
+    'memory_note',
+    'memory_recall',
+    'memory_compress',
+    'memory_zoom',
+    'memory_forget',
+    'memory_config',
+] as const;
+
+const MEMORY_TOOL_NAME_SET = new Set<string>(MEMORY_TOOL_NAMES);
+
+export function isMemoryToolName(toolName: string): boolean {
+    return MEMORY_TOOL_NAME_SET.has(toolName);
+}
+
 /** 单条日志记录 */
 export interface LogEntry {
     /** 记录 ID（在 LOG 中的序号） */

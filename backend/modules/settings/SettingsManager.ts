@@ -50,6 +50,7 @@ import type {
     HistorySearchToolConfig,
     MemoryToolConfig
 } from './types';
+import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
     DEFAULT_LIST_FILES_CONFIG,
@@ -355,6 +356,9 @@ export class SettingsManager {
      * @returns 是否启用（未配置时默认启用）
      */
     isToolEnabled(toolName: string): boolean {
+        if (isMemoryToolName(toolName) && !this.isMemoryEnabled()) {
+            return false;
+        }
         // 如果未配置，默认启用
         return this.settings.toolsEnabled[toolName] !== false;
     }
@@ -366,6 +370,9 @@ export class SettingsManager {
      * @param enabled 是否启用
      */
     async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
+        if (enabled && isMemoryToolName(toolName) && !this.isMemoryEnabled()) {
+            throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
+        }
         const oldValue = { ...this.settings.toolsEnabled };
         this.settings.toolsEnabled[toolName] = enabled;
         this.settings.lastUpdated = Date.now();
@@ -388,9 +395,17 @@ export class SettingsManager {
      */
     async setToolsEnabled(states: ToolsEnabledState): Promise<void> {
         const oldValue = { ...this.settings.toolsEnabled };
+        const normalizedStates = { ...states };
+        if (!this.isMemoryEnabled()) {
+            for (const toolName of MEMORY_TOOL_NAMES) {
+                if (normalizedStates[toolName] === true) {
+                    delete normalizedStates[toolName];
+                }
+            }
+        }
         this.settings.toolsEnabled = {
             ...this.settings.toolsEnabled,
-            ...states
+            ...normalizedStates
         };
         this.settings.lastUpdated = Date.now();
         
@@ -926,6 +941,13 @@ export class SettingsManager {
     }
     
     // ========== 记忆配置管理 ==========
+
+    /**
+     * 长期记忆总开关。
+     */
+    isMemoryEnabled(): boolean {
+        return this.getMemoryConfig().enabled !== false;
+    }
     
     /**
      * 获取记忆工具配置

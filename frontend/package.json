@@ -8,6 +8,8 @@
     "dev:local": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "typecheck": "vue-tsc --noEmit",
     "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview"
   },
   "dependencies": {
