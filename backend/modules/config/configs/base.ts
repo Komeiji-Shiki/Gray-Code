@@ -270,7 +270,7 @@ export interface BaseChannelConfig {
      * 启用后，将发送历史对话中的所有思考内容（包括摘要）
      * 这可能会显著增加上下文长度
      *
-     * 默认值：false
+     * 默认值：true
      */
     sendHistoryThoughts?: boolean;
     

@@ -456,7 +456,7 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
-    dynamicContextStrategy: 'single',
+    dynamicContextStrategy: 'preserve',
     customPrefix: '',
     customSuffix: ''
 };

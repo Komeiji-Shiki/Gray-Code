@@ -60,7 +60,7 @@ import { ToolCallParserService, MessageBuilderService, TokenEstimationService, C
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 
 /** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
-const DEFAULT_MAX_TOOL_ITERATIONS = 20;
+const DEFAULT_MAX_TOOL_ITERATIONS = 200;
 
 /**
  * 对话处理器
