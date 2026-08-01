@@ -86,8 +86,10 @@ export class ConfigManager {
             customHeaders: [],
             customBodyEnabled: false,
             customBody: { mode: 'simple' as const, items: [] },
-            sendHistoryThoughts: false,
+            sendHistoryThoughts: true,
             sendHistoryThoughtSignatures: false,
+            sendCurrentThoughts: true,
+            maxContextTokens: 256000,
             options: {
                 stream: false
             }
@@ -101,7 +103,7 @@ export class ConfigManager {
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,
-                        maxOutputTokens: 65536,
+                        maxOutputTokens: 65535,
                         maxImages: 0,
                         // Gemini 思考配置默认值
                         thinkingConfig: {
@@ -128,7 +130,7 @@ export class ConfigManager {
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,
-                        max_tokens: 16384,
+                        max_tokens: 65535,
                         // OpenAI 思考配置默认值
                         reasoning: {
                             effort: 'high',
@@ -153,7 +155,7 @@ export class ConfigManager {
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,
-                        max_tokens: 8192,
+                        max_tokens: 65535,
                         // Anthropic 思考配置默认值
                         thinking: {
                             type: 'adaptive',
@@ -177,7 +179,7 @@ export class ConfigManager {
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,
-                        max_output_tokens: 16384,
+                        max_output_tokens: 65535,
                         reasoning: {
                             effort: 'medium',
                             summaryEnabled: false,

@@ -101,8 +101,8 @@ export class MessageBuilderService {
             sendHistoryThoughts,
             // 是否发送历史思考签名
             sendHistoryThoughtSignatures,
-            // 是否发送当前思考内容 (默认: Anthropic 为 true, OAI/Gemini/OAI-Responses 为 false)
-            sendCurrentThoughts: config.sendCurrentThoughts ?? (config.type === 'anthropic'),
+            // 是否发送当前思考内容 (默认: true)
+            sendCurrentThoughts: config.sendCurrentThoughts ?? true,
             // 是否发送当前思考签名 (默认: OAI 为 false, Gemini/Anthropic/OAI-Responses 为 true)
             sendCurrentThoughtSignatures: config.sendCurrentThoughtSignatures ?? (config.type === 'gemini' || config.type === 'anthropic' || config.type === 'openai-responses'),
             // 渠道类型，用于选择对应格式的签名

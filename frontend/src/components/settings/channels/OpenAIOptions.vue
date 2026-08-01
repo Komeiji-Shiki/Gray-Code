@@ -361,7 +361,7 @@ function handleNumberChange(optionKey: string, event: any) {
           <label class="custom-checkbox">
             <input
               type="checkbox"
-              :checked="config.sendCurrentThoughts ?? false"
+              :checked="config.sendCurrentThoughts ?? true"
               @change="(e: any) => emit('update:field', 'sendCurrentThoughts', e.target.checked)"
             />
             <span class="checkmark"></span>

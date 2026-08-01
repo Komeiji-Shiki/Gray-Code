@@ -2258,7 +2258,7 @@ import { DEFAULT_SYSTEM_PROMPT_CONFIG } from './promptModes';
 /**
  * 默认单回合最大工具调用次数
  */
-export const DEFAULT_MAX_TOOL_ITERATIONS = 50;
+export const DEFAULT_MAX_TOOL_ITERATIONS = 200;
 
 /**
  * 默认上下文感知配置

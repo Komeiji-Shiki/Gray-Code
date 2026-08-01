@@ -26,7 +26,7 @@ const thinkingLevelOptions = computed<SelectOption[]>(() => [
 // 默认配置值
 const DEFAULT_VALUES: Record<string, any> = {
   temperature: 1.0,
-  maxOutputTokens: 8192,
+  maxOutputTokens: 65535,
   maxImages: 0,
   thinkingConfig: {
     includeThoughts: true,
@@ -135,8 +135,8 @@ function updateThinkingConfig(field: string, value: any) {
       </div>
       <input
         type="number"
-        :value="config.options?.maxOutputTokens ?? 8192"
-        placeholder="8192"
+        :value="config.options?.maxOutputTokens ?? 65535"
+        placeholder="65535"
         :disabled="!isOptionEnabled('maxOutputTokens')"
         :class="{ disabled: !isOptionEnabled('maxOutputTokens') }"
         @input="(e: any) => emit('update:option', 'maxOutputTokens', Number(e.target.value))"
@@ -301,7 +301,7 @@ function updateThinkingConfig(field: string, value: any) {
           <label class="custom-checkbox">
             <input
               type="checkbox"
-              :checked="config.sendCurrentThoughts ?? false"
+              :checked="config.sendCurrentThoughts ?? true"
               @change="(e: any) => emit('update:field', 'sendCurrentThoughts', e.target.checked)"
             />
             <span class="checkmark"></span>

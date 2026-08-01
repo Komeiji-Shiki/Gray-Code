@@ -990,7 +990,7 @@ onMounted(async () => {
       <div class="form-group">
         <label>{{ t('components.settings.channelSettings.form.maxContextTokens.label') }}</label>
         <input
-          :value="currentConfig.maxContextTokens || 128000"
+          :value="currentConfig.maxContextTokens || 256000"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.maxContextTokens.placeholder')"
           @input="(e: any) => updateConfigField('maxContextTokens', Number(e.target.value))"
