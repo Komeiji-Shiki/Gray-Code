@@ -38,10 +38,10 @@ const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(l
 
 // 页签列表（使用 computed 以便语言切换时自动更新）
 const tabs = computed<TabItem[]>(() => [
-  { id: 'channel', label: t('components.settings.tabs.channel'), icon: 'codicon-server' },
+  { id: 'channel', label: t('components.settings.tabs.channel'), icon: 'codicon-plug' },
   { id: 'tools', label: t('components.settings.tabs.tools'), icon: 'codicon-tools' },
   { id: 'autoExec', label: t('components.settings.tabs.autoExec'), icon: 'codicon-shield' },
-  { id: 'mcp', label: t('components.settings.tabs.mcp'), icon: 'codicon-plug' },
+  { id: 'mcp', label: t('components.settings.tabs.mcp'), icon: 'codicon-server' },
   { id: 'subagents', label: t('components.settings.tabs.subagents'), icon: 'codicon-hubot' },
   { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
   { id: 'summarize', label: t('components.settings.tabs.summarize'), icon: 'codicon-fold' },
@@ -50,7 +50,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
   { id: 'prompt', label: t('components.settings.tabs.prompt'), icon: 'codicon-note' },
   { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
-  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-notifications' },
+  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
@@ -528,7 +528,7 @@ onMounted(() => {
             <SubAgentsSettings />
           </div>
 
-          <!-- 提示系统 -->
+          <!-- 通知系统 -->
           <div v-if="settingsStore.activeTab === 'sound'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.sound.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.sound.description') }}</p>

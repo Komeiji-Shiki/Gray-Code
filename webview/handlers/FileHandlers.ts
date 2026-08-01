@@ -962,17 +962,29 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
 export const revealConversationInExplorer: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId } = data;
-    const conversationsDir = ctx.storagePathManager.getConversationsPath();
-    const conversationFile = vscode.Uri.file(path.join(conversationsDir, `${conversationId}.json`));
-    
-    try {
-      await vscode.workspace.fs.stat(conversationFile);
-    } catch {
-      throw new Error(t('webview.errors.conversationFileNotExists'));
+    // 修改原因：segmented 存储格式下对话是 {id}/ 目录而非 {id}.json 单文件，
+    // 旧实现硬编码拼接 {id}.json 并 stat 校验，正常对话全部报“对话文件不存在”，
+    // 无法在文件管理器中显示。
+    // 修改方式：委托 ConversationManager → 存储适配器的 getConversationStorageLocation，
+    // 由适配器按 segmented index → legacy history → metadata 优先级返回真实存在的 URI。
+    // 修改目的：存储布局规则保持单一来源，handler 不再复制路径规则。
+    const location = await ctx.conversationManager.getConversationStorageLocation(conversationId);
+
+    if (!location || !location.revealUri) {
+      // 非文件系统存储（内存 / globalState）或无法定位：回退打开 conversations 根目录
+      const conversationsDir = ctx.storagePathManager.getConversationsPath();
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(conversationsDir));
+      ctx.sendResponse(requestId, { success: true, fallback: true });
+      return;
     }
-    
-    await vscode.commands.executeCommand('revealFileInOS', conversationFile);
-    ctx.sendResponse(requestId, { success: true });
+
+    await vscode.commands.executeCommand('revealFileInOS', location.revealUri);
+    ctx.sendResponse(requestId, {
+      success: true,
+      exists: location.exists,
+      path: location.displayPath,
+      warning: location.warning
+    });
   } catch (error: any) {
     ctx.sendError(requestId, 'REVEAL_IN_EXPLORER_ERROR', error.message || t('webview.errors.cannotRevealInExplorer'));
   }
