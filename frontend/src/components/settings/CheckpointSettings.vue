@@ -13,6 +13,7 @@ import { CustomCheckbox, CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useChatStore } from '@/stores'
 import { t } from '@/i18n'
+import type { CheckpointRecord } from '@/types'
 
 // 消息类型存档点配置
 interface MessageCheckpointConfig {
@@ -90,9 +91,25 @@ const isLoading = ref(false)
 const conversationsWithCheckpoints = ref<ConversationWithCheckpoints[]>([])
 const searchQuery = ref('')
 const isCleanupLoading = ref(false)
-const isDeletingConversation = ref<string | null>(null)
-const deleteConfirmConversation = ref<ConversationWithCheckpoints | null>(null)
-const showDeleteConfirm = ref(false)
+
+// 批量管理：对话多选
+const selectedConversationIds = ref<Set<string>>(new Set())
+
+// 批量管理：展开对话的存档点列表
+const expandedConversationId = ref<string | null>(null)
+const expandedCheckpoints = ref<Array<CheckpointRecord & { size?: number }>>([])
+const selectedCheckpointIds = ref<Set<string>>(new Set())
+const isExpandedLoading = ref(false)
+const isBatchDeleting = ref(false)
+
+// 删除确认（统一处理对话批量 / 存档点批量）
+interface DeleteConfirmState {
+  kind: 'conversations' | 'checkpoints'
+  title: string
+  count: number
+  size: number
+}
+const deleteConfirmState = ref<DeleteConfirmState | null>(null)
 
 // 直接使用所有工具（用户可以自由选择哪些需要备份）
 const displayTools = computed(() => allTools.value)
@@ -343,6 +360,38 @@ const filteredConversations = computed(() => {
   )
 })
 
+// 已选对话列表
+const selectedConversations = computed(() =>
+  conversationsWithCheckpoints.value.filter(c => selectedConversationIds.value.has(c.conversationId))
+)
+
+// 已选对话的存档点总数与磁盘占用
+const selectedConversationsCheckpointCount = computed(() =>
+  selectedConversations.value.reduce((sum, c) => sum + c.checkpointCount, 0)
+)
+const selectedConversationsSize = computed(() =>
+  selectedConversations.value.reduce((sum, c) => sum + (c.totalSize || 0), 0)
+)
+
+// 对话全选状态
+const isAllConversationsSelected = computed(() =>
+  filteredConversations.value.length > 0 &&
+  filteredConversations.value.every(c => selectedConversationIds.value.has(c.conversationId))
+)
+
+// 存档点全选状态
+const isAllCheckpointsSelected = computed(() =>
+  expandedCheckpoints.value.length > 0 &&
+  expandedCheckpoints.value.every(cp => selectedCheckpointIds.value.has(cp.id))
+)
+
+// 已选存档点磁盘占用
+const selectedCheckpointsSize = computed(() =>
+  expandedCheckpoints.value
+    .filter(cp => selectedCheckpointIds.value.has(cp.id))
+    .reduce((sum, cp) => sum + (cp.size || 0), 0)
+)
+
 // 加载带有存档点的对话列表
 async function loadConversationsWithCheckpoints() {
   isCleanupLoading.value = true
@@ -361,48 +410,210 @@ async function loadConversationsWithCheckpoints() {
   }
 }
 
-// 显示删除确认
+// 切换对话选中状态
+function toggleConversationSelected(conversationId: string, selected: boolean) {
+  const next = new Set(selectedConversationIds.value)
+  if (selected) {
+    next.add(conversationId)
+  } else {
+    next.delete(conversationId)
+  }
+  selectedConversationIds.value = next
+}
+
+// 全选/取消全选对话
+function toggleAllConversationsSelected(selected: boolean) {
+  const next = new Set<string>()
+  if (selected) {
+    filteredConversations.value.forEach(c => next.add(c.conversationId))
+  }
+  selectedConversationIds.value = next
+}
+
+// 展开/收起对话的存档点列表
+async function toggleExpandConversation(conv: ConversationWithCheckpoints) {
+  if (expandedConversationId.value === conv.conversationId) {
+    expandedConversationId.value = null
+    expandedCheckpoints.value = []
+    selectedCheckpointIds.value = new Set()
+    return
+  }
+  expandedConversationId.value = conv.conversationId
+  selectedCheckpointIds.value = new Set()
+  await loadExpandedCheckpoints(conv.conversationId)
+}
+
+// 加载展开对话的存档点列表（含磁盘占用）
+async function loadExpandedCheckpoints(conversationId: string) {
+  isExpandedLoading.value = true
+  try {
+    const response = await sendToExtension<{ checkpoints: Array<CheckpointRecord & { size?: number }> }>(
+      'checkpoint.getCheckpoints',
+      { conversationId, withSize: true }
+    )
+    expandedCheckpoints.value = (response?.checkpoints || [])
+      .slice()
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+  } catch (error) {
+    console.error('Failed to load checkpoints:', error)
+    expandedCheckpoints.value = []
+  } finally {
+    isExpandedLoading.value = false
+  }
+}
+
+// 切换存档点选中状态
+function toggleCheckpointSelected(id: string, selected: boolean) {
+  const next = new Set(selectedCheckpointIds.value)
+  if (selected) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  selectedCheckpointIds.value = next
+}
+
+// 全选/取消全选存档点
+function toggleAllCheckpointsSelected(selected: boolean) {
+  const next = new Set<string>()
+  if (selected) {
+    expandedCheckpoints.value.forEach(cp => next.add(cp.id))
+  }
+  selectedCheckpointIds.value = next
+}
+
+// 请求删除选中的对话（全部存档点）
+function requestDeleteConversations() {
+  if (selectedConversations.value.length === 0 || isBatchDeleting.value) return
+  deleteConfirmState.value = {
+    kind: 'conversations',
+    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.conversationsMessage', {
+      count: selectedConversations.value.length
+    }),
+    count: selectedConversationsCheckpointCount.value,
+    size: selectedConversationsSize.value
+  }
+}
+
+// 请求删除选中的存档点
+function requestDeleteCheckpoints() {
+  if (selectedCheckpointIds.value.size === 0 || isBatchDeleting.value) return
+  deleteConfirmState.value = {
+    kind: 'checkpoints',
+    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', {
+      count: selectedCheckpointIds.value.size
+    }),
+    count: selectedCheckpointIds.value.size,
+    size: selectedCheckpointsSize.value
+  }
+}
+
+// 请求删除单个存档点
+function requestDeleteSingleCheckpoint(cp: CheckpointRecord & { size?: number }) {
+  if (isBatchDeleting.value) return
+  selectedCheckpointIds.value = new Set([cp.id])
+  deleteConfirmState.value = {
+    kind: 'checkpoints',
+    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', { count: 1 }),
+    count: 1,
+    size: cp.size || 0
+  }
+}
+
+// 显示单个对话的删除确认
 function showDeleteConfirmDialog(conversation: ConversationWithCheckpoints) {
-  deleteConfirmConversation.value = conversation
-  showDeleteConfirm.value = true
+  if (isBatchDeleting.value) return
+  selectedConversationIds.value = new Set([conversation.conversationId])
+  deleteConfirmState.value = {
+    kind: 'conversations',
+    title: conversation.title || conversation.conversationId,
+    count: conversation.checkpointCount,
+    size: conversation.totalSize || 0
+  }
 }
 
 // 取消删除
 function cancelDelete() {
-  showDeleteConfirm.value = false
-  deleteConfirmConversation.value = null
+  deleteConfirmState.value = null
 }
 
-// 确认删除对话的所有存档点
-async function confirmDeleteCheckpoints() {
-  if (!deleteConfirmConversation.value) return
-  
-  const conversationId = deleteConfirmConversation.value.conversationId
-  showDeleteConfirm.value = false
-  isDeletingConversation.value = conversationId
-  
+// 确认删除（对话批量 / 存档点批量共用）
+async function confirmDelete() {
+  const state = deleteConfirmState.value
+  if (!state) return
+
+  deleteConfirmState.value = null
+  isBatchDeleting.value = true
+  const affectedConversationIds = new Set<string>()
+
   try {
-    const response = await sendToExtension<{ success: boolean; deletedCount: number }>(
-      'checkpoint.deleteAll',
-      { conversationId }
-    )
-    
-    if (response?.success) {
-      // 从列表中移除
+    if (state.kind === 'conversations') {
+      // 批量删除选中的对话（checkpointIds 为空 = 删除该对话全部）
+      const targets = selectedConversations.value
+      const items = targets.map(c => ({ conversationId: c.conversationId, checkpointIds: [] as string[] }))
+      await sendToExtension('checkpoint.deleteBatch', { items })
+
+      targets.forEach(c => affectedConversationIds.add(c.conversationId))
+      const removedIds = new Set(targets.map(c => c.conversationId))
       conversationsWithCheckpoints.value = conversationsWithCheckpoints.value.filter(
-        c => c.conversationId !== conversationId
+        c => !removedIds.has(c.conversationId)
       )
-      
-      // 如果是当前对话，通知 chatStore 刷新检查点
-      if (chatStore.currentConversationId === conversationId) {
-        await chatStore.loadCheckpoints()
+      selectedConversationIds.value = new Set()
+
+      // 若展开的对话被删除，收起展开面板
+      if (expandedConversationId.value && removedIds.has(expandedConversationId.value)) {
+        expandedConversationId.value = null
+        expandedCheckpoints.value = []
+        selectedCheckpointIds.value = new Set()
       }
+    } else {
+      // 删除展开对话中的选中存档点
+      if (expandedConversationId.value) {
+        const conversationId = expandedConversationId.value
+        const items = [{ conversationId, checkpointIds: [...selectedCheckpointIds.value] }]
+        await sendToExtension('checkpoint.deleteBatch', { items })
+
+        selectedCheckpointIds.value = new Set()
+        affectedConversationIds.add(conversationId)
+        await loadExpandedCheckpoints(conversationId)
+        await loadConversationsWithCheckpoints()
+      }
+    }
+
+    // 当前对话受影响时，通知聊天视图刷新存档点
+    if (chatStore.currentConversationId && affectedConversationIds.has(chatStore.currentConversationId)) {
+      await chatStore.loadCheckpoints()
     }
   } catch (error) {
     console.error('Failed to delete checkpoints:', error)
   } finally {
-    isDeletingConversation.value = null
-    deleteConfirmConversation.value = null
+    isBatchDeleting.value = false
+  }
+}
+
+// 存档点展示辅助
+function getPhaseLabel(phase: 'before' | 'after'): string {
+  return phase === 'before'
+    ? t('components.settings.checkpoint.sections.cleanup.phaseBefore')
+    : t('components.settings.checkpoint.sections.cleanup.phaseAfter')
+}
+
+function getTypeLabel(type?: string): string {
+  return type === 'full'
+    ? t('components.settings.checkpoint.sections.cleanup.typeFull')
+    : t('components.settings.checkpoint.sections.cleanup.typeIncremental')
+}
+
+function getToolLabel(toolName: string): string {
+  switch (toolName) {
+    case 'user_message':
+      return t('components.settings.checkpoint.sections.cleanup.toolUserMessage')
+    case 'model_message':
+      return t('components.settings.checkpoint.sections.cleanup.toolModelMessage')
+    case 'tool_batch':
+      return t('components.settings.checkpoint.sections.cleanup.toolBatch')
+    default:
+      return getToolDisplayName(toolName)
   }
 }
 
@@ -683,6 +894,29 @@ onMounted(() => {
           </button>
         </div>
         
+        <!-- 批量操作栏 -->
+        <div v-if="conversationsWithCheckpoints.length > 0" class="batch-bar">
+          <span class="batch-info">
+            <template v-if="selectedConversations.length > 0">
+              {{ t('components.settings.checkpoint.sections.cleanup.selectedCount', { count: selectedConversations.length }) }}
+              ·
+              {{ t('components.settings.checkpoint.sections.cleanup.selectedSize', { size: formatSize(selectedConversationsSize) }) }}
+            </template>
+            <template v-else>
+              {{ formatCheckpointCount(conversationsWithCheckpoints.reduce((sum, c) => sum + c.checkpointCount, 0)) }}
+            </template>
+          </span>
+          <button
+            class="batch-delete-btn"
+            :disabled="selectedConversations.length === 0 || isBatchDeleting"
+            @click="requestDeleteConversations"
+          >
+            <i v-if="isBatchDeleting" class="codicon codicon-loading codicon-modifier-spin"></i>
+            <i v-else class="codicon codicon-trash"></i>
+            {{ t('components.settings.checkpoint.sections.cleanup.deleteSelected') }}
+          </button>
+        </div>
+        
         <!-- 对话列表 -->
         <div class="conversations-list-wrapper">
           <CustomScrollbar>
@@ -698,37 +932,126 @@ onMounted(() => {
                 <span v-else>{{ t('components.settings.checkpoint.sections.cleanup.noCheckpoints') }}</span>
               </div>
               
-              <div
-                v-else
-                v-for="conv in filteredConversations"
-                :key="conv.conversationId"
-                class="conversation-item"
-              >
-                <div class="conversation-info">
-                  <div class="conversation-title">{{ conv.title }}</div>
-                  <div class="conversation-meta">
-                    <span class="checkpoint-count">
-                      <i class="codicon codicon-archive"></i>
-                      {{ formatCheckpointCount(conv.checkpointCount) }}
-                    </span>
-                    <span class="size-info">
-                      <i class="codicon codicon-database"></i>
-                      {{ formatSize(conv.totalSize) }}
-                    </span>
-                    <span class="update-time">
-                      {{ formatRelativeTime(conv.updatedAt) }}
-                    </span>
+              <template v-else>
+                <!-- 表头：全选 -->
+                <div class="list-header">
+                  <CustomCheckbox
+                    :modelValue="isAllConversationsSelected"
+                    @update:modelValue="toggleAllConversationsSelected"
+                  />
+                  <span class="header-label">{{ t('components.settings.checkpoint.sections.cleanup.selectAll') }}</span>
+                </div>
+                
+                <div
+                  v-for="conv in filteredConversations"
+                  :key="conv.conversationId"
+                  class="conversation-item"
+                  :class="{ expanded: expandedConversationId === conv.conversationId }"
+                >
+                  <CustomCheckbox
+                    :modelValue="selectedConversationIds.has(conv.conversationId)"
+                    @update:modelValue="(v: boolean) => toggleConversationSelected(conv.conversationId, v)"
+                  />
+                  <button
+                    class="expand-btn"
+                    @click="toggleExpandConversation(conv)"
+                  >
+                    <i class="codicon" :class="expandedConversationId === conv.conversationId ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
+                  </button>
+                  <div class="conversation-info">
+                    <div class="conversation-title">{{ conv.title }}</div>
+                    <div class="conversation-meta">
+                      <span class="checkpoint-count">
+                        <i class="codicon codicon-archive"></i>
+                        {{ formatCheckpointCount(conv.checkpointCount) }}
+                      </span>
+                      <span class="size-info">
+                        <i class="codicon codicon-database"></i>
+                        {{ formatSize(conv.totalSize) }}
+                      </span>
+                      <span class="update-time">
+                        {{ formatRelativeTime(conv.updatedAt) }}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    class="delete-btn"
+                    :disabled="isBatchDeleting"
+                    @click="showDeleteConfirmDialog(conv)"
+                  >
+                    <i class="codicon codicon-trash"></i>
+                  </button>
+                  
+                  <!-- 展开的存档点列表 -->
+                  <div v-if="expandedConversationId === conv.conversationId" class="checkpoint-sub-list">
+                    <div v-if="isExpandedLoading" class="sub-loading">
+                      <i class="codicon codicon-loading codicon-modifier-spin"></i>
+                      <span>{{ t('components.settings.checkpoint.sections.cleanup.loading') }}</span>
+                    </div>
+                    
+                    <div v-else-if="expandedCheckpoints.length === 0" class="sub-empty">
+                      {{ t('components.settings.checkpoint.sections.cleanup.noCheckpointsInConversation') }}
+                    </div>
+                    
+                    <template v-else>
+                      <div class="sub-header">
+                        <CustomCheckbox
+                          :modelValue="isAllCheckpointsSelected"
+                          @update:modelValue="toggleAllCheckpointsSelected"
+                        />
+                        <span class="sub-header-info">
+                          <template v-if="selectedCheckpointIds.size > 0">
+                            {{ t('components.settings.checkpoint.sections.cleanup.selectedCount', { count: selectedCheckpointIds.size }) }}
+                            ·
+                            {{ t('components.settings.checkpoint.sections.cleanup.selectedSize', { size: formatSize(selectedCheckpointsSize) }) }}
+                          </template>
+                          <template v-else>
+                            {{ formatCheckpointCount(expandedCheckpoints.length) }}
+                          </template>
+                        </span>
+                        <button
+                          class="sub-delete-btn"
+                          :disabled="selectedCheckpointIds.size === 0 || isBatchDeleting"
+                          @click="requestDeleteCheckpoints"
+                        >
+                          <i class="codicon codicon-trash"></i>
+                          {{ t('components.settings.checkpoint.sections.cleanup.deleteSelected') }}
+                        </button>
+                      </div>
+                      
+                      <div
+                        v-for="cp in expandedCheckpoints"
+                        :key="cp.id"
+                        class="checkpoint-item"
+                      >
+                        <CustomCheckbox
+                          :modelValue="selectedCheckpointIds.has(cp.id)"
+                          @update:modelValue="(v: boolean) => toggleCheckpointSelected(cp.id, v)"
+                        />
+                        <div class="checkpoint-info">
+                          <div class="checkpoint-title">
+                            <span class="cp-phase" :class="cp.phase">{{ getPhaseLabel(cp.phase) }}</span>
+                            <span class="cp-tool">{{ getToolLabel(cp.toolName) }}</span>
+                            <span v-if="cp.type" class="cp-type">{{ getTypeLabel(cp.type) }}</span>
+                          </div>
+                          <div class="checkpoint-meta">
+                            <span>{{ formatRelativeTime(cp.timestamp) }}</span>
+                            <span>{{ t('components.settings.checkpoint.sections.cleanup.checkpointFiles', { count: cp.fileCount }) }}</span>
+                            <span class="cp-size">{{ formatSize(cp.size || 0) }}</span>
+                          </div>
+                        </div>
+                        <button
+                          class="delete-btn"
+                          :disabled="isBatchDeleting"
+                          @click="requestDeleteSingleCheckpoint(cp)"
+                        >
+                          <i class="codicon codicon-trash"></i>
+                        </button>
+                      </div>
+                    </template>
                   </div>
                 </div>
-                <button
-                  class="delete-btn"
-                  :disabled="isDeletingConversation === conv.conversationId"
-                  @click="showDeleteConfirmDialog(conv)"
-                >
-                  <i v-if="isDeletingConversation === conv.conversationId" class="codicon codicon-loading codicon-modifier-spin"></i>
-                  <i v-else class="codicon codicon-trash"></i>
-                </button>
-              </div>
+              </template>
             </div>
           </CustomScrollbar>
         </div>
@@ -736,7 +1059,7 @@ onMounted(() => {
         <!-- 刷新按钮 -->
         <button
           class="refresh-btn"
-          :disabled="isCleanupLoading"
+          :disabled="isCleanupLoading || isBatchDeleting"
           @click="loadConversationsWithCheckpoints"
         >
           <i class="codicon codicon-refresh" :class="{ 'codicon-modifier-spin': isCleanupLoading }"></i>
@@ -747,25 +1070,25 @@ onMounted(() => {
     </template>
     
     <!-- 删除确认对话框 -->
-    <div v-if="showDeleteConfirm" class="delete-confirm-overlay" @click.self="cancelDelete">
+    <div v-if="deleteConfirmState" class="delete-confirm-overlay" @click.self="cancelDelete">
       <div class="delete-confirm-dialog">
         <div class="dialog-header">
           <i class="codicon codicon-warning"></i>
           <span>{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.title') }}</span>
         </div>
         <div class="dialog-body">
-          <p>{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.message', { title: deleteConfirmConversation?.title || '' }) }}</p>
+          <p>{{ deleteConfirmState.title }}</p>
           <p class="delete-stats">
             {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.stats', {
-              count: deleteConfirmConversation?.checkpointCount || 0,
-              size: formatSize(deleteConfirmConversation?.totalSize || 0)
+              count: deleteConfirmState.count,
+              size: formatSize(deleteConfirmState.size)
             }) }}
           </p>
           <p class="warning-text">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.warning') }}</p>
         </div>
         <div class="dialog-footer">
           <button class="btn-cancel" @click="cancelDelete">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.cancel') }}</button>
-          <button class="btn-delete" @click="confirmDeleteCheckpoints">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.delete') }}</button>
+          <button class="btn-delete" :disabled="isBatchDeleting" @click="confirmDelete">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.delete') }}</button>
         </div>
       </div>
     </div>
@@ -1060,8 +1383,9 @@ onMounted(() => {
 
 .conversation-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--vscode-panel-border);
 }
@@ -1072,6 +1396,216 @@ onMounted(() => {
 
 .conversation-item:hover {
   background: var(--vscode-list-hoverBackground);
+}
+
+.conversation-item.expanded {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.conversation-item.expanded:last-child {
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+/* 列表表头（全选） */
+.list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+}
+
+.header-label {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* 批量操作栏 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border-radius: 6px;
+}
+
+.batch-info {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-delete-btn,
+.sub-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-inputValidation-errorForeground);
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.batch-delete-btn:hover:not(:disabled),
+.sub-delete-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.batch-delete-btn:disabled,
+.sub-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 展开按钮 */
+.expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.expand-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+/* 展开的存档点列表 */
+.checkpoint-sub-list {
+  flex-basis: 100%;
+  margin: 4px 0 4px 26px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+}
+
+.sub-loading,
+.sub-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.sub-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.sub-header-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.checkpoint-item:last-child {
+  border-bottom: none;
+}
+
+.checkpoint-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.checkpoint-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.checkpoint-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cp-phase {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.cp-phase.before {
+  background: var(--vscode-editorWarning-background);
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.cp-phase.after {
+  background: var(--vscode-editorInfo-background);
+  color: var(--vscode-editorInfo-foreground);
+}
+
+.cp-tool {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-type {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+}
+
+.checkpoint-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cp-size {
+  font-weight: 500;
+  color: var(--vscode-foreground);
 }
 
 .conversation-info {
@@ -1262,5 +1796,10 @@ onMounted(() => {
 
 .btn-delete:hover {
   opacity: 0.9;
+}
+
+.btn-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

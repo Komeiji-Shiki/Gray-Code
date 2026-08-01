@@ -36,8 +36,8 @@ export const updateCheckpointConfig: MessageHandler = async (data, requestId, ct
  */
 export const getCheckpoints: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { conversationId } = data;
-    const checkpoints = await ctx.checkpointManager.getCheckpoints(conversationId);
+    const { conversationId, withSize } = data;
+    const checkpoints = await ctx.checkpointManager.getCheckpoints(conversationId, { withSize });
     ctx.sendResponse(requestId, { checkpoints });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_CHECKPOINTS_ERROR', error.message || t('webview.errors.getCheckpointsFailed'));
@@ -90,6 +90,19 @@ export const deleteAllCheckpoints: MessageHandler = async (data, requestId, ctx)
 };
 
 /**
+ * 批量删除检查点（支持跨对话，checkpointIds 为空数组表示删除该对话全部）
+ */
+export const deleteCheckpointsBatch: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { items } = data;
+    const results = await ctx.checkpointManager.deleteCheckpointsBatch(items);
+    ctx.sendResponse(requestId, { results });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_CHECKPOINTS_BATCH_ERROR', error.message || t('webview.errors.deleteCheckpointsBatchFailed'));
+  }
+};
+
+/**
  * 获取所有包含检查点的对话
  */
 export const getAllConversationsWithCheckpoints: MessageHandler = async (data, requestId, ctx) => {
@@ -111,5 +124,6 @@ export function registerCheckpointHandlers(registry: Map<string, MessageHandler>
   registry.set('checkpoint.restore', restoreCheckpoint);
   registry.set('checkpoint.delete', deleteCheckpoint);
   registry.set('checkpoint.deleteAll', deleteAllCheckpoints);
+  registry.set('checkpoint.deleteBatch', deleteCheckpointsBatch);
   registry.set('checkpoint.getAllConversationsWithCheckpoints', getAllConversationsWithCheckpoints);
 }

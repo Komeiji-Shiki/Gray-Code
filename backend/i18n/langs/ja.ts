@@ -664,6 +664,7 @@ description: "このスキルの機能と使用場面の簡単な説明"
             restoreCheckpointFailed: 'チェックポイントの復元に失敗しました',
             deleteCheckpointFailed: 'チェックポイントの削除に失敗しました',
             deleteAllCheckpointsFailed: 'すべてのチェックポイントの削除に失敗しました',
+            deleteCheckpointsBatchFailed: 'チェックポイントの一括削除に失敗しました',
             getConversationsWithCheckpointsFailed: 'チェックポイント付き会話の取得に失敗しました',
             
             openDiffPreviewFailed: 'diff プレビューを開くのに失敗しました',

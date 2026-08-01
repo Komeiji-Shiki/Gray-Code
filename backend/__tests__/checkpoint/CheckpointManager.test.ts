@@ -64,7 +64,8 @@ async function createCheckpointManager(
     workspaceRoot: string,
     storageRoot: string,
     checkpoints: CheckpointRecord[],
-    customIgnorePatterns: string[] = []
+    customIgnorePatterns: string[] = [],
+    multiConversation?: Record<string, CheckpointRecord[]>
 ): Promise<CheckpointManager> {
     (vscode.workspace as any).workspaceFolders = [
         {
@@ -86,7 +87,27 @@ async function createCheckpointManager(
     };
     (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
 
-    const metadata = { custom: { checkpoints: [...checkpoints] } };
+    // 单对话模式：所有读写共享同一 metadata 对象（兼容既有测试）
+    const sharedMetadata = { custom: { checkpoints: [...checkpoints] } };
+    // 多对话模式：按 conversationId 隔离存储，模拟真实 ConversationManager
+    const metadataByConversation = new Map<string, { custom: Record<string, unknown> }>();
+    if (multiConversation) {
+        for (const [id, cps] of Object.entries(multiConversation)) {
+            metadataByConversation.set(id, { custom: { checkpoints: [...cps] } });
+        }
+    }
+    const resolveMetadata = (conversationId: string): { custom: Record<string, unknown> } => {
+        if (multiConversation) {
+            let m = metadataByConversation.get(conversationId);
+            if (!m) {
+                m = { custom: {} };
+                metadataByConversation.set(conversationId, m);
+            }
+            return m;
+        }
+        return sharedMetadata;
+    };
+
     const settingsManager = {
         getCheckpointConfig: jest.fn().mockReturnValue({
             enabled: true,
@@ -103,17 +124,17 @@ async function createCheckpointManager(
     // 模拟真实 withMetadataWriteSerialized 链：并发调用串行执行，第二个 updater 基于第一个写回后的最新列表
     let metadataWriteChain: Promise<unknown> = Promise.resolve();
     const conversationManager = {
-        getMetadata: jest.fn().mockResolvedValue(metadata),
-        setCustomMetadata: jest.fn().mockImplementation(async (_conversationId: string, key: string, value: unknown) => {
-            (metadata.custom as Record<string, unknown>)[key] = value;
+        getMetadata: jest.fn().mockImplementation(async (conversationId: string) => resolveMetadata(conversationId)),
+        setCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string, value: unknown) => {
+            (resolveMetadata(conversationId).custom as Record<string, unknown>)[key] = value;
         }),
         updateCustomMetadata: jest.fn().mockImplementation(
-            (_conversationId: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
+            (conversationId: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
                 const run = metadataWriteChain.then(async () => {
-                    const current = (metadata.custom as Record<string, unknown>)[key];
+                    const current = (resolveMetadata(conversationId).custom as Record<string, unknown>)[key];
                     const next = await updater(current);
                     if (next !== current) {
-                        (metadata.custom as Record<string, unknown>)[key] = next;
+                        (resolveMetadata(conversationId).custom as Record<string, unknown>)[key] = next;
                     }
                     return next;
                 });
@@ -782,6 +803,146 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
             // base 独有文件已并入 target 备份目录，base 目录已删除
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-target', 'b.txt'))).resolves.toBe(true);
             await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-base'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('deleteCheckpointsBatch deletes selected checkpoints across conversations', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const convA = 'conv-batch-a';
+        const convB = 'conv-batch-b';
+        const cpsA: CheckpointRecord[] = [0, 1].map(i => makeRecord({
+            id: `a-${i}`, conversationId: convA, messageIndex: i, timestamp: 1000 + i
+        }));
+        const cpsB: CheckpointRecord[] = [0, 1].map(i => makeRecord({
+            id: `b-${i}`, conversationId: convB, messageIndex: i, timestamp: 2000 + i
+        }));
+
+        try {
+            for (const cp of [...cpsA, ...cpsB]) {
+                await writeFile(path.join(storageRoot, 'checkpoints', cp.backupDir), 'x.txt', 'x\n');
+            }
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [...cpsA, ...cpsB], [], {
+                [convA]: cpsA,
+                [convB]: cpsB
+            });
+
+            const results = await manager.deleteCheckpointsBatch([
+                { conversationId: convA, checkpointIds: ['a-1'] },
+                { conversationId: convB, checkpointIds: ['b-0', 'b-1'] }
+            ]);
+
+            expect(results).toHaveLength(2);
+            expect(results[0]).toEqual({ conversationId: convA, deletedIds: ['a-1'], rejectedIds: [], success: true });
+            expect(results[1]).toEqual({ conversationId: convB, deletedIds: ['b-0', 'b-1'], rejectedIds: [], success: true });
+
+            const listA = await manager.getCheckpoints(convA);
+            expect(listA.map(c => c.id)).toEqual(['a-0']);
+            const listB = await manager.getCheckpoints(convB);
+            expect(listB).toEqual([]);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'a-1'))).resolves.toBe(false);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'a-0'))).resolves.toBe(true);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('deleteCheckpointsBatch refuses base referenced by kept checkpoints', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-batch-refused';
+        const baseCp = makeRecord({ id: 'cp-base', conversationId, timestamp: 1000 });
+        const midCp = makeRecord({
+            id: 'cp-mid', conversationId, messageIndex: 1, timestamp: 2000,
+            type: 'incremental', baseCheckpointId: 'cp-base'
+        });
+        const tailCp = makeRecord({
+            id: 'cp-tail', conversationId, messageIndex: 2, timestamp: 3000,
+            type: 'incremental', baseCheckpointId: 'cp-mid'
+        });
+
+        try {
+            for (const cp of [baseCp, midCp, tailCp]) {
+                await writeFile(path.join(storageRoot, 'checkpoints', cp.backupDir), 'x.txt', 'x\n');
+            }
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [baseCp, midCp, tailCp], []);
+
+            // 只删 mid：被保留的 tail 引用为基快照，应拒绝
+            const refused = await manager.deleteCheckpointsBatch([
+                { conversationId, checkpointIds: ['cp-mid'] }
+            ]);
+            expect(refused[0]).toEqual({ conversationId, deletedIds: [], rejectedIds: ['cp-mid'], success: true });
+            const list1 = await manager.getCheckpoints(conversationId);
+            expect(list1.map(c => c.id)).toEqual(['cp-base', 'cp-mid', 'cp-tail']);
+
+            // 同时删 mid + tail（整条链）：mid 虽被 tail 引用，但 tail 也在删除集合内，应全部删除
+            const chained = await manager.deleteCheckpointsBatch([
+                { conversationId, checkpointIds: ['cp-mid', 'cp-tail'] }
+            ]);
+            expect(chained[0].deletedIds.sort()).toEqual(['cp-mid', 'cp-tail']);
+            expect(chained[0].rejectedIds).toEqual([]);
+            const list2 = await manager.getCheckpoints(conversationId);
+            expect(list2.map(c => c.id)).toEqual(['cp-base']);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-mid'))).resolves.toBe(false);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-tail'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('deleteCheckpointsBatch with empty checkpointIds deletes all in conversation', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-batch-all';
+        const cps: CheckpointRecord[] = [0, 1].map(i => makeRecord({
+            id: `cp-${i}`, conversationId, messageIndex: i, timestamp: 1000 + i
+        }));
+
+        try {
+            for (const cp of cps) {
+                await writeFile(path.join(storageRoot, 'checkpoints', cp.backupDir), 'x.txt', 'x\n');
+            }
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, cps, []);
+
+            const results = await manager.deleteCheckpointsBatch([
+                { conversationId, checkpointIds: [] }
+            ]);
+
+            expect(results[0].deletedIds.sort()).toEqual(['cp-0', 'cp-1']);
+            expect(results[0].rejectedIds).toEqual([]);
+            expect(await manager.getCheckpoints(conversationId)).toEqual([]);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-0'))).resolves.toBe(false);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-1'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('getCheckpoints withSize attaches backup dir sizes', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-with-size';
+        const cp = makeRecord({ id: 'cp-size', conversationId, timestamp: 1000 });
+
+        try {
+            // 5 字节文件
+            await writeFile(path.join(storageRoot, 'checkpoints', 'cp-size'), 'a.txt', 'hello');
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [cp], []);
+
+            const withSize = await manager.getCheckpoints(conversationId, { withSize: true });
+            expect(withSize).toHaveLength(1);
+            expect(withSize[0].size).toBe(5);
+            expect(withSize[0].id).toBe('cp-size');
+
+            // 不带 withSize 时保持原结构，无 size 字段
+            const plain = await manager.getCheckpoints(conversationId);
+            expect(plain[0].size).toBeUndefined();
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });

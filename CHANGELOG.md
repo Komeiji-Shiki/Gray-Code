@@ -1,9 +1,10 @@
 # Change Log
 
 
-## [Unreleased]
+## [1.3.0] - 2026-08-01
 
 ### Fixed
+  - 修复输入框 Ctrl+Z 撤销忽略粘贴内容：contenteditable 粘贴为强制纯文本走 `preventDefault` + 手动 Range 插入，操作不进浏览器原生 undo 栈，Ctrl+Z 会跳过刚粘贴的内容去撤销更早的操作（Shift+Enter 换行、插入 @路径文本同理）；现在粘贴 / 换行 / 插入 @路径文本改用 `document.execCommand('insertText'/'insertHTML')` 写入原生撤销栈——一次粘贴对应一个 undo 条目可整体撤销，同时保持纯文本语义与 lim-break BR + ZWSP 的既有 DOM 结构；`execCommand` 不可用时回退手动插入保证功能不回归，插入函数返回 `inputFired` 避免 execCommand 自动派发 input 事件后调用方重复提取节点，新增 14 个 vitest 用例
   - 修复 subagents 工具后台模式缺失（E3 F1.1 计划标记完成但实际未实现）：工具声明无 `background` 参数、handler 无后台分支，前端 backgroundTaskStore / BackgroundTaskBar / backgroundStatus 整套后台基建空转；现在按已确认设计补齐——`background: true` 时创建独立 AbortController（用户停止当前对话流不连带取消）、以 `background_subagent` 类型注册到 TaskManager、executor 启动后不 await、工具立即返回 `{ background: true, taskId, runId, agentName }`，executor settle 时注销任务并携带完整结果载荷（response/steps/runId/error），经现成 taskEvent 转发链路由前端混合回流（会话空闲立即发回执、正忙挂起补发）送达主模型
   - 修复代理非 chunked 流式解码仍损坏中文（PR #1 B1 补全）：非 chunked 消费点仍逐 TCP 包 `toString('utf8')`，被包边界切开的 UTF-8 多字节字符固化成 U+FFFD；现在与 chunked 一致走流式 `TextDecoder`，flush 移入非中止分支
   - 修复 glob globstar `**` 失效（PR #1 C4 补全）：GLOBSTAR 占位符正则匹配三个转义星号而 `**` 转义后是两个，`**/node_modules/**` 等规则永不跨目录命中；修正为匹配两个转义星号（PromptManager / fileTree 两处）
@@ -22,6 +23,7 @@
 
 ### Added
   - 新增 subagents 工具后台分支单元测试（`backend/__tests__/tools/subagentsTool.test.ts`，8 用例）：声明暴露 background 参数、后台调用立即返回 stub 且不 await、TaskManager 注册（background_subagent + 元数据）与注销载荷（response/steps/runId/error）、executor 失败/取消状态映射、父 abortSignal 已中止时后台任务仍启动（独立取消）、前台模式回归
+  - 新增存档点批量管理/清理：设置页「清理存档点」支持对话多选 + 全选 + 跨对话批量删除（顶部显示已选数量与磁盘占用合计）；对话可展开查看内部存档点列表（阶段/工具/备份类型/文件数/磁盘占用），支持存档点多选或单个删除；后端新增 `deleteCheckpointsBatch` 批量接口（沿用基快照引用保护，整条增量链同时选中时可一并删除，空 ID 列表 = 清空该对话），`getCheckpoints` 支持 `withSize` 返回每条存档点磁盘占用，前端 CheckpointRecord 类型补齐与后端一致的字段
 
 ## [1.2.9] - 2026-08-01
 

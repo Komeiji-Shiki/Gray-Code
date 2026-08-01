@@ -664,6 +664,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             restoreCheckpointFailed: 'Failed to restore checkpoint',
             deleteCheckpointFailed: 'Failed to delete checkpoint',
             deleteAllCheckpointsFailed: 'Failed to delete all checkpoints',
+            deleteCheckpointsBatchFailed: 'Failed to batch delete checkpoints',
             getConversationsWithCheckpointsFailed: 'Failed to get conversations with checkpoints',
             
             openDiffPreviewFailed: 'Failed to open diff preview',

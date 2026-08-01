@@ -665,6 +665,7 @@ description: "简要描述该技能的功能及使用场景"
             restoreCheckpointFailed: '恢复检查点失败',
             deleteCheckpointFailed: '删除检查点失败',
             deleteAllCheckpointsFailed: '删除所有检查点失败',
+            deleteCheckpointsBatchFailed: '批量删除检查点失败',
             getConversationsWithCheckpointsFailed: '获取对话检查点信息失败',
             
             openDiffPreviewFailed: '打开 diff 预览失败',

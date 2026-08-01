@@ -401,9 +401,8 @@ function handleKeydown(e: KeyboardEvent) {
 
   if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
-    if (insertLineBreakAtCaret(editor)) {
-      handleInput()
-    }
+    const br = insertLineBreakAtCaret(editor)
+    if (br.ok && !br.inputFired) handleInput()
     return
   }
 
@@ -415,9 +414,8 @@ function handleKeydown(e: KeyboardEvent) {
     }
 
     e.preventDefault()
-    if (insertLineBreakAtCaret(editor)) {
-      handleInput()
-    }
+    const br = insertLineBreakAtCaret(editor)
+    if (br.ok && !br.inputFired) handleInput()
     return
   }
 }
@@ -453,10 +451,12 @@ function handlePaste(e: ClipboardEvent) {
   const text = e.clipboardData?.getData('text/plain')
   if (text && editor) {
     // Force plain-text paste to avoid bringing rich-text styles (from web pages,
-    // docs, etc.) into contenteditable.
+    // docs, etc.) into contenteditable. execCommand('insertHTML') keeps the text
+    // plain while writing into the browser's native undo stack, so Ctrl+Z can
+    // undo the whole paste in one step.
     e.preventDefault()
-    insertPlainTextWithLineBreaksAtCaret(editor, text)
-    handleInput()
+    const result = insertPlainTextWithLineBreaksAtCaret(editor, text)
+    if (result.ok && !result.inputFired) handleInput()
 
     nextTick(() => {
       if (editor) {
@@ -581,8 +581,8 @@ function insertPathsAsAtText(files: { path: string; isDirectory: boolean }[]) {
     .join('')
 
   if (text) {
-    insertTextAtCaret(editorRef.value, text)
-    handleInput()
+    const result = insertTextAtCaret(editorRef.value, text)
+    if (result.ok && !result.inputFired) handleInput()
   }
 }
 
