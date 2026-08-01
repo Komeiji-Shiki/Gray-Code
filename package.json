@@ -271,24 +271,24 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run build",
+    "vscode:prepublish": "npm run build",
     "compile": "node esbuild.config.js",
     "typecheck": "tsc -p ./ --noEmit",
     "build:backend": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
-    "build:frontend": "cd frontend && pnpm run build",
-    "dev:frontend": "cd frontend && pnpm run dev:local",
-    "build": "node esbuild.config.js && cd frontend && pnpm run build",
+    "build:frontend": "npm --prefix frontend run build",
+    "dev:frontend": "npm --prefix frontend run dev:local",
+    "build": "node esbuild.config.js && npm --prefix frontend run build",
     "test": "jest --config jest.backend.config.js",
     "test:watch": "jest --config jest.backend.config.js --watch",
-    "test:coverage": "jest --config jest.backend.config.js --coverage"
+    "test:coverage": "jest --config jest.backend.config.js --coverage",
+    "test:frontend": "npm --prefix frontend test"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",
-    "fast-xml-parser": "^4.5.0",
+    "fast-xml-parser": "^5.10.1",
     "ignore": "^7.0.5",
     "nanoid": "^5.1.6",
-    "node-notifier": "^10.0.1",
     "tree-kill": "^1.2.2"
   },
   "devDependencies": {

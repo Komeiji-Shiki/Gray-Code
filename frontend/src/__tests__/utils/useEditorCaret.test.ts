@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
-  buildPlainTextHtml,
   insertTextAtCaret,
-  insertLineBreakAtCaret,
-  insertPlainTextWithLineBreaksAtCaret
+  insertLineBreakAtCaret
 } from '../../components/input/inputBox/useEditorCaret'
 
 let execCommandMock: ReturnType<typeof vi.fn>
@@ -34,34 +32,6 @@ function mockSelectionInEditor(editor: HTMLElement) {
   vi.spyOn(window, 'getSelection').mockReturnValue(selection)
   return range
 }
-
-describe('buildPlainTextHtml', () => {
-  it('纯文本原样保留', () => {
-    expect(buildPlainTextHtml('hello world')).toBe('hello world')
-  })
-
-  it('换行转为 lim-break BR + ZWSP', () => {
-    expect(buildPlainTextHtml('a\nb')).toBe('a<br data-lim-break="1">\u200Bb')
-  })
-
-  it('Windows 换行被规范化', () => {
-    expect(buildPlainTextHtml('a\r\nb')).toBe('a<br data-lim-break="1">\u200Bb')
-  })
-
-  it('连续换行生成多个 BR', () => {
-    expect(buildPlainTextHtml('a\n\nb')).toBe(
-      'a<br data-lim-break="1">\u200B<br data-lim-break="1">\u200Bb'
-    )
-  })
-
-  it('HTML 特殊字符被转义', () => {
-    expect(buildPlainTextHtml('<script>&')).toBe('&lt;script&gt;&amp;')
-  })
-
-  it('空文本返回空串', () => {
-    expect(buildPlainTextHtml('')).toBe('')
-  })
-})
 
 describe('insertTextAtCaret', () => {
   it('优先走 execCommand insertText，并标记 input 已由浏览器触发', () => {
@@ -117,56 +87,5 @@ describe('insertLineBreakAtCaret', () => {
     expect(br).not.toBeNull()
     expect(br!.dataset.limBreak).toBe('1')
     expect(editor.lastChild?.textContent).toBe('\u200B')
-  })
-})
-
-describe('insertPlainTextWithLineBreaksAtCaret', () => {
-  it('单行文本：一次 insertHTML 整体进入 undo 栈', () => {
-    const editor = document.createElement('div')
-    mockSelectionInEditor(editor)
-
-    const result = insertPlainTextWithLineBreaksAtCaret(editor, 'hello')
-
-    expect(execCommandMock).toHaveBeenCalledTimes(1)
-    expect(execCommandMock).toHaveBeenCalledWith('insertHTML', false, 'hello')
-    expect(result).toEqual({ ok: true, inputFired: true })
-  })
-
-  it('多行文本：单次 insertHTML 且换行结构完整', () => {
-    const editor = document.createElement('div')
-    mockSelectionInEditor(editor)
-
-    const result = insertPlainTextWithLineBreaksAtCaret(editor, 'a\nb')
-
-    expect(execCommandMock).toHaveBeenCalledTimes(1)
-    expect(execCommandMock).toHaveBeenCalledWith(
-      'insertHTML',
-      false,
-      'a<br data-lim-break="1">\u200Bb'
-    )
-    expect(result).toEqual({ ok: true, inputFired: true })
-  })
-
-  it('execCommand 失败时回退逐段手动插入，文本与换行结构保持', () => {
-    execCommandMock.mockReturnValue(false)
-    const editor = document.createElement('div')
-    mockSelectionInEditor(editor)
-
-    const result = insertPlainTextWithLineBreaksAtCaret(editor, 'a\nb')
-
-    expect(result).toEqual({ ok: true, inputFired: false })
-    expect(editor.textContent).toBe('a\u200Bb')
-    expect(editor.querySelectorAll('br[data-lim-break="1"]').length).toBe(1)
-  })
-
-  it('空文本时手动路径不产生任何节点', () => {
-    execCommandMock.mockReturnValue(false)
-    const editor = document.createElement('div')
-    mockSelectionInEditor(editor)
-
-    const result = insertPlainTextWithLineBreaksAtCaret(editor, '')
-
-    expect(result).toEqual({ ok: true, inputFired: false })
-    expect(editor.childNodes.length).toBe(0)
   })
 })

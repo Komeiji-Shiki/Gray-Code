@@ -4,13 +4,31 @@
 ## [Unreleased]
 
 ### Fixed
+  - 修复 README 与实际工程能力不一致：更新 npm 构建、Node.js 版本、工具参数、模板变量、设置导出边界、测试命令和项目目录说明
+  - 修复 npm 工作流残留 pnpm 调用与根锁文件过期：`vscode:prepublish`、前端构建和开发脚本统一通过 npm 执行，重新生成与 GrayCode 1.3.0 当前依赖一致的 `package-lock.json`
+  - 修复 SubAgent 对话延续入口不可达：`subagents` 工具正式暴露并在前台、后台、General Worker 与自定义代理路径中透传 `continueFromRunId`
+  - 修复 Sub-Agent 可获得永久记忆工具：所有子代理统一排除 7 个 memory 工具，工具清单描述和执行期允许列表使用同一隔离规则
+  - 再次修复输入框 Ctrl+Z 撤销忽略粘贴内容：此前文字粘贴在 `paste` 回调中 `preventDefault` 后通过 `execCommand('insertHTML')` 模拟插入，虽然单独执行命令可进入撤销栈，但没有保留 Chromium 原生 `insertFromPaste` 事务，实际 webview 中仍可能跳过粘贴内容；现在仅在本次粘贴默认动作期间把编辑器临时切换为 `contenteditable="plaintext-only"`，由 Chromium 原生完成纯文本粘贴并记录撤销项，事件结束后恢复普通编辑模式，不影响 Shift+Enter 自定义换行与上下文徽章；文件粘贴仍按附件处理，新增组件级回归测试覆盖文字与文件两条分支
   - 修复用量索引文件被识别为假对话：`FileUsageIndexStore` 把索引写到 `{conversationId}.usage.json`（与历史文件同级），而 `listConversations` 只排除了 `.meta.json`，导致每个对话的 `.usage.json` 都被识别成假对话 ID（形如 `xxx.usage`）显示在历史列表，点入报 "Metadata file is missing"；现在文件识别同样排除 `.usage.json`，只返回真实对话 ID（legacy `{id}.json` 与 segmented `{id}/` 目录），新增回归测试锁定该行为
+  - 修复 XML 工具调用解析安全（F-01）：`fast-xml-parser` 升级到 5.10.1 后为解析器增加 `processEntities: false` 与 `maxNestedTags: 100`，工具协议不再接受 DOCTYPE 自定义实体与超深嵌套输入；协议层额外过滤 `__proto__`/`constructor`/`prototype` 危险键名防原型污染，新增安全输入回归测试（数字字符串保持、实体不展开、深嵌套安全失败、危险键名拒绝）
+  - 修复批量工具部分成功时 LLM 只看得到顶层错误（F-02）：`serializeToolResultForLLM()` 错误分支不再丢弃 `data`，`data.results` 混合数组逐项格式化（避免 JSON 二次转义）、`data.message` 与批量统计（successCount/failCount/totalCount）一并输出，`data.output` 与取消标记保持原有格式；新增共享 formatter 回归测试覆盖 10 项场景
+  - 修复 XML 工具指南示例过时（F-03）：`read_file` 的 `paths` 与 `write_file` 的 `files` 旧示例改为真实 schema（单文件 `path` / 批量 `files: [{ path, startLine?, endLine? }]` / 顶层 `path`+`content`），XML/JSON 测试夹具同步更新为真实参数形状
+  - 修复 `SubAgentRegistry.isEnabled()` 把未注册代理误判为启用（F-05）：未注册代理现在返回 false
+  - 修复注册的自定义 Sub-Agent executor 从未被调用（F-08）：Registry 查询不再隐式创建并缓存默认 executor，正式工具调用路径优先使用显式注册的 executor；executor 请求新增 `conversationId`/`conversationStore`/`promptModeSnapshot` 动态上下文并在每次调用透传
+  - 修复 Sub-Agent 跨对话接续泄漏（F-06）：`continueFromRunId` 只允许接续当前主对话所属的 run，归属不一致时拒绝且错误信息不泄漏旧对话 ID 或内容
+  - 修复重载/内存淘汰后已持久化 run 无法接续（F-09）：接续时内存快照未命中会只加载当前对话的持久化记录，恢复后仍执行归属与终态校验
+  - 修复全部配置代理禁用时 `subagents` 工具被整体隐藏（F-10）：`ChannelManager`/`ToolDeclarationResolver` 统一使用「配置代理计数 > 0 或 General Worker 启用」的 `hasAvailableSubAgent()` 判断
+  - 修复 Windows 通知依赖链（F-07）：移除已停更且有生产审计告警的 `node-notifier`，通知适配器改为 VS Code 原生 `showInformationMessage`（操作按钮打开聊天、不阻塞工具调用），esbuild 不再复制原生包，`npm audit --omit=dev` 归零
+  - 修复 `.vscode/launch.json` 的 `Extension Tests` 指向不存在的测试入口：替换为可运行的 Jest 调试配置
 
 ### Added
+  - 永久记忆设置新增默认开启的总开关；关闭后不再向系统提示词注入 `{{$MEMORY}}` 内容，也不会向 AI 暴露 7 个 memory 工具，已有记忆、运行参数和自定义提示词保持不变并可继续在设置页管理，重新开启后恢复使用
+  - `read_file` 新增单次批量读取：保留 `path/startLine/endLine` 单文件调用，新增 `files: [{ path, startLine?, endLine? }]`，每个文本文件可独立指定行范围，结果按输入顺序汇总并保留部分失败详情；前端工具摘要与结果面板同步支持批量参数
   - 用量统计新增缓存维度：此前 Anthropic 的缓存写入（cache_creation_input_tokens）与缓存命中（cache_read_input_tokens）在 formatter 被合并成 cachedContentTokenCount 后明细即丢失，聚合器也从未读取该字段，统计里完全没有缓存信息；现在 usageMetadata 拆分保存 cacheCreationTokenCount / cacheReadTokenCount（Anthropic 分别映射写入与命中，OpenAI cached_tokens / Gemini cachedContentTokenCount 映射命中），流式累加器同步合并；aggregateUsageStats 总览 / 按对话 / 按模型 / 按天各维度新增缓存写入与缓存命中两个桶——缓存是 promptTokenCount 的细分（prompt 已含缓存部分），不重复计入 totalTokens；用量统计页总览卡片与明细行新增「缓存写入 / 缓存命中」展示（有值才显示），i18n 三语补齐，新增聚合与 formatter 断言测试
   - 用量统计兼容旧数据缓存记录：旧版本只存缓存合并值（cachedContentTokenCount）无法拆分写入/命中，升级前的对话统计时近似全部记为缓存命中（OpenAI/Gemini 语义下该值本就是命中，Anthropic 实际以命中为主，偏差最小），避免旧对话的缓存贡献在统计中消失
   - 用量统计性能优化：聚合由串行逐个读取改为限流并发（12 路）；新增轻量读取接口 getMessagesRaw 绕过显示规范化与逐条深拷贝，只读统计所需的原始消息；handler 层新增进程内 5 分钟 TTL 结果缓存，短时间内重复打开统计页直接命中缓存，手动刷新（force）强制重算
   - 用量统计性能优化新增消息级增量索引：全量扫描历史文件的开销随对话数增长（每次统计都要解析全部历史 JSON），现在消息落盘时同步维护每对话的用量索引（{conversationId}.usage.json，只存消息级 token 明细，不存消息内容），统计时按历史文件与索引文件的 mtime 判定新鲜度——索引最新则直接聚合索引（完全不读历史文件），缺失/过期/损坏则回退读取历史并重建写回（一次性成本）；任何历史写路径（编辑/删除/回滚/清空/导入/分支）都会更新历史 mtime 从而自动触发索引重建，无需逐一追踪写入口；删除对话时索引同步清理；索引写失败静默降级，不影响对话保存与统计正确性；新增索引构建/命中/重建/损坏回退/写失败降级测试
+  - 新增本轮安全与行为修复的回归测试：`toolResponseFormatter.test.ts`（部分成功序列化）、`subagentRegistry.test.ts`（isEnabled 与 executor 语义）、`subagentExecutorContinuation.test.ts`（跨对话拒绝与持久化恢复）、`windowsToastAdapter.test.ts`（VS Code 原生通知适配器）
 
 ## [1.3.0] - 2026-08-01
 

@@ -8,10 +8,8 @@ import type {
     SubAgentType,
     SubAgentConfig,
     SubAgentRegistryEntry,
-    SubAgentExecutor,
-    SubAgentExecutorContext
+    SubAgentExecutor
 } from './types';
-import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 
 /**
  * 子代理注册器
@@ -62,20 +60,12 @@ export class SubAgentRegistry {
      * @returns 代理注册项，不存在则返回 undefined
      */
     get(type: SubAgentType): SubAgentRegistryEntry | undefined {
-        const entry = this.agents.get(type);
-        if (!entry) {
-            return undefined;
-        }
-        
-        // 如果没有提供执行器，创建默认执行器
-        if (!entry.executor) {
-            const context = getSubAgentExecutorContext();
-            if (context) {
-                entry.executor = createDefaultExecutor(entry.config, context);
-            }
-        }
-        
-        return entry;
+        // 修改原因：以前 get() 会隐式创建默认 executor 并写回 Registry，
+        // 导致「显式注册的自定义 executor」和「临时创建的默认 executor」无法区分，
+        // 且缓存的默认 executor 缺少每次调用的动态会话上下文（F-08）。
+        // 修改方式：查询方法只返回注册项本身；默认 executor 由正式工具调用路径
+        // 按每次请求动态创建。
+        return this.agents.get(type);
     }
     
     /**
@@ -85,8 +75,8 @@ export class SubAgentRegistry {
      * @returns 执行器，不存在则返回 undefined
      */
     getExecutor(type: SubAgentType): SubAgentExecutor | undefined {
-        const entry = this.get(type);
-        return entry?.executor;
+        // 只返回显式注册的 executor，不隐式创建默认 executor（F-08）
+        return this.agents.get(type)?.executor;
     }
     
     /**
@@ -139,15 +129,9 @@ export class SubAgentRegistry {
      * @returns 代理注册项，不存在则返回 undefined
      */
     getByName(name: string): SubAgentRegistryEntry | undefined {
+        // 同 get()：不再隐式创建默认 executor（F-08）
         for (const entry of this.agents.values()) {
             if (entry.config.name === name && entry.config.enabled !== false) {
-                // 如果没有提供执行器，创建默认执行器
-                if (!entry.executor) {
-                    const context = getSubAgentExecutorContext();
-                    if (context) {
-                        entry.executor = createDefaultExecutor(entry.config, context);
-                    }
-                }
                 return entry;
             }
         }
@@ -171,8 +155,10 @@ export class SubAgentRegistry {
      * @returns 是否启用
      */
     isEnabled(type: SubAgentType): boolean {
+        // 修改原因：未注册代理的 entry 为 undefined 时，
+        // `undefined !== false` 恒为 true，把不存在的代理误判为已启用（F-05）。
         const entry = this.agents.get(type);
-        return entry?.config.enabled !== false;
+        return entry !== undefined && entry.config.enabled !== false;
     }
     
     /**

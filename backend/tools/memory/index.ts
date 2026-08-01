@@ -21,6 +21,8 @@ export { registerMemoryZoom } from './memory_zoom';
 export { registerMemoryForget } from './memory_forget';
 export { registerMemoryConfig } from './memory_config';
 
+export { MEMORY_TOOL_NAMES } from '../../modules/memory';
+
 export function getMemoryToolRegistrations(): ToolRegistration[] {
     return [
         registerMemoryWake,

@@ -25,6 +25,8 @@ export {
     LOG_REC,
     TREE_REC,
     RAW_MAX,
+    MEMORY_TOOL_NAMES,
+    isMemoryToolName,
 } from './types';
 
 // ─── 单例访问器 ──────────────────────────────────

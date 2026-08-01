@@ -11,24 +11,28 @@ registerTool('read_file', {
   label: '读取文件',
   icon: 'codicon-file-text',
   
-  // 描述生成器 - 显示文件路径和行范围
+    // 描述生成器 - 显示文件路径和行范围
   descriptionFormatter: (args) => {
-    const path = typeof args.path === 'string' ? args.path : null
-    if (!path) {
-      return '?'
+    const formatRequest = (request: Record<string, unknown>): string => {
+      const path = typeof request.path === 'string' ? request.path : '?'
+      const startLine = typeof request.startLine === 'number' ? request.startLine : undefined
+      const endLine = typeof request.endLine === 'number' ? request.endLine : undefined
+      if (startLine !== undefined && endLine !== undefined) return `${path} [L${startLine}-${endLine}]`
+      if (startLine !== undefined) return `${path} [L${startLine}+]`
+      if (endLine !== undefined) return `${path} [L1-${endLine}]`
+      return path
     }
 
-    let desc = path
-    const startLine = typeof args.startLine === 'number' ? args.startLine : undefined
-    const endLine = typeof args.endLine === 'number' ? args.endLine : undefined
-    if (startLine !== undefined && endLine !== undefined) {
-      desc += ` [L${startLine}-${endLine}]`
-    } else if (startLine !== undefined) {
-      desc += ` [L${startLine}+]`
-    } else if (endLine !== undefined) {
-      desc += ` [L1-${endLine}]`
+    if (Array.isArray(args.files)) {
+      const requests = args.files.filter((item): item is Record<string, unknown> => (
+        typeof item === 'object' && item !== null && !Array.isArray(item)
+      ))
+      if (requests.length === 0) return '?'
+      const first = formatRequest(requests[0])
+      return requests.length === 1 ? first : `${first} +${requests.length - 1}`
     }
-    return desc
+
+    return formatRequest(args)
   },
   
   // 使用自定义组件显示内容
