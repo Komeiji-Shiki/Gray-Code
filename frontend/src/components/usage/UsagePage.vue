@@ -56,12 +56,13 @@ function rangeToStartTime(range: UsageTimeRange): number | undefined {
 
 // ==================== 数据加载 ====================
 
-async function loadStats() {
+async function loadStats(force = false) {
   isLoading.value = true
   loadError.value = ''
   try {
     const startTime = rangeToStartTime(activeRange.value)
-    const query = startTime !== undefined ? { startTime } : {}
+    const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
+    if (force) query.force = true
     stats.value = await sendToExtension<UsageStatsResult>('usage.getStats', query)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : String(error)
@@ -71,7 +72,7 @@ async function loadStats() {
 }
 
 // 切换时间范围时重新聚合
-watch(activeRange, loadStats)
+watch(activeRange, () => loadStats())
 
 // 页面保活（v-show 切换）后，重新进入时自动刷新
 watch(() => settingsStore.currentView, (view) => {
@@ -249,7 +250,7 @@ const tabs = computed(() => ([
     <div class="page-header">
       <h3>{{ t('components.usage.title') }}</h3>
       <div class="header-actions">
-        <button class="header-btn" :title="t('components.usage.refresh')" :disabled="isLoading" @click="loadStats">
+        <button class="header-btn" :title="t('components.usage.refresh')" :disabled="isLoading" @click="loadStats(true)">
           <i class="codicon codicon-refresh"></i>
         </button>
         <button class="header-btn" :title="t('components.usage.backToChat')" @click="settingsStore.showChat">
@@ -282,7 +283,7 @@ const tabs = computed(() => ([
       <div v-else-if="loadError" class="state-hint is-error">
         <i class="codicon codicon-error"></i>
         <span>{{ t('components.usage.loadFailed') }}</span>
-        <button class="retry-btn" @click="loadStats">{{ t('components.usage.retry') }}</button>
+        <button class="retry-btn" @click="loadStats()">{{ t('components.usage.retry') }}</button>
       </div>
 
       <!-- 空数据 -->
@@ -310,6 +311,14 @@ const tabs = computed(() => ([
             <div class="breakdown-item">
               <span class="breakdown-value">{{ formatTokens(stats.totals.thoughtsTokens) }}</span>
               <span class="breakdown-label">{{ t('components.usage.thoughtsTokens') }}</span>
+            </div>
+            <div v-if="stats.totals.cacheCreationTokens > 0" class="breakdown-item">
+              <span class="breakdown-value">{{ formatTokens(stats.totals.cacheCreationTokens) }}</span>
+              <span class="breakdown-label">{{ t('components.usage.cacheCreationTokens') }}</span>
+            </div>
+            <div v-if="stats.totals.cacheReadTokens > 0" class="breakdown-item">
+              <span class="breakdown-value">{{ formatTokens(stats.totals.cacheReadTokens) }}</span>
+              <span class="breakdown-label">{{ t('components.usage.cacheReadTokens') }}</span>
             </div>
             <div class="breakdown-item">
               <span class="breakdown-value">{{ stats.totals.conversations }}</span>
@@ -375,6 +384,8 @@ const tabs = computed(() => ([
               <span>{{ t('components.usage.promptTokens') }} {{ formatTokens(row.promptTokens) }}</span>
               <span>{{ t('components.usage.candidatesTokens') }} {{ formatTokens(row.candidatesTokens) }}</span>
               <span v-if="row.thoughtsTokens > 0">{{ t('components.usage.thoughtsTokens') }} {{ formatTokens(row.thoughtsTokens) }}</span>
+              <span v-if="row.cacheCreationTokens > 0">{{ t('components.usage.cacheCreationTokens') }} {{ formatTokens(row.cacheCreationTokens) }}</span>
+              <span v-if="row.cacheReadTokens > 0">{{ t('components.usage.cacheReadTokens') }} {{ formatTokens(row.cacheReadTokens) }}</span>
               <span>{{ t('components.usage.modelMessages') }} {{ row.modelMessages }}</span>
             </div>
 

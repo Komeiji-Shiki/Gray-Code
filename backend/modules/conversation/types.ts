@@ -292,6 +292,12 @@ export interface UsageMetadata {
     
     /** 缓存内容的 token 数量（写入缓存 + 命中缓存） */
     cachedContentTokenCount?: number;
+
+    /** 缓存写入的 token 数量（Anthropic cache_creation_input_tokens） */
+    cacheCreationTokenCount?: number;
+
+    /** 缓存命中的 token 数量（Anthropic cache_read_input_tokens / OpenAI cached_tokens / Gemini cachedContentTokenCount） */
+    cacheReadTokenCount?: number;
     
     /** 思考部分的 token 数量 */
     thoughtsTokenCount?: number;

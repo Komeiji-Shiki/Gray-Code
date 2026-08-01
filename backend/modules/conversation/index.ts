@@ -9,6 +9,7 @@
  */
 
 export { ConversationManager } from './ConversationManager';
+export { FileUsageIndexStore } from './UsageIndexStore';
 export { createConversationModule } from './register';
 export {
     IStorageAdapter,

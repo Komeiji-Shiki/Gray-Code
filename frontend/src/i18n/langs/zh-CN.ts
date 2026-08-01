@@ -227,6 +227,8 @@ const zhCN = {
             promptTokens: '输入',
             candidatesTokens: '输出',
             thoughtsTokens: '思考',
+            cacheCreationTokens: '缓存写入',
+            cacheReadTokens: '缓存命中',
             conversations: '对话数',
             modelMessages: '回复数',
             byConversation: '按对话',

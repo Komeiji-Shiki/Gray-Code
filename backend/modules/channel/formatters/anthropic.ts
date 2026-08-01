@@ -979,6 +979,8 @@ export class AnthropicFormatter extends BaseFormatter {
             candidatesTokenCount: candidatesTokens > 0 ? candidatesTokens : (outputTokens > 0 ? outputTokens : undefined),
             totalTokenCount: hasInputSideTokens ? (promptTotal + outputTokens || undefined) : undefined,
             ...(thinkingTokens > 0 ? { thoughtsTokenCount: thinkingTokens } : {}),
+            ...(cacheCreation > 0 ? { cacheCreationTokenCount: cacheCreation } : {}),
+            ...(cacheRead > 0 ? { cacheReadTokenCount: cacheRead } : {}),
             ...(cachedTotal > 0 ? { cachedContentTokenCount: cachedTotal } : {})
         };
     }

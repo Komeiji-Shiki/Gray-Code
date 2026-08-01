@@ -226,6 +226,8 @@ const ja: LanguageMessages = {
             promptTokens: '入力',
             candidatesTokens: '出力',
             thoughtsTokens: '思考',
+            cacheCreationTokens: 'キャッシュ書き込み',
+            cacheReadTokens: 'キャッシュヒット',
             conversations: '会話数',
             modelMessages: '応答数',
             byConversation: '会話別',

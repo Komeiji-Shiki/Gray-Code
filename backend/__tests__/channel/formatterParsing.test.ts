@@ -56,6 +56,7 @@ describe('OpenAIFormatter.parseResponse', () => {
             candidatesTokenCount: 20, // completion - reasoning
             totalTokenCount: 130,
             thoughtsTokenCount: 10,
+            cacheReadTokenCount: 40,
             cachedContentTokenCount: 40
         });
     });
@@ -224,6 +225,8 @@ describe('AnthropicFormatter.parseResponse', () => {
             promptTokenCount: 100,
             candidatesTokenCount: 20,
             totalTokenCount: 120,
+            cacheCreationTokenCount: 30,
+            cacheReadTokenCount: 60,
             cachedContentTokenCount: 90
         });
     });
