@@ -7,6 +7,7 @@
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
 import { ref, onMounted } from 'vue'
+import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
@@ -42,6 +43,7 @@ const DEFAULT_SYSTEM_PROMPT = [
 const isLoading = ref(true)
 const isSaving = ref(false)
 const statusMessage = ref('')
+const enabled = ref(true)
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
 const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
@@ -72,6 +74,7 @@ async function loadConfig() {
   try {
     const config = await sendToExtension<any>('getMemoryConfig', {})
     if (config) {
+      if (typeof config.enabled === 'boolean') enabled.value = config.enabled
       if (typeof config.systemPrompt === 'string' && config.systemPrompt.trim()) {
         systemPrompt.value = config.systemPrompt
       }
@@ -148,6 +151,7 @@ async function saveConfig() {
     const promptToSave = systemPrompt.value === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt.value
     await sendToExtension('updateMemoryConfig', {
       config: {
+        enabled: enabled.value,
         systemPrompt: promptToSave,
         wakeLines: wakeLines.value,
         entryChars: entryChars.value,
@@ -166,6 +170,7 @@ async function saveConfig() {
 
 // 重置为默认
 function resetToDefault() {
+  enabled.value = true
   systemPrompt.value = DEFAULT_SYSTEM_PROMPT
   wakeLines.value = 96
   entryChars.value = 280
@@ -187,6 +192,19 @@ onMounted(() => {
     </div>
 
     <div v-else class="settings-form">
+      <!-- 长期记忆总开关 -->
+      <div class="section memory-toggle-section">
+        <CustomCheckbox
+          v-model="enabled"
+          :label="t('components.settings.settingsPanel.memory.enabled.label')"
+          :hint="t('components.settings.settingsPanel.memory.enabled.description')"
+        />
+        <p v-if="!enabled" class="disabled-notice">
+          <i class="codicon codicon-info"></i>
+          {{ t('components.settings.settingsPanel.memory.enabled.disabledNotice') }}
+        </p>
+      </div>
+
       <!-- 自定义提示词 -->
       <div class="form-group">
         <label class="group-label">
@@ -200,6 +218,7 @@ onMounted(() => {
           v-model="systemPrompt"
           class="form-textarea"
           rows="16"
+          :disabled="!enabled"
         ></textarea>
       </div>
 
@@ -222,7 +241,7 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.wakeLines.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="wakeLines" min="1" max="500" class="form-input-number" />
+              <input type="number" v-model.number="wakeLines" min="1" max="500" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.wakeLines.unit') }}</span>
             </div>
           </div>
@@ -234,7 +253,7 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" />
+              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
             </div>
           </div>
@@ -246,7 +265,7 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.partChars.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="partChars" min="100" max="100000" step="100" class="form-input-number" />
+              <input type="number" v-model.number="partChars" min="100" max="100000" step="100" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partChars.unit') }}</span>
             </div>
           </div>
@@ -258,7 +277,7 @@ onMounted(() => {
               {{ t('components.settings.settingsPanel.memory.runtime.partLines.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="partLines" min="10" max="2000" step="10" class="form-input-number" />
+              <input type="number" v-model.number="partLines" min="10" max="2000" step="10" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partLines.unit') }}</span>
             </div>
           </div>
@@ -402,6 +421,36 @@ onMounted(() => {
 .form-textarea:focus {
   outline: none;
   border-color: var(--vscode-focusBorder);
+}
+
+.form-textarea:disabled,
+.form-input-number:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-toggle-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.disabled-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-textBlockQuote-background);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.disabled-notice i {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
 /* 分区 */

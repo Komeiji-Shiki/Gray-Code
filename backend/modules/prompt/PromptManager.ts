@@ -237,7 +237,10 @@ export class PromptManager {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         const prefix = promptConfig?.customPrefix || ''
         const suffix = promptConfig?.customSuffix || ''
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}`
+        const memoryConfig = settingsManager?.getMemoryConfig?.()
+        const memoryEnabled = memoryConfig?.enabled !== false
+        const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::memory=${memoryEnabled}::${memoryPrompt}`
     }
     
     /**
@@ -602,8 +605,10 @@ export class PromptManager {
      */
     private generateMemorySection(): string {
         const settingsManager = getGlobalSettingsManager();
-        const toolsConfig = settingsManager?.getToolsConfig();
-        const memoryConfig = toolsConfig?.memory as Record<string, unknown> | undefined;
+        const memoryConfig = settingsManager?.getMemoryConfig?.();
+        if (memoryConfig?.enabled === false) {
+            return '';
+        }
         const userPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt.trim() : '';
 
         if (userPrompt) {
@@ -666,6 +671,7 @@ export class PromptManager {
             'DIAGNOSTICS': '',
             'PINNED_FILES': '',
             'SKILLS': '',
+            'MEMORY': '',
             'TOOLS': '{{$TOOLS}}',
             'MCP_TOOLS': '{{$MCP_TOOLS}}'
         }
@@ -674,6 +680,9 @@ export class PromptManager {
         }
         if (referencedKeys.has('CONTEXT_BADGE_FORMAT')) {
             modules['CONTEXT_BADGE_FORMAT'] = this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection())
+        }
+        if (referencedKeys.has('MEMORY')) {
+            modules['MEMORY'] = this.generateMemorySection()
         }
         Object.assign(modules, this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys))
 

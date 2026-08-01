@@ -141,6 +141,25 @@ export interface SubAgentRequest {
      * 如果仍在运行中则拒绝延续。
      */
     continueFromRunId?: string;
+
+    /**
+     * 当前主对话 ID（每次工具调用由 handler 填充）。
+     *
+     * 修改原因：subagents 工具每次调用都携带当前会话上下文，默认 executor
+     * 用它做 run 持久化归属和跨对话接续校验（F-06/F-09），自定义 executor
+     * 也可以据此遵守会话边界。
+     * 修改方式：request 字段优先于创建 executor 时的静态 context。
+     */
+    conversationId?: string;
+
+    /** 对话元数据存储（当前调用携带，接续时只加载当前对话的持久化 run 快照） */
+    conversationStore?: {
+        getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
+        setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    };
+
+    /** 父请求继承的提示词模式快照（当前调用携带） */
+    promptModeSnapshot?: ResolvedPromptModeSnapshot;
 }
 
 /**

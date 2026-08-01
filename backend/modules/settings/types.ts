@@ -197,6 +197,13 @@ export interface HistorySearchToolConfig {
  */
 export interface MemoryToolConfig {
     /**
+     * 是否启用长期记忆系统。
+     *
+     * 关闭后不注入记忆提示词，也不向模型提供记忆工具；已有记忆数据保持不变。
+     */
+    enabled?: boolean;
+
+    /**
      * 自定义记忆系统提示词。
      *
      * 如果设置，将替换内置的 {{$MEMORY}} 模板变量内容。
@@ -236,6 +243,7 @@ export interface MemoryToolConfig {
  * 默认 Memory 工具配置
  */
 export const DEFAULT_MEMORY_TOOL_CONFIG: MemoryToolConfig = {
+    enabled: true,
     // systemPrompt 为空时，PromptManager 使用内置默认值
     wakeLines: 96,
     entryChars: 280,

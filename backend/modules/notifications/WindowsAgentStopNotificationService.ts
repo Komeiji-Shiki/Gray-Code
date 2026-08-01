@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { t } from '../../i18n'
 import type { SettingsManager } from '../settings/SettingsManager'
-import { NodeNotifierWindowsToastAdapter } from './WindowsToastAdapter'
+import { VSCodeNotificationAdapter } from './WindowsToastAdapter'
 import { renderWindowsAgentStopTemplate } from './templateRenderer'
 import { deriveWindowsAgentStopWindowTitle } from './windowTitle'
 import type {
@@ -115,7 +115,7 @@ export class WindowsAgentStopNotificationService {
   private windowStateDisposable?: { dispose: () => void }
 
   constructor(options: WindowsAgentStopNotificationServiceOptions) {
-    this.adapter = options.adapter ?? new NodeNotifierWindowsToastAdapter()
+    this.adapter = options.adapter ?? new VSCodeNotificationAdapter()
     this.platform = options.platform ?? process.platform
     this.getWindowState = options.getWindowState ?? (() => vscode.window.state)
     this.onDidChangeWindowState = options.onDidChangeWindowState ?? vscode.window.onDidChangeWindowState

@@ -71,7 +71,7 @@ function flushMicrotasks(): Promise<void> {
 describe('SubAgents 工具后台分支', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({ config: TEST_CONFIG, executor: {} });
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({ config: TEST_CONFIG, executor: undefined });
         // 声明生成需要非空配置列表，否则 description 走「未配置」短分支
         (subAgentRegistry.getAllConfigs as jest.Mock).mockReturnValue([TEST_CONFIG]);
     });
@@ -249,5 +249,32 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.unregisterTask).not.toHaveBeenCalled();
         expect(result.success).toBe(true);
         expect(result.data.background).toBeUndefined();
+    });
+
+    it('显式注册的自定义 executor 被正式调用路径使用并收到会话上下文（F-08）', async () => {
+        const customExecutor = jest.fn(async (request: any) => ({
+            success: true,
+            response: 'custom result',
+            steps: 1,
+            runId: 'subagent_run_tool_abc',
+            cancelled: false
+        }));
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({ config: TEST_CONFIG, executor: customExecutor });
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            { toolId: 'tool_abc', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        // 自定义 executor 真正被调用，默认 executor 不再被创建
+        expect(customExecutor).toHaveBeenCalledTimes(1);
+        expect(createDefaultExecutor).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+
+        // 自定义 executor 收到本次调用的动态会话上下文
+        const requestArg = customExecutor.mock.calls[0][0];
+        expect(requestArg.conversationId).toBe('conv_1');
+        expect(requestArg.agentType).toBe('tester');
     });
 });

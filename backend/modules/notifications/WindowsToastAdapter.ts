@@ -2,172 +2,70 @@ import * as vscode from 'vscode'
 import type { WindowsToastAdapter, WindowsToastRequest, WindowsToastShowResult } from './types'
 import { Logger } from '../../core/logger'
 
-const log = Logger.get('WindowsToastAdapter')
+const log = Logger.get('VSCodeNotificationAdapter')
 
-const DEFAULT_VSCODE_WINDOWS_APP_ID = 'Microsoft.VisualStudioCode'
-
-function resolveVSCodeWindowsToastAppId(): string {
-  const appName = typeof vscode.env.appName === 'string' ? vscode.env.appName.trim() : ''
-  const uriScheme = typeof vscode.env.uriScheme === 'string' ? vscode.env.uriScheme.trim().toLowerCase() : ''
-
-  if (uriScheme === 'vscode-insiders' || /insiders/i.test(appName)) {
-    return 'Microsoft.VisualStudioCode.Insiders'
-  }
-
-  return DEFAULT_VSCODE_WINDOWS_APP_ID
-}
-
-type WindowsToasterLike = {
-  notify: (
-    options: Record<string, unknown>,
-    callback?: (error: Error | null, response?: string, metadata?: unknown) => void
-  ) => void
-  once: (eventName: string, listener: (...args: any[]) => void) => void
-  removeListener: (eventName: string, listener: (...args: any[]) => void) => void
-}
-
-export type WindowsToasterFactory = () => WindowsToasterLike
-
-function defaultCreateWindowsToaster(): WindowsToasterLike {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const notifier = require('node-notifier')
-  const WindowsToaster = notifier?.WindowsToaster || notifier
-  return new WindowsToaster({ withFallback: false })
-}
+/** 操作按钮文案（点击后打开 GrayCode 聊天面板） */
+const OPEN_CHAT_ACTION = 'Open Chat'
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim()
   if (typeof error === 'string' && error.trim()) return error.trim()
-  return 'Unknown Windows toast error'
+  return 'Unknown notification error'
 }
 
-export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
-  constructor(
-    private readonly createWindowsToaster: WindowsToasterFactory = defaultCreateWindowsToaster,
-    private readonly logger: Pick<Console, 'error'> = console,
-    private readonly cleanupDelayMs = 5 * 60 * 1000,
-    private readonly appId: string = resolveVSCodeWindowsToastAppId()
-  ) {}
-
+/**
+ * 基于 VS Code 原生通知的 WindowsToastAdapter 实现。
+ *
+ * 修改原因（F-07）：node-notifier 已停更，其传递依赖 uuid@8.3.2 触发生产依赖
+ * 审计告警（GHSA-w5hq-g745-h8pq），且项目运行在 VS Code 扩展宿主中，原生通知
+ * 能力足以替代系统 toast，无需再携带外部通知包及其原生二进制。
+ * 修改方式：show() 调用 vscode.window.showInformationMessage 展示通知；不等待
+ * 用户关闭通知，立即返回 shown: true；操作按钮结果异步处理，工具调用不会挂起。
+ * 修改目的：去掉停更且有告警的生产依赖，同时保留「通知内容可见 + 打开聊天」行为。
+ *
+ * 行为差异（相对 node-notifier 的 Windows toast）：
+ * - 「打开聊天」通过通知操作按钮触发，而不是点击通知任意区域触发。
+ * - 通知声音由 VS Code 与系统设置管理，无法逐条强制静音或播放声音。
+ * - 通知属于 VS Code 原生通知体系，窗口未聚焦时是否显示系统级横幅由 VS Code
+ *   与 Windows 通知设置决定。
+ */
+export class VSCodeNotificationAdapter implements WindowsToastAdapter {
   async show(request: WindowsToastRequest): Promise<WindowsToastShowResult> {
     log.debug('show_called', {
       title: request.title,
       message: request.message,
       silent: request.silent,
       waitForAction: request.waitForAction,
-      hasOnClick: typeof request.onClick === 'function',
-      appId: this.appId
+      hasOnClick: typeof request.onClick === 'function'
     })
 
-    if (process.platform !== 'win32') {
-      log.debug('skip_show_not_win32', { platform: process.platform })
-      return {
-        shown: false,
-        skippedReason: 'unsupported_platform'
-      }
-    }
-
-    let toaster: WindowsToasterLike
     try {
-      toaster = this.createWindowsToaster()
-      log.debug('toaster_instance_created')
-    } catch (error) {
-      log.error('toaster_instance_create_failed', { error: toErrorMessage(error) })
-      return {
-        shown: false,
-        error: toErrorMessage(error)
-      }
-    }
+      const openAction = request.onClick ? OPEN_CHAT_ACTION : undefined
+      const notificationPromise = vscode.window.showInformationMessage(
+        request.title,
+        { detail: request.message, modal: false },
+        ...(openAction ? [openAction] : [])
+      )
 
-    return await new Promise<WindowsToastShowResult>((resolve) => {
-      let cleaned = false
-      let cleanupTimer: NodeJS.Timeout | null = null
-
-      const cleanup = () => {
-        if (cleaned) return
-        cleaned = true
-
-        if (cleanupTimer) {
-          clearTimeout(cleanupTimer)
-          cleanupTimer = null
-        }
-
-        try {
-          toaster.removeListener('click', handleClick)
-          toaster.removeListener('timeout', handleTimeout)
-          toaster.removeListener('replied', handleReply)
-        } catch {
-          // ignore cleanup failures
-        }
-      }
-
-      const handleClick = () => {
-        log.debug('toast_click_received')
-        void Promise.resolve(request.onClick?.()).catch((error) => {
-          this.logger.error('[windows-toast] Failed to handle click:', error)
-        }).finally(() => {
-          cleanup()
-        })
-      }
-
-      const handleTimeout = () => {
-        log.debug('toast_timeout_received')
-        cleanup()
-      }
-
-      const handleReply = () => {
-        log.debug('toast_replied_received')
-        cleanup()
-      }
-
-      if (request.onClick) {
-        toaster.once('click', handleClick)
-      }
-      toaster.once('timeout', handleTimeout)
-      toaster.once('replied', handleReply)
-      cleanupTimer = setTimeout(cleanup, this.cleanupDelayMs)
-
-      try {
-        log.debug('calling_toaster_notify')
-        toaster.notify(
-          {
-            title: request.title,
-            message: request.message,
-            sound: request.silent ? false : true,
-            wait: request.waitForAction,
-            appID: this.appId
-          },
-          (error, response, metadata) => {
-            if (error) {
-              log.error('toaster_notify_callback_error', { error: toErrorMessage(error) })
-              cleanup()
-              resolve({
-                shown: false,
-                error: toErrorMessage(error)
-              })
-              return
-            }
-
-            log.debug('toaster_notify_callback_success', {
-              response,
-              metadata
+      // 不等待用户关闭通知：显示结果异步处理，避免工具调用长时间挂起。
+      // 通知 API 同步抛错会被 try/catch 捕获并返回 shown: false；
+      // 异步 reject 无法在不挂起的前提下感知，只记录日志。
+      void Promise.resolve(notificationPromise)
+        .then(selected => {
+          if (selected === openAction && request.onClick) {
+            void Promise.resolve(request.onClick()).catch(error => {
+              log.error('on_click_failed', { error: toErrorMessage(error) })
             })
-
-            resolve({ shown: true })
-
-            if (!request.waitForAction && !request.onClick) {
-              cleanup()
-            }
           }
-        )
-      } catch (error) {
-        log.error('toaster_notify_threw', { error: toErrorMessage(error) })
-        cleanup()
-        resolve({
-          shown: false,
-          error: toErrorMessage(error)
         })
-      }
-    })
+        .catch(error => {
+          log.error('notification_api_failed', { error: toErrorMessage(error) })
+        })
+
+      return { shown: true }
+    } catch (error) {
+      log.error('show_threw', { error: toErrorMessage(error) })
+      return { shown: false, error: toErrorMessage(error) }
+    }
   }
 }

@@ -1906,6 +1906,11 @@ const en: LanguageMessages = {
                 },
                 memory: {
                     loading: 'Loading memory config...',
+                    enabled: {
+                        label: 'Enable Permanent Memory',
+                        description: 'Allow the AI to recall and record long-term information across sessions.',
+                        disabledNotice: 'When disabled, the memory prompt is not injected and memory tools are not provided to the AI. Existing memories and settings are preserved and can still be viewed or edited below.'
+                    },
                     saved: 'Saved',
                     saving: 'Saving...',
                     save: 'Save Config',

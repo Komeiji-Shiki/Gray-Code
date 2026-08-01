@@ -6,12 +6,15 @@
  */
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
-import type { SubAgentConfig } from './types';
+import type { SubAgentConfig, SubAgentExecutor } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 import { TaskManager } from '../taskManager';
+import { MEMORY_TOOL_NAMES } from '../memory';
+
+const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>(['subagents', ...MEMORY_TOOL_NAMES]);
 
 /** 通用 Worker 虚拟子代理的标识常量 */
 const GENERAL_WORKER_NAME = 'General Worker';
@@ -49,7 +52,7 @@ function getAgentAvailableTools(config: SubAgentConfig): string[] {
     // 获取内置工具名称
     // 使用 getToolNames() 而不是 getAllTools() 以避免触发 subagents 工具的 getter 导致无限递归
     if (toolRegistry) {
-        builtinToolNames = toolRegistry.getToolNames().filter(name => name !== 'subagents');
+        builtinToolNames = toolRegistry.getToolNames().filter(name => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(name));
     }
     
     // 获取 MCP 工具名称
@@ -116,6 +119,18 @@ function getSubAgentsSettings() {
 }
 
 /**
+ * 统一判断是否存在可用子代理（含动态 General Worker）。
+ *
+ * 修改原因：工具声明过滤只看 Registry 已启用计数，General Worker 是运行时
+ * 虚拟代理不在计数内，全部配置代理被禁用时 subagents 工具会被整体隐藏（F-10）。
+ * 修改方式：配置代理计数与 General Worker 启用状态取并集，所有声明过滤位置共用。
+ */
+export function hasAvailableSubAgent(): boolean {
+    const settings = getSubAgentsSettings();
+    return subAgentRegistry.countEnabled() > 0 || settings.generalWorkerEnabled !== false;
+}
+
+/**
  * 格式化限制数值（-1 表示无限制）
  */
 function formatLimit(value: number | undefined, defaultValue: number): string {
@@ -151,7 +166,7 @@ function generateAgentNameDescription(): string {
         const builtinToolNames: string[] = [];
         const toolRegistry = getGlobalToolRegistry();
         if (toolRegistry) {
-            builtinToolNames.push(...toolRegistry.getToolNames().filter(name => name !== 'subagents'));
+            builtinToolNames.push(...toolRegistry.getToolNames().filter(name => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(name)));
         }
         const mcpToolNames: string[] = [];
         const mcpManager = getGlobalMcpManager();
@@ -165,7 +180,7 @@ function generateAgentNameDescription(): string {
         }
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
-        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and full tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 80 iterations, max 2400s runtime`);
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 80 iterations, max 2400s runtime`);
     }
 
     return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
@@ -233,6 +248,10 @@ export function getSubAgentsToolDeclaration(): ToolDeclaration {
                     type: 'string',
                     description: 'Optional additional context or background information for the sub-agent. Include relevant file paths, code snippets, or requirements.'
                 },
+                continueFromRunId: {
+                    type: 'string',
+                    description: 'Optional completed Sub-Agent run ID to continue from. The new run inherits that run\'s complete transcript. Running or unknown run IDs are rejected.'
+                },
                 background: {
                     type: 'boolean',
                     description: 'Set to true to start the sub-agent in the background (non-blocking). Use ONLY for long-running tasks (e.g. batch review/research). The tool returns immediately with a taskId; the final result will arrive later as a "[Background task completed]" user message — do NOT wait for it or poll. Background tasks are NOT cancelled when the current stream stops; cancel them explicitly via the background task bar.'
@@ -259,6 +278,9 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const agentName = args.agentName as string;
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
+    const continueFromRunId = typeof args.continueFromRunId === 'string' && args.continueFromRunId.trim()
+        ? args.continueFromRunId.trim()
+        : undefined;
     const background = args.background === true;
     const runId = getPreallocatedRunId(context);
 
@@ -282,7 +304,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         const dynamicConfig: SubAgentConfig = {
             type: GENERAL_WORKER_TYPE,
             name: GENERAL_WORKER_NAME,
-            description: 'Zero-config general-purpose worker that inherits the current session channel and full tool permissions.',
+            description: 'Zero-config general-purpose worker that inherits the current session channel and all available non-memory tool permissions.',
             systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
             channel: { channelId: channelConfigId },
             tools: { mode: 'all' },
@@ -291,7 +313,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             enabled: true
         };
 
-        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, runId, context, background);
+        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, continueFromRunId, runId, context, background);
     }
 
     const agentEntry = subAgentRegistry.getByName(agentName);
@@ -300,11 +322,18 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         return { success: false, error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
     }
 
-    if (!agentEntry.executor) {
-        return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
-    }
-
-    return executeSubAgent(agentEntry.config, agentName, prompt, additionalContext, runId, context, background);
+    // F-08：显式注册的自定义 executor 优先；未注册时由 executeSubAgent 动态创建默认 executor
+    return executeSubAgent(
+        agentEntry.config,
+        agentName,
+        prompt,
+        additionalContext,
+        continueFromRunId,
+        runId,
+        context,
+        background,
+        agentEntry.executor
+    );
 }
 
 /**
@@ -315,20 +344,26 @@ async function executeSubAgent(
     agentName: string,
     prompt: string,
     additionalContext: string | undefined,
+    continueFromRunId: string | undefined,
     runId: string | undefined,
     context?: ToolContext,
-    background = false
+    background = false,
+    customExecutor?: SubAgentExecutor
 ): Promise<ToolResult> {
     const promptModeSnapshot = context?.promptModeSnapshot as any;
     const baseExecutorContext = getSubAgentExecutorContext();
-    const runtimeExecutor = baseExecutorContext
-        ? createDefaultExecutor(config, {
-            ...baseExecutorContext,
-            conversationId: context?.conversationId as string | undefined,
-            conversationStore: context?.conversationStore as any,
-            promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
-        })
-        : undefined;
+    // F-08：显式注册的自定义 executor 优先；否则按每次调用动态创建默认 executor，
+    // 不再把缺少动态会话上下文的默认 executor 缓存在 Registry。
+    const runtimeExecutor = customExecutor
+        ? customExecutor
+        : baseExecutorContext
+            ? createDefaultExecutor(config, {
+                ...baseExecutorContext,
+                conversationId: context?.conversationId as string | undefined,
+                conversationStore: context?.conversationStore as any,
+                promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
+            })
+            : undefined;
 
     if (!runtimeExecutor) {
         return { success: false, error: `SubAgent "${agentName}" has no runtime executor context.` };
@@ -345,6 +380,7 @@ async function executeSubAgent(
             conversationId: context?.conversationId as string | undefined,
             agentName,
             runId,
+            continueFromRunId,
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
 
@@ -352,7 +388,11 @@ async function executeSubAgent(
             agentType: config.type,
             prompt,
             context: additionalContext,
-            runId
+            continueFromRunId,
+            runId,
+            conversationId: context?.conversationId as string | undefined,
+            conversationStore: context?.conversationStore as any,
+            promptModeSnapshot: promptModeSnapshot
         }, backgroundAbortController.signal).then(result => {
             const status = result.cancelled ? 'cancelled' : (result.success ? 'completed' : 'error');
             TaskManager.unregisterTask(taskId, status, {
@@ -392,7 +432,11 @@ async function executeSubAgent(
             agentType: config.type,
             prompt,
             context: additionalContext,
-            runId
+            continueFromRunId,
+            runId,
+            conversationId: context?.conversationId as string | undefined,
+            conversationStore: context?.conversationStore as any,
+            promptModeSnapshot: promptModeSnapshot
         }, abortSignal);
 
         if (result.cancelled || abortSignal?.aborted) {

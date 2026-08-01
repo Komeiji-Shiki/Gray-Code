@@ -14,7 +14,7 @@ import type { McpManager } from '../mcp/McpManager';
 import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
-import { subAgentRegistry } from '../../tools/subagents';
+import { hasAvailableSubAgent } from '../../tools/subagents';
 
 export type DeclarationChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
 export type DeclarationToolMode = 'function_call' | 'xml' | 'json';
@@ -162,7 +162,7 @@ export class ToolDeclarationResolver {
             declaration = { ...declaration, description: dynamicTool.declaration.description };
         }
 
-        if (tool.name === 'subagents' && subAgentRegistry.countEnabled() === 0) {
+        if (tool.name === 'subagents' && !hasAvailableSubAgent()) {
             return null;
         }
 

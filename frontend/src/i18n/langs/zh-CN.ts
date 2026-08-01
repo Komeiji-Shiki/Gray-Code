@@ -1907,6 +1907,11 @@ const zhCN = {
                 },
                 memory: {
                     loading: '正在加载记忆配置...',
+                    enabled: {
+                        label: '启用长期记忆',
+                        description: '允许 AI 跨会话回忆和记录长期信息。',
+                        disabledNotice: '关闭后不会注入记忆提示词，也不会向 AI 提供记忆工具。已有记忆和配置将保留，仍可在下方查看和编辑。'
+                    },
                     saved: '保存成功',
                     saving: '正在保存...',
                     save: '保存配置',

@@ -91,6 +91,31 @@ function formatResultItem(result: Record<string, unknown>): string {
 }
 
 /**
+ * 提取批量统计字段（successCount / failCount / totalCount）为单行摘要。
+ */
+function formatBatchSummary(data: Record<string, unknown>): string {
+    const counts: string[] = [];
+    for (const key of ['successCount', 'failCount', 'totalCount']) {
+        if (typeof data[key] === 'number') {
+            counts.push(`${key}=${data[key]}`);
+        }
+    }
+    return counts.length > 0 ? `[${counts.join(', ')}]` : '';
+}
+
+/**
+ * 格式化错误场景下的部分成功结果块：
+ * "Partial results:" + 批量统计 + 逐项格式化后的结果。
+ */
+function formatPartialResultsBlock(data: Record<string, unknown>): string {
+    const results = (data.results as Array<Record<string, unknown>>) || [];
+    const summary = formatBatchSummary(data);
+    const header = summary ? `Partial results:\n${summary}` : 'Partial results:';
+    const formatted = results.map(r => formatResultItem(r as Record<string, unknown>));
+    return `${header}\n\n${formatted.join('\n\n').trimEnd()}`;
+}
+
+/**
  * 将 ToolResult.response 序列化为适合发给 LLM 的纯文本字符串。
  *
  * - read_file / search_in_files 等含大段原始文本的工具 → 文本原样透出
@@ -116,18 +141,39 @@ export function serializeToolResultForLLM(
 
     const data = response.data as Record<string, unknown> | undefined;
 
-    // 错误分支：优先提取错误信息，避免 JSON.stringify 包裹
+    // 错误分支：错误信息始终保留在最前，同时继续序列化部分成功结果（F-02）。
+    // 修改原因：批量工具部分失败时，以前这里直接返回顶层错误，
+    // 成功结果（data.results / data.message）全部丢失，模型会重复执行已完成的操作。
     if (response.error && typeof response.error === 'string') {
         const parts: string[] = [`Error: ${response.error}`];
         if (response.cancelled) {
             parts.push('[cancelled by user]');
         }
-        // 附上 data 中的输出文本（如 execute_command 的 stderr/stdout），
-        // 避免 AI 只看到 "Command exited with code 1" 却不知道具体原因
-        if (data?.output && typeof data.output === 'string' && data.output.trim()) {
-            parts.push('');
-            parts.push('Output:');
-            parts.push(data.output.trimEnd());
+
+        if (data && typeof data === 'object') {
+            // 命令执行输出（execute_command 的 stderr/stdout），保持原有格式
+            if (typeof data.output === 'string' && data.output.trim()) {
+                parts.push('', 'Output:', data.output.trimEnd());
+            }
+
+            // 批量结果数组：只要存在文本项就逐项格式化，避免 JSON 二次转义
+            if (Array.isArray(data.results) && data.results.length > 0) {
+                const results = data.results as Array<Record<string, unknown>>;
+                const hasAnyText = results.some(r =>
+                    typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>)
+                );
+                if (hasAnyText) {
+                    parts.push('', formatPartialResultsBlock(data));
+                } else {
+                    // 纯结构化数组（如 list_files 的文件列表）→ JSON
+                    parts.push('', JSON.stringify(data, null, 2));
+                }
+            }
+
+            // 可读信息（删除/创建目录/补丁工具返回的 data.message）
+            if (typeof data.message === 'string' && data.message.trim()) {
+                parts.push('', `Message: ${data.message.trim()}`);
+            }
         }
         return parts.join('\n');
     }
@@ -136,8 +182,8 @@ export function serializeToolResultForLLM(
     if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
         const results = data.results as Array<Record<string, unknown>>;
 
-        // 如果数组中每个元素都有 content 字段 → 按文本格式化
-        if (results.every(r => typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>))) {
+        // 只要存在文本字段就逐项格式化（混合数组也逐项，避免 JSON 二次转义）
+        if (results.some(r => typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>))) {
             const formatted = results.map(r => formatResultItem(r as Record<string, unknown>));
             // 去掉末尾多余空行
             return formatted.join('\n\n').trimEnd();

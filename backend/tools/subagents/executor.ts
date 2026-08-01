@@ -15,6 +15,7 @@ import type {
 } from './types';
 import type { ToolDeclaration } from '../types';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
+import { MEMORY_TOOL_NAMES } from '../memory';
 import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
 import type { Content, ContentPart } from '../../modules/conversation/types';
@@ -66,7 +67,7 @@ export function getSubAgentExecutorContext(): SubAgentExecutorContext | null {
 /**
  * 根据配置获取可用工具列表
  */
-async function getAvailableTools(
+export async function resolveSubAgentAvailableTools(
     config: SubAgentConfig,
     context: SubAgentExecutorContext
 ): Promise<ToolDeclaration[]> {
@@ -104,7 +105,7 @@ async function getAvailableTools(
         includeMcp,
         allowlist,
         denylist,
-        excludeToolNames: ['subagents']
+        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES]
     }) || [];
 }
 
@@ -342,14 +343,36 @@ export function createDefaultExecutor(
         // 修改方式：从 runEventBus 读取旧 run 的 contents 作为 baseContents；校验旧 run 已处于终态。
         // 修改目的：主模型可通过 continueFromRunId 参数指定延续目标，避免每次从零开始。
         const terminalStatuses: SubAgentRunStatus[] = ['completed', 'failed', 'cancelled', 'interrupted'];
+        // F-06/F-09：每次调用的动态会话上下文优先于创建 executor 时的静态 context。
+        // 修改原因：接续必须限定在同一个主对话内，且重载/内存淘汰后要从当前对话的
+        // 持久化元数据恢复 run 快照；这些信息属于每次工具调用，不能固定在 Registry 缓存。
+        const currentConversationId = request.conversationId ?? context.conversationId;
+        const currentConversationStore = request.conversationStore ?? context.conversationStore;
+        const currentPromptModeSnapshot = request.promptModeSnapshot ?? context.promptModeSnapshot;
+
         let baseContents: Content[] = [];
         if (request.continueFromRunId) {
-            const oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
+            // F-09：先查内存快照；未命中且当前调用可提供对话 store 时，
+            // 只加载当前对话的持久化快照（不扫描其他对话，避免 runId 跨对话碰撞）。
+            let oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
+            if (!oldSnapshot && currentConversationId && currentConversationStore) {
+                await subAgentRunEventBus.loadConversationSnapshots(currentConversationId, currentConversationStore);
+                oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
+            }
             if (!oldSnapshot) {
                 return {
                     success: false,
                     runId,
                     error: `Cannot continue from run "${request.continueFromRunId}": run not found. It may have been cleared or never existed.`
+                };
+            }
+            // F-06：会话归属校验——旧 run 已绑定 conversationId 且与当前不一致时拒绝，
+            // 防止跨对话泄漏 transcript（错误信息不包含旧对话 ID 或任何内容）。
+            if (oldSnapshot.conversationId && currentConversationId && oldSnapshot.conversationId !== currentConversationId) {
+                return {
+                    success: false,
+                    runId,
+                    error: `Cannot continue from run "${request.continueFromRunId}": the run belongs to a different conversation.`
                 };
             }
             if (!terminalStatuses.includes(oldSnapshot.status)) {
@@ -386,8 +409,8 @@ export function createDefaultExecutor(
             prompt: request.prompt,
             context: request.context
         }, {
-            conversationId: context.conversationId,
-            conversationStore: context.conversationStore,
+            conversationId: currentConversationId,
+            conversationStore: currentConversationStore,
             initialContents: [...baseContents, initialPromptContent]
         });
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
@@ -620,8 +643,11 @@ export function createDefaultExecutor(
             const providerType = channelConfig.type || 'custom';
             const toolCallParser = new ToolCallParserService();
 
-            // 获取可用工具
-            const availableTools = await getAvailableTools(config, context);
+            // 获取可用工具（提示词模式快照使用本次调用的动态值）
+            const availableTools = await resolveSubAgentAvailableTools(config, {
+                ...context,
+                promptModeSnapshot: currentPromptModeSnapshot
+            });
             
             // 构建允许的工具名称集合，用于执行时的防御性校验
             const allowedToolNames = new Set(availableTools.map(t => t.name));
@@ -728,7 +754,7 @@ export function createDefaultExecutor(
                     // 修改原因：SubAgent 解析 XML/JSON prompt tool mode 时必须和主请求使用同一份模式快照。
                     // 修改方式：把父请求解析好的 promptModeSnapshot 继续传给 ChannelManager。
                     // 修改目的：避免 SubAgent 工具声明和工具调用解析在不同 prompt mode 下再次分叉。
-                    promptModeSnapshot: context.promptModeSnapshot
+                    promptModeSnapshot: currentPromptModeSnapshot
                 };
                 
                 // 如果指定了模型，设置模型覆盖
@@ -917,7 +943,7 @@ export function createDefaultExecutor(
                         result = await executeToolCall(
                             call.name,
                             call.args,
-                            context,
+                            { ...context, promptModeSnapshot: currentPromptModeSnapshot },
                             toolOperation.signal,
                             allowedToolNames,
                             config,
