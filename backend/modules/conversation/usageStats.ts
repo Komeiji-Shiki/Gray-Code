@@ -12,18 +12,27 @@
  * - 按对话（byConversation）
  * - 按模型（byModel，以 modelVersion 近似渠道维度）
  * - 按天（byDay，基于消息 timestamp 的本地日期；缺失时间戳的消息只计入其他维度）
+ *
+ * 性能：全量扫描历史 JSON 的开销随对话数增长明显，统计页可提供 UsageIndexStore
+ * （消息级 token 索引，见 UsageIndexStore.ts）。聚合器对每个对话先查索引新鲜度：
+ * - fresh：直接聚合索引消息，完全不读历史文件；
+ * - missing/stale：回退读取历史并重建写回索引（一次性成本，之后走索引）。
  */
 
 import type { Content, ConversationMetadata } from './types';
 
 /** 单个维度桶的 token 计数 */
 export interface UsageBucket {
-    /** 输入 token（各次请求 promptTokenCount 之和） */
+    /** 输入 token（各次请求 promptTokenCount 之和，已含缓存部分） */
     promptTokens: number;
     /** 输出 token */
     candidatesTokens: number;
     /** 思考 token */
     thoughtsTokens: number;
+    /** 缓存写入 token（cacheCreationTokenCount 之和；是 promptTokens 的细分，不重复计入 totalTokens） */
+    cacheCreationTokens: number;
+    /** 缓存命中 token（cacheReadTokenCount 之和；是 promptTokens 的细分，不重复计入 totalTokens） */
+    cacheReadTokens: number;
     /** 合计（prompt + candidates + thoughts） */
     totalTokens: number;
     /** 参与统计的 model 消息数 */
@@ -66,6 +75,47 @@ export interface UsageStatsSource {
     listConversations(): Promise<string[]>;
     getMetadata(conversationId: string): Promise<ConversationMetadata | null | undefined>;
     getMessages(conversationId: string): Promise<Content[]>;
+    /** 可选：轻量读取原始消息（不经显示规范化/深拷贝），聚合器优先使用以降低全量扫描开销 */
+    getMessagesRaw?(conversationId: string): Promise<Content[]>;
+}
+
+/** 用量索引中的单条消息级 token 记录（extractMessageTokens 提取后的扁平结构） */
+export interface UsageIndexMessage {
+    /** 消息时间戳（毫秒）；缺失/无效时省略，时间筛选激活时不参与统计 */
+    timestamp?: number;
+    /** 模型标识（trim 后原始值；聚合端缺失时兜底 'unknown'） */
+    modelVersion?: string;
+    prompt: number;
+    candidates: number;
+    thoughts: number;
+    cacheCreation: number;
+    cacheRead: number;
+}
+
+/** 单个对话的用量索引（消息级 token 明细，落盘打点维护，统计时直接聚合） */
+export interface UsageIndex {
+    version: 1;
+    conversationId: string;
+    /** 索引生成时间（毫秒） */
+    updatedAt: number;
+    messages: UsageIndexMessage[];
+}
+
+/** 索引新鲜度：fresh=历史未再改动；stale=历史比索引新；missing=索引不存在 */
+export type UsageIndexFreshness = 'fresh' | 'stale' | 'missing';
+
+/**
+ * 用量索引存取接口
+ *
+ * 文件实现见 UsageIndexStore.ts；测试使用内存实现。
+ * getFreshness 用于在读取前判断索引是否仍与历史一致：
+ * 历史文件（legacy {id}.json 或 segmented {id}/history.index.json）mtime 新于索引即 stale。
+ */
+export interface UsageIndexStore {
+    read(conversationId: string): Promise<UsageIndex | null>;
+    write(conversationId: string, index: UsageIndex): Promise<void>;
+    remove(conversationId: string): Promise<void>;
+    getFreshness(conversationId: string): Promise<UsageIndexFreshness>;
 }
 
 /**
@@ -77,12 +127,16 @@ export interface UsageStatsSource {
 export interface UsageStatsOptions {
     startTime?: number;
     endTime?: number;
+    /** 可选：消息级用量索引，命中时跳过历史文件读取（见 loadOne） */
+    indexStore?: UsageIndexStore;
 }
 
 /** 单个对话的读取结果 */
 interface LoadedConversation {
     metadata?: ConversationMetadata | null;
     messages: Content[];
+    /** 索引路径：命中新鲜索引时消息明细已提取到 index（messages 为空数组） */
+    index?: UsageIndex | null;
 }
 
 /**
@@ -94,7 +148,7 @@ interface LoadedConversation {
  * 估算基于消息文本长度：中文等 CJK 约 1 字符/token，英文约 4 字符/token，
  * 取折中 2.5 字符/token 做粗估。
  */
-export function estimatePartialMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number } | null {
+export function estimatePartialMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number; cacheCreation: number; cacheRead: number } | null {
     const usage = message.usageMetadata;
 
     let charCount = 0;
@@ -124,26 +178,69 @@ export function estimatePartialMessageTokens(message: Content): { prompt: number
     // 返回 null——否则整条 model 消息被跳过（连 prompt 都不计），M6 声称修复的
     // "中断/取消流 token 严重少计" 只在 Anthropic 类每 chunk 带 usage 的渠道生效。
     // prompt 侧无法从消息文本估算（输入是全量历史+系统提示词），保守记 0。
+    // 旧格式（无拆分字段）的缓存合并值近似全部记为命中：OpenAI/Gemini 语义下
+    // cachedContentTokenCount 本就是命中；Anthropic 以命中为主，偏差最小。
+    const hasSplitCache = usage?.cacheCreationTokenCount !== undefined || usage?.cacheReadTokenCount !== undefined;
     return {
         prompt: usage?.promptTokenCount ?? 0,
         candidates: Math.max(usage?.candidatesTokenCount ?? 0, estimatedCandidates),
-        thoughts: usage?.thoughtsTokenCount ?? 0
+        thoughts: usage?.thoughtsTokenCount ?? 0,
+        cacheCreation: usage?.cacheCreationTokenCount ?? 0,
+        cacheRead: usage?.cacheReadTokenCount ?? (hasSplitCache ? 0 : usage?.cachedContentTokenCount ?? 0)
     };
 }
 
-/** 读取单个对话（失败返回 null，由调用方计入 skipped） */
-async function loadOne(source: UsageStatsSource, conversationId: string): Promise<LoadedConversation | null> {
+/**
+ * 读取单个对话（失败返回 null，由调用方计入 skipped）
+ *
+ * 提供 indexStore 时优先走索引：
+ * - 索引 fresh（历史未被改动）→ 直接返回索引消息，完全不读历史文件；
+ * - 索引缺失/过期/损坏 → 回退读取历史，由调用方负责重建写回索引。
+ */
+async function loadOne(source: UsageStatsSource, conversationId: string, indexStore?: UsageIndexStore): Promise<LoadedConversation | null> {
+    if (indexStore) {
+        try {
+            const freshness = await indexStore.getFreshness(conversationId);
+            if (freshness === 'fresh') {
+                const index = await indexStore.read(conversationId);
+                if (index && Array.isArray(index.messages)) {
+                    const metadata = await source.getMetadata(conversationId);
+                    return { metadata, messages: [], index };
+                }
+            }
+        } catch {
+            // 索引读失败（含 metadata 失败）：回退历史路径
+        }
+    }
     try {
         const metadata = await source.getMetadata(conversationId);
-        const messages = await source.getMessages(conversationId);
+        const messages = typeof source.getMessagesRaw === 'function'
+            ? await source.getMessagesRaw(conversationId)
+            : await source.getMessages(conversationId);
         return { metadata, messages };
     } catch {
         return null;
     }
 }
 
+/**
+ * 限流并发执行：同时最多 concurrency 个任务在途。
+ * 用量统计需要逐个读取全部对话，串行 IO 在对话多时耗时明显；
+ * 并发受限于文件句柄与内存，取一个适中的并发上限。
+ */
+async function runBounded<T>(items: readonly T[], concurrency: number, task: (item: T) => Promise<void>): Promise<void> {
+    let next = 0;
+    const workerCount = Math.max(1, Math.min(concurrency, items.length));
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (next < items.length) {
+            const index = next++;
+            await task(items[index]);
+        }
+    }));
+}
+
 /** 从消息中提取 token 计数（优先 usageMetadata，向后兼容旧字段） */
-function extractMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number } | null {
+export function extractMessageTokens(message: Content): { prompt: number; candidates: number; thoughts: number; cacheCreation: number; cacheRead: number } | null {
     // 中断/取消流的 usageMetadata 只覆盖已收到的 chunk，token 严重偏低：
     // 回退到文本长度估算，避免统计结果与真实消耗偏差过大。
     if (message.usageMetadataPartial) {
@@ -154,21 +251,50 @@ function extractMessageTokens(message: Content): { prompt: number; candidates: n
     const prompt = usage?.promptTokenCount ?? 0;
     const candidates = usage?.candidatesTokenCount ?? message.candidatesTokenCount ?? 0;
     const thoughts = usage?.thoughtsTokenCount ?? message.thoughtsTokenCount ?? 0;
+    // 旧格式（仅合并值 cachedContentTokenCount）无法拆分写入/命中，近似全部记为命中
+    const hasSplitCache = usage?.cacheCreationTokenCount !== undefined || usage?.cacheReadTokenCount !== undefined;
+    const cacheCreation = usage?.cacheCreationTokenCount ?? 0;
+    const cacheRead = usage?.cacheReadTokenCount ?? (hasSplitCache ? 0 : usage?.cachedContentTokenCount ?? 0);
 
     if (prompt === 0 && candidates === 0 && thoughts === 0) {
         return null;
     }
-    return { prompt, candidates, thoughts };
+    return { prompt, candidates, thoughts, cacheCreation, cacheRead };
+}
+
+/**
+ * 从对话历史构建用量索引（纯函数）。
+ *
+ * 供两处复用：消息落盘打点（ConversationManager 保存后）与统计侧索引缺失/过期时的重建。
+ * 只保留有 token 计数的 model 消息，与统计语义一致；
+ * 时间戳无效的消息省略 timestamp（筛选激活时不计入，与统计端一致）。
+ */
+export function buildConversationUsageIndex(conversationId: string, history: Content[]): UsageIndex {
+    const messages: UsageIndexMessage[] = [];
+    for (const message of history) {
+        if (message.role !== 'model') continue;
+        const tokens = extractMessageTokens(message);
+        if (!tokens) continue;
+        const ts = message.timestamp;
+        messages.push({
+            timestamp: (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) ? ts : undefined,
+            modelVersion: (message.modelVersion || '').trim(),
+            ...tokens
+        });
+    }
+    return { version: 1, conversationId, updatedAt: Date.now(), messages };
 }
 
 function createBucket(): UsageBucket {
-    return { promptTokens: 0, candidatesTokens: 0, thoughtsTokens: 0, totalTokens: 0, modelMessages: 0 };
+    return { promptTokens: 0, candidatesTokens: 0, thoughtsTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, modelMessages: 0 };
 }
 
-function addToBucket(bucket: UsageBucket, tokens: { prompt: number; candidates: number; thoughts: number }): void {
+function addToBucket(bucket: UsageBucket, tokens: { prompt: number; candidates: number; thoughts: number; cacheCreation: number; cacheRead: number }): void {
     bucket.promptTokens += tokens.prompt;
     bucket.candidatesTokens += tokens.candidates;
     bucket.thoughtsTokens += tokens.thoughts;
+    bucket.cacheCreationTokens += tokens.cacheCreation;
+    bucket.cacheReadTokens += tokens.cacheRead;
     bucket.totalTokens += tokens.prompt + tokens.candidates + tokens.thoughts;
     bucket.modelMessages += 1;
 }
@@ -182,12 +308,12 @@ function toLocalDateKey(timestamp: number): string {
     return `${year}-${month}-${day}`;
 }
 
-/** 判断消息是否通过时间范围筛选 */
-function passesTimeFilter(message: Content, options?: UsageStatsOptions): boolean {
+/** 判断消息/索引记录是否通过时间范围筛选（timestamp 缺失或无效时不通过） */
+function passesTimeFilter(record: { timestamp?: unknown }, options?: UsageStatsOptions): boolean {
     const hasFilter = typeof options?.startTime === 'number' || typeof options?.endTime === 'number';
     if (!hasFilter) return true;
 
-    const ts = message.timestamp;
+    const ts = record.timestamp;
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts <= 0) return false;
     if (typeof options?.startTime === 'number' && ts < options.startTime) return false;
     if (typeof options?.endTime === 'number' && ts > options.endTime) return false;
@@ -195,9 +321,56 @@ function passesTimeFilter(message: Content, options?: UsageStatsOptions): boolea
 }
 
 /**
+ * 累加一条消息级 token 记录到各维度桶（索引消息与历史消息共用）。
+ * 时间范围筛选在此统一执行：缺时间戳的记录在筛选激活时不参与统计。
+ */
+function accumulateRecord(
+    conversationBucket: UsageBucket,
+    totals: UsageBucket,
+    modelBuckets: Map<string, UsageBucket>,
+    dayBuckets: Map<string, UsageBucket>,
+    record: UsageIndexMessage,
+    options?: UsageStatsOptions
+): void {
+    if (!passesTimeFilter(record, options)) return;
+
+    const tokens = {
+        prompt: record.prompt,
+        candidates: record.candidates,
+        thoughts: record.thoughts,
+        cacheCreation: record.cacheCreation,
+        cacheRead: record.cacheRead
+    };
+    addToBucket(conversationBucket, tokens);
+    addToBucket(totals, tokens);
+
+    // 按模型
+    const modelKey = (record.modelVersion || '').trim() || 'unknown';
+    let modelBucket = modelBuckets.get(modelKey);
+    if (!modelBucket) {
+        modelBucket = createBucket();
+        modelBuckets.set(modelKey, modelBucket);
+    }
+    addToBucket(modelBucket, tokens);
+
+    // 按天（缺失时间戳的消息不计入该维度）
+    if (typeof record.timestamp === 'number' && Number.isFinite(record.timestamp) && record.timestamp > 0) {
+        const dayKey = toLocalDateKey(record.timestamp);
+        let dayBucket = dayBuckets.get(dayKey);
+        if (!dayBucket) {
+            dayBucket = createBucket();
+            dayBuckets.set(dayKey, dayBucket);
+        }
+        addToBucket(dayBucket, tokens);
+    }
+}
+
+/**
  * 聚合所有对话的 token 用量
  *
  * 单个对话读取失败时跳过并计入 skippedConversations，不影响整体统计。
+ * 提供 options.indexStore 时：索引 fresh 的对话直接聚合索引（不读历史文件），
+ * 索引缺失/过期/损坏的对话回退读取历史并在统计完成后重建写回索引。
  */
 export async function aggregateUsageStats(source: UsageStatsSource, options?: UsageStatsOptions): Promise<UsageStatsResult> {
     const totals = createBucket();
@@ -215,8 +388,16 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
         conversationIds = [];
     }
 
+    // 并发读取各对话（限流避免一次性打开过多文件），结果按原顺序消费。
+    // 提供 indexStore 时优先读轻量用量索引，缺失/过期再回退历史（见 loadOne）。
+    const indexStore = options?.indexStore;
+    const loadedMap = new Map<string, LoadedConversation | null>();
+    await runBounded(conversationIds, 12, async (conversationId) => {
+        loadedMap.set(conversationId, await loadOne(source, conversationId, indexStore));
+    });
+
     for (const conversationId of conversationIds) {
-        const loaded = await loadOne(source, conversationId);
+        const loaded = loadedMap.get(conversationId) ?? null;
         if (loaded === null) {
             skippedConversations++;
             continue;
@@ -224,33 +405,30 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
 
         const conversationBucket = createBucket();
 
-        for (const message of loaded.messages) {
-            if (message.role !== 'model') continue;
-            if (!passesTimeFilter(message, options)) continue;
-            const tokens = extractMessageTokens(message);
-            if (!tokens) continue;
-
-            addToBucket(conversationBucket, tokens);
-            addToBucket(totals, tokens);
-
-            // 按模型
-            const modelKey = (message.modelVersion || '').trim() || 'unknown';
-            let modelBucket = modelBuckets.get(modelKey);
-            if (!modelBucket) {
-                modelBucket = createBucket();
-                modelBuckets.set(modelKey, modelBucket);
+        if (loaded.index) {
+            // 索引路径：token 记录已提取，直接累加
+            for (const record of loaded.index.messages) {
+                accumulateRecord(conversationBucket, totals, modelBuckets, dayBuckets, record, options);
             }
-            addToBucket(modelBucket, tokens);
-
-            // 按天（缺失时间戳的消息不计入该维度）
-            if (typeof message.timestamp === 'number' && Number.isFinite(message.timestamp) && message.timestamp > 0) {
-                const dayKey = toLocalDateKey(message.timestamp);
-                let dayBucket = dayBuckets.get(dayKey);
-                if (!dayBucket) {
-                    dayBucket = createBucket();
-                    dayBuckets.set(dayKey, dayBucket);
+        } else {
+            // 历史路径：逐条提取并累加
+            for (const message of loaded.messages) {
+                if (message.role !== 'model') continue;
+                const tokens = extractMessageTokens(message);
+                if (!tokens) continue;
+                accumulateRecord(conversationBucket, totals, modelBuckets, dayBuckets, {
+                    timestamp: message.timestamp,
+                    modelVersion: message.modelVersion,
+                    ...tokens
+                }, options);
+            }
+            // 索引缺失/过期：重建写回（失败不影响本次统计，下次仍会走重建）
+            if (indexStore) {
+                try {
+                    await indexStore.write(conversationId, buildConversationUsageIndex(conversationId, loaded.messages));
+                } catch {
+                    // 忽略索引写失败
                 }
-                addToBucket(dayBucket, tokens);
             }
         }
 

@@ -226,6 +226,8 @@ const en: LanguageMessages = {
             promptTokens: 'Input',
             candidatesTokens: 'Output',
             thoughtsTokens: 'Thinking',
+            cacheCreationTokens: 'Cache Write',
+            cacheReadTokens: 'Cache Read',
             conversations: 'Conversations',
             modelMessages: 'Responses',
             byConversation: 'By Conversation',

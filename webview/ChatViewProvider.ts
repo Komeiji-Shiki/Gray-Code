@@ -12,7 +12,8 @@ import { t, setLanguage as setBackendLanguage } from '../backend/i18n';
 import type { SupportedLanguage } from '../backend/i18n';
 import {
     ConversationManager,
-    FileSystemStorageAdapter
+    FileSystemStorageAdapter,
+    FileUsageIndexStore
 } from '../backend/modules/conversation';
 import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config';
 import { ChannelManager } from '../backend/modules/channel';
@@ -196,8 +197,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.diffStorageManager = DiffStorageManager.initialize(this.storagePathManager.getEffectiveDataPath());
         setGlobalDiffStorageManager(this.diffStorageManager);
         
-        // 6. 初始化对话管理器
-        this.conversationManager = new ConversationManager(storageAdapter);
+        // 6. 初始化对话管理器（附带用量索引：消息落盘时维护 token 明细，统计页免全量扫描）
+        this.conversationManager = new ConversationManager(
+            storageAdapter,
+            new FileUsageIndexStore(vscode, effectiveDataUri)
+        );
 
         // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
         void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {

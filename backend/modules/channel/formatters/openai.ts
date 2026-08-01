@@ -673,7 +673,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
+                ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
             };
         }
         
@@ -937,7 +937,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
-                ...(cachedTokens > 0 ? { cachedContentTokenCount: cachedTokens } : {})
+                ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
             };
         }
         

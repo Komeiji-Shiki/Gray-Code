@@ -30,7 +30,7 @@ import { withMetadataWriteSerialized } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
-import { estimatePartialMessageTokens } from './usageStats';
+import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 
 /**
@@ -128,7 +128,7 @@ export interface CreateBranchConversationResult {
  * - 无内存缓存，每次操作直接读写存储，确保数据一致性
  */
 export class ConversationManager {
-    constructor(private storage: IStorageAdapter) {}
+    constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {}
 
     /**
      * 同一会话的 read-modify-write 串行队列（历史 mutate、自定义元数据等）。
@@ -177,8 +177,31 @@ export class ConversationManager {
         // 修改目的：外部协作者不再直接接触 storage.loadHistory/saveHistory，也不会复制主聊天特有的初始化规则。
         return new ConversationTranscriptRepository({
             loadContents: async () => await this.loadHistory(conversationId),
-            saveContents: async contents => await this.storage.saveHistory(conversationId, contents)
+            saveContents: async contents => {
+                await this.storage.saveHistory(conversationId, contents);
+                await this.updateUsageIndex(conversationId, contents);
+            }
         }, fn => this.withConversationWriteLock(conversationId, fn));
+    }
+
+    /**
+     * 对话落盘后同步维护用量索引（消息级 token 明细，供统计页免全量扫描）。
+     *
+     * 失败静默降级：索引写失败不影响对话保存主流程，统计侧会按 mtime 判定
+     * stale/missing 并重建兜底。空历史不写索引（createConversation 的初始化落盘）。
+     */
+    private async updateUsageIndex(conversationId: string, history: ConversationHistory): Promise<void> {
+        if (!this.usageIndexStore || history.length === 0) return;
+        try {
+            await this.usageIndexStore.write(conversationId, buildConversationUsageIndex(conversationId, history));
+        } catch {
+            // 静默降级：统计侧重建兜底
+        }
+    }
+
+    /** 供用量统计等外部模块获取索引存储（未配置时为 undefined，统计回退全量扫描） */
+    getUsageIndexStore(): UsageIndexStore | undefined {
+        return this.usageIndexStore;
     }
 
     async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation | null> {
@@ -420,6 +443,7 @@ export class ConversationManager {
         };
 
         await this.storage.saveHistory(conversationId, []);
+        await this.updateUsageIndex(conversationId, []);
         await this.storage.saveMetadata(meta);
     }
 
@@ -497,6 +521,7 @@ export class ConversationManager {
         };
 
         await this.storage.saveHistory(targetConversationId, branchHistory);
+        await this.updateUsageIndex(targetConversationId, branchHistory);
         await this.storage.saveMetadata(meta);
 
         return {
@@ -515,6 +540,14 @@ export class ConversationManager {
      */
     async deleteConversation(conversationId: string): Promise<void> {
         await this.storage.deleteHistory(conversationId);
+        // 用量索引随对话删除（失败忽略：统计侧按 missing 自然跳过）
+        if (this.usageIndexStore) {
+            try {
+                await this.usageIndexStore.remove(conversationId);
+            } catch {
+                // 忽略
+            }
+        }
 
         // 清理孤儿快照：listSnapshots 已按会话过滤，删除对话时必须一并清理，
         // 否则 snapshots/ 目录残留孤儿数据（低危 L10）。
@@ -686,6 +719,17 @@ export class ConversationManager {
                 index
             };
         });
+    }
+
+    /**
+     * 轻量读取原始消息（供用量统计等只关心 usageMetadata 的场景使用）
+     *
+     * 与 getMessages 不同：不做显示规范化（工具调用配对补齐等）与逐条深拷贝，
+     * 直接返回存储中的原始消息，显著降低全量扫描的成本。
+     */
+    async getMessagesRaw(conversationId: string): Promise<Content[]> {
+        const result = await this.storage.loadHistoryWithStatus(conversationId);
+        return result.value ?? [];
     }
 
     /**

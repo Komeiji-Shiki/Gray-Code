@@ -1,6 +1,14 @@
 # Change Log
 
 
+## [Unreleased]
+
+### Added
+  - 用量统计新增缓存维度：此前 Anthropic 的缓存写入（cache_creation_input_tokens）与缓存命中（cache_read_input_tokens）在 formatter 被合并成 cachedContentTokenCount 后明细即丢失，聚合器也从未读取该字段，统计里完全没有缓存信息；现在 usageMetadata 拆分保存 cacheCreationTokenCount / cacheReadTokenCount（Anthropic 分别映射写入与命中，OpenAI cached_tokens / Gemini cachedContentTokenCount 映射命中），流式累加器同步合并；aggregateUsageStats 总览 / 按对话 / 按模型 / 按天各维度新增缓存写入与缓存命中两个桶——缓存是 promptTokenCount 的细分（prompt 已含缓存部分），不重复计入 totalTokens；用量统计页总览卡片与明细行新增「缓存写入 / 缓存命中」展示（有值才显示），i18n 三语补齐，新增聚合与 formatter 断言测试
+  - 用量统计兼容旧数据缓存记录：旧版本只存缓存合并值（cachedContentTokenCount）无法拆分写入/命中，升级前的对话统计时近似全部记为缓存命中（OpenAI/Gemini 语义下该值本就是命中，Anthropic 实际以命中为主，偏差最小），避免旧对话的缓存贡献在统计中消失
+  - 用量统计性能优化：聚合由串行逐个读取改为限流并发（12 路）；新增轻量读取接口 getMessagesRaw 绕过显示规范化与逐条深拷贝，只读统计所需的原始消息；handler 层新增进程内 5 分钟 TTL 结果缓存，短时间内重复打开统计页直接命中缓存，手动刷新（force）强制重算
+  - 用量统计性能优化新增消息级增量索引：全量扫描历史文件的开销随对话数增长（每次统计都要解析全部历史 JSON），现在消息落盘时同步维护每对话的用量索引（{conversationId}.usage.json，只存消息级 token 明细，不存消息内容），统计时按历史文件与索引文件的 mtime 判定新鲜度——索引最新则直接聚合索引（完全不读历史文件），缺失/过期/损坏则回退读取历史并重建写回（一次性成本）；任何历史写路径（编辑/删除/回滚/清空/导入/分支）都会更新历史 mtime 从而自动触发索引重建，无需逐一追踪写入口；删除对话时索引同步清理；索引写失败静默降级，不影响对话保存与统计正确性；新增索引构建/命中/重建/损坏回退/写失败降级测试
+
 ## [1.3.0] - 2026-08-01
 
 ### Fixed

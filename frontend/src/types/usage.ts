@@ -7,12 +7,16 @@
 
 /** 单个维度桶的 token 计数 */
 export interface UsageBucket {
-  /** 输入 token（各次请求 promptTokenCount 之和） */
+  /** 输入 token（各次请求 promptTokenCount 之和，已含缓存部分） */
   promptTokens: number
   /** 输出 token */
   candidatesTokens: number
   /** 思考 token */
   thoughtsTokens: number
+  /** 缓存写入 token（cacheCreationTokenCount 之和；是 promptTokens 的细分，不重复计入 totalTokens） */
+  cacheCreationTokens: number
+  /** 缓存命中 token（cacheReadTokenCount 之和；是 promptTokens 的细分，不重复计入 totalTokens） */
+  cacheReadTokens: number
   /** 合计（prompt + candidates + thoughts） */
   totalTokens: number
   /** 参与统计的 model 消息数 */
