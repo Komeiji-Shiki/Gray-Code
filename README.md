@@ -665,19 +665,11 @@ GrayCode 提供独立的 SubAgent Monitor 面板，用于实时查看和管理�
 
 > **要求：** VS Code `^1.84.0` 或更高版本。
 
-### 从 VS Code 插件市场安装
-
-在扩展市场搜索：
-
-```text
-GrayCode
-```
-
-找到扩展后安装即可。
+> **说明：** 本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
 
 ### 从 VSIX 安装
 
-1. 下载对应版本的 `graycode-*.vsix` 文件。
+1. 获取对应版本的 `graycode-*.vsix` 文件（本地打包或项目发布渠道）。
 2. 在 VS Code 中打开命令面板：`Ctrl+Shift+P` / `Cmd+Shift+P`。
 3. 执行 `Extensions: Install from VSIX...`。
 4. 选择下载的 VSIX 文件。
