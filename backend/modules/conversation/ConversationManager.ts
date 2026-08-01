@@ -1286,8 +1286,8 @@ export class ConversationManager {
         const includeThoughts = opts.includeThoughts ?? false;
         const sendHistoryThoughts = opts.sendHistoryThoughts ?? false;
         const sendHistoryThoughtSignatures = opts.sendHistoryThoughtSignatures ?? false;
-        // 当前轮次配置：如果没有传，Anthropic 默认全传，Gemini/OpenAI 默认不传文本内容
-        const sendCurrentThoughts = opts.sendCurrentThoughts ?? (opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
+        // 当前轮次配置：默认发送当前思考内容
+        const sendCurrentThoughts = opts.sendCurrentThoughts ?? true;
         const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
         const channelType = opts.channelType;
         // 历史思考回合数，默认 -1 表示全部

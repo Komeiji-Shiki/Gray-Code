@@ -53,7 +53,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   const currentModelName = computed(() => state.selectedModelId.value || state.currentConfig.value?.model || state.configId.value)
   
   /** 最大上下文 Tokens（从配置获取） */
-  const maxContextTokens = computed(() => state.currentConfig.value?.maxContextTokens || 128000)
+  const maxContextTokens = computed(() => state.currentConfig.value?.maxContextTokens || 256000)
   
   /** 当前使用的 Tokens（从最后一条助手消息获取） */
   const usedTokens = computed(() => {

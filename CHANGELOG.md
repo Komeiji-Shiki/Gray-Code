@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-02
+
 ### Fixed
   - 修复 README 与实际工程能力不一致：更新 npm 构建、Node.js 版本、工具参数、模板变量、设置导出边界、测试命令和项目目录说明
   - 修复 npm 工作流残留 pnpm 调用与根锁文件过期：`vscode:prepublish`、前端构建和开发脚本统一通过 npm 执行，重新生成与 GrayCode 1.3.0 当前依赖一致的 `package-lock.json`

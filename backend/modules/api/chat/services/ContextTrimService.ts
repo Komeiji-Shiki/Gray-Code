@@ -35,7 +35,7 @@ import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/prompt
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
-export const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
+export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
 
 /**
@@ -722,7 +722,7 @@ export class ContextTrimService {
         // 从 historyOptions 获取用户配置
         const sendHistoryThoughts = historyOptions.sendHistoryThoughts ?? false;
         const sendHistoryThoughtSignatures = historyOptions.sendHistoryThoughtSignatures ?? false;
-        const sendCurrentThoughts = historyOptions.sendCurrentThoughts ?? false;
+        const sendCurrentThoughts = historyOptions.sendCurrentThoughts ?? true;
         const sendCurrentThoughtSignatures = historyOptions.sendCurrentThoughtSignatures ?? false;
         const historyThinkingRounds = historyOptions.historyThinkingRounds ?? -1;
         
