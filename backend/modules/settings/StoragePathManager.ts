@@ -121,12 +121,29 @@ export class StoragePathManager {
      */
     async validatePath(targetPath: string): Promise<{ valid: boolean; error?: string }> {
         try {
+            const normalized = path.normalize(targetPath);
+            const effectivePath = path.normalize(this.getEffectiveDataPath());
+            
             // 检查路径是否存在
+            let exists = true;
             try {
                 await fs.access(targetPath);
             } catch {
+                exists = false;
                 // 路径不存在，尝试创建
                 await fs.mkdir(targetPath, { recursive: true });
+            }
+            
+            // 防呆：目标已包含扩展数据子目录时拒绝
+            // （说明是之前迁移过的数据目录，重复迁移会造成混合；
+            //   普通非空目录（如桌面）允许——迁移只是把数据复制进去，copyDirectory 已有防套娃保护）
+            const DATA_SUBDIRS = ['conversations', 'checkpoints', 'snapshots', 'diffs', 'memory', 'settings', 'skills'];
+            if (exists) {
+                const entries = await fs.readdir(targetPath);
+                const hasDataSubdir = entries.some((e) => DATA_SUBDIRS.includes(e));
+                if (hasDataSubdir) {
+                    return { valid: false, error: '目标目录已包含扩展数据（conversations/checkpoints 等），请选择其他目录' };
+                }
             }
             
             // 检查是否可写
@@ -215,6 +232,17 @@ export class StoragePathManager {
         let copiedCount = 0;
         
         try {
+            // 防套娃：目标位于源目录内部时直接跳过，避免无限递归自我复制
+            // （迁移目标误选为源子目录时，mkdir 会在源内部创建目标，
+            //   随后的 readdir 会看到刚创建的子目录并递归复制，直到资源耗尽——
+            //   历史上产生过 8000+ 层的 mcp/mcp/mcp 嵌套）
+            const srcNorm = path.normalize(src);
+            const destNorm = path.normalize(dest);
+            const rel = path.relative(srcNorm, destNorm);
+            if (rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+                return 0;
+            }
+            
             await fs.mkdir(dest, { recursive: true });
             const entries = await fs.readdir(src, { withFileTypes: true });
             
