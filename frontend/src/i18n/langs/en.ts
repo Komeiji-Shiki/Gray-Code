@@ -847,6 +847,7 @@ const en: LanguageMessages = {
                         title: 'New Configuration',
                         nameLabel: 'Config Name',
                         namePlaceholder: 'e.g.: My Gemini',
+                        nameRequired: 'Please enter a config name',
                         typeLabel: 'API Type',
                         typePlaceholder: 'Select API type',
                         cancel: 'Cancel',
@@ -1050,6 +1051,15 @@ const en: LanguageMessages = {
                     media: 'Media Processing',
                     plan: 'Plan',
                     mcp: 'MCP Tools',
+                    todo: 'TODO',
+                    history: 'History',
+                    memory: 'Memory',
+                    review: 'Review',
+                    progress: 'Progress',
+                    skills: 'Skills',
+                    design: 'Design',
+                    notification: 'Notifications',
+                    agents: 'Agents',
                     other: 'Other'
                 },
                 badges: {
@@ -1747,6 +1757,11 @@ const en: LanguageMessages = {
                     TODO_LIST: {
                         name: 'TODO List',
                         description: 'Displays the TODO list for the current conversation (from todoList metadata persisted by todo_write / todo_update / create_plan)'
+                    },
+                    MEMORY: {
+                        name: 'Memory System',
+                        description: 'Instructions for the permanent memory system (OptMem), telling the AI how to record and recall information across sessions.',
+                        requiresConfig: 'Customizable in Settings → Memory'
                     }
                 },
                 exampleOutput: 'Example Output:',
@@ -1947,6 +1962,11 @@ const en: LanguageMessages = {
                     info: {
                         title: 'About Permanent Memory',
                         text: 'The memory system (OptMem) lets the AI automatically recall past agreements, decisions, and knowledge at the start of each session. The AI records important things as it works, and older memories are intelligently compressed into summaries to save tokens.'
+                    },
+                    rawEntries: {
+                        title: 'Raw Memory Entries',
+                        description: 'View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).',
+                        empty: 'No memory entries yet.'
                     }
                 },
 
@@ -2138,6 +2158,13 @@ const en: LanguageMessages = {
                     plan: 'Plan',
                     todo: 'TODO',
                     history: 'History',
+                    memory: 'Memory',
+                    review: 'Review',
+                    progress: 'Progress',
+                    skills: 'Skills',
+                    design: 'Design',
+                    notification: 'Notifications',
+                    agents: 'Agents',
                     other: 'Other'
                 },
                 dependency: {
@@ -2191,6 +2218,11 @@ const en: LanguageMessages = {
                     memory_zoom: 'Memory Zoom',
                     memory_forget: 'Memory Forget',
                     memory_config: 'Memory Config',
+                    insert_code: 'Insert Code',
+                    delete_code: 'Delete Code',
+                    read_skill: 'Read Skill',
+                    toggle_skills: 'Toggle Skills',
+                    subagents: 'Subagents',
                 },
                 toolDescriptions: {
                     read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
@@ -2235,6 +2267,11 @@ const en: LanguageMessages = {
                     memory_zoom: 'Expand a memory tree node to view details.',
                     memory_forget: 'Discard an incorrect memory tree summary (original memories preserved).',
                     memory_config: 'View or modify the permanent memory system configuration parameters.',
+                    insert_code: 'Insert code before a specified line. Use "last line + 1" to append at the end.',
+                    delete_code: 'Delete code within a specified line range in files.',
+                    read_skill: 'Read a skill\'s content and instructions.',
+                    toggle_skills: 'Enable or disable skills for subsequent requests.',
+                    subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
                 },
             },
             tokenCountSettings: {
@@ -2369,8 +2406,8 @@ const en: LanguageMessages = {
             storageSettings: {
                 title: 'Storage Path',
                 description: 'Configure storage location for conversation history, checkpoints, etc.',
-                currentPath: 'Current Storage Path',
-                customPath: 'Custom Path',
+                currentPath: 'Current Path',
+                customPath: 'Storage Path',
                 customPathPlaceholder: 'Enter custom storage path...',
                 customPathHint: 'Leave empty to use default path (extension storage directory)',
                 browse: 'Browse',
@@ -2395,6 +2432,9 @@ const en: LanguageMessages = {
                 notifications: {
                     pathUpdated: 'Storage path updated',
                     pathReset: 'Storage path reset to default',
+                    alreadyDefault: 'Already using the default path',
+                    alreadyDefaultTitle: 'Already using the default path',
+                    applyEmptyHint: 'Please select or enter a storage path first',
                     migrationSuccess: 'Data migration completed, please reload window for changes to take effect',
                     migrationFailed: 'Data migration failed: {error}',
                     validationFailed: 'Path validation failed: {error}'

@@ -847,6 +847,7 @@ const ja: LanguageMessages = {
                         title: '新規設定',
                         nameLabel: '設定名',
                         namePlaceholder: '例：マイ Gemini',
+                        nameRequired: '設定名を入力してください',
                         typeLabel: 'API タイプ',
                         typePlaceholder: 'API タイプを選択',
                         cancel: 'キャンセル',
@@ -1050,6 +1051,15 @@ const ja: LanguageMessages = {
                     media: 'メディア処理',
                     plan: 'プラン',
                     mcp: 'MCP ツール',
+                    todo: 'TODO',
+                    history: '履歴',
+                    memory: '記憶',
+                    review: 'レビュー',
+                    progress: '進捗',
+                    skills: 'スキル',
+                    design: 'デザイン',
+                    notification: '通知',
+                    agents: 'エージェント',
                     other: 'その他'
                 },
                 badges: {
@@ -1747,6 +1757,11 @@ const ja: LanguageMessages = {
                     TODO_LIST: {
                         name: 'TODO リスト',
                         description: '現在の会話の TODO リストを表示します（todo_write / todo_update / create_plan によって永続化された todoList メタデータから取得）'
+                    },
+                    MEMORY: {
+                        name: '記憶システム',
+                        description: '永続記憶システム（OptMem）の使い方ガイド。セッションをまたいで情報を記録・想起する方法を AI に伝えます。設定 → 記憶 でカスタマイズできます。',
+                        requiresConfig: '設定 → 記憶 でカスタマイズできます'
                     }
                 },
                 exampleOutput: '出力例：',
@@ -1947,6 +1962,11 @@ const ja: LanguageMessages = {
                     info: {
                         title: '永久記憶について',
                         text: '記憶システム（OptMem）を使用すると、AI は各セッションの開始時に過去の合意、決定、知識を自動的に思い出すことができます。AI は作業中に重要なことを記録し、古い記憶はトークンを節約するためにインテリジェントに要約に圧縮されます。'
+                    },
+                    rawEntries: {
+                        title: '生の記憶エントリ',
+                        description: '生の記憶エントリを表示・編集します。編集すると関連する要約がクリアされます（次回の圧縮時に再構築されます）。',
+                        empty: 'まだ記憶エントリがありません。'
                     }
                 },
 
@@ -2138,6 +2158,13 @@ const ja: LanguageMessages = {
                     plan: 'プラン',
                     todo: 'TODO',
                     history: '履歴',
+                    memory: '記憶',
+                    review: 'レビュー',
+                    progress: '進捗',
+                    skills: 'スキル',
+                    design: 'デザイン',
+                    notification: '通知',
+                    agents: 'エージェント',
                     other: 'その他'
                 },
                 dependency: {
@@ -2191,6 +2218,11 @@ const ja: LanguageMessages = {
                     memory_zoom: '記憶を展開',
                     memory_forget: '記憶を破棄',
                     memory_config: '記憶を設定',
+                    insert_code: 'コード挿入',
+                    delete_code: 'コード削除',
+                    read_skill: 'スキルを読む',
+                    toggle_skills: 'スキル切替',
+                    subagents: 'サブエージェント',
                 },
                 toolDescriptions: {
                     read_file: 'ワークスペース内のファイルを読み取ります。テキストとバイナリファイルに対応。',
@@ -2235,6 +2267,11 @@ const ja: LanguageMessages = {
                     memory_zoom: '記憶ツリーノードを展開して詳細を表示します。',
                     memory_forget: '誤った記憶ツリーのサマリーを破棄します（元の記憶は保持）。',
                     memory_config: '永続記憶システムの設定パラメータを表示または変更します。',
+                    insert_code: '指定行の前にコードを挿入します。「最終行 + 1」で末尾に追加できます。',
+                    delete_code: 'ファイル内の指定行範囲のコードを削除します。',
+                    read_skill: 'スキルの内容と説明を読み取ります。',
+                    toggle_skills: '以降のリクエストで使用するスキルを有効・無効にします。',
+                    subagents: 'サブエージェントを起動してタスクを実行します。',
                 },
             },
             tokenCountSettings: {
@@ -2369,8 +2406,8 @@ const ja: LanguageMessages = {
             storageSettings: {
                 title: 'ストレージパス',
                 description: '会話履歴、チェックポイントなどのデータの保存場所を設定',
-                currentPath: '現在のストレージパス',
-                customPath: 'カスタムパス',
+                currentPath: '現在有効なパス',
+                customPath: 'ストレージパス',
                 customPathPlaceholder: 'カスタムストレージパスを入力...',
                 customPathHint: '空白の場合はデフォルトパス（拡張機能ストレージディレクトリ）を使用',
                 browse: '参照',
@@ -2395,6 +2432,9 @@ const ja: LanguageMessages = {
                 notifications: {
                     pathUpdated: 'ストレージパスが更新されました',
                     pathReset: 'ストレージパスがデフォルトにリセットされました',
+                    alreadyDefault: 'すでにデフォルトパスです',
+                    alreadyDefaultTitle: 'すでにデフォルトパスです',
+                    applyEmptyHint: '先にストレージパスを選択または入力してください',
                     migrationSuccess: 'データ移行が完了しました。変更を有効にするにはウィンドウを再読み込みしてください',
                     migrationFailed: 'データ移行に失敗しました: {error}',
                     validationFailed: 'パスの検証に失敗しました: {error}'

@@ -142,6 +142,14 @@ function getCategoryName(category: string): string {
     'plan': 'components.settings.toolsSettings.categories.plan',
     'todo': 'components.settings.toolsSettings.categories.todo',
     'history': 'components.settings.toolsSettings.categories.history',
+    'memory': 'components.settings.toolsSettings.categories.memory',
+    'review': 'components.settings.toolsSettings.categories.review',
+    'progress': 'components.settings.toolsSettings.categories.progress',
+    'skills': 'components.settings.toolsSettings.categories.skills',
+    'design': 'components.settings.toolsSettings.categories.design',
+    'notification': 'components.settings.toolsSettings.categories.notification',
+    'agents': 'components.settings.toolsSettings.categories.agents',
+    'other': 'components.settings.toolsSettings.categories.other',
     '其他': 'components.settings.toolsSettings.categories.other'
   }
   return t(mapping[category] || mapping['其他'])
@@ -157,7 +165,15 @@ const categoryIcons: Record<string, string> = {
   'plan': 'codicon-notebook',
   'todo': 'codicon-checklist',
   'history': 'codicon-history',
-  '其他': 'codicon-extensions'
+  'memory': 'codicon-database',
+  'review': 'codicon-eye',
+  'progress': 'codicon-graph-line',
+  'skills': 'codicon-lightbulb',
+  'design': 'codicon-paintcan',
+  'notification': 'codicon-bell',
+  'agents': 'codicon-account',
+  '其他': 'codicon-extensions',
+  'other': 'codicon-extensions'
 }
 
 // 加载工具列表
@@ -712,9 +728,9 @@ onMounted(() => {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* 工具操作区 */
