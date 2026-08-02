@@ -8,14 +8,18 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import type { SettingsManager } from './SettingsManager';
 import type { StorageStats } from './types';
 
 /**
  * 存储路径管理器
  */
+const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills'];
+
 export class StoragePathManager {
     private defaultDataPath: string;
+    private migrationInProgress = false;
     
     constructor(
         private settingsManager: SettingsManager,
@@ -121,19 +125,39 @@ export class StoragePathManager {
      */
     async validatePath(targetPath: string): Promise<{ valid: boolean; error?: string }> {
         try {
-            // 检查路径是否存在
+            let existingPath = targetPath;
+            let exists = true;
+
             try {
                 await fs.access(targetPath);
             } catch {
-                // 路径不存在，尝试创建
-                await fs.mkdir(targetPath, { recursive: true });
+                exists = false;
+                while (true) {
+                    const parent = path.dirname(existingPath);
+                    if (parent === existingPath) {
+                        throw new Error('No writable parent directory found');
+                    }
+                    existingPath = parent;
+                    try {
+                        await fs.access(existingPath);
+                        break;
+                    } catch {
+                        // 继续查找最近的已有父目录。
+                    }
+                }
             }
-            
-            // 检查是否可写
-            const testFile = path.join(targetPath, '.limcode-test');
-            await fs.writeFile(testFile, 'test');
-            await fs.unlink(testFile);
-            
+
+            // 已有存储数据的无关目录不接受重复迁移；与当前路径重叠的目标由迁移中转流程处理。
+            if (exists && !(await this.pathsOverlap(this.getEffectiveDataPath(), targetPath))) {
+                const entries = await fs.readdir(targetPath);
+                if (entries.some((entry) => STORAGE_SUBDIRS.includes(entry))) {
+                    return { valid: false, error: '目标目录已包含扩展数据（conversations/checkpoints 等），请选择其他目录' };
+                }
+            }
+
+            const testDir = await fs.mkdtemp(path.join(existingPath, '.limcode-test-'));
+            await fs.rmdir(testDir);
+
             return { valid: true };
         } catch (error: any) {
             return {
@@ -183,16 +207,19 @@ export class StoragePathManager {
     async getStorageStats(targetPath?: string): Promise<StorageStats> {
         const basePath = targetPath || this.getEffectiveDataPath();
         
-        const [conversations, checkpoints, mcp, dependencies, diffs] = await Promise.all([
+        const [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills] = await Promise.all([
             this.getDirectorySize(path.join(basePath, 'conversations')),
             this.getDirectorySize(path.join(basePath, 'checkpoints')),
+            this.getDirectorySize(path.join(basePath, 'snapshots')),
             this.getDirectorySize(path.join(basePath, 'mcp')),
             this.getDirectorySize(path.join(basePath, 'dependencies')),
-            this.getDirectorySize(path.join(basePath, 'diffs'))
+            this.getDirectorySize(path.join(basePath, 'diffs')),
+            this.getDirectorySize(path.join(basePath, 'skills'))
         ]);
-        
-        const totalSize = conversations.size + checkpoints.size + mcp.size + dependencies.size + diffs.size;
-        const fileCount = conversations.count + checkpoints.count + mcp.count + dependencies.count + diffs.count;
+
+        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills];
+        const totalSize = allStats.reduce((sum, stat) => sum + stat.size, 0);
+        const fileCount = allStats.reduce((sum, stat) => sum + stat.count, 0);
         
         return {
             path: basePath,
@@ -212,44 +239,110 @@ export class StoragePathManager {
      * 复制目录（递归）
      */
     private async copyDirectory(src: string, dest: string, onProgress?: (copied: number, total: number) => void): Promise<number> {
-        let copiedCount = 0;
-        
-        try {
-            await fs.mkdir(dest, { recursive: true });
-            const entries = await fs.readdir(src, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const srcPath = path.join(src, entry.name);
-                const destPath = path.join(dest, entry.name);
-                
-                if (entry.isDirectory()) {
-                    copiedCount += await this.copyDirectory(srcPath, destPath, onProgress);
-                } else if (entry.isFile()) {
-                    await fs.copyFile(srcPath, destPath);
-                    copiedCount++;
-                    if (onProgress) {
-                        onProgress(copiedCount, -1); // total unknown
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(`[StoragePathManager] Failed to copy ${src}:`, error);
+        if (await this.isPathInside(src, dest)) {
+            throw new Error('Cannot copy a directory into its own subdirectory');
         }
-        
+
+        let copiedCount = 0;
+        await fs.mkdir(dest, { recursive: true });
+        const entries = await fs.readdir(src, { withFileTypes: true });
+
+        for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+
+            if (entry.isDirectory()) {
+                copiedCount += await this.copyDirectory(srcPath, destPath, onProgress);
+            } else if (entry.isFile()) {
+                await fs.copyFile(srcPath, destPath);
+                copiedCount++;
+                onProgress?.(copiedCount, -1);
+            }
+        }
+
         return copiedCount;
     }
     
-    /**
-     * 删除目录（递归）
-     */
-    private async removeDirectory(dirPath: string): Promise<void> {
+    private async resolvePathForComparison(targetPath: string): Promise<string> {
         try {
-            await fs.rm(dirPath, { recursive: true, force: true });
-        } catch (error) {
-            console.warn(`[StoragePathManager] Failed to remove ${dirPath}:`, error);
+            return await fs.realpath(targetPath);
+        } catch (error: any) {
+            if (error?.code !== 'ENOENT') {
+                throw error;
+            }
+
+            const parent = path.dirname(targetPath);
+            if (parent === targetPath) {
+                return path.normalize(targetPath);
+            }
+
+            return path.join(await this.resolvePathForComparison(parent), path.basename(targetPath));
         }
     }
-    
+
+    private async isPathInside(parentPath: string, childPath: string): Promise<boolean> {
+        const parent = await this.resolvePathForComparison(parentPath);
+        const child = await this.resolvePathForComparison(childPath);
+        const relative = path.relative(parent, child);
+        return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+    }
+
+    private async pathsOverlap(first: string, second: string): Promise<boolean> {
+        const firstResolved = await this.resolvePathForComparison(first);
+        const secondResolved = await this.resolvePathForComparison(second);
+        const relative = path.relative(firstResolved, secondResolved);
+        if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+            return true;
+        }
+
+        const reverse = path.relative(secondResolved, firstResolved);
+        return !reverse.startsWith('..') && !path.isAbsolute(reverse);
+    }
+
+    private async copyStorageData(
+        sourcePath: string,
+        targetPath: string,
+        copiedFiles: number,
+        totalFiles: number,
+        phase: 'Copying' | 'Restoring',
+        onProgress?: (status: { phase: string; current: number; total: number }) => void
+    ): Promise<number> {
+        let totalCopied = copiedFiles;
+
+        for (const subDir of STORAGE_SUBDIRS) {
+            const srcDir = path.join(sourcePath, subDir);
+            const destDir = path.join(targetPath, subDir);
+
+            onProgress?.({ phase: `${phase} ${subDir}...`, current: totalCopied, total: totalFiles });
+
+            try {
+                await fs.access(srcDir);
+            } catch (error: any) {
+                if (error?.code === 'ENOENT') {
+                    continue;
+                }
+                throw error;
+            }
+
+            const copiedBefore = totalCopied;
+            totalCopied += await this.copyDirectory(srcDir, destDir, (copied) => {
+                onProgress?.({
+                    phase: `${phase} ${subDir}...`,
+                    current: copiedBefore + copied,
+                    total: totalFiles
+                });
+            });
+        }
+
+        return totalCopied;
+    }
+
+    private async removeStorageData(storagePath: string): Promise<void> {
+        for (const subDir of STORAGE_SUBDIRS) {
+            await fs.rm(path.join(storagePath, subDir), { recursive: true, force: true });
+        }
+    }
+
     /**
      * 迁移数据到新路径
      *
@@ -262,95 +355,89 @@ export class StoragePathManager {
         onProgress?: (status: { phase: string; current: number; total: number }) => void
     ): Promise<{ success: boolean; error?: string; copiedFiles: number }> {
         const sourcePath = this.getEffectiveDataPath();
-        
-        // 如果源路径和目标路径相同，无需迁移
+        const originalConfig = { ...this.settingsManager.getStoragePathConfig() };
+
         if (path.normalize(sourcePath) === path.normalize(newPath)) {
             return { success: true, copiedFiles: 0 };
         }
-        
+
+        if (this.migrationInProgress) {
+            return { success: false, error: 'A storage migration is already in progress', copiedFiles: 0 };
+        }
+
+        this.migrationInProgress = true;
+        let stagingRoot: string | undefined;
+        let sourceMutationStarted = false;
+        let preserveStaging = false;
+
         try {
-            // 标记迁移开始
-            await this.settingsManager.markMigrationStarted();
-            
-            // 验证目标路径
             const validation = await this.validatePath(newPath);
             if (!validation.valid) {
-                await this.settingsManager.markMigrationFailed(validation.error || 'Path validation failed');
                 return { success: false, error: validation.error, copiedFiles: 0 };
             }
-            
-            // 获取源目录统计
+
+            await this.settingsManager.markMigrationStarted();
+
             const stats = await this.getStorageStats(sourcePath);
             const totalFiles = stats.fileCount;
+            const destinationPath = await this.resolvePathForComparison(newPath);
+            const requiresStaging = await this.pathsOverlap(sourcePath, destinationPath);
             let copiedFiles = 0;
-            
-            // 要迁移的子目录
-            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills'];
-            
-            for (let i = 0; i < subDirs.length; i++) {
-                const subDir = subDirs[i];
-                const srcDir = path.join(sourcePath, subDir);
-                const destDir = path.join(newPath, subDir);
-                
-                if (onProgress) {
-                    onProgress({
-                        phase: `Copying ${subDir}...`,
-                        current: copiedFiles,
-                        total: totalFiles
-                    });
-                }
-                
-                // 检查源目录是否存在
-                try {
-                    await fs.access(srcDir);
-                    const count = await this.copyDirectory(srcDir, destDir, (copied) => {
-                        if (onProgress) {
-                            onProgress({
-                                phase: `Copying ${subDir}...`,
-                                current: copiedFiles + copied,
-                                total: totalFiles
-                            });
-                        }
-                    });
-                    copiedFiles += count;
-                } catch {
-                    // 源目录不存在，跳过
-                }
+
+            if (requiresStaging) {
+                stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-storage-'));
+                copiedFiles = await this.copyStorageData(sourcePath, stagingRoot, 0, totalFiles, 'Copying', onProgress);
+                sourceMutationStarted = true;
+                await this.removeStorageData(sourcePath);
+                await this.copyStorageData(stagingRoot, destinationPath, 0, totalFiles, 'Copying', onProgress);
+            } else {
+                copiedFiles = await this.copyStorageData(sourcePath, destinationPath, 0, totalFiles, 'Copying', onProgress);
             }
-            
-            // 更新配置：设置新路径并标记迁移完成
+
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: newPath,
                 migrationStatus: 'completed',
                 lastMigrationAt: Date.now(),
                 migrationError: undefined
             });
-            
-            if (onProgress) {
-                onProgress({
-                    phase: 'Cleaning up old storage...',
-                    current: copiedFiles,
-                    total: copiedFiles
-                });
+
+            onProgress?.({ phase: 'Cleaning up old storage...', current: copiedFiles, total: copiedFiles });
+
+            if (!requiresStaging) {
+                const cleanup = await this.cleanupOldStorageInternal(sourcePath);
+                if (!cleanup.success) {
+                    console.warn(`[StoragePathManager] Migration completed, but failed to clean ${sourcePath}`);
+                }
             }
-            
-            // 自动清理旧目录（只清理子目录，保留根目录和设置）
-            await this.cleanupOldStorageInternal(sourcePath);
-            
-            if (onProgress) {
-                onProgress({
-                    phase: 'Migration completed',
-                    current: copiedFiles,
-                    total: copiedFiles
-                });
-            }
-            
+
+            onProgress?.({ phase: 'Migration completed', current: copiedFiles, total: copiedFiles });
             return { success: true, copiedFiles };
-            
         } catch (error: any) {
-            const errorMessage = error.message || 'Unknown error during migration';
-            await this.settingsManager.markMigrationFailed(errorMessage);
+            let errorMessage = error.message || 'Unknown error during migration';
+
+            if (stagingRoot && sourceMutationStarted) {
+                try {
+                    await this.removeStorageData(sourcePath);
+                    await this.copyStorageData(stagingRoot, sourcePath, 0, 0, 'Restoring');
+                } catch (rollbackError) {
+                    preserveStaging = true;
+                    errorMessage += `; recovery data kept at ${stagingRoot}`;
+                    console.error('[StoragePathManager] Failed to restore storage after migration error:', rollbackError);
+                }
+            }
+
+            await this.settingsManager.updateStoragePathConfig({
+                customDataPath: originalConfig.customDataPath,
+                migrationStatus: originalConfig.migrationStatus || 'none',
+                lastMigrationAt: originalConfig.lastMigrationAt,
+                migrationError: errorMessage
+            });
             return { success: false, error: errorMessage, copiedFiles: 0 };
+        } finally {
+            if (stagingRoot && !preserveStaging) {
+                await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
+            this.migrationInProgress = false;
         }
     }
     
@@ -362,12 +449,8 @@ export class StoragePathManager {
         try {
             const stats = await this.getStorageStats(oldPath);
             
-            // 要清理的子目录（不包括 settings，settings 只在默认路径存在）
-            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs'];
-            
-            for (const subDir of subDirs) {
-                await this.removeDirectory(path.join(oldPath, subDir));
-            }
+            // settings 仅保存在默认路径，不参与清理。
+            await this.removeStorageData(oldPath);
             
             return { success: true, freedBytes: stats.totalSize };
         } catch (error) {
@@ -397,64 +480,73 @@ export class StoragePathManager {
      */
     async resetToDefault(onProgress?: (status: { phase: string; current: number; total: number }) => void): Promise<{ success: boolean; error?: string }> {
         const config = this.settingsManager.getStoragePathConfig();
-        
+
         if (!config.customDataPath) {
-            // 已经是默认路径
             return { success: true };
         }
-        
+
+        if (this.migrationInProgress) {
+            return { success: false, error: 'A storage migration is already in progress' };
+        }
+
+        this.migrationInProgress = true;
         const customPath = config.customDataPath;
-        
+        let stagingRoot: string | undefined;
+        let sourceMutationStarted = false;
+        let preserveStaging = false;
+
         try {
-            // 将数据从自定义路径迁移回默认路径
-            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs'];
             const stats = await this.getStorageStats(customPath);
+            const requiresStaging = await this.pathsOverlap(customPath, this.defaultDataPath);
             let copiedFiles = 0;
-            
-            for (const subDir of subDirs) {
-                const srcDir = path.join(customPath, subDir);
-                const destDir = path.join(this.defaultDataPath, subDir);
-                
-                if (onProgress) {
-                    onProgress({
-                        phase: `Restoring ${subDir}...`,
-                        current: copiedFiles,
-                        total: stats.fileCount
-                    });
-                }
-                
-                try {
-                    await fs.access(srcDir);
-                    const count = await this.copyDirectory(srcDir, destDir);
-                    copiedFiles += count;
-                } catch {
-                    // 源目录不存在，跳过
-                }
+
+            if (requiresStaging) {
+                stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-storage-'));
+                copiedFiles = await this.copyStorageData(customPath, stagingRoot, 0, stats.fileCount, 'Restoring', onProgress);
+                sourceMutationStarted = true;
+                await this.removeStorageData(customPath);
+                await this.copyStorageData(stagingRoot, this.defaultDataPath, 0, stats.fileCount, 'Restoring', onProgress);
+            } else {
+                copiedFiles = await this.copyStorageData(customPath, this.defaultDataPath, 0, stats.fileCount, 'Restoring', onProgress);
             }
-            
-            if (onProgress) {
-                onProgress({
-                    phase: 'Cleaning up custom storage...',
-                    current: copiedFiles,
-                    total: copiedFiles
-                });
-            }
-            
-            // 清理自定义路径中的数据子目录
-            await this.cleanupOldStorageInternal(customPath);
-            
-            // 清除自定义路径配置
+
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: undefined,
                 migrationStatus: 'none',
                 lastMigrationAt: undefined,
                 migrationError: undefined
             });
-            
+
+            onProgress?.({ phase: 'Cleaning up custom storage...', current: copiedFiles, total: copiedFiles });
+
+            if (!requiresStaging) {
+                const cleanup = await this.cleanupOldStorageInternal(customPath);
+                if (!cleanup.success) {
+                    console.warn(`[StoragePathManager] Storage restored, but failed to clean ${customPath}`);
+                }
+            }
+
             return { success: true };
-            
         } catch (error: any) {
-            return { success: false, error: error.message };
+            let errorMessage = error.message || 'Unknown error while restoring default storage';
+
+            if (stagingRoot && sourceMutationStarted) {
+                try {
+                    await this.removeStorageData(this.defaultDataPath);
+                    await this.copyStorageData(stagingRoot, customPath, 0, 0, 'Restoring');
+                } catch (rollbackError) {
+                    preserveStaging = true;
+                    errorMessage += `; recovery data kept at ${stagingRoot}`;
+                    console.error('[StoragePathManager] Failed to restore custom storage after reset error:', rollbackError);
+                }
+            }
+
+            return { success: false, error: errorMessage };
+        } finally {
+            if (stagingRoot && !preserveStaging) {
+                await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
+            this.migrationInProgress = false;
         }
     }
 }

@@ -297,7 +297,7 @@ onMounted(() => {
         </button>
         <button class="btn btn-secondary" @click="loadEntries" :disabled="entriesLoading">
           <i :class="entriesLoading ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-refresh'"></i>
-          Refresh entries
+          {{ t('common.refresh') }}
         </button>
       </div>
 
@@ -310,17 +310,17 @@ onMounted(() => {
       <div class="section">
         <h5 class="section-title">
           <i class="codicon codicon-list-flat"></i>
-          Raw Memory Entries
+          {{ t('components.settings.settingsPanel.memory.rawEntries.title') }}
           <span v-if="entriesTotal > 0" class="badge">{{ entriesTotal }}</span>
         </h5>
         <p class="field-description" style="margin-bottom: 12px;">
-          View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).
+          {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
 
         <!-- 空状态 -->
         <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
           <i class="codicon codicon-info"></i>
-          No memory entries yet.
+          {{ t('components.settings.settingsPanel.memory.rawEntries.empty') }}
         </div>
 
         <!-- 条目列表 -->
@@ -341,15 +341,15 @@ onMounted(() => {
                   <button class="btn btn-sm btn-primary" @click="saveEdit" :disabled="editSaving">
                     <i v-if="editSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
                     <i v-else class="codicon codicon-check"></i>
-                    Save
+                    {{ t('common.save') }}
                   </button>
-                  <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">Cancel</button>
+                  <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">{{ t('common.cancel') }}</button>
                   <span class="char-count">{{ editingText.length }}/{{ entryChars }}</span>
                 </div>
               </div>
             </div>
             <div class="entry-actions" v-if="editingId !== entry.id">
-              <button class="btn-icon" title="Edit" @click="startEdit(entry)">
+              <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
             </div>

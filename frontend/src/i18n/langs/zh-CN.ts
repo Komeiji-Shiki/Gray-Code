@@ -848,6 +848,7 @@ const zhCN = {
                         title: '新建配置',
                         nameLabel: '配置名称',
                         namePlaceholder: '例如：我的 Gemini',
+                        nameRequired: '请输入配置名称',
                         typeLabel: '接口类型',
                         typePlaceholder: '选择接口类型',
                         cancel: '取消',
@@ -1051,6 +1052,15 @@ const zhCN = {
                     media: '媒体处理',
                     plan: '计划',
                     mcp: 'MCP 工具',
+                    todo: 'TODO',
+                    history: '历史',
+                    memory: '记忆',
+                    review: '审查',
+                    progress: '进度',
+                    skills: '技能',
+                    design: '设计',
+                    notification: '通知',
+                    agents: '代理',
                     other: '其他'
                 },
                 badges: {
@@ -1748,6 +1758,11 @@ const zhCN = {
                     TODO_LIST: {
                         name: 'TODO 列表',
                         description: '显示当前会话的 TODO 列表（来自 todo_write / todo_update / create_plan 持久化的 todoList 元数据）'
+                    },
+                    MEMORY: {
+                        name: '记忆系统',
+                        description: '永久记忆系统（OptMem）的使用说明，告诉 AI 如何跨会话记录和回忆信息。可在 设置 → 记忆 中自定义内容。',
+                        requiresConfig: '设置 → 记忆 中可自定义此提示词'
                     }
                 },
                 exampleOutput: '示例输出：',
@@ -1948,6 +1963,11 @@ const zhCN = {
                     info: {
                         title: '关于永久记忆',
                         text: '记忆系统（OptMem）让 AI 在每次会话开始时自动回忆之前的约定、决策和知识。AI 会在工作过程中自动记录重要事项，旧记忆会被智能压缩为摘要以节省 token。'
+                    },
+                    rawEntries: {
+                        title: '原始记忆条目',
+                        description: '查看和编辑原始记忆条目。编辑会清除相关摘要（下次压缩时重新构建）。',
+                        empty: '暂无记忆条目。'
                     }
                 },
 
@@ -2139,6 +2159,13 @@ const zhCN = {
                     plan: '计划',
                     todo: 'TODO',
                     history: '历史',
+                    memory: '记忆',
+                    review: '审查',
+                    progress: '进度',
+                    skills: '技能',
+                    design: '设计',
+                    notification: '通知',
+                    agents: '代理',
                     other: '其他'
                 },
                 dependency: {
@@ -2192,6 +2219,11 @@ const zhCN = {
                     memory_zoom: '展开记忆',
                     memory_forget: '丢弃记忆',
                     memory_config: '记忆配置',
+                    insert_code: '插入代码',
+                    delete_code: '删除代码',
+                    read_skill: '读取技能',
+                    toggle_skills: '切换技能',
+                    subagents: '子代理',
                 },
                 toolDescriptions: {
                     read_file: '读取工作区文件，支持文本和二进制文件，可指定行范围。',
@@ -2236,6 +2268,11 @@ const zhCN = {
                     memory_zoom: '展开记忆树节点查看详细内容。',
                     memory_forget: '丢弃错误的记忆树摘要（不删除原始记忆）。',
                     memory_config: '查看或修改永久记忆系统的配置参数。',
+                    insert_code: '在指定行前插入代码，可用「最后一行 + 1」追加到文件末尾。',
+                    delete_code: '删除文件中指定行范围内的代码。',
+                    read_skill: '读取技能的内容和说明。',
+                    toggle_skills: '启用或禁用技能，控制后续请求使用的知识模块。',
+                    subagents: '派生子代理执行任务，支持传入提示词和上下文。',
                 },
             },
             tokenCountSettings: {
@@ -2370,8 +2407,8 @@ const zhCN = {
             storageSettings: {
                 title: '存储路径',
                 description: '配置对话历史、存档点等数据的存储位置',
-                currentPath: '当前存储路径',
-                customPath: '自定义路径',
+                currentPath: '当前生效路径',
+                customPath: '存储路径',
                 customPathPlaceholder: '输入自定义存储路径...',
                 customPathHint: '留空则使用默认路径（扩展存储目录）',
                 browse: '浏览',
@@ -2396,6 +2433,9 @@ const zhCN = {
                 notifications: {
                     pathUpdated: '存储路径已更新',
                     pathReset: '存储路径已重置为默认',
+                    alreadyDefault: '当前已是默认路径，无需重置',
+                    alreadyDefaultTitle: '当前已是默认路径',
+                    applyEmptyHint: '请先选择或输入一个存储路径',
                     migrationSuccess: '数据迁移完成，请重新加载窗口以使更改生效',
                     migrationFailed: '数据迁移失败: {error}',
                     validationFailed: '路径验证失败: {error}'
