@@ -297,7 +297,7 @@ onMounted(() => {
         </button>
         <button class="btn btn-secondary" @click="loadEntries" :disabled="entriesLoading">
           <i :class="entriesLoading ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-refresh'"></i>
-          Refresh entries
+          {{ t('common.refresh') }}
         </button>
       </div>
 
@@ -341,15 +341,15 @@ onMounted(() => {
                   <button class="btn btn-sm btn-primary" @click="saveEdit" :disabled="editSaving">
                     <i v-if="editSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
                     <i v-else class="codicon codicon-check"></i>
-                    Save
+                    {{ t('common.save') }}
                   </button>
-                  <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">Cancel</button>
+                  <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">{{ t('common.cancel') }}</button>
                   <span class="char-count">{{ editingText.length }}/{{ entryChars }}</span>
                 </div>
               </div>
             </div>
             <div class="entry-actions" v-if="editingId !== entry.id">
-              <button class="btn-icon" title="Edit" @click="startEdit(entry)">
+              <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
             </div>

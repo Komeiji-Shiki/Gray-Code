@@ -87,6 +87,7 @@ const showMigrateDialog = ref(false)
 const storageMessage = ref('')
 const storageMessageType = ref<'success' | 'error' | 'info'>('success')
 const needsReload = ref(false) // 迁移完成后需要重新加载
+let pathValidationRequestId = 0
 
 // 加载设置
 async function loadSettings() {
@@ -161,27 +162,37 @@ async function pickStoragePath() {
 
 // 验证路径
 async function validateStoragePath(path: string) {
-  if (!path.trim()) {
+  const normalizedPath = path.trim()
+  const requestId = ++pathValidationRequestId
+
+  if (!normalizedPath) {
     pathValidationResult.value = null
+    isValidatingPath.value = false
     return
   }
-  
+
   isValidatingPath.value = true
   pathValidationResult.value = null
-  
+
   try {
-    const response = await sendToExtension<any>('storagePath.validate', { path: path.trim() })
-    pathValidationResult.value = {
-      valid: response?.valid ?? false,
-      message: response?.error
+    const response = await sendToExtension<any>('storagePath.validate', { path: normalizedPath })
+    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
+      pathValidationResult.value = {
+        valid: response?.valid ?? false,
+        message: response?.error
+      }
     }
   } catch (error: any) {
-    pathValidationResult.value = {
-      valid: false,
-      message: error?.message || 'Validation failed'
+    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
+      pathValidationResult.value = {
+        valid: false,
+        message: error?.message || 'Validation failed'
+      }
     }
   } finally {
-    isValidatingPath.value = false
+    if (requestId === pathValidationRequestId) {
+      isValidatingPath.value = false
+    }
   }
 }
 
@@ -191,6 +202,9 @@ function debouncedValidatePath(path: string) {
   if (validateDebounceTimer) {
     clearTimeout(validateDebounceTimer)
   }
+  pathValidationRequestId++
+  isValidatingPath.value = path.trim() !== ''
+  pathValidationResult.value = null
   validateDebounceTimer = setTimeout(() => {
     validateStoragePath(path)
   }, 500)
@@ -203,15 +217,16 @@ watch(() => storageSettings.customPath, (newPath) => {
 
 // 应用存储路径（迁移数据到新路径）
 async function applyStoragePath() {
+  if (isMigrating.value) return
+
   const newPath = storageSettings.customPath.trim()
-  
+
   if (!newPath) {
-    // 空路径：没有可应用的内容
-    storageMessage.value = t('components.settings.storageSettings.applyEmptyHint')
+    storageMessage.value = t('components.settings.storageSettings.notifications.applyEmptyHint')
     storageMessageType.value = 'info'
     return
   }
-  
+
   if (!pathValidationResult.value?.valid) {
     // 路径验证未通过
     storageMessage.value = pathValidationResult.value?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', '')
@@ -225,6 +240,8 @@ async function applyStoragePath() {
 
 // 重置为默认路径
 async function resetStoragePath() {
+  if (isMigrating.value) return
+
   if (!storageSettings.isCustom) {
     // 已经是默认路径，无需重置
     storageMessage.value = t('components.settings.storageSettings.notifications.alreadyDefault')
@@ -271,6 +288,8 @@ function confirmMigrate() {
 
 // 执行数据迁移
 async function executeMigration() {
+  if (isMigrating.value) return
+
   showMigrateDialog.value = false
   isMigrating.value = true
   needsReload.value = false
@@ -689,6 +708,7 @@ onMounted(() => {
                       <button
                         class="path-picker-btn"
                         :title="t('components.settings.storageSettings.browse')"
+                        :disabled="isMigrating"
                         @click="pickStoragePath"
                       >
                         <i class="codicon codicon-folder-opened"></i>
@@ -711,7 +731,7 @@ onMounted(() => {
                     <button
                       class="action-btn primary"
                       @click="applyStoragePath"
-                      :disabled="storageSettings.customPath.trim() === '' || isValidatingPath || !pathValidationResult?.valid"
+                      :disabled="isMigrating || isValidatingPath || (storageSettings.customPath.trim() !== '' && !pathValidationResult?.valid)"
                     >
                       <i class="codicon codicon-check"></i>
                       {{ t('components.settings.storageSettings.apply') }}
@@ -719,8 +739,8 @@ onMounted(() => {
                     <button
                       class="action-btn"
                       @click="resetStoragePath"
-                      :disabled="!storageSettings.isCustom"
-                      :title="!storageSettings.isCustom ? t('components.settings.storageSettings.alreadyDefaultTitle') : ''"
+                      :disabled="isMigrating"
+                      :title="!storageSettings.isCustom ? t('components.settings.storageSettings.notifications.alreadyDefaultTitle') : ''"
                     >
                       <i class="codicon codicon-discard"></i>
                       {{ t('components.settings.storageSettings.reset') }}
@@ -828,10 +848,10 @@ onMounted(() => {
         </p>
       </div>
       <template #footer>
-        <button class="dialog-btn" @click="showMigrateDialog = false">
+        <button class="dialog-btn" :disabled="isMigrating" @click="showMigrateDialog = false">
           {{ t('components.settings.storageSettings.dialog.cancel') }}
         </button>
-        <button class="dialog-btn primary" @click="executeMigration">
+        <button class="dialog-btn primary" :disabled="isMigrating" @click="executeMigration">
           {{ t('components.settings.storageSettings.dialog.confirm') }}
         </button>
       </template>
