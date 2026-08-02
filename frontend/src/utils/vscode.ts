@@ -38,7 +38,8 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'cancelStream',
   'dependencies.install',
   'dependencies.uninstall',
-  'storagePath.migrate'
+  'storagePath.migrate',
+  'storagePath.selectFolder'
 ])
 
 /**
