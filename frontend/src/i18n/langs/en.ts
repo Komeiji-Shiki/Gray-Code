@@ -898,12 +898,12 @@ const en: LanguageMessages = {
                         },
                         json: {
                             label: 'JSON Boundary Markers',
-                            description: 'Use JSON format + boundary markers (recommended)'
+                            description: 'Use JSON format + boundary markers'
                         },
                         hint: {
                             functionCall: 'Function Calling: Use API native function calling feature',
                             xml: 'XML Prompt: Convert tools to XML format in system prompt',
-                            json: 'JSON Boundary Markers: Use JSON format + <<<TOOL_CALL>>> boundary markers (recommended)'
+                            json: 'JSON Boundary Markers: Use JSON format + <<<TOOL_CALL>>> boundary markers'
                         },
                         openaiWarning: 'OpenAI Function Call mode does not support multimodal tools (such as read_file for reading images, generate_image, remove_background, crop_image, resize_image, rotate_image). To use multimodal features, please switch to XML or JSON mode.'
                     },
