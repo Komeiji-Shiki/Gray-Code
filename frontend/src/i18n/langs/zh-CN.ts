@@ -899,12 +899,12 @@ const zhCN = {
                         },
                         json: {
                             label: 'JSON 边界标记',
-                            description: '使用 JSON 格式 + 边界标记（推荐）'
+                            description: '使用 JSON 格式 + 边界标记'
                         },
                         hint: {
                             functionCall: 'Function Calling: 使用 API 原生函数调用功能',
                             xml: 'XML 提示词: 将工具转换为 XML 格式插入系统提示词',
-                            json: 'JSON 边界标记: 使用 JSON 格式 + <<<TOOL_CALL>>> 边界标记（推荐）'
+                            json: 'JSON 边界标记: 使用 JSON 格式 + <<<TOOL_CALL>>> 边界标记'
                         },
                         openaiWarning: 'OpenAI Function Call 模式不支持多模态工具（如 read_file 读取图片、generate_image 生成图片、remove_background 抠图、crop_image 裁切图片、resize_image 缩放图片、rotate_image 旋转图片）。如需使用多模态功能，请切换到 XML 或 JSON 模式。'
                     },

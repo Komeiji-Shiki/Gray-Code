@@ -898,12 +898,12 @@ const ja: LanguageMessages = {
                         },
                         json: {
                             label: 'JSON 境界マーカー',
-                            description: 'JSON 形式 + 境界マーカーを使用（推奨）'
+                            description: 'JSON 形式 + 境界マーカーを使用'
                         },
                         hint: {
                             functionCall: 'Function Calling: API ネイティブの関数呼び出し機能を使用',
                             xml: 'XML プロンプト: ツールを XML 形式に変換してシステムプロンプトに挿入',
-                            json: 'JSON 境界マーカー: JSON 形式 + <<<TOOL_CALL>>> 境界マーカーを使用（推奨）'
+                            json: 'JSON 境界マーカー: JSON 形式 + <<<TOOL_CALL>>> 境界マーカーを使用'
                         },
                         openaiWarning: 'OpenAI Function Call モードはマルチモーダルツール（read_file で画像を読み取り、generate_image、remove_background、crop_image、resize_image、rotate_image など）をサポートしていません。マルチモーダル機能を使用するには、XML または JSON モードに切り替えてください。'
                     },
