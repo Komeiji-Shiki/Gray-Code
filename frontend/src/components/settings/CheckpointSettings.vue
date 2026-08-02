@@ -322,9 +322,20 @@ async function toggleToolAfter(toolName: string, enabled: boolean) {
   await updateConfigField('afterTools', newAfterTools)
 }
 
-// 获取工具显示名称
+// 获取工具显示名称（优先 i18n，fallback 机械转换）
 function getToolDisplayName(name: string): string {
+  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// 获取工具描述（优先 i18n，fallback 原文）
+function getToolDescription(name: string, fallback: string): string {
+  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
+  return fallback
 }
 
 // 全选/取消 before 并保存
@@ -816,7 +827,7 @@ onMounted(() => {
           >
             <div class="col-tool">
               <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
-              <span class="tool-desc">{{ tool.description }}</span>
+              <span class="tool-desc">{{ getToolDescription(tool.name, tool.description) }}</span>
             </div>
             <div class="col-before">
               <CustomCheckbox
@@ -1216,9 +1227,9 @@ onMounted(() => {
 .tool-desc {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* 空状态 */

@@ -1471,9 +1471,9 @@ input[type="number"]::-webkit-inner-spin-button {
 .tool-description {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .no-tools {

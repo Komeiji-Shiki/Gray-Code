@@ -558,9 +558,9 @@ watch(() => props.visible, (visible) => {
 .model-desc {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .added-badge {
