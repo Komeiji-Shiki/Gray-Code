@@ -310,17 +310,17 @@ onMounted(() => {
       <div class="section">
         <h5 class="section-title">
           <i class="codicon codicon-list-flat"></i>
-          Raw Memory Entries
+          {{ t('components.settings.settingsPanel.memory.rawEntries.title') }}
           <span v-if="entriesTotal > 0" class="badge">{{ entriesTotal }}</span>
         </h5>
         <p class="field-description" style="margin-bottom: 12px;">
-          View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).
+          {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
 
         <!-- 空状态 -->
         <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
           <i class="codicon codicon-info"></i>
-          No memory entries yet.
+          {{ t('components.settings.settingsPanel.memory.rawEntries.empty') }}
         </div>
 
         <!-- 条目列表 -->

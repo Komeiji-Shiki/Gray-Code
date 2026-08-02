@@ -34,6 +34,7 @@ const editInput = ref<HTMLInputElement>()
 const showNewDialog = ref(false)
 const newConfigName = ref('')
 const newConfigType = ref<'gemini' | 'openai' | 'openai-responses' | 'anthropic'>('gemini')
+const newConfigNameError = ref(false)
 
 // API Key 显示
 const showApiKey = ref(false)
@@ -398,7 +399,10 @@ async function loadConfigs() {
 
 // 创建新配置
 async function createConfig() {
-  if (!newConfigName.value.trim()) return
+  if (!newConfigName.value.trim()) {
+    newConfigNameError.value = true
+    return
+  }
   
   try {
     // 只传递必要参数，其他由后端提供默认值
@@ -411,6 +415,7 @@ async function createConfig() {
     currentConfigId.value = configId
     showNewDialog.value = false
     newConfigName.value = ''
+    newConfigNameError.value = false
   } catch (error) {
     console.error('Failed to create config:', error)
   }
@@ -511,6 +516,7 @@ function handleEditKeydown(e: KeyboardEvent) {
 function cancelNew() {
   showNewDialog.value = false
   newConfigName.value = ''
+  newConfigNameError.value = false
 }
 
 // 更新多个配置字段（单个请求，避免竞态条件）
@@ -694,8 +700,8 @@ onMounted(async () => {
     </div>
     
     <!-- 新建对话框 -->
-    <div v-if="showNewDialog" class="config-dialog">
-      <div class="dialog-content">
+    <div v-if="showNewDialog" class="config-dialog" @click="cancelNew">
+      <div class="dialog-content" @click.stop>
         <h4>{{ t('components.settings.channelSettings.dialog.new.title') }}</h4>
         
         <div class="form-group">
@@ -703,9 +709,13 @@ onMounted(async () => {
           <input
             v-model="newConfigName"
             type="text"
+            class="config-name-input"
+            :class="{ 'input-error': newConfigNameError }"
             :placeholder="t('components.settings.channelSettings.dialog.new.namePlaceholder')"
             @keyup.enter="createConfig"
+            @input="newConfigNameError = false"
           />
+          <span v-if="newConfigNameError" class="config-name-error">{{ t('components.settings.channelSettings.dialog.new.nameRequired') }}</span>
         </div>
         
         <div class="form-group">
@@ -1359,12 +1369,47 @@ onMounted(async () => {
   color: var(--vscode-errorForeground, #f48771);
 }
 
-/* 对话框 */
 .config-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0;
+}
+
+.dialog-content {
+  width: 100%;
+  max-width: 420px;
+  margin: 16px;
   padding: 16px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.config-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
   border-radius: 2px;
+}
+
+input[type="text"].config-name-input.input-error {
+  border-color: var(--vscode-inputValidation-errorBorder);
+}
+
+.config-name-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--vscode-inputValidation-errorBorder);
 }
 
 .dialog-content h4 {

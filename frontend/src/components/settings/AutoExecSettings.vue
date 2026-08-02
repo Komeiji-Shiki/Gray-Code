@@ -70,7 +70,17 @@ const categoryIcons: Record<string, string> = {
   'media': 'codicon-file-media',
   'plan': 'codicon-notebook',
   'mcp': 'codicon-plug',
-  '其他': 'codicon-extensions'
+  'todo': 'codicon-checklist',
+  'history': 'codicon-history',
+  'memory': 'codicon-database',
+  'review': 'codicon-eye',
+  'progress': 'codicon-graph-line',
+  'skills': 'codicon-lightbulb',
+  'design': 'codicon-paintcan',
+  'notification': 'codicon-bell',
+  'agents': 'codicon-account',
+  '其他': 'codicon-extensions',
+  'other': 'codicon-extensions'
 }
 
 // 加载工具列表和配置
@@ -161,7 +171,7 @@ async function disableAllAutoExec() {
   }
 }
 
-// 获取工具显示名称
+// 获取工具显示名称（优先 i18n，fallback 机械转换）
 function getToolDisplayName(tool: ToolInfo): string {
   // 如果是 MCP 工具，提取原始工具名
   if (tool.category === 'mcp' && tool.name.startsWith('mcp__')) {
@@ -169,7 +179,19 @@ function getToolDisplayName(tool: ToolInfo): string {
     const originalName = parts[2] || tool.name
     return originalName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
+  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${tool.name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
   return tool.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// 获取工具描述（优先 i18n，fallback 后端原文）
+function getToolDescription(tool: ToolInfo): string {
+  if (tool.category === 'mcp') return tool.description
+  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${tool.name}`
+  const translated = t(i18nKey)
+  if (translated !== i18nKey) return translated
+  return tool.description
 }
 
 // 获取分类图标
@@ -273,7 +295,7 @@ onMounted(() => {
                   {{ tool.serverName }}
                 </span>
               </div>
-              <div class="tool-description">{{ tool.description }}</div>
+              <div class="tool-description">{{ getToolDescription(tool) }}</div>
             </div>
             
             <!-- Diff 审阅类工具：显示真实生效状态而非误导性勾选框 -->
@@ -535,9 +557,9 @@ onMounted(() => {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* 工具操作区 */
