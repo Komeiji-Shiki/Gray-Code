@@ -85,8 +85,9 @@ const pathValidationResult = ref<{ valid: boolean; message?: string } | null>(nu
 const isMigrating = ref(false)
 const showMigrateDialog = ref(false)
 const storageMessage = ref('')
-const storageMessageType = ref<'success' | 'error'>('success')
+const storageMessageType = ref<'success' | 'error' | 'info'>('success')
 const needsReload = ref(false) // 迁移完成后需要重新加载
+let pathValidationRequestId = 0
 
 // 加载设置
 async function loadSettings() {
@@ -138,37 +139,60 @@ async function loadStorageConfig() {
     if (response) {
       storageSettings.currentPath = response.effectivePath || ''
       storageSettings.defaultPath = response.defaultPath || ''
-      storageSettings.customPath = response.config?.customPath || ''
-      storageSettings.isCustom = !!response.config?.customPath
+      storageSettings.customPath = response.config?.customDataPath || ''
+      storageSettings.isCustom = !!response.config?.customDataPath
     }
   } catch (error) {
     console.error('Failed to load storage config:', error)
   }
 }
 
-// 验证路径
-async function validateStoragePath(path: string) {
-  if (!path.trim()) {
-    pathValidationResult.value = null
-    return
-  }
-  
-  isValidatingPath.value = true
-  pathValidationResult.value = null
-  
+// 打开系统文件夹选择器
+async function pickStoragePath() {
   try {
-    const response = await sendToExtension<any>('storagePath.validate', { path: path.trim() })
-    pathValidationResult.value = {
-      valid: response?.valid ?? false,
-      message: response?.error
+    const response = await sendToExtension<any>('storagePath.selectFolder', {}, { timeoutMs: 120000 })
+    if (response?.path) {
+      storageSettings.customPath = response.path
     }
   } catch (error: any) {
-    pathValidationResult.value = {
-      valid: false,
-      message: error?.message || 'Validation failed'
+    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', 'SELECT_FOLDER')
+    storageMessageType.value = 'error'
+  }
+}
+
+// 验证路径
+async function validateStoragePath(path: string) {
+  const normalizedPath = path.trim()
+  const requestId = ++pathValidationRequestId
+
+  if (!normalizedPath) {
+    pathValidationResult.value = null
+    isValidatingPath.value = false
+    return
+  }
+
+  isValidatingPath.value = true
+  pathValidationResult.value = null
+
+  try {
+    const response = await sendToExtension<any>('storagePath.validate', { path: normalizedPath })
+    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
+      pathValidationResult.value = {
+        valid: response?.valid ?? false,
+        message: response?.error
+      }
+    }
+  } catch (error: any) {
+    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
+      pathValidationResult.value = {
+        valid: false,
+        message: error?.message || 'Validation failed'
+      }
     }
   } finally {
-    isValidatingPath.value = false
+    if (requestId === pathValidationRequestId) {
+      isValidatingPath.value = false
+    }
   }
 }
 
@@ -178,6 +202,9 @@ function debouncedValidatePath(path: string) {
   if (validateDebounceTimer) {
     clearTimeout(validateDebounceTimer)
   }
+  pathValidationRequestId++
+  isValidatingPath.value = path.trim() !== ''
+  pathValidationResult.value = null
   validateDebounceTimer = setTimeout(() => {
     validateStoragePath(path)
   }, 500)
@@ -188,25 +215,40 @@ watch(() => storageSettings.customPath, (newPath) => {
   debouncedValidatePath(newPath)
 })
 
-// 应用存储路径（不迁移数据，只是更改配置）
+// 应用存储路径（迁移数据到新路径）
 async function applyStoragePath() {
+  if (isMigrating.value) return
+
   const newPath = storageSettings.customPath.trim()
-  
-  if (newPath && !pathValidationResult.value?.valid) {
+
+  if (!newPath) {
+    storageMessage.value = t('components.settings.storageSettings.notifications.applyEmptyHint')
+    storageMessageType.value = 'info'
+    return
+  }
+
+  if (!pathValidationResult.value?.valid) {
+    // 路径验证未通过
+    storageMessage.value = pathValidationResult.value?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', '')
+    storageMessageType.value = 'error'
     return
   }
   
   // 使用迁移接口来应用新路径（迁移到新路径）
-  if (newPath) {
-    confirmMigrate()
-  } else {
-    // 重置为默认路径
-    await resetStoragePath()
-  }
+  confirmMigrate()
 }
 
 // 重置为默认路径
 async function resetStoragePath() {
+  if (isMigrating.value) return
+
+  if (!storageSettings.isCustom) {
+    // 已经是默认路径，无需重置
+    storageMessage.value = t('components.settings.storageSettings.notifications.alreadyDefault')
+    storageMessageType.value = 'info'
+    return
+  }
+  
   isMigrating.value = true
   needsReload.value = false
   
@@ -246,6 +288,8 @@ function confirmMigrate() {
 
 // 执行数据迁移
 async function executeMigration() {
+  if (isMigrating.value) return
+
   showMigrateDialog.value = false
   isMigrating.value = true
   needsReload.value = false
@@ -647,41 +691,36 @@ onMounted(() => {
                 <p class="field-description">{{ t('components.settings.storageSettings.description') }}</p>
                 
                 <div class="storage-settings">
-                  <!-- 当前路径显示 -->
-                  <div class="storage-current-path">
-                    <label>{{ t('components.settings.storageSettings.currentPath') }}</label>
-                    <div class="path-display">
-                      <span class="path-text" :title="storageSettings.currentPath">{{ storageSettings.currentPath || '-' }}</span>
-                      <span v-if="storageSettings.isCustom" class="path-badge custom">{{ t('common.custom') }}</span>
-                      <span v-else class="path-badge default">{{ t('common.default') }}</span>
-                    </div>
-                  </div>
-                  
-                  <!-- 自定义路径输入 -->
+                  <!-- 存储路径输入（合并当前路径与自定义路径） -->
                   <div class="storage-custom-path">
                     <label>{{ t('components.settings.storageSettings.customPath') }}</label>
                     <div class="path-input-group">
                       <input
                         type="text"
                         v-model="storageSettings.customPath"
-                        :placeholder="t('components.settings.storageSettings.customPathPlaceholder')"
+                        :placeholder="storageSettings.currentPath || t('components.settings.storageSettings.customPathPlaceholder')"
                         class="path-input"
                         :class="{
                           valid: pathValidationResult?.valid === true,
                           invalid: pathValidationResult?.valid === false
                         }"
                       />
-                      <span v-if="isValidatingPath" class="validation-indicator">
-                        <i class="codicon codicon-loading codicon-modifier-spin"></i>
-                      </span>
-                      <span v-else-if="pathValidationResult?.valid === true" class="validation-indicator valid">
-                        <i class="codicon codicon-check"></i>
-                      </span>
-                      <span v-else-if="pathValidationResult?.valid === false" class="validation-indicator invalid">
-                        <i class="codicon codicon-error"></i>
-                      </span>
+                      <button
+                        class="path-picker-btn"
+                        :title="t('components.settings.storageSettings.browse')"
+                        :disabled="isMigrating"
+                        @click="pickStoragePath"
+                      >
+                        <i class="codicon codicon-folder-opened"></i>
+                      </button>
                     </div>
                     <p class="field-hint">{{ t('components.settings.storageSettings.customPathHint') }}</p>
+                    <p class="current-path-note">
+                      {{ t('components.settings.storageSettings.currentPath') }}：
+                      <span class="path-note-value" :title="storageSettings.currentPath">{{ storageSettings.currentPath || '-' }}</span>
+                      <span v-if="storageSettings.isCustom" class="path-badge custom">{{ t('common.custom') }}</span>
+                      <span v-else class="path-badge default">{{ t('common.default') }}</span>
+                    </p>
                     <p v-if="pathValidationResult?.valid === false && pathValidationResult?.message" class="error-hint">
                       {{ pathValidationResult.message }}
                     </p>
@@ -692,7 +731,7 @@ onMounted(() => {
                     <button
                       class="action-btn primary"
                       @click="applyStoragePath"
-                      :disabled="storageSettings.customPath.trim() !== '' && (!pathValidationResult?.valid || isValidatingPath)"
+                      :disabled="isMigrating || isValidatingPath || (storageSettings.customPath.trim() !== '' && !pathValidationResult?.valid)"
                     >
                       <i class="codicon codicon-check"></i>
                       {{ t('components.settings.storageSettings.apply') }}
@@ -700,26 +739,17 @@ onMounted(() => {
                     <button
                       class="action-btn"
                       @click="resetStoragePath"
-                      :disabled="!storageSettings.isCustom"
+                      :disabled="isMigrating"
+                      :title="!storageSettings.isCustom ? t('components.settings.storageSettings.notifications.alreadyDefaultTitle') : ''"
                     >
                       <i class="codicon codicon-discard"></i>
                       {{ t('components.settings.storageSettings.reset') }}
-                    </button>
-                    <button
-                      class="action-btn"
-                      @click="confirmMigrate"
-                      :disabled="!storageSettings.customPath.trim() || !pathValidationResult?.valid || isMigrating"
-                      :title="t('components.settings.storageSettings.migrateHint')"
-                    >
-                      <i v-if="isMigrating" class="codicon codicon-loading codicon-modifier-spin"></i>
-                      <i v-else class="codicon codicon-sync"></i>
-                      {{ isMigrating ? t('components.settings.storageSettings.migrating') : t('components.settings.storageSettings.migrate') }}
                     </button>
                   </div>
                   
                   <!-- 状态消息 -->
                   <div v-if="storageMessage" class="storage-message" :class="storageMessageType">
-                    <i :class="['codicon', storageMessageType === 'success' ? 'codicon-check' : 'codicon-error']"></i>
+                    <i :class="['codicon', storageMessageType === 'success' ? 'codicon-check' : storageMessageType === 'info' ? 'codicon-info' : 'codicon-error']"></i>
                     {{ storageMessage }}
                     <!-- 重新加载按钮 -->
                     <button
@@ -818,10 +848,10 @@ onMounted(() => {
         </p>
       </div>
       <template #footer>
-        <button class="dialog-btn" @click="showMigrateDialog = false">
+        <button class="dialog-btn" :disabled="isMigrating" @click="showMigrateDialog = false">
           {{ t('components.settings.storageSettings.dialog.cancel') }}
         </button>
-        <button class="dialog-btn primary" @click="executeMigration">
+        <button class="dialog-btn primary" :disabled="isMigrating" @click="executeMigration">
           {{ t('components.settings.storageSettings.dialog.confirm') }}
         </button>
       </template>
@@ -1217,38 +1247,6 @@ onMounted(() => {
   border-radius: 6px;
 }
 
-.storage-current-path {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.storage-current-path label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-
-.path-display {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-}
-
-.path-text {
-  flex: 1;
-  font-size: 12px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  color: var(--vscode-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .path-badge {
   flex-shrink: 0;
   padding: 2px 6px;
@@ -1284,11 +1282,13 @@ onMounted(() => {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 6px;
 }
 
 .path-input {
   flex: 1;
-  padding: 8px 32px 8px 12px;
+  min-width: 0;
+  padding: 8px 12px;
   font-size: 13px;
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-input-background);
@@ -1297,6 +1297,48 @@ onMounted(() => {
   border-radius: 4px;
   outline: none;
   transition: border-color 0.15s;
+}
+
+.path-picker-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.path-picker-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.path-picker-btn .codicon {
+  font-size: 16px;
+}
+
+.current-path-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.path-note-value {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
 }
 
 .path-input:focus {
@@ -1309,23 +1351,6 @@ onMounted(() => {
 
 .path-input.invalid {
   border-color: var(--vscode-inputValidation-errorBorder);
-}
-
-.validation-indicator {
-  position: absolute;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--vscode-descriptionForeground);
-}
-
-.validation-indicator.valid {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
-.validation-indicator.invalid {
-  color: var(--vscode-errorForeground);
 }
 
 .field-hint {
