@@ -1658,7 +1658,7 @@ const ja: LanguageMessages = {
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
                     disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。',
                     strategyTitle: '動的コンテキスト戦略',
-                    strategySingle: '単一の動的コンテキスト（現在の動作）',
+                    strategySingle: '単一の動的コンテキスト',
                     strategyPreserve: '古い動的コンテキストを元の位置に保持',
                     strategyDescription: '単一モードは既存の動作を維持します。保持モードでは、キャッシュ済みの古い動的コンテキストを元のターン位置に戻し、新しいコンテキストを新しいメッセージの前に挿入します。',
                     strategyPreserveWarning: '保持モードはリクエストのトークン数を増やします。保持するコンテキストが多いほど、コンテキスト裁剪や要約が発生しやすくなります。'
