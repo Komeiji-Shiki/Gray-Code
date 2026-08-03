@@ -933,6 +933,7 @@ const channelOptions: { value: ChannelType; label: string }[] = [
 ]
 
 // 展开的模块
+const collapsedReference = ref(true)
 const expandedModule = ref<string | null>(null)
 
 // 加载配置
@@ -1534,39 +1535,6 @@ watch(selectedChannel, () => {
         </div>
       </div>
 
-      <!-- 动态上下文保留策略：传统模板和预设条目都生效 -->
-      <div class="template-section dynamic-strategy-section">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-history"></i>
-            {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
-          </label>
-        </div>
-
-        <div class="dynamic-strategy-block">
-          <div class="dynamic-strategy-options">
-            <label class="radio-option">
-              <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
-              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
-              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
-            </label>
-          </div>
-          <p class="dynamic-strategy-description">
-            当预设条目或传统模板中包含
-            <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
-            <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
-            <code>{{ formatModuleId('TODO_LIST') }}</code>
-            等会变化变量时，此设置决定旧回合快照是否保留。
-          </p>
-          <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
-            <i class="codicon codicon-warning"></i>
-            保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
-          </p>
-        </div>
-      </div>
 
       <template v-if="promptAssemblyMode === 'entries'">
         <!-- 预设提示词条目编辑区 -->
@@ -1587,6 +1555,40 @@ watch(selectedChannel, () => {
             :dynamic-modules="DYNAMIC_CONTEXT_MODULES"
             @convert-legacy="convertLegacyTemplatesToEntries"
           />
+        </div>
+
+        <!-- 动态上下文保留策略（预设条目模式） -->
+        <div class="template-section dynamic-strategy-section">
+          <div class="section-header">
+            <label class="section-label">
+              <i class="codicon codicon-history"></i>
+              {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
+            </label>
+          </div>
+
+          <div class="dynamic-strategy-block">
+            <div class="dynamic-strategy-options">
+              <label class="radio-option">
+                <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
+              </label>
+              <label class="radio-option">
+                <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
+              </label>
+            </div>
+            <p class="dynamic-strategy-description">
+              当预设条目或传统模板中包含
+              <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
+              <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
+              <code>{{ formatModuleId('TODO_LIST') }}</code>
+              等会变化变量时，此设置决定旧回合快照是否保留。
+            </p>
+            <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
+              <i class="codicon codicon-warning"></i>
+              保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+            </p>
+          </div>
         </div>
       </template>
       
@@ -1658,9 +1660,147 @@ watch(selectedChannel, () => {
           :placeholder="t('components.settings.promptSettings.dynamicSection.placeholder')"
           rows="10"
         ></textarea>
+
+        <!-- 动态上下文保留策略（传统模板模式） -->
+        <div class="dynamic-strategy-inline">
+          <div class="section-label">
+            <i class="codicon codicon-history"></i>
+            {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
+          </div>
+
+          <div class="dynamic-strategy-block">
+            <div class="dynamic-strategy-options">
+              <label class="radio-option">
+                <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
+              </label>
+              <label class="radio-option">
+                <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
+              </label>
+            </div>
+            <p class="dynamic-strategy-description">
+              当预设条目或传统模板中包含
+              <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
+              <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
+              <code>{{ formatModuleId('TODO_LIST') }}</code>
+              等会变化变量时，此设置决定旧回合快照是否保留。
+            </p>
+            <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
+              <i class="codicon codicon-warning"></i>
+              保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+            </p>
+          </div>
+        </div>
         </div>
       </template>
 
+      <!-- 可用变量参考（可收缩，默认收起） -->
+      <div class="modules-reference collapsible">
+        <div class="reference-header" @click="collapsedReference = !collapsedReference">
+          <h5 class="reference-title">
+            <i class="codicon codicon-references"></i>
+            {{ t('components.settings.promptSettings.modulesReference.title') }}
+          </h5>
+          <i class="codicon" :class="collapsedReference ? 'codicon-chevron-right' : 'codicon-chevron-down'"></i>
+        </div>
+
+        <template v-if="!collapsedReference">
+          <!-- 静态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-lock"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
+              <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
+          
+            <div class="modules-list">
+              <div
+                v-for="module in STATIC_PROMPT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertStaticModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+              
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+                
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+                
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        
+          <!-- 动态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-sync"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
+              <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
+          
+            <div class="modules-list">
+              <div
+                v-for="module in DYNAMIC_CONTEXT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertDynamicModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+              
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+                
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+                
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
       <!-- 模式工具策略 -->
       <div class="template-section tool-policy-section">
         <div class="section-header">
@@ -1873,107 +2013,6 @@ watch(selectedChannel, () => {
         </div>
       </div>
       
-      <!-- 可用变量参考 -->
-      <div class="modules-reference">
-        <h5 class="reference-title">
-          <i class="codicon codicon-references"></i>
-          {{ t('components.settings.promptSettings.modulesReference.title') }}
-        </h5>
-        
-        <!-- 静态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-lock"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
-            <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in STATIC_PROMPT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertStaticModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 动态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-sync"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
-            <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in DYNAMIC_CONTEXT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertDynamicModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </template>
     
     <!-- 添加模式对话框 -->
@@ -2663,11 +2702,28 @@ watch(selectedChannel, () => {
   color: var(--vscode-descriptionForeground);
 }
 
-/* 模块参考 */
+/* 模块参考（可收缩） */
 .modules-reference {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--vscode-panel-border);
+}
+
+.modules-reference .reference-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.modules-reference .reference-header:hover .reference-title {
+  color: var(--vscode-foreground);
+}
+
+.modules-reference .reference-header .codicon {
+  color: var(--vscode-descriptionForeground);
+  font-size: 14px;
 }
 
 .reference-title {
@@ -2677,6 +2733,18 @@ watch(selectedChannel, () => {
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 500;
+}
+
+/* 动态上下文保留策略（内嵌于动态模板卡片） */
+.dynamic-strategy-inline {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.dynamic-strategy-inline .section-label {
+  font-size: 12px;
+  margin-bottom: 8px;
 }
 
 .modules-list {
