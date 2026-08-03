@@ -916,6 +916,17 @@ const hasChanges = computed(() => {
 const isLoading = ref(true)
 const isSaving = ref(false)
 const saveMessage = ref('')
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastSuccess = ref(true)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showSaveToast(message: string, success: boolean) {
+  toastMessage.value = message
+  toastSuccess.value = success
+  toastVisible.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastVisible.value = false }, 2500)
+}
 const isFirstLoad = ref(true)  // 标记是否首次加载
 
 // Token 计数状态
@@ -1014,11 +1025,10 @@ function confirmSwitchMode() {
 // 保存配置
 async function saveConfig() {
   isSaving.value = true
-  saveMessage.value = ''
   try {
     // 工具策略校验：custom 模式必须至少选择一个工具
     if (toolPolicyMode.value === 'custom' && toolPolicy.value.length === 0) {
-      saveMessage.value = t('components.settings.promptSettings.toolPolicy.emptyCannotSave')
+      showSaveToast(t('components.settings.promptSettings.toolPolicy.emptyCannotSave'), false)
       return
     }
 
@@ -1081,14 +1091,13 @@ async function saveConfig() {
     // 通知 InputArea 刷新模式列表，避免保存动态上下文策略后输入区仍显示旧模式数据
     settingsStore.refreshPromptModes()
     
-    saveMessage.value = t('components.settings.promptSettings.saveSuccess')
-    setTimeout(() => { saveMessage.value = '' }, 2000)
+    showSaveToast(t('components.settings.promptSettings.saveSuccess'), true)
     
     // 保存成功后自动更新 token 计数
     await countTokens()
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
-    saveMessage.value = t('components.settings.promptSettings.saveFailed')
+    showSaveToast(t('components.settings.promptSettings.saveFailed'), false)
   } finally {
     isSaving.value = false
   }
@@ -1458,6 +1467,15 @@ watch(selectedChannel, () => {
           />
         </div>
         <div class="mode-actions">
+          <button
+            class="mode-action-btn save-action-btn"
+            @click="saveConfig"
+            :disabled="isSaving"
+            :title="t('components.settings.promptSettings.saveButton')"
+          >
+            <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
+          </button>
+          <span class="mode-actions-divider"></span>
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
             <i class="codicon codicon-add"></i>
           </button>
@@ -1473,14 +1491,24 @@ watch(selectedChannel, () => {
             @click="exportPromptModes('current')" 
             :title="t('components.settings.promptSettings.modes.exportCurrent')"
           >
-            <i class="codicon codicon-export"></i>
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round">
+              <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
+              <path d="M33 14v10h10" stroke-width="3"/>
+              <path d="M30 32h20" stroke-width="4" stroke-linecap="round"/>
+              <path d="M50 27l8 5-8 5z" fill="currentColor" stroke="none"/>
+            </svg>
           </button>
           <button 
             class="mode-action-btn" 
             @click="openImportModeDialog" 
             :title="t('components.settings.promptSettings.modes.import')"
           >
-            <i class="codicon codicon-cloud-upload"></i>
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round">
+              <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
+              <path d="M33 14v10h10" stroke-width="3"/>
+              <path d="M8 32h20" stroke-width="4" stroke-linecap="round"/>
+              <path d="M28 27l8 5-8 5z" fill="currentColor" stroke="none"/>
+            </svg>
           </button>
           <button 
             class="mode-action-btn" 
@@ -1902,22 +1930,8 @@ watch(selectedChannel, () => {
         </div>
       </div>
       
-      <!-- 保存按钮和 Token 计数 -->
+      <!-- Token 计数 -->
       <div class="save-section">
-        <div class="save-row">
-          <button
-            class="save-btn"
-            @click="saveConfig"
-            :disabled="isSaving"
-          >
-            <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.promptSettings.saveButton') }}</span>
-          </button>
-          <span v-if="saveMessage" class="save-message" :class="{ success: saveMessage === t('components.settings.promptSettings.saveSuccess') }">
-            {{ saveMessage }}
-          </span>
-        </div>
-        
         <!-- Token 计数显示 -->
         <div class="token-count-section">
           <div class="token-count-header">
@@ -2014,6 +2028,14 @@ watch(selectedChannel, () => {
       </div>
       
     </template>
+    
+    <!-- 保存浮窗提示 -->
+    <Transition name="toast-fade">
+      <div v-if="toastVisible" class="save-toast" :class="{ success: toastSuccess }">
+        <i :class="['codicon', toastSuccess ? 'codicon-check' : 'codicon-error']"></i>
+        {{ toastMessage }}
+      </div>
+    </Transition>
     
     <!-- 添加模式对话框 -->
     <InputDialog
@@ -2251,6 +2273,70 @@ watch(selectedChannel, () => {
 
 .mode-action-btn .codicon {
   font-size: 14px;
+}
+
+.mode-action-btn .mode-action-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.save-action-btn {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-actions-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: var(--vscode-panel-border);
+}
+
+.mode-actions .save-message {
+  font-size: 11px;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+/* 保存浮窗提示 */
+.save-toast {
+  position: fixed;
+  top: 48px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.save-toast.success .codicon {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-toast:not(.success) .codicon {
+  color: var(--vscode-errorForeground);
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 @media (max-width: 520px) {
@@ -2518,39 +2604,13 @@ watch(selectedChannel, () => {
   padding-top: 8px;
 }
 
-.save-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.save-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 80px;
-  padding: 8px 16px;
-  font-size: 13px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .save-message {
   font-size: 12px;
   color: var(--vscode-errorForeground);
+}
+
+.save-message.success {
+  color: var(--vscode-terminal-ansiGreen);
 }
 
 .save-message.success {
