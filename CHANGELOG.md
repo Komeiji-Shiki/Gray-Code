@@ -5,10 +5,18 @@
 
 ### Changed
   - 用量统计性能再优化：统计读取元数据改为轻量路径（只读 `{id}.meta.json`，不再走 `getMetadata` 的历史完整性检查——此前每次统计都会为每个对话额外加载一次历史，索引优化的收益被抵消大半）；新增对话目录监听（`fs.watch` recursive）+ 内存明细缓存——任何历史/元数据/索引文件写入都会把对应对话标记为 dirty，统计只重读 dirty 对话并回填缓存，其余对话直接重放内存明细（零 stat、零读文件），日常统计从几千次跨进程文件调用降到毫秒级；统计自身重建索引写入 `{id}.usage.json` 会触发一次自伤标记，下一轮重读小索引文件后自然恢复，不会无限循环；扩展 dispose 时释放监听，非文件存储（测试/内存适配器）自动退化全量扫描；新增缓存命中跳过读取 / dirty 重读回填 / 已删对话清理 / 缓存时间筛选与 watcher 文件名解析测试
+  - 提示词设置页排版重排（PR #5）：动态上下文保留策略区块从全局固定位置移入对应的模板模式内——预设条目模式下显示在条目编辑区下方，传统模板模式下内联显示在动态模板文本框下方，选项归属不再让人困惑；新增「可用变量参考」可收缩面板（默认收起，静态变量组 / 动态变量组分组展示，chevron 展开收起），长变量列表不再永久占据设置页空间
+  - 提示词模式栏新增保存按钮（绿色保存图标，保存中切换为 loading 动画），与底部原保存按钮并存；导入 / 导出按钮从 codicon 通用图标改为成对的自定义 SVG 图标（方向相反的导出/导入箭头），视觉上明确为一对操作
+  - 提示词页保存 / 导出 / 导入反馈统一为浮窗 toast（成功 / 失败着色，2.5 秒自动消失，Transition 动画），移除底部行内文本提示（saveMessage）
 
 ### Fixed
   - 修复动态上下文策略选项的误导性括号标注：单份模式选项原先带有「（当前策略）」（zh-CN）或「（当前行为）」（en/ja）注释，而该选项与保留模式是并列可切换的，标注「当前」会让用户在切换后看到错误的归属语义；现在移除括号注释，三语统一为中性文案「单份动态上下文 / Single dynamic context / 単一の動的コンテキスト」
   - 修复动态上下文策略警告文案硬编码英文：设置页选中保留模式时提示「preserve 会把旧回合的动态快照固定插回原位…」，而选项在 UI 上显示的是中文「保留旧动态上下文原位」，用户无法把二者对应；现在句首直接使用选项的中文名称，不再出现英文标识
+  - 修复空提示词保存后回退默认模板（PR #5）：`resolvedMode?.template || promptConfig?.template`（PromptManager.ts）与 `mode?.template || ...`（SettingsManager.getSystemPromptTemplate）的空字符串回退导致 legacy 模式显式保存的空模板在运行时被全局模板覆盖，用户无法真正清空模板；两处改为 `??`（nullish coalescing），空字符串原样保留；前端 `loadModeConfig` 同步用 `typeof === 'string'` 判断而非 `||` 兜底，空模板不再被 DEFAULT_TEMPLATE 顶替，新增回归测试锁定该行为
+  - 修复提示词导出流程不可控（PR #5）：前端 Blob 下载在 webview 环境保存位置与文件名不受用户控制，改为通过新增的 `exportPromptModes` webview handler 调用 `vscode.window.showSaveDialog` 让用户选择保存位置，确认后才写文件；取消保存对话框时不写文件并返回 `{ success: false, cancelled: true }`，成功后才报告成功；导出成功 / 取消 / 失败均有明确反馈，不再出现「已导出但不知道存到哪」
+
+### Added
+  - 新增 `exportPromptModes` webview handler（`webview/handlers/SettingsHandlers.ts`）与回归测试 `backend/__tests__/webview/promptModeExport.test.ts`（取消对话框不写文件 / 选路径并写文件成功后才响应，2 用例）；`PromptManager.promptEntries.test.ts` 新增「显式空模板不回退全局模板」用例；vscode mock 补充 `showSaveDialog` / `showOpenDialog`
 
 ## [1.3.1-1] - 2026-08-02
 
