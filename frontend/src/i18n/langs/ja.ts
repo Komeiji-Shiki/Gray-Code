@@ -1627,6 +1627,7 @@ const ja: LanguageMessages = {
                     exportAll: 'すべてのモードをエクスポート',
                     exportSuccess: 'エクスポートしてクリップボードにコピーしました',
                     exportDownloadOnly: 'ファイルをエクスポートしましたが、クリップボードへのコピーに失敗しました',
+                    exportFailed: 'エクスポートに失敗しました',
                     import: 'モードをインポート',
                     importDescription: 'GrayCode プロンプトモード JSON を貼り付けるか、ファイルから読み込みます。インポート時は新しい ID が生成され、既存のモードは上書きされません。',
                     importFromFile: 'ファイルから読み込み',

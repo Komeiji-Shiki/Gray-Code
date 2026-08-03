@@ -67,7 +67,10 @@ const mode: ResolvedPromptModeSnapshot = {
     ]
 };
 
-function createSettingsManagerMock(resolvedMode: ResolvedPromptModeSnapshot = mode) {
+function createSettingsManagerMock(
+    resolvedMode: ResolvedPromptModeSnapshot = mode,
+    configOverrides: Partial<SystemPromptConfig> = {}
+) {
     const config: Partial<SystemPromptConfig> = {
         customPrefix: '',
         customSuffix: '',
@@ -76,7 +79,8 @@ function createSettingsManagerMock(resolvedMode: ResolvedPromptModeSnapshot = mo
         dynamicContextStrategy: 'single',
         template: '',
         currentModeId: resolvedMode.id,
-        modes: { [resolvedMode.id]: resolvedMode }
+        modes: { [resolvedMode.id]: resolvedMode },
+        ...configOverrides
     };
 
     return {
@@ -157,5 +161,21 @@ describe('PromptManager prompt entries', () => {
         expect(bundle.afterHistoryMessages).toHaveLength(0);
         expect(bundle.text).toContain('Legacy dynamic');
         expect(bundle.text).toContain('Legacy todo');
+    });
+
+    it('preserves an explicitly empty legacy system template instead of falling back to the global template', () => {
+        const emptyMode: ResolvedPromptModeSnapshot = {
+            ...mode,
+            promptAssemblyMode: 'legacy',
+            template: '',
+            dynamicTemplateEnabled: false,
+            dynamicTemplate: ''
+        };
+        setGlobalSettingsManager(createSettingsManagerMock(emptyMode, {
+            template: 'global system fallback'
+        }));
+        const manager = new PromptManager({ includeWorkspaceFiles: false });
+
+        expect(manager.getSystemPrompt(emptyMode, true, {})).toBe('');
     });
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore, useChatStore } from '@/stores'
@@ -712,31 +712,30 @@ function buildPromptModeExportPayload(target: 'current' | 'all'): string {
   return JSON.stringify(payload, null, 2)
 }
 
-function downloadTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.style.display = 'none'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
 async function exportPromptModes(target: 'current' | 'all') {
   const payload = buildPromptModeExportPayload(target)
   const filename = target === 'current'
     ? `graycode-prompt-mode-${selectedModeId.value || 'current'}.json`
     : 'graycode-prompt-modes.json'
 
-  downloadTextFile(filename, payload)
-  const copied = await copyToClipboard(payload)
-  saveMessage.value = copied
-    ? t('components.settings.promptSettings.modes.exportSuccess')
-    : t('components.settings.promptSettings.modes.exportDownloadOnly')
-  setTimeout(() => { saveMessage.value = '' }, 2500)
+  try {
+    const result = await sendToExtension<{ success: boolean; cancelled?: boolean }>('exportPromptModes', {
+      filename,
+      content: payload
+    })
+    if (!result?.success) return
+
+    const copied = await copyToClipboard(payload)
+    showToast(
+      copied
+        ? t('components.settings.promptSettings.modes.exportSuccess')
+        : t('components.settings.promptSettings.modes.exportDownloadOnly'),
+      true
+    )
+  } catch (error) {
+    console.error('Failed to export prompt modes:', error)
+    showToast(t('components.settings.promptSettings.modes.exportFailed'), false)
+  }
 }
 
 async function persistImportedModes(importedModes: PromptMode[]) {
@@ -766,8 +765,7 @@ async function persistImportedModes(importedModes: PromptMode[]) {
     loadModeConfig(lastMode.id)
   }
   settingsStore.refreshPromptModes()
-  saveMessage.value = t('components.settings.promptSettings.modes.importSuccess', { count: savedModes.length })
-  setTimeout(() => { saveMessage.value = '' }, 2500)
+  showToast(t('components.settings.promptSettings.modes.importSuccess', { count: savedModes.length }), true)
 }
 
 function isSamePromptEntries(a: PromptEntry[], b: PromptEntry[]): boolean {
@@ -915,12 +913,11 @@ const hasChanges = computed(() => {
 // 加载状态
 const isLoading = ref(true)
 const isSaving = ref(false)
-const saveMessage = ref('')
 const toastVisible = ref(false)
 const toastMessage = ref('')
 const toastSuccess = ref(true)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showSaveToast(message: string, success: boolean) {
+function showToast(message: string, success: boolean) {
   toastMessage.value = message
   toastSuccess.value = success
   toastVisible.value = true
@@ -956,14 +953,14 @@ async function loadConfig() {
       // 加载模式列表
       modes.value = Object.values(result.modes || {})
       currentModeId.value = result.currentModeId || 'default'
-      
+
       // 只在首次加载时设置 selectedModeId 为当前使用的模式
       // 切换页签时保持上次编辑的模式
       if (isFirstLoad.value) {
         selectedModeId.value = currentModeId.value
         isFirstLoad.value = false
       }
-      
+
       // 加载当前编辑模式的配置
       loadModeConfig(selectedModeId.value)
     }
@@ -978,9 +975,9 @@ async function loadConfig() {
 function loadModeConfig(modeId: string) {
   const mode = modes.value.find(m => m.id === modeId)
   if (mode) {
-    config.template = mode.template || DEFAULT_TEMPLATE
+    config.template = typeof mode.template === 'string' ? mode.template : DEFAULT_TEMPLATE
     config.dynamicTemplateEnabled = mode.dynamicTemplateEnabled ?? true
-    config.dynamicTemplate = mode.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
+    config.dynamicTemplate = typeof mode.dynamicTemplate === 'string' ? mode.dynamicTemplate : DEFAULT_DYNAMIC_TEMPLATE
     config.dynamicContextStrategy = mode.dynamicContextStrategy || 'single'
     originalConfig.value = { ...config }
     promptAssemblyMode.value = normalizePromptAssemblyMode(mode.promptAssemblyMode)
@@ -1028,14 +1025,14 @@ async function saveConfig() {
   try {
     // 工具策略校验：custom 模式必须至少选择一个工具
     if (toolPolicyMode.value === 'custom' && toolPolicy.value.length === 0) {
-      showSaveToast(t('components.settings.promptSettings.toolPolicy.emptyCannotSave'), false)
+      showToast(t('components.settings.promptSettings.toolPolicy.emptyCannotSave'), false)
       return
     }
 
     // 保存前清理多余空行
     const cleanedTemplate = cleanupEmptyLines(config.template)
     const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
-    
+
     // 更新当前模式的配置
     const currentMode = modes.value.find(m => m.id === selectedModeId.value)
     const baseMode: PromptMode = currentMode || {
@@ -1068,9 +1065,9 @@ async function saveConfig() {
     if (toolPolicyMode.value !== 'custom') {
       delete (updatedMode as any).toolPolicy
     }
-    
+
     await sendToExtension('savePromptMode', { mode: updatedMode })
-    
+
     // 更新本地配置为清理后的版本
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
@@ -1081,7 +1078,7 @@ async function saveConfig() {
     originalToolPolicy.value = [...toolPolicy.value]
     promptEntries.value = clonePromptEntries(nextPromptEntries)
     originalPromptEntries.value = clonePromptEntries(nextPromptEntries)
-    
+
     // 更新模式列表中的配置
     const modeIndex = modes.value.findIndex(m => m.id === selectedModeId.value)
     if (modeIndex >= 0) {
@@ -1090,14 +1087,14 @@ async function saveConfig() {
 
     // 通知 InputArea 刷新模式列表，避免保存动态上下文策略后输入区仍显示旧模式数据
     settingsStore.refreshPromptModes()
-    
-    showSaveToast(t('components.settings.promptSettings.saveSuccess'), true)
-    
+
+    showToast(t('components.settings.promptSettings.saveSuccess'), true)
+
     // 保存成功后自动更新 token 计数
     await countTokens()
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
-    showSaveToast(t('components.settings.promptSettings.saveFailed'), false)
+    showToast(t('components.settings.promptSettings.saveFailed'), false)
   } finally {
     isSaving.value = false
   }
@@ -1110,10 +1107,10 @@ async function countTokens() {
     dynamicTokenCount.value = null
     return
   }
-  
+
   isCountingTokens.value = true
   tokenCountError.value = ''
-  
+
   try {
     const result = await sendToExtension<{
       success: boolean
@@ -1125,7 +1122,7 @@ async function countTokens() {
       channelType: selectedChannel.value,
       conversationId: chatStore.currentConversationId
     })
-    
+
     if (result?.success) {
       staticTokenCount.value = result.staticTokens ?? null
       dynamicTokenCount.value = result.dynamicTokens ?? null
@@ -1172,7 +1169,7 @@ function resetStaticToDefault() {
     plan: PLAN_MODE_TEMPLATE,
     ask: ASK_MODE_TEMPLATE
   }
-  
+
   config.template = modeDefaults[selectedModeId.value] || DEFAULT_TEMPLATE
   showResetStaticConfirm.value = false
 }
@@ -1267,7 +1264,7 @@ async function confirmAddMode(name: string) {
     dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
     dynamicContextStrategy: 'single'
   }
-  
+
   try {
     await sendToExtension('savePromptMode', { mode: newMode })
     modes.value.push(newMode)
@@ -1319,11 +1316,10 @@ async function confirmDuplicateMode(name: string) {
     selectedModeId.value = duplicatedMode.id
     loadModeConfig(duplicatedMode.id)
     settingsStore.refreshPromptModes()
-    saveMessage.value = t('components.settings.promptSettings.modes.duplicateSuccess')
-    setTimeout(() => { saveMessage.value = '' }, 2000)
+    showToast(t('components.settings.promptSettings.modes.duplicateSuccess'), true)
   } catch (error) {
     console.error('Failed to duplicate mode:', error)
-    saveMessage.value = t('components.settings.promptSettings.modes.duplicateFailed')
+    showToast(t('components.settings.promptSettings.modes.duplicateFailed'), false)
   }
 }
 
@@ -1368,7 +1364,7 @@ async function handleImportFileChange(event: Event) {
 function openRenameModeDialog(modeId: string) {
   const mode = modes.value.find(m => m.id === modeId)
   if (!mode) return
-  
+
   renamingModeId.value = modeId
   renamingModeName.value = mode.name
   showRenameModeDialog.value = true
@@ -1379,7 +1375,7 @@ async function confirmRenameMode(newName: string) {
   const mode = modes.value.find(m => m.id === renamingModeId.value)
   const normalizedName = newName.trim()
   if (!mode || !normalizedName || normalizedName === mode.name) return
-  
+
   try {
     const result = await sendToExtension<{ mode?: PromptMode }>('renamePromptMode', {
       modeId: renamingModeId.value,
@@ -1410,7 +1406,7 @@ async function confirmDeleteMode() {
   const modeId = selectedModeId.value
   // 至少保留一个模式
   if (modes.value.length <= 1) return
-  
+
   try {
     await sendToExtension('deletePromptMode', { modeId })
     modes.value = modes.value.filter(m => m.id !== modeId)
@@ -1435,6 +1431,10 @@ onMounted(async () => {
   await countTokens()
 })
 
+onBeforeUnmount(() => {
+  if (toastTimer) clearTimeout(toastTimer)
+})
+
 // 监听渠道变化，重新计算 token
 watch(selectedChannel, () => {
   countTokens()
@@ -1448,7 +1448,7 @@ watch(selectedChannel, () => {
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       <span>{{ t('components.settings.promptSettings.loading') }}</span>
     </div>
-    
+
     <template v-else>
       <!-- 模式选择栏 -->
       <div class="mode-selector-bar">
@@ -1479,47 +1479,47 @@ watch(selectedChannel, () => {
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
             <i class="codicon codicon-add"></i>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openDuplicateModeDialog" 
+          <button
+            class="mode-action-btn"
+            @click="openDuplicateModeDialog"
             :title="t('components.settings.promptSettings.modes.duplicate')"
           >
             <i class="codicon codicon-copy"></i>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="exportPromptModes('current')" 
+          <button
+            class="mode-action-btn"
+            @click="exportPromptModes('current')"
             :title="t('components.settings.promptSettings.modes.exportCurrent')"
           >
-            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round">
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
               <path d="M33 14v10h10" stroke-width="3"/>
               <path d="M30 32h20" stroke-width="4" stroke-linecap="round"/>
               <path d="M50 27l8 5-8 5z" fill="currentColor" stroke="none"/>
             </svg>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openImportModeDialog" 
+          <button
+            class="mode-action-btn"
+            @click="openImportModeDialog"
             :title="t('components.settings.promptSettings.modes.import')"
           >
-            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round">
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
               <path d="M33 14v10h10" stroke-width="3"/>
               <path d="M8 32h20" stroke-width="4" stroke-linecap="round"/>
               <path d="M28 27l8 5-8 5z" fill="currentColor" stroke="none"/>
             </svg>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openRenameModeDialog(selectedModeId)" 
+          <button
+            class="mode-action-btn"
+            @click="openRenameModeDialog(selectedModeId)"
             :title="t('components.settings.promptSettings.modes.rename')"
           >
             <i class="codicon codicon-edit"></i>
           </button>
-          <button 
-            class="mode-action-btn danger" 
-            @click="openDeleteConfirm()" 
+          <button
+            class="mode-action-btn danger"
+            @click="openDeleteConfirm()"
             :title="t('components.settings.promptSettings.modes.delete')"
             :disabled="modes.length <= 1"
           >
@@ -1619,7 +1619,7 @@ watch(selectedChannel, () => {
           </div>
         </div>
       </template>
-      
+
       <template v-else>
         <!-- 静态系统提示词编辑区 -->
         <div class="template-section">
@@ -1634,11 +1634,11 @@ watch(selectedChannel, () => {
             {{ t('components.settings.promptSettings.templateSection.resetButton') }}
           </button>
         </div>
-        
+
         <p class="section-description">
           {{ t('components.settings.promptSettings.staticSection.description') }}
         </p>
-        
+
         <textarea
           v-model="config.template"
           class="template-textarea"
@@ -1646,7 +1646,7 @@ watch(selectedChannel, () => {
           rows="12"
         ></textarea>
         </div>
-      
+
         <!-- 动态上下文模板编辑区 -->
         <div class="template-section dynamic-section">
         <div class="section-header">
@@ -1658,8 +1658,8 @@ watch(selectedChannel, () => {
           <div class="section-header-actions">
             <!-- 启用开关 -->
             <label class="toggle-switch" :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 v-model="config.dynamicTemplateEnabled"
               />
               <span class="toggle-slider"></span>
@@ -1670,17 +1670,17 @@ watch(selectedChannel, () => {
             </button>
           </div>
         </div>
-        
+
         <p class="section-description">
           {{ t('components.settings.promptSettings.dynamicSection.description') }}
         </p>
-        
+
         <!-- 禁用时显示提示 -->
         <div v-if="!config.dynamicTemplateEnabled" class="disabled-notice">
           <i class="codicon codicon-info"></i>
           <span>{{ t('components.settings.promptSettings.dynamicSection.disabledNotice') }}</span>
         </div>
-        
+
         <textarea
           v-else
           v-model="config.dynamicTemplate"
@@ -1725,15 +1725,21 @@ watch(selectedChannel, () => {
 
       <!-- 可用变量参考（可收缩，默认收起） -->
       <div class="modules-reference collapsible">
-        <div class="reference-header" @click="collapsedReference = !collapsedReference">
-          <h5 class="reference-title">
+        <button
+          type="button"
+          class="reference-header"
+          :aria-expanded="!collapsedReference"
+          aria-controls="prompt-modules-reference-content"
+          @click="collapsedReference = !collapsedReference"
+        >
+          <span class="reference-title">
             <i class="codicon codicon-references"></i>
             {{ t('components.settings.promptSettings.modulesReference.title') }}
-          </h5>
+          </span>
           <i class="codicon" :class="collapsedReference ? 'codicon-chevron-right' : 'codicon-chevron-down'"></i>
-        </div>
+        </button>
 
-        <template v-if="!collapsedReference">
+        <div v-if="!collapsedReference" id="prompt-modules-reference-content">
           <!-- 静态变量组 -->
           <div class="modules-group">
             <div class="group-header">
@@ -1742,7 +1748,7 @@ watch(selectedChannel, () => {
               <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
             </div>
             <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
-          
+
             <div class="modules-list">
               <div
                 v-for="module in STATIC_PROMPT_MODULES"
@@ -1763,15 +1769,15 @@ watch(selectedChannel, () => {
                     <i class="codicon codicon-add"></i>
                   </button>
                 </div>
-              
+
                 <div v-if="expandedModule === module.id" class="module-details">
                   <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
+
                   <div v-if="module.requiresConfig" class="module-requires">
                     <i class="codicon codicon-info"></i>
                     <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
                   </div>
-                
+
                   <div v-if="module.example" class="module-example">
                     <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
                     <pre>{{ module.example }}</pre>
@@ -1780,7 +1786,7 @@ watch(selectedChannel, () => {
               </div>
             </div>
           </div>
-        
+
           <!-- 动态变量组 -->
           <div class="modules-group">
             <div class="group-header">
@@ -1789,7 +1795,7 @@ watch(selectedChannel, () => {
               <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
             </div>
             <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
-          
+
             <div class="modules-list">
               <div
                 v-for="module in DYNAMIC_CONTEXT_MODULES"
@@ -1810,15 +1816,15 @@ watch(selectedChannel, () => {
                     <i class="codicon codicon-add"></i>
                   </button>
                 </div>
-              
+
                 <div v-if="expandedModule === module.id" class="module-details">
                   <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
+
                   <div v-if="module.requiresConfig" class="module-requires">
                     <i class="codicon codicon-info"></i>
                     <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
                   </div>
-                
+
                   <div v-if="module.example" class="module-example">
                     <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
                     <pre>{{ module.example }}</pre>
@@ -1827,7 +1833,7 @@ watch(selectedChannel, () => {
               </div>
             </div>
           </div>
-        </template>
+        </div>
       </div>
       <!-- 模式工具策略 -->
       <div class="template-section tool-policy-section">
@@ -1929,7 +1935,7 @@ watch(selectedChannel, () => {
           </div>
         </div>
       </div>
-      
+
       <!-- Token 计数 -->
       <div class="save-section">
         <!-- Token 计数显示 -->
@@ -1939,7 +1945,7 @@ watch(selectedChannel, () => {
               <i class="codicon codicon-symbol-numeric"></i>
               {{ t('components.settings.promptSettings.tokenCount.label') }}
             </label>
-            
+
             <select
               v-model="selectedChannel"
               class="channel-select"
@@ -1949,7 +1955,7 @@ watch(selectedChannel, () => {
                 {{ opt.label }}
               </option>
             </select>
-            
+
             <button
               class="refresh-btn"
               @click="countTokens"
@@ -1959,13 +1965,13 @@ watch(selectedChannel, () => {
               <i :class="['codicon', isCountingTokens ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh']"></i>
             </button>
           </div>
-          
+
           <!-- 分别显示静态和动态 token 数 -->
           <div class="token-count-details">
             <!-- 静态模板 token -->
             <div class="token-count-item">
-              <span 
-                class="token-item-label static-label" 
+              <span
+                class="token-item-label static-label"
                 :title="t('components.settings.promptSettings.tokenCount.staticTooltip')"
               >
                 <i class="codicon codicon-lock"></i>
@@ -1990,11 +1996,11 @@ watch(selectedChannel, () => {
                 </template>
               </div>
             </div>
-            
+
             <!-- 动态上下文 token -->
             <div class="token-count-item">
-              <span 
-                class="token-item-label dynamic-label" 
+              <span
+                class="token-item-label dynamic-label"
                 :title="t('components.settings.promptSettings.tokenCount.dynamicTooltip')"
               >
                 <i class="codicon codicon-sync"></i>
@@ -2020,23 +2026,30 @@ watch(selectedChannel, () => {
               </div>
             </div>
           </div>
-          
+
           <p class="token-hint">
             {{ t('components.settings.promptSettings.tokenCount.hint') }}
           </p>
         </div>
       </div>
-      
+
     </template>
-    
+
     <!-- 保存浮窗提示 -->
     <Transition name="toast-fade">
-      <div v-if="toastVisible" class="save-toast" :class="{ success: toastSuccess }">
-        <i :class="['codicon', toastSuccess ? 'codicon-check' : 'codicon-error']"></i>
+      <div
+        v-if="toastVisible"
+        class="save-toast"
+        :class="{ success: toastSuccess }"
+        :role="toastSuccess ? 'status' : 'alert'"
+        :aria-live="toastSuccess ? 'polite' : 'assertive'"
+        aria-atomic="true"
+      >
+        <i :class="['codicon', toastSuccess ? 'codicon-check' : 'codicon-error']" aria-hidden="true"></i>
         {{ toastMessage }}
       </div>
     </Transition>
-    
+
     <!-- 添加模式对话框 -->
     <InputDialog
       v-model="showAddModeDialog"
@@ -2045,7 +2058,7 @@ watch(selectedChannel, () => {
       :default-value="t('components.settings.promptSettings.modes.newModeDefault')"
       @confirm="confirmAddMode"
     />
-    
+
     <!-- 复制模式对话框 -->
     <InputDialog
       v-model="showDuplicateModeDialog"
@@ -2100,7 +2113,7 @@ watch(selectedChannel, () => {
               <button class="small-btn" type="button" @click="showImportModeDialog = false">
                 {{ t('common.cancel') }}
               </button>
-              <button class="save-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
+              <button class="import-confirm-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
                 {{ t('components.settings.promptSettings.modes.importConfirm') }}
               </button>
             </div>
@@ -2108,7 +2121,7 @@ watch(selectedChannel, () => {
         </div>
       </Transition>
     </Teleport>
-    
+
     <!-- 重命名模式对话框 -->
     <InputDialog
       v-model="showRenameModeDialog"
@@ -2117,7 +2130,7 @@ watch(selectedChannel, () => {
       :default-value="renamingModeName"
       @confirm="confirmRenameMode"
     />
-    
+
     <!-- 删除确认对话框 -->
     <ConfirmDialog
       v-model="showDeleteConfirm"
@@ -2296,18 +2309,12 @@ watch(selectedChannel, () => {
   background: var(--vscode-panel-border);
 }
 
-.mode-actions .save-message {
-  font-size: 11px;
-  white-space: nowrap;
-  margin-right: 2px;
-}
-
 /* 保存浮窗提示 */
 .save-toast {
   position: fixed;
   top: 48px;
   right: 24px;
-  z-index: 1000;
+  z-index: 1100;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2346,6 +2353,7 @@ watch(selectedChannel, () => {
 
   .mode-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 }
 
@@ -2426,6 +2434,30 @@ watch(selectedChannel, () => {
   justify-content: flex-end;
   border-top: 1px solid var(--vscode-panel-border);
   border-bottom: none;
+}
+
+.import-confirm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.import-confirm-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.import-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .import-textarea {
@@ -2604,19 +2636,6 @@ watch(selectedChannel, () => {
   padding-top: 8px;
 }
 
-.save-message {
-  font-size: 12px;
-  color: var(--vscode-errorForeground);
-}
-
-.save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
-.save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
 /* Token 计数区域 */
 .token-count-section {
   display: flex;
@@ -2773,8 +2792,20 @@ watch(selectedChannel, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: none;
   cursor: pointer;
   user-select: none;
+}
+
+.modules-reference .reference-header:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .modules-reference .reference-header:hover .reference-title {
