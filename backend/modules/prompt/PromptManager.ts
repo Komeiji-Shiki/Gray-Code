@@ -306,7 +306,7 @@ export class PromptManager {
         }
 
         // 请求运行时必须显式使用本次解析出的模式快照，不能依赖全局当前模式。
-        const template = resolvedMode?.template || promptConfig?.template || ''
+        const template = resolvedMode?.template ?? promptConfig?.template ?? ''
         return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
     }
     
