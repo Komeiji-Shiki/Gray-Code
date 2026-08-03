@@ -30,8 +30,8 @@
 
 - [Changelog](CHANGELOG.md)
 - [About GrayCode](#about-graycode)
-- [Core Capabilities](#core-capabilities)
 - [Quick Start](#quick-start)
+- [Core Capabilities](#core-capabilities)
 - [Model Channel Configuration](#model-channel-configuration)
 - [Common Workflows](#common-workflows)
 - [Built-in Tools](#built-in-tools)
@@ -53,6 +53,20 @@
 GrayCode is an AI coding assistant that runs inside VS Code. It can understand your current workspace, read and edit files, search code, execute commands, inspect symbols and references, manage task plans, and connect to external tools through MCP. Use it to explore unfamiliar projects, explain module relationships, locate bugs, or edit code and review every change through VS Code diff previews before accepting or rejecting it.
 
 For larger work, GrayCode can turn requirements into a design document, generate an execution plan, implement the confirmed plan, and finally produce a structured review record. In long conversations, it can summarize context automatically according to your settings. MCP, Skills, and Sub-Agents extend specialized capabilities, while permanent memory allows the assistant to retain project conventions, design decisions, and personal preferences across sessions and restore relevant context when a new session starts.
+
+## Quick Start
+
+1. **Install the extension** — GrayCode is not published to the VS Code Marketplace, so it must be installed from a VSIX package:
+   - Download the `graycode-*.vsix` file for your version from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) (you can also build one locally; see “Installation and Updates”).
+   - Open VS Code, open the Command Palette with `Ctrl+Shift+P` (macOS: `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the downloaded VSIX file in the file picker. Wait for the installation to finish.
+   - Alternatively, click the Extensions icon in the Activity Bar (`Ctrl+Shift+X`), open the `...` menu at the top-right of the Extensions view, choose `Install from VSIX...`, and select the VSIX file.
+   - After installation, find GrayCode in the Extensions list and make sure it is enabled.
+2. **Open the chat panel** — Click the Gray Code icon in the VS Code Activity Bar, or run `GrayCode: Open Chat Panel` from the Command Palette.
+3. **Create and configure a channel** — Open Settings → Channels from the top-right of the chat panel, create a channel, choose a channel type (Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic), enter the API URL and API key, add or fetch models, and select a default model. Enable streaming, tool mode, thinking options, retries, and other advanced options as needed.
+4. **Choose conversation settings** — Return to the chat page and select the channel, model, and prompt mode (Code / Design / Plan / Ask / Review) at the bottom of the input box.
+5. **Start chatting** — Describe the task and send it.
+
+For a first try, ask: “Read this project’s structure, explain what the main modules do, and give me onboarding suggestions.” Or: “Help me find why a feature is misbehaving. Search the relevant code first, explain the cause, and wait for confirmation before modifying it.”
 
 ## Core Capabilities
 
@@ -79,15 +93,6 @@ Invalid argument types sent by a model are corrected when possible, such as the 
 Memory data is stored locally as append-only logs and fixed-width records, without any external service. Settings → Memory allows you to customize the memory prompt, use the `{{$MEMORY}}` template variable, view and edit raw memory entries, and adjust runtime parameters such as `wakeLines`, `entryChars`, `partChars`, and `partLines`. Memory tools are disabled for Sub-Agents to prevent duplicate or incorrect memory writes.
 
 **Conversation and experience** — GrayCode supports multiple conversation tabs, automatic history persistence, history viewing and migration, message queuing while the assistant is busy, visible tool states, token usage, thinking content, response timing, automatic checkpoints, sound alerts, Windows notifications, Chinese / English / Japanese interfaces, usage statistics, cost estimation, and Mermaid rendering.
-
-## Quick Start
-
-1. **Install and open the chat panel** — After installing the extension, click the Gray Code icon in the VS Code Activity Bar, or run `GrayCode: Open Chat Panel` from the Command Palette.
-2. **Create and configure a channel** — Open Settings → Channels from the top-right of the chat panel, create a channel, choose a channel type (Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic), enter the API URL and API key, add or fetch models, and select a default model. Enable streaming, tool mode, thinking options, retries, and other advanced options as needed.
-3. **Choose conversation settings** — Return to the chat page and select the channel, model, and prompt mode (Code / Design / Plan / Ask / Review) at the bottom of the input box.
-4. **Start chatting** — Describe the task and send it.
-
-For a first try, ask: “Read this project’s structure, explain what the main modules do, and give me onboarding suggestions.” Or: “Help me find why a feature is misbehaving. Search the relevant code first, explain the cause, and wait for confirmation before modifying it.”
 
 ## Model Channel Configuration
 
