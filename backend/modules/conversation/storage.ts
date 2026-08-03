@@ -140,6 +140,12 @@ export interface IStorageAdapter {
      * 列出所有对话 ID
      */
     listConversations(): Promise<string[]>;
+
+    /**
+     * 获取 conversations 目录的本地文件系统路径（供用量统计目录监听使用）；
+     * 非文件系统存储（内存等）不实现，调用方退化全量扫描。
+     */
+    getConversationsDirFsPath?(): string | undefined;
     
     /**
      * 保存对话元数据
@@ -532,6 +538,12 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
+    getConversationsDirFsPath(): string {
+        // 用量统计的目录监听（fs.watch）需要本地文件系统路径；
+        // 与 getConversationsRootDir 同源，避免路径规则在 adapter 外重复拼接。
+        return this.getConversationsRootDir().fsPath;
+    }
+    
     private isNotFoundError(error: any): boolean {
         const code = String(error?.code || '');
         if (code === 'FileNotFound' || code === 'EntryNotFound' || code === 'ENOENT') {

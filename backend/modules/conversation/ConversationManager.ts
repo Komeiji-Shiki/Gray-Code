@@ -1737,6 +1737,26 @@ export class ConversationManager {
     }
 
     /**
+     * 轻量读取对话元数据（供用量统计等只关心 title/updatedAt 的场景使用）
+     *
+     * 与 getMetadata 不同：只读 meta.json，不加载历史做完整性检查、
+     * 不生成 fallback 元数据——统计侧对缺失 meta 直接回退对话 ID 展示。
+     * 避免每次统计都为每个对话额外读一次历史（getMetadata 的 loadHistoryPage）。
+     */
+    async getMetadataLight(conversationId: string): Promise<ConversationMetadata | null> {
+        const result = await this.storage.loadMetadataWithStatus(conversationId);
+        return result.value ?? null;
+    }
+
+    /**
+     * 获取 conversations 目录的本地文件系统路径（供用量统计目录监听使用）；
+     * 存储适配器不支持时返回 undefined，统计退化全量扫描。
+     */
+    getConversationsDirFsPath(): string | undefined {
+        return this.storage.getConversationsDirFsPath?.();
+    }
+
+    /**
      * 设置自定义元数据
      */
     async setCustomMetadata(
