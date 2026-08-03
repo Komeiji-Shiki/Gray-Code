@@ -1659,7 +1659,7 @@ const zhCN = {
                     enableTooltip: '启用/禁用动态上下文模板',
                     disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。',
                     strategyTitle: '动态上下文策略',
-                    strategySingle: '单份动态上下文（当前策略）',
+                    strategySingle: '单份动态上下文',
                     strategyPreserve: '保留旧动态上下文原位',
                     strategyDescription: '单份模式保持现有行为；保留模式会把已缓存的旧动态上下文固定插回原回合位置，新回合上下文插入到新消息前。',
                     strategyPreserveWarning: '保留模式会增加请求 token；旧动态上下文越多，越容易触发上下文裁剪或总结。'

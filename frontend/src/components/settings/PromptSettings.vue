@@ -1563,7 +1563,7 @@ watch(selectedChannel, () => {
           </p>
           <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
             <i class="codicon codicon-warning"></i>
-            preserve 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+            保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
           </p>
         </div>
       </div>

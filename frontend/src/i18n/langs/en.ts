@@ -1658,7 +1658,7 @@ const en: LanguageMessages = {
                     enableTooltip: 'Enable/disable dynamic context template',
                     disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.',
                     strategyTitle: 'Dynamic context strategy',
-                    strategySingle: 'Single dynamic context (current behavior)',
+                    strategySingle: 'Single dynamic context',
                     strategyPreserve: 'Preserve old dynamic context in place',
                     strategyDescription: 'Single mode keeps existing behavior. Preserve mode inserts cached old dynamic contexts back at their original turns and inserts the new context before the new message.',
                     strategyPreserveWarning: 'Preserve mode increases request tokens. More preserved contexts make context trimming or summarization more likely.'
