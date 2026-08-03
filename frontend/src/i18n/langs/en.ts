@@ -1627,6 +1627,7 @@ const en: LanguageMessages = {
                     exportAll: 'Export All Modes',
                     exportSuccess: 'Exported and copied to clipboard',
                     exportDownloadOnly: 'Exported file, but clipboard copy failed',
+                    exportFailed: 'Export failed',
                     import: 'Import Modes',
                     importDescription: 'Paste GrayCode prompt mode JSON, or read it from a file. Imported modes will receive new IDs and will not overwrite existing modes.',
                     importFromFile: 'Read from file',

@@ -46,6 +46,8 @@ export const Position = jest.fn();
 export const Range = jest.fn();
 export const commands = { executeCommand: jest.fn() };
 export const window = {
+    showSaveDialog: jest.fn(),
+    showOpenDialog: jest.fn(),
     showWarningMessage: jest.fn(),
     showErrorMessage: jest.fn(),
     showTextDocument: jest.fn(),
