@@ -1628,6 +1628,7 @@ const zhCN = {
                     exportAll: '导出全部模式',
                     exportSuccess: '已导出并复制到剪贴板',
                     exportDownloadOnly: '已导出文件，剪贴板复制失败',
+                    exportFailed: '导出失败',
                     import: '导入模式',
                     importDescription: '粘贴 GrayCode 提示词模式 JSON，或从文件读取。导入时会自动生成新 ID，并避免覆盖现有模式。',
                     importFromFile: '从文件读取',

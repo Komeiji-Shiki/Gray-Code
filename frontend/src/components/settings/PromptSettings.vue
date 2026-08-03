@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore, useChatStore } from '@/stores'
@@ -712,31 +712,30 @@ function buildPromptModeExportPayload(target: 'current' | 'all'): string {
   return JSON.stringify(payload, null, 2)
 }
 
-function downloadTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.style.display = 'none'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
 async function exportPromptModes(target: 'current' | 'all') {
   const payload = buildPromptModeExportPayload(target)
   const filename = target === 'current'
     ? `graycode-prompt-mode-${selectedModeId.value || 'current'}.json`
     : 'graycode-prompt-modes.json'
 
-  downloadTextFile(filename, payload)
-  const copied = await copyToClipboard(payload)
-  saveMessage.value = copied
-    ? t('components.settings.promptSettings.modes.exportSuccess')
-    : t('components.settings.promptSettings.modes.exportDownloadOnly')
-  setTimeout(() => { saveMessage.value = '' }, 2500)
+  try {
+    const result = await sendToExtension<{ success: boolean; cancelled?: boolean }>('exportPromptModes', {
+      filename,
+      content: payload
+    })
+    if (!result?.success) return
+
+    const copied = await copyToClipboard(payload)
+    showToast(
+      copied
+        ? t('components.settings.promptSettings.modes.exportSuccess')
+        : t('components.settings.promptSettings.modes.exportDownloadOnly'),
+      true
+    )
+  } catch (error) {
+    console.error('Failed to export prompt modes:', error)
+    showToast(t('components.settings.promptSettings.modes.exportFailed'), false)
+  }
 }
 
 async function persistImportedModes(importedModes: PromptMode[]) {
@@ -766,8 +765,7 @@ async function persistImportedModes(importedModes: PromptMode[]) {
     loadModeConfig(lastMode.id)
   }
   settingsStore.refreshPromptModes()
-  saveMessage.value = t('components.settings.promptSettings.modes.importSuccess', { count: savedModes.length })
-  setTimeout(() => { saveMessage.value = '' }, 2500)
+  showToast(t('components.settings.promptSettings.modes.importSuccess', { count: savedModes.length }), true)
 }
 
 function isSamePromptEntries(a: PromptEntry[], b: PromptEntry[]): boolean {
@@ -915,7 +913,17 @@ const hasChanges = computed(() => {
 // 加载状态
 const isLoading = ref(true)
 const isSaving = ref(false)
-const saveMessage = ref('')
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastSuccess = ref(true)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(message: string, success: boolean) {
+  toastMessage.value = message
+  toastSuccess.value = success
+  toastVisible.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastVisible.value = false }, 2500)
+}
 const isFirstLoad = ref(true)  // 标记是否首次加载
 
 // Token 计数状态
@@ -933,6 +941,7 @@ const channelOptions: { value: ChannelType; label: string }[] = [
 ]
 
 // 展开的模块
+const collapsedReference = ref(true)
 const expandedModule = ref<string | null>(null)
 
 // 加载配置
@@ -944,14 +953,14 @@ async function loadConfig() {
       // 加载模式列表
       modes.value = Object.values(result.modes || {})
       currentModeId.value = result.currentModeId || 'default'
-      
+
       // 只在首次加载时设置 selectedModeId 为当前使用的模式
       // 切换页签时保持上次编辑的模式
       if (isFirstLoad.value) {
         selectedModeId.value = currentModeId.value
         isFirstLoad.value = false
       }
-      
+
       // 加载当前编辑模式的配置
       loadModeConfig(selectedModeId.value)
     }
@@ -966,9 +975,9 @@ async function loadConfig() {
 function loadModeConfig(modeId: string) {
   const mode = modes.value.find(m => m.id === modeId)
   if (mode) {
-    config.template = mode.template || DEFAULT_TEMPLATE
+    config.template = typeof mode.template === 'string' ? mode.template : DEFAULT_TEMPLATE
     config.dynamicTemplateEnabled = mode.dynamicTemplateEnabled ?? true
-    config.dynamicTemplate = mode.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
+    config.dynamicTemplate = typeof mode.dynamicTemplate === 'string' ? mode.dynamicTemplate : DEFAULT_DYNAMIC_TEMPLATE
     config.dynamicContextStrategy = mode.dynamicContextStrategy || 'single'
     originalConfig.value = { ...config }
     promptAssemblyMode.value = normalizePromptAssemblyMode(mode.promptAssemblyMode)
@@ -1013,18 +1022,17 @@ function confirmSwitchMode() {
 // 保存配置
 async function saveConfig() {
   isSaving.value = true
-  saveMessage.value = ''
   try {
     // 工具策略校验：custom 模式必须至少选择一个工具
     if (toolPolicyMode.value === 'custom' && toolPolicy.value.length === 0) {
-      saveMessage.value = t('components.settings.promptSettings.toolPolicy.emptyCannotSave')
+      showToast(t('components.settings.promptSettings.toolPolicy.emptyCannotSave'), false)
       return
     }
 
     // 保存前清理多余空行
     const cleanedTemplate = cleanupEmptyLines(config.template)
     const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
-    
+
     // 更新当前模式的配置
     const currentMode = modes.value.find(m => m.id === selectedModeId.value)
     const baseMode: PromptMode = currentMode || {
@@ -1057,9 +1065,9 @@ async function saveConfig() {
     if (toolPolicyMode.value !== 'custom') {
       delete (updatedMode as any).toolPolicy
     }
-    
+
     await sendToExtension('savePromptMode', { mode: updatedMode })
-    
+
     // 更新本地配置为清理后的版本
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
@@ -1070,7 +1078,7 @@ async function saveConfig() {
     originalToolPolicy.value = [...toolPolicy.value]
     promptEntries.value = clonePromptEntries(nextPromptEntries)
     originalPromptEntries.value = clonePromptEntries(nextPromptEntries)
-    
+
     // 更新模式列表中的配置
     const modeIndex = modes.value.findIndex(m => m.id === selectedModeId.value)
     if (modeIndex >= 0) {
@@ -1079,15 +1087,14 @@ async function saveConfig() {
 
     // 通知 InputArea 刷新模式列表，避免保存动态上下文策略后输入区仍显示旧模式数据
     settingsStore.refreshPromptModes()
-    
-    saveMessage.value = t('components.settings.promptSettings.saveSuccess')
-    setTimeout(() => { saveMessage.value = '' }, 2000)
-    
+
+    showToast(t('components.settings.promptSettings.saveSuccess'), true)
+
     // 保存成功后自动更新 token 计数
     await countTokens()
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
-    saveMessage.value = t('components.settings.promptSettings.saveFailed')
+    showToast(t('components.settings.promptSettings.saveFailed'), false)
   } finally {
     isSaving.value = false
   }
@@ -1100,10 +1107,10 @@ async function countTokens() {
     dynamicTokenCount.value = null
     return
   }
-  
+
   isCountingTokens.value = true
   tokenCountError.value = ''
-  
+
   try {
     const result = await sendToExtension<{
       success: boolean
@@ -1115,7 +1122,7 @@ async function countTokens() {
       channelType: selectedChannel.value,
       conversationId: chatStore.currentConversationId
     })
-    
+
     if (result?.success) {
       staticTokenCount.value = result.staticTokens ?? null
       dynamicTokenCount.value = result.dynamicTokens ?? null
@@ -1162,7 +1169,7 @@ function resetStaticToDefault() {
     plan: PLAN_MODE_TEMPLATE,
     ask: ASK_MODE_TEMPLATE
   }
-  
+
   config.template = modeDefaults[selectedModeId.value] || DEFAULT_TEMPLATE
   showResetStaticConfirm.value = false
 }
@@ -1257,7 +1264,7 @@ async function confirmAddMode(name: string) {
     dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
     dynamicContextStrategy: 'single'
   }
-  
+
   try {
     await sendToExtension('savePromptMode', { mode: newMode })
     modes.value.push(newMode)
@@ -1309,11 +1316,10 @@ async function confirmDuplicateMode(name: string) {
     selectedModeId.value = duplicatedMode.id
     loadModeConfig(duplicatedMode.id)
     settingsStore.refreshPromptModes()
-    saveMessage.value = t('components.settings.promptSettings.modes.duplicateSuccess')
-    setTimeout(() => { saveMessage.value = '' }, 2000)
+    showToast(t('components.settings.promptSettings.modes.duplicateSuccess'), true)
   } catch (error) {
     console.error('Failed to duplicate mode:', error)
-    saveMessage.value = t('components.settings.promptSettings.modes.duplicateFailed')
+    showToast(t('components.settings.promptSettings.modes.duplicateFailed'), false)
   }
 }
 
@@ -1358,7 +1364,7 @@ async function handleImportFileChange(event: Event) {
 function openRenameModeDialog(modeId: string) {
   const mode = modes.value.find(m => m.id === modeId)
   if (!mode) return
-  
+
   renamingModeId.value = modeId
   renamingModeName.value = mode.name
   showRenameModeDialog.value = true
@@ -1369,7 +1375,7 @@ async function confirmRenameMode(newName: string) {
   const mode = modes.value.find(m => m.id === renamingModeId.value)
   const normalizedName = newName.trim()
   if (!mode || !normalizedName || normalizedName === mode.name) return
-  
+
   try {
     const result = await sendToExtension<{ mode?: PromptMode }>('renamePromptMode', {
       modeId: renamingModeId.value,
@@ -1400,7 +1406,7 @@ async function confirmDeleteMode() {
   const modeId = selectedModeId.value
   // 至少保留一个模式
   if (modes.value.length <= 1) return
-  
+
   try {
     await sendToExtension('deletePromptMode', { modeId })
     modes.value = modes.value.filter(m => m.id !== modeId)
@@ -1425,6 +1431,10 @@ onMounted(async () => {
   await countTokens()
 })
 
+onBeforeUnmount(() => {
+  if (toastTimer) clearTimeout(toastTimer)
+})
+
 // 监听渠道变化，重新计算 token
 watch(selectedChannel, () => {
   countTokens()
@@ -1438,7 +1448,7 @@ watch(selectedChannel, () => {
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       <span>{{ t('components.settings.promptSettings.loading') }}</span>
     </div>
-    
+
     <template v-else>
       <!-- 模式选择栏 -->
       <div class="mode-selector-bar">
@@ -1457,40 +1467,59 @@ watch(selectedChannel, () => {
           />
         </div>
         <div class="mode-actions">
+          <button
+            class="mode-action-btn save-action-btn"
+            @click="saveConfig"
+            :disabled="isSaving"
+            :title="t('components.settings.promptSettings.saveButton')"
+          >
+            <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
+          </button>
+          <span class="mode-actions-divider"></span>
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
             <i class="codicon codicon-add"></i>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openDuplicateModeDialog" 
+          <button
+            class="mode-action-btn"
+            @click="openDuplicateModeDialog"
             :title="t('components.settings.promptSettings.modes.duplicate')"
           >
             <i class="codicon codicon-copy"></i>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="exportPromptModes('current')" 
+          <button
+            class="mode-action-btn"
+            @click="exportPromptModes('current')"
             :title="t('components.settings.promptSettings.modes.exportCurrent')"
           >
-            <i class="codicon codicon-export"></i>
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
+              <path d="M33 14v10h10" stroke-width="3"/>
+              <path d="M30 32h20" stroke-width="4" stroke-linecap="round"/>
+              <path d="M50 27l8 5-8 5z" fill="currentColor" stroke="none"/>
+            </svg>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openImportModeDialog" 
+          <button
+            class="mode-action-btn"
+            @click="openImportModeDialog"
             :title="t('components.settings.promptSettings.modes.import')"
           >
-            <i class="codicon codicon-cloud-upload"></i>
+            <svg class="mode-action-icon" viewBox="8 11 50 38" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M20 14h13l10 10v18a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3Z" stroke-width="3"/>
+              <path d="M33 14v10h10" stroke-width="3"/>
+              <path d="M8 32h20" stroke-width="4" stroke-linecap="round"/>
+              <path d="M28 27l8 5-8 5z" fill="currentColor" stroke="none"/>
+            </svg>
           </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openRenameModeDialog(selectedModeId)" 
+          <button
+            class="mode-action-btn"
+            @click="openRenameModeDialog(selectedModeId)"
             :title="t('components.settings.promptSettings.modes.rename')"
           >
             <i class="codicon codicon-edit"></i>
           </button>
-          <button 
-            class="mode-action-btn danger" 
-            @click="openDeleteConfirm()" 
+          <button
+            class="mode-action-btn danger"
+            @click="openDeleteConfirm()"
             :title="t('components.settings.promptSettings.modes.delete')"
             :disabled="modes.length <= 1"
           >
@@ -1534,39 +1563,6 @@ watch(selectedChannel, () => {
         </div>
       </div>
 
-      <!-- 动态上下文保留策略：传统模板和预设条目都生效 -->
-      <div class="template-section dynamic-strategy-section">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-history"></i>
-            {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
-          </label>
-        </div>
-
-        <div class="dynamic-strategy-block">
-          <div class="dynamic-strategy-options">
-            <label class="radio-option">
-              <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
-              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
-              <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
-            </label>
-          </div>
-          <p class="dynamic-strategy-description">
-            当预设条目或传统模板中包含
-            <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
-            <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
-            <code>{{ formatModuleId('TODO_LIST') }}</code>
-            等会变化变量时，此设置决定旧回合快照是否保留。
-          </p>
-          <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
-            <i class="codicon codicon-warning"></i>
-            保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
-          </p>
-        </div>
-      </div>
 
       <template v-if="promptAssemblyMode === 'entries'">
         <!-- 预设提示词条目编辑区 -->
@@ -1588,8 +1584,42 @@ watch(selectedChannel, () => {
             @convert-legacy="convertLegacyTemplatesToEntries"
           />
         </div>
+
+        <!-- 动态上下文保留策略（预设条目模式） -->
+        <div class="template-section dynamic-strategy-section">
+          <div class="section-header">
+            <label class="section-label">
+              <i class="codicon codicon-history"></i>
+              {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
+            </label>
+          </div>
+
+          <div class="dynamic-strategy-block">
+            <div class="dynamic-strategy-options">
+              <label class="radio-option">
+                <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
+              </label>
+              <label class="radio-option">
+                <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
+              </label>
+            </div>
+            <p class="dynamic-strategy-description">
+              当预设条目或传统模板中包含
+              <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
+              <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
+              <code>{{ formatModuleId('TODO_LIST') }}</code>
+              等会变化变量时，此设置决定旧回合快照是否保留。
+            </p>
+            <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
+              <i class="codicon codicon-warning"></i>
+              保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+            </p>
+          </div>
+        </div>
       </template>
-      
+
       <template v-else>
         <!-- 静态系统提示词编辑区 -->
         <div class="template-section">
@@ -1604,11 +1634,11 @@ watch(selectedChannel, () => {
             {{ t('components.settings.promptSettings.templateSection.resetButton') }}
           </button>
         </div>
-        
+
         <p class="section-description">
           {{ t('components.settings.promptSettings.staticSection.description') }}
         </p>
-        
+
         <textarea
           v-model="config.template"
           class="template-textarea"
@@ -1616,7 +1646,7 @@ watch(selectedChannel, () => {
           rows="12"
         ></textarea>
         </div>
-      
+
         <!-- 动态上下文模板编辑区 -->
         <div class="template-section dynamic-section">
         <div class="section-header">
@@ -1628,8 +1658,8 @@ watch(selectedChannel, () => {
           <div class="section-header-actions">
             <!-- 启用开关 -->
             <label class="toggle-switch" :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 v-model="config.dynamicTemplateEnabled"
               />
               <span class="toggle-slider"></span>
@@ -1640,17 +1670,17 @@ watch(selectedChannel, () => {
             </button>
           </div>
         </div>
-        
+
         <p class="section-description">
           {{ t('components.settings.promptSettings.dynamicSection.description') }}
         </p>
-        
+
         <!-- 禁用时显示提示 -->
         <div v-if="!config.dynamicTemplateEnabled" class="disabled-notice">
           <i class="codicon codicon-info"></i>
           <span>{{ t('components.settings.promptSettings.dynamicSection.disabledNotice') }}</span>
         </div>
-        
+
         <textarea
           v-else
           v-model="config.dynamicTemplate"
@@ -1658,9 +1688,153 @@ watch(selectedChannel, () => {
           :placeholder="t('components.settings.promptSettings.dynamicSection.placeholder')"
           rows="10"
         ></textarea>
+
+        <!-- 动态上下文保留策略（传统模板模式） -->
+        <div class="dynamic-strategy-inline">
+          <div class="section-label">
+            <i class="codicon codicon-history"></i>
+            {{ t('components.settings.promptSettings.dynamicSection.strategyTitle') }}
+          </div>
+
+          <div class="dynamic-strategy-block">
+            <div class="dynamic-strategy-options">
+              <label class="radio-option">
+                <input type="radio" value="single" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategySingle') }}</span>
+              </label>
+              <label class="radio-option">
+                <input type="radio" value="preserve" v-model="config.dynamicContextStrategy" />
+                <span class="radio-text">{{ t('components.settings.promptSettings.dynamicSection.strategyPreserve') }}</span>
+              </label>
+            </div>
+            <p class="dynamic-strategy-description">
+              当预设条目或传统模板中包含
+              <code>{{ formatModuleId('WORKSPACE_FILES') }}</code>、
+              <code>{{ formatModuleId('DIAGNOSTICS') }}</code>、
+              <code>{{ formatModuleId('TODO_LIST') }}</code>
+              等会变化变量时，此设置决定旧回合快照是否保留。
+            </p>
+            <p v-if="config.dynamicContextStrategy === 'preserve'" class="dynamic-strategy-warning">
+              <i class="codicon codicon-warning"></i>
+              保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。
+            </p>
+          </div>
+        </div>
         </div>
       </template>
 
+      <!-- 可用变量参考（可收缩，默认收起） -->
+      <div class="modules-reference collapsible">
+        <button
+          type="button"
+          class="reference-header"
+          :aria-expanded="!collapsedReference"
+          aria-controls="prompt-modules-reference-content"
+          @click="collapsedReference = !collapsedReference"
+        >
+          <span class="reference-title">
+            <i class="codicon codicon-references"></i>
+            {{ t('components.settings.promptSettings.modulesReference.title') }}
+          </span>
+          <i class="codicon" :class="collapsedReference ? 'codicon-chevron-right' : 'codicon-chevron-down'"></i>
+        </button>
+
+        <div v-if="!collapsedReference" id="prompt-modules-reference-content">
+          <!-- 静态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-lock"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
+              <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
+
+            <div class="modules-list">
+              <div
+                v-for="module in STATIC_PROMPT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertStaticModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 动态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-sync"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
+              <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
+
+            <div class="modules-list">
+              <div
+                v-for="module in DYNAMIC_CONTEXT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertDynamicModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- 模式工具策略 -->
       <div class="template-section tool-policy-section">
         <div class="section-header">
@@ -1761,23 +1935,9 @@ watch(selectedChannel, () => {
           </div>
         </div>
       </div>
-      
-      <!-- 保存按钮和 Token 计数 -->
+
+      <!-- Token 计数 -->
       <div class="save-section">
-        <div class="save-row">
-          <button
-            class="save-btn"
-            @click="saveConfig"
-            :disabled="isSaving"
-          >
-            <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.promptSettings.saveButton') }}</span>
-          </button>
-          <span v-if="saveMessage" class="save-message" :class="{ success: saveMessage === t('components.settings.promptSettings.saveSuccess') }">
-            {{ saveMessage }}
-          </span>
-        </div>
-        
         <!-- Token 计数显示 -->
         <div class="token-count-section">
           <div class="token-count-header">
@@ -1785,7 +1945,7 @@ watch(selectedChannel, () => {
               <i class="codicon codicon-symbol-numeric"></i>
               {{ t('components.settings.promptSettings.tokenCount.label') }}
             </label>
-            
+
             <select
               v-model="selectedChannel"
               class="channel-select"
@@ -1795,7 +1955,7 @@ watch(selectedChannel, () => {
                 {{ opt.label }}
               </option>
             </select>
-            
+
             <button
               class="refresh-btn"
               @click="countTokens"
@@ -1805,13 +1965,13 @@ watch(selectedChannel, () => {
               <i :class="['codicon', isCountingTokens ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh']"></i>
             </button>
           </div>
-          
+
           <!-- 分别显示静态和动态 token 数 -->
           <div class="token-count-details">
             <!-- 静态模板 token -->
             <div class="token-count-item">
-              <span 
-                class="token-item-label static-label" 
+              <span
+                class="token-item-label static-label"
                 :title="t('components.settings.promptSettings.tokenCount.staticTooltip')"
               >
                 <i class="codicon codicon-lock"></i>
@@ -1836,11 +1996,11 @@ watch(selectedChannel, () => {
                 </template>
               </div>
             </div>
-            
+
             <!-- 动态上下文 token -->
             <div class="token-count-item">
-              <span 
-                class="token-item-label dynamic-label" 
+              <span
+                class="token-item-label dynamic-label"
                 :title="t('components.settings.promptSettings.tokenCount.dynamicTooltip')"
               >
                 <i class="codicon codicon-sync"></i>
@@ -1866,116 +2026,30 @@ watch(selectedChannel, () => {
               </div>
             </div>
           </div>
-          
+
           <p class="token-hint">
             {{ t('components.settings.promptSettings.tokenCount.hint') }}
           </p>
         </div>
       </div>
-      
-      <!-- 可用变量参考 -->
-      <div class="modules-reference">
-        <h5 class="reference-title">
-          <i class="codicon codicon-references"></i>
-          {{ t('components.settings.promptSettings.modulesReference.title') }}
-        </h5>
-        
-        <!-- 静态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-lock"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
-            <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in STATIC_PROMPT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertStaticModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 动态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-sync"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
-            <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in DYNAMIC_CONTEXT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertDynamicModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+
     </template>
-    
+
+    <!-- 保存浮窗提示 -->
+    <Transition name="toast-fade">
+      <div
+        v-if="toastVisible"
+        class="save-toast"
+        :class="{ success: toastSuccess }"
+        :role="toastSuccess ? 'status' : 'alert'"
+        :aria-live="toastSuccess ? 'polite' : 'assertive'"
+        aria-atomic="true"
+      >
+        <i :class="['codicon', toastSuccess ? 'codicon-check' : 'codicon-error']" aria-hidden="true"></i>
+        {{ toastMessage }}
+      </div>
+    </Transition>
+
     <!-- 添加模式对话框 -->
     <InputDialog
       v-model="showAddModeDialog"
@@ -1984,7 +2058,7 @@ watch(selectedChannel, () => {
       :default-value="t('components.settings.promptSettings.modes.newModeDefault')"
       @confirm="confirmAddMode"
     />
-    
+
     <!-- 复制模式对话框 -->
     <InputDialog
       v-model="showDuplicateModeDialog"
@@ -2039,7 +2113,7 @@ watch(selectedChannel, () => {
               <button class="small-btn" type="button" @click="showImportModeDialog = false">
                 {{ t('common.cancel') }}
               </button>
-              <button class="save-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
+              <button class="import-confirm-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
                 {{ t('components.settings.promptSettings.modes.importConfirm') }}
               </button>
             </div>
@@ -2047,7 +2121,7 @@ watch(selectedChannel, () => {
         </div>
       </Transition>
     </Teleport>
-    
+
     <!-- 重命名模式对话框 -->
     <InputDialog
       v-model="showRenameModeDialog"
@@ -2056,7 +2130,7 @@ watch(selectedChannel, () => {
       :default-value="renamingModeName"
       @confirm="confirmRenameMode"
     />
-    
+
     <!-- 删除确认对话框 -->
     <ConfirmDialog
       v-model="showDeleteConfirm"
@@ -2214,6 +2288,64 @@ watch(selectedChannel, () => {
   font-size: 14px;
 }
 
+.mode-action-btn .mode-action-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.save-action-btn {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-actions-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: var(--vscode-panel-border);
+}
+
+/* 保存浮窗提示 */
+.save-toast {
+  position: fixed;
+  top: 48px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.save-toast.success .codicon {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-toast:not(.success) .codicon {
+  color: var(--vscode-errorForeground);
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
 @media (max-width: 520px) {
   .mode-selector-left {
     flex-basis: 100%;
@@ -2221,6 +2353,7 @@ watch(selectedChannel, () => {
 
   .mode-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 }
 
@@ -2301,6 +2434,30 @@ watch(selectedChannel, () => {
   justify-content: flex-end;
   border-top: 1px solid var(--vscode-panel-border);
   border-bottom: none;
+}
+
+.import-confirm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.import-confirm-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.import-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .import-textarea {
@@ -2479,45 +2636,6 @@ watch(selectedChannel, () => {
   padding-top: 8px;
 }
 
-.save-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.save-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 80px;
-  padding: 8px 16px;
-  font-size: 13px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.save-message {
-  font-size: 12px;
-  color: var(--vscode-errorForeground);
-}
-
-.save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
 /* Token 计数区域 */
 .token-count-section {
   display: flex;
@@ -2663,11 +2781,40 @@ watch(selectedChannel, () => {
   color: var(--vscode-descriptionForeground);
 }
 
-/* 模块参考 */
+/* 模块参考（可收缩） */
 .modules-reference {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--vscode-panel-border);
+}
+
+.modules-reference .reference-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.modules-reference .reference-header:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.modules-reference .reference-header:hover .reference-title {
+  color: var(--vscode-foreground);
+}
+
+.modules-reference .reference-header .codicon {
+  color: var(--vscode-descriptionForeground);
+  font-size: 14px;
 }
 
 .reference-title {
@@ -2677,6 +2824,18 @@ watch(selectedChannel, () => {
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 500;
+}
+
+/* 动态上下文保留策略（内嵌于动态模板卡片） */
+.dynamic-strategy-inline {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.dynamic-strategy-inline .section-label {
+  font-size: 12px;
+  margin-bottom: 8px;
 }
 
 .modules-list {

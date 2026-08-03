@@ -1866,7 +1866,7 @@ export class SettingsManager {
      */
     getSystemPromptTemplate(): string {
         const mode = this.getDefaultPromptMode();
-        return mode?.template || this.getSystemPromptConfig().template;
+        return mode?.template ?? this.getSystemPromptConfig().template;
     }
     
     /**
