@@ -50,16 +50,28 @@ export class CheckpointRetentionService {
                 const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
                 const excess = checkpoints.length - config.maxCheckpoints;
                 const deleted = new Set<string>();
+                // CP-RET-3: 预构建 baseCheckpointId → 后继列表 与 id → 排序位置索引，
+                // 每轮 O(1) 取后继，替代对 sorted.slice(i+1) 反复 filter 的 O(n²) 扫描；
+                // 「仅合并排序在后的后继」与「未被删除」两个过滤保持原语义。
+                const indexById = new Map(sorted.map((c, idx) => [c.id, idx] as const));
+                const successorsByBase = new Map<string, CheckpointRecord[]>();
+                for (const c of sorted) {
+                    if (c.baseCheckpointId) {
+                        let list = successorsByBase.get(c.baseCheckpointId);
+                        if (!list) {
+                            list = [];
+                            successorsByBase.set(c.baseCheckpointId, list);
+                        }
+                        list.push(c);
+                    }
+                }
 
                 for (let i = 0; i < excess && i < sorted.length; i++) {
                     const cp = sorted[i];
-                    if (deleted.has(cp.id)) {
-                        continue;
-                    }
-                    const stillAlive = sorted.slice(i + 1).filter(c => !deleted.has(c.id));
                     // CP-RET-1: 对引用被删项的全部后继循环执行合并——异常元数据可能出现
                     // 多节点引用同一 base，只合并第一个会让其余依赖者悬空断链。
-                    const dependents = stillAlive.filter(c => c.baseCheckpointId === cp.id);
+                    const dependents = (successorsByBase.get(cp.id) ?? [])
+                        .filter(c => !deleted.has(c.id) && (indexById.get(c.id) ?? -1) > i);
                     let mergeFailed = false;
                     for (const dependent of dependents) {
                         try {

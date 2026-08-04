@@ -410,8 +410,12 @@ export class CheckpointManager {
                     const currentHashes: Record<string, string> = { ...snapshot.fileHashes };
                     const currentStats: Record<string, SnapshotFileStat> = { ...snapshot.fileStats };
                     const unbackedPaths: string[] = [];
+                    // CP-PERF-2: Set 旁路去重——sizeExcluded/unreadable 达十万级时逐条
+                    // Array.includes 是 O(n²)；Set.has 为 O(1)，输出顺序保持插入序不变。
+                    const unbackedPathSet = new Set<string>();
                     const markUnbacked = (scopedPath: string) => {
                         unbackedPaths.push(scopedPath);
+                        unbackedPathSet.add(scopedPath);
                         delete currentHashes[scopedPath];
                         delete currentStats[scopedPath];
                     };
@@ -502,7 +506,8 @@ export class CheckpointManager {
                     // 大小超限与不可读文件合并进 unbackedPaths：
                     // 恢复时这些路径绝不能自动删除（protectedScopedPaths 边界）
                     for (const entry of [...snapshot.sizeExcluded, ...snapshot.unreadable]) {
-                        if (!unbackedPaths.includes(entry.scopedPath)) {
+                        if (!unbackedPathSet.has(entry.scopedPath)) {
+                            unbackedPathSet.add(entry.scopedPath);
                             unbackedPaths.push(entry.scopedPath);
                         }
                     }

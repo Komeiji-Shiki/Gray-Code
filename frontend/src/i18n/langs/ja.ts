@@ -3469,8 +3469,6 @@ const ja: LanguageMessages = {
     },
 
     composables: {
-
-
         useAttachments: {
             errors: {
                 validationFailed: '添付ファイルの検証に失敗しました',

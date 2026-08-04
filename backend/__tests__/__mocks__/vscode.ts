@@ -42,8 +42,19 @@ export const FileType = {
     Directory: 2,
 };
 
+export const ConfigurationTarget = {
+    Global: 1,
+    Workspace: 2,
+    WorkspaceFolder: 3,
+};
+
 export const Position = jest.fn();
 export const Range = jest.fn();
+
+/** 文本标签页输入（PromptManager.openTabs 测试需要 instanceof 判断） */
+export class TabInputText {
+    constructor(public uri: any) {}
+}
 export const commands = { executeCommand: jest.fn() };
 export const window = {
     showWarningMessage: jest.fn(),

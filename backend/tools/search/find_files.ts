@@ -75,11 +75,16 @@ async function findInWorkspace(
     try {
         // 创建相对于工作区的模式
         const relativePattern = new vscode.RelativePattern(workspace.uri, pattern);
-        const files = await vscode.workspace.findFiles(relativePattern, exclude, maxResults);
+        // 多取 1 个用于精确判定截断：findFiles 达到 maxResults 即停止，无法区分
+        // “恰好 maxResults 个”与“超过 maxResults 个”；取 maxResults+1 后若多出 1 个
+        // 才说明真的被截断，避免恰好等于时误报 truncated
+        const files = await vscode.workspace.findFiles(relativePattern, exclude, maxResults + 1);
+        const truncated = files.length > maxResults;
+        const cappedFiles = truncated ? files.slice(0, maxResults) : files;
         
         // 受控并发：以前用裸 Promise.all 对最多 500 个文件无上限并发全量读取，
         // 同时打开数百文件句柄且内存峰值不可控；行数统计本身也已改为字节流。
-        const fileDetails = await mapWithConcurrency(files, 8, async (fileUri: vscode.Uri): Promise<FoundFileDetail> => {
+        const fileDetails = await mapWithConcurrency(cappedFiles, 8, async (fileUri: vscode.Uri): Promise<FoundFileDetail> => {
             const relativePath = toRelativePath(fileUri, includeWorkspacePrefix);
             return {
                 path: relativePath,
@@ -96,7 +101,7 @@ async function findInWorkspace(
             files: relativePaths,
             fileDetails,
             count: relativePaths.length,
-            truncated: relativePaths.length >= maxResults
+            truncated
         };
     } catch (error) {
         return {
@@ -151,6 +156,10 @@ async function findWithPattern(
             // 修改目的：单工作区和多工作区 find_files 返回相同的信息层级。
             allFileDetails.push(...(result.fileDetails || []));
         }
+        // 单个工作区内部已用 maxResults+1 探测精确判定截断，向上传播
+        if (result.truncated) {
+            truncated = true;
+        }
     }
     
     allFiles.sort();
@@ -161,7 +170,9 @@ async function findWithPattern(
         files: allFiles,
         fileDetails: allFileDetails,
         count: allFiles.length,
-        truncated: truncated || allFiles.length >= maxResults
+        // 去掉原来的 allFiles.length >= maxResults 兜底：各工作区已精确判定截断，
+        // 恰好等于 maxResults 时不再误报 truncated
+        truncated
     };
 }
 
@@ -224,7 +235,8 @@ export function createFindFilesTool(): Tool {
 
             // 如果用户指定了 exclude 参数则使用，否则使用配置的默认值
             const exclude = (args.exclude as string) || getExcludePattern();
-            const maxResults = (args.maxResults as number) || 500;
+            // 0/负值/非数字语义混乱（负值会原样传入 findFiles）：统一回退到默认 500，并取整
+            const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.floor(args.maxResults) : 500;
 
             const results: FindResult[] = [];
             let successCount = 0;

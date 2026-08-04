@@ -303,7 +303,7 @@ export interface BuildPromptParams {
     vectorSearch?: (params: {
       entries: WorldBookEntry[];
       contextText: string;
-    }) => Set<number> | number[] | Promise<Set<number> | number[]>;
+    }) => Set<number> | number[];
 
     /** 递归激活最大迭代次数；默认 5 */
     recursionLimit?: number;

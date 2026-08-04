@@ -21,6 +21,7 @@ import {
   isProgressModePathAllowedWithMultiRoot,
   validateProgressArtifactRefInput,
 } from './pathUtils';
+import { withProgressWriteLock } from './progressWriteLock';
 import { projectProgressToolResultData } from './resultProjection';
 import type {
   ProgressArtifactRef,
@@ -173,105 +174,112 @@ export function createUpdateProgressTool(): Tool {
         return { success: false, error: error || 'No workspace folder open' };
       }
 
-      let existingContent = '';
-      try {
-        const existingBytes = await vscode.workspace.fs.readFile(uri);
-        existingContent = Buffer.from(existingBytes).toString('utf-8');
-      } catch (e: any) {
-        return { success: false, error: e?.message || `Progress document does not exist: ${targetPath}` };
-      }
+      // 修改原因：progress.md 的「读 → 改 → 写」无锁，并行子代理同时 update 会互相覆盖，
+      //          丢失对方的 activeArtifacts/todos/risks/log 更新。
+      // 修改方式：把整段读改写放进 per-path 写锁（progressWriteLock），后一个更新总是基于
+      //          前一个写回后的盘面重新读取合并。
+      // 修改目的：同一文件的更新按调用顺序串行，互不覆盖；不同文件之间互不阻塞。
+      return withProgressWriteLock(targetPath, async (): Promise<ToolResult> => {
+        let existingContent = '';
+        try {
+          const existingBytes = await vscode.workspace.fs.readFile(uri);
+          existingContent = Buffer.from(existingBytes).toString('utf-8');
+        } catch (e: any) {
+          return { success: false, error: e?.message || `Progress document does not exist: ${targetPath}` };
+        }
 
-      const validation = validateProgressDocument(existingContent);
-      if (!validation.success) {
-        return { success: false, error: 'error' in validation ? validation.error : 'Failed to validate progress document' };
-      }
+        const validation = validateProgressDocument(existingContent);
+        if (!validation.success) {
+          return { success: false, error: 'error' in validation ? validation.error : 'Failed to validate progress document' };
+        }
 
-      const now = new Date().toISOString();
-      const currentMetadata = validation.metadata;
-      const nextLog = Object.prototype.hasOwnProperty.call(rawArgs, 'appendLog')
-        ? [...currentMetadata.log, ...buildAppendedLogEntries(args.appendLog, now)]
-        : currentMetadata.log;
+        const now = new Date().toISOString();
+        const currentMetadata = validation.metadata;
+        const nextLog = Object.prototype.hasOwnProperty.call(rawArgs, 'appendLog')
+          ? [...currentMetadata.log, ...buildAppendedLogEntries(args.appendLog, now)]
+          : currentMetadata.log;
 
-      const nextMetadata = {
-        ...currentMetadata,
-        updatedAt: now,
-        status: Object.prototype.hasOwnProperty.call(rawArgs, 'status')
-          ? args.status
-          : currentMetadata.status,
-        phase: Object.prototype.hasOwnProperty.call(rawArgs, 'phase')
-          ? args.phase
-          : currentMetadata.phase,
-        currentFocus: Object.prototype.hasOwnProperty.call(rawArgs, 'currentFocus')
-          ? normalizeOptionalProgressSingleLineText(args.currentFocus)
-          : currentMetadata.currentFocus,
-        latestConclusion: Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion')
-          ? args.latestConclusion
-          : currentMetadata.latestConclusion,
-        currentBlocker: Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker')
-          ? args.currentBlocker
-          : currentMetadata.currentBlocker,
-        nextAction: Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
-          ? args.nextAction
-          : currentMetadata.nextAction,
-        activeArtifacts: Object.prototype.hasOwnProperty.call(rawArgs, 'activeArtifacts')
-          ? applyProgressArtifactPatch(currentMetadata.activeArtifacts, args.activeArtifacts)
-          : currentMetadata.activeArtifacts,
-        todos: Object.prototype.hasOwnProperty.call(rawArgs, 'todos')
-          ? args.todos
-          : currentMetadata.todos,
-        risks: Object.prototype.hasOwnProperty.call(rawArgs, 'risks')
-          ? args.risks
-          : currentMetadata.risks,
-        log: nextLog,
-      };
-
-      const changedFields = new Set<string>();
-      if (
-        Object.prototype.hasOwnProperty.call(rawArgs, 'status') ||
-        Object.prototype.hasOwnProperty.call(rawArgs, 'phase')
-      ) {
-        changedFields.add('header');
-      }
-      if (
-        Object.prototype.hasOwnProperty.call(rawArgs, 'currentFocus') ||
-        Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion') ||
-        Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker') ||
-        Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
-      ) {
-        changedFields.add('summary');
-      }
-      if (Object.prototype.hasOwnProperty.call(rawArgs, 'activeArtifacts')) {
-        changedFields.add('artifacts');
-      }
-      if (Object.prototype.hasOwnProperty.call(rawArgs, 'todos')) {
-        changedFields.add('todos');
-      }
-      if (Object.prototype.hasOwnProperty.call(rawArgs, 'risks')) {
-        changedFields.add('risks');
-      }
-      if (Object.prototype.hasOwnProperty.call(rawArgs, 'appendLog')) {
-        changedFields.add('log');
-      }
-
-      try {
-        await ensureParentDir(uri.fsPath);
-        const { metadata, content } = buildProgressDocument(nextMetadata, { generatedAt: now });
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
-
-        return {
-          success: true,
-          data: projectProgressToolResultData({
-            path: targetPath,
-            metadata,
-            delta: {
-              type: 'updated',
-              changedFields: Array.from(changedFields.values())
-            }
-          })
+        const nextMetadata = {
+          ...currentMetadata,
+          updatedAt: now,
+          status: Object.prototype.hasOwnProperty.call(rawArgs, 'status')
+            ? args.status
+            : currentMetadata.status,
+          phase: Object.prototype.hasOwnProperty.call(rawArgs, 'phase')
+            ? args.phase
+            : currentMetadata.phase,
+          currentFocus: Object.prototype.hasOwnProperty.call(rawArgs, 'currentFocus')
+            ? normalizeOptionalProgressSingleLineText(args.currentFocus)
+            : currentMetadata.currentFocus,
+          latestConclusion: Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion')
+            ? normalizeOptionalProgressSingleLineText(args.latestConclusion)
+            : currentMetadata.latestConclusion,
+          currentBlocker: Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker')
+            ? args.currentBlocker
+            : currentMetadata.currentBlocker,
+          nextAction: Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
+            ? args.nextAction
+            : currentMetadata.nextAction,
+          activeArtifacts: Object.prototype.hasOwnProperty.call(rawArgs, 'activeArtifacts')
+            ? applyProgressArtifactPatch(currentMetadata.activeArtifacts, args.activeArtifacts)
+            : currentMetadata.activeArtifacts,
+          todos: Object.prototype.hasOwnProperty.call(rawArgs, 'todos')
+            ? args.todos
+            : currentMetadata.todos,
+          risks: Object.prototype.hasOwnProperty.call(rawArgs, 'risks')
+            ? args.risks
+            : currentMetadata.risks,
+          log: nextLog,
         };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
-      }
+
+        const changedFields = new Set<string>();
+        if (
+          Object.prototype.hasOwnProperty.call(rawArgs, 'status') ||
+          Object.prototype.hasOwnProperty.call(rawArgs, 'phase')
+        ) {
+          changedFields.add('header');
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(rawArgs, 'currentFocus') ||
+          Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion') ||
+          Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker') ||
+          Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
+        ) {
+          changedFields.add('summary');
+        }
+        if (Object.prototype.hasOwnProperty.call(rawArgs, 'activeArtifacts')) {
+          changedFields.add('artifacts');
+        }
+        if (Object.prototype.hasOwnProperty.call(rawArgs, 'todos')) {
+          changedFields.add('todos');
+        }
+        if (Object.prototype.hasOwnProperty.call(rawArgs, 'risks')) {
+          changedFields.add('risks');
+        }
+        if (Object.prototype.hasOwnProperty.call(rawArgs, 'appendLog')) {
+          changedFields.add('log');
+        }
+
+        try {
+          await ensureParentDir(uri.fsPath);
+          const { metadata, content } = buildProgressDocument(nextMetadata, { generatedAt: now });
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
+
+          return {
+            success: true,
+            data: projectProgressToolResultData({
+              path: targetPath,
+              metadata,
+              delta: {
+                type: 'updated',
+                changedFields: Array.from(changedFields.values())
+              }
+            })
+          };
+        } catch (e: any) {
+          return { success: false, error: e?.message || String(e) };
+        }
+      });
     }
   };
 }

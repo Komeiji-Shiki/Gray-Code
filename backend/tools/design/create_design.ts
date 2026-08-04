@@ -74,6 +74,17 @@ export function createCreateDesignTool(): Tool {
         return { success: false, error: error || 'No workspace folder open' };
       }
 
+      // 写入前探测目标文件存在性：create_design 不应静默覆盖既有设计文档
+      try {
+        await vscode.workspace.fs.readFile(uri);
+        return {
+          success: false,
+          error: `Design document already exists at ${outPath}. Use update_design to revise it instead of overwriting.`
+        };
+      } catch (e: any) {
+        // 目标不存在（或不可读）：继续创建；写入失败由下方 try/catch 返回错误
+      }
+
       try {
         await ensureParentDir(uri.fsPath);
 

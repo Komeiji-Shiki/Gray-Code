@@ -151,9 +151,11 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         await run(env.service, [makeCall('read_file', { path: 'a.ts' }), makeCall('write_file', { path: 'a.ts', content: 'x' })]);
 
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
-        // 反查按消息索引（工具执行所在模型消息）
+        // 反查按消息索引（工具执行所在模型消息）；
+        // before/after 两个存档点复用同一次反查（同一 (conversationId, messageIndex)），
+        // 避免每批次两次全量重读 transcript 文件
         expect(conversationManager.getMessageNodeIdAt).toHaveBeenCalledWith('conv-cpf5', 0);
-        expect(conversationManager.getMessageNodeIdAt).toHaveBeenCalledTimes(2);
+        expect(conversationManager.getMessageNodeIdAt).toHaveBeenCalledTimes(1);
 
         const beforeCall = env.checkpointService.createToolExecutionCheckpoint.mock.calls[0];
         const afterCall = env.checkpointService.createToolExecutionCheckpoint.mock.calls[1];
@@ -254,19 +256,19 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         };
     }
 
-    /** 轮询等待 fire-and-forget 绑定落盘（最多 timeoutMs） */
-    async function waitForBoundNode(conversationId: string, nodeId: string, timeoutMs = 3000): Promise<ConversationBranchNode> {
+    /** 轮询等待 fire-and-forget 绑定落盘（最多 timeoutMs）。expectedId 存在时等最终值（before/after 两次绑定覆盖同一节点） */
+    async function waitForBoundNode(conversationId: string, nodeId: string, expectedId?: string, timeoutMs = 3000): Promise<ConversationBranchNode> {
         const deadline = Date.now() + timeoutMs;
         let last: ConversationBranchNode | undefined;
         while (Date.now() < deadline) {
             const node = (await branchService.getBranchGraph(conversationId)).graph?.nodes[nodeId];
             last = node;
-            if (node?.workspaceCheckpointId) {
+            if (node?.workspaceCheckpointId && (!expectedId || node.workspaceCheckpointId === expectedId)) {
                 return node;
             }
             await new Promise(resolve => setTimeout(resolve, 10));
         }
-        throw new Error(`node ${nodeId} was not bound within ${timeoutMs}ms; last=${JSON.stringify(last)}`);
+        throw new Error(`node ${nodeId} was not bound to ${expectedId ?? 'any id'} within ${timeoutMs}ms; last=${JSON.stringify(last)}`);
     }
 
     it('写工具执行 before/after 存档后，节点绑定最新（after）存档 id 且 state=checkpointed', async () => {
@@ -276,7 +278,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         // 工具执行在消息索引 0（user 消息）→ 反查到 user 节点
         await run(env.service, [makeCall('write_file', { path: 'a.ts', content: 'x' })], 'conv-bcp2');
 
-        const node = await waitForBoundNode('conv-bcp2', userNodeId);
+        const node = await waitForBoundNode('conv-bcp2', userNodeId, 'cp-after-2');
         // before 先绑 cp-before-1，after 覆盖为 cp-after-2（最新存档为准）
         expect(node.workspaceCheckpointId).toBe('cp-after-2');
         expect(node.workspaceState).toBe('checkpointed');

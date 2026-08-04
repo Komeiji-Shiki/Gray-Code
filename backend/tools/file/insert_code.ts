@@ -8,9 +8,13 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding, formatFileSize } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
+
+// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
+// 超大文件全量 readFileSync 会阻塞 extension host 并全量读入内存。
+const MAX_EDIT_FILE_BYTES = 5 * 1024 * 1024;
 
 /**
  * 单个插入条目
@@ -79,6 +83,9 @@ export { insertAtLine };
  * 去掉尾部空串后，结尾换行由 join('\n') 在插入点自然还原，行数统计正确。
  */
 function splitContentLines(content: string): string[] {
+    if (content === '') {
+        return [];
+    }
     const lines = content.split('\n');
     if (content.length > 0 && lines[lines.length - 1] === '') {
         lines.pop();
@@ -117,6 +124,20 @@ async function insertSingleFile(
     const absolutePath = uri.fsPath;
     if (!fs.existsSync(absolutePath)) {
         return { path: filePath, success: false, error: `File not found: ${filePath}. Use write_file to create new files.` };
+    }
+
+    // 文件大小护栏：超大文件全量 readFileSync 会阻塞 extension host，先 stat 拦截。
+    try {
+        const stat = fs.statSync(absolutePath);
+        if (stat.size > MAX_EDIT_FILE_BYTES) {
+            return {
+                path: filePath,
+                success: false,
+                error: `File is too large (${formatFileSize(stat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
+            };
+        }
+    } catch (e) {
+        return { path: filePath, success: false, error: `Failed to stat file: ${e instanceof Error ? e.message : String(e)}` };
     }
 
     try {

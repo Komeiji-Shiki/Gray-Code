@@ -53,6 +53,67 @@ import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 
+/**
+ * 流式取消时给在途早启动工具的收尾窗口（毫秒）。
+ *
+ * 流式边执行工具已产生真实副作用（写文件、跑命令），取消时若只结算"取消时刻已 settle"
+ * 的工具，刚完成/仍在执行的工具结果会永久丢失（历史只剩 cancelled 占位，下一轮
+ * rejectAllPendingToolCalls 会误标"用户拒绝"）。窗口内落定的工具用真实结果结算，
+ * 超时未落定的标记为取消；窗口有界，保证停止按钮不被不响应 abort 的工具拖死。
+ */
+export const STREAM_CANCEL_TOOL_SETTLE_GRACE_MS = 3000;
+
+/**
+ * 主工具循环 abort 后给工具执行生成器的收尾窗口（毫秒）。
+ *
+ * abort 先于 gen.next() 落定时，响应 abort 的工具会快速返回已完成部分的真实结果；
+ * 窗口内返回则正常结算（真实副作用结果不能丢），窗口结束仍未返回（工具不响应 abort
+ * 且永不结束）则放弃，避免请求永久挂起、停止按钮失效。
+ */
+export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
+
+/**
+ * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
+ *
+ * 必须先等 initialNext（即主循环里那次正在恢复生成器的 next() 请求）：
+ * - 若生成器直接返回（如 abort 落在工具间隙、核心循环检查 abort 后直接结束），
+ *   返回值交给 initialNext；此时再调 gen.next() 只会拿到 { done: true, value: undefined }；
+ * - 若生成器先 yield 当前工具的 end 事件再返回（abort 落在工具执行中），
+ *   initialNext 拿到事件，随后 gen.next() 才会拿到返回值。
+ *
+ * 窗口（graceMs）内拿到最终值则返回；超时（工具不响应 abort 且永不结束）返回 undefined，
+ * 调用方走既有取消路径，保证请求不永久挂起。
+ */
+export async function drainToolExecutionGeneratorAfterAbort(
+    gen: AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void>,
+    initialNext: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>,
+    graceMs: number
+): Promise<ToolExecutionFullResult | undefined> {
+    const drainDeadline = Date.now() + graceMs;
+    const raceWithDeadline = <T>(promise: Promise<T>): Promise<T | undefined> => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), Math.max(0, drainDeadline - Date.now()));
+        });
+        // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
+        promise.then(
+            () => { if (timer) clearTimeout(timer); },
+            () => { if (timer) clearTimeout(timer); }
+        );
+        return Promise.race([promise, timeoutPromise]);
+    };
+
+    let drained = await raceWithDeadline(initialNext);
+    while (drained !== undefined && !drained.done && Date.now() < drainDeadline) {
+        drained = await raceWithDeadline(gen.next());
+    }
+
+    if (drained !== undefined && drained.done) {
+        return drained.value as ToolExecutionFullResult;
+    }
+    return undefined;
+}
+
 function shouldStartToolDuringModelStream(
     call: FunctionCallInfo,
     toolExecutionService: ToolExecutionService,
@@ -752,12 +813,72 @@ export class ToolIterationLoopService {
                 // 检查是否被取消
                 if (processor.isCancelled()) {
                     const partialContent = processor.getContent();
+
+                    // 流式取消收尾窗口（对齐 843-871 行 early-abort 路径的 abort-race 模式）：
+                    // 早启动工具已产生真实副作用，取消时先等它们落定，用真实结果结算，而不是
+                    // 只结算"取消时刻已 settle"的工具——否则刚完成/仍在执行的工具结果只会写入
+                    // 将被丢弃的 streamingToolResults，历史留下 cancelled 占位，下一轮
+                    // rejectAllPendingToolCalls 会误标"用户拒绝"，模型可能重复执行。
+                    // abort 此刻已触发，不能再与 abort race（会立即 resolve 造成忙等），
+                    // 改用 deadline 兜底：窗口内落定的工具结算真实结果，超时未落定的标记取消。
+                    const settleDeadline = Date.now() + STREAM_CANCEL_TOOL_SETTLE_GRACE_MS;
+                    while (earlyToolProgressQueue.hasPending() && Date.now() < settleDeadline) {
+                        const readyStatuses = drainSettledEarlyToolStatuses();
+                        if (readyStatuses.length > 0) {
+                            for (const statusChunk of readyStatuses) {
+                                yield statusChunk;
+                            }
+                            continue;
+                        }
+                        const remainingMs = settleDeadline - Date.now();
+                        if (remainingMs <= 0) {
+                            break;
+                        }
+                        let settleTimer: ReturnType<typeof setTimeout> | undefined;
+                        const timeoutPromise = new Promise<void>((resolve) => {
+                            settleTimer = setTimeout(resolve, remainingMs);
+                        });
+                        try {
+                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), timeoutPromise]);
+                        } finally {
+                            // 工具先落定时清理 timer，避免残留 open handle
+                            if (settleTimer) {
+                                clearTimeout(settleTimer);
+                            }
+                        }
+                    }
+                    for (const statusChunk of drainSettledEarlyToolStatuses()) {
+                        yield statusChunk;
+                    }
+
                     if (partialContent.parts.length > 0) {
                         // 标记半截 usage：流被取消时 usageMetadata 只覆盖已收到的 chunk，
                         // 统计端（usageStats/getStats）据此回退到文本长度估算。
                         partialContent.usageMetadataPartial = true;
                         await this.conversationManager.addContent(conversationId, partialContent);
                         await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
+
+                        // 与 stream_early_abort 路径（878-902 行）对齐：结算 stop state，
+                        // 避免 pendingApprovalGate 等状态残留，否则后续 hidden continuation
+                        // 会被 APPROVAL_GATE_MISMATCH 拦截或漏掉审批门。
+                        const cancelledCalls = partialContent.parts
+                            .map(part => part.functionCall)
+                            .filter((call): call is NonNullable<ContentPart['functionCall']> & { id: string } => !!call?.id);
+                        const settledEarlyResults = Array.from(streamingToolResults.values());
+                        const settledToolResults = this.orderToolResultsByCallSequence(
+                            cancelledCalls,
+                            [settledEarlyResults.flatMap(result => result.toolResults)]
+                        );
+                        await resolveAndPersistPostToolStopState(
+                            this.conversationManager,
+                            conversationId,
+                            cancelledCalls,
+                            settledToolResults,
+                            {
+                                logger: this.log,
+                                logContext: { iteration, executionPath: 'stream_cancel' }
+                            }
+                        );
                     }
                     // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理
                     yield processor.getCancelledData() as any;
@@ -935,7 +1056,9 @@ export class ToolIterationLoopService {
             // Anthropic API 会返回 400 错误。
             if (autoPrefix.length === 0 && earlyResponseParts.length > 0) {
                 // E-1：早启动生成器不 drain（见上），此处是最终落盘路径，
-                // 显式 drain 一次主会话信箱并注入结果（无主循环时的唯一投递点）
+                // 显式 drain 一次主会话信箱并注入结果（无主循环时的唯一投递点）。
+                // drainInboxIntoResults 内部会先校验该 mailbox 无并发执行循环持有
+                // drain 权（MED-1），避免与并发新主循环竞争时消息挂到将被丢弃的结果上。
                 this.toolExecutionService.drainInboxIntoResults(
                     conversationId,
                     MAIN_SESSION_RUN_ID,
@@ -1028,39 +1151,70 @@ export class ToolIterationLoopService {
                 );
 
                 while (true) {
-                    const { value, done } = await gen.next();
-                    if (done) {
-                        executionResult = value as ToolExecutionFullResult;
-                        break;
-                    }
+                    // 主循环 gen.next() 与 abort race（复用 857-870 行 abort-race 模式）：
+                    // 若当前工具不响应 abortSignal 且永不结束，单独的 await gen.next() 会让
+                    // 整个请求（含停止按钮）永久挂起。abort 先到时先给生成器一个短暂收尾窗口：
+                    // 响应 abort 的工具会快速返回已完成部分的真实结果（不能丢，否则历史只剩
+                    // "用户拒绝"占位），窗口结束仍未返回则放弃，立即走下方取消路径。
+                    let onAbort: (() => void) | undefined;
+                    const abortPromise = abortSignal
+                        ? new Promise<void>((resolve) => {
+                            onAbort = () => resolve();
+                            abortSignal.addEventListener('abort', onAbort, { once: true });
+                        })
+                        : undefined;
+                    try {
+                        const nextPromise = gen.next();
+                        const winner = abortPromise
+                            ? await Promise.race([nextPromise, abortPromise])
+                            : await nextPromise;
+                        if (winner === undefined) {
+                            // abort 先到：收尾窗口内等生成器返回已完成部分的真实结果
+                            executionResult = await drainToolExecutionGeneratorAfterAbort(
+                                gen,
+                                nextPromise,
+                                MAIN_LOOP_ABORT_DRAIN_GRACE_MS
+                            );
+                            break;
+                        }
+                        const { value, done } = winner;
+                        if (done) {
+                            executionResult = value as ToolExecutionFullResult;
+                            break;
+                        }
 
-                    const event = value as ToolExecutionProgressEvent;
+                        const event = value as ToolExecutionProgressEvent;
 
-                    if (event.type === 'start') {
-                        // 计算当前工具及所有剩余待执行工具
-                        const currentIndex = autoPrefix.findIndex(c => c.id === event.call.id);
-                        const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
+                        if (event.type === 'start') {
+                            // 计算当前工具及所有剩余待执行工具
+                            const currentIndex = autoPrefix.findIndex(c => c.id === event.call.id);
+                            const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
 
-                        // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
-                        yield {
-                            conversationId,
-                            content: finalContent,
-                            toolsExecuting: true as const,
-                            pendingToolCalls: remaining.map(c => ({
-                                id: c.id,
-                                name: c.name,
-                                args: c.args
-                            }))
-                        } satisfies ChatStreamToolsExecutingData;
-                        continue;
-                    }
+                            // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
+                            yield {
+                                conversationId,
+                                content: finalContent,
+                                toolsExecuting: true as const,
+                                pendingToolCalls: remaining.map(c => ({
+                                    id: c.id,
+                                    name: c.name,
+                                    args: c.args
+                                }))
+                            } satisfies ChatStreamToolsExecutingData;
+                            continue;
+                        }
 
-                    if (event.type === 'end') {
-                        yield {
-                            conversationId,
-                            toolStatus: true as const,
-                            tool: createChatToolStatusUpdate(event.toolResult)
-                        } satisfies ChatStreamToolStatusData;
+                        if (event.type === 'end') {
+                            yield {
+                                conversationId,
+                                toolStatus: true as const,
+                                tool: createChatToolStatusUpdate(event.toolResult)
+                            } satisfies ChatStreamToolStatusData;
+                        }
+                    } finally {
+                        if (onAbort && abortSignal) {
+                            abortSignal.removeEventListener('abort', onAbort);
+                        }
                     }
                 }
 
@@ -1110,27 +1264,32 @@ export class ToolIterationLoopService {
 
                 // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
 
-                repeatedCallGuard.recordResults(executionResult.toolResults);
+                // 该块仅在主循环以 done 正常结束时可达（此时 executionResult 必然已赋值，
+                // abort 路径在上面已提前 return）；TS 控制流无法跨循环收窄，这里断言后使用，
+                // 不改变运行时行为。
+                const finalExecutionResult = executionResult!;
+
+                repeatedCallGuard.recordResults(finalExecutionResult.toolResults);
 
                 const combinedToolResults = this.orderToolResultsByCallSequence(
                     functionCalls,
-                    [earlyToolResults, executionResult.toolResults]
+                    [earlyToolResults, finalExecutionResult.toolResults]
                 );
                 const orderedFunctionResponseParts = this.orderFunctionResponsePartsByCallSequence(
                     functionCalls,
-                    [earlyResponseParts, executionResult.responseParts]
+                    [earlyResponseParts, finalExecutionResult.responseParts]
                 );
                 // 合并流式提前执行与后续串行执行两条路径的多模态附件，缺一不可
                 const combinedMultimodalAttachments = [
                     ...earlyMultimodalAttachments,
-                    ...(executionResult.multimodalAttachments ?? [])
+                    ...(finalExecutionResult.multimodalAttachments ?? [])
                 ];
                 const functionResponseParts = combinedMultimodalAttachments.length > 0
                     ? [...combinedMultimodalAttachments, ...orderedFunctionResponseParts]
                     : orderedFunctionResponseParts;
 
                 executionResult = {
-                    ...executionResult,
+                    ...finalExecutionResult,
                     responseParts: orderedFunctionResponseParts,
                     toolResults: combinedToolResults,
                     multimodalAttachments: combinedMultimodalAttachments.length > 0 ? combinedMultimodalAttachments : undefined

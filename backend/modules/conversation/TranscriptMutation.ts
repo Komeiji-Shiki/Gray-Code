@@ -112,6 +112,40 @@ export function repairParentChainAfterDelete(
     }
 }
 
+/**
+ * R5b-2.4：插入中间消息后修复线性 parentId 链（与 repairParentChainAfterDelete 对称）。
+ *
+ * 插入只给新消息设 parentId（指向插入点前一条），插入点之后的消息仍指向插入前的旧父节点
+ * （新插入消息被跳过），形成图分叉。此函数把插入点之后 parentId === 旧父 id 的消息重链到
+ * 新插入消息 id（线性主链中唯一，即主链直系后继；若存在挂在旧父上的分支挂点同样被重链，
+ * 与 delete 路径“挂在被删节点上的分支挂点”的处理语义一致）。
+ *
+ * 分支语义保留：parentId 指向其它未受影响节点的消息原样保留。
+ *
+ * @param remaining 插入后的消息数组（原地修改 parentId，不改变数组内容）
+ * @param insertIndex 新插入消息所在下标（插入点）
+ * @param oldParentId 插入点之前的旧父节点 id（插入前 remaining[insertIndex-1]?.id；
+ *                    首条插入为 null；旧父无 id 时按 null 处理，与 ensureNodeId 的
+ *                    parent?.id ?? null 口径一致）
+ * @param insertedId 新插入消息的 id（由 ensureNodeId 保证非空）
+ */
+export function repairParentChainAfterInsert(
+    remaining: Content[],
+    insertIndex: number,
+    oldParentId: string | null,
+    insertedId: string
+): void {
+    if (typeof insertedId !== 'string' || insertedId.length === 0) {
+        return; // 防御：新插入消息无 id 时无法作为重链目标，跳过
+    }
+    for (let i = insertIndex + 1; i < remaining.length; i += 1) {
+        const message = remaining[i];
+        if (message && message.parentId === oldParentId) {
+            message.parentId = insertedId;
+        }
+    }
+}
+
 export function deleteLogicalMessage(contents: Content[], contentIndex: number): Content[] {
     const cloned = cloneContents(contents);
     if (contentIndex < 0 || contentIndex >= cloned.length) {

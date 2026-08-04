@@ -62,6 +62,58 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 
+/**
+ * Vue 响应式对象内部标记键（与 Vue 3 的 toRaw 实现一致）。
+ * Vue 的 reactive/readonly 代理在读取该键时返回原始目标对象，普通对象返回 undefined。
+ */
+const VUE_RAW_KEY = '__v_raw'
+
+/**
+ * 判断对象是否为 Vue 响应式 Proxy（reactive / readonly / ref 解包后的响应式对象）。
+ * 读取 __v_raw 触发 Vue 代理的 get trap 并返回原始目标；普通对象读取为 undefined。
+ * 读取抛错时保守视为 Proxy（走 JSON 往返，保证不破坏原有解包行为）。
+ */
+function isVueReactiveProxy(value: any): boolean {
+  try {
+    const raw = value[VUE_RAW_KEY]
+    return raw !== undefined && raw !== value
+  } catch {
+    return true
+  }
+}
+
+/**
+ * 判断 payload 是否必须 JSON 往返解包：
+ * - 树中存在 Vue 响应式 Proxy → 是（structured clone 无法序列化 Proxy，会抛 DataCloneError）
+ * - 存在循环引用 → 是（JSON.stringify 会抛错 → 保持原有 reject 行为）
+ * - 存在非普通对象（Date/Map/Set/RegExp/函数等）→ 是（保持原有 JSON 化语义）
+ * - 纯 JSON 结构（对象/数组/字符串/数字/布尔/null，含 base64 大字符串）→ 否，直接透传
+ *
+ * 遍历为引用级检查，不复制字符串，开销远小于 JSON.stringify；visited 防止循环引用死循环。
+ */
+function requiresJsonRoundTrip(value: any, visited: Set<object> = new Set()): boolean {
+  if (value === null || typeof value !== 'object') return false
+  if (visited.has(value)) return true
+  visited.add(value)
+
+  if (isVueReactiveProxy(value)) return true
+
+  const proto = Object.getPrototypeOf(value)
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return true
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (requiresJsonRoundTrip(item, visited)) return true
+    }
+    return false
+  }
+
+  for (const key of Object.keys(value)) {
+    if (requiresJsonRoundTrip(value[key], visited)) return true
+  }
+  return false
+}
+
 // 发送消息到插件
 export function sendToExtension<T = any>(type: string, data: any, options?: { timeoutMs?: number; clientId?: string }): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -101,20 +153,42 @@ export function sendToExtension<T = any>(type: string, data: any, options?: { ti
       // 修改原因：Vue ref 响应式对象是 Proxy，vscode.postMessage 的 structured clone
       //          无法序列化 Proxy，会抛 DataCloneError。调用方传进来的 data 可能含有来自
       //          ref 的深层嵌套 Proxy（如预设模板的 tools.whitelist 数组）。
-      // 修改方式：JSON 往返解包所有 Proxy，统一在此处确保 payload 是纯 JSON 兼容对象。
-      // 修改目的：调用方无需感知 Vue 响应式细节，全局消除 "could not be cloned"。
-      const safeData = JSON.parse(JSON.stringify(data))
-      // clientId 用于同一窗口内区分消息归属（如内嵌 SubAgent Monitor 面板）；
-      // 与 VS Code 版 per-message clientId 协议保持一致，缺省不带则由后端回退主聊天。
-      const message: Record<string, unknown> = {
-        type,
-        requestId,
-        data: safeData
+      // 修改方式：仅当 payload 树中检测到 Proxy 时才 JSON 往返解包；纯 JSON payload
+      //          （如带 base64 附件的大对象）直接透传，避免每次复制数 MB 字符串。
+      //          透传若因漏检的非 Vue Proxy 抛 DataCloneError，回退 JSON 解包重试一次。
+      // 修改目的：调用方无需感知 Vue 响应式细节，全局消除 "could not be cloned"，
+      //          同时消除大 payload 的双份 JSON 序列化开销。
+      let safeData = data
+      if (requiresJsonRoundTrip(data)) {
+        safeData = JSON.parse(JSON.stringify(data))
       }
-      if (options?.clientId) {
-        message.clientId = options.clientId
+      try {
+        // clientId 用于同一窗口内区分消息归属（如内嵌 SubAgent Monitor 面板）；
+        // 与 VS Code 版 per-message clientId 协议保持一致，缺省不带则由后端回退主聊天。
+        const message: Record<string, unknown> = {
+          type,
+          requestId,
+          data: safeData
+        }
+        if (options?.clientId) {
+          message.clientId = options.clientId
+        }
+        vscode.postMessage(message)
+      } catch (postErr: any) {
+        // 已 JSON 化仍失败（如 payload 超限）→ 直接抛出，由外层统一处理
+        if (safeData !== data) throw postErr
+        // 透传失败（漏检的非 Vue Proxy 等）→ 回退 JSON 解包重试一次
+        safeData = JSON.parse(JSON.stringify(data))
+        const retryMessage: Record<string, unknown> = {
+          type,
+          requestId,
+          data: safeData
+        }
+        if (options?.clientId) {
+          retryMessage.clientId = options.clientId
+        }
+        vscode.postMessage(retryMessage)
       }
-      vscode.postMessage(message)
     } catch (err: any) {
       // 例如：payload 过大导致 structured clone / postMessage 失败
       clearTimeoutTimer()

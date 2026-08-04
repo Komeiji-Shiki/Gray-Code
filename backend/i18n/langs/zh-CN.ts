@@ -648,6 +648,7 @@ description: "简要描述该技能的功能及使用场景"
             fileNotInAnyWorkspace: '文件不在任何打开的工作区内',
             fileInOtherWorkspace: '文件属于其他工作区: {workspaceName}',
             readFileFailed: '读取文件失败',
+            attachmentTooLarge: '文件过大（超过 {maxSizeMB}MB），请改用文件选择或预览方式查看',
             listWorkspaceDirectoryFailed: '列出工作区目录失败',
             conversationFileNotExists: '对话文件不存在',
             cannotRevealInExplorer: '无法在文件管理器中显示',

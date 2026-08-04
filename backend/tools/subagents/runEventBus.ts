@@ -264,6 +264,15 @@ export class SubAgentRunEventBus {
     private readonly listeners = new Set<SubAgentRunListener>();
     private readonly snapshots = new Map<string, SubAgentRunSnapshot>();
     private readonly stores = new Map<string, SubAgentRunConversationStore>();
+    /**
+     * 持久化写队列：按 conversationId 键控。
+     *
+     * 修改原因：flushPersist 的「读整份 metadata → 改一条 → 写回整份」作用于 conversation 级文档，
+     *          队列原来按 runId 串行只保证单个 run 内部不交叉，同一会话并行运行的多个 run 仍会并发
+     *          读改写，后写者覆盖先写者，丢失对方 run 的 transcript 记录。
+     * 修改方式：队列改为按 conversationId 串行；pendingPersists 仍按 runId 合并同一 run 的连续落盘请求。
+     * 修改目的：同一会话内任意两个 run 的落盘互斥，读改写不再交叉，同时保留原有节流合并语义。
+     */
     private readonly persistQueues = new Map<string, Promise<void>>();
     /** 已排队但尚未开始写入的 run，用于合并连续的持久化请求 */
     private readonly pendingPersists = new Set<string>();
@@ -330,7 +339,9 @@ export class SubAgentRunEventBus {
             if (this.pendingPersists.has(snapshot.runId) || this.persistTimers.has(snapshot.runId)) continue;
             this.snapshots.delete(snapshot.runId);
             this.stores.delete(snapshot.runId);
-            this.persistQueues.delete(snapshot.runId);
+            // 修改原因：persistQueues 已改为按 conversationId 键控，不能在这里按 runId 删除——
+            //          同会话其他 run 可能还有排队中的写入，删掉会话队列会破坏它们的串行化。
+            // 修改方式：保留会话级队列条目（已 settle 的 Promise，按会话数有界，后续写入会覆盖）。
             this.lastPersistAt.delete(snapshot.runId);
             overflow--;
         }
@@ -709,13 +720,21 @@ export class SubAgentRunEventBus {
         }
         this.pendingPersists.add(runId);
 
-        const previous = this.persistQueues.get(runId) || Promise.resolve();
+        // 修改原因：持久化队列原按 runId 串行，但「读整份 metadata → 改一条 → 写回整份」的读改写
+        //          作用于 conversation 级文档；同一会话并行运行的多个 run 并发读改写时，后写者会
+        //          覆盖先写者写入的对方 run 记录，导致 transcript 丢失。
+        // 修改方式：队列改为按 conversationId 串行——同一会话的落盘排队执行，后一个写入总是基于
+        //          前一个写入完成后的盘面重新读取合并；pendingPersists 仍按 runId 合并同一 run 的
+        //          连续请求，不同会话之间互不阻塞。
+        // 修改目的：同一会话两个 run 并发 flush 不再互相覆盖，同时保持原有节流与合并时序。
+        const conversationId = snapshot.conversationId;
+        const previous = this.persistQueues.get(conversationId) || Promise.resolve();
         const next = previous
             .catch(() => undefined)
             .then(async () => {
                 // 进入真正写入前清除脏标记：写入期间发生的新变更会重新排队一次后续写入
                 this.pendingPersists.delete(runId);
-                const raw = await store.getCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY);
+                const raw = await store.getCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY);
                 const persistedMap = normalizePersistedMap(raw);
                 ensureSnapshotProtocolFields(snapshot);
                 const record: SubAgentRunPersistedRecord = {
@@ -729,14 +748,14 @@ export class SubAgentRunEventBus {
                     eventSequence: snapshot.eventSequence
                 };
                 persistedMap[runId] = record;
-                await store.setCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
+                await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
             })
             .catch(error => {
                 this.pendingPersists.delete(runId);
                 console.warn('[SubAgentRunEventBus] Failed to persist SubAgent run:', error);
             });
 
-        this.persistQueues.set(runId, next);
+        this.persistQueues.set(conversationId, next);
     }
 }
 

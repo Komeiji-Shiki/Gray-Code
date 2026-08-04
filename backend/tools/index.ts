@@ -4,7 +4,7 @@
  * VSCode 扩展工具管理
  */
 
-import type { Tool } from './types';
+import type { Tool, ToolRegistration } from './types';
 import { DependencyManager } from '../modules/dependencies';
 import { getReadSkillToolRegistration } from './skills';
 
@@ -60,17 +60,16 @@ export {
 } from './taskManager';
 
 /**
- * 获取所有 VSCode 工具
+ * 收集所有内置工具的注册函数（真实工厂函数，不含 read_skill 与 subagents 工具）。
  *
- * @returns 所有工具的数组
+ * getAllTools 与 registerAllTools 共用同一收集逻辑，保证两者工具集合一致。
  */
-export function getAllTools(): Tool[] {
+function collectAllToolRegistrations(): ToolRegistration[] {
     const { getFileToolRegistrations } = require('./file');
     const { getSearchToolRegistrations } = require('./search');
     const { getTerminalToolRegistrations } = require('./terminal');
     const { getMediaToolRegistrations } = require('./media');
     const { getLspToolRegistrations } = require('./lsp');
-    const { getSubAgentsToolRegistrations } = require('./subagents');
     const { getTodoToolRegistrations } = require('./todo');
     const { getDesignToolRegistrations } = require('./design');
     const { getPlanToolRegistrations } = require('./plan');
@@ -79,8 +78,8 @@ export function getAllTools(): Tool[] {
     const { getHistoryToolRegistrations } = require('./history');
     const { getNotificationToolRegistrations } = require('./notification');
     const { getMemoryToolRegistrations } = require('./memory');
-    
-    const registrations = [
+
+    return [
         ...getFileToolRegistrations(),
         ...getSearchToolRegistrations(),
         ...getTerminalToolRegistrations(),
@@ -95,16 +94,31 @@ export function getAllTools(): Tool[] {
         ...getNotificationToolRegistrations(),
         ...getMemoryToolRegistrations()
     ];
-    
-    const tools = registrations.map(reg => reg());
-    
+}
+
+/**
+ * 收集 subagents 工具的注册函数（经 require 访问，与 collectAllToolRegistrations 一致）。
+ */
+function getSubAgentsRegistrations(): ToolRegistration[] {
+    const { getSubAgentsToolRegistrations } = require('./subagents');
+    return getSubAgentsToolRegistrations();
+}
+
+/**
+ * 获取所有 VSCode 工具
+ *
+ * @returns 所有工具的数组
+ */
+export function getAllTools(): Tool[] {
+    const tools = collectAllToolRegistrations().map(reg => reg());
+
     // 始终添加 read_skill 工具（工具描述中会动态反映当前启用的 Skill 列表）
     tools.push(getReadSkillToolRegistration()());
 
     // 始终添加 subagents 工具（工具内部会动态判断是否有可用的子代理）
-    const subAgentRegistrations = getSubAgentsToolRegistrations();
+    const subAgentRegistrations = getSubAgentsRegistrations();
     tools.push(...subAgentRegistrations.map((reg: () => Tool) => reg()));
-    
+
     return tools;
 }
 
@@ -116,15 +130,25 @@ export function getAllTools(): Tool[] {
 export function registerAllTools(
     registry: typeof import('./ToolRegistry').toolRegistry
 ): void {
-    const tools = getAllTools();
-    
+    // 修改原因：旧实现先 getAllTools() 预构建 Tool 实例，再以 () => tool 闭包注册，
+    // registry.refreshTool() 重新调用"工厂"拿到的仍是同一实例——除 read_skill 外
+    // 所有工具的"刷新声明"都是静默空操作。
+    // 修改方式：直接收集各 getXxxToolRegistrations() 返回的真实工厂函数并逐个注册，
+    // refreshTool() 会重新调用工厂生成新实例。
+    const registrations = [
+        ...collectAllToolRegistrations(),
+        ...getSubAgentsRegistrations()
+    ];
+
     // 注册所有工具（read_skill 除外，它需要特殊处理）
-    for (const tool of tools) {
-        // read_skill 已在下面通过工厂函数单独注册，跳过
-        if (tool.declaration.name === 'read_skill') {
+    for (const registration of registrations) {
+        // read_skill 不在 collectAllToolRegistrations 中，此处仅作防御性跳过，
+        // 保持"read_skill 单独以真实工厂注册"的既有逻辑。
+        const probe = registration();
+        if (probe.declaration.name === 'read_skill') {
             continue;
         }
-        registry.register(() => tool);
+        registry.register(registration);
     }
 
     // 用真正的工厂函数注册 read_skill，使 refreshTool('read_skill') 能重新生成声明

@@ -54,7 +54,43 @@ function runWriteSerialized<T>(conversationId: string, task: () => Promise<T>): 
     return current;
 }
 
+/**
+ * Windows 上 rename 偶发 EPERM（文件锁/杀软竞态）：短暂重试后仍失败才抛出。
+ * 仅重试「可恢复」错误码（EPERM/EACCES/EBUSY）；其他错误（ENOENT 等）立即抛出。
+ */
+async function renameWithRetry(src: string, dest: string, attempts = 3, delayMs = 50): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            await fsp.rename(src, dest);
+            return;
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            const retryable = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+            if (!retryable || attempt >= attempts) {
+                throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+}
+
 /** 轻量结构校验已提升至 branch/types.ts 共享（R8b-L3：isBranchGraphShape），此处不再重复实现 */
+
+/**
+ * 会话 ID 路径安全校验（路径穿越防护）。
+ * conversationId 可能来自 webview 消息或元数据等不可信输入，直接拼进 path.join
+ * 会被 node:path 解析 `..`，从而把 branches.json 读写到 conversations/ 之外；
+ * 规则为「单层目录名」白名单：非空且仅 [a-zA-Z0-9_-]（与现有 ID 生成规则
+ * conv_{timestamp}_{rand} 及测试用 c1 / conv-a 等全部兼容）。非法时抛 BranchError。
+ */
+function assertSafeConversationId(conversationId: string): void {
+    if (typeof conversationId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(conversationId)) {
+        throw new BranchError(
+            'INVALID_CONVERSATION_ID',
+            `Unsafe conversation id: ${String(conversationId)} (must be a plain directory name)`
+        );
+    }
+}
 
 export class BranchGraphRepository {
     /**
@@ -63,8 +99,9 @@ export class BranchGraphRepository {
      */
     constructor(private readonly baseDir: string) {}
 
-    /** branches.json 的完整路径（路径规则单一来源） */
+    /** branches.json 的完整路径（路径规则单一来源）；conversationId 非法时抛 BranchError */
     getBranchesFilePath(conversationId: string): string {
+        assertSafeConversationId(conversationId);
         return path.join(this.baseDir, 'conversations', conversationId, 'branches.json');
     }
 
@@ -148,7 +185,7 @@ export class BranchGraphRepository {
         const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         try {
             await fsp.writeFile(tmpPath, JSON.stringify({ retentionDays: config.retentionDays }, null, 2), 'utf8');
-            await fsp.rename(tmpPath, filePath);
+            await renameWithRetry(tmpPath, filePath);
         } catch (error) {
             try {
                 await fsp.unlink(tmpPath);
@@ -217,7 +254,7 @@ export class BranchGraphRepository {
         const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         try {
             await fsp.writeFile(tmpPath, JSON.stringify(graph, null, 2), 'utf8');
-            await fsp.rename(tmpPath, filePath);
+            await renameWithRetry(tmpPath, filePath);
         } catch (error) {
             try {
                 await fsp.unlink(tmpPath);

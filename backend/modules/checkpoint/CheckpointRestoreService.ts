@@ -39,6 +39,7 @@ import { hashFileStreaming } from './fileHashing';
 import { Logger } from '../../core/logger';
 import type { CheckpointConfig } from '../settings/types';
 import type { CheckpointManifestRepository } from './CheckpointManifestRepository';
+import { isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import type { CheckpointQueryService } from './CheckpointQueryService';
 // L-11（R4 复查）：CheckpointRecord 等公共类型统一从 ./types 导入（单一真源），
 // 不再反向依赖 CheckpointManager。
@@ -205,6 +206,9 @@ export class CheckpointRestoreService {
         const chain: CheckpointRecord[] = [];
         let current: CheckpointRecord | undefined = targetCheckpoint;
         let broken = false;
+        // CP-PERF-3: 预构建 id → 记录 索引，每跳 O(1) 定位 base；
+        // 长链下替代逐跳 checkpoints.find 的 O(n²) 线性扫描。
+        const byId = new Map(checkpoints.map(cp => [cp.id, cp] as const));
 
         while (current) {
             chain.unshift(current);  // 添加到链的开头
@@ -213,7 +217,7 @@ export class CheckpointRestoreService {
                 break;  // 到达完整备份，停止
             }
 
-            current = checkpoints.find(cp => cp.id === current!.baseCheckpointId);
+            current = byId.get(current.baseCheckpointId);
             if (!current) {
                 broken = true;  // #28: 增量链断裂（找不到 baseCheckpointId 对应的检查点）
             }
@@ -525,6 +529,18 @@ export class CheckpointRestoreService {
         autoPrunedCheckpointCount: number,
         signal?: AbortSignal
     ): Promise<RestoreResult> {
+        // CP-PATH-1: 读取侧与删除侧同一校验口径——越界/损坏 backupDir 绝不拼路径扫描
+        //（本方法会对备份目录做 collectSnapshotEntries 的递归 readdir/stat/哈希遍历）。
+        if (!isSafeCheckpointDirName(checkpoint.backupDir)) {
+            console.warn(`[CheckpointManager] Refusing to restore checkpoint ${checkpoint.id}: unsafe backupDir ${checkpoint.backupDir}`);
+            return {
+                success: false,
+                restored: 0,
+                deleted: 0,
+                skipped: 0,
+                error: 'Refusing to restore checkpoint with unsafe backupDir'
+            };
+        }
         // 备份目录以“备份内容自身”为遍历边界（不叠加工作区自定义模式）
         const backupPath = path.join(this.checkpointsDir, checkpoint.backupDir);
         let backupFiles: string[];

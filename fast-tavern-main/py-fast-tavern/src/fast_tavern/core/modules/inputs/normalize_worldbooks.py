@@ -70,16 +70,18 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
         else "andAny"
     )
 
+    # 对齐 TS normalizeWorldbooks.ts:49-54：order 保持浮点不 int 截断（number）
     order_n = _entry_number(e, "order", float("nan"))
     if order_n != order_n:
         return None
-    order = int(order_n)
+    order = order_n
 
     depth_default = float("nan") if position == "fixed" else 0.0
     depth_n = _entry_number(e, "depth", depth_default)
     if position == "fixed" and depth_n != depth_n:
         return None
-    depth = int(depth_n) if depth_n == depth_n else 0
+    # 对齐 TS：depth 保持浮点不 int 截断（number）；非 fixed 缺省 0.0
+    depth = depth_n
 
     role_raw = e.get("role")
     if role_raw is None:

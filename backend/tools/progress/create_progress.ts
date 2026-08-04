@@ -14,6 +14,7 @@ import {
   validateProgressDocument,
 } from './documentLayout';
 import { ensureParentDir, isProgressModePathAllowedWithMultiRoot, normalizeProgressArtifactRef, validateProgressArtifactRefInput } from './pathUtils';
+import { withProgressWriteLock } from './progressWriteLock';
 import { projectProgressToolResultData } from './resultProjection';
 import type { ProgressArtifactRef, ProgressPhase, ProgressRiskItem, ProgressStatus, ProgressTodoItem } from './schema';
 
@@ -149,75 +150,92 @@ export function createCreateProgressTool(): Tool {
         return { success: false, error: error || 'No workspace folder open' };
       }
 
-      try {
-        const existingBytes = await vscode.workspace.fs.readFile(uri);
-        const existingContent = Buffer.from(existingBytes).toString('utf-8');
-        const validation = validateProgressDocument(existingContent);
-        if (!validation.success) {
+      // 修改原因：create 的「检查已存在 → 构建 → 写入」此前无锁，并发 create 与
+      //          autoSync/update_progress 交错时存在小窗口覆盖风险（create 基于 ENOENT
+      //          判断后写入，可能覆盖并发 autoSync 刚写入的盘面）。
+      // 修改方式：把整段「读（存在性检查）→ 写」放进 per-path 写锁（progressWriteLock），
+      //          与 update_progress/record_progress_milestone/autoSync 落在同一队列。
+      // 修改目的：保持「不存在才创建」语义不变的同时，消除检查-写入竞态窗口。
+      return withProgressWriteLock(outPath, async (): Promise<ToolResult> => {
+        try {
+          const existingBytes = await vscode.workspace.fs.readFile(uri);
+          const existingContent = Buffer.from(existingBytes).toString('utf-8');
+          const validation = validateProgressDocument(existingContent);
+          if (!validation.success) {
+            return {
+              success: false,
+              error: `Progress document already exists but is invalid: ${'error' in validation ? validation.error : outPath}`
+            };
+          }
+
           return {
-            success: false,
-            error: `Progress document already exists but is invalid: ${'error' in validation ? validation.error : outPath}`
+            success: true,
+            data: projectProgressToolResultData({
+              path: outPath,
+              metadata: validation.metadata,
+              delta: { type: 'updated', changedFields: [] },
+              warnings: [`Progress document already exists at ${outPath}. Returned the existing snapshot instead of creating a second file.`]
+            })
           };
+        } catch (readError: any) {
+          // 区分 ENOENT 与其它读取错误：只有文件不存在时才继续创建，
+          // EACCES/IO 等异常应显式失败而不是被当作“文件不存在”。
+          const readMessage = String(readError?.message || '');
+          if (!/enoent|not exist|file not found/i.test(readMessage)) {
+            return {
+              success: false,
+              error: `Failed to check existing progress document: ${readMessage || outPath}`
+            };
+          }
+          // file does not exist, continue
         }
 
-        return {
-          success: true,
-          data: projectProgressToolResultData({
-            path: outPath,
-            metadata: validation.metadata,
-            delta: { type: 'updated', changedFields: [] },
-            warnings: [`Progress document already exists at ${outPath}. Returned the existing snapshot instead of creating a second file.`]
-          })
-        };
-      } catch (readError: any) {
-        // file does not exist, continue
-      }
+        const now = new Date().toISOString();
+        const projectName = typeof args.projectName === 'string' && args.projectName.trim()
+          ? args.projectName.trim()
+          : getDefaultProjectName();
+        const projectId = typeof args.projectId === 'string' && args.projectId.trim()
+          ? args.projectId.trim()
+          : slugify(projectName || getDefaultProjectName() || 'project');
 
-      const now = new Date().toISOString();
-      const projectName = typeof args.projectName === 'string' && args.projectName.trim()
-        ? args.projectName.trim()
-        : getDefaultProjectName();
-      const projectId = typeof args.projectId === 'string' && args.projectId.trim()
-        ? args.projectId.trim()
-        : slugify(projectName || getDefaultProjectName() || 'project');
+        try {
+          await ensureParentDir(uri.fsPath);
 
-      try {
-        await ensureParentDir(uri.fsPath);
+          const { metadata, content } = buildProgressDocument({
+            projectId,
+            projectName,
+            createdAt: now,
+            updatedAt: now,
+            status: isProgressStatus(args.status) ? args.status : 'active',
+            phase: isProgressPhase(args.phase) ? args.phase : 'implementation',
+            currentFocus: args.currentFocus,
+            latestConclusion: args.latestConclusion,
+            currentBlocker: args.currentBlocker,
+            nextAction: args.nextAction,
+            activeArtifacts: normalizeProgressArtifactRef(args.activeArtifacts),
+            todos: args.todos,
+            milestones: [],
+            risks: args.risks,
+            log: [{ at: now, type: 'created', message: '初始化项目进度' }],
+          }, { generatedAt: now });
 
-        const { metadata, content } = buildProgressDocument({
-          projectId,
-          projectName,
-          createdAt: now,
-          updatedAt: now,
-          status: isProgressStatus(args.status) ? args.status : 'active',
-          phase: isProgressPhase(args.phase) ? args.phase : 'implementation',
-          currentFocus: args.currentFocus,
-          latestConclusion: args.latestConclusion,
-          currentBlocker: args.currentBlocker,
-          nextAction: args.nextAction,
-          activeArtifacts: normalizeProgressArtifactRef(args.activeArtifacts),
-          todos: args.todos,
-          milestones: [],
-          risks: args.risks,
-          log: [{ at: now, type: 'created', message: '初始化项目进度' }],
-        }, { generatedAt: now });
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
 
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
-
-        return {
-          success: true,
-          data: projectProgressToolResultData({
-            path: outPath,
-            metadata,
-            delta: {
-              type: 'created',
-              changedFields: ['header', 'summary', 'artifacts', 'todos', 'risks', 'log']
-            }
-          })
-        };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
-      }
+          return {
+            success: true,
+            data: projectProgressToolResultData({
+              path: outPath,
+              metadata,
+              delta: {
+                type: 'created',
+                changedFields: ['header', 'summary', 'artifacts', 'todos', 'risks', 'log']
+              }
+            })
+          };
+        } catch (e: any) {
+          return { success: false, error: e?.message || String(e) };
+        }
+      });
     }
   };
 }

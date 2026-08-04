@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import math
-import random
 from typing import Any
 
 from ...types import (
@@ -243,6 +242,23 @@ def _normalize_depth(v: Any) -> int | float | None:
     return _read_number(v)
 
 
+def _deterministic_id_hash(input_str: str) -> str:
+    """确定性 id 哈希（FNV-1a 32bit，UTF-16 code unit 输入）→ 8 位小写 hex（与 TS 侧一致）"""
+    hash_value = 0x811C9DC5
+    for ch in input_str:
+        code = ord(ch)
+        if code > 0xFFFF:
+            # 增补平面字符按 UTF-16 代理对处理，与 JS charCodeAt 一致
+            code -= 0x10000
+            units = (0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF))
+        else:
+            units = (code,)
+        for unit in units:
+            hash_value ^= unit
+            hash_value = (hash_value * 0x01000193) & 0xFFFFFFFF
+    return format(hash_value, "08x")
+
+
 # 单条旧酒馆正则 -> 新格式 RegexScriptData
 
 def convert_regex_from_silly_tavern(raw_regex: Any) -> RegexScriptData:
@@ -250,7 +266,12 @@ def convert_regex_from_silly_tavern(raw_regex: Any) -> RegexScriptData:
 
     name = _to_str(raw.get("name") if raw.get("name") is not None else raw.get("scriptName"), "")
     fallback_id_base = name or "regex"
-    script_id = _to_str(raw.get("id"), "").strip() or f"{fallback_id_base}_{random.randint(0, 36**8 - 1):08x}"
+    find_regex = _to_str(raw.get("findRegex"), "")
+    id_separator = "\u0000"
+    script_id = (
+        _to_str(raw.get("id"), "").strip()
+        or f"{fallback_id_base}_{_deterministic_id_hash(fallback_id_base + id_separator + find_regex)}"
+    )
 
     targets_from_targets = [t for t in (_normalize_regex_target(x) for x in _to_array(raw.get("targets"))) if t]
     placement_raw = raw.get("placement")
@@ -607,7 +628,6 @@ def _convert_prompt_from_silly_tavern(
     injection_order = raw_prompt.get("injection_order")
     injection_trigger = raw_prompt.get("injection_trigger")
     injection_position = raw_prompt.get("injection_position")
-    system_prompt = raw_prompt.get("system_prompt")
 
     rest = dict(raw_prompt)
     for k in ("injection_depth", "injection_order", "injection_trigger", "injection_position", "system_prompt"):
@@ -623,7 +643,7 @@ def _convert_prompt_from_silly_tavern(
     else:
         position = "fixed" if int(_to_num(injection_position, 0)) == 1 else "relative"
 
-    role = _to_str(rest.get("role", "system" if system_prompt else "system"))
+    role = _to_str(rest.get("role", "system"))
 
     out: PromptInfo = {
         **rest,

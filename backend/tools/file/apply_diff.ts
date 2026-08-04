@@ -9,10 +9,14 @@
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getDiffManager } from './diffManager';
-import { resolveUriWithInfo, getAllWorkspaces, detectNonUtf8Encoding } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, detectNonUtf8Encoding, formatFileSize } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
+
+// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
+// 超大文件（如打包产物）全量 readFileSync 会阻塞 extension host 并全量读入内存。
+const MAX_EDIT_FILE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Legacy：单个 search/replace diff（仍被 DiffManager 用于旧结构的块级 accept/reject 逻辑）
@@ -88,17 +92,17 @@ function findAllExactMatchLineNumbers(
     return result;
 }
 
-function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: string): number[] {
+/** 精确匹配候选索引上限：超过后 oldContent 过于泛化（如单字符 " "），继续收集只会浪费内存 */
+const MAX_EXACT_MATCH_INDEXES = 100_000;
+
+function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: string): number[] | null {
     // 为什么要单独返回索引：结构化 hunks 需要先判断 oldContent 是否唯一，唯一时必须忽略 startLine，避免 stale line number 让本来正确的内容替换失败。
     // 怎么改：使用重叠 indexOf 扫描（每次只推进 1 个字符），重叠出现的 oldContent 也必须计入候选。
     // 目的：旧实现按 match.length 非重叠推进，会把 "aaa" 中两个重叠的 "aa" 误判为唯一匹配并忽略 startLine；
     // 完整索引数组同时服务于唯一性计数与 startLine 定位，二者必须看到同一份真实匹配集。
+    // 候选上限：1 字符级 oldContent（如 " "）在 5MB 文件上可产生数百万索引，全量收集会撑爆内存；
+    // 超过 MAX_EXACT_MATCH_INDEXES 时返回 null，由调用方按“歧义过多”处理（与现有 multiple matches 错误口径一致）。
     if (!normalizedSearch) return [];
-
-    // DoS 防护：高度重复的短 oldContent（如单个字符）在重叠扫描下会产生 O(n²/2) 的
-    // 字符比较并累积海量索引，卡死扩展宿主主线程。命中上限即截断——
-    // 调用方只需区分「唯一 / 多个」，截断后的数组语义不变。
-    const MAX_MATCHES = 20000;
 
     const result: number[] = [];
     let fromIndex = 0;
@@ -108,8 +112,8 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
         if (pos === -1) break;
 
         result.push(pos);
-        if (result.length >= MAX_MATCHES) {
-            break;
+        if (result.length >= MAX_EXACT_MATCH_INDEXES) {
+            return null;
         }
         fromIndex = pos + 1;
     }
@@ -361,7 +365,22 @@ function buildNewToOldLineAlignment(oldLines: StructuredLineSpan[], newLines: St
     // 修改目的：插入、删除、替换混合出现时，缩进重映射仍能依赖相对可靠的行级对应关系。
     const oldBodies = oldLines.map(line => stripLeadingHorizontalWhitespace(line.content));
     const newBodies = newLines.map(line => stripLeadingHorizontalWhitespace(line.content));
-    const dp: number[][] = Array.from({ length: oldBodies.length + 1 }, () => Array(newBodies.length + 1).fill(0));
+
+    // 行数护栏：LCS DP 为 O(n·m) 全矩阵，超大输入（模型提交超大 oldContent/newContent）会分配海量内存并阻塞主线程。
+    // 超过护栏（min(n,m) > 2000 或 n*m > 4M）跳过 DP，退化为顺序配对：
+    // 第 i 个新行对应第 i 个旧行，超出部分映射到最后一个旧行；调用方对缺失对齐已有兜底，行为语义不变。
+    // 正常小 hunk 路径完全不受影响。
+    const n = oldBodies.length;
+    const m = newBodies.length;
+    if (Math.min(n, m) > 2000 || n * m > 4_000_000) {
+        const alignment: Array<number | undefined> = Array(m).fill(undefined);
+        for (let i = 0; i < m; i++) {
+            alignment[i] = i < n ? i : n - 1;
+        }
+        return alignment;
+    }
+
+    const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
 
     for (let i = oldBodies.length - 1; i >= 0; i--) {
         for (let j = newBodies.length - 1; j >= 0; j--) {
@@ -602,6 +621,14 @@ function resolveStructuredHunkMatch(
     // 修改方式：先执行原有 exact indexOf 逻辑；仅当 exact 为 0 时，才进入完整行窗口的 indent fallback。
     // 修改目的：保持历史成功路径完全不变，同时把 AI 缩进误差收敛到一个可审计的匹配解析函数。
     const matches = findAllExactMatchIndexes(currentContent, oldContent);
+    if (matches === null) {
+        // 候选超限（> MAX_EXACT_MATCH_INDEXES）：oldContent 过于泛化，继续处理只会浪费内存，按现有歧义处理返回可读错误。
+        return {
+            success: false,
+            error: `Too many exact matches found (more than ${MAX_EXACT_MATCH_INDEXES}). oldContent is too generic to locate safely; add more context to oldContent or provide startLine.`,
+            matchCount: MAX_EXACT_MATCH_INDEXES
+        };
+    }
 
     if (matches.length === 1) {
         const startIndex = matches[0];
@@ -775,7 +802,8 @@ function tryApplyIndependentExactStructuredHunks(
         const oldContent = normalizeLineEndings(hunk.oldContent);
         if (!oldContent) return undefined;
         const matches = findAllExactMatchIndexes(normalizedOriginal, oldContent);
-        if (matches.length !== 1) return undefined;
+        // matches === null 表示候选超限（歧义过多），与多匹配一样放弃独立应用
+        if (matches === null || matches.length !== 1) return undefined;
 
         const startIndex = matches[0];
         const previous = planned[planned.length - 1];
@@ -1576,14 +1604,17 @@ ${descriptionSuffix}`,
                 return { success: false, error: `File not found: ${filePath}` };
             }
 
-            // 大小护栏：同步读入任意大小文件会阻塞扩展宿主主线程并吃掉等量内存
-            const MAX_DIFF_FILE_SIZE = 20 * 1024 * 1024;
-            const fileStat = fs.statSync(absolutePath);
-            if (fileStat.size > MAX_DIFF_FILE_SIZE) {
-                return {
-                    success: false,
-                    error: `File too large (${(fileStat.size / 1024 / 1024).toFixed(1)}MB) for apply_diff. Use search_in_files with targeted replacements instead.`
-                };
+            // 文件大小护栏：超大文件（如打包产物）全量 readFileSync 会阻塞 extension host，先 stat 拦截。
+            try {
+                const stat = fs.statSync(absolutePath);
+                if (stat.size > MAX_EDIT_FILE_BYTES) {
+                    return {
+                        success: false,
+                        error: `File is too large (${formatFileSize(stat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
+                    };
+                }
+            } catch (e) {
+                return { success: false, error: `Failed to stat file: ${e instanceof Error ? e.message : String(e)}` };
             }
 
             const format = getApplyDiffFormat();

@@ -47,6 +47,7 @@ result = build_prompt(
 )
 
 print(result["stages"]["tagged"]["afterPostRegex"])
+```
 
 ### 旧酒馆格式直接调用（包装入口）
 
@@ -62,17 +63,16 @@ result = build_prompt_from_silly_tavern(
     },
     history=legacy_chat,
     view="model",
-    outputFormat="openai",
+    output_format="openai",
 )
+
+print(result["stages"]["output"]["afterPostRegex"])
 ```
 
 也可单独调用转换函数：
 
 - `convert_preset_from_silly_tavern` / `convert_worldbook_from_silly_tavern`
 - `convert_regex_from_silly_tavern` / `convert_character_from_silly_tavern` / `convert_history_from_silly_tavern`
-
-print(result["stages"]["output"]["afterPostRegex"])
-```
 
 ### Regex flags 说明（与 TS 的差异点）
 
