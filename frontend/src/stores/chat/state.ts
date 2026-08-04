@@ -4,7 +4,7 @@
 
 import { ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
-import type { CheckpointRecord } from '../../types'
+import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
 import type { StreamChunk } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
@@ -20,6 +20,7 @@ import type {
   ConversationSessionSnapshot,
   QueuedMessage
 } from './types'
+import { clearVisibleChatMessagesCache } from './windowUtils'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
 export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById' | 'toolResponseIndex'>>
@@ -160,6 +161,13 @@ export function replaceMessageAt(state: MessageIndexLookupState, index: number, 
     return
   }
 
+  // L1：中间位置的同长度替换（首尾元素不变）会命中 windowUtils 的可见消息增量缓存
+  // （指纹只校验首尾元素）。典型场景：迟到的旧请求 cancelled chunk 清理旧消息元数据。
+  // 只有尾元素替换才是流式原地更新的安全模式，其余一律清除缓存。
+  if (index !== state.allMessages.value.length - 1) {
+    clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+  }
+
   assertMessageIndexInvariant(state)
 }
 
@@ -290,11 +298,14 @@ export function createChatState(): ChatStoreState {
   /** 自动总结状态（用于显示“自动总结中”提示） */
   const autoSummaryStatus = ref<AutoSummaryStatus | null>(null)
   
-  /** 当前对话的检查点列表 */
-  const checkpoints = ref<CheckpointRecord[]>([])
+  /** 当前对话的检查点列表（CPF-03：轻量 CheckpointSummary） */
+  const checkpoints = ref<CheckpointSummary[]>([])
   
   /** 存档点配置：是否合并无变更的存档点 */
   const mergeUnchangedCheckpoints = ref(true)
+
+  /** 恢复预览进行中（计算待删除文件清单，供确认框展示） */
+  const isRestorePreviewing = ref(false)
   
   /** 正在删除的对话 ID 集合（用于防止重复删除） */
   const deletingConversationIds = ref<Set<string>>(new Set())
@@ -322,6 +333,9 @@ export function createChatState(): ChatStoreState {
 
   /** 最近一个因审批门闸停止的 streamId */
   const _lastApprovalGatedStreamId = ref<string | null>(null)
+
+  /** 最近一次流式失败时保留的半截 assistant 消息 ID（retryAfterError 回滚用） */
+  const _failedStreamMessageId = ref<string | null>(null)
 
   /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
   const editorNodes = ref<EditorNode[]>([])
@@ -380,6 +394,7 @@ export function createChatState(): ChatStoreState {
     autoSummaryStatus,
     checkpoints,
     mergeUnchangedCheckpoints,
+    isRestorePreviewing,
     deletingConversationIds,
     currentWorkspaceUri,
     inputValue,
@@ -392,6 +407,7 @@ export function createChatState(): ChatStoreState {
     messageQueue,
     _lastCancelledStreamId,
     _lastApprovalGatedStreamId,
+    _failedStreamMessageId,
     openTabs,
     activeTabId,
     sessionSnapshots,

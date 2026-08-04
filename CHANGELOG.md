@@ -4,19 +4,89 @@
 ## [Unreleased]
 
 ### Changed
+  - 存档点创建/恢复主流程切换到新架构：创建改用 `CheckpointSnapshotBuilder`（多根工作区扫描、强制排除存档目录自身、流式哈希 + 有界并发、stat 复用），恢复改用 `CheckpointRestoreEngine`（增量链文件索引 O(1) 查询、scoped 路径安全解析、失败清单区分 missing_in_chain / hash_mismatch / copy_failed / delete_failed）；新存档记录工作区身份（`workspaceRoots` / `workspaceFingerprint`），恢复前校验当前工作区，跨项目恢复被明确拒绝；新存档备份目录改用 scoped 布局（`cp_xxx/ws_xxx/relative`），多根工作区同名文件不再互相覆盖；旧格式存档（相对路径键 + 旧布局）单根恢复保持兼容，多根下明确拒绝而非静默错恢复；存档创建/恢复进入工作区级互斥锁（等待进行中的写工具退出并阻止新写入），恢复失败路径转相对路径展示
   - 用量统计性能再优化：统计读取元数据改为轻量路径（只读 `{id}.meta.json`，不再走 `getMetadata` 的历史完整性检查——此前每次统计都会为每个对话额外加载一次历史，索引优化的收益被抵消大半）；新增对话目录监听（`fs.watch` recursive）+ 内存明细缓存——任何历史/元数据/索引文件写入都会把对应对话标记为 dirty，统计只重读 dirty 对话并回填缓存，其余对话直接重放内存明细（零 stat、零读文件），日常统计从几千次跨进程文件调用降到毫秒级；统计自身重建索引写入 `{id}.usage.json` 会触发一次自伤标记，下一轮重读小索引文件后自然恢复，不会无限循环；扩展 dispose 时释放监听，非文件存储（测试/内存适配器）自动退化全量扫描；新增缓存命中跳过读取 / dirty 重读回填 / 已删对话清理 / 缓存时间筛选与 watcher 文件名解析测试
   - 提示词设置页排版重排（PR #5）：动态上下文保留策略区块从全局固定位置移入对应的模板模式内——预设条目模式下显示在条目编辑区下方，传统模板模式下内联显示在动态模板文本框下方，选项归属不再让人困惑；新增「可用变量参考」可收缩面板（默认收起，静态变量组 / 动态变量组分组展示，chevron 展开收起），长变量列表不再永久占据设置页空间
   - 提示词模式栏新增保存按钮（绿色保存图标，保存中切换为 loading 动画），与底部原保存按钮并存；导入 / 导出按钮从 codicon 通用图标改为成对的自定义 SVG 图标（方向相反的导出/导入箭头），视觉上明确为一对操作
   - 提示词页保存 / 导出 / 导入反馈统一为浮窗 toast（成功 / 失败着色，2.5 秒自动消失，Transition 动画），移除底部行内文本提示（saveMessage）
+  - 存档点文件哈希改为流式读取（`CheckpointManager.getFileHash` / `computeFileHashes`），不再把大文件整体 `readFile` 进内存，哈希结果不变
+  - 默认启用存档的写工具列表补齐（CP-13）：新增 `insert_code`、`delete_code`、`search_in_files`（replace 模式）、图像处理（`remove_background` / `crop_image` / `resize_image` / `rotate_image`）与文档类（`create_plan` / `update_plan` / `create_design` / `update_design` / `create_progress` / `update_progress` / `record_progress_milestone` / `create_review` / `record_review_milestone` / `finalize_review` / `reopen_review`）默认在执行前/后创建存档；`search_in_files` 纯 search 模式（非 replace）不再创建全工作区存档
+  - 恢复检查点前主动取消该对话的流式请求与关联的活跃 SubAgent（CP-04/CP-12），防止恢复后迟到 chunk 污染历史、SubAgent 继续写文件与恢复结果冲突
+  - 存档排除功能上线（EX-01~EX-12）：`CheckpointIgnoreResolver` 升级为四层排除模型——强制排除（`.git` / `node_modules` / 扩展存储根绝对路径，`!` 不可否定）→ 默认排除类别（8 类，设置页可分别开关，可被 `!` 重新纳入）→ 嵌套 `.gitignore`（anchored + 否定 + 目录作用域）→ 用户自定义模式（独立最终求值阶段，最后生效）；`shouldIgnore` 返回 `{ignored, reason, rule, source}`，快照构建输出完整 `excluded` 清单（含命中规则文本）与排除统计；单文件大小上限默认 50 MiB（0 = 不限制），超限文件记录 `reason: 'size'` 不静默消失；存档记录与 manifest 保存排除规则快照 `ignoreSnapshot` 与 `excludedCount/excludedBytes`，恢复时对比快照规则与当前规则输出 `excludedNote`（含 `rulesChanged`），且恢复过滤严格按当前规则（不因旧规则宽而覆盖当前明确忽略的文件）
+  - 存档排除设置与预览（EX-08/EX-09）：`CheckpointConfig.exclusion`（enabledProfiles 全开 / maxFileSizeBytes 50MiB / customPatterns，兼容旧 `customIgnorePatterns` 合并）；设置页新增默认类别开关、大小上限输入、自定义模式编辑器与「预览排除结果」按钮（按类别聚合展示、samples 上限 50、命中 reason/rule/source、被排除目录有界遍历 2000 项且 `complete=false` 标记）；新增 `checkpoint.previewExclusions` / `checkpoint.getExclusionProfiles` handler；配置校验拒绝空模式、绝对路径（盘符/UNC）、纯 `!`、`..` 越界、换行注入、未知类别 id 与非有限数值
+  - 排除语义细节：win32 下强制排除绝对路径比较统一小写归一（防 `C:\Proj` vs `c:\proj` 大小写漏排）；「重新纳入目录类别下文件需同时否定目录本身（如 `!data/ + !data/keep.txt`）」在设置页给出提示；自定义模式不再被嵌套 `.gitignore` 覆盖（见 Fixed）
 
 ### Fixed
+  - 存档恢复边界显式化：只删除目标快照 `fileHashes` 中记录过的路径（#29 语义），快照后新建、快照时被忽略/未备份（复制失败、大小超限、不可读）的文件恢复时不会被静默删除；恢复/创建期间与写工具互斥，避免快照与文件写入竞态
+  - 修复批量删除增量链断链（CP-05）：旧实现只检查「被保留检查点直接引用」一层，链 A→B→C 删除 {A,B} 时 A 被删而 B 保留，B 恢复时断链；现在从所有保留节点向前遍历完整祖先链，被直接或间接依赖的祖先全部强制保留并返回 rejectedIds
+  - 存档删除/合并操作接入工作区级互斥锁（CP-03）：删除、按索引删除、批量删除与创建/恢复互斥；`CheckpointOperationLock` 支持同 owner 相同工作区集合的可重入（引用计数），create 锁内清理旧存档（cleanupOldCheckpoints → deleteCheckpoint）不再嵌套等待自己而死锁
+  - 修复回档并重试 / 回档并删除时后端删除失败仍继续执行（CP-11）：前端 `deleteMessage` 返回失败或抛错时中止后续重试/流程并展示明确错误，不再出现「前端已截断而后端历史残留」的静默不一致；后端各删除路径的磁盘删除失败不再完全静默，记录 warn 便于排查（元数据已正确移除，残留目录为孤儿目录不影响正确性）
+  - 恢复结果新增未备份文件提示（CP-08/CP-10）：`restoreCheckpoint` 返回 `unbackedPaths`（快照时大小超限/不可读/复制失败的文件，恢复时受保护不会被删除），前端恢复确认后展示失败/部分失败/未备份文件清单；设置页批量删除展示被依赖保留与删除失败的数量
+  - 新增恢复预览确认流程（CP-09）：所有恢复入口（普通恢复 / 回档并重试 / 回档并删除 / 回档并编辑）先调用 `checkpoint.previewRestore` 计算恢复计划（将恢复/删除/跳过数量 + 待删除文件清单），确认框展示清单后才执行真正恢复；待删除文件区分「快照记录过」（#29 白名单）与「快照后新建」（默认保留，用户确认后一并删除，实现「撤销工具新建文件」语义）；`RestoreEngine` 提取纯计算函数 `computeRestorePlan`，预览清单与实际执行的删除严格一致；`restoreCheckpoint` 新增 `deleteUntrackedFiles` 选项，未确认时保持原有保护语义不删除任何快照后新建文件
+  - 恢复确认流程安全加固：`restoreAndRetry` / `restoreAndDelete` / `restoreAndEdit` 的「删除快照后新建文件」改为调用方（确认框）显式传参确认，默认 false——绕过确认框的调用不会静默删除文件；回档三连中 `deleteMessage` 失败时不再只提示，而是重新加载历史拉回前端窗口与后端一致；恢复确认框取消时清理暂存的预览动作状态；预览期间恢复按钮显示 loading 并禁用
+  - 存档维护改进：`pruneMissingBackupCheckpointRecords` 顺带清理孤儿备份目录（磁盘存在但无任何记录引用，如删除失败/崩溃残留，仅处理 `cp_*` 格式目录）；设置页存档详情展示「N 个文件未备份」（悬停显示路径清单，去除工作区作用域前缀）；`CheckpointOperationLock` 可重入放宽为「请求集合是已持有集合的子集即放行」，嵌套调用更不易死锁
+  - 深度审查修复：快照强制排除范围从存档目录扩大为整个扩展存储根（自定义数据目录位于工作区内时，memory/conversations 等扩展数据不再进入存档）；恢复时「删除多余空目录」纳入 `deleteUntrackedFiles` 确认控制（快照后新建的空目录默认保留，#29 语义，预览清单一并展示）；legacy 存档预览返回 `legacy` 标记，前端展示「恢复以备份内容为准」避免误判「无变更」；恢复确认框打开期间恢复按钮禁用，防止重复点击覆盖确认内容
+  - 修复增量链恢复索引错误：增量节点磁盘上只保存 `changes` 里的文件，但恢复索引此前把该节点完整 `fileHashes` 都指向其目录，导致未变化文件恢复时报 `missing_in_chain`；现在按 `changes` 限定节点备份边界，未变化文件从更早节点（base）恢复
+  - 修复存档路径安全缺口：备份源目录（`backupDir`）来自存档元数据，损坏数据可含 `..`/绝对路径，现在恢复时校验备份源必须位于存档根目录内（越界视为链上缺失）；恢复目标路径全程做符号链接/junction 检查（`resolveSafePathInsideRoot`），链接不能绕过工作区边界
+  - 修复旧版存档（无 `fileHashes`）恢复安全隐患：多根工作区下明确拒绝（旧记录无工作区身份，无法确定文件归属）；单根恢复以备份目录实际内容为目标、绝不删除当前工作区任何文件（旧记录没有“快照时可见”清单），替代此前“删除备份里没有的所有文件”的危险行为
+  - 修复同一对话切换工作区后增量链错乱：新存档识别到工作区指纹不一致时从新的完整备份开始（断开旧链），不再跨工作区串接增量
+  - 部分恢复失败时返回 `error` 摘要（前 5 条路径+原因，超出计数），前端 `restoreCheckpoint` 类型同步补充 `failures` 字段
+  - 修复流式报错后重试残留半截回答：流式过程中后端报错时，后端不会持久化半截 assistant 消息，但前端窗口会保留有内容的半截消息，点击错误通知上的「重试」（`retryAfterError`）之前不会清理，导致重试后窗口/历史出现半截回答残留，且与后端历史错位；现在 `handleError` 会记录失败半截消息 ID，`retryAfterError` 重试前回滚（删除窗口消息 + 清理检查点 + 防御性同步删除后端），错误条「关闭」按钮与发送新消息也会一并清理失败残留，工具响应后的「继续对话」语义不受影响（不删除正常历史）；新增回归测试 12 用例（frontend `streamErrorRetry.test.ts`）
   - 修复动态上下文策略选项的误导性括号标注：单份模式选项原先带有「（当前策略）」（zh-CN）或「（当前行为）」（en/ja）注释，而该选项与保留模式是并列可切换的，标注「当前」会让用户在切换后看到错误的归属语义；现在移除括号注释，三语统一为中性文案「单份动态上下文 / Single dynamic context / 単一の動的コンテキスト」
   - 修复动态上下文策略警告文案硬编码英文：设置页选中保留模式时提示「preserve 会把旧回合的动态快照固定插回原位…」，而选项在 UI 上显示的是中文「保留旧动态上下文原位」，用户无法把二者对应；现在句首直接使用选项的中文名称，不再出现英文标识
   - 修复空提示词保存后回退默认模板（PR #5）：`resolvedMode?.template || promptConfig?.template`（PromptManager.ts）与 `mode?.template || ...`（SettingsManager.getSystemPromptTemplate）的空字符串回退导致 legacy 模式显式保存的空模板在运行时被全局模板覆盖，用户无法真正清空模板；两处改为 `??`（nullish coalescing），空字符串原样保留；前端 `loadModeConfig` 同步用 `typeof === 'string'` 判断而非 `||` 兜底，空模板不再被 DEFAULT_TEMPLATE 顶替，新增回归测试锁定该行为
   - 修复提示词导出流程不可控（PR #5）：前端 Blob 下载在 webview 环境保存位置与文件名不受用户控制，改为通过新增的 `exportPromptModes` webview handler 调用 `vscode.window.showSaveDialog` 让用户选择保存位置，确认后才写文件；取消保存对话框时不写文件并返回 `{ success: false, cancelled: true }`，成功后才报告成功；导出成功 / 取消 / 失败均有明确反馈，不再出现「已导出但不知道存到哪」
+  - 修复恢复路径未接入四层排除模型（审查 H-1）：恢复时的目标状态过滤与当前工作区状态收集此前只走 `.gitignore` + 旧 `customIgnorePatterns` 两层，恢复可能把文件写回当前明确排除的路径（`dist/`、`data/`、超过大小上限的文件）或删除当前应排除的文件；现在 `createIgnoreResolver` 统一构造完整四层规则（强制排除含扩展存储根、默认类别、嵌套 `.gitignore`、新旧自定义模式合并），`filterRestoreTargetScoped` / `collectCurrentWorkspaceState` 与快照构建同一口径，恢复不再触碰当前明确排除的路径
+  - 修复空增量节点恢复必失败（审查 H1）：增量链索引构建时 `changes` 为空数组的节点（工具执行但无文件变化的 before/after 存档）被当作完整节点，其全部哈希被指到自己的空备份目录并覆盖更早节点，恢复任何漂移文件都报 `missing_in_chain`；现在区分「未提供 changes（完整节点）」与「空数组（空增量节点，不索引任何文件）」，空增量后的恢复由更早节点提供文件
+  - 修复跨格式合并断链（审查 M6）：容量清理把 legacy 布局（`cp_xxx/relative`）被清理节点并入新格式后继时，文件被原样复制到后继根目录且不写进 manifest，恢复时 `missing_in_chain`；现在按后继 scoped 布局重写路径（`ws_xxx/` 前缀）再复制，并把合并文件的 scoped 键并入后继 manifest.files（hash 取自被删节点），legacy→新格式过渡期清理不再破坏可恢复性
+  - 修复存档取消竞态与锁等待裸异常（审查 M4/M5）：取消发生在等待文件写锁期间时，锁管理器抛普通 Error 从 `runExclusive` 漏出并冒泡到工具循环中断整轮执行；现在 create/restore/deleteAll/deleteBatch 外层捕获锁取消错误转为取消结果；取消发生在复制完成、元数据落盘之前时检查点仍会被保存且进度被 `done` 覆盖——现在写 manifest 与写会话元数据前检查 `throwIfAborted`，进度终态改为 `signal.aborted ? 'cancelled' : 'done'`
+  - 修复排除规则对比漏类别开关（审查 M3/M-4）：`rulesChanged` 只比较大小上限与自定义模式，设置页仅开关默认类别（如关闭 logs）时恢复说明误报「规则未变化」；现在同时比较键排序后的 `enabledProfiles` 与规则版本号
+  - 修复自定义排除模式被嵌套 `.gitignore` 双向覆盖（审查 M-1）：自定义模式与默认类别原先注入根作用域 matcher，嵌套 `.gitignore` 可否定自定义层的 `!` 规则或反过来；现在自定义模式从作用域链拆出，作为所有作用域求值之后的独立最终阶段（强制排除仍不可覆盖），「设置页规则最后生效」与计划语义一致
+  - 修复排除预览 `complete` 谎报（审查 M-6）：主扫描遇到不可读目录时静默跳过且 `complete` 仍为 true；现在不可读目录产出 `unreadable` 排除条目并置 `complete=false` 计入统计
+  - 修复恢复说明与未备份提示回归：`rulesChanged` 与 `excludedNote` 补全后恢复说明准确；存档摘要（`CheckpointSummary`）化后设置页「N 个文件未备份」提示丢失——摘要补齐 `unbackedPaths` 相关字段，前端悬停提示恢复
+  - 修复 append-only 崩溃恢复后计数永久不一致（审查 H1）：尾段 rename 成功但 index 写失败/崩溃时残留行会在下次追加被并入段计数，`index.totalMessages` 与各段 count 永久相差、全量读与分页读口径不一；现在尾段读取后先按 index 提交点截断（`slice(0, count)`）再拼接新内容，at-most-once 语义下重试不重复，崩溃残留不会泄漏
+  - 修复元数据文件损坏导致列表 UNKNOWN_ERROR（真实故障）：`saveMetadata` 原为非原子 `writeFile`，写入中途崩溃/断电即截断 `{id}.meta.json`（如 24MB 大文件），读取时 `parse_error` 抛到前端阻塞对话列表；现在元数据写入改为临时文件 + rename 原子替换（index 式提交点），`getMetadata` 遇 `parse_error` 时把损坏文件改名备份为 `.corrupt-*`（只保留一份）并从历史时间戳重建 fallback 元数据返回，不再向上抛错（存档记录列表随损坏文件丢失属降级代价，磁盘 `cp_*` 备份目录不受影响且不会被自动清理）
+  - 修复完整性检查两类误判（审查 M1）：legacy 单文件历史只 `exists` 不解析导致损坏 JSON 报 `ok`——现在至少做一次 `JSON.parse` 探测；segmented 分支 index 完好但段文件缺失时误报 `ok`——现在对每个段 `stat` 存在性（不解析内容，保持 HIS-11 只读结构目标），任一缺失即 `readable=false`
+  - 修复段缓存元素引用污染（审查 M2）：`loadSegmentedHistory` 的 `slice` 只复制数组、元素与缓存共享引用，`ContextTrimService` 对 `tokenCountByChannel` 的原地赋值会污染缓存；现在加载路径返回前对元素浅拷贝，缓存只读边界落实；缓存键纳入段文件 mtime（`revision::m{mtime}`），外部进程改写段内容后命中前 `stat` 比对自动失效（审查 M5）
+  - 修复用量与元数据一致性：`updateSummary` 不再无条件写前端传来的 `messageCount`——超过历史实际条数时按 `index.totalMessages` 钳制，前端 IPC 失败时不同步本地计数（审查 M3）；append 遇「index 存在但尾段缺失/损坏」时不再永久失败，回退全量重写自愈（审查 M4）
+  - 修复前端历史窗口与缓存问题：backfill 把 IPC 失败误当「已到历史开头」置 `windowStartIndex=0` 导致更早消息无法上拉——现在错误与空页区分，错误时放弃合并保留原窗口（审查 L2）；`loadMoreConversations` 游标按实际返回数量前进，批量结果缺失时不再跳过未加载对话（审查 L3）；消息中间位置同长度替换（迟到 cancelled chunk 清理）会命中陈旧可见缓存——`replaceMessageAt` 非尾部替换时清缓存（审查 L1）；`addBatch` 直通 append 可能绕过 functionResponse 去重安全网——契约注释明确仅限纯追加 user/model 并对 functionResponse 显式拒绝（审查 L4）
+  - 修复子agent 续跑丢失 provider 缓存（用户反馈）：子agent 每次执行分配新 runId 作为请求 `conversationId`，DeepSeek/Anthropic 的 `user_id` 按它哈希，`continueFromRunId` 续跑时新 runId 落入新缓存域、前缀缓存必 miss；现在续跑时 `conversationId` 直接沿用旧 run 的 runId（`request.continueFromRunId || runId`），`user_id` 哈希输入与旧 run 完全一致、缓存域天然相同——模型调用工具只需传 `continueFromRunId`，系统自动注入稳定缓存域，无需任何额外字段（同时移除临时引入的 `GenerateRequest.cacheDomainId` 机制，formatter 回退为 conversationId 单一来源）
+  - 修复子agent 反复调用 todo 工具报「无权限」（用户反馈）：`todo_write`/`todo_update` 依赖主会话 `ToolContext.conversationId`，子agent 执行路径不注入该值，声明了也必然失败并浪费迭代——现在从子agent 工具声明与执行期允许列表统一排除 todo 工具（主会话不受影响）
+  - 修复子agent 窗口被尾部校准清空（用户反馈）：SubAgentMonitor 收到工具/内容事件时对聚焦 run 拉取尾部 20 条并整体替换窗口，用户「加载更早消息」prepend 的历史被清空；现在尾部校准改为保留早于传入 `startIndex` 的前缀合并（`replaceRunContentWindowPreservingPrefix`），删除/重试的权威校准路径仍走纯替换
+  - 修复子agent 写文件冲突提示不友好（用户反馈）：冲突消息不再笼统「不要重试」，改为明确持有者身份（`agent "X"` / 主会话 / 存档操作）与三步指引（不循环重试 → 先做其他工作、持有者释放后重试 → 持续冲突在最终回复上报主会话协调），`presets.ts` 指引语义同步
+  - 修复子agent 运行时间显示本地绝对时间戳（用户反馈）：SubAgentMonitor 的「运行中 · 15:16:46」改为相对耗时（`42s` / `2m30s` / `1h5m`，活跃态显示已运行时长、终态显示总耗时），新增 1s ticker 仅在有活跃 run 时运行
 
 ### Added
   - 新增 `exportPromptModes` webview handler（`webview/handlers/SettingsHandlers.ts`）与回归测试 `backend/__tests__/webview/promptModeExport.test.ts`（取消对话框不写文件 / 选路径并写文件成功后才响应，2 用例）；`PromptManager.promptEntries.test.ts` 新增「显式空模板不回退全局模板」用例；vscode mock 补充 `showSaveDialog` / `showOpenDialog`
+  - 新增存档快照构建器 `CheckpointSnapshotBuilder`（多根工作区扫描、强制排除绝对路径防存档自备份、单文件大小上限记录排除原因、流式哈希、有界并发）与单元测试 7 用例
+  - 新增存档恢复引擎 `CheckpointRestoreEngine`（增量链文件索引 O(1) 查询、scoped 路径安全解析兼容旧相对路径存档、哈希校验、失败清单区分 missing_in_chain / hash_mismatch / copy_failed / delete_failed）与单元测试 6 用例
+  - 新增工作区身份与路径安全模块 `CheckpointWorkspace`（工作区根 ID / 指纹 / 快照校验 / 安全相对路径与符号链接边界）与存档操作互斥模块 `CheckpointOperationLock`（工作区级 FIFO 互斥 + 全局文件写锁等待），配套单元测试 26 用例
+  - 新增存档工作区边界集成测试 `CheckpointManagerWorkspace.test.ts` 6 用例（多根创建/恢复、跨项目恢复拒绝、存档目录位于工作区内时自排除、多根下旧存档明确拒绝、unbacked 文件恢复保护）
+  - 新增增量链/路径安全回归测试 6 用例：增量节点未变化文件从 base 恢复（`changes` 边界）、`backupDir` 越界备份源忽略、跨工作区创建新存档断链、无 `fileHashes` 旧存档多根拒绝、旧存档恢复不删除备份外文件、部分失败返回错误摘要
+  - 新增测试：`CheckpointOperationLock` 可重入 3 用例（同 owner 嵌套不死锁、不同 owner 仍串行、内层释放不提前释放外层锁）、批量删除祖先闭包 1 用例（保留尾节点保护整条基链）、恢复返回 `unbackedPaths` 且未备份文件不受删除 1 用例
+  - 新增测试：`computeRestorePlan` 白名单/受保护/快照后新建文件过滤 1 用例、`previewRestore` 预览无副作用 + 未确认不删快照后新建文件 + 确认后删除 1 用例
+  - 新增测试：锁子集可重入 1 用例、孤儿备份目录清理 1 用例、前端 `checkpointActions.test.ts` 9 用例（previewRestore 透传/异常、restoreCheckpoint 确认标记、restoreAndRetry 删除失败中止 + 重载历史、成功路径、restoreAndDelete 失败重载历史）
+  - 新增测试：扩展存储整根排除（memory 数据不进存档）增强 1 用例、快照后空目录默认保留 + 确认后清理 1 用例
+  - 设置页存储路径区域新增「打开目录」按钮，复用既有 `storagePath.openInExplorer` webview handler，一键在系统文件管理器中打开当前生效的存储目录
+  - 新增 checkpoint 模块共享类型契约 `backend/modules/checkpoint/types.ts`（`CheckpointExcludeReason` / `CheckpointExcludedEntry` / `CheckpointExclusionSummary` / `CheckpointExclusionConfig` / `CheckpointIgnoreSnapshot` / `CheckpointManifest` / `CheckpointSummary` / `CheckpointExclusionPreviewResult` / `CheckpointOperationProgress`），作为排除与 manifest 并行改造的接口锚点
+  - 新增默认排除类别模块 `CheckpointExclusionProfiles.ts`：8 个类别（logs / aiModels / datasets / caches / pythonVenvs / buildArtifacts / largeMedia / archives）严格按计划清单（不含 `*.bin/*.dat/*.model`、`env/`、`png/jpg/svg`），导出 `resolveEnabledProfiles` / `collectEnabledProfilePatterns` / `buildIgnoreSnapshot` / `validateCustomExclusionPatterns`
+  - 新增 manifest 仓储 `CheckpointManifestRepository.ts`：`checkpoints/cp_xxx/manifest.json` 原子写入（tmp+rename）、按 ID 加载（内存缓存）、旧记录迁移（从 `CheckpointRecord.fileHashes/fileStats/emptyDirs/changes` 生成并落盘，幂等）、损坏回退、写入失败清理 tmp；新格式记录无文件哈希时迁移产物为空则返回 null 并显式报「存档数据缺失」而非假成功
+  - 新增 `CheckpointQueryService.ts`（getCheckpoints / getAllConversationsWithCheckpoints / getDirectorySize / pruneMissingBackupCheckpointRecords / 孤儿目录清理）与 `CheckpointRetentionService.ts`（cleanupOldCheckpoints / mergeCheckpointIntoSuccessor），`CheckpointManager` 从 2000+ 行拆分为协调层 + 三服务（CPF-12）
+  - 新增共享有界并发池 `checkpointConcurrency.ts`（runBounded，首错停止取新任务并正确传播），创建复制、恢复/删除循环、目录大小统计均改为有界并发（默认 8）（CPF-06）
+  - 会话元数据精简：完整 `fileHashes` / `fileStats` 从会话元数据迁到独立 manifest，元数据只保留 `CheckpointSummary`（fileCount / backupBytes / excludedCount / manifestVersion 等）；`getCheckpoints` / `getAllConversationsWithCheckpoints` 只下发摘要，旧存档缺字段时按需懒扫描并写回缓存；磁盘占用创建时直接记录（`backupBytes`），设置页不再重复递归扫描（CPF-01/02/09/10）
+  - 流式路径下发摘要化：工具执行期间的 checkpoints chunk 经 `CheckpointService.toStreamSummary()` 剥离 `fileHashes/fileStats`，`loadConversationForView` 与流式两条路径都不再向 webview 传全量哈希映射（CPF-03/04 补全）
+  - 存档操作接入进度与取消：Manager 维护进行中操作状态（阶段 / 已处理 / 总数，AbortController），create / restore / deleteAll / deleteBatch 全接入；RestoreEngine 支持 `signal` + `onProgress`；新增 `checkpoint.getOperationProgress` / `checkpoint.cancelOperation` handler 与前端轮询 + 取消按钮（CPF-11）
+  - 只读工具批次不再创建存档（CPF-05）：`tool_batch` 判定改为基于真实工具名集合 `toolNames.some(name => configuredTools.includes(name))`，`read_file + search_in_files(search)` 等纯只读批次不建存档，`search_in_files` 仅 replace 模式计入
+  - 历史追加改为 append-only 尾段写入（HIS-01/02）：普通追加只写最后一段（不足 200 条）或新建下一段 + 更新 index，不再全量重写所有段；写入顺序「临时尾段 → 原子替换 → 临时 index → 原子替换」，index 是提交点；删除 / 编辑 / 回档 / 分支切换仍走全量重写；`TranscriptRepository` 新增 `appendContents` 直通 append，`addContent` / `addBatch` 纯追加路径不再读全量（functionResponse 保留 mutate 去重安全网）
+  - 新增段级 LRU 缓存 `history/HistorySegmentCache.ts`（HIS-06）：键 `conversationId + segmentFile + revision(+mtime)`，默认 32 段，写后 / 删除会话失效；多段读取改有界并发（并发 4）（HIS-05）
+  - 同一工具迭代内复用历史快照（HIS-03/04）：`getHistoryForAPIFrom(contents)` / `getStatsFrom(contents)` 支持基于已加载历史直接格式化，`ContextTrimService` 不再每次重新读全量历史
+  - 元数据写入合并（HIS-09）：新增 `conversation.updateSummary({conversationId, messageCount, preview})` 一次读写完成，前端流式结束后由 3 次 `setCustomMetadata` 改为 1 次；`updatedAt` 由历史提交统一维护
+  - 对话列表批量元数据（HIS-10）：新增 `conversation.getConversationMetadataBatch`（16 并发、每页 ≤200），前端 `loadMoreConversations` 一次 IPC 拉一页摘要，消除逐对话 IPC
+  - 用量索引增量维护（HIS-08）：新增 `UsageIndexStore.appendUsage` / `appendUsageMessages`，普通追加助手消息只追加条目，删除 / 编辑 / 回档 / 索引损坏才全量重建；`getMetadata` 完整性检查只读 `history.index.json` 结构，不再解析末段历史（HIS-11）
+  - 子agent 用量归集（用户需求）：子agent 每轮 generate 的 `usageMetadata` 以 `source: 'subagent'` 条目追加到发起它的主会话用量索引（`appendUsageIndexMessages`），用量统计 totals / byConversation / byModel / byDay 自动包含子agent 消耗，`ConversationUsage` 新增 `subagentTokens` 细分；索引 stale 全量重建时保留已有 subagent 条目；无主会话归属时跳过归集
+  - 前端渲染优化（HIS-12/13）：可见消息窗口增量缓存（同引用 + 长度 + 首尾指纹 O(1) 校验，流式尾替换 O(1)，结构变更回退全量过滤）；对话加载先渲染最后一页再异步补拉更早历史（`backfillInitialVisibleWindow`，与用户上拉 / 发送 / 流式并发时放弃合并）
+  - 元数据写入原子化：`saveMetadata` 改为临时文件 + rename 原子替换，任何写路径不再可能留下截断的 meta.json
+  - 子agent 设置新增「默认迭代次数」（用户需求）：`SubAgentsConfig.defaultMaxIterations`（默认 80，上限 1000），executor 取值 `per-agent maxIterations > 全局默认 > 50`，设置页全局配置区新增输入框（1~1000），`subagents.list` 返回该值
 
 ## [1.3.1-1] - 2026-08-02
 

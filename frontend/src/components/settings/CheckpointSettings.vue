@@ -8,10 +8,17 @@
  * 3. 设置最大存档点数量
  */
 
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch, onUnmounted } from 'vue'
 import { CustomCheckbox, CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useChatStore } from '@/stores'
+import {
+  previewExclusions,
+  pollOperationProgress,
+  cancelCheckpointOperation,
+  type CheckpointOperationProgress,
+  type ExclusionPreviewResult
+} from '@/stores/chat/checkpointActions'
 import { t } from '@/i18n'
 import type { CheckpointRecord } from '@/types'
 
@@ -23,6 +30,13 @@ interface MessageCheckpointConfig {
   mergeUnchangedCheckpoints?: boolean
 }
 
+// 排除配置（EX-08）
+interface CheckpointExclusionConfig {
+  enabledProfiles: Record<string, boolean>
+  maxFileSizeBytes: number
+  customPatterns: string[]
+}
+
 // 存档点配置接口
 interface CheckpointConfig {
   enabled: boolean
@@ -31,6 +45,7 @@ interface CheckpointConfig {
   messageCheckpoint?: MessageCheckpointConfig
   maxCheckpoints: number
   customIgnorePatterns?: string[]
+  exclusion?: CheckpointExclusionConfig
 }
 
 // 工具信息接口
@@ -46,6 +61,8 @@ interface ConversationWithCheckpoints {
   title: string
   checkpointCount: number
   totalSize: number
+  /** M8: 存在缺少 backupBytes 的旧存档时 totalSize 不完整（展示「部分未统计」提示） */
+  sizeIncomplete?: boolean
   createdAt?: number
   updatedAt?: number
 }
@@ -78,8 +95,29 @@ const config = reactive<CheckpointConfig>({
     modelOuterLayerOnly: true,
     mergeUnchangedCheckpoints: true
   },
-  maxCheckpoints: -1  // -1 表示无上限
+  maxCheckpoints: -1,  // -1 表示无上限
+  customIgnorePatterns: [],
+  exclusion: {
+    enabledProfiles: {},
+    maxFileSizeBytes: 50 * 1024 * 1024,  // 默认 50 MiB
+    customPatterns: []
+  }
 })
+
+// 默认排除类别元数据（id 列表；名称走 i18n，模式清单由后端 checkpoint.getExclusionProfiles 提供）
+const DEFAULT_PROFILE_IDS = ['logs', 'aiModels', 'datasets', 'caches', 'pythonVenvs', 'buildArtifacts', 'largeMedia', 'archives'] as const
+
+// 后端默认排除类别元数据（模式清单等）
+const exclusionProfileMeta = ref<Array<{ id: string; patterns: string[]; defaultEnabled: boolean }>>([])
+
+// 预览排除结果状态（EX-09）
+const isPreviewing = ref(false)
+const previewResult = ref<ExclusionPreviewResult | null>(null)
+const previewError = ref<string | null>(null)
+const expandedPreviewProfile = ref<string | null>(null)
+
+// 配置保存错误（如 EX-12 校验拒绝）
+const configSaveError = ref<string | null>(null)
 
 // 所有可用的工具列表
 const allTools = ref<ToolInfo[]>([])
@@ -111,6 +149,57 @@ interface DeleteConfirmState {
 }
 const deleteConfirmState = ref<DeleteConfirmState | null>(null)
 
+// 删除结果反馈：批量删除中被拒绝（依赖保留）的存档数量等（CP-05/CP-11）
+const deleteFeedback = ref<{ rejectedCount: number; failedCount: number; message: string } | null>(null)
+
+// M7: 进行中存档操作进度（create/restore/delete）轮询展示 + 取消按钮
+const operationProgress = ref<CheckpointOperationProgress | null>(null)
+let progressPollTimer: ReturnType<typeof setInterval> | null = null
+let progressPolling = false
+
+// 轮询后端最近更新的进行中存档操作；无进行中操作或已结束时停止轮询
+async function pollOperation() {
+  if (progressPolling) return
+  progressPolling = true
+  try {
+    const progress = await pollOperationProgress()
+    operationProgress.value = progress
+    if (!progress || progress.phase === 'done' || progress.phase === 'failed' || progress.phase === 'cancelled') {
+      stopProgressPolling()
+    }
+  } finally {
+    progressPolling = false
+  }
+}
+
+function startProgressPolling() {
+  if (progressPollTimer) return
+  pollOperation()
+  progressPollTimer = setInterval(pollOperation, 800)
+}
+
+function stopProgressPolling() {
+  if (progressPollTimer) {
+    clearInterval(progressPollTimer)
+    progressPollTimer = null
+  }
+}
+
+// 取消进行中的存档操作（M7/CPF-11）
+async function cancelActiveOperation() {
+  const op = operationProgress.value
+  if (!op || op.cancelled) return
+  await cancelCheckpointOperation(op.operationId)
+  operationProgress.value = { ...op, cancelled: true, phase: 'cancelled' }
+}
+
+// 机器可读 phase → 展示文案（与后端 CheckpointOperationProgress.phase 对齐）
+function operationPhaseLabel(phase: string): string {
+  const key = `components.settings.checkpoint.sections.cleanup.progress.${phase}` as const
+  const label = t(key)
+  return label || phase
+}
+
 // 直接使用所有工具（用户可以自由选择哪些需要备份）
 const displayTools = computed(() => allTools.value)
 
@@ -123,6 +212,16 @@ async function loadConfig() {
     const response = await sendToExtension<{ config: CheckpointConfig }>('checkpoint.getConfig', {})
     if (response?.config) {
       Object.assign(config, response.config)
+      // 防御：旧后端/旧配置可能没有 exclusion 字段
+      if (!config.exclusion) {
+        config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
+      }
+    }
+    
+    // 加载默认排除类别元数据
+    const profilesResponse = await sendToExtension<{ profiles: Array<{ id: string; patterns: string[]; defaultEnabled: boolean }> }>('checkpoint.getExclusionProfiles', {})
+    if (profilesResponse?.profiles) {
+      exclusionProfileMeta.value = profilesResponse.profiles
     }
     
     // 加载工具列表
@@ -163,15 +262,146 @@ async function updateConfigField(field: keyof CheckpointConfig, value: any) {
       afterTools: [...config.afterTools],
       messageCheckpoint: messageCheckpointToSave,
       maxCheckpoints: config.maxCheckpoints,
-      customIgnorePatterns: config.customIgnorePatterns ? [...config.customIgnorePatterns] : []
+      customIgnorePatterns: config.customIgnorePatterns ? [...config.customIgnorePatterns] : [],
+      exclusion: config.exclusion ? {
+        enabledProfiles: { ...(config.exclusion.enabledProfiles || {}) },
+        maxFileSizeBytes: config.exclusion.maxFileSizeBytes,
+        customPatterns: [...(config.exclusion.customPatterns || [])]
+      } : undefined
     }
     
     await sendToExtension('checkpoint.updateConfig', {
       config: configToSave
     })
-  } catch (error) {
+    configSaveError.value = null
+  } catch (error: any) {
+    configSaveError.value = error?.message || String(error || 'Unknown error')
     console.error('Failed to save checkpoint config:', error)
   }
+}
+
+// ========== 排除配置（EX-08 / EX-09） ==========
+
+// 默认类别是否启用（缺省按默认启用处理）
+function isProfileEnabled(profileId: string): boolean {
+  return config.exclusion?.enabledProfiles?.[profileId] !== false
+}
+
+// 切换默认类别开关
+async function toggleProfile(profileId: string, enabled: boolean) {
+  if (!config.exclusion) {
+    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
+  }
+  config.exclusion.enabledProfiles = {
+    ...(config.exclusion.enabledProfiles || {}),
+    [profileId]: enabled
+  }
+  await updateConfigField('exclusion', { ...config.exclusion })
+}
+
+// 类别显示名（i18n）
+function profileLabel(profileId: string): string {
+  const key = `components.settings.checkpoint.sections.exclusion.profiles.${profileId}`
+  const translated = t(key)
+  return translated === key ? profileId : translated
+}
+
+// 类别模式清单（后端元数据）
+function profilePatterns(profileId: string): string[] {
+  return exclusionProfileMeta.value.find(p => p.id === profileId)?.patterns || []
+}
+
+// 单文件大小上限（MiB 显示）
+const maxFileSizeMiB = computed(() =>
+  Math.round((config.exclusion?.maxFileSizeBytes ?? 0) / (1024 * 1024))
+)
+
+// 保存大小上限（MiB -> 字节；0 = 不限制）
+async function saveMaxFileSize(event: any) {
+  const raw = parseInt(String(event.target?.value ?? ''), 10)
+  const miB = Number.isNaN(raw) ? 0 : Math.max(0, raw)
+  if (!config.exclusion) {
+    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 0, customPatterns: [] }
+  }
+  config.exclusion.maxFileSizeBytes = miB * 1024 * 1024
+  await updateConfigField('exclusion', { ...config.exclusion })
+}
+
+// 自定义排除模式文本（每行一条）
+// L-5: setter 同步写回 config.exclusion.customPatterns，避免未保存输入在重渲染时丢失；
+// 模板使用 v-model.lazy，只在 change 时触发（不会打断输入过程中的换行）。
+const customPatternsText = computed({
+  get: () => (config.exclusion?.customPatterns || []).join('\n'),
+  set: (value: string) => {
+    if (!config.exclusion) {
+      config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
+    }
+    config.exclusion.customPatterns = value
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+  }
+})
+
+// 保存自定义排除模式（按行拆分、去空白）
+async function saveCustomPatterns(event: any) {
+  const lines = String(event.target?.value ?? '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+  if (!config.exclusion) {
+    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
+  }
+  config.exclusion.customPatterns = lines
+  await updateConfigField('exclusion', { ...config.exclusion })
+}
+
+// 执行排除预览（EX-09）
+async function runPreview() {
+  isPreviewing.value = true
+  previewError.value = null
+  try {
+    const result = await previewExclusions()
+    previewResult.value = result
+    expandedPreviewProfile.value = null
+    if (!result) {
+      previewError.value = t('components.settings.checkpoint.sections.exclusion.preview.failed')
+    }
+  } catch (error: any) {
+    previewError.value = error?.message || t('components.settings.checkpoint.sections.exclusion.preview.failed')
+  } finally {
+    isPreviewing.value = false
+  }
+}
+
+// 预览：按类别聚合的行（默认类别 + other）
+const previewRows = computed(() => {
+  const result = previewResult.value
+  if (!result) return []
+  const rows: Array<{ key: string; label: string; summary: ExclusionPreviewResult['summary'] }> = []
+  for (const profileId of DEFAULT_PROFILE_IDS) {
+    const summary = result.byProfile[profileId]
+    if (summary && summary.excludedCount > 0) {
+      rows.push({ key: profileId, label: profileLabel(profileId), summary })
+    }
+  }
+  const other = result.byProfile['other']
+  if (other && other.excludedCount > 0) {
+    rows.push({ key: 'other', label: t('components.settings.checkpoint.sections.exclusion.preview.other'), summary: other })
+  }
+  return rows
+})
+
+// 预览：原因文案
+function reasonLabel(reason: string): string {
+  const key = `components.settings.checkpoint.sections.exclusion.preview.reasons.${reason}`
+  const translated = t(key)
+  return translated === key ? reason : translated
+}
+
+// 预览：展开/收起某个类别
+function togglePreviewProfile(key: string) {
+  expandedPreviewProfile.value = expandedPreviewProfile.value === key ? null : key
 }
 
 // 检查消息类型是否在 before 列表中
@@ -384,6 +614,14 @@ const selectedConversationsSize = computed(() =>
   selectedConversations.value.reduce((sum, c) => sum + (c.totalSize || 0), 0)
 )
 
+// 全部对话存档点的总磁盘占用（含 sizeIncomplete 标记的未统计部分）
+const totalCheckpointsSize = computed(() =>
+  conversationsWithCheckpoints.value.reduce((sum, c) => sum + (c.totalSize || 0), 0)
+)
+const totalCheckpointsSizeIncomplete = computed(() =>
+  conversationsWithCheckpoints.value.some(c => c.sizeIncomplete)
+)
+
 // 对话全选状态
 const isAllConversationsSelected = computed(() =>
   filteredConversations.value.length > 0 &&
@@ -558,11 +796,17 @@ async function confirmDelete() {
   const affectedConversationIds = new Set<string>()
 
   try {
+    let totalRejected = 0
+    let totalFailed = 0
+
     if (state.kind === 'conversations') {
       // 批量删除选中的对话（checkpointIds 为空 = 删除该对话全部）
       const targets = selectedConversations.value
       const items = targets.map(c => ({ conversationId: c.conversationId, checkpointIds: [] as string[] }))
-      await sendToExtension('checkpoint.deleteBatch', { items })
+      const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
+      const results = resp?.results || []
+      totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
+      totalFailed = results.filter((r: any) => !r.success).length
 
       targets.forEach(c => affectedConversationIds.add(c.conversationId))
       const removedIds = new Set(targets.map(c => c.conversationId))
@@ -582,7 +826,10 @@ async function confirmDelete() {
       if (expandedConversationId.value) {
         const conversationId = expandedConversationId.value
         const items = [{ conversationId, checkpointIds: [...selectedCheckpointIds.value] }]
-        await sendToExtension('checkpoint.deleteBatch', { items })
+        const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
+        const results = resp?.results || []
+        totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
+        totalFailed = results.filter((r: any) => !r.success).length
 
         selectedCheckpointIds.value = new Set()
         affectedConversationIds.add(conversationId)
@@ -591,12 +838,35 @@ async function confirmDelete() {
       }
     }
 
+    // CP-05/CP-11: 被后续存档依赖而拒绝删除的存档、删除失败项，向用户明确展示
+    if (totalRejected > 0 || totalFailed > 0) {
+      const parts: string[] = []
+      if (totalRejected > 0) {
+        parts.push(t('components.settings.checkpoint.sections.cleanup.rejectedByDependency', { count: totalRejected }))
+      }
+      if (totalFailed > 0) {
+        parts.push(t('components.settings.checkpoint.sections.cleanup.deleteFailedCount', { count: totalFailed }))
+      }
+      deleteFeedback.value = {
+        rejectedCount: totalRejected,
+        failedCount: totalFailed,
+        message: parts.join('；')
+      }
+    } else {
+      deleteFeedback.value = null
+    }
+
     // 当前对话受影响时，通知聊天视图刷新存档点
     if (chatStore.currentConversationId && affectedConversationIds.has(chatStore.currentConversationId)) {
       await chatStore.loadCheckpoints()
     }
   } catch (error) {
     console.error('Failed to delete checkpoints:', error)
+    deleteFeedback.value = {
+      rejectedCount: 0,
+      failedCount: 0,
+      message: t('components.settings.checkpoint.sections.cleanup.deleteRequestFailed')
+    }
   } finally {
     isBatchDeleting.value = false
   }
@@ -626,6 +896,18 @@ function getToolLabel(toolName: string): string {
     default:
       return getToolDisplayName(toolName)
   }
+}
+
+// 未备份文件的悬停提示：展示前 10 个路径（去掉工作区作用域前缀，展示相对路径）
+function getUnbackedPathsTitle(cp: CheckpointRecord & { size?: number }): string {
+  const paths = (cp.unbackedPaths || []).map(toDisplayScopedPath)
+  const shown = paths.slice(0, 10).join('\n')
+  return paths.length > 10 ? `${shown}\n... 等 ${paths.length} 个文件` : shown
+}
+
+// scoped 键（ws_xxx/relative）转为对用户友好的相对路径
+function toDisplayScopedPath(scopedKey: string): string {
+  return scopedKey.replace(/^ws_[a-f0-9]{16}\//, '')
 }
 
 // 格式化时间
@@ -673,6 +955,19 @@ function formatCheckpointCount(count: number): string {
 onMounted(() => {
   loadConfig()
   loadConversationsWithCheckpoints()
+  // M7: 挂载即开始轮询进行中的存档操作（恢复/删除等），展示进度与取消按钮
+  startProgressPolling()
+})
+
+// M7: 批量删除期间保持轮询（删除完成后停止）
+watch(isBatchDeleting, deleting => {
+  if (deleting) {
+    startProgressPolling()
+  }
+})
+
+onUnmounted(() => {
+  stopProgressPolling()
 })
 </script>
 
@@ -875,6 +1170,156 @@ onMounted(() => {
         </div>
       </div>
       
+      
+      <div class="divider"></div>
+      
+      <!-- 排除配置（EX-08 / EX-09） -->
+      <div class="setting-group" :class="{ disabled: !config.enabled }">
+        <h4 class="group-title">
+          <i class="codicon codicon-filter"></i>
+          {{ t('components.settings.checkpoint.sections.exclusion.title') }}
+        </h4>
+        <p class="setting-description">
+          {{ t('components.settings.checkpoint.sections.exclusion.description') }}
+        </p>
+
+        <!-- 保存错误提示（EX-12 校验拒绝等） -->
+        <div v-if="configSaveError" class="exclusion-error">
+          <i class="codicon codicon-warning"></i>
+          <span>{{ configSaveError }}</span>
+        </div>
+
+        <!-- 默认排除类别开关 -->
+        <div
+          v-for="profileId in DEFAULT_PROFILE_IDS"
+          :key="profileId"
+          class="profile-row"
+        >
+          <CustomCheckbox
+            :modelValue="isProfileEnabled(profileId)"
+            :label="profileLabel(profileId)"
+            :disabled="!config.enabled"
+            @update:modelValue="(v: boolean) => toggleProfile(profileId, v)"
+          />
+          <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
+            {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
+          </span>
+        </div>
+
+        <!-- 单文件大小上限 -->
+        <div class="form-row">
+          <label>{{ t('components.settings.checkpoint.sections.exclusion.maxFileSize.label') }}</label>
+          <input
+            type="text"
+            :value="maxFileSizeMiB"
+            @change="saveMaxFileSize"
+            :disabled="!config.enabled"
+            class="number-input"
+            placeholder="50"
+          />
+          <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.maxFileSize.hint') }}</span>
+        </div>
+
+        <!-- 自定义排除模式 -->
+        <div class="form-row patterns-row">
+          <label>{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.label') }}</label>
+          <textarea
+            v-model.lazy="customPatternsText"
+            @change="saveCustomPatterns"
+            :disabled="!config.enabled"
+            class="patterns-input"
+            rows="4"
+            :placeholder="t('components.settings.checkpoint.sections.exclusion.customPatterns.placeholder')"
+          ></textarea>
+          <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.hint') }}</span>
+          <!-- M-5: 目录型默认类别需同时否定目录本身才能重新纳入其下文件 -->
+          <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.reincludeHint') }}</span>
+        </div>
+
+        <!-- 预览排除结果 -->
+        <div class="preview-bar">
+          <button
+            class="preview-btn"
+            :disabled="isPreviewing || !config.enabled"
+            @click="runPreview"
+          >
+            <i
+              class="codicon"
+              :class="isPreviewing ? 'codicon-loading codicon-modifier-spin' : 'codicon-search'"
+            ></i>
+            {{ isPreviewing
+              ? t('components.settings.checkpoint.sections.exclusion.preview.loading')
+              : t('components.settings.checkpoint.sections.exclusion.preview.button') }}
+          </button>
+        </div>
+
+        <div v-if="previewError" class="exclusion-error">
+          <i class="codicon codicon-warning"></i>
+          <span>{{ previewError }}</span>
+        </div>
+
+        <div v-if="previewResult" class="preview-result">
+          <div class="preview-total">
+            <i class="codicon codicon-database"></i>
+            {{ t('components.settings.checkpoint.sections.exclusion.preview.total', {
+              count: previewResult.summary.excludedCount,
+              size: formatSize(previewResult.summary.excludedBytes)
+            }) }}
+            <span v-if="!previewResult.complete" class="preview-partial">
+              {{ t('components.settings.checkpoint.sections.exclusion.preview.partial') }}
+            </span>
+          </div>
+
+          <div v-if="previewRows.length === 0" class="preview-empty">
+            {{ t('components.settings.checkpoint.sections.exclusion.preview.empty') }}
+          </div>
+
+          <div
+            v-for="row in previewRows"
+            :key="row.key"
+            class="preview-row"
+          >
+            <button
+              class="preview-row-header"
+              @click="togglePreviewProfile(row.key)"
+            >
+              <i
+                class="codicon"
+                :class="expandedPreviewProfile === row.key ? 'codicon-chevron-down' : 'codicon-chevron-right'"
+              ></i>
+              <span class="preview-row-label">{{ row.label }}</span>
+              <span class="preview-row-stats">
+                {{ t('components.settings.checkpoint.sections.exclusion.preview.count', { count: row.summary.excludedCount }) }}
+                · {{ formatSize(row.summary.excludedBytes) }}
+              </span>
+            </button>
+
+            <div v-if="expandedPreviewProfile === row.key" class="preview-samples">
+              <div
+                v-for="sample in row.summary.samples"
+                :key="sample.path"
+                class="preview-sample"
+              >
+                <div class="sample-path">{{ sample.path }}</div>
+                <div class="sample-meta">
+                  <span class="sample-reason">{{ reasonLabel(sample.reason) }}</span>
+                  <span v-if="sample.rule" class="sample-rule">
+                    {{ t('components.settings.checkpoint.sections.exclusion.preview.rule') }}: {{ sample.rule }}
+                  </span>
+                  <span v-if="sample.source" class="sample-source">
+                    {{ t('components.settings.checkpoint.sections.exclusion.preview.source') }}: {{ sample.source }}
+                  </span>
+                  <span v-if="sample.size" class="sample-size">{{ formatSize(sample.size) }}</span>
+                </div>
+              </div>
+              <div v-if="row.summary.samples.length === 0" class="preview-no-samples">
+                {{ t('components.settings.checkpoint.sections.exclusion.preview.noSamples') }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <div class="divider"></div>
       
       <!-- 存档点清理 -->
@@ -915,6 +1360,17 @@ onMounted(() => {
             </template>
             <template v-else>
               {{ formatCheckpointCount(conversationsWithCheckpoints.reduce((sum, c) => sum + c.checkpointCount, 0)) }}
+              <template v-if="totalCheckpointsSize > 0">
+                ·
+                {{ t('components.settings.checkpoint.sections.cleanup.totalSize', { size: formatSize(totalCheckpointsSize) }) }}
+                <span
+                  v-if="totalCheckpointsSizeIncomplete"
+                  class="size-incomplete"
+                  :title="t('components.settings.checkpoint.sections.cleanup.sizeIncompleteHint')"
+                >
+                  （{{ t('components.settings.checkpoint.sections.cleanup.sizeIncomplete') }}）
+                </span>
+              </template>
             </template>
           </span>
           <button
@@ -925,6 +1381,35 @@ onMounted(() => {
             <i v-if="isBatchDeleting" class="codicon codicon-loading codicon-modifier-spin"></i>
             <i v-else class="codicon codicon-trash"></i>
             {{ t('components.settings.checkpoint.sections.cleanup.deleteSelected') }}
+          </button>
+        </div>
+        
+        <!-- M7: 进行中存档操作进度（create/restore/delete）+ 取消按钮 -->
+        <div
+          v-if="operationProgress && operationProgress.phase !== 'done' && operationProgress.phase !== 'failed' && operationProgress.phase !== 'cancelled'"
+          class="operation-progress"
+        >
+          <i class="codicon codicon-loading codicon-modifier-spin"></i>
+          <span class="op-label">{{ operationPhaseLabel(operationProgress.phase) }}</span>
+          <span v-if="operationProgress.total > 0" class="op-count">
+            {{ operationProgress.processed }} / {{ operationProgress.total }}
+          </span>
+          <button
+            class="op-cancel-btn"
+            :disabled="operationProgress.cancelled"
+            @click="cancelActiveOperation"
+          >
+            <i class="codicon codicon-close"></i>
+            {{ t('components.settings.checkpoint.sections.cleanup.progress.cancel') }}
+          </button>
+        </div>
+        
+        <!-- 删除结果反馈（被依赖拒绝/删除失败） -->
+        <div v-if="deleteFeedback" class="delete-feedback">
+          <i class="codicon codicon-warning"></i>
+          <span>{{ deleteFeedback.message }}</span>
+          <button class="feedback-close" @click="deleteFeedback = null">
+            <i class="codicon codicon-close"></i>
           </button>
         </div>
         
@@ -979,6 +1464,13 @@ onMounted(() => {
                       <span class="size-info">
                         <i class="codicon codicon-database"></i>
                         {{ formatSize(conv.totalSize) }}
+                        <span
+                          v-if="conv.sizeIncomplete"
+                          class="size-incomplete"
+                          :title="t('components.settings.checkpoint.sections.cleanup.sizeIncompleteHint')"
+                        >
+                          {{ t('components.settings.checkpoint.sections.cleanup.sizeIncomplete') }}
+                        </span>
                       </span>
                       <span class="update-time">
                         {{ formatRelativeTime(conv.updatedAt) }}
@@ -1049,6 +1541,13 @@ onMounted(() => {
                             <span>{{ formatRelativeTime(cp.timestamp) }}</span>
                             <span>{{ t('components.settings.checkpoint.sections.cleanup.checkpointFiles', { count: cp.fileCount }) }}</span>
                             <span class="cp-size">{{ formatSize(cp.size || 0) }}</span>
+                            <span
+                              v-if="cp.unbackedPaths?.length"
+                              class="cp-unbacked"
+                              :title="getUnbackedPathsTitle(cp)"
+                            >
+                              {{ t('components.settings.checkpoint.sections.cleanup.unbackedFiles', { count: cp.unbackedPaths.length }) }}
+                            </span>
                           </div>
                         </div>
                         <button
@@ -1619,6 +2118,11 @@ onMounted(() => {
   color: var(--vscode-foreground);
 }
 
+.cp-unbacked {
+  color: var(--vscode-editorWarning-foreground);
+  cursor: help;
+}
+
 .conversation-info {
   flex: 1;
   min-width: 0;
@@ -1686,6 +2190,90 @@ onMounted(() => {
 .delete-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.delete-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-inputValidation-errorBorder));
+  background: var(--vscode-inputValidation-warningBackground, var(--vscode-inputValidation-errorBackground));
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-inputValidation-errorForeground));
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.delete-feedback .feedback-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  opacity: 0.7;
+}
+
+.delete-feedback .feedback-close:hover {
+  opacity: 1;
+}
+
+/* M7: 进行中存档操作进度条 + 取消按钮 */
+.operation-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--vscode-inputValidation-infoBorder, var(--vscode-focusBorder));
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.operation-progress .codicon-loading {
+  color: var(--vscode-progressBar-background);
+}
+
+.op-label {
+  font-weight: 600;
+}
+
+.op-count {
+  opacity: 0.8;
+}
+
+.op-cancel-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.op-cancel-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.op-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* M8: 对话大小不完整提示 */
+.size-incomplete {
+  opacity: 0.75;
+  font-style: italic;
+  margin-left: 2px;
 }
 
 .refresh-btn {
@@ -1812,5 +2400,189 @@ onMounted(() => {
 .btn-delete:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ========== 排除配置（EX-08 / EX-09） ========== */
+.profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.profile-patterns {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.patterns-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.patterns-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.patterns-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.patterns-input:disabled {
+  opacity: 0.6;
+}
+
+.exclusion-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(255, 0, 0, 0.4));
+  color: var(--vscode-errorForeground, #f14c4c);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.preview-bar {
+  margin-top: 10px;
+}
+
+.preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.preview-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.preview-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preview-result {
+  margin-top: 10px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.preview-total {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--vscode-editorWidget-background, rgba(0, 0, 0, 0.1));
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+}
+
+.preview-partial {
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground);
+}
+
+.preview-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.preview-row {
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+}
+
+.preview-row:last-child {
+  border-bottom: none;
+}
+
+.preview-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.preview-row-header:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+}
+
+.preview-row-label {
+  flex: 1;
+}
+
+.preview-row-stats {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.preview-samples {
+  padding: 2px 10px 8px 26px;
+}
+
+.preview-sample {
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--vscode-panel-border, rgba(128, 128, 128, 0.15));
+  font-size: 12px;
+}
+
+.preview-sample:last-child {
+  border-bottom: none;
+}
+
+.sample-path {
+  word-break: break-all;
+}
+
+.sample-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sample-reason {
+  color: var(--vscode-charts-yellow, #cca700);
+}
+
+.preview-no-samples {
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
 }
 </style>

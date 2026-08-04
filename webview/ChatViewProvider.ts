@@ -360,7 +360,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             mcpManager: this.mcpManager,
             settingsManager: this.settingsManager,
             configManager: this.configManager,
-            toolExecutionService: this.chatHandler.getToolExecutionService()
+            toolExecutionService: this.chatHandler.getToolExecutionService(),
+            // 修改原因：子代理 token 消耗需要归集到发起它的主会话用量统计（UsagePage）。
+            // 修改方式：把 ConversationManager 的索引追加入口注入 SubAgent 执行上下文，
+            //          executor 每轮 generate 后把 usageMetadata 以 source='subagent' 条目写入主会话索引。
+            // 修改目的：用量统计包含子代理消耗，且不把子代理运行明细写入主历史。
+            usageIndexAppend: (conversationId, messages) =>
+                this.conversationManager.appendUsageIndexMessages(conversationId, messages)
         });
         
         // 26. 初始化依赖管理器（使用自定义路径）

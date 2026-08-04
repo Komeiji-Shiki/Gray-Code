@@ -49,6 +49,11 @@ export interface ConversationUsage extends UsageBucket {
     title: string;
     /** 最后更新时间（毫秒） */
     updatedAt: number;
+    /**
+     * 子代理归集消耗（prompt + candidates + thoughts，仅当该对话存在 subagent 条目时出现）。
+     * 已包含在 totalTokens 中，仅作细分展示。
+     */
+    subagentTokens?: number;
 }
 
 export interface ModelUsage extends UsageBucket {
@@ -97,6 +102,15 @@ export interface UsageIndexMessage {
     thoughts: number;
     cacheCreation: number;
     cacheRead: number;
+    /**
+     * 条目来源（可选）：
+     * - main（缺省）：从主会话历史提取的 model 消息；
+     * - subagent：子代理消耗 token 的归集条目（不入主历史，由 executor 单独追加）。
+     *
+     * 修改原因：子代理 token 需要归集到发起它的主会话统计页，同时全量重建索引时
+     *          必须保留这些不在历史里的条目，避免统计波动。
+     */
+    source?: UsageIndexMessageSource;
 }
 
 /** 单个对话的用量索引（消息级 token 明细，落盘打点维护，统计时直接聚合） */
@@ -107,6 +121,9 @@ export interface UsageIndex {
     updatedAt: number;
     messages: UsageIndexMessage[];
 }
+
+/** 用量索引条目来源：main=主会话消息（默认），subagent=子代理归集条目（不入主历史） */
+export type UsageIndexMessageSource = 'main' | 'subagent';
 
 /** 索引新鲜度：fresh=历史未再改动；stale=历史比索引新；missing=索引不存在 */
 export type UsageIndexFreshness = 'fresh' | 'stale' | 'missing';
@@ -123,6 +140,19 @@ export interface UsageIndexStore {
     write(conversationId: string, index: UsageIndex): Promise<void>;
     remove(conversationId: string): Promise<void>;
     getFreshness(conversationId: string): Promise<UsageIndexFreshness>;
+    /**
+     * 可选：增量维护用量索引（HIS-08）。
+     * 普通追加助手消息时只更新对应用量条目；返回 false 表示增量不可用
+     * （索引缺失/损坏），调用方回退全量重建。
+     */
+    appendUsage?(conversationId: string, appended: Content[]): Promise<boolean>;
+
+    /**
+     * 可选：追加已提取好的用量索引条目（子代理归集用，不入对话历史）。
+     * 与 appendUsage 的区别：输入已是 UsageIndexMessage（通常带 source='subagent'），
+     * 不再做 Content 提取；索引缺失/损坏时返回 false，调用方决定回退策略。
+     */
+    appendUsageMessages?(conversationId: string, messages: UsageIndexMessage[]): Promise<boolean>;
 }
 
 /**
@@ -450,11 +480,16 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
         }
 
         const conversationBucket = createBucket();
+        // 子代理归集消耗（source='subagent' 的条目；与时间筛选保持同一口径）
+        let conversationSubagentTokens = 0;
 
         if (loaded.index) {
             // 索引路径：token 记录已提取，直接累加
             for (const record of loaded.index.messages) {
                 accumulateRecord(conversationBucket, totals, modelBuckets, dayBuckets, record, options);
+                if (record.source === 'subagent' && passesTimeFilter(record, options)) {
+                    conversationSubagentTokens += record.prompt + record.candidates + record.thoughts;
+                }
             }
         } else {
             // 历史路径：逐条提取并累加
@@ -468,10 +503,26 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
                     ...tokens
                 }, options);
             }
-            // 索引缺失/过期：重建写回（失败不影响本次统计，下次仍会走重建）
+            // 索引缺失/过期：重建写回（失败不影响本次统计，下次仍会走重建）。
+            // 子代理归集条目不在主历史里：重建时从旧索引合并保留，并把它们计入本次统计
+            // （统计语义 = 主会话历史 + 已归集的子代理消耗，避免重建当次出现波动）。
             if (indexStore) {
                 try {
-                    await indexStore.write(conversationId, buildConversationUsageIndex(conversationId, loaded.messages));
+                    const rebuilt = buildConversationUsageIndex(conversationId, loaded.messages);
+                    const previous = await indexStore.read(conversationId);
+                    if (previous && Array.isArray(previous.messages)) {
+                        const subagentEntries = previous.messages.filter(m => m.source === 'subagent');
+                        for (const record of subagentEntries) {
+                            accumulateRecord(conversationBucket, totals, modelBuckets, dayBuckets, record, options);
+                            if (passesTimeFilter(record, options)) {
+                                conversationSubagentTokens += record.prompt + record.candidates + record.thoughts;
+                            }
+                        }
+                        if (subagentEntries.length > 0) {
+                            rebuilt.messages.push(...subagentEntries);
+                        }
+                    }
+                    await indexStore.write(conversationId, rebuilt);
                 } catch {
                     // 忽略索引写失败
                 }
@@ -480,12 +531,16 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
 
         if (conversationBucket.modelMessages > 0) {
             conversationsWithUsage++;
-            byConversation.push({
+            const usage: ConversationUsage = {
                 conversationId,
                 title: (loaded.metadata?.title || '').trim() || conversationId,
                 updatedAt: loaded.metadata?.updatedAt ?? 0,
                 ...conversationBucket
-            });
+            };
+            if (conversationSubagentTokens > 0) {
+                usage.subagentTokens = conversationSubagentTokens;
+            }
+            byConversation.push(usage);
         }
     }
 

@@ -160,6 +160,18 @@ async function pickStoragePath() {
   }
 }
 
+// 在文件资源管理器中打开存储目录
+async function openStoragePathInExplorer() {
+  try {
+    await sendToExtension('storagePath.openInExplorer', {
+      path: storageSettings.currentPath
+    })
+  } catch (error: any) {
+    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.openInExplorerFailed').replace('{error}', '')
+    storageMessageType.value = 'error'
+  }
+}
+
 // 验证路径
 async function validateStoragePath(path: string) {
   const normalizedPath = path.trim()
@@ -744,6 +756,15 @@ onMounted(() => {
                     >
                       <i class="codicon codicon-discard"></i>
                       {{ t('components.settings.storageSettings.reset') }}
+                    </button>
+                    <button
+                      class="action-btn"
+                      @click="openStoragePathInExplorer"
+                      :disabled="isMigrating || !storageSettings.currentPath"
+                      :title="t('components.settings.storageSettings.openInExplorerTitle')"
+                    >
+                      <i class="codicon codicon-link-external"></i>
+                      {{ t('components.settings.storageSettings.openInExplorer') }}
                     </button>
                   </div>
                   

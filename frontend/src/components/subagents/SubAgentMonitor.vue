@@ -14,6 +14,7 @@ import {
   isRunWindowTailAuthoritative,
   prependRunContentWindow,
   replaceRunContentWindow,
+  replaceRunContentWindowPreservingPrefix,
   type SubAgentRunContentWindowState
 } from './monitorWindowState'
 import {
@@ -193,9 +194,12 @@ function applyManifestPayload(data: any) {
   updateActiveRunIds(data?.activeRunIds)
 }
 
-function upsertWindow(contentWindow: SubAgentRunContentWindow | undefined) {
+function upsertWindow(contentWindow: SubAgentRunContentWindow | undefined, options?: { preservePrefix?: boolean }) {
   if (!contentWindow?.runId) return
-  const replacement = replaceRunContentWindow(contentWindow, windowsByRunId.value[contentWindow.runId])
+  const current = windowsByRunId.value[contentWindow.runId]
+  const replacement = options?.preservePrefix
+    ? replaceRunContentWindowPreservingPrefix(contentWindow, current)
+    : replaceRunContentWindow(contentWindow, current)
   if (!replacement) return
   windowsByRunId.value = {
     ...windowsByRunId.value,
@@ -293,7 +297,8 @@ async function requestRunWindow(runId: string | undefined, force = false) {
     }
     if (response?.manifest) upsertManifest(response.manifest)
     if (response?.window) {
-      upsertWindow(response.window)
+      // P3：尾部校准窗口保留用户已 prepend 的更早历史，不整体替换回最新页
+      upsertWindow(response.window, { preservePrefix: true })
       // 修改原因：窗口响应可能是 Monitor 打开后第一次可用的 transcript 基线，之前到达的 llm_delta 不能再丢弃。
       // 修改方式：窗口写入缓存后立即尝试回放同 run 的有界 live delta 缓冲。
       // 修改目的：解决流式过程中打开 Monitor 时正文或工具调用只在结束后才恢复的问题。
@@ -752,9 +757,37 @@ const latestRetryEvent = computed(() => {
   return [...events].reverse().find(event => event.type === 'retrying' || event.type === 'retrySuccess' || event.type === 'retryFailed')
 })
 
-function formatTime(ms?: number): string {
-  if (!ms) return ''
-  return new Date(ms).toLocaleTimeString()
+// P5：运行时间显示改为相对耗时（如「42s / 2m30s」），绝对本地时间戳对用户没有意义。
+// 与 BackgroundTaskBar 的 formatDuration 语义一致：运行中显示已运行时长，结束后显示总耗时。
+const now = ref(Date.now())
+let elapsedTicker: ReturnType<typeof setInterval> | undefined
+
+function formatElapsed(startMs?: number, endMs?: number): string {
+  if (!startMs) return ''
+  const end = endMs ?? now.value
+  const seconds = Math.max(0, Math.floor((end - startMs) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m${seconds % 60}s`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h${minutes % 60}m`
+}
+
+// 有活跃 run 时每秒刷新一次耗时显示（空闲时不跑 ticker，避免周期性开销）
+watch(() => activeRunIds.value.size, (size) => {
+  if (size > 0 && !elapsedTicker) {
+    now.value = Date.now()
+    elapsedTicker = setInterval(() => { now.value = Date.now() }, 1000)
+  } else if (size === 0 && elapsedTicker) {
+    clearInterval(elapsedTicker)
+    elapsedTicker = undefined
+  }
+}, { immediate: true })
+
+function runElapsed(run: { createdAt: number; updatedAt: number; status: RunStatus }): string {
+  const isActive = run.status === 'queued' || run.status === 'running'
+    || run.status === 'paused' || run.status === 'awaiting_monitor_action'
+  return formatElapsed(run.createdAt, isActive ? undefined : run.updatedAt)
 }
 
 function selectRun(runId: string) {
@@ -1004,6 +1037,10 @@ onBeforeUnmount(() => {
   disposeMessageListener?.()
   detachScrollListener?.()
   detachScrollListener = undefined
+  if (elapsedTicker) {
+    clearInterval(elapsedTicker)
+    elapsedTicker = undefined
+  }
   if (llmDeltaFlushFallbackTimer) {
     clearTimeout(llmDeltaFlushFallbackTimer)
     llmDeltaFlushFallbackTimer = undefined
@@ -1038,7 +1075,7 @@ onBeforeUnmount(() => {
         @click="selectRun(run.runId)"
       >
         <span class="run-name">{{ run.agentName || t('components.subagents.monitor.defaultAgentName') }}</span>
-        <span class="run-meta">{{ statusLabel(run.status) }} · {{ formatTime(run.updatedAt) }}</span>
+        <span class="run-meta">{{ statusLabel(run.status) }} · {{ runElapsed(run) }}</span>
       </button>
     </div>
 
@@ -1058,7 +1095,7 @@ onBeforeUnmount(() => {
         <div class="run-title-row">
           <div>
             <div class="run-title">{{ focusedRun.agentName || t('components.subagents.monitor.defaultAgentName') }}</div>
-            <div class="run-subtitle">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ formatTime(focusedRun.updatedAt) }}</div>
+            <div class="run-subtitle">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ runElapsed(focusedRun) }}</div>
             <div v-if="focusedWindow?.hasMoreBefore" class="run-window-note">
               <!--
                 修改原因：当前窗口可能由多次向前分页拼接而来，文案不能继续暗示只显示“最近”尾部。

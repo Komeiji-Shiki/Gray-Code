@@ -10,7 +10,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
+import { loadCheckpoints, refreshCurrentConversationBuildSession, loadHistory } from './conversationActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
 
@@ -50,11 +50,121 @@ export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendInde
 }
 
 /**
+ * 恢复预览（CP-09）：调用后端计算恢复计划（待删除文件清单），不执行任何写入。
+ *
+ * 前端在展示确认对话框（含待删除文件清单）后，再调用 restoreCheckpoint 真正执行。
+ * deletablePaths：快照记录过、按 #29 白名单删除的文件；
+ * untrackedPaths：快照后新建的文件，需用户确认后才删除。
+ */
+export async function previewRestore(
+  state: ChatStoreState,
+  checkpointId: string
+): Promise<{
+  success: boolean
+  restored: number
+  deleted: number
+  skipped: number
+  deletablePaths: string[]
+  untrackedPaths: string[]
+  legacy?: boolean
+  error?: string
+  failures?: Array<{ path: string; reason: string }>
+  missingBackupDirs?: string[]
+  autoPrunedCheckpointCount?: number
+  unbackedPaths?: string[]
+}> {
+  if (!state.currentConversationId.value) {
+    return { success: false, restored: 0, deleted: 0, skipped: 0, deletablePaths: [], untrackedPaths: [], error: 'No conversation selected' }
+  }
+
+  try {
+    const result = await sendToExtension<{
+      success: boolean
+      restored: number
+      deleted: number
+      skipped: number
+      deletablePaths: string[]
+      untrackedPaths: string[]
+      legacy?: boolean
+      error?: string
+      failures?: Array<{ path: string; reason: string }>
+      missingBackupDirs?: string[]
+      autoPrunedCheckpointCount?: number
+      unbackedPaths?: string[]
+    }>(
+      'checkpoint.previewRestore',
+      {
+        conversationId: state.currentConversationId.value,
+        checkpointId
+      }
+    )
+
+    const normalized = result || { success: false, restored: 0, deleted: 0, skipped: 0, deletablePaths: [], untrackedPaths: [], error: 'Unknown error' }
+    if ((normalized.autoPrunedCheckpointCount || 0) > 0) {
+      try {
+        await loadCheckpoints(state)
+      } catch (error) {
+        console.error('[checkpointActions] Failed to refresh checkpoints after auto prune:', error)
+      }
+    }
+    return normalized
+  } catch (err: any) {
+    return { success: false, restored: 0, deleted: 0, skipped: 0, deletablePaths: [], untrackedPaths: [], error: err.message || 'Preview restore failed' }
+  }
+}
+
+/**
+ * 预览排除结果（EX-09）：调用后端按当前排除配置扫描工作区。
+ *
+ * 返回按默认类别聚合的排除统计（summary / byProfile / ignoreSnapshot / complete）。
+ * 只做扫描统计，不哈希大文件、不创建存档。
+ */
+export interface ExclusionPreviewSummary {
+  excludedCount: number
+  excludedBytes: number
+  byReason: Record<string, { count: number; bytes: number }>
+  samples: Array<{
+    path: string
+    reason: string
+    rule?: string
+    source?: string
+    size?: number
+  }>
+}
+
+export interface ExclusionPreviewResult {
+  summary: ExclusionPreviewSummary
+  byProfile: Record<string, ExclusionPreviewSummary>
+  ignoreSnapshot: {
+    version: number
+    forcedRulesVersion: number
+    defaultProfileVersion: number
+    enabledProfiles: Record<string, boolean>
+    maxFileSizeBytes: number
+    customPatterns: string[]
+  }
+  complete: boolean
+}
+
+export async function previewExclusions(): Promise<ExclusionPreviewResult | null> {
+  try {
+    return await sendToExtension<ExclusionPreviewResult>('checkpoint.previewExclusions', {})
+  } catch (err: any) {
+    console.error('[checkpointActions] Failed to preview exclusions:', err)
+    return null
+  }
+}
+
+/**
  * 恢复到指定检查点
+ *
+ * @param deleteUntrackedFiles 是否删除快照后新建的文件（CP-09）。
+ *        用户在恢复确认框中确认了待删除文件清单后传 true。
  */
 export async function restoreCheckpoint(
   state: ChatStoreState,
-  checkpointId: string
+  checkpointId: string,
+  deleteUntrackedFiles?: boolean
 ): Promise<{
   success: boolean
   restored: number
@@ -63,6 +173,8 @@ export async function restoreCheckpoint(
   error?: string
   missingBackupDirs?: string[]
   autoPrunedCheckpointCount?: number
+  failures?: Array<{ path: string; reason: string }>
+  unbackedPaths?: string[]
 }> {
   if (!state.currentConversationId.value) {
     return { success: false, restored: 0, error: 'No conversation selected' }
@@ -77,11 +189,14 @@ export async function restoreCheckpoint(
       error?: string
       missingBackupDirs?: string[]
       autoPrunedCheckpointCount?: number
+      failures?: Array<{ path: string; reason: string }>
+      unbackedPaths?: string[]
     }>(
       'checkpoint.restore',
       {
         conversationId: state.currentConversationId.value,
-        checkpointId
+        checkpointId,
+        deleteUntrackedFiles: deleteUntrackedFiles === true
       }
     )
     
@@ -111,13 +226,16 @@ export async function restoreCheckpoint(
  * @param messageIndex allMessages 中的索引
  * @param checkpointId 检查点 ID
  * @param currentModelName 当前模型名称
+ * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
+ *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
  */
 export async function restoreAndRetry(
   state: ChatStoreState,
   messageIndex: number,
   checkpointId: string,
   currentModelName: string,
-  cancelStream: () => Promise<void>
+  cancelStream: () => Promise<void>,
+  confirmedDeleteUntracked: boolean = false
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -140,8 +258,8 @@ export async function restoreAndRetry(
   state.isLoading.value = true
 
   try {
-    // 1. 先恢复检查点
-    const restoreResult = await restoreCheckpoint(state, checkpointId)
+    // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
     if (!restoreResult.success) {
       if (validateSessionIdentity(state, originConvId)) {
         state.error.value = {
@@ -162,7 +280,9 @@ export async function restoreAndRetry(
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
-    // 4. 删除后端的消息
+    // 4. 删除后端的消息；失败必须中止重试，否则后端历史截断失败时，
+    //    重试生成的消息会追加在旧消息之后，造成历史重复（CP-11）
+    let deleteFailed = false
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: originConvId,
@@ -170,10 +290,28 @@ export async function restoreAndRetry(
         preserveCheckpointId: checkpointId
       })
       if (!resp?.success) {
+        deleteFailed = true
         console.error('[checkpointActions] restoreAndRetry: backend deleteMessage returned error:', resp)
       }
     } catch (err) {
+      deleteFailed = true
       console.error('Failed to delete messages from backend:', err)
+    }
+    if (deleteFailed) {
+      if (validateSessionIdentity(state, originConvId)) {
+        state.error.value = {
+          code: 'DELETE_MESSAGE_ERROR',
+          message: '回档后删除旧消息失败，已中止重试。请刷新对话后重试。'
+        }
+      }
+      // 本地窗口已截断而后端历史未删：重新加载历史恢复一致（CP-11）
+      try {
+        await loadHistory(state)
+      } catch (reloadErr) {
+        console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
+      }
+      state.isLoading.value = false
+      return
     }
 
     // 再次校验归属
@@ -236,12 +374,15 @@ export async function restoreAndRetry(
  *
  * @param messageIndex allMessages 中的索引
  * @param checkpointId 检查点 ID
+ * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
+ *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
  */
 export async function restoreAndDelete(
   state: ChatStoreState,
   messageIndex: number,
   checkpointId: string,
-  cancelStream: () => Promise<void>
+  cancelStream: () => Promise<void>,
+  confirmedDeleteUntracked: boolean = false
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -264,8 +405,8 @@ export async function restoreAndDelete(
   state.isLoading.value = true
 
   try {
-    // 1. 先恢复检查点
-    const restoreResult = await restoreCheckpoint(state, checkpointId)
+    // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
     if (!restoreResult.success) {
       if (validateSessionIdentity(state, originConvId)) {
         state.error.value = {
@@ -286,7 +427,8 @@ export async function restoreAndDelete(
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
-    // 4. 删除后端的消息
+    // 4. 删除后端的消息；失败时明确提示，避免前端已截断而后端历史残留的静默不一致（CP-11）
+    let deleteFailed = false
     try {
       const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: originConvId,
@@ -294,13 +436,27 @@ export async function restoreAndDelete(
         preserveCheckpointId: checkpointId
       })
       if (!resp?.success) {
+        deleteFailed = true
         console.error('[checkpointActions] restoreAndDelete: backend deleteMessage returned error:', resp)
       } else {
         // 删除/回滚后刷新 activeBuild，避免展示旧的 Build 壳
         await refreshCurrentConversationBuildSession(state)
       }
     } catch (err) {
+      deleteFailed = true
       console.error('Failed to delete messages from backend:', err)
+    }
+    if (deleteFailed && validateSessionIdentity(state, originConvId)) {
+      state.error.value = {
+        code: 'DELETE_MESSAGE_ERROR',
+        message: '回档后删除旧消息失败，请刷新对话后检查历史状态。'
+      }
+      // 本地窗口已截断而后端历史未删：重新加载历史恢复一致（CP-11）
+      try {
+        await loadHistory(state)
+      } catch (reloadErr) {
+        console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
+      }
     }
 
   } catch (err: any) {
@@ -325,6 +481,8 @@ export async function restoreAndDelete(
  * @param attachments 附件列表（可选）
  * @param checkpointId 检查点 ID
  * @param currentModelName 当前模型名称
+ * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
+ *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
  */
 export async function restoreAndEdit(
   state: ChatStoreState,
@@ -333,7 +491,8 @@ export async function restoreAndEdit(
   attachments: Attachment[] | undefined,
   checkpointId: string,
   currentModelName: string,
-  cancelStream: () => Promise<void>
+  cancelStream: () => Promise<void>,
+  confirmedDeleteUntracked: boolean = false
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -363,8 +522,8 @@ export async function restoreAndEdit(
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   try {
-    // 1. 先恢复检查点
-    const restoreResult = await restoreCheckpoint(state, checkpointId)
+    // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
     if (!restoreResult.success) {
       state.error.value = {
         code: 'RESTORE_ERROR',
@@ -555,5 +714,58 @@ export async function cancelSummarizeRequest(state: ChatStoreState): Promise<voi
     await sendToExtension('cancelSummarizeRequest', { conversationId })
   } catch (error) {
     console.error('[checkpointActions] Failed to cancel summarize request:', error)
+  }
+}
+
+// ============ 存档操作进度 / 取消（M7，CPF-11） ============
+
+/** 与后端 CheckpointOperationProgress 对齐的操作进度 */
+export interface CheckpointOperationProgress {
+  operationId: string
+  kind: string
+  conversationId?: string
+  checkpointId?: string
+  phase: string
+  processed: number
+  total: number
+  cancelled: boolean
+  startedAt: number
+  updatedAt: number
+  message?: string
+}
+
+/**
+ * 轮询进行中存档操作的进度（M7）。
+ * operationId 缺省时返回最近更新的进行中操作；无进行中操作返回 null。
+ */
+export async function pollOperationProgress(
+  operationId?: string
+): Promise<CheckpointOperationProgress | null> {
+  try {
+    const result = await sendToExtension<{ progress: CheckpointOperationProgress | null }>(
+      'checkpoint.getOperationProgress',
+      { operationId }
+    )
+    return result?.progress ?? null
+  } catch (error: any) {
+    console.error('[checkpointActions] Failed to poll operation progress:', error)
+    return null
+  }
+}
+
+/**
+ * 取消进行中的存档操作（M7）。
+ * @returns 是否存在该操作并已触发取消
+ */
+export async function cancelCheckpointOperation(operationId: string): Promise<boolean> {
+  try {
+    const result = await sendToExtension<{ cancelled: boolean }>(
+      'checkpoint.cancelOperation',
+      { operationId }
+    )
+    return result?.cancelled === true
+  } catch (error: any) {
+    console.error('[checkpointActions] Failed to cancel operation:', error)
+    return false
   }
 }

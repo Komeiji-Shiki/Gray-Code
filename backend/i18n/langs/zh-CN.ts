@@ -91,7 +91,9 @@ const zhCN = {
                 filesDeleted: '{count} 个文件已删除',
                 filesUnchanged: '{count} 个文件未变化',
                 chainBroken: '增量链断裂：引用的基准检查点缺失',
-                partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败'
+                partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败',
+                workspaceMismatch: '当前工作区与存档记录的工作区不一致，拒绝恢复',
+                multiRootLegacyNotSupported: '旧版存档（相对路径格式）不支持在多根工作区中恢复'
             },
             defaultConversationTitle: '对话 {conversationId}',
             errors: {
@@ -105,7 +107,17 @@ const zhCN = {
             errors: {
                 loadFailed: '加载设置失败',
                 saveFailed: '保存设置失败',
-                invalidValue: '无效的设置值'
+                invalidValue: '无效的设置值',
+                invalidCheckpointExclusionPatterns: '存档排除规则无效: {detail}',
+                invalidCheckpointExclusionProfiles: '存档排除类别无效: {detail}',
+                invalidCheckpointMaxFileSize: '单文件大小上限必须是有限数值',
+                exclusionPatternReason: {
+                    empty: '空模式',
+                    absolute: '绝对路径模式',
+                    negationOnly: '纯 ! 否定（缺少规则体）',
+                    traversal: '包含 .. 越界',
+                    newline: '包含换行'
+                }
             },
             storage: {
                 pathNotAbsolute: '路径必须是绝对路径: {path}',
@@ -663,10 +675,16 @@ description: "简要描述该技能的功能及使用场景"
             updateCheckpointConfigFailed: '更新存档点配置失败',
             getCheckpointsFailed: '获取检查点列表失败',
             restoreCheckpointFailed: '恢复检查点失败',
+            previewRestoreFailed: '预览恢复失败',
             deleteCheckpointFailed: '删除检查点失败',
             deleteAllCheckpointsFailed: '删除所有检查点失败',
             deleteCheckpointsBatchFailed: '批量删除检查点失败',
             getConversationsWithCheckpointsFailed: '获取对话检查点信息失败',
+            previewExclusionsFailed: '预览排除结果失败',
+            previewExclusionsNoWorkspace: '当前没有可用的工作区根目录',
+            getCheckpointManifestFailed: '获取存档 manifest 失败',
+            getCheckpointOperationProgressFailed: '获取存档操作进度失败',
+            cancelCheckpointOperationFailed: '取消存档操作失败',
             
             openDiffPreviewFailed: '打开 diff 预览失败',
             diffContentNotFound: 'Diff 内容不存在或已过期',

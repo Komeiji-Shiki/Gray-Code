@@ -228,20 +228,23 @@ export class OpenAIFormatter extends BaseFormatter {
      * 这样可以避免把不同前缀空间误并到主聊天 KVCache 隔离域里。
      * 此功能由渠道设置 deepSeekUserIdEnabled 显式控制，默认关闭，避免误判兼容服务。
      *
-     * user_id 使用对话 ID 的哈希，保证稳定且不包含原始对话信息。
+     * 续跑（continueFromRunId）时 executor 会把 conversationId 直接沿用旧 runId，
+     * 因此 user_id 哈希输入与旧 run 一致，缓存域天然相同，无需额外字段。
+     *
+     * user_id 使用 ID 的哈希，保证稳定且不包含原始对话信息。
      */
     private buildDeepSeekUserId(request: GenerateRequest, config: OpenAIConfig): string | undefined {
         if (!config.deepSeekUserIdEnabled) {
             return undefined;
         }
 
-        const conversationId = request.conversationId?.trim();
-        if (!conversationId) {
+        const domainId = request.conversationId?.trim();
+        if (!domainId) {
             return undefined;
         }
 
         const digest = createHash('sha256')
-            .update(conversationId, 'utf8')
+            .update(domainId, 'utf8')
             .digest('hex');
 
         return `${DEEPSEEK_USER_ID_PREFIX}${digest}`;

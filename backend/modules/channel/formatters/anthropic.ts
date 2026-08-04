@@ -252,6 +252,10 @@ export class AnthropicFormatter extends BaseFormatter {
      *
      * 只有渠道启用 anthropicUserIdEnabled 且调用方传入 conversationId 时才生成。
      * 主聊天请求传真实对话 ID，SubAgent 传 runId，各运行域彼此区分。
+     *
+     * 续跑（continueFromRunId）时 executor 会把 conversationId 直接沿用旧 runId，
+     * 因此 user_id 哈希输入与旧 run 一致，运行域天然相同，无需额外字段。
+     *
      * user_id 使用 ID 的 sha256 哈希，稳定且不包含原始对话信息。
      */
     private buildAnthropicUserId(request: GenerateRequest, config: AnthropicConfig): string | undefined {
@@ -259,13 +263,13 @@ export class AnthropicFormatter extends BaseFormatter {
             return undefined;
         }
 
-        const conversationId = request.conversationId?.trim();
-        if (!conversationId) {
+        const domainId = request.conversationId?.trim();
+        if (!domainId) {
             return undefined;
         }
 
         const digest = createHash('sha256')
-            .update(conversationId, 'utf8')
+            .update(domainId, 'utf8')
             .digest('hex');
 
         return `${ANTHROPIC_USER_ID_PREFIX}${digest}`;
