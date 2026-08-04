@@ -86,7 +86,7 @@ export class ElectronContext {
       packageJSON: {
         name: 'graycode',
         displayName: 'Gray Code',
-        version: '1.5.2',
+        version: readRootPackageVersion(this.extensionPath),
         publisher: 'czocelot'
       }
     };
@@ -94,5 +94,14 @@ export class ElectronContext {
     if (WIN32) {
       // fsPath comes from Uri.file which already yields backslashes
     }
+  }
+}
+
+function readRootPackageVersion(extensionPath: string): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(extensionPath, 'package.json'), 'utf-8'));
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
   }
 }

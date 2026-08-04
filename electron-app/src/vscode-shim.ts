@@ -1565,7 +1565,7 @@ export const extensions = {
       return {
         id,
         extensionPath: resolveRepoRoot(),
-        packageJSON: { version: '1.5.2', name: 'graycode', displayName: 'Gray Code' }
+        packageJSON: readRootPackageMetadata()
       };
     }
     return undefined;
@@ -1575,6 +1575,19 @@ export const extensions = {
 
 function resolveRepoRoot(): string {
   return process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
+}
+
+function readRootPackageMetadata(): { version: string; name: string; displayName: string } {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(resolveRepoRoot(), 'package.json'), 'utf-8'));
+    return {
+      version: typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0',
+      name: typeof pkg.name === 'string' && pkg.name ? pkg.name : 'graycode',
+      displayName: typeof pkg.displayName === 'string' && pkg.displayName ? pkg.displayName : 'Gray Code'
+    };
+  } catch {
+    return { version: '0.0.0', name: 'graycode', displayName: 'Gray Code' };
+  }
 }
 
 // ============================================================================
