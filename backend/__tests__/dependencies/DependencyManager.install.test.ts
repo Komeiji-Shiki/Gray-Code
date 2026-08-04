@@ -1,10 +1,10 @@
 /**
  * DependencyManager.install 并发安全回归测试
  *
- * 1. 同依赖并发安装串行化：第二个调用复用第一个的结果（exec 只执行一次）
+ * 1. 同依赖并发安装串行化：第二个调用复用第一个的结果（execFile 只执行一次）
  * 2. 安装完成后再调用会重新安装（不缓存结果）
  * 3. 安装失败路径清理临时目录（不留 deps-temp-* 残留）
- * 4. 未知依赖直接返回 false，不触发 exec
+ * 4. 未知依赖直接返回 false，不触发 execFile
  */
 import * as childProcess from 'child_process';
 import * as fs from 'fs';
@@ -12,17 +12,18 @@ import * as os from 'os';
 import * as path from 'path';
 import { DependencyManager } from '../../modules/dependencies/DependencyManager';
 
-// 模拟 child_process.exec：
-// DependencyManager 使用 promisify(childProcess.exec)，promisify 依据 fn.length
-// 决定传给回调前的参数个数，真实 exec.length === 2 (command, options)，这里保持一致。
+// 模拟 child_process.execFile：
+// DependencyManager 使用 promisify(childProcess.execFile)，promisify 依据 fn.length
+// 决定传给回调前的参数个数，真实 execFile.length === 4 (file, args, options, callback)，这里保持一致。
+// fork 刻意使用 execFile（参数数组直传、不经 shell 解析）而非 exec，见 DependencyManager.ts。
 jest.mock('child_process', () => {
     const actual = jest.requireActual('child_process');
-    const exec = jest.fn();
-    Object.defineProperty(exec, 'length', { value: 2 });
-    return { ...actual, exec };
+    const execFile = jest.fn();
+    Object.defineProperty(execFile, 'length', { value: 4 });
+    return { ...actual, execFile };
 });
 
-const execMock = childProcess.exec as unknown as jest.Mock;
+const execFileMock = childProcess.execFile as unknown as jest.Mock;
 
 describe('DependencyManager.install', () => {
     let limcodeDir: string;
@@ -30,7 +31,7 @@ describe('DependencyManager.install', () => {
     beforeEach(() => {
         limcodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-deps-'));
         (DependencyManager as any).instance = undefined;
-        execMock.mockReset();
+        execFileMock.mockReset();
     });
 
     afterEach(() => {
@@ -44,7 +45,7 @@ describe('DependencyManager.install', () => {
 
     /** 模拟 npm install 成功：在 options.cwd（临时目录）下生成 node_modules/sharp */
     function mockNpmSuccess(delayMs = 0): void {
-        execMock.mockImplementation((command: string, options: any, callback: any) => {
+        execFileMock.mockImplementation((file: string, args: string[], options: any, callback: any) => {
             const tempDir = options?.cwd as string;
             const done = () => {
                 const pkgDir = path.join(tempDir, 'node_modules', 'sharp');
@@ -72,7 +73,7 @@ describe('DependencyManager.install', () => {
         expect(r1).toBe(true);
         expect(r2).toBe(true);
         // 串行化：同一依赖的两次并发请求只触发一次真实安装
-        expect(execMock).toHaveBeenCalledTimes(1);
+        expect(execFileMock).toHaveBeenCalledTimes(1);
         // 安装结果可用
         expect(await mgr.isInstalled('sharp')).toBe(true);
         expect(await mgr.getInstalledVersion('sharp')).toBe('0.33.5');
@@ -87,12 +88,12 @@ describe('DependencyManager.install', () => {
 
         expect(await mgr.install('sharp')).toBe(true);
         expect(await mgr.install('sharp')).toBe(true);
-        expect(execMock).toHaveBeenCalledTimes(2);
+        expect(execFileMock).toHaveBeenCalledTimes(2);
         expect(await mgr.isInstalled('sharp')).toBe(true);
     });
 
     it('安装失败：返回 false、不标记已安装、清理临时目录', async () => {
-        execMock.mockImplementation((command: string, options: any, callback: any) => {
+        execFileMock.mockImplementation((file: string, args: string[], options: any, callback: any) => {
             callback(new Error('npm install failed (mock)'), '', '');
         });
         const mgr = createManager();
@@ -108,6 +109,6 @@ describe('DependencyManager.install', () => {
         const mgr = createManager();
 
         expect(await mgr.install('nonexistent-dep')).toBe(false);
-        expect(execMock).not.toHaveBeenCalled();
+        expect(execFileMock).not.toHaveBeenCalled();
     });
 });

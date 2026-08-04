@@ -75,6 +75,8 @@ beforeEach(() => {
     (vscode.workspace as any).workspaceFolders = [
         { uri: vscode.Uri.file('C:/workspace'), name: 'ws', index: 0 }
     ];
+    (vscode.workspace.fs.stat as jest.Mock).mockReset();
+    (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ size: 1024 });
     (vscode.workspace.fs.readFile as jest.Mock).mockReset();
     (vscode.workspace.fs.writeFile as jest.Mock).mockReset();
     (vscode.workspace.fs.createDirectory as jest.Mock).mockReset();

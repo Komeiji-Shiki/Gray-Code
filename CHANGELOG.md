@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### Merged
+  - 同步合入上游 1.4.1（大规模代码审查修复：并发/安全/性能/一致性加固），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量：
+    - MCP：StdioClient spawn `error` 立即清理并拒绝 pending 请求（不再挂满超时）+ stdin/stdout/stderr 流 error 监听 + stderr 64KB 上限；HttpClient SSE 按请求 id 匹配与多行 `data:` 合并、超时覆盖 body 读取与 sendNotification、disconnect 中止进行中请求（保留 fork 的 16MB 缓冲区上限）
+    - 依赖安装：并发 in-flight 复用 + 独立临时目录 + `maxBuffer` 64MB + 失败清理（fork 保留 `execFile` 参数直传、不经 shell 解析的注入面收敛）
+    - 用量统计：接入 `UsageStatsCache` + 对话目录监听（懒初始化、宿主 dispose 时释放），结果缓存保留 fork 的 LRU 上限
+    - Diff 预览：`diffContentId` 白名单校验统一收敛到 `isValidDiffContentId`
+    - media 工具：generate_image / remove_background 输入输出统一走 `resolveFileToolPathWithInfo` + 工作区外访问审批流（fork 的 `ensureMediaPathsSafe` 工作区护栏保留，配套测试适配）
+    - 前端：`sendToExtension` 条件 JSON 往返（纯 JSON 大载荷不再双份序列化）；设置语言补 'ja'；声音去重与 todo 状态集合容量上限
+
 ## [1.4.1] - 2026-08-04
 
 ### Fixed
