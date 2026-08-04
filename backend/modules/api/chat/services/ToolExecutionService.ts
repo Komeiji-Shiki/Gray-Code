@@ -430,9 +430,13 @@ export class ToolExecutionService {
         })();
 
         // 在所有工具执行前创建一个检查点
+        // BCP-01: 由消息索引反查节点 ID（注入 ConversationManager 时；否则 CheckpointService 兜底）
+        // PERF：before/after 两个存档点使用同一 (conversationId, messageIndex)，合并为一次反查。
+        // 每次 getMessageNodeIdAt 都会全量重读 transcript 文件，工具循环一轮最多 200 次迭代时
+        // 该重复查询会放大为数百次全量文件读。
+        let resolvedMessageNodeId: string | undefined;
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
-            // BCP-01: 由消息索引反查节点 ID（注入 ConversationManager 时；否则 CheckpointService 兜底）
-            const messageNodeId = this.conversationManager
+            resolvedMessageNodeId = this.conversationManager
                 ? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex)
                 : undefined;
             const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
@@ -440,12 +444,12 @@ export class ToolExecutionService {
                 messageIndex,
                 toolNameForCheckpoint,
                 'before',
-                messageNodeId
+                resolvedMessageNodeId
             );
             if (beforeCheckpoint) {
                 checkpoints.push(beforeCheckpoint);
                 // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
-                void this.bindWorkspaceCheckpointBestEffort(conversationId, messageNodeId, beforeCheckpoint.id);
+                void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, beforeCheckpoint.id);
             }
         }
 
@@ -642,21 +646,20 @@ export class ToolExecutionService {
 
         // 在所有工具执行后创建一个检查点
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
-            // BCP-01: 由消息索引反查节点 ID（与 before 同消息，index 不变）
-            const messageNodeId = this.conversationManager
-                ? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex)
-                : undefined;
+            // BCP-01: 复用 before 已反查的节点 ID（与 before 同消息，index 不变；
+            // 工具执行只在其后追加 functionResponse，不影响该索引位置的节点），
+            // 避免同一批次内第二次全量重读 transcript 文件。
             const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 messageIndex,
                 toolNameForCheckpoint,
                 'after',
-                messageNodeId
+                resolvedMessageNodeId
             );
             if (afterCheckpoint) {
                 checkpoints.push(afterCheckpoint);
                 // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
-                void this.bindWorkspaceCheckpointBestEffort(conversationId, messageNodeId, afterCheckpoint.id);
+                void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, afterCheckpoint.id);
             }
         }
 
@@ -964,15 +967,47 @@ export class ToolExecutionService {
      *
      * 供 ToolIterationLoopService 在「流式边执行已完成、无主循环」（autoPrefix 为空）分支调用：
      * 此时早启动生成器不参与 drain（避免 abort 边角把已 drain 消息随被丢弃结果一起丢失，
-     * 见 E-1），由本方法在最终落盘前显式消费一次。不参与 epoch 竞争——
-     * 调用方保证自己是最终落盘路径；无注入目标（非 functionResponse part）时不消费 inbox。
+     * 见 E-1），由本方法在最终落盘前显式消费一次。
+     *
+     * MED-1 收敛：调用方若持有 claim（mailboxDrainKey/mailboxDrainEpoch）则走与主循环一致的
+     * 标准所有权检查；未传 claim 时（本路径无执行循环领取过 epoch）显式校验当前持有者——
+     * 若已有并发的执行循环持有该 (conversationId, runId) 的 drain 权（如并发请求新启动的主循环），
+     * 跳过本次消费，消息保留给新主循环，避免挂到将被丢弃的结果上；无持有者时本路径即最终落盘点，
+     * 正常 drain。无注入目标（非 functionResponse part）时不消费 inbox。
      */
     drainInboxIntoResults(
         mailboxConversationId: string | undefined,
         mailboxRunId: string | undefined,
         responseParts: ContentPart[],
-        toolResults: ToolExecutionResult[]
+        toolResults: ToolExecutionResult[],
+        mailboxDrainKey?: string,
+        mailboxDrainEpoch?: number
     ): void {
+        if (!mailboxConversationId || !mailboxRunId) {
+            return;
+        }
+
+        if (mailboxDrainKey !== undefined && mailboxDrainEpoch !== undefined) {
+            // 调用方持有 claim：走与主循环一致的所有权检查（injectInboxMessages 内校验）
+            this.injectInboxMessages(
+                mailboxConversationId,
+                mailboxRunId,
+                responseParts,
+                toolResults,
+                mailboxDrainKey,
+                mailboxDrainEpoch
+            );
+            return;
+        }
+
+        // 调用方未持有 claim（无主循环路径）：MED-1 收敛——显式校验当前持有者。
+        // 已有并发的执行循环持有该 (conversationId, runId) 的 drain 权时跳过本次消费，
+        // 消息保留给新主循环（避免挂到将被丢弃的结果上）；无持有者时才正常 drain。
+        // 本方法整体同步执行，check 与 drain 之间无 await，事件循环内原子。
+        const key = `${mailboxConversationId}\u0000${mailboxRunId}`;
+        if (this.mailboxDrainEpochs.has(key)) {
+            return;
+        }
         this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults);
     }
 
@@ -1075,7 +1110,7 @@ export class ToolExecutionService {
 
         toolContext.promptModeSnapshot = promptModeSnapshot;
 
-        // A-COMM：注入信箱身份（会话 + runId），供 agent.sendMessage 识别发送方与会话边界；
+        // A-COMM：注入信箱身份（会话 + runId），供 agent_send_message 识别发送方与会话边界；
         // 子代理路径的 conversationId 参数为 undefined，信箱会话必须单独注入。
         if (mailboxConversationId) {
             toolContext.mailboxConversationId = mailboxConversationId;

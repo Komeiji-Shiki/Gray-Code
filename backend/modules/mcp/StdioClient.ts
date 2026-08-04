@@ -112,6 +112,10 @@ export class StdioMcpClient extends EventEmitter {
     // stderr 输出（用于错误诊断）
     private stderrOutput: string = '';
 
+    // stderr 缓存上限（64KB），超出后截断并标记，防止输出冗长的服务器导致内存无限增长
+    private static readonly MAX_STDERR = 64 * 1024;
+    private stderrTruncated: boolean = false;
+
     // 请求超时（毫秒）
     private timeout: number;
 
@@ -138,6 +142,7 @@ export class StdioMcpClient extends EventEmitter {
         
         // 收集 stderr 输出用于错误诊断
         this.stderrOutput = '';
+        this.stderrTruncated = false;
         
         this.process = cp.spawn(this.command, this.args, {
             env: processEnv,
@@ -155,8 +160,11 @@ export class StdioMcpClient extends EventEmitter {
         this.process.stderr?.setEncoding('utf8');
 
         // 设置错误处理
+        // spawn 失败（如命令不存在）只触发 'error' 不触发 'exit'，必须立即清理并拒绝所有 pending 请求，
+        // 否则 connect 会一直挂到超时
         this.process.on('error', (err) => {
             this.emit('error', err);
+            this.cleanup(`Process error: ${err.message}`);
         });
 
         this.process.on('exit', (code, signal) => {
@@ -164,9 +172,14 @@ export class StdioMcpClient extends EventEmitter {
             this.cleanup();
         });
 
-        // 收集 stderr (已 setEncoding，data 为 string)
+        // 为 stdin/stdout/stderr 流补 'error' 监听，避免对已死进程写入/读取时产生未处理的 'error' 事件
+        this.process.stdin?.on('error', () => {});
+        this.process.stdout?.on('error', () => {});
+        this.process.stderr?.on('error', () => {});
+
+        // 收集 stderr (已 setEncoding，data 为 string)，带 64KB 上限防止内存无限增长
         this.process.stderr?.on('data', (data: string) => {
-            this.stderrOutput += data;
+            this.appendStderr(data);
         });
 
         // 读取 stdout (已 setEncoding，data 为 string)
@@ -325,9 +338,8 @@ export class StdioMcpClient extends EventEmitter {
     private sendRequest<T>(method: string, params?: any, timeout?: number): Promise<T> {
         const effectiveTimeout = timeout ?? this.timeout;
         return new Promise((resolve, reject) => {
-            if (!this.process || !this.process.stdin) {
-                const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
-                reject(new Error(`Process not started${errorInfo}`));
+            if (!this.process || !this.process.stdin || this.process.exitCode !== null || this.process.signalCode !== null) {
+                reject(new Error(`Process not started${this.getStderrInfo()}`));
                 return;
             }
             
@@ -346,8 +358,7 @@ export class StdioMcpClient extends EventEmitter {
                 if (!resolved) {
                     resolved = true;
                     this.pendingRequests.delete(id);
-                    const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
-                    reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${errorInfo}`));
+                    reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${this.getStderrInfo()}`));
                 }
             }, effectiveTimeout);
             
@@ -357,8 +368,7 @@ export class StdioMcpClient extends EventEmitter {
                     resolved = true;
                     clearTimeout(timeoutId);
                     this.pendingRequests.delete(id);
-                    const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
-                    reject(new Error(`Process exited while waiting for "${method}" response${errorInfo}`));
+                    reject(new Error(`Process exited while waiting for "${method}" response${this.getStderrInfo()}`));
                 }
             };
             
@@ -384,7 +394,18 @@ export class StdioMcpClient extends EventEmitter {
             });
             
             const message = JSON.stringify(request) + '\n';
-            this.process.stdin.write(message);
+            try {
+                this.process.stdin.write(message);
+            } catch (error) {
+                // 流已销毁/关闭导致同步抛错（例如进程刚退出），立即拒绝请求
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    this.process?.removeListener('exit', onExit);
+                    this.pendingRequests.delete(id);
+                    reject(error instanceof Error ? error : new Error(String(error)));
+                }
+            }
         });
     }
     
@@ -453,15 +474,44 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /**
-     * 清理资源
+     * 附加 stderr 输出（带 64KB 上限，超出截断并标记）
      */
-    private cleanup(): void {
+    private appendStderr(data: string): void {
+        if (this.stderrOutput.length >= StdioMcpClient.MAX_STDERR) {
+            this.stderrTruncated = true;
+            return;
+        }
+        this.stderrOutput += data;
+        if (this.stderrOutput.length > StdioMcpClient.MAX_STDERR) {
+            this.stderrOutput = this.stderrOutput.slice(0, StdioMcpClient.MAX_STDERR);
+            this.stderrTruncated = true;
+        }
+    }
+
+    /**
+     * 获取 stderr 诊断信息（含截断标记）
+     */
+    private getStderrInfo(): string {
+        if (!this.stderrOutput) {
+            return '';
+        }
+        const truncated = this.stderrTruncated ? '\n[stderr truncated]' : '';
+        return `\nStderr: ${this.stderrOutput.trim()}${truncated}`;
+    }
+
+    /**
+     * 清理资源
+     *
+     * @param errorMessage 可选的自定义错误信息（如 spawn 失败），用于拒绝 pending 请求
+     */
+    private cleanup(errorMessage?: string): void {
         this.process = null;
         
         // 拒绝所有等待中的请求（包含 stderr 信息）
-        const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+        const errorInfo = this.getStderrInfo();
+        const message = errorMessage ? `${errorMessage}${errorInfo}` : `Connection closed${errorInfo}`;
         for (const [id, pending] of this.pendingRequests) {
-            pending.reject(new Error(`Connection closed${errorInfo}`));
+            pending.reject(new Error(message));
         }
         this.pendingRequests.clear();
         
@@ -469,5 +519,6 @@ export class StdioMcpClient extends EventEmitter {
         this.resources = [];
         this.prompts = [];
         this.stderrOutput = '';
+        this.stderrTruncated = false;
     }
 }

@@ -46,6 +46,7 @@ import type {
 import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { ToolIterationLoopService } from './ToolIterationLoopService';
+import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from './ToolIterationLoopService';
 import type { CheckpointService } from './CheckpointService';
 import type { DiffInterruptService } from './DiffInterruptService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
@@ -758,6 +759,34 @@ export class ChatFlowService {
   }
 
   /**
+   * 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器，拒绝所有未响应的工具调用。
+   *
+   * 流式与非流式入口共用（handleChatStream / handleRetryStream / handleChat / handleRetry）：
+   * 在写入本轮输入到历史之前统一调用，避免上一轮悬空的 functionCall / pending diff 跨回合残留，
+   * 导致下一次请求历史中出现带 functionCall 但没有 functionResponse 的消息而触发 API 400。
+   *
+   * mark/reset 成对且自带 try/finally：cancelAllPending / rejectAllPendingToolCalls 中任何
+   * await 抛错都会复位中断标记，不会让全局 userInterruptFlag 泄漏（对照 handleChatStream 的
+   * finally 用法；resetUserInterrupt 幂等，调用方后续 finally 再 reset 一次无副作用）。
+   */
+  private async prepareConversationForRequest(conversationId: string): Promise<void> {
+    // 中断之前未完成的 diff 等待并关闭编辑器
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+
+      // 拒绝所有未响应的工具调用（在添加用户消息之前）
+      // 悬空 functionCall 会被标记 rejected 并补 functionResponse，
+      // 确保 functionResponse 插入到工具调用消息之后、用户消息之前
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+    } finally {
+      // 重置中断标记：中途任何 await 抛错都必须清理，
+      // 否则全局中断标记残留，无会话 diff 被误取消
+      this.diffInterruptService.resetUserInterrupt(conversationId);
+    }
+  }
+
+  /**
    * 非流式 Chat 流程
    */
   async handleChat(request: ChatRequestData): Promise<ChatSuccessData | ChatErrorData> {
@@ -800,6 +829,9 @@ export class ChatFlowService {
       await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
     }
 
+    // 2.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
+    //（与流式 handleChatStream 对齐，避免悬空 functionCall/pending diff 跨回合残留）
+    await this.prepareConversationForRequest(conversationId);
 
     // 3. 添加输入到历史
     if (hiddenFunctionResponse) {
@@ -875,6 +907,10 @@ export class ChatFlowService {
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry');
+
+    // 2.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
+    //（与流式 handleRetryStream 对齐，避免悬空 functionCall/pending diff 跨回合残留）
+    await this.prepareConversationForRequest(conversationId);
 
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -964,6 +1000,10 @@ export class ChatFlowService {
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_and_retry');
+
+    // 3.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
+    //（与 handleChat/handleRetry 一致，避免悬空 functionCall/pending diff 跨回合残留）
+    await this.prepareConversationForRequest(conversationId);
 
     // 4. 更新消息内容，并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
@@ -1067,15 +1107,12 @@ export class ChatFlowService {
     }
 
 
-    // 3. 中断之前未完成的 diff 等待并关闭编辑器
-    this.diffInterruptService.markUserInterrupt(conversationId);
-    try {
-      await this.diffInterruptService.cancelAllPending(conversationId);
-      
-      // 3.5 拒绝所有未响应的工具调用（在添加用户消息之前）
-      // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
-      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+    // 3. 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器、
+    //    拒绝所有未响应的工具调用（在添加用户消息之前，确保 functionResponse
+    //    会被插入到工具调用消息之后、用户消息之前）
+    await this.prepareConversationForRequest(conversationId);
 
+    try {
       // 4/5/6. 写入输入到历史：
       // - 普通模式：用户文本消息 + before/after checkpoint
       // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
@@ -1188,19 +1225,10 @@ export class ChatFlowService {
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'retry_stream');
 
-    // 3. 中断之前未完成的 diff 等待并关闭编辑器
-    this.diffInterruptService.markUserInterrupt(conversationId);
-    try {
-      await this.diffInterruptService.cancelAllPending(conversationId);
-      
-      // 3.5 拒绝所有未响应的工具调用（会把悬空 functionCall 标记为 rejected 并补 functionResponse，
-      // 所以后面不需要再单独检测孤立调用了——历史里永远不会有带 functionCall 但没有 functionResponse 的消息）
-      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
-    } finally {
-      // 4. 重置中断标记：中途任何 await 抛错都必须清理，
-      // 否则全局中断标记残留，无会话 diff 被误取消（与 handleChatStream 的 finally 用法一致）。
-      this.diffInterruptService.resetUserInterrupt(conversationId);
-    }
+    // 3. 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器、
+    //    拒绝所有未响应的工具调用（悬空 functionCall 会被标记 rejected 并补 functionResponse，
+    //    历史里不会残留带 functionCall 但没有 functionResponse 的消息）
+    await this.prepareConversationForRequest(conversationId);
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
@@ -1910,47 +1938,81 @@ export class ChatFlowService {
       );
 
       while (true) {
-        const { value, done } = await gen.next();
-        if (done) {
-          mergeExecutionResult(value as ToolExecutionFullResult);
-          break;
-        }
-
-        const event = value as ToolExecutionProgressEvent;
-
-        if (event.type === 'start') {
-          yield {
-            conversationId,
-            content: lastMessage,
-            toolsExecuting: true as const,
-            pendingToolCalls: [{
-              id: event.call.id,
-              name: event.call.name,
-              args: event.call.args,
-            }],
-          } satisfies ChatStreamToolsExecutingData;
-          continue;
-        }
-
-        if (event.type === 'end') {
-          const r = event.toolResult.result as any;
-          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-            status = 'error';
-          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-            status = 'warning';
+        // gen.next() 与 abort race（复用 ToolIterationLoopService 857-870 行 abort-race 模式）：
+        // 若当前工具不响应 abortSignal 且永不结束，单独的 await gen.next() 会让整个请求
+        // （含停止按钮）永久挂起。abort 先到时先给生成器一个短暂收尾窗口：响应 abort 的
+        // 工具会快速返回已完成部分的真实结果（不能丢，否则历史只剩“用户拒绝”占位），
+        // 窗口结束仍未返回则放弃，随后由下方 abort 检查输出 cancelled 可读信号。
+        let onAbort: (() => void) | undefined;
+        const abortPromise = request.abortSignal
+          ? new Promise<void>((resolve) => {
+            onAbort = () => resolve();
+            request.abortSignal!.addEventListener('abort', onAbort, { once: true });
+          })
+          : undefined;
+        try {
+          const nextPromise = gen.next();
+          const winner = abortPromise
+            ? await Promise.race([nextPromise, abortPromise])
+            : await nextPromise;
+          if (winner === undefined) {
+            // abort 先到：收尾窗口内等生成器返回已完成部分的真实结果
+            const drainedResult = await drainToolExecutionGeneratorAfterAbort(
+              gen,
+              nextPromise,
+              MAIN_LOOP_ABORT_DRAIN_GRACE_MS,
+            );
+            if (drainedResult) {
+              mergeExecutionResult(drainedResult);
+            }
+            break;
+          }
+          const { value, done } = winner;
+          if (done) {
+            mergeExecutionResult(value as ToolExecutionFullResult);
+            break;
           }
 
-          yield {
-            conversationId,
-            toolStatus: true as const,
-            tool: {
-              id: event.call.id,
-              name: event.call.name,
-              status,
-              result: event.toolResult.result,
-            },
-          } satisfies ChatStreamToolStatusData;
+          const event = value as ToolExecutionProgressEvent;
+
+          if (event.type === 'start') {
+            yield {
+              conversationId,
+              content: lastMessage,
+              toolsExecuting: true as const,
+              pendingToolCalls: [{
+                id: event.call.id,
+                name: event.call.name,
+                args: event.call.args,
+              }],
+            } satisfies ChatStreamToolsExecutingData;
+            continue;
+          }
+
+          if (event.type === 'end') {
+            const r = event.toolResult.result as any;
+            let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+            if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+              status = 'error';
+            } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+              status = 'warning';
+            }
+
+            yield {
+              conversationId,
+              toolStatus: true as const,
+              tool: {
+                id: event.call.id,
+                name: event.call.name,
+                status,
+                result: event.toolResult.result,
+              },
+            } satisfies ChatStreamToolStatusData;
+          }
+        } finally {
+          if (onAbort && request.abortSignal) {
+            request.abortSignal.removeEventListener('abort', onAbort);
+          }
         }
       }
 
@@ -2018,47 +2080,79 @@ export class ChatFlowService {
       );
 
       while (true) {
-        const { value, done } = await gen.next();
-        if (done) {
-          mergeExecutionResult(value as ToolExecutionFullResult);
-          break;
-        }
-
-        const event = value as ToolExecutionProgressEvent;
-
-        if (event.type === 'start') {
-          yield {
-            conversationId,
-            content: lastMessage,
-            toolsExecuting: true as const,
-            pendingToolCalls: [{
-              id: event.call.id,
-              name: event.call.name,
-              args: event.call.args,
-            }],
-          } satisfies ChatStreamToolsExecutingData;
-          continue;
-        }
-
-        if (event.type === 'end') {
-          const r = event.toolResult.result as any;
-          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-            status = 'error';
-          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-            status = 'warning';
+        // 与上方队首工具循环相同的 abort-race + 收尾窗口模式：
+        // 不响应 abort 且永不结束的工具不再让请求（含停止按钮）永久挂起；
+        // abort 后由下方 abort 检查输出 cancelled 可读信号。
+        let onAbort: (() => void) | undefined;
+        const abortPromise = request.abortSignal
+          ? new Promise<void>((resolve) => {
+            onAbort = () => resolve();
+            request.abortSignal!.addEventListener('abort', onAbort, { once: true });
+          })
+          : undefined;
+        try {
+          const nextPromise = gen.next();
+          const winner = abortPromise
+            ? await Promise.race([nextPromise, abortPromise])
+            : await nextPromise;
+          if (winner === undefined) {
+            // abort 先到：收尾窗口内等生成器返回已完成部分的真实结果
+            const drainedResult = await drainToolExecutionGeneratorAfterAbort(
+              gen,
+              nextPromise,
+              MAIN_LOOP_ABORT_DRAIN_GRACE_MS,
+            );
+            if (drainedResult) {
+              mergeExecutionResult(drainedResult);
+            }
+            break;
+          }
+          const { value, done } = winner;
+          if (done) {
+            mergeExecutionResult(value as ToolExecutionFullResult);
+            break;
           }
 
-          yield {
-            conversationId,
-            toolStatus: true as const,
-            tool: {
-              id: event.call.id,
-              name: event.call.name,
-              status,
-              result: event.toolResult.result,
-            },
-          } satisfies ChatStreamToolStatusData;
+          const event = value as ToolExecutionProgressEvent;
+
+          if (event.type === 'start') {
+            yield {
+              conversationId,
+              content: lastMessage,
+              toolsExecuting: true as const,
+              pendingToolCalls: [{
+                id: event.call.id,
+                name: event.call.name,
+                args: event.call.args,
+              }],
+            } satisfies ChatStreamToolsExecutingData;
+            continue;
+          }
+
+          if (event.type === 'end') {
+            const r = event.toolResult.result as any;
+            let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+            if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+              status = 'error';
+            } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+              status = 'warning';
+            }
+
+            yield {
+              conversationId,
+              toolStatus: true as const,
+              tool: {
+                id: event.call.id,
+                name: event.call.name,
+                status,
+                result: event.toolResult.result,
+              },
+            } satisfies ChatStreamToolStatusData;
+          }
+        } finally {
+          if (onAbort && request.abortSignal) {
+            request.abortSignal.removeEventListener('abort', onAbort);
+          }
         }
       }
 

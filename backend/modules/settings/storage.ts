@@ -33,12 +33,13 @@ export class FileSettingsStorage implements SettingsStorage {
             const content = await fs.readFile(this.filePath, 'utf-8');
             return JSON.parse(content);
         } catch (error: any) {
-            // 文件不存在或解析失败
+            // 文件不存在：按全新安装处理
             if (error.code === 'ENOENT') {
                 return null;
             }
-            console.error('Failed to load settings:', error);
-            return null;
+            // 解析失败（或读取异常）：抛错而不是静默归零，
+            // 避免设置管理器按全新安装处理并在下次保存时覆盖可恢复的坏文件。
+            throw new Error(`Failed to load settings from ${this.filePath}: ${error.message}`);
         }
     }
     

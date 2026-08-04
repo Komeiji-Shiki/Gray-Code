@@ -14,6 +14,9 @@ import { pruneMessageListUiStateByTab } from '../../components/message/messageLi
 /** 最大标签页数量 */
 const MAX_TABS = 100
 
+/** 每个后台会话缓冲区的最大 chunk 数量（防止长工具循环/长文本流无限累积） */
+const MAX_BACKGROUND_BUFFER_CHUNKS = 2000
+
 /** 生成标签页 ID */
 function generateTabId(): string {
   return `tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
@@ -350,7 +353,16 @@ export function bufferBackgroundChunk(
     snapshot.activeStreamId = chunk.streamId
   }
 
-  buffers.get(convId)!.push(chunk)
+  const buffer = buffers.get(convId)!
+  buffer.push(chunk)
+
+  // 缓冲上限保护：用户停留在其他标签页期间，长工具循环/长文本流会逐 chunk 累积。
+  // 超过上限时丢弃最旧 chunk，避免切回标签页时全量同步回放导致 UI 卡死。
+  // 丢弃最旧 chunk 是安全的：终结事件（complete/toolIteration 等）携带完整内容快照，
+  // 回放时仍能重建最终消息状态。
+  if (buffer.length > MAX_BACKGROUND_BUFFER_CHUNKS) {
+    buffer.splice(0, buffer.length - MAX_BACKGROUND_BUFFER_CHUNKS)
+  }
 
   if (snapshot) {
     switch (chunk.type) {

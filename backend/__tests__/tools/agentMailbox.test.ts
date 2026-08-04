@@ -12,6 +12,8 @@ import {
     MAIN_SESSION_RUN_ID,
     MAIN_AGENT_NAME,
     MAX_HOP_DEPTH,
+    AGENT_MESSAGE_MAX_LENGTH,
+    AGENT_INBOX_MAX_MESSAGES,
     type AgentMessage
 } from '../../tools/subagents/agentMailbox';
 
@@ -345,6 +347,101 @@ describe('AgentMailbox - threadId + hopDepth 防循环', () => {
         expect(t2reply.success).toBe(true);
         if (!t2reply.success) return;
         expect(t2reply.data.hopDepth).toBe(2);
+    });
+});
+
+describe('AgentMailbox - 消息长度与 inbox 条数上限', () => {
+    let mailbox: AgentMailbox;
+
+    beforeEach(() => {
+        mailbox = new AgentMailbox();
+    });
+
+    it(`text 超过 AGENT_MESSAGE_MAX_LENGTH(${AGENT_MESSAGE_MAX_LENGTH}) 时拒绝投递，错误信息含上限说明`, () => {
+        mailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        mailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        const oversized = 'x'.repeat(AGENT_MESSAGE_MAX_LENGTH + 1);
+        const result = mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_a',
+            targetRunId: 'run_b',
+            text: oversized
+        });
+        expect(result.success).toBe(false);
+        if (result.success) return;
+        expect(result.error).toContain(String(AGENT_MESSAGE_MAX_LENGTH));
+        // 未投递：inbox 保持为空
+        expect(mailbox.peekMessages('conv_1', 'run_b')).toHaveLength(0);
+        expect(mailbox.getPendingMessageCount()).toBe(0);
+    });
+
+    it(`text 恰好等于 AGENT_MESSAGE_MAX_LENGTH 时正常投递`, () => {
+        mailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        mailbox.registerRun('conv_1', 'run_b', 'Agent B');
+        const exact = 'x'.repeat(AGENT_MESSAGE_MAX_LENGTH);
+        const result = mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_a',
+            targetRunId: 'run_b',
+            text: exact
+        });
+        expect(result.success).toBe(true);
+        expect(mailbox.drainMessages('conv_1', 'run_b')[0].text.length).toBe(AGENT_MESSAGE_MAX_LENGTH);
+    });
+
+    it(`目标 inbox 达 AGENT_INBOX_MAX_MESSAGES(${AGENT_INBOX_MAX_MESSAGES}) 条时拒绝后续投递，drain 后可继续`, () => {
+        mailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        mailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        for (let i = 0; i < AGENT_INBOX_MAX_MESSAGES; i++) {
+            const sent = mailbox.sendMessage({
+                conversationId: 'conv_1',
+                fromRunId: 'run_a',
+                targetRunId: 'run_b',
+                text: `msg ${i}`
+            });
+            expect(sent.success).toBe(true);
+            if (!sent.success) return;
+        }
+        expect(mailbox.getPendingMessageCount()).toBe(AGENT_INBOX_MAX_MESSAGES);
+
+        const rejected = mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_a',
+            targetRunId: 'run_b',
+            text: 'one more'
+        });
+        expect(rejected.success).toBe(false);
+        if (rejected.success) return;
+        expect(rejected.error).toContain(String(AGENT_INBOX_MAX_MESSAGES));
+        // 拒绝不改变积压条数
+        expect(mailbox.getPendingMessageCount()).toBe(AGENT_INBOX_MAX_MESSAGES);
+
+        // drain 后恢复可投递
+        mailbox.drainMessages('conv_1', 'run_b');
+        const after = mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_a',
+            targetRunId: 'run_b',
+            text: 'after drain'
+        });
+        expect(after.success).toBe(true);
+    });
+
+    it('inbox 上限按收件方独立统计，不影响其它收件方', () => {
+        mailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        mailbox.registerRun('conv_1', 'run_b', 'Agent B');
+        mailbox.registerRun('conv_1', 'run_c', 'Agent C');
+
+        for (let i = 0; i < AGENT_INBOX_MAX_MESSAGES; i++) {
+            mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: `b ${i}` });
+        }
+        // run_b 的 inbox 已满，run_c 的 inbox 不受影响
+        const toB = mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'to b' });
+        expect(toB.success).toBe(false);
+        const toC = mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_c', text: 'to c' });
+        expect(toC.success).toBe(true);
     });
 });
 

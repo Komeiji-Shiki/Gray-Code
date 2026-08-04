@@ -8,6 +8,9 @@ import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 
+/** context 参数允许的最大上下文行数（防止引用多时响应体暴涨） */
+const MAX_CONTEXT_LINES = 10;
+
 /**
  * 引用位置信息
  */
@@ -81,7 +84,7 @@ Returns references grouped by file, with line numbers and code content.`;
                     },
                     context: {
                         type: 'number',
-                        description: 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only.'
+                        description: 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only. Max: 10 (values above are clamped).'
                     }
                 },
                 required: ['path', 'line']
@@ -92,7 +95,13 @@ Returns references grouped by file, with line numbers and code content.`;
             const line = args.line as number;
             const column = (args.column as number) || 1;
             const symbolName = args.symbol as string | undefined;
-            const contextLines = typeof args.context === 'number' ? args.context : 2;
+            // 修改原因：context 无上限时，模型传大值会让每个引用携带近乎整文件上下文，
+            // 引用多时响应体暴涨。
+            // 修改方式：clamp 到 [0, MAX_CONTEXT_LINES]；NaN/Infinity 等非法值回退默认 2。
+            const rawContextLines = typeof args.context === 'number' ? args.context : 2;
+            const contextLines = Number.isFinite(rawContextLines)
+                ? Math.min(MAX_CONTEXT_LINES, Math.max(0, Math.floor(rawContextLines)))
+                : 2;
             
             if (!filePath) {
                 return { success: false, error: 'path is required' };

@@ -98,6 +98,19 @@ describe('getMetadata 损坏降级（parse_error → fallback + 备份，不抛 
         // 备份文件仍保留（损坏现场）
         expect([...fake.files.keys()].some(p => p.includes(corruptPrefix('conv-recover')))).toBe(true);
     });
+
+    test('meta.json 损坏：getCustomMetadata 不抛错返回 undefined（与 getMetadataLight 降级一致）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-custom-corrupt', 'C');
+        await manager.setCustomMetadata('conv-custom-corrupt', 'todoList', [{ id: 't1', text: 'a' }]);
+
+        // 人为截断 meta.json（损坏）→ loadMetadataWithStatus 返回 parse_error
+        fake.files.set(metaPath('conv-custom-corrupt'), '{ "id": "conv-custom-corrupt"');
+
+        // 不抛 UNKNOWN_ERROR，按缺失返回 undefined
+        await expect(manager.getCustomMetadata('conv-custom-corrupt', 'todoList')).resolves.toBeUndefined();
+    });
 });
 
 describe('saveMetadata 原子写（tmp → rename 覆盖）', () => {

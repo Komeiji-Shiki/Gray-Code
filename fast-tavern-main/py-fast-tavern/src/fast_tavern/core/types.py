@@ -32,8 +32,9 @@ class RegexScriptData(TypedDict):
     view: list[RegexView]
     runOnEdit: bool
     macroMode: RegexMacroMode
-    minDepth: int | None
-    maxDepth: int | None
+    # number | null：保留浮点（对齐 TS normalizeRegexes）
+    minDepth: float | None
+    maxDepth: float | None
 
 
 RegexScriptsFileInput = Union[
@@ -63,8 +64,9 @@ class WorldBookEntry(TypedDict):
     key: list[str]
     secondaryKey: list[str]
     selectiveLogic: WorldBookEntrySelectiveLogic
-    order: int
-    depth: int
+    # number：保留浮点不 int 截断（对齐 TS normalizeWorldbooks）
+    order: float
+    depth: float
     position: WorldBookEntryPosition
     role: WorldBookEntryRole | None
     caseSensitive: bool | None

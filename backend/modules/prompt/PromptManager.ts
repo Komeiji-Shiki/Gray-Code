@@ -75,6 +75,71 @@ const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
     'SKILLS'
 ])
 
+// ========== 固定文件读取预算与缓存（热路径：每条消息都会组装动态上下文） ==========
+//
+// 调用链 getPromptContextBundle -> getLegacyDynamicContextMessages -> buildDynamicPromptModules
+// -> generatePinnedFilesSection 全部为同步签名（ToolIterationLoopService / ContextTrimService /
+// SettingsHandler 在同步位置调用），无法直接异步化，因此采用「TTL 缓存 + mtime 失效 + 大小限制」
+// 的最小同步方案：
+// - TTL 内零磁盘 I/O（不 stat、不 read）
+// - TTL 过期后仅 stat 校验 mtime，未变更则复用缓存内容，变更才重读
+// - 单文件超过 PINNED_FILE_MAX_BYTES 只读取前 N 字节并标记截断
+// - 全部固定文件累计读取超过 PINNED_FILE_MAX_TOTAL_BYTES 时跳过剩余文件
+
+/** 单文件大小上限（字节）：超过则只读取前 N 字节并标记截断 */
+export const PINNED_FILE_MAX_BYTES = 1024 * 1024 // 1MB
+
+/** 单次生成累计读取字节上限（字节）：超过则跳过剩余固定文件 */
+export const PINNED_FILE_MAX_TOTAL_BYTES = 2 * 1024 * 1024 // 2MB
+
+/** 固定文件内容缓存 TTL（毫秒） */
+export const PINNED_FILE_CACHE_TTL_MS = 5000
+
+interface PinnedFileCacheEntry {
+    content: string
+    mtimeMs: number
+    bytesRead: number
+    truncated: boolean
+    checkedAt: number
+}
+
+/** 固定文件内容缓存：key=绝对路径；TTL + mtime 双失效 */
+const pinnedFileCache = new Map<string, PinnedFileCacheEntry>()
+
+/**
+ * 读取固定文件内容并应用单文件大小上限：
+ * 小文件整体读取；大文件只读取前 PINNED_FILE_MAX_BYTES 字节（不把整文件载入内存）。
+ */
+function readPinnedFileCapped(fullPath: string, statSize: number): { content: string; bytesRead: number; truncated: boolean } {
+    if (statSize <= PINNED_FILE_MAX_BYTES) {
+        const content = fs.readFileSync(fullPath, 'utf-8')
+        return { content, bytesRead: statSize, truncated: false }
+    }
+
+    const fd = fs.openSync(fullPath, 'r')
+    try {
+        const buffer = Buffer.alloc(PINNED_FILE_MAX_BYTES)
+        const bytesRead = fs.readSync(fd, buffer, 0, PINNED_FILE_MAX_BYTES, 0)
+        // 去掉被切断的多字节 UTF-8 字符留下的孤立 U+FFFD
+        const content = buffer.subarray(0, bytesRead).toString('utf-8').replace(/[\uFFFD]{1,3}$/, '')
+        return { content, bytesRead: Math.min(statSize, PINNED_FILE_MAX_BYTES), truncated: true }
+    } finally {
+        fs.closeSync(fd)
+    }
+}
+
+// ========== 忽略模式正则缓存（matchGlobPattern 每文件×每模式重复 new RegExp 的修复） ==========
+// 模块级缓存：key=原始模式，flags 固定为 'i'（与旧实现一致，注意大小写/标志一致性）；
+// 大工作区下每条消息可省去大量重复编译。
+const ignorePatternRegexCache = new Map<string, RegExp>()
+let ignorePatternRegexCompileCount = 0
+let ignorePatternRegexHitCount = 0
+
+/** 获取忽略模式正则缓存的统计（供测试断言编译次数） */
+export function getGlobIgnoreRegexCacheStats(): { compiles: number; hits: number; size: number } {
+    return { compiles: ignorePatternRegexCompileCount, hits: ignorePatternRegexHitCount, size: ignorePatternRegexCache.size }
+}
+
 function isTodoStatus(value: unknown): value is TodoStatus {
     return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'cancelled'
 }
@@ -99,6 +164,20 @@ function truncateText(s: string, maxLen: number): string {
     const t = (s ?? '').replace(/\s+/g, ' ').trim()
     if (t.length <= maxLen) return t
     return t.slice(0, Math.max(0, maxLen - 1)) + '…'
+}
+
+/**
+ * 轻量字符串指纹（FNV-1a 32 位 + 长度前缀）。
+ * 用于把模板文本嵌入系统提示词缓存键：模板可能很长，直接拼原文会让 key 巨大；
+ * 长度先筛掉绝大多数差异，哈希兜底区分等长但内容不同的模板。
+ */
+function fingerprint(s: string): string {
+    let h = 0x811c9dc5
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i)
+        h = Math.imul(h, 0x01000193)
+    }
+    return `${s.length}:${(h >>> 0).toString(36)}`
 }
 
 function formatTodoListText(raw: unknown): string {
@@ -237,10 +316,14 @@ export class PromptManager {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         const prefix = promptConfig?.customPrefix || ''
         const suffix = promptConfig?.customSuffix || ''
+        // 模板文本必须纳入缓存键：只改模板（prefix/suffix/mode 不变）时，
+        // 旧缓存会在最多 60 秒内返回过期提示词。模板可能很长，
+        // 用指纹（长度 + FNV-1a 哈希）代替原文，控制 key 大小与比较成本。
+        const template = resolvedMode?.template ?? promptConfig?.template ?? ''
         const memoryConfig = settingsManager?.getMemoryConfig?.()
         const memoryEnabled = memoryConfig?.enabled !== false
         const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::memory=${memoryEnabled}::${memoryPrompt}`
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}`
     }
     
     /**
@@ -1175,6 +1258,7 @@ export class PromptManager {
             : settingsManager.getEnabledPinnedFiles()
         
         const results: string[] = []
+        let totalBytes = 0
         
         for (const pinnedFile of allPinnedFiles) {
             const workspaceFolder = workspaceUriToFolder.get(pinnedFile.workspaceUri)
@@ -1188,16 +1272,60 @@ export class PromptManager {
                     ? filePath
                     : path.join(workspaceFolder.uri.fsPath, filePath)
 
-                if (!fs.existsSync(fullPath)) {
-                    continue
+                const now = Date.now()
+                const cached = pinnedFileCache.get(fullPath)
+                let content: string
+                let truncated: boolean
+                let bytesRead: number
+
+                if (cached && now - cached.checkedAt < PINNED_FILE_CACHE_TTL_MS) {
+                    // TTL 内：零磁盘 I/O，直接复用缓存
+                    content = cached.content
+                    truncated = cached.truncated
+                    bytesRead = cached.bytesRead
+                } else {
+                    let stat: fs.Stats
+                    try {
+                        stat = fs.statSync(fullPath)
+                    } catch {
+                        // 文件不存在或不可访问（替代旧 existsSync + readFileSync 的探测）
+                        pinnedFileCache.delete(fullPath)
+                        continue
+                    }
+
+                    if (cached && cached.mtimeMs === stat.mtimeMs) {
+                        // 未变更：只刷新检查时间，不重读磁盘
+                        cached.checkedAt = now
+                        content = cached.content
+                        truncated = cached.truncated
+                        bytesRead = cached.bytesRead
+                    } else {
+                        const read = readPinnedFileCapped(fullPath, stat.size)
+                        pinnedFileCache.set(fullPath, {
+                            content: read.content,
+                            mtimeMs: stat.mtimeMs,
+                            bytesRead: read.bytesRead,
+                            truncated: read.truncated,
+                            checkedAt: now
+                        })
+                        content = read.content
+                        truncated = read.truncated
+                        bytesRead = read.bytesRead
+                    }
                 }
 
-                const content = fs.readFileSync(fullPath, 'utf-8')
+                // 总字节预算：累计读取超限则跳过剩余文件
+                if (totalBytes + bytesRead > PINNED_FILE_MAX_TOTAL_BYTES) {
+                    console.warn(`[PromptManager] Skipping pinned file ${pinnedFile.path}: total pinned file bytes would exceed ${PINNED_FILE_MAX_TOTAL_BYTES}`)
+                    continue
+                }
+                totalBytes += bytesRead
+
                 const displayPath = workspaceFolders.length > 1
                     ? `${workspaceFolder.name}/${pinnedFile.path}`
                     : pinnedFile.path
 
-                results.push(`--- ${displayPath} ---\n${content}`)
+                results.push(`--- ${displayPath} ---\n${content}${truncated ? `\n[truncated: file exceeds ${PINNED_FILE_MAX_BYTES} bytes]` : ''}`)
             } catch (error: any) {
                 console.warn(`Failed to read pinned file ${pinnedFile.path}:`, error.message)
             }
@@ -1228,9 +1356,19 @@ export class PromptManager {
     private matchGlobPattern(path: string, pattern: string): boolean {
         // 通配符展开语义见 glob.ts（gitignore 式：**/ 零段可选，* 不跨目录段）；
         // 先整体转义正则元字符（含 . [ ( + ? 等），避免用户配置含这些字符时 new RegExp 抛 SyntaxError。
-        const regexPattern = globPatternToRegExp(pattern)
-        
-        const regex = new RegExp(`^${regexPattern}$|/${regexPattern}$|^${regexPattern}/|/${regexPattern}/`, 'i')
+        // 正则源由 pattern 确定性推导、flags 固定为 'i'，可按 pattern 缓存编译结果，避免重复编译。
+        let regex = ignorePatternRegexCache.get(pattern)
+        if (!regex) {
+            const regexPattern = globPatternToRegExp(pattern)
+            regex = new RegExp(`^${regexPattern}$|/${regexPattern}$|^${regexPattern}/|/${regexPattern}/`, 'i')
+            ignorePatternRegexCompileCount++
+            if (ignorePatternRegexCache.size >= 512) {
+                ignorePatternRegexCache.clear()
+            }
+            ignorePatternRegexCache.set(pattern, regex)
+        } else {
+            ignorePatternRegexHitCount++
+        }
         return regex.test(path.replace(/\\/g, '/'))
     }
     

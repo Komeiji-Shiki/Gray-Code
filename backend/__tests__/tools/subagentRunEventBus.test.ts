@@ -341,6 +341,144 @@ describe('SubAgentRunEventBus - 快照淘汰', () => {
     });
 });
 
+
+describe('SubAgentRunEventBus - 同会话并发落盘', () => {
+    /**
+     * 慢存储：get 在调用时刻立即捕获盘面（等价于两个进程同时读到同一份旧文件），再延迟返回。
+     * 修复前两个 run 的落盘按 runId 并行，两个读都会基于同一空盘面计算，后写者覆盖先写者。
+     */
+    function createSlowStore() {
+        const metadata = new Map<string, unknown>();
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata(conversationId: string, key: string) {
+                const captured = metadata.get(`${conversationId}:${key}`);
+                await new Promise(resolve => setTimeout(resolve, 10));
+                return captured;
+            },
+            async setCustomMetadata(conversationId: string, key: string, value: unknown) {
+                metadata.set(`${conversationId}:${key}`, value);
+            }
+        };
+        return { store, metadata };
+    }
+
+    it('同一会话两个 run 并发 flush 不互相覆盖（按 conversationId 串行）', async () => {
+        const bus = new SubAgentRunEventBus();
+        const { store, metadata } = createSlowStore();
+
+        bus.createRun('run_conv_a', 'Agent A', undefined, {
+            conversationId: 'conv_race',
+            conversationStore: store,
+            initialContents: []
+        });
+        bus.createRun('run_conv_b', 'Agent B', undefined, {
+            conversationId: 'conv_race',
+            conversationStore: store,
+            initialContents: []
+        });
+
+        // 同一 tick 内两个 run 同时产生内容变更并进入终态：
+        // 修复前两个落盘并发「读整份 metadata → 各改一条 → 写回整份」，后写者覆盖先写者，丢失对方 run。
+        bus.appendContent('run_conv_a', textContent('user', 'a1'));
+        bus.appendContent('run_conv_b', textContent('user', 'b1'));
+        bus.emit({ runId: 'run_conv_a', type: 'run_completed' } as any);
+        bus.emit({ runId: 'run_conv_b', type: 'run_completed' } as any);
+
+        await flushPersistQueue();
+        await flushPersistQueue();
+        await flushPersistQueue();
+        // 等慢存储的真实读写完成
+        await new Promise(resolve => setTimeout(resolve, 80));
+
+        const persisted = metadata.get(`conv_race:${SUBAGENT_RUNS_METADATA_KEY}`) as
+            Record<string, { status: string; contents: Content[] }> | undefined;
+        expect(persisted).toBeDefined();
+        // 两个 run 的记录都必须存在，谁也不能覆盖谁
+        expect(persisted!['run_conv_a']).toBeDefined();
+        expect(persisted!['run_conv_b']).toBeDefined();
+        expect(persisted!['run_conv_a'].status).toBe('completed');
+        expect(persisted!['run_conv_b'].status).toBe('completed');
+        expect(persisted!['run_conv_a'].contents[0].parts?.[0]?.text).toBe('a1');
+        expect(persisted!['run_conv_b'].contents[0].parts?.[0]?.text).toBe('b1');
+    });
+
+    it('同一会话连续多次 flush 仍保留两个 run 的完整记录', async () => {
+        const bus = new SubAgentRunEventBus();
+        const { store, metadata } = createSlowStore();
+
+        bus.createRun('run_conv_c', 'Agent C', undefined, {
+            conversationId: 'conv_race2',
+            conversationStore: store,
+            initialContents: []
+        });
+        bus.createRun('run_conv_d', 'Agent D', undefined, {
+            conversationId: 'conv_race2',
+            conversationStore: store,
+            initialContents: []
+        });
+
+        // 交错写入：a 追加两轮、b 追加两轮，每轮都触发落盘
+        for (let i = 0; i < 2; i++) {
+            bus.appendContent('run_conv_c', textContent('user', `c${i}`));
+            bus.appendContent('run_conv_d', textContent('user', `d${i}`));
+            await flushPersistQueue();
+        }
+        await flushPersistQueue();
+        await new Promise(resolve => setTimeout(resolve, 80));
+
+        const persisted = metadata.get(`conv_race2:${SUBAGENT_RUNS_METADATA_KEY}`) as
+            Record<string, { contents: Content[] }> | undefined;
+        expect(persisted).toBeDefined();
+        expect(persisted!['run_conv_c'].contents.length).toBe(2);
+        expect(persisted!['run_conv_d'].contents.length).toBe(2);
+        expect(persisted!['run_conv_c'].contents[1].parts?.[0]?.text).toBe('c1');
+        expect(persisted!['run_conv_d'].contents[1].parts?.[0]?.text).toBe('d1');
+    });
+
+    it('不同会话的落盘互不阻塞（串行化只按会话隔离）', async () => {
+        const bus = new SubAgentRunEventBus();
+        const metadata = new Map<string, unknown>();
+        let readCount = 0;
+        let releaseReads: () => void = () => undefined;
+        const bothReadsInFlight = new Promise<void>(resolve => { releaseReads = resolve; });
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata(conversationId: string, key: string) {
+                readCount++;
+                if (readCount === 2) releaseReads();
+                await bothReadsInFlight;
+                return metadata.get(`${conversationId}:${key}`);
+            },
+            async setCustomMetadata(conversationId: string, key: string, value: unknown) {
+                metadata.set(`${conversationId}:${key}`, value);
+            }
+        };
+
+        bus.createRun('run_c1', 'Agent', undefined, { conversationId: 'conv_1', conversationStore: store, initialContents: [] });
+        bus.createRun('run_c2', 'Agent', undefined, { conversationId: 'conv_2', conversationStore: store, initialContents: [] });
+        bus.appendContent('run_c1', textContent('user', 'x'));
+        bus.appendContent('run_c2', textContent('user', 'y'));
+
+        // 两个会话的读请求应能同时到达；若被错误地全局串行化，这里会超时失败
+        let raceTimer: ReturnType<typeof setTimeout> | undefined;
+        const serializedTimeout = new Promise((_, reject) => {
+            raceTimer = setTimeout(() => reject(new Error('reads serialized across conversations')), 500);
+        });
+        try {
+            await expect(Promise.race([bothReadsInFlight, serializedTimeout])).resolves.toBeUndefined();
+        } finally {
+            clearTimeout(raceTimer);
+        }
+
+        await flushPersistQueue();
+        await flushPersistQueue();
+        await flushPersistQueue();
+
+        const c1 = metadata.get(`conv_1:${SUBAGENT_RUNS_METADATA_KEY}`) as Record<string, { contents: Content[] }> | undefined;
+        const c2 = metadata.get(`conv_2:${SUBAGENT_RUNS_METADATA_KEY}`) as Record<string, { contents: Content[] }> | undefined;
+        expect(c1?.['run_c1']).toBeDefined();
+        expect(c2?.['run_c2']).toBeDefined();
+    });
+});
 describe('SubAgentRunEventBus - runId 分配', () => {
     it('runId 未被占用时原样返回', () => {
         const bus = new SubAgentRunEventBus();

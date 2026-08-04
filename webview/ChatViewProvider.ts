@@ -51,6 +51,7 @@ import { WindowsAgentStopNotificationService } from '../backend/modules/notifica
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
+import { getExtensionVersion } from './utils/extensionInfo';
 
 const log = Logger.get('ChatViewProvider');
 
@@ -58,6 +59,8 @@ const log = Logger.get('ChatViewProvider');
  * Diff 预览内容提供者
  */
 class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, IDiffPreviewContentProvider {
+    /** 缓存条目数上限：超过时按插入顺序淘汰最旧条目 */
+    private static readonly MAX_CONTENTS_ENTRIES = 50;
     private contents: Map<string, string> = new Map();
     private onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
     
@@ -65,7 +68,20 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
     
     public setContent(uri: string, content: string): void {
         const prev = this.contents.get(uri);
+        // 先删后设：被更新的条目移到 Map 末尾（最新位置），淘汰时优先保留最近使用的预览
+        if (prev !== undefined) {
+            this.contents.delete(uri);
+        }
         this.contents.set(uri, content);
+
+        // 缓存条目数上限：超出时按插入顺序（Map 迭代序）淘汰最旧条目，
+        // 防止完整文件内容在长期使用中无界增长（内存泄漏）
+        if (this.contents.size > DiffPreviewContentProvider.MAX_CONTENTS_ENTRIES) {
+            const oldestKey = this.contents.keys().next().value;
+            if (oldestKey !== undefined) {
+                this.contents.delete(oldestKey);
+            }
+        }
 
         // 关键：当同一个 diff 预览标签已打开时，必须主动触发 onDidChange，
         // 否则 VSCode 不会重新拉取 provideTextDocumentContent，看起来像“按钮没反应”。
@@ -475,10 +491,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.subAgentMonitorPanel.open(runId, conversationId);
     }
 
-    private normalizeClientId(clientId: unknown, fallback: string): string {
-        return typeof clientId === 'string' && clientId.trim() ? clientId.trim() : fallback;
-    }
-
     private postRoutedWebviewMessage(clientId: string, message: Record<string, any>, fallbackWebview?: vscode.Webview): void {
         const routedMessage = { ...message, clientId };
         if (this.webviewClientRegistry.postMessage(clientId, routedMessage)) {
@@ -534,9 +546,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
         await this.initPromise;
 
-        const { type, data, clientId } = message || {};
+        const { type, data } = message || {};
         const requestId = typeof message?.requestId === 'string' ? message.requestId : '';
-        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.subagentMonitor);
+        // 安全：不信任消息体中的 clientId。来源 webview 是 SubAgent Monitor 面板
+        // （注册身份固定为 subagentMonitor），路由身份按来源 webview 的注册身份决定，
+        // 防止伪造 clientId 冒充其他客户端。
+        const routedClientId = WEBVIEW_CLIENT_IDS.subagentMonitor;
 
         const sendResponse = (id: string, responseData: any) => {
             this.postRoutedWebviewMessage(routedClientId, {
@@ -839,8 +854,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理来自前端的消息
      */
     private async handleMessage(message: any) {
-        const { type, data, requestId, clientId } = message;
-        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.mainChat);
+        const { type, data, requestId } = message;
+        // 安全：不信任消息体中的 clientId。来源 webview 是主聊天视图
+        // （注册身份固定为 mainChat），路由身份按来源 webview 的注册身份决定，
+        // 防止主聊天伪造 clientId='subagent-monitor' 触发 monitor 专属操作
+        // 或把 pendingCommands 刷到对方 webview。
+        const routedClientId = WEBVIEW_CLIENT_IDS.mainChat;
 
         // The frontend sends this as soon as its JS is ready to receive commands.
         // Handle it even if backend init is still running.
@@ -1062,7 +1081,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.configManager,
             this.mcpManager,
             skillsManager,
-            this.getExtensionVersion(),
+            getExtensionVersion(this.context.extensionPath),
             this.storagePathManager.getEffectiveDataPath() + '/skills'
         );
 
@@ -1091,26 +1110,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.configManager,
             this.mcpManager,
             skillsManager,
-            this.getExtensionVersion(),
+            getExtensionVersion(this.context.extensionPath),
             this.storagePathManager.getEffectiveDataPath() + '/skills'
         );
 
         const data = exporter.parseExportData(json);
         return await exporter.importFromData(data, options);
-    }
-
-    /**
-     * 获取当前插件版本号
-     */
-    private getExtensionVersion(): string {
-        try {
-            // 从 package.json 读取版本号
-            const packageJsonPath = path.join(this.context.extensionPath, 'package.json');
-            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-            return packageJson.version || '0.0.0';
-        } catch {
-            return '0.0.0';
-        }
     }
 
 

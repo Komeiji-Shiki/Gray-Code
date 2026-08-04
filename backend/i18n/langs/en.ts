@@ -644,6 +644,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             fileNotInAnyWorkspace: 'File is not in any open workspace',
             fileInOtherWorkspace: 'File belongs to another workspace: {workspaceName}',
             readFileFailed: 'Failed to read file',
+            attachmentTooLarge: 'File is too large (over {maxSizeMB}MB), please use file picker or preview instead',
             conversationFileNotExists: 'Conversation file does not exist',
             cannotRevealInExplorer: 'Cannot reveal in explorer',
             

@@ -17,7 +17,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
-import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
@@ -101,10 +102,18 @@ interface TaskResult {
 /**
  * 读取图片文件
  */
-async function readImageFile(imagePath: string): Promise<{ data: Buffer; mimeType: string; ext: string } | null> {
-    const uri = resolveUri(imagePath);
+async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string; ext: string } | null> {
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
     if (!uri) {
         return null;
+    }
+
+    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
+    if (isOutsideWorkspace) {
+        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context);
+        if (readAccessError) {
+            return null;
+        }
     }
 
     try {
@@ -183,7 +192,8 @@ function getOutputFormat(outputPath: string, specifiedFormat?: string, originalE
 async function executeRotateTask(
     task: RotateTask,
     index: number,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    context?: ToolContext
 ): Promise<TaskResult> {
     const { image_path, output_path, angle, format } = task;
 
@@ -214,7 +224,7 @@ async function executeRotateTask(
         }
 
         // 读取原图
-        const imageFile = await readImageFile(image_path);
+        const imageFile = await readImageFile(image_path, context);
         if (!imageFile) {
             return { index, success: false, error: `Task ${index + 1}: Cannot read image: ${image_path}` };
         }
@@ -261,9 +271,17 @@ async function executeRotateTask(
         }
 
         // 保存结果
-        const outputUri = resolveUri(output_path);
+        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
+        }
+
+        // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
+        if (outputOutside) {
+            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context);
+            if (writeAccessError) {
+                return { index, success: false, error: `Task ${index + 1}: ${writeAccessError}` };
+            }
         }
 
         // 确保目录存在
@@ -472,7 +490,7 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
             try {
                 // 并发执行所有任务
                 const results = await Promise.all(
-                    tasks.map((task, index) => executeRotateTask(task, index, abortSignal))
+                    tasks.map((task, index) => executeRotateTask(task, index, abortSignal, context))
                 );
 
                 // 统计结果

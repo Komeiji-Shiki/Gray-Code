@@ -23,6 +23,59 @@ import { TODO_TOOL_NAMES } from '../todo';
 // 深度上限由 executeSubAgent 在派发前校验。
 const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>([...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES]);
 
+/**
+ * 工具名快照缓存（声明 getter 全量重算优化）。
+ *
+ * 输入依赖：toolRegistry 工具名集合、mcpManager 各 server 的 tool 集合，均无现成版本号可依赖，
+ * 故以「toolRegistry 工具数 + MCP 服务器/工具计数」为键：任一计数变化即失效重算；计数不变时
+ * 复用快照，避免每次访问 tool.declaration 都重复 O(全部工具数) 枚举（含 encodeMcpToolName 编码）。
+ *
+ * 注意：本缓存只缓存「工具名列表」；registry/settings 的内容（agent 名称/描述/限制、
+ * generalWorkerEnabled 等）不经过本缓存，声明其余部分仍每次即时生成，配置变更即时生效。
+ *
+ * 失效边界：同一计数下工具名集合发生变化（如工具注销后以同数量重新注册、MCP 同数量工具列表
+ * 被整体替换）时快照会短暂滞后——工具注册/注销在启动期一次性完成，运行期无此路径。
+ */
+let toolNameSnapshotCache: { key: string; builtin: string[]; mcp: string[] } | null = null;
+
+function getCachedToolNameSnapshot(): { builtin: string[]; mcp: string[] } {
+    const toolRegistry = getGlobalToolRegistry();
+    const mcpManager = getGlobalMcpManager();
+
+    // 键：toolRegistry 工具数 + MCP 服务器/工具计数（计数均为 O(1)/O(服务器数) 可算）
+    const builtinCount = toolRegistry?.count?.() ?? -1;
+    let mcpKeyPart = '-';
+    if (mcpManager) {
+        const mcpTools = mcpManager.getAllTools();
+        mcpKeyPart = mcpTools
+            .map(serverTools => `${serverTools.serverId}:${serverTools.tools?.length ?? 0}`)
+            .join('|') || '-';
+    }
+    const key = `${builtinCount}|${mcpKeyPart}`;
+    if (toolNameSnapshotCache && toolNameSnapshotCache.key === key) {
+        return toolNameSnapshotCache;
+    }
+
+    // 获取内置工具名称
+    // 使用 getToolNames() 而不是 getAllTools() 以避免触发 subagents 工具的 getter 导致无限递归
+    const builtin: string[] = [];
+    if (toolRegistry) {
+        builtin.push(...toolRegistry.getToolNames().filter(name => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(name)));
+    }
+    // 获取 MCP 工具名称
+    const mcp: string[] = [];
+    if (mcpManager) {
+        const mcpTools = mcpManager.getAllTools();
+        for (const serverTools of mcpTools) {
+            for (const tool of serverTools.tools || []) {
+                mcp.push(encodeMcpToolName(serverTools.serverId, tool.name));
+            }
+        }
+    }
+    toolNameSnapshotCache = { key, builtin, mcp };
+    return toolNameSnapshotCache;
+}
+
 /** 通用 Worker 虚拟子代理的标识常量 */
 const GENERAL_WORKER_NAME = 'General Worker';
 const GENERAL_WORKER_TYPE = 'general-worker';
@@ -61,28 +114,14 @@ function isGeneralWorker(agentName: string): boolean {
  *   让 getAgentAvailableTools 直接消费 resolveSubAgentAvailableTools 的输出。
  */
 function getAgentAvailableTools(config: SubAgentConfig): string[] {
-    const toolRegistry = getGlobalToolRegistry();
-    const mcpManager = getGlobalMcpManager();
-    
-    let builtinToolNames: string[] = [];
-    const mcpToolNames: string[] = [];
-    
-    // 获取内置工具名称
-    // 使用 getToolNames() 而不是 getAllTools() 以避免触发 subagents 工具的 getter 导致无限递归
-    if (toolRegistry) {
-        builtinToolNames = toolRegistry.getToolNames().filter(name => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(name));
-    }
-    
-    // 获取 MCP 工具名称
-    if (mcpManager) {
-        const mcpTools = mcpManager.getAllTools();
-        for (const serverTools of mcpTools) {
-            for (const tool of serverTools.tools || []) {
-                mcpToolNames.push(encodeMcpToolName(serverTools.serverId, tool.name));
-            }
-        }
-    }
-    
+    // 修改原因：旧实现每次访问 tool.declaration getter 都全量重算「内置工具名 + MCP 工具名」
+    //          （遍历 toolRegistry 全部工具名 + mcpManager 全部 server/tool），一个请求多次访问
+    //          声明即重复 O(全部工具数) 枚举。
+    // 修改方式：枚举结果按（toolRegistry 工具数 + MCP 服务器/工具计数）为键缓存为快照，
+    //          计数变化即失效重算；registry/settings 的内容变更不经过本缓存（声明其余部分
+    //          仍每次即时生成，见 getCachedToolNameSnapshot），配置变更即时生效。
+    const { builtin: builtinToolNames, mcp: mcpToolNames } = getCachedToolNameSnapshot();
+
     const toolsConfig = config.tools;
     let availableTools: string[] = [];
     
@@ -194,21 +233,8 @@ function generateAgentNameDescription(): string {
 
     // 动态 General Worker（启用时追加）
     if (hasGeneralWorker) {
-        const builtinToolNames: string[] = [];
-        const toolRegistry = getGlobalToolRegistry();
-        if (toolRegistry) {
-            builtinToolNames.push(...toolRegistry.getToolNames().filter(name => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(name)));
-        }
-        const mcpToolNames: string[] = [];
-        const mcpManager = getGlobalMcpManager();
-        if (mcpManager) {
-            const mcpTools = mcpManager.getAllTools();
-            for (const serverTools of mcpTools) {
-                for (const tool of serverTools.tools || []) {
-                    mcpToolNames.push(encodeMcpToolName(serverTools.serverId, tool.name));
-                }
-            }
-        }
+        // 与 getAgentAvailableTools 共用同一份工具名快照缓存，不再重复枚举 registry/MCP
+        const { builtin: builtinToolNames, mcp: mcpToolNames } = getCachedToolNameSnapshot();
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
         const globalMaxIterations = getGlobalDefaultMaxIterations();
@@ -411,7 +437,7 @@ async function executeSubAgent(
     const inheritedToolFilterList = inheritedToolFilter ? Array.from(inheritedToolFilter) : undefined;
     // F2：嵌套 run 的会话归属——子代理内部调用时 context.conversationId 为 undefined，
     // 但信箱会话（mailboxConversationId，即主会话 ID）始终存在，回退使用它，
-    // 让嵌套 run 的 transcript 持久化、用量归集和 agent.sendMessage 寻址都归属主会话。
+    // 让嵌套 run 的 transcript 持久化、用量归集和 agent_send_message 寻址都归属主会话。
     const conversationId = (context?.conversationId as string | undefined)
         ?? (context?.mailboxConversationId as string | undefined);
     const baseExecutorContext = getSubAgentExecutorContext();

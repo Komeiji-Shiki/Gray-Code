@@ -1,5 +1,5 @@
 /**
- * agent.sendMessage 工具 + 注入点（A-COMM）测试
+ * agent_send_message 工具 + 注入点（A-COMM）测试
  *
  * 覆盖：
  * - 工具声明形状（参数、必填、注册到 SubAgents 工具注册函数）；
@@ -41,10 +41,12 @@ function makeCall(id: string, name = 'stub_tool') {
     return { id, name, args: { query: 'x' } };
 }
 
-describe('agent.sendMessage - 工具声明', () => {
+describe('agent_send_message - 工具声明', () => {
     it('声明名称与参数结构正确，message 必填', () => {
         const decl = getAgentSendMessageToolDeclaration();
-        expect(decl.name).toBe('agent.sendMessage');
+        expect(decl.name).toBe('agent_send_message');
+        // 兼容旧对话历史：agent.sendMessage 注册为别名（API 工具名不允许点号）
+        expect(decl.aliases).toContain('agent.sendMessage');
         expect(decl.category).toBe('agents');
         expect(decl.parameters.type).toBe('object');
         expect(decl.parameters.properties.targetRunId.type).toBe('string');
@@ -56,18 +58,18 @@ describe('agent.sendMessage - 工具声明', () => {
     it('已注册进 SubAgents 工具注册函数（随 getAllTools 进入 ToolRegistry）', () => {
         const registrations = getSubAgentsToolRegistrations();
         const names = registrations.map(reg => reg().declaration.name);
-        expect(names).toContain('agent.sendMessage');
+        expect(names).toContain('agent_send_message');
         expect(names).toContain('subagents');
     });
 
     it('getAgentSendMessageTool 返回单例工具对象', () => {
         const tool = getAgentSendMessageTool();
-        expect(tool.declaration.name).toBe('agent.sendMessage');
+        expect(tool.declaration.name).toBe('agent_send_message');
         expect(getAgentSendMessageTool()).toBe(tool);
     });
 });
 
-describe('agent.sendMessage - handler', () => {
+describe('agent_send_message - handler', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
@@ -158,7 +160,7 @@ describe('agent.sendMessage - handler', () => {
     });
 });
 
-describe('agent.sendMessage - 注入点（ToolExecutionService 工具循环）', () => {
+describe('agent_send_message - 注入点（ToolExecutionService 工具循环）', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
@@ -278,7 +280,7 @@ describe('agent.sendMessage - 注入点（ToolExecutionService 工具循环）',
         expect(agentMailbox.peekMessages('conv_1', 'run_b')).toHaveLength(1);
     });
 
-    it('工具上下文注入 mailbox 身份（agent.sendMessage 借此识别发送方）', async () => {
+    it('工具上下文注入 mailbox 身份（agent_send_message 借此识别发送方）', async () => {
         let capturedContext: Record<string, unknown> | undefined;
         const service = new ToolExecutionService({
             getTool: () => makeStubTool((_args, ctx) => {
@@ -297,7 +299,7 @@ describe('agent.sendMessage - 注入点（ToolExecutionService 工具循环）',
     });
 });
 
-describe('agent.sendMessage - 历史重放防护（FIX-B）', () => {
+describe('agent_send_message - 历史重放防护（FIX-B）', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });

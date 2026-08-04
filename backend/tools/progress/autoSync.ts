@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
 import { buildProgressDocument, validateProgressDocument } from './documentLayout';
 import { ensureParentDir, isProgressModePathAllowedWithMultiRoot } from './pathUtils';
+import { withProgressWriteLock } from './progressWriteLock';
 import type { ProgressDocumentMetadataV1, ProgressTodoItem } from './schema';
 
 interface SyncProgressFromDesignArtifactArgs {
@@ -140,42 +141,47 @@ export async function syncProgressFromDesignArtifact(
   if (!designPath) return [];
 
   const progressPath = resolveProgressPathForArtifact(designPath);
-  const now = new Date().toISOString();
 
   try {
-    const loaded = await loadExistingProgress(progressPath);
-    if (loaded.error) {
-      return [`Failed to auto-sync progress after design write: ${loaded.error}`];
-    }
+    // 修改原因：progress.md 的「读 → 改 → 写」无锁，并行子代理同时 sync 会互相覆盖。
+    // 修改方式：把 loadExistingProgress 到 writeProgress 的整段读改写放进 per-path 写锁。
+    // 修改目的：后一个同步总是基于前一个写回后的盘面合并，不丢失对方的 activeArtifacts/log。
+    return await withProgressWriteLock(progressPath, async () => {
+      const now = new Date().toISOString();
+      const loaded = await loadExistingProgress(progressPath);
+      if (loaded.error) {
+        return [`Failed to auto-sync progress after design write: ${loaded.error}`];
+      }
 
-    const base = loaded.missing || !loaded.metadata
-      ? buildInitialProgressMetadata(now, progressPath)
-      : loaded.metadata;
+      const base = loaded.missing || !loaded.metadata
+        ? buildInitialProgressMetadata(now, progressPath)
+        : loaded.metadata;
 
-    const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
-      ...base,
-      updatedAt: now,
-      phase: loaded.missing ? 'design' : base.phase,
-      currentFocus: loaded.missing && normalizeSingleLineText(args.title)
-        ? normalizeSingleLineText(args.title)
-        : base.currentFocus,
-      activeArtifacts: {
-        ...(base.activeArtifacts || {}),
-        design: designPath,
-      },
-      log: [
-        ...(base.log || []),
-        {
-          at: now,
-          type: 'artifact_changed',
-          refId: 'design',
-          message: `同步设计文档：${designPath}`,
-        }
-      ]
-    };
+      const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
+        ...base,
+        updatedAt: now,
+        phase: loaded.missing ? 'design' : base.phase,
+        currentFocus: loaded.missing && normalizeSingleLineText(args.title)
+          ? normalizeSingleLineText(args.title)
+          : base.currentFocus,
+        activeArtifacts: {
+          ...(base.activeArtifacts || {}),
+          design: designPath,
+        },
+        log: [
+          ...(base.log || []),
+          {
+            at: now,
+            type: 'artifact_changed',
+            refId: 'design',
+            message: `同步设计文档：${designPath}`,
+          }
+        ]
+      };
 
-    await writeProgress(progressPath, nextMetadata, now);
-    return [];
+      await writeProgress(progressPath, nextMetadata, now);
+      return [];
+    });
   } catch (e: any) {
     return [`Failed to auto-sync progress after design write: ${e?.message || String(e)}`];
   }
@@ -188,56 +194,61 @@ export async function syncProgressFromPlanArtifact(
   if (!planPath) return [];
 
   const progressPath = resolveProgressPathForArtifact(planPath);
-  const now = new Date().toISOString();
   const updateMode = args.updateMode === 'progress_sync' ? 'progress_sync' : 'revision';
 
   try {
-    const loaded = await loadExistingProgress(progressPath);
-    if (loaded.error) {
-      return [`Failed to auto-sync progress after plan write: ${loaded.error}`];
-    }
-
-    const base = loaded.missing || !loaded.metadata
-      ? {
-        ...buildInitialProgressMetadata(now, progressPath),
-        phase: updateMode === 'progress_sync' ? 'implementation' : 'plan',
+    // 修改原因：progress.md 的「读 → 改 → 写」无锁，并行子代理同时 sync 会互相覆盖。
+    // 修改方式：把 loadExistingProgress 到 writeProgress 的整段读改写放进 per-path 写锁。
+    // 修改目的：后一个同步总是基于前一个写回后的盘面合并，不丢失对方的 activeArtifacts/todos/log。
+    return await withProgressWriteLock(progressPath, async () => {
+      const now = new Date().toISOString();
+      const loaded = await loadExistingProgress(progressPath);
+      if (loaded.error) {
+        return [`Failed to auto-sync progress after plan write: ${loaded.error}`];
       }
-      : loaded.metadata;
 
-    const currentPhase = base.phase as ProgressDocumentMetadataV1['phase'] | undefined;
-    const nextPhase: ProgressDocumentMetadataV1['phase'] | undefined = loaded.missing
-      ? (updateMode === 'progress_sync' ? 'implementation' : 'plan')
-      : updateMode === 'progress_sync'
-        ? currentPhase
-        : (currentPhase === 'design' || currentPhase === 'plan' ? 'plan' : currentPhase);
-
-    const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
-      ...base,
-      updatedAt: now,
-      phase: nextPhase,
-      currentFocus: !base.currentFocus && normalizeSingleLineText(args.title)
-        ? normalizeSingleLineText(args.title)
-        : base.currentFocus,
-      activeArtifacts: {
-        ...(base.activeArtifacts || {}),
-        plan: planPath,
-      },
-      todos: Array.isArray(args.todos) ? args.todos : base.todos,
-      log: [
-        ...(base.log || []),
-        {
-          at: now,
-          type: 'artifact_changed',
-          refId: 'plan',
-          message: updateMode === 'progress_sync'
-            ? `同步计划 TODO 快照：${planPath}`
-            : `同步计划文档：${planPath}`,
+      const base = loaded.missing || !loaded.metadata
+        ? {
+          ...buildInitialProgressMetadata(now, progressPath),
+          phase: updateMode === 'progress_sync' ? 'implementation' : 'plan',
         }
-      ]
-    };
+        : loaded.metadata;
 
-    await writeProgress(progressPath, nextMetadata, now);
-    return [];
+      const currentPhase = base.phase as ProgressDocumentMetadataV1['phase'] | undefined;
+      const nextPhase: ProgressDocumentMetadataV1['phase'] | undefined = loaded.missing
+        ? (updateMode === 'progress_sync' ? 'implementation' : 'plan')
+        : updateMode === 'progress_sync'
+          ? currentPhase
+          : (currentPhase === 'design' || currentPhase === 'plan' ? 'plan' : currentPhase);
+
+      const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
+        ...base,
+        updatedAt: now,
+        phase: nextPhase,
+        currentFocus: !base.currentFocus && normalizeSingleLineText(args.title)
+          ? normalizeSingleLineText(args.title)
+          : base.currentFocus,
+        activeArtifacts: {
+          ...(base.activeArtifacts || {}),
+          plan: planPath,
+        },
+        todos: Array.isArray(args.todos) ? args.todos : base.todos,
+        log: [
+          ...(base.log || []),
+          {
+            at: now,
+            type: 'artifact_changed',
+            refId: 'plan',
+            message: updateMode === 'progress_sync'
+              ? `同步计划 TODO 快照：${planPath}`
+              : `同步计划文档：${planPath}`,
+          }
+        ]
+      };
+
+      await writeProgress(progressPath, nextMetadata, now);
+      return [];
+    });
   } catch (e: any) {
     return [`Failed to auto-sync progress after plan write: ${e?.message || String(e)}`];
   }
@@ -250,51 +261,56 @@ export async function syncProgressFromReviewArtifact(
   if (!reviewPath) return [];
 
   const progressPath = resolveProgressPathForArtifact(reviewPath);
-  const now = new Date().toISOString();
 
   try {
-    const loaded = await loadExistingProgress(progressPath);
-    if (loaded.error) {
-      return [`Failed to auto-sync progress after review write: ${loaded.error}`];
-    }
-
-    const base = loaded.missing || !loaded.metadata
-      ? {
-        ...buildInitialProgressMetadata(now, progressPath),
-        phase: 'review' as const,
+    // 修改原因：progress.md 的「读 → 改 → 写」无锁，并行子代理同时 sync 会互相覆盖。
+    // 修改方式：把 loadExistingProgress 到 writeProgress 的整段读改写放进 per-path 写锁。
+    // 修改目的：后一个同步总是基于前一个写回后的盘面合并，不丢失对方的 activeArtifacts/log。
+    return await withProgressWriteLock(progressPath, async () => {
+      const now = new Date().toISOString();
+      const loaded = await loadExistingProgress(progressPath);
+      if (loaded.error) {
+        return [`Failed to auto-sync progress after review write: ${loaded.error}`];
       }
-      : loaded.metadata;
 
-    const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
-      ...base,
-      updatedAt: now,
-      phase: loaded.missing ? 'review' : base.phase,
-      currentFocus: !base.currentFocus && normalizeSingleLineText(args.title)
-        ? normalizeSingleLineText(args.title)
-        : base.currentFocus,
-      latestConclusion: normalizeSingleLineText(args.latestConclusion)
-        ? args.latestConclusion
-        : base.latestConclusion,
-      nextAction: normalizeSingleLineText(args.nextAction)
-        ? args.nextAction
-        : base.nextAction,
-      activeArtifacts: {
-        ...(base.activeArtifacts || {}),
-        review: reviewPath,
-      },
-      log: [
-        ...(base.log || []),
-        {
-          at: now,
-          type: 'artifact_changed',
-          refId: 'review',
-          message: args.eventMessage || `同步审查文档：${reviewPath}`,
+      const base = loaded.missing || !loaded.metadata
+        ? {
+          ...buildInitialProgressMetadata(now, progressPath),
+          phase: 'review' as const,
         }
-      ]
-    };
+        : loaded.metadata;
 
-    await writeProgress(progressPath, nextMetadata, now);
-    return [];
+      const nextMetadata: Partial<ProgressDocumentMetadataV1> = {
+        ...base,
+        updatedAt: now,
+        phase: loaded.missing ? 'review' : base.phase,
+        currentFocus: !base.currentFocus && normalizeSingleLineText(args.title)
+          ? normalizeSingleLineText(args.title)
+          : base.currentFocus,
+        latestConclusion: normalizeSingleLineText(args.latestConclusion)
+          ? args.latestConclusion
+          : base.latestConclusion,
+        nextAction: normalizeSingleLineText(args.nextAction)
+          ? args.nextAction
+          : base.nextAction,
+        activeArtifacts: {
+          ...(base.activeArtifacts || {}),
+          review: reviewPath,
+        },
+        log: [
+          ...(base.log || []),
+          {
+            at: now,
+            type: 'artifact_changed',
+            refId: 'review',
+            message: args.eventMessage || `同步审查文档：${reviewPath}`,
+          }
+        ]
+      };
+
+      await writeProgress(progressPath, nextMetadata, now);
+      return [];
+    });
   } catch (e: any) {
     return [`Failed to auto-sync progress after review write: ${e?.message || String(e)}`];
   }

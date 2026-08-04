@@ -91,7 +91,7 @@ export {
     type AgentSendMessageResult
 } from './agentMailbox';
 
-// 导出 agent.sendMessage 工具
+// 导出 agent_send_message 工具
 export {
     createAgentSendMessageTool,
     getAgentSendMessageTool,

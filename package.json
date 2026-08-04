@@ -2,10 +2,11 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "publisher": "Komeiji-Shiki",
   "icon": "resources/icon.png",
   "engines": {
+    "node": ">=20",
     "vscode": "^1.84.0"
   },
   "categories": [
@@ -272,17 +273,18 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "compile": "node esbuild.config.js",
+    "compile": "npm run build:backend",
     "typecheck": "tsc -p ./ --noEmit",
     "build:backend": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "build:frontend": "npm --prefix frontend run build",
     "dev:frontend": "npm --prefix frontend run dev:local",
-    "build": "node esbuild.config.js && npm --prefix frontend run build",
+    "build": "npm run build:backend && npm --prefix frontend run build",
     "test": "jest --config jest.backend.config.js",
     "test:watch": "jest --config jest.backend.config.js --watch",
     "test:coverage": "jest --config jest.backend.config.js --coverage",
-    "test:frontend": "npm --prefix frontend test"
+    "test:frontend": "npm --prefix frontend test",
+    "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",

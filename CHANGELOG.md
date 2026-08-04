@@ -8,6 +8,45 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-04
+
+### Fixed
+  - 修复 `agent.sendMessage` 工具名含点号导致 OpenAI 兼容 API 拒绝请求（400 `Invalid 'tools[N].function.name': string does not match pattern '^[a-zA-Z0-9_-]+$'`）：工具更名为 `agent_send_message`（与全局 snake_case 命名一致），并在声明中注册 `agent.sendMessage` 为别名，旧对话历史中的调用仍可经 ToolRegistry 别名解析执行
+  - 子代理设置页工具白名单/黑名单列表不再把工具完整描述直接渲染在名字下方（几十个工具的长英文描述把设置页撑得极大），改为仅显示工具名，描述收敛为鼠标悬停的 title 提示
+  - 批量代码审查修复：
+    - 工具系统：validateToolArgs 对非对象参数加守卫（畸形模型输出不再 TypeError 崩溃整个工具批次）；insert_code 空内容不再产生多余空行；jsonFormatter 字符串值内出现字面 `<<<END_TOOL_CALL>>>` 标记不再提前截断块（状态机感知字符串开关与转义）
+    - 对话历史：rejectToolCalls 对无 parts 消息加防御；getCustomMetadata 在 meta.json 损坏时降级返回 undefined 而非抛错；删除会话后迟到的 setTitle/updateSummary 不再重建幽灵 meta.json（loadMetadataForWrite 校验历史存在性）
+    - 文件与搜索：generate_image 参数缺失路径不再残留 running 任务；网络错误不再误报为用户取消；remove_background mask 缩放改 fit:'fill' 消除裁切错位；find_files maxResults 语义修正（+1 探测避免 truncated 误报）；search_in_files replace 模式匹配收集加 20000 上限与 truncated 标志、多根工作区 path 解析失败不再静默回退、正则源超 500 字符拒绝（ReDoS 防护）
+    - 子代理与文档工具：agent_send_message 消息加 16000 字符与 inbox 50 条上限；子代理排队取消路径收敛到 finalizeRun 终态出口；update_progress latestConclusion 归一化；record_progress_milestone 里程碑 id 撞车自动递增重试；create_progress 区分 ENOENT 与其它读错误；create_design 不再静默覆盖已存在设计文档；toggle_skills 未找到技能改 data.warnings 语义
+    - 记忆与设置：truncateLog 长度读取移入锁内（并发 note 不再被误截断）；compress 仅在 treePut 成功时上报 done；wake 缺失摘要提示指向实际缺失块；SkillsManager.refresh 同步清理已删除技能；代理设置不再默认启用；设置文件损坏抛错而非静默归零；savePromptMode 校验 mode.id 非空
+    - webview：MessageRouter 流式请求 clientId 映射改为流结束时统一清理（Monitor 发起的流出错不再错投主聊天或永久挂起）；cancelStream 缺 data 不再泄漏映射条目；diff 预览内容缓存加 50 条上限；getExtensionVersion 收敛到公共模块；UsageHandlers dispose 清空统计缓存；删除 FileHandlers 死代码变量
+    - 前端：流式终结 chunk 缺 content 时流状态仍无条件复位（不再卡在"等待响应"）；视频/图片缩略图加载加整体超时与 onerror 兜底；声音去重集合与 todo 状态集合加容量上限；待确认工具拦截路径不再静默丢弃附件；后台会话流式缓冲加 2000 chunk 上限
+    - 构建与测试：.vscodeignore 补充 .env/.env.*/*.pem/*.key 防密钥入包；jest 全局 testTimeout 20000；移除空 jest.setup 引用；messageRouterNonBlocking 测试改为断言生产常量（不再是无效测试）；tsconfig 移除 tsc 直出遗留死配置；npm scripts 收敛；fast-tavern 恢复被删除的 build 模块（buildPrompt/buildPromptFromSillyTavern，npm build 与 pytest 恢复通过）、vectorSearch 类型收敛为同步并修正 Python 端异常静默、Python 正则/世界书浮点语义对齐 TS（NaN/Inf 守卫、不再 int 截断）、递归上限对齐 Math.trunc+clamp
+  - 第二轮高风险并发/性能修复：
+    - 流式取消竞态（ToolIterationLoopService + ChatFlowService）：取消时先以 3s 有界窗口等早启动工具落定再结算（真实结果不再丢失为 cancelled 占位）；主工具循环 gen.next() 与 handleToolConfirmation 两个确认循环补 abort-race + 2s 收尾窗口（不再永久挂起）；流式取消分支补 resolveAndPersistPostToolStopState（审批门不再残留误拦截）——配套 5 个时序测试
+    - 代理模式取消：executeStreamRequest 代理分支循环结束后显式检测 externalSignal.aborted 抛 CANCELLED_ERROR（与原生 fetch 分支对齐，半截流不再被当完整消息落盘）+ 剩余 buffer 取消后不再冲刷——5 个测试
+    - MCP 连接生命周期：connect 代际号机制（旧连接的晚到 exit/error/catch 不再误删新客户端/覆盖状态）；connect 按 serverId 复用 in-flight promise（不再假成功）；StdioClient spawn 'error' 立即 reject（不再挂满 30s 超时）+ 流 error 监听 + stderr 64KB 上限；HttpClient 超时覆盖 body 读取与 sendNotification、disconnect abort 进行中请求、SSE 按请求 id 匹配与多行 data: 合并——21 个测试
+    - 依赖安装与配置导出：DependencyManager 同依赖 in-flight 复用 + 每次安装独立临时目录 + exec maxBuffer 64MB + 失败清理 temp；exportConfig 递归脱敏（customHeaders/customBody/tokenCountApiConfig 不再泄漏密钥）
+    - 前端依赖矩阵统一：vite ^5→^6.4.3、@vitejs/plugin-vue ^5→^6.0.8、vitest 4 保持，删除 esbuild overrides，npm dedupe 后测试与生产构建统一到 vite 6.4.3 + esbuild 0.25.12（npm ci 可复现）
+    - 锁与设置：fileWriteLockManager 锁 key 统一绝对规范路径（相对/绝对/../写法不再绕过互斥）；registerAllTools 改注册真实工厂（refreshTool 不再静默空操作）；SettingsCore.updateSettings 深合并（嵌套部分对象不再抹掉同层配置）；VSCodeSettingsStorage 按快照 diff 只写变更键（不再每次全量重写全部配置）
+    - 并发一致性：runEventBus 持久化队列改按 conversationId 串行（同会话并行子代理不再互相覆盖 transcript）；新增 progressWriteLock per-path 写互斥（progress.md 读改写不再丢失并行更新）
+    - 性能：TranscriptRepository 结构化变更少一次写后全量回读+深拷贝；ToolExecutionService 每工具批次节点反查 2 次→1 次（200 次迭代省数百次全量读）；PromptManager 固定文件 TTL+mtime 缓存与 1MB/2MB 大小限制、fileTree 节点预算截断（10000）、gitignore `!` 否定语义、glob 正则编译缓存；checkpoint 三处 O(n²)→O(n)（unbackedPaths/RetentionService 后继/getIncrementalChain）+ 读取侧 backupDir 越界校验
+    - 测试稳定性：toolBatchCheckpoint 轮询改为等待 after 最终绑定值（消除 fire-and-forget 绑定窗口的既有 flaky）
+  - 安全/性能/一致性修复：
+    - webview 安全：diffContentId 白名单校验（^[A-Za-z0-9_-]+$，5 处 loadGlobalDiff 调用点封堵 ../ 穿越）；消息路由 clientId 改为按来源 webview 固定（不再信任消息体字段，杜绝跨面板身份伪造）
+    - media 工具工作区护栏：5 个图片工具（generate_image/remove_background/crop/resize/rotate）输入输出路径统一走 resolveFileToolPathWithInfo + outside-workspace 审批流，与 file 工具策略对齐（默认 deny 下不再能读写工作区外）
+    - 路径校验：integrityCheck 段文件名白名单（恶意索引不再越界读盘）；BranchGraphRepository（新错误码 INVALID_CONVERSATION_ID）与 DiffStorageManager 会话 ID 白名单
+    - 请求一致性：ChatFlowService 前置清理（diff 中断 + rejectAllPendingToolCalls）提取为公共方法并接入非流式 handleChat/handleRetry（悬空 functionCall 不再跨回合残留）；drainInboxIntoResults 显式校验 mailbox drain 持有者（并发主循环不再窃取消息）
+    - subagents：executor 超时/父取消直接丢弃 partial response 走终态（半截工具调用不再进 transcript）；agentMailbox 线程深度原子递增 + 拒绝时清理（不再只增不删）；subagents 工具名列表按 registry/MCP 计数指纹缓存（声明访问不再 O(N) 全量重算）
+    - 大文件护栏：apply_diff/insert_code/delete_code 同步读取前 stat 5MB 上限；remove_background 文件 50MB + 像素 16MP 双层拦截；apply_diff 精确匹配 10 万候选上限 + LCS DP 行数护栏（病态输入不再撑爆内存）
+    - 工具护栏：list_files 递归深度 10/条目 5000 + truncated 标志 + 跳过常见大目录；execute_command shell 检测结果缓存（不再每工具创建多次同步 execSync）；find_references context 钳制 0~10；goto_definition 括号计数词法感知（字符串/注释/模板不参与）
+    - memory/prompt/settings：recall 淘汰 O(1) 索引指针（不再反复 shift）；updateConfig 配置项边界校验（entryChars 1~319 等）；listEntries 流式扫描 + 可选 limit；buildPromptCacheKey 纳入模板指纹（改模板不再 60s 内返回过期提示词）；SettingsExporter YAML 双引号转义 + 解析端配套反转义（描述含换行/引号/--- 往返不损坏）
+    - webview 性能：附件 base64 上限 50MB；searchWorkspaceFiles limit 钳制 200 + glob 元字符剥离 + 子目录并行遍历；上下文预览改异步写；BranchHandlers 图信息单次 DFS（O(n²)→O(n)）；死代码清理（MessageRouter 两方法、jsonFormatter 三导出、StreamProcessorResult 接口）
+    - ConversationManager：insertMessage/insertContent 后 repairParentChainAfterInsert（插入点后继 parentId 重链，恢复线性活跃路径不变量）；结构性删除后同步 messageCount（列表计数不再漂移）；toolAdapter 旧 mcp_ 命名收敛到 codec（mcp__，删除死导出）；create_progress 并入 per-path 写互斥
+    - 前端：sanitizeHtml 补齐（xlink:href/use href/data:/srcdoc/style 剥离、控制字符混淆防护）；删除 useChat/useMessages/useConversations 三个死 composable（含从不释放的监听器）；sendToExtension 条件 JSON 往返 + 失败回退（纯 JSON 大载荷不再双份序列化）；settingsStore Language 补 'ja' + useI18n 接入 ja 语言包（ja 用户 store 级文案不再回退中文）
+    - fast-tavern：无 id 正则回退 id 改确定性 FNV-1a 哈希（TS/Python 输出一致，可复现）；死代码三元收敛；py README 示例命名与代码块修正；根 package.json 新增 benchmark script 与 engines.node（>=20）；BranchGraphRepository 原子写 rename 重试（Windows EPERM 偶发 flaky 根治）
+  - 代码组织与文档收尾：ChannelManager.getFilteredTools 与 ToolDeclarationResolver 合并（删约 235 行重复实现，主会话工具列表获得 denylist/excludeToolNames 能力，"主会话与 SubAgent 共用同一入口"兑现）；review 6 个工具路径策略副本收敛到 progress/pathUtils 共享实现；handleEditAndRetry（非流式）补齐前置清理（与其它入口一致）；前端三语语言包删除 useChat/useConversations 孤儿键；sanitizeHtml 补 srcset 候选级协议校验；CHANGELOG 历史条目清除全部内部代号（CP-/BR-/MIG-/TREE-/BCP-/EX-/HIS-/CPF-/MED-/审查/复查/决策/PR # 等 165 处）
+
 ## [1.4.0] - 2026-08-04
 
 ### Changed
@@ -16,73 +55,73 @@
   - 后端 diff 应用增加快速路径：互不重叠且唯一匹配的结构化 hunks 先规划位置并一次拼接文件，保留依赖前序修改、缩进容错和歧义场景的原逐块语义；unified patch 改为整块单次 `splice`，fallback 先按首行筛选候选再校验完整块，避免逐行修改数组和无条件嵌套扫描
   - 存档排除配置编辑器美化：设置页「自定义排除模式」与「每类别模式编辑」从裸 textarea 改为 chips 风格模式列表编辑器（`PatternListEditor`）——已有模式以标签卡片展示、悬停逐个删除，输入框回车添加、粘贴多行自动拆条去重，添加/删除即时保存；类别编辑面板补充标题栏与「清空（恢复默认）」按钮并补齐样式；自定义模式标签旁新增规则数量徽标；三语文案同步
   - 后台任务回流卡片新增三段式折叠视图（用户反馈）：默认折叠为两行省略，可切换「中展开（约 15 行内滚动查看）」与「完全展开」，三个图标按钮置于卡片头部右侧，当前视图高亮；配合后台回执完整内联修复，长报告不再撑满聊天窗口
-  - 存档路径安全加固（审查 CP-DEL-1/CP-PATH-1/CP-RET-2）：删除、合并、manifest 读取路径统一经共享 `isSafeCheckpointDirName` 校验（`/^cp_[a-z0-9_]+$/i`），损坏/恶意元数据中的 `backupDir` 不再能触发 `fs.rm(recursive)` 递归删除存档目录外内容；恢复侧文案与失败摘要统一走 `t()` 并补齐 `modules.checkpoint.restore.*` 三语条目（checkpointNotFound / manifestMissing / cannotBuildChain / backupDirNotFound / moreFailures / excludedNote / excludedNoteChanged）
-  - 索引删除补祖先闭包（审查 CP-IDX-1）：`deleteCheckpointsFromIndexInternal` 与批量删除（CP-05）对齐，从所有保留节点向前遍历完整基链，编辑+重试导致消息索引回退时不再删掉保留节点的基快照（不再产生永久断链存档）；预览返回 `deleted` 与 `deletedIfUnconfirmed` 两个计数，与默认执行口径严格一致（CP-09）
-  - 存档配置保存链路加固（审查 EX-CFG-1/EX-12-1/EX-12-2）：`updateCheckpointConfig` 改为深合并落盘（部分 exclusion/messageCheckpoint 负载不再覆盖已保存的 profilePatterns 等嵌套字段）；`enabledProfiles` 值必须为 boolean（`"false"` 字符串不再被当真）、工具列表必须为字符串数组、`maxCheckpoints` 仅接受有限整数（保留 -1 无上限哨兵）、`enabled` 必须为 boolean；自定义模式拒绝 `*` / `**` / `/**` / `/*` 全忽略模式（新增 blanket 原因）
-  - 强制排除大小写折叠扩展到 macOS（审查 EX-CASE-1/EX-CASE-2/CP-WS-1）：`.GIT` / `NODE_MODULES` 目录片段与扩展存储绝对路径自排除在 win32/darwin 大小写不敏感卷上不再可绕过，`normalizeWorkspaceUri` 同步折叠；符号链接不再静默丢弃，记录为 `unsupported_file_type` 排除条目供预览解释（CP-SYMLINK-1）
-  - 用量索引并发丢失更新根治（审查高项）：`FileUsageIndexStore` 内部实现 per-conversation 写串行队列（appendUsage / appendUsageMessages / write / remove 全部入队，write 内按条目键去重），并行子代理与主会话的读改写不再互相覆盖；usage.json 改 tmp+rename 原子写；统计 listConversations 失败时跳过 prune 保留内存缓存；`fs.watch` recursive 增加递归能力探测，不支持时退化为 mtime 快照比对
-  - 历史存储读一致性加固（审查中项）：`loadSegmentedHistory` 读后校验 `Σcount === totalMessages` 且段齐全（双 rename 提交窗口不再静默返回错位历史），读侧重试改为 2~3 次带退避；`getMessagesPaged` 初始页先只读浅扫描，仅存在悬空 functionCall 才走深拷贝路径（HIS-13 首屏收益找回）；M3 钳制改轻量只读 index（不再每条消息 O(段数) 次 stat）；删除会话后 append/mutate 短路（流式中删除不再"无 meta 幽灵复活"）；M4 自愈优先从可读段重建、totalMessages 重算为 Σcount、批量摘要返回 truncated 标志、段缓存增加字节软上限与按会话分桶失效
-  - 前端设置页与 checkpoint store 加固（审查 H-1/H-2 等）：`updateConfigField` 保存失败回滚字段 + 保存串行化；`loadConfig` 失败时禁用表单并展示错误横幅（不再以默认值渲染导致真实配置被覆盖）；`checkpoint.restore`/`deleteBatch`/`previewExclusions` 超时豁免；失败路径重载 checkpoints；进度轮询瞬时错误不停止 + 陈旧检测 + 新操作重启；展开对话列表响应校验对话身份；批量删除失败保留列表 + 防重入；`mergeUnchanged` 仅保存成功才同步 chatStore
-  - 恢复错误语义修正（审查 H-3）：恢复结果（失败/部分失败/未备份警告/成功）改用独立分级提示，不再塞入 `chatStore.error`；错误条「重试」按钮仅在可重试错误码（STREAM_ERROR 等）时显示，恢复失败后点击不再误触发 LLM 重新生成；恢复确认框固化 `conversationId`（预览/确认期间切对话不再恢复错误对话）；`previewExclusions`/`getAllConversationsWithCheckpoints` 加入非阻塞路由；`updateCheckpointConfig` 响应携带归一化配置供前端校正；checkpoint handler 补入参校验与明确错误码
-  - 快照构建/查询收敛（审查 CP-DUP-1 等）：`runBounded`/`hashFileStreaming`/`isExcludedAbsolutePath` 三处重复实现收敛到共享模块（`checkpointConcurrency`/`fileHashing`/`checkpointPathUtils`，大小写策略统一）；排除预览 samples 按路径排序；设置页统计改有界并发 + `getMetadataLight`；`getCheckpoints` 区分「无记录」与「读取失败」；移除 `as any` 类型绕过
-  - 消息稳定 ID 地基（BR-01/BR-02）：`Content` 新增 `id`/`parentId`，所有写入路径（append 锁内尾读、mutate 插入、functionResponse 补齐）统一经 `ensureNodeId` 生成稳定 ID + 线性 parentId；旧历史在首载/迁移入口按「缺 id 自判定」于会话写锁内确定性补 ID（uuidv5 风格，幂等：多次迁移 ID 集合一致）并原子全量重写一次（totalMessages 不变、指纹校验）；`formatHistoryForAPI` 白名单确认不下发 id/parentId；前端 parsers 透传 `content.id` 为 `Message.id`（跨加载稳定，不再每次生成）
-  - 前端清理：`summarizeContext`/`cancelSummarizeRequest` 从 checkpointActions 迁入 messageActions（re-export 保持导出名兼容）；设置页存档项新增「排除详情」入口接通 `checkpoint.getManifest`（EX-11 前端缺口闭合，旧存档提示不可用）
+  - 存档路径安全加固：删除、合并、manifest 读取路径统一经共享 `isSafeCheckpointDirName` 校验（`/^cp_[a-z0-9_]+$/i`），损坏/恶意元数据中的 `backupDir` 不再能触发 `fs.rm(recursive)` 递归删除存档目录外内容；恢复侧文案与失败摘要统一走 `t()` 并补齐 `modules.checkpoint.restore.*` 三语条目（checkpointNotFound / manifestMissing / cannotBuildChain / backupDirNotFound / moreFailures / excludedNote / excludedNoteChanged）
+  - 索引删除补祖先闭包：`deleteCheckpointsFromIndexInternal` 与批量删除对齐，从所有保留节点向前遍历完整基链，编辑+重试导致消息索引回退时不再删掉保留节点的基快照（不再产生永久断链存档）；预览返回 `deleted` 与 `deletedIfUnconfirmed` 两个计数，与默认执行口径严格一致
+  - 存档配置保存链路加固：`updateCheckpointConfig` 改为深合并落盘（部分 exclusion/messageCheckpoint 负载不再覆盖已保存的 profilePatterns 等嵌套字段）；`enabledProfiles` 值必须为 boolean（`"false"` 字符串不再被当真）、工具列表必须为字符串数组、`maxCheckpoints` 仅接受有限整数（保留 -1 无上限哨兵）、`enabled` 必须为 boolean；自定义模式拒绝 `*` / `**` / `/**` / `/*` 全忽略模式（新增 blanket 原因）
+  - 强制排除大小写折叠扩展到 macOS：`.GIT` / `NODE_MODULES` 目录片段与扩展存储绝对路径自排除在 win32/darwin 大小写不敏感卷上不再可绕过，`normalizeWorkspaceUri` 同步折叠；符号链接不再静默丢弃，记录为 `unsupported_file_type` 排除条目供预览解释
+  - 用量索引并发丢失更新根治：`FileUsageIndexStore` 内部实现 per-conversation 写串行队列（appendUsage / appendUsageMessages / write / remove 全部入队，write 内按条目键去重），并行子代理与主会话的读改写不再互相覆盖；usage.json 改 tmp+rename 原子写；统计 listConversations 失败时跳过 prune 保留内存缓存；`fs.watch` recursive 增加递归能力探测，不支持时退化为 mtime 快照比对
+  - 历史存储读一致性加固：`loadSegmentedHistory` 读后校验 `Σcount === totalMessages` 且段齐全（双 rename 提交窗口不再静默返回错位历史），读侧重试改为 2~3 次带退避；`getMessagesPaged` 初始页先只读浅扫描，仅存在悬空 functionCall 才走深拷贝路径（首屏收益找回）；钳制改轻量只读 index（不再每条消息 O(段数) 次 stat）；删除会话后 append/mutate 短路（流式中删除不再"无 meta 幽灵复活"）；自愈优先从可读段重建、totalMessages 重算为 Σcount、批量摘要返回 truncated 标志、段缓存增加字节软上限与按会话分桶失效
+  - 前端设置页与 checkpoint store 加固：`updateConfigField` 保存失败回滚字段 + 保存串行化；`loadConfig` 失败时禁用表单并展示错误横幅（不再以默认值渲染导致真实配置被覆盖）；`checkpoint.restore`/`deleteBatch`/`previewExclusions` 超时豁免；失败路径重载 checkpoints；进度轮询瞬时错误不停止 + 陈旧检测 + 新操作重启；展开对话列表响应校验对话身份；批量删除失败保留列表 + 防重入；`mergeUnchanged` 仅保存成功才同步 chatStore
+  - 恢复错误语义修正：恢复结果（失败/部分失败/未备份警告/成功）改用独立分级提示，不再塞入 `chatStore.error`；错误条「重试」按钮仅在可重试错误码（STREAM_ERROR 等）时显示，恢复失败后点击不再误触发 LLM 重新生成；恢复确认框固化 `conversationId`（预览/确认期间切对话不再恢复错误对话）；`previewExclusions`/`getAllConversationsWithCheckpoints` 加入非阻塞路由；`updateCheckpointConfig` 响应携带归一化配置供前端校正；checkpoint handler 补入参校验与明确错误码
+  - 快照构建/查询收敛：`runBounded`/`hashFileStreaming`/`isExcludedAbsolutePath` 三处重复实现收敛到共享模块（`checkpointConcurrency`/`fileHashing`/`checkpointPathUtils`，大小写策略统一）；排除预览 samples 按路径排序；设置页统计改有界并发 + `getMetadataLight`；`getCheckpoints` 区分「无记录」与「读取失败」；移除 `as any` 类型绕过
+  - 消息稳定 ID 地基：`Content` 新增 `id`/`parentId`，所有写入路径（append 锁内尾读、mutate 插入、functionResponse 补齐）统一经 `ensureNodeId` 生成稳定 ID + 线性 parentId；旧历史在首载/迁移入口按「缺 id 自判定」于会话写锁内确定性补 ID（uuidv5 风格，幂等：多次迁移 ID 集合一致）并原子全量重写一次（totalMessages 不变、指纹校验）；`formatHistoryForAPI` 白名单确认不下发 id/parentId；前端 parsers 透传 `content.id` 为 `Message.id`（跨加载稳定，不再每次生成）
+  - 前端清理：`summarizeContext`/`cancelSummarizeRequest` 从 checkpointActions 迁入 messageActions（re-export 保持导出名兼容）；设置页存档项新增「排除详情」入口接通 `checkpoint.getManifest`（前端缺口闭合，旧存档提示不可用）
   - 子 agent 嵌套能力（用户需求）：子 agent 现在可派生子子 agent（subagents 工具对子 agent 开放）——嵌套深度上限 2（主=0/子=1/子子=2）超限拒绝，深度由框架注入不可伪造；父 run 结束级联清理派生子 run；子 agent system prompt 追加使用说明（一般不需要，仅代码需独立复查或主模型明确指令时使用）；嵌套派发继承父级工具过滤（只读 agent 不能通过嵌套获得写权限）
-  - 用户消息插入（A-COMM 二期）：主会话工具循环/流式中用户发消息不再排队等整轮结束——`chat.sendInterruptMessage` 投递到主会话 inbox，随最近一次工具调用结果一起注入给模型（10s/条频率限制、4000 字符上限、仅投递不落历史）；`sendMessage` 忙时自动改走插入路径
-  - 树状分支接线（BR-05/06/07/09）：新建 `BranchService`（分支图读写删接口 getBranchGraph/getBranchGraphMeta/createRerollCandidate/editCandidate/switchBranchCandidate/deleteBranchCandidate、`validateActivePathMatchesHistory` 活跃路径校验、BR-09 跨对话导出建模 exportedFrom/exportedRefs、`importLinearHistory` 线性导入）；`BranchHandlers` 注册 5 个分支 API；`ConversationManager` 暴露 `runExclusive` 公共锁包装（锁序文档化）、`createBranchConversation` 记录 sourceNodeId + 图初始化/导出标注、`deleteConversation` 清理 sidecar；`switchBranchCandidate` 明确不重写主历史（边界留给 TREE-06）
-  - 迁移与完整性（MIG-04/05）：新建 `BranchMigration`（逐版本迁移注册表 + 链式升级 + 升级前深拷贝失败回滚 + 原子落盘 + 损坏拒绝覆盖）；新建 `backend/tools/maintenance/integrityCheck` 只读完整性检查（历史 Σcount/段齐全/孤儿段、存档 backupDir/manifest/增量链 base+环、分支 validate + 活跃路径与主历史对比，只报告不修复）；R8e 复查后分支对比降级为 warning（回收条件注释随 TREE-06/09 落地更新）
-  - 候选切换全链（TREE-04/06）：`ConversationManager.rewriteHistoryFromBranchGraph`（会话写锁内从图活跃路径重建主历史：决策 8 FR 拆分、幂等、分歧索引、用量重建 + trim 失效）+ `BranchHandlers.switchBranchCandidate` 全链编排（切图 → 主历史重写 → 锁外检查点清理 → rewritten 标记，失败回滚图状态）；R8a 复查后补：FR 消息 id 按「节点 id + FR part id 集」复用旧历史 id（防幂等失效与检查点误删）、invalidate 移至 saveHistory 前（metadata 写失败不再分裂图/历史）、切换前锁内历史/图尾部一致性检测（不一致拒绝切换返回 BRANCH_OPERATION_CONFLICT）
-  - 树状分支前端（TREE-07/10/11/12）：`branchActions.ts`（切换成功后重载历史 → 重建 messageIndexById/toolResponseIndex → 清理错误条/流式残留 → TODO/Build 重置 → 刷新检查点与分支图，失败快照回滚，BRANCH_BUSY 前端双保险）；`BranchSwitcherBar.vue`（‹ 2/3 › 循环切换 + 候选下拉 + 两步确认删除，无分支图自动隐藏）；`BranchTreePanel.vue`（分支树浮层面板：本地 DFS 组装 + 活跃路径高亮 + 软删灰显/恢复 + 行内重命名）；标签页快照保存 branchGraph（修复切标签页残留旧图）
-  - 用量含全部分支（TREE-08）：方案 A 读取时合并——统计读取时经 `readBranchGraph` 读 branches.json，主历史消息 id 为权威去重键（图活跃路径仅作旧索引无 id 时兜底），非活跃候选 token 以 `source='branch'` 并入各维度 + `inactiveBranchTokens` 细分；R8 复查后补：混合态索引去重修正（historyIdsComplete 判定）、候选节点携带 usageMetadataPartial（中断候选按估算口径）
-  - 分支管理（TREE-09）：软删除（deletedAt + 保留期默认 30 天可配置 + **级联软删/恢复整棵子树**——R8 复查修复 prune 静默移除 live 子孙的数据丢失高危）、重命名（renameBranchCandidate 仅改 label）、修剪（pruneDeletedBranches 过期节点+子树物理清理）、purgeBranchCandidate 彻底删除（幂等化）、getDeletedBranchCount 与 prune 孤儿口径统一；设置页新增 `BranchCleanupSettings.vue` 区块（软删数量/一键清理/保留期输入，三语文案）；switch 目标到 root 链上软删节点校验返回 BRANCH_OPERATION_CONFLICT
-  - 性能基准（MIG-09）：`test/benchmark/`（.benchmark.ts 后缀 + --testMatch 显式运行，普通测试不执行）——2000 文件快照创建 0.3s/恢复 0.7s、1 万条历史 append 0.9s/读取 27ms/用量 12ms、100 候选图操作全亚毫秒（R8e 后含漂移恢复测量与 102 层深链场景，smoke 上限按实测 10-20× 收紧，harness 输出 GC 可用性并做 JIT 预热）
-  - 分支-存档联动（BCP-02~08）：`bindWorkspaceCheckpoint`（节点绑定 workspaceCheckpointId/workspaceState，工具执行存档点 fire-and-forget 接线）；切换双模式（chat-only/chat-and-workspace——决策 1，编排：安全校验→dirty 闸门→取消流→预览→恢复（失败不切分支）→切换，锁序「恢复先于切图」）；**dirty 文件拦截**（决策 11：WorkspaceRestoreGuard 统一拦截普通恢复与切换，未保存内容不再被静默丢弃）；判据富化（hasWorkspaceState/wroteToWorkspace）+ 前端双按钮确认（三语）；引用计数清理（checkpointRefCounts 扫描 + deleteCheckpointsByNodeIds 三重闸门 + purge/prune 联动，软删不触发）；决策 12 不做内容哈希去重（增量链共享 4 测试固化）；BCP-08 一致性矩阵 26 场景盘点；MIG-02/03 核实旧存档 manifest 兼容与 ignorePatterns 合并口径已覆盖
-  - 大文件拆分（CPF-12 落地）：`CheckpointManager` 2413→1687 行，恢复侧文件操作与辅助平移至 `CheckpointRestoreService`（722 行，prepareRestore/legacy 恢复/过滤/哈希收集/排除说明等 12 方法）与 `WorkspaceEditorRefresher`（94 行）；`CheckpointSettings.vue` 3284→2263 行，script 拆为 5 个 composable（useCheckpointConfig/useCheckpointExclusion/useCheckpointCleanup/useCheckpointOperationProgress/useCheckpointManifest）；`SettingsManager` 2347 行拆为门面 + SettingsCore + 14 个主题服务，`settings/types.ts` 2419 行拆为 11 个主题类型文件 + 聚合入口（公共导出零变化，纯重构）
+  - 用户消息插入：主会话工具循环/流式中用户发消息不再排队等整轮结束——`chat.sendInterruptMessage` 投递到主会话 inbox，随最近一次工具调用结果一起注入给模型（10s/条频率限制、4000 字符上限、仅投递不落历史）；`sendMessage` 忙时自动改走插入路径
+  - 树状分支接线：新建 `BranchService`（分支图读写删接口 getBranchGraph/getBranchGraphMeta/createRerollCandidate/editCandidate/switchBranchCandidate/deleteBranchCandidate、`validateActivePathMatchesHistory` 活跃路径校验、跨对话导出建模 exportedFrom/exportedRefs、`importLinearHistory` 线性导入）；`BranchHandlers` 注册 5 个分支 API；`ConversationManager` 暴露 `runExclusive` 公共锁包装（锁序文档化）、`createBranchConversation` 记录 sourceNodeId + 图初始化/导出标注、`deleteConversation` 清理 sidecar；`switchBranchCandidate` 明确不重写主历史（边界留给后续分支任务）
+  - 迁移与完整性：新建 `BranchMigration`（逐版本迁移注册表 + 链式升级 + 升级前深拷贝失败回滚 + 原子落盘 + 损坏拒绝覆盖）；新建 `backend/tools/maintenance/integrityCheck` 只读完整性检查（历史 Σcount/段齐全/孤儿段、存档 backupDir/manifest/增量链 base+环、分支 validate + 活跃路径与主历史对比，只报告不修复）；复查后分支对比降级为 warning（回收条件注释随分支任务落地更新）
+  - 候选切换全链：`ConversationManager.rewriteHistoryFromBranchGraph`（会话写锁内从图活跃路径重建主历史：FR 拆分、幂等、分歧索引、用量重建 + trim 失效）+ `BranchHandlers.switchBranchCandidate` 全链编排（切图 → 主历史重写 → 锁外检查点清理 → rewritten 标记，失败回滚图状态）；复查后补：FR 消息 id 按「节点 id + FR part id 集」复用旧历史 id（防幂等失效与检查点误删）、invalidate 移至 saveHistory 前（metadata 写失败不再分裂图/历史）、切换前锁内历史/图尾部一致性检测（不一致拒绝切换返回 BRANCH_OPERATION_CONFLICT）
+  - 树状分支前端：`branchActions.ts`（切换成功后重载历史 → 重建 messageIndexById/toolResponseIndex → 清理错误条/流式残留 → TODO/Build 重置 → 刷新检查点与分支图，失败快照回滚，BRANCH_BUSY 前端双保险）；`BranchSwitcherBar.vue`（‹ 2/3 › 循环切换 + 候选下拉 + 两步确认删除，无分支图自动隐藏）；`BranchTreePanel.vue`（分支树浮层面板：本地 DFS 组装 + 活跃路径高亮 + 软删灰显/恢复 + 行内重命名）；标签页快照保存 branchGraph（修复切标签页残留旧图）
+  - 用量含全部分支：方案 A 读取时合并——统计读取时经 `readBranchGraph` 读 branches.json，主历史消息 id 为权威去重键（图活跃路径仅作旧索引无 id 时兜底），非活跃候选 token 以 `source='branch'` 并入各维度 + `inactiveBranchTokens` 细分；复查后补：混合态索引去重修正（historyIdsComplete 判定）、候选节点携带 usageMetadataPartial（中断候选按估算口径）
+  - 分支管理：软删除（deletedAt + 保留期默认 30 天可配置 + **级联软删/恢复整棵子树**——修复 prune 静默移除 live 子孙的数据丢失高危）、重命名（renameBranchCandidate 仅改 label）、修剪（pruneDeletedBranches 过期节点+子树物理清理）、purgeBranchCandidate 彻底删除（幂等化）、getDeletedBranchCount 与 prune 孤儿口径统一；设置页新增 `BranchCleanupSettings.vue` 区块（软删数量/一键清理/保留期输入，三语文案）；switch 目标到 root 链上软删节点校验返回 BRANCH_OPERATION_CONFLICT
+  - 性能基准：`test/benchmark/`（.benchmark.ts 后缀 + --testMatch 显式运行，普通测试不执行）——2000 文件快照创建 0.3s/恢复 0.7s、1 万条历史 append 0.9s/读取 27ms/用量 12ms、100 候选图操作全亚毫秒（含漂移恢复测量与 102 层深链场景，smoke 上限按实测 10-20× 收紧，harness 输出 GC 可用性并做 JIT 预热）
+  - 分支-存档联动：`bindWorkspaceCheckpoint`（节点绑定 workspaceCheckpointId/workspaceState，工具执行存档点 fire-and-forget 接线）；切换双模式（chat-only/chat-and-workspace，编排：安全校验→dirty 闸门→取消流→预览→恢复（失败不切分支）→切换，锁序「恢复先于切图」）；**dirty 文件拦截**（WorkspaceRestoreGuard 统一拦截普通恢复与切换，未保存内容不再被静默丢弃）；判据富化（hasWorkspaceState/wroteToWorkspace）+ 前端双按钮确认（三语）；引用计数清理（checkpointRefCounts 扫描 + deleteCheckpointsByNodeIds 三重闸门 + purge/prune 联动，软删不触发）；不做内容哈希去重（增量链共享 4 测试固化）；一致性矩阵 26 场景盘点；核实旧存档 manifest 兼容与 ignorePatterns 合并口径已覆盖
+  - 大文件拆分（落地）：`CheckpointManager` 2413→1687 行，恢复侧文件操作与辅助平移至 `CheckpointRestoreService`（722 行，prepareRestore/legacy 恢复/过滤/哈希收集/排除说明等 12 方法）与 `WorkspaceEditorRefresher`（94 行）；`CheckpointSettings.vue` 3284→2263 行，script 拆为 5 个 composable（useCheckpointConfig/useCheckpointExclusion/useCheckpointCleanup/useCheckpointOperationProgress/useCheckpointManifest）；`SettingsManager` 2347 行拆为门面 + SettingsCore + 14 个主题服务，`settings/types.ts` 2419 行拆为 11 个主题类型文件 + 聚合入口（公共导出零变化，纯重构）
 
 ### Added
   - 新增共享行级 diff 算法与虚拟行组件测试，以及结构化/unified diff 应用回归测试，覆盖大文件预算降级、公共边缘裁剪、顺序依赖与 relocated hunk fallback
   - 新增 agent 间消息通信（用户设计）：`agent.sendMessage` 工具 + 内存 mailbox（会话限定 + 已知 runId 防冒充、threadId + hopDepth 5 跳防循环）——收件方在**最近一次工具调用结束后**把 inbox 消息追加到工具结果之后随结果返回（主会话工具循环 5 处调用点与子代理执行器均接入），run 结束自动清理；配套信箱与注入点测试 34 用例；用户消息插入与对话删除接线作为二期方案
-  - 新增树状分支底座（BR-03/BR-04/BR-08 初版）：`backend/modules/conversation/branch/`——`BranchGraph.ts` 纯函数模块（insertNode / rerollCandidate / editCandidate / activePath / rebuildActivePath / childrenIndex / validate，含环检测）、`BranchGraphRepository.ts`（branches.json 原子写、损坏抛 BRANCH_STORAGE_CORRUPT、删除对话清理）、`types.ts`（ConversationBranchGraph / ConversationBranchNode / BranchErrorCode；functionResponse 不独立成节点、kind 含 exported、单 parentId 索引 + activeChildId）；配套纯函数与仓储单测 61 用例
-  - 审计修复核对与测试补齐（F-01/F-02/F-03/F-05）：确认 xmlFormatter 防御配置、toolResponseFormatter 部分成功序列化、SubAgentRegistry.isEnabled 修复已在提交 3bfab33 就位；`promptToolParser.test.ts` 补齐 DOCTYPE 实体不展开与超深嵌套拒绝两项安全用例；新增 `toolResponseFormatter.test.ts`（文档 5.6 节 10 项全覆盖）与 `subagentRegistry.test.ts`；各修复批次新增回归测试（损坏 backupDir 删除拒绝、索引回退不断链、manifest LRU、锁排队取消、大小写绕过、深合并保留、用量并发、双 rename 读一致性、删除复活、设置页保存回滚/加载失败等）
+  - 新增树状分支底座（初版）：`backend/modules/conversation/branch/`——`BranchGraph.ts` 纯函数模块（insertNode / rerollCandidate / editCandidate / activePath / rebuildActivePath / childrenIndex / validate，含环检测）、`BranchGraphRepository.ts`（branches.json 原子写、损坏抛 BRANCH_STORAGE_CORRUPT、删除对话清理）、`types.ts`（ConversationBranchGraph / ConversationBranchNode / BranchErrorCode；functionResponse 不独立成节点、kind 含 exported、单 parentId 索引 + activeChildId）；配套纯函数与仓储单测 61 用例
+  - 审计修复核对与测试补齐：确认 xmlFormatter 防御配置、toolResponseFormatter 部分成功序列化、SubAgentRegistry.isEnabled 修复已在提交 3bfab33 就位；`promptToolParser.test.ts` 补齐 DOCTYPE 实体不展开与超深嵌套拒绝两项安全用例；新增 `toolResponseFormatter.test.ts`（文档 5.6 节 10 项全覆盖）与 `subagentRegistry.test.ts`；各修复批次新增回归测试（损坏 backupDir 删除拒绝、索引回退不断链、manifest LRU、锁排队取消、大小写绕过、深合并保留、用量并发、双 rename 读一致性、删除复活、设置页保存回滚/加载失败等）
   - 本轮新增测试：子 agent 嵌套（15 例：深度限制/父过滤传播/级联清理）、用户消息插入（8 例：忙时投递/频率限制/失败回退）、分支接线（BranchService 23 + BranchHandlers 6 + BranchGraph 扩展 5）、迁移与完整性（BranchMigration 15 + integrityCheck 32）、复审修复（用量重建/队列超时/重读校验/原子化 9、agentInbox 剥离 11、错误码与重试 8、前端 UX 9、嵌套权限逃逸回归 等）
 
 ### Fixed
   - 修复 SubAgent Monitor 面板抢走 diff 预览位置（用户反馈）：`vscode.diff` 不带 viewColumn 时在「当前活动编辑器组」打开，焦点在 Monitor（Beside 列）时 diff 会开在 Monitor 旁边而非主聊天侧；现在 Monitor 路由上下文下发 `diffViewColumn`（经 tabGroups 按 viewType 定位主聊天所在列，侧边栏时回退主区域第一列），`openDiffView` 显式传 `viewColumn`——无论焦点在哪，diff 都固定跟随主聊天所在列；`HandlerContext` 新增 `diffViewColumn` 字段，主聊天自己发起的 diff 行为不变
-  - 修复前台 SubAgent 转后台（detach）机制的三处残留缺陷（复查 R7c）：① 循环顶部/工具执行前/启动检查三处取消判定仍裸读父 abortSignal，转后台的 run 在后续迭代或工具调用前仍会被旧流 abort 杀死（绝大多数真实场景失效）——统一改为 `parentAbort()`（detached 后视为无父信号）；② 排队期间 detach 后，acquire 成功时启动检查与超时桥（对已 abort 信号注册的 onParentAbort）仍会杀掉 run——超时桥注册加 `!detachedFromParent` 保护；③ detach 把 acquire 桥的 run 控制信号监听一并移除，排队中已转后台的 run 失去 Monitor 终止响应——acquire 桥拆分父信号/控制信号两部分，detach 只摘父信号；新增回归测试（多轮迭代继续执行、排队-detach 继续执行）
+  - 修复前台 SubAgent 转后台（detach）机制的三处残留缺陷：① 循环顶部/工具执行前/启动检查三处取消判定仍裸读父 abortSignal，转后台的 run 在后续迭代或工具调用前仍会被旧流 abort 杀死（绝大多数真实场景失效）——统一改为 `parentAbort()`（detached 后视为无父信号）；② 排队期间 detach 后，acquire 成功时启动检查与超时桥（对已 abort 信号注册的 onParentAbort）仍会杀掉 run——超时桥注册加 `!detachedFromParent` 保护；③ detach 把 acquire 桥的 run 控制信号监听一并移除，排队中已转后台的 run 失去 Monitor 终止响应——acquire 桥拆分父信号/控制信号两部分，detach 只摘父信号；新增回归测试（多轮迭代继续执行、排队-detach 继续执行）
   - 修复用户发消息时前台子 agent 被连带杀掉（用户实测）：此前新流启动（StreamAbortManager.create）会 abort 旧流，而前台 SubAgent 的 abort 信号挂在主会话工具循环上，旧流取消会连带终止还在干活的子代理；现在 `SubAgentRunController` 增加 `attachedToParent` 标记与 `detachFromParent`（转后台）能力——`StreamAbortManager.create` 在 abort 旧流**之前**先把该会话活跃前台 SubAgent 转为后台（executor 同步解绑父 abort 信号的组合监听、排队唤醒桥与超时桥），run 继续执行至完成，结果经 Monitor/事件总线呈现（广播 `run_detached` 事件）；后台 run（attachedToParent=false）不受影响，保留 TaskManager 取消能力；新增回归测试 11 例（runController detach 语义 5、StreamAbortManager 转后台矩阵 4、executor 集成含对照组 2）
   - 修复后台子 agent 完成消息被截断（用户实测）：`buildSubAgentSection` 此前把后台 SubAgent 最终报告按 4000 字符截断，并以 `[Truncated N more characters. Open Monitor to view the full transcript.]` 收尾，而 Monitor 是人类 UI、主模型没有访问路径，研究/审查报告被腰斩（前台不传 background 的回复完整，因 functionResponse 无截断）；现在回执完整内联结果正文，与前台载荷同规格——完整结果本就要经 postMessage 转发给 Monitor（现状无截断），回执再经 chatStream 与普通用户消息同路径发送，无新增载荷上限；新增回归测试锁定超长报告不再截断
-  - 修复 manifest 缓存无界与锁队列不可取消（审查 CP-CACHE-1/CP-LOCK-1/CP-LOCK-3）：manifest 内存缓存改 LRU（上限 32）且 `getManifest` 读后即弃；工作区锁排队等待响应取消信号（abort 时移出队列）；同 owner 超集重入改为运行时 fail-fast 而非静默排队死锁
+  - 修复 manifest 缓存无界与锁队列不可取消：manifest 内存缓存改 LRU（上限 32）且 `getManifest` 读后即弃；工作区锁排队等待响应取消信号（abort 时移出队列）；同 owner 超集重入改为运行时 fail-fast 而非静默排队死锁
   - 修复存量并发与一致性缺陷：RetentionService 清理以删除返回值为准、对多依赖者循环合并；updateSummary 不再多余写入 `updatedAt`（列表排序不再抖动）；`loadCheckpoints` 失败保留旧值；`trimWindowFromTop` 窗口裁剪不再永久丢弃窗口外检查点；恢复确认框取消时清理选中残留；前端 `restoreAndEdit` 失败补重载兜底
-  - 修复恢复/预览性能残留（审查 CP-PERF-1/CP-LOCK-2）：`collectCurrentWorkspaceState` 与 legacy 恢复哈希从顺序读盘改为共享模块有界并发流式哈希；`previewRestore` 经 `runExclusive({ needFileLock: false })` 只取工作区级互斥，不再持有全局文件写锁阻塞全部写工具
-  - 修复恢复顺序与进度（审查 CP-ORDER-1/CP-PROG-1）：恢复改为「先复制（含哈希校验）→ 全部成功后最后删除」，复制失败不再留下「已删未补」中间态；删除阶段逐文件上报进度，进度 total 覆盖删除 + 恢复全量
-  - 修复复审轮发现的高危问题：用量索引全量重建改为队列内基于最新盘面执行（并发 main 条目不再被覆盖丢失）；`agentInbox` 在落盘前剥离（不再随历史每轮重放给模型）；错误条重试白名单并入后端真实可重试错误码（API/NETWORK/TIMEOUT/PARSE，排除 CANCELLED/CONFIG/VALIDATION 与 RESTORE_*——B7 引入的重试回归修复）；只读预设嵌套派发权限逃逸修复（嵌套继承父级工具过滤、无写工具 agent 移除 subagents、空工具集拒绝一切）；`retryFromMessage`/`editAndRetry` 删除或编辑 IPC 异常路径不再继续重试（历史不重复、本地与后端一致）；`rejectToolCalls` 读改写原子化；`deleteConversation` 纳入会话写锁（删除复活闭环）；段读取后重读 index 版本比对（双 rename 窗口错位历史被检出）；`enqueueWrite` 挂起超时；统计缓存回填含 subagent 合并条目
+  - 修复恢复/预览性能残留：`collectCurrentWorkspaceState` 与 legacy 恢复哈希从顺序读盘改为共享模块有界并发流式哈希；`previewRestore` 经 `runExclusive({ needFileLock: false })` 只取工作区级互斥，不再持有全局文件写锁阻塞全部写工具
+  - 修复恢复顺序与进度：恢复改为「先复制（含哈希校验）→ 全部成功后最后删除」，复制失败不再留下「已删未补」中间态；删除阶段逐文件上报进度，进度 total 覆盖删除 + 恢复全量
+  - 修复复审轮发现的高危问题：用量索引全量重建改为队列内基于最新盘面执行（并发 main 条目不再被覆盖丢失）；`agentInbox` 在落盘前剥离（不再随历史每轮重放给模型）；错误条重试白名单并入后端真实可重试错误码（API/NETWORK/TIMEOUT/PARSE，排除 CANCELLED/CONFIG/VALIDATION 与 RESTORE_*——引入的重试回归修复）；只读预设嵌套派发权限逃逸修复（嵌套继承父级工具过滤、无写工具 agent 移除 subagents、空工具集拒绝一切）；`retryFromMessage`/`editAndRetry` 删除或编辑 IPC 异常路径不再继续重试（历史不重复、本地与后端一致）；`rejectToolCalls` 读改写原子化；`deleteConversation` 纳入会话写锁（删除复活闭环）；段读取后重读 index 版本比对（双 rename 窗口错位历史被检出）；`enqueueWrite` 挂起超时；统计缓存回填含 subagent 合并条目
 
 ## [1.3.2] - 2026-08-04
 
 ### Changed
   - 存档点创建/恢复主流程切换到新架构：创建改用 `CheckpointSnapshotBuilder`（多根工作区扫描、强制排除存档目录自身、流式哈希 + 有界并发、stat 复用），恢复改用 `CheckpointRestoreEngine`（增量链文件索引 O(1) 查询、scoped 路径安全解析、失败清单区分 missing_in_chain / hash_mismatch / copy_failed / delete_failed）；新存档记录工作区身份（`workspaceRoots` / `workspaceFingerprint`），恢复前校验当前工作区，跨项目恢复被明确拒绝；新存档备份目录改用 scoped 布局（`cp_xxx/ws_xxx/relative`），多根工作区同名文件不再互相覆盖；旧格式存档（相对路径键 + 旧布局）单根恢复保持兼容，多根下明确拒绝而非静默错恢复；存档创建/恢复进入工作区级互斥锁（等待进行中的写工具退出并阻止新写入），恢复失败路径转相对路径展示
   - 用量统计性能再优化：统计读取元数据改为轻量路径（只读 `{id}.meta.json`，不再走 `getMetadata` 的历史完整性检查——此前每次统计都会为每个对话额外加载一次历史，索引优化的收益被抵消大半）；新增对话目录监听（`fs.watch` recursive）+ 内存明细缓存——任何历史/元数据/索引文件写入都会把对应对话标记为 dirty，统计只重读 dirty 对话并回填缓存，其余对话直接重放内存明细（零 stat、零读文件），日常统计从几千次跨进程文件调用降到毫秒级；统计自身重建索引写入 `{id}.usage.json` 会触发一次自伤标记，下一轮重读小索引文件后自然恢复，不会无限循环；扩展 dispose 时释放监听，非文件存储（测试/内存适配器）自动退化全量扫描；新增缓存命中跳过读取 / dirty 重读回填 / 已删对话清理 / 缓存时间筛选与 watcher 文件名解析测试
-  - 提示词设置页排版重排（PR #5）：动态上下文保留策略区块从全局固定位置移入对应的模板模式内——预设条目模式下显示在条目编辑区下方，传统模板模式下内联显示在动态模板文本框下方，选项归属不再让人困惑；新增「可用变量参考」可收缩面板（默认收起，静态变量组 / 动态变量组分组展示，chevron 展开收起），长变量列表不再永久占据设置页空间
+  - 提示词设置页排版重排：动态上下文保留策略区块从全局固定位置移入对应的模板模式内——预设条目模式下显示在条目编辑区下方，传统模板模式下内联显示在动态模板文本框下方，选项归属不再让人困惑；新增「可用变量参考」可收缩面板（默认收起，静态变量组 / 动态变量组分组展示，chevron 展开收起），长变量列表不再永久占据设置页空间
   - 提示词模式栏新增保存按钮（绿色保存图标，保存中切换为 loading 动画），与底部原保存按钮并存；导入 / 导出按钮从 codicon 通用图标改为成对的自定义 SVG 图标（方向相反的导出/导入箭头），视觉上明确为一对操作
   - 提示词页保存 / 导出 / 导入反馈统一为浮窗 toast（成功 / 失败着色，2.5 秒自动消失，Transition 动画），移除底部行内文本提示（saveMessage）
   - 存档点文件哈希改为流式读取（`CheckpointManager.getFileHash` / `computeFileHashes`），不再把大文件整体 `readFile` 进内存，哈希结果不变
-  - 默认启用存档的写工具列表补齐（CP-13）：新增 `insert_code`、`delete_code`、`search_in_files`（replace 模式）、图像处理（`remove_background` / `crop_image` / `resize_image` / `rotate_image`）与文档类（`create_plan` / `update_plan` / `create_design` / `update_design` / `create_progress` / `update_progress` / `record_progress_milestone` / `create_review` / `record_review_milestone` / `finalize_review` / `reopen_review`）默认在执行前/后创建存档；`search_in_files` 纯 search 模式（非 replace）不再创建全工作区存档
-  - 恢复检查点前主动取消该对话的流式请求与关联的活跃 SubAgent（CP-04/CP-12），防止恢复后迟到 chunk 污染历史、SubAgent 继续写文件与恢复结果冲突
-  - 存档排除功能上线（EX-01~EX-12）：`CheckpointIgnoreResolver` 升级为四层排除模型——强制排除（`.git` / `node_modules` / 扩展存储根绝对路径，`!` 不可否定）→ 默认排除类别（8 类，设置页可分别开关，可被 `!` 重新纳入）→ 嵌套 `.gitignore`（anchored + 否定 + 目录作用域）→ 用户自定义模式（独立最终求值阶段，最后生效）；`shouldIgnore` 返回 `{ignored, reason, rule, source}`，快照构建输出完整 `excluded` 清单（含命中规则文本）与排除统计；单文件大小上限默认 50 MiB（0 = 不限制），超限文件记录 `reason: 'size'` 不静默消失；存档记录与 manifest 保存排除规则快照 `ignoreSnapshot` 与 `excludedCount/excludedBytes`，恢复时对比快照规则与当前规则输出 `excludedNote`（含 `rulesChanged`），且恢复过滤严格按当前规则（不因旧规则宽而覆盖当前明确忽略的文件）
-  - 存档排除设置与预览（EX-08/EX-09）：`CheckpointConfig.exclusion`（enabledProfiles 全开 / maxFileSizeBytes 50MiB / customPatterns，兼容旧 `customIgnorePatterns` 合并）；设置页新增默认类别开关、大小上限输入、自定义模式编辑器与「预览排除结果」按钮（按类别聚合展示、samples 上限 50、命中 reason/rule/source、被排除目录有界遍历 2000 项且 `complete=false` 标记）；新增 `checkpoint.previewExclusions` / `checkpoint.getExclusionProfiles` handler；配置校验拒绝空模式、绝对路径（盘符/UNC）、纯 `!`、`..` 越界、换行注入、未知类别 id 与非有限数值
+  - 默认启用存档的写工具列表补齐：新增 `insert_code`、`delete_code`、`search_in_files`（replace 模式）、图像处理（`remove_background` / `crop_image` / `resize_image` / `rotate_image`）与文档类（`create_plan` / `update_plan` / `create_design` / `update_design` / `create_progress` / `update_progress` / `record_progress_milestone` / `create_review` / `record_review_milestone` / `finalize_review` / `reopen_review`）默认在执行前/后创建存档；`search_in_files` 纯 search 模式（非 replace）不再创建全工作区存档
+  - 恢复检查点前主动取消该对话的流式请求与关联的活跃 SubAgent，防止恢复后迟到 chunk 污染历史、SubAgent 继续写文件与恢复结果冲突
+  - 存档排除功能上线：`CheckpointIgnoreResolver` 升级为四层排除模型——强制排除（`.git` / `node_modules` / 扩展存储根绝对路径，`!` 不可否定）→ 默认排除类别（8 类，设置页可分别开关，可被 `!` 重新纳入）→ 嵌套 `.gitignore`（anchored + 否定 + 目录作用域）→ 用户自定义模式（独立最终求值阶段，最后生效）；`shouldIgnore` 返回 `{ignored, reason, rule, source}`，快照构建输出完整 `excluded` 清单（含命中规则文本）与排除统计；单文件大小上限默认 50 MiB（0 = 不限制），超限文件记录 `reason: 'size'` 不静默消失；存档记录与 manifest 保存排除规则快照 `ignoreSnapshot` 与 `excludedCount/excludedBytes`，恢复时对比快照规则与当前规则输出 `excludedNote`（含 `rulesChanged`），且恢复过滤严格按当前规则（不因旧规则宽而覆盖当前明确忽略的文件）
+  - 存档排除设置与预览：`CheckpointConfig.exclusion`（enabledProfiles 全开 / maxFileSizeBytes 50MiB / customPatterns，兼容旧 `customIgnorePatterns` 合并）；设置页新增默认类别开关、大小上限输入、自定义模式编辑器与「预览排除结果」按钮（按类别聚合展示、samples 上限 50、命中 reason/rule/source、被排除目录有界遍历 2000 项且 `complete=false` 标记）；新增 `checkpoint.previewExclusions` / `checkpoint.getExclusionProfiles` handler；配置校验拒绝空模式、绝对路径（盘符/UNC）、纯 `!`、`..` 越界、换行注入、未知类别 id 与非有限数值
   - 排除语义细节：win32 下强制排除绝对路径比较统一小写归一（防 `C:\Proj` vs `c:\proj` 大小写漏排）；「重新纳入目录类别下文件需同时否定目录本身（如 `!data/ + !data/keep.txt`）」在设置页给出提示；自定义模式不再被嵌套 `.gitignore` 覆盖（见 Fixed）
-  - 每类别排除模式可编辑（用户需求）：设置页每个默认排除类别新增「编辑模式」按钮，可覆盖该类别的默认模式清单（每行一个 gitignore 模式，清空保存 = 恢复默认清单）；配置新增 `profilePatterns`（profileId -> 模式清单），`collectEnabledProfilePatterns` / resolver 按覆盖优先解析，并随规则快照写入 manifest（恢复说明口径一致）；保存校验复用 EX-12 规则（未知类别 id / 非字符串数组 / 非法模式均拒绝）；新增覆盖/回退/快照深拷贝测试 3 用例
+  - 每类别排除模式可编辑（用户需求）：设置页每个默认排除类别新增「编辑模式」按钮，可覆盖该类别的默认模式清单（每行一个 gitignore 模式，清空保存 = 恢复默认清单）；配置新增 `profilePatterns`（profileId -> 模式清单），`collectEnabledProfilePatterns` / resolver 按覆盖优先解析，并随规则快照写入 manifest（恢复说明口径一致）；保存校验复用规则（未知类别 id / 非字符串数组 / 非法模式均拒绝）；新增覆盖/回退/快照深拷贝测试 3 用例
 
 ### Fixed
-  - 存档恢复边界显式化：只删除目标快照 `fileHashes` 中记录过的路径（#29 语义），快照后新建、快照时被忽略/未备份（复制失败、大小超限、不可读）的文件恢复时不会被静默删除；恢复/创建期间与写工具互斥，避免快照与文件写入竞态
-  - 修复批量删除增量链断链（CP-05）：旧实现只检查「被保留检查点直接引用」一层，链 A→B→C 删除 {A,B} 时 A 被删而 B 保留，B 恢复时断链；现在从所有保留节点向前遍历完整祖先链，被直接或间接依赖的祖先全部强制保留并返回 rejectedIds
-  - 存档删除/合并操作接入工作区级互斥锁（CP-03）：删除、按索引删除、批量删除与创建/恢复互斥；`CheckpointOperationLock` 支持同 owner 相同工作区集合的可重入（引用计数），create 锁内清理旧存档（cleanupOldCheckpoints → deleteCheckpoint）不再嵌套等待自己而死锁
-  - 修复回档并重试 / 回档并删除时后端删除失败仍继续执行（CP-11）：前端 `deleteMessage` 返回失败或抛错时中止后续重试/流程并展示明确错误，不再出现「前端已截断而后端历史残留」的静默不一致；后端各删除路径的磁盘删除失败不再完全静默，记录 warn 便于排查（元数据已正确移除，残留目录为孤儿目录不影响正确性）
-  - 恢复结果新增未备份文件提示（CP-08/CP-10）：`restoreCheckpoint` 返回 `unbackedPaths`（快照时大小超限/不可读/复制失败的文件，恢复时受保护不会被删除），前端恢复确认后展示失败/部分失败/未备份文件清单；设置页批量删除展示被依赖保留与删除失败的数量
-  - 新增恢复预览确认流程（CP-09）：所有恢复入口（普通恢复 / 回档并重试 / 回档并删除 / 回档并编辑）先调用 `checkpoint.previewRestore` 计算恢复计划（将恢复/删除/跳过数量 + 待删除文件清单），确认框展示清单后才执行真正恢复；待删除文件区分「快照记录过」（#29 白名单）与「快照后新建」（默认保留，用户确认后一并删除，实现「撤销工具新建文件」语义）；`RestoreEngine` 提取纯计算函数 `computeRestorePlan`，预览清单与实际执行的删除严格一致；`restoreCheckpoint` 新增 `deleteUntrackedFiles` 选项，未确认时保持原有保护语义不删除任何快照后新建文件
+  - 存档恢复边界显式化：只删除目标快照 `fileHashes` 中记录过的路径（快照语义），快照后新建、快照时被忽略/未备份（复制失败、大小超限、不可读）的文件恢复时不会被静默删除；恢复/创建期间与写工具互斥，避免快照与文件写入竞态
+  - 修复批量删除增量链断链：旧实现只检查「被保留检查点直接引用」一层，链 A→B→C 删除 {A,B} 时 A 被删而 B 保留，B 恢复时断链；现在从所有保留节点向前遍历完整祖先链，被直接或间接依赖的祖先全部强制保留并返回 rejectedIds
+  - 存档删除/合并操作接入工作区级互斥锁：删除、按索引删除、批量删除与创建/恢复互斥；`CheckpointOperationLock` 支持同 owner 相同工作区集合的可重入（引用计数），create 锁内清理旧存档（cleanupOldCheckpoints → deleteCheckpoint）不再嵌套等待自己而死锁
+  - 修复回档并重试 / 回档并删除时后端删除失败仍继续执行：前端 `deleteMessage` 返回失败或抛错时中止后续重试/流程并展示明确错误，不再出现「前端已截断而后端历史残留」的静默不一致；后端各删除路径的磁盘删除失败不再完全静默，记录 warn 便于排查（元数据已正确移除，残留目录为孤儿目录不影响正确性）
+  - 恢复结果新增未备份文件提示：`restoreCheckpoint` 返回 `unbackedPaths`（快照时大小超限/不可读/复制失败的文件，恢复时受保护不会被删除），前端恢复确认后展示失败/部分失败/未备份文件清单；设置页批量删除展示被依赖保留与删除失败的数量
+  - 新增恢复预览确认流程：所有恢复入口（普通恢复 / 回档并重试 / 回档并删除 / 回档并编辑）先调用 `checkpoint.previewRestore` 计算恢复计划（将恢复/删除/跳过数量 + 待删除文件清单），确认框展示清单后才执行真正恢复；待删除文件区分「快照记录过」（快照白名单）与「快照后新建」（默认保留，用户确认后一并删除，实现「撤销工具新建文件」语义）；`RestoreEngine` 提取纯计算函数 `computeRestorePlan`，预览清单与实际执行的删除严格一致；`restoreCheckpoint` 新增 `deleteUntrackedFiles` 选项，未确认时保持原有保护语义不删除任何快照后新建文件
   - 恢复确认流程安全加固：`restoreAndRetry` / `restoreAndDelete` / `restoreAndEdit` 的「删除快照后新建文件」改为调用方（确认框）显式传参确认，默认 false——绕过确认框的调用不会静默删除文件；回档三连中 `deleteMessage` 失败时不再只提示，而是重新加载历史拉回前端窗口与后端一致；恢复确认框取消时清理暂存的预览动作状态；预览期间恢复按钮显示 loading 并禁用
   - 存档维护改进：`pruneMissingBackupCheckpointRecords` 顺带清理孤儿备份目录（磁盘存在但无任何记录引用，如删除失败/崩溃残留，仅处理 `cp_*` 格式目录）；设置页存档详情展示「N 个文件未备份」（悬停显示路径清单，去除工作区作用域前缀）；`CheckpointOperationLock` 可重入放宽为「请求集合是已持有集合的子集即放行」，嵌套调用更不易死锁
-  - 深度审查修复：快照强制排除范围从存档目录扩大为整个扩展存储根（自定义数据目录位于工作区内时，memory/conversations 等扩展数据不再进入存档）；恢复时「删除多余空目录」纳入 `deleteUntrackedFiles` 确认控制（快照后新建的空目录默认保留，#29 语义，预览清单一并展示）；legacy 存档预览返回 `legacy` 标记，前端展示「恢复以备份内容为准」避免误判「无变更」；恢复确认框打开期间恢复按钮禁用，防止重复点击覆盖确认内容
+  - 深度审查修复：快照强制排除范围从存档目录扩大为整个扩展存储根（自定义数据目录位于工作区内时，memory/conversations 等扩展数据不再进入存档）；恢复时「删除多余空目录」纳入 `deleteUntrackedFiles` 确认控制（快照后新建的空目录默认保留，快照语义，预览清单一并展示）；legacy 存档预览返回 `legacy` 标记，前端展示「恢复以备份内容为准」避免误判「无变更」；恢复确认框打开期间恢复按钮禁用，防止重复点击覆盖确认内容
   - 修复增量链恢复索引错误：增量节点磁盘上只保存 `changes` 里的文件，但恢复索引此前把该节点完整 `fileHashes` 都指向其目录，导致未变化文件恢复时报 `missing_in_chain`；现在按 `changes` 限定节点备份边界，未变化文件从更早节点（base）恢复
   - 修复存档路径安全缺口：备份源目录（`backupDir`）来自存档元数据，损坏数据可含 `..`/绝对路径，现在恢复时校验备份源必须位于存档根目录内（越界视为链上缺失）；恢复目标路径全程做符号链接/junction 检查（`resolveSafePathInsideRoot`），链接不能绕过工作区边界
   - 修复旧版存档（无 `fileHashes`）恢复安全隐患：多根工作区下明确拒绝（旧记录无工作区身份，无法确定文件归属）；单根恢复以备份目录实际内容为目标、绝不删除当前工作区任何文件（旧记录没有“快照时可见”清单），替代此前“删除备份里没有的所有文件”的危险行为
@@ -91,22 +130,22 @@
   - 修复流式报错后重试残留半截回答：流式过程中后端报错时，后端不会持久化半截 assistant 消息，但前端窗口会保留有内容的半截消息，点击错误通知上的「重试」（`retryAfterError`）之前不会清理，导致重试后窗口/历史出现半截回答残留，且与后端历史错位；现在 `handleError` 会记录失败半截消息 ID，`retryAfterError` 重试前回滚（删除窗口消息 + 清理检查点 + 防御性同步删除后端），错误条「关闭」按钮与发送新消息也会一并清理失败残留，工具响应后的「继续对话」语义不受影响（不删除正常历史）；新增回归测试 12 用例（frontend `streamErrorRetry.test.ts`）
   - 修复动态上下文策略选项的误导性括号标注：单份模式选项原先带有「（当前策略）」（zh-CN）或「（当前行为）」（en/ja）注释，而该选项与保留模式是并列可切换的，标注「当前」会让用户在切换后看到错误的归属语义；现在移除括号注释，三语统一为中性文案「单份动态上下文 / Single dynamic context / 単一の動的コンテキスト」
   - 修复动态上下文策略警告文案硬编码英文：设置页选中保留模式时提示「preserve 会把旧回合的动态快照固定插回原位…」，而选项在 UI 上显示的是中文「保留旧动态上下文原位」，用户无法把二者对应；现在句首直接使用选项的中文名称，不再出现英文标识
-  - 修复空提示词保存后回退默认模板（PR #5）：`resolvedMode?.template || promptConfig?.template`（PromptManager.ts）与 `mode?.template || ...`（SettingsManager.getSystemPromptTemplate）的空字符串回退导致 legacy 模式显式保存的空模板在运行时被全局模板覆盖，用户无法真正清空模板；两处改为 `??`（nullish coalescing），空字符串原样保留；前端 `loadModeConfig` 同步用 `typeof === 'string'` 判断而非 `||` 兜底，空模板不再被 DEFAULT_TEMPLATE 顶替，新增回归测试锁定该行为
-  - 修复提示词导出流程不可控（PR #5）：前端 Blob 下载在 webview 环境保存位置与文件名不受用户控制，改为通过新增的 `exportPromptModes` webview handler 调用 `vscode.window.showSaveDialog` 让用户选择保存位置，确认后才写文件；取消保存对话框时不写文件并返回 `{ success: false, cancelled: true }`，成功后才报告成功；导出成功 / 取消 / 失败均有明确反馈，不再出现「已导出但不知道存到哪」
-  - 修复恢复路径未接入四层排除模型（审查 H-1）：恢复时的目标状态过滤与当前工作区状态收集此前只走 `.gitignore` + 旧 `customIgnorePatterns` 两层，恢复可能把文件写回当前明确排除的路径（`dist/`、`data/`、超过大小上限的文件）或删除当前应排除的文件；现在 `createIgnoreResolver` 统一构造完整四层规则（强制排除含扩展存储根、默认类别、嵌套 `.gitignore`、新旧自定义模式合并），`filterRestoreTargetScoped` / `collectCurrentWorkspaceState` 与快照构建同一口径，恢复不再触碰当前明确排除的路径
-  - 修复空增量节点恢复必失败（审查 H1）：增量链索引构建时 `changes` 为空数组的节点（工具执行但无文件变化的 before/after 存档）被当作完整节点，其全部哈希被指到自己的空备份目录并覆盖更早节点，恢复任何漂移文件都报 `missing_in_chain`；现在区分「未提供 changes（完整节点）」与「空数组（空增量节点，不索引任何文件）」，空增量后的恢复由更早节点提供文件
-  - 修复跨格式合并断链（审查 M6）：容量清理把 legacy 布局（`cp_xxx/relative`）被清理节点并入新格式后继时，文件被原样复制到后继根目录且不写进 manifest，恢复时 `missing_in_chain`；现在按后继 scoped 布局重写路径（`ws_xxx/` 前缀）再复制，并把合并文件的 scoped 键并入后继 manifest.files（hash 取自被删节点），legacy→新格式过渡期清理不再破坏可恢复性
-  - 修复存档取消竞态与锁等待裸异常（审查 M4/M5）：取消发生在等待文件写锁期间时，锁管理器抛普通 Error 从 `runExclusive` 漏出并冒泡到工具循环中断整轮执行；现在 create/restore/deleteAll/deleteBatch 外层捕获锁取消错误转为取消结果；取消发生在复制完成、元数据落盘之前时检查点仍会被保存且进度被 `done` 覆盖——现在写 manifest 与写会话元数据前检查 `throwIfAborted`，进度终态改为 `signal.aborted ? 'cancelled' : 'done'`
-  - 修复排除规则对比漏类别开关（审查 M3/M-4）：`rulesChanged` 只比较大小上限与自定义模式，设置页仅开关默认类别（如关闭 logs）时恢复说明误报「规则未变化」；现在同时比较键排序后的 `enabledProfiles` 与规则版本号
-  - 修复自定义排除模式被嵌套 `.gitignore` 双向覆盖（审查 M-1）：自定义模式与默认类别原先注入根作用域 matcher，嵌套 `.gitignore` 可否定自定义层的 `!` 规则或反过来；现在自定义模式从作用域链拆出，作为所有作用域求值之后的独立最终阶段（强制排除仍不可覆盖），「设置页规则最后生效」与计划语义一致
-  - 修复排除预览 `complete` 谎报（审查 M-6）：主扫描遇到不可读目录时静默跳过且 `complete` 仍为 true；现在不可读目录产出 `unreadable` 排除条目并置 `complete=false` 计入统计
+  - 修复空提示词保存后回退默认模板：`resolvedMode?.template || promptConfig?.template`（PromptManager.ts）与 `mode?.template || ...`（SettingsManager.getSystemPromptTemplate）的空字符串回退导致 legacy 模式显式保存的空模板在运行时被全局模板覆盖，用户无法真正清空模板；两处改为 `??`（nullish coalescing），空字符串原样保留；前端 `loadModeConfig` 同步用 `typeof === 'string'` 判断而非 `||` 兜底，空模板不再被 DEFAULT_TEMPLATE 顶替，新增回归测试锁定该行为
+  - 修复提示词导出流程不可控：前端 Blob 下载在 webview 环境保存位置与文件名不受用户控制，改为通过新增的 `exportPromptModes` webview handler 调用 `vscode.window.showSaveDialog` 让用户选择保存位置，确认后才写文件；取消保存对话框时不写文件并返回 `{ success: false, cancelled: true }`，成功后才报告成功；导出成功 / 取消 / 失败均有明确反馈，不再出现「已导出但不知道存到哪」
+  - 修复恢复路径未接入四层排除模型：恢复时的目标状态过滤与当前工作区状态收集此前只走 `.gitignore` + 旧 `customIgnorePatterns` 两层，恢复可能把文件写回当前明确排除的路径（`dist/`、`data/`、超过大小上限的文件）或删除当前应排除的文件；现在 `createIgnoreResolver` 统一构造完整四层规则（强制排除含扩展存储根、默认类别、嵌套 `.gitignore`、新旧自定义模式合并），`filterRestoreTargetScoped` / `collectCurrentWorkspaceState` 与快照构建同一口径，恢复不再触碰当前明确排除的路径
+  - 修复空增量节点恢复必失败：增量链索引构建时 `changes` 为空数组的节点（工具执行但无文件变化的 before/after 存档）被当作完整节点，其全部哈希被指到自己的空备份目录并覆盖更早节点，恢复任何漂移文件都报 `missing_in_chain`；现在区分「未提供 changes（完整节点）」与「空数组（空增量节点，不索引任何文件）」，空增量后的恢复由更早节点提供文件
+  - 修复跨格式合并断链：容量清理把 legacy 布局（`cp_xxx/relative`）被清理节点并入新格式后继时，文件被原样复制到后继根目录且不写进 manifest，恢复时 `missing_in_chain`；现在按后继 scoped 布局重写路径（`ws_xxx/` 前缀）再复制，并把合并文件的 scoped 键并入后继 manifest.files（hash 取自被删节点），legacy→新格式过渡期清理不再破坏可恢复性
+  - 修复存档取消竞态与锁等待裸异常：取消发生在等待文件写锁期间时，锁管理器抛普通 Error 从 `runExclusive` 漏出并冒泡到工具循环中断整轮执行；现在 create/restore/deleteAll/deleteBatch 外层捕获锁取消错误转为取消结果；取消发生在复制完成、元数据落盘之前时检查点仍会被保存且进度被 `done` 覆盖——现在写 manifest 与写会话元数据前检查 `throwIfAborted`，进度终态改为 `signal.aborted ? 'cancelled' : 'done'`
+  - 修复排除规则对比漏类别开关：`rulesChanged` 只比较大小上限与自定义模式，设置页仅开关默认类别（如关闭 logs）时恢复说明误报「规则未变化」；现在同时比较键排序后的 `enabledProfiles` 与规则版本号
+  - 修复自定义排除模式被嵌套 `.gitignore` 双向覆盖：自定义模式与默认类别原先注入根作用域 matcher，嵌套 `.gitignore` 可否定自定义层的 `!` 规则或反过来；现在自定义模式从作用域链拆出，作为所有作用域求值之后的独立最终阶段（强制排除仍不可覆盖），「设置页规则最后生效」与计划语义一致
+  - 修复排除预览 `complete` 谎报：主扫描遇到不可读目录时静默跳过且 `complete` 仍为 true；现在不可读目录产出 `unreadable` 排除条目并置 `complete=false` 计入统计
   - 修复恢复说明与未备份提示回归：`rulesChanged` 与 `excludedNote` 补全后恢复说明准确；存档摘要（`CheckpointSummary`）化后设置页「N 个文件未备份」提示丢失——摘要补齐 `unbackedPaths` 相关字段，前端悬停提示恢复
-  - 修复 append-only 崩溃恢复后计数永久不一致（审查 H1）：尾段 rename 成功但 index 写失败/崩溃时残留行会在下次追加被并入段计数，`index.totalMessages` 与各段 count 永久相差、全量读与分页读口径不一；现在尾段读取后先按 index 提交点截断（`slice(0, count)`）再拼接新内容，at-most-once 语义下重试不重复，崩溃残留不会泄漏
+  - 修复 append-only 崩溃恢复后计数永久不一致：尾段 rename 成功但 index 写失败/崩溃时残留行会在下次追加被并入段计数，`index.totalMessages` 与各段 count 永久相差、全量读与分页读口径不一；现在尾段读取后先按 index 提交点截断（`slice(0, count)`）再拼接新内容，at-most-once 语义下重试不重复，崩溃残留不会泄漏
   - 修复元数据文件损坏导致列表 UNKNOWN_ERROR（真实故障）：`saveMetadata` 原为非原子 `writeFile`，写入中途崩溃/断电即截断 `{id}.meta.json`（如 24MB 大文件），读取时 `parse_error` 抛到前端阻塞对话列表；现在元数据写入改为临时文件 + rename 原子替换（index 式提交点），`getMetadata` 遇 `parse_error` 时把损坏文件改名备份为 `.corrupt-*`（只保留一份）并从历史时间戳重建 fallback 元数据返回，不再向上抛错（存档记录列表随损坏文件丢失属降级代价，磁盘 `cp_*` 备份目录不受影响且不会被自动清理）
-  - 修复完整性检查两类误判（审查 M1）：legacy 单文件历史只 `exists` 不解析导致损坏 JSON 报 `ok`——现在至少做一次 `JSON.parse` 探测；segmented 分支 index 完好但段文件缺失时误报 `ok`——现在对每个段 `stat` 存在性（不解析内容，保持 HIS-11 只读结构目标），任一缺失即 `readable=false`
-  - 修复段缓存元素引用污染（审查 M2）：`loadSegmentedHistory` 的 `slice` 只复制数组、元素与缓存共享引用，`ContextTrimService` 对 `tokenCountByChannel` 的原地赋值会污染缓存；现在加载路径返回前对元素浅拷贝，缓存只读边界落实；缓存键纳入段文件 mtime（`revision::m{mtime}`），外部进程改写段内容后命中前 `stat` 比对自动失效（审查 M5）
-  - 修复用量与元数据一致性：`updateSummary` 不再无条件写前端传来的 `messageCount`——超过历史实际条数时按 `index.totalMessages` 钳制，前端 IPC 失败时不同步本地计数（审查 M3）；append 遇「index 存在但尾段缺失/损坏」时不再永久失败，回退全量重写自愈（审查 M4）
-  - 修复前端历史窗口与缓存问题：backfill 把 IPC 失败误当「已到历史开头」置 `windowStartIndex=0` 导致更早消息无法上拉——现在错误与空页区分，错误时放弃合并保留原窗口（审查 L2）；`loadMoreConversations` 游标按实际返回数量前进，批量结果缺失时不再跳过未加载对话（审查 L3）；消息中间位置同长度替换（迟到 cancelled chunk 清理）会命中陈旧可见缓存——`replaceMessageAt` 非尾部替换时清缓存（审查 L1）；`addBatch` 直通 append 可能绕过 functionResponse 去重安全网——契约注释明确仅限纯追加 user/model 并对 functionResponse 显式拒绝（审查 L4）
+  - 修复完整性检查两类误判：legacy 单文件历史只 `exists` 不解析导致损坏 JSON 报 `ok`——现在至少做一次 `JSON.parse` 探测；segmented 分支 index 完好但段文件缺失时误报 `ok`——现在对每个段 `stat` 存在性（不解析内容，保持只读结构目标），任一缺失即 `readable=false`
+  - 修复段缓存元素引用污染：`loadSegmentedHistory` 的 `slice` 只复制数组、元素与缓存共享引用，`ContextTrimService` 对 `tokenCountByChannel` 的原地赋值会污染缓存；现在加载路径返回前对元素浅拷贝，缓存只读边界落实；缓存键纳入段文件 mtime（`revision::m{mtime}`），外部进程改写段内容后命中前 `stat` 比对自动失效
+  - 修复用量与元数据一致性：`updateSummary` 不再无条件写前端传来的 `messageCount`——超过历史实际条数时按 `index.totalMessages` 钳制，前端 IPC 失败时不同步本地计数；append 遇「index 存在但尾段缺失/损坏」时不再永久失败，回退全量重写自愈
+  - 修复前端历史窗口与缓存问题：backfill 把 IPC 失败误当「已到历史开头」置 `windowStartIndex=0` 导致更早消息无法上拉——现在错误与空页区分，错误时放弃合并保留原窗口；`loadMoreConversations` 游标按实际返回数量前进，批量结果缺失时不再跳过未加载对话；消息中间位置同长度替换（迟到 cancelled chunk 清理）会命中陈旧可见缓存——`replaceMessageAt` 非尾部替换时清缓存；`addBatch` 直通 append 可能绕过 functionResponse 去重安全网——契约注释明确仅限纯追加 user/model 并对 functionResponse 显式拒绝
   - 修复子agent 续跑丢失 provider 缓存（用户反馈）：子agent 每次执行分配新 runId 作为请求 `conversationId`，DeepSeek/Anthropic 的 `user_id` 按它哈希，`continueFromRunId` 续跑时新 runId 落入新缓存域、前缀缓存必 miss；现在续跑时 `conversationId` 直接沿用旧 run 的 runId（`request.continueFromRunId || runId`），`user_id` 哈希输入与旧 run 完全一致、缓存域天然相同——模型调用工具只需传 `continueFromRunId`，系统自动注入稳定缓存域，无需任何额外字段（同时移除临时引入的 `GenerateRequest.cacheDomainId` 机制，formatter 回退为 conversationId 单一来源）
   - 修复子agent 反复调用 todo 工具报「无权限」（用户反馈）：`todo_write`/`todo_update` 依赖主会话 `ToolContext.conversationId`，子agent 执行路径不注入该值，声明了也必然失败并浪费迭代——现在从子agent 工具声明与执行期允许列表统一排除 todo 工具（主会话不受影响）
   - 修复子agent 窗口被尾部校准清空（用户反馈）：SubAgentMonitor 收到工具/内容事件时对聚焦 run 拉取尾部 20 条并整体替换窗口，用户「加载更早消息」prepend 的历史被清空；现在尾部校准改为保留早于传入 `startIndex` 的前缀合并（`replaceRunContentWindowPreservingPrefix`），删除/重试的权威校准路径仍走纯替换
@@ -128,20 +167,20 @@
   - 新增 checkpoint 模块共享类型契约 `backend/modules/checkpoint/types.ts`（`CheckpointExcludeReason` / `CheckpointExcludedEntry` / `CheckpointExclusionSummary` / `CheckpointExclusionConfig` / `CheckpointIgnoreSnapshot` / `CheckpointManifest` / `CheckpointSummary` / `CheckpointExclusionPreviewResult` / `CheckpointOperationProgress`），作为排除与 manifest 并行改造的接口锚点
   - 新增默认排除类别模块 `CheckpointExclusionProfiles.ts`：8 个类别（logs / aiModels / datasets / caches / pythonVenvs / buildArtifacts / largeMedia / archives）严格按计划清单（不含 `*.bin/*.dat/*.model`、`env/`、`png/jpg/svg`），导出 `resolveEnabledProfiles` / `collectEnabledProfilePatterns` / `buildIgnoreSnapshot` / `validateCustomExclusionPatterns`
   - 新增 manifest 仓储 `CheckpointManifestRepository.ts`：`checkpoints/cp_xxx/manifest.json` 原子写入（tmp+rename）、按 ID 加载（内存缓存）、旧记录迁移（从 `CheckpointRecord.fileHashes/fileStats/emptyDirs/changes` 生成并落盘，幂等）、损坏回退、写入失败清理 tmp；新格式记录无文件哈希时迁移产物为空则返回 null 并显式报「存档数据缺失」而非假成功
-  - 新增 `CheckpointQueryService.ts`（getCheckpoints / getAllConversationsWithCheckpoints / getDirectorySize / pruneMissingBackupCheckpointRecords / 孤儿目录清理）与 `CheckpointRetentionService.ts`（cleanupOldCheckpoints / mergeCheckpointIntoSuccessor），`CheckpointManager` 从 2000+ 行拆分为协调层 + 三服务（CPF-12）
-  - 新增共享有界并发池 `checkpointConcurrency.ts`（runBounded，首错停止取新任务并正确传播），创建复制、恢复/删除循环、目录大小统计均改为有界并发（默认 8）（CPF-06）
-  - 会话元数据精简：完整 `fileHashes` / `fileStats` 从会话元数据迁到独立 manifest，元数据只保留 `CheckpointSummary`（fileCount / backupBytes / excludedCount / manifestVersion 等）；`getCheckpoints` / `getAllConversationsWithCheckpoints` 只下发摘要，旧存档缺字段时按需懒扫描并写回缓存；磁盘占用创建时直接记录（`backupBytes`），设置页不再重复递归扫描（CPF-01/02/09/10）
-  - 流式路径下发摘要化：工具执行期间的 checkpoints chunk 经 `CheckpointService.toStreamSummary()` 剥离 `fileHashes/fileStats`，`loadConversationForView` 与流式两条路径都不再向 webview 传全量哈希映射（CPF-03/04 补全）
-  - 存档操作接入进度与取消：Manager 维护进行中操作状态（阶段 / 已处理 / 总数，AbortController），create / restore / deleteAll / deleteBatch 全接入；RestoreEngine 支持 `signal` + `onProgress`；新增 `checkpoint.getOperationProgress` / `checkpoint.cancelOperation` handler 与前端轮询 + 取消按钮（CPF-11）
-  - 只读工具批次不再创建存档（CPF-05）：`tool_batch` 判定改为基于真实工具名集合 `toolNames.some(name => configuredTools.includes(name))`，`read_file + search_in_files(search)` 等纯只读批次不建存档，`search_in_files` 仅 replace 模式计入
-  - 历史追加改为 append-only 尾段写入（HIS-01/02）：普通追加只写最后一段（不足 200 条）或新建下一段 + 更新 index，不再全量重写所有段；写入顺序「临时尾段 → 原子替换 → 临时 index → 原子替换」，index 是提交点；删除 / 编辑 / 回档 / 分支切换仍走全量重写；`TranscriptRepository` 新增 `appendContents` 直通 append，`addContent` / `addBatch` 纯追加路径不再读全量（functionResponse 保留 mutate 去重安全网）
-  - 新增段级 LRU 缓存 `history/HistorySegmentCache.ts`（HIS-06）：键 `conversationId + segmentFile + revision(+mtime)`，默认 32 段，写后 / 删除会话失效；多段读取改有界并发（并发 4）（HIS-05）
-  - 同一工具迭代内复用历史快照（HIS-03/04）：`getHistoryForAPIFrom(contents)` / `getStatsFrom(contents)` 支持基于已加载历史直接格式化，`ContextTrimService` 不再每次重新读全量历史
-  - 元数据写入合并（HIS-09）：新增 `conversation.updateSummary({conversationId, messageCount, preview})` 一次读写完成，前端流式结束后由 3 次 `setCustomMetadata` 改为 1 次；`updatedAt` 由历史提交统一维护
-  - 对话列表批量元数据（HIS-10）：新增 `conversation.getConversationMetadataBatch`（16 并发、每页 ≤200），前端 `loadMoreConversations` 一次 IPC 拉一页摘要，消除逐对话 IPC
-  - 用量索引增量维护（HIS-08）：新增 `UsageIndexStore.appendUsage` / `appendUsageMessages`，普通追加助手消息只追加条目，删除 / 编辑 / 回档 / 索引损坏才全量重建；`getMetadata` 完整性检查只读 `history.index.json` 结构，不再解析末段历史（HIS-11）
+  - 新增 `CheckpointQueryService.ts`（getCheckpoints / getAllConversationsWithCheckpoints / getDirectorySize / pruneMissingBackupCheckpointRecords / 孤儿目录清理）与 `CheckpointRetentionService.ts`（cleanupOldCheckpoints / mergeCheckpointIntoSuccessor），`CheckpointManager` 从 2000+ 行拆分为协调层 + 三服务
+  - 新增共享有界并发池 `checkpointConcurrency.ts`（runBounded，首错停止取新任务并正确传播），创建复制、恢复/删除循环、目录大小统计均改为有界并发（默认 8）
+  - 会话元数据精简：完整 `fileHashes` / `fileStats` 从会话元数据迁到独立 manifest，元数据只保留 `CheckpointSummary`（fileCount / backupBytes / excludedCount / manifestVersion 等）；`getCheckpoints` / `getAllConversationsWithCheckpoints` 只下发摘要，旧存档缺字段时按需懒扫描并写回缓存；磁盘占用创建时直接记录（`backupBytes`），设置页不再重复递归扫描
+  - 流式路径下发摘要化：工具执行期间的 checkpoints chunk 经 `CheckpointService.toStreamSummary()` 剥离 `fileHashes/fileStats`，`loadConversationForView` 与流式两条路径都不再向 webview 传全量哈希映射（补全）
+  - 存档操作接入进度与取消：Manager 维护进行中操作状态（阶段 / 已处理 / 总数，AbortController），create / restore / deleteAll / deleteBatch 全接入；RestoreEngine 支持 `signal` + `onProgress`；新增 `checkpoint.getOperationProgress` / `checkpoint.cancelOperation` handler 与前端轮询 + 取消按钮
+  - 只读工具批次不再创建存档：`tool_batch` 判定改为基于真实工具名集合 `toolNames.some(name => configuredTools.includes(name))`，`read_file + search_in_files(search)` 等纯只读批次不建存档，`search_in_files` 仅 replace 模式计入
+  - 历史追加改为 append-only 尾段写入：普通追加只写最后一段（不足 200 条）或新建下一段 + 更新 index，不再全量重写所有段；写入顺序「临时尾段 → 原子替换 → 临时 index → 原子替换」，index 是提交点；删除 / 编辑 / 回档 / 分支切换仍走全量重写；`TranscriptRepository` 新增 `appendContents` 直通 append，`addContent` / `addBatch` 纯追加路径不再读全量（functionResponse 保留 mutate 去重安全网）
+  - 新增段级 LRU 缓存 `history/HistorySegmentCache.ts`：键 `conversationId + segmentFile + revision(+mtime)`，默认 32 段，写后 / 删除会话失效；多段读取改有界并发（并发 4）
+  - 同一工具迭代内复用历史快照：`getHistoryForAPIFrom(contents)` / `getStatsFrom(contents)` 支持基于已加载历史直接格式化，`ContextTrimService` 不再每次重新读全量历史
+  - 元数据写入合并：新增 `conversation.updateSummary({conversationId, messageCount, preview})` 一次读写完成，前端流式结束后由 3 次 `setCustomMetadata` 改为 1 次；`updatedAt` 由历史提交统一维护
+  - 对话列表批量元数据：新增 `conversation.getConversationMetadataBatch`（16 并发、每页 ≤200），前端 `loadMoreConversations` 一次 IPC 拉一页摘要，消除逐对话 IPC
+  - 用量索引增量维护：新增 `UsageIndexStore.appendUsage` / `appendUsageMessages`，普通追加助手消息只追加条目，删除 / 编辑 / 回档 / 索引损坏才全量重建；`getMetadata` 完整性检查只读 `history.index.json` 结构，不再解析末段历史
   - 子agent 用量归集（用户需求）：子agent 每轮 generate 的 `usageMetadata` 以 `source: 'subagent'` 条目追加到发起它的主会话用量索引（`appendUsageIndexMessages`），用量统计 totals / byConversation / byModel / byDay 自动包含子agent 消耗，`ConversationUsage` 新增 `subagentTokens` 细分；索引 stale 全量重建时保留已有 subagent 条目；无主会话归属时跳过归集
-  - 前端渲染优化（HIS-12/13）：可见消息窗口增量缓存（同引用 + 长度 + 首尾指纹 O(1) 校验，流式尾替换 O(1)，结构变更回退全量过滤）；对话加载先渲染最后一页再异步补拉更早历史（`backfillInitialVisibleWindow`，与用户上拉 / 发送 / 流式并发时放弃合并）
+  - 前端渲染优化：可见消息窗口增量缓存（同引用 + 长度 + 首尾指纹 O(1) 校验，流式尾替换 O(1)，结构变更回退全量过滤）；对话加载先渲染最后一页再异步补拉更早历史（`backfillInitialVisibleWindow`，与用户上拉 / 发送 / 流式并发时放弃合并）
   - 元数据写入原子化：`saveMetadata` 改为临时文件 + rename 原子替换，任何写路径不再可能留下截断的 meta.json
   - 子agent 设置新增「默认迭代次数」（用户需求）：`SubAgentsConfig.defaultMaxIterations`（默认 80，上限 1000），executor 取值 `per-agent maxIterations > 全局默认 > 50`，设置页全局配置区新增输入框（1~1000），`subagents.list` 返回该值
 
@@ -172,15 +211,15 @@
   - 修复 Sub-Agent 可获得永久记忆工具：所有子代理统一排除 7 个 memory 工具，工具清单描述和执行期允许列表使用同一隔离规则
   - 再次修复输入框 Ctrl+Z 撤销忽略粘贴内容：此前文字粘贴在 `paste` 回调中 `preventDefault` 后通过 `execCommand('insertHTML')` 模拟插入，虽然单独执行命令可进入撤销栈，但没有保留 Chromium 原生 `insertFromPaste` 事务，实际 webview 中仍可能跳过粘贴内容；现在仅在本次粘贴默认动作期间把编辑器临时切换为 `contenteditable="plaintext-only"`，由 Chromium 原生完成纯文本粘贴并记录撤销项，事件结束后恢复普通编辑模式，不影响 Shift+Enter 自定义换行与上下文徽章；文件粘贴仍按附件处理，新增组件级回归测试覆盖文字与文件两条分支
   - 修复用量索引文件被识别为假对话：`FileUsageIndexStore` 把索引写到 `{conversationId}.usage.json`（与历史文件同级），而 `listConversations` 只排除了 `.meta.json`，导致每个对话的 `.usage.json` 都被识别成假对话 ID（形如 `xxx.usage`）显示在历史列表，点入报 "Metadata file is missing"；现在文件识别同样排除 `.usage.json`，只返回真实对话 ID（legacy `{id}.json` 与 segmented `{id}/` 目录），新增回归测试锁定该行为
-  - 修复 XML 工具调用解析安全（F-01）：`fast-xml-parser` 升级到 5.10.1 后为解析器增加 `processEntities: false` 与 `maxNestedTags: 100`，工具协议不再接受 DOCTYPE 自定义实体与超深嵌套输入；协议层额外过滤 `__proto__`/`constructor`/`prototype` 危险键名防原型污染，新增安全输入回归测试（数字字符串保持、实体不展开、深嵌套安全失败、危险键名拒绝）
-  - 修复批量工具部分成功时 LLM 只看得到顶层错误（F-02）：`serializeToolResultForLLM()` 错误分支不再丢弃 `data`，`data.results` 混合数组逐项格式化（避免 JSON 二次转义）、`data.message` 与批量统计（successCount/failCount/totalCount）一并输出，`data.output` 与取消标记保持原有格式；新增共享 formatter 回归测试覆盖 10 项场景
-  - 修复 XML 工具指南示例过时（F-03）：`read_file` 的 `paths` 与 `write_file` 的 `files` 旧示例改为真实 schema（单文件 `path` / 批量 `files: [{ path, startLine?, endLine? }]` / 顶层 `path`+`content`），XML/JSON 测试夹具同步更新为真实参数形状
-  - 修复 `SubAgentRegistry.isEnabled()` 把未注册代理误判为启用（F-05）：未注册代理现在返回 false
-  - 修复注册的自定义 Sub-Agent executor 从未被调用（F-08）：Registry 查询不再隐式创建并缓存默认 executor，正式工具调用路径优先使用显式注册的 executor；executor 请求新增 `conversationId`/`conversationStore`/`promptModeSnapshot` 动态上下文并在每次调用透传
-  - 修复 Sub-Agent 跨对话接续泄漏（F-06）：`continueFromRunId` 只允许接续当前主对话所属的 run，归属不一致时拒绝且错误信息不泄漏旧对话 ID 或内容
-  - 修复重载/内存淘汰后已持久化 run 无法接续（F-09）：接续时内存快照未命中会只加载当前对话的持久化记录，恢复后仍执行归属与终态校验
-  - 修复全部配置代理禁用时 `subagents` 工具被整体隐藏（F-10）：`ChannelManager`/`ToolDeclarationResolver` 统一使用「配置代理计数 > 0 或 General Worker 启用」的 `hasAvailableSubAgent()` 判断
-  - 修复 Windows 通知依赖链（F-07）：移除已停更且有生产审计告警的 `node-notifier`，通知适配器改为 VS Code 原生 `showInformationMessage`（操作按钮打开聊天、不阻塞工具调用），esbuild 不再复制原生包，`npm audit --omit=dev` 归零
+  - 修复 XML 工具调用解析安全：`fast-xml-parser` 升级到 5.10.1 后为解析器增加 `processEntities: false` 与 `maxNestedTags: 100`，工具协议不再接受 DOCTYPE 自定义实体与超深嵌套输入；协议层额外过滤 `__proto__`/`constructor`/`prototype` 危险键名防原型污染，新增安全输入回归测试（数字字符串保持、实体不展开、深嵌套安全失败、危险键名拒绝）
+  - 修复批量工具部分成功时 LLM 只看得到顶层错误：`serializeToolResultForLLM()` 错误分支不再丢弃 `data`，`data.results` 混合数组逐项格式化（避免 JSON 二次转义）、`data.message` 与批量统计（successCount/failCount/totalCount）一并输出，`data.output` 与取消标记保持原有格式；新增共享 formatter 回归测试覆盖 10 项场景
+  - 修复 XML 工具指南示例过时：`read_file` 的 `paths` 与 `write_file` 的 `files` 旧示例改为真实 schema（单文件 `path` / 批量 `files: [{ path, startLine?, endLine? }]` / 顶层 `path`+`content`），XML/JSON 测试夹具同步更新为真实参数形状
+  - 修复 `SubAgentRegistry.isEnabled()` 把未注册代理误判为启用：未注册代理现在返回 false
+  - 修复注册的自定义 Sub-Agent executor 从未被调用：Registry 查询不再隐式创建并缓存默认 executor，正式工具调用路径优先使用显式注册的 executor；executor 请求新增 `conversationId`/`conversationStore`/`promptModeSnapshot` 动态上下文并在每次调用透传
+  - 修复 Sub-Agent 跨对话接续泄漏：`continueFromRunId` 只允许接续当前主对话所属的 run，归属不一致时拒绝且错误信息不泄漏旧对话 ID 或内容
+  - 修复重载/内存淘汰后已持久化 run 无法接续：接续时内存快照未命中会只加载当前对话的持久化记录，恢复后仍执行归属与终态校验
+  - 修复全部配置代理禁用时 `subagents` 工具被整体隐藏：`ChannelManager`/`ToolDeclarationResolver` 统一使用「配置代理计数 > 0 或 General Worker 启用」的 `hasAvailableSubAgent()` 判断
+  - 修复 Windows 通知依赖链：移除已停更且有生产审计告警的 `node-notifier`，通知适配器改为 VS Code 原生 `showInformationMessage`（操作按钮打开聊天、不阻塞工具调用），esbuild 不再复制原生包，`npm audit --omit=dev` 归零
   - 修复 `.vscode/launch.json` 的 `Extension Tests` 指向不存在的测试入口：替换为可运行的 Jest 调试配置
 
 ### Added
@@ -196,21 +235,21 @@
 
 ### Fixed
   - 修复输入框 Ctrl+Z 撤销忽略粘贴内容：contenteditable 粘贴为强制纯文本走 `preventDefault` + 手动 Range 插入，操作不进浏览器原生 undo 栈，Ctrl+Z 会跳过刚粘贴的内容去撤销更早的操作（Shift+Enter 换行、插入 @路径文本同理）；现在粘贴 / 换行 / 插入 @路径文本改用 `document.execCommand('insertText'/'insertHTML')` 写入原生撤销栈——一次粘贴对应一个 undo 条目可整体撤销，同时保持纯文本语义与 lim-break BR + ZWSP 的既有 DOM 结构；`execCommand` 不可用时回退手动插入保证功能不回归，插入函数返回 `inputFired` 避免 execCommand 自动派发 input 事件后调用方重复提取节点，新增 14 个 vitest 用例
-  - 修复 subagents 工具后台模式缺失（E3 F1.1 计划标记完成但实际未实现）：工具声明无 `background` 参数、handler 无后台分支，前端 backgroundTaskStore / BackgroundTaskBar / backgroundStatus 整套后台基建空转；现在按已确认设计补齐——`background: true` 时创建独立 AbortController（用户停止当前对话流不连带取消）、以 `background_subagent` 类型注册到 TaskManager、executor 启动后不 await、工具立即返回 `{ background: true, taskId, runId, agentName }`，executor settle 时注销任务并携带完整结果载荷（response/steps/runId/error），经现成 taskEvent 转发链路由前端混合回流（会话空闲立即发回执、正忙挂起补发）送达主模型
-  - 修复代理非 chunked 流式解码仍损坏中文（PR #1 B1 补全）：非 chunked 消费点仍逐 TCP 包 `toString('utf8')`，被包边界切开的 UTF-8 多字节字符固化成 U+FFFD；现在与 chunked 一致走流式 `TextDecoder`，flush 移入非中止分支
-  - 修复 glob globstar `**` 失效（PR #1 C4 补全）：GLOBSTAR 占位符正则匹配三个转义星号而 `**` 转义后是两个，`**/node_modules/**` 等规则永不跨目录命中；修正为匹配两个转义星号（PromptManager / fileTree 两处）
-  - 修复 diff 预览 LCS 后缀匹配丢失（PR #1 H3 补全）：computeLCS 剥离公共后缀后从不回填，任何带公共尾部的 diff 尾部公共行被标为「删除+新增」、统计虚高；现在按原始索引回填后缀匹配（apply_diff / write_file 两处）
-  - 修复 `deleteCheckpoint` 缺少基快照引用保护（PR #1 A2 补全）：updater 未检查 `baseCheckpointId` 引用，被后继检查点引用为基快照时仍删除会断增量链、恢复 100% 失败；现在被引用时返回原引用拒绝删除
-  - 修复 ChatViewProvider 关闭标签页后消息仍静默丢失（PR #1 F1 补全）：`onDidDispose` 不重置 `_view`/`webviewReady`，F4 的 isAlive 判定对已销毁 webview 仍返回 true，面板关闭期间 postMessage 静默丢弃；现在与 dispose() 语义对齐重置并释放主聊天 client 注册
-  - 修复 media 工具取消后终态恒为 `completed`（PR #1 E1 关联）：批处理末尾无条件 `unregisterTask('completed')`，用户取消的任务显示为「已完成」、后台回执误报成功；现在全部任务被取消时终态为 `cancelled`；`generate_image` 的 failedResults 同步排除 cancelled（与其余 4 个 media 工具对齐）
-  - 修复终端输出护栏丢弃行时无截断提示（PR #1 E2 补全）：显示上限关闭时 `omittedOutputLines` 不计入 `wasTruncated`，AI 看不到「输出被截断」；现在护栏丢弃同样触发截断提示
-  - 修复 search_in_files 高亮替换串 `$` 特殊语义（PR #1 G1 附带）：匹配文本含美元符特殊替换序列（$'、$`、$$）时 `String.replace` 展开特殊替换模式导致高亮内容错乱；改用替换函数
-  - 修复 MarkdownRenderer mermaid 残留注入面（PR #1 G 组补全）：`securityLevel: 'loose'` 下模型可控的图例 HTML 可经 zoomedContent 的 v-html 再次注入执行（webview CSP 含 unsafe-inline）；改为 `'strict'`
-  - 修复 fast-tavern Python 遗漏项（PR #1 I 组补全）：`build_prompt.py` 实际存在（文档误判为「已移除」）且 `recentHistoryForWorldbook` 仍 `int()` 强转、浮点字符串抛 ValueError，改为 `int(float())` + 解析失败回退 0；`convert_from_silly_tavern` 遗留 `isinstance(p, int)` 漏 float position，改 `_is_number`；`get_active_entries._to_recursion_limit` 不可解析回退 5（TS 应为 NaN→循环不执行）、负数被钳制到 0 多执行一次、`-inf` 分支多执行一次——全部对齐 TS Math.trunc/Number 语义
-  - 修复 glob 通配零段语义（PR #1 C4 补全）：`**/x` 不匹配根级 `x`、`a/**/b` 不匹配 `a/b`（`**` 展开为 `.*` 后要求至少一个目录段）；现在统一到 `backend/modules/prompt/glob.ts` 的 `globPatternToRegExp`（PromptManager / fileTree 三处共用），`**` 后跟分隔符时零段可选（gitignore 语义）、单星不跨目录段（fileTree gitignore 分支原先 `*` 跨 `/` 一并修正）；同时去掉「斜杠展开为 `[/\\]` 字符类」的 4 反斜杠魔法——三处调用点路径均已归一化为 `/`，模式里的 `/` 直接作字面 `/`，「斜杠替换必须先于星号替换」的顺序耦合随之消除
-  - 修复 fast-tavern Python normalize_worldbooks 缺字段语义与 TS 不一致（PR #1 I5 补全）：`_to_number` 的 None 分支忽略 fallback 直接返回 0.0，缺 `probability` 的条目概率变 0 永不注入、缺 `index`/`order`/`depth` 的条目被保留（TS 侧分别回退 100 / 丢弃条目）；现在 None 返回 fallback，新增 `_entry_number` 区分「键缺失」（→ fallback）与「显式 null」（→ 0，对齐 `Number(null)`），补 5 个 pytest 用例
+  - 修复 subagents 工具后台模式缺失（计划标记完成但实际未实现）：工具声明无 `background` 参数、handler 无后台分支，前端 backgroundTaskStore / BackgroundTaskBar / backgroundStatus 整套后台基建空转；现在按已确认设计补齐——`background: true` 时创建独立 AbortController（用户停止当前对话流不连带取消）、以 `background_subagent` 类型注册到 TaskManager、executor 启动后不 await、工具立即返回 `{ background: true, taskId, runId, agentName }`，executor settle 时注销任务并携带完整结果载荷（response/steps/runId/error），经现成 taskEvent 转发链路由前端混合回流（会话空闲立即发回执、正忙挂起补发）送达主模型
+  - 修复代理非 chunked 流式解码仍损坏中文：非 chunked 消费点仍逐 TCP 包 `toString('utf8')`，被包边界切开的 UTF-8 多字节字符固化成 U+FFFD；现在与 chunked 一致走流式 `TextDecoder`，flush 移入非中止分支
+  - 修复 glob globstar `**` 失效：GLOBSTAR 占位符正则匹配三个转义星号而 `**` 转义后是两个，`**/node_modules/**` 等规则永不跨目录命中；修正为匹配两个转义星号（PromptManager / fileTree 两处）
+  - 修复 diff 预览 LCS 后缀匹配丢失：computeLCS 剥离公共后缀后从不回填，任何带公共尾部的 diff 尾部公共行被标为「删除+新增」、统计虚高；现在按原始索引回填后缀匹配（apply_diff / write_file 两处）
+  - 修复 `deleteCheckpoint` 缺少基快照引用保护：updater 未检查 `baseCheckpointId` 引用，被后继检查点引用为基快照时仍删除会断增量链、恢复 100% 失败；现在被引用时返回原引用拒绝删除
+  - 修复 ChatViewProvider 关闭标签页后消息仍静默丢失：`onDidDispose` 不重置 `_view`/`webviewReady`，isAlive 判定对已销毁 webview 仍返回 true，面板关闭期间 postMessage 静默丢弃；现在与 dispose() 语义对齐重置并释放主聊天 client 注册
+  - 修复 media 工具取消后终态恒为 `completed`：批处理末尾无条件 `unregisterTask('completed')`，用户取消的任务显示为「已完成」、后台回执误报成功；现在全部任务被取消时终态为 `cancelled`；`generate_image` 的 failedResults 同步排除 cancelled（与其余 4 个 media 工具对齐）
+  - 修复终端输出护栏丢弃行时无截断提示：显示上限关闭时 `omittedOutputLines` 不计入 `wasTruncated`，AI 看不到「输出被截断」；现在护栏丢弃同样触发截断提示
+  - 修复 search_in_files 高亮替换串 `$` 特殊语义：匹配文本含美元符特殊替换序列（$'、$`、$$）时 `String.replace` 展开特殊替换模式导致高亮内容错乱；改用替换函数
+  - 修复 MarkdownRenderer mermaid 残留注入面：`securityLevel: 'loose'` 下模型可控的图例 HTML 可经 zoomedContent 的 v-html 再次注入执行（webview CSP 含 unsafe-inline）；改为 `'strict'`
+  - 修复 fast-tavern Python 遗漏项：`build_prompt.py` 实际存在（文档误判为「已移除」）且 `recentHistoryForWorldbook` 仍 `int()` 强转、浮点字符串抛 ValueError，改为 `int(float())` + 解析失败回退 0；`convert_from_silly_tavern` 遗留 `isinstance(p, int)` 漏 float position，改 `_is_number`；`get_active_entries._to_recursion_limit` 不可解析回退 5（TS 应为 NaN→循环不执行）、负数被钳制到 0 多执行一次、`-inf` 分支多执行一次——全部对齐 TS Math.trunc/Number 语义
+  - 修复 glob 通配零段语义：`**/x` 不匹配根级 `x`、`a/**/b` 不匹配 `a/b`（`**` 展开为 `.*` 后要求至少一个目录段）；现在统一到 `backend/modules/prompt/glob.ts` 的 `globPatternToRegExp`（PromptManager / fileTree 三处共用），`**` 后跟分隔符时零段可选（gitignore 语义）、单星不跨目录段（fileTree gitignore 分支原先 `*` 跨 `/` 一并修正）；同时去掉「斜杠展开为 `[/\\]` 字符类」的 4 反斜杠魔法——三处调用点路径均已归一化为 `/`，模式里的 `/` 直接作字面 `/`，「斜杠替换必须先于星号替换」的顺序耦合随之消除
+  - 修复 fast-tavern Python normalize_worldbooks 缺字段语义与 TS 不一致：`_to_number` 的 None 分支忽略 fallback 直接返回 0.0，缺 `probability` 的条目概率变 0 永不注入、缺 `index`/`order`/`depth` 的条目被保留（TS 侧分别回退 100 / 丢弃条目）；现在 None 返回 fallback，新增 `_entry_number` 区分「键缺失」（→ fallback）与「显式 null」（→ 0，对齐 `Number(null)`），补 5 个 pytest 用例
   - 修复关闭活跃标签页产生孤儿快照（内存泄漏）：closeTab 删快照后 switchTab 会把已关闭标签页的完整会话状态（allMessages/messageQueue 等）重新写回 sessionSnapshots 成为永不被清理的孤儿条目；现在快照仅在标签页仍存在于 openTabs 时写入，新增 3 个 vitest 用例
-  - CheckpointManager 测试补强（PR #1 A2）：测试 mock 此前缺 `updateCustomMetadata`（迁移后的 7 处调用零覆盖），且并发 mock 未模拟真实串行链；现在 mock 补链式 `updateCustomMetadata`，新增 8 个用例覆盖 saveCheckpointToConversation（含并发追加无丢失）、deleteCheckpoint（含 isReferencedBase 拒绝与磁盘目录清理）、deleteCheckpointsFromIndex（含 excludeCheckpointId 基链保留）、deleteAllCheckpoints、pruneMissingBackupCheckpointRecords、cleanupOldCheckpoints 链合并重挂
+  - CheckpointManager 测试补强：测试 mock 此前缺 `updateCustomMetadata`（迁移后的 7 处调用零覆盖），且并发 mock 未模拟真实串行链；现在 mock 补链式 `updateCustomMetadata`，新增 8 个用例覆盖 saveCheckpointToConversation（含并发追加无丢失）、deleteCheckpoint（含 isReferencedBase 拒绝与磁盘目录清理）、deleteCheckpointsFromIndex（含 excludeCheckpointId 基链保留）、deleteAllCheckpoints、pruneMissingBackupCheckpointRecords、cleanupOldCheckpoints 链合并重挂
 
 ### Added
   - 新增 subagents 工具后台分支单元测试（`backend/__tests__/tools/subagentsTool.test.ts`，8 用例）：声明暴露 background 参数、后台调用立即返回 stub 且不 await、TaskManager 注册（background_subagent + 元数据）与注销载荷（response/steps/runId/error）、executor 失败/取消状态映射、父 abortSignal 已中止时后台任务仍启动（独立取消）、前台模式回归
@@ -267,50 +306,50 @@
   - 修复 checkpoint cleanup 对完整链恒为 no-op、`maxCheckpoints` 静默失效的问题：删除链上中间节点前先把其备份合并进后继（不覆盖后继已有文件）、changes 合并、base 重挂，再删除
   - 修复取消流从未收到 usage 事件时（OpenAI chat/Gemini）整条 model 消息被跳过漏计的问题：`estimatePartialMessageTokens` 在 usage 缺失时也按文本长度估算（含 functionCall 参数）
   - 修复 fast-tavern Python `process_content_stages` 调用 `apply_regex` 时漏传 `variableContext`：`{{getvar::...}}`/`{{setvar::...}}` 在 replaceRegex 场景端到端仍失效；现在与 TS 调用方对齐透传
-  - 修复 Gemini 空候选报错信息不具体：非流式解析对 `content` 缺失的候选抛笼统错误，现在显式报出 `finishReason`（新增 `emptyCandidate` 三语言词条），内容安全拦截等场景可直接看到真实终止原因（参考 PR #1）
-  - 修复 Anthropic `count_tokens` URL 归一化顺序：baseUrl 形如 `.../v1/models/complete` 时先处理 `/v1/models` 会残留 `/complete` 后缀、拼出畸形端点 URL；现在先去掉 `/complete` 再规整 `/v1/models`（参考 PR #1）
+  - 修复 Gemini 空候选报错信息不具体：非流式解析对 `content` 缺失的候选抛笼统错误，现在显式报出 `finishReason`（新增 `emptyCandidate` 三语言词条），内容安全拦截等场景可直接看到真实终止原因
+  - 修复 Anthropic `count_tokens` URL 归一化顺序：baseUrl 形如 `.../v1/models/complete` 时先处理 `/v1/models` 会残留 `/complete` 后缀、拼出畸形端点 URL；现在先去掉 `/complete` 再规整 `/v1/models`
   - 修复分段历史原子提交的临时路径类型错误：`getHistoryDir(...) + '.tmp'` 把 Uri 对象与字符串拼接成字符串后直接传给 `workspace.fs`（createDirectory/delete/writeFile/rename），扩展宿主按 UriComponents 重新解析抛 `[UriError]: Scheme contains illegal characters`，导致新建对话/保存历史失败（新建对话闪一下无变化、旧对话发消息报错）；改为 `Uri.joinPath` 构造真正的 Uri 对象，新增回归测试 `storageSegmentedWrite.test.ts`（锁定所有 workspace.fs 路径参数必须是 Uri 对象）
   - 修复 `validateFileInWorkspace` 对 workspaceUri 的裸 `Uri.parse`：非法 URI（如旧格式 Windows 路径）抛 UriError 被外层 catch 吞成 `UNKNOWN` 错误码，或把 `C:\...` 误解析成 `scheme='c'` 导致合法文件被误判为「属于其他工作区」；现在 Windows 盘符路径按 `Uri.file` 语义解析，解析失败时跳过归属比对（不误杀合法文件）
-  - 修复会话元数据读改写互相覆盖（PR #1 A 组）：`setCustomMetadata`/`setTitle`/`setWorkspaceUri` 与各存储适配器 `saveHistory` 内部的 updatedAt 更新此前在两条独立串行链上，并发时后写者基于旧 meta 的整体写回会把先写者的 custom 字段覆盖（检查点列表/裁剪状态随机丢失）；现在 `storage.ts` 新增模块级 `withMetadataWriteSerialized` 共享链统一所有元数据读改写，`ConversationManager` 新增 `updateCustomMetadata`（链内「读 meta→updater→无变更跳过写回」，updater 支持异步）
+  - 修复会话元数据读改写互相覆盖：`setCustomMetadata`/`setTitle`/`setWorkspaceUri` 与各存储适配器 `saveHistory` 内部的 updatedAt 更新此前在两条独立串行链上，并发时后写者基于旧 meta 的整体写回会把先写者的 custom 字段覆盖（检查点列表/裁剪状态随机丢失）；现在 `storage.ts` 新增模块级 `withMetadataWriteSerialized` 共享链统一所有元数据读改写，`ConversationManager` 新增 `updateCustomMetadata`（链内「读 meta→updater→无变更跳过写回」，updater 支持异步）
   - apply_diff 匹配失败报错增强：oldContent 找不到时不再只说「请核实内容」，新增最近似块诊断——在文件中定位与 oldContent 最接近的行块，逐行报告差异（含首差异字符列与期望/实际内容片段），帮助快速定位全角/半角、空格、缩进或内容已变等问题；块首行不匹配时自动尝试后续行作锚点，超长块/超大文件自动跳过诊断避免 O(m×n) 扫描卡死；结构化 hunk 与 legacy search/replace 两条失败路径均接入
-  - 修复 CheckpointManager 全部 7 处「读列表→内存改→整体写回」竞态（PR #1 A2）：并发创建互相覆盖记录、并发删除/裁剪互相丢失；全部迁移到 `updateCustomMetadata`，删除类操作在链内算好保留集合、写回成功后才删磁盘目录（竞态窗口收敛）
-  - 修复 `normalizeHistoryForDisplay` 锁外写回覆盖真实工具结果（PR #1 A3）：`getMessages`/`getMessagesPaged` 的补齐流程基于旧快照整体写回，与工具结果并发落盘互相覆盖；现在整个读-改-写移入仓储互斥执行器，`TranscriptRepository.mutateContents` 新增「返回原引用=跳过写回」无变更契约（无未响应调用时不再每次读历史都写一次盘）
-  - 修复 `addContent` 去重锁外执行导致同一 tool_use_id 出现两条 functionResponse（PR #1 A4）：去重+追加整体移入 `mutateContents`，取消流与工具执行循环之间的竞态安全网恢复有效；同步修复契约上线暴露的 9 处「原地修改+返回原引用」mutator（appendContent/addBatch/updateMessage/updateMessagesBatch/insertMessage/insertContent/deleteMessagesInRange/rejectAllPendingToolCalls/settleFunctionResponses）改为有变更时返回新引用
-  - 修复 MemoryManager.updateEntry 越界写垃圾记录（PR #1 A5）：`logLen()` 校验与 `logGet` 读取在锁外执行，并发 `truncateLog`/`logAppend` 改变日志长度后基于过期 id 的写入越过 EOF；校验与读取移入锁内
-  - 修复 `getStats` 对缺 `data`/`mimeType` 的 inlineData 抛 TypeError（PR #1 A6）：旧版本或手动编辑的历史不再导致统计面板/上下文裁剪入口崩溃
-  - 修复代理 CONNECT 隧道流式解码损坏中文（PR #1 B1）：`decodeChunkedStream` 逐 chunk `toString('utf8')` 把被 TCP/chunk 边界切开的 UTF-8 多字节字符在第一个包固化成 U+FFFD，后续 SSE 行 `JSON.parse` 永远失败；现在只收集原始字节，由流式 `TextDecoder` 跨 chunk 拼接解码，循环结束 flush 尾部字符
-  - 修复代理取消被误判为可重试（PR #1 B2）：`fetchWithProxy`/`sendRequestOverSocket` 的取消 reject 普通 Error，ChannelManager 只认 `AbortError` 导致取消变无谓重试；新增 `createAbortError` 统一 6 处取消错误，CONNECT 握手成功后移除旧 abort 监听避免重复取消
-  - 修复重试等待窗口内发送保活请求（PR #1 B3）：重试路径 delay 前未停 keepAlive 定时器，错误后到 delay 完成之间在无活动流时发出保活请求；现在 delay 前先 clearInterval
-  - 修复 OpenAI strict 工具混用被 API 400 拒绝（PR #1 B4）：任一工具 strict 时 OpenAI 要求全部工具 strict，混用显式发送 `strict: false` 被拒；现在整体降级为不启用
-  - 修复 directApplyAndSave 把编辑器旧缓冲区写回磁盘覆盖 AI 内容且 diff 永久 pending（PR #1 C1）：dirty 文档 `openDoc.save()` 会把旧内容+用户未保存编辑写回磁盘，且 `saved` 提前 return 跳过 finalizeAcceptedDiff；现在先写盘，再用 WorkspaceEdit 静默替换编辑器内容为 AI 内容并 `save()` 清理 dirty（内容与磁盘一致，保存无害）——早期方案用 `workbench.action.files.revert`，但文档 dirty 时会弹 VS Code 原生确认框阻塞整个 diff 流程，已弃用
-  - 修复关标签页不收敛 accepted、diff 永久 pending（PR #1 C2）：磁盘已是 AI 内容（files.autoSave 直接落盘）时关闭标签页既不接受也不拒绝；现在内容相等收敛为接受
-  - 修复 legacy 多 diff 行号偏移累积（PR #1 C3）：`start_line` 相对原始文件，前序 hunk 改变行数后后续 hunk 整体错位；三处 legacy 应用路径新增 lineDelta 累计
-  - 修复 glob 元字符未转义抛 SyntaxError（PR #1 C4）：`matchGlobPattern`/`shouldIgnore` 只转义 `.`，配置含 `[`/`(`/`+`/`?` 时 `new RegExp` 抛错中断动态上下文生成；改为整体 `escapeRegExp` 后再做通配替换，并修复斜杠替换在星号替换之后导致 `[^[/\]]` 通配永不命中的顺序缺陷
-  - 修复 fsPath 大小写敏感比较失效（PR #1 C5）：diffManager 11 处 `fsPath ===` 严格比较在 Windows/macOS 上因大小写变体路径失效导致监听器/文档查找失灵；新增 `sameFsPath`（win32/darwin 折叠大小写，Linux 精确）
-  - 修复分段存储 delete+rename 提交窗口与无读重试（PR #1 D1）：删旧目录→rename 期间并发读可能看到 index 在但段文件消失；现在写前清理 tmpIndexPath 残留、提交改 overwrite rename、`loadHistoryWithStatus`/`loadHistoryPage` 对 not_found/io_error 重试一次（50ms）
-  - 修复 cancelTask 提前删任务丢终态事件（PR #1 E1）：abort() 后立即删任务+发裸 cancelled，完成路径的 `unregisterTask` 变 no-op、前端任务条卡在「已取消但无结果」；现在只 abort，终态由各完成路径统一发出（已核对 terminal/media 全部取消路径）
-  - 修复终端输出无内存护栏（PR #1 E2）：长运行进程持续输出内存无限增长；新增 `MAX_RETAINED_OUTPUT_LINES = 50000` + `pushOutputLines`（超限丢最旧并计数），截断提示用 `output.length + omittedOutputLines` 总量
-  - 修复 search_in_files / FilePickerPanel / AnnouncementModal 三处 v-html 注入（PR #1 G1/G2/G3）：搜索结果上下文、文件路径、changelog 正文未转义直接注入 HTML，工作区文件内容含 `<`/`>`/`&` 或恶意 HTML 时可执行任意脚本（远程代码执行级风险）；现在统一先 `escapeHtml` 再做高亮/markdown 标记替换
-  - 修复中文/日文输入法合成回车误发消息（PR #1 H1）：InputBox 无 IME 守卫，按 Enter 确认候选词触发发送逻辑误发半截消息；现在 `isComposing`/keyCode 229 直接 return
-  - 修复批注消息发送失败不回滚（PR #1 H2）：ToolMessage 先 push 用户批注再发送，失败时批注残留成幻影消息、前端索引与后端错位、重试会再插一份；现在失败按 id 回滚
-  - 修复 apply_diff / write_file 大文件 diff 预览卡死（PR #1 H3）：computeLCS 全量二维 DP，数千行 diff 占数百 MB 内存并阻塞 webview 主线程；现在公共前缀/后缀剥离 + 核心区域超过 100 万跳过 DP
-  - 修复 isLoadingMore 切标签页后永久禁用（PR #1 H4）：复位在 tabId 匹配分支内部，加载期间切走标签页后上拉加载被永久跳过；现在 finally 无条件复位
-  - 修复消息列表 UI 状态组件级丢失（PR #1 H5）：uiStateByTab 是组件实例级 Map，空会话过渡卸载组件后滚动位置/展开状态全丢；现在提升为模块级保存
-  - 修复切会话清空排队消息（PR #1 H6）：switchConversation 无条件清空 messageQueue，排队消息被静默丢弃；现在只清理附件，跨会话消息由队列匹配跳过机制处理
-  - 修复跨会话消息卡队头（PR #1 H7）：processQueue 取到不属于当前会话的消息放回队头并中止，该消息永久阻塞队列；现在改为查找第一条属于当前会话的消息
-  - 修复关标签页不取消流 + 废弃缓冲累积（PR #1 H8）：closeTab 不取消该会话仍在进行的流，后续 chunk 为已关闭会话重建缓冲区且无消费者，反复开关页无限累积；现在关页时按 conversationId 取消流，缓冲对已关闭会话直接丢弃不重建
-  - 修复消息 timestamp 被完成时刻覆盖（PR #1 H9）：四个流式 handler 用 `{...message, ...finalMessage}` 展开，finalMessage 的 timestamp 是完成时刻导致时间戳漂移、排序错乱；现在补 timestamp 保留
-  - 修复消息订阅者单点崩溃（PR #1 H10）：一个订阅者抛异常中断其余订阅者（backgroundTaskStore 收不到同一条消息）；现在每个订阅者单独 try/catch
-  - 修复 Markdown 渲染缓存无界增长（PR #1 H11）：codeHighlightCache/fileExistenceCache/imageCache 无上限，长会话持续增长；现在统一 `setCached` 容量 500 FIFO 淘汰
-  - 修复 ChatViewProvider.dispose 不重置 _view（PR #1 F1）：_view 仍指向已销毁 webview，重开面板后 diff 状态/终端输出等事件永久丢失；现在 dispose 置空
-  - 修复 pendingCommands 无上限（PR #1 F2）：面板长期未打开期间反复触发命令队列无界增长、打开后一次性重放陈旧命令；现在上限 100
-  - 修复 sendError 对非 Error 对象取 message 得 undefined（PR #1 F3）：改为 instanceof 判断回退 String(error)
-  - 修复 webview 已死路由判定失效（PR #1 F4）：已销毁 webview 的 postMessage resolve(false) 而不抛异常，调用方误判成功跳过回退路径、响应静默丢失；现在注册表按 isAlive 判定存活，SubAgentMonitorPanel 注册绑定 panel 实例
-  - 修复流 chunk 不按 clientId 路由（PR #1 F5）：所有流都发往主聊天，monitor 面板发起的流错投；现在 `getClientView(clientId)` 按注册表路由
-  - 修复 requestClients 泄漏（PR #1 F6）：请求结束不清理 requestId→clientId 映射；现在 4 个流式 handler 的 finally 与取消路径统一 finalizeRequest
-  - 修复 showDiffView 未入串行队列（PR #1 C7/M13）：与 accept/reject 动作并发时状态互相抢占；现在包 `runDiffActionSerialized`（原实现改 showDiffViewUnlocked）
-  - 修复被淘汰 rejected diff 墓碑 Set 无界增长（PR #1 C6）：evictedRejectedDiffIds 随会话无限累积；现在容量上限 2000 FIFO 淘汰
-  - 修复 fast-tavern Python 与 TS 语义差异（PR #1 I 组）：assemble_tagged_prompt_list 的 NaN/bool 通过 isinstance 过滤导致 int(nan) 抛 ValueError；history/factories 的 str(text or "") 把 0/False 变空串；convert_from_silly_tavern 的 isinstance(v, int) 漏 float 且 bool 误判；normalize_worldbooks 的 _to_number 未对齐 Number() 且 index/probability int 截断（2.5 与 2 是不同键）；apply_regex 的 macroMode 缺失被当 none（TS 缺失=执行替换）且 {{}}/<<>> 替换顺序与 TS 相反；variable_context 的 float(None) 抛错使已存 null 走字符串拼接；get_active_entries 的 recursionLimit/index/order 数值强转抛 ValueError/TypeError/丢小数——全部对齐 TS 语义（build_prompt 对应文件已随重构移除，不适用）
+  - 修复 CheckpointManager 全部 7 处「读列表→内存改→整体写回」竞态：并发创建互相覆盖记录、并发删除/裁剪互相丢失；全部迁移到 `updateCustomMetadata`，删除类操作在链内算好保留集合、写回成功后才删磁盘目录（竞态窗口收敛）
+  - 修复 `normalizeHistoryForDisplay` 锁外写回覆盖真实工具结果：`getMessages`/`getMessagesPaged` 的补齐流程基于旧快照整体写回，与工具结果并发落盘互相覆盖；现在整个读-改-写移入仓储互斥执行器，`TranscriptRepository.mutateContents` 新增「返回原引用=跳过写回」无变更契约（无未响应调用时不再每次读历史都写一次盘）
+  - 修复 `addContent` 去重锁外执行导致同一 tool_use_id 出现两条 functionResponse：去重+追加整体移入 `mutateContents`，取消流与工具执行循环之间的竞态安全网恢复有效；同步修复契约上线暴露的 9 处「原地修改+返回原引用」mutator（appendContent/addBatch/updateMessage/updateMessagesBatch/insertMessage/insertContent/deleteMessagesInRange/rejectAllPendingToolCalls/settleFunctionResponses）改为有变更时返回新引用
+  - 修复 MemoryManager.updateEntry 越界写垃圾记录：`logLen()` 校验与 `logGet` 读取在锁外执行，并发 `truncateLog`/`logAppend` 改变日志长度后基于过期 id 的写入越过 EOF；校验与读取移入锁内
+  - 修复 `getStats` 对缺 `data`/`mimeType` 的 inlineData 抛 TypeError：旧版本或手动编辑的历史不再导致统计面板/上下文裁剪入口崩溃
+  - 修复代理 CONNECT 隧道流式解码损坏中文：`decodeChunkedStream` 逐 chunk `toString('utf8')` 把被 TCP/chunk 边界切开的 UTF-8 多字节字符在第一个包固化成 U+FFFD，后续 SSE 行 `JSON.parse` 永远失败；现在只收集原始字节，由流式 `TextDecoder` 跨 chunk 拼接解码，循环结束 flush 尾部字符
+  - 修复代理取消被误判为可重试：`fetchWithProxy`/`sendRequestOverSocket` 的取消 reject 普通 Error，ChannelManager 只认 `AbortError` 导致取消变无谓重试；新增 `createAbortError` 统一 6 处取消错误，CONNECT 握手成功后移除旧 abort 监听避免重复取消
+  - 修复重试等待窗口内发送保活请求：重试路径 delay 前未停 keepAlive 定时器，错误后到 delay 完成之间在无活动流时发出保活请求；现在 delay 前先 clearInterval
+  - 修复 OpenAI strict 工具混用被 API 400 拒绝：任一工具 strict 时 OpenAI 要求全部工具 strict，混用显式发送 `strict: false` 被拒；现在整体降级为不启用
+  - 修复 directApplyAndSave 把编辑器旧缓冲区写回磁盘覆盖 AI 内容且 diff 永久 pending：dirty 文档 `openDoc.save()` 会把旧内容+用户未保存编辑写回磁盘，且 `saved` 提前 return 跳过 finalizeAcceptedDiff；现在先写盘，再用 WorkspaceEdit 静默替换编辑器内容为 AI 内容并 `save()` 清理 dirty（内容与磁盘一致，保存无害）——早期方案用 `workbench.action.files.revert`，但文档 dirty 时会弹 VS Code 原生确认框阻塞整个 diff 流程，已弃用
+  - 修复关标签页不收敛 accepted、diff 永久 pending：磁盘已是 AI 内容（files.autoSave 直接落盘）时关闭标签页既不接受也不拒绝；现在内容相等收敛为接受
+  - 修复 legacy 多 diff 行号偏移累积：`start_line` 相对原始文件，前序 hunk 改变行数后后续 hunk 整体错位；三处 legacy 应用路径新增 lineDelta 累计
+  - 修复 glob 元字符未转义抛 SyntaxError：`matchGlobPattern`/`shouldIgnore` 只转义 `.`，配置含 `[`/`(`/`+`/`?` 时 `new RegExp` 抛错中断动态上下文生成；改为整体 `escapeRegExp` 后再做通配替换，并修复斜杠替换在星号替换之后导致 `[^[/\]]` 通配永不命中的顺序缺陷
+  - 修复 fsPath 大小写敏感比较失效：diffManager 11 处 `fsPath ===` 严格比较在 Windows/macOS 上因大小写变体路径失效导致监听器/文档查找失灵；新增 `sameFsPath`（win32/darwin 折叠大小写，Linux 精确）
+  - 修复分段存储 delete+rename 提交窗口与无读重试：删旧目录→rename 期间并发读可能看到 index 在但段文件消失；现在写前清理 tmpIndexPath 残留、提交改 overwrite rename、`loadHistoryWithStatus`/`loadHistoryPage` 对 not_found/io_error 重试一次（50ms）
+  - 修复 cancelTask 提前删任务丢终态事件：abort() 后立即删任务+发裸 cancelled，完成路径的 `unregisterTask` 变 no-op、前端任务条卡在「已取消但无结果」；现在只 abort，终态由各完成路径统一发出（已核对 terminal/media 全部取消路径）
+  - 修复终端输出无内存护栏：长运行进程持续输出内存无限增长；新增 `MAX_RETAINED_OUTPUT_LINES = 50000` + `pushOutputLines`（超限丢最旧并计数），截断提示用 `output.length + omittedOutputLines` 总量
+  - 修复 search_in_files / FilePickerPanel / AnnouncementModal 三处 v-html 注入：搜索结果上下文、文件路径、changelog 正文未转义直接注入 HTML，工作区文件内容含 `<`/`>`/`&` 或恶意 HTML 时可执行任意脚本（远程代码执行级风险）；现在统一先 `escapeHtml` 再做高亮/markdown 标记替换
+  - 修复中文/日文输入法合成回车误发消息：InputBox 无 IME 守卫，按 Enter 确认候选词触发发送逻辑误发半截消息；现在 `isComposing`/keyCode 229 直接 return
+  - 修复批注消息发送失败不回滚：ToolMessage 先 push 用户批注再发送，失败时批注残留成幻影消息、前端索引与后端错位、重试会再插一份；现在失败按 id 回滚
+  - 修复 apply_diff / write_file 大文件 diff 预览卡死：computeLCS 全量二维 DP，数千行 diff 占数百 MB 内存并阻塞 webview 主线程；现在公共前缀/后缀剥离 + 核心区域超过 100 万跳过 DP
+  - 修复 isLoadingMore 切标签页后永久禁用：复位在 tabId 匹配分支内部，加载期间切走标签页后上拉加载被永久跳过；现在 finally 无条件复位
+  - 修复消息列表 UI 状态组件级丢失：uiStateByTab 是组件实例级 Map，空会话过渡卸载组件后滚动位置/展开状态全丢；现在提升为模块级保存
+  - 修复切会话清空排队消息：switchConversation 无条件清空 messageQueue，排队消息被静默丢弃；现在只清理附件，跨会话消息由队列匹配跳过机制处理
+  - 修复跨会话消息卡队头：processQueue 取到不属于当前会话的消息放回队头并中止，该消息永久阻塞队列；现在改为查找第一条属于当前会话的消息
+  - 修复关标签页不取消流 + 废弃缓冲累积：closeTab 不取消该会话仍在进行的流，后续 chunk 为已关闭会话重建缓冲区且无消费者，反复开关页无限累积；现在关页时按 conversationId 取消流，缓冲对已关闭会话直接丢弃不重建
+  - 修复消息 timestamp 被完成时刻覆盖：四个流式 handler 用 `{...message, ...finalMessage}` 展开，finalMessage 的 timestamp 是完成时刻导致时间戳漂移、排序错乱；现在补 timestamp 保留
+  - 修复消息订阅者单点崩溃：一个订阅者抛异常中断其余订阅者（backgroundTaskStore 收不到同一条消息）；现在每个订阅者单独 try/catch
+  - 修复 Markdown 渲染缓存无界增长：codeHighlightCache/fileExistenceCache/imageCache 无上限，长会话持续增长；现在统一 `setCached` 容量 500 FIFO 淘汰
+  - 修复 ChatViewProvider.dispose 不重置 _view：_view 仍指向已销毁 webview，重开面板后 diff 状态/终端输出等事件永久丢失；现在 dispose 置空
+  - 修复 pendingCommands 无上限：面板长期未打开期间反复触发命令队列无界增长、打开后一次性重放陈旧命令；现在上限 100
+  - 修复 sendError 对非 Error 对象取 message 得 undefined：改为 instanceof 判断回退 String(error)
+  - 修复 webview 已死路由判定失效：已销毁 webview 的 postMessage resolve(false) 而不抛异常，调用方误判成功跳过回退路径、响应静默丢失；现在注册表按 isAlive 判定存活，SubAgentMonitorPanel 注册绑定 panel 实例
+  - 修复流 chunk 不按 clientId 路由：所有流都发往主聊天，monitor 面板发起的流错投；现在 `getClientView(clientId)` 按注册表路由
+  - 修复 requestClients 泄漏：请求结束不清理 requestId→clientId 映射；现在 4 个流式 handler 的 finally 与取消路径统一 finalizeRequest
+  - 修复 showDiffView 未入串行队列：与 accept/reject 动作并发时状态互相抢占；现在包 `runDiffActionSerialized`（原实现改 showDiffViewUnlocked）
+  - 修复被淘汰 rejected diff 墓碑 Set 无界增长：evictedRejectedDiffIds 随会话无限累积；现在容量上限 2000 FIFO 淘汰
+  - 修复 fast-tavern Python 与 TS 语义差异：assemble_tagged_prompt_list 的 NaN/bool 通过 isinstance 过滤导致 int(nan) 抛 ValueError；history/factories 的 str(text or "") 把 0/False 变空串；convert_from_silly_tavern 的 isinstance(v, int) 漏 float 且 bool 误判；normalize_worldbooks 的 _to_number 未对齐 Number() 且 index/probability int 截断（2.5 与 2 是不同键）；apply_regex 的 macroMode 缺失被当 none（TS 缺失=执行替换）且 {{}}/<<>> 替换顺序与 TS 相反；variable_context 的 float(None) 抛错使已存 null 走字符串拼接；get_active_entries 的 recursionLimit/index/order 数值强转抛 ValueError/TypeError/丢小数——全部对齐 TS 语义（build_prompt 对应文件已随重构移除，不适用）
 
 ### Changed
   - `StreamChunkProcessor` 构造从持有 view 引用改为持有 `getView` 回调，视图重建后消息自动发往新视图
@@ -320,7 +359,7 @@
   - SubAgent 默认限制放宽：迭代次数默认 20 → 50（预设 30~40 → 40~80），运行时间默认 300s → 1800s（预设 600~900s → 1200~2400s），同步更新设置面板默认显示值、工具描述与类型注释；复杂任务不再频繁触顶「超出最大迭代次数 / 运行时间」
 
 ### Added
-  - 新增回归测试：`formatterParallelTools.test.ts`（H2/H3：Anthropic 并行工具参数按 index 合并、OpenAI Responses done 覆盖增量）与 `h1_deadlock.test.ts`（H1：≥2 条记忆编辑不死锁）
+  - 新增回归测试：`formatterParallelTools.test.ts`（Anthropic 并行工具参数按 index 合并、OpenAI Responses done 覆盖增量）与 `h1_deadlock.test.ts`（≥2 条记忆编辑不死锁）
   - 修正 4 处 limcode→graycode 改名遗留的过期测试断言（`show_windows_notification`、`create_progress`、`diffManager`、`PromptManager.promptEntries`）
 
 ## [1.2.8] - 2026-07-30

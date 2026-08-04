@@ -9,7 +9,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
-import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -205,10 +206,18 @@ interface GeminiImageResponse {
 /**
  * 读取参考图片
  */
-async function readReferenceImage(imgPath: string): Promise<{ data: string; mimeType: string } | null> {
-    const uri = resolveUri(imgPath);
+async function readReferenceImage(imgPath: string, context?: ToolContext): Promise<{ data: string; mimeType: string } | null> {
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imgPath);
     if (!uri) {
         return null;
+    }
+
+    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
+    if (isOutsideWorkspace) {
+        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imgPath }, context);
+        if (readAccessError) {
+            return null;
+        }
     }
 
     try {
@@ -426,10 +435,18 @@ function extractFromResponse(response: GeminiImageResponse): {
 /**
  * 保存图片到文件
  */
-async function saveImage(buffer: Buffer, outputPath: string): Promise<void> {
-    const uri = resolveUri(outputPath);
+async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath);
     if (!uri) {
         throw new Error('No workspace folder open');
+    }
+
+    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
+    if (isOutsideWorkspace) {
+        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context);
+        if (writeAccessError) {
+            throw new Error(writeAccessError);
+        }
     }
 
     // 确保目录存在
@@ -490,7 +507,8 @@ async function executeImageTask(
     index: number,
     config: GenerateImageConfig,
     maxImagesPerTask: number,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    context?: ToolContext
 ): Promise<TaskResult> {
     const { prompt, reference_images, aspect_ratio, image_size, output_path } = task;
 
@@ -541,7 +559,7 @@ async function executeImageTask(
                 if (abortSignal?.aborted) {
                     return { index, success: false, error: `Task ${index + 1}: User cancelled image generation`, cancelled: true };
                 }
-                const img = await readReferenceImage(imgPath);
+                const img = await readReferenceImage(imgPath, context);
                 if (!img) {
                     return {
                         index,
@@ -641,7 +659,7 @@ async function executeImageTask(
             }
 
             // 保存图片
-            await saveImage(buffer, finalOutputPath);
+            await saveImage(buffer, finalOutputPath, context);
             savedPaths.push(finalOutputPath);
 
             // 收集尺寸信息
@@ -688,8 +706,7 @@ async function executeImageTask(
             errorMessage.includes('canceled') ||
             errorMessage.includes('Request cancelled') ||
             errorMessage.includes('The operation was aborted') ||
-            errorMessage.includes('signal is aborted') ||
-            errorMessage.includes('fetch failed');  // Node.js fetch 的 abort 错误
+            errorMessage.includes('signal is aborted');
         
         return {
             index,
@@ -923,6 +940,8 @@ Generated images will be saved to the specified path and returned for viewing.`;
                     output_path: singleOutputPath
                 }];
             } else {
+                // 与下方 tasks.length 校验分支保持一致：先注销任务再返回，避免任务管理器残留永久 running 任务
+                TaskManager.unregisterTask(toolId, 'error', { error: 'Please use one of the following:\n1. Single mode: Provide prompt and output_path\n2. Batch mode: Provide images array' });
                 return {
                     success: false,
                     error: 'Please use one of the following:\n1. Single mode: Provide prompt and output_path\n2. Batch mode: Provide images array'
@@ -947,7 +966,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
             try {
                 // 并发执行所有任务（传递取消信号）
                 const results = await Promise.all(
-                    tasks.map((task, index) => executeImageTask(task, index, config, configMaxImagesPerTask, abortSignal))
+                    tasks.map((task, index) => executeImageTask(task, index, config, configMaxImagesPerTask, abortSignal, context))
                 );
 
                 // 统计结果

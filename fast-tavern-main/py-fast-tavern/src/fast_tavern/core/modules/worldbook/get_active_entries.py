@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from ...types import WorldBook, WorldBookEntry
 from ..inputs import normalize_worldbooks
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_probability(p: Any) -> float:
@@ -21,23 +24,29 @@ def _is_number(v: Any) -> bool:
 
 
 def _to_recursion_limit(v: Any) -> int:
-    """Math.trunc 语义：字符串/浮点字符串可解析；NaN → -1（range 空，循环不执行）"""
-    if v is None or isinstance(v, bool):
+    """对齐 TS getActiveEntries.ts:104：Math.max(0, Math.trunc(v ?? 5))。
+    - None/缺失 → 5
+    - 可解析数值：先 Math.trunc（向零截断），再钳制到 >= 0（负数 → 0，执行 1 次迭代）
+    - NaN 或不可解析字符串：TS Math.max(0, NaN) = NaN → 循环 0 次；用 -1 表示
+    - +Inf：TS 会无限循环，这里做实用保护退化为 5；-Inf → Math.max(0, -Inf) = 0
+    """
+    if v is None:
         return 5
     try:
         n = float(v)
     except Exception:
         # TS: Number("abc") = NaN -> Math.trunc(NaN) = NaN -> 循环不执行 -> 等价 -1
         return -1
-    if n != n:
+    if n != n:  # NaN
         return -1
     if n == float("inf"):
+        # TS 是无限循环；实用保护：退化为默认 5
         return 5
     if n == float("-inf"):
-        # TS: Math.trunc(-Infinity) = -Infinity -> range 空（0 次迭代）
-        return -1
-    # Math.trunc 语义：不钳制负数，int(-2.5) = -2 -> range(0, -1) 为空
-    return int(n)
+        # TS: Math.trunc(-Infinity) = -Infinity -> Math.max(0, -Infinity) = 0 -> 执行 1 次迭代
+        return 0
+    # Math.trunc 语义（向零截断），再 Math.max(0, ...) 钳制
+    return max(0, int(n))
 
 
 def _normalize_case_sensitive(entry: WorldBookEntry, default_case_sensitive: bool) -> bool:
@@ -146,7 +155,10 @@ def get_active_entries(params: dict[str, Any]) -> list[WorldBookEntry]:
         try:
             res = vector_search({"entries": [x["entry"] for x in all_nodes], "contextText": context_text})
             vector_hits = _as_set(res)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # 对齐 TS：vectorSearch 回调异常不应静默吞掉——记录错误并回退为空集
+            # （TS 侧会直接抛出；这里保守降级并留下日志便于排查）
+            logger.warning("vectorSearch callback failed; vector entries will be skipped: %s", exc)
             vector_hits = set()
 
     by_index: dict[int, dict[str, Any]] = {}

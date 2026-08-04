@@ -52,6 +52,12 @@ export class McpManager {
     /** 活跃的客户端连接 */
     private clients: Map<string, StdioMcpClient | HttpMcpClient> = new Map();
     
+    /** 每个 serverId 的连接代际计数（防止旧连接的 catch/exit/error 回调覆盖新连接状态） */
+    private connectGenerations: Map<string, number> = new Map();
+    
+    /** 每个 serverId 的 in-flight connect promise（防止并发 connect 假成功） */
+    private connectPromises: Map<string, Promise<void>> = new Map();
+    
     /** 事件监听器 */
     private listeners: Map<McpEventType, Set<McpEventListener>> = new Map();
     
@@ -327,6 +333,11 @@ export class McpManager {
 
     /**
      * 连接到服务器
+     *
+     * 并发保护：
+     * - 已连接：直接返回
+     * - 已有 in-flight connect：复用同一个 promise（避免第二个调用方"假成功"）
+     * - 每次连接分配递增代际号，旧连接的 catch/exit/error 回调不会影响新连接
      */
     async connect(serverId: string): Promise<void> {
         // 先尝试从存储重新加载（支持手动编辑配置文件的情况）
@@ -350,37 +361,25 @@ export class McpManager {
             return;
         }
 
-        if (info.status === 'connecting') {
-            return;
+        // 复用 in-flight connect promise（注意：上方检查与下方注册之间没有 await，并发调用会串行化）
+        const inFlight = this.connectPromises.get(serverId);
+        if (inFlight) {
+            return inFlight;
         }
 
+        const generation = this.nextGeneration(serverId);
         this.updateServerStatus(serverId, 'connecting');
 
-        try {
-            // 根据 transport 类型创建不同的客户端并连接
-            await this.performConnect(info);
-            
-            this.updateServerStatus(serverId, 'connected');
-            info.connectedAt = Date.now();
-            
-            this.emitEvent({
-                type: 'server:connected',
-                serverId,
-                timestamp: Date.now()
-            });
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            info.lastError = errorMessage;
-            this.updateServerStatus(serverId, 'error');
-            
-            this.emitEvent({
-                type: 'server:error',
-                serverId,
-                data: { error: errorMessage },
-                timestamp: Date.now()
-            });
+        const promise = this.runConnect(serverId, info, generation);
+        this.connectPromises.set(serverId, promise);
 
-            throw error;
+        try {
+            await promise;
+        } finally {
+            // 只清理自己注册的 promise，避免误删新连接注册的 promise
+            if (this.connectPromises.get(serverId) === promise) {
+                this.connectPromises.delete(serverId);
+            }
         }
     }
 
@@ -397,16 +396,26 @@ export class McpManager {
             return;
         }
 
+        // 使 in-flight connect 失效：其 promise 不再被复用，其回调/完成路径也不会覆盖新状态
+        const disconnectGeneration = this.nextGeneration(serverId);
+        this.connectPromises.delete(serverId);
+
+        // 立即标记为 disconnected；若期间有新的 connect 启动，由代际校验防止覆盖
+        this.updateServerStatus(serverId, 'disconnected');
+        info.connectedAt = undefined;
+        info.capabilities = undefined;
+
         try {
             await this.performDisconnect(info);
         } catch {
             // 忽略断开连接错误
         }
 
-        this.updateServerStatus(serverId, 'disconnected');
-        info.connectedAt = undefined;
-        info.capabilities = undefined;
-        
+        // 断开期间若已启动新连接（代际已变），不重复发 disconnected 事件
+        if (this.connectGenerations.get(serverId) !== disconnectGeneration) {
+            return;
+        }
+
         this.emitEvent({
             type: 'server:disconnected',
             serverId,
@@ -611,9 +620,71 @@ export class McpManager {
     }
 
     /**
-     * 执行连接
+     * 判断指定代际是否仍是 serverId 的当前连接代际
      */
-    private async performConnect(info: McpServerInfo): Promise<void> {
+    private isCurrentGeneration(serverId: string, generation: number): boolean {
+        return this.connectGenerations.get(serverId) === generation;
+    }
+
+    /**
+     * 递增并返回 serverId 的下一个连接代际号
+     */
+    private nextGeneration(serverId: string): number {
+        const next = (this.connectGenerations.get(serverId) ?? 0) + 1;
+        this.connectGenerations.set(serverId, next);
+        return next;
+    }
+
+    /**
+     * 执行连接并更新状态（带代际校验）
+     *
+     * 旧代际的连接完成/失败路径不会覆盖新连接的状态；
+     * 但错误仍会传播给发起该次连接的调用方。
+     */
+    private async runConnect(serverId: string, info: McpServerInfo, generation: number): Promise<void> {
+        try {
+            await this.performConnect(info, generation);
+
+            // 旧代际的连接完成路径不得覆盖新连接的状态
+            if (!this.isCurrentGeneration(serverId, generation)) {
+                return;
+            }
+
+            this.updateServerStatus(serverId, 'connected');
+            info.connectedAt = Date.now();
+
+            this.emitEvent({
+                type: 'server:connected',
+                serverId,
+                timestamp: Date.now()
+            });
+        } catch (error) {
+            // 旧代际连接失败：不覆盖新连接的状态（错误仍传播给调用方）
+            if (!this.isCurrentGeneration(serverId, generation)) {
+                throw error;
+            }
+
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            info.lastError = errorMessage;
+            this.updateServerStatus(serverId, 'error');
+
+            this.emitEvent({
+                type: 'server:error',
+                serverId,
+                data: { error: errorMessage },
+                timestamp: Date.now()
+            });
+
+            throw error;
+        }
+    }
+
+    /**
+     * 执行连接
+     *
+     * @param generation 本次连接尝试的代际号；error/exit/catch/完成路径据此判断自己是否仍是"当前连接"
+     */
+    private async performConnect(info: McpServerInfo, generation: number): Promise<void> {
         const { transport } = info.config;
         
         switch (transport.type) {
@@ -626,14 +697,23 @@ export class McpManager {
                     info.config.timeout
                 );
 
-                // 设置错误处理
+                // 设置错误处理（带代际校验：旧 client 的回调不得影响新连接）
                 client.on('error', (err) => {
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
                     info.lastError = err.message;
                     this.updateServerStatus(info.config.id, 'error');
                 });
 
                 client.on('exit', () => {
-                    this.clients.delete(info.config.id);
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    // 只删除自己注册的 client，避免误删随后 connect 注册的新客户端
+                    if (this.clients.get(info.config.id) === client) {
+                        this.clients.delete(info.config.id);
+                    }
                     this.updateServerStatus(info.config.id, 'disconnected');
                 });
 
@@ -643,9 +723,18 @@ export class McpManager {
                 try {
                     await client.connect();
                 } catch (_e) {
-                    this.clients.delete(info.config.id);
+                    // 只清理自己注册的 client
+                    if (this.clients.get(info.config.id) === client) {
+                        this.clients.delete(info.config.id);
+                    }
                     await client.disconnect();
                     throw _e;
+                }
+
+                // 连接期间若已被 disconnect/新 connect 取代，不再写入能力并关闭旧进程
+                if (!this.isCurrentGeneration(info.config.id, generation)) {
+                    await client.disconnect();
+                    return;
                 }
 
                 // 获取能力
@@ -691,9 +780,16 @@ export class McpManager {
                 try {
                     await sseClient.connect();
                 } catch (_e) {
-                    this.clients.delete(info.config.id);
+                    if (this.clients.get(info.config.id) === sseClient) {
+                        this.clients.delete(info.config.id);
+                    }
                     await sseClient.disconnect();
                     throw _e;
+                }
+
+                if (!this.isCurrentGeneration(info.config.id, generation)) {
+                    await sseClient.disconnect();
+                    return;
                 }
 
                 info.capabilities = {
@@ -738,9 +834,16 @@ export class McpManager {
                 try {
                     await httpClient.connect();
                 } catch (_e) {
-                    this.clients.delete(info.config.id);
+                    if (this.clients.get(info.config.id) === httpClient) {
+                        this.clients.delete(info.config.id);
+                    }
                     await httpClient.disconnect();
                     throw _e;
+                }
+
+                if (!this.isCurrentGeneration(info.config.id, generation)) {
+                    await httpClient.disconnect();
+                    return;
                 }
 
                 info.capabilities = {
@@ -780,7 +883,10 @@ export class McpManager {
         const client = this.clients.get(info.config.id);
         if (client) {
             await client.disconnect();
-            this.clients.delete(info.config.id);
+            // 只删除自己断开的 client，避免误删并发 connect 注册的新客户端
+            if (this.clients.get(info.config.id) === client) {
+                this.clients.delete(info.config.id);
+            }
         }
     }
 

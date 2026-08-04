@@ -62,7 +62,8 @@ export function sanitizeHtml(dirty: string): string {
         return
       }
 
-      // 剥离危险属性：事件处理器、javascript: 协议
+      // 剥离危险属性：事件处理器、危险协议（javascript:/vbscript:/data:）、
+      // srcdoc、style（可携带 url()/expression 脚本）、SVG use 的外部引用
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase()
         const value = attr.value
@@ -72,11 +73,65 @@ export function sanitizeHtml(dirty: string): string {
           continue
         }
 
-        if (
-          (name === 'href' || name === 'src' || name === 'action' || name === 'formaction') &&
-          /^\s*javascript:/i.test(value)
-        ) {
+        // srcdoc 可在 iframe 上下文执行 HTML；style 可携带 url(javascript:)/expression()/behavior
+        if (name === 'srcdoc' || name === 'style') {
           el.removeAttribute(name)
+          continue
+        }
+
+        // SVG <use> 的 href/xlink:href 仅允许同文档 fragment 引用（#...），
+        // 其余（外部 URL、data: 等）一律剥离，防止加载外部/内联 SVG 载荷
+        if (tagName === 'use' && (name === 'href' || name === 'xlink:href')) {
+          if (!value.startsWith('#')) {
+            el.removeAttribute(name)
+          }
+          continue
+        }
+
+        // 可能携带 URL 的属性：href/src/action/formaction + SVG 的 xlink:href/poster
+        const isUrlAttr =
+          name === 'href' || name === 'src' || name === 'action' ||
+          name === 'formaction' || name === 'xlink:href' || name === 'poster'
+        if (isUrlAttr) {
+          // 先剔除控制字符，防止 "java\nscript:" / "jav&#0;ascript:" 之类混淆绕过
+          const normalized = value.replace(/[\u0000-\u001F\u007F]/g, '')
+          // javascript:/vbscript:/data: 协议一律剥离
+          if (/^\s*(?:javascript|vbscript|data):/i.test(normalized)) {
+            // 例外：图片类 src 放行 data:image/*（保持 markdown 内嵌图片能力；
+            // <img> 加载 SVG 时脚本被禁用，不会执行）
+            const isImageDataSrc =
+              name === 'src' &&
+              /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml|bmp|avif);/i.test(normalized.trim())
+            if (!isImageDataSrc) {
+              el.removeAttribute(name)
+            }
+          }
+        }
+
+        // srcset（<img>/<source> 响应式候选列表）：按逗号拆分为候选
+        // （每个候选为 "URL [descriptor]"），逐个校验 URL 协议——仅放行
+        // http/https、data:image/*（与上方 src 白名单一致）及无协议相对
+        // 路径（如 "a.jpg 1x, b.jpg 2x"），剥离 javascript:/vbscript:/data: 候选
+        if (name === 'srcset') {
+          const keptCandidates: string[] = []
+          for (const rawCandidate of value.split(',')) {
+            const candidate = rawCandidate.trim()
+            if (!candidate) continue
+            // URL 为候选首段（首个空白之前），先剔除控制字符防协议混淆
+            const urlPart = candidate.split(/\s+/)[0].replace(/[\u0000-\u001F\u007F]/g, '')
+            const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(urlPart)
+            const scheme = schemeMatch ? schemeMatch[1].toLowerCase() : ''
+            const isImageDataSrc =
+              /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml|bmp|avif);/i.test(urlPart)
+            if (scheme === '' || scheme === 'http' || scheme === 'https' || isImageDataSrc) {
+              keptCandidates.push(candidate)
+            }
+          }
+          if (keptCandidates.length > 0) {
+            el.setAttribute(name, keptCandidates.join(', '))
+          } else {
+            el.removeAttribute(name)
+          }
           continue
         }
       }

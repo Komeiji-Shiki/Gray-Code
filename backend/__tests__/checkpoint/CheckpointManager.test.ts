@@ -9,9 +9,16 @@ jest.mock('../../tools/file/diffManager', () => ({
         cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
     })
 }));
+// CP-PERF-2 测试用：包一层 jest.fn，默认仍走真实实现；单个用例可 mockResolvedValueOnce 注入快照
+jest.mock('../../modules/checkpoint/CheckpointSnapshotBuilder', () => {
+    const actual = jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder');
+    return { ...actual, buildWorkspaceSnapshot: jest.fn(actual.buildWorkspaceSnapshot) };
+});
 
 import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
+import * as snapshotBuilderModule from '../../modules/checkpoint/CheckpointSnapshotBuilder';
+import { createWorkspaceRootId } from '../../modules/checkpoint/CheckpointWorkspace';
 
 /**
  * CheckpointManager restore 测试
@@ -770,6 +777,61 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
             const list = await manager.getCheckpoints(conversationId);
             expect(list.map(c => c.id)).toEqual(['cp-ok']);
         } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PERF-2: unbackedPaths 合并去重——同一路径同时出现在 sizeExcluded/unreadable 只记录一次', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-dedup';
+        const snapshotMock = snapshotBuilderModule.buildWorkspaceSnapshot as jest.Mock;
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'a\n');
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+            // 把 write_file 加入 after 配置，否则 createCheckpoint 直接跳过
+            ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                enabled: true,
+                beforeTools: [],
+                afterTools: ['write_file'],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: []
+            });
+
+            const rootId = createWorkspaceRootId(workspaceRoot);
+            const scoped = (rel: string) => `${rootId}/${rel}`;
+            snapshotMock.mockResolvedValueOnce({
+                fileHashes: { [scoped('a.txt')]: hashContent('a\n') },
+                fileStats: { [scoped('a.txt')]: { mtimeMs: 1, size: 2 } },
+                emptyDirs: [],
+                // 异常/防御场景：同一路径同时出现在 size 超限与不可读两个列表
+                sizeExcluded: [
+                    { scopedPath: scoped('big.bin'), reason: 'size', size: 999 },
+                    { scopedPath: scoped('dup.bin'), reason: 'size', size: 999 }
+                ],
+                unreadable: [
+                    { scopedPath: scoped('dup.bin'), reason: 'unreadable' },
+                    { scopedPath: scoped('locked.bin'), reason: 'unreadable' }
+                ],
+                excluded: [],
+                roots: []
+            });
+
+            const cp = await manager.createCheckpoint(conversationId, 0, 'write_file', 'after');
+            expect(cp).not.toBeNull();
+            // 合并后无重复：dup.bin 只出现一次，其余保持出现（最终写入时 sort 稳定）
+            expect(cp!.unbackedPaths).toEqual([
+                scoped('big.bin'),
+                scoped('dup.bin'),
+                scoped('locked.bin')
+            ]);
+        } finally {
+            // 恢复真实实现，避免 mock 泄漏影响后续用例
+            snapshotMock.mockImplementation(
+                jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
+            );
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });
         }

@@ -473,10 +473,18 @@ function makeWorldbooksForDepthOrderInjections() {
 
 function simulateDepthInsert(baseTexts, injections) {
   // 复刻 assembleTaggedPromptList 的注入算法：
-  // injections 需已按 depth/order 排序
+  // - 所有注入基于「原始 dialogueList 长度」计算插入位置（同 depth 条目插入同一位置）
+  // - 实现内部排序：depth 升序、order 降序、idx 降序（同位置后插入的排在前面，
+  //   最终输出呈现 order 升序）
   const list = [...baseTexts];
-  for (const inj of injections) {
-    const idx = Math.max(0, list.length - inj.depth);
+  const originalCount = list.length;
+  const sorted = [...injections].sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.order !== b.order) return b.order - a.order;
+    return (b.idx ?? 0) - (a.idx ?? 0);
+  });
+  for (const inj of sorted) {
+    const idx = Math.max(0, originalCount - inj.depth);
     list.splice(idx, 0, inj.text);
   }
   return list;

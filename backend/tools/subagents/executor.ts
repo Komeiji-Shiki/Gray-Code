@@ -709,6 +709,34 @@ export function createDefaultExecutor(
                 releaseRunControlAcquireListener();
             };
         }
+        /**
+         * SubAgent run 的唯一终态出口。
+         *
+         * 修改原因：超时、超迭代、AI 调用失败等早退路径过去既不发终态事件也不带 runId，
+         *          导致 Monitor 里这些 run 永远停留在 running，主聊天卡片也无法定位运行详情。
+         * 修改方式：所有返回路径统一经过本函数补齐 runId，并在事件总线尚未进入终态时补发对应终态事件。
+         * 修改目的：run 状态机只有一个收敛点，新增早退分支不会再遗漏状态广播。
+         */
+        const finalizeRun = (result: SubAgentResult): SubAgentResult => {
+            const finalized: SubAgentResult = { ...result, runId };
+            const snapshot = subAgentRunEventBus.getSnapshot(runId);
+            if (!snapshot || !terminalStatuses.includes(snapshot.status)) {
+                subAgentRunEventBus.emit({
+                    runId,
+                    agentName: config.name,
+                    type: finalized.cancelled
+                        ? 'run_cancelled'
+                        : (finalized.success ? 'run_completed' : 'run_failed'),
+                    payload: {
+                        error: finalized.error,
+                        steps: finalized.steps,
+                        modelVersion: finalized.modelVersion
+                    }
+                });
+            }
+            return finalized;
+        };
+
         try {
             await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
         } catch (queueError) {
@@ -720,18 +748,11 @@ export function createDefaultExecutor(
             const message = queueError instanceof SubAgentQueueCancelledError
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
                 : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
-            subAgentRunEventBus.emit({
-                runId,
-                agentName: config.name,
-                type: 'run_cancelled',
-                payload: { error: message }
-            });
-            return {
+            return finalizeRun({
                 success: false,
-                runId,
                 error: message,
                 cancelled: true
-            };
+            });
         } finally {
             releaseAcquireSignal?.();
             releaseAcquireSignal = undefined;
@@ -742,7 +763,7 @@ export function createDefaultExecutor(
             type: 'run_started'
         });
 
-        // A-COMM：run 真正启动后注册为「本对话下已知」，agent.sendMessage 才能按 runId/名称寻址到它；
+        // A-COMM：run 真正启动后注册为「本对话下已知」，agent_send_message 才能按 runId/名称寻址到它；
         // 排队被取消/接续校验失败等未真正启动的早退路径不会留下“已知 run”残留；
         // run 结束/取消时在最外层 finally 中注销并清理 inbox。
         agentMailbox.registerRun(currentConversationId, runId, config.name);
@@ -861,34 +882,6 @@ export function createDefaultExecutor(
         };
 
         let lastResponse: string = '';
-
-        /**
-         * SubAgent run 的唯一终态出口。
-         *
-         * 修改原因：超时、超迭代、AI 调用失败等早退路径过去既不发终态事件也不带 runId，
-         *          导致 Monitor 里这些 run 永远停留在 running，主聊天卡片也无法定位运行详情。
-         * 修改方式：所有返回路径统一经过本函数补齐 runId，并在事件总线尚未进入终态时补发对应终态事件。
-         * 修改目的：run 状态机只有一个收敛点，新增早退分支不会再遗漏状态广播。
-         */
-        const finalizeRun = (result: SubAgentResult): SubAgentResult => {
-            const finalized: SubAgentResult = { ...result, runId };
-            const snapshot = subAgentRunEventBus.getSnapshot(runId);
-            if (!snapshot || !terminalStatuses.includes(snapshot.status)) {
-                subAgentRunEventBus.emit({
-                    runId,
-                    agentName: config.name,
-                    type: finalized.cancelled
-                        ? 'run_cancelled'
-                        : (finalized.success ? 'run_completed' : 'run_failed'),
-                    payload: {
-                        error: finalized.error,
-                        steps: finalized.steps,
-                        modelVersion: finalized.modelVersion
-                    }
-                });
-            }
-            return finalized;
-        };
 
         const buildCancelledResult = (error: string): SubAgentResult => finalizeRun({
             success: false,
@@ -1139,6 +1132,28 @@ export function createDefaultExecutor(
                             const controlResult = await waitForControlIfNeeded();
                             if (controlResult) return controlResult;
                             continue;
+                        }
+                        if (parentAbort()?.aborted || timeoutController?.signal.aborted || checkTimeout().exceeded) {
+                            // 修改原因：流式循环因超时/父取消 abort 中断后，partial response 过去仍被
+                            //          当作本轮模型输出解析工具调用（可能执行半截工具调用）、写入 history
+                            //          与 transcript，超时边界下产生半截工具调用记录。
+                            // 修改方式：控制中断（pause/exit/awaiting_monitor_action）已由上方分支处理；
+                            //          此处识别「超时或父取消」直接丢弃 partial response 并走终态，
+                            //          只有完整流才继续进入下方的工具解析/转录路径。
+                            // 修改目的：超时/取消边界下不再产生半截工具调用与转录残留。
+                            const timeoutCheck = checkTimeout();
+                            const isTimeout = timeoutCheck.exceeded;
+                            return finalizeRun({
+                                success: false,
+                                response: lastResponse,
+                                modelVersion,
+                                steps,
+                                toolCalls,
+                                error: isTimeout
+                                    ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
+                                    : 'Cancelled during execution',
+                                cancelled: !isTimeout
+                            });
                         }
                         response = {
                             content: streamProcessor.getContent()

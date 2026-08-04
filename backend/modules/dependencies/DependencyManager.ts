@@ -73,6 +73,9 @@ export class DependencyManager {
     /** 依赖安装状态缓存（用于同步检查） */
     private installedCache: Map<string, boolean> = new Map();
     
+    /** 进行中的安装任务（同依赖串行化：第二个调用复用其结果；不同依赖可并行） */
+    private installsInFlight: Map<string, Promise<boolean>> = new Map();
+    
     /** 支持的可选依赖配置 */
     private readonly optionalDependencies: Record<string, { version: string; descriptionKey: string; estimatedSize: number }> = {
         'sharp': {
@@ -203,6 +206,11 @@ export class DependencyManager {
     
     /**
      * 安装依赖
+     *
+     * 并发保护：同依赖的安装请求通过 installsInFlight 串行化——
+     * 若同一依赖已有安装在进行中，后续调用直接复用其结果（等待其完成），
+     * 避免多个安装共享固定 deps-temp 目录时互相删除/覆盖；
+     * 不同依赖互不阻塞，可并行安装（各自使用独立的临时目录）。
      */
     async install(name: string): Promise<boolean> {
         const config = this.optionalDependencies[name];
@@ -215,11 +223,42 @@ export class DependencyManager {
             return false;
         }
         
+        // 同依赖并发安装：复用进行中的安装任务
+        const inFlight = this.installsInFlight.get(name);
+        if (inFlight) {
+            return inFlight;
+        }
+        
+        const promise = this.doInstall(name, config);
+        this.installsInFlight.set(name, promise);
+        try {
+            return await promise;
+        } finally {
+            // 仅当仍指向本次任务时删除，避免误删后续任务
+            if (this.installsInFlight.get(name) === promise) {
+                this.installsInFlight.delete(name);
+            }
+        }
+    }
+    
+    /**
+     * 执行安装（仅由 install 调用，受 installsInFlight 并发保护）
+     */
+    private async doInstall(
+        name: string,
+        config: { version: string; descriptionKey: string; estimatedSize: number }
+    ): Promise<boolean> {
         this.emitProgress({
             type: 'start',
             dependency: name,
             message: t('modules.dependencies.progress.installing', { name })
         });
+        
+        // 每次安装使用独立临时目录，避免并发安装（不同依赖）互相删除/覆盖
+        const tempDir = path.join(
+            this.limcodeDir,
+            `deps-temp-${name}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        );
         
         try {
             // 确保目录存在
@@ -234,7 +273,6 @@ export class DependencyManager {
                 }
             };
             
-            const tempDir = path.join(this.limcodeDir, 'deps-temp');
             const packageJsonPath = path.join(tempDir, 'package.json');
             
             // 创建临时目录
@@ -248,11 +286,13 @@ export class DependencyManager {
             });
             
             // 使用 npm 安装
+            // maxBuffer 放大到 64MB：npm 输出较多时不会被默认 1MB 上限误杀
             const { stdout, stderr } = await exec(
                 `npm install --prefix "${tempDir}" --no-save`,
                 {
                     cwd: tempDir,
-                    timeout: 300000  // 5分钟超时
+                    timeout: 300000,  // 5分钟超时
+                    maxBuffer: 64 * 1024 * 1024
                 }
             );
             
@@ -300,13 +340,6 @@ export class DependencyManager {
                 await this.copyDirectory(sourcePath, targetPath);
             }
             
-            // 清理临时目录
-            try {
-                await rm(tempDir, { recursive: true, force: true });
-            } catch {
-                // 忽略清理错误
-            }
-            
             // 清除缓存并更新安装状态
             this.loadedModules.delete(name);
             this.installedCache.set(name, true);
@@ -329,6 +362,13 @@ export class DependencyManager {
             });
             
             return false;
+        } finally {
+            // 成功与失败路径都清理临时目录，避免残留
+            try {
+                await rm(tempDir, { recursive: true, force: true });
+            } catch {
+                // 忽略清理错误
+            }
         }
     }
     

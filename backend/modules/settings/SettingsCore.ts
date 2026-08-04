@@ -179,11 +179,13 @@ export class SettingsCore {
      */
     async updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
         const oldSettings = { ...this.settings };
-        
-        // 合并更新
+
+        // 修改原因：旧实现为浅合并，传入嵌套部分对象（如 { toolsConfig: {...} }）会整体
+        // 替换该键并抹掉同层其它配置，与 getToolsConfigEntry 的深合并行为不一致。
+        // 修改方式：复用 deepMergeToolsConfig 做纯对象深合并（数组与原始值仍直接覆盖），
+        // 保持与其它服务方法一致的合并语义。
         this.settings = {
-            ...this.settings,
-            ...updates,
+            ...deepMergeToolsConfig(this.settings, updates),
             lastUpdated: Date.now()
         };
         

@@ -32,16 +32,6 @@ export interface StreamProcessorConfig {
 }
 
 /**
- * 流式处理结果
- */
-export interface StreamProcessorResult {
-    /** 最终内容 */
-    content: Content;
-    /** 是否被取消 */
-    cancelled: boolean;
-}
-
-/**
  * 流式 chunk 数据（用于 yield）
  */
 export interface ProcessedChunkData {
@@ -145,16 +135,6 @@ export class StreamResponseProcessor {
                 throw err;
             }
         }
-    }
-
-    /**
-     * 获取处理结果
-     */
-    getResult(): StreamProcessorResult {
-        return {
-            content: this.accumulator.getFinalContent(),
-            cancelled: this.cancelled
-        };
     }
 
     /**

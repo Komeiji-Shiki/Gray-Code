@@ -55,6 +55,8 @@ export function disposeUsageCache(): void {
     disposeUsageWatcher?.();
     disposeUsageWatcher = undefined;
     usageCache = undefined;
+    // 结果缓存同样要清空：扩展重载/存储路径迁移后 statsCache 仍会命中旧统计直到 TTL 过期
+    statsCache.clear();
 }
 
 /**

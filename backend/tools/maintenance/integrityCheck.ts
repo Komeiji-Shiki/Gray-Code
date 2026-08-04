@@ -120,6 +120,31 @@ interface SegmentIndexLike {
 }
 
 /**
+ * 段文件名白名单校验（路径穿越防护）。
+ * history.index.json 的 segment.file 来自磁盘索引，可能被手工编辑、损坏或恶意构造；
+ * 在拼进 path.join(historyDir, file) 之前必须保证它是纯文件名，解析后必然落在
+ * history/ 目录内（等价于「单层文件名」：非空、不含 / 和 \、不是 . / ..、
+ * 不含绝对路径/盘符前缀）。合法段文件名为 `000000.ndjson` 这类纯数字+后缀。
+ * 非法时调用方跳过该段（不读盘）并记 warning，与索引损坏的处理风格一致。
+ */
+function isSafeSegmentFileName(file: string): boolean {
+    if (typeof file !== 'string' || file.length === 0) {
+        return false;
+    }
+    if (file === '.' || file === '..' || file.includes('\0')) {
+        return false;
+    }
+    // 拒绝路径分隔符（含 Windows 反斜杠）与绝对路径/盘符前缀
+    if (file.includes('/') || file.includes('\\')) {
+        return false;
+    }
+    if (path.isAbsolute(file) || /^[a-zA-Z]:/.test(file)) {
+        return false;
+    }
+    return true;
+}
+
+/**
  * 检查单个会话的分段历史一致性。
  * 无 history.index.json（legacy 单文件 / 空会话）→ checked=0 且不报告（不属于 segmented 格式）。
  */
@@ -173,6 +198,12 @@ export async function checkHistoryIntegrity(
         if (!file) {
             issues.push(issue('history', 'error', 'HISTORY_SEGMENT_MISSING_FILE',
                 `segments[${i}] 缺少 file 字段`, { conversationId }));
+            continue;
+        }
+        // 路径穿越防护：非法段文件名（含路径分隔符/绝对路径等）不拼路径、不读盘，跳过该段
+        if (!isSafeSegmentFileName(file)) {
+            issues.push(issue('history', 'warning', 'HISTORY_SEGMENT_UNSAFE_FILE',
+                `段文件名非法（疑似路径穿越），已跳过: ${file}`, { conversationId, detail: { file } }));
             continue;
         }
         indexedFiles.add(file);
@@ -505,6 +536,10 @@ export async function readHistoryIdsFromSegments(baseDir: string, conversationId
     const ids: string[] = [];
     for (const segment of index.segments) {
         if (typeof segment.file !== 'string') {
+            continue;
+        }
+        // 路径穿越防护：非法段文件名不拼路径、不读盘（违规由 checkHistoryIntegrity 报告）
+        if (!isSafeSegmentFileName(segment.file)) {
             continue;
         }
         let content: string;

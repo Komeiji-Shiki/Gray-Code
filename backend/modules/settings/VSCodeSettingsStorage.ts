@@ -54,8 +54,41 @@ type MachineKey = typeof MACHINE_KEYS[number];
 
 type ConfigKey = SyncableKey | MachineKey;
 
+/** save 时需要同步的全部配置键（syncable + machine） */
+const ALL_CONFIG_KEYS: readonly ConfigKey[] = [...SYNCABLE_KEYS, ...MACHINE_KEYS];
+
+/**
+ * 深比较两个配置值（对象按键集合递归比较，数组按顺序比较）。
+ * 用于 save 时判断某键是否真的变化，避免无谓的 config.update 与 Settings Sync。
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
+        return false;
+    }
+    if (Array.isArray(a) !== Array.isArray(b)) {
+        return false;
+    }
+    if (Array.isArray(a)) {
+        return a.length === (b as unknown[]).length
+            && (a as unknown[]).every((v, i) => deepEqual(v, (b as unknown[])[i]));
+    }
+    const aKeys = Object.keys(a as Record<string, unknown>);
+    const bKeys = Object.keys(b as Record<string, unknown>);
+    if (aKeys.length !== bKeys.length) {
+        return false;
+    }
+    return aKeys.every(k => deepEqual(
+        (a as Record<string, unknown>)[k],
+        (b as Record<string, unknown>)[k]
+    ));
+}
+
 export class VSCodeSettingsStorage implements SettingsStorage {
     private options: Required<VSCodeSettingsStorageOptions>;
+
+    /** 上次成功保存/加载的配置快照（键 → 值），save 时据此只写变更的键 */
+    private lastSavedSnapshot: Record<string, unknown> = {};
 
     constructor(options: VSCodeSettingsStorageOptions = {}) {
         this.options = {
@@ -84,34 +117,51 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             return null;
         }
 
-        return this.readSettingsFromVSCode(config, {
+        const settings = this.readSettingsFromVSCode(config, {
             includeSyncable: true,
             includeMachine: true
         });
+        // 以实际加载值为快照基线：外部编辑 / Settings Sync 拉取的值不会被后续未变更键覆盖
+        this.lastSavedSnapshot = this.buildSnapshot(settings);
+        return settings;
+    }
+
+    /** 从设置对象提取全部配置键的快照 */
+    private buildSnapshot(settings: GlobalSettings): Record<string, unknown> {
+        const snapshot: Record<string, unknown> = {};
+        const source = settings as unknown as Record<string, unknown>;
+        for (const key of ALL_CONFIG_KEYS) {
+            snapshot[key] = source[key];
+        }
+        return snapshot;
     }
 
     async save(settings: GlobalSettings): Promise<void> {
         const config = vscode.workspace.getConfiguration(GRAYCODE_CONFIG_SECTION);
 
         try {
-            // 使用 Promise.all 并行写入配置，显著提升保存性能，并减小更新期间处于不一致状态的时间窗口
-            const updates = [
-                // Syncable scope
-                config.update('toolsConfig', settings.toolsConfig, vscode.ConfigurationTarget.Global),
-                config.update('ui', settings.ui, vscode.ConfigurationTarget.Global),
-                config.update('toolsEnabled', settings.toolsEnabled, vscode.ConfigurationTarget.Global),
-                config.update('toolAutoExec', settings.toolAutoExec, vscode.ConfigurationTarget.Global),
-                config.update('maxToolIterations', settings.maxToolIterations, vscode.ConfigurationTarget.Global),
-                config.update('defaultToolMode', settings.defaultToolMode, vscode.ConfigurationTarget.Global),
-                config.update('activeChannelId', settings.activeChannelId, vscode.ConfigurationTarget.Global),
-                config.update('lastReadAnnouncementVersion', settings.lastReadAnnouncementVersion, vscode.ConfigurationTarget.Global),
-                
-                // Machine scope
-                config.update('proxy', settings.proxy, vscode.ConfigurationTarget.Global),
-                config.update('storagePath', settings.storagePath, vscode.ConfigurationTarget.Global)
-            ];
+            // 修改原因：旧实现每次保存都把全部 graycode.* 键全量 config.update 一遍，
+            // 包括庞大的 toolsConfig，触发多次写入与 Settings Sync 全量同步。
+            // 修改方式：与上次快照（上次保存/加载的结果）逐键深比较，只写变更的键；
+            // 全部未变更时不产生任何 config.update。
+            const updates: PromiseLike<void>[] = [];
+            const nextSnapshot: Record<string, unknown> = {};
+            const source = settings as unknown as Record<string, unknown>;
 
+            for (const key of ALL_CONFIG_KEYS) {
+                const value = source[key];
+                nextSnapshot[key] = value;
+                if (deepEqual(value, this.lastSavedSnapshot[key])) {
+                    continue;
+                }
+                updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
+            }
+
+            // 仍使用 Promise.all 并行写入，减小更新期间处于不一致状态的时间窗口
             await Promise.all(updates);
+
+            // 写入成功后才更新快照；部分失败时不记录，下次保存会重试全部变更键
+            this.lastSavedSnapshot = nextSnapshot;
         } catch (error) {
             console.error('[VSCodeSettingsStorage] Failed to save settings:', error);
             throw new Error(`保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
