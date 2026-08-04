@@ -127,7 +127,7 @@ export class SummarizeService {
             const keepRecentRounds = configKeepRecentRounds;
 
             // 1. 确保对话存在
-            await this.conversationManager.getHistory(conversationId);
+            await this.conversationManager.getHistoryRef(conversationId);
 
             // 2. 确定使用的渠道配置
             let actualConfigId = configId;

@@ -1,0 +1,74 @@
+name: Build & Test (GrayCode Desktop)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            electron-app/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
+          npm ci --prefix electron-app
+
+      - name: Install Linux GUI dependencies (xvfb for headless Electron)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 libgbm1
+
+      - name: Build frontend + main process
+        run: npm run build:all
+        working-directory: electron-app
+
+      - name: Backend E2E tests
+        run: ${{ matrix.os == 'ubuntu-latest' && 'xvfb-run -a' || '' }} npm run e2e
+        working-directory: electron-app
+        env:
+          GRAYCODE_CI: '1'
+
+      - name: UI smoke test
+        run: ${{ matrix.os == 'ubuntu-latest' && 'xvfb-run -a' || '' }} npm run smoke
+        working-directory: electron-app
+        env:
+          GRAYCODE_CI: '1'
+
+      - name: Package (electron-builder)
+        run: npx electron-builder --${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'win' || 'mac' }}
+        working-directory: electron-app
+        env:
+          GRAYCODE_CI: '1'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: graycode-desktop-${{ matrix.os }}
+          path: |
+            electron-app/release/*.exe
+            electron-app/release/*.zip
+            electron-app/release/*.dmg
+            electron-app/release/*.AppImage
+            electron-app/release/*.deb
+          if-no-files-found: ignore
+          retention-days: 14

@@ -17,14 +17,9 @@
  * （消息级 token 索引，见 UsageIndexStore.ts）。聚合器对每个对话先查索引新鲜度：
  * - fresh：直接聚合索引消息，完全不读历史文件；
  * - missing/stale：回退读取历史并重建写回索引（一次性成本，之后走索引）。
- *
- * 更进一步，可提供 UsageStatsCache（见 usageCache.ts）：目录监听把变更对话
- * 标记为 dirty，统计只重读 dirty 对话，其余直接复用内存明细，日常统计不再
- * 对每个对话做 stat/读文件，加载耗时降到毫秒级。
  */
 
 import type { Content, ConversationMetadata } from './types';
-import type { UsageStatsCache } from './usageCache';
 
 /** 单个维度桶的 token 计数 */
 export interface UsageBucket {
@@ -82,8 +77,6 @@ export interface UsageStatsSource {
     getMessages(conversationId: string): Promise<Content[]>;
     /** 可选：轻量读取原始消息（不经显示规范化/深拷贝），聚合器优先使用以降低全量扫描开销 */
     getMessagesRaw?(conversationId: string): Promise<Content[]>;
-    /** 可选：轻量读取元数据（只读 meta 文件，不加载历史做完整性检查），聚合器优先使用 */
-    getMetadataLight?(conversationId: string): Promise<ConversationMetadata | null | undefined>;
 }
 
 /** 用量索引中的单条消息级 token 记录（extractMessageTokens 提取后的扁平结构） */
@@ -136,8 +129,6 @@ export interface UsageStatsOptions {
     endTime?: number;
     /** 可选：消息级用量索引，命中时跳过历史文件读取（见 loadOne） */
     indexStore?: UsageIndexStore;
-    /** 可选：内存明细缓存（配合目录监听增量失效），命中时跳过全部文件 IO */
-    cache?: UsageStatsCache;
 }
 
 /** 单个对话的读取结果 */
@@ -206,13 +197,6 @@ export function estimatePartialMessageTokens(message: Content): { prompt: number
  * - 索引 fresh（历史未被改动）→ 直接返回索引消息，完全不读历史文件；
  * - 索引缺失/过期/损坏 → 回退读取历史，由调用方负责重建写回索引。
  */
-/** 轻量读取元数据：优先 getMetadataLight（只读 meta 文件），缺失时回退 getMetadata */
-function readMetadataLight(source: UsageStatsSource, conversationId: string): Promise<ConversationMetadata | null | undefined> {
-    return typeof source.getMetadataLight === 'function'
-        ? source.getMetadataLight(conversationId)
-        : source.getMetadata(conversationId);
-}
-
 async function loadOne(source: UsageStatsSource, conversationId: string, indexStore?: UsageIndexStore): Promise<LoadedConversation | null> {
     if (indexStore) {
         try {
@@ -220,7 +204,7 @@ async function loadOne(source: UsageStatsSource, conversationId: string, indexSt
             if (freshness === 'fresh') {
                 const index = await indexStore.read(conversationId);
                 if (index && Array.isArray(index.messages)) {
-                    const metadata = await readMetadataLight(source, conversationId);
+                    const metadata = await source.getMetadata(conversationId);
                     return { metadata, messages: [], index };
                 }
             }
@@ -229,7 +213,7 @@ async function loadOne(source: UsageStatsSource, conversationId: string, indexSt
         }
     }
     try {
-        const metadata = await readMetadataLight(source, conversationId);
+        const metadata = await source.getMetadata(conversationId);
         const messages = typeof source.getMessagesRaw === 'function'
             ? await source.getMessagesRaw(conversationId)
             : await source.getMessages(conversationId);
@@ -405,41 +389,11 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
     }
 
     // 并发读取各对话（限流避免一次性打开过多文件），结果按原顺序消费。
-    // 提供 indexStore 时优先读轻量用量索引，缺失/过期再回退历史（见 loadOne）；
-    // 提供 cache 时 dirty 对话重读并回填缓存，其余直接复用内存明细（零文件 IO）。
+    // 提供 indexStore 时优先读轻量用量索引，缺失/过期再回退历史（见 loadOne）。
     const indexStore = options?.indexStore;
-    const cache = options?.cache;
-    const dirtyIds = cache ? new Set(cache.takeDirty()) : undefined;
-
-    const loadWithCache = async (conversationId: string): Promise<LoadedConversation | null> => {
-        if (cache) {
-            const cached = cache.get(conversationId);
-            if (cached && (!dirtyIds || !dirtyIds.has(conversationId))) {
-                // 内存缓存命中：跳过全部文件 IO，直接构造索引视图供主循环累加
-                return {
-                    metadata: { id: conversationId, title: cached.title, updatedAt: cached.updatedAt } as ConversationMetadata,
-                    messages: [],
-                    index: { version: 1, conversationId, updatedAt: 0, messages: cached.messages }
-                };
-            }
-        }
-        const loaded = await loadOne(source, conversationId, indexStore);
-        if (loaded && cache) {
-            // 回填缓存：索引路径直接用索引明细，历史路径复用索引构建逻辑提取
-            cache.set(conversationId, {
-                title: (loaded.metadata?.title || '').trim(),
-                updatedAt: loaded.metadata?.updatedAt ?? 0,
-                messages: loaded.index
-                    ? loaded.index.messages
-                    : buildConversationUsageIndex(conversationId, loaded.messages).messages
-            });
-        }
-        return loaded;
-    };
-
     const loadedMap = new Map<string, LoadedConversation | null>();
-    await runBounded(conversationIds, 24, async (conversationId) => {
-        loadedMap.set(conversationId, await loadWithCache(conversationId));
+    await runBounded(conversationIds, 12, async (conversationId) => {
+        loadedMap.set(conversationId, await loadOne(source, conversationId, indexStore));
     });
 
     for (const conversationId of conversationIds) {
@@ -487,11 +441,6 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
                 ...conversationBucket
             });
         }
-    }
-
-    // 清理缓存：磁盘上已不存在的对话从内存缓存移除，保持与磁盘一致
-    if (cache) {
-        cache.prune(new Set(conversationIds));
     }
 
     // 排序：对话/模型按用量降序，日期按时间降序

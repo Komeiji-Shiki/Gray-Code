@@ -4,7 +4,7 @@
  * 使用Pinia store管理状态
  */
 
-import { onMounted, onBeforeUnmount, ref, watch, reactive } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch, reactive, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
@@ -16,9 +16,10 @@ import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
-import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
+import DiffViewerPanel from './components/diff/DiffViewerPanel.vue'
+import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
-import { useI18n, setLanguage } from './i18n'
+import { useI18n, setLanguage, setDetectedLanguage } from './i18n'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
@@ -39,6 +40,7 @@ const languageLoaded = ref(false)
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
+const diffStore = useDiffStore()
 
 // 播放错误提示音：同一错误去重，避免重复触发
 const lastErrorKey = ref('')
@@ -358,6 +360,28 @@ watch(() => settingsStore.currentView, (view) => {
   else if (view === 'settings') visitedViews.settings = true
 }, { immediate: true })
 
+// 子代理 Monitor 内嵌面板：首次打开后保持挂载（v-show），避免流式订阅丢失
+const visitedMonitor = ref(false)
+watch(() => settingsStore.subAgentMonitorOpen, (open) => {
+  if (open) visitedMonitor.value = true
+}, { immediate: true })
+
+// Monitor 面板是否可见（聊天视图内且开关打开）——用于向后端通知事件推送开关
+const monitorPanelVisible = computed(() =>
+  settingsStore.subAgentMonitorOpen && settingsStore.currentView === 'chat'
+)
+
+// 变更查看面板：首次打开后保持挂载（v-show），避免重复计算 diff 的代价
+const visitedDiff = ref(false)
+watch(() => diffStore.open, (open) => {
+  if (open) visitedDiff.value = true
+}, { immediate: true })
+
+// 变更查看面板是否可见（聊天视图内且面板打开）
+const diffPanelVisible = computed(() =>
+  diffStore.open && settingsStore.currentView === 'chat'
+)
+
 // 加载语言设置
 function resolveSelectionContextEnabled(appearance: any): boolean {
   if (!appearance) return true
@@ -377,10 +401,21 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 
 async function loadLanguageSettings() {
   try {
+    // 「跟随系统（auto）」依赖检测到的系统语言；Electron 版由 preload 注入，
+    // 网页版回退 navigator.language。必须在解析 auto 之前设置。
+    setDetectedLanguage(
+      (window as any).__GRAYCODE_DETECTED_LANG || navigator.language || 'zh-CN'
+    )
+
     const response = await sendToExtension<any>('getSettings', {})
     if (response?.settings?.ui?.language) {
-      settingsStore.setLanguage(response.settings.ui.language)
-      setLanguage(response.settings.ui.language)
+      const lang = response.settings.ui.language
+      settingsStore.setLanguage(lang)
+      setLanguage(lang)
+    } else {
+      // 未显式配置过语言时保持默认「跟随系统」
+      settingsStore.setLanguage('auto')
+      setLanguage('auto')
     }
 
     // 加载外观设置
@@ -447,7 +482,26 @@ onMounted(async () => {
         case 'showSettings':
           handleShowSettings()
           break
+        case 'host.openSubAgentMonitor':
+          settingsStore.openSubAgentMonitor(message.data?.runId)
+          break
+        case 'host.openDiffPreview':
+          // 变更查看：vscode.diff 拦截 → 内嵌面板（非独立窗口）
+          diffStore.push({
+            previewId: message.data?.previewId || '',
+            sessionId: message.data?.sessionId,
+            title: message.data?.title || '',
+            filePath: message.data?.filePath || '',
+            originalContent: message.data?.originalContent ?? '',
+            newContent: message.data?.newContent ?? ''
+          })
+          break
       }
+    }
+
+    // 后端 diff 状态推送 → 同步变更面板内的条目状态与删除警戒
+    if (message.type === 'message' && message.command === 'diff.statusChanged') {
+      diffStore.syncStatuses(message.data?.pendingDiffs)
     }
 
     // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）
@@ -535,89 +589,112 @@ onBeforeUnmount(() => {
         @reorder-tab="chatStore.reorderTab"
       />
 
-      <!-- 主聊天区域 -->
-      <div class="chat-area">
-        <!-- 初始状态：显示欢迎面板+历史对话列表 -->
-        <WelcomePanel
-          v-if="chatStore.showEmptyState"
-        />
+      <!-- 主聊天区域：左侧聊天 + 右侧子代理 Monitor 内嵌面板 -->
+      <div class="chat-body">
+        <div class="chat-main">
+          <!-- 初始状态：显示欢迎面板+历史对话列表 -->
+          <WelcomePanel
+            v-if="chatStore.showEmptyState"
+          />
 
-        <!-- 单实例消息列表：仅渲染当前活跃标签页，减少隐藏实例的重算成本 -->
-        <MessageList
-          v-if="chatStore.activeTabId && !chatStore.showEmptyState"
-          :messages="chatStore.messages"
-          :tab-id="chatStore.activeTabId"
-          @edit="handleEdit"
-          @delete="handleDelete"
-          @retry="handleRetry"
-          @copy="handleCopy"
-        />
+          <!-- 单实例消息列表：仅渲染当前活跃标签页，减少隐藏实例的重算成本 -->
+          <MessageList
+            v-if="chatStore.activeTabId && !chatStore.showEmptyState"
+            :messages="chatStore.messages"
+            :tab-id="chatStore.activeTabId"
+            @edit="handleEdit"
+            @delete="handleDelete"
+            @retry="handleRetry"
+            @copy="handleCopy"
+          />
 
-        <!-- 自动总结进行中提示 -->
-        <div
-          v-if="chatStore.autoSummaryStatus && chatStore.autoSummaryStatus.isSummarizing"
-          class="auto-summary-panel"
-          :class="{ 'with-retry': chatStore.retryStatus && chatStore.retryStatus.isRetrying }"
-        >
-          <i class="codicon codicon-loading spin auto-summary-icon"></i>
-          <span>
-            {{
-              chatStore.autoSummaryStatus.message ||
-              (chatStore.autoSummaryStatus.mode === 'manual'
-                ? t('app.autoSummaryPanel.manualSummarizing')
-                : t('app.autoSummaryPanel.summarizing'))
-            }}
-          </span>
-          <button
-            class="auto-summary-cancel-btn"
-            :title="t('app.autoSummaryPanel.cancelTooltip')"
-            @click="handleCancelSummarize"
-          ><i class="codicon codicon-close"></i>
-          </button>
-        </div>
-        
-        <!-- 重试状态提示面板 -->
-        <div
-          v-if="chatStore.retryStatus && chatStore.retryStatus.isRetrying"
-          class="retry-panel"
-        >
-          <div class="retry-header">
-            <i class="codicon codicon-warning warning-icon"></i>
-            <span class="retry-title">{{ t('app.retryPanel.title') }}</span>
-            <div class="retry-progress-inline">
-              <i class="codicon codicon-sync spin"></i>
-              <span>{{ chatStore.retryStatus.attempt }}/{{ chatStore.retryStatus.maxAttempts }}</span>
-              <span v-if="chatStore.retryStatus.nextRetryIn" class="retry-countdown">
-                ({{ Math.ceil((chatStore.retryStatus.nextRetryIn || 0) / 1000) }}s)
-              </span>
-            </div>
-            <button class="retry-cancel-btn" @click="handleCancel" :title="t('app.retryPanel.cancelTooltip')">
-              <i class="codicon codicon-close"></i>
+          <!-- 自动总结进行中提示 -->
+          <div
+            v-if="chatStore.autoSummaryStatus && chatStore.autoSummaryStatus.isSummarizing"
+            class="auto-summary-panel"
+            :class="{ 'with-retry': chatStore.retryStatus && chatStore.retryStatus.isRetrying }"
+          >
+            <i class="codicon codicon-loading spin auto-summary-icon"></i>
+            <span>
+              {{
+                chatStore.autoSummaryStatus.message ||
+                (chatStore.autoSummaryStatus.mode === 'manual'
+                  ? t('app.autoSummaryPanel.manualSummarizing')
+                  : t('app.autoSummaryPanel.summarizing'))
+              }}
+            </span>
+            <button
+              class="auto-summary-cancel-btn"
+              :title="t('app.autoSummaryPanel.cancelTooltip')"
+              @click="handleCancelSummarize"
+            ><i class="codicon codicon-close"></i>
             </button>
           </div>
-          <div class="retry-body">
-            <!-- 错误信息显示在内容开头 -->
-            <CustomScrollbar :max-height="120" :width="4">
-              <pre class="retry-error-json">{{ chatStore.retryStatus.error || t('app.retryPanel.defaultError') }}{{ chatStore.retryStatus.errorDetails ? '\n\n' + formatErrorDetails(chatStore.retryStatus.errorDetails) : '' }}</pre>
-            </CustomScrollbar>
+
+          <!-- 重试状态提示面板 -->
+          <div
+            v-if="chatStore.retryStatus && chatStore.retryStatus.isRetrying"
+            class="retry-panel"
+          >
+            <div class="retry-header">
+              <i class="codicon codicon-warning warning-icon"></i>
+              <span class="retry-title">{{ t('app.retryPanel.title') }}</span>
+              <div class="retry-progress-inline">
+                <i class="codicon codicon-sync spin"></i>
+                <span>{{ chatStore.retryStatus.attempt }}/{{ chatStore.retryStatus.maxAttempts }}</span>
+                <span v-if="chatStore.retryStatus.nextRetryIn" class="retry-countdown">
+                  ({{ Math.ceil((chatStore.retryStatus.nextRetryIn || 0) / 1000) }}s)
+                </span>
+              </div>
+              <button class="retry-cancel-btn" @click="handleCancel" :title="t('app.retryPanel.cancelTooltip')">
+                <i class="codicon codicon-close"></i>
+              </button>
+            </div>
+            <div class="retry-body">
+              <!-- 错误信息显示在内容开头 -->
+              <CustomScrollbar :max-height="120" :width="4">
+                <pre class="retry-error-json">{{ chatStore.retryStatus.error || t('app.retryPanel.defaultError') }}{{ chatStore.retryStatus.errorDetails ? '\n\n' + formatErrorDetails(chatStore.retryStatus.errorDetails) : '' }}</pre>
+              </CustomScrollbar>
+            </div>
           </div>
+
+          <!-- 后台任务状态条（有任务时显示） -->
+          <BackgroundTaskBar />
+
+          <!-- 输入区域（始终显示） -->
+          <InputArea
+            :attachments="attachments"
+            :uploading="uploading"
+            @send="handleSend"
+            @cancel="handleCancel"
+            @clear-attachments="clearAttachments"
+            @attach-file="handleAttachFile"
+            @remove-attachment="handleRemoveAttachment"
+            @paste-files="handlePasteFiles"
+          />
         </div>
+
+        <!-- 子代理 Monitor 内嵌面板（惰性挂载 + v-show 保活） -->
+        <aside
+          v-if="languageLoaded && visitedMonitor"
+          v-show="monitorPanelVisible"
+          class="monitor-panel"
+        >
+          <SubAgentMonitor
+            :visible="monitorPanelVisible"
+            :focus-run-id="settingsStore.monitorFocusRunId"
+            :embedded="true"
+            @close="settingsStore.closeSubAgentMonitor()"
+          />
+        </aside>
+
+        <!-- 变更查看面板（内嵌 GitHub 风格抽屉，覆盖主聊天区域，非独立窗口） -->
+        <DiffViewerPanel
+          v-if="languageLoaded && visitedDiff"
+          :visible="diffPanelVisible"
+          @close="diffStore.close()"
+        />
       </div>
-
-      <!-- 后台任务状态条（有任务时显示） -->
-      <BackgroundTaskBar />
-
-      <!-- 输入区域（始终显示） -->
-      <InputArea
-        :attachments="attachments"
-        :uploading="uploading"
-        @send="handleSend"
-        @cancel="handleCancel"
-        @clear-attachments="clearAttachments"
-        @attach-file="handleAttachFile"
-        @remove-attachment="handleRemoveAttachment"
-        @paste-files="handlePasteFiles"
-      />
     </div>
 
     <!-- 历史页面（惰性挂载 + v-show 保活，保留滚动位置） -->
@@ -647,6 +724,38 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* 聊天主体：左侧聊天 + 右侧 Monitor 面板（flex 行布局）；变更面板为绝对定位抽屉 */
+.chat-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* 子代理 Monitor 内嵌面板（右侧分区） */
+.monitor-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 400px;
+  max-width: 60%;
+  min-width: 260px;
+  min-height: 0;
+  border-left: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--vscode-editor-background);
   overflow: hidden;
 }
 

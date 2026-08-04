@@ -141,6 +141,36 @@ function parseFileHeaderPath(line: string, prefix: '---' | '+++'): string {
 }
 
 /**
+ * 判断第 i 行是否为「文件头对」的起始行（而不是 hunk 内的内容行）。
+ *
+ * unified diff 中删除行内容以 "-- " 开头时原始行为 "--- foo"，增加行内容以
+ * "++ " 开头时原始行为 "+++ bar"；若它们恰好位于 hunk 末尾且下一行是下一个
+ * hunk 头（@@），单纯用「--- / +++ / @@ 三连」判断会误判为下一个文件头，
+ * 导致这两行内容被静默丢弃。
+ *
+ * 消歧规则：只有同时满足以下条件才视为文件头对——
+ * 1. "--- " 后紧跟 "+++ "；
+ * 2. 再下一行是 "@@" 或 "diff --git"（真实文件头对后必跟 hunk 头或另一个 diff 块）；
+ * 3. "--- " 的路径具备文件头特征：a/ b/ 前缀、/dev/null、包含目录分隔符、
+ *    或带常见文件扩展名（覆盖不带 a/b 前缀的老式 diff 头）。
+ *    纯内容对（如 "--- old item" / "+++ new item"）不满足任何特征，按内容行处理。
+ */
+function isFileHeaderPair(lines: string[], i: number): boolean {
+    const l1 = lines[i] ?? '';
+    const l2 = lines[i + 1] ?? '';
+    const l3 = lines[i + 2] ?? '';
+    if (!l1.startsWith('--- ') || !l2.startsWith('+++ ')) return false;
+    if (!(l3.startsWith('@@') || l3.startsWith('diff --git '))) return false;
+    const p1 = l1.slice(4).trim();
+    if (p1 === '/dev/null') return true;
+    if (/^(a|b)\//.test(p1)) return true;
+    if (p1.includes('/')) return true;
+    // 老式 diff 头（无 a/b 前缀、无目录）通常带文件扩展名
+    if (/\.[A-Za-z0-9]+$/.test(p1)) return true;
+    return false;
+}
+
+/**
  * 解析 unified diff patch（单文件）
  */
 export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
@@ -209,15 +239,10 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
                 }
 
                 // `--- `/`+++ ` 在 hunk 内也可能是内容行：删除行内容以 "-- " 开头时
-                // 原始行为 "--- foo"，增加行内容以 "++ " 开头时原始行为 "+++ foo"，
-                // 不能作为中断条件（旧实现把删除行误判为文件头 → 整包被当成 multi-file 拒绝）。
-                // 只有成对出现的 "--- a/x" + "+++ b/x" 才是下一个文件的头；
-                // 真实文件头对后必跟 "@@"（hunk 头），而 hunk 内相邻的
-                // "--- x"（删除行）+ "+++ y"（增加行）内容对后面是普通内容行——
-                // 据此消歧，避免把相邻删除/增加行误判为 multi-file 整包拒绝。
-                if (l.startsWith('--- ')
-                    && (lines[i + 1] ?? '').startsWith('+++ ')
-                    && (lines[i + 2] ?? '').startsWith('@@')) {
+                // 原始行为 "--- foo"，增加行内容以 "++ " 开头时原始行为 "+++ bar"。
+                // 只有「成对出现 + 路径具备文件头特征 + 后接 @@/diff --git」才是下一个
+                // 文件的头；纯内容对（如 "--- old item" + "+++ new item"）必须保留。
+                if (isFileHeaderPair(lines, i)) {
                     break;
                 }
 

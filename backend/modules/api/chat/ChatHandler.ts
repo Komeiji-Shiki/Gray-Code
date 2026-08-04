@@ -580,8 +580,8 @@ export class ChatHandler {
      * @param conversationId 对话 ID
      */
     private async ensureConversation(conversationId: string): Promise<void> {
-        // getHistory 内部调用 loadHistory，如果对话不存在会自动创建
-        await this.conversationManager.getHistory(conversationId);
+        // getHistoryRef 内部调用 loadHistory，如果对话不存在会自动创建
+        await this.conversationManager.getHistoryRef(conversationId);
     }
     
 }

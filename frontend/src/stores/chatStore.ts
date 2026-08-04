@@ -103,6 +103,12 @@ import {
 
 import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession, QueuedMessage } from './chat/types'
+import {
+  refreshTailVersions,
+  switchTailVersion as switchTailVersionAction,
+  getTailVersionsForConversation
+} from './chat/tailVersionActions'
+import type { TailVersionInfo } from './chat/types'
 
 import {
   createTab as createTabAction,
@@ -504,6 +510,26 @@ export const useChatStore = defineStore('chat', () => {
     handleStreamChunk(chunk, streamHandlerCtx)
   }
 
+  // ============ 对话尾部版本（重roll树状分叉） ============
+
+  const tailVersionsByConversation = state.tailVersionsByConversation
+  const tailVersionsLoading = state.tailVersionsLoading
+  const tailVersionSwitching = state.tailVersionSwitching
+
+  /** 某对话分支点上的版本列表（版本 + 当前活跃尾部） */
+  const versionsForBranch = (conversationId: string | null, branchIndex: number): TailVersionInfo[] => {
+    return getTailVersionsForConversation(state, conversationId).filter(v => v.branchIndex === branchIndex)
+  }
+
+  /** 切换尾部版本：后端保存当前尾部并恢复目标版本，然后重载消息窗口 */
+  const switchTailVersion = async (branchIndex: number, versionId: string): Promise<boolean> => {
+    const conversationId = state.currentConversationId.value
+    if (!conversationId) return false
+    return switchTailVersionAction(state, conversationId, branchIndex, versionId, async () => {
+      await loadHistory(state)
+    })
+  }
+
   // ============ 标签页操作 ============
 
   /**
@@ -764,6 +790,15 @@ export const useChatStore = defineStore('chat', () => {
     switchTab: switchTabWrapped,
     openConversationInTab,
     reorderTab: (fromIndex: number, toIndex: number) => reorderTabAction(state, fromIndex, toIndex),
+    
+    // 对话尾部版本（重roll树状分叉）
+    tailVersionsByConversation,
+    tailVersionsLoading,
+    tailVersionSwitching,
+    activeTailVersionByBranch: state.activeTailVersionByBranch,
+    versionsForBranch,
+    refreshTailVersions: (conversationId: string) => refreshTailVersions(state, conversationId),
+    switchTailVersion,
     
     // 初始化
     initialize

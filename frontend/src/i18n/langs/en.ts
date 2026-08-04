@@ -211,7 +211,13 @@ const en: LanguageMessages = {
         tabs: {
             newChat: 'New Chat',
             newTab: 'New Tab',
-            closeTab: 'Close Tab'
+            closeTab: 'Close Tab',
+            appTitle: 'GrayCode',
+            toggleLanguage: 'Switch Language',
+            settings: 'Settings',
+            monitor: 'SubAgent Monitor',
+            monitorOpen: 'Open SubAgent Monitor panel',
+            monitorClose: 'Close SubAgent Monitor panel'
         },
 
         usage: {
@@ -486,6 +492,13 @@ const en: LanguageMessages = {
                 }
             },
             emptyResponse: '(Empty response from model)',
+            tailVersion: {
+                title: 'Answer versions',
+                current: 'Latest',
+                prev: 'Previous version',
+                next: 'Next version',
+                switching: 'Switching…'
+            },
             stats: {
                 responseDuration: 'Response Duration',
                 tokenRate: 'Token Rate'
@@ -1627,7 +1640,6 @@ const en: LanguageMessages = {
                     exportAll: 'Export All Modes',
                     exportSuccess: 'Exported and copied to clipboard',
                     exportDownloadOnly: 'Exported file, but clipboard copy failed',
-                    exportFailed: 'Export failed',
                     import: 'Import Modes',
                     importDescription: 'Paste GrayCode prompt mode JSON, or read it from a file. Imported modes will receive new IDs and will not overwrite existing modes.',
                     importFromFile: 'Read from file',
@@ -1659,7 +1671,7 @@ const en: LanguageMessages = {
                     enableTooltip: 'Enable/disable dynamic context template',
                     disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.',
                     strategyTitle: 'Dynamic context strategy',
-                    strategySingle: 'Single dynamic context',
+                    strategySingle: 'Single dynamic context (current behavior)',
                     strategyPreserve: 'Preserve old dynamic context in place',
                     strategyDescription: 'Single mode keeps existing behavior. Preserve mode inserts cached old dynamic contexts back at their original turns and inserts the new context before the new message.',
                     strategyPreserveWarning: 'Preserve mode increases request tokens. More preserved contexts make context trimming or summarization more likely.'
@@ -2460,6 +2472,7 @@ const en: LanguageMessages = {
                 title: 'SubAgent Monitor',
                 subtitle: 'Shows each SubAgent run as a chat: system prompt, context, AI output, reasoning and tool calls.',
                 runCount: '{count} runs',
+                closePanel: 'Close panel',
                 empty: 'No SubAgent transcripts yet.',
                 defaultAgentName: 'Sub-Agent',
                 loadedCount: 'Loaded {loaded} / {total} messages',
@@ -2483,6 +2496,23 @@ const en: LanguageMessages = {
                     cancelled: 'Cancelled',
                     interrupted: 'Interrupted'
                 }
+            }
+        },
+        diff: {
+            title: 'Changes',
+            fileCount: '{count} file(s)',
+            close: 'Close panel',
+            empty: 'No pending changes',
+            noChange: 'No content difference for this file',
+            accept: 'Accept',
+            reject: 'Reject',
+            acceptAll: 'Accept all',
+            rejectAll: 'Reject all',
+            actionFailed: 'Action failed',
+            status: {
+                pending: 'Pending',
+                accepted: 'Accepted',
+                rejected: 'Rejected'
             }
         },
         channels: {

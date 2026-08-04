@@ -50,7 +50,6 @@ import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentP
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
-import { disposeUsageCache } from './handlers/UsageHandlers';
 
 const log = Logger.get('ChatViewProvider');
 
@@ -934,9 +933,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.subAgentMonitorPanel = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
-
-        // 释放用量统计的目录监听与内存缓存
-        disposeUsageCache();
 
         log.info('disposed');
     }

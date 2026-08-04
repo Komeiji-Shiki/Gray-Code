@@ -893,6 +893,27 @@ function sanitizeLooseUnifiedPatch(patch: string): string {
 }
 
 /**
+ * 判断第 i 行是否为一对「文件头」（--- a/x / +++ b/x），而不是 hunk 内容行。
+ *
+ * 与 unifiedDiff.isFileHeaderPair 保持同一套消歧规则（见其注释）：
+ * 只有「--- 后紧跟 +++、再下一行是 @@/diff --git、且 --- 路径具备文件头特征」
+ * 才视为文件头对；纯内容行（如删除行 "--- old item" + 增加行 "+++ new item"）不满足。
+ */
+function isUnifiedFileHeaderPair(lines: string[], i: number): boolean {
+    const l1 = lines[i] ?? '';
+    const l2 = lines[i + 1] ?? '';
+    const l3 = lines[i + 2] ?? '';
+    if (!l1.startsWith('--- ') || !l2.startsWith('+++ ')) return false;
+    if (!(l3.startsWith('@@') || l3.startsWith('diff --git '))) return false;
+    const p1 = l1.slice(4).trim();
+    if (p1 === '/dev/null') return true;
+    if (/^(a|b)\//.test(p1)) return true;
+    if (p1.includes('/')) return true;
+    if (/\.[A-Za-z0-9]+$/.test(p1)) return true;
+    return false;
+}
+
+/**
  * 将“裸 @@”的 unified diff hunks 解析为 legacy search/replace diffs。
  *
  * 兜底语义：
@@ -941,8 +962,11 @@ function parseLooseUnifiedPatchToLegacyDiffs(patch: string): LegacyDiffBlock[] {
             continue;
         }
 
-        // 结束条件：遇到文件头/新的 diff 块
-        if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+        // 结束条件：遇到「文件头对」/ 新的 diff 块。
+        // 注意：不能对单个 "--- "/"+++ " 行直接 flush——hunk 内的删除/增加行内容
+        // 以 "-- "/"++ " 开头时原始行就是 "--- x"/"+++ y"，且后接下一个 @@ 头，
+        // 直接 flush 会静默丢弃这些内容行（见 unifiedDiff.isFileHeaderPair 的消歧规则）。
+        if (line.startsWith('diff --git ') || isUnifiedFileHeaderPair(lines, i)) {
             // flush 当前 hunk，然后回到非 hunk 状态
             flush();
             inHunk = false;

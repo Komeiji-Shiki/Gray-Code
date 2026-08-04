@@ -8,5 +8,8 @@ export type { Conversation } from './chatStore'
 export { useSettingsStore } from './settingsStore'
 export type { SettingsTab } from './settingsStore'
 
+export { useDiffStore } from './diffStore'
+export type { DiffViewerEntry, DiffViewerEntryInput, DiffEntryStatus, PendingDiffStatus } from './diffStore'
+
 export { useTerminalStore } from './terminalStore'
 export type { TerminalOutputEvent, TerminalState } from './terminalStore'

@@ -19,6 +19,7 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
+import { refreshTailVersions } from './tailVersionActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -542,6 +543,9 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     state.windowStartIndex.value = initialWindow.windowStartIndex
     syncTotalMessagesFromWindow(state)
 
+    // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
+    void refreshTailVersions(state, conversationId)
+
     perfLog('conversation.window', {
       start: state.windowStartIndex.value,
       count: state.allMessages.value.length,
@@ -739,6 +743,9 @@ export async function switchConversation(
       rebuildMessageIndexById(state)
       state.windowStartIndex.value = initialWindow.windowStartIndex
       syncTotalMessagesFromWindow(state)
+
+      // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
+      void refreshTailVersions(state, requestedId)
 
       state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
       state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, requestedId)

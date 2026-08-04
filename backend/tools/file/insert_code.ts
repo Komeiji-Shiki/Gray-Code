@@ -39,11 +39,30 @@ interface InsertResult {
 }
 
 /**
+ * 判断 lines 是否带「幻影尾行」：文件内容以 '\n' 结尾时，split('\n') 会多出一个
+ * 尾部空串（如 "a\nb\n" → ['a','b','']）。该空串不是真实行，行号映射与插入
+ * 都必须以真实行计算，并保证幻影尾行始终位于文件末尾。
+ *
+ * 说明：数组本身无法区分「真实空行结尾」与「幻影尾行」，这里采用保守判定——
+ * 仅当尾部空串的上一项非空（或数组只有一个元素，即空文件）时才视为幻影；
+ * 连续空行结尾（"a\n\n"）时最后一项按真实空行处理，保持原有插入语义。
+ */
+function hasPhantomTailLine(lines: string[]): boolean {
+    if (lines.length === 0) return false;
+    if (lines[lines.length - 1] !== '') return false;
+    if (lines.length === 1) return true;
+    return lines[lines.length - 2] !== '';
+}
+
+/**
  * 在指定行前插入代码
  */
 function insertAtLine(lines: string[], line: number, content: string): string {
     const insertLines = splitContentLines(content);
-    const idx = line - 1; // 转为 0-based
+    // 幻影尾行存在时，插入位置不能越过幻影行（它必须始终位于文件末尾），
+    // 否则 "a\nb\n" 末尾追加会变成 "a\nb\n\nX"（多余空行）。
+    const maxIdx = hasPhantomTailLine(lines) ? lines.length - 1 : lines.length;
+    const idx = Math.min(Math.max(0, line - 1), maxIdx);
     const newLines = [
         ...lines.slice(0, idx),
         ...insertLines,
@@ -51,6 +70,8 @@ function insertAtLine(lines: string[], line: number, content: string): string {
     ];
     return newLines.join('\n');
 }
+
+export { insertAtLine };
 
 /**
  * content 以 \n 结尾时 split('\n') 会多出尾部空串：

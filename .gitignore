@@ -62,3 +62,7 @@ limcode-settings*.json
 # local review notes
 report.md
 docs/
+
+electron-app/release/
+electron-app/*.tar.gz
+

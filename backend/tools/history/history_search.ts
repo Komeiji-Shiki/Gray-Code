@@ -29,7 +29,7 @@
  *   16 | 连接断开后怎么重连？
  * ```
  *
- * 数据来源：ConversationManager.getHistory() 获取完整历史，
+ * 数据来源：ConversationManager.getHistoryRef() 获取完整历史（只读引用，命中缓存时零拷贝），
  * 然后只处理 isSummary 标记之前（被压缩）的消息。
  */
 
@@ -513,8 +513,12 @@ async function historySearchHandler(
             ...(userCfg || {})
         };
 
-        // 获取完整对话历史
-        const fullHistory = await conversationStore.getHistory(conversationId) as Content[];
+        // 获取完整对话历史：本工具只读（格式化/搜索/行读取），
+        // 优先取引用（命中 ConversationManager 缓存时零拷贝），
+        // 旧实现没有 getHistoryRef 时回退到 getHistory 深拷贝。
+        const fullHistory = (typeof conversationStore.getHistoryRef === 'function'
+            ? await conversationStore.getHistoryRef(conversationId)
+            : await conversationStore.getHistory(conversationId)) as Content[];
 
         const targetMessages = cfg.searchScope === 'summarized' ? getSummarizedMessages(fullHistory) : fullHistory;
 
