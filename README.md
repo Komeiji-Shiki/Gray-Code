@@ -289,7 +289,7 @@ Gray-Code/
 
 ## 贡献
 
-欢迎通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
+欢迎通过 [Issues](https://github.com/czocelot/Gray-Code-ocelot/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
 
 ## 许可证
 

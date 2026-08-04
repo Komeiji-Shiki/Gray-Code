@@ -294,7 +294,7 @@ Gray-Code/
 
 ## Contributing
 
-Issues and pull requests are welcome through [GitHub Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
+Issues and pull requests are welcome through [GitHub Issues](https://github.com/czocelot/Gray-Code-ocelot/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
 
 ## License
 

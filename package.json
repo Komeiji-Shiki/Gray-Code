@@ -2,8 +2,8 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.5.1",
-  "publisher": "Komeiji-Shiki",
+  "version": "1.5.2",
+  "publisher": "czocelot",
   "icon": "resources/icon.png",
   "engines": {
     "node": ">=20",
@@ -318,10 +318,10 @@
     "gray code",
     "graycode"
   ],
-  "author": "Komeiji-Shiki",
+  "author": "czocelot",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Komeiji-Shiki/Gray-Code"
+    "url": "https://github.com/czocelot/Gray-Code-ocelot"
   }
 }
