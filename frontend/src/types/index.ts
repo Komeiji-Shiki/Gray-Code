@@ -626,9 +626,24 @@ export const SUPPORTED_AUDIO_TYPES = ['audio/mp3', 'audio/wav', 'audio/ogg']
 // ============ 检查点相关类型 ============
 
 /**
+ * 检查点轻量摘要（CPF-02/CPF-03）
+ *
+ * 与后端 backend/modules/checkpoint/types.ts 的 CheckpointSummary 对齐：
+ * 会话元数据只保留摘要，完整 fileHashes/fileStats/excluded 存于独立 manifest，
+ * 前端列表/展示只接收此结构。
+ *
+ * 注意：前端历史代码（checkpointActions / tabActions / 设置页）仍以 CheckpointRecord
+ * 消费同一批对象，因此这里定义为 CheckpointRecord 的结构别名——后端 getCheckpoints
+ * 只下发摘要字段（不含 fileHashes/fileStats），类型上保持兼容。
+ */
+export type CheckpointSummary = CheckpointRecord
+
+/**
  * 检查点记录
  *
- * 与对话消息索引关联的代码库快照记录
+ * 与对话消息索引关联的代码库快照记录。
+ * 注意：后端新格式存档不再在元数据中保存 fileHashes/fileStats（已迁入 manifest），
+ * 前端只应消费 CheckpointSummary 字段；以下旧字段仅用于兼容旧存档数据。
  */
 export interface CheckpointRecord {
   /** 检查点唯一 ID */
@@ -678,7 +693,7 @@ export interface CheckpointRecord {
   /** 变更的文件列表（仅增量备份有效） */
   changes?: Array<{ path: string; type: 'added' | 'modified' | 'deleted'; hash?: string }>
   
-  /** 所有文件的哈希映射（仅包含真正备份成功的文件） */
+  /** 所有文件的哈希映射（仅包含真正备份成功的文件；新格式存档不存，见 manifest） */
   fileHashes?: Record<string, string>
   
   /** 快照时的文件 stat 信息 */
@@ -692,6 +707,18 @@ export interface CheckpointRecord {
   
   /** 空目录列表（相对路径） */
   emptyDirs?: string[]
+
+  /** 关联的消息节点 ID */
+  messageNodeId?: string
+
+  /** CPF-09: 备份目录磁盘占用（字节） */
+  backupBytes?: number
+
+  /** 该存档创建时按当时规则排除的文件数 */
+  excludedCount?: number
+
+  /** 存档 manifest 的 schema 版本 */
+  manifestVersion?: number
 }
 
 // ============ 模型相关类型 ============

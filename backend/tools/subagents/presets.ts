@@ -56,12 +56,15 @@ const WRITE_TOOLS = [
 
 /**
  * 遇到文件写锁冲突时的通用行为指引（写类模板使用）。
+ *
+ * 修改原因（P4）：旧文案“Do NOT wait or retry that file immediately”容易被模型误解为放弃该文件，
+ * 与后端冲突消息的新语义（先做其他工作、稍后重试、持续冲突则上报主会话）保持一致。
  */
 const LOCK_CONFLICT_GUIDANCE = [
     'If a tool result contains "lockConflict" or says a file is being modified by another agent:',
-    '- Do NOT wait or retry that file immediately.',
-    '- Continue with other parts of your task first.',
-    '- Come back to the conflicted file after finishing the rest.'
+    '- Do not loop on the conflicted file. Continue with other parts of your task first.',
+    '- Retry the conflicted file once you have finished your other work; the lock is released automatically.',
+    '- If it is still locked on retry, mention it in your final response so the main session can coordinate.'
 ].join('\n');
 
 export const SUB_AGENT_PRESETS: SubAgentPreset[] = [

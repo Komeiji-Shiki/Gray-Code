@@ -316,10 +316,10 @@
     "gray code",
     "graycode"
   ],
-  "author": "czocelot",
+  "author": "Komeiji-Shiki",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/czocelot/Gray-Code-ocelot"
+    "url": "https://github.com/Komeiji-Shiki/Gray-Code"
   }
 }

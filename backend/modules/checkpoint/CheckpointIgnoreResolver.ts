@@ -1,42 +1,115 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import ignore, { type Ignore } from 'ignore';
+import type {
+    CheckpointExcludeReason,
+    CheckpointExclusionProfileId
+} from './types';
+import {
+    collectEnabledProfilePatterns,
+    getExclusionProfile,
+    resolveEnabledProfiles
+} from './CheckpointExclusionProfiles';
 
 /**
  * CheckpointIgnoreResolver
  *
  * 职责：
- * - 以标准 `.gitignore` 语义解析检查点的忽略范围
+ * - 以标准 `.gitignore` 语义解析检查点的忽略范围（四层排除模型，EX-01）
  * - 在遍历工作区时按目录作用域逐层叠加规则
  * - 为快照收集、空目录清理、恢复过滤提供统一的判断入口
+ *
+ * 四层排除模型（优先级从高到低）：
+ * 1. 强制排除（forced）：`.git` / `node_modules` 目录片段 + 扩展存储绝对路径。
+ *    任何 `!` 否定规则都不能重新纳入。
+ * 2. 默认排除类别（default）：日志、AI/ML 模型、数据集、缓存、Python 虚拟环境、
+ *    构建产物、大型媒体、压缩包（CheckpointExclusionProfiles）。
+ *    可在设置页分别关闭；用户自定义 `!` 规则可以重新纳入。
+ * 3. 项目 `.gitignore`（gitignore）：根目录 + 嵌套，支持 anchored / 否定 / 目录作用域。
+ * 4. 用户自定义模式（custom）：设置页添加的规则最后生效——在所有作用域（含嵌套
+ *    `.gitignore` / 默认类别）求值之后作为独立最终阶段再执行一次，双向覆盖；
+ *    但不能覆盖强制排除。
  *
  * 设计约束：
  * - 所有相对路径在进入匹配逻辑前都规范化为 POSIX 风格
  * - 嵌套 `.gitignore` 只影响其所在目录子树
  * - 当前模块只关心“检查点应该看到什么”，不负责检查点记录本身
+ * - `enabledProfiles` 未提供时（如恢复过滤等直接使用场景）不启用默认类别层，
+ *   保持历史行为；快照构建器（CheckpointSnapshotBuilder）会显式传入设置解析结果
  */
+export interface CheckpointIgnoreResult {
+    ignored: boolean;
+    reason?: CheckpointExcludeReason;
+    /** 命中的具体规则模式（如 `*.log`、`logs/`）；gitignore/自定义/默认类别才有 */
+    rule?: string;
+    /** 规则来源说明（默认类别 id、`.gitignore` 路径、`custom`、`forced`、`storage`） */
+    source?: string;
+}
+
+/** 解析器构造选项（EX-01/EX-02） */
+export interface CheckpointIgnoreResolverOptions {
+    /**
+     * 默认排除类别启用状态（profileId -> boolean）。
+     * 缺省（undefined）＝不启用默认类别层（恢复过滤等直接使用场景保持历史行为；
+     * 快照构建器会显式传入设置解析结果）；
+     * 传入 `{}` 表示全部类别按默认启用（全开，与 resolveEnabledProfiles 语义一致）；
+     * 单个类别缺省按该类别默认启用处理；需要全关时显式传 `false`（前端保存完整记录）。
+     */
+    enabledProfiles?: Record<string, boolean>;
+    /** 强制排除的绝对路径（扩展存储根、存档目录等；位于工作区内时跳过整棵子树） */
+    excludeAbsolutePaths?: readonly string[];
+}
+
+/** 被排除路径的记录（resolver 只能给出相对根目录的路径，调用方负责转换为 scoped） */
+export interface CheckpointResolverExcludedEntry {
+    /** 相对根目录的 POSIX 路径（调用方负责转换为 scoped） */
+    path: string;
+    reason: CheckpointExcludeReason;
+    rule?: string;
+    source?: string;
+    /** 是否为目录（预览时用于决定是否递归统计大小） */
+    isDirectory?: boolean;
+}
+
 export interface CheckpointSnapshotEntries {
     /** 需要被纳入检查点的文件绝对路径 */
     files: string[];
     /** 需要被纳入检查点的空目录绝对路径 */
     dirs: string[];
+    /** 被排除路径清单（四层模型命中，EX-01；路径为相对根目录的 POSIX 格式） */
+    excluded: CheckpointResolverExcludedEntry[];
+}
+
+/** 单个规则来源（用于解释“为什么被排除”） */
+interface IgnoreSource {
+    matcher: Ignore;
+    reason: CheckpointExcludeReason;
+    /** 静态来源（gitignore 路径 / custom / 兜底） */
+    source: string;
+    /** 动态归属：返回命中的具体规则与来源（默认类别需要动态 source=类别 id） */
+    ruleOf: (candidatePath: string) => { rule?: string; source?: string } | undefined;
 }
 
 /**
  * 单个目录作用域对应的一组忽略规则。
  *
  * `basePath` 表示该 `.gitignore` 所在目录相对于根目录的位置，
- * `matcher` 保存该目录本地规则以及根级自定义规则的匹配器。
+ * `matcher` 保存该目录本地规则以及根级自定义/默认类别规则的匹配器。
  */
 interface IgnoreScope {
     basePath: string;
     matcher: Ignore;
+    /** 规则归属（顺序与 matcher 内模式顺序一致：gitignore -> profiles；custom 已拆为独立最终阶段） */
+    sources: IgnoreSource[];
+    /** 该作用域原始 gitignore 行（用于定位命中的具体行） */
+    patternLines: string[];
 }
 
 /**
  * 检查点始终强制忽略的目录片段。
  *
- * 这些目录不依赖项目 `.gitignore` 是否显式声明，属于检查点自己的固定边界。
+ * 这些目录不依赖项目 `.gitignore` 是否显式声明，属于检查点自己的固定边界，
+ * 且不能被任何 `!` 否定规则重新纳入。
  */
 const FORCED_IGNORED_SEGMENTS = new Set(['.git', 'node_modules']);
 
@@ -101,8 +174,9 @@ function toScopedPath(relativePath: string, scopeBasePath: string): string {
  * 规则块可能来自：
  * - 当前目录的 `.gitignore`
  * - 根目录级别的自定义忽略模式
+ * - 根目录级别的默认排除类别模式
  */
-function createMatcher(patternBlocks: string[]): Ignore | null {
+function createMatcher(patternBlocks: readonly string[]): Ignore | null {
     const nonEmptyBlocks = patternBlocks.filter(block => block.trim().length > 0);
     if (nonEmptyBlocks.length === 0) {
         return null;
@@ -125,52 +199,155 @@ function normalizeExtraPattern(pattern: string): string {
     return pattern.replace(/\\/g, '/');
 }
 
+/** 行是否是可参与匹配的规则行（跳过空行与注释） */
+function isUsableRuleLine(line: string): boolean {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !trimmed.startsWith('#');
+}
+
+/**
+ * 在规则行列表中查找第一个命中 candidatePath 的忽略规则。
+ *
+ * 用于“为什么被排除”的解释：逐行构建单模式 matcher 求值，
+ * 只返回会产生 ignore 结果的行（`!` 否定行返回 unignore，自然被跳过）。
+ */
+function findMatchingRule(patternLines: readonly string[], candidatePath: string): string | undefined {
+    for (const line of patternLines) {
+        const trimmed = line.trim();
+        if (!isUsableRuleLine(trimmed)) {
+            continue;
+        }
+        const single = ignore();
+        single.add(trimmed);
+        const result = single.test(candidatePath);
+        if (result.ignored) {
+            return trimmed;
+        }
+    }
+    return undefined;
+}
+
+/** 判断绝对路径是否位于任一强制排除目录内（EX-02；win32 下统一小写比较，L-3） */
+function isExcludedAbsolutePath(absolutePath: string, excludePaths: readonly string[]): boolean {
+    if (excludePaths.length === 0) {
+        return false;
+    }
+    const normalized = path.resolve(absolutePath);
+    // Windows 文件系统不区分大小写：排除配置与磁盘路径的大小写差异不应放行强制排除
+    const caseFold = process.platform === 'win32'
+        ? (p: string) => p.toLowerCase()
+        : (p: string) => p;
+    const target = caseFold(normalized);
+    return excludePaths.some(excludePath => {
+        const excluded = caseFold(path.resolve(excludePath));
+        if (target === excluded) {
+            return true;
+        }
+        return target.startsWith(excluded + path.sep);
+    });
+}
+
 export class CheckpointIgnoreResolver {
     /** 目录作用域缓存，避免同一子树重复加载父级规则链 */
     private readonly scopeCache = new Map<string, IgnoreScope[]>();
     /** 根级自定义忽略模式，统一转换为 POSIX 路径后再参与匹配 */
     private readonly normalizedExtraPatterns: readonly string[];
+    /** 自定义模式的独立 matcher（所有作用域求值之后的最终阶段，M-1） */
+    private readonly customMatcher: Ignore | null;
+    /** 强制排除的绝对路径（已 resolve 规范化） */
+    private readonly normalizedExcludePaths: readonly string[];
+    /** 启用的默认排除类别 id（按定义顺序） */
+    private readonly enabledProfileIds: readonly CheckpointExclusionProfileId[];
+    /** 启用的默认类别模式（扁平化，注入根作用域） */
+    private readonly profilePatterns: readonly string[];
+    /** 每个类别的独立 matcher（用于定位命中的具体规则） */
+    private readonly profileMatchers = new Map<CheckpointExclusionProfileId, Ignore>();
 
     constructor(
         private readonly rootDir: string,
-        extraPatterns: readonly string[] = []
+        extraPatterns: readonly string[] = [],
+        options: CheckpointIgnoreResolverOptions = {}
     ) {
         this.normalizedExtraPatterns = extraPatterns.map(normalizeExtraPattern);
+        this.customMatcher = this.normalizedExtraPatterns.length > 0
+            ? createMatcher(this.normalizedExtraPatterns)
+            : null;
+        this.normalizedExcludePaths = (options.excludeAbsolutePaths ?? []).map(p => path.resolve(p));
+        // 缺省不启用默认类别层（保持历史行为）；快照构建器显式传入设置解析结果
+        this.enabledProfileIds = options.enabledProfiles === undefined
+            ? []
+            : resolveEnabledProfiles(options.enabledProfiles);
+        this.profilePatterns = this.enabledProfileIds.length > 0
+            ? collectEnabledProfilePatterns(options.enabledProfiles)
+            : [];
+        for (const profileId of this.enabledProfileIds) {
+            const profile = getExclusionProfile(profileId);
+            if (profile) {
+                const matcher = ignore();
+                for (const pattern of profile.patterns) {
+                    matcher.add(pattern);
+                }
+                this.profileMatchers.set(profileId, matcher);
+            }
+        }
     }
 
     /**
-     * 收集当前根目录下所有需要纳入检查点的文件和空目录。
+     * 收集当前根目录下所有需要纳入检查点的文件和空目录，以及被排除路径清单。
      *
      * 约定：
      * - 只返回“未被忽略”的路径
      * - 空目录只记录非根目录
-     * - 目录一旦被忽略，整棵子树都不会继续遍历
+     * - 目录一旦被忽略，整棵子树都不会继续遍历，并在 excluded 中记录该目录
      */
     async collectEntries(
         currentDir: string = this.rootDir,
-        result: CheckpointSnapshotEntries = { files: [], dirs: [] }
+        result: CheckpointSnapshotEntries = { files: [], dirs: [], excluded: [] }
     ): Promise<CheckpointSnapshotEntries> {
         const relativeDir = currentDir === this.rootDir
             ? ''
             : normalizeCheckpointPath(path.relative(this.rootDir, currentDir));
         const scopes = await this.getScopesForDirectory(relativeDir);
 
+        let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
         try {
-            const entries = await fs.readdir(currentDir, { withFileTypes: true });
+            entries = await fs.readdir(currentDir, { withFileTypes: true });
+        } catch {
+            // M-6: 不可读目录不再静默跳过——产出 excluded 条目（预览据此置 complete=false 并统计）
+            if (currentDir !== this.rootDir) {
+                result.excluded.push({
+                    path: normalizeCheckpointPath(path.relative(this.rootDir, currentDir)),
+                    reason: 'unreadable',
+                    isDirectory: true
+                });
+            }
+            return result;
+        }
+
+        {
             let hasTrackedChildren = false;
 
             for (const entry of entries) {
                 const fullPath = path.join(currentDir, entry.name);
                 const relativePath = normalizeCheckpointPath(path.relative(this.rootDir, fullPath));
+                const isDirectory = entry.isDirectory();
 
                 // 目录作用域已经在本层解析完成，下面只做纯粹的路径过滤。
-                if (await this.shouldIgnore(relativePath, entry.isDirectory(), scopes)) {
+                const ignoreResult = await this.shouldIgnore(relativePath, isDirectory, scopes);
+                if (ignoreResult.ignored) {
+                    result.excluded.push({
+                        path: relativePath,
+                        reason: ignoreResult.reason ?? 'forced',
+                        rule: ignoreResult.rule,
+                        source: ignoreResult.source,
+                        isDirectory
+                    });
                     continue;
                 }
 
                 hasTrackedChildren = true;
 
-                if (entry.isDirectory()) {
+                if (isDirectory) {
                     await this.collectEntries(fullPath, result);
                 } else if (entry.isFile()) {
                     result.files.push(fullPath);
@@ -180,8 +357,6 @@ export class CheckpointIgnoreResolver {
             if (!hasTrackedChildren && currentDir !== this.rootDir) {
                 result.dirs.push(currentDir);
             }
-        } catch {
-            // Ignore unreadable directories to preserve previous checkpoint behavior.
         }
 
         return result;
@@ -194,6 +369,15 @@ export class CheckpointIgnoreResolver {
      * 只依赖 resolver 这一处统一语义来源。
      */
     async isIgnored(relativePath: string, isDirectory: boolean = false): Promise<boolean> {
+        return (await this.shouldIgnore(relativePath, isDirectory)).ignored;
+    }
+
+    /**
+     * 查询单个路径的完整忽略结果（含命中原因 / 规则 / 来源）。
+     *
+     * 供恢复时的规则对比（EX-11）与预览解释使用。
+     */
+    async checkIgnore(relativePath: string, isDirectory: boolean = false): Promise<CheckpointIgnoreResult> {
         return this.shouldIgnore(relativePath, isDirectory);
     }
 
@@ -220,7 +404,7 @@ export class CheckpointIgnoreResolver {
                 const fullPath = path.join(currentDir, entry.name);
                 const relativePath = normalizeCheckpointPath(path.relative(this.rootDir, fullPath));
 
-                if (await this.shouldIgnore(relativePath, true, scopes)) {
+                if ((await this.shouldIgnore(relativePath, true, scopes)).ignored) {
                     continue;
                 }
 
@@ -241,41 +425,51 @@ export class CheckpointIgnoreResolver {
     }
 
     /**
-     * 判断一个路径在当前规则链下是否应被忽略。
+     * 判断一个路径在当前规则链下是否应被忽略，并解释原因。
      *
-     * 处理顺序：
-     * 1. 先处理检查点自己的强制忽略目录
-     * 2. 再按父到子的作用域顺序依次求值
-     * 3. 保留 `ignored` / `unignored` 的状态覆盖关系
+     * 处理顺序（四层模型，EX-01）：
+     * 1. 强制排除：`.git` / `node_modules` 目录片段（不可被否定）
+     * 2. 强制排除：扩展存储等绝对路径（不可被否定）
+     * 3. 按父到子的作用域顺序依次求值（根作用域含 .gitignore + 默认类别 + 自定义）
+     * 4. 保留 `ignored` / `unignored` 的状态覆盖关系；
+     *    命中后从“最后一个匹配规则”归属原因（custom > default > gitignore）
      */
     private async shouldIgnore(
         relativePath: string,
         isDirectory: boolean,
         directoryScopes?: IgnoreScope[]
-    ): Promise<boolean> {
+    ): Promise<CheckpointIgnoreResult> {
         const normalized = normalizeCheckpointPath(relativePath);
         if (!normalized) {
-            return false;
+            return { ignored: false };
         }
 
-        // 路径安全防线：含 `..` 段、绝对路径、盘符的路径不属于检查点可见范围，
-        // 直接视为忽略（排除出快照与恢复目标），避免读取工作区外的 .gitignore
-        // 或让 restore 触碰工作区外路径。
-        if (
-            normalized.split('/').some(segment => segment === '..') ||
-            /^[A-Za-z]:/.test(normalized)
-        ) {
-            return true;
+        // 路径安全防线（fork 增量）：拒绝 `..` 段与盘符/绝对路径的键
+        if (normalized.split('/').some(segment => segment === '..') || /^[A-Za-z]:/.test(normalized)) {
+            return { ignored: true, reason: 'forced', rule: undefined, source: 'forced' };
         }
 
-        if (normalized.split('/').some(segment => FORCED_IGNORED_SEGMENTS.has(segment))) {
-            return true;
+        // 第一层：强制排除（目录片段，不可被 `!` 否定）
+        for (const segment of normalized.split('/')) {
+            if (FORCED_IGNORED_SEGMENTS.has(segment)) {
+                return { ignored: true, reason: 'forced', rule: segment, source: 'forced' };
+            }
+        }
+
+        // 第一层：强制排除（扩展存储等绝对路径，EX-02；不可被 `!` 否定）
+        if (this.normalizedExcludePaths.length > 0) {
+            const absolutePath = path.join(this.rootDir, ...normalized.split('/'));
+            if (isExcludedAbsolutePath(absolutePath, this.normalizedExcludePaths)) {
+                return { ignored: true, reason: 'forced', rule: absolutePath, source: 'storage' };
+            }
         }
 
         const scopes = directoryScopes ?? await this.getScopesForDirectory(getParentDirectory(normalized));
         const candidatePath = isDirectory ? `${normalized}/` : normalized;
 
         let ignored = false;
+        // 自定义模式最终阶段是否产生决定性结果（true=忽略、false=不忽略、undefined=未命中）
+        let customDecided: boolean | undefined;
 
         // 作用域必须按“从根到当前目录”的顺序计算，后面的规则才能正确覆盖前面。
         for (const scope of scopes) {
@@ -293,14 +487,62 @@ export class CheckpointIgnoreResolver {
             }
         }
 
-        return ignored;
+        // 最终阶段：用户自定义模式（M-1）。设置页规则在“所有作用域求值之后”独立执行，
+        // 因此可双向覆盖任意嵌套 .gitignore / 默认类别结果（custom *.tmp + 嵌套 !keep.tmp →
+        // 仍忽略；custom !keep.tmp + 嵌套 *.tmp → 不忽略），但不能覆盖强制排除。
+        if (this.customMatcher) {
+            const customResult = this.customMatcher.test(candidatePath);
+            if (customResult.ignored) {
+                ignored = true;
+                customDecided = true;
+            } else if (customResult.unignored) {
+                ignored = false;
+                customDecided = false;
+            }
+        }
+
+        if (!ignored) {
+            return { ignored: false };
+        }
+
+        // 归属原因：自定义最终阶段命中时优先归属 custom
+        if (customDecided === true) {
+            const rule = findMatchingRule(this.normalizedExtraPatterns, candidatePath);
+            return { ignored: true, reason: 'custom', source: 'custom', rule };
+        }
+
+        // 归属原因：从叶子作用域往根、每个作用域内从后往前，找“最后一个匹配规则”。
+        // sources 顺序与 matcher 内模式顺序一致（gitignore -> profiles），
+        // 因此反向遍历等价于“后写的规则优先”。
+        for (let i = scopes.length - 1; i >= 0; i -= 1) {
+            const scope = scopes[i];
+            if (!isWithinScope(normalized, scope.basePath)) {
+                continue;
+            }
+            const scopedPath = toScopedPath(candidatePath, scope.basePath);
+            for (let j = scope.sources.length - 1; j >= 0; j -= 1) {
+                const source = scope.sources[j];
+                const result = source.matcher.test(scopedPath);
+                if (result.ignored) {
+                    const found = source.ruleOf(scopedPath);
+                    return {
+                        ignored: true,
+                        reason: source.reason,
+                        source: found?.source ?? source.source,
+                        rule: found?.rule
+                    };
+                }
+            }
+        }
+
+        return { ignored: true };
     }
 
     /**
      * 获取某个目录可见的完整作用域链。
      *
      * 返回值包含：
-     * - 根目录的规则
+     * - 根目录的规则（.gitignore + 默认类别；自定义模式为独立最终阶段，不在此列）
      * - 沿途每一级祖先目录的 `.gitignore`
      * - 当前目录自己的 `.gitignore`
      */
@@ -331,20 +573,54 @@ export class CheckpointIgnoreResolver {
      *
      * 规则来源：
      * - 当前目录下的 `.gitignore`
-     * - 如果是根目录，再额外追加 checkpoint 配置中的自定义忽略模式
+     * - 根目录额外追加：默认排除类别模式（在 .gitignore 之后）
+     *
+     * 用户自定义模式不再注入任何作用域 matcher：它由 shouldIgnore 在全部作用域
+     * 求值之后作为独立最终阶段执行（M-1，设置页规则最后生效）。
      */
     private async loadScope(relativeDir: string): Promise<IgnoreScope | null> {
         const gitignorePath = path.join(this.rootDir, relativeDir, '.gitignore');
         const patternBlocks: string[] = [];
+        const patternLines: string[] = [];
+        const sources: IgnoreSource[] = [];
 
         try {
-            patternBlocks.push(await fs.readFile(gitignorePath, 'utf-8'));
+            const content = await fs.readFile(gitignorePath, 'utf-8');
+            patternBlocks.push(content);
+            patternLines.push(...content.split(/\r?\n/));
         } catch {
             // 对检查点来说，“无法读取本层规则”和“本层没有规则”都等价为不追加局部 matcher。
         }
 
-        if (!relativeDir && this.normalizedExtraPatterns.length > 0) {
-            patternBlocks.push(this.normalizedExtraPatterns.join('\n'));
+        const gitignoreMatcher = createMatcher(patternBlocks);
+        if (gitignoreMatcher) {
+            sources.push({
+                matcher: gitignoreMatcher,
+                reason: 'gitignore',
+                source: relativeDir ? `${normalizeCheckpointPath(relativeDir)}/.gitignore` : '.gitignore',
+                ruleOf: candidate => {
+                    const rule = findMatchingRule(patternLines, candidate);
+                    return rule ? { rule } : undefined;
+                }
+            });
+        }
+
+        if (!relativeDir) {
+            // 根作用域：默认排除类别（在 .gitignore 之后）
+            if (this.profilePatterns.length > 0) {
+                const profileMatcher = ignore();
+                for (const pattern of this.profilePatterns) {
+                    profileMatcher.add(pattern);
+                }
+                sources.push({
+                    matcher: profileMatcher,
+                    reason: 'default',
+                    source: 'default',
+                    ruleOf: candidate => this.findProfileMatch(candidate)
+                });
+                patternBlocks.push(this.profilePatterns.join('\n'));
+            }
+
         }
 
         const matcher = createMatcher(patternBlocks);
@@ -354,7 +630,31 @@ export class CheckpointIgnoreResolver {
 
         return {
             basePath: relativeDir,
-            matcher
+            matcher,
+            sources,
+            patternLines
         };
+    }
+
+    /**
+     * 在启用的默认类别中查找第一个命中 candidatePath 的类别与具体模式。
+     *
+     * 返回 `{ rule: 具体模式, source: 类别 id }`；未命中返回 undefined。
+     */
+    private findProfileMatch(candidatePath: string): { rule: string; source: string } | undefined {
+        for (const profileId of this.enabledProfileIds) {
+            const profileMatcher = this.profileMatchers.get(profileId);
+            const profile = getExclusionProfile(profileId);
+            if (!profileMatcher || !profile) {
+                continue;
+            }
+            if (profileMatcher.test(candidatePath).ignored) {
+                const rule = findMatchingRule(profile.patterns, candidatePath);
+                if (rule) {
+                    return { rule, source: profileId };
+                }
+            }
+        }
+        return undefined;
     }
 }

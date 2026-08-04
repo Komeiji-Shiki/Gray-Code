@@ -502,3 +502,101 @@ describe('aggregateUsageStats 索引模式', () => {
         expect(stats.totals.promptTokens).toBe(5);
     });
 });
+describe('aggregateUsageStats 子代理归集（source=subagent）', () => {
+    const day = atLocalNoon(2026, 6, 1);
+
+    test('索引 fresh：subagent 条目计入总览与按对话，且 ConversationUsage 提供 subagentTokens 细分', async () => {
+        const seed = {
+            'conv-a': {
+                historyMtime: 9000,
+                index: {
+                    version: 1,
+                    conversationId: 'conv-a',
+                    updatedAt: 10_000,
+                    messages: [
+                        // 主会话消息（无 source）
+                        { timestamp: day, modelVersion: 'model-x', prompt: 500, candidates: 250, thoughts: 0, cacheCreation: 0, cacheRead: 0 },
+                        // 子代理归集条目
+                        { timestamp: day, modelVersion: 'model-y', prompt: 100, candidates: 50, thoughts: 10, cacheCreation: 20, cacheRead: 30, source: 'subagent' }
+                    ]
+                } as UsageIndex
+            }
+        };
+        const { store } = createMemoryIndexStore(seed);
+        const source = {
+            async listConversations() { return ['conv-a']; },
+            async getMetadata() { return { title: 'Alpha' } as ConversationMetadata; },
+            async getMessages() { throw new Error('getMessages should not be called'); }
+        } as UsageStatsSource;
+
+        const stats = await aggregateUsageStats(source, { indexStore: store });
+
+        // 总览包含 subagent 消耗（prompt 600 = 500 + 100）
+        expect(stats.totals.promptTokens).toBe(600);
+        expect(stats.totals.candidatesTokens).toBe(300);
+        expect(stats.totals.thoughtsTokens).toBe(10);
+        expect(stats.totals.cacheCreationTokens).toBe(20);
+        expect(stats.totals.cacheReadTokens).toBe(30);
+        expect(stats.totals.modelMessages).toBe(2);
+        expect(stats.totals.totalTokens).toBe(910);
+
+        // 按对话包含 subagent 消耗，并提供细分
+        expect(stats.byConversation).toHaveLength(1);
+        expect(stats.byConversation[0].totalTokens).toBe(910);
+        expect(stats.byConversation[0].subagentTokens).toBe(160); // 100 + 50 + 10
+
+        // 按模型：subagent 的 model-y 也进入维度
+        expect(stats.byModel.find(m => m.modelVersion === 'model-y')?.promptTokens).toBe(100);
+    });
+
+    test('索引 stale 重建时保留已有 subagent 条目，统计不丢子代理消耗', async () => {
+        const stale = {
+            historyMtime: 20_000,
+            index: {
+                version: 1,
+                conversationId: 'conv-a',
+                updatedAt: 10_000,
+                messages: [
+                    { timestamp: day, modelVersion: 'model-y', prompt: 100, candidates: 50, thoughts: 10, cacheCreation: 0, cacheRead: 0, source: 'subagent' }
+                ]
+            } as UsageIndex
+        };
+        const { store, entries } = createMemoryIndexStore({ 'conv-a': stale });
+        const source = createSource({
+            'conv-a': {
+                metadata: { title: 'Alpha' } as Partial<ConversationMetadata>,
+                // 历史里只有主会话消息，没有 subagent 条目
+                messages: [modelMessage({ prompt: 300, candidates: 100, modelVersion: 'model-x', timestamp: day })]
+            }
+        });
+
+        const stats = await aggregateUsageStats(source, { indexStore: store });
+
+        // 统计 = 历史主会话 + 旧索引保留的 subagent
+        expect(stats.totals.promptTokens).toBe(400);
+        expect(stats.totals.modelMessages).toBe(2);
+        expect(stats.byConversation[0].subagentTokens).toBe(160);
+
+        // 重建后的索引同时包含主会话消息与保留的 subagent 条目
+        const rebuilt = entries.get('conv-a')!.index!;
+        expect(rebuilt.messages).toHaveLength(2);
+        expect(rebuilt.messages.some(m => m.source === 'subagent')).toBe(true);
+        expect(rebuilt.messages.some(m => m.modelVersion === 'model-x')).toBe(true);
+    });
+
+    test('索引缺失重建时无旧 subagent 条目，不影响既有重建行为', async () => {
+        const { store, entries } = createMemoryIndexStore();
+        const source = createSource({
+            'conv-a': {
+                metadata: { title: 'Alpha' } as Partial<ConversationMetadata>,
+                messages: [modelMessage({ prompt: 100, candidates: 50, modelVersion: 'model-x', timestamp: day })]
+            }
+        });
+
+        const stats = await aggregateUsageStats(source, { indexStore: store });
+        expect(stats.totals.promptTokens).toBe(100);
+        const rebuilt = entries.get('conv-a')!.index!;
+        expect(rebuilt.messages).toHaveLength(1);
+        expect(rebuilt.messages[0].source).toBeUndefined();
+    });
+});

@@ -534,7 +534,21 @@ const zhCN = {
                 daysAgo: '{days}天前',
                 restoreConfirmTitle: '恢复存档',
                 restoreConfirmMessage: '确定要将工作区恢复到此存档点吗？这将覆盖当前工作区中的相应文件，此操作不可恢复。',
-                restoreConfirmBtn: '恢复'
+                restoreConfirmBtn: '恢复',
+                restoreConfirmRetryTitle: '回档并重试',
+                restoreConfirmDeleteTitle: '回档并删除',
+                restoreConfirmEditTitle: '回档并编辑',
+                restorePreviewFailed: '无法预览恢复，请稍后重试',
+                restorePreviewFilesUpdated: '将更新 {count} 个文件',
+                restorePreviewFilesDeleted: '将删除 {count} 个文件',
+                restorePreviewFilesUnchanged: '{count} 个文件保持不变',
+                restorePreviewNoChanges: '工作区与存档状态一致，没有文件变更',
+                restorePreviewLegacy: '旧版存档（无文件清单），恢复将以备份内容为准，可能覆盖工作区文件；不会删除任何文件',
+                restoreDeleteListTitle: '将删除以下 {count} 个文件：',
+                restoreDeleteListMore: '……等 {count} 个文件',
+                restoreDeleteListEmpty: '本次恢复不会删除任何文件',
+                restoreDeleteUntrackedNote: '包含存档创建后新建的文件（确认后一并删除）',
+                restoreUnbackedTip: '以下文件在创建存档时未备份（大小超限或不可读），本次恢复不会处理：{paths}'
             },
             continue: {
                 title: '对话等待中',
@@ -1155,6 +1169,52 @@ const zhCN = {
                             hint: '超过此数量时自动清理旧的存档点，填写 -1 表示无上限'
                         }
                     },
+                    exclusion: {
+                        title: '排除配置',
+                        description: '控制哪些文件不会进入存档。默认排除类别可分别开关；被排除的文件不会被备份，但会记录原因，可点击“预览排除结果”查看。',
+                        patterns: '条规则',
+                        profiles: {
+                            logs: '日志文件',
+                            aiModels: 'AI/ML 模型权重',
+                            datasets: '数据集',
+                            caches: '缓存',
+                            pythonVenvs: 'Python 虚拟环境',
+                            buildArtifacts: '构建产物',
+                            largeMedia: '大型媒体文件',
+                            archives: '压缩包与二进制产物'
+                        },
+                        maxFileSize: {
+                            label: '单文件大小上限 (MiB)',
+                            hint: '超过此大小的文件不会进入存档（0 = 不限制，默认 50）'
+                        },
+                        customPatterns: {
+                            label: '自定义排除模式',
+                            hint: '每行一个 gitignore 模式；以 ! 开头可重新纳入默认类别，但不能覆盖强制排除（.git / node_modules / 扩展存储）',
+                            reincludeHint: '提示：默认类别按目录排除时（如 data/、dist/），重新纳入其下文件需同时否定目录本身，例如 !data/ + !data/keep.txt',
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                        },
+                        preview: {
+                            button: '预览排除结果',
+                            loading: '扫描中...',
+                            failed: '预览失败，请重试',
+                            total: '共排除 {count} 个文件/目录，约 {size}',
+                            partial: '（部分目录过大，大小统计可能不完整）',
+                            empty: '当前配置不会排除任何文件',
+                            count: '{count} 项',
+                            rule: '规则',
+                            source: '来源',
+                            other: '其他（.gitignore / 自定义 / 大小限制等）',
+                            noSamples: '无示例',
+                            reasons: {
+                                forced: '强制排除',
+                                default: '默认类别',
+                                gitignore: '.gitignore',
+                                custom: '自定义',
+                                size: '大小上限',
+                                unreadable: '不可读'
+                            }
+                        }
+                    },
                     cleanup: {
                         title: '清理存档点',
                         description: '按对话批量管理存档点，释放存储空间',
@@ -1167,6 +1227,7 @@ const zhCN = {
                         selectAll: '全选',
                         selectedCount: '已选 {count} 项',
                         selectedSize: '共 {size}',
+                        totalSize: '总占用 {size}',
                         deleteSelected: '删除所选',
                         noCheckpointsInConversation: '该对话暂无存档点',
                         checkpointFiles: '{count} 个文件',
@@ -1185,6 +1246,25 @@ const zhCN = {
                             warning: '此操作不可恢复',
                             cancel: '取消',
                             delete: '删除'
+                        },
+                        rejectedByDependency: '{count} 个存档点因被后续存档依赖而保留',
+                        deleteFailedCount: '{count} 个存档点删除失败',
+                        deleteRequestFailed: '删除请求失败，请重试',
+                        unbackedFiles: '{count} 个文件未备份',
+                        sizeIncomplete: '部分未统计',
+                        sizeIncompleteHint: '部分旧存档缺少大小记录，总大小为已统计部分',
+                        progress: {
+                            pending: '等待中',
+                            scanning: '扫描中',
+                            copying: '备份中',
+                            cleaning: '清理中',
+                            preparing: '准备中',
+                            restoring: '恢复中',
+                            deleting: '删除中',
+                            done: '完成',
+                            failed: '失败',
+                            cancelled: '已取消',
+                            cancel: '取消'
                         },
                         timeFormat: {
                             justNow: '刚刚',
@@ -1510,6 +1590,8 @@ const zhCN = {
                 globalConfig: '全局配置',
                 maxConcurrentAgents: '最大并发数',
                 maxConcurrentAgentsHint: '同时运行的子代理数量上限，超出的自动排队等待（-1 表示无限制）',
+                defaultMaxIterations: '默认迭代次数',
+                defaultMaxIterationsHint: '未单独配置迭代次数的子代理与 General Worker 的默认值（1~200，-1 表示无限制）',
                 generalWorker: '启用通用 Worker（傻瓜模式）',
                 generalWorkerHint: '主模型可直接派发零配置的 "General Worker"：继承当前渠道与全部工具权限，数量由主模型自行决定，无需手动配置任何 agent',
                 basicInfo: '基本信息',
@@ -2427,6 +2509,8 @@ const zhCN = {
                 browse: '浏览',
                 apply: '应用',
                 reset: '重置为默认',
+                openInExplorer: '打开目录',
+                openInExplorerTitle: '在文件资源管理器中打开当前存储目录',
                 migrate: '迁移数据',
                 migrateHint: '将现有数据迁移到新路径',
                 migrating: '迁移中...',
@@ -2451,7 +2535,8 @@ const zhCN = {
                     applyEmptyHint: '请先选择或输入一个存储路径',
                     migrationSuccess: '数据迁移完成，请重新加载窗口以使更改生效',
                     migrationFailed: '数据迁移失败: {error}',
-                    validationFailed: '路径验证失败: {error}'
+                    validationFailed: '路径验证失败: {error}',
+                    openInExplorerFailed: '打开存储目录失败: {error}'
                 },
                 reloadWindow: '重新加载窗口'
             }

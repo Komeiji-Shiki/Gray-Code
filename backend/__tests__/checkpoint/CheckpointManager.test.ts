@@ -895,6 +895,42 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
         }
     });
 
+    test('deleteCheckpointsBatch computes ancestor closure: kept tail protects the whole base chain', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-batch-closure';
+        const cpA = makeRecord({ id: 'cp-a', conversationId, timestamp: 1000 });
+        const cpB = makeRecord({
+            id: 'cp-b', conversationId, messageIndex: 1, timestamp: 2000,
+            type: 'incremental', baseCheckpointId: 'cp-a'
+        });
+        const cpC = makeRecord({
+            id: 'cp-c', conversationId, messageIndex: 2, timestamp: 3000,
+            type: 'incremental', baseCheckpointId: 'cp-b'
+        });
+
+        try {
+            for (const cp of [cpA, cpB, cpC]) {
+                await writeFile(path.join(storageRoot, 'checkpoints', cp.backupDir), 'x.txt', 'x\n');
+            }
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [cpA, cpB, cpC], []);
+
+            // 删除 {A, B} 但保留 C：C 依赖 B、B 依赖 A。
+            // 旧实现只检查一层直接引用，会删 A 而保留 B → B 断链；
+            // 闭包计算后 A、B 都被强制保留（CP-05）。
+            const result = await manager.deleteCheckpointsBatch([
+                { conversationId, checkpointIds: ['cp-a', 'cp-b'] }
+            ]);
+            expect(result[0].deletedIds).toEqual([]);
+            expect(result[0].rejectedIds.sort()).toEqual(['cp-a', 'cp-b']);
+            const list = await manager.getCheckpoints(conversationId);
+            expect(list.map(c => c.id)).toEqual(['cp-a', 'cp-b', 'cp-c']);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('deleteCheckpointsBatch with empty checkpointIds deletes all in conversation', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
@@ -946,6 +982,234 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('restore returns unbackedPaths as display paths and keeps them untouched', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-unbacked';
+        const checkpointId = 'cp-unbacked';
+        const visibleContent = 'backed content\n';
+
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'workspace current\n');
+            await writeFile(workspaceRoot, 'big.bin', 'huge content\n');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'hash-unbacked',
+                type: 'full',
+                fileHashes: {
+                    'a.txt': hashContent(visibleContent)
+                },
+                emptyDirs: [],
+                unbackedPaths: ['big.bin']
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'a.txt', visibleContent);
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+            const result = await manager.restoreCheckpoint(conversationId, checkpointId);
+
+            expect(result.success).toBe(true);
+            expect(result.unbackedPaths).toEqual(['big.bin']);
+            // 未备份文件受保护：恢复后仍存在
+            await expect(pathExists(path.join(workspaceRoot, 'big.bin'))).resolves.toBe(true);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('previewRestore returns deletion lists without executing; confirmed restore deletes untracked files (CP-09)', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-preview';
+        const checkpointId = 'cp-preview';
+        const trackedContent = 'tracked v1\n';
+
+        try {
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'tracked.txt', trackedContent);
+
+            // 工作区：tracked.txt（内容已变化）+ untracked.txt（快照后新建）
+            await writeFile(workspaceRoot, 'tracked.txt', 'current changed\n');
+            await writeFile(workspaceRoot, 'untracked.txt', 'new file\n');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'hash-preview',
+                type: 'full',
+                fileHashes: {
+                    'tracked.txt': hashContent(trackedContent)
+                },
+                emptyDirs: []
+            };
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+
+            // 预览：tracked.txt 将修改（restored=1）；untracked.txt 是快照后新建 → untrackedPaths
+            const preview = await manager.previewRestore(conversationId, checkpointId);
+            expect(preview.success).toBe(true);
+            expect(preview.restored).toBe(1);
+            expect(preview.deletablePaths).toEqual([]);
+            expect(preview.untrackedPaths).toEqual(['untracked.txt']);
+            expect(preview.deleted).toBe(1);
+
+            // 预览无副作用：文件都还在
+            await expect(pathExists(path.join(workspaceRoot, 'tracked.txt'))).resolves.toBe(true);
+            await expect(pathExists(path.join(workspaceRoot, 'untracked.txt'))).resolves.toBe(true);
+
+            // 未确认（默认 deleteUntrackedFiles=false）：恢复后 untracked.txt 保留（#29 保护）
+            const resultDefault = await manager.restoreCheckpoint(conversationId, checkpointId);
+            expect(resultDefault.success).toBe(true);
+            expect(resultDefault.deleted).toBe(0);
+            await expect(pathExists(path.join(workspaceRoot, 'untracked.txt'))).resolves.toBe(true);
+
+            // 确认删除快照后新建文件：untracked.txt 被删除
+            const resultConfirmed = await manager.restoreCheckpoint(conversationId, checkpointId, { deleteUntrackedFiles: true });
+            expect(resultConfirmed.success).toBe(true);
+            expect(resultConfirmed.deleted).toBe(1);
+            await expect(pathExists(path.join(workspaceRoot, 'untracked.txt'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('previewRestore prunes orphan backup dirs without any record references', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-orphan';
+        const checkpointId = 'cp-orphan';
+        const orphanDir = 'cp_orphan_residue';
+        const visibleContent = 'hello\n';
+
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'workspace current\n');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'hash-orphan',
+                type: 'full',
+                fileHashes: { 'a.txt': hashContent(visibleContent) },
+                emptyDirs: []
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'a.txt', visibleContent);
+            // 构造孤儿目录（磁盘存在但无任何记录引用，如删除失败残留）
+            await writeFile(path.join(storageRoot, 'checkpoints', orphanDir), 'junk.txt', 'junk');
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+            await manager.previewRestore(conversationId, checkpointId);
+
+            // 孤儿目录被清理，正常存档目录保留
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', orphanDir))).resolves.toBe(false);
+            await expect(pathExists(path.join(storageRoot, 'checkpoints', checkpointId))).resolves.toBe(true);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('H-1: restore honors the four-layer exclusion model (default categories + storage root)', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        // 存储根放在工作区内：同时验证强制排除绝对路径（存储根）在恢复侧生效
+        const storageRoot = path.join(workspaceRoot, '.limcode');
+        const conversationId = 'conv-h1';
+        const checkpointId = 'cp-h1';
+        const excludedDistContent = 'backup dist content\n';
+        const excludedDataContent = 'backup data content\n';
+        const visibleContent = 'visible content\n';
+
+        try {
+            // 当前工作区：dist/（buildArtifacts 类别）与 data/（datasets 类别）是当前明确排除路径
+            await writeFile(workspaceRoot, 'dist/bundle.js', 'current dist\n');
+            await writeFile(workspaceRoot, 'data/raw.csv', 'current data\n');
+            await writeFile(workspaceRoot, 'visible.txt', 'current visible\n');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 3,
+                contentHash: 'hash-h1',
+                type: 'full',
+                fileHashes: {
+                    'dist/bundle.js': hashContent(excludedDistContent),
+                    'data/raw.csv': hashContent(excludedDataContent),
+                    'visible.txt': hashContent(visibleContent)
+                },
+                emptyDirs: []
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'dist/bundle.js', excludedDistContent);
+            await writeFile(backupRoot, 'data/raw.csv', excludedDataContent);
+            await writeFile(backupRoot, 'visible.txt', visibleContent);
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+            // 开启默认类别 buildArtifacts / datasets（其余关闭）——恢复必须服从当前四层排除模型
+            ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                enabled: true,
+                beforeTools: [],
+                afterTools: [],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: [],
+                exclusion: {
+                    enabledProfiles: {
+                        buildArtifacts: true,
+                        datasets: true,
+                        logs: false,
+                        aiModels: false,
+                        caches: false,
+                        pythonVenvs: false,
+                        largeMedia: false,
+                        archives: false
+                    },
+                    maxFileSizeBytes: 0,
+                    customPatterns: []
+                }
+            });
+
+            const result = await manager.restoreCheckpoint(conversationId, checkpointId);
+            expect(result.success).toBe(true);
+            // 只有 visible.txt 被恢复；dist/ 与 data/ 下的文件（当前明确排除）不得被写回或删除
+            expect(result.restored).toBe(1);
+            await expect(fs.readFile(path.join(workspaceRoot, 'visible.txt'), 'utf-8')).resolves.toBe(visibleContent);
+            await expect(fs.readFile(path.join(workspaceRoot, 'dist/bundle.js'), 'utf-8')).resolves.toBe('current dist\n');
+            await expect(fs.readFile(path.join(workspaceRoot, 'data/raw.csv'), 'utf-8')).resolves.toBe('current data\n');
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
         }
     });
 });
@@ -1088,9 +1352,13 @@ describe('CheckpointManager path safety regressions', () => {
 
             const created = await manager.createCheckpoint(conversationId, 0, 'apply_diff', 'after');
             expect(created).not.toBeNull();
-            // 文件必须全部进入快照（之前 mtimeNs undefined 会抛 TypeError 被吞掉，文件整体漏出）
-            expect(Object.keys(created!.fileHashes || {})).toEqual(expect.arrayContaining(['a.txt', 'sub/b.txt']));
-            expect(created!.fileHashes!['a.txt']).toBe(hashContent('hello world\n'));
+            // 文件必须全部进入快照（之前 mtimeNs undefined 会抛 TypeError 被吞掉，文件整体漏出）；
+            // 上游新格式 fileHashes 键为 scoped 布局（ws_xxx/ 前缀），按后缀匹配
+            const hashKeys = Object.keys(created!.fileHashes || {});
+            expect(hashKeys.some(k => k === 'a.txt' || k.endsWith('/a.txt'))).toBe(true);
+            expect(hashKeys.some(k => k === 'sub/b.txt' || k.endsWith('/sub/b.txt'))).toBe(true);
+            const aKey = hashKeys.find(k => k === 'a.txt' || k.endsWith('/a.txt'))!;
+            expect(created!.fileHashes![aKey]).toBe(hashContent('hello world\n'));
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });

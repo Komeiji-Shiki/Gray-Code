@@ -16,6 +16,8 @@ export function setTailVersionsForConversation(
   conversationId: string,
   versions: TailVersionInfo[]
 ): void {
+  // 字段缺失时静默降级（部分调用方/测试用最小 state）
+  if (!state.tailVersionsByConversation) return
   state.tailVersionsByConversation.value = {
     ...state.tailVersionsByConversation.value,
     [conversationId]: Array.isArray(versions) ? versions : []
@@ -27,7 +29,7 @@ export function getTailVersionsForConversation(
   state: ChatStoreState,
   conversationId: string | null | undefined
 ): TailVersionInfo[] {
-  if (!conversationId) return []
+  if (!conversationId || !state.tailVersionsByConversation) return []
   return state.tailVersionsByConversation.value[conversationId] || []
 }
 
@@ -38,6 +40,7 @@ export function setActiveTailVersion(
   branchIndex: number,
   versionId: string | null
 ): void {
+  if (!state.activeTailVersionByBranch) return
   state.activeTailVersionByBranch.value = {
     ...state.activeTailVersionByBranch.value,
     [`${conversationId}:${branchIndex}`]: versionId
@@ -49,6 +52,7 @@ export function setActiveTailVersion(
  * 之后的尾部都是「最新当前答案」，版本切换器回到最新位置。
  */
 export function resetActiveTailVersionsForConversation(state: ChatStoreState, conversationId: string): void {
+  if (!state.activeTailVersionByBranch) return
   const prefix = `${conversationId}:`
   const current = state.activeTailVersionByBranch.value
   let changed = false
@@ -70,7 +74,8 @@ export function resetActiveTailVersionsForConversation(state: ChatStoreState, co
  */
 export async function refreshTailVersions(state: ChatStoreState, conversationId: string): Promise<void> {
   if (!conversationId) return
-  if (state.tailVersionsLoading.value[conversationId]) return
+  // 字段缺失时静默降级（部分调用方/测试用最小 state）
+  if (!state.tailVersionsLoading?.value || state.tailVersionsLoading.value[conversationId]) return
 
   state.tailVersionsLoading.value = {
     ...state.tailVersionsLoading.value,

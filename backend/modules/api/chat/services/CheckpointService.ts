@@ -12,6 +12,7 @@
 import type { CheckpointManager, CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
+import type { CheckpointOperationProgress } from '../../../checkpoint';
 
 export class CheckpointService {
     private checkpointManager?: CheckpointManager;
@@ -24,6 +25,21 @@ export class CheckpointService {
     ) {
         this.checkpointManager = checkpointManager;
         this.settingsManager = settingsManager;
+    }
+
+    /**
+     * M1: 流式下发的存档记录摘要化——去掉 fileHashes/fileStats（完整数据在 manifest），
+     * 避免把全量哈希映射经 IPC 下发 webview（CPF-03 只完成一半的补全）。
+     * createCheckpoint 返回值保留完整数据（兼容既有调用方/测试），此处仅裁剪流出边界。
+     */
+    private toStreamSummary(record: CheckpointRecord | null): CheckpointRecord | null {
+        if (!record) {
+            return null;
+        }
+        const summary = { ...record };
+        delete (summary as Partial<CheckpointRecord>).fileHashes;
+        delete (summary as Partial<CheckpointRecord>).fileStats;
+        return summary as CheckpointRecord;
     }
 
     /**
@@ -70,12 +86,12 @@ export class CheckpointService {
                 index = history.length; // 新用户消息将插入的位置
             }
 
-            return await this.checkpointManager.createCheckpoint(
+            return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
                 conversationId,
                 index,
                 'user_message',
                 'before'
-            );
+            ));
         }
 
         // position === 'after'
@@ -92,12 +108,12 @@ export class CheckpointService {
             index = history.length - 1; // 刚刚添加的用户消息
         }
 
-        return await this.checkpointManager.createCheckpoint(
+        return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             index,
             'user_message',
             'after'
-        );
+        ));
     }
 
     /**
@@ -131,12 +147,12 @@ export class CheckpointService {
             const history = await this.conversationManager.getHistoryRef(conversationId);
             const index = history.length; // 模型消息将要插入的位置
 
-            return await this.checkpointManager.createCheckpoint(
+            return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
                 conversationId,
                 index,
                 'model_message',
                 'before'
-            );
+            ));
         }
 
         // position === 'after'
@@ -150,34 +166,38 @@ export class CheckpointService {
         }
         const index = history.length - 1; // 刚刚添加的模型消息
 
-        return await this.checkpointManager.createCheckpoint(
+        return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             index,
             'model_message',
             'after'
-        );
+        ));
     }
 
     /**
      * 为工具执行创建检查点
      *
      * 这里不额外做开关判断，直接委托给 CheckpointManager，由其根据配置决定是否实际创建。
+     *
+     * M7: 支持透传 progress 回调（可选用）；返回值按 M1 摘要化（不含 fileHashes/fileStats）。
      */
     async createToolExecutionCheckpoint(
         conversationId: string,
         messageIndex: number,
         toolName: string,
-        phase: 'before' | 'after'
+        phase: 'before' | 'after',
+        options?: { progress?: (progress: CheckpointOperationProgress) => void }
     ): Promise<CheckpointRecord | null> {
         if (!this.checkpointManager) {
             return null;
         }
-        return await this.checkpointManager.createCheckpoint(
+        return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             messageIndex,
             toolName,
-            phase
-        );
+            phase,
+            options && options.progress ? { progress: options.progress } : undefined
+        ));
     }
 
     /**
