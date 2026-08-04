@@ -58,6 +58,7 @@ import {
 } from './utils';
 import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
+import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
 
 /** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
 const DEFAULT_MAX_TOOL_ITERATIONS = 200;
@@ -478,6 +479,91 @@ export class ChatHandler {
         }
     }
     
+    /**
+     * 处理 reroll 请求（TREE-01：重新生成并保留旧回答，流式）
+     * 支持工具调用循环；旧回答作为候选保留在分支图中，失败可切回（决策 10）。
+     *
+     * @param request reroll 请求数据
+     * @returns 异步生成器，产生流式响应
+     */
+    async *handleRerollStream(
+        request: RerollRequestData
+    ): AsyncGenerator<
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
+    > {
+        try {
+            for await (const chunk of this.chatFlowService.handleRerollStream(request)) {
+                yield chunk as any;
+            }
+        } catch (error) {
+            // 检查是否是用户取消错误
+            if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
+                // 用户取消，yield cancelled 消息
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            yield {
+                conversationId: request.conversationId,
+                error: this.formatError(error)
+            };
+        }
+    }
+
+    /**
+     * 处理编辑用户消息分支请求（TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息，流式）。
+     * 支持工具调用循环；旧用户节点及其子树保留在分支图中，失败可切回（决策 10 精神）。
+     *
+     * @param request 编辑分支请求数据
+     * @returns 异步生成器，产生流式响应
+     */
+    async *handleEditBranchStream(
+        request: EditBranchRequestData
+    ): AsyncGenerator<
+        ChatStreamChunkData
+        | ChatStreamCompleteData
+        | ChatStreamErrorData
+        | ChatStreamToolIterationData
+        | ChatStreamCheckpointsData
+        | ChatStreamToolConfirmationData
+        | ChatStreamToolsExecutingData
+        | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
+    > {
+        try {
+            for await (const chunk of this.chatFlowService.handleEditBranchStream(request)) {
+                yield chunk as any;
+            }
+        } catch (error) {
+            // 检查是否是用户取消错误
+            if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
+                // 用户取消，yield cancelled 消息
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            yield {
+                conversationId: request.conversationId,
+                error: this.formatError(error)
+            };
+        }
+    }
+
     /**
      * 处理编辑并重试请求（非流式）
      * 支持工具调用循环

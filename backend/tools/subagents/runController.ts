@@ -23,8 +23,14 @@ export interface SubAgentRunControlState {
 interface ActiveRunRecord {
     runId: string;
     agentName?: string;
+    /** 嵌套深度（主模型=0，子=1，子子=2），由 executor 注册时携带（F2） */
+    depth?: number;
     status: SubAgentRunStatus;
     controller: AbortController;
+    /** 是否挂父轮 abort 信号（前台 SubAgent=true；后台模式=false，detach 只对前台生效） */
+    attachedToParent: boolean;
+    /** 已与父 abort 信号解绑（转后台继续运行） */
+    detached: boolean;
     /**
      * 等待 run 重新变得可运行（resume）或被终止（exit）的唤醒器。
      *
@@ -48,25 +54,94 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
      */
     readonly scopeType = 'subagent' as const;
     private readonly activeRuns = new Map<string, ActiveRunRecord>();
+    /** 父 runId -> 它派生的子 runId 集合（F2 级联清理用） */
+    private readonly children = new Map<string, Set<string>>();
+    /** runId -> detach 回调（executor 注册；detachFromParent 时同步调用，用于解绑父 abort 信号） */
+    private readonly detachListeners = new Map<string, () => void>();
 
-    register(runId: string, agentName?: string): AbortSignal {
+    register(runId: string, agentName?: string, depth?: number, attachedToParent = true): AbortSignal {
         // 修改原因：每次 SubAgent run 需要一个可由 Monitor 独立中止的控制信号，不能复用主聊天的 AbortController。
         // 修改方式：注册活跃 run 时创建专属 AbortController，并把 run 标记为 running。
         // 修改目的：后续 pause/exit 可以只影响该 SubAgent run，不直接让主窗口其他流式请求中止。
+        // F2：同时记录嵌套深度，供子 agent 派发时读取父深度做超限校验与 Monitor 元数据。
+        // 转后台（detach）：attachedToParent 标记该 run 是否挂父轮 abort 信号（前台 true / 后台 false），
+        // detachFromParent 只对挂父信号的 run 生效——用户发新消息时前台 SubAgent 转后台继续，不被旧流 abort 连带杀掉。
         const existing = this.activeRuns.get(runId);
         if (existing) {
+            if (depth !== undefined) existing.depth = depth;
             return existing.controller.signal;
         }
         const record: ActiveRunRecord = {
             runId,
             agentName,
+            depth,
             status: 'running',
             controller: new AbortController(),
+            attachedToParent,
+            detached: false,
             waiters: [],
             inactiveDurationMs: 0
         };
         this.activeRuns.set(runId, record);
         return record.controller.signal;
+    }
+
+    /**
+     * 读取 run 的嵌套深度（未注册或未记录时返回 undefined）。
+     *
+     * 修改原因（F2）：子 agent 派发子子 agent 时，需要从父 run 的 run 上下文读取深度并 +1。
+     * 修改方式：从活跃 run 记录直接读取，不新增独立状态源。
+     */
+    getDepth(runId: string): number | undefined {
+        return this.activeRuns.get(runId)?.depth;
+    }
+
+    /**
+     * 登记父子关系：parentRunId 派生了一个子 run childRunId。
+     *
+     * 修改原因（F2）：父 run 结束时需要级联退出仍存活（含排队/后台）的子 run，
+     * 避免父级结束后留下孤儿 run 继续运行或占用并发席位。
+     */
+    registerChild(parentRunId: string, childRunId: string): void {
+        let set = this.children.get(parentRunId);
+        if (!set) {
+            set = new Set();
+            this.children.set(parentRunId, set);
+        }
+        set.add(childRunId);
+    }
+
+    /**
+     * 解除父子关系：子 run 结束时把自己从父 run 的派生列表里摘除（幂等）。
+     */
+    unregisterChild(parentRunId: string, childRunId: string): void {
+        const set = this.children.get(parentRunId);
+        if (!set) return;
+        set.delete(childRunId);
+        if (set.size === 0) {
+            this.children.delete(parentRunId);
+        }
+    }
+
+    /** 读取某 run 当前仍登记在册的子 runId 列表（快照，不修改内部状态）。 */
+    getChildren(parentRunId: string): string[] {
+        return Array.from(this.children.get(parentRunId) ?? []);
+    }
+
+    /**
+     * 级联退出：父 run 结束时调用，把其派生的全部子 run 置为 cancelled 并中止。
+     *
+     * 修改原因（F2）：父 run 被取消/超时/正常结束时，仍存活的后台子 run 或排队中的子 run
+     * 必须一并终止，否则会脱离父级约束继续运行。
+     * 修改方式：清空父子关系表后逐个调用 exit（幂等，子 run 未注册/已结束时为 no-op）。
+     */
+    cascadeExitChildren(parentRunId: string, reason?: string): string[] {
+        const childRunIds = this.getChildren(parentRunId);
+        this.children.delete(parentRunId);
+        for (const childRunId of childRunIds) {
+            this.exit(childRunId, reason || 'Parent sub-agent run ended; nested sub-agent runs were cancelled.');
+        }
+        return childRunIds;
     }
 
     /**
@@ -84,6 +159,7 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         // 修改方式：删除 activeRuns 中对应记录，但保留 runEventBus 的持久快照。
         // 修改目的：Monitor 可以继续查看历史 run，同时不会显示会影响主工具的控制按钮。
         this.activeRuns.delete(runId);
+        this.detachListeners.delete(runId);
     }
 
     isActive(runId: string): boolean {
@@ -268,6 +344,58 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         const latest = this.activeRuns.get(runId);
         if (!latest) return 'inactive';
         return latest.status === 'cancelled' ? 'cancelled' : 'running';
+    }
+
+    /**
+     * 判断 run 是否已与父 abort 信号解绑（转后台）。
+     */
+    isDetached(runId: string): boolean {
+        return this.activeRuns.get(runId)?.detached === true;
+    }
+
+    /**
+     * 注册 detach 回调（executor 在 run 启动时注册，unregister 时自动清理）。
+     */
+    registerDetachListener(runId: string, listener: () => void): void {
+        this.detachListeners.set(runId, listener);
+    }
+
+    /**
+     * 移除 detach 回调。
+     */
+    unregisterDetachListener(runId: string): void {
+        this.detachListeners.delete(runId);
+    }
+
+    /**
+     * 把前台 SubAgent run 转为后台继续运行（解除与父 abort 信号的绑定）。
+     *
+     * 修改原因：前台 SubAgent 的 abort 信号挂在主会话工具循环上，用户发新消息时
+     * 旧流被 abort 会连带杀掉还在干活的 SubAgent；应当转后台继续（与 background:true 语义一致）。
+     * 修改方式：标记 detached 并同步调用 executor 注册的解绑回调（移除父信号监听），
+     * 后续 executor 创建的组合信号不再包含父 abort 信号；同时广播 run_detached 事件。
+     * 修改目的：detach 后旧流取消不再影响该 run，run 继续执行至完成并正常进入终态。
+     * 仅对 attachedToParent（前台）的活跃 run 生效；后台 run 与已 detach 的 run 返回 false。
+     */
+    detachFromParent(runId: string, reason = '用户发送了新消息，前台子代理已转为后台继续运行'): boolean {
+        const record = this.activeRuns.get(runId);
+        if (!record || !record.attachedToParent || record.detached) return false;
+        record.detached = true;
+        const listener = this.detachListeners.get(runId);
+        if (listener) {
+            try {
+                listener();
+            } catch (err) {
+                console.warn(`[SubAgentRunController] detach listener for ${runId} threw:`, err);
+            }
+        }
+        subAgentRunEventBus.emit({
+            runId,
+            agentName: record.agentName,
+            type: 'run_detached',
+            payload: { reason }
+        });
+        return true;
     }
 
     getAbortSignal(runId: string): AbortSignal | undefined {

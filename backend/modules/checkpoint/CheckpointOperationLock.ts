@@ -5,6 +5,18 @@ import {
 
 export type CheckpointOperation = 'create' | 'restore' | 'merge' | 'delete';
 
+/** runExclusive 可选参数（CP-LOCK-2） */
+export interface CheckpointRunExclusiveOptions {
+    /**
+     * 是否需要获取全局文件写锁（默认 true）。
+     * 预览/只读计算类操作传 false：只取工作区级互斥，不阻塞主会话与 SubAgent 的写工具。
+     */
+    needFileLock?: boolean;
+}
+
+/** CP-LOCK-1: 排队等待工作区锁期间被取消时 reject 的错误消息（与文件写锁取消同语义） */
+export const CHECKPOINT_LOCK_CANCELLED_MESSAGE = 'Checkpoint operation was cancelled';
+
 interface PendingOperation {
     workspaceIds: string[];
     operation: CheckpointOperation;
@@ -38,21 +50,36 @@ export class CheckpointOperationLockManager {
         operation: CheckpointOperation,
         ownerId: string,
         task: () => Promise<T>,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        options?: CheckpointRunExclusiveOptions
     ): Promise<T> {
         const normalizedIds = [...new Set(workspaceIds)].sort();
         if (normalizedIds.length === 0) {
             throw new Error('Checkpoint operation requires at least one workspace root');
         }
 
+        // CP-LOCK-2: 预览/只读计算默认仍取全局文件写锁；needFileLock=false 时跳过文件锁，
+        // 只保留工作区级互斥（仍与同工作区的其他存档操作互斥，但不阻塞写工具）。
+        const needFileLock = options?.needFileLock !== false;
+
         // 可重入：同一 owner 已持有工作区集合的超集时，跳过排队直接进入（嵌套调用）。
         // 文件写锁按同 holder 计数重入，嵌套 acquire/release 对称、不会死锁。
         const existing = this.activeOwners.get(ownerId);
-        if (existing && normalizedIds.every(id => existing.workspaceIds.includes(id))) {
+        if (existing) {
+            if (!normalizedIds.every(id => existing.workspaceIds.includes(id))) {
+                // CP-LOCK-3: 同 owner 请求超出已持有集合的嵌套调用会进入队列等待自己 → 死锁。
+                // fail-fast：直接抛错，而不是挂起在 pending 队列中。
+                throw new Error(
+                    `Checkpoint lock re-entry deadlock: owner ${ownerId} already holds ` +
+                    `[${existing.workspaceIds.join(', ')}] but requested [${normalizedIds.join(', ')}]`
+                );
+            }
             const record = existing;
             record.depth += 1;
             try {
-                return await this.runWithFileLock(operation, ownerId, task, abortSignal);
+                return needFileLock
+                    ? await this.runWithFileLock(operation, ownerId, task, abortSignal)
+                    : await task();
             } finally {
                 record.depth -= 1;
                 if (record.depth <= 0) {
@@ -62,13 +89,14 @@ export class CheckpointOperationLockManager {
         }
 
         // 非嵌套（不同 owner 或请求集合超出已持有范围）：正常排队互斥。
-        // 注意：调用方不得在持锁任务内等待一个请求了更大工作区集合的嵌套操作，
-        // 否则会等待自己（全局文件根锁 + FIFO 语义下即使工作区不相交也会串行）。
+        // 同 owner 的超集请求已在上面 fail-fast（CP-LOCK-3）。
 
-        const releaseWorkspaceLock = await this.acquireWorkspaceLock(normalizedIds, operation, ownerId);
+        const releaseWorkspaceLock = await this.acquireWorkspaceLock(normalizedIds, operation, ownerId, abortSignal);
         this.activeOwners.set(ownerId, { workspaceIds: normalizedIds, depth: 1 });
         try {
-            return await this.runWithFileLock(operation, ownerId, task, abortSignal);
+            return needFileLock
+                ? await this.runWithFileLock(operation, ownerId, task, abortSignal)
+                : await task();
         } finally {
             this.activeOwners.delete(ownerId);
             releaseWorkspaceLock();
@@ -98,10 +126,35 @@ export class CheckpointOperationLockManager {
     private acquireWorkspaceLock(
         workspaceIds: string[],
         operation: CheckpointOperation,
-        ownerId: string
+        ownerId: string,
+        abortSignal?: AbortSignal
     ): Promise<() => void> {
-        return new Promise(resolve => {
-            this.pending.push({ workspaceIds, operation, ownerId, resolve });
+        return new Promise((resolve, reject) => {
+            const pendingItem: PendingOperation = { workspaceIds, operation, ownerId, resolve };
+
+            // CP-LOCK-1: 取消信号作用于排队等待——abort 时把 pending 项移出队列并 reject，
+            // 而不是等到锁授予后在任务内才失败（排队等待时间无上限）。
+            if (abortSignal?.aborted) {
+                reject(new Error(CHECKPOINT_LOCK_CANCELLED_MESSAGE));
+                return;
+            }
+            const onAbort = (): void => {
+                const index = this.pending.indexOf(pendingItem);
+                if (index >= 0) {
+                    this.pending.splice(index, 1);
+                }
+                reject(new Error(CHECKPOINT_LOCK_CANCELLED_MESSAGE));
+            };
+            if (abortSignal) {
+                abortSignal.addEventListener('abort', onAbort, { once: true });
+            }
+            // 被授予锁时移除 abort 监听，避免授予后 abort 对已 resolve 的 Promise 二次 reject
+            pendingItem.resolve = (release: () => void) => {
+                abortSignal?.removeEventListener('abort', onAbort);
+                resolve(release);
+            };
+
+            this.pending.push(pendingItem);
             this.drain();
         });
     }

@@ -265,8 +265,9 @@ export function trimWindowFromTop(state: ChatStoreState, maxCount = MAX_WINDOW_M
   replaceAllMessages(state, all.slice(removeCount))
   state.windowStartIndex.value = nextWindowStartIndex
 
-  // 清理窗口外的检查点，避免长期累积
-  state.checkpoints.value = state.checkpoints.value.filter(cp => cp.messageIndex >= state.windowStartIndex.value)
+  // L-7：不再裁剪窗口外的检查点。此前 filter 会永久丢弃 messageIndex < windowStartIndex 的检查点，
+  // 用户上拉加载更早历史（windowStartIndex 前移）后这些检查点不会恢复，表现为存档条消失。
+  // 保留全部检查点由 loadOlderMessagesPage / loadCheckpoints 负责与窗口对齐，内存占用受对话存档数约束。
 
   // 标记已发生折叠（用于 UI 提示）
   state.historyFolded.value = true

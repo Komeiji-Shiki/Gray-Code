@@ -23,6 +23,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import type { UsageIndexMessage } from './usageStats';
 
 /** 单个对话的用量快照（内存缓存条目） */
@@ -110,37 +111,195 @@ export function parseConversationIdFromPath(filename: string): string | undefine
     const normalized = filename.replace(/\\/g, '/');
     const top = normalized.split('/')[0];
     if (!top) return undefined;
+    // 原子写临时文件（{id}.meta.json.tmp / {id}.usage.json.tmp）先剥掉 .tmp 再识别，
+    // 否则会被当成假对话 ID（形如 xxx.usage.json.tmp）标记进 dirty 集合
+    const base = top.endsWith('.tmp') ? top.slice(0, -'.tmp'.length) : top;
     // 双后缀优先：{id}.meta.json（改名）与 {id}.usage.json（索引写入）都要映射回真实对话
     for (const suffix of ['.meta.json', '.usage.json', '.json']) {
-        if (top.endsWith(suffix)) {
-            return top.slice(0, -suffix.length);
+        if (base.endsWith(suffix)) {
+            return base.slice(0, -suffix.length);
         }
     }
-    return top;
+    return base;
+}
+
+/** 递归能力探测超时（毫秒） */
+const DEFAULT_PROBE_TIMEOUT_MS = 1500;
+/** 非递归降级时 mtime 快照扫描间隔（毫秒） */
+const DEFAULT_FALLBACK_SCAN_INTERVAL_MS = 15_000;
+/** 探测探针目录名前缀（扫描器跳过，避免把探针文件计入 mtime 快照） */
+const PROBE_DIR_PREFIX = '.usage-watch-probe-';
+
+/**
+ * 递归能力探测：在受监听目录内创建探针子目录并写入探针文件，
+ * 若 watcher 在超时内收到“探针子目录内部文件”的事件，说明 recursive 生效。
+ *
+ * 只把“探针目录内部”的事件视为递归证据：非递归 watcher 也会收到子目录本身的创建
+ * 事件，但那不能证明能观察到子目录内的文件变更（旧 Node / 部分平台 fs.watch
+ * 的 recursive 选项创建时不抛错但静默降级为非递归）。
+ *
+ * 探测不经过调用方事件处理（另挂临时 change 监听，探测期间探针事件不会误标 dirty）；
+ * 返回 false 时调用方应退化为 mtime 快照比对。
+ */
+export function probeRecursiveWatchSupport(
+    watcher: fs.FSWatcher,
+    conversationsDirPath: string,
+    timeoutMs: number
+): Promise<boolean> {
+    const probeDir = path.join(conversationsDirPath, `${PROBE_DIR_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const probeBase = path.basename(probeDir);
+    return new Promise<boolean>((resolve) => {
+        let settled = false;
+
+        function finish(ok: boolean): void {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            watcher.removeListener('change', onChange);
+            try {
+                fs.rmSync(probeDir, { recursive: true, force: true });
+            } catch {
+                // 忽略清理失败
+            }
+            resolve(ok);
+        }
+
+        function onChange(_event: string, filename: string | Buffer | null): void {
+            const raw = typeof filename === 'string' ? filename : filename?.toString();
+            if (!raw) return;
+            if (raw.replace(/\\/g, '/').includes(`${probeBase}/`)) {
+                finish(true);
+            }
+        }
+
+        const timer = setTimeout(() => finish(false), Math.max(1, timeoutMs));
+        watcher.on('change', onChange);
+        try {
+            fs.mkdirSync(probeDir, { recursive: true });
+            fs.writeFileSync(path.join(probeDir, 'probe.txt'), 'probe');
+        } catch {
+            finish(false);
+        }
+    });
+}
+
+/**
+ * 递归不可用时的降级路径：扫描 conversations 目录下所有文件的 mtime，
+ * 每个对话取最大 mtime（写历史/元数据/索引都会触碰对应文件）。
+ * 目录不存在或不可读时返回空 Map。
+ */
+export function scanConversationMtimes(conversationsDirPath: string): Map<string, number> {
+    const result = new Map<string, number>();
+    const walk = (dir: string, prefix: string): void => {
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            if (entry.name.startsWith(PROBE_DIR_PREFIX)) continue; // 跳过探测残留
+            const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+                walk(path.join(dir, entry.name), rel);
+                continue;
+            }
+            const conversationId = parseConversationIdFromPath(rel);
+            if (!conversationId) continue;
+            try {
+                const mtime = fs.statSync(path.join(dir, entry.name)).mtimeMs;
+                const prev = result.get(conversationId);
+                if (prev === undefined || mtime > prev) {
+                    result.set(conversationId, mtime);
+                }
+            } catch {
+                // 文件可能已并发删除，忽略
+            }
+        }
+    };
+    walk(conversationsDirPath, '');
+    return result;
+}
+
+/** 两次 mtime 快照间发生变化的对话（新增/变更；删除由 listConversations + prune 处理） */
+export function diffMtimeSnapshots(previous: Map<string, number>, current: Map<string, number>): string[] {
+    const changed: string[] = [];
+    for (const [id, mtime] of current) {
+        if (previous.get(id) !== mtime) {
+            changed.push(id);
+        }
+    }
+    return changed;
+}
+
+/**
+ * 非递归降级兜底：定期对 conversations 目录做 mtime 快照比对，
+ * 把 mtime 变化的对话标记为 dirty（等价于 recursive watcher 的失效信号）。
+ * 首次扫描只建立基线不标记 dirty，避免启动即全量失效。返回停止函数（清定时器）。
+ */
+export function startMtimeFallbackScanner(
+    conversationsDirPath: string,
+    cache: UsageStatsCache,
+    intervalMs: number = DEFAULT_FALLBACK_SCAN_INTERVAL_MS
+): () => void {
+    let baseline: Map<string, number> | null = null;
+    let timer: NodeJS.Timeout | null = null;
+    const scan = (): void => {
+        const current = scanConversationMtimes(conversationsDirPath);
+        if (baseline) {
+            for (const id of diffMtimeSnapshots(baseline, current)) {
+                cache.markDirty(id);
+            }
+        }
+        baseline = current;
+    };
+    scan();
+    timer = setInterval(scan, intervalMs);
+    return () => {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+    };
 }
 
 /**
  * 监听 conversations 目录，文件变更时把对应对话标记为 dirty。
  *
  * - recursive：segmented 历史写入发生在 {id}/ 子目录内，必须递归监听；
+ * - 创建后做递归能力探测：部分旧 Node / 平台对 recursive 静默降级为非递归，
+ *   探测失败时退化为 mtime 快照比对（startMtimeFallbackScanner），避免缓存永久陈旧；
  * - 目录不存在（首次启动）时定期重试，退避上限 30 秒；
  * - watcher 异常时自动重建（同样退避），避免监听静默失效；
  * - 返回 dispose 函数：停止监听并清理定时器（扩展 dispose 时调用）。
  */
 export function startUsageDirectoryWatcher(
     conversationsDirPath: string,
-    cache: UsageStatsCache
+    cache: UsageStatsCache,
+    options?: { probeTimeoutMs?: number; fallbackScanIntervalMs?: number }
 ): () => void {
+    const probeTimeoutMs = options?.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    const fallbackScanIntervalMs = options?.fallbackScanIntervalMs ?? DEFAULT_FALLBACK_SCAN_INTERVAL_MS;
     let stopped = false;
     let watcher: fs.FSWatcher | null = null;
     let restartTimer: NodeJS.Timeout | null = null;
     let retryDelayMs = 1000;
+    /** 递归能力探测结果：null=未探测，true=recursive 生效，false=已降级 */
+    let recursiveSupported: boolean | null = null;
+    /** 非递归降级：mtime 快照扫描器（探测失败时启动，watcher 重建后复用，不重复探测） */
+    let fallbackScanner: (() => void) | null = null;
+
+    const stopFallbackScanner = (): void => {
+        fallbackScanner?.();
+        fallbackScanner = null;
+    };
 
     const closeWatcher = (): void => {
         if (restartTimer) {
             clearTimeout(restartTimer);
             restartTimer = null;
         }
+        stopFallbackScanner();
         if (watcher) {
             try {
                 watcher.close();
@@ -181,6 +340,20 @@ export function startUsageDirectoryWatcher(
                 closeWatcher();
                 scheduleRestart();
             });
+            if (recursiveSupported === false) {
+                // 已知不支持递归：直接启动 mtime 快照兜底，不再重复探测
+                if (!fallbackScanner) {
+                    fallbackScanner = startMtimeFallbackScanner(conversationsDirPath, cache, fallbackScanIntervalMs);
+                }
+            } else {
+                void probeRecursiveWatchSupport(watcher, conversationsDirPath, probeTimeoutMs).then(ok => {
+                    if (stopped) return;
+                    recursiveSupported = ok;
+                    if (!ok && !fallbackScanner) {
+                        fallbackScanner = startMtimeFallbackScanner(conversationsDirPath, cache, fallbackScanIntervalMs);
+                    }
+                });
+            }
         } catch {
             scheduleRestart();
         }

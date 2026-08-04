@@ -21,6 +21,7 @@ export { default as TaskCard } from './TaskCard.vue'
 export { default as DependencyWarning } from './DependencyWarning.vue'
 export { default as AnnouncementModal } from './AnnouncementModal.vue'
 export { default as JsonViewerDialog } from './JsonViewerDialog.vue'
+export { default as PatternListEditor } from './PatternListEditor.vue'
 
 // 导出类型
 export type { SelectOption } from './types'

@@ -287,6 +287,7 @@ const ja: LanguageMessages = {
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
             sendWhileBusy: '新しいメッセージを送信（実行中のコマンドはバックグラウンドへ、AI が先に応答）',
+            interruptDelivered: '現在のターンに挿入しました。AI がまもなく処理します',
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
@@ -396,6 +397,33 @@ const ja: LanguageMessages = {
             actions: {
                 viewResponse: '応答を見る',
                 branchFromHere: 'ここから分岐'
+            },
+            branch: {
+                previous: '前の候補',
+                next: '次の候補',
+                candidateList: '候補リスト',
+                switchTo: 'この候補に切り替え',
+                delete: '候補を削除',
+                deleteConfirm: 'もう一度クリックして削除を確定',
+                active: '現在',
+                noPreview: '（プレビューなし）',
+                workspaceConfirmTitle: '候補ブランチを切り替え',
+                workspaceConfirmMessage: 'このブランチは書き込みツールを使用したか、ワークスペースのチェックポイントがあります。ワークスペースも一緒に復元しますか？',
+                workspaceConfirmChatOnly: 'チャットのみ切り替え',
+                workspaceConfirmChatAndWorkspace: '切り替えてワークスペースも復元',
+                workspaceConfirmCancel: 'キャンセル'
+            },
+            branchTree: {
+                open: '分岐ツリー',
+                close: '閉じる',
+                title: '分岐ツリー',
+                empty: '分岐はまだありません',
+                deleted: '削除済み',
+                restore: '復元',
+                rename: '名前を変更',
+                renamePlaceholder: '分岐ラベルを入力…',
+                save: '保存',
+                cancel: 'キャンセル'
             },
             responseViewer: {
                 commonMode: '通常モード',
@@ -534,7 +562,24 @@ const ja: LanguageMessages = {
                 restoreDeleteListMore: '…ほか {count} 個のファイル',
                 restoreDeleteListEmpty: 'この復元で削除されるファイルはありません',
                 restoreDeleteUntrackedNote: 'チェックポイント作成後に新規作成されたファイルを含みます（確認後に削除されます）',
-                restoreUnbackedTip: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths}'
+                restoreUnbackedTip: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths}',
+                restoreResultErrorTitle: '復元に失敗しました',
+                restoreResultPartialTitle: '復元は部分的に完了しました',
+                restoreResultWarningTitle: '未バックアップのファイル',
+                restoreResultSuccessTitle: '復元が完了しました',
+                restoreResultFailed: 'チェックポイントの復元に失敗しました',
+                restoreResultPartial: '復元は部分的に完了しました。次のファイルが失敗しました：{files}',
+                restoreResultPartialMore: '復元は部分的に完了しました。次のファイルが失敗しました：{files} ほか {count} 個のファイル',
+                restoreResultUnbacked: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths}',
+                restoreResultUnbackedMore: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths} ほか {count} 個のファイル',
+                restoreResultSuccess: 'ワークスペースをチェックポイントに復元しました（{count} 個のファイル）',
+                restoreResultSuccessWithPrune: 'ワークスペースをチェックポイントに復元しました（{count} 個のファイル）。古いチェックポイントを {pruned} 個自動整理しました',
+                restoreConversationChanged: '会話が切り替えられたため、復元操作をキャンセルしました',
+                dirtyConfirmTitle: '未保存の変更があります',
+                dirtyConfirmMessage: '復元すると {count} 個の未保存ファイルの変更が破棄されます。続行しますか？',
+                dirtyConfirmDiscard: '変更を破棄して続行',
+                dirtyConfirmCancel: 'キャンセル',
+                dirtyConfirmMore: '…ほか {count} 個のファイル'
             },
             continue: {
                 title: '会話が一時停止中',
@@ -545,6 +590,10 @@ const ja: LanguageMessages = {
                 title: 'リクエストに失敗しました',
                 retry: '再試行',
                 dismiss: '閉じる'
+            },
+            interrupt: {
+                delivered: '「{text}」を送信しました。現在のターン終了後に処理されます',
+                deliverFailed: 'メッセージを送信できませんでした：{detail}'
             },
             tool: {
                 parameters: 'パラメータ',
@@ -1109,6 +1158,8 @@ const ja: LanguageMessages = {
             checkpoint: {
                 title: 'チェックポイント設定',
                 loading: '設定を読み込み中...',
+                loadError: 'チェックポイント設定の読み込みに失敗しました。既存設定の上書きを避けるため、設定を無効化しています。',
+                loadRetry: '再試行',
                 sections: {
                     enable: {
                         label: 'チェックポイント機能を有効化',
@@ -1159,6 +1210,7 @@ const ja: LanguageMessages = {
                         title: '除外設定',
                         description: 'チェックポイントから除外するファイルを制御します。デフォルトの除外カテゴリは個別にオン/オフできます。除外されたファイルはバックアップされませんが、理由が記録されます（「除外結果をプレビュー」で確認できます）。',
                         patterns: 'ルール',
+                        patternsAdd: '追加',
                         profiles: {
                             logs: 'ログファイル',
                             aiModels: 'AI/ML モデル重み',
@@ -1171,13 +1223,24 @@ const ja: LanguageMessages = {
                         },
                         maxFileSize: {
                             label: '単一ファイルサイズ上限 (MiB)',
-                            hint: 'このサイズを超えるファイルはチェックポイントに含まれません（0 = 無制限、デフォルト 50）'
+                            hint: 'このサイズを超えるファイルはチェックポイントに含まれません（0 = 無制限、デフォルト 50）',
+                            invalid: '有効な数値を入力してください（MiB、0 は無制限）'
                         },
                         customPatterns: {
                             label: 'カスタム除外パターン',
                             hint: '1 行に 1 つの gitignore パターン。! で始めるとデフォルトカテゴリを再び含められますが、強制除外（.git / node_modules / 拡張ストレージ）は上書きできません',
                             reincludeHint: 'ヒント：デフォルトカテゴリがディレクトリ単位で除外する場合（data/ や dist/ など）、その下のファイルを再び含めるにはディレクトリ自体の否定も必要です。例: !data/ + !data/keep.txt',
-                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf',
+                            empty: 'カスタムパターンはまだありません。入力して Enter で追加できます'
+                        },
+                        profilePatterns: {
+                            edit: 'パターンを編集',
+                            save: '保存',
+                            cancel: 'キャンセル',
+                            hint: 'このカテゴリのデフォルト除外パターンを上書きします。空にして保存するとデフォルトに戻ります',
+                            placeholder: '1 行に 1 つの gitignore パターン',
+                            empty: 'このカテゴリのデフォルトパターンを使用中です。空のリストを保存するとデフォルトに戻ります',
+                            clear: 'クリア（デフォルトに戻す）'
                         },
                         preview: {
                             button: '除外結果をプレビュー',
@@ -1239,6 +1302,21 @@ const ja: LanguageMessages = {
                         unbackedFiles: '{count} 件のファイルがバックアップされていません',
                         sizeIncomplete: '一部未集計',
                         sizeIncompleteHint: '一部の旧チェックポイントはサイズ記録がなく、合計は集計済みのみです',
+                        manifestDetail: '除外の詳細',
+                        manifestLoadFailed: '除外マニフェストの読み込みに失敗しました',
+                        manifestUnavailable: 'このチェックポイントは旧形式のため、除外マニフェストを表示できません',
+                        manifestExcludedCount: '除外ファイル数',
+                        manifestNote: 'このチェックポイントは作成時の除外ルールで {count} 個のファイルを除外しました',
+                        manifestRulesChanged: '現在の除外ルールは変更されています。復元は現在のルールに従います',
+                        manifestIgnoreSnapshot: '除外ルールのスナップショット',
+                        manifestRuleVersion: 'ルールバージョン',
+                        manifestForcedRulesVersion: '強制ルールバージョン',
+                        manifestDefaultProfileVersion: 'デフォルトカテゴリバージョン',
+                        manifestMaxFileSize: 'ファイルサイズ上限',
+                        manifestEnabledProfiles: '有効な除外カテゴリ',
+                        manifestCustomPatterns: 'カスタム除外パターン',
+                        manifestNone: 'なし',
+                        manifestClose: '閉じる',
                         progress: {
                             pending: '待機中',
                             scanning: 'スキャン中',
@@ -1250,13 +1328,34 @@ const ja: LanguageMessages = {
                             done: '完了',
                             failed: '失敗',
                             cancelled: 'キャンセル済み',
-                            cancel: 'キャンセル'
+                            cancel: 'キャンセル',
+                            cancelFailed: 'キャンセルに失敗しました。再試行してください',
+                            stale: '操作が長時間進行していません。ハングしている可能性があります。キャンセルするか設定ページを更新してください'
                         },
                         timeFormat: {
                             justNow: 'たった今',
                             minutesAgo: '{count} 分前',
                             hoursAgo: '{count} 時間前',
                             daysAgo: '{count} 日前'
+                        }
+                    },
+                    branchCleanup: {
+                        title: 'ブランチのクリーンアップ',
+                        description: '削除済み（ソフト削除）のブランチ候補を管理し、ストレージを解放します。削除したブランチは一定期間保持してから自動クリーンアップするか、ワンクリックで手動クリーンアップできます。',
+                        deletedCountLabel: '削除済みブランチ',
+                        deletedCountValue: '{count} 件（{conversations} 件の会話に分散）',
+                        deletedCountEmpty: '削除済みブランチはありません',
+                        countLoadFailed: '削除済みブランチ数の読み込みに失敗しました',
+                        pruneButton: '期限切れのソフト削除を一括クリーンアップ',
+                        pruneLoading: 'クリーンアップ中...',
+                        pruneSuccess: '{count} 件の期限切れブランチノードをクリーンアップしました',
+                        pruneFailed: 'クリーンアップに失敗しました: {message}',
+                        pruneSkipped: '{count} 件の会話のブランチデータはクリーンアップされませんでした（会話が存在しません）',
+                        retention: {
+                            label: 'ソフト削除の保持期間（日）',
+                            hint: '削除したブランチはこの日数経過後に自動クリーンアップされます。0 を入力すると自動クリーンアップしません（手動のみ）',
+                            invalid: '0 以上の整数を入力してください（0 = 自動クリーンアップしない）',
+                            save: '保存'
                         }
                     }
                 }
@@ -2538,7 +2637,10 @@ const ja: LanguageMessages = {
             dismiss: '削除',
             pendingReport: '結果はモデルへの報告待ち',
             outputTitle: 'コマンド出力',
-            noOutput: '出力はまだありません'
+            noOutput: '出力はまだありません',
+            viewCollapsed: '折りたたむ',
+            viewMedium: 'スクロール表示',
+            viewExpanded: 'すべて展開'
         },
         subagents: {
             monitor: {

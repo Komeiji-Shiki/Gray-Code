@@ -56,6 +56,8 @@ export interface CheckpointIgnoreResolverOptions {
      * 单个类别缺省按该类别默认启用处理；需要全关时显式传 `false`（前端保存完整记录）。
      */
     enabledProfiles?: Record<string, boolean>;
+    /** 每类别自定义模式覆盖（profileId -> 模式清单；缺省/空数组 = 使用该类别的默认清单） */
+    profilePatterns?: Record<string, string[]>;
     /** 强制排除的绝对路径（扩展存储根、存档目录等；位于工作区内时跳过整棵子树） */
     excludeAbsolutePaths?: readonly string[];
 }
@@ -112,6 +114,16 @@ interface IgnoreScope {
  * 且不能被任何 `!` 否定规则重新纳入。
  */
 const FORCED_IGNORED_SEGMENTS = new Set(['.git', 'node_modules']);
+
+/**
+ * 强制排除路径匹配是否大小写不敏感（EX-CASE-1/EX-CASE-2）。
+ *
+ * Windows 文件系统不区分大小写；macOS 默认 APFS 卷大小写不敏感，
+ * 因此这两类平台上 `.GIT` / `NODE_MODULES` 目录片段与扩展存储绝对路径
+ * 都必须按大小写折叠后比较，否则大小写变体可绕过强制排除边界。
+ * Linux / 其他 POSIX 文件系统保持大小写敏感。
+ */
+const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin';
 
 /**
  * 将检查点内部使用的相对路径统一为稳定格式。
@@ -227,14 +239,14 @@ function findMatchingRule(patternLines: readonly string[], candidatePath: string
     return undefined;
 }
 
-/** 判断绝对路径是否位于任一强制排除目录内（EX-02；win32 下统一小写比较，L-3） */
+/** 判断绝对路径是否位于任一强制排除目录内（EX-02；win32/darwin 下统一小写比较，EX-CASE-2） */
 function isExcludedAbsolutePath(absolutePath: string, excludePaths: readonly string[]): boolean {
     if (excludePaths.length === 0) {
         return false;
     }
     const normalized = path.resolve(absolutePath);
-    // Windows 文件系统不区分大小写：排除配置与磁盘路径的大小写差异不应放行强制排除
-    const caseFold = process.platform === 'win32'
+    // Windows 与 macOS 默认文件系统不区分大小写：排除配置与磁盘路径的大小写差异不应放行强制排除
+    const caseFold = CASE_INSENSITIVE_FS
         ? (p: string) => p.toLowerCase()
         : (p: string) => p;
     const target = caseFold(normalized);
@@ -278,13 +290,15 @@ export class CheckpointIgnoreResolver {
             ? []
             : resolveEnabledProfiles(options.enabledProfiles);
         this.profilePatterns = this.enabledProfileIds.length > 0
-            ? collectEnabledProfilePatterns(options.enabledProfiles)
+            ? collectEnabledProfilePatterns(options.enabledProfiles, options.profilePatterns)
             : [];
         for (const profileId of this.enabledProfileIds) {
             const profile = getExclusionProfile(profileId);
             if (profile) {
                 const matcher = ignore();
-                for (const pattern of profile.patterns) {
+                const override = options.profilePatterns?.[profileId];
+                const patterns = override && override.length > 0 ? override : profile.patterns;
+                for (const pattern of patterns) {
                     matcher.add(pattern);
                 }
                 this.profileMatchers.set(profileId, matcher);
@@ -351,6 +365,15 @@ export class CheckpointIgnoreResolver {
                     await this.collectEntries(fullPath, result);
                 } else if (entry.isFile()) {
                     result.files.push(fullPath);
+                } else {
+                    // CP-SYMLINK-1: 符号链接（及 fifo/socket 等特殊文件类型）不支持备份。
+                    // 不再静默丢弃——记录到 excluded 清单（reason=unsupported_file_type），
+                    // 预览/恢复可据此向用户解释"为什么没有备份"。
+                    result.excluded.push({
+                        path: relativePath,
+                        reason: 'unsupported_file_type',
+                        source: 'filesystem'
+                    });
                 }
             }
 
@@ -382,49 +405,6 @@ export class CheckpointIgnoreResolver {
     }
 
     /**
-     * 递归删除所有未被忽略且已经为空的目录。
-     *
-     * 这一步主要用于 restore 之后清理工作区中被删除文件留下的空壳目录，
-     * 同时确保不会误动当前本来就被忽略的目录树。
-     */
-    async removeEmptyDirectories(currentDir: string = this.rootDir): Promise<void> {
-        const relativeDir = currentDir === this.rootDir
-            ? ''
-            : normalizeCheckpointPath(path.relative(this.rootDir, currentDir));
-        const scopes = await this.getScopesForDirectory(relativeDir);
-
-        try {
-            const entries = await fs.readdir(currentDir, { withFileTypes: true });
-
-            for (const entry of entries) {
-                if (!entry.isDirectory()) {
-                    continue;
-                }
-
-                const fullPath = path.join(currentDir, entry.name);
-                const relativePath = normalizeCheckpointPath(path.relative(this.rootDir, fullPath));
-
-                if ((await this.shouldIgnore(relativePath, true, scopes)).ignored) {
-                    continue;
-                }
-
-                await this.removeEmptyDirectories(fullPath);
-
-                try {
-                    const remaining = await fs.readdir(fullPath);
-                    if (remaining.length === 0) {
-                        await fs.rmdir(fullPath);
-                    }
-                } catch {
-                    // Ignore transient cleanup failures.
-                }
-            }
-        } catch {
-            // Ignore unreadable directories to preserve previous cleanup behavior.
-        }
-    }
-
-    /**
      * 判断一个路径在当前规则链下是否应被忽略，并解释原因。
      *
      * 处理顺序（四层模型，EX-01）：
@@ -444,9 +424,10 @@ export class CheckpointIgnoreResolver {
             return { ignored: false };
         }
 
-        // 第一层：强制排除（目录片段，不可被 `!` 否定）
+        // 第一层：强制排除（目录片段，不可被 `!` 否定；win32/darwin 大小写折叠，EX-CASE-1）
         for (const segment of normalized.split('/')) {
-            if (FORCED_IGNORED_SEGMENTS.has(segment)) {
+            const candidate = CASE_INSENSITIVE_FS ? segment.toLowerCase() : segment;
+            if (FORCED_IGNORED_SEGMENTS.has(candidate)) {
                 return { ignored: true, reason: 'forced', rule: segment, source: 'forced' };
             }
         }

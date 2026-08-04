@@ -13,6 +13,7 @@ export interface FakeFsStats {
     writeCalls: string[];
     deleteCalls: string[];
     renameCalls: string[];
+    statCalls: string[];
     files: Map<string, string>;
     dirs: Set<string>;
     /** 稳定的每文件 mtime（首次 stat 分配、写入/重命名时递增），供 M5 外部变更失效测试手动 bump */
@@ -32,6 +33,7 @@ export function createFakeFs(options: { failWriteMatching?: (normPath: string) =
     const writeCalls: string[] = [];
     const deleteCalls: string[] = [];
     const renameCalls: string[] = [];
+    const statCalls: string[] = [];
 
     const assignMtime = (p: string): number => {
         const m = mtimeClock++;
@@ -52,6 +54,7 @@ export function createFakeFs(options: { failWriteMatching?: (normPath: string) =
     const fs: any = {
         async stat(uri: any) {
             const p = normPath(uri.fsPath);
+            statCalls.push(p);
             if (files.has(p)) return { type: FileType.File, size: files.get(p)!.length, mtime: mtimes.get(p) ?? assignMtime(p) };
             if (dirs.has(p)) return { type: FileType.Directory, size: 0, mtime: mtimes.get(p) ?? assignMtime(p) };
             const err: any = new Error('EntryNotFound');
@@ -162,7 +165,7 @@ export function createFakeFs(options: { failWriteMatching?: (normPath: string) =
         }
     };
 
-    return { fs, files, dirs, mtimes, readCalls, writeCalls, deleteCalls, renameCalls };
+    return { fs, files, dirs, mtimes, readCalls, writeCalls, deleteCalls, renameCalls, statCalls };
 }
 
 export function createAdapter(

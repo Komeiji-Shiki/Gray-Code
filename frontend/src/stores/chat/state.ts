@@ -18,7 +18,8 @@ import type {
   ChatStoreState,
   TabInfo,
   ConversationSessionSnapshot,
-  QueuedMessage
+  QueuedMessage,
+  BranchGraphData
 } from './types'
 import { clearVisibleChatMessagesCache } from './windowUtils'
 
@@ -366,6 +367,17 @@ export function createChatState(): ChatStoreState {
   /** functionResponse.id -> 消息下标，随消息写入维护的权威索引 */
   const toolResponseIndex = ref<Map<string, number>>(new Map())
 
+  // ============ 树状分支（TREE-10） ============
+
+  /** 当前对话的分支图（null = 无图 / 线性模式 / 损坏降级） */
+  const branchGraph = ref<BranchGraphData | null>(null)
+
+  /** 分支图拉取中 */
+  const branchGraphLoading = ref(false)
+
+  /** 分支切换 / 候选删除进行中（TREE-07：切换期间锁定切换器交互） */
+  const isSwitchingBranch = ref(false)
+
   return {
     conversations,
     persistedConversationIds,
@@ -412,6 +424,9 @@ export function createChatState(): ChatStoreState {
     activeTabId,
     sessionSnapshots,
     backgroundStreamBuffers,
-    toolResponseCache
+    toolResponseCache,
+    branchGraph,
+    branchGraphLoading,
+    isSwitchingBranch
   }
 }

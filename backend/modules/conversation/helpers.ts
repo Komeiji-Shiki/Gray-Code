@@ -7,6 +7,30 @@
 import type { Content, ContentPart } from './types';
 
 /**
+ * 判断消息是否为「真实 user 消息」（新回合边界）。
+ *
+ * MED-3 / H1-1：回合边界 = 真实用户输入。排除 functionResponse（工具结果）与
+ * isSummary/isAutoSummary 总结消息——总结发生在回合内（SummarizeService 以 insertIndex
+ * 在历史中间插入总结消息），不构成新回合；新回合只由新的真实 user 消息开始。
+ *
+ * 谓词统一入口：ConversationManager.addMessage / addContent / addBatch 的清空主会话信箱
+ * 判定，与 formatHistoryForAPI 的当轮边界（lastNonFunctionResponseUserIndex）和回合列表
+ * （roundStartIndices）必须使用同一谓词，否则出现“信箱未清空但 agentInbox 被当历史剥离”
+ * 的行为分叉。
+ */
+export function isRealUserMessage(message: {
+    role?: string;
+    isFunctionResponse?: boolean;
+    isSummary?: boolean;
+    isAutoSummary?: boolean;
+}): boolean {
+    return message.role === 'user'
+        && !message.isFunctionResponse
+        && !message.isSummary
+        && !message.isAutoSummary;
+}
+
+/**
  * 构建包含多个 parts 的消息
  * 
  * Gemini 允许一个消息包含多个 parts，可以混合文本和多模态内容
@@ -293,25 +317,38 @@ export function createMultiTextMessage(
  * 清理 functionResponse 中不应发送给 API 的内部字段
  *
  * 过滤的字段包括：
- * - 顶层：diffContentId, diffId, diffs, pendingDiffId
+ * - 顶层：diffContentId, diffId, diffs, pendingDiffId,
+ *          agentInbox（A-COMM 信箱消息，drain 一次性语义，仅当轮随工具结果返回给模型，禁止历史重放）
  * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
- *                   channelName, modelId, steps（subagents 运行时元数据，仅供 UI 展示）
+ *                   channelName, modelId, steps（subagents 运行时元数据，仅供 UI 展示）, agentInbox
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）
  *
  * @param response functionResponse.response 对象
+ * @param isHistoryMessage 是否是历史消息（当前回合之前的消息）。默认 true：历史中的
+ *        agentInbox 必须剥离（drain 一次性语义，禁止跨轮重放、prompt 膨胀）；当轮
+ *        （false）保留 agentInbox——injectInboxMessages 注入的 agent→main 信箱消息随工具
+ *        结果落盘后，下一轮请求仍属当前回合，必须保留主模型才能真正看到（HIGH-1）。
  * @returns 清理后的 response 对象
  */
 export function cleanFunctionResponseForAPI(
-    response: Record<string, unknown> | undefined
+    response: Record<string, unknown> | undefined,
+    isHistoryMessage = true
 ): Record<string, unknown> | undefined {
-    if (!response || typeof response !== 'object') {
+    // H1-3：数组也是 typeof 'object'，无法被上面拦截；数组没有内部字段语义，原样返回
+    if (!response || typeof response !== 'object' || Array.isArray(response)) {
         return response;
     }
     
     // 过滤顶层内部字段
-    const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = response;
+    // agentInbox：A-COMM 瞬态信箱消息（drain 一次性），只允许当轮随工具结果返回给模型；
+    // 历史中的 functionResponse 必须剥离，否则每轮请求都会把 agent 消息重放给模型（prompt 持续膨胀）
+    const { diffContentId, diffId, diffs, pendingDiffId, agentInbox, ...rest } = response;
+    // HIGH-1：当轮（isHistoryMessage=false）保留 agentInbox，跨轮（默认）剥离防重放
+    if (!isHistoryMessage && agentInbox !== undefined) {
+        rest.agentInbox = agentInbox;
+    }
     
     // 检查 data 字段中是否也有这些字段
     if (rest.data && typeof rest.data === 'object') {
@@ -331,6 +368,8 @@ export function cleanFunctionResponseForAPI(
             channelName: dataChannelName,
             modelId: dataModelId,
             steps: dataSteps,
+            // A-COMM 瞬态信箱消息（与顶层 agentInbox 同理，禁止历史重放）
+            agentInbox: dataAgentInbox,
             ...dataRest
         } = rest.data as Record<string, unknown>;
         
@@ -343,6 +382,11 @@ export function cleanFunctionResponseForAPI(
                 }
                 return item;
             });
+        }
+        
+        // HIGH-1：当轮保留 data.agentInbox（与顶层同理）
+        if (!isHistoryMessage && dataAgentInbox !== undefined) {
+            dataRest.agentInbox = dataAgentInbox;
         }
         
         rest.data = dataRest;

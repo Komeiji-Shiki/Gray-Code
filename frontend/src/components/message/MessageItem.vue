@@ -1,3 +1,38 @@
+<script lang="ts">
+/**
+ * R3-#5: 后台任务消息三段式视图模式的模块级持久化。
+ * 组件实例会随列表滚动（虚拟化）、新增消息、重载等场景销毁重建；
+ * 若折叠态只是组件实例级 ref，重建后会复位为 collapsed。
+ * 仿照 MessageList 的 messageListUiStateByTab：以 messageId 为 key 存于模块级 Map，
+ * 组件重建时按 id 恢复用户上次选择的视图模式。
+ * 使用 reactive(Map) 以便 computed getter 追踪 key 访问、setter 触发更新。
+ */
+import { reactive } from 'vue'
+export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
+export const backgroundTaskViewModeByMessageId = reactive(new Map<string, BackgroundTaskViewMode>())
+
+/**
+ * M1-1：视图模式 Map 容量上限（防御性兜底；正常路径由 pruneBackgroundTaskViewModes 定期清理）。
+ * 消息删除/窗口裁剪/重试截断/对话关闭都会留下不再被渲染的 messageId 记录，
+ * 该上限保证 Map 大小有界，避免无限增长。
+ */
+export const BACKGROUND_TASK_VIEW_MODE_CAP = 500
+
+/**
+ * M1-1：清理不再活跃（消息被删除/窗口裁剪/重试截断/对话关闭）的视图模式记录。
+ *
+ * @param activeIds 仍可能被渲染的消息 ID 集合（当前窗口 + 各标签页快照的并集）；
+ *                  不在集合中的 messageId 记录会被删除。
+ */
+export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
+  for (const messageId of Array.from(backgroundTaskViewModeByMessageId.keys())) {
+    if (!activeIds.has(messageId)) {
+      backgroundTaskViewModeByMessageId.delete(messageId)
+    }
+  }
+}
+</script>
+
 <script setup lang="ts">
 /**
  * MessageItem - 单条消息组件
@@ -13,6 +48,7 @@ import MessageTaskCards from './MessageTaskCards.vue'
 import ResponseViewerDialog from './ResponseViewerDialog.vue'
 import MessageRenderBlock from './MessageRenderBlock.vue'
 import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
+import type { ResponseViewerData } from './responseViewer/buildResponseViewerData'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
@@ -69,6 +105,25 @@ const isSummary = computed(() => props.message.isSummary === true)
 // 是否为后台任务回流消息
 const isBackgroundTask = computed(() => props.message.source === 'background_task')
 
+// 后台任务回流消息的三段式视图：折叠（默认） / 中展开（滚动查看） / 完全展开
+// R3-#5: 读写模块级 Map（按 messageId 持久化），组件实例重建后恢复
+const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
+  get: () => backgroundTaskViewModeByMessageId.get(props.message.id) ?? 'collapsed',
+  set: (mode: BackgroundTaskViewMode) => {
+    // M1-1：容量上限兜底（Map 保持插入序，超限时淘汰最旧记录，不侵入渲染热路径）
+    if (
+      !backgroundTaskViewModeByMessageId.has(props.message.id) &&
+      backgroundTaskViewModeByMessageId.size >= BACKGROUND_TASK_VIEW_MODE_CAP
+    ) {
+      const oldestKey = backgroundTaskViewModeByMessageId.keys().next().value
+      if (oldestKey !== undefined) {
+        backgroundTaskViewModeByMessageId.delete(oldestKey)
+      }
+    }
+    backgroundTaskViewModeByMessageId.set(props.message.id, mode)
+  }
+})
+
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
@@ -112,10 +167,15 @@ function startThinkingTimer() {
   // 立即更新一次
   elapsedThinkingTime.value = Date.now() - startTime
   
-  // 每 100ms 更新一次
+  // M1-2：计时器从 100ms 降频到 500ms。
+  // 说明：thinkingTimeDisplay 是 v-memo 依赖之一（MessageRenderBlock 上的 v-memo），
+  // 100ms tick 会每秒失效 10 次、强制重渲染思考块；500ms 把失效频率降到 2 次/秒。
+  // 不把 thinkingTimeDisplay 从 v-memo 依赖中移除的原因：v-memo 命中时整个子树（含
+  // 时间徽标）会被冻结，时间文本将停止刷新，破坏现有显示体验；降频在保留 0.5s 粒度
+  // 刷新体验的同时把热路径重渲染成本降低 5 倍。
   thinkingTimer = setInterval(() => {
     elapsedThinkingTime.value = Date.now() - startTime
-  }, 100)
+  }, 500)
 }
 
 // 停止思考计时器
@@ -503,9 +563,15 @@ function handleViewResponse() {
   showResponseDialog.value = true
 }
 
-const responseViewerData = computed(() => buildResponseViewerData(props.message, {
-  allMessages: chatStore.allMessages
-}))
+// R3-#6: 响应查看数据仅在对话框打开时构建一次（此前为无条件 computed，
+// 流式期间每收到新消息都会重算整包数据）。关闭状态下保持 null，避免无谓重算。
+const responseViewerData = ref<ResponseViewerData | null>(null)
+watch(showResponseDialog, (open) => {
+  if (!open) return
+  responseViewerData.value = buildResponseViewerData(props.message, {
+    allMessages: chatStore.allMessages
+  })
+})
 
 function toggleThought() {
   isThoughtExpanded.value = !isThoughtExpanded.value
@@ -573,7 +639,7 @@ function handleRestoreAndRetry(checkpointId: string) {
     <!-- 回复查看 -->
     <ResponseViewerDialog
       v-model="showResponseDialog"
-      :value="responseViewerData"
+      :value="responseViewerData as ResponseViewerData"
       :title="t('components.message.actions.viewResponse')"
       width="960px"
     />
@@ -606,8 +672,38 @@ function handleRestoreAndRetry(checkpointId: string) {
         <div class="bg-task-header">
           <i class="codicon codicon-hubot bg-task-icon"></i>
           <span class="bg-task-label">{{ t('components.backgroundTasks.completed') || 'Background task completed' }}</span>
+          <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开 -->
+          <div class="bg-task-view-controls">
+            <button
+              class="bg-task-view-btn"
+              :class="{ active: backgroundTaskViewMode === 'collapsed' }"
+              :title="t('components.backgroundTasks.viewCollapsed')"
+              @click="backgroundTaskViewMode = 'collapsed'"
+            >
+              <i class="codicon codicon-chevron-up"></i>
+            </button>
+            <button
+              class="bg-task-view-btn"
+              :class="{ active: backgroundTaskViewMode === 'medium' }"
+              :title="t('components.backgroundTasks.viewMedium')"
+              @click="backgroundTaskViewMode = 'medium'"
+            >
+              <i class="codicon codicon-list-flat"></i>
+            </button>
+            <button
+              class="bg-task-view-btn"
+              :class="{ active: backgroundTaskViewMode === 'expanded' }"
+              :title="t('components.backgroundTasks.viewExpanded')"
+              @click="backgroundTaskViewMode = 'expanded'"
+            >
+              <i class="codicon codicon-chevron-down"></i>
+            </button>
+          </div>
         </div>
-        <div class="bg-task-content">{{ message.content }}</div>
+        <div
+          class="bg-task-content"
+          :class="`view-${backgroundTaskViewMode}`"
+        >{{ message.content }}</div>
       </div>
 
       <!-- 普通消息显示 -->
@@ -1308,6 +1404,55 @@ function handleRestoreAndRetry(checkpointId: string) {
   line-height: 1.4;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
+}
+
+/* 三段式视图：折叠（两行省略） / 中展开（约 15 行滚动） / 完全展开 */
+.bg-task-view-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.bg-task-view-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.bg-task-view-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.bg-task-view-btn.active {
+  background: var(--vscode-toolbar-activeBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-foreground);
+}
+
+.bg-task-content.view-collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bg-task-content.view-medium {
+  max-height: 21em;  /* 行高 1.4em × 15 行 */
+  overflow-y: auto;
+}
+
+.bg-task-content.view-expanded {
+  max-height: none;
+  overflow: visible;
 }
 
 </style>

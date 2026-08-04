@@ -39,6 +39,24 @@ export interface ConversationCheckpointStats {
 
 export type CheckpointSummaryWithSize = CheckpointSummary & { size?: number };
 
+/**
+ * getCheckpoints 的返回类型：仍是数组（保持现有调用方兼容），
+ * 读取失败时在数组上附带非枚举 `error` 标记（区别于“无记录”返回空数组）。
+ * 前端可在 handler 中读取 `checkpoints.error` 并向用户展示错误。
+ */
+export type CheckpointQueryResult = CheckpointSummaryWithSize[] & { error?: string };
+
+/** 给返回数组附加非枚举 error 标记（不改变数组本身的相等性与序列化） */
+function attachError(result: CheckpointQueryResult, error: unknown): CheckpointQueryResult {
+    Object.defineProperty(result, 'error', {
+        value: error instanceof Error ? error.message : String(error),
+        enumerable: false,
+        configurable: true,
+        writable: true
+    });
+    return result;
+}
+
 export class CheckpointQueryService {
     constructor(
         private readonly conversationManager: ConversationManager,
@@ -49,17 +67,16 @@ export class CheckpointQueryService {
 
     /** 读取对话元数据中的原始存档记录（内部使用，含旧格式完整字段） */
     async getCheckpointRecords(conversationId: string): Promise<CheckpointRecord[]> {
-        const conversationManager = this.conversationManager as any;
+        const conversationManager = this.conversationManager;
+        // CP-TYPE-1: 收敛为类型化接口（不再 as any）。getCustomMetadata 是 ConversationManager 的
+        // 正式接口，优先使用；对不支持它的旧实现/测试桩做类型安全的结构性回退（读完整元数据）。
         if (typeof conversationManager.getCustomMetadata === 'function') {
             const checkpoints = await conversationManager.getCustomMetadata(conversationId, 'checkpoints');
             return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
         }
-        if (typeof conversationManager.getMetadata === 'function') {
-            const metadata = await conversationManager.getMetadata(conversationId);
-            const checkpoints = metadata?.custom?.checkpoints;
-            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
-        }
-        return [];
+        const metadata = await conversationManager.getMetadata(conversationId);
+        const legacy = metadata?.custom?.checkpoints;
+        return Array.isArray(legacy) ? legacy as CheckpointRecord[] : [];
     }
 
     /**
@@ -68,14 +85,18 @@ export class CheckpointQueryService {
      * - 默认返回 CheckpointSummary（不含完整哈希映射）；
      * - withSize=true 时附加 size 字段：优先用创建时记录的 backupBytes；
      *   旧存档没有该字段时按需扫描备份目录一次，并把结果写回摘要缓存（CPF-09/CPF-10）。
+     *
+     * CP-QUERY-2：区分“无记录”与“读取失败”——无记录返回空数组；
+     * 元数据损坏/读取失败时同样返回数组（保持调用方兼容）但附加非枚举 `error` 标记，
+     * 前端可读取 `result.error` 展示错误，而不是误显示“无存档”。
      */
     async getCheckpoints(
         conversationId: string,
         options?: { withSize?: boolean }
-    ): Promise<CheckpointSummaryWithSize[]> {
+    ): Promise<CheckpointQueryResult> {
+        const result: CheckpointQueryResult = [];
         try {
             const records = await this.getCheckpointRecords(conversationId);
-            const result: CheckpointSummaryWithSize[] = [];
             for (const record of records) {
                 const summary = await this.toSummary(record);
                 if (!options?.withSize) {
@@ -95,8 +116,11 @@ export class CheckpointQueryService {
             }
             return result;
         } catch (err) {
-            console.error('[CheckpointQueryService] Failed to get checkpoints:', err);
-            return [];
+            log.warn('get_checkpoints_failed', {
+                conversationId,
+                error: err instanceof Error ? err.message : String(err)
+            });
+            return attachError(result, err);
         }
     }
 
@@ -130,17 +154,24 @@ export class CheckpointQueryService {
      *
      * 只基于摘要字段（backupBytes）聚合 totalSize，绝不递归扫描每个存档目录；
      * 旧存档缺 backupBytes 时标记 sizeIncomplete，由设置页展开时按需懒扫描补齐。
+     *
+     * CP-QUERY-1：元数据读取改为有界并发（runBounded，DEFAULT_CHECKPOINT_CONCURRENCY），
+     * 并使用轻量 getMetadataLight（只读 meta.json，不做历史完整性检查），
+     * 避免设置页挂载时 O(n) 次顺序读盘/反序列化。
      */
     async getAllConversationsWithCheckpoints(): Promise<ConversationCheckpointStats[]> {
         const results: ConversationCheckpointStats[] = [];
         try {
             const conversationIds = await this.conversationManager.listConversations();
-            for (const conversationId of conversationIds) {
+            await runBounded(conversationIds, DEFAULT_CHECKPOINT_CONCURRENCY, async conversationId => {
                 try {
-                    const metadata = await this.conversationManager.getMetadata(conversationId);
+                    // 优先轻量读（只读 meta.json）；不支持 getMetadataLight 的旧实现/测试桩回退 getMetadata
+                    const metadata = typeof this.conversationManager.getMetadataLight === 'function'
+                        ? await this.conversationManager.getMetadataLight(conversationId)
+                        : await this.conversationManager.getMetadata(conversationId);
                     const records = (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
                     if (!Array.isArray(records) || records.length === 0) {
-                        continue;
+                        return;
                     }
                     let totalSize = 0;
                     let sizeIncomplete = false;
@@ -163,10 +194,12 @@ export class CheckpointQueryService {
                 } catch {
                     // 忽略单个对话的错误
                 }
-            }
+            });
             results.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
         } catch (err) {
-            console.error('[CheckpointQueryService] Failed to get all conversations with checkpoints:', err);
+            log.warn('get_all_conversations_with_checkpoints_failed', {
+                error: err instanceof Error ? err.message : String(err)
+            });
         }
         return results;
     }

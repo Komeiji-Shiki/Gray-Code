@@ -48,6 +48,7 @@ import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './s
 import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
+import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -709,7 +710,17 @@ export class ToolIterationLoopService {
                                     earlyCheckpointIndex,
                                     config,
                                     abortSignal,
-                                    promptModeSnapshot
+                                    promptModeSnapshot,
+                                    undefined,
+                                    undefined,
+                                    undefined,
+                                    // E-1：早启动生成器一律不参与主会话信箱 drain（不传 mailbox 身份）。
+                                    // 原因：早启动在其持有 epoch 期间完成 drain 后，若流中途 cancel 且
+                                    // 携带 agentInbox 的结果被整体丢弃（partialContent.parts.length===0 不落盘，
+                                    // 或调用 id 不在 partialContent 中不结算），消息已从 inbox 移除、未持久化 =
+                                    // 丢失。改为统一由主循环 drain；无主循环时在 autoPrefix 为空分支显式 drain 一次。
+                                    undefined,
+                                    undefined
                                 ).catch(err => {
                                     // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
                                     // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
@@ -923,6 +934,14 @@ export class ToolIterationLoopService {
             // 必须写入，否则下一轮 LLM 调用时 assistant 的 tool_use 没有对应的 tool_result，
             // Anthropic API 会返回 400 错误。
             if (autoPrefix.length === 0 && earlyResponseParts.length > 0) {
+                // E-1：早启动生成器不 drain（见上），此处是最终落盘路径，
+                // 显式 drain 一次主会话信箱并注入结果（无主循环时的唯一投递点）
+                this.toolExecutionService.drainInboxIntoResults(
+                    conversationId,
+                    MAIN_SESSION_RUN_ID,
+                    earlyResponseParts,
+                    earlyToolResults
+                );
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',
                     parts: earlyMultimodalAttachments.length > 0
@@ -999,7 +1018,13 @@ export class ToolIterationLoopService {
                     messageIndex,
                     config,
                     abortSignal,
-                    promptModeSnapshot
+                    promptModeSnapshot,
+                    undefined,
+                    undefined,
+                    undefined,
+                    // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
+                    conversationId,
+                    MAIN_SESSION_RUN_ID
                 );
 
                 while (true) {
@@ -1372,7 +1397,13 @@ export class ToolIterationLoopService {
                 messageIndex,
                 config,
                 undefined,
-                promptModeSnapshot
+                promptModeSnapshot,
+                undefined,
+                undefined,
+                undefined,
+                // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
+                conversationId,
+                MAIN_SESSION_RUN_ID
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);
 

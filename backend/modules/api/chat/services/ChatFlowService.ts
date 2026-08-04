@@ -57,6 +57,14 @@ import {
 } from '../../../conversation/pendingApprovalGate';
 import { getHiddenContinuationApprovalRequirement } from './approvalGateRules';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
+import {
+  BranchError,
+  activePath,
+  getGlobalBranchService,
+  isFunctionResponseMessage,
+} from '../../../conversation/branch';
+import type { ConversationBranchGraph } from '../../../conversation/branch';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -69,6 +77,198 @@ export type ChatStreamOutput =
   | ChatStreamToolStatusData
   | ChatStreamAutoSummaryData
   | ChatStreamAutoSummaryStatusData;
+
+/**
+ * reroll（重新生成并保留旧回答）请求数据（TREE-01）。
+ * 与 RetryRequestData 的区别：不删除旧回答——后端在 BranchGraph 中把旧助手节点及其子树
+ * 保留为候选（进 sidecar），新建候选并切换主历史到新候选路径；失败保留旧候选（决策 10）。
+ */
+export interface RerollRequestData {
+  /** 对话 ID */
+  conversationId: string;
+  /**
+   * 要重新生成的助手节点 ID（须在当前活跃路径上，且父节点为用户消息）；
+   * 省略时取活跃路径上最后一条助手消息（前端「重新生成」默认行为）。
+   */
+  assistantNodeId?: string;
+  /** 配置 ID */
+  configId: string;
+  /** 模型覆盖（可选） */
+  modelOverride?: string;
+  /** 取消信号 */
+  abortSignal?: AbortSignal;
+  /** 总结请求专用取消信号 */
+  summarizeAbortSignal?: AbortSignal;
+  /** Prompt 模式 ID（可选） */
+  promptModeId?: string;
+}
+
+/**
+ * 编辑用户消息分支（TREE-03）请求数据。
+ * 与 EditAndRetryRequestData 的区别：不覆盖原消息——后端在 BranchGraph 中把旧用户节点及其子树
+ * 保留为候选（进 sidecar），创建编辑候选（新 user 节点，kind='edit'）并切换主历史到编辑后路径；
+ * 失败保留旧候选（决策 10 精神）。
+ */
+export interface EditBranchRequestData {
+  /** 对话 ID */
+  conversationId: string;
+  /**
+   * 要编辑的用户节点 ID（须在当前活跃路径上，且 role==='user'，且不是根节点）；
+   * 省略时取活跃路径上最后一条可编辑用户消息（前端「编辑最后一条用户消息」默认行为）。
+   */
+  userNodeId?: string;
+  /** 新文本（替换用户消息的文本 parts） */
+  newText: string;
+  /** 配置 ID */
+  configId: string;
+  /** 模型覆盖（可选） */
+  modelOverride?: string;
+  /** 取消信号 */
+  abortSignal?: AbortSignal;
+  /** 总结请求专用取消信号 */
+  summarizeAbortSignal?: AbortSignal;
+  /** Prompt 模式 ID（可选） */
+  promptModeId?: string;
+}
+
+/** TREE-03：编辑目标解析结果 */
+export interface EditTargetResolution {
+  /** 被编辑的旧用户节点 id */
+  nodeId: string;
+  /** 新编辑候选的父节点 id（旧用户节点的父节点；null 即根节点，不可编辑） */
+  parentNodeId: string;
+}
+
+/**
+ * TREE-03：解析并校验编辑目标（纯函数，可单测）。
+ *
+ * - 显式 userNodeId：图模式校验「存在 + 在活跃路径 + role==='user' + 非根节点」；
+ *   线性模式（graph 为 null）以主历史为活跃路径，父节点取前一个非 functionResponse 消息
+ *   （与 importLinearHistory 的线性链接规则一致，决策 8）；
+ * - 省略 userNodeId：取活跃路径上最后一条可编辑用户消息；
+ * - 错误码：节点缺失 NODE_NOT_FOUND；非 user / 不在活跃路径 / 根节点 → INVALID_BRANCH_RELATION。
+ */
+export function resolveEditTargetNode(
+  graph: ConversationBranchGraph | null,
+  history: ReadonlyArray<Content>,
+  userNodeId?: string,
+): EditTargetResolution {
+  if (userNodeId !== undefined && userNodeId.trim() !== '') {
+    if (graph) {
+      const node = graph.nodes[userNodeId];
+      if (!node) {
+        throw new BranchError('NODE_NOT_FOUND', `node not found: ${userNodeId}`);
+      }
+      if (node.role !== 'user') {
+        throw new BranchError(
+          'INVALID_BRANCH_RELATION',
+          `edit target ${userNodeId} is not a user node`
+        );
+      }
+      const path = activePath(graph);
+      if (!path.includes(userNodeId)) {
+        throw new BranchError(
+          'INVALID_BRANCH_RELATION',
+          `node ${userNodeId} is not on the active path; cannot edit it`
+        );
+      }
+      if (node.parentId === null) {
+        throw new BranchError(
+          'INVALID_BRANCH_RELATION',
+          `cannot edit the root node ${userNodeId} (no parent to branch under)`
+        );
+      }
+      return { nodeId: userNodeId, parentNodeId: node.parentId };
+    }
+    // 线性模式（无分支图）：主历史即活跃路径
+    const idx = history.findIndex(message => message.id === userNodeId);
+    if (idx < 0) {
+      throw new BranchError('NODE_NOT_FOUND', `node not found: ${userNodeId}`);
+    }
+    if (history[idx].role !== 'user') {
+      throw new BranchError(
+        'INVALID_BRANCH_RELATION',
+        `edit target ${userNodeId} is not a user node`
+      );
+    }
+    const parentId = findLinearParentId(history, idx);
+    if (parentId === null) {
+      throw new BranchError(
+        'INVALID_BRANCH_RELATION',
+        `cannot edit the root node ${userNodeId} (no parent to branch under)`
+      );
+    }
+    return { nodeId: userNodeId, parentNodeId: parentId };
+  }
+  // 缺省：活跃路径上最后一条可编辑用户消息
+  if (graph) {
+    const path = activePath(graph);
+    for (let i = path.length - 1; i >= 0; i -= 1) {
+      const node = graph.nodes[path[i]];
+      if (node && node.role === 'user' && node.parentId !== null) {
+        return { nodeId: node.id, parentNodeId: node.parentId };
+      }
+    }
+  } else {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i].role === 'user' && !isFunctionResponseMessage(history[i])) {
+        const parentId = findLinearParentId(history, i);
+        if (parentId !== null) {
+          return { nodeId: history[i].id!, parentNodeId: parentId };
+        }
+      }
+    }
+  }
+  throw new BranchError(
+    'INVALID_BRANCH_RELATION',
+    'no editable user node found on the active path'
+  );
+}
+
+/** 线性模式父节点解析：向前跳过 functionResponse（决策 8：FR 不独立成节点） */
+function findLinearParentId(history: ReadonlyArray<Content>, index: number): string | null {
+  for (let j = index - 1; j >= 0; j -= 1) {
+    if (!isFunctionResponseMessage(history[j])) {
+      return history[j].id ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * M1（R6a-FIX）：解析 reroll 主历史截断起始索引（startReroll 保留到父用户节点，截断从其后开始）。
+ *
+ * 与 BranchService.resolveRerollTarget 同规则：显式 assistantNodeId 或活跃路径最后一条 model 消息；
+ * 父节点 = 目标之前最后一个非 functionResponse 的 user 消息（决策 8：FR 不参与节点链接）。
+ * 返回截断起始索引（= 父用户节点 index + 1）；无法定位目标时返回 -1（startReroll 会抛校验错误，
+ * 此处仅用于提前清理旧检查点，无需重复报错）。
+ */
+export function resolveRerollTruncateIndex(
+  history: ReadonlyArray<Content>,
+  assistantNodeId?: string,
+): number {
+  let targetIndex = -1;
+  if (assistantNodeId !== undefined && assistantNodeId.trim() !== '') {
+    targetIndex = history.findIndex(message => message.id === assistantNodeId);
+  } else {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i].role === 'model' && !isFunctionResponseMessage(history[i])) {
+        targetIndex = i;
+        break;
+      }
+    }
+  }
+  if (targetIndex <= 0) {
+    return -1;
+  }
+  for (let i = targetIndex - 1; i >= 0; i -= 1) {
+    const message = history[i];
+    if (message.role === 'user' && !isFunctionResponseMessage(message)) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
@@ -1031,6 +1231,354 @@ export class ChatFlowService {
   }
 
   /**
+   * 流式 Reroll 流程（TREE-01：重新生成并保留旧回答）。
+   *
+   * 与 handleRetryStream 并存（决策 5）：retryStream 保留为内部兼容路径（错误条重试等），
+   * 主流程切 reroll；本方法不再调用破坏性 deleteMessage，旧回答由分支图 sidecar 保留。
+   *
+   * 流程：
+   * 1. 确保对话 / 验证配置（与 retry 一致）；
+   * 2. 中断未完成的 diff 等待 + 拒绝所有未响应工具调用（与 retry 一致）；
+   * 3. BranchService.startReroll：验证目标在活跃路径 → 旧助手节点及子树保留进 sidecar →
+   *    创建新候选并激活 → 主历史截断到父用户节点之后（切换到新候选路径）；
+   * 4. 复用现有工具循环生成内容（写入主历史尾部，functionResponse 走主历史正常路径，决策 8）；
+   * 5. finally 中 BranchService.finishReroll：把流式结果回填进新候选节点（含续接节点）+ 更新摘要；
+   *    失败也回填（决策 10：保留旧候选，新候选保留部分内容可切回查看）。
+   */
+  async *handleRerollStream(
+    request: RerollRequestData,
+  ): AsyncGenerator<ChatStreamOutput> {
+    const { conversationId, configId, modelOverride } = request;
+
+    // 1. 确保对话存在
+    await this.ensureConversation(conversationId);
+
+    // 2. 验证配置
+    const config = await this.configManager.getConfig(configId);
+    if (!config) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_NOT_FOUND',
+          message: t('modules.api.chat.errors.configNotFound', { configId }),
+        },
+      };
+      return;
+    }
+
+    if (!config.enabled) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_DISABLED',
+          message: t('modules.api.chat.errors.configDisabled', { configId }),
+        },
+      };
+      return;
+    }
+
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
+
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'reroll_stream');
+
+    // 3. 中断之前未完成的 diff 等待并关闭编辑器
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    let rerollStarted: { candidateNodeId: string } | undefined;
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+
+      // 3.5 拒绝所有未响应的工具调用（与 retry 一致；悬空 functionCall 会被标记 rejected 并补
+      // functionResponse，随后由 startReroll 的主历史截断一并移除——它们属于被 reroll 的旧子树）
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+
+      // 3.6 reroll 底座：验证节点 → 旧候选进 sidecar → 创建新候选并激活 → 主历史切到新候选路径
+      const branchService = getGlobalBranchService();
+      if (!branchService) {
+        yield {
+          conversationId,
+          error: {
+            code: 'BRANCH_SERVICE_UNAVAILABLE',
+            message: 'branch service is not registered; open the branch panel first',
+          },
+        };
+        return;
+      }
+
+      // M1（R6a-FIX）：startReroll 内部会把主历史截断到父用户节点之后；截断前清理截断点之后的
+      // 旧检查点（与 handleEditAndRetryStream 的 deleteCheckpointsFromIndex 对齐）。否则旧回合
+      // 检查点原样保留在相同索引，新候选消息会命中旧检查点（索引错位，回档/恢复可能恢复到错误状态）。
+      const historyBeforeTruncate = await this.conversationManager.getMessagesRaw(conversationId);
+      const truncateIndex = resolveRerollTruncateIndex(historyBeforeTruncate, request.assistantNodeId);
+      if (truncateIndex > 0) {
+        await this.checkpointService.deleteCheckpointsFromIndex(conversationId, truncateIndex);
+      }
+
+      rerollStarted = await branchService.startReroll(conversationId, request.assistantNodeId);
+    } finally {
+      // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRetryStream 的 finally 用法一致）
+      this.diffInterruptService.resetUserInterrupt(conversationId);
+    }
+
+    // 5. 判断是否需要刷新动态系统提示词（截断后主历史可能只剩首条用户消息，与 retry 语义一致）
+    const rerollHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
+    const isRerollFirstMessage =
+      rerollHistoryCheck.length === 1 && rerollHistoryCheck[0].role === 'user';
+
+    // 6. 工具调用循环（复用现有循环；functionResponse 走主历史正常路径，决策 8）
+    const maxToolIterations = this.getMaxToolIterations();
+    let finishError: { code: string; message: string } | undefined;
+    try {
+      for await (const output of this.toolIterationLoopService.runToolLoop({
+        conversationId,
+        configId,
+        config,
+        modelOverride,
+        abortSignal: request.abortSignal,
+        summarizeAbortSignal: request.summarizeAbortSignal,
+        isFirstMessage: isRerollFirstMessage,
+        maxIterations: maxToolIterations,
+        // reroll 的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文
+        createBeforeModelCheckpoint: false,
+        isNewTurn: false,
+        promptModeSnapshot,
+        dynamicContextStrategy,
+      })) {
+        yield output as ChatStreamOutput;
+      }
+    } finally {
+      // 7. 流式结果写入新节点 + 更新摘要；失败也回填（决策 10：失败保留旧候选，可切回）
+      if (rerollStarted) {
+        try {
+          const branchService = getGlobalBranchService();
+          if (branchService) {
+            await branchService.finishReroll(conversationId, rerollStarted.candidateNodeId);
+          }
+        } catch (error) {
+          // M2（R6a-FIX）：不再只 log.warn 吞掉——记录结构化事件，并在下方透出 error chunk
+          this.log.warn('reroll_finish_sync_failed', {
+            conversationId,
+            candidateNodeId: rerollStarted.candidateNodeId,
+            error: (error as Error)?.message ?? String(error),
+          });
+          finishError = {
+            code: 'REROLL_FINISH_SYNC_FAILED',
+            message: `reroll result sync to branch graph failed: ${(error as Error)?.message ?? String(error)}`,
+          };
+        }
+      }
+    }
+    // 7.5 M2：主历史已显示新内容但图回填失败 → 透出结构化 error chunk（前端错误条可见），
+    // 候选保留占位（决策 10：失败候选保留，可切回查看）。
+    // 注：工具循环自身抛错时此处不可达（异常直接传播，由 ChatHandler 转 error chunk）。
+    if (finishError) {
+      yield {
+        conversationId,
+        error: finishError,
+      };
+    }
+  }
+
+  /**
+   * 流式编辑用户消息分支（TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息）。
+   *
+   * 与 handleEditAndRetryStream（破坏性覆盖 + 截断）并存（决策 5 精神）：旧路径保留为内部兼容，
+   * 主流程切编辑分支；本方法不覆盖原消息——旧用户节点及其子树由分支图 sidecar 保留。
+   *
+   * 流程（复用 reroll 底座编排结构，TREE-01/02 同款锁与验证结构）：
+   * 1. 确保对话 / 验证配置（与 reroll 一致）；
+   * 2. 中断未完成的 diff 等待 + 拒绝所有未响应工具调用（与 reroll 一致）；
+   * 3. 解析并校验编辑目标（活跃路径 + role==='user' + 非根节点）；
+   * 4. BranchService.editCandidate：在旧用户节点父节点下创建编辑候选（新 user 节点 kind='edit'，
+   *    文本=编辑后内容）并激活（旧子树保留进 sidecar）；
+   * 5. BranchService.createRerollCandidate：在新用户节点下创建模型候选占位（流式结果写入此节点；
+   *    缺少 startEditBranch 公共方法，见设计说明）；
+   * 6. 主历史截断到旧用户节点之前（父节点保留），并追加编辑后的用户消息（id 对齐新用户节点，BR-01）；
+   * 7. 复用现有工具循环生成内容（编辑后用户消息内容变化 → 新回合语义，与 editAndRetryStream 一致）；
+   * 8. finally 中 BranchService.finishReroll：把流式结果回填进模型候选节点（含续接节点）+ 更新摘要；
+   *    失败也回填（决策 10 精神：保留旧候选，新候选保留部分内容可切回查看）。
+   */
+  async *handleEditBranchStream(
+    request: EditBranchRequestData,
+  ): AsyncGenerator<ChatStreamOutput> {
+    const { conversationId, configId, modelOverride } = request;
+
+    // 0. 新文本校验
+    if (typeof request.newText !== 'string' || request.newText.trim() === '') {
+      yield {
+        conversationId,
+        error: {
+          code: 'EDIT_BRANCH_INVALID_ARGS',
+          message: 'newText is required',
+        },
+      };
+      return;
+    }
+
+    // 1. 确保对话存在
+    await this.ensureConversation(conversationId);
+
+    // 2. 验证配置
+    const config = await this.configManager.getConfig(configId);
+    if (!config) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_NOT_FOUND',
+          message: t('modules.api.chat.errors.configNotFound', { configId }),
+        },
+      };
+      return;
+    }
+
+    if (!config.enabled) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_DISABLED',
+          message: t('modules.api.chat.errors.configDisabled', { configId }),
+        },
+      };
+      return;
+    }
+
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+    const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
+
+    await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_branch_stream');
+
+    // 3. 中断之前未完成的 diff 等待并关闭编辑器
+    this.diffInterruptService.markUserInterrupt(conversationId);
+    let editStarted: { modelCandidateNodeId: string; parentNodeId: string } | undefined;
+    try {
+      await this.diffInterruptService.cancelAllPending(conversationId);
+
+      // 3.5 拒绝所有未响应的工具调用（与 reroll 一致；悬空 functionCall 会被标记 rejected 并补
+      // functionResponse，随后由主历史截断一并移除——它们属于被编辑的旧子树）
+      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+
+      // 3.6 编辑分支底座需要全局 BranchService（懒初始化在 webview handler 完成）
+      const branchService = getGlobalBranchService();
+      if (!branchService) {
+        yield {
+          conversationId,
+          error: {
+            code: 'BRANCH_SERVICE_UNAVAILABLE',
+            message: 'branch service is not registered; open the branch panel first',
+          },
+        };
+        return;
+      }
+
+      // 3.7 解析并校验编辑目标（活跃路径 + user 角色 + 非根节点）；sidecar 损坏时快速失败
+      const graphResult = await branchService.getBranchGraph(conversationId);
+      if (graphResult.errorCode === 'BRANCH_STORAGE_CORRUPT') {
+        throw new BranchError(
+          'BRANCH_STORAGE_CORRUPT',
+          `branches.json is corrupt for ${conversationId}; refusing to edit`
+        );
+      }
+      const historyBefore = await this.conversationManager.getMessagesRaw(conversationId);
+      const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId);
+
+      // 3.8 创建编辑候选：新 user 节点（kind='edit'，文本=编辑后内容）+ 激活 + 摘要
+      //     （旧用户节点及其子树完整保留进 sidecar——先建图后截断，线性模式首次建图不丢旧消息）
+      const created = await branchService.editCandidate(conversationId, target.parentNodeId, {
+        role: 'user',
+        parts: [{ text: request.newText }],
+      });
+      const newUserNodeId = created.nodeId;
+
+      // 3.9 创建模型候选占位（流式结果将写入此节点；createRerollCandidate 是当前唯一可用的
+      //     模型节点创建入口，kind 固定为 'reroll'——缺少 startEditBranch 公共方法，见设计说明）
+      const modelCreated = await branchService.createRerollCandidate(conversationId, newUserNodeId, {
+        parts: [],
+      });
+      const modelCandidateNodeId = modelCreated.nodeId;
+
+      // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
+      const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
+      const parentIndex = historyAfterGraph.findIndex(message => message.id === target.parentNodeId);
+      // M1（R6a-FIX）：截断前清理截断点之后的旧检查点（与 handleEditAndRetryStream 对齐）——
+      // 旧回合检查点原样保留在相同索引会让新候选消息命中旧检查点（索引错位，回档/恢复错状态）
+      if (parentIndex >= 0) {
+        await this.checkpointService.deleteCheckpointsFromIndex(conversationId, parentIndex + 1);
+      }
+      if (parentIndex >= 0 && parentIndex < historyAfterGraph.length - 1) {
+        await this.conversationManager.deleteMessagesInRange(
+          conversationId,
+          parentIndex + 1,
+          historyAfterGraph.length - 1,
+        );
+      }
+
+      // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
+      await this.conversationManager.addContent(conversationId, {
+        role: 'user',
+        parts: [{ text: request.newText }],
+        id: newUserNodeId,
+        isUserInput: true,
+      });
+
+      editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId };
+    } finally {
+      // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRerollStream 的 finally 用法一致）
+      this.diffInterruptService.resetUserInterrupt(conversationId);
+    }
+
+    // 5. 工具调用循环（编辑后用户消息内容变化 → 新回合语义，与 editAndRetryStream 一致；
+    //    模型消息前检查点保持默认开启）
+    const maxToolIterations = this.getMaxToolIterations();
+    let finishError: { code: string; message: string } | undefined;
+    try {
+      for await (const output of this.toolIterationLoopService.runToolLoop({
+        conversationId,
+        configId,
+        config,
+        modelOverride,
+        abortSignal: request.abortSignal,
+        summarizeAbortSignal: request.summarizeAbortSignal,
+        // 编辑分支永不可能是会话首条消息（根节点不可编辑，编辑目标必有父节点）
+        isFirstMessage: false,
+        maxIterations: maxToolIterations,
+        isNewTurn: true,
+        promptModeSnapshot,
+        dynamicContextStrategy,
+      })) {
+        yield output as ChatStreamOutput;
+      }
+    } finally {
+      // 6. 流式结果写入模型候选节点 + 更新摘要；失败也回填（决策 10 精神：保留旧候选，可切回）
+      if (editStarted) {
+        try {
+          const branchService = getGlobalBranchService();
+          if (branchService) {
+            await branchService.finishReroll(conversationId, editStarted.modelCandidateNodeId);
+          }
+        } catch (error) {
+          // M2（R6a-FIX）：不再只 log.warn 吞掉——记录结构化事件，并在下方透出 error chunk
+          this.log.warn('edit_branch_finish_sync_failed', {
+            conversationId,
+            candidateNodeId: editStarted.modelCandidateNodeId,
+            error: (error as Error)?.message ?? String(error),
+          });
+          finishError = {
+            code: 'EDIT_BRANCH_FINISH_SYNC_FAILED',
+            message: `edit branch result sync to branch graph failed: ${(error as Error)?.message ?? String(error)}`,
+          };
+        }
+      }
+    }
+    // 6.5 M2：主历史已显示新内容但图回填失败 → 透出结构化 error chunk（前端错误条可见）
+    if (finishError) {
+      yield {
+        conversationId,
+        error: finishError,
+      };
+    }
+  }
+
+  /**
    * 流式 EditAndRetry 流程
    */
   async *handleEditAndRetryStream(
@@ -1354,6 +1902,11 @@ export class ChatFlowService {
         request.abortSignal,
         promptModeSnapshot,
         new Set([nextCall.id]),
+        undefined,
+        undefined,
+        // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
+        conversationId,
+        MAIN_SESSION_RUN_ID
       );
 
       while (true) {
@@ -1456,6 +2009,12 @@ export class ChatFlowService {
         config,
         request.abortSignal,
         promptModeSnapshot,
+        undefined,
+        undefined,
+        undefined,
+        // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
+        conversationId,
+        MAIN_SESSION_RUN_ID
       );
 
       while (true) {

@@ -686,8 +686,8 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
       state.checkpoints.value = []
     }
   } catch (err) {
-    console.error('Failed to load checkpoints:', err)
-    state.checkpoints.value = []
+    // L-8：加载失败时保留旧值（不静默置空），避免后端瞬时错误导致检查点条全部消失
+    console.warn('[conversationActions] Failed to load checkpoints, keeping previous list:', err)
   }
 }
 

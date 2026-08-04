@@ -93,7 +93,14 @@ const zhCN = {
                 chainBroken: '增量链断裂：引用的基准检查点缺失',
                 partialFailure: '已恢复到 "{toolName}" {phase}的状态，但有 {count} 个文件失败',
                 workspaceMismatch: '当前工作区与存档记录的工作区不一致，拒绝恢复',
-                multiRootLegacyNotSupported: '旧版存档（相对路径格式）不支持在多根工作区中恢复'
+                multiRootLegacyNotSupported: '旧版存档（相对路径格式）不支持在多根工作区中恢复',
+                checkpointNotFound: '存档未找到',
+                manifestMissing: '存档备份数据缺失（未找到 manifest）',
+                cannotBuildChain: '无法构建存档增量链',
+                backupDirNotFound: '备份目录未找到: {dirs}',
+                moreFailures: '另有 {count} 个失败',
+                excludedNote: '该存档创建时按当时的排除规则排除了 {count} 个文件',
+                excludedNoteChanged: '该存档创建时按当时的排除规则排除了 {count} 个文件；当前排除规则已变化，恢复将按当前规则执行'
             },
             defaultConversationTitle: '对话 {conversationId}',
             errors: {
@@ -111,12 +118,14 @@ const zhCN = {
                 invalidCheckpointExclusionPatterns: '存档排除规则无效: {detail}',
                 invalidCheckpointExclusionProfiles: '存档排除类别无效: {detail}',
                 invalidCheckpointMaxFileSize: '单文件大小上限必须是有限数值',
+                invalidCheckpointConfigField: '存档点配置字段无效: {field}',
                 exclusionPatternReason: {
                     empty: '空模式',
                     absolute: '绝对路径模式',
                     negationOnly: '纯 ! 否定（缺少规则体）',
                     traversal: '包含 .. 越界',
-                    newline: '包含换行'
+                    newline: '包含换行',
+                    blanket: '全量忽略（排除整个工作区）'
                 }
             },
             storage: {
@@ -640,6 +649,12 @@ description: "简要描述该技能的功能及使用场景"
             cannotRevealInExplorer: '无法在文件管理器中显示',
             
             deleteMessageFailed: '删除消息失败',
+            
+            interruptMessageInvalidConversation: '无效的会话 ID',
+            interruptMessageEmptyText: '消息内容不能为空',
+            interruptMessageConversationNotFound: '会话不存在',
+            interruptMessageRateLimited: '消息插入过于频繁，请稍后再试',
+            interruptMessageFailed: '插入消息失败',
             
             getModelsFailed: '获取模型列表失败',
             addModelsFailed: '添加模型失败',

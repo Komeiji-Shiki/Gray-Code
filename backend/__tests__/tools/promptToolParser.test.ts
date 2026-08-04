@@ -185,6 +185,45 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toContain('could not be parsed');
     });
 
+    it('DOCTYPE 自定义实体不被展开（processEntities: false 链路保护）', () => {
+        const text = `<!DOCTYPE tool_use [
+  <!ENTITY secret "expanded-value">
+]>
+<tool_use>
+  <tool_name>write_file</tool_name>
+  <parameters>
+    <path>a.txt</path>
+    <content>&secret;</content>
+  </parameters>
+</tool_use>`;
+
+        const { parts } = extractPromptToolParts(text, 'xml');
+
+        // DOCTYPE 声明作为块前文本透出，工具调用本身正常解析
+        const fnPart = parts.find(p => p.functionCall);
+        expect(fnPart?.functionCall?.name).toBe('write_file');
+        // 实体引用保持字面量，不展开为 expanded-value
+        expect(fnPart?.functionCall?.args.content).toBe('&secret;');
+    });
+
+    it('超深嵌套输入被拒绝并转为可读失败反馈，不抛异常不执行', () => {
+        const depth = 150;
+        const nested = '<a>'.repeat(depth) + '</a>'.repeat(depth);
+        const text = `<tool_use>
+  <tool_name>write_file</tool_name>
+  <parameters>
+    <content>${nested}</content>
+  </parameters>
+</tool_use>`;
+
+        const { parts } = extractPromptToolParts(text, 'xml');
+
+        // maxNestedTags: 100 超限后整个块被拒绝，转为携带意图工具名的失败反馈
+        expect(parts).toHaveLength(1);
+        expect(parts[0].functionCall?.name).toBe('write_file');
+        expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
+    });
+
     it('XMLValidator.validate 错误对象仍包含 err.msg 和 err.line（5.10.1 API 回归）', () => {
         // 失败诊断路径依赖 validator 的报错形状；XMLParser 5.x 对语法错误很宽容，
         // 所以直接针对 validator API 锁定 err.msg / err.line 结构

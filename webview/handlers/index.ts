@@ -5,6 +5,7 @@
 import type { MessageHandler } from '../types';
 
 import { registerConversationHandlers } from './ConversationHandlers';
+import { registerBranchHandlers } from './BranchHandlers';
 import { registerConfigHandlers } from './ConfigHandlers';
 import { registerSettingsHandlers } from './SettingsHandlers';
 import { registerCheckpointHandlers } from './CheckpointHandlers';
@@ -23,6 +24,7 @@ import { registerUsageHandlers } from './UsageHandlers';
 
 // 重新导出各个模块
 export * from './ConversationHandlers';
+export * from './BranchHandlers';
 export * from './ConfigHandlers';
 export * from './SettingsHandlers';
 export * from './CheckpointHandlers';
@@ -47,6 +49,7 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   
   // 注册各个模块的处理器
   registerConversationHandlers(registry);
+  registerBranchHandlers(registry);
   registerConfigHandlers(registry);
   registerSettingsHandlers(registry);
   registerCheckpointHandlers(registry);

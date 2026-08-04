@@ -1,17 +1,14 @@
 <script lang="ts">
 /**
- * MessageList UI 状态的模块级保存（H5）。
- * 组件随「空会话过渡」（showEmptyState）卸载时，实例级 Map 会随实例销毁，
- * 导致滚动位置/展开状态丢失；提升为模块级可跨组件实例保留。
+ * MessageList UI 状态（H5/M2-1）：模块级保存与清理逻辑已提升到 messageListUiState.ts，
+ * 避免 store 层（tabActions.closeTab 清理接线）与组件层循环导入；此处仅保留对外再导出。
  */
-export interface MessageListUiState {
-  scrollTop: number
-  visibleCount: number
-  buildExpanded: boolean
-  todoExpanded: boolean
-}
-
-export const messageListUiStateByTab = new Map<string, MessageListUiState>()
+export type { RestoreNoticeState, MessageListUiState } from './messageListUiState'
+export {
+  messageListUiStateByTab,
+  MESSAGE_LIST_UI_STATE_CAP,
+  pruneMessageListUiStateByTab
+} from './messageListUiState'
 </script>
 
 <script setup lang="ts">
@@ -22,8 +19,9 @@ export const messageListUiStateByTab = new Map<string, MessageListUiState>()
 
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
-import MessageItem from './MessageItem.vue'
+import MessageItem, { pruneBackgroundTaskViewModes } from './MessageItem.vue'
 import SummaryMessage from './SummaryMessage.vue'
+import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import { useChatStore } from '../../stores'
 import { formatTime } from '../../utils/format'
 import { useI18n } from '../../i18n'
@@ -35,6 +33,9 @@ import {
 } from '../../utils/todoList'
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
+import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import BranchSwitcherBar from './BranchSwitcherBar.vue'
+import BranchTreePanel from './BranchTreePanel.vue'
 
 const { t } = useI18n()
 
@@ -74,9 +75,8 @@ const todoBarItems = computed<BuildTodoItem[]>(() => {
     .filter(t => t.text.length > 0)
 })
 
-// 每个对话独立记忆 TODO 展开状态；key = conversationId, value = 用户最后设定的展开/折叠
-// undefined 表示该对话从未手动设置过（首次出现 TODO 时默认折叠）
-const todoExpandedMap = new Map<string, boolean>()
+// M2-2：删除实例级 todoExpandedMap，统一走模块级 messageListUiStateByTab（按 tabId），
+// 避免与 uiStateByTab.todoExpanded 语义分叉（两个来源互相覆盖）。
 const isTodoExpanded = ref(false)
 
 
@@ -399,16 +399,14 @@ watch(showBuildBar, (visible) => {
 })
 
 
-/** 根据当前对话恢复 TODO 展开状态 */
+/** 根据当前标签页的模块级 UI 状态恢复 TODO 展开状态（M2-2：单一数据源） */
 function restoreTodoExpandedState() {
   if (!showTodoBar.value) return
-  const convId = chatStore.currentConversationId
-  if (convId && todoExpandedMap.has(convId)) {
-    isTodoExpanded.value = todoExpandedMap.get(convId)!
-  } else {
-    isTodoExpanded.value = false
-    if (convId) todoExpandedMap.set(convId, false)
+  const saved = uiStateByTab.get(props.tabId)
+  if (saved) {
+    isTodoExpanded.value = saved.todoExpanded
   }
+  // 无保存记录时保持当前 ref 值（组件实例生命周期内用户的选择不丢失）
 }
 
 // showTodoBar 变为可见时，恢复该对话记忆的展开状态
@@ -417,12 +415,12 @@ watch(showTodoBar, (visible) => {
   restoreTodoExpandedState()
 })
 
-/** 切换 TODO 展开/折叠，同时记忆到当前对话 */
+/** 切换 TODO 展开/折叠（M2-2：只更新 ref；写回 uiStateByTab 由切换标签页时 saveCurrentUiState 完成） */
 function toggleTodoExpanded() {
   isTodoExpanded.value = !isTodoExpanded.value
-  const convId = chatStore.currentConversationId
-  if (convId) {
-    todoExpandedMap.set(convId, isTodoExpanded.value)
+  const saved = uiStateByTab.get(props.tabId)
+  if (saved) {
+    saved.todoExpanded = isTodoExpanded.value
   }
 }
 
@@ -620,15 +618,46 @@ const suppressConversationReset = ref(false)
 // 使用模块级 Map（H5）：组件卸载后滚动位置/展开状态不丢失
 const uiStateByTab = messageListUiStateByTab
 
+/**
+ * M1-1：收集「仍可能被渲染」的消息 ID 并集（当前窗口 + 各标签页快照），
+ * 供 pruneBackgroundTaskViewModes 清理已删除/已关闭会话遗留的视图模式记录。
+ */
+function collectActiveBackgroundTaskMessageIds(): Set<string> {
+  const ids = new Set<string>()
+  for (const msg of chatStore.allMessages) {
+    if (msg?.id) ids.add(msg.id)
+  }
+  for (const snapshot of chatStore.sessionSnapshots.values()) {
+    for (const msg of snapshot.allMessages) {
+      if (msg?.id) ids.add(msg.id)
+    }
+  }
+  return ids
+}
+
 function saveCurrentUiState(tabId?: string) {
   if (!tabId) return
+  // M2-1：已关闭的标签页不再保存（closeTab 已清理其 UI 状态，
+  // 避免关闭活跃标签页后 watcher 又把旧记录写回造成泄漏）
+  if (!chatStore.openTabs.some(t => t.id === tabId)) return
   const container = scrollbarRef.value?.getContainer()
   uiStateByTab.set(tabId, {
     scrollTop: container?.scrollTop || 0,
     visibleCount: visibleCount.value,
     buildExpanded: isBuildExpanded.value,
-    todoExpanded: isTodoExpanded.value
+    todoExpanded: isTodoExpanded.value,
+    restoreNotice: restoreNotice.value ? { ...restoreNotice.value } : null
   })
+  // M2-1：容量上限兜底（优先淘汰最旧的非当前记录）
+  if (uiStateByTab.size > MESSAGE_LIST_UI_STATE_CAP) {
+    let overflow = uiStateByTab.size - MESSAGE_LIST_UI_STATE_CAP
+    for (const key of Array.from(uiStateByTab.keys())) {
+      if (key === tabId) continue
+      uiStateByTab.delete(key)
+      overflow--
+      if (overflow <= 0) break
+    }
+  }
 }
 
 function restoreUiState(tabId?: string) {
@@ -638,6 +667,7 @@ function restoreUiState(tabId?: string) {
     visibleCount.value = saved.visibleCount
     isBuildExpanded.value = saved.buildExpanded
     isTodoExpanded.value = saved.todoExpanded
+    restoreNotice.value = saved.restoreNotice ?? null
     needsScrollToBottom.value = false
     nextTick(() => {
       const container = scrollbarRef.value?.getContainer()
@@ -666,6 +696,8 @@ watch(() => props.tabId, (newTabId, oldTabId) => {
   suppressConversationReset.value = true
   if (oldTabId && oldTabId !== newTabId) {
     saveCurrentUiState(oldTabId)
+    // M1-1：对话/标签页切换时清理已不存在的消息视图模式（非渲染热路径，仅切换时执行）
+    pruneBackgroundTaskViewModes(collectActiveBackgroundTaskMessageIds())
   }
   restoreUiState(newTabId)
 }, { immediate: true })
@@ -779,6 +811,8 @@ const pendingDeleteBackendIndex = ref<number | null>(null)
 // 先预览（计算待删除文件清单），确认框展示清单，用户确认后才真正执行恢复。
 interface PendingRestoreAction {
   kind: 'restore' | 'retry' | 'delete' | 'edit'
+  /** M-8: 发起预览时固化的对话身份；确认时校验，避免恢复错误对话的存档 */
+  conversationId: string
   checkpointId: string
   messageId?: string
   newContent?: string
@@ -791,6 +825,55 @@ const pendingRestoreAction = ref<PendingRestoreAction | null>(null)
 // 确认框展示的删除清单上限（超出显示省略计数）
 const RESTORE_DELETE_LIST_LIMIT = 30
 const isRestorePreviewing = computed(() => chatStore.isRestorePreviewing)
+// L-1: 当前正在预览的检查点 ID——只对发起预览的那个恢复按钮显示 spinner，避免全局转圈
+const previewingCheckpointId = ref<string | null>(null)
+
+// H-3: 恢复类结果（失败/部分失败/警告/成功）用独立提示样式展示，不再塞入 chatStore.error，
+// 避免错误条“重试”按钮误触发 retryAfterError → LLM 重新生成。
+const restoreNotice = ref<RestoreNoticeState | null>(null)
+
+function showRestoreNotice(kind: RestoreNoticeState['kind'], message: string) {
+  restoreNotice.value = { kind, message }
+}
+
+const restoreNoticeIconClass = computed(() => {
+  switch (restoreNotice.value?.kind) {
+    case 'partial': return 'codicon-warning'
+    case 'warning': return 'codicon-info'
+    case 'success': return 'codicon-check'
+    default: return 'codicon-error'
+  }
+})
+
+const restoreNoticeTitle = computed(() => {
+  switch (restoreNotice.value?.kind) {
+    case 'partial': return t('components.message.checkpoint.restoreResultPartialTitle')
+    case 'warning': return t('components.message.checkpoint.restoreResultWarningTitle')
+    case 'success': return t('components.message.checkpoint.restoreResultSuccessTitle')
+    default: return t('components.message.checkpoint.restoreResultErrorTitle')
+  }
+})
+
+// ============ U1 忙时投递（M3-1）轻量回显 ============
+// 忙时发送的用户消息改走 chat.sendInterruptMessage（主会话 inbox），窗口内无痕迹；
+// 这里读取 messageActions 记录的「最近投递 / 投递失败」状态，在消息区给出轻量提示。
+const interruptNotices = computed(() => {
+  const convId = chatStore.currentConversationId
+  if (!convId) return []
+  return recentInterruptDeliveries.value.filter(n => n.conversationId === convId)
+})
+
+// 当前回合结束（流式与等待均结束）时，清除本会话的投递提示——
+// 提示文案承诺「将在当前回合结束后处理」，回合结束即失效。
+watch(
+  [() => chatStore.isStreaming, () => chatStore.isWaitingForResponse],
+  ([streaming, waiting]) => {
+    if (!streaming && !waiting) {
+      const convId = chatStore.currentConversationId
+      if (convId) clearInterruptDeliveries(convId)
+    }
+  }
+)
 
 
 // 计算要删除的消息数量（使用 allMessages）
@@ -932,27 +1015,27 @@ async function restoreCheckpoint(checkpoint: CheckpointRecord) {
 }
 
 // 预览恢复并打开确认框；预览失败（链断裂/存档缺失等）时直接展示错误，不弹确认
-async function openRestoreConfirm(action: Omit<PendingRestoreAction, 'preview'>) {
+async function openRestoreConfirm(action: Omit<PendingRestoreAction, 'preview' | 'conversationId'>) {
   if (chatStore.isRestorePreviewing) return
+  // M-8: 固化对话身份——预览与确认之间可能切换对话，确认时据此校验
+  const conversationId = chatStore.currentConversationId
+  if (!conversationId) return
+  restoreNotice.value = null
+  previewingCheckpointId.value = action.checkpointId
   chatStore.isRestorePreviewing = true
   try {
     const preview = await chatStore.previewRestore(action.checkpointId)
     if (!preview.success) {
-      chatStore.error = {
-        code: 'RESTORE_PREVIEW_ERROR',
-        message: preview.error || t('components.message.checkpoint.restorePreviewFailed')
-      }
+      showRestoreNotice('error', preview.error || t('components.message.checkpoint.restorePreviewFailed'))
       return
     }
-    pendingRestoreAction.value = { ...action, preview }
+    pendingRestoreAction.value = { ...action, conversationId, preview }
     showRestoreConfirm.value = true
   } catch (err: any) {
-    chatStore.error = {
-      code: 'RESTORE_PREVIEW_ERROR',
-      message: err?.message || t('components.message.checkpoint.restorePreviewFailed')
-    }
+    showRestoreNotice('error', err?.message || t('components.message.checkpoint.restorePreviewFailed'))
   } finally {
     chatStore.isRestorePreviewing = false
+    previewingCheckpointId.value = null
   }
 }
 
@@ -962,6 +1045,14 @@ async function confirmRestore() {
   if (!action) return
   showRestoreConfirm.value = false
   pendingRestoreAction.value = null
+  restoreNotice.value = null
+
+  // M-8: 校验对话身份——预览/确认期间若用户切换对话，丢弃本次恢复，
+  // 避免把恢复/回档执行到错误对话上。
+  if (action.conversationId !== chatStore.currentConversationId) {
+    showRestoreNotice('error', t('components.message.checkpoint.restoreConversationChanged'))
+    return
+  }
 
   const { kind, checkpointId } = action
 
@@ -969,25 +1060,26 @@ async function confirmRestore() {
     // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
     const result = await chatStore.restoreCheckpoint(checkpointId, true)
 
-    // CP-10: 恢复失败 / 部分失败 / 快照未备份文件，向前端展示明确结果
+    // CP-10 / H-3: 恢复结果用独立提示分级展示（成功/部分成功/警告/失败），
+    // 不再塞入 chatStore.error，避免错误条“重试”误触发 LLM 重新生成。
     if (result && !result.success) {
-      chatStore.error = {
-        code: 'RESTORE_ERROR',
-        message: result.error || '恢复检查点失败'
-      }
+      showRestoreNotice('error', result.error || t('components.message.checkpoint.restoreResultFailed'))
     } else if (result?.failures && result.failures.length > 0) {
       const shown = result.failures.slice(0, 5).map(f => `${f.path}: ${f.reason}`).join('；')
-      chatStore.error = {
-        code: 'RESTORE_PARTIAL_ERROR',
-        message: `恢复部分完成，以下文件失败：${shown}${result.failures.length > 5 ? ` 等 ${result.failures.length} 个文件` : ''}`
-      }
+      showRestoreNotice('partial', result.failures.length > 5
+        ? t('components.message.checkpoint.restoreResultPartialMore', { files: shown, count: result.failures.length })
+        : t('components.message.checkpoint.restoreResultPartial', { files: shown }))
     } else if (result?.unbackedPaths && result.unbackedPaths.length > 0) {
       // 快照时未备份（超限/不可读）的文件不会被本次恢复删除或恢复，明确告知
       const shown = result.unbackedPaths.slice(0, 5).join('、')
-      chatStore.error = {
-        code: 'RESTORE_UNBACKED_WARNING',
-        message: `以下文件在创建存档时未被备份（大小超限或不可读），本次恢复未处理它们：${shown}${result.unbackedPaths.length > 5 ? ` 等 ${result.unbackedPaths.length} 个文件` : ''}`
-      }
+      showRestoreNotice('warning', result.unbackedPaths.length > 5
+        ? t('components.message.checkpoint.restoreResultUnbackedMore', { paths: shown, count: result.unbackedPaths.length })
+        : t('components.message.checkpoint.restoreResultUnbacked', { paths: shown }))
+    } else {
+      const pruned = result?.autoPrunedCheckpointCount || 0
+      showRestoreNotice('success', pruned > 0
+        ? t('components.message.checkpoint.restoreResultSuccessWithPrune', { count: result?.restored ?? 0, pruned })
+        : t('components.message.checkpoint.restoreResultSuccess', { count: result?.restored ?? 0 }))
     }
     return
   }
@@ -1003,6 +1095,8 @@ async function confirmRestore() {
     await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
     pendingDeleteMessageId.value = null
     pendingDeleteBackendIndex.value = null
+    // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
+    showDeleteConfirm.value = false
   } else if (kind === 'edit') {
     await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
   }
@@ -1117,6 +1211,12 @@ function formatCheckpointTime(timestamp: number): string {
     <div class="message-scroll-area">
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message" :width="10" :marker-height="10">
       <div class="messages-container">
+        <!-- TREE-10：候选切换器（分支状态 UI；无分支图/单候选时内部隐藏） -->
+        <BranchSwitcherBar />
+
+        <!-- TREE-11：完整分支树查看面板（独立浮层；有分支图即显示入口按钮） -->
+        <BranchTreePanel />
+
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -1196,7 +1296,7 @@ function formatCheckpointTime(timestamp: number): string {
                 <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                 <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
                   <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
-                    <i v-if="isRestorePreviewing" class="codicon codicon-loading codicon-modifier-spin"></i>
+                    <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin"></i>
                     <i v-else class="codicon codicon-discard"></i>
                   </button>
                 </Tooltip>
@@ -1243,7 +1343,7 @@ function formatCheckpointTime(timestamp: number): string {
                   <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                   <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
                     <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
-                      <i v-if="isRestorePreviewing" class="codicon codicon-loading codicon-modifier-spin"></i>
+                      <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin"></i>
                       <i v-else class="codicon codicon-discard"></i>
                     </button>
                   </Tooltip>
@@ -1320,7 +1420,14 @@ function formatCheckpointTime(timestamp: number): string {
             <div class="error-icon">⚠</div>
             <div class="error-title">{{ t('components.message.error.title') }}</div>
             <div class="error-actions">
-              <button class="error-retry" @click="handleErrorRetry" :title="t('components.message.error.retry')">
+              <!-- H-3: 重试按钮仅在可重试错误码（STREAM_ERROR 等流式生成错误）时显示，
+                   恢复/预览类错误（RESTORE_ERROR 等）走独立提示，不触发 LLM 重新生成 -->
+              <button
+                v-if="isRetryableError(chatStore.error)"
+                class="error-retry"
+                @click="handleErrorRetry"
+                :title="t('components.message.error.retry')"
+              >
                 <span class="codicon codicon-refresh"></span>
               </button>
               <button class="error-dismiss" @click="chatStore.dismissError()" :title="t('components.message.error.dismiss')">
@@ -1332,6 +1439,43 @@ function formatCheckpointTime(timestamp: number): string {
             <CustomScrollbar :max-height="120" :width="4">
               <pre class="error-text-code">{{ chatStore.error.code }}: {{ chatStore.error.message }}</pre>
             </CustomScrollbar>
+          </div>
+        </div>
+
+        <!-- 恢复结果提示（H-3）：恢复类结果独立展示，不占用错误条，也不提供 LLM 重试 -->
+        <div v-if="restoreNotice" class="restore-notice" :class="`restore-notice-${restoreNotice.kind}`">
+          <div class="restore-notice-header">
+            <div class="restore-notice-icon">
+              <i class="codicon" :class="restoreNoticeIconClass"></i>
+            </div>
+            <div class="restore-notice-title">{{ restoreNoticeTitle }}</div>
+            <div class="restore-notice-actions">
+              <button class="restore-notice-dismiss" @click="restoreNotice = null" :title="t('components.message.error.dismiss')">
+                ✕
+              </button>
+            </div>
+          </div>
+          <div class="restore-notice-body">
+            <pre class="restore-notice-text">{{ restoreNotice.message }}</pre>
+          </div>
+        </div>
+
+        <!-- U1 忙时投递（M3-1）轻量回显：已投递 / 投递失败，不占用错误条 -->
+        <div v-if="interruptNotices.length > 0" class="interrupt-notices">
+          <div
+            v-for="notice in interruptNotices"
+            :key="notice.createdAt"
+            class="interrupt-notice"
+            :class="`interrupt-notice-${notice.kind}`"
+          >
+            <i class="codicon" :class="notice.kind === 'delivered' ? 'codicon-check' : 'codicon-warning'"></i>
+            <span class="interrupt-notice-text">
+              {{
+                notice.kind === 'delivered'
+                  ? t('components.message.interrupt.delivered', { text: notice.text })
+                  : t('components.message.interrupt.deliverFailed', { detail: notice.errorMessage || notice.errorCode || '' })
+              }}
+            </span>
           </div>
         </div>
       </div>
@@ -1714,6 +1858,141 @@ function formatCheckpointTime(timestamp: number): string {
 
 .error-retry .codicon {
   font-size: 14px;
+}
+
+/* 恢复结果提示（H-3）：独立于错误条，按成功/部分成功/警告/失败分级着色 */
+.restore-notice {
+  display: flex;
+  flex-direction: column;
+  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.restore-notice-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+
+.restore-notice-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.restore-notice-error .restore-notice-icon {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.restore-notice-partial .restore-notice-icon {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.restore-notice-warning .restore-notice-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-notice-success .restore-notice-icon {
+  color: var(--vscode-testing-iconPassed, #89d185);
+}
+
+.restore-notice-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.restore-notice-body {
+  padding: 12px;
+}
+
+.restore-notice-text {
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  border-radius: 4px;
+  margin: 0;
+}
+
+.restore-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.restore-notice-dismiss {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 4px;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.restore-notice-dismiss:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* U1 忙时投递（M3-1）轻量回显：细条提示，随消息区滚动，不占错误条 */
+.interrupt-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 var(--spacing-md, 16px) var(--spacing-md, 16px);
+  flex-shrink: 0;
+}
+
+.interrupt-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: 4px;
+}
+
+.interrupt-notice .codicon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.interrupt-notice-delivered .codicon {
+  color: var(--vscode-testing-iconPassed, #89d185);
+}
+
+.interrupt-notice-error .codicon {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.interrupt-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 继续对话提示 */

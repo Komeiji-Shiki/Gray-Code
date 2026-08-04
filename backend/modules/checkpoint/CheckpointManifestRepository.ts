@@ -14,20 +14,63 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { CheckpointManifest, CheckpointIgnoreSnapshot } from './types';
 import type { CheckpointRecord } from './CheckpointManager';
+import { CheckpointPathError } from './CheckpointWorkspace';
 
 export const CHECKPOINT_MANIFEST_VERSION = 1;
 export const CHECKPOINT_MANIFEST_FILENAME = 'manifest.json';
 
 /**
+ * 存档目录名安全校验（CP-DEL-1 / CP-PATH-1 / CP-RET-2 共用）。
+ *
+ * backupDir / checkpointId 来自对话元数据或 webview 消息，可能被手工编辑、损坏或恶意构造；
+ * 删除、合并、manifest 读写路径在使用 `path.join(checkpointsDir, name)` 之前必须校验，
+ * 否则 `fs.rm(recursive)` / `fs.cp` / `fs.readFile` 可能越界操作存档目录外内容。
+ *
+ * 规则：非空、无路径分隔符、非 `.` / `..`、非绝对路径 / 盘符、无空白与控制字符；
+ * 等价于「解析后必然落在 checkpointsDir 内的单层目录名」。
+ * 测试常用的 `cp-1` / `a-1` 等连字符命名均放行；真实存档名为 `cp_xxx`。
+ */
+export function isSafeCheckpointDirName(name: string): boolean {
+    if (typeof name !== 'string' || name.length === 0) {
+        return false;
+    }
+    if (name === '.' || name === '..' || name.includes('\0')) {
+        return false;
+    }
+    // 单层目录名：拒绝路径分隔符（含 Windows 反斜杠）与绝对路径/盘符前缀
+    if (name.includes('/') || name.includes('\\')) {
+        return false;
+    }
+    if (path.isAbsolute(name) || /^[a-zA-Z]:/.test(name)) {
+        return false;
+    }
+    return /^[a-zA-Z0-9_.-]+$/.test(name);
+}
+
+/** 校验失败抛 CheckpointPathError（供 manifest 路径等需要硬失败的位置使用） */
+export function assertSafeCheckpointDirName(name: string): void {
+    if (!isSafeCheckpointDirName(name)) {
+        throw new CheckpointPathError('INVALID_CHECKPOINT_PATH', `Unsafe checkpoint dir name: ${name}`);
+    }
+}
+
+/**
  * 检查点管理器
  */
 export class CheckpointManifestRepository {
+    /**
+     * CP-CACHE-1: manifest 内存缓存 LRU 上限。
+     * 每条 manifest 含全工作区 files 映射（10 万文件 ≈ 10-20MB），无界缓存会让
+     * 长时间运行的扩展宿主内存持续增长；超出上限时淘汰最久未使用的条目。
+     */
+    private static readonly CACHE_LIMIT = 32;
     private readonly cache = new Map<string, CheckpointManifest>();
 
     constructor(private readonly checkpointsDir: string) {}
 
-    /** manifest 文件路径（checkpointId 即存档目录名） */
+    /** manifest 文件路径（checkpointId 即存档目录名）；非法 ID 抛 CheckpointPathError（CP-PATH-1） */
     getManifestPath(checkpointId: string): string {
+        assertSafeCheckpointDirName(checkpointId);
         return path.join(this.checkpointsDir, checkpointId, CHECKPOINT_MANIFEST_FILENAME);
     }
 
@@ -40,13 +83,26 @@ export class CheckpointManifestRepository {
         }
     }
 
-    /** 判断某个存档是否已有 manifest（磁盘探测，不走缓存） */
-    async hasManifest(checkpointId: string): Promise<boolean> {
-        try {
-            await fs.access(this.getManifestPath(checkpointId));
-            return true;
-        } catch {
-            return false;
+    /** LRU 读取：命中后重插刷新为“最新”（Map 迭代顺序 = 插入顺序） */
+    private cacheGet(checkpointId: string): CheckpointManifest | undefined {
+        const hit = this.cache.get(checkpointId);
+        if (hit !== undefined) {
+            this.cache.delete(checkpointId);
+            this.cache.set(checkpointId, hit);
+        }
+        return hit;
+    }
+
+    /** LRU 写入：插入并淘汰最久未使用的条目 */
+    private cacheSet(checkpointId: string, manifest: CheckpointManifest): void {
+        this.cache.delete(checkpointId);
+        this.cache.set(checkpointId, manifest);
+        while (this.cache.size > CheckpointManifestRepository.CACHE_LIMIT) {
+            const oldest = this.cache.keys().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.cache.delete(oldest);
         }
     }
 
@@ -70,7 +126,7 @@ export class CheckpointManifestRepository {
             }
             throw err;
         }
-        this.cache.set(checkpointId, manifest);
+        this.cacheSet(checkpointId, manifest);
     }
 
     /**
@@ -85,7 +141,9 @@ export class CheckpointManifestRepository {
         checkpointId: string,
         fallbackRecord?: CheckpointRecord
     ): Promise<CheckpointManifest | null> {
-        const cached = this.cache.get(checkpointId);
+        // CP-PATH-1: 非法 checkpointId 直接抛错，不允许落入缓存/磁盘/迁移回退路径
+        assertSafeCheckpointDirName(checkpointId);
+        const cached = this.cacheGet(checkpointId);
         if (cached) {
             return cached;
         }
@@ -101,7 +159,7 @@ export class CheckpointManifestRepository {
                 parsed.files &&
                 typeof parsed.files === 'object'
             ) {
-                this.cache.set(checkpointId, parsed);
+                this.cacheSet(checkpointId, parsed);
                 return parsed;
             }
             // 损坏的 manifest：不缓存，继续走迁移/回退路径
@@ -160,7 +218,10 @@ export class CheckpointManifestRepository {
             defaultProfileVersion: 1,
             enabledProfiles: {},
             maxFileSizeBytes: 0,
-            customPatterns: record.ignorePatterns ?? []
+            // MIG-03: 优先用记录中的合并快照（旧 customIgnorePatterns + 新 exclusion.customPatterns
+            // 已在写入时合并进 ignoreSnapshot.customPatterns），旧记录（无 ignoreSnapshot）回退到
+            // 历史字段 ignorePatterns，保证回退生成的 manifest 与快照构建口径一致。
+            customPatterns: record.ignoreSnapshot?.customPatterns ?? record.ignorePatterns ?? []
         };
 
         return {

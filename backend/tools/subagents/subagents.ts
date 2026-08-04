@@ -6,9 +6,10 @@
  */
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
+import { MAX_SUBAGENT_NESTING_DEPTH } from './types';
 import type { SubAgentConfig, SubAgentExecutor } from './types';
 import { subAgentRegistry } from './registry';
-import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
+import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools, agentLacksWriteCapability } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 import { TaskManager } from '../taskManager';
@@ -17,7 +18,10 @@ import { TODO_TOOL_NAMES } from '../todo';
 
 // 修改原因：todo_write/todo_update 依赖主会话 conversationId，子代理执行路径无法使用，
 // 不应出现在子代理的工具描述/声明里（P1：避免子代理反复尝试调用报错浪费迭代）。
-const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>(['subagents', ...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES]);
+// F2：不再排除 subagents——子 agent 需要能派生子子 agent（嵌套）；subagents 工具不依赖
+// conversationId（General Worker 只依赖 channelConfigId），放开不会引入 todo 类问题，
+// 深度上限由 executeSubAgent 在派发前校验。
+const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>([...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES]);
 
 /** 通用 Worker 虚拟子代理的标识常量 */
 const GENERAL_WORKER_NAME = 'General Worker';
@@ -43,7 +47,18 @@ function isGeneralWorker(agentName: string): boolean {
 }
 
 /**
- * 获取子代理可用的工具列表
+ * 获取子代理可用的工具列表（用于工具声明描述）。
+ *
+ * M-7（R4 复查）：本函数（同步，直接读 registry/MCP 拼名字）与 executor.ts 的
+ * resolveSubAgentAvailableTools（异步，经 ToolDeclarationResolver 生成完整声明）
+ * 存在口径分叉：
+ * - 分叉原因：工具声明生成是同步路径（getSubAgentsToolDeclaration →
+ *   generateAgentNameDescription），无法直接复用异步 resolver；resolver 侧还额外
+ *   做 schema 清理、多模态过滤等声明级处理。
+ * - 当前对齐手段：两侧共用 agentLacksWriteCapability + WRITE_CAPABILITY_TOOLS，
+ *   保证「subagents 工具去留」的裁剪口径一致（H-1）。
+ * - 后续方案（如需彻底合一）：把声明生成改为异步或缓存 resolver 结果，
+ *   让 getAgentAvailableTools 直接消费 resolveSubAgentAvailableTools 的输出。
  */
 function getAgentAvailableTools(config: SubAgentConfig): string[] {
     const toolRegistry = getGlobalToolRegistry();
@@ -89,6 +104,12 @@ function getAgentAvailableTools(config: SubAgentConfig): string[] {
             const blacklist = new Set(toolsConfig.blacklist || toolsConfig.list || []);
             availableTools = [...builtinToolNames, ...mcpToolNames].filter(t => !blacklist.has(t));
             break;
+    }
+    // H-1（R4 复查）：与 executor 的 resolveSubAgentAvailableTools 共用同一裁剪口径——
+    // 不具备完整写/执行能力的代理（blacklist 排除写工具、whitelist 缺写工具、mcp 等）
+    // 自动从可用集移除 subagents，防止其派发 mode='all' 的 General Worker 越权。
+    if (agentLacksWriteCapability(toolsConfig)) {
+        availableTools = availableTools.filter(name => name !== 'subagents');
     }
     
     return availableTools;
@@ -191,7 +212,7 @@ function generateAgentNameDescription(): string {
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
         const globalMaxIterations = getGlobalDefaultMaxIterations();
-        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max 2400s runtime`);
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions; when invoked from another sub-agent its tools are limited to the dispatching agent's own tool set\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max 2400s runtime`);
     }
 
     return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
@@ -315,7 +336,9 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         const dynamicConfig: SubAgentConfig = {
             type: GENERAL_WORKER_TYPE,
             name: GENERAL_WORKER_NAME,
-            description: 'Zero-config general-purpose worker that inherits the current session channel and all available non-memory tool permissions.',
+            // H-1（R4 复查）：嵌套派发时 General Worker 的工具受父 run 限制（executor 取交集），
+            // 描述文案同步说明，避免误导模型以为嵌套 worker 拥有全量权限。
+            description: 'Zero-config general-purpose worker that inherits the current session channel and all available non-memory tool permissions. When invoked from another sub-agent, its tools are limited to the dispatching agent\'s own tool set.',
             systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
             channel: { channelId: channelConfigId },
             tools: { mode: 'all' },
@@ -363,6 +386,34 @@ async function executeSubAgent(
     customExecutor?: SubAgentExecutor
 ): Promise<ToolResult> {
     const promptModeSnapshot = context?.promptModeSnapshot as any;
+    // F2：嵌套深度——父 run 深度从工具上下文读取（ToolExecutionService 注入 subagentDepth，
+    // 主模型直接派发时缺省 0），子 run 深度 = 父深度 + 1；超过 MAX_SUBAGENT_NESTING_DEPTH 拒绝。
+    const rawParentDepth = context?.subagentDepth;
+    const parentDepth = typeof rawParentDepth === 'number' && Number.isFinite(rawParentDepth) && rawParentDepth >= 0
+        ? Math.floor(rawParentDepth)
+        : 0;
+    const depth = parentDepth + 1;
+    if (depth > MAX_SUBAGENT_NESTING_DEPTH) {
+        return {
+            success: false,
+            error: `Sub-agent nesting depth limit reached: cannot spawn a sub-agent at depth ${depth} `
+                + `(maximum allowed depth is ${MAX_SUBAGENT_NESTING_DEPTH}: main model=0, sub-agent=1, sub-sub-agent=2). `
+                + `Handle the task at the current level, or break it into fewer nested steps.`
+        };
+    }
+    // F2：父 runId（A-COMM 信箱身份），用于级联清理父子关系；主模型直接派发时缺省。
+    const parentRunId = context?.mailboxRunId as string | undefined;
+    // H-1（R4 复查）：嵌套派发时继承父 run 的可用工具限制——
+    // 子 run 最终可用工具 = 子配置解析结果 ∩ 父 run 可用工具（executor 内取交集）。
+    // 父 run 的工具集由 executor 在解析后按 runId 注册（setRunAllowedTools），
+    // 主模型直接派发（无 mailboxRunId）时不做继承，General Worker 保持全量权限。
+    const inheritedToolFilter = parentRunId ? getRunAllowedTools(parentRunId) : undefined;
+    const inheritedToolFilterList = inheritedToolFilter ? Array.from(inheritedToolFilter) : undefined;
+    // F2：嵌套 run 的会话归属——子代理内部调用时 context.conversationId 为 undefined，
+    // 但信箱会话（mailboxConversationId，即主会话 ID）始终存在，回退使用它，
+    // 让嵌套 run 的 transcript 持久化、用量归集和 agent.sendMessage 寻址都归属主会话。
+    const conversationId = (context?.conversationId as string | undefined)
+        ?? (context?.mailboxConversationId as string | undefined);
     const baseExecutorContext = getSubAgentExecutorContext();
     // F-08：显式注册的自定义 executor 优先；否则按每次调用动态创建默认 executor，
     // 不再把缺少动态会话上下文的默认 executor 缓存在 Registry。
@@ -371,7 +422,7 @@ async function executeSubAgent(
         : baseExecutorContext
             ? createDefaultExecutor(config, {
                 ...baseExecutorContext,
-                conversationId: context?.conversationId as string | undefined,
+                conversationId,
                 conversationStore: context?.conversationStore as any,
                 promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
             })
@@ -389,7 +440,7 @@ async function executeSubAgent(
         const taskId = TaskManager.generateTaskId('bgagent');
 
         TaskManager.registerTask(taskId, 'background_subagent', backgroundAbortController, {
-            conversationId: context?.conversationId as string | undefined,
+            conversationId,
             agentName,
             runId,
             continueFromRunId,
@@ -402,9 +453,16 @@ async function executeSubAgent(
             context: additionalContext,
             continueFromRunId,
             runId,
-            conversationId: context?.conversationId as string | undefined,
+            conversationId,
             conversationStore: context?.conversationStore as any,
-            promptModeSnapshot: promptModeSnapshot
+            promptModeSnapshot: promptModeSnapshot,
+            // F2：嵌套深度与父 runId 随请求传给 executor（级联清理 + run 元数据）
+            depth,
+            parentRunId,
+            // 转后台（detach）：标记后台模式，executor 据此不注册 detach 监听（后台 run 本就独立于父轮 abort）
+            background: true,
+            // H-1：父 run 的工具限制随请求传给 executor（子 run 工具 = 子配置 ∩ 父限制）
+            inheritedToolFilter: inheritedToolFilterList
         }, backgroundAbortController.signal).then(result => {
             const status = result.cancelled ? 'cancelled' : (result.success ? 'completed' : 'error');
             TaskManager.unregisterTask(taskId, status, {
@@ -446,9 +504,14 @@ async function executeSubAgent(
             context: additionalContext,
             continueFromRunId,
             runId,
-            conversationId: context?.conversationId as string | undefined,
+            conversationId,
             conversationStore: context?.conversationStore as any,
-            promptModeSnapshot: promptModeSnapshot
+            promptModeSnapshot: promptModeSnapshot,
+            // F2：嵌套深度与父 runId 随请求传给 executor（级联清理 + run 元数据）
+            depth,
+            parentRunId,
+            // H-1：父 run 的工具限制随请求传给 executor（子 run 工具 = 子配置 ∩ 父限制）
+            inheritedToolFilter: inheritedToolFilterList
         }, abortSignal);
 
         if (result.cancelled || abortSignal?.aborted) {

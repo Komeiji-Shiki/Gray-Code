@@ -107,6 +107,15 @@ import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession, QueuedMessage } from './chat/types'
 
 import {
+  loadBranchGraph as loadBranchGraphAction,
+  refreshBranchGraph as refreshBranchGraphAction,
+  switchBranchCandidate as switchBranchCandidateAction,
+  deleteBranchCandidate as deleteBranchCandidateAction,
+  restoreBranchCandidate as restoreBranchCandidateAction,
+  renameBranchCandidate as renameBranchCandidateAction
+} from './chat/branchActions'
+
+import {
   createTab as createTabAction,
   closeTab as closeTabAction,
   switchTab as switchTabAction,
@@ -201,6 +210,16 @@ export const useChatStore = defineStore('chat', () => {
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)
   const clearMessages = () => clearMessagesFn(state)
 
+  // ============ 分支操作（TREE-07 切换 / TREE-10 切换器数据源） ============
+
+  const loadBranchGraph = () => loadBranchGraphAction(state)
+  const refreshBranchGraph = () => refreshBranchGraphAction(state)
+  const switchBranchCandidate = (nodeId: string, options?: { mode?: 'chat-only' | 'chat-and-workspace'; confirmedDiscardDirty?: boolean }) =>
+    switchBranchCandidateAction(state, nodeId, options)
+  const deleteBranchCandidate = (nodeId: string) => deleteBranchCandidateAction(state, nodeId)
+  const restoreBranchCandidate = (nodeId: string) => restoreBranchCandidateAction(state, nodeId)
+  const renameBranchCandidate = (nodeId: string, label: string) => renameBranchCandidateAction(state, nodeId, label)
+
   // ============ 对话操作 ============
   
   /**
@@ -212,6 +231,7 @@ export const useChatStore = defineStore('chat', () => {
     // 如果当前标签页已经是空白的，直接在当前标签页创建
     if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
       await createNewConvAction(state, cancelStreamAndRejectTools)
+      void loadBranchGraphAction(state)
       return
     }
 
@@ -249,6 +269,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 在当前标签页中加载该对话
     await switchConvAction(state, id, cancelStreamAndRejectTools)
+    void loadBranchGraphAction(state)
 
     // 更新当前标签页的信息
     if (state.activeTabId.value) {
@@ -283,6 +304,7 @@ export const useChatStore = defineStore('chat', () => {
     if (tabId) {
       switchTabWrapped(tabId)
       await switchConvAction(state, conv.id, cancelStreamAndRejectTools)
+      void loadBranchGraphAction(state)
       updateTabTitle(state, tabId, conv.title)
     } else {
       await switchConversation(conv.id)
@@ -483,14 +505,14 @@ export const useChatStore = defineStore('chat', () => {
   const hasCheckpoint = (messageIndex: number) => hasCheckpointFn(state, messageIndex)
   const addCheckpoint = (checkpoint: any) => addCheckpointFn(state, checkpoint)
   const previewRestore = (checkpointId: string) => previewRestoreFn(state, checkpointId)
-  const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean) =>
-    restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles)
-  const restoreAndRetry = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
-    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked)
-  const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
-    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked)
-  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
-    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked)
+  const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean, confirmedDiscardDirty?: boolean) =>
+    restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty)
+  const restoreAndRetry = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
+    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
+  const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
+    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
+  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
+    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
 
@@ -576,6 +598,7 @@ export const useChatStore = defineStore('chat', () => {
       switchTabWrapped(tabId)
       // 切换后需要从后端加载历史
       await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
+      void loadBranchGraphAction(state)
       if (conv) {
         updateTabTitle(state, tabId, conv.title)
       }
@@ -695,6 +718,17 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     deleteSingleMessage,
     clearMessages,
+
+    // 分支（TREE-07 / TREE-10 / TREE-11）
+    branchGraph: state.branchGraph,
+    branchGraphLoading: state.branchGraphLoading,
+    isSwitchingBranch: state.isSwitchingBranch,
+    loadBranchGraph,
+    refreshBranchGraph,
+    switchBranchCandidate,
+    deleteBranchCandidate,
+    restoreBranchCandidate,
+    renameBranchCandidate,
     
     // 配置管理
     setConfigId,

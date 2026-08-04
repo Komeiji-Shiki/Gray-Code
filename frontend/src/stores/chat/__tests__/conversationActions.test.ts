@@ -8,12 +8,13 @@
  */
 import { ref } from 'vue'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
-import type { Content } from '../../../types'
+import type { Content, CheckpointRecord } from '../../../types'
 import type { ChatStoreState } from '../types'
 import {
   loadMoreConversations,
   updateConversationAfterMessage,
   loadHistory,
+  loadCheckpoints,
   MESSAGES_PAGE_SIZE
 } from '../conversationActions'
 
@@ -352,5 +353,47 @@ describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {
     }, { timeout: 2000 })
     expect(state.allMessages.value[10].id).toBe('stream-new')
     expect(state.windowStartIndex.value).toBe(290)
+  })
+})
+
+describe('loadCheckpoints（L-8）', () => {
+  beforeEach(() => {
+    mockSend.mockReset()
+  })
+
+  it('成功后写入后端检查点列表', async () => {
+    mockSend.mockResolvedValue({
+      checkpoints: [{ id: 'cp_1', messageIndex: 3, phase: 'before' }]
+    })
+    const state = createState({ currentConversationId: ref('conv-1') })
+
+    await loadCheckpoints(state)
+
+    expect(mockSend).toHaveBeenCalledWith('checkpoint.getCheckpoints', { conversationId: 'conv-1' })
+    expect(state.checkpoints.value).toEqual([{ id: 'cp_1', messageIndex: 3, phase: 'before' }])
+  })
+
+  it('加载失败时保留旧值（不静默置空），避免检查点条消失', async () => {
+    const existing = [{ id: 'cp_old', messageIndex: 0, phase: 'before' }]
+    const state = createState({
+      currentConversationId: ref('conv-1'),
+      checkpoints: ref(existing as CheckpointRecord[])
+    })
+    mockSend.mockRejectedValue(new Error('ipc down'))
+
+    await loadCheckpoints(state)
+
+    expect(state.checkpoints.value).toEqual(existing)
+  })
+
+  it('无当前对话时清空检查点', async () => {
+    const state = createState({
+      currentConversationId: ref(null),
+      checkpoints: ref([{ id: 'cp_x', messageIndex: 0, phase: 'before' }] as CheckpointRecord[])
+    })
+
+    await loadCheckpoints(state)
+
+    expect(state.checkpoints.value).toEqual([])
   })
 })

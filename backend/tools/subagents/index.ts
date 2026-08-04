@@ -22,6 +22,9 @@ export type {
     SubAgentExecutorFactory
 } from './types';
 
+// F2：嵌套深度上限常量
+export { MAX_SUBAGENT_NESTING_DEPTH } from './types';
+
 // 导出注册器
 export { SubAgentRegistry, subAgentRegistry } from './registry';
 
@@ -76,15 +79,37 @@ export {
     registerSubAgents 
 } from './subagents';
 
+// 导出 agent 消息信箱（A-COMM）
+export {
+    agentMailbox,
+    AgentMailbox,
+    MAIN_SESSION_RUN_ID,
+    MAIN_AGENT_NAME,
+    MAX_HOP_DEPTH,
+    type AgentMessage,
+    type AgentSendMessageInput,
+    type AgentSendMessageResult
+} from './agentMailbox';
+
+// 导出 agent.sendMessage 工具
+export {
+    createAgentSendMessageTool,
+    getAgentSendMessageTool,
+    getAgentSendMessageToolDeclaration,
+    agentSendMessageHandler
+} from './agentSendMessage';
+
 /**
  * 获取所有 SubAgents 工具
  * @returns 所有 SubAgents 工具的数组
  */
 export function getAllSubAgentsTools(): Tool[] {
     const { getSubAgentsTool } = require('./subagents');
+    const { getAgentSendMessageTool } = require('./agentSendMessage');
     
     return [
-        getSubAgentsTool()
+        getSubAgentsTool(),
+        getAgentSendMessageTool()
     ];
 }
 
@@ -94,8 +119,10 @@ export function getAllSubAgentsTools(): Tool[] {
  */
 export function getSubAgentsToolRegistrations() {
     const { getSubAgentsTool } = require('./subagents');
+    const { getAgentSendMessageTool } = require('./agentSendMessage');
     
     return [
-        getSubAgentsTool
+        getSubAgentsTool,
+        getAgentSendMessageTool
     ];
 }

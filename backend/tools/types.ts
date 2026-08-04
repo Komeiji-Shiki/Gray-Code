@@ -15,7 +15,7 @@ export interface ToolProgressEvent {
     runId?: string;
     /** 事件类型，覆盖运行级、内容级和工具级进度 */
     type: 'run_created' | 'run_queued' | 'run_started' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
-        | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted'
+        | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted' | 'run_detached'
         | 'retrying' | 'retrySuccess' | 'retryFailed'
         | 'llm_delta' | 'content_snapshot'
         | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';
