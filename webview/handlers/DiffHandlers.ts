@@ -396,9 +396,15 @@ async function openDiffView(
   
   ctx.diffPreviewProvider.setContent(originalUri.toString(), originalContent);
   ctx.diffPreviewProvider.setContent(newUri.toString(), newContent);
-  
+
+  // 修改原因：vscode.diff 不带 viewColumn 时在“当前活动编辑器组”打开，焦点在 SubAgent Monitor 面板时
+  //          diff 会开在 Monitor 旁边而不是主聊天侧，用户主窗口的 diff 位置被面板“抢走”。
+  // 修改方式：优先使用路由下发的主聊天列（diffViewColumn），其次主区域第一列。
+  // 修改目的：diff 预览固定跟随主聊天所在列，不再受 Monitor 面板焦点影响。
+  const viewColumn = ctx.diffViewColumn ?? vscode.ViewColumn.One;
   await vscode.commands.executeCommand('vscode.diff', originalUri, newUri, diffTitle, {
-    preview: false
+    preview: false,
+    viewColumn
   });
 }
 
