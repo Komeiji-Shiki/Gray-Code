@@ -148,7 +148,7 @@ const ja: LanguageMessages = {
             },
             retryDialog: {
                 title: 'メッセージを再試行',
-                message: 'このメッセージを再試行してもよろしいですか？これによりこのメッセージと後続のメッセージが削除され、新しい AI レスポンスをリクエストします。',
+                message: 'このメッセージの新しいバージョンを生成しますか？現在の回答は保持され、生成後にバージョン間で切り替えられます。',
                 checkpointHint: 'このメッセージの前にツール実行のバックアップが検出されました。ツール実行前に復元してから再試行できます。',
                 cancel: 'キャンセル',
                 retry: '再試行',
@@ -2410,6 +2410,7 @@ const ja: LanguageMessages = {
                     read_skill: 'スキルを読む',
                     toggle_skills: 'スキル切替',
                     subagents: 'サブエージェント',
+                    agent_send_message: 'エージェントにメッセージ送信',
                 },
                 toolDescriptions: {
                     read_file: 'ワークスペース内のファイルを読み取ります。テキストとバイナリファイルに対応。',
@@ -2459,6 +2460,7 @@ const ja: LanguageMessages = {
                     read_skill: 'スキルの内容と説明を読み取ります。',
                     toggle_skills: '以降のリクエストで使用するスキルを有効・無効にします。',
                     subagents: 'サブエージェントを起動してタスクを実行します。',
+                    agent_send_message: '現在の会話内の別エージェント（サブエージェント）またはメインセッション（メインモデル）に非同期でメッセージを送信します。宛先は targetRunId（現在の会話でアクティブなサブエージェント実行 ID）または targetAgentName（"main" はメインセッション）で指定します。同じスレッドの返信は hopDepth が増加し、5 ホップを超えると配信が拒否されます（ループ防止）。送信元は自動識別され、なりすましはできません。',
                 },
             },
             tokenCountSettings: {

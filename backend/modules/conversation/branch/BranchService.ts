@@ -59,6 +59,7 @@ import {
     rerollCandidate,
     restoreNode,
     softDeleteNode,
+    softDeleteSubtreeFrom,
     switchActivePath,
     updateNodeContent,
     upsertCandidateSummary,
@@ -197,6 +198,18 @@ export interface BranchPurgeResult {
     purged: boolean;
     /** 本次物理移除的节点数（含子树） */
     prunedNodeCount: number;
+}
+
+/** 决策 6：主历史删除（deleteToMessage / deleteMessage）后的分支图同步结果 */
+export interface BranchHistoryDeleteSyncResult {
+    /** 图是否发生变更并落盘（无图 / 锚点缺失 / 幂等时为 false） */
+    graphUpdated: boolean;
+    /** 本次新标记软删的节点 id（整体重置为空图时为全部旧节点 id） */
+    deletedNodeIds: string[];
+    /** 是否整体重置为空图（删除到对话开头，锚定根节点） */
+    resetToEmpty: boolean;
+    /** 活跃尾是否被回退（被删集合包含原活跃尾） */
+    activeTailAdjusted: boolean;
 }
 
 /** TREE-01：startReroll 的返回值（reroll 开始：旧候选保留进 sidecar，新候选激活） */
@@ -1311,6 +1324,100 @@ export class BranchService {
         });
     }
 
+
+    /**
+     * 决策 6：主历史删除后同步软删分支图——「被删消息对应的节点及其后续整棵子树」。
+     *
+     * 语义（复用 TREE-09 软删：节点标记 deleted + deletedAt，不物理移除 sidecar；
+     * 级联覆盖该点之后的所有后代，含非活跃候选子树；prune 前可整体恢复）：
+     * - 无分支图（线性对话未建图）→ 返回 graphUpdated:false，不强制建图、不影响原有行为；
+     * - 锚点消息（第一个被删消息的 id，删除前捕获）不在图中（functionResponse 等决策 8
+     *   并入所属节点的消息 / 图未覆盖被删段）→ 退化用 lastKeptMessageId（最后保留消息）
+     *   软删其**之后**的所有后代（保留点自身不清除）；两者都不在图中 → 幂等 no-op；
+     * - 锚定根节点（删除到对话开头）→ 整图重置为空图（createEmptyBranchGraph）；
+     * - 活跃尾若落在被删子树内（截断场景的常态）→ 回退到保留锚点，并清空指向被删节点的
+     *   activeChildId（validate 不变量）；
+     * - sidecar 损坏（解析 / 语义）→ 抛 BRANCH_STORAGE_CORRUPT（与其它写路径一致：不覆盖）。
+     *
+     * 锁边界：整体在会话写锁（runExclusive）内执行，与主历史删除共用同一把锁、串行化；
+     * 本方法不触碰存档锁（「会话锁内严禁获取存档锁」）。调用方约定：在主历史删除完成、
+     * 仓储互斥已释放后同步 await（顺序取锁，非嵌套）；图同步失败仅告警，不阻断硬删除。
+     *
+     * @param deletedFromMessageId 第一个被删除消息的 id（删除前捕获；null = 无锚点防御）
+     * @param options.lastKeptMessageId 最后保留消息的 id（锚点不在图内时的退化锚）
+     */
+    async syncGraphAfterHistoryDelete(
+        conversationId: string,
+        deletedFromMessageId: string | null,
+        options: { deletedAt?: number; lastKeptMessageId?: string | null } = {}
+    ): Promise<BranchHistoryDeleteSyncResult> {
+        const empty: BranchHistoryDeleteSyncResult = {
+            graphUpdated: false,
+            deletedNodeIds: [],
+            resetToEmpty: false,
+            activeTailAdjusted: false,
+        };
+        if (!deletedFromMessageId) {
+            // 无锚点（历史消息缺 id 的防御路径）：不做任何图变更（不臆测删除范围）
+            return empty;
+        }
+        await this.conversationManager.ensureHistoryNodeIds(conversationId);
+        return await this.conversationManager.runExclusive(conversationId, async () => {
+            await this.assertConversationWritable(conversationId);
+            const loaded = await this.repository.load(conversationId);
+            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
+                throw new BranchError(
+                    'BRANCH_STORAGE_CORRUPT',
+                    `branches.json is corrupt for ${conversationId}; refusing to sync delete (${loaded.errorMessage ?? 'unknown error'})`
+                );
+            }
+            if (!loaded.graph) {
+                // 线性对话未建图：删除不同步（主历史为唯一真源，不强制建图）
+                return empty;
+            }
+            const validation = validate(loaded.graph);
+            if (!validation.valid) {
+                throw new BranchError(
+                    'BRANCH_STORAGE_CORRUPT',
+                    `branches.json is semantically corrupt for ${conversationId}; refusing to sync delete (${validation.issues.map(i => i.message).join('; ')})`
+                );
+            }
+            const graph = loaded.graph;
+            let anchorNodeId: string | null = graph.nodes[deletedFromMessageId] ? deletedFromMessageId : null;
+            let excludeNode = false;
+            if (anchorNodeId === null) {
+                // 锚点消息不在图中（functionResponse / 图未覆盖被删段）：
+                // 退化为「最后保留消息之后的所有后代」整体软删（保留点自身不清除）
+                const keptNodeId = options.lastKeptMessageId && graph.nodes[options.lastKeptMessageId]
+                    ? options.lastKeptMessageId
+                    : null;
+                if (keptNodeId === null) {
+                    log.warn('branch_delete_sync_anchor_missing', {
+                        conversationId,
+                        deletedFromMessageId,
+                        reason: 'neither deleted anchor nor last kept message exists in the branch graph; graph left unchanged',
+                    });
+                    return empty;
+                }
+                anchorNodeId = keptNodeId;
+                excludeNode = true;
+            }
+            const outcome = softDeleteSubtreeFrom(graph, anchorNodeId, {
+                deletedAt: options.deletedAt ?? Date.now(),
+                excludeNode,
+            });
+            if (outcome.graph === graph) {
+                return empty; // R8c-P6 幂等：图未变化，不落盘
+            }
+            await this.validateAndSave(conversationId, outcome.graph);
+            return {
+                graphUpdated: true,
+                deletedNodeIds: outcome.deletedNodeIds,
+                resetToEmpty: outcome.resetToEmpty,
+                activeTailAdjusted: outcome.activeTailAdjusted,
+            };
+        });
+    }
     // ==================== 内部工具 ====================
 
     /**

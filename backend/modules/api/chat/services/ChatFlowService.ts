@@ -839,7 +839,8 @@ export class ChatFlowService {
     } else {
       const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
       await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-        isUserInput: true
+        isUserInput: request.source !== 'background_task',
+        source: request.source
       });
     }
 
@@ -1134,7 +1135,8 @@ export class ChatFlowService {
         // 5. 添加用户消息到历史（包含附件）
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-          isUserInput: true
+          isUserInput: request.source !== 'background_task',
+          source: request.source
         });
 
         // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
@@ -2307,7 +2309,33 @@ export class ChatFlowService {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex, preserveCheckpointId);
 
       // 6. 删除消息
+      // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
+      // 注意：必须在 deleteToMessage 之前读取（删除后这些消息已不在主历史中）。
+      const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
+      const deletedFromMessageId = historyBeforeDelete[targetIndex]?.id ?? null;
+      const lastKeptMessageId = targetIndex > 0 ? (historyBeforeDelete[targetIndex - 1]?.id ?? null) : null;
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
+
+      // 6.2 决策 6：删除成功后同步软删分支图「该点之后」的整棵子树（TREE-09 软删语义：
+      // 节点标记 deleted + deletedAt，不物理移除 sidecar；活跃尾同步回退到保留锚点）。
+      // 锁取舍：deleteToMessage 的仓储互斥（会话写锁）已随方法返回释放，此处再取会话写锁
+      // 是顺序获取（非嵌套），故同步 await 而非 fire-and-forget——删除响应返回前保证分支图一致
+      // （避免响应后立即续写新消息时 appendHistoryToGraph 挂在已被硬删除的旧尾上）。
+      // 失败仅告警不阻断：主历史为唯一真源，硬删除已提交，图侧由下次读图/写图自校验兜底。
+      try {
+        const branchService = getGlobalBranchService();
+        if (branchService) {
+          await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
+            lastKeptMessageId,
+          });
+        }
+      } catch (error) {
+        this.log.warn('branch_delete_to_sync_failed', {
+          conversationId,
+          targetIndex,
+          error: (error as Error)?.message ?? String(error),
+        });
+      }
 
       // 6.5 根据剩余历史重放 todo 工具，修正 ConversationMetadata.custom.todoList
       await this.rebuildTodoListMetadataFromHistory(conversationId);

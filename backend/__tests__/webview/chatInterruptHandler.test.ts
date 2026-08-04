@@ -6,7 +6,7 @@
  */
 
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
-import { sendInterruptMessage, registerChatHandlers } from '../../../webview/handlers/ChatHandlers';
+import { sendInterruptMessage, awaitConversationIdle, registerChatHandlers } from '../../../webview/handlers/ChatHandlers';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
 
 function createCtx(overrides: Record<string, unknown> = {}) {
@@ -35,6 +35,22 @@ describe('chat.sendInterruptMessage 处理器', () => {
     it('已注册进消息处理器注册表', () => {
         const registry = createMessageHandlerRegistry();
         expect(registry.has('chat.sendInterruptMessage')).toBe(true);
+        expect(registry.has('chat.awaitConversationIdle')).toBe(true);
+    });
+
+    it('awaitConversationIdle 等待后端运行控制器真正空闲后才响应', async () => {
+        let release!: () => void;
+        const waitForIdle = jest.fn(() => new Promise<void>(resolve => { release = resolve; }));
+        const ctx = createCtx({ streamAbortControllers: { waitForIdle } });
+
+        const pending = awaitConversationIdle({ conversationId: 'conv_1' }, 'req_idle', ctx);
+        await Promise.resolve();
+        expect(waitForIdle).toHaveBeenCalledWith('conv_1');
+        expect(ctx.sendResponse).not.toHaveBeenCalled();
+
+        release();
+        await pending;
+        expect(ctx.sendResponse).toHaveBeenCalledWith('req_idle', { idle: true });
     });
 
     it('成功：投递到主会话 inbox 并返回 { success: true }', async () => {

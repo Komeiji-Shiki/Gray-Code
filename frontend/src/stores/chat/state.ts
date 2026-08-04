@@ -338,6 +338,13 @@ export function createChatState(): ChatStoreState {
   /** 最近一次流式失败时保留的半截 assistant 消息 ID（retryAfterError 回滚用） */
   const _failedStreamMessageId = ref<string | null>(null)
 
+  /**
+   * reroll/编辑分支流结束后需要刷新分支图（TREE-01/TREE-03 前端接入）。
+   * 值为发起该流的会话 ID：仅当该会话成为当前会话且收到终结 chunk 时才消费（避免跨会话误刷）；
+   * 流启动失败 / 会话切换兜底路径显式复位为 null。
+   */
+  const _pendingBranchRefreshAfterStream = ref<string | null>(null)
+
   /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
   const editorNodes = ref<EditorNode[]>([])
 
@@ -420,6 +427,7 @@ export function createChatState(): ChatStoreState {
     _lastCancelledStreamId,
     _lastApprovalGatedStreamId,
     _failedStreamMessageId,
+    _pendingBranchRefreshAfterStream,
     openTabs,
     activeTabId,
     sessionSnapshots,

@@ -149,7 +149,7 @@ const zhCN = {
             },
             retryDialog: {
                 title: '重试消息',
-                message: '确定要重试此消息吗？这将删除此消息及后续消息，然后重新请求 AI 响应。',
+                message: '重新生成此消息的新版本？当前回答将保留，生成后可在多个版本间切换。',
                 checkpointHint: '检测到此消息前有工具执行的备份，您可以选择回档到工具执行前再重试。',
                 cancel: '取消',
                 retry: '重试',
@@ -2411,6 +2411,7 @@ const zhCN = {
                     read_skill: '读取技能',
                     toggle_skills: '切换技能',
                     subagents: '子代理',
+                    agent_send_message: '发送代理消息',
                 },
                 toolDescriptions: {
                     read_file: '读取工作区文件，支持文本和二进制文件，可指定行范围。',
@@ -2460,6 +2461,7 @@ const zhCN = {
                     read_skill: '读取技能的内容和说明。',
                     toggle_skills: '启用或禁用技能，控制后续请求使用的知识模块。',
                     subagents: '派生子代理执行任务，支持传入提示词和上下文。',
+                    agent_send_message: '向当前对话中的另一个代理（子代理）或主会话（主模型）异步发送消息。寻址方式二选一：targetRunId（当前对话中活跃的子代理运行 ID）或 targetAgentName（"main" 表示主会话）。同一线程回复超过 5 跳后投递被拒绝（防循环）；发送方身份自动识别，无法冒充。',
                 },
             },
             tokenCountSettings: {

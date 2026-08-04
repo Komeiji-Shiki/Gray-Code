@@ -23,8 +23,11 @@ export function isRealUserMessage(message: {
     isFunctionResponse?: boolean;
     isSummary?: boolean;
     isAutoSummary?: boolean;
+    isUserInput?: boolean;
+    source?: 'user' | 'background_task';
 }): boolean {
     return message.role === 'user'
+        && message.source !== 'background_task'
         && !message.isFunctionResponse
         && !message.isSummary
         && !message.isAutoSummary;

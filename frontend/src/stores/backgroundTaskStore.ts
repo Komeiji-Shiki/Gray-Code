@@ -81,7 +81,6 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
    */
   async function flushReports(): Promise<void> {
     if (flushing) return
-    // 同步检查会话忙闲；与 sendMessage 之间无 await，不存在竞态窗口
     if (chatStore.isStreaming || chatStore.isWaitingForResponse) return
 
     const currentId = chatStore.currentConversationId
@@ -94,6 +93,19 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
     flushing = true
     try {
+      // 前端 complete chunk 会先清理 isStreaming，但后端流此时可能还没走到 finally。
+      // 必须等待后端运行控制器确认空闲，避免新回执流中止仍在收尾的旧流。
+      if (currentId) {
+        await sendToExtension('chat.awaitConversationIdle', { conversationId: currentId })
+      }
+
+      // 等待期间可能切换了会话或启动了新流；重新判定，不能把旧会话报告发进新会话。
+      if (chatStore.currentConversationId !== currentId
+        || chatStore.isStreaming
+        || chatStore.isWaitingForResponse) {
+        return
+      }
+
       const report = buildCompletionReport(ready)
       // 先乐观标记，避免 await 期间 watcher 再次触发导致重复回执
       const next = { ...tasks.value }

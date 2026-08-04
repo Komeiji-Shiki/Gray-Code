@@ -18,11 +18,12 @@
  *   ① appendHistoryToGraph 是 fire-and-forget 且失败仅告警（写锁不可重入，promise 链排队；
  *      历史可能暂时领先于图，图同步失败由下次读图/写图自校验兜底）；
  *   ② startReroll 图变更（写锁内）与主历史截断（锁外）非原子（中间窗由 finishReroll 回填兜底）；
- *   ③ 消息删除路径（deleteMessagesInRange/deleteToMessage）只删主历史、不同步删图节点
- *      （TREE-09 软删已落地于 deleteBranchCandidate/restoreBranchCandidate/pruneDeletedNodes，
- *      但消息删除路径未接线，图可能残留已删消息节点）。
- *   保持降级为 warning 的决定不变（①②③ 仍存在）；下次复核时间点：消息删除路径接线图软删、
- *   TREE-13 流式互斥落地，或任何一次相关改动合入后。
+ *   ③ 消息删除路径（deleteMessagesInRange）只删主历史、不同步删图节点——这是**有意保留**的
+ *      （startReroll / 编辑分支截断用 deleteMessagesInRange，旧候选要保留进 sidecar）；
+ *      deleteToMessage（经 ChatFlowService 接线）与 deleteMessage（单条删除）已同步软删图节点
+ *      （决策 6：被删节点及后续子树标记 deleted + deletedAt，活跃尾回退）。
+ *   保持降级为 warning 的决定不变（①②③ 仍存在）；下次复核时间点：TREE-13 流式互斥落地，
+ *   或任何一次相关改动合入后。
  *
  * 设计约束：
  * - 只报告，不自动修复；输出结构化报告（每类问题计数 + 完整问题清单作示例）。

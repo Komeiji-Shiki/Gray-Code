@@ -1424,7 +1424,7 @@ export class ConversationManager {
         conversationId: string,
         role: 'user' | 'model' | 'system',
         parts: ContentPart[],
-        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary'>>
+        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source'>>
     ): Promise<void> {
         // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，
         // 防止上一回合滞留的 agent→main / 用户打断消息跨轮过期投递。
@@ -1432,7 +1432,8 @@ export class ConversationManager {
         if (isRealUserMessage({
             role,
             isFunctionResponse: metadata?.isFunctionResponse,
-            isSummary: metadata?.isSummary
+            isSummary: metadata?.isSummary,
+            source: metadata?.source
         })) {
             agentMailbox.clearMainSessionInbox(conversationId);
         }
@@ -1814,10 +1815,35 @@ export class ConversationManager {
         if (messageIndex < 0 || messageIndex >= history.length) {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
         }
+        // 决策 6：删除前捕获被删消息 id（删除后主历史不再包含它），供分支图同步锚定
+        const deletedMessageId = history[messageIndex]?.id ?? null;
         const nextHistory = await repository.mutateContents(contents => deleteLogicalMessage(contents, messageIndex));
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'message_deleted');
+
+        // 决策 6：删除后同步软删分支图——「被删节点及其后续整棵子树」（TREE-09 软删语义：
+        // 节点标记 deleted + deletedAt，不物理移除 sidecar；可经恢复接口还原）。
+        // 锁取舍：删除历史已随 mutateContents 释放会话写锁（仓储互斥执行器非重入，此时锁空闲），
+        // 因此直接 await 图同步（内部顺序再取会话写锁，非嵌套，无死锁）——单条删除是用户显式
+        // 操作，删除响应返回前保证图一致（避免响应后立即续写时 appendHistoryToGraph 挂在已被
+        // 硬删除的旧尾上）；这与 appendContents 的 fire-and-forget（彼处仍处于写锁内不可重入）
+        // 场景不同。图同步失败仅告警（主历史为唯一真源，图侧由下次读图/写图自校验兜底），
+        // 不阻断删除；无全局 BranchService（未注册/测试环境）时静默跳过。
+        if (deletedMessageId) {
+            const branchService = getGlobalBranchService();
+            if (branchService) {
+                try {
+                    await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                } catch (error) {
+                    log.warn('branch_delete_sync_failed', {
+                        conversationId,
+                        messageIndex,
+                        error: (error as Error)?.message ?? String(error),
+                    });
+                }
+            }
+        }
     }
 
     /**

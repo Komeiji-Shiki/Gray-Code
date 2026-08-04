@@ -21,6 +21,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   private controllers: Map<string, AbortController> = new Map();
   /** 总结请求专用取消器（仅取消总结 API，不中断主对话流） */
   private summaryControllers: Map<string, AbortController> = new Map();
+  /** 会话主流真正退出时唤醒等待者；由 delete() 在控制器引用仍匹配时统一释放。 */
+  private idleWaiters: Map<string, Set<() => void>> = new Map();
 
   /**
    * 创建并存储新的 AbortController
@@ -141,6 +143,28 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   }
 
   /**
+   * 等待指定会话的主流真正退出。
+   *
+   * 前端 complete chunk 只表示模型消息已经落盘，并不代表 StreamRequestHandler 的 finally
+   * 已执行。后台任务回执若只看前端 isStreaming，会在这个窗口创建新流并中止旧流。
+   * 本方法以控制器 Map 为唯一生命周期事实来源；空闲时立即返回，活跃时由 delete() 唤醒。
+   */
+  waitForIdle(conversationId: string): Promise<void> {
+    if (!this.controllers.has(conversationId)) {
+      return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+      let waiters = this.idleWaiters.get(conversationId);
+      if (!waiters) {
+        waiters = new Set();
+        this.idleWaiters.set(conversationId, waiters);
+      }
+      waiters.add(resolve);
+    });
+  }
+
+  /**
    * 修改原因：统一接口要求用同一方法读取运行时 AbortSignal。
    * 修改方式：直接委托给既有 get()。
    * 修改目的：后续共享运行时可以透过接口拿到 signal，而不依赖具体 controller 名称。
@@ -183,6 +207,13 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       return;
     }
     this.controllers.delete(conversationId);
+    const waiters = this.idleWaiters.get(conversationId);
+    if (waiters) {
+      this.idleWaiters.delete(conversationId);
+      for (const resolve of waiters) {
+        resolve();
+      }
+    }
   }
 
   /**
@@ -242,6 +273,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       }
     }
     this.controllers.clear();
+    for (const waiters of this.idleWaiters.values()) {
+      for (const resolve of waiters) {
+        resolve();
+      }
+    }
+    this.idleWaiters.clear();
 
     for (const [, controller] of this.summaryControllers) {
       controller.abort();

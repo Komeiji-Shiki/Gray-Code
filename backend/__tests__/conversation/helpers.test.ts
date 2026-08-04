@@ -10,9 +10,20 @@
 
 import {
     cleanFunctionResponseForAPI,
-    cleanContentForAPI
+    cleanContentForAPI,
+    isRealUserMessage
 } from '../../modules/conversation/helpers';
 import type { Content, ContentPart } from '../../modules/conversation/types';
+
+describe('isRealUserMessage', () => {
+    it('保留新旧真实用户消息语义，但排除后台任务回执', () => {
+        expect(isRealUserMessage({ role: 'user', isUserInput: true })).toBe(true);
+        expect(isRealUserMessage({ role: 'user' })).toBe(true);
+        expect(isRealUserMessage({ role: 'user', source: 'background_task' })).toBe(false);
+        expect(isRealUserMessage({ role: 'user', isFunctionResponse: true })).toBe(false);
+        expect(isRealUserMessage({ role: 'user', isSummary: true })).toBe(false);
+    });
+});
 
 describe('cleanFunctionResponseForAPI', () => {
     it('剥离顶层 agentInbox（A-COMM 信箱消息，禁止历史重放）', () => {

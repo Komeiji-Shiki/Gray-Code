@@ -22,6 +22,7 @@
 
 import type { Content } from '../../../conversation/types';
 import { CONVERSATION_CONTEXT_TRIM_STATE_KEY } from '../../../conversation/types';
+import { isRealUserMessage } from '../../../conversation/helpers';
 import type { ConversationManager, GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { PromptManager } from '../../../prompt';
 import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
@@ -181,7 +182,7 @@ export class ContextTrimService {
      */
     private isLegalTrimStart(history: Content[], index: number): boolean {
         const message = history[index];
-        return !!message && message.role === 'user' && !message.isFunctionResponse;
+        return !!message && isRealUserMessage(message);
     }
 
     private collectLegalTrimStartIndices(history: Content[], minimumStartIndex: number): number[] {
@@ -360,8 +361,9 @@ export class ContextTrimService {
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
             
-            if (message.role === 'user' && !message.isFunctionResponse) {
-                // 找到一个非函数响应的用户消息，这是一个新回合的开始
+            if (isRealUserMessage(message)) {
+                // 只有真实用户输入才开始新回合。后台任务回执是旧任务的异步延续，
+                // 若把它当新回合，超大工具回合会在裁剪时被整体丢弃。
                 if (currentRoundStart !== -1) {
                     // 保存上一个回合
                     rounds.push({
@@ -732,7 +734,7 @@ export class ContextTrimService {
         let lastNonFunctionResponseUserIndex = -1;
         for (let i = fullHistory.length - 1; i >= 0; i--) {
             const message = fullHistory[i];
-            if (message.role === 'user' && !message.isFunctionResponse) {
+            if (isRealUserMessage(message)) {
                 lastNonFunctionResponseUserIndex = i;
                 break;
             }
@@ -763,7 +765,7 @@ export class ContextTrimService {
         const roundStartIndices: number[] = [];
         for (let i = 0; i < fullHistory.length; i++) {
             const message = fullHistory[i];
-            if (message.role === 'user' && !message.isFunctionResponse) {
+            if (isRealUserMessage(message)) {
                 roundStartIndices.push(i);
             }
         }
@@ -1070,8 +1072,8 @@ export class ContextTrimService {
             const message = fullHistory[i];
             
             if (message.role === 'user') {
-                // 检测新回合开始（非函数响应的用户消息）
-                if (!message.isFunctionResponse) {
+                // 只有真实用户输入才开始新回合；functionResponse、总结和后台任务回执都属于当前回合。
+                if (isRealUserMessage(message)) {
                     // 保存上一个回合的信息
                     if (currentRoundStartIndex !== -1) {
                         roundTokenInfos.push({

@@ -5,7 +5,7 @@
  */
 
 import type { Message, Attachment, CheckpointRecord, CheckpointManifest } from '../../types'
-import type { ChatStoreState, AttachmentData } from './types'
+import type { ChatStoreState } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
@@ -320,51 +320,16 @@ export async function restoreAndRetry(
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
 
-    // 3. 删除该消息及后续的本地消息和检查点
+    // 3. 本地截断窗口（决策 7：旧回答由后端 startReroll 保留进分支图 sidecar，不再破坏性删除）
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
     rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
 
-    // 4. 删除后端的消息；失败必须中止重试，否则后端历史截断失败时，
-    //    重试生成的消息会追加在旧消息之后，造成历史重复（CP-11）
-    let deleteFailed = false
-    try {
-      const resp = await sendToExtension<any>('deleteMessage', {
-        conversationId: originConvId,
-        targetIndex: backendIndex,
-        preserveCheckpointId: checkpointId
-      })
-      if (!resp?.success) {
-        deleteFailed = true
-        console.error('[checkpointActions] restoreAndRetry: backend deleteMessage returned error:', resp)
-      }
-    } catch (err) {
-      deleteFailed = true
-      console.error('Failed to delete messages from backend:', err)
-    }
-    if (deleteFailed) {
-      if (validateSessionIdentity(state, originConvId)) {
-        state.error.value = {
-          code: 'DELETE_MESSAGE_ERROR',
-          message: '回档后删除旧消息失败，已中止重试。请刷新对话后重试。'
-        }
-        // 本地窗口已截断而后端历史未删：重新加载历史 + 检查点恢复一致（CP-11 / M-2）
-        try {
-          await loadHistory(state)
-          await loadCheckpoints(state)
-        } catch (reloadErr) {
-          console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
-        }
-      }
-      state.isLoading.value = false
-      return
-    }
-
     // 再次校验归属
     if (!validateSessionIdentity(state, originConvId)) return
 
-    // 5. 开始流式重试
+    // 4. 开始流式 reroll
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
 
@@ -386,23 +351,39 @@ export async function restoreAndRetry(
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
 
-    // 6. 调用后端重试
+    // 置位：流结束（complete/error/cancelled）后刷新分支图，BranchSwitcherBar 显示候选切换器
+    state._pendingBranchRefreshAfterStream.value = originConvId
+
+    // 5. 调用后端 reroll（决策 7：旧分支保留，可切换回）
     const modelOverride = resolveConversationModelOverride(state)
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    await sendToExtension('chat.rerollStream', {
       conversationId: originConvId,
+      // 目标 assistant 消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
+      assistantNodeId: targetMessageId,
       configId: state.configId.value,
       modelOverride,
-      streamId
+      streamId,
+      promptModeId: state.currentPromptModeId.value
     })
 
   } catch (err: any) {
-    if (state.isStreaming.value && validateSessionIdentity(state, originConvId)) {
+    // 本次 reroll 已中止：无论会话是否切换，先复位分支图刷新标记，避免残留误消费
+    state._pendingBranchRefreshAfterStream.value = null
+    if (validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_RETRY_ERROR',
         message: err.message || '回档并重试失败'
+      }
+      // reroll 流启动失败：本地窗口已截断而后端主历史可能未截断——
+      // 重载最后一页 + 检查点恢复前后端一致，并复位流式状态与分支图刷新标记
+      try {
+        await loadHistory(state)
+        await loadCheckpoints(state)
+      } catch (reloadErr) {
+        console.error('[checkpointActions] Failed to reload history after reroll start failure:', reloadErr)
       }
       state.streamingMessageId.value = null
       state.isStreaming.value = false
@@ -541,7 +522,8 @@ export async function restoreAndDelete(
 /**
  * 回档并编辑
  *
- * 先恢复到指定检查点，然后编辑消息并重试
+ * 先恢复到指定检查点，然后编辑消息并创建编辑候选
+ * （TREE-03/决策 7：走 chat.editBranchStream，旧分支保留，不覆盖原消息）。
  *
  * @param messageIndex allMessages 中的索引
  * @param newContent 新的消息内容
@@ -587,9 +569,6 @@ export async function restoreAndEdit(
   state.error.value = null
   state.isLoading.value = true
 
-  // 计算后端索引（在修改数组之前）
-  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-  
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
     const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
@@ -611,22 +590,36 @@ export async function restoreAndEdit(
       return
     }
     if (!restoreResult.success) {
-      state.error.value = {
-        code: 'RESTORE_ERROR',
-        message: restoreResult.error || '恢复检查点失败'
+      // R3-#13（编辑同款）：await restoreCheckpoint 期间会话可能已切换，错误只写回原会话
+      if (validateSessionIdentity(state, originConvId)) {
+        state.error.value = {
+          code: 'RESTORE_ERROR',
+          message: restoreResult.error || '恢复检查点失败'
+        }
       }
       state.isLoading.value = false
       return
     }
-    
+
+    // R3-#13（编辑同款）：await restoreCheckpoint 期间数组可能已变化（如用户发送了新消息），
+    // 按 id 重定位目标后重算索引；目标消息已不存在时中止（不写本地窗口）。
+    const targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+    if (targetIndex === -1) {
+      state.isLoading.value = false
+      return
+    }
+
+    // 计算后端索引（在修改数组之前）
+    const backendMessageIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+
     // 2. 更新本地消息内容和附件
-    const targetMessage = state.allMessages.value[messageIndex]
+    const targetMessage = state.allMessages.value[targetIndex]
     targetMessage.content = newContent
     targetMessage.parts = [{ text: newContent }]
     targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
     
     // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+    state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
     rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendMessageIndex, checkpointId)
     setTotalMessagesFromWindow(state)
@@ -652,57 +645,49 @@ export async function restoreAndEdit(
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
-    
-    // 6. 准备附件数据（序列化为纯对象）
-    const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
-      ? attachments.map(att => ({
-          id: att.id,
-          name: att.name,
-          type: att.type,
-          size: att.size,
-          mimeType: att.mimeType,
-          data: att.data || '',
-          thumbnail: att.thumbnail
-        }))
-      : undefined
-    
-    // 7. 调用后端编辑并重试
+
+    // 置位：流结束（complete/error/cancelled）后刷新分支图，BranchSwitcherBar 显示候选切换器
+    state._pendingBranchRefreshAfterStream.value = originConvId
+
+    // 6. 调用后端编辑分支（TREE-03/决策 7：创建编辑候选，旧分支保留，不覆盖原消息）。
+    //    注意：chat.editBranchStream 无附件字段（后端 EditBranchRequestData 仅文本 parts），
+    //    附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
     const modelOverride = resolveConversationModelOverride(state)
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('editAndRetryStream', {
+    await sendToExtension('chat.editBranchStream', {
       conversationId: originConvId,
-      messageIndex: backendMessageIndex,
-      preserveCheckpointId: checkpointId,
-      newMessage: newContent,
-      attachments: attachmentData,
+      // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
+      userNodeId: targetMessageId,
+      newText: newContent,
       configId: state.configId.value,
       modelOverride,
-      streamId
+      streamId,
+      promptModeId: state.currentPromptModeId.value
     })
-    
+
   } catch (err: any) {
-    // 会话已切换时不得污染新会话的错误/流式状态（H1/M2）
-    if (state.isStreaming.value && validateSessionIdentity(state, originConvId)) {
+    // 本次编辑分支流已中止：无论会话是否切换，先复位分支图刷新标记，避免残留误消费
+    state._pendingBranchRefreshAfterStream.value = null
+    if (validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_EDIT_ERROR',
         message: err.message || '回档并编辑失败'
+      }
+      // 编辑分支流启动失败：本地窗口已截断改写而后端主历史可能未截断——
+      // 重载历史 + 检查点恢复前后端一致，并复位流式状态与分支图刷新标记
+      // （与 restoreAndRetry 的 reroll 模式一致）
+      try {
+        await loadHistory(state)
+        await loadCheckpoints(state)
+      } catch (reloadErr) {
+        console.error('[checkpointActions] Failed to reload after restoreAndEdit failure:', reloadErr)
       }
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
-      // M-9：本地已截断窗口并改写消息内容，而后端历史未变：
-      // 会话未切换时重载历史 + 检查点恢复前后端一致，避免幽灵不一致状态
-      if (validateSessionIdentity(state, originConvId)) {
-        try {
-          await loadHistory(state)
-          await loadCheckpoints(state)
-        } catch (reloadErr) {
-          console.error('[checkpointActions] Failed to reload after restoreAndEdit failure:', reloadErr)
-        }
-      }
     }
   } finally {
     state.isLoading.value = false

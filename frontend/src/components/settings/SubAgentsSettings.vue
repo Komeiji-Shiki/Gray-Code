@@ -14,6 +14,7 @@ import { CustomSelect, CustomCheckbox, ConfirmDialog, type SelectOption } from '
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
+import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 
 const { t } = useI18n()
 
@@ -779,9 +780,9 @@ onMounted(async () => {
                 <span class="tool-count">{{ builtinTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item" :title="tool.description">
+                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
                   <div class="tool-info">
-                    <span class="tool-name">{{ tool.name }}</span>
+                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
@@ -799,9 +800,9 @@ onMounted(async () => {
                 <span class="tool-count">{{ mcpTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item" :title="tool.description">
+                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
                   <div class="tool-info">
-                    <span class="tool-name">{{ tool.name }}</span>
+                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
