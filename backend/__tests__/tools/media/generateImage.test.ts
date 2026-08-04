@@ -19,7 +19,12 @@ const mockCreateProxyFetch = createProxyFetch as jest.Mock;
 
 beforeEach(() => {
     mockCreateProxyFetch.mockReset();
-    (vscode.workspace as any).workspaceFolders = [];
+    // 单工作区：媒体工具要求输出路径位于工作区内（pathGuard 护栏），
+    // 空工作区会让 ensureMediaPathsSafe 直接拒绝
+    (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('C:/ws'), name: 'ws', index: 0 }
+    ];
+    (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ size: 1024 });
 });
 
 describe('generate_image 单张模式参数缺失', () => {
@@ -37,7 +42,7 @@ describe('generate_image 单张模式参数缺失', () => {
     it('配置校验失败路径（无 API Key）同样注销任务', async () => {
         const tool = createGenerateImageTool();
         const result = await tool.handler(
-            { prompt: 'cat', output_path: 'C:/out/cat.png' },
+            { prompt: 'cat', output_path: 'C:/ws/out/cat.png' },
             { toolId: 't-no-apikey' } as any
         );
         expect(result.success).toBe(false);
@@ -53,7 +58,7 @@ describe('generate_image isCancelled 判定', () => {
         });
         const tool = createGenerateImageTool();
         const result = await tool.handler(
-            { prompt: 'a cat', output_path: 'C:/out/cat.png' },
+            { prompt: 'a cat', output_path: 'C:/ws/out/cat.png' },
             { config: { apiKey: 'test-key' }, toolId: 't-fetch-fail' } as any
         );
         expect(result.success).toBe(false);
@@ -71,7 +76,7 @@ describe('generate_image isCancelled 判定', () => {
         });
         const tool = createGenerateImageTool();
         const result = await tool.handler(
-            { prompt: 'a cat', output_path: 'C:/out/cat.png' },
+            { prompt: 'a cat', output_path: 'C:/ws/out/cat.png' },
             { config: { apiKey: 'test-key' }, toolId: 't-abort' } as any
         );
         expect(result.cancelled).toBe(true);

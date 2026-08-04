@@ -53,10 +53,8 @@ esbuild.config.js
 docs/**
 *.plan.md
 AUDIT_REMEDIATION.md
-HEAD
 PLAN.md
 .github/**
-CHANGELOG.mdpstream/main
 
 # 前端源文件（只需要 dist）
 frontend/src/**
