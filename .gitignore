@@ -66,3 +66,13 @@ docs/
 electron-app/release/
 electron-app/*.tar.gz
 
+
+# dev handover traces (removed from the repo).graycode
+electron-app/PROGRESS.md
+
+# dev handover traces (removed from the repo)
+.graycode
+electron-app/PROGRESS.md
+
+# portable instance data (dev runs write here)
+electron-app/data/
