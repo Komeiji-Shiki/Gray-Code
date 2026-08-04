@@ -62,6 +62,23 @@ export class ConfigManager {
     // ========== CRUD 操作 ==========
     
     /**
+     * 模型回退：未显式选择模型但配置了模型列表时，解析为列表第一个模型。
+     *
+     * 修复原因：渠道只配置了 models 列表而 model 为空时，前端发送按钮因
+     * 「未选择模型」被禁用（currentModel 为空），且请求侧也没有可用模型。
+     * 修复方式：创建 / 更新 / 读取三个路径统一解析，读取路径只作用于返回的副本。
+     */
+    private resolveModel(config: ChannelConfig): ChannelConfig {
+        const anyConfig = config as any;
+        const models = Array.isArray(anyConfig.models) ? anyConfig.models : [];
+        const model = anyConfig.model;
+        if (models.length > 0 && (typeof model !== 'string' || model.trim().length === 0)) {
+            anyConfig.model = models[0].id;
+        }
+        return config;
+    }
+    
+    /**
      * 获取指定类型的默认配置
      *
      * @param type 渠道类型
@@ -233,6 +250,8 @@ export class ConfigManager {
             updatedAt: now
         } as ChannelConfig;
         
+        this.resolveModel(config);
+        
         // 保存（不验证配置）
         await this.storageAdapter.save(config);
         this.configCache.set(id, config);
@@ -250,7 +269,9 @@ export class ConfigManager {
         await this.ensureLoaded();
         
         const config = this.configCache.get(configId);
-        return config ? JSON.parse(JSON.stringify(config)) : null;
+        if (!config) return null;
+        // 深拷贝后再解析模型，避免污染缓存（models[0] 回退只对读取方生效）
+        return this.resolveModel(JSON.parse(JSON.stringify(config)) as ChannelConfig);
     }
     
     /**
@@ -286,6 +307,9 @@ export class ConfigManager {
             createdAt: existing.createdAt,  // 保持创建时间
             updatedAt: Date.now()  // 更新时间
         } as ChannelConfig;
+
+        // 模型回退：model 为空但 models 非空时自动选中列表第一个（自我修复历史坏数据）
+        this.resolveModel(updated);
         
         // 保存（不验证配置）
         await this.storageAdapter.save(updated);

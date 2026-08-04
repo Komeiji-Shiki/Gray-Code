@@ -19,6 +19,26 @@ import { __setWindowFocused } from './vscode-shim';
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 
+// 便携式多实例：所有数据（会话/设置/工作区/记忆/用量/缓存）默认写入应用自身目录下的 data/，
+// 不写入系统路径（AppData / Program Files）。复制一份应用目录即可得到互不影响的独立实例。
+// 显式覆盖：`--user-data-dir <path>` 命令行参数或 `GRAYCODE_USER_DATA_DIR` 环境变量优先。
+// 必须在任何 app.getPath('userData') 使用之前调用 app.setPath，因此放在模块顶层。
+function resolveUserDataDir(): string {
+  const cliIndex = process.argv.indexOf('--user-data-dir');
+  const cliDir = cliIndex > -1 ? process.argv[cliIndex + 1] : undefined;
+  const explicit = process.env.GRAYCODE_USER_DATA_DIR || cliDir;
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  if (app.isPackaged) {
+    // 打包版：数据目录与可执行文件同级（win-unpacked/GrayCode.exe → win-unpacked/data）
+    return path.join(path.dirname(app.getPath('exe')), 'data');
+  }
+  // 开发版（electron .）：数据目录在 electron-app/data（已加入 .gitignore）
+  return path.join(path.resolve(__dirname, '..'), 'data');
+}
+app.setPath('userData', resolveUserDataDir());
+
 Logger.setLevel(LogLevel.INFO);
 
 let mainWindow: BrowserWindow | null = null;
@@ -585,6 +605,60 @@ function createWindow(): void {
               await sleep(300);
               const stillOpen = !!document.querySelector('.monitor-panel:not([style*="display: none"])');
               return { found: true, header: !!(monitorRoot.querySelector('.monitor-header') || monitorRoot.querySelector('h1')), closedAfterCloseBtn: !stillOpen };
+            });
+
+            // send from empty state: with the welcome panel (recent conversations
+            // bar) visible and no conversation open, typing + pressing send must
+            // create a conversation and render the user message card
+            await step('sendFromEmpty', async () => {
+              const back = document.querySelector('.settings-close-btn');
+              if (back) back.click();
+              await sleep(300);
+              const storeProbe = () => {
+                const app = document.querySelector('#app')?.__vue_app__;
+                const pinia = app?.config?.globalProperties?.$pinia;
+                const chat = pinia?._s?.get('chat');
+                if (!chat) return null;
+                return {
+                  allMessages: chat.allMessages?.length,
+                  isWaitingForResponse: chat.isWaitingForResponse,
+                  isStreaming: chat.isStreaming,
+                  error: chat.error ? (chat.error.message || JSON.stringify(chat.error)).slice(0, 200) : null,
+                  currentConversationId: chat.currentConversationId,
+                  configId: chat.configId,
+                  selectedModelId: chat.selectedModelId,
+                  storeCurrentConfig: chat.currentConfig ? { id: chat.currentConfig.id, model: chat.currentConfig.model, name: chat.currentConfig.name } : null,
+                  hasPendingToolConfirmation: chat.hasPendingToolConfirmation
+                };
+              };
+              const before = storeProbe();
+              const editor = document.querySelector('.input-box [contenteditable="true"], .input-area [contenteditable="true"], [contenteditable="true"]');
+              if (!editor) return { missing: 'no editor', before };
+              editor.focus();
+              document.execCommand('insertText', false, 'send smoke test');
+              await sleep(300);
+              const editorText = (editor.innerText || '').trim();
+              const sendBtn = [...document.querySelectorAll('button')].find(b => !!b.querySelector('.codicon-send') || /发送|Send/i.test(b.innerText || ''));
+              const btnDisabled = sendBtn ? sendBtn.disabled : null;
+              if (sendBtn) sendBtn.click();
+              let userCard = null;
+              for (let i = 0; i < 150 && !userCard; i++) {
+                await sleep(100);
+                userCard = document.querySelector('.message-list .user-message');
+              }
+              const after = storeProbe();
+              const errorBox = document.querySelector('.error-panel, .retry-panel, [class*="error-box"]');
+              return {
+                found: !!userCard,
+                before,
+                after,
+                editorText,
+                btnDisabled,
+                welcomeGone: !document.querySelector('.welcome-panel'),
+                userText: userCard ? (userCard.innerText || '').slice(0, 60) : null,
+                errorVisible: !!errorBox,
+                errorText: errorBox ? (errorBox.innerText || '').slice(0, 120) : null
+              };
             });
 
             // code-change viewer: the host.openDiffPreview command (vscode.diff

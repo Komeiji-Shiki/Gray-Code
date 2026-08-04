@@ -3,6 +3,10 @@
 
 ## [1.4.0] - 2026-08-04
 
+### Fixed
+  - 修复存在最近对话栏时无法发送消息：渠道只配置 `models` 列表而未选择 `model`（`model` 为空）时，前端发送按钮因 `currentModel` 为空被禁用；`ConfigManager` 创建/更新/读取三路径统一回退 `models[0]`（读取路径只作用于副本、更新路径自我修复历史坏数据），前端 `loadCurrentConfig` 与输入区同步兜底，新增 6 个后端回归用例
+  - 桌面版便携式多实例：所有数据默认写入应用目录下 `data/`（不写 AppData/Program Files），复制应用目录即得互不影响实例，`--user-data-dir` 可显式覆盖（详见 `electron-app/CHANGELOG.md`）
+
 ### Added
   - 桌面版变更查看面板（内嵌 GitHub 风格）：全屏 Diff 模态框改为主窗口右侧内嵌抽屉（非独立窗口），`vscode.diff` 拦截 → `host.openDiffPreview` 命令驱动打开，左侧文件列表（状态 + ±统计）与右侧统一 diff（hunk 头/双行号/增删着色），单文件与全部接受/拒绝、删除警戒提示、`diff.statusChanged` 状态同步；accept/reject 复用同一协议（详见 `electron-app/CHANGELOG.md`）
   - 行级 diff 计算抽取为共享工具 `frontend/src/utils/diffLines.ts`（LCS 匹配 + hunk 分组 + 统计，超大文件 DP 保护），write_file 工具卡删除重复实现并复用，新增 12 个 Vitest 用例
