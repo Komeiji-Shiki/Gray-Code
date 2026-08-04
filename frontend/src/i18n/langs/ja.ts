@@ -211,7 +211,13 @@ const ja: LanguageMessages = {
         tabs: {
             newChat: '新しい会話',
             newTab: '新しいタブ',
-            closeTab: 'タブを閉じる'
+            closeTab: 'タブを閉じる',
+            appTitle: 'GrayCode',
+            toggleLanguage: '言語を切り替える',
+            settings: '設定',
+            monitor: 'SubAgent モニター',
+            monitorOpen: 'SubAgent モニターパネルを開く',
+            monitorClose: 'SubAgent モニターパネルを閉じる'
         },
 
         usage: {
@@ -486,6 +492,13 @@ const ja: LanguageMessages = {
                 }
             },
             emptyResponse: '（モデルの返答が空です）',
+            tailVersion: {
+                title: '回答バージョン',
+                current: '最新',
+                prev: '前のバージョン',
+                next: '次のバージョン',
+                switching: '切替中…'
+            },
             stats: {
                 responseDuration: '応答時間',
                 tokenRate: 'トークン速度'
@@ -1627,7 +1640,6 @@ const ja: LanguageMessages = {
                     exportAll: 'すべてのモードをエクスポート',
                     exportSuccess: 'エクスポートしてクリップボードにコピーしました',
                     exportDownloadOnly: 'ファイルをエクスポートしましたが、クリップボードへのコピーに失敗しました',
-                    exportFailed: 'エクスポートに失敗しました',
                     import: 'モードをインポート',
                     importDescription: 'GrayCode プロンプトモード JSON を貼り付けるか、ファイルから読み込みます。インポート時は新しい ID が生成され、既存のモードは上書きされません。',
                     importFromFile: 'ファイルから読み込み',
@@ -1659,7 +1671,7 @@ const ja: LanguageMessages = {
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
                     disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。',
                     strategyTitle: '動的コンテキスト戦略',
-                    strategySingle: '単一の動的コンテキスト',
+                    strategySingle: '単一の動的コンテキスト（現在の動作）',
                     strategyPreserve: '古い動的コンテキストを元の位置に保持',
                     strategyDescription: '単一モードは既存の動作を維持します。保持モードでは、キャッシュ済みの古い動的コンテキストを元のターン位置に戻し、新しいコンテキストを新しいメッセージの前に挿入します。',
                     strategyPreserveWarning: '保持モードはリクエストのトークン数を増やします。保持するコンテキストが多いほど、コンテキスト裁剪や要約が発生しやすくなります。'
@@ -2460,6 +2472,7 @@ const ja: LanguageMessages = {
                 title: 'SubAgent Monitor',
                 subtitle: 'SubAgent のシステムプロンプト、コンテキスト、AI 出力、思考過程、ツール呼び出しをチャット形式で表示します。',
                 runCount: '{count} 件の実行',
+                closePanel: 'パネルを閉じる',
                 empty: 'SubAgent の会話記録はまだありません。',
                 defaultAgentName: 'Sub-Agent',
                 loadedCount: '{loaded} / {total} 件を読み込み済み',
@@ -2483,6 +2496,23 @@ const ja: LanguageMessages = {
                     cancelled: 'キャンセル済み',
                     interrupted: '中断'
                 }
+            }
+        },
+        diff: {
+            title: '変更',
+            fileCount: '{count} ファイル',
+            close: 'パネルを閉じる',
+            empty: '処理待ちの変更はありません',
+            noChange: 'このファイルに内容の差分はありません',
+            accept: '承認',
+            reject: '拒否',
+            acceptAll: 'すべて承認',
+            rejectAll: 'すべて拒否',
+            actionFailed: '操作に失敗しました',
+            status: {
+                pending: '処理待ち',
+                accepted: '承認済み',
+                rejected: '拒否済み'
             }
         },
         channels: {

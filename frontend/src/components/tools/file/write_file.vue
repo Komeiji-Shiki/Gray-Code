@@ -19,6 +19,8 @@ import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { generateId } from '@/utils/format'
+import { computeDiffLines } from '@/utils/diffLines'
+import type { DiffLine } from '@/utils/diffLines'
 import { useChatStore } from '@/stores'
 import * as configService from '@/services/config'
 
@@ -490,160 +492,8 @@ function getActionLabel(action?: string): string {
 
 // ============ Diff 对比相关 ============
 
-// 计算差异行
-interface DiffLine {
-  type: 'unchanged' | 'deleted' | 'added'
-  content: string
-  oldLineNum?: number
-  newLineNum?: number
-}
-
-/**
- * 计算 diff 行
- */
-function computeDiffLines(originalContent: string, newContent: string): DiffLine[] {
-  const oldLines = originalContent.split('\n')
-  const newLines = newContent.split('\n')
-  const result: DiffLine[] = []
-  
-  // 使用简单的最长公共子序列算法找出差异
-  const lcs = computeLCS(oldLines, newLines)
-  
-  let oldIdx = 0
-  let newIdx = 0
-  let oldLineNum = 1
-  let newLineNum = 1
-  
-  for (const match of lcs) {
-    // 添加删除的行
-    while (oldIdx < match.oldIndex) {
-      result.push({
-        type: 'deleted',
-        content: oldLines[oldIdx],
-        oldLineNum: oldLineNum++
-      })
-      oldIdx++
-    }
-    
-    // 添加新增的行
-    while (newIdx < match.newIndex) {
-      result.push({
-        type: 'added',
-        content: newLines[newIdx],
-        newLineNum: newLineNum++
-      })
-      newIdx++
-    }
-    
-    // 添加未更改的行
-    result.push({
-      type: 'unchanged',
-      content: oldLines[oldIdx],
-      oldLineNum: oldLineNum++,
-      newLineNum: newLineNum++
-    })
-    oldIdx++
-    newIdx++
-  }
-  
-  // 处理剩余的删除行
-  while (oldIdx < oldLines.length) {
-    result.push({
-      type: 'deleted',
-      content: oldLines[oldIdx],
-      oldLineNum: oldLineNum++
-    })
-    oldIdx++
-  }
-  
-  // 处理剩余的新增行
-  while (newIdx < newLines.length) {
-    result.push({
-      type: 'added',
-      content: newLines[newIdx],
-      newLineNum: newLineNum++
-    })
-    newIdx++
-  }
-  
-  return result
-}
-
-// 计算最长公共子序列
-interface LCSMatch {
-  oldIndex: number
-  newIndex: number
-}
-
-function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
-  const m = oldLines.length
-  const n = newLines.length
-
-  // 剥离公共前缀：这些行必然匹配，无需进入 DP
-  let prefixLen = 0
-  while (prefixLen < m && prefixLen < n && oldLines[prefixLen] === newLines[prefixLen]) {
-    prefixLen++
-  }
-
-  // 剥离公共后缀
-  let suffixLen = 0
-  while (
-    suffixLen < m - prefixLen &&
-    suffixLen < n - prefixLen &&
-    oldLines[m - 1 - suffixLen] === newLines[n - 1 - suffixLen]
-  ) {
-    suffixLen++
-  }
-
-  const coreOld = oldLines.slice(prefixLen, m - suffixLen)
-  const coreNew = newLines.slice(prefixLen, n - suffixLen)
-  const coreM = coreOld.length
-  const coreN = coreNew.length
-
-  // 核心区域 DP：面积过大时跳过（数千行 diff 的 O(m×n) 会占用数百 MB 内存并阻塞主线程）
-  const coreMatches: LCSMatch[] = []
-  if (coreM > 0 && coreN > 0 && coreM * coreN <= 1_000_000) {
-    // 创建 DP 表
-    const dp: number[][] = Array(coreM + 1).fill(null).map(() => Array(coreN + 1).fill(0))
-
-    for (let i = 1; i <= coreM; i++) {
-      for (let j = 1; j <= coreN; j++) {
-        if (coreOld[i - 1] === coreNew[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1] + 1
-        } else {
-          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
-        }
-      }
-    }
-
-    // 回溯找出匹配的行（索引需加回 prefixLen 偏移）
-    let i = coreM, j = coreN
-    while (i > 0 && j > 0) {
-      if (coreOld[i - 1] === coreNew[j - 1]) {
-        coreMatches.unshift({ oldIndex: prefixLen + i - 1, newIndex: prefixLen + j - 1 })
-        i--
-        j--
-      } else if (dp[i - 1][j] > dp[i][j - 1]) {
-        i--
-      } else {
-        j--
-      }
-    }
-  }
-
-  // 前缀匹配（前缀中所有行都匹配）
-  const result: LCSMatch[] = []
-  for (let k = 0; k < prefixLen; k++) {
-    result.push({ oldIndex: k, newIndex: k })
-  }
-
-  // 后缀匹配回填：剥离前后缀时已确认匹配，按原始索引追加到核心匹配之后
-  for (let k = 0; k < suffixLen; k++) {
-    coreMatches.push({ oldIndex: m - suffixLen + k, newIndex: n - suffixLen + k })
-  }
-
-  return result.concat(coreMatches)
-}
+// 行级 diff 计算为公共工具（frontend/src/utils/diffLines.ts）：
+// 变更查看面板（DiffViewerPanel.vue）与工具卡片共用同一实现。
 
 // 获取行号宽度
 function getDiffLineNumWidth(diffContent: DiffContent): number {

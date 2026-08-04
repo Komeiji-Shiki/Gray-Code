@@ -1,0 +1,81 @@
+{
+  "name": "graycode-desktop",
+  "version": "1.3.1",
+  "description": "GrayCode standalone desktop app (Electron) - AI coding assistant without VS Code",
+  "author": {
+    "name": "Komeiji-Shiki",
+    "url": "https://github.com/Komeiji-Shiki/Gray-Code"
+  },
+  "homepage": "https://github.com/Komeiji-Shiki/Gray-Code",
+  "license": "MIT",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:all": "npm --prefix ../frontend run build && node patch-dist.mjs && node build.mjs",
+    "patch": "node patch-dist.mjs",
+    "start": "npm run build:all && electron .",
+    "dev": "electron .",
+    "e2e": "node build.mjs && cross-env GRAYCODE_E2E=1 electron .",
+    "smoke": "node build.mjs && cross-env GRAYCODE_UISMOKE=1 electron .",
+    "dist": "npm run build:all && electron-builder",
+    "dist:win": "npm run build:all && electron-builder --win",
+    "dist:mac": "npm run build:all && electron-builder --mac",
+    "dist:linux": "npm run build:all && electron-builder --linux"
+  },
+  "build": {
+    "appId": "dev.graycode.desktop",
+    "productName": "GrayCode",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      },
+      {
+        "from": "../resources",
+        "to": "resources"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "../resources/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "../resources/icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "../resources/icon.png",
+      "category": "Development"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "cross-env": "^7.0.3",
+    "electron": "latest",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.9.3"
+  }
+}

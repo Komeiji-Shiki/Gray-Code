@@ -23,6 +23,8 @@ import {
     MessageFilter,
     HistorySnapshot,
     ConversationStats,
+    ConversationTailVersion,
+    ConversationTailVersionInfo,
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorageAdapter } from './storage';
@@ -32,6 +34,11 @@ import { ConversationTranscriptRepository, type ITranscriptRepository } from './
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
+
+/**
+ * 适配器不支持 saveTailVersions 时，尾部版本回退存储在 custom 元数据的键名。
+ */
+const TAIL_VERSIONS_META_KEY = 'tailVersions';
 
 /**
  * 多模态能力（用于过滤历史中的多模态数据）
@@ -125,10 +132,66 @@ export interface CreateBranchConversationResult {
  * - 自动维护元数据
  * - 支持思考签名、函数调用等高级特性
  * - 可直接将历史发送给 Gemini API
- * - 无内存缓存，每次操作直接读写存储，确保数据一致性
+ * - 带内存缓存：历史/元数据按会话 LRU 缓存，所有写路径统一失效，
+ *   读取热路径（列表元数据、分页、API 历史）不再重复走磁盘
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {}
+
+    // ==================== 内存缓存 ====================
+
+    /** 会话历史 LRU（容量上限：超出按插入序淘汰最旧会话） */
+    private static readonly HISTORY_CACHE_CAPACITY = 24;
+    /** 会话元数据 LRU（容量上限：对话列表分页 + 打开标签页通常远小于此） */
+    private static readonly META_CACHE_CAPACITY = 256;
+
+    private readonly historyCache = new Map<string, ConversationHistory>();
+    private readonly metaCache = new Map<string, ConversationMetadata | null>();
+
+    private touchCache<T>(map: Map<string, T>, key: string, capacity: number): void {
+        const value = map.get(key);
+        if (value !== undefined) {
+            map.delete(key);
+            map.set(key, value);
+        }
+        if (map.size > capacity) {
+            const oldest = map.keys().next().value;
+            if (oldest !== undefined) {
+                map.delete(oldest);
+            }
+        }
+    }
+
+    /** 会话所有缓存统一失效（历史/元数据）；结构性变更后必须调用 */
+    private invalidateCaches(conversationId: string): void {
+        this.historyCache.delete(conversationId);
+        this.metaCache.delete(conversationId);
+    }
+
+    private cacheHistory(conversationId: string, history: ConversationHistory): void {
+        this.historyCache.set(conversationId, history);
+        this.touchCache(this.historyCache, conversationId, ConversationManager.HISTORY_CACHE_CAPACITY);
+    }
+
+    private cacheMetadata(conversationId: string, metadata: ConversationMetadata | null): void {
+        this.metaCache.set(conversationId, metadata);
+        this.touchCache(this.metaCache, conversationId, ConversationManager.META_CACHE_CAPACITY);
+    }
+
+    /** 供测试/诊断清理全部缓存 */
+    clearCaches(): void {
+        this.historyCache.clear();
+        this.metaCache.clear();
+    }
+
+    /**
+     * 元数据落盘并同步缓存：所有 ConversationManager 层级的 saveMetadata 都应走这里，
+     * 保证写后读命中缓存而不是重新走磁盘。
+     */
+    private async persistMetadata(meta: ConversationMetadata): Promise<void> {
+        await this.storage.saveMetadata(meta);
+        this.cacheMetadata(meta.id, meta);
+    }
 
     /**
      * 同一会话的 read-modify-write 串行队列（历史 mutate、自定义元数据等）。
@@ -178,7 +241,11 @@ export class ConversationManager {
         return new ConversationTranscriptRepository({
             loadContents: async () => await this.loadHistory(conversationId),
             saveContents: async contents => {
+                // 落盘后同步缓存：避免下一次读重新走磁盘；同时元数据（存储层 saveHistory 会刷新 updatedAt）
+                // 必须失效，否则对话列表排序会读到陈旧时间戳。
                 await this.storage.saveHistory(conversationId, contents);
+                this.cacheHistory(conversationId, contents);
+                this.metaCache.delete(conversationId);
                 await this.updateUsageIndex(conversationId, contents);
             }
         }, fn => this.withConversationWriteLock(conversationId, fn));
@@ -286,6 +353,8 @@ export class ConversationManager {
     }
 
     private async loadMetadataForWrite(conversationId: string): Promise<ConversationMetadata | null> {
+        // 写路径直接读磁盘：写链上的调用方随后会整体写回 meta，缓存在此处可能已过期，
+        // 而且写回后存储层（如 updatedAt 刷新）会改变内容，必须基于最新磁盘状态做读改写。
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {
             return result.value;
@@ -299,11 +368,17 @@ export class ConversationManager {
     }
 
     private async loadStoredMetadata(conversationId: string): Promise<ConversationMetadata | null> {
+        const cached = this.metaCache.get(conversationId);
+        if (cached !== undefined) {
+            return cached;
+        }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {
+            this.cacheMetadata(conversationId, result.value);
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
+            this.cacheMetadata(conversationId, null);
             return null;
         }
         throw new Error(
@@ -444,7 +519,9 @@ export class ConversationManager {
 
         await this.storage.saveHistory(conversationId, []);
         await this.updateUsageIndex(conversationId, []);
-        await this.storage.saveMetadata(meta);
+        await this.persistMetadata(meta);
+        // 新建会话的缓存种子：空历史 + 元数据，避免后续读取重复走磁盘
+        this.cacheHistory(conversationId, []);
     }
 
 
@@ -522,7 +599,8 @@ export class ConversationManager {
 
         await this.storage.saveHistory(targetConversationId, branchHistory);
         await this.updateUsageIndex(targetConversationId, branchHistory);
-        await this.storage.saveMetadata(meta);
+        await this.persistMetadata(meta);
+        this.cacheHistory(targetConversationId, branchHistory);
 
         return {
             conversationId: targetConversationId,
@@ -535,11 +613,180 @@ export class ConversationManager {
         };
     }
 
+    // ==================== 对话尾部版本（重roll树状分叉） ====================
+
+    /** 每会话尾部版本上限：超出时按创建时间淘汰最旧版本 */
+    private static readonly TAIL_VERSIONS_MAX = 10;
+
+    /** 尾部版本摘要：取尾部第一条非空文本的截断 */
+    private getTailPreview(tail: ConversationHistory, maxLength = 50): string | undefined {
+        for (const message of tail) {
+            if (!message.parts) continue;
+            const text = message.parts
+                .map(part => typeof part.text === 'string' ? part.text : '')
+                .join('')
+                .trim();
+            if (text) {
+                return text.slice(0, maxLength);
+            }
+        }
+        return undefined;
+    }
+
+    private toTailVersionInfo(version: ConversationTailVersion): ConversationTailVersionInfo {
+        return {
+            id: version.id,
+            branchIndex: version.branchIndex,
+            createdAt: version.createdAt,
+            preview: version.preview,
+            messageCount: version.messageCount
+        };
+    }
+
+    private async loadStoredTailVersions(conversationId: string): Promise<ConversationTailVersion[]> {
+        try {
+            if (this.storage.loadTailVersions) {
+                const versions = await this.storage.loadTailVersions(conversationId);
+                if (Array.isArray(versions)) return versions;
+            }
+        } catch (error) {
+            console.warn('[ConversationManager] loadTailVersions failed:', error);
+        }
+        // 适配器不支持时回退到自定义元数据
+        const custom = await this.getCustomMetadata(conversationId, TAIL_VERSIONS_META_KEY);
+        return Array.isArray(custom) ? custom as ConversationTailVersion[] : [];
+    }
+
+    private async persistTailVersions(conversationId: string, versions: ConversationTailVersion[]): Promise<void> {
+        if (this.storage.saveTailVersions) {
+            await this.storage.saveTailVersions(conversationId, versions);
+        } else {
+            await this.setCustomMetadata(conversationId, TAIL_VERSIONS_META_KEY, versions);
+        }
+    }
+
+    /**
+     * 保存当前对话尾部（从 branchIndex 到末尾）为一个版本。
+     *
+     * 用于「重新生成 / 切换版本」前保留当前答案：内容与已有版本完全一致时跳过。
+     */
+    async saveTailVersion(
+        conversationId: string,
+        branchIndex: number
+    ): Promise<{ saved: boolean; versionId?: string; versions: ConversationTailVersionInfo[] }> {
+        const index = Math.floor(branchIndex);
+        if (!Number.isFinite(index) || index < 0) {
+            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: branchIndex }));
+        }
+
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
+
+        if (index >= history.length) {
+            // 分支点之后没有内容，无需保存
+            return { saved: false, versions: await this.listTailVersions(conversationId) };
+        }
+
+        const tail = history.slice(index).map(message => {
+            // 存储层可能在截断后为消息附加 index 字段；版本保存/恢复时这些索引已失效，
+            // 必须剥离，避免恢复后污染 transcript（前端索引由 getMessagesPaged 重新计算）。
+            if ('index' in message) {
+                const { index: _index, ...rest } = message;
+                return rest as Content;
+            }
+            return message;
+        });
+        const versions = await this.loadStoredTailVersions(conversationId);
+
+        // 与已有版本完全一致时跳过（避免切换/重roll 时重复落盘）
+        const tailJson = JSON.stringify(tail);
+        const existing = versions.find(v => v.branchIndex === index && JSON.stringify(v.messages) === tailJson);
+        if (existing) {
+            return { saved: false, versionId: existing.id, versions: versions.map(v => this.toTailVersionInfo(v)) };
+        }
+
+        const now = Date.now();
+        const version: ConversationTailVersion = {
+            id: `ver_${now}_${Math.random().toString(36).slice(2, 8)}`,
+            branchIndex: index,
+            createdAt: now,
+            preview: this.getTailPreview(tail),
+            messageCount: tail.length,
+            messages: this.cloneJson(tail)
+        };
+        const next = [...versions, version];
+        // 容量上限：按创建时间保留最近 TAIL_VERSIONS_MAX 个
+        if (next.length > ConversationManager.TAIL_VERSIONS_MAX) {
+            next.sort((a, b) => a.createdAt - b.createdAt);
+            next.splice(0, next.length - ConversationManager.TAIL_VERSIONS_MAX);
+        }
+        await this.persistTailVersions(conversationId, next);
+        return {
+            saved: true,
+            versionId: version.id,
+            versions: next.map(v => this.toTailVersionInfo(v))
+        };
+    }
+
+    /**
+     * 列出对话的全部尾部版本摘要（不含消息内容）。
+     */
+    async listTailVersions(conversationId: string): Promise<ConversationTailVersionInfo[]> {
+        const versions = await this.loadStoredTailVersions(conversationId);
+        return versions.map(v => this.toTailVersionInfo(v));
+    }
+
+    /**
+     * 切换到某个已保存的尾部版本。
+     *
+     * 切换前会把当前活跃尾部先保存为一个版本（内容重复时跳过），因此任何
+     * 版本都不会丢失；随后将 transcript 截断到 branchIndex 并恢复目标版本尾部。
+     */
+    async restoreTailVersion(
+        conversationId: string,
+        branchIndex: number,
+        versionId: string
+    ): Promise<{ versions: ConversationTailVersionInfo[] }> {
+        const index = Math.floor(branchIndex);
+        if (!Number.isFinite(index) || index < 0) {
+            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: branchIndex }));
+        }
+        if (!versionId) {
+            throw new Error('versionId is required');
+        }
+
+        // 1. 先保存当前尾部（防止切换丢失当前答案）
+        await this.saveTailVersion(conversationId, index);
+
+        const versions = await this.loadStoredTailVersions(conversationId);
+        const target = versions.find(v => v.id === versionId && v.branchIndex === index);
+        if (!target) {
+            throw new Error(`Tail version not found: ${versionId}`);
+        }
+
+        // 2. 截断到分支点并恢复目标尾部
+        const repository = this.getTranscriptRepository(conversationId);
+        await repository.mutateContents(history => {
+            if (index >= history.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index }));
+            }
+            history.splice(index);
+            history.push(...this.cloneJson(target.messages));
+            return history.slice();
+        });
+        await this.invalidateContextManagementState(conversationId, 'tail_version_restored');
+
+        return {
+            versions: versions.map(v => this.toTailVersionInfo(v))
+        };
+    }
+
     /**
      * 删除对话
      */
     async deleteConversation(conversationId: string): Promise<void> {
         await this.storage.deleteHistory(conversationId);
+        this.invalidateCaches(conversationId);
         // 用量索引随对话删除（失败忽略：统计侧按 missing 自然跳过）
         if (this.usageIndexStore) {
             try {
@@ -579,11 +826,23 @@ export class ConversationManager {
     }
 
     /**
-     * 加载对话历史（直接从存储读取）
+     * 加载对话历史（缓存优先，避免热路径重复磁盘 IO）
+     *
+     * 缓存契约：
+     * - 缓存存的是「最近一次持久化的 transcript 快照」的引用，读路径共享同一份对象；
+     * - 所有写路径（TranscriptRepository.saveContents、createConversation、
+     *   createBranchConversation、deleteConversation）必须调用 invalidateCaches 或重新填充缓存，
+     *   否则旧快照会泄漏给下一次读取；
+     * - 读路径拿到引用后禁止原地修改（如需要变更必须走仓储写入口，见 getTranscriptRepository）。
      */
     private async loadHistory(conversationId: string): Promise<ConversationHistory> {
+        const cached = this.historyCache.get(conversationId);
+        if (cached) {
+            return cached;
+        }
         const result = await this.storage.loadHistoryWithStatus(conversationId);
         if (result.value) {
+            this.cacheHistory(conversationId, result.value);
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
@@ -733,6 +992,46 @@ export class ConversationManager {
     }
 
     /**
+     * 计算分页窗口 [startIndex, endExclusive)。
+     */
+    private buildPageRange(total: number, options: { beforeIndex?: number; offset?: number; limit?: number }): { startIndex: number; endExclusive: number } {
+        const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
+        let startIndex = 0;
+        let endExclusive = total;
+
+        if (typeof options.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)) {
+            endExclusive = Math.max(0, Math.min(total, Math.floor(options.beforeIndex)));
+            startIndex = Math.max(0, endExclusive - limit);
+        } else if (typeof options.offset === 'number' && Number.isFinite(options.offset)) {
+            startIndex = Math.max(0, Math.min(total, Math.floor(options.offset)));
+            endExclusive = Math.max(startIndex, Math.min(total, startIndex + limit));
+        } else {
+            startIndex = Math.max(0, total - limit);
+            endExclusive = total;
+        }
+
+        return { startIndex, endExclusive };
+    }
+
+    /**
+     * 将后端消息转换为可发送给前端的形态：
+     * - 移除后端内部字段（turnDynamicContext 数据量大且前端无需使用）；
+     * - 附加绝对索引。
+     *
+     * 性能说明：这里只做浅拷贝（嵌套对象与缓存共享）。消息随后会经 IPC 同步序列化
+     * 发送给渲染层，前端拿到的是独立副本，不存在被前端反向修改的风险；后端读路径
+     * 也约定不原地修改（见 loadHistory 缓存契约），因此省略逐条 JSON 深拷贝。
+     */
+    private toFrontendMessage(message: Content, index: number): Content {
+        if ('turnDynamicContext' in message) {
+            const copy = { ...message } as Record<string, unknown>;
+            delete copy.turnDynamicContext;
+            return { ...copy, index } as Content;
+        }
+        return { ...message, index } as Content;
+    }
+
+    /**
      * 分页获取对话消息（仅返回一个窗口，避免一次性向 Webview 发送全量历史）
      *
      * - beforeIndex: 取 [0, beforeIndex) 区间内的最后 limit 条（用于上拉加载更早消息）
@@ -754,15 +1053,23 @@ export class ConversationManager {
             await this.normalizeHistoryForDisplay(conversationId);
         }
 
+        // 缓存命中：直接从内存快照切片，避免磁盘段读取与解析
+        const cached = this.historyCache.get(conversationId);
+        if (cached) {
+            const { startIndex, endExclusive } = this.buildPageRange(cached.length, options);
+            return {
+                total: cached.length,
+                messages: cached.slice(startIndex, endExclusive).map((message, i) =>
+                    this.toFrontendMessage(message, startIndex + i))
+            };
+        }
+
         const pagedHistory = await this.storage.loadHistoryPage(conversationId, options);
         if (pagedHistory.value && pagedHistory.value.format === 'paged') {
             return {
                 total: pagedHistory.value.total,
-                messages: pagedHistory.value.messages.map((message, i) => {
-                    const index = pagedHistory.value!.startIndex + i;
-                    const { turnDynamicContext, ...rest } = message;
-                    return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
-                })
+                messages: pagedHistory.value.messages.map((message, i) =>
+                    this.toFrontendMessage(message, pagedHistory.value!.startIndex + i))
             };
         }
 
@@ -786,18 +1093,11 @@ export class ConversationManager {
             endExclusive = total;
         }
 
-        const slice = history.slice(start, endExclusive);
-        const messages = slice.map((message, i) => {
-            const index = start + i;
-            // 深拷贝并过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = message;
-            return {
-                ...JSON.parse(JSON.stringify(rest)),
-                index
-            } as Content;
-        });
-
-        return { total, messages };
+        return {
+            total,
+            messages: history.slice(start, endExclusive).map((message, i) =>
+                this.toFrontendMessage(message, start + i))
+        };
     }
 
     /**
@@ -1664,7 +1964,7 @@ export class ConversationManager {
                 meta.title = title;
                 meta.updatedAt = Date.now();
             }
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -1688,7 +1988,7 @@ export class ConversationManager {
                 meta.workspaceUri = workspaceUri;
                 meta.updatedAt = Date.now();
             }
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -1696,10 +1996,25 @@ export class ConversationManager {
      * 获取对话元数据
      */
     async getMetadata(conversationId: string): Promise<ConversationMetadata | null> {
+        // 缓存命中：metaCache 是最近一次持久化快照（所有写路径统一失效/回填），
+        // 直接跳过磁盘 meta + historyPage(limit:1) 的完整性检查两次 IO；
+        // 磁盘上的元数据不持久化 integrityStatus，缓存值无该字段等价于 integrityStatus 'ok'
+        // （当前实现会在 'ok' 时删除该字段）。返回深拷贝，防止调用方污染缓存。
+        const cached = this.metaCache.get(conversationId);
+        if (cached !== undefined) {
+            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+        }
+
+        // 完整性检查需要真实磁盘状态，这里仍直接读存储；读取结果顺带回填元数据缓存，
+        // 后续对同一会话的 getMetadata / getCustomMetadata 直接命中缓存。
         const [metadataResult, historyPageResult] = await Promise.all([
             this.storage.loadMetadataWithStatus(conversationId),
             this.storage.loadHistoryPage(conversationId, { limit: 1 }),
         ]);
+
+        if (metadataResult.value) {
+            this.cacheMetadata(conversationId, metadataResult.value);
+        }
 
         const historyExists = historyPageResult.value !== null || historyPageResult.errorCode !== 'not_found';
         const integrity: ConversationStorageIntegrity = {
@@ -1737,26 +2052,6 @@ export class ConversationManager {
     }
 
     /**
-     * 轻量读取对话元数据（供用量统计等只关心 title/updatedAt 的场景使用）
-     *
-     * 与 getMetadata 不同：只读 meta.json，不加载历史做完整性检查、
-     * 不生成 fallback 元数据——统计侧对缺失 meta 直接回退对话 ID 展示。
-     * 避免每次统计都为每个对话额外读一次历史（getMetadata 的 loadHistoryPage）。
-     */
-    async getMetadataLight(conversationId: string): Promise<ConversationMetadata | null> {
-        const result = await this.storage.loadMetadataWithStatus(conversationId);
-        return result.value ?? null;
-    }
-
-    /**
-     * 获取 conversations 目录的本地文件系统路径（供用量统计目录监听使用）；
-     * 存储适配器不支持时返回 undefined，统计退化全量扫描。
-     */
-    getConversationsDirFsPath(): string | undefined {
-        return this.storage.getConversationsDirFsPath?.();
-    }
-
-    /**
      * 设置自定义元数据
      */
     async setCustomMetadata(
@@ -1785,7 +2080,7 @@ export class ConversationManager {
             meta.custom[key] = value;
             meta.updatedAt = Date.now();
 
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -1825,7 +2120,7 @@ export class ConversationManager {
 
             meta.custom[key] = next;
             meta.updatedAt = Date.now();
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
             return next;
         });
     }

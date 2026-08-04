@@ -3,38 +3,18 @@
 
 ## [Unreleased]
 
-### Changed
-  - 用量统计性能再优化：统计读取元数据改为轻量路径（只读 `{id}.meta.json`，不再走 `getMetadata` 的历史完整性检查——此前每次统计都会为每个对话额外加载一次历史，索引优化的收益被抵消大半）；新增对话目录监听（`fs.watch` recursive）+ 内存明细缓存——任何历史/元数据/索引文件写入都会把对应对话标记为 dirty，统计只重读 dirty 对话并回填缓存，其余对话直接重放内存明细（零 stat、零读文件），日常统计从几千次跨进程文件调用降到毫秒级；统计自身重建索引写入 `{id}.usage.json` 会触发一次自伤标记，下一轮重读小索引文件后自然恢复，不会无限循环；扩展 dispose 时释放监听，非文件存储（测试/内存适配器）自动退化全量扫描；新增缓存命中跳过读取 / dirty 重读回填 / 已删对话清理 / 缓存时间筛选与 watcher 文件名解析测试
-  - 提示词设置页排版重排（PR #5）：动态上下文保留策略区块从全局固定位置移入对应的模板模式内——预设条目模式下显示在条目编辑区下方，传统模板模式下内联显示在动态模板文本框下方，选项归属不再让人困惑；新增「可用变量参考」可收缩面板（默认收起，静态变量组 / 动态变量组分组展示，chevron 展开收起），长变量列表不再永久占据设置页空间
-  - 提示词模式栏新增保存按钮（绿色保存图标，保存中切换为 loading 动画），与底部原保存按钮并存；导入 / 导出按钮从 codicon 通用图标改为成对的自定义 SVG 图标（方向相反的导出/导入箭头），视觉上明确为一对操作
-  - 提示词页保存 / 导出 / 导入反馈统一为浮窗 toast（成功 / 失败着色，2.5 秒自动消失，Transition 动画），移除底部行内文本提示（saveMessage）
-
-### Fixed
-  - 修复动态上下文策略选项的误导性括号标注：单份模式选项原先带有「（当前策略）」（zh-CN）或「（当前行为）」（en/ja）注释，而该选项与保留模式是并列可切换的，标注「当前」会让用户在切换后看到错误的归属语义；现在移除括号注释，三语统一为中性文案「单份动态上下文 / Single dynamic context / 単一の動的コンテキスト」
-  - 修复动态上下文策略警告文案硬编码英文：设置页选中保留模式时提示「preserve 会把旧回合的动态快照固定插回原位…」，而选项在 UI 上显示的是中文「保留旧动态上下文原位」，用户无法把二者对应；现在句首直接使用选项的中文名称，不再出现英文标识
-  - 修复空提示词保存后回退默认模板（PR #5）：`resolvedMode?.template || promptConfig?.template`（PromptManager.ts）与 `mode?.template || ...`（SettingsManager.getSystemPromptTemplate）的空字符串回退导致 legacy 模式显式保存的空模板在运行时被全局模板覆盖，用户无法真正清空模板；两处改为 `??`（nullish coalescing），空字符串原样保留；前端 `loadModeConfig` 同步用 `typeof === 'string'` 判断而非 `||` 兜底，空模板不再被 DEFAULT_TEMPLATE 顶替，新增回归测试锁定该行为
-  - 修复提示词导出流程不可控（PR #5）：前端 Blob 下载在 webview 环境保存位置与文件名不受用户控制，改为通过新增的 `exportPromptModes` webview handler 调用 `vscode.window.showSaveDialog` 让用户选择保存位置，确认后才写文件；取消保存对话框时不写文件并返回 `{ success: false, cancelled: true }`，成功后才报告成功；导出成功 / 取消 / 失败均有明确反馈，不再出现「已导出但不知道存到哪」
-
 ### Added
-  - 新增 `exportPromptModes` webview handler（`webview/handlers/SettingsHandlers.ts`）与回归测试 `backend/__tests__/webview/promptModeExport.test.ts`（取消对话框不写文件 / 选路径并写文件成功后才响应，2 用例）；`PromptManager.promptEntries.test.ts` 新增「显式空模板不回退全局模板」用例；vscode mock 补充 `showSaveDialog` / `showOpenDialog`
-
-## [1.3.1-1] - 2026-08-02
+  - 桌面版变更查看面板（内嵌 GitHub 风格）：全屏 Diff 模态框改为主窗口右侧内嵌抽屉（非独立窗口），`vscode.diff` 拦截 → `host.openDiffPreview` 命令驱动打开，左侧文件列表（状态 + ±统计）与右侧统一 diff（hunk 头/双行号/增删着色），单文件与全部接受/拒绝、删除警戒提示、`diff.statusChanged` 状态同步；accept/reject 复用同一协议（详见 `electron-app/CHANGELOG.md`）
+  - 行级 diff 计算抽取为共享工具 `frontend/src/utils/diffLines.ts`（LCS 匹配 + hunk 分组 + 统计，超大文件 DP 保护），write_file 工具卡删除重复实现并复用，新增 12 个 Vitest 用例
+  - 对话重 roll 树状分叉（DeepSeek 风格）：重新生成 AI 回答不再破坏性覆盖——截断前把当前回答及后续尾部保存为版本（每会话上限 10 个，全等去重，随删除对话清理）；AI 消息上出现 v1/v2/v3 版本切换器（chips + 前后箭头），随时切回旧版本，切换前自动保存当前尾部（不丢数据），切换后继续聊天基于所选分支；版本保存失败静默降级不阻塞重roll；`conversation.saveTailVersion` / `conversation.getTailVersions` / `conversation.restoreTailVersion` 三个 IPC + 6 个后端回归用例
+  - 历史记录读取性能优化：ConversationManager 新增历史 LRU（24 会话）与元数据 LRU（256）缓存，写路径统一失效/回填；`getMessagesPaged` 缓存命中直接从内存快照切片（免分段存储磁盘解析），移除逐条 JSON 深拷贝；`getMetadata` 缓存命中跳过磁盘完整性检查（两次 fs → O(1)）；分段历史并行读取（Promise.all 保持段序，单段失败不中断）；`history_search` 新增 `getHistoryRef` 免深拷贝供只读调用方
 
 ### Fixed
-  - 修复存储路径迁移目录套娃（无限递归）：`copyDirectory` 复制时若目标位于源目录内部会无限递归自我复制（mkdir 目标后 readdir 源会看到刚创建的子目录，一次误选子路径可产生数千层嵌套），现检测到目标在源内部时跳过；路径重叠判断改用 `realpath`，junction/符号链接无法绕过防套娃
-  - 修复存储路径迁移数据安全：源/目标互相包含时先复制到临时目录中转，避免清理旧目录时删除新数据；复制失败终止迁移并回滚，源数据与配置保持不变；失败时恢复原 `customDataPath`/状态，不再错误切回默认路径；路径验证改用随机临时目录，不再覆盖用户 `.limcode-test` 文件
-  - 修复前端误读 `config.customPath`（后端字段为 `customDataPath`）导致重置按钮永远禁用；应用/重置按钮增加明确提示（空路径、已是默认路径时不再静默无反应）
-  - 修复设置页描述单行截断：工具名与描述改用 i18n（47 个工具全覆盖），描述样式改自动换行（pre-wrap），不再截断
+  - 修复 unifiedDiff hunk 边界误判：hunk 末尾的 `--- x` / `+++ y` 内容对 + 下一行 `@@` 被当作下一个文件头而中断，导致内容丢失；新增 `isFileHeaderPair()` 按「路径形」消歧（`-- old item` 这类内容行不再中断 hunk），`apply_diff` 的 loose 解析同步修复避免同样丢行
+  - 修复 `insert_code` 幻影尾行：文件以 `\n` 结尾时 `split('\n')` 产生的尾部空串让末尾追加产生多余空行；新增 `hasPhantomTailLine()` 判定并导出 `insertAtLine`（插入索引钳制到幻影行之前）
 
 ### Changed
   - 工具调用格式选项移除「（推荐）」标记：JSON 边界标记不再标注为推荐项（原生 Function Calling 已是主流选择），渠道设置下拉与提示文案的中/英/日三语同步调整
-  - 设置页 i18n 补全：工具设置/自动执行/存档点/子代理/模型管理的分类分组全量三语翻译（记忆/审查/进度/技能/设计/通知/代理等 16 类），消除重复「其他」分组；Prompt 设置补 `modules.MEMORY`（记忆系统）三语；记忆设置 Raw Memory Entries 等硬编码英文改走 i18n
-  - 存储路径设置 UI 改版：合并「当前存储路径/自定义路径」为单一输入框，新增 📁 文件夹选择按钮（`storagePath.selectFolder`），删除冗余的迁移数据按钮；`validatePath` 放宽——允许选择默认路径/子路径/普通非空目录（如桌面），仅拒绝已包含扩展数据子目录（conversations/checkpoints 等）的目标，防止数据混合
-  - 渠道设置新建配置：改为模态遮罩弹窗（点击遮罩取消），配置名称为空时红框+提示
-  - 更新扩展与活动栏图标：市场图标由 1024px 角色插画（1.4MB）替换为 256px 三色剪影版（73KB，深蓝圆角方底，小尺寸辨识度更好）；活动栏/侧边栏图标由 VS Code 默认地球替换为角色剪影，并进一步改为纯轮廓线稿（fill=none + stroke=currentColor 随主题着色，Douglas-Peucker 路径简化 716→161 点，24px 下无锯齿）
-
-### Added
-  - 新增 `StoragePathManager` 单元测试（6 项）：覆盖迁移中转、失败回滚、realpath 重叠判断、路径验证临时目录等安全加固行为
 
 ## [1.3.1] - 2026-08-02
 

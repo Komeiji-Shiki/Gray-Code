@@ -8,14 +8,32 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type { LanguageMessages } from '@/i18n/types'
 import zhCN from '@/i18n/langs/zh-CN'
 import en from '@/i18n/langs/en'
+import ja from '@/i18n/langs/ja'
 
 const messages: Record<string, LanguageMessages> = {
     'zh-CN': zhCN,
-    'en': en
+    'en': en,
+    'ja': ja
 }
 
 // 导出 messages 对象供外部使用
 export { messages }
+
+/**
+ * 把用户配置的语言解析为可用的语言包 key。
+ * 'auto'（跟随系统）按浏览器语言解析，与核心 i18n 模块的解析规则保持一致。
+ */
+function resolveLang(lang: string): string {
+    if (messages[lang]) return lang
+    if (lang === 'auto' || lang === '' || !lang) {
+        const detected = typeof navigator !== 'undefined' ? navigator.language : 'zh-CN'
+        if (detected.startsWith('zh')) return 'zh-CN'
+        if (detected.startsWith('ja')) return 'ja'
+        if (detected.startsWith('en')) return 'en'
+        return 'zh-CN'
+    }
+    return 'zh-CN'
+}
 
 /**
  * 独立的翻译函数，可在 Store 等非 Vue setup 上下文中使用
@@ -24,7 +42,7 @@ export { messages }
  * @param params 参数对象
  */
 export function translate(lang: string, key: string, params?: Record<string, any>): string {
-    const message = messages[lang] || messages['zh-CN']
+    const message = messages[resolveLang(lang)] || messages['zh-CN']
     
     // 按点分割键名获取嵌套对象的值
     const keys = key.split('.')
@@ -62,7 +80,7 @@ export function useI18n() {
     
     // 当前语言
     const currentLanguage = computed(() => {
-        return settingsStore.language || 'zh-CN'
+        return resolveLang(settingsStore.language || 'zh-CN')
     })
     
     // 翻译函数

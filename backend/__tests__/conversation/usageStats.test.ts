@@ -12,11 +12,9 @@ import {
     aggregateUsageStats,
     buildConversationUsageIndex,
     type UsageIndex,
-    type UsageIndexMessage,
     type UsageIndexStore,
     type UsageStatsSource
 } from '../../modules/conversation/usageStats';
-import { UsageStatsCache, type UsageConversationEntry } from '../../modules/conversation/usageCache';
 import type { Content, ConversationMetadata } from '../../modules/conversation/types';
 
 /** 构造一条带用量的 model 消息 */
@@ -502,96 +500,5 @@ describe('aggregateUsageStats 索引模式', () => {
 
         const stats = await aggregateUsageStats(source, { indexStore: failingStore });
         expect(stats.totals.promptTokens).toBe(5);
-    });
-});
-
-
-describe('aggregateUsageStats 内存缓存模式', () => {
-    const day = atLocalNoon(2026, 5, 1);
-
-    /** 构造含 conv-a 一条缓存条目的内存缓存 */
-    function seedCache(messages: UsageIndexMessage[], overrides: Partial<UsageConversationEntry> = {}): UsageStatsCache {
-        const cache = new UsageStatsCache();
-        cache.set('conv-a', { title: 'Cached', updatedAt: 1000, messages, ...overrides });
-        return cache;
-    }
-
-    test('缓存命中：跳过全部文件读取', async () => {
-        const cache = seedCache([
-            { timestamp: day, modelVersion: 'model-x', prompt: 500, candidates: 250, thoughts: 0, cacheCreation: 0, cacheRead: 0 }
-        ]);
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('getMetadata should not be called'); },
-            async getMessages() { throw new Error('getMessages should not be called'); },
-            async getMessagesRaw() { throw new Error('getMessagesRaw should not be called'); }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, { cache });
-        expect(stats.totals.promptTokens).toBe(500);
-        expect(stats.totals.candidatesTokens).toBe(250);
-        expect(stats.totals.conversations).toBe(1);
-        expect(stats.byConversation[0].title).toBe('Cached');
-        expect(stats.byConversation[0].updatedAt).toBe(1000);
-        expect(stats.byModel[0].modelVersion).toBe('model-x');
-        expect(stats.byDay).toHaveLength(1);
-    });
-
-    test('dirty 对话重新读取并回填缓存，dirty 集合被消费', async () => {
-        const cache = seedCache([{ prompt: 1, candidates: 0, thoughts: 0, cacheCreation: 0, cacheRead: 0 }]);
-        cache.markDirty('conv-a');
-        let readCount = 0;
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { readCount++; return { title: 'New', updatedAt: 2000 } as ConversationMetadata; },
-            async getMessages() { readCount++; return [modelMessage({ prompt: 100, candidates: 50, modelVersion: 'model-x', timestamp: day })]; }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, { cache });
-        expect(readCount).toBe(2);
-        expect(stats.totals.promptTokens).toBe(100);
-        expect(stats.byConversation[0].title).toBe('New');
-        // 缓存已回填为最新明细，且 dirty 已消费
-        const entry = cache.get('conv-a')!;
-        expect(entry.title).toBe('New');
-        expect(entry.updatedAt).toBe(2000);
-        expect(entry.messages[0].prompt).toBe(100);
-        expect(cache.takeDirty()).toHaveLength(0);
-    });
-
-    test('已删除对话从缓存清理', async () => {
-        const cache = seedCache([]);
-        cache.set('conv-b', { title: 'B', updatedAt: 0, messages: [] });
-        const source = {
-            async listConversations() { return ['conv-b']; },
-            async getMetadata() { return null; },
-            async getMessages() { return []; }
-        } as UsageStatsSource;
-
-        await aggregateUsageStats(source, { cache });
-        expect(cache.has('conv-a')).toBe(false);
-        expect(cache.has('conv-b')).toBe(true);
-    });
-
-    test('缓存 + 时间筛选：按缓存消息 timestamp 过滤', async () => {
-        const early = atLocalNoon(2026, 4, 1);
-        const inRange = atLocalNoon(2026, 5, 1);
-        const cache = seedCache([
-            { timestamp: early, modelVersion: 'model-x', prompt: 1, candidates: 1, thoughts: 0, cacheCreation: 0, cacheRead: 0 },
-            { timestamp: inRange, modelVersion: 'model-x', prompt: 10, candidates: 10, thoughts: 0, cacheCreation: 0, cacheRead: 0 }
-        ]);
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('getMetadata should not be called'); },
-            async getMessages() { throw new Error('getMessages should not be called'); }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, {
-            cache,
-            startTime: atLocalNoon(2026, 4, 15),
-            endTime: atLocalNoon(2026, 5, 15)
-        });
-        expect(stats.totals.promptTokens).toBe(10);
-        expect(stats.totals.modelMessages).toBe(1);
     });
 });

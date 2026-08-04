@@ -722,6 +722,35 @@ export interface HistorySnapshot {
 }
 
 /**
+ * 对话尾部版本（重roll树状分叉）。
+ *
+ * 用户在 AI 回答上点击「重新生成」时，当前回答及其后续消息不会直接丢弃，
+ * 而是作为「版本」保存下来；重新生成的回答成为新的活跃尾部。版本之间可以
+ * 随时来回切换（DeepSeek 网页版式 v1/v2/v3 分叉体验）。
+ *
+ * 每个版本保存从 branchIndex（AI 回答所在的消息索引）到会话末尾的完整尾部。
+ */
+export interface ConversationTailVersion {
+    /** 版本 ID */
+    id: string;
+    /** 分支点：AI 回答消息的后端索引 */
+    branchIndex: number;
+    /** 创建时间戳 */
+    createdAt: number;
+    /** 版本摘要（尾部第一条非空文本的截断） */
+    preview?: string;
+    /** 尾部消息数 */
+    messageCount: number;
+    /** 尾部消息内容（从 branchIndex 到末尾） */
+    messages: ConversationHistory;
+}
+
+/**
+ * 尾部版本的无内容摘要（用于列表展示，避免把整段尾部发给前端）。
+ */
+export type ConversationTailVersionInfo = Omit<ConversationTailVersion, 'messages'>;
+
+/**
  * 对话统计信息
  */
 export interface ConversationStats {

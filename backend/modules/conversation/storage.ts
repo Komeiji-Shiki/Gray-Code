@@ -12,7 +12,7 @@
  * 3. 元数据与历史分离,便于管理
  */
 
-import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content } from './types';
+import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content, ConversationTailVersion } from './types';
 
 // 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
 // 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
@@ -140,12 +140,6 @@ export interface IStorageAdapter {
      * 列出所有对话 ID
      */
     listConversations(): Promise<string[]>;
-
-    /**
-     * 获取 conversations 目录的本地文件系统路径（供用量统计目录监听使用）；
-     * 非文件系统存储（内存等）不实现，调用方退化全量扫描。
-     */
-    getConversationsDirFsPath?(): string | undefined;
     
     /**
      * 保存对话元数据
@@ -193,6 +187,18 @@ export interface IStorageAdapter {
      * @param conversationId 对话 ID
      */
     listSnapshots(conversationId: string): Promise<string[]>;
+
+    /**
+     * 保存对话尾部版本（重roll树状分叉）。
+     *
+     * 可选能力：未实现的适配器由 ConversationManager 回退到自定义元数据存储。
+     */
+    saveTailVersions?(conversationId: string, versions: ConversationTailVersion[]): Promise<void>;
+
+    /**
+     * 加载对话尾部版本。
+     */
+    loadTailVersions?(conversationId: string): Promise<ConversationTailVersion[] | null>;
 }
 
 /**
@@ -202,6 +208,16 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     private histories: Map<string, ConversationHistory> = new Map();
     private metadata: Map<string, ConversationMetadata> = new Map();
     private snapshots: Map<string, HistorySnapshot> = new Map();
+    private tailVersions: Map<string, ConversationTailVersion[]> = new Map();
+
+    async saveTailVersions(conversationId: string, versions: ConversationTailVersion[]): Promise<void> {
+        this.tailVersions.set(conversationId, JSON.parse(JSON.stringify(versions)));
+    }
+
+    async loadTailVersions(conversationId: string): Promise<ConversationTailVersion[] | null> {
+        const versions = this.tailVersions.get(conversationId);
+        return versions ? JSON.parse(JSON.stringify(versions)) : null;
+    }
 
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         // 深拷贝以避免引用问题
@@ -248,6 +264,7 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     async deleteHistory(conversationId: string): Promise<void> {
         this.histories.delete(conversationId);
         this.metadata.delete(conversationId);
+        this.tailVersions.delete(conversationId);
     }
 
     async listConversations(): Promise<string[]> {
@@ -381,6 +398,17 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         const metaKey = `limcode.meta.${conversationId}`;
         await this.context.globalState.update(historyKey, undefined);
         await this.context.globalState.update(metaKey, undefined);
+        await this.context.globalState.update(`limcode.tailVersions.${conversationId}`, undefined);
+    }
+
+    async saveTailVersions(conversationId: string, versions: ConversationTailVersion[]): Promise<void> {
+        const key = `limcode.tailVersions.${conversationId}`;
+        await this.context.globalState.update(key, versions);
+    }
+
+    async loadTailVersions(conversationId: string): Promise<ConversationTailVersion[] | null> {
+        const key = `limcode.tailVersions.${conversationId}`;
+        return (this.context.globalState.get(key) as ConversationTailVersion[] | undefined) || null;
     }
 
     async listConversations(): Promise<string[]> {
@@ -528,6 +556,10 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
+    private getTailVersionsPath(conversationId: string): any {
+        return this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'versions.json');
+    }
+
     private getConversationsRootDir(): any {
         // 修改原因：reveal 兜底需要打开 conversations 根目录，而不是在 handler 中拼接存储路径。
         // 修改方式：把 root URI 构造留在 FileSystemStorageAdapter 内部复用 baseDir 和 VS Code Uri API。
@@ -538,12 +570,6 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
-    getConversationsDirFsPath(): string {
-        // 用量统计的目录监听（fs.watch）需要本地文件系统路径；
-        // 与 getConversationsRootDir 同源，避免路径规则在 adapter 外重复拼接。
-        return this.getConversationsRootDir().fsPath;
-    }
-    
     private isNotFoundError(error: any): boolean {
         const code = String(error?.code || '');
         if (code === 'FileNotFound' || code === 'EntryNotFound' || code === 'ENOENT') {
@@ -780,9 +806,17 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
 
         const historyDir = this.getHistoryDir(conversationId);
+        // 并行读取所有分段文件（readHistorySegment 内部捕获错误返回结果，
+        // Promise.all 不会中断）：某段读失败不阻塞其他段的读取，结果仍按段序号排列，
+        // 错误语义与原串行版本一致——按段顺序返回第一个失败段的结果。
+        const segmentResults = await Promise.all(
+            indexResult.value.segments.map(segment =>
+                this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file))
+            )
+        );
+
         const history: ConversationHistory = [];
-        for (const segment of indexResult.value.segments) {
-            const segmentResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file));
+        for (const segmentResult of segmentResults) {
             if (!segmentResult.value) {
                 return { value: null, errorCode: segmentResult.errorCode, errorMessage: segmentResult.errorMessage };
             }
@@ -1094,5 +1128,17 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         } catch {
             return [];
         }
+    }
+
+    async saveTailVersions(conversationId: string, versions: ConversationTailVersion[]): Promise<void> {
+        const uri = this.getTailVersionsPath(conversationId);
+        await this.vscode.workspace.fs.createDirectory(this.getConversationDir(conversationId));
+        const content = JSON.stringify(versions, null, 2);
+        await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+    }
+
+    async loadTailVersions(conversationId: string): Promise<ConversationTailVersion[] | null> {
+        const result = await this.readJsonFile<ConversationTailVersion[]>(this.getTailVersionsPath(conversationId));
+        return result.value;
     }
 }

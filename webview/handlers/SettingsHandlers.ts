@@ -304,36 +304,6 @@ export const savePromptMode: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /**
- * 导出提示词模式
- */
-export const exportPromptModes: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const filename = typeof data?.filename === 'string' && data.filename.trim()
-      ? data.filename.trim()
-      : 'graycode-prompt-modes.json';
-    const content = typeof data?.content === 'string' ? data.content : '';
-    const result = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(filename),
-      filters: {
-        'JSON Files': ['json'],
-        'All Files': ['*']
-      },
-      title: '导出 GrayCode 提示词模式'
-    });
-
-    if (!result) {
-      ctx.sendResponse(requestId, { success: false, cancelled: true });
-      return;
-    }
-
-    await fs.writeFile(result.fsPath, content, 'utf-8');
-    ctx.sendResponse(requestId, { success: true, filePath: result.fsPath });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'EXPORT_PROMPT_MODES_ERROR', error.message || 'Failed to export prompt modes');
-  }
-};
-
-/**
  * 重命名提示词模式
  */
 export const renamePromptMode: MessageHandler = async (data, requestId, ctx) => {
@@ -410,7 +380,6 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getPromptModes', getPromptModes);
   registry.set('setCurrentPromptMode', setCurrentPromptMode);
   registry.set('savePromptMode', savePromptMode);
-  registry.set('exportPromptModes', exportPromptModes);
   registry.set('renamePromptMode', renamePromptMode);
   registry.set('deletePromptMode', deletePromptMode);
   registry.set('countSystemPromptTokens', countSystemPromptTokens);

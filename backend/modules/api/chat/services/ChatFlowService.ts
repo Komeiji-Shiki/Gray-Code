@@ -101,7 +101,7 @@ export class ChatFlowService {
    * 确保对话存在（不存在则创建）
    */
   private async ensureConversation(conversationId: string): Promise<void> {
-    await this.conversationManager.getHistory(conversationId);
+    await this.conversationManager.getHistoryRef(conversationId);
   }
 
   private normalizePromptModeId(value: unknown): string | undefined {
