@@ -8,7 +8,7 @@ import {
   getToolApprovalStopKind,
   isAwaitingToolUserConfirmation
 } from '../../utils/toolContinuations'
-import { filterVisibleChatMessages } from './visibilityUtils'
+import { getVisibleChatMessagesCached } from './windowUtils'
 
 /**
  * 创建 Chat Store 计算属性
@@ -38,9 +38,12 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   
   /**
    * 用于显示的消息列表（过滤掉纯 functionResponse 消息）
+   *
+   * HIS-12：使用增量可见消息缓存——流式期间每个 chunk 只更新尾元素，
+   * 不再对全窗口（≤800 条）重复 filter 扫描；结构性变更自动回退全量重建。
    */
   const messages = computed(() =>
-    filterVisibleChatMessages(state.allMessages.value)
+    getVisibleChatMessagesCached(state)
   )
   
   /** 是否有消息 */

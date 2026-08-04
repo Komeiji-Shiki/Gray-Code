@@ -60,6 +60,28 @@ export const getConversationMetadata: MessageHandler = async (data, requestId, c
 };
 
 /**
+ * 批量获取对话摘要元数据（HIS-10）：对话列表一次 IPC 拉一页摘要，避免每对话一次 IPC。
+ */
+export const getConversationMetadataBatch: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationIds } = data || {};
+  const ids = Array.isArray(conversationIds) ? conversationIds : [];
+  const summaries = await ctx.conversationManager.getConversationMetadataBatch(ids);
+  ctx.sendResponse(requestId, summaries);
+};
+
+/**
+ * 一次性更新对话摘要元数据（HIS-09）：messageCount/preview 合并为一次写入；updatedAt 由后端维护。
+ */
+export const updateSummary: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId, messageCount, preview } = data || {};
+  await ctx.conversationManager.updateSummary(conversationId, {
+    messageCount: typeof messageCount === 'number' ? messageCount : undefined,
+    preview: typeof preview === 'string' ? preview : undefined
+  });
+  ctx.sendResponse(requestId, { success: true });
+};
+
+/**
  * 设置对话标题
  */
 export const setTitle: MessageHandler = async (data, requestId, ctx) => {
@@ -158,11 +180,19 @@ export const loadConversationForView: MessageHandler = async (data, requestId, c
   ]);
 
   const custom = (metadata?.custom || {}) as Record<string, unknown>;
+  // CPF-04: 不再从元数据原样下发完整存档记录（可能含 fileHashes/fileStats），
+  // 改为返回轻量 CheckpointSummary（getCheckpoints 内部按需从 manifest 补全摘要字段）
+  let checkpoints: unknown[] = [];
+  try {
+    checkpoints = await ctx.checkpointManager.getCheckpoints(conversationId);
+  } catch (err) {
+    console.warn('[ConversationHandlers] Failed to load checkpoint summaries:', err);
+  }
   ctx.sendResponse(requestId, {
     metadata,
     totalMessages: result.total,
     messages: result.messages,
-    checkpoints: Array.isArray(custom.checkpoints) ? custom.checkpoints : [],
+    checkpoints,
     modelConfig: custom.inputModelConfig,
     promptMode: custom.promptModeConfig,
     activeBuild: custom.activeBuild ?? null
@@ -232,6 +262,8 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.createConversation', createConversation);
   registry.set('conversation.listConversations', listConversations);
   registry.set('conversation.getConversationMetadata', getConversationMetadata);
+  registry.set('conversation.getConversationMetadataBatch', getConversationMetadataBatch);
+  registry.set('conversation.updateSummary', updateSummary);
   registry.set('conversation.setTitle', setTitle);
   registry.set('conversation.setWorkspaceUri', setWorkspaceUri);
   registry.set('conversation.setCustomMetadata', setCustomMetadata);

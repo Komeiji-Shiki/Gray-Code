@@ -14,7 +14,9 @@
  * 写入失败不向上抛（调用方静默降级），统计侧会按 stale/missing 重建兜底。
  */
 
-import type { UsageIndex, UsageIndexFreshness, UsageIndexStore } from './usageStats';
+import type { Content } from './types';
+import type { UsageIndex, UsageIndexFreshness, UsageIndexMessage, UsageIndexStore } from './usageStats';
+import { extractMessageTokens } from './usageStats';
 import { assertSafeId } from '../../core/idValidation';
 
 export class FileUsageIndexStore implements UsageIndexStore {
@@ -99,6 +101,67 @@ export class FileUsageIndexStore implements UsageIndexStore {
             this.usagePath(conversationId),
             Buffer.from(JSON.stringify(index), 'utf8')
         );
+    }
+
+    /**
+     * 增量维护用量索引（HIS-08）：普通追加助手消息时只增加对应条目，不重建整个索引。
+     *
+     * - 索引缺失/损坏：返回 false，调用方回退全量重建（freshness 机制保留为兜底）；
+     * - 仅追加 user/functionResponse 消息（无 token 条目）：不写盘，直接返回 true；
+     * - 追加 model 消息：读索引 → 追加条目 → 整体写回（单文件，规模与消息数线性）。
+     *
+     * 删除/编辑/回档/分支切换等结构性变更仍走全量重建（ConversationManager.updateUsageIndex），
+     * 本方法只服务“普通追加”路径。
+     */
+    async appendUsage(conversationId: string, appended: Content[]): Promise<boolean> {
+        const existing = await this.read(conversationId);
+        if (!existing) {
+            // 索引缺失或损坏：调用方回退全量重建
+            return false;
+        }
+
+        const added: UsageIndexMessage[] = [];
+        for (const message of appended) {
+            if (message.role !== 'model') continue;
+            const tokens = extractMessageTokens(message);
+            if (!tokens) continue;
+            const ts = message.timestamp;
+            added.push({
+                timestamp: (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) ? ts : undefined,
+                modelVersion: (message.modelVersion || '').trim(),
+                ...tokens
+            });
+        }
+
+        if (added.length === 0) {
+            // 没有需要更新的用量条目（仅追加 user/functionResponse 消息）：不重复写盘
+            return true;
+        }
+
+        existing.messages.push(...added);
+        existing.updatedAt = Date.now();
+        await this.write(conversationId, existing);
+        return true;
+    }
+
+    /**
+     * 追加已提取好的用量索引条目（子代理归集用，不入对话历史）。
+     *
+     * 与 appendUsage 的区别：输入已是 UsageIndexMessage（通常带 source='subagent'），
+     * 不做 Content 提取，原样追加；索引缺失/损坏时返回 false，调用方回退读改写。
+     */
+    async appendUsageMessages(conversationId: string, messages: UsageIndexMessage[]): Promise<boolean> {
+        if (messages.length === 0) {
+            return true;
+        }
+        const existing = await this.read(conversationId);
+        if (!existing) {
+            return false;
+        }
+        existing.messages.push(...messages);
+        existing.updatedAt = Date.now();
+        await this.write(conversationId, existing);
+        return true;
     }
 
     async remove(conversationId: string): Promise<void> {

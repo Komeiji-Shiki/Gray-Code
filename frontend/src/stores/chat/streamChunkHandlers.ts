@@ -1161,8 +1161,17 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
       const removeIndex = getMessageIndexById(state, state.streamingMessageId.value)
       removeMessageAt(state, removeIndex)
+      state._failedStreamMessageId.value = null
+    } else if (messageToRemove) {
+      // 有内容的半截消息：保留展示，但记录其 ID，
+      // 供 retryAfterError 在重试前回滚（后端从未持久化该消息）。
+      state._failedStreamMessageId.value = messageToRemove.id
+    } else {
+      state._failedStreamMessageId.value = null
     }
     state.streamingMessageId.value = null
+  } else {
+    state._failedStreamMessageId.value = null
   }
   
   state.activeStreamId.value = null

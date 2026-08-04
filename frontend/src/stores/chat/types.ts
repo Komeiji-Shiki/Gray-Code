@@ -3,11 +3,12 @@
  */
 
 import type { Ref, ComputedRef } from 'vue'
-import type { Message, ErrorInfo, CheckpointRecord, Attachment } from '../../types'
+import type { Message, ErrorInfo, CheckpointSummary, Attachment } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
 
 // 重新导出类型以供其他模块使用
-export type { CheckpointRecord, ErrorInfo } from '../../types'
+// CPF-03: 新代码使用 CheckpointSummary；CheckpointRecord 保留导出（结构同构，兼容旧消费方）
+export type { CheckpointSummary, CheckpointRecord, ErrorInfo } from '../../types'
 
 /**
  * 对话摘要
@@ -205,10 +206,12 @@ export interface ChatStoreState {
   retryStatus: Ref<RetryStatus | null>
   /** 自动总结状态（用于显示“自动总结中”提示） */
   autoSummaryStatus: Ref<AutoSummaryStatus | null>
-  /** 当前对话的检查点列表 */
-  checkpoints: Ref<CheckpointRecord[]>
+  /** 当前对话的检查点列表（CPF-03：轻量 CheckpointSummary，不含完整哈希映射） */
+  checkpoints: Ref<CheckpointSummary[]>
   /** 存档点配置：是否合并无变更的存档点 */
   mergeUnchangedCheckpoints: Ref<boolean>
+  /** 恢复预览进行中（恢复确认框打开前计算待删除文件清单） */
+  isRestorePreviewing: Ref<boolean>
   /** 正在删除的对话 ID 集合 */
   deletingConversationIds: Ref<Set<string>>
   /** 当前工作区 URI */
@@ -242,6 +245,12 @@ export interface ChatStoreState {
 
   /** 最近一个因审批门闸停止的 streamId（用于迟到 chunk 诊断） */
   _lastApprovalGatedStreamId: Ref<string | null>
+
+  /**
+   * 最近一次流式失败时保留在窗口中的半截 assistant 消息 ID（localOnly，后端未持久化）。
+   * retryAfterError 据此回滚失败残留，避免重试后窗口/历史出现半截回答。
+   */
+  _failedStreamMessageId: Ref<string | null>
 
   // ============ 多对话标签页 ============
 
@@ -350,7 +359,7 @@ export interface ConversationSessionSnapshot {
   /** 是否等待响应 */
   isWaitingForResponse: boolean
   /** 检查点列表 */
-  checkpoints: CheckpointRecord[]
+  checkpoints: CheckpointSummary[]
   /** Build 会话 */
   activeBuild: BuildSession | null
   /** 错误信息 */

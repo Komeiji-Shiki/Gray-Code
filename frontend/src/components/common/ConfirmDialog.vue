@@ -73,7 +73,9 @@ const iconColor = computed(() => {
             <span class="dialog-title">{{ displayTitle }}</span>
           </div>
           <div class="dialog-body">
-            <p>{{ displayMessage }}</p>
+            <p v-if="displayMessage">{{ displayMessage }}</p>
+            <!-- 扩展内容：恢复确认时展示待删除文件清单等 -->
+            <slot />
           </div>
           <div class="dialog-footer">
             <button class="dialog-btn cancel" @click="handleCancel">

@@ -23,6 +23,8 @@ export type TranscriptContentsMutator = (contents: Content[]) => Content[];
 export interface ITranscriptRepository {
     getContents(): Promise<Content[]>;
     appendContent(content: Content): Promise<Content[]>;
+    /** 批量追加（append-only 优化，HIS-02）：不走读全量→push→全量写回，直接追加尾段。 */
+    appendContents(contents: Content[]): Promise<Content[]>;
     replaceContents(contents: Content[]): Promise<Content[]>;
     mutateContents(mutator: TranscriptContentsMutator): Promise<Content[]>;
 }
@@ -30,6 +32,11 @@ export interface ITranscriptRepository {
 export interface TranscriptRepositoryDelegate {
     loadContents(): Promise<Content[]>;
     saveContents(contents: Content[]): Promise<void>;
+    /**
+     * 可选：append-only 落盘（HIS-01/HIS-02）。
+     * 未实现时仓储回退 get→push→save（保留旧语义）。
+     */
+    appendContents?(contents: Content[]): Promise<void>;
 }
 
 export function cloneTranscriptContents(contents: ReadonlyArray<Content> = []): Content[] {
@@ -56,12 +63,28 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
 
     async appendContent(content: Content): Promise<Content[]> {
         // 修改原因：append 是最常见的 transcript 写操作，调用方不应自己重复 load -> push -> save 样板代码。
-        // 修改方式：append 在仓储内部转成 mutate，从而与 replace/mutate 共用同一条保存路径。
+        // 修改方式：append 在仓储内部转成 appendContents，从而与 replace/mutate 共用同一套保存路径。
         // 修改目的：任何 append 的后续增强（审计、校验、监控）都能自动覆盖主聊天和 SubAgent。
-        const [contentCopy] = cloneTranscriptContents([content]);
-        return await this.mutateContents(contents => {
-            contents.push(contentCopy as Content);
-            return contents.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
+        return await this.appendContents([content]);
+    }
+
+    async appendContents(contents: Content[]): Promise<Content[]> {
+        // 修改原因（HIS-02/HIS-07）：普通追加此前走 getContents（全量读+全量深拷贝）→ push → 全量写回，
+        // 长对话下成本随历史长度增长。append-only 路径只克隆新增消息，并委托给适配器的追加落盘。
+        // 修改方式：独占执行器内只克隆新增内容 → 委托 appendContents 落盘 → 返回新增内容的独立副本
+        // （不再回读全量历史：落盘内容与传入内容一致，时间戳等由上层/适配器补全）。
+        // 修改目的：追加路径避免全量读、全量克隆与全量重写，同时保持仓储边界的只读/复制语义。
+        const run = this.exclusive ?? ((fn: () => Promise<Content[]>) => fn());
+        return run(async () => {
+            const copies = cloneTranscriptContents(contents);
+            if (this.delegate.appendContents) {
+                await this.delegate.appendContents(copies);
+                return cloneTranscriptContents(copies);
+            }
+            // 兜底：无 append 委托时退化为 get→push→save（保留旧语义）
+            const currentContents = await this.getContents();
+            currentContents.push(...copies);
+            return await this.saveAndReload(currentContents);
         });
     }
 
@@ -124,6 +147,7 @@ export class ConversationTranscriptRepository extends DelegatingTranscriptReposi
         if (contentCopy && !contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
-        return await super.appendContent(contentCopy as Content);
+        // HIS-02/HIS-07：主聊天 append 直通 append-only 尾段写入，不再读全量→push→全量写回
+        return await this.appendContents([contentCopy as Content]);
     }
 }

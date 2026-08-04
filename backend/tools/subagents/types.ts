@@ -11,6 +11,7 @@ import type { McpManager } from '../../modules/mcp/McpManager';
 import type { SettingsManager } from '../../modules/settings/SettingsManager';
 import type { ConfigManager } from '../../modules/config/ConfigManager';
 import type { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
+import type { UsageIndexMessage } from '../../modules/conversation/usageStats';
 
 /**
  * 子代理类型
@@ -268,6 +269,15 @@ export interface SubAgentExecutorContext {
 
     /** 父请求继承下来的提示词模式快照（可选） */
     promptModeSnapshot?: ResolvedPromptModeSnapshot;
+
+    /**
+     * 用量归集回调（可选）：把子代理消耗的 token 追加到主会话的用量索引。
+     *
+     * 修改原因：子代理的 token 消耗此前不进入任何用量统计，UsagePage 看不到子代理开销。
+     * 修改方式：由宿主（ChatViewProvider）注入 ConversationManager 的归集入口；
+     *          未注入或主会话归属缺失时跳过归集（不写索引）。
+     */
+    usageIndexAppend?: (conversationId: string, messages: UsageIndexMessage[]) => Promise<void>;
 }
 
 /**

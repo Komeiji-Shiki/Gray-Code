@@ -63,12 +63,14 @@ limcode-settings*.json
 report.md
 docs/
 
+# audit remediation notes (keep local, don't publish)
+AUDIT_REMEDIATION.md
+
+# electron desktop build artifacts
 electron-app/release/
 electron-app/*.tar.gz
 
-
 # dev handover traces (removed from the repo)
-.graycode
 electron-app/PROGRESS.md
 
 # portable instance data (dev runs write here)
