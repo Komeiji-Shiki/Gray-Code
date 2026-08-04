@@ -11,8 +11,9 @@
  * 索引 fresh 的对话不读历史文件，缺失/过期的对话读历史并重建索引（一次性成本）。
  */
 
-import type { MessageHandler } from '../types';
+import type { MessageHandler, HandlerContext } from '../types';
 import { aggregateUsageStats, type UsageStatsResult } from '../../backend/modules/conversation/usageStats';
+import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modules/conversation/usageCache';
 
 /** 结果缓存 TTL（毫秒）：5 分钟内重复打开直接命中，手动刷新强制重算 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -22,23 +23,49 @@ interface CachedStats {
     cachedAt: number;
 }
 
-/** 缓存 key 只由时间范围组成；条目数加 LRU 上限（客户端可控 key，无上限会撑爆内存） */
+/** 缓存 key 只由时间范围组成（全部/今天/近7天/近30天）；条目数加 LRU 上限（客户端可控 key，无上限会撑爆内存） */
 const statsCache = new Map<string, CachedStats>();
 const MAX_CACHE_ENTRIES = 20;
+
+/** 内存明细缓存与目录监听（懒初始化，宿主 dispose 时释放） */
+let usageCache: UsageStatsCache | undefined;
+let disposeUsageWatcher: (() => void) | undefined;
 
 function cacheKey(startTime?: number, endTime?: number): string {
     return `${startTime ?? ''}:${endTime ?? ''}`;
 }
 
+/** 写入结果缓存并淘汰最旧条目（Map 迭代序 = 插入序），保证缓存大小有界 */
 function setCachedStats(key: string, entry: CachedStats): void {
     statsCache.delete(key);
     statsCache.set(key, entry);
-    // 超过上限时淘汰最旧（Map 迭代序 = 插入序）
     while (statsCache.size > MAX_CACHE_ENTRIES) {
         const oldest = statsCache.keys().next().value;
         if (oldest === undefined) break;
         statsCache.delete(oldest);
     }
+}
+
+/**
+ * 懒初始化用量内存缓存 + 对话目录监听。
+ * 拿不到 conversations 目录（内存存储等）时返回 undefined，统计退化全量扫描。
+ */
+function getOrInitUsageCache(ctx: HandlerContext): UsageStatsCache | undefined {
+    if (usageCache) return usageCache;
+    const conversationsDir = ctx.conversationManager.getConversationsDirFsPath?.();
+    if (!conversationsDir) return undefined;
+    usageCache = new UsageStatsCache();
+    disposeUsageWatcher = startUsageDirectoryWatcher(conversationsDir, usageCache);
+    return usageCache;
+}
+
+/** 释放目录监听与内存缓存（宿主 dispose 时调用） */
+export function disposeUsageCache(): void {
+    disposeUsageWatcher?.();
+    disposeUsageWatcher = undefined;
+    usageCache = undefined;
+    // 结果缓存同样要清空：宿主重载/存储路径迁移后 statsCache 仍会命中旧统计直到 TTL 过期
+    statsCache.clear();
 }
 
 /**
@@ -61,7 +88,8 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
     const stats = await aggregateUsageStats(ctx.conversationManager, {
       startTime,
       endTime,
-      indexStore: ctx.conversationManager.getUsageIndexStore()
+      indexStore: ctx.conversationManager.getUsageIndexStore(),
+      cache: getOrInitUsageCache(ctx)
     });
     setCachedStats(key, { result: stats, cachedAt: Date.now() });
     ctx.sendResponse(requestId, stats);

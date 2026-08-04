@@ -92,10 +92,14 @@ export class DiffStorageManager {
     
     /**
      * 获取 diff 存储目录
+     *
+     * 路径穿越防护：conversationId 可能来自不可信输入，直接拼进 path.join 会被解析 `..`
+     * 写出到 diffs/ 之外；白名单校验（非空且仅 [a-zA-Z0-9_-]，与现有 ID 生成规则
+     * conv_{timestamp}_{rand} 兼容），非法时抛错拒绝读写。
      */
     private getDiffsDir(conversationId: string): string {
-        if (!isSafeId(conversationId)) {
-            throw new Error('Invalid conversationId');
+        if (typeof conversationId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(conversationId)) {
+            throw new Error(`Unsafe conversation id for diff storage: ${String(conversationId)}`);
         }
         return path.join(this.basePath, 'diffs', conversationId);
     }

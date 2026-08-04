@@ -67,6 +67,18 @@ function records(buf: Buffer): LogEntry[] {
     return out;
 }
 
+/**
+ * 各配置项的合法范围（与固定宽度记录/分页逻辑配套）：
+ * - entryChars 上限为 LOG_REC - 1（319），超过后所有 note/compress 写入都会在 pad() 抛 Too long；
+ * - 其余项要求为正整数，避免 0/负数导致分页、cover 或 recall 窗口行为异常。
+ */
+const MEMORY_CONFIG_BOUNDS: Array<[keyof MemoryConfig, number, number]> = [
+    ['wakeLines', 1, 10000],
+    ['entryChars', 1, LOG_REC - 1],
+    ['partChars', 1, 1000000],
+    ['partLines', 1, 100000],
+];
+
 // ─── 异步锁（保证操作串行化） ─────────────────────
 
 class AsyncLock {
@@ -477,9 +489,11 @@ export class MemoryManager {
             } else {
                 let s = await this.treeGet(lo, hi);
                 if (s === null) {
-                    const nap = await this.nextNap(snapshotT);
-                    if (nap) {
-                        const pc = await this.pendingCount(snapshotT);
+                    const pc = await this.pendingCount(snapshotT);
+                    if (pc > 0) {
+                        // 直接用实际缺失的块构造提示，而不是 nextNap 返回的
+                        // "第一个待压缩块"（可能不是 wake 实际缺失的那个块）。
+                        const nap = await this.napPrompt(lo, hi, pc - 1);
                         throw new Error(
                             `Cannot wake: the memory context needs #${lo}-${hi - 1}, ` +
                             `which is not compressed yet.\nDo the ${plural(pc, 'compression')} below, ` +
@@ -570,7 +584,11 @@ export class MemoryManager {
             die(`bad regex: ${e.message}`);
         }
 
+        // 用 head 指针代替 shift() 淘汰旧匹配：shift 是 O(n)，命中量大时整体退化为 O(n²)。
+        // head 记录已被淘汰的窗口起点；淘汰数超过存活数一半时 splice 压缩数组（摊还 O(1)），
+        // 数组容量始终约为存活窗口的 2 倍，不会随总命中数无限增长。
         const matches: string[] = [];
+        let head = 0;
         let totalHits = 0;
         let size = 0;
 
@@ -581,8 +599,14 @@ export class MemoryManager {
             matches.push(line);
             size += Buffer.byteLength(line, 'utf-8') + 1;
             // 保持最新的匹配，丢弃最旧的
-            while (size > this.config.partChars && matches.length > 0) {
-                size -= Buffer.byteLength(matches.shift()!, 'utf-8') + 1;
+            while (size > this.config.partChars && head < matches.length) {
+                size -= Buffer.byteLength(matches[head], 'utf-8') + 1;
+                head++;
+            }
+            // 淘汰超过一半时压缩，防止 head 无界增长
+            if (head > 0 && head * 2 >= matches.length) {
+                matches.splice(0, head);
+                head = 0;
             }
         }
 
@@ -590,8 +614,9 @@ export class MemoryManager {
             return { lines: [], totalHits: 0, truncated: false };
         }
 
-        const truncated = matches.length < totalHits;
-        return { lines: matches, totalHits, truncated };
+        const lines = head === 0 ? matches : matches.slice(head);
+        const truncated = lines.length < totalHits;
+        return { lines, totalHits, truncated };
     }
 
     /**
@@ -604,7 +629,6 @@ export class MemoryManager {
         let said = false;
 
         if (blockId && summary !== undefined) {
-            said = true;
             const [lo, hi] = this.parseBlockId(blockId);
             const todo = await this.pending(T, 1);
             if (todo.length === 0) {
@@ -612,9 +636,7 @@ export class MemoryManager {
             }
             if (lo !== todo[0][0] || hi !== todo[0][1]) {
                 const existing = await this.treeGet(lo, hi);
-                if (existing !== null) {
-                    // 已经存在，不报错
-                } else {
+                if (existing === null) {
                     die(`Wrong block: ${blockId}. Blocks are built in order; the next is ` +
                         `${todo[0][0]}-${todo[0][1] - 1}. Run memory_compress.`);
                 }
@@ -627,9 +649,10 @@ export class MemoryManager {
                 }
                 const ok = await this.treePut(lo, hi, trimmed);
                 if (ok) {
-                    // 成功写入
-                } else {
-                    // 已被并行操作处理
+                    // 只有真正写入成功才置 said=true：
+                    // 块已存在或 treePut 返回 false（并行会话已处理）时保持 said=false，
+                    // 避免上报 done:1 与实际写入不符。
+                    said = true;
                 }
             }
         }
@@ -679,11 +702,20 @@ export class MemoryManager {
 
     /**
      * listEntries: 返回所有原始记忆条目。
+     *
+     * 流式逐块扫描 LOG（logScan 每块最多 LOG_REC * 4096 字节），
+     * 不再一次性分配 T * LOG_REC 字节的 Buffer 全量读入——记忆量大时
+     * （如 100 万条 ≈ 320MB）会显著抬高峰值内存。
+     *
+     * @param limit 可选：最多返回的条目数（不传则返回全部）
      */
-    async listEntries(): Promise<LogEntry[]> {
-        const T = await this.logLen();
-        if (T === 0) return [];
-        return this.logSlice(0, T);
+    async listEntries(limit?: number): Promise<LogEntry[]> {
+        const entries: LogEntry[] = [];
+        for await (const e of this.logScan()) {
+            entries.push(e);
+            if (limit !== undefined && entries.length >= limit) break;
+        }
+        return entries;
     }
 
     /**
@@ -751,16 +783,19 @@ export class MemoryManager {
      * keepId=0 表示清空全部记忆。
      */
     async truncateLog(keepId: number): Promise<{ removed: number }> {
-        const T = await this.logLen();
-        if (keepId >= T) {
-            return { removed: 0 };
-        }
         if (keepId < 0) {
             die(`Invalid keepId: ${keepId}.`);
         }
 
+        // T 必须在锁内读取并与截断原子化：若在锁外读取 logLen，期间并发 note
+        // 追加的新记录会在 truncate 时被一并截断，removed 数也不准确。
+        // logLen 不获取锁（仅 fs.stat），锁内调用不会死锁。
         const release = await this.lock.acquire();
         try {
+            const T = await this.logLen();
+            if (keepId >= T) {
+                return { removed: 0 };
+            }
             // 1. 截断 LOG 文件
             const logPath = this.logPath();
             await this.repair(logPath, LOG_REC);
@@ -803,7 +838,18 @@ export class MemoryManager {
     }
 
     async updateConfig(updates: Partial<MemoryConfig>): Promise<MemoryConfig> {
-        this.config = { ...this.config, ...updates };
+        // 逐项校验：非法值直接抛错（与模块内 die() 的错误风格一致，工具层会转成失败结果），
+        // 避免 entryChars 被设为 >319 后所有 note/compress 都在 pad() 抛 Too long。
+        const validated: Partial<MemoryConfig> = {};
+        for (const [key, min, max] of MEMORY_CONFIG_BOUNDS) {
+            const value = updates[key];
+            if (value === undefined) continue;
+            if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+                die(`Invalid ${key}: ${String(value)}. Must be an integer between ${min} and ${max}.`);
+            }
+            validated[key] = value;
+        }
+        this.config = { ...this.config, ...validated };
         await this.writeConfig(this.config);
         return this.config;
     }

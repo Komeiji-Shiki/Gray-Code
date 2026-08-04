@@ -29,7 +29,7 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, History
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
@@ -336,6 +336,11 @@ export class ConversationManager {
                 this.cacheHistory(conversationId, contents);
                 this.metaCache.delete(conversationId);
                 await this.updateUsageIndex(conversationId, contents);
+                // PERF：返回落盘形态。存储适配器（FileSystem/Memory/VSCode）对消息内容只做
+                // JSON 往返序列化，不补 timestamp/index 等字段（与 append 委托不同），
+                // 传入数组即真实落盘形态；仓储 saveAndReload 据此跳过“写后全量回读 + 深拷贝”，
+                // 把每次结构性变更（删除/插入/拒绝工具调用等）从 读→写→读 3 次全量 IO 降为 读→写 2 次。
+                return contents;
             },
             // HIS-01/HIS-02：普通追加直通 append-only 尾段写入（不再读全量→push→全量写回）
             // BR-01：委托调用发生在仓储互斥执行器（会话写锁）内，在这里读取尾消息 id、
@@ -588,6 +593,17 @@ export class ConversationManager {
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
+            // R5b-2.5：元数据缺失（not_found）时先确认历史仍存在，再允许调用方基于基础字段重建。
+            // 删除对话后并发的 setTitle/updateSummary/setCustomMetadata 会基于 not_found
+            // 重建并落盘 meta.json，把已删除会话的元数据“复活”（幽灵 meta）。
+            // 历史不存在 → 会话已删除或从未创建 → 抛错中断写入（跳过重建），
+            // 与 append/mutate 入口的 assertNotDeleted 短路语义一致。
+            const indexInfo = await this.resolveHistoryIndexInfo(conversationId);
+            if (!indexInfo?.exists) {
+                throw new Error(
+                    `Conversation ${conversationId} has been deleted or does not exist; refusing to write metadata`
+                );
+            }
             return null;
         }
         throw new Error(
@@ -1798,7 +1814,9 @@ export class ConversationManager {
         if (messageIndex < 0 || messageIndex >= history.length) {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
         }
-        await repository.mutateContents(contents => deleteLogicalMessage(contents, messageIndex));
+        const nextHistory = await repository.mutateContents(contents => deleteLogicalMessage(contents, messageIndex));
+        // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
+        await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'message_deleted');
     }
 
@@ -1813,12 +1831,17 @@ export class ConversationManager {
     ): Promise<void> {
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const index = Math.max(0, Math.min(position, history.length));
-            const parent = index > 0 ? history[index - 1] : null;
-            history.splice(index, 0, this.ensureNodeId({
+            const oldParent = index > 0 ? history[index - 1] : null;
+            const oldParentId = oldParent?.id ?? null;
+            const inserted = this.ensureNodeId({
                 role,
                 parts: JSON.parse(JSON.stringify(parts)),
                 timestamp: Date.now()  // 自动添加时间
-            } as Content, parent));
+            } as Content, oldParent);
+            history.splice(index, 0, inserted);
+            // R5b-2.4：插入后修复线性 parentId 链（插入点之后 parentId===旧父id 的消息
+            // 重链到新插入消息，与 deleteMessagesInRange 的 repairParentChainAfterDelete 语义对称）
+            repairParentChainAfterInsert(history, index, oldParentId, inserted.id as string);
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, 'message_inserted');
@@ -1839,8 +1862,13 @@ export class ConversationManager {
         }
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const index = Math.max(0, Math.min(position, history.length));
-            const parent = index > 0 ? history[index - 1] : null;
-            history.splice(index, 0, this.ensureNodeId(contentCopy, parent));
+            const oldParent = index > 0 ? history[index - 1] : null;
+            const oldParentId = oldParent?.id ?? null;
+            const inserted = this.ensureNodeId(contentCopy, oldParent);
+            history.splice(index, 0, inserted);
+            // R5b-2.4：插入后修复线性 parentId 链（插入点之后 parentId===旧父id 的消息
+            // 重链到新插入消息，与 deleteMessagesInRange 的 repairParentChainAfterDelete 语义对称）
+            repairParentChainAfterInsert(history, index, oldParentId, inserted.id as string);
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, contentCopy.isSummary ? 'summary_inserted' : 'content_inserted');
@@ -1856,7 +1884,7 @@ export class ConversationManager {
         startIndex: number,
         endIndex: number
     ): Promise<void> {
-        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+        const nextHistory = await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const start = Math.max(0, startIndex);
             const end = Math.min(history.length, endIndex + 1);
             const deleted = history.slice(start, end);
@@ -1866,6 +1894,8 @@ export class ConversationManager {
             repairParentChainAfterDelete(history, deleted);
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
+        // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
+        await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'message_range_deleted');
     }
 
@@ -1900,6 +1930,8 @@ export class ConversationManager {
         const nextHistory = await repository.mutateContents(currentHistory => truncateFrom(currentHistory, targetIndex));
         const deleteCount = history.length - nextHistory.length;
         if (deleteCount > 0) {
+            // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
+            await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
             await this.invalidateContextManagementState(conversationId, 'history_truncated');
         }
         
@@ -1913,7 +1945,9 @@ export class ConversationManager {
         // 修改原因：清空 transcript 属于 replace 整体快照的典型场景，应直接走统一 replace 入口。
         // 修改方式：委托 repository.replaceContents([]) 保存空 transcript。
         // 修改目的：主聊天 clear 与 SubAgent replace 拥有同一仓储操作语义。
-        await this.getTranscriptRepository(conversationId).replaceContents([]);
+        const nextHistory = await this.getTranscriptRepository(conversationId).replaceContents([]);
+        // HIS-11：结构性清空后同步 custom.messageCount（防对话列表 messageCount 漂移）
+        await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'history_cleared');
     }
 
@@ -2845,6 +2879,47 @@ export class ConversationManager {
     }
 
     /**
+     * 结构性变更后同步 custom.messageCount（HIS-11 配套，防对话列表 messageCount 漂移）。
+     *
+     * deleteMessage / deleteMessagesInRange / deleteToMessage / clearHistory 是结构性变更，
+     * 此前只有 updateSummary 会钳制写入 messageCount，这些路径不更新 → custom.messageCount
+     * 永久超前于真实历史，对话列表消息数漂移。这里基于变更后的实际历史长度直接写入：
+     * 长度来自本次变更结果，天然不超过真实历史，无需 updateSummary 的钳制逻辑。
+     *
+     * 与 updateSummary 保持一致的约定：
+     * - 整对象读改写走同一元数据写链（withMetadataWriteSerialized），避免与
+     *   updateSummary/setTitle/updateCustomMetadata 并发时互相覆盖 custom 字段；
+     * - 不更新 updatedAt（由历史提交路径 saveHistory/appendHistory 统一维护）；
+     * - 元数据缺失（历史存在但无 meta.json）时不重建 meta，仅跳过；
+     * - 会话已删除时 loadMetadataForWrite 抛错，由本方法 catch 吞掉（messageCount 属展示性
+     *   元数据，同步失败不阻塞结构性删除主流程，仅告警）。
+     */
+    private async syncMessageCountAfterStructuralChange(conversationId: string, count: number): Promise<void> {
+        try {
+            await withMetadataWriteSerialized(conversationId, async () => {
+                const meta = await this.loadMetadataForWrite(conversationId);
+                if (!meta) {
+                    return; // 元数据缺失（历史存在）：不重建，仅跳过
+                }
+                if (!meta.custom) {
+                    meta.custom = {};
+                }
+                if (meta.custom.messageCount === count) {
+                    return; // 无变化，跳过写回
+                }
+                meta.custom.messageCount = count;
+                await this.storage.saveMetadata(meta);
+            });
+        } catch (error) {
+            log.warn('conversation.messageCountSyncFailed', {
+                conversationId,
+                count,
+                error: String(error),
+            });
+        }
+    }
+
+    /**
      * 轻量读取对话元数据（供用量统计等只关心 title/updatedAt 的场景使用）
      *
      * 与 getMetadata 不同：只读 meta.json，不加载历史做完整性检查、
@@ -2998,10 +3073,14 @@ export class ConversationManager {
 
     /**
      * 获取自定义元数据
+     *
+     * 与 getMetadataLight 相同的降级语义：meta.json 损坏（parse_error）/读失败（io_error）时
+     * 不向调用方抛错，返回 undefined（调用方按缺失处理），避免 todo/checkpoints/trimState 等
+     * 工具侧因元数据损坏整体中断。
      */
     async getCustomMetadata(conversationId: string, key: string): Promise<unknown> {
-        const meta = await this.loadStoredMetadata(conversationId);
-        return meta?.custom?.[key];
+        const result = await this.storage.loadMetadataWithStatus(conversationId);
+        return result.value?.custom?.[key];
     }
 
     // ==================== 工具调用管理 ====================
@@ -3074,23 +3153,26 @@ export class ConversationManager {
             // 收集需要拒绝的工具调用
             const rejectedCalls: Array<{ id: string; name: string }> = [];
 
-            // 标记工具为拒绝状态
-            for (const part of message.parts) {
-                if (part.functionCall && part.functionCall.id) {
-                    // 检查是否需要标记此工具
-                    const shouldReject = toolCallIds
-                        ? toolCallIds.includes(part.functionCall.id)
-                        : !respondedToolIds.has(part.functionCall.id);
+            // 标记工具为拒绝状态（R5b-2.4：与同函数 2904-2910 行 / rejectAllPendingToolCalls 一致，
+            // 防御目标消息本身无 parts 时抛 TypeError）
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionCall && part.functionCall.id) {
+                        // 检查是否需要标记此工具
+                        const shouldReject = toolCallIds
+                            ? toolCallIds.includes(part.functionCall.id)
+                            : !respondedToolIds.has(part.functionCall.id);
 
-                    if (shouldReject && !part.functionCall.rejected) {
-                        part.functionCall.rejected = true;
-                        localModified = true;
+                        if (shouldReject && !part.functionCall.rejected) {
+                            part.functionCall.rejected = true;
+                            localModified = true;
 
-                        // 收集被拒绝的工具信息
-                        rejectedCalls.push({
-                            id: part.functionCall.id,
-                            name: part.functionCall.name || 'unknown'
-                        });
+                            // 收集被拒绝的工具信息
+                            rejectedCalls.push({
+                                id: part.functionCall.id,
+                                name: part.functionCall.name || 'unknown'
+                            });
+                        }
                     }
                 }
             }

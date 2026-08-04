@@ -53,14 +53,14 @@ export {
 export { registerMcpModule } from './register';
 
 // 工具适配器
+// WP12：MCP 工具名编解码统一走 mcpToolNameCodec；mcpToolSimpleName /
+// mcpToolToDeclarationWithOptions 为旧单下划线命名时代的死代码（无任何引用），已删除。
 export {
     mcpToolToDeclaration,
     mcpResultToToolResult,
     parseMcpToolName,
     createMcpTool,
     mcpToolsToDeclarations,
-    collectAllMcpToolDeclarations,
-    mcpToolSimpleName,
-    mcpToolToDeclarationWithOptions
+    collectAllMcpToolDeclarations
 } from './toolAdapter';
-export type { McpToolSchema, McpToolRegistrationOptions } from './toolAdapter';
+export type { McpToolSchema } from './toolAdapter';

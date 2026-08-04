@@ -647,6 +647,7 @@ description: "このスキルの機能と使用場面の簡単な説明"
             fileNotInAnyWorkspace: 'ファイルが開いているワークスペースにありません',
             fileInOtherWorkspace: 'ファイルは別のワークスペースに属しています: {workspaceName}',
             readFileFailed: 'ファイルの読み取りに失敗しました',
+            attachmentTooLarge: 'ファイルが大きすぎます（{maxSizeMB}MB 超）。ファイル選択またはプレビューをご利用ください',
             listWorkspaceDirectoryFailed: 'ワークスペースのディレクトリ一覧の取得に失敗しました',
             conversationFileNotExists: '会話ファイルが存在しません',
             cannotRevealInExplorer: 'エクスプローラーで表示できません',

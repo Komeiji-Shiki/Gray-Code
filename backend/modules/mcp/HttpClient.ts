@@ -96,6 +96,12 @@ export class HttpMcpClient extends EventEmitter {
     private connected = false;
     private timeout: number;
     
+    // 进行中的 fetch AbortController（disconnect 时统一中止）
+    private activeControllers: Set<AbortController> = new Set();
+    
+    // 进行中的 SSE 读流（disconnect 时统一取消）
+    private activeReaders: Set<ReadableStreamDefaultReader<Uint8Array>> = new Set();
+    
     // 服务器能力和信息
     private serverInfo?: { name: string; version: string };
     private protocolVersion?: string;
@@ -180,6 +186,26 @@ export class HttpMcpClient extends EventEmitter {
         this.tools = [];
         this.resources = [];
         this.prompts = [];
+
+        // 中止所有进行中的请求
+        for (const controller of this.activeControllers) {
+            try {
+                controller.abort();
+            } catch {
+                // 忽略中止失败
+            }
+        }
+        this.activeControllers.clear();
+
+        // 取消所有进行中的 SSE 读流
+        for (const reader of this.activeReaders) {
+            try {
+                await reader.cancel();
+            } catch {
+                // 忽略取消失败
+            }
+        }
+        this.activeReaders.clear();
     }
     
     /**
@@ -250,6 +276,10 @@ export class HttpMcpClient extends EventEmitter {
     
     /**
      * 发送 JSON-RPC 请求
+     *
+     * 超时通过 AbortController 覆盖整个请求生命周期（含 body 读取）：
+     * - JSON 响应：controller 保持到 response.json() 完成
+     * - SSE 响应：拿到响应头后由空闲超时接管（每次收到数据重置计时器）
      */
     private async sendRequest<T>(method: string, params?: any): Promise<T> {
         const id = ++this.requestId;
@@ -271,84 +301,111 @@ export class HttpMcpClient extends EventEmitter {
             headers['Mcp-Session-Id'] = this.sessionId;
         }
         
-        // 创建 AbortController 用于超时控制
+        // 创建 AbortController 用于超时控制（保持到 body 读取完成）
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => {
-            controller.abort();
-        }, this.timeout);
+        this.activeControllers.add(controller);
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
         
-        let response: Response;
         try {
-            response = await fetch(this.url, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(request),
-                signal: controller.signal
-            });
-        } catch (error: any) {
-            clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
+            timeoutId = setTimeout(() => {
+                controller.abort();
+            }, this.timeout);
+            
+            let response: Response;
+            try {
+                response = await fetch(this.url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(request),
+                    signal: controller.signal
+                });
+            } catch (error: any) {
+                if (error?.name === 'AbortError') {
+                    throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
+                }
+                throw error;
             }
-            throw error;
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
+            }
+            
+            // 检查是否返回了 session ID
+            const newSessionId = response.headers.get('Mcp-Session-Id');
+            if (newSessionId) {
+                this.sessionId = newSessionId;
+            }
+            
+            const contentType = response.headers.get('Content-Type') || '';
+            
+            // SSE 响应：固定超时到响应头为止，之后由空闲超时接管（数据到达时重置）
+            if (contentType.includes('text/event-stream')) {
+                if (timeoutId) clearTimeout(timeoutId);
+                timeoutId = null;
+                return await this.handleSseResponse<T>(response, id);
+            }
+            
+            // JSON 响应（controller 保持到 json() 完成，body 读取同样受超时保护）
+            try {
+                const jsonResponse = await response.json() as JsonRpcResponse;
+                
+                if (jsonResponse.error) {
+                    throw new Error(jsonResponse.error.message);
+                }
+                
+                return jsonResponse.result as T;
+            } catch (error: any) {
+                if (error?.name === 'AbortError') {
+                    throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
+                }
+                throw error;
+            }
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+            this.activeControllers.delete(controller);
         }
-        
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
-        }
-        
-        // 检查是否返回了 session ID
-        const newSessionId = response.headers.get('Mcp-Session-Id');
-        if (newSessionId) {
-            this.sessionId = newSessionId;
-        }
-        
-        const contentType = response.headers.get('Content-Type') || '';
-        
-        // SSE 响应
-        if (contentType.includes('text/event-stream')) {
-            return await this.handleSseResponse<T>(response);
-        }
-        
-        // JSON 响应
-        const jsonResponse = await response.json() as JsonRpcResponse;
-        
-        if (jsonResponse.error) {
-            throw new Error(jsonResponse.error.message);
-        }
-        
-        return jsonResponse.result as T;
     }
     
     /**
-     * 处理 SSE 响应（空闲超时：每次收到数据重置计时器，避免误杀合法长任务）
+     * 处理 SSE 响应
+     *
+     * - 只消费与请求 id 匹配的事件，服务器下发的通知（id: null/缺失）不会被误当结果
+     * - 按 SSE 规范合并多行 data:（以 \n 连接，空行结束事件）
+     * - 空闲超时：每次收到数据重置计时器，避免误杀合法长任务；收到结果后提前关闭读流
      */
-    private async handleSseResponse<T>(response: Response): Promise<T> {
+    private async handleSseResponse<T>(response: Response, expectedId: number | string): Promise<T> {
         const reader = response.body?.getReader();
         if (!reader) {
             throw new Error('No response body');
         }
 
+        this.activeReaders.add(reader);
         const decoder = new TextDecoder();
         let buffer = '';
         let result: T | undefined;
+        let matched = false;
 
         // 空闲超时控制：每次收到数据重置计时器
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         const resetIdleTimer = () => {
             if (idleTimer) clearTimeout(idleTimer);
             idleTimer = setTimeout(() => {
-                reader.cancel();
+                reader.cancel().catch(() => {});
             }, this.timeout);
         };
 
         resetIdleTimer();
 
         try {
-            while (true) {
-                const { done, value } = await reader.read();
+            while (!matched) {
+                let chunk: { done: boolean; value?: Uint8Array };
+                try {
+                    chunk = await reader.read();
+                } catch {
+                    // 读流被取消/中止（超时或 disconnect）
+                    break;
+                }
+                const { done, value } = chunk;
                 if (done) break;
 
                 resetIdleTimer();
@@ -362,49 +419,81 @@ export class HttpMcpClient extends EventEmitter {
                     throw new Error(`MCP HTTP server output exceeded buffer limit (${MAX_BUFFER_SIZE} bytes), connection closed`);
                 }
 
-                // 处理 SSE 事件
+                // 按 SSE 规范解析：data: 行累积，空行触发事件
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('data:')) {
-                        const jsonStr = line.slice(5).trim();
-                        if (!jsonStr || jsonStr === '[DONE]') continue;
+                let eventData: string[] | null = null;
+                const dispatchEvent = () => {
+                    if (eventData === null) return;
+                    const jsonStr = eventData.join('\n').trim();
+                    eventData = null;
+                    if (!jsonStr || jsonStr === '[DONE]') return;
 
-                        let event: Partial<JsonRpcResponse>;
-                        try {
-                            event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
-                        } catch (parseError) {
-                            // 仅忽略 JSON 解析错误
-                            continue;
-                        }
-
-                        // 检查是否是最终结果
-                        if (event.jsonrpc === '2.0' && event.id !== undefined) {
-                            if (event.error) {
-                                // 服务器结构化错误（如工具不存在、参数错误）直接抛出，
-                                // 不能被当作解析错误吞掉，否则调用方只会收到误导性的“超时”
-                                throw new Error(event.error.message);
-                            }
-                            result = event.result as T;
-                        }
+                    let event: Partial<JsonRpcResponse> | undefined;
+                    try {
+                        event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
+                    } catch {
+                        // 忽略解析错误（多行 data 已在合并后解析）
+                        return;
                     }
+                    // 只消费与请求 id 匹配的响应，服务器下发的通知不会被误当结果
+                    if (event.jsonrpc === '2.0' && event.id === expectedId) {
+                        if (event.error) {
+                            throw new Error(event.error.message);
+                        }
+                        matched = true;
+                        result = event.result as T;
+                    }
+                };
+
+                for (const rawLine of lines) {
+                    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+                    if (line.startsWith('data:')) {
+                        // SSE 规范：data: 后若跟一个空格，该空格不属于数据
+                        const value2 = line.slice(5);
+                        eventData = eventData ?? [];
+                        eventData.push(value2.startsWith(' ') ? value2.slice(1) : value2);
+                    } else if (line === '' && eventData !== null) {
+                        dispatchEvent();
+                        if (matched) break;
+                    }
+                }
+
+                // 流结束时派发尚未结束的事件
+                if (done && eventData !== null) {
+                    dispatchEvent();
+                }
+
+                if (matched) {
+                    // 已拿到结果，提前关闭读流（某些服务器不会主动关闭 SSE 流）
+                    try {
+                        await reader.cancel();
+                    } catch {
+                        // 忽略取消失败
+                    }
+                    break;
                 }
             }
         } finally {
             if (idleTimer) clearTimeout(idleTimer);
-            reader.releaseLock();
+            try {
+                reader.releaseLock();
+            } catch {
+                // 忽略释放失败
+            }
+            this.activeReaders.delete(reader);
         }
 
-        if (result === undefined) {
+        if (!matched) {
             throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
         }
 
-        return result;
+        return result as T;
     }
     
     /**
-     * 发送通知（无需响应）
+     * 发送通知（无需响应，同样受超时与 disconnect 中止保护）
      */
     private async sendNotification(method: string, params?: any): Promise<void> {
         const notification = {
@@ -422,10 +511,27 @@ export class HttpMcpClient extends EventEmitter {
             headers['Mcp-Session-Id'] = this.sessionId;
         }
         
-        await fetch(this.url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(notification)
-        });
+        const controller = new AbortController();
+        this.activeControllers.add(controller);
+        const timeoutId = setTimeout(() => {
+            controller.abort();
+        }, this.timeout);
+        
+        try {
+            await fetch(this.url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(notification),
+                signal: controller.signal
+            });
+        } catch (error: any) {
+            if (error?.name === 'AbortError') {
+                throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
+            this.activeControllers.delete(controller);
+        }
     }
 }

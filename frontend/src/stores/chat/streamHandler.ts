@@ -46,6 +46,25 @@ export interface StreamHandlerContext {
   processQueue: () => Promise<void>
 }
 
+/**
+ * 复位终结事件（complete/toolIteration）的流式状态。
+ *
+ * 后端可能发送 content 为 null/undefined 的终结 chunk：
+ * 此时消息内容替换无法进行，但流式状态必须无条件复位，
+ * 否则 isStreaming/isWaitingForResponse/streamingMessageId 永久残留，
+ * 界面会一直卡在“等待响应”。
+ */
+function resetTerminalStreamState(state: ChatStoreState): void {
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state.autoSummaryStatus.value = null
+  state.pendingModelOverride.value = null
+  state._lastApprovalGatedStreamId.value = null
+  state._lastCancelledStreamId.value = null
+}
+
 function warnLateApprovalGatedChunk(chunk: StreamChunk, state: ChatStoreState): void {
   if (!chunk.streamId || chunk.streamId !== state._lastApprovalGatedStreamId.value) {
     return
@@ -113,14 +132,20 @@ export function handleStreamChunk(
     case 'toolIteration':
       if (chunk.content) {
         handleToolIteration(chunk, state, currentModelName, addCheckpoint)
+      } else {
+        // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        resetTerminalStreamState(state)
       }
       break
       
     case 'complete':
       if (chunk.content) {
         handleComplete(chunk, state, addCheckpoint, updateConversationAfterMessage)
-        nextTick(() => processQueue())
+      } else {
+        // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        resetTerminalStreamState(state)
       }
+      nextTick(() => processQueue())
       break
       
     case 'checkpoints':

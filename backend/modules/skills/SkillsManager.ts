@@ -182,6 +182,15 @@ ${content}
             await this.scanDirectory(dirInfo.path, dirInfo.source);
         }
         
+        // 基于新扫描结果重建启用状态：磁盘上已删除的 skill 不再视为启用，
+        // 仍存在的 skill 保留其启用状态。
+        const existingIds = new Set(this.skills.keys());
+        for (const id of Array.from(this.enabledSkillIds)) {
+            if (!existingIds.has(id)) {
+                this.enabledSkillIds.delete(id);
+            }
+        }
+        
         // 通知监听器
         this.notifyChange({
             type: 'refresh',
@@ -291,6 +300,47 @@ ${content}
     }
     
     /**
+     * 定位 frontmatter 结束标记（独占一行的 '---'）的字符索引，找不到返回 -1。
+     * 只用 indexOf 找 '---' 会把 description 等字段内容里的 '---' 误判为结束，
+     * 导致 frontmatter 提前截断、正文错乱。
+     */
+    private findFrontmatterEnd(content: string): number {
+        const lines = content.split('\n');
+        // 第 0 行是开头的 '---'，从其后开始找
+        let offset = lines[0].length + 1;
+        for (let i = 1; i < lines.length; i++) {
+            if (lines[i].trim() === '---') {
+                return offset;
+            }
+            offset += lines[i].length + 1;
+        }
+        return -1;
+    }
+    
+    /**
+     * 反转 JSON 双引号字符串转义（\n \r \t \" \\ \uXXXX 等），
+     * 与 SettingsExporter.buildSkillMarkdown 的 JSON.stringify 输出配套，保证往返一致。
+     */
+    private unescapeQuotedValue(value: string): string {
+        return value.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_match, esc: string) => {
+            if (esc[0] === 'u') {
+                return String.fromCharCode(parseInt(esc.substring(1), 16));
+            }
+            switch (esc) {
+                case 'n': return '\n';
+                case 'r': return '\r';
+                case 't': return '\t';
+                case 'b': return '\b';
+                case 'f': return '\f';
+                case '"': return '"';
+                case '\\': return '\\';
+                case '/': return '/';
+                default: return esc;
+            }
+        });
+    }
+    
+    /**
      * 解析 frontmatter
      */
     private parseFrontmatter(content: string): { frontmatter: Partial<SkillFrontmatter>; body: string } {
@@ -298,7 +348,7 @@ ${content}
         let body = content;
         
         if (content.startsWith('---')) {
-            const endIndex = content.indexOf('---', 3);
+            const endIndex = this.findFrontmatterEnd(content);
             if (endIndex !== -1) {
                 const frontmatterContent = content.substring(3, endIndex).trim();
                 body = content.substring(endIndex + 3).trim();
@@ -310,8 +360,10 @@ ${content}
                         const key = line.substring(0, colonIndex).trim();
                         let value = line.substring(colonIndex + 1).trim();
                         
-                        if ((value.startsWith('"') && value.endsWith('"')) ||
-                            (value.startsWith("'") && value.endsWith("'"))) {
+                        if (value.startsWith('"') && value.endsWith('"')) {
+                            // 双引号标量：反转义（与 SettingsExporter 导出的 JSON.stringify 输出配套）
+                            value = this.unescapeQuotedValue(value.slice(1, -1));
+                        } else if (value.startsWith("'") && value.endsWith("'")) {
                             value = value.slice(1, -1);
                         }
                         

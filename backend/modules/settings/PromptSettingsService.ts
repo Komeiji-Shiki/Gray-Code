@@ -401,6 +401,11 @@ export class PromptSettingsService {
      * 添加或更新模式
      */
     async savePromptMode(mode: PromptMode): Promise<void> {
+        // 校验 id 非空字符串：空/undefined id 会写入 "undefined" 键的模式。
+        // 返回风格与 renamePromptMode 一致（抛错）。
+        if (typeof mode.id !== 'string' || !mode.id.trim()) {
+            throw new Error('Mode id is required');
+        }
         const config = this.getSystemPromptConfig();
         // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
         // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值

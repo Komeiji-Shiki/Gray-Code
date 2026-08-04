@@ -20,6 +20,15 @@ import {
   type PendingApprovalGateExpectation
 } from '../../backend/modules/conversation/pendingApprovalGate';
 
+// ========== 附件大小上限 ==========
+
+/**
+ * 附件（非文本文件）会整体 base64 编码后经 postMessage 传给 webview：
+ * base64 体积膨胀约 1/3，超大文件会拖垮扩展进程内存并阻塞序列化。
+ * 超过该上限时拒绝传输/预览，引导用户改用文件选择或预览方式查看。
+ */
+const MAX_ATTACHMENT_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
 // ========== 工作区包含校验 ==========
 
 /**
@@ -636,6 +645,15 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
     }
 
     const stat = await vscode.workspace.fs.stat(fileUri);
+    // 大文件整体 base64 后塞进 postMessage 会导致扩展进程内存暴涨/序列化阻塞，
+    // 超限时返回可读错误，引导用户改用文件选择/预览方式查看。
+    if (stat.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
+      });
+      return;
+    }
     const mimeType = inferMimeTypeByPath(relativePath);
 
     ctx.sendResponse(requestId, {
@@ -657,18 +675,13 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
   }
 };
 
-// 在 VSCode 中显示上下文内容（使用临时文件）
-let contextPreviewDoc: vscode.TextDocument | null = null;
-
 export const showContextContent: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { title, content, language } = data;
     
-    // 创建临时文件来显示内容
+    // 创建临时文件来显示内容（异步 mkdir/writeFile：内容大小由 webview 控制，同步写会阻塞扩展宿主）
     const tempDir = path.join(os.tmpdir(), 'graycode-context-preview');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    await fs.promises.mkdir(tempDir, { recursive: true });
     
     // 根据语言确定扩展名
     const extMap: Record<string, string> = {
@@ -704,7 +717,7 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     const tempFilePath = path.join(tempDir, `preview_${safeTitle}${ext}`);
     
     // 写入内容
-    fs.writeFileSync(tempFilePath, content, 'utf-8');
+    await fs.promises.writeFile(tempFilePath, content, 'utf-8');
     
     const uri = vscode.Uri.file(tempFilePath);
     
@@ -731,16 +744,23 @@ export const previewAttachment: MessageHandler = async (data, requestId, ctx) =>
     const { name, mimeType, data: base64Data } = data;
     
     const tempDir = path.join(os.tmpdir(), 'graycode-preview');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    await fs.promises.mkdir(tempDir, { recursive: true });
     
     const timestamp = Date.now();
     const safeFileName = name.replace(/[<>:"/\\|?*]/g, '_');
     const tempFilePath = path.join(tempDir, `${timestamp}_${safeFileName}`);
     
     const buffer = Buffer.from(base64Data, 'base64');
-    fs.writeFileSync(tempFilePath, buffer);
+    // 与 readWorkspaceFileForInput 共用附件大小上限，拒绝超大附件写入临时目录
+    if (buffer.length > MAX_ATTACHMENT_SIZE_BYTES) {
+      ctx.sendError(
+        requestId,
+        'PREVIEW_ATTACHMENT_ERROR',
+        t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
+      );
+      return;
+    }
+    await fs.promises.writeFile(tempFilePath, buffer);
     
     const uri = vscode.Uri.file(tempFilePath);
     await vscode.commands.executeCommand('vscode.open', uri);
@@ -1114,7 +1134,21 @@ const EXCLUDED_DIRS = new Set([
   '.vscode', '.idea', '__pycache__', '.cache', 'coverage'
 ]);
 
-// 递归搜索文件夹
+/** searchWorkspaceFiles 结果数量上限：webview 传入的 limit 会被钳制到该值以内 */
+const MAX_SEARCH_RESULTS = 200;
+
+/**
+ * 过滤 glob 元字符（[ ] { } * ? 等）。
+ *
+ * query 会被拼入 vscode.workspace.findFiles 的 glob 模式（通配前缀 + query + 通配后缀），
+ * 直接透传会破坏模式结构（如 query="[" 产生非法字符类、query="*" 退化成全匹配）。
+ * 采用剥离而非转义：VS Code glob 用反斜杠转义，在 Windows 上与路径分隔符冲突，剥离最稳妥。
+ */
+function sanitizeGlobQuery(query: string): string {
+  return typeof query === 'string' ? query.replace(/[\\[\]{}()*+?$|!@]/g, '') : '';
+}
+
+// 递归搜索文件夹（子目录并行遍历，避免逐目录串行 await 的深度遍历）
 async function searchDirectories(
   baseUri: vscode.Uri, 
   query: string, 
@@ -1124,43 +1158,53 @@ async function searchDirectories(
 ): Promise<void> {
   if (results.length >= limit) return;
   
+  let entries: [string, vscode.FileType][];
   try {
-    const entries = await vscode.workspace.fs.readDirectory(baseUri);
-    
-    for (const [name, type] of entries) {
-      if (results.length >= limit) break;
-      
-      // 跳过排除的目录
-      if (EXCLUDED_DIRS.has(name)) continue;
-      
-      const relativePath = currentPath ? `${currentPath}/${name}` : name;
-      
-      if (type === vscode.FileType.Directory) {
-        // 检查文件夹名是否匹配查询
-        if (!query || name.toLowerCase().includes(query.toLowerCase())) {
-          results.push({
-            path: relativePath,
-            name,
-            isDirectory: true
-          });
-        }
-        
-        // 递归搜索子目录（限制深度避免性能问题）
-        const depth = relativePath.split('/').length;
-        if (depth < 5) {
-          const subUri = vscode.Uri.joinPath(baseUri, name);
-          await searchDirectories(subUri, query, limit, results, relativePath);
-        }
-      }
-    }
+    entries = await vscode.workspace.fs.readDirectory(baseUri);
   } catch {
     // 忽略无法访问的目录
+    return;
   }
+  
+  const subDirectoryPromises: Promise<void>[] = [];
+  for (const [name, type] of entries) {
+    // 跳过排除的目录
+    if (EXCLUDED_DIRS.has(name)) continue;
+    
+    const relativePath = currentPath ? `${currentPath}/${name}` : name;
+    
+    if (type === vscode.FileType.Directory) {
+      // 检查文件夹名是否匹配查询
+      if (!query || name.toLowerCase().includes(query.toLowerCase())) {
+        if (results.length >= limit) break;
+        results.push({
+          path: relativePath,
+          name,
+          isDirectory: true
+        });
+      }
+      
+      // 并行递归搜索子目录（限制深度避免性能问题）
+      const depth = relativePath.split('/').length;
+      if (depth < 5) {
+        const subUri = vscode.Uri.joinPath(baseUri, name);
+        subDirectoryPromises.push(searchDirectories(subUri, query, limit, results, relativePath));
+      }
+    }
+  }
+  await Promise.all(subDirectoryPromises);
 }
 
 export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { query = '', limit = 50 } = data;
+    const { query: rawQuery = '', limit: rawLimit = 50 } = data || {};
+
+    // 钳制 limit：webview 传入值不可信，防止一次请求遍历/返回海量结果
+    const requestedLimit = typeof rawLimit === 'number' && Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 50;
+    const limit = Math.min(Math.max(requestedLimit, 1), MAX_SEARCH_RESULTS);
+
+    // 过滤 glob 元字符并 trim，避免 query 破坏 findFiles 模式
+    const query = sanitizeGlobQuery(rawQuery).trim();
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     
     if (!workspaceFolder) {
@@ -1198,7 +1242,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     }
     
     // 如果没有搜索查询，优先显示已打开的标签页
-    if (!query.trim()) {
+    if (!query) {
       // 收集所有打开的标签页文件
       const openFiles: { path: string; name: string; isDirectory: boolean; isActive: boolean }[] = [];
       
@@ -1246,7 +1290,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     
     // 1. 搜索文件夹
     const folderResults: { path: string; name: string; isDirectory: boolean }[] = [];
-    await searchDirectories(workspaceFolder.uri, query.trim(), Math.floor(limit / 2), folderResults);
+    await searchDirectories(workspaceFolder.uri, query, Math.floor(limit / 2), folderResults);
     
     // 添加文件夹（排除已添加的）
     for (const folder of folderResults) {
@@ -1258,7 +1302,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     }
     
     // 2. 搜索文件
-    const pattern = query.trim() ? `**/*${query}*` : '**/*';
+    const pattern = query ? `**/*${query}*` : '**/*';
     const excludePattern = '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**,**/out/**,**/.vscode/**,**/.idea/**,**/__pycache__/**,**/.cache/**,**/coverage/**}';
     const files = await vscode.workspace.findFiles(pattern, excludePattern, limit * 2); // 获取更多以便过滤
     
@@ -1278,7 +1322,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     }
     
     // 如果有查询，需要重新排序：文件夹在前，然后按路径长度排序
-    if (query.trim()) {
+    if (query) {
       results.sort((a, b) => {
         // 文件夹优先
         if (a.isDirectory !== b.isDirectory) {

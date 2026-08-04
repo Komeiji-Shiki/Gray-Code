@@ -10,13 +10,13 @@ import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
 import type { ConversationManager } from '../backend/modules/conversation/ConversationManager';
 import type { SettingsManager } from '../backend/modules/settings/SettingsManager';
-import { WebviewClientRegistry, type WebviewClientId, type WebviewClientRegistration } from './runtime/WebviewClientRegistry';
+import { WebviewClientRegistry, type WebviewClientId } from './runtime/WebviewClientRegistry';
 import type * as vscode from 'vscode';
 
 /**
  * 流式消息类型
  */
-const STREAM_MESSAGE_TYPES = [
+export const STREAM_MESSAGE_TYPES = [
   'chatStream',
   'retryStream',
   'editAndRetryStream',
@@ -41,7 +41,7 @@ type StreamMessageType = typeof STREAM_MESSAGE_TYPES[number];
  * 修改方式：route() 命中这些类型时采用 fire-and-forget，
  * 不 await handler，catch 中就地清理 requestClients 并回传错误。
  */
-const NON_BLOCKING_MESSAGE_TYPES = new Set([
+export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   'summarizeContext',
   'dependencies.install',
   'dependencies.uninstall',
@@ -90,15 +90,6 @@ export class MessageRouter {
     });
   }
 
-  /** 注册可接收响应的 webview client；router 只转交给 registry，不写 view 类型特判。 */
-  registerClient(client: WebviewClientRegistration): vscode.Disposable {
-    return this.clientRegistry.register(client);
-  }
-
-  postMessageToClient(clientId: string, message: Record<string, unknown>): boolean {
-    return this.clientRegistry.postMessage(clientId, message);
-  }
-
   /**
    * 路由消息到正确的处理器
    * 
@@ -107,9 +98,10 @@ export class MessageRouter {
   async route(type: string, data: any, requestId: string, ctx: HandlerContext, clientId?: string): Promise<boolean> {
     const resolvedClientId = this.clientRegistry.resolveClientId(clientId, ctx.clientId);
 
-    // requestId → clientId 的映射只在 sendResponse / sendError 时删除，因此只能为「确实会被本
-    // router 处理」的请求登记：以前无论如何都先 set，未命中处理器而回退的消息、以及 handler
-    // 抛异常的请求都会留下一条永不清理的条目，这个 Map 没有上界。
+    // requestId → clientId 的映射：非流式请求在 sendResponse / sendError 路由成功或回退时删除，
+    // 流式请求由流的 finally/finalizeRequest 统一清理。因此只能为「确实会被本 router 处理」的
+    // 请求登记：以前无论如何都先 set，未命中处理器而回退的消息、以及 handler 抛异常的请求都会
+    // 留下一条永不清理的条目，这个 Map 没有上界。
     const trackRequestClient = () => {
       if (requestId && resolvedClientId) {
         this.requestClients.set(requestId, resolvedClientId);
@@ -205,7 +197,9 @@ export class MessageRouter {
   private sendRoutedResponse(requestId: string, data: any): void {
     const clientId = this.requestClients.get(requestId);
     if (clientId && this.clientRegistry.sendResponse(clientId, requestId, data)) {
-      this.requestClients.delete(requestId);
+      // 流式请求的 started:true / cancelled 响应发出后流可能仍在进行（后续错误响应仍要靠
+      // requestId → clientId 映射路由回发起方），此处不删除条目；由流的 finally/finalizeRequest
+      // 统一清理，避免 Monitor 侧错误被错投主聊天、await 永久挂起。
       return;
     }
 
@@ -262,14 +256,19 @@ export class MessageRouter {
         break;
         
       case 'cancelStream':
-        {
-          const { conversationId } = data || {};
-          if (typeof conversationId !== 'string' || !conversationId) {
-            this.sendRoutedError(requestId, 'INVALID_CONVERSATION_ID', 'Missing conversationId for cancelStream');
-            return;
+        // data 缺失时直接解构会抛 TypeError（被上层 catch 吞掉），requestClients 已登记的条目
+        // 将永久残留；先 sendRoutedError 回传错误（映射还在，能路由到发起方），再兜底清理。
+        if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
+          try {
+            this.sendRoutedError(requestId, 'INVALID_DATA', 'cancelStream: missing conversationId');
+          } catch {
+            // 发送错误失败则静默忽略
           }
-          this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
+          this.requestClients.delete(requestId);
+          break;
         }
+        const { conversationId } = data;
+        this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
         break;
 
       // H2（R6a-FIX）：reroll/editBranch 长流按 fire-and-forget 处理（与 chatStream/retryStream 同），

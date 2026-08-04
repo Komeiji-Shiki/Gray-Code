@@ -206,13 +206,24 @@ function normalizeDepth(v: unknown): number | null {
   return n === undefined ? null : n;
 }
 
+/** 确定性 id 哈希（FNV-1a 32bit，UTF-16 code unit 输入）→ 8 位小写 hex（与 Python 侧一致） */
+function deterministicIdHash(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 /** 单条旧酒馆正则 -> 新格式 RegexScriptData */
 export function convertRegexFromSillyTavern(rawRegex: any): RegexScriptData {
   const raw = isObject(rawRegex) ? rawRegex : {};
 
   const name = toStr(raw.name ?? raw.scriptName ?? '');
   const fallbackIdBase = name || 'regex';
-  const id = toStr(raw.id ?? '').trim() || `${fallbackIdBase}_${Math.random().toString(36).slice(2, 10)}`;
+  const id = toStr(raw.id ?? '').trim()
+    || `${fallbackIdBase}_${deterministicIdHash(`${fallbackIdBase}\u0000${toStr(raw.findRegex ?? '')}`)}`;
 
   const targetsFromTargets = toArray(raw.targets).map(normalizeRegexTarget).filter(Boolean) as RegexTarget[];
   const placements = Array.isArray(raw.placement)
@@ -549,9 +560,11 @@ function convertPromptFromSillyTavern(
     injection_order,
     injection_trigger,
     injection_position,
-    system_prompt,
     ...rest
   } = rawPrompt;
+
+  // system_prompt 不参与新格式输出（旧字段，排除避免泄漏到 ...rest）
+  delete rest.system_prompt;
 
   const rawIdentifier = toStr(rest.identifier ?? `prompt_${fallbackIndex}`, '').trim() || `prompt_${fallbackIndex}`;
   const identifier = ST_IDENTIFIER_MAP[rawIdentifier] ?? rawIdentifier;
@@ -565,7 +578,7 @@ function convertPromptFromSillyTavern(
         ? 'fixed'
         : 'relative';
 
-  const role = toStr(rest.role ?? (system_prompt ? 'system' : 'system'));
+  const role = toStr(rest.role ?? 'system');
 
   return {
     ...rest,

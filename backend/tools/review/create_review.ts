@@ -6,10 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
-import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { resolveUriWithInfo } from '../utils';
+import { ensureParentDir, isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import {
   buildInitialReviewDocument,
   getCurrentReviewDocumentLocale,
@@ -34,29 +33,6 @@ function slugify(input: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   return slug || `review-${Date.now()}`;
-}
-
-function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  if (isReviewPathAllowed(pathStr)) return true;
-
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isReviewPathAllowed(rest);
-}
-
-async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }
 
 export function createCreateReviewToolDeclaration(): ToolDeclaration {
@@ -96,7 +72,7 @@ export function createCreateReviewTool(): Tool {
       const defaultPath = `.graycode/review/${slugify(title || 'review')}.md`;
       const outPath = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : defaultPath;
 
-      if (!isReviewModePathAllowedWithMultiRoot(outPath)) {
+      if (!isProgressArtifactPathAllowedWithMultiRoot('review', outPath)) {
         return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${outPath}` };
       }
 

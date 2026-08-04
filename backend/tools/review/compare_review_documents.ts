@@ -7,8 +7,8 @@
 import * as vscode from 'vscode';
 import { createHash } from 'crypto';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
-import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import type {
   ReviewCompareFindingChange,
   ReviewCompareFindingDiffItem,
@@ -25,24 +25,6 @@ export interface CompareReviewDocumentsArgs {
   basePath: string;
   targetPath: string;
   includeUnchanged?: boolean;
-}
-
-function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  if (isReviewPathAllowed(pathStr)) return true;
-
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isReviewPathAllowed(rest);
 }
 
 function normalizeComparableText(value: unknown): string {
@@ -262,7 +244,7 @@ export function createCompareReviewDocumentsTool(): Tool {
         return { success: false, error: 'basePath and targetPath are required and must be non-empty strings' };
       }
 
-      if (!isReviewModePathAllowedWithMultiRoot(basePath) || !isReviewModePathAllowedWithMultiRoot(targetPath)) {
+      if (!isProgressArtifactPathAllowedWithMultiRoot('review', basePath) || !isProgressArtifactPathAllowedWithMultiRoot('review', targetPath)) {
         return {
           success: false,
           error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Received: ${basePath}, ${targetPath}`

@@ -19,24 +19,6 @@ export const TOOL_CALL_START = '<<<TOOL_CALL>>>';
 export const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 
 /**
- * 转义正则表达式特殊字符。
- *
- * 说明：与 tools/utils.ts 的 escapeRegExp 重复是有意为之——
- * utils.ts 依赖 vscode 模块，本文件保持无 vscode 依赖以便纯单元测试。
- */
-function escapeRegExp(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * 预编译的边界标记正则（避免每次调用都重新转义/拼接 source）。
- * String.prototype.match 搭配 /g 标志不依赖 lastIndex，模块级共享安全。
- */
-const TOOL_CALL_BLOCK_REGEX_SOURCE = `${escapeRegExp(TOOL_CALL_START)}\\s*([\\s\\S]*?)\\s*${escapeRegExp(TOOL_CALL_END)}`;
-const TOOL_CALL_START_COUNT_REGEX = new RegExp(escapeRegExp(TOOL_CALL_START), 'g');
-const TOOL_CALL_END_COUNT_REGEX = new RegExp(escapeRegExp(TOOL_CALL_END), 'g');
-
-/**
  * JSON 工具调用的格式定义
  */
 export interface JSONToolCall {
@@ -234,14 +216,24 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
     const results: JSONToolCall[] = [];
     
     // 匹配 <<<TOOL_CALL>>> ... <<<END_TOOL_CALL>>> 边界
-    // 使用非贪婪匹配，确保正确处理多个工具调用
-    // （/g 正则有 lastIndex 状态，每次调用基于预编译 source 新建实例，避免跨调用串状态）
-    const toolCallRegex = new RegExp(TOOL_CALL_BLOCK_REGEX_SOURCE, 'g');
-    let match;
-    
-    while ((match = toolCallRegex.exec(text)) !== null) {
+    // 结束标记用状态机定位：跳过位于 JSON 字符串内部的 <<<END_TOOL_CALL>>>。
+    // 字符串值里可能出现字面结束标记（如 write_file 的 content 恰好含该标记），
+    // 非贪婪正则会在字符串中间提前截断块，导致 JSON 解析失败。
+    let searchFrom = 0;
+    while (true) {
+        const startIndex = text.indexOf(TOOL_CALL_START, searchFrom);
+        if (startIndex === -1) {
+            break;
+        }
+        const blockStart = startIndex + TOOL_CALL_START.length;
+        const endIndex = findEndMarkerOutsideString(text, blockStart);
+        if (endIndex === -1) {
+            // 该块没有闭合的结束标记，继续找下一个开始标记
+            searchFrom = blockStart;
+            continue;
+        }
         try {
-            const jsonStr = match[1].trim();
+            const jsonStr = text.substring(blockStart, endIndex).trim();
             const parsed = parseJsonLenient(jsonStr);
             
             // 验证是否是有效的工具调用格式
@@ -255,9 +247,45 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             // JSON 解析失败，跳过这个块（上层 promptToolParser 会生成解析失败反馈）
             console.warn('Failed to parse JSON tool call:', error);
         }
+        searchFrom = endIndex + TOOL_CALL_END.length;
     }
     
     return results;
+}
+
+/**
+ * 从 startIndex 起查找第一个位于 JSON 字符串之外的 <<<END_TOOL_CALL>>> 标记。
+ *
+ * 用简单状态机跟踪双引号字符串的开关（含 \" 转义）：字符串值内部出现的
+ * 字面结束标记会被跳过，避免把工具调用块截断在字符串中间。
+ *
+ * @returns 结束标记的起始下标；未找到返回 -1
+ */
+function findEndMarkerOutsideString(text: string, startIndex: number): number {
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (text.startsWith(TOOL_CALL_END, i)) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /**
@@ -352,51 +380,4 @@ function repairCommonJsonMistakes(input: string): string {
 export function parseJSONToolCall(text: string): JSONToolCall | null {
     const calls = parseJSONToolCalls(text);
     return calls.length > 0 ? calls[0] : null;
-}
-
-/**
- * 检查文本中是否包含工具调用开始标记
- * 用于流式解析时判断是否需要等待更多内容
- *
- * @param text 文本内容
- * @returns 是否包含工具调用开始标记
- */
-export function hasJSONToolCallStart(text: string): boolean {
-    return text.includes(TOOL_CALL_START);
-}
-
-/**
- * 检查工具调用块是否完整
- *
- * @param text 文本内容
- * @returns 是否包含完整的工具调用块
- */
-export function hasCompleteJSONBlock(text: string): boolean {
-    const startCount = (text.match(TOOL_CALL_START_COUNT_REGEX) || []).length;
-    const endCount = (text.match(TOOL_CALL_END_COUNT_REGEX) || []).length;
-    return startCount > 0 && endCount >= startCount;
-}
-
-/**
- * 提取未完成的工具调用内容（用于流式解析）
- *
- * @param text 文本内容
- * @returns 未完成的工具调用内容，如果没有则返回 null
- */
-export function extractIncompleteToolCall(text: string): string | null {
-    const lastStartIndex = text.lastIndexOf(TOOL_CALL_START);
-    if (lastStartIndex === -1) {
-        return null;
-    }
-    
-    const afterStart = text.substring(lastStartIndex + TOOL_CALL_START.length);
-    const endIndex = afterStart.indexOf(TOOL_CALL_END);
-    
-    // 如果找到了结束标记，说明这个块是完整的
-    if (endIndex !== -1) {
-        return null;
-    }
-    
-    // 返回未完成的内容
-    return afterStart.trim();
 }

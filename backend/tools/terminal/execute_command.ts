@@ -557,45 +557,64 @@ function getOSName(): string {
 }
 
 /**
- * 同步检测 Shell 是否可用
+ * Shell 可用性同步检测结果缓存（模块级 Map，进程生命周期内有效）。
+ *
+ * 修改原因：工具创建时 getAvailableShells 会对每个启用的 shell 同步 execSync
+ * （which/where/wsl --status，各最多 3s），且 getAvailableShellsDescription /
+ * getEnabledShellTypesForEnum / getUnavailableShellsDescription 会多次触发
+ * getAvailableShells，一次工具创建可能重复执行多轮外部检测，阻塞 extension host。
+ * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存。
+ * 修改目的：工具创建只做一轮检测，避免重复 execSync 阻塞。
+ */
+const shellAvailabilityCache = new Map<string, boolean>();
+
+function getShellAvailabilityCacheKey(shellType: string, customPath?: string): string {
+    return `${shellType}:${customPath ?? ''}`;
+}
+
+/**
+ * 同步检测 Shell 是否可用（带模块级缓存）
  */
 function checkShellAvailabilitySync(shellType: string, customPath?: string): boolean {
+    // 缓存命中直接返回，避免重复 execSync 阻塞
+    const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
+    const cached = shellAvailabilityCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
+
     const platform = os.platform();
     const shellPath = customPath || getDefaultShellPath(shellType);
     
+    let available = false;
     try {
         if (platform === 'win32') {
             // WSL 特殊处理
             if (shellType === 'wsl') {
                 cp.execSync('wsl --status', { timeout: 3000, stdio: 'ignore' });
-                return true;
-            }
-            
-            // 绝对路径检查文件存在
-            if (shellPath.includes('\\') || shellPath.includes('/')) {
-                const fs = require('fs');
+            } else if (shellPath.includes('\\') || shellPath.includes('/')) {
+                // 绝对路径检查文件存在
                 fs.accessSync(shellPath, fs.constants.X_OK);
-                return true;
+            } else {
+                // 使用 where 检查 PATH
+                cp.execSync(`where ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
             }
-            
-            // 使用 where 检查 PATH
-            cp.execFileSync('where', [shellPath], { timeout: 3000, stdio: 'ignore' });
-            return true;
         } else {
             // 绝对路径检查文件存在
             if (shellPath.startsWith('/')) {
-                const fs = require('fs');
                 fs.accessSync(shellPath, fs.constants.X_OK);
-                return true;
+            } else {
+                // 使用 which 检查 PATH
+                cp.execSync(`which ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
             }
-            
-            // 使用 which 检查 PATH
-            cp.execFileSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
-            return true;
         }
+        available = true;
     } catch {
-        return false;
+        available = false;
     }
+
+    shellAvailabilityCache.set(cacheKey, available);
+    return available;
 }
 
 /**

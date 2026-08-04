@@ -27,6 +27,12 @@ export const USER_INTERRUPT_MAX_LENGTH = 4000;
 /** 同一会话用户消息插入的最短间隔（毫秒，防刷屏） */
 export const USER_INTERRUPT_MIN_INTERVAL_MS = 10_000;
 
+/** agent_send_message 单条消息文本长度上限（防失控子代理向主会话注入超大消息） */
+export const AGENT_MESSAGE_MAX_LENGTH = 16000;
+
+/** 单个收件方 inbox 允许积压的消息条数上限（防上下文洪泛） */
+export const AGENT_INBOX_MAX_MESSAGES = 50;
+
 /**
  * 一条投递到收件方 inbox 的消息
  */
@@ -203,14 +209,21 @@ export class AgentMailbox {
     sendMessage(input: AgentSendMessageInput): AgentSendMessageResult {
         const conversationId = input.conversationId;
         if (!conversationId) {
-            return { success: false, error: 'agent.sendMessage requires a conversationId (session-scoped addressing).' };
+            return { success: false, error: 'agent_send_message requires a conversationId (session-scoped addressing).' };
         }
         const text = input.text?.trim?.() ?? '';
         if (!text) {
-            return { success: false, error: 'agent.sendMessage requires a non-empty message.' };
+            return { success: false, error: 'agent_send_message requires a non-empty message.' };
+        }
+        if (text.length > AGENT_MESSAGE_MAX_LENGTH) {
+            return {
+                success: false,
+                error: `agent_send_message text exceeds the ${AGENT_MESSAGE_MAX_LENGTH}-character limit. `
+                    + 'Split the message into smaller parts.'
+            };
         }
         if (!input.fromRunId) {
-            return { success: false, error: 'agent.sendMessage requires a known sender runId (fromRunId missing).' };
+            return { success: false, error: 'agent_send_message requires a known sender runId (fromRunId missing).' };
         }
         // 发送方校验：主会话隐式已知；子代理必须已在本对话注册
         if (input.fromRunId !== MAIN_SESSION_RUN_ID && !this.isKnownRun(conversationId, input.fromRunId)) {
@@ -244,14 +257,23 @@ export class AgentMailbox {
                 toRunId = matches[matches.length - 1].runId;
             }
         } else {
-            return { success: false, error: 'agent.sendMessage requires either targetRunId or targetAgentName.' };
+            return { success: false, error: 'agent_send_message requires either targetRunId or targetAgentName.' };
         }
 
         // threadId + hopDepth 防循环
         const threadId = input.threadId?.trim?.() || randomUUID();
-        const prevDepth = this.threadDepths.get(conversationId)?.get(threadId) ?? 0;
-        const hopDepth = prevDepth + 1;
+        // 修改原因：旧实现把「读取 prevDepth」与「写回 hopDepth」拆在投递校验两端，
+        //          读-写窗口若被 await/提前返回路径拆散，并发互回可能双写同一深度绕过
+        //          MAX_HOP_DEPTH；且 threadDepths 按 (conversationId, threadId) 只增不删，
+        //          长会话线程越多残留越多。
+        // 修改方式：递增收敛到 incrementThreadDepth（同一同步块内读-增-写，原子递增）；
+        //          hop 被拒绝时删除该线程深度记录（removeThreadDepth，含空会话映射清理），
+        //          threadDepths 不再只增不删。
+        // 语义说明：递增发生在投递校验（inbox 满等）之前，被拒绝的回复尝试也消耗一跳，
+        //          对「同线程反复尝试互回」的循环防护更强；被拒消息本就未投递、线程未推进。
+        const hopDepth = this.incrementThreadDepth(conversationId, threadId);
         if (hopDepth > MAX_HOP_DEPTH) {
+            this.removeThreadDepth(conversationId, threadId);
             return {
                 success: false,
                 error: `Thread "${threadId}" exceeded the maximum hop depth (${MAX_HOP_DEPTH}). `
@@ -280,14 +302,14 @@ export class AgentMailbox {
             runInbox = [];
             convInbox.set(toRunId, runInbox);
         }
-        runInbox.push(message);
-
-        let convDepths = this.threadDepths.get(conversationId);
-        if (!convDepths) {
-            convDepths = new Map();
-            this.threadDepths.set(conversationId, convDepths);
+        if (runInbox.length >= AGENT_INBOX_MAX_MESSAGES) {
+            return {
+                success: false,
+                error: `agent_send_message target inbox is full (max ${AGENT_INBOX_MAX_MESSAGES} pending messages). `
+                    + 'Wait for the recipient to consume earlier messages before sending more.'
+            };
         }
-        convDepths.set(threadId, hopDepth);
+        runInbox.push(message);
 
         return {
             success: true,
@@ -298,6 +320,37 @@ export class AgentMailbox {
                 hopDepth
             }
         };
+    }
+
+    /**
+     * 原子递增某线程的 hopDepth（读取-递增-写回在同一同步块内完成）。
+     *
+     * 修改原因：sendMessage 内旧实现把「读取 prevDepth」与「写回 hopDepth」拆在两处，
+     * 若两者之间出现 await 或提前返回路径，并发互回可能双写同一深度绕过 MAX_HOP_DEPTH；
+     * 收敛到本方法后递增与写回必然成对发生，深度与已投递/尝试消息数保持一致。
+     */
+    private incrementThreadDepth(conversationId: string, threadId: string): number {
+        let convDepths = this.threadDepths.get(conversationId);
+        if (!convDepths) {
+            convDepths = new Map();
+            this.threadDepths.set(conversationId, convDepths);
+        }
+        const nextDepth = (convDepths.get(threadId) ?? 0) + 1;
+        convDepths.set(threadId, nextDepth);
+        return nextDepth;
+    }
+
+    /**
+     * 删除某线程的深度记录；会话下无其他线程时连会话映射一并清理，
+     * 保证 threadDepths 不会只增不删（长会话线程残留）。
+     */
+    private removeThreadDepth(conversationId: string, threadId: string): void {
+        const convDepths = this.threadDepths.get(conversationId);
+        if (!convDepths) return;
+        convDepths.delete(threadId);
+        if (convDepths.size === 0) {
+            this.threadDepths.delete(conversationId);
+        }
     }
 
     /**

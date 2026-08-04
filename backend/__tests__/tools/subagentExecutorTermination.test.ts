@@ -59,6 +59,10 @@ describe('SubAgent executor 终态收敛', () => {
         subAgentConcurrencyLimiter.release('run_iterations');
         subAgentConcurrencyLimiter.release('run_timer');
         subAgentConcurrencyLimiter.release('run_cancelled');
+        subAgentConcurrencyLimiter.release('run_queue_cancelled');
+        subAgentConcurrencyLimiter.release('queue_holder_1');
+        subAgentConcurrencyLimiter.release('queue_holder_2');
+        subAgentConcurrencyLimiter.release('queue_holder_3');
     });
 
     it('超出最大迭代次数时发出 run_failed 并返回 runId', async () => {
@@ -81,6 +85,44 @@ describe('SubAgent executor 终态收敛', () => {
             expect(subAgentRunEventBus.getSnapshot('run_iterations')!.status).toBe('failed');
         } finally {
             dispose();
+        }
+    });
+
+    it('排队被取消时经 finalizeRun 收敛终态：发 run_cancelled、快照 cancelled、结果带 runId', async () => {
+        const { types, dispose } = collectEvents('run_queue_cancelled');
+        try {
+            // 占满默认并发容量（3），让 run 进入排队
+            await subAgentConcurrencyLimiter.acquire('queue_holder_1', undefined);
+            await subAgentConcurrencyLimiter.acquire('queue_holder_2', undefined);
+            await subAgentConcurrencyLimiter.acquire('queue_holder_3', undefined);
+
+            const controller = new AbortController();
+            const executor = createDefaultExecutor(createConfig(), createContext());
+            const runPromise = executor(
+                { agentType: 'tester', prompt: 'x', runId: 'run_queue_cancelled' },
+                controller.signal
+            );
+            // 等 run 真正进入排队（run_queued 已发出）后再取消
+            for (let i = 0; i < 200; i++) {
+                if (subAgentConcurrencyLimiter.getQueueLength() > 0) break;
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            controller.abort();
+            const result = await runPromise;
+
+            expect(result.success).toBe(false);
+            expect(result.cancelled).toBe(true);
+            expect(result.runId).toBe('run_queue_cancelled');
+            expect(result.error).toContain('cancelled');
+            // 终态事件与快照必须收敛，不能停留在 queued/running
+            expect(types).toContain('run_queued');
+            expect(types).toContain('run_cancelled');
+            expect(subAgentRunEventBus.getSnapshot('run_queue_cancelled')!.status).toBe('cancelled');
+        } finally {
+            dispose();
+            subAgentConcurrencyLimiter.release('queue_holder_1');
+            subAgentConcurrencyLimiter.release('queue_holder_2');
+            subAgentConcurrencyLimiter.release('queue_holder_3');
         }
     });
 

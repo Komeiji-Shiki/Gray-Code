@@ -130,4 +130,23 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
         const history = await manager.getHistory('conv-del5');
         expect(history).toHaveLength(1);
     });
+
+    test('删除后元数据写路径（setTitle/updateSummary/setCustomMetadata）不重建 meta.json（无幽灵 meta）', async () => {
+        const { adapter } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-del-meta', 'Meta');
+        // 删除前元数据写正常
+        await manager.setTitle('conv-del-meta', 'Renamed');
+        await manager.deleteConversation('conv-del-meta');
+
+        // 删除后基于 not_found 的重建应被拒绝（跳过重建，不落盘 meta.json）
+        await expect(manager.setTitle('conv-del-meta', 'Ghost Title')).rejects.toThrow(/deleted|does not exist/);
+        await expect(manager.updateSummary('conv-del-meta', { messageCount: 1, preview: 'p' }))
+            .rejects.toThrow(/deleted|does not exist/);
+        await expect(manager.setCustomMetadata('conv-del-meta', 'k', 'v'))
+            .rejects.toThrow(/deleted|does not exist/);
+
+        // meta 未复活
+        expect(await adapter.loadMetadata('conv-del-meta')).toBeNull();
+    });
 });

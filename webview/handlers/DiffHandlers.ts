@@ -4,9 +4,20 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
-import { assertSafeId } from '../../backend/core/idValidation';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
 import type { HandlerContext, MessageHandler } from '../types';
+
+/**
+ * diffContentId 白名单：全局 diff ID 由 DiffStorageManager.generateDiffId() 生成
+ * （diff_<timestamp>_<base36>），只允许字母数字与 - _。
+ * 拒绝含路径分隔符（/ \ . 等）的输入，防止含 ../ 的 diffContentId
+ * 在 loadGlobalDiff 内部 path.join 时穿越 diffs 目录读取任意 .json 文件。
+ */
+const DIFF_CONTENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function isValidDiffContentId(diffContentId: unknown): diffContentId is string {
+  return typeof diffContentId === 'string' && DIFF_CONTENT_ID_PATTERN.test(diffContentId);
+}
 
 /**
  * 打开 Diff 预览
@@ -26,8 +37,14 @@ export const openDiffPreview: MessageHandler = async (data, requestId, ctx) => {
 export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { diffContentId } = data;
-    const safeId = assertSafeId(diffContentId, 'diffContentId');
-    const content = await ctx.diffStorageManager.loadGlobalDiff(safeId);
+    if (!isValidDiffContentId(diffContentId)) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.invalidDiffData')
+      });
+      return;
+    }
+    const content = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
     if (content) {
       ctx.sendResponse(requestId, {
         success: true,
@@ -104,7 +121,7 @@ async function handleApplyDiffPreview(
   let fullNewContent = resultData?.newContent as string | undefined;
   
   const diffContentId = resultData?.diffContentId as string | undefined;
-  if (diffContentId && (!fullOriginalContent || !fullNewContent)) {
+  if (diffContentId && isValidDiffContentId(diffContentId) && (!fullOriginalContent || !fullNewContent)) {
     try {
       const loadedContent = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
       if (loadedContent) {
@@ -258,7 +275,7 @@ async function handleSearchInFilesPreview(
   }
   
   for (const replaceResult of replaceResults) {
-    if (!replaceResult.diffContentId) {
+    if (!replaceResult.diffContentId || !isValidDiffContentId(replaceResult.diffContentId)) {
       continue;
     }
     
@@ -321,7 +338,7 @@ async function handleWriteFilePreview(
     let diffTitle: string;
     
     const diffContentId = diffContentIdMap.get(file.path);
-    if (diffContentId) {
+    if (diffContentId && isValidDiffContentId(diffContentId)) {
       try {
         const loadedContent = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
         if (loadedContent) {
@@ -364,7 +381,7 @@ async function handleDiffContentIdPreview(
   }
 
   for (const item of results) {
-    if (!item.diffContentId) {
+    if (!item.diffContentId || !isValidDiffContentId(item.diffContentId)) {
       continue;
     }
 

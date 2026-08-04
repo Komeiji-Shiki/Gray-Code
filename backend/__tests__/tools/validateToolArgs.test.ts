@@ -446,4 +446,36 @@ describe('validateToolArgs', () => {
         const reportedLines = error.split('\n\nExpected parameters')[0].split('\n').slice(1);
         expect(reportedLines).toHaveLength(11);
     });
+
+    // ==================== 非对象参数守卫 ====================
+
+    it('args 为 null 时返回可读错误而非抛异常', () => {
+        const s = schema({ path: { type: 'string' } }, ['path']);
+
+        expect(() => validateToolArgs('write_file', null as any, s)).not.toThrow();
+        expect(validateToolArgs('write_file', null as any, s)).toContain('parameters must be a JSON object, got null');
+    });
+
+    it('args 为字符串/数字/布尔时返回可读错误而非抛异常', () => {
+        const s = schema({ path: { type: 'string' } }, ['path']);
+
+        expect(() => validateToolArgs('write_file', 'oops' as any, s)).not.toThrow();
+        expect(validateToolArgs('write_file', 'oops' as any, s)).toContain('got string');
+        expect(validateToolArgs('write_file', 42 as any, s)).toContain('got number');
+        expect(validateToolArgs('write_file', true as any, s)).toContain('got boolean');
+    });
+
+    it('args 为数组时返回可读错误而非抛异常', () => {
+        const s = schema({ files: { type: 'array' } }, ['files']);
+
+        expect(() => validateToolArgs('insert_code', ['a'] as any, s)).not.toThrow();
+        expect(validateToolArgs('insert_code', ['a'] as any, s)).toContain('parameters must be a JSON object, got object');
+    });
+
+    it('args 为 undefined 时返回可读错误', () => {
+        const s = schema({ path: { type: 'string' } }, ['path']);
+
+        expect(() => validateToolArgs('write_file', undefined as any, s)).not.toThrow();
+        expect(validateToolArgs('write_file', undefined as any, s)).toContain('got undefined');
+    });
 });

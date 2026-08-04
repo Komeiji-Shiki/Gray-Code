@@ -60,9 +60,6 @@ import { ToolCallParserService, MessageBuilderService, TokenEstimationService, C
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
 
-/** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
-const DEFAULT_MAX_TOOL_ITERATIONS = 200;
-
 /**
  * 对话处理器
  *
@@ -120,7 +117,10 @@ export class ChatHandler {
             this.toolRegistry,
             this.mcpManager,
             this.settingsManager,
-            this.checkpointService
+            this.checkpointService,
+            // BCP-01：注入 ConversationManager，让工具批次 before/after 存档点共用一次
+            // getMessageNodeIdAt 反查（每批次只全量重读一次 transcript，而非两次）
+            this.conversationManager
         );
         // 注入 conversationStore，供 todo_write 等工具持久化使用
         this.toolExecutionService.setConversationStore(this.conversationManager);
@@ -245,14 +245,6 @@ export class ChatHandler {
      */
     setDiffStorageManager(diffStorageManager: DiffStorageManager): void {
         this.diffStorageManager = diffStorageManager;
-    }
-    
-    /**
-     * 获取单回合最大工具调用次数
-     * 从设置管理器读取，如果不可用则返回默认值
-     */
-    private getMaxToolIterations(): number {
-        return this.settingsManager?.getMaxToolIterations() ?? DEFAULT_MAX_TOOL_ITERATIONS;
     }
     
     /**
@@ -658,18 +650,4 @@ export class ChatHandler {
             console.error('[ChatHandler] Failed to refresh derived metadata:', error);
         }
     }
-    
-    /**
-     * 确保对话存在（不存在则创建）
-     *
-     * 由于 ConversationManager 现在无内存缓存，每次操作直接读写文件，
-     * 只需调用 getHistory 即可触发自动创建逻辑（loadHistory 内部会处理）
-     *
-     * @param conversationId 对话 ID
-     */
-    private async ensureConversation(conversationId: string): Promise<void> {
-        // getHistoryRef 内部调用 loadHistory，如果对话不存在会自动创建
-        await this.conversationManager.getHistoryRef(conversationId);
-    }
-    
 }

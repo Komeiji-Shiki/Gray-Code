@@ -89,6 +89,9 @@ export class AgentStopNotificationController {
 
         if (isRunning) {
           this.lastSentDedupeKey = ''
+          // 新一轮开始：清除上一轮用户取消遗留的 suppressNextStop，
+          // 避免“取消后立即发送新消息”时新一轮正常结束的 stop 被误判为用户取消而吞掉通知
+          this.suppressNextStop = false
           console.log(LOG_PREFIX, 'agent entered running state, reset last dedupe key')
           return
         }

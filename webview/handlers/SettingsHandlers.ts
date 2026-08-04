@@ -4,7 +4,6 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
 import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
@@ -13,6 +12,7 @@ import { SettingsExporter } from '../../backend/modules/settings/SettingsExporte
 import { getSkillsManager } from '../../backend/modules/skills';
 import { getGlobalMemoryManager } from '../../backend/modules/memory';
 import { getProductMetadata } from '../../backend/core/productMetadata';
+import { getExtensionVersion } from '../utils/extensionInfo';
 
 /**
  * 获取设置
@@ -416,22 +416,6 @@ export const markAnnouncementRead: MessageHandler = async (data, requestId, ctx)
 };
 
 /**
- * 获取扩展版本号
- */
-function getExtensionVersion(ctx: HandlerContext): string {
-    try {
-        if (ctx.context) {
-            const packageJsonPath = path.join(ctx.context.extensionPath, 'package.json');
-            const packageJson = JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf-8'));
-            return packageJson.version || '0.0.0';
-        }
-    } catch (error) {
-        console.warn('[SettingsHandlers] Failed to read extension version from package.json:', error);
-    }
-    return '0.0.0';
-}
-
-/**
  * 获取 Skills 目录路径
  */
 function getSkillsDir(ctx: HandlerContext): string {
@@ -451,7 +435,7 @@ function createExporter(ctx: HandlerContext): SettingsExporter | null {
         ctx.configManager,
         ctx.mcpManager,
         skillsManager,
-        getExtensionVersion(ctx),
+        ctx.context ? getExtensionVersion(ctx.context.extensionPath) : '0.0.0',
         getSkillsDir(ctx)
     );
 }

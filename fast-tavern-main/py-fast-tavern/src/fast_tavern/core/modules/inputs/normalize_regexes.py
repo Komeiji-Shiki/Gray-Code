@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ...types import RegexScriptData, RegexScriptsFileInput, RegexScriptsInput
@@ -40,6 +41,20 @@ def _to_array(v: Any) -> list[Any]:
     return v if isinstance(v, list) else []
 
 
+def _normalize_depth(v: Any) -> float | None:
+    """对齐 TS normalizeRegexes.ts:53-54（仅 typeof number 检查，保留浮点原值）：
+    - None / 数值：保留原值（不 int 截断）
+    - NaN/±Inf（typeof number 但不可用）与其它类型（bool/str/...）→ None
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if not math.isfinite(v):
+        return None
+    return float(v)
+
+
 def _normalize_one(item: Any) -> RegexScriptData | None:
     if not isinstance(item, dict):
         return None
@@ -64,15 +79,8 @@ def _normalize_one(item: Any) -> RegexScriptData | None:
     macro_mode_raw = str(item.get("macroMode") or "none")
     macro_mode = macro_mode_raw if macro_mode_raw in ("raw", "escaped", "none") else "none"
 
-    min_depth = item.get("minDepth")
-    if not (min_depth is None or isinstance(min_depth, (int, float))):
-        min_depth = None
-    min_depth = int(min_depth) if isinstance(min_depth, (int, float)) else None
-
-    max_depth = item.get("maxDepth")
-    if not (max_depth is None or isinstance(max_depth, (int, float))):
-        max_depth = None
-    max_depth = int(max_depth) if isinstance(max_depth, (int, float)) else None
+    min_depth = _normalize_depth(item.get("minDepth"))
+    max_depth = _normalize_depth(item.get("maxDepth"))
 
     return {
         "id": script_id,

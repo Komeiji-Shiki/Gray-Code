@@ -207,6 +207,65 @@ describe('CheckpointRetentionService', () => {
         }
     });
 
+    test('CP-RET-3: 仅合并排序在后的后继——前向 base 的越界依赖项不阻止其 base 被删除', async () => {
+        // 异常元数据：X(ts=1000) 的 base 指向更晚的 Y(ts=2000)（前向引用）。
+        // X 因 backupDir 越界无法删除；旧实现依赖 sorted.slice(i+1) 的位置约束——
+        // 删除 Y 时不会把 X 当作后继合并（否则 CP-RET-2 抛错会中止 Y 的删除）。
+        const evilX = makeRecord({
+            id: 'cp-x', timestamp: 1000, type: 'incremental', baseCheckpointId: 'cp-y',
+            backupDir: `..${path.sep}outside-fwd`
+        });
+        const y = makeRecord({ id: 'cp-y', timestamp: 2000, type: 'full', fileHashes: {} });
+        const z = makeRecord({ id: 'cp-z', timestamp: 3000, type: 'full', fileHashes: {} });
+
+        const harness = await createHarness([evilX, y, z], 1);
+        try {
+            await writeFile(path.join(harness.checkpointsDir, 'cp-y'), 'a.txt', 'y\n');
+            await writeFile(path.join(harness.checkpointsDir, 'cp-z'), 'a.txt', 'z\n');
+
+            await harness.service.cleanupOldCheckpoints('conv');
+
+            // X 无法删除 → 保留；Y 正常删除（X 不在其“排序在后”的后继集合中，不触发合并中止）
+            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-x', 'cp-z']);
+            expect(harness.deletedIds()).toEqual(['cp-y']);
+        } finally {
+            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-RET-3: 长链清理（2000 节点）正确完成且仅删最旧超额节点', async () => {
+        const N = 2000;
+        const records: CheckpointRecord[] = [];
+        for (let i = 0; i < N; i++) {
+            records.push(makeRecord({
+                id: `cp-${i}`, timestamp: 1000 + i, type: 'incremental',
+                baseCheckpointId: i > 0 ? `cp-${i - 1}` : undefined,
+                fileHashes: {}
+            }));
+        }
+        // 超额 10 个：只应删除最旧的 cp-0..cp-9（每个删除前先合并进后继）
+        const harness = await createHarness(records, N - 10);
+        try {
+            await harness.service.cleanupOldCheckpoints('conv');
+
+            // 按数字 id 排序比较（字符串 sort 会把 cp-10 排在 cp-9 前）
+            const byNumericId = (a: string, b: string): number =>
+                Number(a.slice(3)) - Number(b.slice(3));
+            expect(harness.stored()).toHaveLength(N - 10);
+            expect(harness.stored().map(c => c.id).sort(byNumericId)).toEqual(
+                Array.from({ length: N - 10 }, (_, i) => `cp-${i + 10}`)
+            );
+            expect(harness.deletedIds().sort(byNumericId)).toEqual(
+                Array.from({ length: 10 }, (_, i) => `cp-${i}`)
+            );
+            // 链重挂完成：剩余最旧节点 cp-10 不再引用已删除的 cp-9
+            const head = harness.stored().find(c => c.id === 'cp-10');
+            expect(head!.baseCheckpointId).toBeUndefined();
+        } finally {
+            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('删除被拒绝（返回 false）时不标记 deleted，后续候选仍继续清理（CP-RET-1）', async () => {
         const evilCp = makeRecord({
             id: 'cp-evil', timestamp: 1000,

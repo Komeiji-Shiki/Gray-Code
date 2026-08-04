@@ -3470,8 +3470,6 @@ const zhCN = {
     },
 
     composables: {
-
-
         useAttachments: {
             errors: {
                 validationFailed: '附件验证失败',

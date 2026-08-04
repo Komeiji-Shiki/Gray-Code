@@ -1,5 +1,5 @@
 /**
- * agent.sendMessage 工具
+ * agent_send_message 工具
  *
  * 允许一个 agent（子代理或主模型）给同一对话下的另一个 agent 发消息：
  * - 按 targetRunId 寻址：目标必须是同一对话下已知的 runId（防冒充/注入）。
@@ -18,7 +18,8 @@ import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessage
  */
 export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
     return {
-        name: 'agent.sendMessage',
+        name: 'agent_send_message',
+        aliases: ['agent.sendMessage'],
         category: 'agents',
         description: `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. The message is delivered asynchronously: the recipient sees it appended to its most recent tool result, without waiting for the current stream/turn to end.
 
@@ -68,7 +69,7 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
             ? context.conversationId.trim()
             : undefined);
     if (!mailboxConversationId) {
-        return { success: false, error: 'agent.sendMessage requires an active conversation (no conversationId in tool context).' };
+        return { success: false, error: 'agent_send_message requires an active conversation (no conversationId in tool context).' };
     }
 
     // 发送方身份由执行层注入，模型无法伪造
@@ -119,7 +120,7 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
 let cachedTool: Tool | null = null;
 
 /**
- * 创建 agent.sendMessage 工具
+ * 创建 agent_send_message 工具
  */
 export function createAgentSendMessageTool(): Tool {
     const tool: Tool = {
@@ -132,7 +133,7 @@ export function createAgentSendMessageTool(): Tool {
 }
 
 /**
- * 获取 agent.sendMessage 工具（单例）
+ * 获取 agent_send_message 工具（单例）
  */
 export function getAgentSendMessageTool(): Tool {
     if (!cachedTool) {

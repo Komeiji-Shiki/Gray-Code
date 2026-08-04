@@ -6,8 +6,8 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
-import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import {
   getCurrentReviewDocumentLocale,
   reopenReviewDocument
@@ -18,24 +18,6 @@ import { syncProgressFromReviewArtifact } from '../progress/autoSync';
 
 export interface ReopenReviewArgs {
   path: string;
-}
-
-function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  if (isReviewPathAllowed(pathStr)) return true;
-
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isReviewPathAllowed(rest);
 }
 
 export function createReopenReviewToolDeclaration(): ToolDeclaration {
@@ -65,7 +47,7 @@ export function createReopenReviewTool(): Tool {
         return { success: false, error: 'path is required and must be a non-empty string' };
       }
 
-      if (!isReviewModePathAllowedWithMultiRoot(path)) {
+      if (!isProgressArtifactPathAllowedWithMultiRoot('review', path)) {
         return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
