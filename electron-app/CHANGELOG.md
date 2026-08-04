@@ -10,6 +10,10 @@ are tracked in the root `CHANGELOG.md`.
 
 ## [1.4.0] - 2026-08-04
 
+### Fixed
+  - 修复存在最近对话栏（欢迎面板历史列表）时无法发送消息：渠道只配置了 `models` 列表而未显式选择 `model` 时（`model` 为空字符串），前端 `currentModel` 为空导致发送按钮被禁用、消息永远发不出去；现在 `ConfigManager` 创建/更新/读取三个路径统一回退到 `models[0]`（读取路径只作用于副本不污染缓存，更新路径自动修复历史坏数据），前端 `loadCurrentConfig` 与输入区 `currentModel` 同步兜底；新增 6 个后端回归用例 + UISMOKE `sendFromEmpty` 步骤（欢迎面板可见时输入并发送，断言用户消息卡片出现）
+  - 便携式多实例：所有数据（会话/设置/工作区/记忆/用量/缓存）默认写入应用目录下 `data/`，不再写入系统路径（AppData/Program Files）——复制应用目录即得完全独立的实例，互不影响；`--user-data-dir <path>` / `GRAYCODE_USER_DATA_DIR` 仍可显式覆盖
+
 ### Added
   - 变更查看面板（Diff Viewer）：由全屏模态框改为**主窗口内嵌 GitHub 风格面板**（右侧抽屉，非独立窗口，运行逻辑与 SubAgent Monitor 内嵌面板一致）。`vscode.diff` 拦截 → `host.openDiffPreview` 命令 → 打开面板：左侧文件列表（状态徽标 + ±行数统计），右侧统一 diff（hunk 头 `@@ -a,b +c,d @@` + 双行号 + 增删着色），支持单文件/全部接受与拒绝、删除警戒提示、`diff.statusChanged` 状态同步；accept/reject 复用 VS Code 版同一协议（`electron-app/renderer/overlay.js` 的模态框已移除）
   - 行级 diff 算法抽取为公共工具 `frontend/src/utils/diffLines.ts`（LCS 行匹配 + hunk 分组 + 统计），write_file 工具卡改用它，删除重复实现；配套 Vitest 12 例

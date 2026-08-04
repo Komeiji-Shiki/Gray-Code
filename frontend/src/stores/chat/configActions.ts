@@ -30,16 +30,18 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
   try {
     const config = await sendToExtension<any>('config.getConfig', { configId: state.configId.value })
     if (config) {
+      // 模型回退：model 为空时使用 models 列表第一个模型（后端 getConfig 已解析，这里兜底）
+      const resolvedModel = config.model || config.models?.[0]?.id || ''
       state.currentConfig.value = {
         id: config.id,
         name: config.name,
-        model: config.model || '',
+        model: resolvedModel,
         type: config.type,
         maxContextTokens: config.maxContextTokens
       }
 
       if (!normalizeModelId(state.selectedModelId.value)) {
-        state.selectedModelId.value = config.model || ''
+        state.selectedModelId.value = resolvedModel
       }
     }
   } catch (err) {

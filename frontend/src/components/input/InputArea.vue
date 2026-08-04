@@ -90,7 +90,10 @@ const channelOptions = computed<ChannelOption[]>(() =>
 const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
-const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
+// 修复原因：渠道只配置 models 列表而未显式选择 model 时，selectedModelId 与 config.model 均为空，
+//          发送按钮被禁用（canSend 依赖 currentModel），存在最近对话栏时无法发送消息。
+// 修复方式：依次回退 selectedModelId → config.model → models 列表第一个模型。
+const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || currentModels.value[0]?.id || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
 async function loadConfigs() {
   isLoadingConfigs.value = true
