@@ -17,6 +17,7 @@ import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import type { WebviewClientId } from './runtime/WebviewClientRegistry';
+import type { StreamAbortManager } from './stream/StreamAbortManager';
 
 /**
  * 消息处理器上下文
@@ -44,8 +45,8 @@ export interface HandlerContext {
   toolRegistry?: ToolRegistry;
   windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
   
-  // 流式请求控制
-  streamAbortControllers: Map<string, AbortController>;
+  // 流式请求控制（实际注入的是 StreamAbortManager，具有 create/cancel/deleteSummary 等能力）
+  streamAbortControllers: StreamAbortManager;
   
   // Diff 预览提供者
   diffPreviewProvider: DiffPreviewContentProvider;

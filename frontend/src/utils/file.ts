@@ -5,6 +5,7 @@
 import type { Attachment, AttachmentType } from '../types'
 import {
   MAX_ATTACHMENT_SIZE,
+  MAX_VIDEO_ATTACHMENT_SIZE,
   SUPPORTED_DOCUMENT_TYPES
 } from '../types'
 
@@ -132,11 +133,13 @@ export function getFileType(mimeType: string): AttachmentType {
 
 // 验证文件
 export function validateFile(file: File): { valid: boolean; error?: string } {
-  // 检查文件大小
-  if (file.size > MAX_ATTACHMENT_SIZE) {
+  // 检查文件大小（视频放宽到 200MB，其余 50MB；全量 base64 读入内存 + JSON 通道拷贝）
+  const isVideo = file.type.startsWith('video/')
+  const limit = isVideo ? MAX_VIDEO_ATTACHMENT_SIZE : MAX_ATTACHMENT_SIZE
+  if (file.size > limit) {
     return {
       valid: false,
-      error: `文件大小超过限制 (${formatFileSize(MAX_ATTACHMENT_SIZE)})`
+      error: `文件大小超过限制 (${formatFileSize(limit)})`
     }
   }
   

@@ -1,7 +1,7 @@
 # GrayCode Desktop
 
-> **GrayCode AI 编程助手 · 独立桌面版** — 不依赖 VS Code 的完整前端
-> **GrayCode AI coding assistant · standalone desktop edition** — the full extension experience without VS Code
+> **GrayCode AI 编程助手 · 独立桌面版** — 无需安装 VS Code，基于 `vscode-shim` 兼容层运行完整插件能力
+> **GrayCode AI coding assistant · standalone desktop edition** — the full extension experience without installing VS Code (backed by a `vscode-shim` compat layer)
 
 [![Electron](https://img.shields.io/badge/Electron-43-blue)](https://www.electronjs.org/)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883)](https://vuejs.org/)
@@ -191,12 +191,28 @@ electron-app/
 
 ## 数据存储 / Data storage
 
-Windows: `%APPDATA%\GrayCode Desktop\graycode\`
-macOS: `~/Library/Application Support/GrayCode Desktop/graycode/`
-Linux: `~/.config/GrayCode Desktop/graycode/`
+应用为**便携式设计**：数据默认写入**应用自身目录下的 `data/`**，不写入系统路径（AppData / Program Files）。
 
-包含设置、渠道配置（含 API Key）、对话历史、MCP 配置、记忆、检查点等。
-可在 设置 → 通用 中自定义存储路径。
+- 打包版（免安装版 / win-unpacked）：`data/` 与可执行文件同级，如
+  `win-unpacked\GrayCode.exe` → `win-unpacked\data`
+- 源码开发版（`npm start`）：`electron-app/data`
+- macOS / Linux 同理：`<应用目录>/data`
+
+设置、渠道配置（含 API Key）、对话历史、MCP 配置、记忆、检查点等存放在 `<data>/graycode/` 下
+（Electron 的 `userData` 即该 `data/` 目录，后端数据再存放于其 `graycode/` 子目录）。
+
+也可显式指定数据目录（优先级：命令行参数 > 环境变量 > 默认便携目录）：
+
+```bash
+# 命令行参数
+"GrayCode.exe" --user-data-dir="D:\graycode-instance-b"
+
+# 环境变量
+set GRAYCODE_USER_DATA_DIR=D:\graycode-instance-b
+GrayCode.exe
+```
+
+或通过 设置 → 通用 自定义存储路径。
 
 ---
 

@@ -16,6 +16,7 @@ import { promisify } from 'util';
 import { t } from '../../i18n';
 
 const exec = promisify(childProcess.exec);
+const execFile = promisify(childProcess.execFile);
 const mkdir = promisify(fs.mkdir);
 const readdir = promisify(fs.readdir);
 const statAsync = promisify(fs.stat);
@@ -84,8 +85,14 @@ export class DependencyManager {
     
     private constructor(private context: vscode.ExtensionContext, customDepsPath?: string) {
         // 如果提供了自定义路径，使用自定义路径
-        // 否则使用用户主目录下的 .limcode 文件夹
-        this.limcodeDir = customDepsPath || path.join(os.homedir(), '.limcode');
+        // 否则默认使用用户主目录下的 .graycode 文件夹；
+        // 兼容旧版：若旧 LimCode 目录已存在且含已安装依赖，则沿用旧目录避免重复安装。
+        let defaultDir = path.join(os.homedir(), '.graycode');
+        const legacyDir = path.join(os.homedir(), '.limcode');
+        if (customDepsPath === undefined && fs.existsSync(path.join(legacyDir, 'node_modules'))) {
+            defaultDir = legacyDir;
+        }
+        this.limcodeDir = customDepsPath || defaultDir;
         this.depsDir = path.join(this.limcodeDir, 'node_modules');
     }
     
@@ -247,9 +254,10 @@ export class DependencyManager {
                 message: t('modules.dependencies.progress.downloading', { name })
             });
             
-            // 使用 npm 安装
-            const { stdout, stderr } = await exec(
-                `npm install --prefix "${tempDir}" --no-save`,
+            // 使用 npm 安装（execFile 参数数组直传，不经 shell 解析，消除路径注入面）
+            const { stdout, stderr } = await execFile(
+                'npm',
+                ['install', '--prefix', tempDir, '--no-save'],
                 {
                     cwd: tempDir,
                     timeout: 300000  // 5分钟超时

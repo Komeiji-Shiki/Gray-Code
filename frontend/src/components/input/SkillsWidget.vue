@@ -398,7 +398,7 @@ watch(() => chatStore.currentConversationId, async () => {
   content: '';
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-checkbox-foreground, #fff);
+  border: solid var(--vscode-checkbox-border, #a0a0a0);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
   margin-bottom: 2px;

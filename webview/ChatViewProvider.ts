@@ -1207,7 +1207,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
         const cspContent = this.buildCsp(webview, devServerOrigin);
-        const builtinSoundAssetsScript = `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
+        const safeJson = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c');
+        const builtinSoundAssetsScript = `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${safeJson(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });

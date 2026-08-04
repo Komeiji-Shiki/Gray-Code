@@ -62,10 +62,11 @@ export function translate(lang: string, key: string, params?: Record<string, any
         return key
     }
     
-    // 替换参数
+    // 替换参数（参数键先转义正则元字符，防止 {key} 含特殊字符时替换异常或 ReDoS）
     if (params) {
         return Object.keys(params).reduce((result, paramKey) => {
-            return result.replace(new RegExp(`\\{${paramKey}\\}`, 'g'), String(params[paramKey]))
+            const escapedKey = paramKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            return result.replace(new RegExp(`\\{${escapedKey}\\}`, 'g'), String(params[paramKey]))
         }, value)
     }
     

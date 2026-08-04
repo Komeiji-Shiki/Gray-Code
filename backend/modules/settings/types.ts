@@ -2312,7 +2312,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         url: undefined
     },
     ui: {
-        theme: 'auto',
+        // 默认深色：早期版本主题从未生效时界面恒为深色，用户已习惯；
+        // 'auto' 跟随系统在浅色系统下会突然变浅，被视为对比度异常。
+        theme: 'dark',
         language: 'zh-CN',
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）

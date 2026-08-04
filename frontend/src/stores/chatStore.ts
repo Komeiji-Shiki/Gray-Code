@@ -435,8 +435,15 @@ export const useChatStore = defineStore('chat', () => {
     const [next] = queue.splice(matchIndex, 1)
     state.messageQueue.value = queue
 
-    // 发送下一条排队消息
-    await sendMessage(next.content, next.attachments, next.sendOptions)
+    // 发送下一条排队消息；失败时放回队首（去重防死循环），
+    // 避免「我排队的消息丢了」（M4）
+    const sent = await sendMessage(next.content, next.attachments, next.sendOptions)
+    if (!sent) {
+      const currentQueue = state.messageQueue.value
+      if (!currentQueue.some(m => m.id === next.id)) {
+        state.messageQueue.value = [next, ...currentQueue]
+      }
+    }
   }
 
   // ============ Build（Plan 执行）============

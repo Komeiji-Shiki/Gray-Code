@@ -6,13 +6,15 @@
 
 import { t } from '../../backend/i18n';
 import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
+import { assertSafeId } from '../../backend/core/idValidation';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
  * 删除消息（删除到指定位置）
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, targetIndex, preserveCheckpointId } = data;
+  const { conversationId: rawConversationId, targetIndex, preserveCheckpointId } = data;
+  const conversationId = assertSafeId(rawConversationId, 'conversationId');
   
   // 先取消该对话的流式请求（如果有）
   // streamAbortControllers 实际上是 StreamAbortManager，但类型定义为 Map
@@ -42,12 +44,13 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
 export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, targetIndex } = data;
   try {
-    await ctx.conversationManager.deleteMessage(conversationId, targetIndex);
+    const safeConversationId = assertSafeId(conversationId, 'conversationId');
+    await ctx.conversationManager.deleteMessage(safeConversationId, targetIndex);
 
     // 删除单条消息后刷新派生元数据（todoList / activeBuild），
     // 避免删除 todo/create_plan 轨迹后历史会话残留无效 Build 壳。
     if (ctx.chatHandler) {
-      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(safeConversationId);
     }
 
     ctx.sendResponse(requestId, { success: true });
@@ -61,12 +64,13 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
  */
 export const cancelSummarizeRequest: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId } = data;
+  const safeConversationId = assertSafeId(conversationId, 'conversationId');
 
   const abortManager = ctx.streamAbortControllers as any;
   let cancelled = false;
 
   if (abortManager?.cancelSummary) {
-    cancelled = !!abortManager.cancelSummary(conversationId);
+    cancelled = !!abortManager.cancelSummary(safeConversationId);
   }
 
   ctx.sendResponse(requestId, { cancelled });

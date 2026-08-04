@@ -13,6 +13,7 @@ import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
 import { ChannelError, ErrorType } from '../../backend/modules/channel/types';
+import { assertSafeId } from '../../backend/core/idValidation';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
@@ -46,6 +47,11 @@ export class StreamRequestHandler {
     const name = error?.name
     const message = typeof error?.message === 'string' ? error.message : ''
     return name === 'AbortError' || message.toLowerCase().includes('aborted') || message.toLowerCase().includes('cancelled')
+  }
+
+  /** conversationId 来自 webview 消息层，进入存储路径前必须校验，防止 `..` 路径穿越 */
+  private validateConversationId(conversationId: unknown): string {
+    return assertSafeId(conversationId, 'conversationId')
   }
 
   private reportCancelled(processor: StreamChunkProcessor): void {
@@ -101,7 +107,7 @@ export class StreamRequestHandler {
 
     await Promise.all(conversationIds.map(async (conversationId) => {
       try {
-        await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
+        await this.deps.conversationManager.rejectAllPendingToolCalls(this.validateConversationId(conversationId));
       } catch (err) {
         console.error(`Failed to reject pending tool calls for conversation ${conversationId}:`, err);
       }
@@ -118,18 +124,31 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string, clientId?: string): Promise<void> {
+    let conversationId: string
+    let streamId: string
+    try {
+      const {
+        conversationId: rawConversationId,
+        streamId: clientStreamId
+      } = data || {};
+      conversationId = this.validateConversationId(rawConversationId)
+      streamId = this.resolveStreamId(clientStreamId, requestId)
+    } catch (error: any) {
+      // 校验失败也必须回给前端错误响应并清理路由表，否则前端请求永久挂起
+      this.deps.sendError(requestId, 'INVALID_CONVERSATION_ID', error?.message || 'Invalid conversation id');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
+
     const {
-      conversationId,
       message,
       configId,
       attachments,
       modelOverride,
       hiddenFunctionResponse,
       promptModeId,
-      dynamicContextStrategyOverride,
-      streamId: clientStreamId
+      dynamicContextStrategyOverride
     } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -181,8 +200,18 @@ export class StreamRequestHandler {
    * 处理重试流
    */
   async handleRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    let conversationId: string
+    let streamId: string
+    try {
+      const { conversationId: rawConversationId, streamId: clientStreamId } = data || {};
+      conversationId = this.validateConversationId(rawConversationId)
+      streamId = this.resolveStreamId(clientStreamId, requestId)
+    } catch (error: any) {
+      this.deps.sendError(requestId, 'INVALID_CONVERSATION_ID', error?.message || 'Invalid conversation id');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
+    const { configId, modelOverride, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -227,8 +256,18 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    let conversationId: string
+    let streamId: string
+    try {
+      const { conversationId: rawConversationId, streamId: clientStreamId } = data || {};
+      conversationId = this.validateConversationId(rawConversationId)
+      streamId = this.resolveStreamId(clientStreamId, requestId)
+    } catch (error: any) {
+      this.deps.sendError(requestId, 'INVALID_CONVERSATION_ID', error?.message || 'Invalid conversation id');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
+    const { messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -277,8 +316,18 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    let conversationId: string
+    let streamId: string
+    try {
+      const { conversationId: rawConversationId, streamId: clientStreamId } = data || {};
+      conversationId = this.validateConversationId(rawConversationId)
+      streamId = this.resolveStreamId(clientStreamId, requestId)
+    } catch (error: any) {
+      this.deps.sendError(requestId, 'INVALID_CONVERSATION_ID', error?.message || 'Invalid conversation id');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
+    const { toolResponses, annotation, configId, modelOverride, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -326,7 +375,7 @@ export class StreamRequestHandler {
    */
   async cancelStream(conversationId: string, requestId: string): Promise<void> {
     // 1. 取消流式请求
-    this.deps.abortManager.cancel(conversationId);
+    this.deps.abortManager.cancel(this.validateConversationId(conversationId));
 
     await this.cleanupAbortedConversations([conversationId]);
 

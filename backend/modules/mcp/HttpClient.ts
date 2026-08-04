@@ -355,6 +355,13 @@ export class HttpMcpClient extends EventEmitter {
 
                 buffer += decoder.decode(value, { stream: true });
 
+                // 缓冲区大小上限，防止服务器发送无界数据导致内存 DoS
+                const MAX_BUFFER_SIZE = 16 * 1024 * 1024;
+                if (buffer.length > MAX_BUFFER_SIZE) {
+                    await reader.cancel();
+                    throw new Error(`MCP HTTP server output exceeded buffer limit (${MAX_BUFFER_SIZE} bytes), connection closed`);
+                }
+
                 // 处理 SSE 事件
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
@@ -364,18 +371,22 @@ export class HttpMcpClient extends EventEmitter {
                         const jsonStr = line.slice(5).trim();
                         if (!jsonStr || jsonStr === '[DONE]') continue;
 
+                        let event: Partial<JsonRpcResponse>;
                         try {
-                            const event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
-
-                            // 检查是否是最终结果
-                            if (event.jsonrpc === '2.0' && event.id !== undefined) {
-                                if (event.error) {
-                                    throw new Error(event.error.message);
-                                }
-                                result = event.result as T;
-                            }
+                            event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
                         } catch (parseError) {
-                            // 忽略解析错误
+                            // 仅忽略 JSON 解析错误
+                            continue;
+                        }
+
+                        // 检查是否是最终结果
+                        if (event.jsonrpc === '2.0' && event.id !== undefined) {
+                            if (event.error) {
+                                // 服务器结构化错误（如工具不存在、参数错误）直接抛出，
+                                // 不能被当作解析错误吞掉，否则调用方只会收到误导性的“超时”
+                                throw new Error(event.error.message);
+                            }
+                            result = event.result as T;
                         }
                     }
                 }

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
 import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
+import { assertSafeId } from '../backend/core/idValidation';
 import type { RunScope } from '../backend/core/RunController';
 
 /**
@@ -185,6 +186,8 @@ export class SubAgentMonitorPanel {
     private panel?: vscode.WebviewPanel;
     private focusRunId?: string;
     private focusConversationId?: string;
+    /** 面板可见性（前端通过 subagents.monitor.setVisible 上报，用于折叠时丢弃 llm_delta） */
+    private visible = true;
     private readonly unsubscribe: () => void;
     private clientRegistration?: vscode.Disposable;
     /**
@@ -388,6 +391,21 @@ export class SubAgentMonitorPanel {
             return;
         }
 
+        if (message.type === 'subagents.monitor.setVisible') {
+            // 修改原因：与 Electron 版行为对齐（SubAgentMonitorBridge.ts 125-134）。
+            // 修改方式：维护面板可见性状态并回执；隐藏时前端停止推送 llm_delta，
+            //          避免折叠面板仍持续接收高频流式增量。
+            // 修改目的：嵌入模式下“隐藏时丢弃 llm_delta”的优化真正生效。
+            this.visible = message.data?.visible === true;
+            this.postRoutedMessage({
+                type: 'response',
+                requestId: message.requestId,
+                success: true,
+                data: { visible: this.visible }
+            }, clientId);
+            return;
+        }
+
         if (this.routeMessage && this.panel) {
             // 非 lifecycle 消息委托给主聊天统一 MessageRouter，避免 Monitor 复制 handler 或让 diff/tool 操作 pending。
             const handled = await this.routeMessage(message, this.panel.webview);
@@ -528,6 +546,8 @@ export class SubAgentMonitorPanel {
         // 修改原因：Monitor 面板自身不拥有 ConversationManager，但历史子 run 需要从父 conversation metadata 恢复。
         // 修改方式：ChatViewProvider 构造时注入 conversationStore seam；这里仅按 conversationId 恢复到事件总线。
         // 修改目的：不在 MessageRouter 写 endpoint 特判，也不新增 Monitor 独立状态真源。
+        // conversationId 来自消息层，进存储前必须校验（存储层也有兜底，这里提前给出友好错误）。
+        assertSafeId(conversationId, 'conversationId');
         await subAgentRunEventBus.loadConversationSnapshots(conversationId, this.conversationStore);
     }
 
@@ -573,7 +593,9 @@ export class SubAgentMonitorPanel {
             `script-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
             `connect-src ${devServerOrigin || ''}`
         ].join('; ');
-        const bootstrap = `<script>window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
+        // 内联 JSON 必须转义 < 防止 </script> 提前闭合注入（focusRunId 来自消息层，不可信）
+        const safeJson = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c');
+        const bootstrap = `<script>window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${safeJson(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${safeJson(this.focusRunId || null)};</script>`;
 
         if (devServerUrl) {
             return `<!DOCTYPE html>

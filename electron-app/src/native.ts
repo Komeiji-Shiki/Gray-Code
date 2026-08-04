@@ -1,15 +1,58 @@
 /**
  * native.ts - Native operations for the vscode shim (run in the main process).
+ *
+ * 安全加固：所有可被渲染层触发的操作都做输入校验。
+ * - openExternal 仅允许 https/http/mailto
+ * - openPath / showInFolder 拒绝可执行扩展名
  */
 
 import { dialog, shell, clipboard, BrowserWindow } from 'electron';
 import * as fs from 'fs';
+import * as path from 'path';
 
 let pickWorkspaceHandler: (() => void) | null = null;
 
 /** Set by main.ts: opens the "Open Workspace Folder" dialog. */
 export function setPickWorkspaceHandler(handler: (() => void) | null): void {
   pickWorkspaceHandler = handler;
+}
+
+/** 可执行/脚本类扩展名：openPath/showInFolder 一律拒绝，防止渲染层被攻破后直接启动本机程序 */
+const EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.ps1', '.psm1', '.vbs', '.vbe',
+  '.js', '.jse', '.wsf', '.wsh', '.msi', '.msp', '.scr', '.pif',
+  '.sh', '.bash', '.csh', '.ksh', '.zsh', '.py', '.rb', '.pl', '.jar',
+  // 黑名单补充（H-2）：以下扩展名可被系统直接解释执行或携带代码，
+  // 缺失时会构成"AI 写入文件 → 用户打开 → 任意代码执行"的现实链路
+  '.hta', '.lnk', '.url', '.reg', '.iso', '.vhd', '.vhdx',
+  '.docm', '.xlsm', '.pptm', '.svg'
+]);
+
+function isAllowedExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return ['https:', 'http:', 'mailto:'].includes(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedOpenPath(filePath: string): boolean {
+  try {
+    // 目录允许打开（资源管理器中查看文件夹）
+    let isDir = false;
+    try {
+      isDir = fs.statSync(filePath).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (isDir) return true;
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ext) return false; // 无扩展名文件不允许直接打开（无法判断其类型）
+    return !EXECUTABLE_EXTENSIONS.has(ext);
+  } catch {
+    return false;
+  }
 }
 
 export async function runNative<T = any>(
@@ -45,15 +88,29 @@ export async function runNative<T = any>(
       return { filePath: result.filePath, canceled: result.canceled } as T;
     }
     case 'shell:openPath': {
-      const error = await shell.openPath(payload?.path);
+      const target = typeof payload?.path === 'string' ? payload.path : '';
+      if (!isAllowedOpenPath(target)) {
+        return { ok: false, error: `Refusing to open file: ${target || '(empty)'}` } as T;
+      }
+      const error = await shell.openPath(target);
       return { ok: !error } as T;
     }
-    case 'shell:showInFolder':
-      shell.showItemInFolder(payload?.path);
+    case 'shell:showInFolder': {
+      const target = typeof payload?.path === 'string' ? payload.path : '';
+      if (!isAllowedOpenPath(target)) {
+        return { ok: false, error: `Refusing to reveal file: ${target || '(empty)'}` } as T;
+      }
+      shell.showItemInFolder(target);
       return { ok: true } as T;
-    case 'shell:openExternal':
-      await shell.openExternal(payload?.url);
+    }
+    case 'shell:openExternal': {
+      const target = typeof payload?.url === 'string' ? payload.url : '';
+      if (!isAllowedExternalUrl(target)) {
+        return { ok: false, error: `Refusing to open URL (only http/https/mailto allowed): ${target || '(empty)'}` } as T;
+      }
+      await shell.openExternal(target);
       return { ok: true } as T;
+    }
     case 'clipboard:write':
       clipboard.writeText(String(payload?.text ?? ''));
       return { ok: true } as T;
@@ -62,8 +119,12 @@ export async function runNative<T = any>(
     case 'window:reload':
       win?.webContents.reload();
       return { ok: true } as T;
-    case 'fs:exists':
-      return { exists: fs.existsSync(payload?.path) } as T;
+    case 'fs:exists': {
+      // 类型校验：非字符串路径会直接让 existsSync 抛 TypeError
+      const target = typeof payload?.path === 'string' ? payload.path : '';
+      if (!target) return { exists: false } as T;
+      return { exists: fs.existsSync(target) } as T;
+    }
     default:
       throw new Error(`Unknown native op: ${op}`);
   }

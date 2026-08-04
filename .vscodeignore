@@ -47,6 +47,10 @@ esbuild.config.js
 
 # 内部开发文档（不打包）
 docs/**
+AUDIT_REMEDIATION.md
+PLAN.md
+.github/**
+CHANGELOG.md
 
 # 前端源文件（只需要 dist）
 frontend/src/**
@@ -62,3 +66,7 @@ frontend/COMPONENT_ARCHITECTURE.md
 # 依赖：运行时依赖已由 esbuild 打包进 dist/（bundle + dist/node_modules），
 # codicons 等静态资源使用 resources/ 目录，根 node_modules 不需要进包
 node_modules/**
+
+# Electron 独立桌面版：含用户数据（conversations/设置/本地存储）与构建产物，
+# 绝不进扩展包，避免真实会话与明文配置随 VSIX 发布
+electron-app/**

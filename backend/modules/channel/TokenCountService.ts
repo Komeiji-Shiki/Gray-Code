@@ -287,30 +287,27 @@ export class TokenCountService {
             };
         }
         
-        // 构建 countTokens URL
-        // 将 generateContent 或其他端点替换为 countTokens
+        // 构建 countTokens URL（密钥一律走 x-goog-api-key 请求头，不拼进 URL，
+        // 避免密钥泄漏到访问日志 / 代理日志 / 浏览器历史）
         let countUrl: string;
         if (url.includes('{model}') && url.includes('{key}')) {
-            // 使用模板格式
+            // 使用模板格式（模板含 {key} 时替换为空，密钥统一走请求头）
             countUrl = url
                 .replace('{model}', model)
-                .replace('{key}', apiKey);
+                .replace('{key}', '');
+            countUrl = countUrl.replace(/\?+$/, '');
         } else if (url.includes(':generateContent')) {
             // 替换 generateContent 为 countTokens
             countUrl = url.replace(':generateContent', ':countTokens');
-            if (!countUrl.includes('key=')) {
-                countUrl += (countUrl.includes('?') ? '&' : '?') + `key=${apiKey}`;
-            }
+            countUrl = stripKeyQuery(countUrl);
         } else if (url.includes(':streamGenerateContent')) {
             // 替换 streamGenerateContent 为 countTokens
             countUrl = url.replace(':streamGenerateContent', ':countTokens');
-            if (!countUrl.includes('key=')) {
-                countUrl += (countUrl.includes('?') ? '&' : '?') + `key=${apiKey}`;
-            }
+            countUrl = stripKeyQuery(countUrl);
         } else {
             // 假设是基础 URL，添加 countTokens 端点
             const baseUrl = url.replace(/\/$/, '');
-            countUrl = `${baseUrl}/models/${model}:countTokens?key=${apiKey}`;
+            countUrl = `${baseUrl}/models/${model}:countTokens`;
         }
         
         // 构建请求体
@@ -335,7 +332,8 @@ export class TokenCountService {
         const response = await proxyFetch(countUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
             },
             body: JSON.stringify(requestBody)
         });
@@ -672,10 +670,12 @@ export class TokenCountService {
         config: TokenCountChannelConfig,
         contents: Content[]
     ): Promise<TokenCountResult> {
-        // 构建 URL
+        // 构建 URL（{key} 模板替换为空并清理残留 query；密钥走 x-goog-api-key 请求头，
+        // 避免密钥出现在 URL 而泄漏到访问日志 / 代理日志 / 浏览器历史）
         let url = config.baseUrl
             .replace('{model}', config.model)
-            .replace('{key}', config.apiKey);
+            .replace('{key}', '');
+        url = stripKeyQuery(url);
         
         // 清理并转换内容格式为 Gemini 格式
         const geminiContents = contents.map(content => {
@@ -700,7 +700,8 @@ export class TokenCountService {
         const response = await proxyFetch(url, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'x-goog-api-key': config.apiKey
             },
             body: JSON.stringify(requestBody)
         });
@@ -1006,6 +1007,25 @@ export class TokenCountService {
             success: true,
             totalTokens: result.input_tokens
         };
+    }
+}
+
+/**
+ * 从 URL 中剥离 key / api_key / api-key query 参数（密钥改走请求头后防止残留泄漏）
+ */
+function stripKeyQuery(url: string): string {
+    if (!url.includes('?') && !url.includes('#')) {
+        return url.replace(/\?+$/, '');
+    }
+    try {
+        const parsed = new URL(url);
+        for (const name of ['key', 'api_key', 'api-key', 'apikey']) {
+            parsed.searchParams.delete(name);
+        }
+        const cleaned = parsed.toString();
+        return cleaned.endsWith('?') ? cleaned.slice(0, -1) : cleaned;
+    } catch {
+        return url;
     }
 }
 

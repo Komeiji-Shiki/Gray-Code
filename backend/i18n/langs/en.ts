@@ -173,6 +173,7 @@ const en: BackendLanguageMessages = {
                 streamRequestFailed: 'Stream request failed: {error}',
                 requestTimeout: 'Request timeout ({timeout}ms)',
                 requestTimeoutNoResponse: 'Request timeout (no response in {timeout}ms)',
+                streamBufferTooLarge: 'Stream response buffer exceeded the limit ({limit} characters), request aborted',
                 requestCancelled: 'Request cancelled',
                 requestAborted: 'Request aborted',
                 noResponseBody: 'No response body'
@@ -327,7 +328,9 @@ Output content directly without any prefix.`
                 savedShort: 'Saved: {filePath}',
                 rejected: 'Rejected changes: {filePath}',
                 diffTitle: '{filePath} (AI changes - Ctrl+S to save)',
-                diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
+                diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.',
+                unsavedChanges: 'The file {filePath} has unsaved changes. Please save the file before generating a diff.',
+                fileModifiedExternally: 'The file {filePath} was modified externally after the diff was created. Please generate a new diff based on the latest content.'
             },
             diffCodeLens: {
                 accept: 'Accept',
@@ -623,6 +626,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             fileNotInAnyWorkspace: 'File is not in any open workspace',
             fileInOtherWorkspace: 'File belongs to another workspace: {workspaceName}',
             readFileFailed: 'Failed to read file',
+            listWorkspaceDirectoryFailed: 'Failed to list workspace directory',
             conversationFileNotExists: 'Conversation file does not exist',
             cannotRevealInExplorer: 'Cannot reveal in explorer',
             

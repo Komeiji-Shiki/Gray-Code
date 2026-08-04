@@ -10,7 +10,7 @@ import { BaseFormatter } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
 import type { OpenAIResponsesConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
-import { applyCustomBody } from '../../config/configs/base';
+import { applyCustomBody, applyCustomHeaders } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
 import {
@@ -104,13 +104,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         }
 
         // 应用自定义标头
-        if (config.customHeadersEnabled && config.customHeaders) {
-            for (const header of config.customHeaders) {
-                if (header.enabled && header.key && header.key.trim()) {
-                    headers[header.key.trim()] = header.value || '';
-                }
-            }
-        }
+        applyCustomHeaders(headers, config.customHeaders, config.customHeadersEnabled);
         
         // 应用自定义 body
         const finalBody = applyCustomBody(body, config.customBody, config.customBodyEnabled);

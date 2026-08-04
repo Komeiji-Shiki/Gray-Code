@@ -16,6 +16,8 @@ import {
     toRelativePath,
     normalizeLineEndingsToLF,
     escapeRegExp,
+    isPathInsideOrEqualReal,
+    isRegexPotentiallyCatastrophic,
     detectSuspectedRegexIntent,
     createSuspectedRegexSuggestion
 } from '../utils';
@@ -763,6 +765,13 @@ async function getSearchRootAndPattern(
 
     const fullUri = vscode.Uri.joinPath(rootUri, relativePath);
 
+    // 路径安全防线：joinPath 会规范化 `..` 段，导致 `../` 解析到工作区外。
+    // 这里对解析结果做（符号链接感知的）包含性校验，越界直接拒绝，
+    // 防止搜索/替换作用到工作区之外。
+    if (!isPathInsideOrEqualReal(fullUri.fsPath, rootUri.fsPath)) {
+        throw new Error(`Search path escapes the workspace: ${relativePath}`);
+    }
+
     try {
         const stat = await vscode.workspace.fs.stat(fullUri);
         if (stat.type === vscode.FileType.File) {
@@ -933,6 +942,16 @@ export function createSearchInFilesTool(): Tool {
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
                 const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
+
+                // ReDoS 防线：危险结构（嵌套量词）直接在编译前拒绝，
+                // 避免在扩展宿主主线程上对长行文本做指数级回溯。
+                if (isRegex && isRegexPotentiallyCatastrophic(query)) {
+                    return {
+                        success: false,
+                        error: 'The provided regular expression has a pattern that can cause catastrophic backtracking (e.g. nested quantifiers like (a+)+). Simplify the pattern or use literal search (isRegex: false).'
+                    };
+                }
+
                 const searchRegex = isRegex
                     ? new RegExp(query, flags)
                     : new RegExp(escapeRegExp(query), flags);

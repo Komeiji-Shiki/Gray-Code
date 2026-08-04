@@ -323,20 +323,42 @@ export const getSkillsDirectory: MessageHandler = async (data, requestId, ctx) =
  * 
  * 如果目录不存在则先创建，防止 vscode.env.openExternal 报错
  * （用户点击"打开 Skills 目录"时，~/.graycode/skills/ 可能尚未创建）
+ * 
+ * 安全限制：只允许打开 skillsManager 管理的目录，拒绝任意路径
+ * （webview 传入的路径不可信，任意路径意味着可在用户机器任意位置创建目录并打开）
  */
 export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
     try {
         const { path: dirPath } = data;
-        if (dirPath) {
-            // 确保目录存在后再打开，避免"系统找不到指定的文件"错误
-            const fs = await import('fs');
-            if (!fs.existsSync(dirPath)) {
-                await fs.promises.mkdir(dirPath, { recursive: true });
-            }
+        const skillsManager = getSkillsManager();
+        const allowedPath = skillsManager?.getSkillsDirectory();
+        const fs = await import('fs');
+        const pathMod = await import('path');
 
-            const uri = vscode.Uri.file(dirPath);
-            await vscode.env.openExternal(uri);
+        if (typeof dirPath !== 'string' || !dirPath.trim() || typeof allowedPath !== 'string' || !allowedPath) {
+            ctx.sendError(requestId, 'OPEN_DIRECTORY_DENIED', 'Only the skills directory can be opened.');
+            return;
         }
+
+        // 用「待创建/已存在」两种状态统一做 containment 校验：
+        // 解析路径为绝对路径后，必须位于 allowedPath 之内（含相等）
+        const resolvedTarget = pathMod.resolve(dirPath);
+        const resolvedAllowed = pathMod.resolve(allowedPath);
+        const withinAllowed =
+            resolvedTarget === resolvedAllowed ||
+            resolvedTarget.startsWith(resolvedAllowed + pathMod.sep);
+
+        if (!withinAllowed) {
+            ctx.sendError(requestId, 'OPEN_DIRECTORY_DENIED', 'Only the skills directory can be opened.');
+            return;
+        }
+
+        if (!fs.existsSync(resolvedTarget)) {
+            await fs.promises.mkdir(resolvedTarget, { recursive: true });
+        }
+
+        const uri = vscode.Uri.file(resolvedTarget);
+        await vscode.env.openExternal(uri);
         ctx.sendResponse(requestId, { success: true });
     } catch (error: any) {
         ctx.sendError(requestId, 'OPEN_DIRECTORY_ERROR', error.message || 'Failed to open directory');

@@ -6,7 +6,7 @@
  * custom `graycode://` protocol (so fetch()/audio work without CORS issues).
  */
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { BackendHost } from './host/BackendHost';
@@ -108,10 +108,85 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       stream: true,
-      bypassCSP: true
+      // 不允许 bypassCSP：渲染层加载的是 AI 生成内容渲染出来的页面，
+      // CSP 是纵深防御的重要一环，不能对自定义协议豁免。
+      bypassCSP: false
     }
   }
 ]);
+
+// ============================================================================
+// 桌面渲染层资源注入（主题变量 / overlay UI）
+//
+// 为什么用 insertCSS / executeJavaScript 而非依赖 dist 补丁：
+// 前端 rebuild 会重新生成 frontend/dist/index.html，patch-dist.mjs 注入的
+// theme.css/overlay.js 链接会丢失。CSS 变量一旦缺失，UI 退回浏览器默认样式
+// （灰底黑字），这是桌面版对比度问题的根因之一。主进程注入不受 dist 内容影响。
+// ============================================================================
+
+function findRendererAsset(name: string): string | null {
+  // 打包版：extraResources 把 renderer/ 复制到 resources/renderer/
+  const packaged = path.join(REPO_ROOT, 'renderer', name);
+  if (fs.existsSync(packaged)) return packaged;
+  // 开发版：electron-app/renderer/
+  const dev = path.join(REPO_ROOT, 'electron-app', 'renderer', name);
+  if (fs.existsSync(dev)) return dev;
+  return null;
+}
+
+// 记录已注入 CSS 的 key：reload 时先移除旧注入，避免规则翻倍累积（L-6）
+const insertedCssKeys = new Map<string, string | null>();
+
+async function insertCssOnce(win: BrowserWindow, css: string, keyName: string): Promise<void> {
+  const previousKey = insertedCssKeys.get(keyName) ?? null;
+  if (previousKey) {
+    try {
+      await win.webContents.removeInsertedCSS(previousKey);
+    } catch {
+      // webContents 已销毁等情况忽略
+    }
+  }
+  const key = await win.webContents.insertCSS(css);
+  insertedCssKeys.set(keyName, key);
+}
+
+async function injectDesktopRendererAssets(win: BrowserWindow): Promise<void> {
+  try {
+    const themePath = findRendererAsset('theme.css');
+    if (themePath) {
+      const css = fs.readFileSync(themePath, 'utf-8');
+      await insertCssOnce(win, css, 'theme');
+    } else {
+      console.warn('[main] theme.css not found; UI will fall back to browser defaults');
+    }
+
+    // codicons 图标字体：dist 重建会冲掉 patch-dist.mjs 注入的 <link>，
+    // 与 theme.css 同策略改为运行时注入；相对字体 URL 必须改写成绝对 graycode:// URL，
+    // 否则会相对页面路径解析（graycode://local/frontend/dist/codicon.ttf）导致字体 404、图标全丢
+    const codiconCssPath = path.join(REPO_ROOT, 'resources', 'codicons', 'codicon.css');
+    if (fs.existsSync(codiconCssPath)) {
+      let codiconCss = fs.readFileSync(codiconCssPath, 'utf-8');
+      codiconCss = codiconCss.replace(
+        /url\(\s*(['"]?)(\.\/[^)'"]+)\1\s*\)/g,
+        (_match, quote, relPath) => {
+          const absolute = `graycode://local/resources/codicons/${relPath.replace(/^\.\//, '')}`;
+          return `url(${quote}${absolute}${quote})`;
+        }
+      );
+      await insertCssOnce(win, codiconCss, 'codicons');
+    }
+
+    const overlayPath = findRendererAsset('overlay.js');
+    if (overlayPath) {
+      const js = fs.readFileSync(overlayPath, 'utf-8');
+      await win.webContents.executeJavaScript(js, false).catch((err) => {
+        console.warn('[main] overlay.js injection failed:', err);
+      });
+    }
+  } catch (err) {
+    console.warn('[main] Failed to inject renderer assets:', err);
+  }
+}
 
 export function registerCustomProtocol(): void {
   const MIME_BY_EXT: Record<string, string> = {
@@ -164,18 +239,42 @@ export function registerCustomProtocol(): void {
   // In-memory cache keyed by mtime: app reloads re-read the same ~3MB bundle
   // on every launch; serving it from memory keeps startup snappy.
   const fileCache = new Map<string, { body: Buffer; mime: string; mtimeMs: number }>();
+
+  // 可服务根目录白名单：只有静态资源目录可被 graycode:// 读取。
+  // 用户数据目录（含 API Key 与全部对话历史）默认位于 electron-app/data，
+  // 位于 REPO_ROOT 之内，必须显式排除，否则渲染层可 fetch 到全部敏感数据（H-1）。
+  const allowedRoots = [
+    path.join(REPO_ROOT, 'frontend', 'dist'),
+    path.join(REPO_ROOT, 'resources'),
+    path.join(REPO_ROOT, 'renderer')
+  ];
+
+  function isPathAllowed(fsPath: string): boolean {
+    const normalized = path.normalize(fsPath);
+    return allowedRoots.some((root) => {
+      const rootNorm = process.platform === 'win32'
+        ? root.replace(/\\/g, '/').toLowerCase()
+        : root.replace(/\\/g, '/');
+      const pathNorm = process.platform === 'win32'
+        ? normalized.replace(/\\/g, '/').toLowerCase()
+        : normalized.replace(/\\/g, '/');
+      return pathNorm === rootNorm || pathNorm.startsWith(rootNorm.endsWith('/') ? rootNorm : rootNorm + '/');
+    });
+  }
+
   protocol.handle(CUSTOM_SCHEME, async (request) => {
     try {
       const url = new URL(request.url);
-      // graycode://local/<relative path from repo root>
+      // 只接受 graycode://local/：hostname 不校验时 graycode://evil/ 与 local 服务同一批文件
+      if (url.hostname !== 'local') {
+        return new Response('Forbidden', { status: 403 });
+      }
+      // graycode://local/<relative path from an allowed static root>
       const relPath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
       if (!relPath) return new Response('Not found', { status: 404 });
       const fsPath = path.normalize(path.join(REPO_ROOT, relPath));
-      // containment check（Windows 路径不区分大小写，需归一化后比较，并加分隔符边界防止
-      // C:\repo 与 C:\repo2 误放行/误拦截）
-      const rootNorm = process.platform === 'win32' ? REPO_ROOT.replace(/\\/g, '/').toLowerCase() : REPO_ROOT.replace(/\\/g, '/');
-      const pathNorm = process.platform === 'win32' ? fsPath.replace(/\\/g, '/').toLowerCase() : fsPath.replace(/\\/g, '/');
-      if (!(pathNorm === rootNorm || pathNorm.startsWith(rootNorm.endsWith('/') ? rootNorm : rootNorm + '/'))) {
+      // 白名单 containment 校验（用户数据目录不在白名单内，天然被拦截）
+      if (!isPathAllowed(fsPath)) {
         return new Response('Forbidden', { status: 403 });
       }
       const stat = await fs.promises.stat(fsPath);
@@ -201,7 +300,8 @@ export function registerCustomProtocol(): void {
         headers: { 'Content-Type': contentType }
       });
     } catch (err) {
-      return new Response(String(err), { status: 500 });
+      // 固定文案，不向渲染层泄露内部路径/错误细节
+      return new Response('Internal server error', { status: 500 });
     }
   });
 }
@@ -211,10 +311,22 @@ export function registerCustomProtocol(): void {
 // ============================================================================
 
 function registerNativeOps(): void {
-  ipcMain.handle('graycode:native', (_event, op: string, payload: any) => {
+  ipcMain.handle('graycode:native', (event, op: string, payload: any) => {
+    // 只接受主窗口主框架的调用：渲染层被 XSS 后无法借 iframe/其它 frame 调用
+    if (!isTrustedSender(event)) {
+      return { ok: false, error: 'Untrusted sender' };
+    }
     return runNative(op, payload, mainWindow);
   });
   setPickWorkspaceHandler(() => void pickWorkspaceFolder());
+}
+
+/** IPC 发送方校验：必须是主窗口自身的主框架 */
+function isTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const senderFrame = (event as any).senderFrame as Electron.WebFrameMain | undefined;
+  if (!senderFrame) return event.sender === mainWindow.webContents;
+  return senderFrame.top === senderFrame && event.sender === mainWindow.webContents;
 }
 
 // ============================================================================
@@ -249,7 +361,9 @@ function createBackend(): void {
 
   // 消息入口注册一次（不放在 createWindow 内，避免 macOS activate 重建窗口时重复注册，
   // 导致每条渲染层消息被处理两次）。同一窗口内的所有消息都走同一个入口。
-  ipcMain.on('graycode:renderer-to-backend', (_event, message: any) => {
+  ipcMain.on('graycode:renderer-to-backend', (event, message: any) => {
+    // 只接受主窗口主框架的消息（与 graycode:native 同一套发送方校验）
+    if (!isTrustedSender(event)) return;
     void backendHost?.handleRendererMessage(message);
   });
 }
@@ -326,21 +440,31 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 620,
     show: false,
-    backgroundColor: '#1e1e1e',
+    // 初始背景跟随系统深浅色，避免浅色系统下启动时深色闪烁（页面加载后由主题变量接管）
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
     autoHideMenuBar: false,
     icon: path.join(REPO_ROOT, 'resources', 'icon.png'),
     title: 'GrayCode',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: false,
+      // 安全基线：contextIsolation + sandbox 开启，渲染层（渲染 AI 生成的 Markdown/HTML）
+      // 即使被 XSS 攻破也无法直接访问 Node/IPC；桥接全部经 preload contextBridge 白名单。
+      contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+
+  // 主题变量与 overlay UI 由主进程注入，不依赖 frontend/dist 是否被 patch-dist 处理：
+  // 前端 rebuild 会覆盖 dist/index.html 导致 theme.css/overlay.js 链接丢失，
+  // 一旦 CSS 变量缺失，整个 UI 会退回浏览器默认色（灰底黑字），即历史对比度 bug 根因。
+  mainWindow.webContents.on('did-finish-load', () => {
+    void injectDesktopRendererAssets(mainWindow!);
   });
 
   mainWindow.on('focus', () => {
@@ -350,9 +474,21 @@ function createWindow(): void {
     __setWindowFocused(false);
   });
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // 拒绝新窗口；对 http/https 链接改用系统浏览器打开（复用 native.ts 的 scheme 校验）
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:' || parsed.protocol === 'mailto:') {
+        void import('electron').then(({ shell }) => shell.openExternal(url));
+      }
+    } catch {
+      // 非法 URL 忽略
+    }
+    return { action: 'deny' };
+  });
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(`${CUSTOM_SCHEME}://`)) {
+    // 严格限定 graycode://local/：前缀过宽会放行 graycode://evil/ 等 host 变体
+    if (!url.startsWith(`${CUSTOM_SCHEME}://local/`)) {
       event.preventDefault();
     }
   });
@@ -736,6 +872,26 @@ function createWindow(): void {
         command: 'host.noWorkspace',
         data: { message: 'No workspace folder is open. Use File > Open Workspace Folder... to get started.' }
       });
+    }
+  }).catch((error) => {
+    // 初始化失败（如数据目录损坏、配置解析崩溃）必须可见，不能留下 unhandled rejection + 空白窗口（M-8）
+    console.error('GrayCode backend initialization failed:', error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'GrayCode Failed to Start',
+        message: 'The backend failed to initialize.',
+        detail: String(error?.message || error),
+        buttons: ['Open Data Folder', 'Quit']
+      }).then(({ response }) => {
+        if (response === 0) {
+          const { shell } = require('electron');
+          void shell.openPath(app.getPath('userData'));
+        }
+        app.quit();
+      });
+    } else {
+      app.exit(1);
     }
   });
 }

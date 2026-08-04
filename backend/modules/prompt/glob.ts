@@ -26,7 +26,10 @@ function escapeRegExp(s: string): string {
  *   （调用方须先 `path.replace(/\\/g, '/')` 归一化路径）
  */
 export function globPatternToRegExp(pattern: string): string {
-    return escapeRegExp(pattern.replace(/\\/g, '/'))
+    // 连续 `**` 折叠为一个：a/**/**/b 展开成多个可选的 .*/ 组会对长路径产生
+    // 指数级回溯（L1）。折叠后语义不变（任意多个段 == 一个段）。
+    const collapsed = pattern.replace(/\\/g, '/').replace(/(\/\*\*)+\/(?!\*)/g, '/**/');
+    return escapeRegExp(collapsed)
         .replace(/\\\*\\\*/g, '<<<GLOBSTAR>>>')   // 转义后的 **
         .replace(/\\\*/g, '[^/]*')                // 转义后的 *
         .replace(/<<<GLOBSTAR>>>\//g, '(?:.*/)?') // ** 后跟分隔符：零段可选

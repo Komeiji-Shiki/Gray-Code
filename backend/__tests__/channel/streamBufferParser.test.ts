@@ -40,6 +40,44 @@ describe('parseStreamBuffer - SSE', () => {
     });
 });
 
+describe('parseStreamBuffer - SSE keep-alive 心跳', () => {
+    it('非 JSON 心跳行不污染后续真实事件', () => {
+        const result = parseStreamBuffer('data: keep_alive\ndata: {"a":1}\ndata: keep-alive\ndata: {"a":2}\n\n');
+        expect(result.chunks).toEqual([{ a: 1 }, { a: 2 }]);
+        expect(result.remaining).toBe('');
+    });
+
+    it('纯心跳流在流结束时直接丢弃，不进入 unparsed（避免误报错误）', () => {
+        const result = parseStreamBuffer('data: keep_alive', true);
+        expect(result.chunks).toEqual([]);
+        expect(result.remaining).toBe('');
+        expect(result.unparsed).toBeUndefined();
+    });
+
+    it('多种心跳形态（ping/heartbeat/keepalive）均被容忍', () => {
+        const result = parseStreamBuffer(
+            'data: ping\ndata: heartbeat\ndata: keepalive\ndata: {"a":1}',
+            true
+        );
+        expect(result.chunks).toEqual([{ a: 1 }]);
+    });
+
+    it('心跳出现在流中间时不中断其后事件解析（长思考场景回归）', () => {
+        const result = parseStreamBuffer(
+            'data: {"type":"content_block_delta"}\ndata: keep_alive\n\ndata: keep_alive\n\ndata: {"type":"message_stop"}'
+        );
+        expect(result.chunks).toEqual([
+            { type: 'content_block_delta' },
+            { type: 'message_stop' }
+        ]);
+    });
+
+    it('未收完的 JSON 前缀仍按多行事件累积（不被心跳规则误伤）', () => {
+        const result = parseStreamBuffer('data: {"a":\ndata: 1}');
+        expect(result.chunks).toEqual([{ a: 1 }]);
+    });
+});
+
 describe('parseStreamBuffer - JSON 行', () => {
     it('逐行解析 JSON 对象', () => {
         const result = parseStreamBuffer('{"a":1}\n{"a":2}\n');

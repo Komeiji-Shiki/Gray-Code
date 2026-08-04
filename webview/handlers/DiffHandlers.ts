@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
+import { assertSafeId } from '../../backend/core/idValidation';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
 import type { HandlerContext, MessageHandler } from '../types';
 
@@ -25,7 +26,8 @@ export const openDiffPreview: MessageHandler = async (data, requestId, ctx) => {
 export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { diffContentId } = data;
-    const content = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
+    const safeId = assertSafeId(diffContentId, 'diffContentId');
+    const content = await ctx.diffStorageManager.loadGlobalDiff(safeId);
     if (content) {
       ctx.sendResponse(requestId, {
         success: true,

@@ -949,4 +949,152 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
         }
     });
 });
+
+describe('CheckpointManager path safety regressions', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    function makeRecord(overrides: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
+        return {
+            conversationId: 'conv',
+            messageIndex: 0,
+            toolName: 'write_file',
+            phase: 'after',
+            timestamp: 1000,
+            backupDir: overrides.id,
+            fileCount: 0,
+            contentHash: 'h',
+            type: 'full',
+            ...overrides
+        };
+    }
+
+    test('records with unsafe backupDir are dropped from all read paths', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-unsafe-backupdir';
+
+        try {
+            const safe = makeRecord({ id: 'cp-safe', conversationId, timestamp: 1000 });
+            const escaped = makeRecord({ id: 'cp-escape', conversationId, timestamp: 1001 });
+            // 篡改 backupDir 为穿越路径：任何读取入口都必须剔除该记录，
+            // 否则 fs.rm(recursive) 会删到 checkpoints 目录之外。
+            escaped.backupDir = '../..';
+            const absolute = makeRecord({ id: 'cp-abs', conversationId, timestamp: 1002 });
+            absolute.backupDir = path.join(storageRoot, 'elsewhere');
+
+            // 在目录外放一个文件，验证「穿越删除」不会发生
+            await writeFile(storageRoot, 'outside-marker.txt', 'must survive');
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [safe, escaped, absolute], []);
+
+            const listed = await manager.getCheckpoints(conversationId);
+            expect(listed.map(cp => cp.id)).toEqual(['cp-safe']);
+
+            // deleteAllCheckpoints 只能删掉目录内的合法备份目录
+            const result = await manager.deleteAllCheckpoints(conversationId);
+            expect(result.success).toBe(true);
+            await expect(pathExists(path.join(storageRoot, 'outside-marker.txt'))).resolves.toBe(true);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('restore drops fileHashes entries with parent traversal segments', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-unsafe-hashes';
+        const checkpointId = 'cp-unsafe-hashes';
+
+        try {
+            // 工作区外的目标文件：如果 fileHashes 里的 '../' 键被放行，
+            // restore 会 path.join(workspaceRoot, '../evil.txt') 写穿工作区。
+            const outsideDir = path.dirname(workspaceRoot);
+            const outsideTarget = path.join(outsideDir, 'evil.txt');
+            await writeFile(workspaceRoot, 'inside.txt', 'keep');
+            await writeFile(outsideDir, 'evil.txt', 'outside original');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'apply_diff',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 2,
+                contentHash: 'hash-unsafe',
+                type: 'full',
+                fileHashes: {
+                    'inside.txt': hashContent('keep'),
+                    '../evil.txt': hashContent('evil')
+                },
+                emptyDirs: ['../outside-dir']
+            };
+
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'inside.txt', 'keep');
+            await writeFile(backupRoot, '../evil.txt', 'evil');
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+
+            const result = await manager.restoreCheckpoint(conversationId, checkpointId);
+            expect(result.success).toBe(true);
+            // 工作区外文件绝不能被写入或创建
+            await expect(fs.readFile(outsideTarget, 'utf-8')).resolves.toBe('outside original');
+            await expect(pathExists(path.join(outsideDir, 'outside-dir'))).resolves.toBe(false);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(path.join(path.dirname(workspaceRoot), 'evil.txt'), { force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('createCheckpoint keeps the snapshot complete when mtimeNs is unavailable', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-mtime-ns';
+
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'hello world\n');
+            await writeFile(workspaceRoot, 'sub/b.txt', 'nested\n');
+
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+            // 启用 apply_diff 的 after 检查点，否则 createCheckpoint 会因配置为空直接返回 null
+            (manager as any).settingsManager.getCheckpointConfig = jest.fn().mockReturnValue({
+                enabled: true,
+                beforeTools: [],
+                afterTools: ['apply_diff'],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: []
+            });
+            // 覆盖 getCheckpoints，模拟「上一次检查点 fileStats 带 mtimeNs: undefined」的旧记录，
+            // 走创建路径验证 stat 复用分支不会抛错导致文件被静默剔除。
+            (manager as any).getCheckpoints = jest.fn().mockResolvedValue([{
+                ...makeRecord({ id: 'cp-prev', conversationId, timestamp: 1 }),
+                type: 'incremental',
+                fileHashes: {
+                    'a.txt': hashContent('hello world\n'),
+                    'sub/b.txt': hashContent('nested\n')
+                },
+                fileStats: {
+                    'a.txt': { mtimeMs: 123, size: 12, mtimeNs: undefined },
+                    'sub/b.txt': { mtimeMs: 456, size: 7, mtimeNs: undefined }
+                }
+            }]);
+
+            const created = await manager.createCheckpoint(conversationId, 0, 'apply_diff', 'after');
+            expect(created).not.toBeNull();
+            // 文件必须全部进入快照（之前 mtimeNs undefined 会抛 TypeError 被吞掉，文件整体漏出）
+            expect(Object.keys(created!.fileHashes || {})).toEqual(expect.arrayContaining(['a.txt', 'sub/b.txt']));
+            expect(created!.fileHashes!['a.txt']).toBe(hashContent('hello world\n'));
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+});
 });

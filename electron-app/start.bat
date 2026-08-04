@@ -5,6 +5,11 @@ rem  Double-click this file (or run `start.bat` from a terminal) to start the
 rem  app. It installs dependencies and builds the frontend/main process only
 rem  when needed, so subsequent launches are fast.
 rem
+rem  WARNING: on first run this script automatically executes `npm install`,
+rem  which runs the dependency installation scripts of all packages in
+rem  package.json (including transitive dependencies). Only run this script
+rem  if you trust the project source and its dependencies (supply-chain risk).
+rem
 rem  Usage:  start.bat [--rebuild]
 rem          --rebuild  force a full rebuild (frontend + patch + main process)
 rem ===========================================================================

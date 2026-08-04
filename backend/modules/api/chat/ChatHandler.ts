@@ -280,13 +280,15 @@ export class ChatHandler {
         if (error instanceof ChannelError) {
             let message = error.message;
             
-            // 如果有详细错误信息，直接 JSON 序列化追加
+            // 如果有详细错误信息，直接 JSON 序列化追加（截断到 2000 字符，
+            // 防止上游超大响应体/内部细节透传给前端并拖慢渲染）
             if (error.details) {
                 try {
                     const detailsStr = typeof error.details === 'string'
                         ? error.details
-                        : JSON.stringify(error.details, null, 2);
-                    message = `${error.message}\n${detailsStr}`;
+                        : JSON.stringify(error.details);
+                    const appended = `\n${detailsStr}`;
+                    message = `${error.message}${appended.length > 2000 ? appended.slice(0, 2000) + '\n...(truncated)' : appended}`;
                 } catch {
                     // 忽略序列化错误
                 }

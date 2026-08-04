@@ -109,7 +109,17 @@ export class MessageRouter {
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
       trackRequestClient();
-      await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId);
+      try {
+        await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId);
+      } catch (error) {
+        // 异常路径（如载荷解构失败）必须兜底清理路由表，否则 requestClients 泄漏、前端请求永久挂起
+        console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
+        try {
+          this.sendRoutedError(requestId, 'STREAM_HANDLER_ERROR', error?.message || String(error));
+        } catch {
+          this.requestClients.delete(requestId);
+        }
+      }
       return true;
     }
 
@@ -236,8 +246,14 @@ export class MessageRouter {
         break;
         
       case 'cancelStream':
-        const { conversationId } = data;
-        this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
+        {
+          const { conversationId } = data || {};
+          if (typeof conversationId !== 'string' || !conversationId) {
+            this.sendRoutedError(requestId, 'INVALID_CONVERSATION_ID', 'Missing conversationId for cancelStream');
+            return;
+          }
+          this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
+        }
         break;
     }
   }

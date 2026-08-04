@@ -1008,6 +1008,12 @@ const workspaceFs = {
   },
   async delete(uri: Uri, options?: { recursive?: boolean; useTrash?: boolean }): Promise<void> {
     const fsPath = await uriToFsPath(uri);
+    if (options?.useTrash === true) {
+      // 与 VS Code 语义一致：useTrash 时进回收站，避免删除工具永久删除文件（M-3）
+      const { shell } = await import('electron');
+      await shell.trashItem(fsPath);
+      return;
+    }
     await fsp.rm(fsPath, { recursive: options?.recursive === true, force: true });
   },
   async rename(source: Uri, target: Uri, options?: { overwrite?: boolean }): Promise<void> {
@@ -1055,6 +1061,13 @@ async function openTextDocument(uriOrPath: Uri | string): Promise<TextDocumentLi
     throw new Error(`Cannot open document with scheme "${uri.scheme}"`);
   }
   documentCache.set(uri.toString(), doc);
+  // LRU 上限：长会话中 AI 反复读取文件会持续累积文档缓存，无上限会膨胀到 GB 级（M-7）
+  const MAX_DOCUMENT_CACHE = 100;
+  while (documentCache.size > MAX_DOCUMENT_CACHE) {
+    const oldest = documentCache.keys().next().value;
+    if (oldest === undefined) break;
+    documentCache.delete(oldest);
+  }
   return doc;
 }
 
@@ -1071,8 +1084,12 @@ async function applyEditImpl(edit: WorkspaceEdit): Promise<boolean> {
     let content: string;
     try {
       content = await fsp.readFile(uri.fsPath, 'utf-8');
-    } catch {
-      content = '';
+    } catch (error: any) {
+      // ENOENT 不再静默按空文件重建：对已删除文件的编辑会悄悄写出残缺文件（M-4）
+      if (error?.code === 'ENOENT') {
+        throw new Error(`Cannot apply edits: file does not exist: ${uri.fsPath}`);
+      }
+      throw error;
     }
     const tempDoc = new TextDocumentImpl(uri, content);
     const edits = [...entry.edits].sort((a, b) => {

@@ -115,7 +115,12 @@ function normalizePreviewPayload(data: unknown): WindowsNotificationPreviewPaylo
 export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
   const payload = normalizePayload(data)
   if (!payload) {
-    log.warn('agent_stop_invalid_payload', { data })
+    // 只记录元数据，避免把完整 payload（可含对话标题/正文等敏感内容）写进默认可见的 WARN 日志
+    const record = asRecord(data)
+    log.warn('agent_stop_invalid_payload', {
+      reason: record?.reason ?? null,
+      hasTitle: typeof record?.titleTemplate === 'string'
+    })
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -137,10 +142,14 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
   }
 
   try {
-    log.debug('agent_stop_dispatching', { ...payload })
+    // debug 级别也做脱敏：content/bodyTemplates 可能含对话正文，只保留元数据
+    log.debug('agent_stop_dispatching', {
+      reason: payload.reason,
+      actionType: payload.actionType
+    })
     const result = await ctx.windowsAgentStopNotificationService.notify(payload)
     log.debug('agent_stop_finished', {
-      payload,
+      reason: payload.reason,
       result
     })
     ctx.sendResponse(requestId, {

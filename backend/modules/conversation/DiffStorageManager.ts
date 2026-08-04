@@ -19,6 +19,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { isSafeId, isSafeRelativePath } from '../../core/idValidation';
 import { Logger } from '../../core/logger';
 
 const log = Logger.get('DiffStorageManager');
@@ -93,6 +94,9 @@ export class DiffStorageManager {
      * 获取 diff 存储目录
      */
     private getDiffsDir(conversationId: string): string {
+        if (!isSafeId(conversationId)) {
+            throw new Error('Invalid conversationId');
+        }
         return path.join(this.basePath, 'diffs', conversationId);
     }
     
@@ -100,6 +104,9 @@ export class DiffStorageManager {
      * 获取 diff 文件路径
      */
     private getDiffFilePath(conversationId: string, diffId: string): string {
+        if (!isSafeId(diffId)) {
+            throw new Error('Invalid diffId');
+        }
         return path.join(this.getDiffsDir(conversationId), `${diffId}.json`);
     }
     
@@ -209,6 +216,11 @@ export class DiffStorageManager {
      * @returns Diff 内容，如果不存在返回 null
      */
     public async loadGlobalDiff(diffId: string): Promise<DiffContent | null> {
+        // 防御纵深：diffId 会拼入文件路径，拒绝穿越/绝对路径写法
+        if (!isSafeId(diffId)) {
+            console.warn(`[DiffStorageManager] Rejected unsafe diff id: ${diffId}`);
+            return null;
+        }
         const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);
         
         try {

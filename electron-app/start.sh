@@ -5,6 +5,11 @@
 #  frontend/main process are built only when needed, so subsequent launches
 #  are fast.
 #
+#  WARNING: on first run this script automatically executes `npm install`,
+#  which runs the dependency installation scripts of all packages in
+#  package.json (including transitive dependencies). Only run this script
+#  if you trust the project source and its dependencies (supply-chain risk).
+#
 #  Usage:  ./start.sh [--rebuild]
 #          --rebuild  force a full rebuild (frontend + patch + main process)
 # ===========================================================================
