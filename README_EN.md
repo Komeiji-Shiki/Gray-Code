@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>An AI coding assistant extension for VS Code</strong>
+  <strong>AI coding assistant: VS Code extension + standalone desktop app (portable)</strong>
 </p>
 
 <p align="center">
@@ -18,13 +18,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
-> 💡 **Don't want VS Code?** Try [GrayCode Desktop](electron-app/README.md) — the desktop edition of this extension, backed by a `vscode-shim` compat layer, no VS Code installation needed (Windows / macOS / Linux).
+> 🚀 **GrayCode Desktop (standalone)** — no VS Code installation needed, works out of the box (Windows / macOS / Linux).
+>
+> Latest downloads ([Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)):
+> [Installer](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [Portable](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [Zip](https://github.com/czocelot/Gray-Code-ocelot/releases/latest)
+>
+> This repository also maintains the VS Code extension forked from [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code). The desktop app and the extension share the same backend / frontend / webview code.
 
 ---
 
@@ -41,7 +46,7 @@
 - [Context and Prompts](#context-and-prompts)
 - [MCP, Skills, and Sub-Agents](#mcp-skills-and-sub-agents)
 - [Data Storage and Sync](#data-storage-and-sync)
-- [Installation and Updates](#installation-and-updates)
+- [Installation and Updates (desktop download / version update)](#installation-and-updates)
 - [Local Development](#local-development)
 - [Project Structure](#project-structure)
 - [FAQ](#faq)
@@ -83,6 +88,8 @@ Memory data is stored locally as append-only logs and fixed-width records, witho
 **Conversation and experience** — GrayCode supports multiple conversation tabs, automatic history persistence, history viewing and migration, message queuing while the assistant is busy, visible tool states, token usage, thinking content, response timing, automatic checkpoints, sound alerts, Windows notifications, Chinese / English / Japanese interfaces, usage statistics, cost estimation, and Mermaid rendering.
 
 ## Quick Start
+
+> 💡 **Desktop app users:** After launching GrayCode Desktop you land directly on the chat page; the steps below are identical to the extension.
 
 1. **Install and open the chat panel** — After installing the extension, click the Gray Code icon in the VS Code Activity Bar, or run `GrayCode: Open Chat Panel` from the Command Palette.
 2. **Create and configure a channel** — Open Settings → Channels from the top-right of the chat panel, create a channel, choose a channel type (Gemini, OpenAI Compatible, OpenAI Responses, or Anthropic), enter the API URL and API key, add or fetch models, and select a default model. Enable streaming, tool mode, thinking options, retries, and other advanced options as needed.
@@ -179,15 +186,35 @@ Prompt entries can be reordered, enabled or disabled, duplicated, and converted 
 
 ## Installation and Updates
 
+### GrayCode Desktop (standalone, recommended)
+
+No VS Code installation needed — ships with a built-in `vscode-shim` compat layer, feature-identical to the extension (Windows x64 / macOS / Linux).
+
+**First install**
+
+- **Installer**: download `GrayCode.Setup.<version>.exe` and run it; the install directory can be customized
+- **Portable**: download `GrayCode-Portable-<version>.exe` and double-click to run; or download `GrayCode-<version>-win.zip` and run `GrayCode.exe` after extraction
+- Data is stored in a `data/` folder next to the program by default (delete the folder to fully uninstall); use `--user-data-dir <path>` or the `GRAYCODE_USER_DATA_DIR` environment variable to override
+- The packages are not code-signed; the SmartScreen / OS security prompt on first launch is expected — choose "Run anyway"
+
+**Updating (desktop app users)**
+
+- **Installer**: download and run the new installer — settings and conversation data are kept
+- **Portable**: download the new exe / zip and replace the old program files; the `data/` folder is preserved
+- Before upgrading, you can back up the `data/` folder or use Settings → General → Export Settings
+- Downloads: [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)
+
+### VS Code extension
+
 VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is not published to the VS Code Marketplace; install it from a VSIX package or from source.
 
-**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
+**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
 
 **Build and install from source** — This repository uses npm and commits `package-lock.json`:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
+git clone https://github.com/czocelot/Gray-Code-ocelot.git
 cd Gray-Code-ocelot
 
 # Install root dependencies
@@ -202,6 +229,18 @@ npm run build
 # Package the VSIX
 npx @vscode/vsce package
 ```
+
+### Maintainers: releasing a new version / syncing upstream
+
+This repository is a fork of [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code). The full release workflow:
+
+1. **Sync upstream**: `git fetch upstream && git merge upstream/main`; when resolving conflicts, keep this fork's increments (`electron-app` / diff & code viewer panels / safety guards), following the existing `merge: 合入上游 vX.Y.Z` commits as reference
+2. **Bump versions**: update `version` in the root `package.json` and `electron-app/package.json`
+3. **Update changelogs**: add entries for the new version in the root `CHANGELOG.md` and `electron-app/CHANGELOG.md`
+4. **Verify**: `npm run typecheck`, `npm test`, `npm --prefix frontend run test`, `npm run build` (extension build); `npm --prefix electron-app run e2e` (desktop end-to-end regression)
+5. **Package the desktop app**: `npm --prefix electron-app run dist:win` — artifacts land in `electron-app/release/` (installer / portable / zip; use `dist:mac` / `dist:linux` for other platforms)
+6. **Tag and publish**: `git tag v<version> && git push origin v<version>`, then create the release on GitHub Releases, fill in the notes and upload the artifacts from `electron-app/release/`
+7. **(Optional) Push back upstream**: open a Pull Request from this repository to upstream — complete step 1 first so the fork is in sync and conflict-free
 
 ## Local Development
 
@@ -220,6 +259,7 @@ Gray-Code/
 │   ├── core/                # Core context, logging, and shared services
 │   ├── modules/             # Channels, configuration, conversations, MCP, prompts, settings, and other modules
 │   └── tools/               # Built-in tool implementations
+├── electron-app/            # GrayCode Desktop (Electron, built-in vscode-shim)
 ├── frontend/                # Vue 3 + Pinia + Vite webview frontend
 │   ├── src/__tests__/       # Frontend Vitest tests
 │   ├── src/components/      # Chat, input, settings, and other components
