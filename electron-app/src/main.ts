@@ -19,6 +19,15 @@ import { __setWindowFocused } from './vscode-shim';
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 
+function readRootVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8'));
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 // 便携式多实例：所有数据（会话/设置/工作区/记忆/用量/缓存）默认写入应用自身目录下的 data/，
 // 不写入系统路径（AppData / Program Files）。复制一份应用目录即可得到互不影响的独立实例。
 // 显式覆盖：`--user-data-dir <path>` 命令行参数或 `GRAYCODE_USER_DATA_DIR` 环境变量优先。
@@ -422,7 +431,7 @@ function buildMenu(): void {
               message: 'GrayCode Desktop',
               detail:
                 `GrayCode AI coding assistant (standalone desktop edition)\n` +
-                `Based on GrayCode v1.3.1\n` +
+                `Based on GrayCode v${readRootVersion()}\n` +
                 `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
             });
           }
