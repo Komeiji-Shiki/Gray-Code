@@ -4,7 +4,7 @@
  * 包含对话的 CRUD 操作
  */
 
-import type { ChatStoreState, Conversation, CheckpointRecord, BuildSession } from './types'
+import type { ChatStoreState, Conversation, CheckpointSummary, BuildSession } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content, Message } from '../../types'
@@ -32,9 +32,6 @@ export const MESSAGES_PAGE_SIZE = 120
 /** 首屏至少应保证的可见消息数 */
 export const MIN_INITIAL_VISIBLE_MESSAGES = 40
 
-/** 拉取元数据时的并发数（避免一次性打爆 IPC / IO） */
-const METADATA_FETCH_CONCURRENCY = 30
-
 function parseConversationIdTimestamp(id: string): number | null {
   // 默认创建 ID: conv_${Date.now()}_${random}
   const m = /^conv_(\d+)_/.exec(id)
@@ -57,24 +54,23 @@ function sortConversationIds(ids: string[]): string[] {
   })
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let nextIndex = 0
-
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const index = nextIndex++
-      if (index >= items.length) break
-      results[index] = await fn(items[index], index)
-    }
-  })
-
-  await Promise.all(workers)
-  return results
+/**
+ * 将后端批量摘要（HIS-10）转换为前端 Conversation 列表项。
+ */
+function toConversationFromSummary(raw: any): Conversation | null {
+  if (!raw || typeof raw.id !== 'string' || !raw.id) return null
+  return {
+    id: raw.id,
+    title: raw.title || `Chat ${raw.id.slice(0, 8)}`,
+    createdAt: raw.createdAt || Date.now(),
+    // L5：unknown 用当前时间兜底；显式 0 保持 0（按最旧排序，而不是伪装成最新）
+    updatedAt: raw.updatedAt ?? Date.now(),
+    messageCount: raw.messageCount || 0,
+    preview: raw.preview,
+    isPersisted: true,
+    workspaceUri: raw.workspaceUri,
+    integrityStatus: raw.integrityStatus
+  } as Conversation
 }
 
 /**
@@ -86,7 +82,7 @@ interface ConversationViewPayload {
   metadata?: any
   totalMessages?: number
   messages?: Content[]
-  checkpoints?: CheckpointRecord[]
+  checkpoints?: CheckpointSummary[]
   modelConfig?: ConversationModelConfig
   promptMode?: ConversationPromptModeConfig
   activeBuild?: unknown
@@ -124,6 +120,80 @@ interface InitialVisibleMessageWindowResult {
   windowStartIndex: number
 }
 
+/**
+ * 立即渲染最后一页消息窗口（HIS-13：首屏先展示）。
+ */
+function renderMessageWindow(
+  state: ChatStoreState,
+  page: Content[],
+  totalMessages: number
+): void {
+  const messages = page.map(content => contentToMessageEnhanced(content))
+  state.totalMessages.value = totalMessages
+  state.allMessages.value = messages
+  rebuildMessageIndexById(state)
+  state.windowStartIndex.value = page[0]?.index ?? Math.max(0, totalMessages - page.length)
+  syncTotalMessagesFromWindow(state)
+}
+
+/** 补拉更早历史页（HIS-13 异步补拉复用同一分页 IPC） */
+function fetchOlderPageFor(
+  conversationId: string,
+  beforeIndex: number
+): Promise<{ total: number; messages: Content[] } | null | undefined> {
+  return perfMeasureAsync('conversation.loadHistoryPaged.backfill', () =>
+    sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      conversationId,
+      beforeIndex,
+      limit: MESSAGES_PAGE_SIZE
+    })
+  )
+}
+
+/**
+ * 异步补拉更早历史并合并进窗口（HIS-13）。
+ *
+ * 首屏已先渲染最后一页；本函数在后台补拉更早页直到可见消息数达标。
+ * 合并前校验：会话未切换、窗口未被新消息改动（发送/流式/上拉），
+ * 否则放弃合并（保留分页语义，用户仍可手动上拉加载）。
+ */
+async function backfillInitialVisibleWindow(
+  state: ChatStoreState,
+  conversationId: string,
+  page: Content[],
+  total: number
+): Promise<void> {
+  const originWindowStart = state.windowStartIndex.value
+  const originCount = state.allMessages.value.length
+  try {
+    const initialWindow = await buildInitialVisibleMessageWindow(
+      page,
+      total,
+      (beforeIndex) => fetchOlderPageFor(conversationId, beforeIndex)
+    )
+
+    // 校验归属：await 后当前会话可能已切换
+    if (!validateSessionIdentity(state, conversationId)) return
+    // 补拉期间窗口已有新数据（用户发送/流式/手动上拉）：跳过合并避免覆盖
+    if (state.windowStartIndex.value !== originWindowStart || state.allMessages.value.length !== originCount) return
+
+    state.totalMessages.value = initialWindow.totalMessages
+    state.allMessages.value = initialWindow.messages
+    rebuildMessageIndexById(state)
+    state.windowStartIndex.value = initialWindow.windowStartIndex
+    syncTotalMessagesFromWindow(state)
+
+    perfLog('conversation.window.backfilled', {
+      start: state.windowStartIndex.value,
+      count: state.allMessages.value.length,
+      total: state.totalMessages.value
+    })
+  } catch (err) {
+    // 补拉失败不影响首屏：静默降级（保留分页语义，用户可手动上拉）
+    console.warn('[conversationActions] Failed to backfill older history:', err)
+  }
+}
+
 export async function buildInitialVisibleMessageWindow(
   initialPage: Content[],
   initialTotalMessages: number,
@@ -146,8 +216,13 @@ export async function buildInitialVisibleMessageWindow(
   while (visibleCount < MIN_INITIAL_VISIBLE_MESSAGES && windowStartIndex > 0) {
     const previousStartIndex = windowStartIndex
     const result = await fetchOlderPage(previousStartIndex)
-    const olderPage = result?.messages || []
-    totalMessages = result?.total ?? totalMessages
+    // L2：null/undefined 表示拉取失败（IPC 错误/超时），不是“已到历史开头”——
+    // 抛出让调用方 catch 兜底，放弃合并并保留原窗口（空页才会置 windowStartIndex=0）。
+    if (!result) {
+      throw new Error('Failed to fetch older page during backfill')
+    }
+    const olderPage = result.messages || []
+    totalMessages = result.total ?? totalMessages
 
     if (olderPage.length === 0) {
       windowStartIndex = 0
@@ -451,40 +526,17 @@ export async function loadMoreConversations(
   if (!initial) state.isLoadingMoreConversations.value = true
 
   try {
-    const summaries = await mapWithConcurrency(
-      idsToLoad,
-      METADATA_FETCH_CONCURRENCY,
-      async (id) => {
-        try {
-          // 只获取元信息，不获取消息内容
-          const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId: id })
+    // HIS-10：一次 IPC 批量拉取一页摘要，避免每个对话一次 getConversationMetadata
+    const rawSummaries = await sendToExtension<Array<Record<string, unknown>>>('conversation.getConversationMetadataBatch', {
+      conversationIds: idsToLoad
+    })
+    const summaries = (Array.isArray(rawSummaries) ? rawSummaries : [])
+      .map(toConversationFromSummary)
+      .filter((c): c is Conversation => c !== null)
 
-          return {
-            id,
-            title: metadata?.title || `Chat ${id.slice(0, 8)}`,
-            createdAt: metadata?.createdAt || Date.now(),
-            updatedAt: metadata?.updatedAt || metadata?.custom?.updatedAt || Date.now(),
-            // 消息数量从元信息获取（如果有），否则显示为 0，切换时再更新
-            messageCount: metadata?.custom?.messageCount || 0,
-            preview: metadata?.custom?.preview,
-            isPersisted: true,
-            workspaceUri: metadata?.workspaceUri,
-            integrityStatus: metadata?.integrityStatus
-          } as Conversation
-        } catch {
-          return {
-            id,
-            title: `Chat ${id.slice(0, 8)}`,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            messageCount: 0,
-            isPersisted: true
-          } as Conversation
-        }
-      }
-    )
-
-    state.persistedConversationsLoaded.value = cursor + idsToLoad.length
+    // L3：游标按“实际返回数量”前进，而不是按请求数量。后端 getConversationMetadataBatch
+    // 会截断到 200 条、IPC 失败时返回空数组——按请求数前进会跳过未加载的对话。
+    state.persistedConversationsLoaded.value = cursor + (Array.isArray(rawSummaries) ? rawSummaries.length : 0)
 
     // 合并到现有列表（避免重复）
     const unpersisted = state.conversations.value.filter(c => !c.isPersisted)
@@ -523,34 +575,21 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     )
 
     const page = result?.messages || []
-    const initialWindow = await buildInitialVisibleMessageWindow(
-      page,
-      result?.total ?? page.length,
-      async (beforeIndex) => perfMeasureAsync('conversation.loadHistoryPaged.backfill', () =>
-        sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-          conversationId,
-          beforeIndex,
-          limit: MESSAGES_PAGE_SIZE
-        })
-      )
-    )
+    const total = result?.total ?? page.length
 
-    state.totalMessages.value = initialWindow.totalMessages
-
-    // 转换所有消息，包括 functionResponse 消息
-    state.allMessages.value = initialWindow.messages
-    rebuildMessageIndexById(state)
-    state.windowStartIndex.value = initialWindow.windowStartIndex
-    syncTotalMessagesFromWindow(state)
+    // HIS-13：先渲染最后一页（首屏即时显示），再异步补拉更早历史
+    renderMessageWindow(state, page, total)
 
     // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
     void refreshTailVersions(state, conversationId)
 
-    perfLog('conversation.window', {
+    perfLog('conversation.window.firstPaint', {
       start: state.windowStartIndex.value,
       count: state.allMessages.value.length,
       total: state.totalMessages.value
     })
+
+    void backfillInitialVisibleWindow(state, conversationId, page, total)
   } catch (err: any) {
     state.error.value = {
       code: err.code || 'LOAD_ERROR',
@@ -641,7 +680,7 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
   }
   
   try {
-    const result = await sendToExtension<{ checkpoints: CheckpointRecord[] }>('checkpoint.getCheckpoints', {
+    const result = await sendToExtension<{ checkpoints: CheckpointSummary[] }>('checkpoint.getCheckpoints', {
       conversationId: state.currentConversationId.value
     })
     
@@ -723,26 +762,11 @@ export async function switchConversation(
       if (!validateSessionIdentity(state, requestedId)) return
 
       const page = view?.messages || []
-      const initialWindow = await buildInitialVisibleMessageWindow(
-        page,
-        view?.totalMessages ?? page.length,
-        async (beforeIndex) => perfMeasureAsync('conversation.loadConversationForView.backfill', () =>
-          sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-            conversationId: requestedId,
-            beforeIndex,
-            limit: MESSAGES_PAGE_SIZE
-          })
-        )
-      )
+      const total = view?.totalMessages ?? page.length
 
-      // 校验归属：buildInitialVisibleMessageWindow 可能涉及多次网络请求
-      if (!validateSessionIdentity(state, requestedId)) return
-
-      state.totalMessages.value = initialWindow.totalMessages
-      state.allMessages.value = initialWindow.messages
-      rebuildMessageIndexById(state)
-      state.windowStartIndex.value = initialWindow.windowStartIndex
-      syncTotalMessagesFromWindow(state)
+      // HIS-13：先渲染最后一页（首屏即时显示），再异步补拉更早历史
+      renderMessageWindow(state, page, total)
+      void backfillInitialVisibleWindow(state, requestedId, page, total)
 
       // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
       void refreshTailVersions(state, requestedId)
@@ -866,36 +890,31 @@ export async function updateConversationAfterMessage(state: ChatStoreState): Pro
     state.totalMessages.value,
     state.windowStartIndex.value + state.allMessages.value.length
   )
-  state.totalMessages.value = messageCount
-  
-  try {
-    // 更新对话的updatedAt时间戳
-    await sendToExtension('conversation.setCustomMetadata', {
-      conversationId: state.currentConversationId.value,
-      key: 'updatedAt',
-      value: now
-    })
-    
-    // 更新消息数量
-    await sendToExtension('conversation.setCustomMetadata', {
-      conversationId: state.currentConversationId.value,
-      key: 'messageCount',
-      value: messageCount
-    })
-    
-    // 如果有消息，更新preview
-    if (state.allMessages.value.length > 0) {
-      const lastUserMsg = state.allMessages.value.filter(m => m.role === 'user' && !m.isFunctionResponse).pop()
-      if (lastUserMsg) {
-        await sendToExtension('conversation.setCustomMetadata', {
-          conversationId: state.currentConversationId.value,
-          key: 'preview',
-          value: lastUserMsg.content.slice(0, 50)
-        })
-        conv.preview = lastUserMsg.content.slice(0, 50)
-      }
+
+  // 最近一条非 functionResponse 用户消息作为预览
+  let preview: string | undefined
+  if (state.allMessages.value.length > 0) {
+    const lastUserMsg = state.allMessages.value.filter(m => m.role === 'user' && !m.isFunctionResponse).pop()
+    if (lastUserMsg) {
+      preview = lastUserMsg.content.slice(0, 50)
     }
-    
+  }
+
+  try {
+    // HIS-09：updatedAt / messageCount / preview 合并为一次 IPC 写入
+    // （updatedAt 由后端历史提交统一维护，不再前端分别 setCustomMetadata 三次）
+    await sendToExtension('conversation.updateSummary', {
+      conversationId: state.currentConversationId.value,
+      messageCount,
+      preview
+    })
+
+    // M3：IPC 成功后才更新本地计数（totalMessages/messageCount/updatedAt/preview）——
+    // appendHistory 失败时后端会钳制 messageCount，前端保持与后端一致，避免永久超前。
+    state.totalMessages.value = messageCount
+    if (preview !== undefined) {
+      conv.preview = preview
+    }
     conv.updatedAt = now
     conv.messageCount = messageCount
   } catch (err) {

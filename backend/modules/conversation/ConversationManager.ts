@@ -27,13 +27,16 @@ import {
     ConversationTailVersionInfo,
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
-import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorageAdapter } from './storage';
+import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter } from './storage';
 import { withMetadataWriteSerialized } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
-import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexStore } from './usageStats';
+import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
+import { Logger } from '../../core/logger';
+
+const log = Logger.get('ConversationManager');
 
 /**
  * 适配器不支持 saveTailVersions 时，尾部版本回退存储在 custom 元数据的键名。
@@ -121,6 +124,21 @@ export interface CreateBranchConversationResult {
     messageCount: number;
     preview?: string;
     workspaceUri?: string;
+}
+
+/**
+ * 对话列表摘要（HIS-10）：一次批量 IPC 返回一页对话列表所需的轻量元数据。
+ * 完整 metadata 只在打开具体对话时读取。
+ */
+export interface ConversationSummary {
+    id: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+    messageCount: number;
+    preview?: string;
+    workspaceUri?: string;
+    integrityStatus?: string;
 }
 
 
@@ -247,6 +265,23 @@ export class ConversationManager {
                 this.cacheHistory(conversationId, contents);
                 this.metaCache.delete(conversationId);
                 await this.updateUsageIndex(conversationId, contents);
+            },
+            // HIS-01/HIS-02：普通追加直通 append-only 尾段写入（不再读全量→push→全量写回）
+            appendContents: async contents => {
+                if (this.storage.appendHistory) {
+                    await this.storage.appendHistory(conversationId, contents);
+                } else {
+                    // 无 append-only 存储（测试 fake 等）：回退全量读改写，语义不变
+                    const history = await this.loadHistory(conversationId);
+                    history.push(...contents);
+                    await this.storage.saveHistory(conversationId, history);
+                }
+                // 关键补丁：appendHistory 直写不经过 saveContents 的缓存回填/失效，走 append-only
+                // 路径后必须手动失效 LRU 缓存，否则 loadHistory/getMessagesPaged 命中陈旧快照
+                // （聊天最后一条消息不显示）；metaCache 因存储层刷新 updatedAt 同样必须失效。
+                this.historyCache.delete(conversationId);
+                this.metaCache.delete(conversationId);
+                await this.updateUsageIndexAppend(conversationId, contents);
             }
         }, fn => this.withConversationWriteLock(conversationId, fn));
     }
@@ -260,15 +295,74 @@ export class ConversationManager {
     private async updateUsageIndex(conversationId: string, history: ConversationHistory): Promise<void> {
         if (!this.usageIndexStore || history.length === 0) return;
         try {
-            await this.usageIndexStore.write(conversationId, buildConversationUsageIndex(conversationId, history));
+            const rebuilt = buildConversationUsageIndex(conversationId, history);
+            // 修改原因：子代理归集条目（source='subagent'）不在主历史里，全量重建
+            //          必须从旧索引合并保留，否则主会话下次落盘后子代理消耗会从统计中消失。
+            // 修改方式：重建时读取旧索引，仅保留 source='subagent' 的条目追加到新索引。
+            const previous = await this.usageIndexStore.read(conversationId);
+            if (previous && Array.isArray(previous.messages)) {
+                const subagentEntries = previous.messages.filter(m => m.source === 'subagent');
+                if (subagentEntries.length > 0) {
+                    rebuilt.messages.push(...subagentEntries);
+                }
+            }
+            await this.usageIndexStore.write(conversationId, rebuilt);
         } catch {
             // 静默降级：统计侧重建兜底
+        }
+    }
+
+    /**
+     * 增量维护用量索引（HIS-08）：普通追加助手消息只更新对应用量条目；
+     * 仅追加 user/functionResponse 时不重复写盘。增量不可用（索引缺失/损坏）
+     * 时回退全量重建；删除/编辑/回档/分支切换仍走全量重建（updateUsageIndex）。
+     */
+    private async updateUsageIndexAppend(conversationId: string, appended: ConversationHistory): Promise<void> {
+        if (!this.usageIndexStore) return;
+        try {
+            if (typeof this.usageIndexStore.appendUsage === 'function') {
+                const ok = await this.usageIndexStore.appendUsage(conversationId, appended);
+                if (ok) return;
+            }
+            // 增量不可用/失败 → 全量重建兜底（现有 freshness 机制保留为兜底）
+            const history = await this.loadHistory(conversationId);
+            await this.updateUsageIndex(conversationId, history);
+        } catch {
+            // 静默降级：统计侧按 mtime 判定 stale 并重建
         }
     }
 
     /** 供用量统计等外部模块获取索引存储（未配置时为 undefined，统计回退全量扫描） */
     getUsageIndexStore(): UsageIndexStore | undefined {
         return this.usageIndexStore;
+    }
+
+    /**
+     * 追加子代理用量索引条目（不入主对话历史，只更新用量索引）。
+     *
+     * 修改原因：子代理消耗的 token 需要归集到发起它的主会话用量统计，
+     *          但子代理的运行明细（run transcript）不写主历史。
+     * 修改方式：优先使用 UsageIndexStore.appendUsageMessages 增量追加；
+     *          增量不可用（索引缺失/损坏）时回退读改写（不做全量重建，避免丢条目）；
+     *          写失败静默降级，统计侧按 mtime 判定 stale/missing 重建兜底。
+     */
+    async appendUsageIndexMessages(conversationId: string, messages: UsageIndexMessage[]): Promise<void> {
+        if (!this.usageIndexStore || messages.length === 0) return;
+        try {
+            if (typeof this.usageIndexStore.appendUsageMessages === 'function') {
+                const ok = await this.usageIndexStore.appendUsageMessages(conversationId, messages);
+                if (ok) return;
+            }
+            // 增量不可用/索引缺失：读改写追加，保留既有条目（含已存在的 subagent 条目）
+            const existing = await this.usageIndexStore.read(conversationId);
+            if (existing && Array.isArray(existing.messages)) {
+                existing.messages.push(...messages);
+                existing.updatedAt = Date.now();
+                await this.usageIndexStore.write(conversationId, existing);
+            }
+        } catch {
+            // 静默降级：统计侧重建兜底
+        }
     }
 
     async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation | null> {
@@ -904,15 +998,18 @@ export class ConversationManager {
             contentCopy.timestamp = Date.now();
         }
 
-        // 去重 + 追加整体放入仓储互斥执行器：两个并发 addContent 基于同一旧快照各自追加时，
-        // 同一 tool_use_id 会出现两条 functionResponse（会触发 API 400）。锁内重新收集
-        // existingResponseIds 再过滤；全部被过滤时返回原引用跳过写回。
-        await this.getTranscriptRepository(conversationId).mutateContents(history => {
-            if (!contentCopy.isFunctionResponse || !contentCopy.parts) {
-                history.push(contentCopy);
-                return history.slice();
-            }
+        // HIS-02：纯追加（非 functionResponse）没有配对/去重逻辑，走 append-only 尾段写入，
+        // 不再读全量历史做去重（避免长对话下每次追加都全量重写）。
+        if (!contentCopy.isFunctionResponse || !contentCopy.parts) {
+            await this.getTranscriptRepository(conversationId).appendContents([contentCopy]);
+            return;
+        }
 
+        // functionResponse 保留配对语义：去重 + 追加整体放入仓储互斥执行器，
+        // 两个并发 addContent 基于同一旧快照各自追加时，同一 tool_use_id 会出现两条
+        // functionResponse（会触发 API 400）。锁内重新收集 existingResponseIds 再过滤；
+        // 全部被过滤时返回原引用跳过写回。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
             // 去重：过滤掉历史中已有响应的 tool call ID。
             // 这是一道安全网，防止 cancelStream→rejectAllPendingToolCalls 与工具执行循环之间的
             // 竞态条件导致同一 tool_use_id 出现多条 functionResponse（会触发 API 400 错误）。
@@ -941,7 +1038,11 @@ export class ConversationManager {
     }
 
     /**
-     * 批量添加消息
+     * 批量添加消息。
+     *
+     * 契约（L4）：addBatch 仅限纯追加的 user/model 消息，走 append-only 尾段写入（HIS-02），
+     * 没有配对/去重逻辑。禁止经 addBatch 追加 functionResponse——functionResponse 必须走
+     * addContent（保留配对去重语义，防 cancelStream 与工具执行循环竞态产生重复响应）。
      */
     async addBatch(conversationId: string, contents: Content[]): Promise<void> {
         const now = Date.now();
@@ -950,12 +1051,18 @@ export class ConversationManager {
             if (!content.timestamp) {
                 content.timestamp = now + index;
             }
+            // L4：functionResponse 无去重安全网——显式拒绝而不是静默追加重复响应
+            const hasFunctionResponse = content.isFunctionResponse === true ||
+                (Array.isArray(content.parts) && content.parts.some(part => !!part.functionResponse?.id));
+            if (hasFunctionResponse) {
+                throw new Error(
+                    'addBatch does not support functionResponse messages (no dedupe); use addContent instead'
+                );
+            }
             return content;
         });
-        await this.getTranscriptRepository(conversationId).mutateContents(history => {
-            history.push(...contentsCopy);
-            return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
-        });
+        // HIS-02：批量追加是纯追加（无配对/去重逻辑），走 append-only 尾段写入
+        await this.getTranscriptRepository(conversationId).appendContents(contentsCopy);
     }
 
     /**
@@ -1416,6 +1523,18 @@ export class ConversationManager {
      */
     async getStats(conversationId: string): Promise<ConversationStats> {
         const history = await this.loadHistory(conversationId);
+        return this.computeStatsFrom(history);
+    }
+
+    /**
+     * 从已加载内容计算统计（HIS-03/HIS-04）：同一迭代内避免重复 loadHistory。
+     */
+    getStatsFrom(contents: ReadonlyArray<Content>): ConversationStats {
+        return this.computeStatsFrom(contents);
+    }
+
+    private computeStatsFrom(rawHistory: ReadonlyArray<Content>): ConversationStats {
+        const history = rawHistory as ConversationHistory;
         
         let userMessages = 0;
         let modelMessages = 0;
@@ -1568,7 +1687,29 @@ export class ConversationManager {
         conversationId: string,
         options: GetHistoryOptions | boolean = false
     ): Promise<ConversationHistory> {
-        let history = await this.loadHistory(conversationId);
+        const history = await this.loadHistory(conversationId);
+        return this.formatHistoryForAPI(history, options);
+    }
+
+    /**
+     * 从已加载的原始内容直接格式化（HIS-03/HIS-04）。
+     *
+     * 同一逻辑步骤内（上下文裁剪、Token 计算、工具配对、API 格式化）已经拿到完整
+     * 历史时，不要再调用 getHistoryForAPI(conversationId) 触发第二次 loadHistory；
+     * 直接把该数组传进来格式化。跨越历史写入后必须重新获取 contents，不能长期缓存旧引用。
+     */
+    getHistoryForAPIFrom(
+        contents: ReadonlyArray<Content>,
+        options: GetHistoryOptions | boolean = false
+    ): ConversationHistory {
+        return this.formatHistoryForAPI(contents, options);
+    }
+
+    private formatHistoryForAPI(
+        rawContents: ReadonlyArray<Content>,
+        options: GetHistoryOptions | boolean = false
+    ): ConversationHistory {
+        let history = rawContents as ConversationHistory;
         
         // 向后兼容：如果传入 boolean，视为 includeThoughts
         const opts: GetHistoryOptions = typeof options === 'boolean'
@@ -1994,10 +2135,13 @@ export class ConversationManager {
 
     /**
      * 获取对话元数据
+     *
+     * HIS-11：完整性检查只读历史索引结构（index.json 的 totalMessages/segments），
+     * 不再解析末段历史消息内容，避免长对话下每次打开元数据都读一段文件。
      */
     async getMetadata(conversationId: string): Promise<ConversationMetadata | null> {
         // 缓存命中：metaCache 是最近一次持久化快照（所有写路径统一失效/回填），
-        // 直接跳过磁盘 meta + historyPage(limit:1) 的完整性检查两次 IO；
+        // 直接跳过磁盘 meta + 索引结构探针的两次 IO；
         // 磁盘上的元数据不持久化 integrityStatus，缓存值无该字段等价于 integrityStatus 'ok'
         // （当前实现会在 'ok' 时删除该字段）。返回深拷贝，防止调用方污染缓存。
         const cached = this.metaCache.get(conversationId);
@@ -2007,24 +2151,24 @@ export class ConversationManager {
 
         // 完整性检查需要真实磁盘状态，这里仍直接读存储；读取结果顺带回填元数据缓存，
         // 后续对同一会话的 getMetadata / getCustomMetadata 直接命中缓存。
-        const [metadataResult, historyPageResult] = await Promise.all([
+        const [metadataResult, indexInfo] = await Promise.all([
             this.storage.loadMetadataWithStatus(conversationId),
-            this.storage.loadHistoryPage(conversationId, { limit: 1 }),
+            this.resolveHistoryIndexInfo(conversationId),
         ]);
 
         if (metadataResult.value) {
             this.cacheMetadata(conversationId, metadataResult.value);
         }
 
-        const historyExists = historyPageResult.value !== null || historyPageResult.errorCode !== 'not_found';
+        const historyExists = indexInfo?.exists ?? false;
         const integrity: ConversationStorageIntegrity = {
             historyExists,
             metadataExists: metadataResult.value !== null || metadataResult.errorCode !== 'not_found',
-            historyReadable: historyPageResult.value !== null,
+            historyReadable: indexInfo?.readable ?? false,
             metadataReadable: metadataResult.value !== null,
-            historyErrorCode: historyPageResult.errorCode,
+            historyErrorCode: indexInfo?.errorCode,
             metadataErrorCode: metadataResult.errorCode,
-            historyErrorMessage: historyPageResult.errorMessage,
+            historyErrorMessage: indexInfo?.errorMessage,
             metadataErrorMessage: metadataResult.errorMessage,
         };
         const integrityStatus = this.resolveIntegrityStatus(integrity);
@@ -2039,8 +2183,40 @@ export class ConversationManager {
             return metadata;
         }
 
-        if (historyPageResult.errorCode === 'not_found' && !historyPageResult.value) {
+        if (!historyExists) {
             return null;
+        }
+
+        // 元数据文件损坏（parse_error）降级：不向调用方抛 UNKNOWN_ERROR。
+        // 把损坏文件改名备份为 {id}.meta.json.corrupt-{Date.now()}（只保留一份，改名失败不阻塞），
+        // 之后 loadMetadataWithStatus 对该会话返回 not_found，写路径（loadMetadataForWrite）会
+        // 基于基础字段重建元数据，不会再被同一个损坏文件反复中断。
+        // 降级代价：custom 字段（如 checkpoints 存档记录列表）随损坏文件丢失——cp_xxx 备份目录
+        // 仍留在数据目录中，但 removeOrphanBackupDirs 只在显式清理时执行，不会自动删除。
+        if (metadataResult.errorCode && metadataResult.errorCode !== 'not_found') {
+            if (metadataResult.errorCode === 'parse_error') {
+                // 只有 parse_error（文件内容损坏）才改名备份；io_error 等瞬时读错误不改名（文件未必损坏）。
+                try {
+                    if (typeof this.storage.backupCorruptMetadata === 'function') {
+                        await this.storage.backupCorruptMetadata(conversationId);
+                    }
+                } catch (error) {
+                    // 备份失败不阻塞降级主流程（改名失败不阻塞）
+                    log.warn('metadata.corruptBackupFailed', { conversationId, error: String(error) });
+                }
+                log.warn('metadata.corruptFallback', {
+                    conversationId,
+                    errorCode: metadataResult.errorCode,
+                    errorMessage: metadataResult.errorMessage,
+                    note: 'meta.json 损坏：已改名备份并返回从历史重建的 fallback 元数据；custom 字段（含 checkpoints 存档记录列表）丢失，cp_xxx 备份目录不会被自动清理',
+                });
+            } else {
+                log.warn('metadata.unreadableFallback', {
+                    conversationId,
+                    errorCode: metadataResult.errorCode,
+                    errorMessage: metadataResult.errorMessage,
+                });
+            }
         }
 
         const historyResult = await this.storage.loadHistoryWithStatus(conversationId);
@@ -2049,6 +2225,141 @@ export class ConversationManager {
             fallback.integrityStatus = integrityStatus;
         }
         return fallback;
+    }
+
+    /**
+     * 只读历史索引结构（不解析消息内容）。
+     * 适配器实现 getHistoryIndexInfo 时优先使用；否则用完整性检查兜底（同样不读消息）。
+     */
+    private async resolveHistoryIndexInfo(conversationId: string): Promise<HistoryIndexInfo | null> {
+        if (typeof this.storage.getHistoryIndexInfo === 'function') {
+            return await this.storage.getHistoryIndexInfo(conversationId);
+        }
+        const integrity = await this.storage.getConversationIntegrity(conversationId);
+        return {
+            exists: integrity.historyExists,
+            readable: integrity.historyReadable,
+            errorCode: integrity.historyErrorCode,
+            errorMessage: integrity.historyErrorMessage,
+        };
+    }
+
+    /**
+     * 一次性合并写入对话摘要元数据（HIS-09）。
+     *
+     * messageCount / preview 一次 loadMetadata+saveMetadata 写入；
+     * updatedAt 由后端历史提交（saveHistory/appendHistory）统一维护，不在此重复写。
+     * 真正的 custom metadata 修改（setCustomMetadata/updateCustomMetadata）仍即时持久化。
+     */
+    async updateSummary(
+        conversationId: string,
+        summary: { messageCount?: number; preview?: string }
+    ): Promise<void> {
+        await withMetadataWriteSerialized(conversationId, async () => {
+            let meta = await this.loadMetadataForWrite(conversationId);
+            if (!meta) {
+                meta = {
+                    id: conversationId,
+                    title: t('modules.conversation.defaultTitle', { conversationId }),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    custom: {}
+                };
+            }
+            if (!meta.custom) {
+                meta.custom = {};
+            }
+            let messageCount = summary.messageCount;
+            if (messageCount !== undefined) {
+                // M3：钳制 messageCount 不超过实际历史提交数。appendHistory 失败但前端已乐观更新并
+                // 调 updateSummary 时，不钳制会让 custom.messageCount 永久超前于真实历史。
+                // getHistoryIndexInfo 只读 index 结构，成本低；索引不可读/legacy 时跳过钳制。
+                try {
+                    const indexInfo = await this.resolveHistoryIndexInfo(conversationId);
+                    if (typeof indexInfo?.totalMessages === 'number' && indexInfo.totalMessages >= 0) {
+                        messageCount = Math.min(messageCount, indexInfo.totalMessages);
+                    }
+                } catch {
+                    // 索引读取失败不影响本次摘要写入（按原值保存）
+                }
+                meta.custom.messageCount = messageCount;
+            }
+            if (summary.preview !== undefined) {
+                meta.custom.preview = summary.preview;
+            }
+            meta.updatedAt = Date.now();
+            await this.storage.saveMetadata(meta);
+        });
+    }
+
+    /**
+     * 轻量读取对话元数据（供用量统计等只关心 title/updatedAt 的场景使用）
+     *
+     * 与 getMetadata 不同：只读 meta.json，不加载历史做完整性检查、
+     * 不生成 fallback 元数据——统计侧对缺失 meta 直接回退对话 ID 展示。
+     * 避免每次统计都为每个对话额外读一次历史（getMetadata 的 loadHistoryPage）。
+     */
+    async getMetadataLight(conversationId: string): Promise<ConversationMetadata | null> {
+        const result = await this.storage.loadMetadataWithStatus(conversationId);
+        return result.value ?? null;
+    }
+
+    /**
+     * 批量获取对话摘要元数据（HIS-10）。
+     *
+     * 对话列表一次 IPC 拉一页摘要，避免每个对话一次 IPC。
+     * 只读 meta.json（getMetadataLight），不做完整性检查、不解析历史。
+     */
+    async getConversationMetadataBatch(conversationIds: string[]): Promise<ConversationSummary[]> {
+        const ids = Array.isArray(conversationIds) ? conversationIds.slice(0, 200) : [];
+        if (ids.length === 0) return [];
+        return await this.runBounded(ids, 16, async conversationId => this.buildConversationSummary(conversationId));
+    }
+
+    private async buildConversationSummary(conversationId: string): Promise<ConversationSummary> {
+        const meta = await this.getMetadataLight(conversationId);
+        const custom = (meta?.custom ?? {}) as Record<string, unknown>;
+        const now = Date.now();
+        return {
+            id: conversationId,
+            title: typeof meta?.title === 'string' && meta.title.trim()
+                ? meta.title
+                : `Chat ${conversationId.slice(0, 8)}`,
+            createdAt: typeof meta?.createdAt === 'number' ? meta.createdAt : now,
+            updatedAt: typeof meta?.updatedAt === 'number'
+                ? meta.updatedAt
+                : (typeof custom.updatedAt === 'number' ? custom.updatedAt : now),
+            messageCount: typeof custom.messageCount === 'number' ? custom.messageCount : 0,
+            preview: typeof custom.preview === 'string' ? custom.preview : undefined,
+            workspaceUri: typeof meta?.workspaceUri === 'string' ? meta.workspaceUri : undefined,
+            integrityStatus: typeof meta?.integrityStatus === 'string' ? meta.integrityStatus : undefined,
+        };
+    }
+
+    /** 限流并发执行（结果按输入顺序返回） */
+    private async runBounded<T, R>(
+        items: readonly T[],
+        concurrency: number,
+        task: (item: T) => Promise<R>
+    ): Promise<R[]> {
+        const results: R[] = new Array(items.length);
+        let next = 0;
+        const workerCount = Math.max(1, Math.min(concurrency, items.length));
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+            while (next < items.length) {
+                const index = next++;
+                results[index] = await task(items[index]);
+            }
+        }));
+        return results;
+    }
+
+    /**
+     * 获取 conversations 目录的本地文件系统路径（供用量统计目录监听使用）；
+     * 存储适配器不支持时返回 undefined，统计退化全量扫描。
+     */
+    getConversationsDirFsPath(): string | undefined {
+        return this.storage.getConversationsDirFsPath?.();
     }
 
     /**

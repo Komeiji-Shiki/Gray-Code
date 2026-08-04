@@ -51,6 +51,8 @@ import type {
     MemoryToolConfig
 } from './types';
 import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
+import { t } from '../../i18n';
+import { validateCustomExclusionPatterns, DEFAULT_EXCLUSION_PROFILES } from '../checkpoint/CheckpointExclusionProfiles';
 import {
     DEFAULT_GLOBAL_SETTINGS,
     DEFAULT_LIST_FILES_CONFIG,
@@ -757,10 +759,65 @@ export class SettingsManager {
     
     /**
      * 更新存档点配置
+     *
+     * EX-12/L-4：保存前校验排除配置，拒绝危险/无意义的自定义排除规则
+     * （空模式、绝对路径、纯 `!`、`..` 越界、换行注入），以及未知默认类别 id、
+     * 非有限数值的单文件大小上限。
      */
     async updateCheckpointConfig(config: Partial<CheckpointConfig>): Promise<void> {
+        const patternsToValidate: string[] = [
+            ...(config.exclusion?.customPatterns ?? []),
+            ...(config.customIgnorePatterns ?? [])
+        ];
+        if (patternsToValidate.length > 0) {
+            const issues = validateCustomExclusionPatterns(patternsToValidate);
+            if (issues.length > 0) {
+                const detail = issues
+                    .map(issue => `"${issue.pattern}" (${this.exclusionPatternIssueText(issue.reason)})`)
+                    .join('; ');
+                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionPatterns', { detail }));
+            }
+        }
+
+        // L-4: enabledProfiles 未知 profile id（前端可能发送损坏/过期的配置）→ 拒绝保存
+        if (config.exclusion?.enabledProfiles !== undefined) {
+            const enabledProfiles = config.exclusion.enabledProfiles;
+            if (typeof enabledProfiles !== 'object' || Array.isArray(enabledProfiles)) {
+                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionProfiles', {
+                    detail: String(enabledProfiles)
+                }));
+            }
+            const knownIds = new Set<string>(DEFAULT_EXCLUSION_PROFILES.map(profile => profile.id));
+            const unknownIds = Object.keys(enabledProfiles).filter(id => !knownIds.has(id));
+            if (unknownIds.length > 0) {
+                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionProfiles', {
+                    detail: unknownIds.join(', ')
+                }));
+            }
+        }
+
+        // L-4: maxFileSizeBytes 非有限数值（NaN / 字符串）→ 拒绝保存
+        if (config.exclusion && config.exclusion.maxFileSizeBytes !== undefined) {
+            const size = config.exclusion.maxFileSizeBytes;
+            if (typeof size !== 'number' || !Number.isFinite(size)) {
+                throw new Error(t('modules.settings.errors.invalidCheckpointMaxFileSize'));
+            }
+        }
+
+        // 负数上限归一化为 0（0 = 不限制）
+        if (config.exclusion && typeof config.exclusion.maxFileSizeBytes === 'number' && config.exclusion.maxFileSizeBytes < 0) {
+            config.exclusion.maxFileSizeBytes = 0;
+        }
+
         const oldConfig = this.getCheckpointConfig();
         await this.saveToolsConfigEntry('checkpoint', oldConfig, { ...oldConfig, ...config });
+    }
+
+    /** 排除模式校验失败的局部原因文案（EX-12） */
+    private exclusionPatternIssueText(reason: string): string {
+        const key = `modules.settings.errors.exclusionPatternReason.${reason}` as const;
+        const localized = t(key);
+        return localized === key ? reason : localized;
     }
     
     /**

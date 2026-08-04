@@ -56,8 +56,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
     const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
     const generalWorkerEnabled = config.generalWorkerEnabled !== false;
+    const defaultMaxIterations = config.defaultMaxIterations ?? 80;
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -438,6 +439,14 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
 
     if (data.generalWorkerEnabled !== undefined && typeof data.generalWorkerEnabled === 'boolean') {
       updates.generalWorkerEnabled = data.generalWorkerEnabled;
+    }
+
+    // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
+    if (data.defaultMaxIterations !== undefined) {
+      const v = data.defaultMaxIterations;
+      if (typeof v === 'number' && Number.isFinite(v) && (v === -1 || v >= 1)) {
+        updates.defaultMaxIterations = v;
+      }
     }
 
     if (Object.keys(updates).length > 0) {

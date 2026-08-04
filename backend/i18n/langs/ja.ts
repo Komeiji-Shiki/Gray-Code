@@ -90,7 +90,9 @@ const ja: BackendLanguageMessages = {
                 filesDeleted: '{count} 個のファイルが削除されました',
                 filesUnchanged: '{count} 個のファイルは変更なし',
                 chainBroken: '増分チェーンが破損しています：参照先のベースチェックポイントが見つかりません',
-                partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります'
+                partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります',
+                workspaceMismatch: '現在のワークスペースがチェックポイント記録のワークスペースと一致しないため、復元を拒否しました',
+                multiRootLegacyNotSupported: '旧形式のチェックポイント（相対パス形式）はマルチルートワークスペースでは復元できません'
             },
             defaultConversationTitle: '会話 {conversationId}',
             errors: {
@@ -104,7 +106,17 @@ const ja: BackendLanguageMessages = {
             errors: {
                 loadFailed: '設定の読み込みに失敗しました',
                 saveFailed: '設定の保存に失敗しました',
-                invalidValue: '無効な設定値'
+                invalidValue: '無効な設定値',
+                invalidCheckpointExclusionPatterns: 'チェックポイント除外ルールが無効です: {detail}',
+                invalidCheckpointExclusionProfiles: 'チェックポイント除外カテゴリが無効です: {detail}',
+                invalidCheckpointMaxFileSize: '単一ファイルサイズ上限は有限の数値である必要があります',
+                exclusionPatternReason: {
+                    empty: '空パターン',
+                    absolute: '絶対パスパターン',
+                    negationOnly: '! のみの否定（ルール本体なし）',
+                    traversal: '.. による越界',
+                    newline: '改行を含む'
+                }
             },
             storage: {
                 pathNotAbsolute: 'パスは絶対パスである必要があります: {path}',
@@ -666,10 +678,16 @@ description: "このスキルの機能と使用場面の簡単な説明"
             updateCheckpointConfigFailed: 'チェックポイント設定の更新に失敗しました',
             getCheckpointsFailed: 'チェックポイント一覧の取得に失敗しました',
             restoreCheckpointFailed: 'チェックポイントの復元に失敗しました',
+            previewRestoreFailed: '復元のプレビューに失敗しました',
             deleteCheckpointFailed: 'チェックポイントの削除に失敗しました',
             deleteAllCheckpointsFailed: 'すべてのチェックポイントの削除に失敗しました',
             deleteCheckpointsBatchFailed: 'チェックポイントの一括削除に失敗しました',
             getConversationsWithCheckpointsFailed: 'チェックポイント付き会話の取得に失敗しました',
+            previewExclusionsFailed: '除外結果のプレビューに失敗しました',
+            previewExclusionsNoWorkspace: '利用可能なワークスペースルートがありません',
+            getCheckpointManifestFailed: 'チェックポイントのマニフェスト取得に失敗しました',
+            getCheckpointOperationProgressFailed: 'チェックポイント操作の進捗取得に失敗しました',
+            cancelCheckpointOperationFailed: 'チェックポイント操作のキャンセルに失敗しました',
             
             openDiffPreviewFailed: 'diff プレビューを開くのに失敗しました',
             diffContentNotFound: 'Diff 内容が見つからないか、期限切れです',

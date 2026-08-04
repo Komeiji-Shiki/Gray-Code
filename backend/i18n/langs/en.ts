@@ -90,7 +90,9 @@ const en: BackendLanguageMessages = {
                 filesDeleted: '{count} files deleted',
                 filesUnchanged: '{count} files unchanged',
                 chainBroken: 'Incremental chain is broken: a referenced base checkpoint is missing',
-                partialFailure: 'Restored to "{toolName}" {phase} state with {count} failure(s)'
+                partialFailure: 'Restored to "{toolName}" {phase} state with {count} failure(s)',
+                workspaceMismatch: 'Current workspace does not match the workspace recorded in this checkpoint; restore refused',
+                multiRootLegacyNotSupported: 'Legacy checkpoints (relative path format) cannot be restored in a multi-root workspace'
             },
             defaultConversationTitle: 'Conversation {conversationId}',
             errors: {
@@ -104,7 +106,17 @@ const en: BackendLanguageMessages = {
             errors: {
                 loadFailed: 'Failed to load settings',
                 saveFailed: 'Failed to save settings',
-                invalidValue: 'Invalid setting value'
+                invalidValue: 'Invalid setting value',
+                invalidCheckpointExclusionPatterns: 'Invalid checkpoint exclusion pattern(s): {detail}',
+                invalidCheckpointExclusionProfiles: 'Invalid checkpoint exclusion profile(s): {detail}',
+                invalidCheckpointMaxFileSize: 'Max file size must be a finite number',
+                exclusionPatternReason: {
+                    empty: 'empty pattern',
+                    absolute: 'absolute path pattern',
+                    negationOnly: 'bare ! negation (no rule body)',
+                    traversal: 'contains .. traversal',
+                    newline: 'contains newline'
+                }
             },
             storage: {
                 pathNotAbsolute: 'Path must be absolute: {path}',
@@ -666,10 +678,16 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             updateCheckpointConfigFailed: 'Failed to update checkpoint config',
             getCheckpointsFailed: 'Failed to get checkpoints list',
             restoreCheckpointFailed: 'Failed to restore checkpoint',
+            previewRestoreFailed: 'Failed to preview restore',
             deleteCheckpointFailed: 'Failed to delete checkpoint',
             deleteAllCheckpointsFailed: 'Failed to delete all checkpoints',
             deleteCheckpointsBatchFailed: 'Failed to batch delete checkpoints',
             getConversationsWithCheckpointsFailed: 'Failed to get conversations with checkpoints',
+            previewExclusionsFailed: 'Failed to preview exclusions',
+            previewExclusionsNoWorkspace: 'No workspace root available',
+            getCheckpointManifestFailed: 'Failed to load checkpoint manifest',
+            getCheckpointOperationProgressFailed: 'Failed to get checkpoint operation progress',
+            cancelCheckpointOperationFailed: 'Failed to cancel checkpoint operation',
             
             openDiffPreviewFailed: 'Failed to open diff preview',
             diffContentNotFound: 'Diff content not found or expired',

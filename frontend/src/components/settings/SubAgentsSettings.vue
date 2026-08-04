@@ -80,6 +80,8 @@ interface SubAgentPreset {
 const maxConcurrentAgents = ref(3)
 // 通用 Worker（傻瓜式多 agent 模式）开关，默认开启
 const generalWorkerEnabled = ref(true)
+// 全局默认迭代次数（未单独配置的 agent 与 General Worker 继承，默认 80）
+const defaultMaxIterations = ref(80)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -225,7 +227,7 @@ async function toggleTool(toolName: string, selected: boolean) {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean }>('subagents.list', {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>('subagents.list', {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -233,6 +235,9 @@ async function loadSubAgents() {
         maxConcurrentAgents.value = response.maxConcurrentAgents
       }
       generalWorkerEnabled.value = response.generalWorkerEnabled !== false
+      if (response.defaultMaxIterations !== undefined) {
+        defaultMaxIterations.value = response.defaultMaxIterations
+      }
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
         currentAgentType.value = subAgents.value[0].type
@@ -590,6 +595,17 @@ onMounted(async () => {
               @change="maxConcurrentAgents = parseInt(($event.target as HTMLInputElement).value) || 3; updateGlobalConfig('maxConcurrentAgents', maxConcurrentAgents)"
             />
             <span class="field-hint">{{ t('components.settings.subagents.maxConcurrentAgentsHint') }}</span>
+          </div>
+          <div class="form-group flex-1">
+            <label>{{ t('components.settings.subagents.defaultMaxIterations') }}</label>
+            <input
+              type="number"
+              :value="defaultMaxIterations"
+              min="1"
+              max="1000"
+              @change="defaultMaxIterations = parseInt(($event.target as HTMLInputElement).value) || 80; updateGlobalConfig('defaultMaxIterations', defaultMaxIterations)"
+            />
+            <span class="field-hint">{{ t('components.settings.subagents.defaultMaxIterationsHint') }}</span>
           </div>
         </div>
         <div class="form-group">

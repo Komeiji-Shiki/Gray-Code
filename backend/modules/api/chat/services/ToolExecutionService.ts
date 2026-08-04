@@ -234,10 +234,39 @@ export class ToolExecutionService {
         const toolMode = config?.toolMode || 'function_call';
         const isPromptMode = toolMode === 'xml' || toolMode === 'json';
 
-        const toolNameForCheckpoint = calls.length === 1 ? calls[0].name : 'tool_batch';
+        // 检查点创建名（CPF-05）：
+        // - 单个调用：用工具名（search_in_files 纯 search 模式只读，不创建存档）
+        // - 批量调用：只有批内存在「当前已配置的写工具」时才用 tool_batch；
+        //   否则纯只读批次（read_file + search_in_files(search)、list_files + find_files、
+        //   get_symbols + find_references 等）不创建全工作区存档。
+        //   判断基于真实工具名集合（toolNames.some(name => configuredTools.includes(name))），
+        //   而不是笼统的「批次存在写工具」或「配置列表非空」。
+        const toolNameForCheckpoint: string | null = (() => {
+            if (calls.length === 1) {
+                const single = calls[0];
+                if (single.name === 'search_in_files' && single.args?.mode !== 'replace') {
+                    return null;
+                }
+                return single.name;
+            }
+            const checkpointConfig = this.settingsManager?.getCheckpointConfig();
+            if (!checkpointConfig) {
+                return null;
+            }
+            const configuredTools = new Set([
+                ...(checkpointConfig.beforeTools ?? []),
+                ...(checkpointConfig.afterTools ?? [])
+            ]);
+            const batchHasConfiguredTool = calls.some(call =>
+                call.name === 'search_in_files'
+                    ? (call.args?.mode === 'replace' && configuredTools.has('search_in_files'))
+                    : configuredTools.has(call.name)
+            );
+            return batchHasConfiguredTool ? 'tool_batch' : null;
+        })();
 
         // 在所有工具执行前创建一个检查点
-        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+        if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
             const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 messageIndex,
@@ -424,7 +453,7 @@ export class ToolExecutionService {
 
 
         // 在所有工具执行后创建一个检查点
-        if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+        if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
             const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 messageIndex,
@@ -684,12 +713,24 @@ export class ToolExecutionService {
         if (writePaths && writePaths.length > 0) {
             const lockResult = fileWriteLockManager.tryAcquire(writePaths, lockHolder);
             if (!lockResult.acquired) {
+                // 修改原因（P4）：旧文案“Do NOT wait or retry this file immediately”易被 LLM 误解为放弃该文件，
+                // 且未告知冲突持有者身份之外的协作方式。
+                // 修改方式：明确持有者（子代理 run / 主会话 / 存档操作）、建议先做其他工作后重试、
+                //          持续冲突时在最终回复中上报主会话协调；lockConflict 标志保留供预设 prompt 识别。
                 const conflictText = lockResult.conflicts
-                    .map(c => `'${c.path}' is currently being modified by ${c.holder.kind === 'subagent' ? `agent "${c.holder.label}"` : c.holder.label}`)
+                    .map(c => {
+                        const holderName = c.holder.kind === 'subagent'
+                            ? `agent "${c.holder.label}"`
+                            : (c.holder.kind === 'checkpoint' ? 'a checkpoint operation' : c.holder.label);
+                        return `'${c.path}' is currently being modified by ${holderName}`;
+                    })
                     .join('; ');
                 return {
                     success: false,
-                    error: `File write conflict: ${conflictText}. Do NOT wait or retry this file immediately. Work on other parts of your task first, then come back to this file after the current holder finishes.`,
+                    error: `File write conflict: ${conflictText}. `
+                        + `Do not loop on this file. Work on other parts of your task first, `
+                        + `then retry after the current holder finishes (the lock is released automatically). `
+                        + `If it is still locked on retry, mention it in your final response so the main session can coordinate.`,
                     lockConflict: true
                 };
             }

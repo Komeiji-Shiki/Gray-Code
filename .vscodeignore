@@ -47,6 +47,7 @@ esbuild.config.js
 
 # 内部开发文档（不打包）
 docs/**
+*.plan.md
 AUDIT_REMEDIATION.md
 PLAN.md
 .github/**

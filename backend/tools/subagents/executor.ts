@@ -16,11 +16,13 @@ import type {
 import type { ToolDeclaration } from '../types';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
 import { MEMORY_TOOL_NAMES } from '../memory';
+import { TODO_TOOL_NAMES } from '../todo';
 import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
 import type { Content, ContentPart } from '../../modules/conversation/types';
 import type { ToolExecutionResult } from '../../modules/api/chat/utils';
 import type { GenerateRequest } from '../../modules/channel/types';
+import { extractMessageTokens, type UsageIndexMessage } from '../../modules/conversation/usageStats';
 import { subAgentRunEventBus } from './runEventBus';
 import type { SubAgentRunStatus } from './runEventBus';
 import { subAgentRunController } from './runController';
@@ -114,7 +116,10 @@ export async function resolveSubAgentAvailableTools(
         includeMcp,
         allowlist,
         denylist,
-        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES, ...blockedByDefault]
+        // 修改原因：todo_write/todo_update 依赖主会话 ToolContext.conversationId 读写会话元数据，
+        // 子代理执行路径不注入该值，声明了也必然失败并浪费迭代。
+        // 修改方式：与 subagents/memory 工具一起从子代理可用工具中排除，主会话 todo 功能不受影响。
+        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES, ...blockedByDefault]
     }) || [];
 }
 
@@ -311,6 +316,45 @@ function extractTextContent(response: any): string {
 }
 
 /**
+ * 把本轮 LLM 调用的 usageMetadata 转换为 UsageIndexMessage（source='subagent'），
+ * 归集到发起它的主会话用量索引。
+ *
+ * 修改原因：子代理消耗的 token 此前不进入任何用量统计，UsagePage 看不到子代理开销。
+ * 修改方式：从 response.content.usageMetadata 提取 token（复用主链路 extractMessageTokens
+ *           同一套语义），经上下文注入的 usageIndexAppend 追加到主会话索引；
+ *           无主会话归属或未注入回调时跳过（不写索引）。
+ * 修改目的：主会话用量统计包含其派发的所有子代理消耗，且可通过 source 细分。
+ */
+async function reportUsageToMainConversation(
+    response: any,
+    conversationId: string | undefined,
+    usageIndexAppend: SubAgentExecutorContext['usageIndexAppend']
+): Promise<void> {
+    if (!conversationId) {
+        // 子代理无主会话归属：跳过归集（不写索引）
+        console.debug('[SubAgent] Usage attribution skipped: no main conversation id for this run.');
+        return;
+    }
+    if (typeof usageIndexAppend !== 'function') return;
+    const usage = response?.content?.usageMetadata as Content['usageMetadata'] | undefined;
+    if (!usage) return;
+    const tokens = extractMessageTokens({ role: 'model', parts: [], usageMetadata: usage } as Content);
+    if (!tokens) return;
+    const entry: UsageIndexMessage = {
+        timestamp: Date.now(),
+        modelVersion: (response?.content?.modelVersion || '').trim(),
+        ...tokens,
+        source: 'subagent'
+    };
+    try {
+        await usageIndexAppend(conversationId, [entry]);
+    } catch (e) {
+        // 归集失败不打断子代理主流程
+        console.debug(`[SubAgent] Failed to attribute usage to conversation ${conversationId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * 识别「上下文超限」类错误。
  *
  * 子代理没有接主链路的 ContextTrimService，它的 history 只增不减：工具结果一大、迭代一多就会撞上
@@ -465,7 +509,11 @@ export function createDefaultExecutor(
             type: 'run_started'
         });
 
-        const maxIterations = config.maxIterations ?? 50;
+        // 修改原因：子代理设置界面新增「默认迭代次数」全局配置，未单独配置的 agent 应继承该默认值。
+        // 修改方式：优先取 per-agent maxIterations，其次取全局 defaultMaxIterations，最后回退 50。
+        const maxIterations = config.maxIterations
+            ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxIterations
+            ?? 50;
         const maxRuntime = config.maxRuntime ?? 1800; // 默认 30 分钟
         const startTime = Date.now();
         const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
@@ -745,7 +793,13 @@ export function createDefaultExecutor(
                     // 修改原因：DeepSeek KVCache 按 user_id 隔离、Anthropic metadata.user_id 区分运行域都依赖请求携带稳定标识。
                     // 修改方式：SubAgent 用 runId 作为 conversationId，每个 run 拥有独立缓存域（formatter 会哈希，不泄露原始 ID）。
                     // 修改目的：主会话与各 SubAgent、SubAgent 彼此之间的 provider 侧缓存互不污染。
-                    conversationId: runId,
+                    // 修改原因：continueFromRunId 续跑时若仍用新 runId 作 conversationId，user_id 按它哈希
+                    //          会让续跑落入新缓存域、前缀缓存必 miss。
+                    // 修改方式：续跑时 conversationId 直接沿用旧 run 的 runId（request.continueFromRunId），
+                    //          user_id 哈希输入与旧 run 完全一致，缓存域天然相同；普通新 run 仍用新 runId。
+                    // 修改目的：模型调用 subagents 工具时只需传 continueFromRunId（参数与旧调用一致），
+                    //          系统即自动复用旧 run 的 provider 侧缓存域（DeepSeek user_id / Anthropic user_id），无需额外字段。
+                    conversationId: request.continueFromRunId || runId,
                     retryStatusCallback: (status) => {
                         if (status.type === 'retryFailed') {
                             retryFailedInThisCall = true;
@@ -871,6 +925,12 @@ export function createDefaultExecutor(
                     // 本轮 LLM 调用结束，摘除组合信号挂在父信号上的 abort 监听器
                     operation.release();
                 }
+
+                // 修改原因：子代理的 token 消耗此前不进入主会话用量统计，UsagePage 看不到子代理开销。
+                // 修改方式：每轮 generate 成功后从响应 content 提取 usageMetadata，归集到主会话用量索引；
+                //          无主会话归属或未注入归集回调时跳过（见 reportUsageToMainConversation）。
+                // 修改目的：用量统计页能汇总展示子代理消耗（source='subagent'），且不影响主会话历史。
+                await reportUsageToMainConversation(response, currentConversationId, context.usageIndexAppend);
                 
                 // 修改原因：SubAgent 过去自己解析各 provider 的工具调用，主流程支持 XML/JSON prompt tool mode 后容易漏同步。
                 // 修改方式：统一把标准 Content 交给 ToolCallParserService 转换和提取 functionCall。

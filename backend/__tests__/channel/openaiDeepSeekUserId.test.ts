@@ -116,4 +116,18 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
 
         expect(request.body.user_id).toBeUndefined();
     });
+
+    it('uses the conversationId passed by caller as the user_id domain (续跑时 executor 传旧 runId，天然同域)', () => {
+        const formatter = new OpenAIFormatter();
+        const config = createConfig({ deepSeekUserIdEnabled: true });
+
+        // 模拟续跑：executor 会把 conversationId 沿用旧 runId
+        const request = formatter.buildRequest({
+            configId: config.id,
+            history: createHistory(),
+            conversationId: 'old_run_1690000000000_abc'
+        }, config);
+
+        expect(request.body.user_id).toBe(expectedDeepSeekUserId('old_run_1690000000000_abc'));
+    });
 });

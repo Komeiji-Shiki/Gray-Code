@@ -476,6 +476,55 @@ export function createConversationModule(storage: IStorageAdapter): ModuleDefini
                 }
             },
 
+            {
+                name: 'getConversationMetadataBatch',
+                description: '批量获取对话摘要元数据（一次 IPC 拉一页对话列表摘要，HIS-10）',
+                parameters: [
+                    {
+                        name: 'conversationIds',
+                        type: 'array',
+                        required: true,
+                        description: '对话 ID 数组'
+                    }
+                ],
+                returnType: 'ConversationSummary[]',
+                handler: async (params) => {
+                    return await manager.getConversationMetadataBatch(params.conversationIds as string[]);
+                }
+            },
+
+            {
+                name: 'updateSummary',
+                description: '一次性更新对话摘要元数据（messageCount / preview；updatedAt 由后端历史提交统一维护，HIS-09）',
+                parameters: [
+                    {
+                        name: 'conversationId',
+                        type: 'string',
+                        required: true,
+                        description: '对话 ID'
+                    },
+                    {
+                        name: 'messageCount',
+                        type: 'number',
+                        required: false,
+                        description: '消息数量'
+                    },
+                    {
+                        name: 'preview',
+                        type: 'string',
+                        required: false,
+                        description: '预览文本'
+                    }
+                ],
+                returnType: 'void',
+                handler: async (params) => {
+                    await manager.updateSummary(params.conversationId as string, {
+                        messageCount: params.messageCount as number | undefined,
+                        preview: params.preview as string | undefined
+                    });
+                }
+            },
+
             // ========== 对话管理 ==========
             {
                 name: 'createConversation',

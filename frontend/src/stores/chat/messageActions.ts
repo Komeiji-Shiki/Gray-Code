@@ -224,6 +224,10 @@ export async function sendMessage(
 
   state.error.value = null
   if (state.isWaitingForResponse.value) return false
+
+  // 发送新消息 = 放弃上次失败的回答：回滚失败流保留的半截消息，
+  // 避免窗口中出现后端不存在的幽灵消息。
+  rollbackFailedStreamMessage(state)
   
   state.isLoading.value = true
   state.isStreaming.value = true
@@ -588,6 +592,41 @@ export async function retryFromMessage(
 /**
  * 错误后重试
  */
+/**
+ * 回滚上次流式失败保留的半截 assistant 消息（仅前端窗口，不含后端）。
+ *
+ * 该消息是前端占位消息（localOnly=true），后端在流式错误时从未持久化它，
+ * 因此这里只删除窗口中的消息，并清除挂在该消息索引上的检查点，
+ * 避免重试/继续后窗口与后端历史错位。
+ *
+ * @returns 被回滚消息的后端索引（-1 表示没有可回滚的消息）
+ */
+export function rollbackFailedStreamMessage(state: ChatStoreState): number {
+  const failedMessageId = state._failedStreamMessageId.value
+  state._failedStreamMessageId.value = null
+  if (!failedMessageId) return -1
+
+  const failedIndex = state.allMessages.value.findIndex(m => m.id === failedMessageId)
+  if (failedIndex === -1) return -1
+
+  const backendIndex = calculateBackendIndex(state.allMessages.value, failedIndex, state.windowStartIndex.value)
+  state.allMessages.value = state.allMessages.value.slice(0, failedIndex)
+  clearCheckpointsFromIndex(state, backendIndex)
+  setTotalMessagesFromWindow(state)
+  return backendIndex
+}
+
+/**
+ * 关闭错误提示：同时清理失败流保留的半截消息（用户明确放弃该次回答）。
+ */
+export function dismissError(state: ChatStoreState): void {
+  rollbackFailedStreamMessage(state)
+  state.error.value = null
+}
+
+/**
+ * 错误后重试
+ */
 export async function retryAfterError(
   state: ChatStoreState,
   computed: ChatStoreComputed
@@ -597,7 +636,25 @@ export async function retryAfterError(
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   const originConvId = state.currentConversationId.value
-  
+
+  // 失败流回滚：清理上次流式失败保留的半截 assistant 消息，
+  // 避免重试后窗口/历史出现半截回答残留。
+  const failedMessage = state.allMessages.value.find(m => m.id === state._failedStreamMessageId.value)
+  const backendIndex = rollbackFailedStreamMessage(state)
+
+  // 防御性兜底：极端情况下半截消息已被标记为非 localOnly（后端可能已持久化），
+  // 同步删除后端对应消息，避免重试后历史残留。
+  if (backendIndex !== -1 && failedMessage && !failedMessage.localOnly && typeof failedMessage.backendIndex === 'number') {
+    try {
+      await sendToExtension<any>('deleteMessage', {
+        conversationId: originConvId,
+        targetIndex: backendIndex
+      })
+    } catch (err) {
+      console.error('[messageActions] retryAfterError: failed to delete partial message in backend:', err)
+    }
+  }
+
   state.error.value = null
   state.isLoading.value = true
   state.isStreaming.value = true
