@@ -118,6 +118,8 @@ export interface Content {
   modelVersion?: string
   /** Token 使用统计（仅 model 消息有值） */
   usageMetadata?: UsageMetadata
+  /** 系统内部消息来源；background_task 用于恢复后台任务卡片并排除新回合语义。 */
+  source?: 'user' | 'background_task'
   /** 是否为函数响应消息 */
   isFunctionResponse?: boolean
   /** 是否为上下文总结消息 */
@@ -427,7 +429,7 @@ export interface VSCodeMessage<T = any> {
 
 export interface VSCodeRequest {
   type: 'chat' | 'chatStream' | 'retry' | 'retryStream' | 'editAndRetry' | 'editAndRetryStream' |
-        'deleteMessage' | 'getHistory' | 'getConfig' | 'updateConfig'
+        'chat.rerollStream' | 'chat.editBranchStream' | 'deleteMessage' | 'getHistory' | 'getConfig' | 'updateConfig'
   data: any
   requestId: string
 }
@@ -450,6 +452,8 @@ export interface ChatRequest {
   modelOverride?: string
   /** 可选：覆盖本次请求的动态上下文策略 */
   dynamicContextStrategyOverride?: 'single' | 'preserve'
+  /** 消息来源；background_task 是系统生成的后台结果回执 */
+  source?: 'user' | 'background_task'
 }
 
 export interface RetryRequest {
@@ -585,6 +589,8 @@ export interface StreamChunk {
 export interface ErrorInfo {
   code: string
   message: string
+  /** 底层错误类型（后端 ChannelError.type，如 API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/PARSE_ERROR） */
+  type?: string
   details?: any
 }
 

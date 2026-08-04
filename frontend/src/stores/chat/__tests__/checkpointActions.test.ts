@@ -7,7 +7,7 @@
  * - restoreAndRetry 中 deleteMessage 失败中止重试（不调 retryStream、设置错误、重载历史+检查点）
  * - restoreAndRetry 成功路径调用 retryStream
  * - restoreAndDelete 中 deleteMessage 失败设置错误并重载历史+检查点
- * - restoreAndEdit 成功 / 失败重载兜底 / 附件序列化
+ * - restoreAndEdit 成功 / 失败重载兜底 / 附件仅更新本地窗口（chat.editBranchStream 无附件字段）
  */
 import { ref } from 'vue'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
@@ -79,6 +79,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastCancelledStreamId: ref<string | null>(null),
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
+    _pendingBranchRefreshAfterStream: ref<string | null>(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
@@ -171,15 +172,17 @@ describe('restoreCheckpoint', () => {
   })
 })
 
-describe('restoreAndRetry', () => {
+describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 清空未消费的 mockResolvedValueOnce，避免 Once 泄漏到后续测试
+    mockSend.mockReset()
   })
 
-  it('deleteMessage 失败时中止重试、设置错误并重载历史', async () => {
+  it('rerollStream IPC 抛异常时中止、设置错误并重载历史', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockResolvedValueOnce({ success: false }) // deleteMessage
+      .mockRejectedValueOnce(new Error('ipc boom')) // chat.rerollStream
 
     const state = createState({
       allMessages: ref([
@@ -190,19 +193,18 @@ describe('restoreAndRetry', () => {
 
     await restoreAndRetry(state, 1, 'cp_1', 'model-x', async () => {})
 
-    // retryStream 不应被调用（中止重试）
-    const retryCall = mockSend.mock.calls.find(c => c[0] === 'retryStream')
-    expect(retryCall).toBeUndefined()
-    // deleteMessage 确实被调用
-    expect(mockSend).toHaveBeenCalledWith('deleteMessage', expect.objectContaining({ targetIndex: 1 }))
-    // 错误提示 + 历史重载（本地已截断而后端未删，拉回一致）
+    // reroll 流启动失败（IPC 抛异常）：不继续后续流程
+    // 不触碰破坏性删除 / 旧重试接口
+    expect(mockSend.mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
+    expect(mockSend.mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    // 错误提示 + 历史重载（本地已截断而后端未截断，拉回一致）
     expect(state.error.value).not.toBeNull()
-    // H-3 兼容：restoreAndRetry 的 deleteMessage 失败设置 DELETE_MESSAGE_ERROR
-    //（非可重试错误码，错误条不显示“重试”，不会触发 LLM 重新生成）
-    expect(state.error.value?.code).toBe('DELETE_MESSAGE_ERROR')
+    expect(state.error.value?.code).toBe('RESTORE_RETRY_ERROR')
     expect(loadHistoryMock).toHaveBeenCalled()
     // M-2: 失败重载时同步重载检查点，避免存档条消失（前后端不一致）
     expect(loadCheckpointsMock).toHaveBeenCalled()
+    // 分支图刷新标记复位（流未启动，不残留）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
   })
 
   it('cancel 期间对话切换后不写入错误（M-8 身份隔离）', async () => {
@@ -226,10 +228,10 @@ describe('restoreAndRetry', () => {
     expect(mockSend.mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
   })
 
-  it('deleteMessage 成功后调用 retryStream', async () => {
+  it('reroll 成功发起：调用 chat.rerollStream 携带 assistantNodeId，不 deleteMessage/retryStream', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockResolvedValueOnce({ success: true }) // deleteMessage
+      .mockResolvedValueOnce({ success: true }) // chat.rerollStream
 
     const state = createState({
       allMessages: ref([
@@ -240,7 +242,15 @@ describe('restoreAndRetry', () => {
 
     await restoreAndRetry(state, 1, 'cp_1', 'model-x', async () => {})
 
-    expect(mockSend).toHaveBeenCalledWith('retryStream', expect.objectContaining({ conversationId: 'conv_1' }))
+    expect(mockSend).toHaveBeenCalledWith('chat.rerollStream', expect.objectContaining({
+      conversationId: 'conv_1',
+      assistantNodeId: 'm1'
+    }))
+    // 不再调用破坏性删除 / 旧重试接口
+    expect(mockSend.mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
+    expect(mockSend.mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    // 分支图刷新标记置位（流结束后由 streamHandler 按会话消费）
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
     // 成功路径不重载历史
     expect(loadHistoryMock).not.toHaveBeenCalled()
   })
@@ -286,6 +296,8 @@ describe('restoreAndRetry', () => {
 describe('restoreAndDelete', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 清空未消费的 mockResolvedValueOnce，避免 Once 泄漏到后续测试
+    mockSend.mockReset()
   })
 
   it('deleteMessage 失败时设置错误并重载历史', async () => {
@@ -319,7 +331,7 @@ describe('restoreAndRetry（R3-#13：按 id 定位重算索引）', () => {
   it('cancel 期间数组前插消息后按 id 定位目标并重算索引', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockResolvedValueOnce({ success: true }) // deleteMessage
+      .mockResolvedValueOnce({ success: true }) // chat.rerollStream
 
     const state = createState({
       allMessages: ref([
@@ -338,17 +350,15 @@ describe('restoreAndRetry（R3-#13：按 id 定位重算索引）', () => {
       ]
     })
 
-    // deleteMessage 应使用 m1 的后端索引（1），而非前插后错位的下标
-    expect(mockSend).toHaveBeenCalledWith('deleteMessage', expect.objectContaining({ targetIndex: 1 }))
+    // reroll 应使用按 id 定位后的目标节点 m1（而非前插后错位的下标）
+    expect(mockSend).toHaveBeenCalledWith('chat.rerollStream', expect.objectContaining({ assistantNodeId: 'm1' }))
     // 本地切片保留到 m1 之前（m_new 与 m0 保留，m1 被截断），随后追加流式助手消息
     const ids = state.allMessages.value.map(m => m.id)
     expect(ids.slice(0, 2)).toEqual(['m_new', 'm0'])
     expect(state.allMessages.value[2].streaming).toBe(true)
-    // 成功路径仍触发重试
-    expect(mockSend).toHaveBeenCalledWith('retryStream', expect.objectContaining({ conversationId: 'conv_1' }))
   })
 
-  it('目标消息已不在数组中时中止（不发送删除/重试）', async () => {
+  it('目标消息已不在数组中时中止（不发送删除/reroll）', async () => {
     // 用基础实现（非 Once）：本测试不触发任何 IPC，避免未消费的 Once 泄漏到后续测试
     mockSend.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 })
 
@@ -366,7 +376,7 @@ describe('restoreAndRetry（R3-#13：按 id 定位重算索引）', () => {
     })
 
     expect(mockSend.mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
-    expect(mockSend.mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(mockSend.mock.calls.find(c => c[0] === 'chat.rerollStream')).toBeUndefined()
     expect(loadHistoryMock).not.toHaveBeenCalled()
   })
 })
@@ -521,15 +531,17 @@ describe('getCheckpointManifest（EX-11 / L-9）', () => {
   })
 })
 
-describe('restoreAndEdit', () => {
+describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 清空未消费的 mockResolvedValueOnce，避免 Once 泄漏到后续测试
+    mockSend.mockReset()
   })
 
-  it('成功后改写本地消息并调用 editAndRetryStream（无附件）', async () => {
+  it('成功后改写本地消息并调用 chat.editBranchStream（无附件）', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockResolvedValueOnce({ success: true }) // editAndRetryStream
+      .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
 
     const state = createState({
       allMessages: ref([
@@ -540,13 +552,12 @@ describe('restoreAndEdit', () => {
 
     await restoreAndEdit(state, 1, 'edited content', undefined, 'cp_1', 'model-x', async () => {})
 
-    const editCall = mockSend.mock.calls.find(c => c[0] === 'editAndRetryStream')
+    const editCall = mockSend.mock.calls.find(c => c[0] === 'chat.editBranchStream')
     expect(editCall).toBeDefined()
     expect(editCall![1]).toMatchObject({
       conversationId: 'conv_1',
-      messageIndex: 1,
-      preserveCheckpointId: 'cp_1',
-      newMessage: 'edited content',
+      userNodeId: 'm1',
+      newText: 'edited content',
       configId: 'cfg_1'
     })
     expect(editCall![1].attachments).toBeUndefined()
@@ -556,12 +567,14 @@ describe('restoreAndEdit', () => {
     expect(state.allMessages.value[2].role).toBe('assistant')
     expect(state.allMessages.value[2].streaming).toBe(true)
     expect(state.isStreaming.value).toBe(true)
+    // 分支图刷新标记置位（流结束后由 streamHandler 按会话消费）
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 
-  it('附件序列化为纯对象后透传', async () => {
+  it('附件仅更新本地窗口（chat.editBranchStream 无附件字段，不随 IPC 上送）', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockResolvedValueOnce({ success: true }) // editAndRetryStream
+      .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
 
     const state = createState({
       allMessages: ref([
@@ -575,17 +588,15 @@ describe('restoreAndEdit', () => {
     ]
     await restoreAndEdit(state, 1, 'edited', attachments, 'cp_1', 'model-x', async () => {})
 
-    const editCall = mockSend.mock.calls.find(c => c[0] === 'editAndRetryStream')
-    expect(editCall![1].attachments).toEqual([
-      { id: 'att_1', name: 'a.png', type: 'image', size: 10, mimeType: 'image/png', data: 'base64data', thumbnail: 'thumb' }
-    ])
+    const editCall = mockSend.mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall![1].attachments).toBeUndefined()
     expect(state.allMessages.value[1].attachments).toEqual(attachments)
   })
 
-  it('后端调用失败时重置流状态并重载历史 + 检查点（M-9）', async () => {
+  it('chat.editBranchStream 调用失败时设置错误、复位分支图标记并重载历史 + 检查点', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
-      .mockRejectedValueOnce(new Error('edit backend failed')) // editAndRetryStream
+      .mockRejectedValueOnce(new Error('edit backend failed')) // chat.editBranchStream
 
     const state = createState({
       allMessages: ref([
@@ -597,11 +608,47 @@ describe('restoreAndEdit', () => {
     await restoreAndEdit(state, 1, 'edited content', undefined, 'cp_1', 'model-x', async () => {})
 
     expect(state.error.value).not.toBeNull()
+    expect(state.error.value?.code).toBe('RESTORE_EDIT_ERROR')
     expect(state.isStreaming.value).toBe(false)
     expect(state.streamingMessageId.value).toBeNull()
+    // 分支图刷新标记复位（流未启动，不残留）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
     // M-9: 本地已截断改写而后端未变，重载恢复前后端一致
     expect(loadHistoryMock).toHaveBeenCalled()
     expect(loadCheckpointsMock).toHaveBeenCalled()
+  })
+
+  it('await restoreCheckpoint 期间数组前插消息后按 id 重定位目标（R3-#13 编辑同款）', async () => {
+    mockSend
+      .mockImplementationOnce(async () => {
+        // 模拟 restore 的 await 期间用户发送了新消息（数组前插）：目标 m1 下标从 1 变为 2
+        state.allMessages.value = [
+          createMessage({ id: 'm_new', role: 'user', content: 'new', backendIndex: 99 }),
+          state.allMessages.value[0],
+          state.allMessages.value[1]
+        ]
+        return { success: true, restored: 1, deleted: 0, skipped: 0 }
+      }) // checkpoint.restore
+      .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
+
+    const state = createState({
+      allMessages: ref([
+        createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+      ])
+    })
+
+    await restoreAndEdit(state, 1, 'edited content', undefined, 'cp_1', 'model-x', async () => {})
+
+    // 编辑分支应使用按 id 重定位后的目标节点 m1（而非错位的原下标 1 → 现在指向 m0）
+    const editCall = mockSend.mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({ userNodeId: 'm1', newText: 'edited content' })
+    // 本地改写落到 m1 上（下标 2），截断保留到 m1 为止（m_new 与 m0 保留），随后追加流式助手消息
+    const ids = state.allMessages.value.map(m => m.id)
+    expect(ids.slice(0, 3)).toEqual(['m_new', 'm0', 'm1'])
+    expect(state.allMessages.value[2].content).toBe('edited content')
+    expect(state.allMessages.value[3].streaming).toBe(true)
   })
 })
 
@@ -609,6 +656,8 @@ describe('restoreAndEdit', () => {
 describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 清空未消费的 mockResolvedValueOnce，避免 Once 泄漏到后续测试
+    mockSend.mockReset()
     clearPendingDirtyConfirm()
   })
 
@@ -704,10 +753,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
       if (command === 'checkpoint.restore') {
         return Promise.resolve({ success: true, restored: 1, deleted: 0, skipped: 0 })
       }
-      if (command === 'deleteMessage') {
-        return Promise.resolve({ success: true })
-      }
-      if (command === 'retryStream') {
+      if (command === 'chat.rerollStream') {
         return Promise.resolve({ success: true })
       }
       return Promise.resolve(undefined)
@@ -721,7 +767,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
       deleteUntrackedFiles: false,
       confirmedDiscardDirty: true
     })
-    expect(mockSend).toHaveBeenCalledWith('retryStream', expect.objectContaining({ conversationId: 'conv_1' }))
+    expect(mockSend).toHaveBeenCalledWith('chat.rerollStream', expect.objectContaining({ conversationId: 'conv_1' }))
     expect(pendingDirtyConfirm.value).toBeNull()
   })
 })

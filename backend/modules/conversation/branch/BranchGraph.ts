@@ -789,6 +789,131 @@ export function softDeleteNode(
     return next;
 }
 
+/**
+ * 决策 6：主历史删除后「软删目标节点及其后续整棵子树」（纯函数）。
+ *
+ * 与 softDeleteNode 的分工：
+ * - softDeleteNode 是候选删除语义——拒绝活跃路径上的节点（需先切换走，删除分支头不影响主历史）；
+ * - 本函数是「主历史已硬删除该点及之后消息」后的图同步——被删节点很可能正是活跃路径尾部，
+ *   因此**允许**软删活跃路径节点，并同步修正活跃指针（见下）。
+ *
+ * 级联范围（复用 TREE-09 软删语义）：目标节点 + 其全部后代（含非活跃候选子树）整体标记
+ * deleted + deletedAt，**不物理移除节点 / sidecar**——prune 物理清理前整棵子树可经 restoreNode
+ * 整体恢复；已软删子孙保留首次 deletedAt（幂等）。候选摘要同步标记（保留条目供前端灰显）。
+ *
+ * 活跃指针修正（保证 validate 不变量）：
+ * - 被删集合内所有指向（已删）子节点的 activeChildId 清空；
+ * - 集合外保留节点若 activeChildId 指向被删节点（父节点指向分支头等）一并清空；
+ * - 若 activeTailNodeId 落在被删集合内（锚点在活跃路径上 ⇒ 活跃尾必在其子树内），把活跃尾
+ *   回退到保留锚点：默认 = 锚点父节点；excludeNode 时 = 锚点自身（保留点，不删除）；
+ * - 根节点镜像（graph.activeChildId）经 syncRootMirror 同步。
+ *
+ * 根节点锚定（删除到对话开头，deleteToMessage(0) 等）：主历史已全部移除，任何
+ * 「保留全部软删节点」的图都不可再扩展（新消息插入需要根 / 活跃尾），因此整体重置为空图
+ * （createEmptyBranchGraph）——旧内容已随主历史硬删除，等价于重新开始。
+ *
+ * @param excludeNode 为 true 时只软删目标节点的后代（目标节点保留）——用于锚点消息
+ *   （functionResponse 等决策 8 并入所属节点的消息）不在图中、退化到「最后保留消息之后
+ *   所有后代」的场景。
+ * @returns 变更后的图 + 本次新标记软删的节点 id 等元信息；图未变化（节点缺失 / 已软删 /
+ *   无后代）时返回**原图引用**（调用方据此跳过落盘，R8c-P6 幂等）。
+ */
+export interface SoftDeleteSubtreeResult {
+    graph: ConversationBranchGraph;
+    /** 本次新标记软删的节点 id（含已软删子孙中保持原 deletedAt 的节点；resetToEmpty 时为全部旧节点 id） */
+    deletedNodeIds: string[];
+    /** 活跃尾是否被回退（被删集合包含原活跃尾） */
+    activeTailAdjusted: boolean;
+    /** 是否整体重置为空图（锚定根节点，整棵图随主历史移除） */
+    resetToEmpty: boolean;
+}
+
+export function softDeleteSubtreeFrom(
+    graph: ConversationBranchGraph,
+    nodeId: string,
+    options: { deletedAt?: number; excludeNode?: boolean } = {}
+): SoftDeleteSubtreeResult {
+    const noChange: SoftDeleteSubtreeResult = { graph, deletedNodeIds: [], activeTailAdjusted: false, resetToEmpty: false };
+    const excludeNode = options.excludeNode ?? false;
+    const anchor = graph.nodes[nodeId];
+    if (!anchor) {
+        return noChange; // 锚点不在图中（FR 消息 / 图未覆盖被删段）：无可同步，幂等
+    }
+    if (anchor.deleted) {
+        return noChange; // 已软删：其子树必然已整体软删（deleted 节点下不允许再插入新子节点），幂等
+    }
+    if (!excludeNode && anchor.parentId === null) {
+        // 锚定根节点：主历史已全部移除，重置为空图（唯一可继续扩展的有效形态）
+        return {
+            graph: createEmptyBranchGraph(),
+            deletedNodeIds: Object.keys(graph.nodes),
+            activeTailAdjusted: true,
+            resetToEmpty: true,
+        };
+    }
+    const deletedAt = options.deletedAt ?? Date.now();
+
+    // 收集目标子树（excludeNode 时 = 目标的所有后代，不含目标自身）
+    const toDelete = new Set<string>();
+    const stack = excludeNode
+        ? Object.values(graph.nodes).filter(n => n.parentId === nodeId).map(n => n.id)
+        : [nodeId];
+    while (stack.length > 0) {
+        const id = stack.pop()!;
+        if (toDelete.has(id)) {
+            continue;
+        }
+        toDelete.add(id);
+        for (const current of Object.values(graph.nodes)) {
+            if (current.parentId === id) {
+                stack.push(current.id);
+            }
+        }
+    }
+    if (toDelete.size === 0) {
+        return noChange; // excludeNode 且无后代：图未变化
+    }
+
+    const nodes: Record<string, ConversationBranchNode> = {};
+    for (const [id, current] of Object.entries(graph.nodes)) {
+        if (toDelete.has(id)) {
+            // 已软删子孙保留首次 deletedAt（幂等语义），未软删的标记为本次删除时间
+            const patched: ConversationBranchNode = {
+                ...current,
+                deleted: true,
+                deletedAt: current.deleted ? (current.deletedAt ?? deletedAt) : deletedAt,
+            };
+            // 子树整体软删：指向已删子节点的 activeChildId 全部清空（validate 不变量）
+            if (patched.activeChildId != null && toDelete.has(patched.activeChildId)) {
+                patched.activeChildId = null;
+            }
+            nodes[id] = patched;
+        } else {
+            // 集合外保留节点：若 activeChildId 指向被删节点（父节点指向分支头等），清空指针
+            nodes[id] = current.activeChildId != null && toDelete.has(current.activeChildId)
+                ? { ...current, activeChildId: null }
+                : current;
+        }
+    }
+
+    let next: ConversationBranchGraph = { ...graph, nodes };
+    // 活跃尾在被删集合内（锚点在活跃路径上 ⇒ 活跃尾在其子树内）：回退到保留锚点
+    let activeTailAdjusted = false;
+    if (next.activeTailNodeId !== null && toDelete.has(next.activeTailNodeId)) {
+        next.activeTailNodeId = excludeNode ? nodeId : (anchor.parentId ?? null);
+        activeTailAdjusted = true;
+    }
+    for (const id of toDelete) {
+        next = syncSummaryDeleted(next, id, deletedAt);
+    }
+    return {
+        graph: syncRootMirror(next),
+        deletedNodeIds: [...toDelete],
+        activeTailAdjusted,
+        resetToEmpty: false,
+    };
+}
+
 /** 候选摘要同步软删/恢复标记（内部辅助，复用 upsertCandidateSummary 的替换语义） */
 function syncSummaryDeleted(graph: ConversationBranchGraph, nodeId: string, deletedAt: number): ConversationBranchGraph {
     const summaries = graph.candidateSummaries ?? [];

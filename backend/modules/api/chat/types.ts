@@ -101,6 +101,11 @@ export interface ChatRequestData {
     promptModeId?: string;
 
     /**
+     * 消息来源。background_task 是系统生成的异步任务回执，不应被当作真实用户新回合。
+     */
+    source?: 'user' | 'background_task';
+
+    /**
      * 本次发送的动态上下文策略覆盖。
      */
     dynamicContextStrategyOverride?: DynamicContextStrategy;

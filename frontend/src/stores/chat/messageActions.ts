@@ -12,7 +12,6 @@ import { generateId } from '../../utils/format'
 import {
   createAndPersistConversation,
   MESSAGES_PAGE_SIZE,
-  loadHistory,
   loadCheckpoints,
   refreshCurrentConversationBuildSession,
   syncConversationWorkspaceUri
@@ -462,6 +461,7 @@ export async function sendMessage(
       hiddenFunctionResponse,
       promptModeId: state.currentPromptModeId.value,
       dynamicContextStrategyOverride: options?.dynamicContextStrategyOverride,
+      source: options?.source,
       streamId
     })
 
@@ -510,16 +510,17 @@ export async function retryLastMessage(
 }
 
 /**
- * retryFromMessage：deleteMessage 失败（resp.success=false 或 IPC 抛异常）后的统一恢复（FIX-C-2）。
+ * retryFromMessage：reroll 流启动失败（IPC 抛异常）后的统一恢复。
  *
- * 此时本地已截断窗口（slice + clearCheckpointsFromIndex），而后端历史未删；
- * 若继续 retryStream 会导致窗口/历史错位（幽灵或重复消息）。
- * 这里重载最后一页 + 检查点恢复前后端一致，并复位流式状态，中止本次重试。
+ * 此时本地已截断窗口（slice + clearCheckpointsFromIndex），而后端主历史可能未截断
+ * （rerollStream 未送达 / handler 同步抛错）；这里重载最后一页 + 检查点恢复前后端一致，
+ * 并复位流式状态与 reroll 分支图刷新标记，中止本次 reroll。
  */
-async function recoverAfterDeleteFailure(
+async function recoverAfterStreamStartFailure(
   state: ChatStoreState,
   originConvId: string
 ): Promise<void> {
+  state._pendingBranchRefreshAfterStream.value = null
   // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
   try {
     const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
@@ -532,16 +533,16 @@ async function recoverAfterDeleteFailure(
     state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
     rebuildMessageIndexById(state)
   } catch (reloadErr) {
-    console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
+    console.error('[messageActions] retryFromMessage: failed to reload history after reroll start failure:', reloadErr)
   }
 
-  // M-2: 失败重载历史后同步重载检查点——getMessagesPaged 只拉消息页，不重载 checkpoints，
+  // 失败重载历史后同步重载检查点——getMessagesPaged 只拉消息页，不重载 checkpoints，
   // 否则后端历史未删、检查点仍存在，而前端窗口只有消息没有存档条（前后端不一致）。
   if (state.currentConversationId.value === originConvId) {
     try {
       await loadCheckpoints(state)
     } catch (reloadErr) {
-      console.error('[messageActions] retryFromMessage: failed to reload checkpoints after delete failure:', reloadErr)
+      console.error('[messageActions] retryFromMessage: failed to reload checkpoints after reroll start failure:', reloadErr)
     }
   }
 
@@ -553,7 +554,11 @@ async function recoverAfterDeleteFailure(
 }
 
 /**
- * 从指定消息重试
+ * 从指定消息重试（TREE-01：主流程走 reroll——保留旧回答，生成新候选）。
+ *
+ * 语义变化：不再调用 deleteMessage 破坏性删除旧回答；后端 chat.rerollStream 会把旧回答
+ * 移入分支图 sidecar 并创建新候选（旧候选可切换回来，BranchSwitcherBar 显示 ‹ 2/2 ›）。
+ * 本地空占位（后端不存在）仍走 retryStream 兼容路径（决策 5）。
  */
 export async function retryFromMessage(
   state: ChatStoreState,
@@ -647,41 +652,12 @@ export async function retryFromMessage(
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
 
+  // TREE-01：reroll 语义——本地截断窗口（旧回答从活跃路径移除，后端 startReroll 会将其
+  // 保留进分支图 sidecar 并截断主历史），不再调用 deleteMessage（破坏性删除已废弃）。
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
 
-  try {
-    const resp = await sendToExtension<any>('deleteMessage', {
-      conversationId: originConvId,
-      targetIndex: backendIndex
-    })
-
-    if (!resp?.success) {
-      console.error('[messageActions] retryFromMessage: backend deleteMessage returned error:', resp)
-      const err = resp?.error
-      safeSetError(state, originConvId, {
-        code: err?.code || 'DELETE_ERROR',
-        message: err?.message || 'Failed to delete messages in backend'
-      })
-
-      await recoverAfterDeleteFailure(state, originConvId)
-      return
-    }
-  } catch (err: any) {
-    // FIX-C-2：deleteMessage 的 IPC 抛异常与 resp.success=false 同等对待——
-    // 本地已截断窗口（slice + clearCheckpointsFromIndex）而后端历史未删，
-    // 必须重载最后一页 + 检查点并复位流式状态后中止重试，不能带着错位状态继续 retryStream。
-    console.error('[messageActions] retryFromMessage: deleteMessage threw, aborting retry:', err)
-    safeSetError(state, originConvId, {
-      code: err.code || 'DELETE_ERROR',
-      message: err.message || 'Failed to delete messages in backend'
-    })
-    await recoverAfterDeleteFailure(state, originConvId)
-    return
-  }
-
-  
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
     id: assistantMessageId,
@@ -699,29 +675,37 @@ export async function retryFromMessage(
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
-  
+
+  // 置位：流结束（complete/error/cancelled）后刷新分支图，
+  // 让 BranchSwitcherBar 显示新候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
+  state._pendingBranchRefreshAfterStream.value = originConvId
+
   try {
     const modelOverride = resolveConversationModelOverride(state)
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    await sendToExtension('chat.rerollStream', {
       conversationId: originConvId,
+      // 目标 assistant 消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
+      assistantNodeId: targetMessageId,
       configId: state.configId.value,
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
+    // 本次 reroll 已中止：无论会话是否切换，先复位分支图刷新标记，避免后续终结事件误消费
+    state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
         code: err.code || 'RETRY_ERROR',
         message: err.message || 'Retry failed'
       })
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
+    }
+    // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，重载原会话历史会污染当前窗口（与 editAndRetry 同款）
+    if (validateSessionIdentity(state, originConvId)) {
+      await recoverAfterStreamStartFailure(state, originConvId)
     }
   } finally {
     state.isLoading.value = false
@@ -792,9 +776,17 @@ export const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
 
 /**
  * 错误是否可重试（H-3）：仅流式生成类错误码允许通过错误条“重试”。
+ *
+ * REROLL_ERROR / EDIT_BRANCH_ERROR（reroll/编辑分支流失败，方案 B）：可重试性取决于
+ * 底层 ChannelError.type（后端流式失败时透传）——type 属于可重试集合成员时判定可重试；
+ * 无 type（reroll 特有错误，如 REROLL_FINISH_SYNC_FAILED，不属于底层流错误）或 type 不可重试
+ * （CONFIG_ERROR / VALIDATION_ERROR / CANCELLED_ERROR 等）时不可重试。
  */
 export function isRetryableError(error: ErrorInfo | null | undefined): boolean {
   if (!error) return false
+  if (error.code === 'REROLL_ERROR' || error.code === 'EDIT_BRANCH_ERROR') {
+    return !!error.type && RETRYABLE_ERROR_CODES.has(error.type)
+  }
   return RETRYABLE_ERROR_CODES.has(error.code)
 }
 
@@ -812,7 +804,7 @@ export async function retryAfterError(
   // 只有可重试错误码才继续；恢复类结果由独立提示（MessageList restoreNotice）展示。
   // 注：needsContinueButton 仅在 error 为空时成立，因此“继续对话”不受此守卫影响。
   const currentError = state.error.value
-  if (currentError && !RETRYABLE_ERROR_CODES.has(currentError.code)) {
+  if (currentError && !isRetryableError(currentError)) {
     return
   }
 
@@ -893,7 +885,7 @@ export async function retryAfterError(
 }
 
 /**
- * 编辑并重发消息
+ * 编辑并重发消息（TREE-03：主流程走 chat.editBranchStream——创建编辑候选，不覆盖原消息）。
  */
 export async function editAndRetry(
   state: ChatStoreState,
@@ -954,56 +946,46 @@ export async function editAndRetry(
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
-  
-  const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
-    ? attachments.map(att => ({
-        id: att.id,
-        name: att.name,
-        type: att.type,
-        size: att.size,
-        mimeType: att.mimeType,
-        data: att.data || '',
-        thumbnail: att.thumbnail
-      }))
-    : undefined
-  
+
+  // 置位：流结束（complete/error/cancelled）后刷新分支图，
+  // 让 BranchSwitcherBar 显示新编辑候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
+  state._pendingBranchRefreshAfterStream.value = originConvId
+
   try {
     const modelOverride = resolveConversationModelOverride(state)
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('editAndRetryStream', {
+    // TREE-03：主流程走 chat.editBranchStream——后端创建编辑候选（新 user 节点），
+    // 原消息及其子树保留进分支图 sidecar（决策 7/10：不覆盖原消息、失败可切回）。
+    // 注意：编辑分支接口无附件字段（后端 EditBranchRequestData 仅文本 parts），
+    // 附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
+    await sendToExtension('chat.editBranchStream', {
       conversationId: originConvId,
-      messageIndex: backendMessageIndex,
-      newMessage,
-      attachments: attachmentData,
+      // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
+      userNodeId: targetMessageId,
+      newText: newMessage,
       configId: state.configId.value,
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
+    // 编辑分支流启动失败（IPC 抛异常）：后端可能未创建编辑候选/未截断主历史，
+    // 而本地窗口已截断并改写——重载最后一页 + 检查点恢复前后端一致，
+    // 并复位流式状态与分支图刷新标记（与 reroll 的 recoverAfterStreamStartFailure 同模式）。
+    // 错误条仍显示 EDIT_RETRY_ERROR（可重试），但重试基于重载后的真实后端历史。
+    // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
+    state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
         code: err.code || 'EDIT_RETRY_ERROR',
         message: err.message || 'Edit and retry failed'
       })
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
-      // FIX-C-3（M-9 同款）：IPC 失败时本地已截断窗口并改写目标消息内容，而后端历史未变。
-      // 会话未切换时重载历史 + 检查点恢复前后端一致，避免幽灵不一致状态；
-      // 此时错误条仍显示 EDIT_RETRY_ERROR（可重试），但重试基于重载后的真实后端历史，
-      // 不会带着错位的本地窗口继续生成。
-      if (validateSessionIdentity(state, originConvId)) {
-        try {
-          await loadHistory(state)
-          await loadCheckpoints(state)
-        } catch (reloadErr) {
-          console.error('[messageActions] Failed to reload after editAndRetry failure:', reloadErr)
-        }
-      }
+    }
+    // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，避免跨会话污染
+    if (validateSessionIdentity(state, originConvId)) {
+      await recoverAfterStreamStartFailure(state, originConvId)
     }
   } finally {
     state.isLoading.value = false

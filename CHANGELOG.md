@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-08-04
+
 ### Merged
   - 同步合入上游 1.4.1（大规模代码审查修复：并发/安全/性能/一致性加固），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量：
     - MCP：StdioClient spawn `error` 立即清理并拒绝 pending 请求（不再挂满超时）+ stdin/stdout/stderr 流 error 监听 + stderr 64KB 上限；HttpClient SSE 按请求 id 匹配与多行 `data:` 合并、超时覆盖 body 读取与 sendNotification、disconnect 中止进行中请求（保留 fork 的 16MB 缓冲区上限）
@@ -16,6 +18,13 @@
     - Diff 预览：`diffContentId` 白名单校验统一收敛到 `isValidDiffContentId`
     - media 工具：generate_image / remove_background 输入输出统一走 `resolveFileToolPathWithInfo` + 工作区外访问审批流（fork 的 `ensureMediaPathsSafe` 工作区护栏保留，配套测试适配）
     - 前端：`sendToExtension` 条件 JSON 往返（纯 JSON 大载荷不再双份序列化）；设置语言补 'ja'；声音去重与 todo 状态集合容量上限
+  - 同步合入上游 150a287（分支 reroll/编辑前端主流程接线、删除消息同步分支图、后台回执上下文骤降修复、子代理工具本地化），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量：
+    - 前端 reroll 主流程接线：消息「重试」与「回档并重试」从破坏性删除（deleteMessage + retryStream）切换为 `chat.rerollStream`（旧回答保留进分支图 sidecar，新候选生成后可经 BranchSwitcherBar 的「‹ 2/2 ›」切换回）；reroll 流结束（complete/error/cancelled）后自动刷新分支图；重试确认框三语文案同步为「保留当前回答、生成新版本」语义；`chat.rerollStream` 加入无超时请求白名单
+    - 编辑用户消息分支化：消息「编辑」与「回档并编辑」从破坏性 `editAndRetryStream`（覆盖原消息）切换为 `chat.editBranchStream`（后端创建编辑候选并截断主历史，原消息及其子树保留进分支图 sidecar）；本地窗口改写目标消息 + 截断 + 流式占位 + 分支图刷新标记；流启动失败时重载最后一页 + 检查点恢复前后端一致；附件仅更新本地窗口（编辑分支接口无附件字段）
+    - 子代理设置页工具白名单/黑名单列表工具名称与悬停描述接入三语 i18n：新增公共模块 `frontend/src/utils/toolLocalization.ts`（工具显示名/描述本地化，缺失时机械转写回退原文），工具设置页与子代理设置页共用同一套条目，MCP 外部工具自动回退英文原名
+    - 删除消息同步软删分支图子树：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或未注册分支服务时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
+    - 修复：`_pendingBranchRefreshAfterStream` 标记改为按会话隔离（会话切换后其他会话的终结 chunk 不再误消费并误刷分支图，切回原会话后由该会话的终结 chunk 正确消费）；`retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点）；分支流失败错误条可重试（后端把底层 `ChannelError.type`（API/NETWORK/TIMEOUT/PARSE 等）透传到错误 chunk，`isRetryableError` 按底层 type 判定，`REROLL_FINISH_SYNC_FAILED` 等 reroll 特有错误或 CONFIG/VALIDATION/CANCELLED 不显示重试）；主聊天发起的 diff 预览同样跟随主聊天所在列（`diffViewColumn` + `openDiffView` 后 `moveActiveEditor` 校正）
+    - 后台回执上下文骤降修复（约 35k token → 2k token）：新增后端 `chat.awaitConversationIdle`（`StreamAbortManager.waitForIdle()`），回执发送前以运行控制器为生命周期唯一事实来源、等待旧流真正退出（不再依靠延时或前端瞬时 `isStreaming` 状态猜测），等待期间切换会话或启动新流则重新判定；后台回执以 `source: 'background_task'` 从前端请求贯通到后端历史、`isUserInput: false` 保存，合法裁剪起点、回合识别、当前回合定位、思考范围与 token 累加统一复用 `isRealUserMessage()`，`source` 在渠道 formatter 发请求前剥离、历史重载时透传回前端保持后台任务卡片样式
 
 ## [1.4.1] - 2026-08-04
 

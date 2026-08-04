@@ -55,4 +55,29 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         const controller = manager.create('conv_c');
         expect(controller.signal.aborted).toBe(false);
     });
+
+    it('waitForIdle 只在匹配控制器被 delete 后释放', async () => {
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv_idle');
+        let settled = false;
+        const waiting = manager.waitForIdle('conv_idle').then(() => { settled = true; });
+
+        manager.delete('conv_idle', new AbortController());
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        manager.delete('conv_idle', controller);
+        await waiting;
+        expect(settled).toBe(true);
+    });
+
+    it('waitForIdle 在会话原本空闲时立即完成，cancelAll 也会释放等待者', async () => {
+        const manager = new StreamAbortManager();
+        await expect(manager.waitForIdle('conv_free')).resolves.toBeUndefined();
+
+        manager.create('conv_cancel_all');
+        const waiting = manager.waitForIdle('conv_cancel_all');
+        manager.cancelAll();
+        await expect(waiting).resolves.toBeUndefined();
+    });
 });
