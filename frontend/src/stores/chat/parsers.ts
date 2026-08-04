@@ -228,6 +228,17 @@ function extractToolUsages(parts: Content['parts']): ToolUsage[] {
 }
 
 /**
+ * BR-01：读取后端透传的稳定节点 id（content.id）。
+ *
+ * 前端 Content 类型暂未声明该字段（文件边界限制），此处用安全读取避免类型报错；
+ * 旧后端/旧消息无 id 时返回 undefined，调用方回退 generateId。
+ */
+function getContentNodeId(content: Content): string | undefined {
+  const id = (content as { id?: unknown }).id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/**
  * 将 Content 转换为 Message
  */
 export function contentToMessage(content: Content, id?: string): Message {
@@ -242,7 +253,9 @@ export function contentToMessage(content: Content, id?: string): Message {
   const role = content.role === 'model' ? 'assistant' : 'user'
   
   const msg: Message = {
-    id: id || generateId(),
+    // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
+    // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
+    id: id || getContentNodeId(content) || generateId(),
     role,
     content: text,
     timestamp: Date.now(),
@@ -341,7 +354,9 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
   const isFunctionResponse = content.isFunctionResponse === true || isOnlyFunctionResponse(content)
   
   const msg: Message = {
-    id: id || generateId(),
+    // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
+    // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
+    id: id || getContentNodeId(content) || generateId(),
     role,
     content: text,
     // 使用后端存储的时间戳，如果没有则为 0（前端会判断不显示）

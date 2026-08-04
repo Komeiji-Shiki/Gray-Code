@@ -45,7 +45,7 @@ const READ_ONLY_TOOLS = [
 ];
 
 /** 写类工具集合（研究模板通过黑名单排除） */
-const WRITE_TOOLS = [
+export const WRITE_TOOLS = [
     'write_file',
     'apply_diff',
     'insert_code',

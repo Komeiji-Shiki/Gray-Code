@@ -79,6 +79,52 @@ export interface ConfigInfo {
   maxContextTokens?: number
 }
 
+// ============ 树状分支（TREE-10 候选切换器数据源） ============
+
+/** 分支节点（后端 ConversationBranchNode 的前端投影，仅保留 UI 所需字段） */
+export interface BranchNodeData {
+  id: string
+  parentId: string | null
+  role: 'user' | 'model' | 'system'
+  kind?: 'normal' | 'reroll' | 'edit' | 'continue' | 'imported' | 'exported'
+  createdAt?: number
+  timestamp?: number
+  modelVersion?: string
+  activeChildId?: string | null
+  label?: string
+  deleted?: boolean
+  /** 轻量内容投影（仅用于候选摘要展示） */
+  parts?: Array<{ text?: string; functionCall?: { name?: string } }>
+  /** BCP-04：是否绑定工作区存档（后端 getBranchGraph/switchBranchCandidate 响应富化） */
+  hasWorkspaceState?: boolean
+  /** BCP-04：root→该节点路径上是否执行过写工具（后端富化，决策 1 判据之一） */
+  wroteToWorkspace?: boolean
+}
+
+/** 候选摘要（后端 BranchCandidateSummary 投影） */
+export interface BranchCandidateSummaryData {
+  nodeId: string
+  parentId: string | null
+  kind?: string
+  createdAt?: number
+  timestamp?: number
+  modelVersion?: string
+  label?: string
+  preview?: string
+  deleted?: boolean
+}
+
+/** 分支图（后端 ConversationBranchGraph 投影，TREE-10 数据源） */
+export interface BranchGraphData {
+  version?: number
+  rootNodeId: string | null
+  activeTailNodeId: string | null
+  activeChildId?: string | null
+  nodes: Record<string, BranchNodeData>
+  candidateSummaries?: BranchCandidateSummaryData[]
+  exportedFrom?: { conversationId: string; nodeId: string }
+}
+
 // ============ Build（Plan 执行）相关 ============
 
 export type BuildStatus = 'running' | 'done'
@@ -255,6 +301,15 @@ export interface ChatStoreState {
    * 随消息写入维护的权威索引，让 getToolResponseById 退化为纯 O(1) 查表。
    */
   toolResponseIndex: Ref<Map<string, number>>
+
+  // ============ 树状分支（TREE-10） ============
+
+  /** 当前对话的分支图（null = 无图 / 线性模式 / 损坏降级） */
+  branchGraph: Ref<BranchGraphData | null>
+  /** 分支图拉取中 */
+  branchGraphLoading: Ref<boolean>
+  /** 分支切换 / 候选删除进行中（TREE-07：切换期间锁定切换器交互） */
+  isSwitchingBranch: Ref<boolean>
 }
 
 /**
@@ -347,6 +402,8 @@ export interface ConversationSessionSnapshot {
   currentPromptModeId: string
   /** 工具响应缓存快照（toolCallId -> response 条目数组，用于新 Map 重建） */
   toolResponseCache: Array<[string, Record<string, unknown>]>
+  /** 分支图快照（TREE-12：切标签页回来恢复分支视图状态；null = 无图/线性模式） */
+  branchGraph: BranchGraphData | null
 }
 
 /**

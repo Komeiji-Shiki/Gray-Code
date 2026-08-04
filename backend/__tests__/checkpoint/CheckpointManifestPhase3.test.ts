@@ -98,6 +98,9 @@ async function createHarness(
     let metadataWriteChain: Promise<unknown> = Promise.resolve();
     const conversationManager = {
         getMetadata: jest.fn().mockImplementation(async () => sharedMetadata),
+        getCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string) => {
+            return (sharedMetadata.custom as Record<string, unknown>)[key];
+        }),
         setCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string, value: unknown) => {
             (sharedMetadata.custom as Record<string, unknown>)[key] = value;
         }),
@@ -663,7 +666,9 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             const harness = await createHarness(workspaceRoot, storageRoot, [orphan]);
             const restore = await harness.manager.restoreCheckpoint('conv-1', 'cp-orphan');
             expect(restore.success).toBe(false);
-            expect(restore.error).toContain('manifest not found');
+            // CP-I18N-1: 错误串统一走 t()，文案随语言包变化，这里只断言“给出显式错误”
+            expect(restore.error).toBeDefined();
+            expect(restore.error!.length).toBeGreaterThan(0);
             expect(restore.restored).toBe(0);
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });

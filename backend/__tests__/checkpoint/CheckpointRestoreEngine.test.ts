@@ -8,6 +8,7 @@ import {
     type RestoreChainEntry,
     type RestoreTargetState
 } from '../../modules/checkpoint/CheckpointRestoreEngine';
+import { hashFileStreaming } from '../../modules/checkpoint/fileHashing';
 import {
     createRuntimeWorkspaceRoots,
     createWorkspaceScopedPath,
@@ -20,7 +21,7 @@ import {
  * 覆盖：
  * - 完整备份恢复（文件 + 空目录）
  * - 增量链合并（最新节点覆盖旧节点）
- * - 删除多余文件与受保护路径
+ * - 删除多余文件与受保护路径（含 M-3 目录级前缀保护：目录条目保护其子树）
  * - missing_in_chain / hash_mismatch 失败清单
  * - 旧格式（相对路径）单根兼容
  */
@@ -534,6 +535,232 @@ describe('CheckpointRestoreEngine', () => {
             );
             expect(resultConfirmed.success).toBe(true);
             await expect(fs.access(path.join(ctx.workspaceDir, 'newdir'))).rejects.toBeTruthy();
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-DUP-1: restore hashing converges to the shared hashFileStreaming implementation', async () => {
+        const ctx = await setupContext();
+        try {
+            await writeFile(ctx.workspaceDir, 'a.txt', 'current');
+
+            const chain = [await createFullBackup(ctx, 'cp_full', { 'a.txt': 'backup content' })];
+            const target: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('backup content') },
+                emptyDirs: []
+            };
+
+            // 备份文件经共享 hashFileStreaming 计算应与声明哈希一致
+            const backupPath = path.join(ctx.checkpointsDir, 'cp_full', ctx.roots[0].id, 'a.txt');
+            expect(await hashFileStreaming(backupPath)).toBe(md5('backup content'));
+
+            // 引擎内部用同一共享实现校验备份内容：若实现漂移（算法/读取差异），
+            // 备份哈希与声明不一致会报 hash_mismatch，恢复必然失败
+            const current = await collectCurrentState(ctx);
+            const result = await restoreWorkspaceSnapshot(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                target,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            expect(result.success).toBe(true);
+            expect(await readWorkspaceFile(ctx, 'a.txt')).toBe('backup content');
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-ORDER-1: does not delete existing files when restore copy fails', async () => {
+        const ctx = await setupContext();
+        try {
+            // 工作区：ghost.txt（目标要求恢复、备份缺失 → 复制失败）+ extra.txt（多余文件，旧顺序会先被删除）
+            await writeFile(ctx.workspaceDir, 'ghost.txt', 'user content');
+            await writeFile(ctx.workspaceDir, 'extra.txt', 'extra');
+
+            // 备份目录声明了 ghost.txt 但文件不存在（missing_in_chain）
+            const chain = [await createFullBackup(ctx, 'cp_full', {})];
+            chain[0].fileHashes![scoped(ctx, 'ghost.txt')] = md5('declared');
+
+            const target: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'ghost.txt')]: md5('declared') },
+                emptyDirs: []
+            };
+
+            const current = await collectCurrentState(ctx);
+            const result = await restoreWorkspaceSnapshot(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                target,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            // 复制阶段失败 → 整体失败，删除阶段被跳过（CP-ORDER-1）
+            expect(result.success).toBe(false);
+            expect(result.failures).toEqual([
+                { path: scoped(ctx, 'ghost.txt'), reason: 'missing_in_chain' }
+            ]);
+            expect(result.deleted).toBe(0);
+            // 用户当前文件保持完整：目标文件未被覆盖，本可删除的 extra.txt 也未被删除，
+            // 不存在「已删未补」的破坏性中间态
+            await expect(readWorkspaceFile(ctx, 'ghost.txt')).resolves.toBe('user content');
+            await expect(readWorkspaceFile(ctx, 'extra.txt')).resolves.toBe('extra');
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PROG-1: deletion phase reports progress covering the full restore', async () => {
+        const ctx = await setupContext();
+        try {
+            // 恢复 2 个文件 + 删除 1 个多余文件 → total 应为 3，进度须覆盖删除阶段
+            await writeFile(ctx.workspaceDir, 'src/main.ts', 'changed');
+            await writeFile(ctx.workspaceDir, 'extra.txt', 'should be deleted');
+
+            const chain = [await createFullBackup(ctx, 'cp_full', {
+                'src/main.ts': 'original',
+                'src/lib.ts': 'lib'
+            })];
+            const target: RestoreTargetState = {
+                fileHashes: {
+                    [scoped(ctx, 'src/main.ts')]: md5('original'),
+                    [scoped(ctx, 'src/lib.ts')]: md5('lib')
+                },
+                emptyDirs: []
+            };
+
+            const current = await collectCurrentState(ctx);
+            const progressCalls: Array<[number, number]> = [];
+            const result = await restoreWorkspaceSnapshot(
+                {
+                    checkpointsDir: ctx.checkpointsDir,
+                    roots: ctx.roots,
+                    onProgress: (processed, total) => progressCalls.push([processed, total])
+                },
+                chain,
+                target,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.deleted).toBe(1);
+            expect(result.restored).toBe(2);
+
+            // total 覆盖复制 + 删除全量（CP-PROG-1）
+            const expectedTotal = 2 + 1;
+            expect(progressCalls.length).toBe(3);
+            for (const [processed, total] of progressCalls) {
+                expect(total).toBe(expectedTotal);
+                expect(processed).toBeGreaterThan(0);
+                expect(processed).toBeLessThanOrEqual(expectedTotal);
+            }
+            // 进度推进到删除阶段（存在 processed > 复制文件数的回调），并最终覆盖全量
+            expect(progressCalls.some(([processed]) => processed > 2)).toBe(true);
+            expect(progressCalls[progressCalls.length - 1]).toEqual([expectedTotal, expectedTotal]);
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-3 dir-level: computeRestorePlan protects directory-prefix descendants without over-protecting siblings', async () => {
+        const ctx = await setupContext();
+        try {
+            const target: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'src/main.ts')]: md5('v1') },
+                emptyDirs: []
+            };
+            // 当前工作区：快照时整目录被排除的 dist/ 内部文件（放宽规则后进入 currentHashes），
+            // 同名前缀兄弟目录 dist-other/、文件级保护条目 secret.log 的邻居 secret.log.bak
+            const current = {
+                [scoped(ctx, 'src/main.ts')]: md5('v2'),
+                [scoped(ctx, 'dist/app.js')]: md5('x'),
+                [scoped(ctx, 'dist/sub/deep.js')]: md5('y'),
+                [scoped(ctx, 'dist-other/a.js')]: md5('z'),
+                [scoped(ctx, 'secret.log')]: md5('s'),
+                [scoped(ctx, 'secret.log.bak')]: md5('b')
+            };
+
+            const plan = computeRestorePlan(
+                {
+                    checkpointsDir: ctx.checkpointsDir,
+                    roots: ctx.roots,
+                    // 目录级排除条目（manifest.excluded 只记录目录自身）+ 文件级排除条目
+                    protectedScopedPaths: new Set([
+                        scoped(ctx, 'dist'),
+                        scoped(ctx, 'secret.log')
+                    ]),
+                    deletableScopedPaths: new Set([scoped(ctx, 'src/main.ts')])
+                },
+                [],
+                target,
+                current,
+                [scoped(ctx, 'dist/empty-dir'), scoped(ctx, 'other-empty')]
+            );
+
+            // dist/ 子树内文件受前缀保护：不进 toDelete / untrackedToDelete
+            // 文件级条目只精确保护自身：secret.log.bak（无 `/` 边界）与 dist-other/ 不受保护
+            expect(plan.untrackedToDelete).toEqual([
+                scoped(ctx, 'dist-other/a.js'),
+                scoped(ctx, 'secret.log.bak')
+            ]);
+            expect(plan.toDelete).toEqual([]);
+            // 受保护目录下的空目录同样受前缀保护；其余空目录进入 untrackedEmptyDirs
+            expect(plan.untrackedEmptyDirs).toEqual([scoped(ctx, 'other-empty')]);
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-3 dir-level: restore keeps files and empty dirs under a protected directory even when untracked deletion is confirmed', async () => {
+        const ctx = await setupContext();
+        try {
+            await writeFile(ctx.workspaceDir, 'src/main.ts', 'v2');
+            await writeFile(ctx.workspaceDir, 'dist/app.js', 'build');
+            await writeFile(ctx.workspaceDir, 'dist/sub/deep.js', 'build');
+            await writeFile(ctx.workspaceDir, 'extra.txt', 'untracked');
+            await fs.mkdir(path.join(ctx.workspaceDir, 'dist', 'empty-dir'), { recursive: true });
+            await fs.mkdir(path.join(ctx.workspaceDir, 'orphan-dir'), { recursive: true });
+
+            const chain = [await createFullBackup(ctx, 'cp_full', { 'src/main.ts': 'v1' })];
+            const target: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'src/main.ts')]: md5('v1') },
+                emptyDirs: []
+            };
+            const current = await collectCurrentState(ctx);
+
+            const result = await restoreWorkspaceSnapshot(
+                {
+                    checkpointsDir: ctx.checkpointsDir,
+                    roots: ctx.roots,
+                    // 快照时整目录被排除：manifest.excluded 只记录 `ws_x/dist` 一条
+                    protectedScopedPaths: new Set([scoped(ctx, 'dist')]),
+                    deleteUntrackedFiles: true
+                },
+                chain,
+                target,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            expect(result.success).toBe(true);
+            // 只删除真正快照后新建的 extra.txt（dist/ 内文件受前缀保护）
+            expect(result.deleted).toBe(1);
+            await expect(readWorkspaceFile(ctx, 'src/main.ts')).resolves.toBe('v1');
+            await expect(fs.access(path.join(ctx.workspaceDir, 'dist/app.js'))).resolves.toBeUndefined();
+            await expect(fs.access(path.join(ctx.workspaceDir, 'dist/sub/deep.js'))).resolves.toBeUndefined();
+            // 受保护目录下的空目录保留；快照后新建的空目录被清理
+            await expect(fs.access(path.join(ctx.workspaceDir, 'dist/empty-dir'))).resolves.toBeUndefined();
+            await expect(fs.access(path.join(ctx.workspaceDir, 'orphan-dir'))).rejects.toBeTruthy();
+            await expect(fs.access(path.join(ctx.workspaceDir, 'extra.txt'))).rejects.toThrow();
         } finally {
             await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
             await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });

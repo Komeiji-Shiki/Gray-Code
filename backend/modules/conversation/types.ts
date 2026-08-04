@@ -329,6 +329,24 @@ export interface Content {
     index?: number;
     
     /**
+     * 稳定消息节点 ID（BR-01）
+     *
+     * - 新写入的消息由 ConversationManager 统一生成（ensureNodeId）；
+     * - 旧历史缺失时由 BR-02 惰性迁移按确定性规则补齐（幂等：同一历史多次迁移产出同一 ID 集合）；
+     * - 树状分支 API 使用此 ID 定位消息节点，数组下标仅作为当前活跃路径的显示位置；
+     * - 后端内部字段：formatHistoryForAPI 白名单过滤，不会发送给模型。
+     */
+    id?: string;
+    
+    /**
+     * 父消息节点 ID（BR-01）
+     *
+     * 主历史是线性活跃路径：parentId = 前一条消息的 id（首条为 null）。
+     * 旧历史迁移时按数组顺序补齐线性 parentId。
+     */
+    parentId?: string | null;
+    
+    /**
      * 模型版本（仅 model 消息有值）
      *
      * 例如: "gemini-2.5-flash", "gpt-5o"

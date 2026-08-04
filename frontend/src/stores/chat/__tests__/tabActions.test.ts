@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'
-import { closeTab, switchTab } from '../tabActions'
-import type { ChatStoreState } from '../types'
+import {
+  closeTab,
+  switchTab,
+  snapshotCurrentSession,
+  restoreSessionFromSnapshot,
+  resetConversationState
+} from '../tabActions'
+import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 
 /** Creates a minimal mock state with all fields used by tabActions */
 function mockState(): ChatStoreState {
@@ -49,8 +55,19 @@ function mockState(): ChatStoreState {
     openTabs: ref([]),
     activeTabId: ref(null),
     sessionSnapshots: ref(new Map()),
-    backgroundStreamBuffers: ref(new Map())
+    backgroundStreamBuffers: ref(new Map()),
+    branchGraph: ref(null),
+    branchGraphLoading: ref(false),
+    isSwitchingBranch: ref(false)
   } as unknown as ChatStoreState
+}
+
+function makeNode(id: string, parentId: string | null, overrides: Partial<BranchNodeData> = {}): BranchNodeData {
+  return { id, parentId, role: 'model', createdAt: 0, ...overrides }
+}
+
+function makeGraph(nodes: Record<string, BranchNodeData>, activeTailNodeId: string): BranchGraphData {
+  return { version: 1, rootNodeId: 'u1', activeTailNodeId, nodes }
 }
 
 function makeQueuedMessage(id: string, conversationId: string | null) {
@@ -122,5 +139,81 @@ describe('tabActions snapshot lifecycle', () => {
     expect(state.activeTabId.value).toBe('tab-1')
     expect(state.openTabs.value.map(t => t.id)).toEqual(['tab-1'])
     expect(state.sessionSnapshots.value.has('tab-2')).toBe(false)
+  })
+})
+
+
+describe('tabActions branchGraph snapshot（TREE-12）', () => {
+  it('snapshotCurrentSession 保存 branchGraph 快照', () => {
+    const state = mockState()
+    const graph = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+    state.currentConversationId.value = 'conv-1'
+    state.branchGraph.value = graph
+
+    const snapshot = snapshotCurrentSession(state)
+
+    expect(snapshot.branchGraph).toEqual(graph)
+  })
+
+  it('switchTab 快照当前标签页分支图，切回后恢复分支视图状态', () => {
+    const state = mockState()
+    const graphA = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+    const graphB = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user' }), b1: makeNode('b1', 'u1') },
+      'b1'
+    )
+    state.openTabs.value = [
+      { id: 'tab-1', conversationId: 'conv-1', title: 'A', isStreaming: false },
+      { id: 'tab-2', conversationId: 'conv-2', title: 'B', isStreaming: false }
+    ]
+    state.activeTabId.value = 'tab-1'
+    state.currentConversationId.value = 'conv-1'
+    state.branchGraph.value = graphA
+
+    // A → B：A 的分支图进快照，B 恢复自己的分支图
+    switchTab(state, 'tab-2', vi.fn())
+    expect(state.sessionSnapshots.value.get('tab-1')!.branchGraph).toEqual(graphA)
+
+    state.branchGraph.value = graphB
+    state.currentConversationId.value = 'conv-2'
+
+    // B → A：A 的分支图恢复回来
+    switchTab(state, 'tab-1', vi.fn())
+    expect(state.branchGraph.value).toEqual(graphA)
+    expect(state.currentConversationId.value).toBe('conv-1')
+  })
+
+  it('restoreSessionFromSnapshot：旧快照无 branchGraph 字段时回退 null', () => {
+    const state = mockState()
+    const snapshot = snapshotCurrentSession(state)
+    const legacy = { ...snapshot } as any
+    delete legacy.branchGraph
+
+    state.branchGraph.value = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+
+    restoreSessionFromSnapshot(state, legacy)
+
+    expect(state.branchGraph.value).toBeNull()
+  })
+
+  it('resetConversationState 清空 branchGraph（新空白标签页无分支图）', () => {
+    const state = mockState()
+    state.branchGraph.value = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+
+    resetConversationState(state)
+
+    expect(state.branchGraph.value).toBeNull()
   })
 })

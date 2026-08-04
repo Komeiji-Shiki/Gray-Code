@@ -6,954 +6,168 @@
  * 1. 启用/禁用存档点功能
  * 2. 配置哪些工具需要在执行前后创建备份
  * 3. 设置最大存档点数量
+ *
+ * 拆分说明（S2 批次，纯重构）：
+ * - useCheckpointConfig：配置加载/保存（H-1/H-2）+ 消息/工具开关
+ * - useCheckpointExclusion：排除配置（EX-08/09）+ 排除预览
+ * - useCheckpointCleanup：存档点清理/批量管理（M-6）
+ * - useCheckpointOperationProgress：操作进度轮询（M7/M4/L-10）
+ * - useCheckpointManifest：存档排除清单详情（EX-11）
  */
 
-import { ref, reactive, onMounted, computed, watch, onUnmounted } from 'vue'
-import { CustomCheckbox, CustomScrollbar } from '../common'
-import { sendToExtension } from '@/utils/vscode'
+import { onMounted, watch, onUnmounted } from 'vue'
+import { CustomCheckbox, CustomScrollbar, PatternListEditor } from '../common'
+import { t } from '@/i18n'
 import { useChatStore } from '@/stores'
 import {
-  previewExclusions,
-  pollOperationProgress,
-  cancelCheckpointOperation,
-  type CheckpointOperationProgress,
-  type ExclusionPreviewResult
-} from '@/stores/chat/checkpointActions'
-import { t } from '@/i18n'
-import type { CheckpointRecord } from '@/types'
-
-// 消息类型存档点配置
-interface MessageCheckpointConfig {
-  beforeMessages: string[]
-  afterMessages: string[]
-  modelOuterLayerOnly?: boolean
-  mergeUnchangedCheckpoints?: boolean
-}
-
-// 排除配置（EX-08）
-interface CheckpointExclusionConfig {
-  enabledProfiles: Record<string, boolean>
-  maxFileSizeBytes: number
-  customPatterns: string[]
-}
-
-// 存档点配置接口
-interface CheckpointConfig {
-  enabled: boolean
-  beforeTools: string[]
-  afterTools: string[]
-  messageCheckpoint?: MessageCheckpointConfig
-  maxCheckpoints: number
-  customIgnorePatterns?: string[]
-  exclusion?: CheckpointExclusionConfig
-}
-
-// 工具信息接口
-interface ToolInfo {
-  name: string
-  description: string
-  category?: string
-}
-
-// 对话检查点信息
-interface ConversationWithCheckpoints {
-  conversationId: string
-  title: string
-  checkpointCount: number
-  totalSize: number
-  /** M8: 存在缺少 backupBytes 的旧存档时 totalSize 不完整（展示「部分未统计」提示） */
-  sizeIncomplete?: boolean
-  createdAt?: number
-  updatedAt?: number
-}
+  useCheckpointConfig,
+  getToolDisplayName,
+  getToolDescription
+} from '@/composables/useCheckpointConfig'
+import { useCheckpointExclusion } from '@/composables/useCheckpointExclusion'
+import { useCheckpointOperationProgress } from '@/composables/useCheckpointOperationProgress'
+import { useCheckpointCleanup } from '@/composables/useCheckpointCleanup'
+import { useCheckpointManifest } from '@/composables/useCheckpointManifest'
+import BranchCleanupSettings from './BranchCleanupSettings.vue'
 
 // 使用 chatStore
 const chatStore = useChatStore()
 
-// 消息类型列表
-const messageTypes = computed(() => [
-  {
-    name: 'user',
-    displayName: t('components.settings.checkpoint.sections.messages.types.user.name'),
-    description: t('components.settings.checkpoint.sections.messages.types.user.description')
-  },
-  {
-    name: 'model',
-    displayName: t('components.settings.checkpoint.sections.messages.types.model.name'),
-    description: t('components.settings.checkpoint.sections.messages.types.model.description')
-  }
-])
-
-// 配置
-const config = reactive<CheckpointConfig>({
-  enabled: true,
-  beforeTools: [],
-  afterTools: [],
-  messageCheckpoint: {
-    beforeMessages: [],
-    afterMessages: [],
-    modelOuterLayerOnly: true,
-    mergeUnchangedCheckpoints: true
-  },
-  maxCheckpoints: -1,  // -1 表示无上限
-  customIgnorePatterns: [],
-  exclusion: {
-    enabledProfiles: {},
-    maxFileSizeBytes: 50 * 1024 * 1024,  // 默认 50 MiB
-    customPatterns: []
-  }
-})
-
-// 默认排除类别元数据（id 列表；名称走 i18n，模式清单由后端 checkpoint.getExclusionProfiles 提供）
-const DEFAULT_PROFILE_IDS = ['logs', 'aiModels', 'datasets', 'caches', 'pythonVenvs', 'buildArtifacts', 'largeMedia', 'archives'] as const
-
-// 后端默认排除类别元数据（模式清单等）
-const exclusionProfileMeta = ref<Array<{ id: string; patterns: string[]; defaultEnabled: boolean }>>([])
-
-// 预览排除结果状态（EX-09）
-const isPreviewing = ref(false)
-const previewResult = ref<ExclusionPreviewResult | null>(null)
-const previewError = ref<string | null>(null)
-const expandedPreviewProfile = ref<string | null>(null)
-
-// 配置保存错误（如 EX-12 校验拒绝）
-const configSaveError = ref<string | null>(null)
-
-// 所有可用的工具列表
-const allTools = ref<ToolInfo[]>([])
-
-// 加载状态
-const isLoading = ref(false)
-
-// 存档点清理相关状态
-const conversationsWithCheckpoints = ref<ConversationWithCheckpoints[]>([])
-const searchQuery = ref('')
-const isCleanupLoading = ref(false)
-
-// 批量管理：对话多选
-const selectedConversationIds = ref<Set<string>>(new Set())
-
-// 批量管理：展开对话的存档点列表
-const expandedConversationId = ref<string | null>(null)
-const expandedCheckpoints = ref<Array<CheckpointRecord & { size?: number }>>([])
-const selectedCheckpointIds = ref<Set<string>>(new Set())
-const isExpandedLoading = ref(false)
-const isBatchDeleting = ref(false)
-
-// 删除确认（统一处理对话批量 / 存档点批量）
-interface DeleteConfirmState {
-  kind: 'conversations' | 'checkpoints'
-  title: string
-  count: number
-  size: number
-}
-const deleteConfirmState = ref<DeleteConfirmState | null>(null)
-
-// 删除结果反馈：批量删除中被拒绝（依赖保留）的存档数量等（CP-05/CP-11）
-const deleteFeedback = ref<{ rejectedCount: number; failedCount: number; message: string } | null>(null)
-
-// M7: 进行中存档操作进度（create/restore/delete）轮询展示 + 取消按钮
-const operationProgress = ref<CheckpointOperationProgress | null>(null)
-let progressPollTimer: ReturnType<typeof setInterval> | null = null
-let progressPolling = false
-
-// 轮询后端最近更新的进行中存档操作；无进行中操作或已结束时停止轮询
-async function pollOperation() {
-  if (progressPolling) return
-  progressPolling = true
-  try {
-    const progress = await pollOperationProgress()
-    operationProgress.value = progress
-    if (!progress || progress.phase === 'done' || progress.phase === 'failed' || progress.phase === 'cancelled') {
-      stopProgressPolling()
-    }
-  } finally {
-    progressPolling = false
-  }
-}
-
-function startProgressPolling() {
-  if (progressPollTimer) return
-  pollOperation()
-  progressPollTimer = setInterval(pollOperation, 800)
-}
-
-function stopProgressPolling() {
-  if (progressPollTimer) {
-    clearInterval(progressPollTimer)
-    progressPollTimer = null
-  }
-}
-
-// 取消进行中的存档操作（M7/CPF-11）
-async function cancelActiveOperation() {
-  const op = operationProgress.value
-  if (!op || op.cancelled) return
-  await cancelCheckpointOperation(op.operationId)
-  operationProgress.value = { ...op, cancelled: true, phase: 'cancelled' }
-}
-
-// 机器可读 phase → 展示文案（与后端 CheckpointOperationProgress.phase 对齐）
-function operationPhaseLabel(phase: string): string {
-  const key = `components.settings.checkpoint.sections.cleanup.progress.${phase}` as const
-  const label = t(key)
-  return label || phase
-}
-
-// 直接使用所有工具（用户可以自由选择哪些需要备份）
-const displayTools = computed(() => allTools.value)
-
-// 加载配置
-async function loadConfig() {
-  isLoading.value = true
-  
-  try {
-    // 加载存档点配置
-    const response = await sendToExtension<{ config: CheckpointConfig }>('checkpoint.getConfig', {})
-    if (response?.config) {
-      Object.assign(config, response.config)
-      // 防御：旧后端/旧配置可能没有 exclusion 字段
-      if (!config.exclusion) {
-        config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
-      }
-    }
-    
-    // 加载默认排除类别元数据
-    const profilesResponse = await sendToExtension<{ profiles: Array<{ id: string; patterns: string[]; defaultEnabled: boolean }> }>('checkpoint.getExclusionProfiles', {})
-    if (profilesResponse?.profiles) {
-      exclusionProfileMeta.value = profilesResponse.profiles
-    }
-    
-    // 加载工具列表
-    const toolsResponse = await sendToExtension<{ tools: ToolInfo[] }>('tools.getTools', {})
-    if (toolsResponse?.tools) {
-      allTools.value = toolsResponse.tools
-    }
-  } catch (error) {
-    console.error('Failed to load checkpoint config:', error)
-  } finally {
-    isLoading.value = false
-  }
-}
-
-// 更新配置字段并保存
-async function updateConfigField(field: keyof CheckpointConfig, value: any) {
-  // 更新本地配置
-  (config as any)[field] = value
-  
-  try {
-    // 转换为纯 JSON 对象，避免 DataCloneError
-    // 需要深拷贝 messageCheckpoint 中的数组
-    const messageCheckpointToSave = config.messageCheckpoint ? {
-      beforeMessages: [...(config.messageCheckpoint.beforeMessages || [])],
-      afterMessages: [...(config.messageCheckpoint.afterMessages || [])],
-      modelOuterLayerOnly: config.messageCheckpoint.modelOuterLayerOnly,
-      mergeUnchangedCheckpoints: config.messageCheckpoint.mergeUnchangedCheckpoints
-    } : {
-      beforeMessages: [],
-      afterMessages: [],
-      modelOuterLayerOnly: true,
-      mergeUnchangedCheckpoints: true
-    }
-    
-    const configToSave = {
-      enabled: config.enabled,
-      beforeTools: [...config.beforeTools],
-      afterTools: [...config.afterTools],
-      messageCheckpoint: messageCheckpointToSave,
-      maxCheckpoints: config.maxCheckpoints,
-      customIgnorePatterns: config.customIgnorePatterns ? [...config.customIgnorePatterns] : [],
-      exclusion: config.exclusion ? {
-        enabledProfiles: { ...(config.exclusion.enabledProfiles || {}) },
-        maxFileSizeBytes: config.exclusion.maxFileSizeBytes,
-        customPatterns: [...(config.exclusion.customPatterns || [])]
-      } : undefined
-    }
-    
-    await sendToExtension('checkpoint.updateConfig', {
-      config: configToSave
-    })
-    configSaveError.value = null
-  } catch (error: any) {
-    configSaveError.value = error?.message || String(error || 'Unknown error')
-    console.error('Failed to save checkpoint config:', error)
-  }
-}
+// ========== 配置（加载/保存 + 消息/工具开关） ==========
+const {
+  config,
+  configSaveError,
+  isLoading,
+  loadError,
+  loadConfig: loadConfigFromBackend,
+  loadTools,
+  updateConfigField,
+  messageTypes,
+  displayTools,
+  isMessageInBefore,
+  isMessageInAfter,
+  toggleMessageBefore,
+  toggleMessageAfter,
+  toggleModelOuterLayerOnly,
+  toggleMergeUnchangedCheckpoints,
+  hasModelMessageCheckpoint,
+  toggleAllMessageBefore,
+  toggleAllMessageAfter,
+  isAllMessageBeforeSelected,
+  isAllMessageAfterSelected,
+  isToolInBefore,
+  isToolInAfter,
+  toggleToolBefore,
+  toggleToolAfter,
+  toggleAllBefore,
+  toggleAllAfter,
+  isAllBeforeSelected,
+  isAllAfterSelected
+} = useCheckpointConfig()
 
 // ========== 排除配置（EX-08 / EX-09） ==========
-
-// 默认类别是否启用（缺省按默认启用处理）
-function isProfileEnabled(profileId: string): boolean {
-  return config.exclusion?.enabledProfiles?.[profileId] !== false
-}
-
-// 切换默认类别开关
-async function toggleProfile(profileId: string, enabled: boolean) {
-  if (!config.exclusion) {
-    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
-  }
-  config.exclusion.enabledProfiles = {
-    ...(config.exclusion.enabledProfiles || {}),
-    [profileId]: enabled
-  }
-  await updateConfigField('exclusion', { ...config.exclusion })
-}
-
-// 类别显示名（i18n）
-function profileLabel(profileId: string): string {
-  const key = `components.settings.checkpoint.sections.exclusion.profiles.${profileId}`
-  const translated = t(key)
-  return translated === key ? profileId : translated
-}
-
-// 类别模式清单（后端元数据）
-function profilePatterns(profileId: string): string[] {
-  return exclusionProfileMeta.value.find(p => p.id === profileId)?.patterns || []
-}
-
-// 单文件大小上限（MiB 显示）
-const maxFileSizeMiB = computed(() =>
-  Math.round((config.exclusion?.maxFileSizeBytes ?? 0) / (1024 * 1024))
-)
-
-// 保存大小上限（MiB -> 字节；0 = 不限制）
-async function saveMaxFileSize(event: any) {
-  const raw = parseInt(String(event.target?.value ?? ''), 10)
-  const miB = Number.isNaN(raw) ? 0 : Math.max(0, raw)
-  if (!config.exclusion) {
-    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 0, customPatterns: [] }
-  }
-  config.exclusion.maxFileSizeBytes = miB * 1024 * 1024
-  await updateConfigField('exclusion', { ...config.exclusion })
-}
-
-// 自定义排除模式文本（每行一条）
-// L-5: setter 同步写回 config.exclusion.customPatterns，避免未保存输入在重渲染时丢失；
-// 模板使用 v-model.lazy，只在 change 时触发（不会打断输入过程中的换行）。
-const customPatternsText = computed({
-  get: () => (config.exclusion?.customPatterns || []).join('\n'),
-  set: (value: string) => {
-    if (!config.exclusion) {
-      config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
-    }
-    config.exclusion.customPatterns = value
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-  }
-})
-
-// 保存自定义排除模式（按行拆分、去空白）
-async function saveCustomPatterns(event: any) {
-  const lines = String(event.target?.value ?? '')
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line.length > 0)
-  if (!config.exclusion) {
-    config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
-  }
-  config.exclusion.customPatterns = lines
-  await updateConfigField('exclusion', { ...config.exclusion })
-}
-
-// 执行排除预览（EX-09）
-async function runPreview() {
-  isPreviewing.value = true
-  previewError.value = null
-  try {
-    const result = await previewExclusions()
-    previewResult.value = result
-    expandedPreviewProfile.value = null
-    if (!result) {
-      previewError.value = t('components.settings.checkpoint.sections.exclusion.preview.failed')
-    }
-  } catch (error: any) {
-    previewError.value = error?.message || t('components.settings.checkpoint.sections.exclusion.preview.failed')
-  } finally {
-    isPreviewing.value = false
-  }
-}
-
-// 预览：按类别聚合的行（默认类别 + other）
-const previewRows = computed(() => {
-  const result = previewResult.value
-  if (!result) return []
-  const rows: Array<{ key: string; label: string; summary: ExclusionPreviewResult['summary'] }> = []
-  for (const profileId of DEFAULT_PROFILE_IDS) {
-    const summary = result.byProfile[profileId]
-    if (summary && summary.excludedCount > 0) {
-      rows.push({ key: profileId, label: profileLabel(profileId), summary })
-    }
-  }
-  const other = result.byProfile['other']
-  if (other && other.excludedCount > 0) {
-    rows.push({ key: 'other', label: t('components.settings.checkpoint.sections.exclusion.preview.other'), summary: other })
-  }
-  return rows
-})
-
-// 预览：原因文案
-function reasonLabel(reason: string): string {
-  const key = `components.settings.checkpoint.sections.exclusion.preview.reasons.${reason}`
-  const translated = t(key)
-  return translated === key ? reason : translated
-}
-
-// 预览：展开/收起某个类别
-function togglePreviewProfile(key: string) {
-  expandedPreviewProfile.value = expandedPreviewProfile.value === key ? null : key
-}
-
-// 检查消息类型是否在 before 列表中
-function isMessageInBefore(messageType: string): boolean {
-  return config.messageCheckpoint?.beforeMessages?.includes(messageType) ?? false
-}
-
-// 检查消息类型是否在 after 列表中
-function isMessageInAfter(messageType: string): boolean {
-  return config.messageCheckpoint?.afterMessages?.includes(messageType) ?? false
-}
-
-// 切换消息类型的 before 状态
-async function toggleMessageBefore(messageType: string, enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [] }
-  }
-  const newBeforeMessages = [...(config.messageCheckpoint.beforeMessages || [])]
-  if (enabled) {
-    if (!newBeforeMessages.includes(messageType)) {
-      newBeforeMessages.push(messageType)
-    }
-  } else {
-    const index = newBeforeMessages.indexOf(messageType)
-    if (index !== -1) {
-      newBeforeMessages.splice(index, 1)
-    }
-  }
-  config.messageCheckpoint.beforeMessages = newBeforeMessages
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-}
-
-// 切换消息类型的 after 状态
-async function toggleMessageAfter(messageType: string, enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [], modelOuterLayerOnly: true }
-  }
-  const newAfterMessages = [...(config.messageCheckpoint.afterMessages || [])]
-  if (enabled) {
-    if (!newAfterMessages.includes(messageType)) {
-      newAfterMessages.push(messageType)
-    }
-  } else {
-    const index = newAfterMessages.indexOf(messageType)
-    if (index !== -1) {
-      newAfterMessages.splice(index, 1)
-    }
-  }
-  config.messageCheckpoint.afterMessages = newAfterMessages
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-}
-
-// 切换模型消息只在最外层创建存档点
-async function toggleModelOuterLayerOnly(enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [], modelOuterLayerOnly: enabled }
-  } else {
-    config.messageCheckpoint.modelOuterLayerOnly = enabled
-  }
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-}
-
-// 切换是否合并无变更的存档点
-async function toggleMergeUnchangedCheckpoints(enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [], mergeUnchangedCheckpoints: enabled }
-  } else {
-    config.messageCheckpoint.mergeUnchangedCheckpoints = enabled
-  }
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-  
-  // 同步更新 chatStore，实现实时响应
-  chatStore.setMergeUnchangedCheckpoints(enabled)
-}
-
-// 检查是否启用了模型消息存档点
-const hasModelMessageCheckpoint = computed(() => {
-  const mc = config.messageCheckpoint
-  return mc?.beforeMessages?.includes('model') || mc?.afterMessages?.includes('model')
-})
-
-// 全选/取消消息 before
-async function toggleAllMessageBefore(enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [] }
-  }
-  config.messageCheckpoint.beforeMessages = enabled ? messageTypes.value.map(m => m.name) : []
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-}
-
-// 全选/取消消息 after
-async function toggleAllMessageAfter(enabled: boolean) {
-  if (!config.messageCheckpoint) {
-    config.messageCheckpoint = { beforeMessages: [], afterMessages: [] }
-  }
-  config.messageCheckpoint.afterMessages = enabled ? messageTypes.value.map(m => m.name) : []
-  await updateConfigField('messageCheckpoint', { ...config.messageCheckpoint })
-}
-
-// 检查消息类型是否全选
-const isAllMessageBeforeSelected = computed(() => {
-  return messageTypes.value.every(m => config.messageCheckpoint?.beforeMessages?.includes(m.name))
-})
-
-const isAllMessageAfterSelected = computed(() => {
-  return messageTypes.value.every(m => config.messageCheckpoint?.afterMessages?.includes(m.name))
-})
-
-// 检查工具是否在 before 列表中
-function isToolInBefore(toolName: string): boolean {
-  return config.beforeTools.includes(toolName)
-}
-
-// 检查工具是否在 after 列表中
-function isToolInAfter(toolName: string): boolean {
-  return config.afterTools.includes(toolName)
-}
-
-// 切换工具的 before 状态并保存
-async function toggleToolBefore(toolName: string, enabled: boolean) {
-  const newBeforeTools = [...config.beforeTools]
-  if (enabled) {
-    if (!newBeforeTools.includes(toolName)) {
-      newBeforeTools.push(toolName)
-    }
-  } else {
-    const index = newBeforeTools.indexOf(toolName)
-    if (index !== -1) {
-      newBeforeTools.splice(index, 1)
-    }
-  }
-  await updateConfigField('beforeTools', newBeforeTools)
-}
-
-// 切换工具的 after 状态并保存
-async function toggleToolAfter(toolName: string, enabled: boolean) {
-  const newAfterTools = [...config.afterTools]
-  if (enabled) {
-    if (!newAfterTools.includes(toolName)) {
-      newAfterTools.push(toolName)
-    }
-  } else {
-    const index = newAfterTools.indexOf(toolName)
-    if (index !== -1) {
-      newAfterTools.splice(index, 1)
-    }
-  }
-  await updateConfigField('afterTools', newAfterTools)
-}
-
-// 获取工具显示名称（优先 i18n，fallback 机械转换）
-function getToolDisplayName(name: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-// 获取工具描述（优先 i18n，fallback 原文）
-function getToolDescription(name: string, fallback: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return fallback
-}
-
-// 全选/取消 before 并保存
-async function toggleAllBefore(enabled: boolean) {
-  const newBeforeTools = enabled ? displayTools.value.map(t => t.name) : []
-  await updateConfigField('beforeTools', newBeforeTools)
-}
-
-// 全选/取消 after 并保存
-async function toggleAllAfter(enabled: boolean) {
-  const newAfterTools = enabled ? displayTools.value.map(t => t.name) : []
-  await updateConfigField('afterTools', newAfterTools)
-}
-
-// 检查是否全选
-const isAllBeforeSelected = computed(() => {
-  return displayTools.value.length > 0 && displayTools.value.every(t => config.beforeTools.includes(t.name))
-})
-
-const isAllAfterSelected = computed(() => {
-  return displayTools.value.length > 0 && displayTools.value.every(t => config.afterTools.includes(t.name))
-})
-
-// 筛选后的对话列表
-const filteredConversations = computed(() => {
-  if (!searchQuery.value.trim()) {
-    return conversationsWithCheckpoints.value
-  }
-  const query = searchQuery.value.toLowerCase()
-  return conversationsWithCheckpoints.value.filter(c =>
-    c.title.toLowerCase().includes(query) ||
-    c.conversationId.toLowerCase().includes(query)
-  )
-})
-
-// 已选对话列表
-const selectedConversations = computed(() =>
-  conversationsWithCheckpoints.value.filter(c => selectedConversationIds.value.has(c.conversationId))
-)
-
-// 已选对话的存档点总数与磁盘占用
-const selectedConversationsCheckpointCount = computed(() =>
-  selectedConversations.value.reduce((sum, c) => sum + c.checkpointCount, 0)
-)
-const selectedConversationsSize = computed(() =>
-  selectedConversations.value.reduce((sum, c) => sum + (c.totalSize || 0), 0)
-)
-
-// 全部对话存档点的总磁盘占用（含 sizeIncomplete 标记的未统计部分）
-const totalCheckpointsSize = computed(() =>
-  conversationsWithCheckpoints.value.reduce((sum, c) => sum + (c.totalSize || 0), 0)
-)
-const totalCheckpointsSizeIncomplete = computed(() =>
-  conversationsWithCheckpoints.value.some(c => c.sizeIncomplete)
-)
-
-// 对话全选状态
-const isAllConversationsSelected = computed(() =>
-  filteredConversations.value.length > 0 &&
-  filteredConversations.value.every(c => selectedConversationIds.value.has(c.conversationId))
-)
-
-// 存档点全选状态
-const isAllCheckpointsSelected = computed(() =>
-  expandedCheckpoints.value.length > 0 &&
-  expandedCheckpoints.value.every(cp => selectedCheckpointIds.value.has(cp.id))
-)
-
-// 已选存档点磁盘占用
-const selectedCheckpointsSize = computed(() =>
-  expandedCheckpoints.value
-    .filter(cp => selectedCheckpointIds.value.has(cp.id))
-    .reduce((sum, cp) => sum + (cp.size || 0), 0)
-)
-
-// 加载带有存档点的对话列表
-async function loadConversationsWithCheckpoints() {
-  isCleanupLoading.value = true
-  try {
-    const response = await sendToExtension<{ conversations: ConversationWithCheckpoints[] }>(
-      'checkpoint.getAllConversationsWithCheckpoints',
-      {}
-    )
-    if (response?.conversations) {
-      conversationsWithCheckpoints.value = response.conversations
-    }
-  } catch (error) {
-    console.error('Failed to load conversations with checkpoints:', error)
-  } finally {
-    isCleanupLoading.value = false
-  }
-}
-
-// 切换对话选中状态
-function toggleConversationSelected(conversationId: string, selected: boolean) {
-  const next = new Set(selectedConversationIds.value)
-  if (selected) {
-    next.add(conversationId)
-  } else {
-    next.delete(conversationId)
-  }
-  selectedConversationIds.value = next
-}
-
-// 全选/取消全选对话
-function toggleAllConversationsSelected(selected: boolean) {
-  const next = new Set<string>()
-  if (selected) {
-    filteredConversations.value.forEach(c => next.add(c.conversationId))
-  }
-  selectedConversationIds.value = next
-}
-
-// 展开/收起对话的存档点列表
-async function toggleExpandConversation(conv: ConversationWithCheckpoints) {
-  if (expandedConversationId.value === conv.conversationId) {
-    expandedConversationId.value = null
-    expandedCheckpoints.value = []
-    selectedCheckpointIds.value = new Set()
-    return
-  }
-  expandedConversationId.value = conv.conversationId
-  selectedCheckpointIds.value = new Set()
-  await loadExpandedCheckpoints(conv.conversationId)
-}
-
-// 加载展开对话的存档点列表（含磁盘占用）
-async function loadExpandedCheckpoints(conversationId: string) {
-  isExpandedLoading.value = true
-  try {
-    const response = await sendToExtension<{ checkpoints: Array<CheckpointRecord & { size?: number }> }>(
-      'checkpoint.getCheckpoints',
-      { conversationId, withSize: true }
-    )
-    expandedCheckpoints.value = (response?.checkpoints || [])
-      .slice()
-      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
-  } catch (error) {
-    console.error('Failed to load checkpoints:', error)
-    expandedCheckpoints.value = []
-  } finally {
-    isExpandedLoading.value = false
-  }
-}
-
-// 切换存档点选中状态
-function toggleCheckpointSelected(id: string, selected: boolean) {
-  const next = new Set(selectedCheckpointIds.value)
-  if (selected) {
-    next.add(id)
-  } else {
-    next.delete(id)
-  }
-  selectedCheckpointIds.value = next
-}
-
-// 全选/取消全选存档点
-function toggleAllCheckpointsSelected(selected: boolean) {
-  const next = new Set<string>()
-  if (selected) {
-    expandedCheckpoints.value.forEach(cp => next.add(cp.id))
-  }
-  selectedCheckpointIds.value = next
-}
-
-// 请求删除选中的对话（全部存档点）
-function requestDeleteConversations() {
-  if (selectedConversations.value.length === 0 || isBatchDeleting.value) return
-  deleteConfirmState.value = {
-    kind: 'conversations',
-    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.conversationsMessage', {
-      count: selectedConversations.value.length
-    }),
-    count: selectedConversationsCheckpointCount.value,
-    size: selectedConversationsSize.value
-  }
-}
-
-// 请求删除选中的存档点
-function requestDeleteCheckpoints() {
-  if (selectedCheckpointIds.value.size === 0 || isBatchDeleting.value) return
-  deleteConfirmState.value = {
-    kind: 'checkpoints',
-    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', {
-      count: selectedCheckpointIds.value.size
-    }),
-    count: selectedCheckpointIds.value.size,
-    size: selectedCheckpointsSize.value
-  }
-}
-
-// 请求删除单个存档点
-function requestDeleteSingleCheckpoint(cp: CheckpointRecord & { size?: number }) {
-  if (isBatchDeleting.value) return
-  selectedCheckpointIds.value = new Set([cp.id])
-  deleteConfirmState.value = {
-    kind: 'checkpoints',
-    title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', { count: 1 }),
-    count: 1,
-    size: cp.size || 0
-  }
-}
-
-// 显示单个对话的删除确认
-function showDeleteConfirmDialog(conversation: ConversationWithCheckpoints) {
-  if (isBatchDeleting.value) return
-  selectedConversationIds.value = new Set([conversation.conversationId])
-  deleteConfirmState.value = {
-    kind: 'conversations',
-    title: conversation.title || conversation.conversationId,
-    count: conversation.checkpointCount,
-    size: conversation.totalSize || 0
-  }
-}
-
-// 取消删除
-function cancelDelete() {
-  deleteConfirmState.value = null
-}
-
-// 确认删除（对话批量 / 存档点批量共用）
-async function confirmDelete() {
-  const state = deleteConfirmState.value
-  if (!state) return
-
-  deleteConfirmState.value = null
-  isBatchDeleting.value = true
-  const affectedConversationIds = new Set<string>()
-
-  try {
-    let totalRejected = 0
-    let totalFailed = 0
-
-    if (state.kind === 'conversations') {
-      // 批量删除选中的对话（checkpointIds 为空 = 删除该对话全部）
-      const targets = selectedConversations.value
-      const items = targets.map(c => ({ conversationId: c.conversationId, checkpointIds: [] as string[] }))
-      const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
-      const results = resp?.results || []
-      totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
-      totalFailed = results.filter((r: any) => !r.success).length
-
-      targets.forEach(c => affectedConversationIds.add(c.conversationId))
-      const removedIds = new Set(targets.map(c => c.conversationId))
-      conversationsWithCheckpoints.value = conversationsWithCheckpoints.value.filter(
-        c => !removedIds.has(c.conversationId)
-      )
-      selectedConversationIds.value = new Set()
-
-      // 若展开的对话被删除，收起展开面板
-      if (expandedConversationId.value && removedIds.has(expandedConversationId.value)) {
-        expandedConversationId.value = null
-        expandedCheckpoints.value = []
-        selectedCheckpointIds.value = new Set()
-      }
-    } else {
-      // 删除展开对话中的选中存档点
-      if (expandedConversationId.value) {
-        const conversationId = expandedConversationId.value
-        const items = [{ conversationId, checkpointIds: [...selectedCheckpointIds.value] }]
-        const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
-        const results = resp?.results || []
-        totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
-        totalFailed = results.filter((r: any) => !r.success).length
-
-        selectedCheckpointIds.value = new Set()
-        affectedConversationIds.add(conversationId)
-        await loadExpandedCheckpoints(conversationId)
-        await loadConversationsWithCheckpoints()
-      }
-    }
-
-    // CP-05/CP-11: 被后续存档依赖而拒绝删除的存档、删除失败项，向用户明确展示
-    if (totalRejected > 0 || totalFailed > 0) {
-      const parts: string[] = []
-      if (totalRejected > 0) {
-        parts.push(t('components.settings.checkpoint.sections.cleanup.rejectedByDependency', { count: totalRejected }))
-      }
-      if (totalFailed > 0) {
-        parts.push(t('components.settings.checkpoint.sections.cleanup.deleteFailedCount', { count: totalFailed }))
-      }
-      deleteFeedback.value = {
-        rejectedCount: totalRejected,
-        failedCount: totalFailed,
-        message: parts.join('；')
-      }
-    } else {
-      deleteFeedback.value = null
-    }
-
-    // 当前对话受影响时，通知聊天视图刷新存档点
-    if (chatStore.currentConversationId && affectedConversationIds.has(chatStore.currentConversationId)) {
-      await chatStore.loadCheckpoints()
-    }
-  } catch (error) {
-    console.error('Failed to delete checkpoints:', error)
-    deleteFeedback.value = {
-      rejectedCount: 0,
-      failedCount: 0,
-      message: t('components.settings.checkpoint.sections.cleanup.deleteRequestFailed')
-    }
-  } finally {
-    isBatchDeleting.value = false
-  }
-}
-
-// 存档点展示辅助
-function getPhaseLabel(phase: 'before' | 'after'): string {
-  return phase === 'before'
-    ? t('components.settings.checkpoint.sections.cleanup.phaseBefore')
-    : t('components.settings.checkpoint.sections.cleanup.phaseAfter')
-}
-
-function getTypeLabel(type?: string): string {
-  return type === 'full'
-    ? t('components.settings.checkpoint.sections.cleanup.typeFull')
-    : t('components.settings.checkpoint.sections.cleanup.typeIncremental')
-}
-
-function getToolLabel(toolName: string): string {
-  switch (toolName) {
-    case 'user_message':
-      return t('components.settings.checkpoint.sections.cleanup.toolUserMessage')
-    case 'model_message':
-      return t('components.settings.checkpoint.sections.cleanup.toolModelMessage')
-    case 'tool_batch':
-      return t('components.settings.checkpoint.sections.cleanup.toolBatch')
-    default:
-      return getToolDisplayName(toolName)
-  }
-}
-
-// 未备份文件的悬停提示：展示前 10 个路径（去掉工作区作用域前缀，展示相对路径）
-function getUnbackedPathsTitle(cp: CheckpointRecord & { size?: number }): string {
-  const paths = (cp.unbackedPaths || []).map(toDisplayScopedPath)
-  const shown = paths.slice(0, 10).join('\n')
-  return paths.length > 10 ? `${shown}\n... 等 ${paths.length} 个文件` : shown
-}
-
-// scoped 键（ws_xxx/relative）转为对用户友好的相对路径
-function toDisplayScopedPath(scopedKey: string): string {
-  return scopedKey.replace(/^ws_[a-f0-9]{16}\//, '')
-}
-
-// 格式化时间
-function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return ''
-  
-  const now = Date.now()
-  const diff = now - timestamp
-  
-  const minute = 60 * 1000
-  const hour = 60 * minute
-  const day = 24 * hour
-  
-  if (diff < minute) {
-    return t('components.settings.checkpoint.sections.cleanup.timeFormat.justNow')
-  } else if (diff < hour) {
-    return t('components.settings.checkpoint.sections.cleanup.timeFormat.minutesAgo', { count: Math.floor(diff / minute) })
-  } else if (diff < day) {
-    return t('components.settings.checkpoint.sections.cleanup.timeFormat.hoursAgo', { count: Math.floor(diff / hour) })
-  } else if (diff < 7 * day) {
-    return t('components.settings.checkpoint.sections.cleanup.timeFormat.daysAgo', { count: Math.floor(diff / day) })
-  } else {
-    return new Date(timestamp).toLocaleDateString()
-  }
-}
-
-// 格式化文件大小
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  
-  const units = ['B', 'KB', 'MB', 'GB']
-  const k = 1024
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  const size = bytes / Math.pow(k, i)
-  
-  return `${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`
-}
-
-// 格式化检查点数量
-function formatCheckpointCount(count: number): string {
-  return t('components.settings.checkpoint.sections.cleanup.checkpointCount', { count })
+const {
+  DEFAULT_PROFILE_IDS,
+  loadExclusionProfiles,
+  isProfileEnabled,
+  toggleProfile,
+  openProfileEditor,
+  saveProfilePatterns,
+  profileLabel,
+  profilePatterns,
+  maxFileSizeMiB,
+  maxFileSizeError,
+  saveMaxFileSize,
+  onCustomPatternsChange,
+  runPreview,
+  previewRows,
+  reasonLabel,
+  togglePreviewProfile,
+  isPreviewing,
+  previewResult,
+  previewError,
+  expandedPreviewProfile,
+  editingProfileId,
+  profilePatternsDraft
+} = useCheckpointExclusion(config, updateConfigField)
+
+// ========== 操作进度轮询（M7/M4） ==========
+const {
+  operationProgress,
+  operationStale,
+  operationCancelError,
+  startProgressPolling,
+  stopProgressPolling,
+  cancelActiveOperation,
+  operationPhaseLabel
+} = useCheckpointOperationProgress()
+
+// ========== 存档点清理 / 批量管理 ==========
+const {
+  conversationsWithCheckpoints,
+  searchQuery,
+  isCleanupLoading,
+  selectedConversationIds,
+  expandedConversationId,
+  expandedCheckpoints,
+  selectedCheckpointIds,
+  isExpandedLoading,
+  isBatchDeleting,
+  deleteConfirmState,
+  deleteFeedback,
+  filteredConversations,
+  selectedConversations,
+  selectedConversationsSize,
+  totalCheckpointsSize,
+  totalCheckpointsSizeIncomplete,
+  isAllConversationsSelected,
+  isAllCheckpointsSelected,
+  selectedCheckpointsSize,
+  loadConversationsWithCheckpoints,
+  toggleConversationSelected,
+  toggleAllConversationsSelected,
+  toggleExpandConversation,
+  toggleCheckpointSelected,
+  toggleAllCheckpointsSelected,
+  requestDeleteConversations,
+  requestDeleteCheckpoints,
+  requestDeleteSingleCheckpoint,
+  showDeleteConfirmDialog,
+  cancelDelete,
+  confirmDelete,
+  getPhaseLabel,
+  getTypeLabel,
+  getToolLabel,
+  getUnbackedPathsTitle,
+  formatRelativeTime,
+  formatSize,
+  formatCheckpointCount
+} = useCheckpointCleanup()
+
+// ========== 存档排除清单详情（EX-11） ==========
+const {
+  manifestCheckpointId,
+  manifestDetail,
+  isManifestLoading,
+  manifestLoadError,
+  manifestExcludedCount,
+  manifestEnabledProfileIds,
+  manifestRulesChanged,
+  openManifestDetail,
+  closeManifestDetail
+} = useCheckpointManifest(config, loadError)
+
+// 加载配置（H-2: 失败时展示错误横幅并禁用表单，直到重试成功）
+async function loadConfig() {
+  await loadConfigFromBackend()
+  await loadExclusionProfiles()
+  await loadTools()
 }
 
 // 组件挂载
-onMounted(() => {
-  loadConfig()
+onMounted(async () => {
+  // L-4: await loadConfig，确保 H-2 加载失败状态立即可见（失败时表单禁用）
+  await loadConfig()
   loadConversationsWithCheckpoints()
   // M7: 挂载即开始轮询进行中的存档操作（恢复/删除等），展示进度与取消按钮
   startProgressPolling()
@@ -964,6 +178,11 @@ watch(isBatchDeleting, deleting => {
   if (deleting) {
     startProgressPolling()
   }
+})
+
+// M4: 设置页打开期间，聊天侧创建/恢复/删除存档（会触发 loadCheckpoints）时重启轮询
+watch(() => chatStore.checkpoints, () => {
+  startProgressPolling()
 })
 
 onUnmounted(() => {
@@ -977,6 +196,19 @@ onUnmounted(() => {
     <div v-if="isLoading" class="loading-state">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
       <span>{{ t('components.settings.checkpoint.loading') }}</span>
+    </div>
+
+    <!-- H-2: 配置加载失败时展示错误横幅并禁用表单（不把默认值暴露为可编辑配置），直到重试成功 -->
+    <div v-else-if="loadError" class="load-error-state">
+      <div class="load-error-text">
+        <i class="codicon codicon-error"></i>
+        <span>{{ t('components.settings.checkpoint.loadError') }}</span>
+        <span class="load-error-detail">{{ loadError }}</span>
+      </div>
+      <button class="load-retry-btn" @click="loadConfig">
+        <i class="codicon codicon-refresh"></i>
+        {{ t('components.settings.checkpoint.loadRetry') }}
+      </button>
     </div>
     
     <template v-else>
@@ -1189,7 +421,7 @@ onUnmounted(() => {
           <span>{{ configSaveError }}</span>
         </div>
 
-        <!-- 默认排除类别开关 -->
+        <!-- 默认排除类别开关（每类别可编辑模式清单） -->
         <div
           v-for="profileId in DEFAULT_PROFILE_IDS"
           :key="profileId"
@@ -1204,6 +436,50 @@ onUnmounted(() => {
           <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
             {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
           </span>
+          <button
+            class="profile-edit-btn"
+            :disabled="!config.enabled"
+            @click="openProfileEditor(profileId)"
+          >
+            <i class="codicon codicon-edit"></i>
+            {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.edit') }}
+          </button>
+        </div>
+
+        <!-- 类别模式编辑面板 -->
+        <div v-if="editingProfileId" class="profile-edit-panel">
+          <div class="profile-edit-header">
+            <span class="profile-edit-title">
+              <i class="codicon codicon-pencil"></i>
+              {{ profileLabel(editingProfileId) }}
+            </span>
+            <button
+              class="profile-edit-clear"
+              :disabled="!config.enabled"
+              @click="profilePatternsDraft = []"
+            >
+              {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.clear') }}
+            </button>
+          </div>
+          <PatternListEditor
+            v-model="profilePatternsDraft"
+            :disabled="!config.enabled"
+            :placeholder="t('components.settings.checkpoint.sections.exclusion.profilePatterns.placeholder')"
+            :empty-text="t('components.settings.checkpoint.sections.exclusion.profilePatterns.empty')"
+            :add-label="t('components.settings.checkpoint.sections.exclusion.patternsAdd')"
+          />
+          <div class="profile-edit-actions">
+            <button
+              class="profile-edit-save"
+              @click="saveProfilePatterns(editingProfileId)"
+            >
+              {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.save') }}
+            </button>
+            <button class="profile-edit-cancel" @click="editingProfileId = null">
+              {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.cancel') }}
+            </button>
+            <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.hint') }}</span>
+          </div>
         </div>
 
         <!-- 单文件大小上限 -->
@@ -1218,19 +494,26 @@ onUnmounted(() => {
             placeholder="50"
           />
           <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.maxFileSize.hint') }}</span>
+          <span v-if="maxFileSizeError" class="exclusion-error">
+            <i class="codicon codicon-warning"></i>
+            <span>{{ maxFileSizeError }}</span>
+          </span>
         </div>
 
         <!-- 自定义排除模式 -->
         <div class="form-row patterns-row">
-          <label>{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.label') }}</label>
-          <textarea
-            v-model.lazy="customPatternsText"
-            @change="saveCustomPatterns"
+          <label>
+            {{ t('components.settings.checkpoint.sections.exclusion.customPatterns.label') }}
+            <span class="pattern-count">{{ (config.exclusion?.customPatterns || []).length }}</span>
+          </label>
+          <PatternListEditor
+            :model-value="config.exclusion?.customPatterns || []"
             :disabled="!config.enabled"
-            class="patterns-input"
-            rows="4"
             :placeholder="t('components.settings.checkpoint.sections.exclusion.customPatterns.placeholder')"
-          ></textarea>
+            :empty-text="t('components.settings.checkpoint.sections.exclusion.customPatterns.empty')"
+            :add-label="t('components.settings.checkpoint.sections.exclusion.patternsAdd')"
+            @update:model-value="onCustomPatternsChange"
+          />
           <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.hint') }}</span>
           <!-- M-5: 目录型默认类别需同时否定目录本身才能重新纳入其下文件 -->
           <span class="hint">{{ t('components.settings.checkpoint.sections.exclusion.customPatterns.reincludeHint') }}</span>
@@ -1394,6 +677,9 @@ onUnmounted(() => {
           <span v-if="operationProgress.total > 0" class="op-count">
             {{ operationProgress.processed }} / {{ operationProgress.total }}
           </span>
+          <span v-if="operationStale" class="op-stale">
+            {{ t('components.settings.checkpoint.sections.cleanup.progress.stale') }}
+          </span>
           <button
             class="op-cancel-btn"
             :disabled="operationProgress.cancelled"
@@ -1402,6 +688,10 @@ onUnmounted(() => {
             <i class="codicon codicon-close"></i>
             {{ t('components.settings.checkpoint.sections.cleanup.progress.cancel') }}
           </button>
+          <span v-if="operationCancelError" class="op-cancel-error">
+            <i class="codicon codicon-warning"></i>
+            {{ operationCancelError }}
+          </span>
         </div>
         
         <!-- 删除结果反馈（被依赖拒绝/删除失败） -->
@@ -1551,6 +841,13 @@ onUnmounted(() => {
                           </div>
                         </div>
                         <button
+                          class="manifest-btn"
+                          :title="t('components.settings.checkpoint.sections.cleanup.manifestDetail')"
+                          @click="openManifestDetail(cp)"
+                        >
+                          <i class="codicon codicon-filter"></i>
+                        </button>
+                        <button
                           class="delete-btn"
                           :disabled="isBatchDeleting"
                           @click="requestDeleteSingleCheckpoint(cp)"
@@ -1577,6 +874,9 @@ onUnmounted(() => {
         </button>
       </div>
       
+      <!-- TREE-09：分支清理区块（与存档清理并列） -->
+      <BranchCleanupSettings />
+      
     </template>
     
     <!-- 删除确认对话框 -->
@@ -1599,6 +899,84 @@ onUnmounted(() => {
         <div class="dialog-footer">
           <button class="btn-cancel" @click="cancelDelete">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.cancel') }}</button>
           <button class="btn-delete" :disabled="isBatchDeleting" @click="confirmDelete">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.delete') }}</button>
+        </div>
+      </div>
+    </div>
+    <!-- EX-11: 存档排除清单详情 -->
+    <div v-if="manifestCheckpointId" class="manifest-overlay" @click.self="closeManifestDetail">
+      <div class="manifest-dialog">
+        <div class="dialog-header">
+          <i class="codicon codicon-filter"></i>
+          <span>{{ t('components.settings.checkpoint.sections.cleanup.manifestDetail') }}</span>
+        </div>
+        <div class="dialog-body manifest-body">
+          <div v-if="isManifestLoading" class="manifest-loading">
+            <i class="codicon codicon-loading codicon-modifier-spin"></i>
+            <span>{{ t('components.settings.checkpoint.sections.cleanup.loading') }}</span>
+          </div>
+          <p v-else-if="manifestLoadError" class="manifest-error">
+            <i class="codicon codicon-warning"></i>
+            {{ t('components.settings.checkpoint.sections.cleanup.manifestLoadFailed') }}
+          </p>
+          <div v-else-if="!manifestDetail" class="manifest-unavailable">
+            <i class="codicon codicon-info"></i>
+            <span>{{ t('components.settings.checkpoint.sections.cleanup.manifestUnavailable') }}</span>
+          </div>
+          <div v-else class="manifest-content">
+            <div class="manifest-stat">
+              <span class="manifest-stat-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestExcludedCount') }}</span>
+              <span class="manifest-stat-value">{{ manifestExcludedCount }}</span>
+            </div>
+            <p class="manifest-note">
+              {{ t('components.settings.checkpoint.sections.cleanup.manifestNote', { count: manifestExcludedCount }) }}
+            </p>
+            <p v-if="manifestRulesChanged()" class="manifest-rules-changed">
+              <i class="codicon codicon-warning"></i>
+              {{ t('components.settings.checkpoint.sections.cleanup.manifestRulesChanged') }}
+            </p>
+            <template v-if="manifestDetail.ignoreSnapshot">
+              <div class="manifest-section-title">
+                {{ t('components.settings.checkpoint.sections.cleanup.manifestIgnoreSnapshot') }}
+              </div>
+              <div class="manifest-rows">
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestRuleVersion') }}</span>
+                  <span>{{ manifestDetail.ignoreSnapshot.version }}</span>
+                </div>
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestForcedRulesVersion') }}</span>
+                  <span>{{ manifestDetail.ignoreSnapshot.forcedRulesVersion }}</span>
+                </div>
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestDefaultProfileVersion') }}</span>
+                  <span>{{ manifestDetail.ignoreSnapshot.defaultProfileVersion }}</span>
+                </div>
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestMaxFileSize') }}</span>
+                  <span>{{ formatSize(manifestDetail.ignoreSnapshot.maxFileSizeBytes) }}</span>
+                </div>
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestEnabledProfiles') }}</span>
+                  <span v-if="manifestEnabledProfileIds.length > 0" class="manifest-profiles">
+                    {{ manifestEnabledProfileIds.map(profileLabel).join('、') }}
+                  </span>
+                  <span v-else>{{ t('components.settings.checkpoint.sections.cleanup.manifestNone') }}</span>
+                </div>
+                <div class="manifest-row">
+                  <span class="manifest-row-label">{{ t('components.settings.checkpoint.sections.cleanup.manifestCustomPatterns') }}</span>
+                  <span v-if="manifestDetail.ignoreSnapshot.customPatterns?.length > 0" class="manifest-patterns">
+                    {{ manifestDetail.ignoreSnapshot.customPatterns.join('、') }}
+                  </span>
+                  <span v-else>{{ t('components.settings.checkpoint.sections.cleanup.manifestNone') }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-cancel" @click="closeManifestDetail">
+            {{ t('components.settings.checkpoint.sections.cleanup.manifestClose') }}
+          </button>
         </div>
       </div>
     </div>
@@ -2422,26 +1800,102 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-.patterns-input {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-family: var(--vscode-editor-font-family, monospace);
+.pattern-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  margin-left: 6px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* 类别模式编辑面板 */
+.profile-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.profile-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.profile-edit-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  resize: vertical;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.patterns-input:focus {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: -1px;
+.profile-edit-clear {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
 }
 
-.patterns-input:disabled {
-  opacity: 0.6;
+.profile-edit-clear:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.profile-edit-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.profile-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-edit-save,
+.profile-edit-cancel {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.profile-edit-save {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.profile-edit-save:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.profile-edit-cancel {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.profile-edit-cancel:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
 }
 
 .exclusion-error {
@@ -2584,5 +2038,230 @@ onUnmounted(() => {
   padding: 6px 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* H-2: 配置加载失败横幅 */
+.load-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 6px;
+  background: var(--vscode-inputValidation-errorBackground, rgba(190, 17, 0, 0.12));
+}
+
+.load-error-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.load-error-text .codicon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.load-error-detail {
+  font-size: 12px;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.load-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.load-retry-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+/* M4: 操作进度陈旧提示 */
+.op-stale {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* L-10: 操作取消失败提示 */
+.op-cancel-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* EX-11: 存档排除清单入口按钮 */
+.manifest-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.manifest-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+/* EX-11: 排除清单详情对话框 */
+.manifest-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.manifest-dialog {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  width: 460px;
+  max-width: 92%;
+  max-height: 80vh;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-header .codicon-filter {
+  color: var(--vscode-descriptionForeground);
+  font-size: 16px;
+}
+
+.manifest-body {
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.manifest-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.manifest-loading .codicon {
+  color: var(--vscode-progressBar-background);
+}
+
+.manifest-error,
+.manifest-unavailable {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.manifest-error {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.manifest-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.manifest-stat-label {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.manifest-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.manifest-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.manifest-rules-changed {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.12));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.5));
+  color: var(--vscode-inputValidation-warningForeground, #cca700);
+  font-size: 12px;
+}
+
+.manifest-section-title {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.manifest-rows {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.manifest-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+}
+
+.manifest-row:last-child {
+  border-bottom: none;
+}
+
+.manifest-row-label {
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.manifest-profiles,
+.manifest-patterns {
+  text-align: right;
+  word-break: break-all;
+  max-width: 260px;
 }
 </style>

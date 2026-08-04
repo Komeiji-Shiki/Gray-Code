@@ -85,55 +85,55 @@
 
 ### 第五阶段：稳定消息 ID 与树状分支底座
 
-- [ ] BR-01：给后端 `Content` 增加稳定、持久化的消息节点 ID
-- [ ] BR-02：旧历史读取时惰性补齐消息 ID，并保证幂等
-- [ ] BR-03：新增版本化的 `BranchGraph` 数据模型
-- [ ] BR-04：新增分支 sidecar 存储，不把非活跃分支塞入主历史数组
-- [ ] BR-05：主历史始终只保存当前活跃路径
-- [ ] BR-06：增加分支图读取、写入、删除和迁移接口
-- [ ] BR-07：分支操作统一进入会话写锁
-- [ ] BR-08：新增纯函数形式的分支图操作模块和单元测试
-- [ ] BR-09：现有跨对话“创建分支”记录 `sourceNodeId`
+- [x] BR-01：给后端 `Content` 增加稳定、持久化的消息节点 ID
+- [x] BR-02：旧历史读取时惰性补齐消息 ID，并保证幂等
+- [x] BR-03：新增版本化的 `BranchGraph` 数据模型
+- [x] BR-04：新增分支 sidecar 存储，不把非活跃分支塞入主历史数组
+- [x] BR-05：主历史始终只保存当前活跃路径
+- [x] BR-06：增加分支图读取、写入、删除和迁移接口
+- [x] BR-07：分支操作统一进入会话写锁
+- [x] BR-08：新增纯函数形式的分支图操作模块和单元测试
+- [x] BR-09：现有跨对话“创建分支”记录 `sourceNodeId`，并把“复制为新对话”建模进 BranchGraph（节点 `kind: 'exported'`，新对话记录来源节点与导出关系——已确认）
 
 ### 第六阶段：树状重 roll 与候选切换
 
-- [ ] TREE-01：将破坏性重试改成保留旧回答的 reroll
-- [ ] TREE-02：同一父节点下支持多个助手候选
-- [ ] TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息
-- [ ] TREE-04：支持左右切换同一父节点下的候选
-- [ ] TREE-05：每个候选都可以继续向下对话
-- [ ] TREE-06：切换候选时重新构建当前活跃路径
-- [ ] TREE-07：切换后重建 TODO、Build、上下文裁剪和工具响应索引
-- [ ] TREE-08：用量统计默认只统计当前活跃路径
-- [ ] TREE-09：增加分支删除、分支重命名和分支修剪
-- [ ] TREE-10：增加候选切换器和分支状态 UI
-- [ ] TREE-11：增加完整分支树查看面板
-- [ ] TREE-12：扩展标签页快照，保存分支图和当前候选位置
-- [ ] TREE-13：增加流式生成期间的分支操作互斥
-- [ ] TREE-14：补充 reroll、编辑分支、切换分支和竞态测试
+- [x] TREE-01：将破坏性重试改成保留旧回答的 reroll（`chat.rerollStream` 全链路：startReroll 验证/旧候选进 sidecar/新候选激活/主历史截断 → 复用工具循环 → finally finishReroll 回填节点+摘要，失败保留旧候选——决策 10；retryStream 并存不动——决策 5）
+- [x] TREE-02：同一父节点下支持多个助手候选（BranchGraph 新增 `updateNodeContent`/`renameNode` 纯函数使候选 id 对齐 BR-01、每父节点 10 候选上限——决策 4、多候选与摘要维护；branchReroll.test.ts 16 用例）
+- [x] TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息（`chat.editBranchStream` 全链路：目标校验 → editCandidate 建 edit 候选 → 模型候选占位 → 主历史截断+追加（id 对齐 BR-01）→ 工具循环 → finishReroll 回填，失败保留旧候选；editBranch.test.ts 13 用例；遗留：无 startEditBranch 公共方法故模型候选 kind 为 'reroll'、根节点编辑暂拒）
+- [x] TREE-04：支持左右切换同一父节点下的候选（BranchHandlers.switchBranchCandidate 全链编排：切图 → 主历史重写 → 锁外检查点清理 → `{rewritten:true}`，失败回滚图状态；branchSwitch.test.ts 13 项）
+- [x] TREE-05：每个候选都可以继续向下对话（ConversationManager.appendContents 已接上 `appendHistoryToGraph`：有分支图才增量并入、空占位候选跳过避免与 finishReroll 重命名冲突、锁不可重入故 fire-and-forget；切换侧完整语义依赖 TREE-06）
+- [x] TREE-06：切换候选时重新构建当前活跃路径（`ConversationManager.rewriteHistoryFromBranchGraph`：会话写锁内从图活跃路径重建主历史，决策 8 FR 拆分、幂等（FR id 复用）、分歧索引、用量重建 + trim 失效；R8a 复查后补：FR id 复用防检查点误删、metadata 写失败回滚完整性、切换前历史/图尾部一致性检测拒绝切换）
+- [x] TREE-07：切换后重建 TODO、Build、上下文裁剪和工具响应索引（前端 branchActions：切换成功 → 重载历史 → 重建 messageIndexById/toolResponseIndex → 清理错误条/流式残留 → TODO/Build 重置为待定/清空 → 刷新检查点与分支图；失败快照回滚）
+- [x] TREE-08：用量统计包含对话全部分支（非活跃分支的消耗也计入——已确认；方案 A 读取时合并：主历史消息 id 权威去重 + 活跃路径兜底，非活跃候选以 source='branch' 并入各维度 + inactiveBranchTokens 细分；R8 复查后补：混合态索引去重修正、usageMetadataPartial 估算口径）
+- [x] TREE-09：增加分支删除、分支重命名和分支修剪（软删 deletedAt + 保留期默认 30 天可配置 + 级联软删/恢复整棵子树 + restoreNode/renameBranchCandidate/purgeBranchCandidate/pruneDeletedBranches/getDeletedBranchCount + 设置页 BranchCleanupSettings 区块三语；R8 复查后补：switch 链上软删节点校验、孤儿 sidecar 口径统一）
+- [x] TREE-10：增加候选切换器和分支状态 UI（BranchSwitcherBar：‹ 2/3 › 循环切换 + 候选下拉 + 两步确认删除，无分支图自动隐藏）
+- [x] TREE-11：增加完整分支树查看面板（BranchTreePanel：本地 DFS 树形组装 + 活跃路径高亮 + 软删灰显/恢复 + 两步删除 + 行内重命名）
+- [x] TREE-12：扩展标签页快照，保存分支图和当前候选位置（branchGraph 纳入 sessionSnapshots 保存/恢复，修复切标签页残留旧图）
+- [x] TREE-13：增加流式生成期间的分支操作互斥（BranchHandlers 三个变更 handler——createRerollCandidate/switchBranchCandidate/deleteBranchCandidate——调用前检查 `StreamAbortManager.isActive`，活跃返 `BRANCH_BUSY`；只读操作不拦截；branchHandlers.test.ts 互斥矩阵 8 用例 + branchRace.test.ts 竞态 12 用例）
+- [x] TREE-14：补充 reroll、编辑分支、切换分支和竞态测试（reroll 16 例 + 互斥/竞态 20 例 + 编辑分支 13 例 + 切换 13 例 + 流式链路取消/检查点 4 例 + R8a 幂等/回滚/尾部一致性用例）
 
 ### 第七阶段：树状分支与工作区存档联动
 
-- [ ] BCP-01：存档记录关联消息节点 ID 和分支 ID
-- [ ] BCP-02：每个分支记录对应的工作区存档头节点
-- [ ] BCP-03：切换代码分支时明确工作区文件恢复语义
-- [ ] BCP-04：支持“仅切换聊天分支”和“聊天与工作区一起切换”两种模式
-- [ ] BCP-05：工作区无法安全恢复时禁止静默切换
-- [ ] BCP-06：分支删除时按引用计数清理不再使用的存档
-- [ ] BCP-07：分支存档共享不可变内容，避免重复复制
-- [ ] BCP-08：补充聊天分支和工作区状态一致性测试
+- [x] BCP-01：存档记录关联消息节点 ID 和分支 ID（`createCheckpoint` 新增 `options.messageNodeId` 写入存档记录；CheckpointService 三个创建方法经新增 `ConversationManager.getMessageNodeIdAt` 反查 nodeId 透传，旧历史自动触发 BR-02 补 ID；ToolExecutionService before/after 存档点经第 5 构造参数反查、未注入时 CheckpointService 兜底；按 index 的删除/恢复与旧存档完全兼容；含 conversationMessageNodeId 测试）
+- [x] BCP-02：每个分支记录对应的工作区存档头节点（`BranchService.bindWorkspaceCheckpoint`：锁内绑定 workspaceCheckpointId/workspaceState，无图返回 false 不建图、缺失节点 NODE_NOT_FOUND、软删节点拒绝、同 id 幂等不落盘；ToolExecutionService before/after 存档点 fire-and-forget 接线，失败仅 warn 不阻塞工具循环）
+- [x] BCP-03：切换代码分支时明确工作区文件恢复语义（switchBranchCandidate 扩展 mode：chat-and-workspace 编排 = 安全校验 → dirty 闸门 → 取消流 → previewRestore → 恢复（**失败不切分支**，无变化可省略）→ 既有切图/主历史重写/锁外检查点清理；锁序「恢复先于切图」）
+- [x] BCP-04：支持“仅切换聊天分支”和“聊天与工作区一起切换”两种模式（默认仅切聊天；检测到该分支执行过写工具时弹提示询问是否连工作区一起恢复，判据结合 `workspaceCheckpointId` 与分支内工具名列表——已确认；getBranchGraph 富化 hasWorkspaceState/wroteToWorkspace，前端 DirtyFilesConfirm + BranchSwitcherBar/BranchTreePanel 双按钮确认，三语文案）
+- [x] BCP-05：工作区无法安全恢复时禁止静默切换（WORKSPACE_STATE_UNAVAILABLE / WORKSPACE_CHECKPOINT_BROKEN 明确错误码；dirty 文件检测 WorkspaceRestoreGuard 统一拦截普通恢复与切换——决策 11）
+- [x] BCP-06：分支删除时按引用计数清理不再使用的存档（checkpointRefCounts 模块：扫描 BranchGraph 统计引用、软删节点不计数；`deleteCheckpointsByNodeIds` 三重闸门 = 引用计数/CP-05 祖先闭包/unsafe backupDir；purge/prune 物理清理后联动清理，软删不触发）
+- [x] BCP-07：分支存档共享不可变内容，避免重复复制（决策 12：**不做内容哈希去重**——增量链文件级共享 + 引用级共享已满足；4 个测试固化：backupDir 布局、base 引用恢复 + 缺失反证、多跳链、同内容零重复）
+- [x] BCP-08：补充聊天分支和工作区状态一致性测试（26 场景矩阵盘点：8 已覆盖 + 3 本批新增 + 10 由 BCP-03/04/05 + 6 由 BCP-06 补齐；矩阵进度见 bcp07-08-verification.md）
 
 ### 第八阶段：迁移、测试与发布
 
-- [ ] MIG-01：旧线性对话首次分支时建立基线 BranchGraph
-- [ ] MIG-02：旧存档记录迁移到 manifest 模式
-- [ ] MIG-03：旧 `ignorePatterns` 兼容读取为新排除快照
-- [ ] MIG-04：为迁移增加版本号、失败回滚和可恢复中间状态
-- [ ] MIG-05：增加存档和历史数据完整性检查工具
-- [ ] MIG-06：更新中、英、日三语文案
-- [ ] MIG-07：执行后端 Jest、前端 Vitest、typecheck 和 build
-- [ ] MIG-08：更新 README 和 CHANGELOG `[Unreleased]`
-- [ ] MIG-09：进行大工作区、长对话和大量分支性能基准测试
+- [x] MIG-01：旧线性对话首次分支时建立基线 BranchGraph（**核实结论：已覆盖无需补码**——BranchService.loadGraphForWrite 无图时以 importLinearHistory 惰性建线性基线图，BR-09 initializeBranchConversation 同步覆盖）
+- [x] MIG-02：旧存档记录迁移到 manifest 模式（已验证：buildManifestFromRecord 补齐，legacy 保持回退源）
+- [x] MIG-03：旧 `ignorePatterns` 兼容读取为新排除快照（已验证：合并口径覆盖）
+- [x] MIG-04：为迁移增加版本号、失败回滚和可恢复中间状态（BranchMigration 迁移注册表 + 链式升级 + 深拷贝回滚 + 原子落盘 + 损坏拒绝覆盖）
+- [x] MIG-05：增加存档和历史数据完整性检查工具（backend/tools/maintenance/integrityCheck 只读检查：历史 Σcount/段齐全/孤儿段、存档 backupDir/manifest/增量链 base+环、分支 validate + 活跃路径对比，只报告不修复）
+- [x] MIG-06：更新中、英、日三语文案（TREE-09 分支清理区块 + TREE-10/11 切换器/分支树 UI 文案三语同步，languageParity 4/4）
+- [x] MIG-07：执行后端 Jest（138 套/1517 用例）、前端 Vitest（22 文件/267 用例）、双 typecheck 全部通过
+- [x] MIG-08：更新 README 和 CHANGELOG `[Unreleased]`（CHANGELOG 随各批次同步汇总 + README 核心能力补充树状分支对话/子代理增强章节）
+- [x] MIG-09：进行大工作区、长对话和大量分支性能基准测试（test/benchmark/：2000 文件快照 0.3-0.7s、1 万条 append <1s、100 候选全亚毫秒；R8e 后含漂移恢复测量与深链 102 层场景，smoke 上限按实测收紧）
 
 ---
 
@@ -185,6 +185,13 @@
   - 恢复确认框打开期间恢复按钮禁用（`showRestoreConfirm` 并入 disabled），防止重复点击覆盖确认框内容；设置页 unbacked 悬停路径去除 `ws_xxx/` 前缀；
   - 新增测试：扩展存储整根排除增强 1 用例、空目录默认保留 + 确认后清理 1 用例。
   - checkpoint 模块 95 用例全过，后端全量 794 用例通过，前端 Vitest 92 用例通过，前后端 typecheck 通过。
+- ✅ 第五阶段 BR-01~09 与第六阶段 TREE-01/02/13 已落地（2026-08-04）：稳定消息 ID 幂等迁移（branch-br01-02.md）、BranchGraph 纯函数+sidecar 仓储（branch-base-br0304-08.md）、BranchService/BranchHandlers/锁包装（branch-br05-09.md）、reroll 底座（tree01-02-reroll.md）、流式互斥（tree13-busy-guard.md）。
+- ✅ BCP-01（messageNodeId 接线，bcp01-nodeid.md）与 MIG-01~05（mig02-05.md）完成；全量基线：后端 129 suites / 1341 tests、前端 17 files / 188 tests、双 typecheck 全绿。
+- 📋 R5 复查（5 个模块，2026-08-04）发现的遗留问题（已入修复队列）：
+  - branch 模块（R5e）：M-1~M-5 + L-1~L-5 未修 + 新发现 BS-1~6（MetaResult 语义矛盾/普通追加不同步图/候选不校验活跃路径/delete 无锁/未用导入）与 BG-1/2（validate 不校验 version/activeTailNodeId 非链终端）→ **FIX-G3**
+  - checkpoint 模块（R5a）：M-1 create 早退 operation 泄漏、M-2 恢复侧漏传 profilePatterns（排除口径不一致）、M-3 manifest.excluded 未纳入保护（规则变化后误删旧文件）、M-4 rulesChanged 未比 profilePatterns → **FIX-G2**
+  - 前端（R5c）：M3-1 U1 忙时插入零回显、M1-1/M2-1 模块级 Map 无清理、M1-2 思考计时器击穿 v-memo、M2-2/M3-2 → **FIX-G4**
+  - conversation/subagents（R5b/R5d）：HIGH-1 agentInbox 当轮即剥离（主模型收不到信箱消息，A-COMM 失效）、MED-1 并发 drain 归属、MED-2/3 mailbox 无清理、2.1 锁无超时、2.3 parts 判空、2.4 parentId 悬空 → **FIX-G1（进行中）**
 
 ## 流式失败重试残留（已修复）
 
@@ -2006,6 +2013,25 @@ backend/modules/conversation/
 - 用量主页只统计当前活跃路径，另提供所有候选总用量；
 - 分支默认软删除；
 - 不自动删除旧候选，只在数量过多时提示清理。
+
+---
+
+# 已确认业务决策（2026-08-04，主人拍板）
+
+以下决策已由主人确认，第五阶段起按此执行：
+
+1. **分支切换默认模式（BCP-04）**：默认仅切聊天；检测到该分支执行过写工具时弹提示询问是否连工作区一起恢复。**判据结合**：`workspaceCheckpointId` 存在性 + 分支内工具名列表，两者取或。
+2. **用量统计口径（TREE-08）**：对话全部分支都计入——非活跃分支的消耗**不排除**，统计页展示对话总消耗（含所有候选）。
+3. **分支删除（TREE-09）**：软删除——节点标记 `deleted`、可恢复；提供保留期（默认值待定，建议 30 天可配置）；**手动清理入口放设置页新增区块**（与存档清理并列）。
+4. **候选数量上限**：每父节点 10 个候选；超限后提示用户清理，**不自动删除**。
+5. **旧破坏性重试接口**：reroll 上线后 `retryStream` / `editAndRetryStream` 保留为内部兼容路径（错误条重试 `retryAfterError` 等暂走旧逻辑），主流程切 reroll。
+6. **“删除到某条消息”（deleteToMessage）**：保留硬删除语义（用户显式操作），但删除时**同步更新分支图**（该点之后的子树整体软删或移除）。
+7. **回档三连与分支交互**：回档并重试 / 回档并编辑 = 在目标 nodeId 上创建 reroll / 编辑候选 + 恢复存档，**旧分支保留**；只有“回档并删除”才真正移除分支。
+8. **functionResponse 建模**：**不独立成 BranchGraph 节点**，依附所属 model 节点（作为附属记录），reroll 后配对不乱。
+9. **跨对话“创建分支”**：建模进 BranchGraph（节点 `kind: 'exported'`），新对话 BranchGraph 记录来源节点与导出关系（BR-09 范围扩大）。
+10. **流式失败候选**：保留为“失败候选”（标记失败、可切回查看错误），不自动清理。
+11. **dirty 文件拦截（BCP-05/恢复安全）**：普通 `checkpoint.restore` 与分支切换恢复**均拦截未保存的编辑器内容**——恢复前检测 dirty 文件（roots 内 isDirty 文档）并提示确认，不再静默丢弃（2026-08-04 拍板）。
+12. **BCP-07 不做内容哈希去重**：增量链文件级共享 + BCP-02 引用级共享已够用；哈希去重会改变存档列表语义且收益边际，落地为验证测试 + 文档固化（2026-08-04 拍板）。
 
 ---
 

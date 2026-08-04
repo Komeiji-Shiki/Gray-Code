@@ -123,6 +123,23 @@ describe('buildCompletionReport', () => {
         expect(report).toContain('Full review report here.');
     });
 
+    it('超长结果不再截断：回执包含完整正文，不出现 [Truncated ...] 提示（回归：后台完成消息被腰斩）', () => {
+        const longResponse = 'R'.repeat(12000)
+        const task: BackgroundTaskRecord = {
+            ...taskRecordFromStartEvent(startEvent()),
+            status: 'completed',
+            finishedAt: 2000,
+            response: longResponse,
+            steps: 5
+        };
+        const report = buildCompletionReport([task]);
+        // 主模型必须能读到全文（与前台 functionResponse 同规格），而不是 4000 字符截断 + Monitor 提示
+        expect(report).toContain(longResponse);
+        expect(report).not.toContain('[Truncated');
+        expect(report).not.toContain('Open Monitor');
+        expect(report.length).toBeGreaterThan(longResponse.length);
+    });
+
     it('terminal 任务回执包含退出码与输出', () => {
         const task: BackgroundTaskRecord = {
             ...taskRecordFromStartEvent({

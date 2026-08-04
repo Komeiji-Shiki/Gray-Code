@@ -731,6 +731,99 @@ function resolveStructuredHunkMatch(
 }
 
 
+function tryApplyIndependentExactStructuredHunks(
+    originalContent: string,
+    hunks: StructuredDiffHunk[],
+    applyIndices?: Set<number>
+): {
+    newContent: string;
+    results: Array<{
+        index: number;
+        success: boolean;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        matchKind?: StructuredMatchKind;
+    }>;
+    blocks: Array<{ index: number; startLine: number; endLine: number }>;
+    appliedCount: number;
+    failedCount: number;
+} | undefined {
+    const normalizedOriginal = normalizeLineEndings(originalContent);
+    const planned: Array<{
+        index: number;
+        startIndex: number;
+        endIndex: number;
+        originalStartLine: number;
+        oldContent: string;
+        newContent: string;
+    }> = [];
+
+    for (let index = 0; index < hunks.length; index++) {
+        if (applyIndices && !applyIndices.has(index)) continue;
+        const hunk = hunks[index];
+        if (!hunk || typeof hunk.oldContent !== 'string' || typeof hunk.newContent !== 'string') return undefined;
+
+        const oldContent = normalizeLineEndings(hunk.oldContent);
+        if (!oldContent) return undefined;
+        const matches = findAllExactMatchIndexes(normalizedOriginal, oldContent);
+        if (matches.length !== 1) return undefined;
+
+        const startIndex = matches[0];
+        const previous = planned[planned.length - 1];
+        if (previous && startIndex < previous.endIndex) return undefined;
+        planned.push({
+            index,
+            startIndex,
+            endIndex: startIndex + oldContent.length,
+            originalStartLine: getLineNumberAtIndex(normalizedOriginal, startIndex),
+            oldContent,
+            newContent: normalizeLineEndings(hunk.newContent)
+        });
+    }
+
+    if (planned.length === 0) return undefined;
+
+    const output: string[] = [];
+    const results: Array<{
+        index: number;
+        success: boolean;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        matchKind?: StructuredMatchKind;
+    }> = [];
+    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
+    let cursor = 0;
+    let lineDelta = 0;
+
+    for (const item of planned) {
+        output.push(normalizedOriginal.slice(cursor, item.startIndex), item.newContent);
+        const startLine = item.originalStartLine + lineDelta;
+        const endLine = startLine + Math.max(countTextLines(item.newContent), 1) - 1;
+        results.push({
+            index: item.index,
+            success: true,
+            startLine,
+            endLine,
+            matchCount: 1,
+            matchKind: 'exact'
+        });
+        blocks.push({ index: item.index, startLine, endLine });
+        lineDelta += countLineBreaks(item.newContent) - countLineBreaks(item.oldContent);
+        cursor = item.endIndex;
+    }
+    output.push(normalizedOriginal.slice(cursor));
+
+    return {
+        newContent: output.join(''),
+        results,
+        blocks,
+        appliedCount: results.length,
+        failedCount: 0
+    };
+}
+
 export function applyStructuredDiffHunksBestEffort(
     originalContent: string,
     hunks: StructuredDiffHunk[],
@@ -754,6 +847,9 @@ export function applyStructuredDiffHunksBestEffort(
     appliedCount: number;
     failedCount: number;
 } {
+    const fastResult = tryApplyIndependentExactStructuredHunks(originalContent, hunks, options?.applyIndices);
+    if (fastResult) return fastResult;
+
     // 为什么要把结构化 hunk 应用逻辑做成导出函数：工具入口和 DiffManager 块级接受/拒绝都需要同一套重放语义，不能各写一份。
     // 怎么改：逐 hunk 处理；先保持 exact 匹配原有语义，exact 为 0 时才启用行首缩进容错，并根据已应用 hunk 的行数变化维护偏移。
     // 目的：同时解决 JSON 转义误写、多个修改点行号漂移、AI 缩进误差、以及块级拒绝后重新计算内容的一致性问题。

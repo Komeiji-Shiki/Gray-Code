@@ -21,7 +21,12 @@ const STREAM_MESSAGE_TYPES = [
   'retryStream',
   'editAndRetryStream',
   'toolConfirmation',
-  'cancelStream'
+  'cancelStream',
+  // H2（R6a-FIX）：reroll/editBranch 长流与 chatStream/retryStream 同模式——
+  // 走 fire-and-forget，避免 route() 串行 await 整个流占死 IPC 消息队列
+  // （期间 cancelStream/deleteMessage/switchBranchCandidate/新消息全部排队）。
+  'chat.rerollStream',
+  'chat.editBranchStream'
 ] as const;
 
 type StreamMessageType = typeof STREAM_MESSAGE_TYPES[number];
@@ -40,7 +45,12 @@ const NON_BLOCKING_MESSAGE_TYPES = new Set([
   'summarizeContext',
   'dependencies.install',
   'dependencies.uninstall',
-  'storagePath.migrate'
+  'storagePath.migrate',
+  // M-1: 检查点全量扫描/枚举可能耗时数秒到数分钟（大工作区），
+  // 若在串行队列中 await 会阻塞 cancelStream / checkpoint.cancelOperation / 消息删除等全部 IPC，
+  // 导致 webview 消息通道整体冻结；fire-and-forget 让取消类消息始终能及时送达。
+  'checkpoint.previewExclusions',
+  'checkpoint.getAllConversationsWithCheckpoints'
 ]);
 
 /**
@@ -109,7 +119,7 @@ export class MessageRouter {
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
       trackRequestClient();
-      await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId);
+      await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId, ctx);
       return true;
     }
 
@@ -216,7 +226,13 @@ export class MessageRouter {
   /**
    * 处理流式消息
    */
-  private async handleStreamMessage(type: StreamMessageType, data: any, requestId: string, clientId?: WebviewClientId): Promise<void> {
+  private async handleStreamMessage(
+    type: StreamMessageType,
+    data: any,
+    requestId: string,
+    clientId: WebviewClientId | undefined,
+    ctx: HandlerContext
+  ): Promise<void> {
     switch (type) {
       case 'chatStream':
         // 不阻塞消息循环，流式处理在后台进行
@@ -239,7 +255,50 @@ export class MessageRouter {
         const { conversationId } = data;
         this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
         break;
+
+      // H2（R6a-FIX）：reroll/editBranch 长流按 fire-and-forget 处理（与 chatStream/retryStream 同），
+      // 不串行 await 占死消息队列；handler 内部自行完成 abort 接线与 chunk 转发。
+      case 'chat.rerollStream':
+        this.runRegistryStreamHandler('chat.rerollStream', data, requestId, ctx, clientId);
+        break;
+
+      case 'chat.editBranchStream':
+        this.runRegistryStreamHandler('chat.editBranchStream', data, requestId, ctx, clientId);
+        break;
     }
+  }
+
+  /**
+   * H2：以 fire-and-forget 方式调用注册表中的流式 handler（chat.rerollStream / chat.editBranchStream）。
+   *
+   * 与 StreamRequestHandler 的流式类型同语义：route() 不 await 长流，取消/删除/新消息等 IPC
+   * 不会被长流占死；错误就地清理 requestClients 后按路由回传（sendRoutedError 依赖该映射）。
+   */
+  private runRegistryStreamHandler(
+    type: string,
+    data: any,
+    requestId: string,
+    ctx: HandlerContext,
+    clientId: WebviewClientId | undefined
+  ): void {
+    const handler = this.registry.get(type);
+    if (!handler) {
+      // 理论上不可能（注册表与 STREAM_MESSAGE_TYPES 同步维护）；兜底回传错误防挂起
+      this.requestClients.delete(requestId);
+      this.sendRoutedError(requestId, 'HANDLER_ERROR', `stream handler not registered: ${type}`);
+      return;
+    }
+    const routedCtx = this.createRoutedContext(ctx, clientId);
+    Promise.resolve(handler(data, requestId, routedCtx)).catch((error: any) => {
+      console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
+      // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息
+      try {
+        this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
+      } catch {
+        // 发送错误失败则静默忽略
+      }
+      this.requestClients.delete(requestId);
+    });
   }
 
   /**

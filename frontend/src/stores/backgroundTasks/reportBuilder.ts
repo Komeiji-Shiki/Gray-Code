@@ -51,16 +51,6 @@ export interface TaskEventLike {
 const COMMAND_LABEL_MAX_LENGTH = 60
 
 /**
- * 回执中允许携带的 SubAgent 结果正文上限。
- *
- * 修改原因：后台 SubAgent 的工具调用立即返回 taskId stub，主模型不会通过 functionResponse 拿到任何结果，
- *          回执是结果回到主模型的唯一通道；但完整报告可能长达数万字符，直接内联会刷屏。
- * 修改方式：内联正文并按上限截断，截断时显式提示可去 Monitor 查看完整 transcript。
- * 修改目的：主模型能真正拿到后台任务产出，同时最坏情况下的消息体积可控。
- */
-const SUBAGENT_RESPONSE_MAX_LENGTH = 4000
-
-/**
  * 是否是后台任务的 start 事件。
  *
  * background_subagent 全部是后台；terminal 仅当 metadata.background === true。
@@ -154,18 +144,17 @@ function buildSubAgentSection(task: BackgroundTaskRecord): string {
 
   if (task.error) lines.push(`Error: ${task.error}`)
 
-  // 修改原因：后台 SubAgent 的 functionResponse 只含 taskId，主模型无法从别处得到结果；旧实现省略正文导致后台任务产出被静默丢弃。
-  // 修改方式：内联结果正文并按 SUBAGENT_RESPONSE_MAX_LENGTH 截断，截断时提示去 Monitor 查看完整 transcript。
-  // 修改目的：后台派发的工作真正回到主模型手里，同时回执体积仍然有界。
+  // 修改原因：后台 SubAgent 的 functionResponse 只含 taskId，回执是结果回到主模型的唯一通道。
+  //          旧实现把正文按 4000 字符截断并提示「去 Monitor 查看完整 transcript」，但 Monitor 是人类 UI，
+  //          主模型没有访问路径——研究/审查报告被腰斩，截断提示等于产出丢失（用户实测多次中招）。
+  // 修改方式：完整内联结果正文，不再截断。载荷安全无需额外处理：完整结果本就要经 postMessage 转发给
+  //          Monitor（现状无截断），回执再经 chatStream 与普通用户消息同路径发送（无消息长度上限），
+  //          且与前台 SubAgent 经 functionResponse 回传的完整载荷完全同规格。
+  // 修改目的：主模型能读到与前台一致的完整后台任务产出。
   const response = task.response?.trim()
   if (response) {
     lines.push('Result:')
-    if (response.length > SUBAGENT_RESPONSE_MAX_LENGTH) {
-      lines.push(`${response.slice(0, SUBAGENT_RESPONSE_MAX_LENGTH)}…`)
-      lines.push(`[Truncated ${response.length - SUBAGENT_RESPONSE_MAX_LENGTH} more characters. Open Monitor to view the full transcript.]`)
-    } else {
-      lines.push(response)
-    }
+    lines.push(response)
   } else {
     lines.push('Open Monitor to view full transcript.')
   }
