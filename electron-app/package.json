@@ -50,9 +50,13 @@
     "win": {
       "target": [
         "nsis",
+        "portable",
         "zip"
       ],
       "icon": "../resources/icon.png"
+    },
+    "portable": {
+      "artifactName": "GrayCode-Portable-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
