@@ -117,6 +117,25 @@ export interface QueuedMessage {
 }
 
 /**
+ * 对话尾部版本摘要（重roll树状分叉）。
+ *
+ * 每条 AI 回答被重新生成时，旧回答及其后续内容保存为一个版本；
+ * 版本列表按创建时间排序，配合「当前活跃尾部」构成 v1/v2/v3… 分叉，
+ * 可随时来回切换（DeepSeek 网页版交互）。
+ */
+export interface TailVersionInfo {
+  id: string
+  /** 分支点：AI 回答消息的后端索引 */
+  branchIndex: number
+  /** 创建时间戳 */
+  createdAt: number
+  /** 版本摘要（尾部第一条非空文本的截断） */
+  preview?: string
+  /** 尾部消息数 */
+  messageCount: number
+}
+
+/**
  * Chat Store 状态类型
  */
 export interface ChatStoreState {
@@ -246,6 +265,26 @@ export interface ChatStoreState {
    * 随消息写入维护的权威索引，让 getToolResponseById 退化为纯 O(1) 查表。
    */
   toolResponseIndex: Ref<Map<string, number>>
+
+  // ============ 对话尾部版本（重roll树状分叉） ============
+
+  /** conversationId -> 该对话的全部尾部版本摘要（不含消息内容） */
+  tailVersionsByConversation: Ref<Record<string, TailVersionInfo[]>>
+
+  /** conversationId -> 是否正在拉取版本列表 */
+  tailVersionsLoading: Ref<Record<string, boolean>>
+
+  /**
+   * 正在切换版本的标记：`${conversationId}:${branchIndex}:${versionId}` -> boolean。
+   * 用于版本切换期间在消息上显示加载态、防止重复点击。
+   */
+  tailVersionSwitching: Ref<Set<string>>
+
+  /**
+   * `${conversationId}:${branchIndex}` -> 当前恢复为 transcript 的版本 ID。
+   * null 表示活跃尾部是「最新生成的当前答案」。用于版本切换器的位置/高亮显示。
+   */
+  activeTailVersionByBranch: Ref<Record<string, string | null>>
 }
 
 /**

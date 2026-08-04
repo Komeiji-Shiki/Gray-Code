@@ -23,6 +23,7 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
+import { saveTailVersionForRetry, resetActiveTailVersionsForConversation, setActiveTailVersion } from './tailVersionActions'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -272,6 +273,9 @@ export async function sendMessage(
       state.allMessages.value.push(userMessage)
     }
 
+    // 新用户消息意味着尾部变化：重roll 分叉的活跃版本标记重置为「最新当前答案」
+    resetActiveTailVersionsForConversation(state, targetConvId)
+
     const assistantMessageId = generateId()
     const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
@@ -475,6 +479,13 @@ export async function retryFromMessage(
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
 
+  // ★ 重roll 树状分叉：截断前先把「当前回答及其后续内容」保存为版本，
+  // 新回答生成后可在消息上随时切回旧版本（DeepSeek 网页版交互）。
+  // 失败不阻塞重roll 本身（版本保存是尽力而为的增强）。
+  await saveTailVersionForRetry(state, originConvId, backendIndex)
+  // 重roll 后该分支点的活跃尾部变为「最新当前答案」
+  setActiveTailVersion(state, originConvId, backendIndex, null)
+
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
@@ -676,6 +687,9 @@ export async function editAndRetry(
   clearCheckpointsFromIndex(state, backendMessageIndex)
   setTotalMessagesFromWindow(state)
 
+  // 编辑用户消息也会改变后续尾部：重置重roll 分叉的活跃版本标记
+  resetActiveTailVersionsForConversation(state, originConvId)
+
   
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
@@ -799,6 +813,8 @@ export async function deleteMessage(
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
+      // 删除后续消息：重置重roll 分叉的活跃版本标记
+      resetActiveTailVersionsForConversation(state, originConvId)
       await refreshCurrentConversationBuildSession(state)
     } else {
       const err = response?.error
@@ -869,6 +885,9 @@ export async function deleteSingleMessage(
       state.isLoadingMoreMessages.value = false
       state.historyFolded.value = false
       state.foldedMessageCount.value = 0
+
+      // 删除单条消息也会改变尾部：重置重roll 分叉的活跃版本标记
+      resetActiveTailVersionsForConversation(state, originConvId)
 
       await loadCheckpoints(state)
       await refreshCurrentConversationBuildSession(state)

@@ -11,8 +11,8 @@ export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'
 
-/** 支持的语言 */
-export type Language = 'zh-CN' | 'en'
+/** 支持的语言（'auto' = 跟随系统，由 preload 注入的 __GRAYCODE_DETECTED_LANG 解析） */
+export type Language = 'auto' | 'zh-CN' | 'en' | 'ja'
 
 export const useSettingsStore = defineStore('settings', () => {
   // 当前视图（默认为聊天）
@@ -29,7 +29,13 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 外观设置：选中内容入口开关
   const selectionContextEnabled = ref(true)
-  
+
+  // 子代理 Monitor 内嵌面板开关（仅会话内状态，不持久化）
+  const subAgentMonitorOpen = ref(false)
+
+  // 子代理 Monitor 面板打开时携带的导航目标（runId）
+  const monitorFocusRunId = ref<string | undefined>(undefined)
+
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
 
@@ -82,6 +88,29 @@ export const useSettingsStore = defineStore('settings', () => {
   function setSelectionContextEnabled(enabled: boolean) {
     selectionContextEnabled.value = enabled
   }
+
+  // 打开子代理 Monitor 内嵌面板（可携带要聚焦的 runId）
+  function openSubAgentMonitor(runId?: string) {
+    if (runId) {
+      monitorFocusRunId.value = runId
+    }
+    subAgentMonitorOpen.value = true
+  }
+
+  // 关闭子代理 Monitor 面板
+  function closeSubAgentMonitor() {
+    subAgentMonitorOpen.value = false
+    monitorFocusRunId.value = undefined
+  }
+
+  // 切换面板开关
+  function toggleSubAgentMonitor() {
+    if (subAgentMonitorOpen.value) {
+      closeSubAgentMonitor()
+    } else {
+      openSubAgentMonitor()
+    }
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -96,6 +125,8 @@ export const useSettingsStore = defineStore('settings', () => {
     language,
     appearanceLoadingText,
     selectionContextEnabled,
+    subAgentMonitorOpen,
+    monitorFocusRunId,
     promptModesVersion,
 
     // 方法
@@ -108,6 +139,9 @@ export const useSettingsStore = defineStore('settings', () => {
     setLanguage,
     setAppearanceLoadingText,
     setSelectionContextEnabled,
+    openSubAgentMonitor,
+    closeSubAgentMonitor,
+    toggleSubAgentMonitor,
     refreshPromptModes
   }
 })

@@ -2,7 +2,7 @@
  * VSCode API 通信工具
  */
 
-import type { VSCodeMessage, VSCodeRequest } from '../types'
+import type { VSCodeMessage } from '../types'
 import { handleSoundEvent } from '../services/soundEventController'
 import { routeExtensionMessage, type PendingRequestHandler } from './extensionMessageRouting'
 
@@ -52,7 +52,7 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
 const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 
 // 发送消息到插件
-export function sendToExtension<T = any>(type: string, data: any, options?: { timeoutMs?: number }): Promise<T> {
+export function sendToExtension<T = any>(type: string, data: any, options?: { timeoutMs?: number; clientId?: string }): Promise<T> {
   return new Promise((resolve, reject) => {
     const requestId = generateRequestId()
     const vscode = getVSCodeAPI()
@@ -93,11 +93,17 @@ export function sendToExtension<T = any>(type: string, data: any, options?: { ti
       // 修改方式：JSON 往返解包所有 Proxy，统一在此处确保 payload 是纯 JSON 兼容对象。
       // 修改目的：调用方无需感知 Vue 响应式细节，全局消除 "could not be cloned"。
       const safeData = JSON.parse(JSON.stringify(data))
-      vscode.postMessage({
+      // clientId 用于同一窗口内区分消息归属（如内嵌 SubAgent Monitor 面板）；
+      // 与 VS Code 版 per-message clientId 协议保持一致，缺省不带则由后端回退主聊天。
+      const message: Record<string, unknown> = {
         type,
         requestId,
         data: safeData
-      } as VSCodeRequest)
+      }
+      if (options?.clientId) {
+        message.clientId = options.clientId
+      }
+      vscode.postMessage(message)
     } catch (err: any) {
       // 例如：payload 过大导致 structured clone / postMessage 失败
       clearTimeoutTimer()

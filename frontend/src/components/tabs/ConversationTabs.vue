@@ -1,21 +1,31 @@
 <script setup lang="ts">
 /**
- * ConversationTabs - 多对话标签页组件
+ * ConversationTabs - 多对话标签页组件（常驻顶部栏）
  *
- * 在聊天区域顶部显示横向标签页栏，支持：
- * - 切换标签页
- * - 关闭标签页
- * - 新建标签页
- * - 拖拽排序标签页
- * - 流式响应指示器
- * - 使用 CustomScrollbar 实现底部横向滚动条
+ * 顶部栏始终渲染（无标签页时显示 GrayCode 占位标题），右侧固定操作区：
+ *  - 新建标签页
+ *  - SubAgent Monitor 内嵌面板开关
+ *  - 语言切换（简体中文 → English → 日本語 → Auto 循环，持久化到 ui.language）
+ *  - 设置齿轮
  */
 
 import { ref, computed, nextTick, watch } from 'vue'
-import { useI18n } from '../../i18n'
+import { useI18n, setLanguage } from '../../i18n'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { sendToExtension } from '../../utils/vscode'
 import { CustomScrollbar } from '../common'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
+
+/** 语言循环顺序（Auto = 跟随系统） */
+const LANG_CYCLE = ['zh-CN', 'en', 'ja', 'auto'] as const
+const LANG_LABELS: Record<string, string> = {
+  'zh-CN': '简体中文',
+  en: 'English',
+  ja: '日本語',
+  auto: 'Auto'
+}
 
 interface TabInfo {
   id: string
@@ -39,8 +49,27 @@ const emit = defineEmits<{
 /** CustomScrollbar 组件 ref */
 const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 
-/** 是否显示标签栏（至少 1 个标签页时显示） */
+/** 是否显示标签页（至少 1 个标签页时显示） */
 const showTabs = computed(() => props.tabs.length >= 1)
+
+// ─── 语言切换 ───
+const languageLabel = computed(() => LANG_LABELS[settingsStore.language] || LANG_LABELS['auto'])
+
+/** 循环切换语言并持久化（简体中文 → English → 日本語 → Auto） */
+async function cycleLanguage() {
+  const current = settingsStore.language
+  const idx = LANG_CYCLE.indexOf(current as (typeof LANG_CYCLE)[number])
+  const next = LANG_CYCLE[idx >= 0 ? (idx + 1) % LANG_CYCLE.length : 0]
+  settingsStore.setLanguage(next)
+  setLanguage(next)
+  try {
+    await sendToExtension('updateUISettings', {
+      ui: { language: next }
+    })
+  } catch (err) {
+    console.error('Failed to save language setting:', err)
+  }
+}
 
 // ─── 拖拽排序状态 ───
 /** 正在拖拽的标签页索引 */
@@ -173,64 +202,98 @@ watch(() => props.tabs.length, () => {
 </script>
 
 <template>
-  <div v-if="showTabs" class="tabs-bar" @wheel="handleWheel">
-    <CustomScrollbar
-      ref="scrollbarRef"
-      :horizontal="true"
-      :width="3"
-      :offset="0"
-      :min-thumb-height="20"
-      class="tabs-scrollbar"
-    >
-      <div class="tabs-container">
-        <div
-          v-for="(tab, index) in tabs"
-          :key="tab.id"
-          class="tab-item"
-          :class="{
-            active: tab.id === activeTabId,
-            streaming: tab.isStreaming,
-            dragging: dragFromIndex === index,
-            'drag-over-left': dragOverIndex === index && dragOverSide === 'left',
-            'drag-over-right': dragOverIndex === index && dragOverSide === 'right'
-          }"
-          draggable="true"
-          @dragstart="handleDragStart($event, index)"
-          @dragover="handleDragOver($event, index)"
-          @drop="handleDrop($event, index)"
-          @dragend="handleDragEnd"
-          @click="emit('switchTab', tab.id)"
-          @mousedown="handleMouseDown($event, tab.id)"
-          :title="tab.title || t('components.tabs.newChat')"
-        >
-          <!-- 流式指示器 -->
-          <i v-if="tab.isStreaming" class="codicon codicon-loading spin tab-spinner"></i>
-
-          <!-- 标题 -->
-          <span class="tab-title">
-            {{ truncateTitle(tab.title || t('components.tabs.newChat')) }}
-          </span>
-
-          <!-- 关闭按钮 -->
-          <button
-            class="tab-close-btn"
-            @click="handleClose($event, tab.id)"
-            :title="t('components.tabs.closeTab')"
+  <div class="tabs-bar" @wheel="showTabs ? handleWheel($event) : undefined">
+    <!-- 左侧：标签页 或 占位标题 -->
+    <div v-if="showTabs" class="tabs-area">
+      <CustomScrollbar
+        ref="scrollbarRef"
+        :horizontal="true"
+        :width="3"
+        :offset="0"
+        :min-thumb-height="20"
+        class="tabs-scrollbar"
+      >
+        <div class="tabs-container">
+          <div
+            v-for="(tab, index) in tabs"
+            :key="tab.id"
+            class="tab-item"
+            :class="{
+              active: tab.id === activeTabId,
+              streaming: tab.isStreaming,
+              dragging: dragFromIndex === index,
+              'drag-over-left': dragOverIndex === index && dragOverSide === 'left',
+              'drag-over-right': dragOverIndex === index && dragOverSide === 'right'
+            }"
+            draggable="true"
+            @dragstart="handleDragStart($event, index)"
+            @dragover="handleDragOver($event, index)"
+            @drop="handleDrop($event, index)"
+            @dragend="handleDragEnd"
+            @click="emit('switchTab', tab.id)"
+            @mousedown="handleMouseDown($event, tab.id)"
+            :title="tab.title || t('components.tabs.newChat')"
           >
-            <i class="codicon codicon-close"></i>
-          </button>
-        </div>
-      </div>
-    </CustomScrollbar>
+            <!-- 流式指示器 -->
+            <i v-if="tab.isStreaming" class="codicon codicon-loading spin tab-spinner"></i>
 
-    <!-- 新建标签页按钮 -->
-    <button
-      class="tab-new-btn"
-      @click="emit('newTab')"
-      :title="t('components.tabs.newTab')"
-    >
-      <i class="codicon codicon-add"></i>
-    </button>
+            <!-- 标题 -->
+            <span class="tab-title">
+              {{ truncateTitle(tab.title || t('components.tabs.newChat')) }}
+            </span>
+
+            <!-- 关闭按钮 -->
+            <button
+              class="tab-close-btn"
+              @click="handleClose($event, tab.id)"
+              :title="t('components.tabs.closeTab')"
+            >
+              <i class="codicon codicon-close"></i>
+            </button>
+          </div>
+        </div>
+      </CustomScrollbar>
+
+      <!-- 新建标签页按钮 -->
+      <button
+        class="tab-new-btn"
+        @click="emit('newTab')"
+        :title="t('components.tabs.newTab')"
+      >
+        <i class="codicon codicon-add"></i>
+      </button>
+    </div>
+    <div v-else class="tabs-placeholder">
+      <span class="tabs-app-title">{{ t('components.tabs.appTitle') }}</span>
+    </div>
+
+    <!-- 右侧：全局操作区（常驻） -->
+    <div class="tabs-actions">
+      <button
+        class="tab-action-btn"
+        :class="{ 'action-active': settingsStore.subAgentMonitorOpen }"
+        @click="settingsStore.toggleSubAgentMonitor()"
+        :title="settingsStore.subAgentMonitorOpen
+          ? t('components.tabs.monitorClose')
+          : t('components.tabs.monitorOpen')"
+      >
+        <i class="codicon codicon-hubot"></i>
+      </button>
+      <button
+        class="tab-action-btn lang-toggle"
+        @click="cycleLanguage"
+        :title="t('components.tabs.toggleLanguage')"
+      >
+        {{ languageLabel }}
+      </button>
+      <button
+        class="tab-action-btn"
+        @click="settingsStore.showSettings()"
+        :title="t('components.tabs.settings')"
+      >
+        <i class="codicon codicon-settings-gear"></i>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -238,12 +301,20 @@ watch(() => props.tabs.length, () => {
 .tabs-bar {
   display: flex;
   align-items: stretch;
-  height: 26px;
-  min-height: 26px;
+  height: 32px;
+  min-height: 32px;
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
   border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
   flex-shrink: 0;
   overflow: hidden;
+}
+
+.tabs-area {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
 }
 
 .tabs-scrollbar {
@@ -412,8 +483,8 @@ watch(() => props.tabs.length, () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  min-width: 26px;
+  width: 28px;
+  min-width: 28px;
   height: 100%;
   padding: 0;
   border: none;
@@ -432,6 +503,72 @@ watch(() => props.tabs.length, () => {
 
 .tab-new-btn .codicon {
   font-size: 12px;
+}
+
+/* 无标签页时的占位标题 */
+.tabs-placeholder {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.tabs-app-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 右侧全局操作区（常驻） */
+.tabs-actions {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border-left: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.15));
+}
+
+.tab-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 32px;
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast, 0.1s ease),
+              background var(--transition-fast, 0.1s ease);
+}
+
+.tab-action-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.1));
+}
+
+.tab-action-btn.action-active {
+  opacity: 1;
+  color: var(--vscode-focusBorder, #007fd4);
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.12));
+}
+
+.tab-action-btn .codicon {
+  font-size: 14px;
+}
+
+.lang-toggle {
+  min-width: 56px;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .spin {

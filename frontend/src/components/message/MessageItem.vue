@@ -519,6 +519,92 @@ function handleRestoreAndRetry(checkpointId: string) {
   emit('restoreAndRetry', props.message.id, checkpointId)
 }
 
+// ============ 重roll 树状分叉：版本切换器 ============
+
+interface VersionChip {
+  key: string
+  label: string
+  /** 版本 ID；null 表示「最新当前答案」（未保存为版本的活跃尾部） */
+  versionId: string | null
+  preview: string
+}
+
+/** 该消息分支点上的已保存版本 */
+const branchVersions = computed(() =>
+  chatStore.versionsForBranch(chatStore.currentConversationId, props.messageIndex)
+)
+
+/** 当前恢复为 transcript 的版本 ID（null = 最新当前答案） */
+const activeTailVersionId = computed(() => {
+  const key = `${chatStore.currentConversationId}:${props.messageIndex}`
+  return chatStore.activeTailVersionByBranch[key] ?? null
+})
+
+/** 活跃版本在 chips 中的位置（0-based；最新当前答案在最后） */
+const activeChipIndex = computed(() => {
+  const activeId = activeTailVersionId.value
+  if (activeId === null) return branchVersions.value.length
+  const idx = branchVersions.value.findIndex(v => v.id === activeId)
+  return idx === -1 ? branchVersions.value.length : idx
+})
+
+/** 版本 chips：已保存版本 + （活跃尾部是当前答案时的）「最新」chip */
+const versionChips = computed<VersionChip[]>(() => {
+  const chips: VersionChip[] = branchVersions.value.map((v, i) => ({
+    key: v.id,
+    label: `v${i + 1}`,
+    versionId: v.id,
+    preview: v.preview || ''
+  }))
+  if (activeTailVersionId.value === null) {
+    chips.push({
+      key: '__current__',
+      label: `v${chips.length + 1} ${t('components.message.tailVersion.current')}`,
+      versionId: null,
+      preview: ''
+    })
+  }
+  return chips
+})
+
+/** 是否显示版本切换器：AI 消息、非流式、该分支点存在已保存版本 */
+const showVersionSwitcher = computed(() =>
+  !isUser.value && !isStreaming.value && branchVersions.value.length > 0
+)
+
+/** 该分支点是否正在切换版本 */
+const isSwitchingVersion = computed(() => {
+  const prefix = `${chatStore.currentConversationId}:${props.messageIndex}:`
+  return [...chatStore.tailVersionSwitching].some(k => k.startsWith(prefix))
+})
+
+/** 切换到指定 chip（前后箭头与 chip 点击共用） */
+async function switchToVersionChip(index: number) {
+  if (isSwitchingVersion.value) return
+  if (index < 0 || index >= versionChips.value.length) return
+  if (index === activeChipIndex.value) return
+
+  const chip = versionChips.value[index]
+  if (chip.versionId === null) {
+    // 「最新」chip：活跃尾部本来就是当前答案，无需切换
+    if (activeTailVersionId.value === null) return
+    return
+  }
+  await chatStore.switchTailVersion(props.messageIndex, chip.versionId)
+}
+
+/** 前进/后退一步 */
+function stepVersion(delta: number) {
+  switchToVersionChip(activeChipIndex.value + delta)
+}
+
+/** 指定版本是否正在切换（用于 chip 上的加载动画） */
+function isChipSwitching(chip: VersionChip): boolean {
+  if (chip.versionId === null) return false
+  const key = `${chatStore.currentConversationId}:${props.messageIndex}:${chip.versionId}`
+  return chatStore.tailVersionSwitching.has(key)
+}
+
 </script>
 
 <template>
@@ -577,6 +663,49 @@ function handleRestoreAndRetry(checkpointId: string) {
       :title="t('components.message.actions.viewResponse')"
       width="960px"
     />
+
+    <!-- 重roll 树状分叉：版本切换器（DeepSeek 风格 v1/v2/v3…） -->
+    <div v-if="showVersionSwitcher" class="version-switcher" :title="t('components.message.tailVersion.title')">
+      <button
+        class="version-nav-btn"
+        :disabled="isSwitchingVersion || activeChipIndex <= 0"
+        :title="t('components.message.tailVersion.prev')"
+        @click="stepVersion(-1)"
+      >
+        <i class="codicon codicon-chevron-left"></i>
+      </button>
+
+      <div class="version-chips">
+        <button
+          v-for="(chip, idx) in versionChips"
+          :key="chip.key"
+          class="version-chip"
+          :class="{
+            active: idx === activeChipIndex,
+            switching: isChipSwitching(chip)
+          }"
+          :title="chip.preview || (chip.versionId === null ? t('components.message.tailVersion.current') : '')"
+          :disabled="isSwitchingVersion"
+          @click="switchToVersionChip(idx)"
+        >
+          <span>{{ chip.label }}</span>
+          <i v-if="isChipSwitching(chip)" class="codicon codicon-loading spin version-chip-spinner"></i>
+        </button>
+      </div>
+
+      <button
+        class="version-nav-btn"
+        :disabled="isSwitchingVersion || activeChipIndex >= versionChips.length - 1"
+        :title="t('components.message.tailVersion.next')"
+        @click="stepVersion(1)"
+      >
+        <i class="codicon codicon-chevron-right"></i>
+      </button>
+
+      <span v-if="isSwitchingVersion" class="version-switching-label">
+        {{ t('components.message.tailVersion.switching') }}
+      </span>
+    </div>
 
     <div class="message-body">
       <!-- 总结消息特殊显示 -->
@@ -850,7 +979,111 @@ function handleRestoreAndRetry(checkpointId: string) {
   color: var(--vscode-descriptionForeground);
 }
 
-/* 消息内容 */
+/* 重roll 树状分叉：版本切换器 */
+.version-switcher {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 4px;
+  padding: 3px 6px;
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-focusBorder) 4%);
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.version-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  opacity: 0.7;
+  flex-shrink: 0;
+  transition: opacity var(--transition-fast, 0.1s ease), background var(--transition-fast, 0.1s ease);
+}
+
+.version-nav-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+.version-nav-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.version-nav-btn .codicon {
+  font-size: 12px;
+}
+
+.version-chips {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.version-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.version-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #8a8a8a);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition-fast, 0.1s ease),
+              background var(--transition-fast, 0.1s ease),
+              border-color var(--transition-fast, 0.1s ease);
+}
+
+.version-chip:hover:not(:disabled) {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+.version-chip.active {
+  color: var(--vscode-editor-background);
+  background: var(--vscode-focusBorder, #007fd4);
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.version-chip:disabled {
+  cursor: default;
+}
+
+.version-chip-switching-spinner,
+.version-chip-spinner {
+  font-size: 9px;
+}
+
+.version-switching-label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #8a8a8a);
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+/* 消息体 */
 .message-body {
   padding-left: 0;
 }

@@ -81,6 +81,25 @@ interface SubAgentRunSnapshot {
 
 const { t } = useI18n()
 
+// 修改原因：桌面版需要把 Monitor 内嵌到主窗口（同一 webview），而不是独立窗口。
+// 修改方式：新增 embedded/visible/focusRunId 三个 prop——embedded 控制面板式布局
+//          （高度铺满容器 + 头部关闭按钮）；visible 通知后端事件推送开关；
+//          focusRunId 由主窗口在“打开详情”时传入并导航聚焦。
+// 修改目的：主窗口分区方案复用同一组件，独立窗口（view mode）模式不受影响。
+const props = withDefaults(defineProps<{
+  visible?: boolean
+  focusRunId?: string
+  embedded?: boolean
+}>(), {
+  visible: true,
+  focusRunId: undefined,
+  embedded: false
+})
+
+const emit = defineEmits<{
+  close: []
+}>()
+
 const DEFAULT_RUN_WINDOW_LIMIT = 20
 
 /** 距底部多少像素以内视为"贴着底部"，用于决定是否自动跟随新内容 */
@@ -111,8 +130,7 @@ const pendingForcedRunWindowRefreshes = new Set<string>()
 const liveDeltaBuffersByRunId = new Map<string, MonitorLiveDeltaEvent[]>()
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
-const focusedRunId = ref<string | undefined>((window as any).__GRAYCODE_INITIAL_RUN_ID || undefined)
-// 修改原因：顶部控制按钮只能作用于后端仍持有活跃主工具 Promise 的 run。
+const focusedRunId = ref<string | undefined>((window as any).__GRAYCODE_INITIAL_RUN_ID || undefined)// 修改原因：顶部控制按钮只能作用于后端仍持有活跃主工具 Promise 的 run。
 // 修改方式：由 SubAgentMonitorPanel 随 ready/manifest/event 消息下发 activeRunIds，前端只按该集合决定按钮可见性。
 // 修改目的：历史 run 不会错误显示“中止/退出”等会影响主工具的操作。
 const activeRunIds = ref<Set<string>>(new Set())
@@ -284,7 +302,7 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       runId,
       conversationId: manifest?.conversationId,
       options: { limit: DEFAULT_RUN_WINDOW_LIMIT, fromTail: true }
-    })
+    }, { clientId: 'subagent-monitor' })
     if (latestRunWindowRequestSeq.get(runId) !== requestSeq) {
       // 修改原因：Webview request/response 没有业务顺序保证，旧响应可能晚于后续强制刷新返回。
       // 修改方式：每个 tail window 请求带本地递增 seq，只有当前最新请求允许写入窗口缓存。
@@ -342,7 +360,7 @@ async function loadOlderMessages() {
       runId: run.runId,
       conversationId: run.conversationId,
       options: createPreviousRunWindowRequestOptions(currentWindow, DEFAULT_RUN_WINDOW_LIMIT)
-    })
+    }, { clientId: 'subagent-monitor' })
     if (response?.manifest) upsertManifest(response.manifest)
     if (response?.window) prependWindow(response.window)
     updateActiveRunIds(response?.activeRunIds)
@@ -801,7 +819,7 @@ async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
   const response = await sendToExtension<{ success?: boolean; active?: boolean; status?: RunStatus }>(type, {
     runId: run.runId,
     reason: action === 'exit' ? '用户主动终止 SubAgent 执行' : undefined
-  })
+  }, { clientId: 'subagent-monitor' })
 
   // 修改原因：控制请求失败时前端过去完全无反馈——按钮还在，点了却什么都不发生（run 刚好结束时必然如此）。
   // 修改方式：后端回传该 run 当前是否仍被运行控制器持有；不再活跃就本地摘掉控制按钮，并提示操作未生效。
@@ -859,7 +877,7 @@ async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retr
     runId: run.runId,
     contentIndex,
     conversationId: run.conversationId
-  })
+  }, { clientId: 'subagent-monitor' })
   if (response?.manifest) upsertManifest(response.manifest)
   const returnedWindow = response?.window || response?.contentWindow
   if (returnedWindow) {
@@ -932,6 +950,33 @@ watch(
   }
 )
 
+// 修改原因：内嵌面板模式下，面板可见性由主窗口布局决定（v-show），组件本身不会销毁。
+// 修改方式：监听 visible prop，向后端通知事件推送开关（隐藏时丢弃高频 llm_delta）。
+// 修改目的：面板折叠时不接收高频事件，与独立窗口方案「不可见丢 delta」的语义一致。
+watch(
+  () => props.visible,
+  (visible) => {
+    sendToExtension('subagents.monitor.setVisible', { visible: !!visible }, { clientId: 'subagent-monitor' })
+      .catch(() => undefined)
+  },
+  { immediate: true }
+)
+
+// 修改原因：主窗口「打开详情」时通过 host.openSubAgentMonitor 命令携带目标 runId，
+//          面板已挂载（v-show）时组件收不到新的初始 runId，需要 prop 驱动导航。
+// 修改方式：监听 focusRunId prop，出现新值时强制切换焦点并加载窗口。
+// 修改目的：从工具卡打开详情能实时定位到对应 run，且覆盖用户手动选中的旧焦点。
+watch(
+  () => props.focusRunId,
+  (runId) => {
+    if (!runId) return
+    hasUserSelectedRun.value = false
+    focusedRunId.value = runId
+    void requestRunWindow(runId)
+  },
+  { immediate: true }
+)
+
 onMounted(async () => {
   // 修改原因：Monitor 应渲染 SubAgent 子对话 Content[]，但不应在首屏拉取所有 run 的完整 transcript。
   // 修改方式：挂载后请求轻量 manifests，并订阅后续 manifest/event；聚焦 run 再请求窗口。
@@ -989,7 +1034,7 @@ onMounted(async () => {
     detachScrollListener = () => container.removeEventListener('scroll', handleScroll)
   }
 
-  const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {})
+  const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {}, { clientId: 'subagent-monitor' })
   applyManifestPayload(initial)
   const initialFocus = initial?.focusRunId || focusedManifest.value?.runId
   if (initialFocus) {
@@ -1019,13 +1064,24 @@ onBeforeUnmount(() => {
 
 
 <template>
-  <div class="monitor-root">
+  <div class="monitor-root" :class="{ embedded: props.embedded }">
     <header class="monitor-header">
       <div>
         <h1>{{ t('components.subagents.monitor.title') }}</h1>
         <p>{{ t('components.subagents.monitor.subtitle') }}</p>
       </div>
-      <span class="run-count">{{ t('components.subagents.monitor.runCount', { count: orderedRuns.length }) }}</span>
+      <div class="monitor-header-actions">
+        <span class="run-count">{{ t('components.subagents.monitor.runCount', { count: orderedRuns.length }) }}</span>
+        <button
+          v-if="props.embedded"
+          class="monitor-close-btn"
+          type="button"
+          :title="t('components.subagents.monitor.closePanel')"
+          @click="emit('close')"
+        >
+          <span class="codicon codicon-close"></span>
+        </button>
+      </div>
     </header>
 
     <div v-if="orderedRuns.length > 1" class="run-tabs">
@@ -1161,6 +1217,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
+/* 内嵌面板模式：铺满宿主容器（主窗口右侧分区） */
+.monitor-root.embedded {
+  height: 100%;
+}
+
 .monitor-header {
   display: flex;
   align-items: flex-start;
@@ -1168,6 +1229,34 @@ onBeforeUnmount(() => {
   gap: 16px;
   padding: 14px 16px 8px;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.monitor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.monitor-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.monitor-close-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
 }
 
 .monitor-header h1 {

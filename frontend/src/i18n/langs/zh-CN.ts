@@ -212,7 +212,13 @@ const zhCN = {
         tabs: {
             newChat: '新对话',
             newTab: '新建标签页',
-            closeTab: '关闭标签页'
+            closeTab: '关闭标签页',
+            appTitle: 'GrayCode',
+            toggleLanguage: '切换语言',
+            settings: '设置',
+            monitor: 'SubAgent 监视',
+            monitorOpen: '打开 SubAgent 监视面板',
+            monitorClose: '关闭 SubAgent 监视面板'
         },
 
         usage: {
@@ -487,6 +493,13 @@ const zhCN = {
                 }
             },
             emptyResponse: '（模型返回空内容）',
+            tailVersion: {
+                title: '回答版本',
+                current: '最新',
+                prev: '上一个版本',
+                next: '下一个版本',
+                switching: '切换中…'
+            },
             stats: {
                 responseDuration: '响应时间',
                 tokenRate: 'Token 速率'
@@ -1628,7 +1641,6 @@ const zhCN = {
                     exportAll: '导出全部模式',
                     exportSuccess: '已导出并复制到剪贴板',
                     exportDownloadOnly: '已导出文件，剪贴板复制失败',
-                    exportFailed: '导出失败',
                     import: '导入模式',
                     importDescription: '粘贴 GrayCode 提示词模式 JSON，或从文件读取。导入时会自动生成新 ID，并避免覆盖现有模式。',
                     importFromFile: '从文件读取',
@@ -1660,7 +1672,7 @@ const zhCN = {
                     enableTooltip: '启用/禁用动态上下文模板',
                     disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。',
                     strategyTitle: '动态上下文策略',
-                    strategySingle: '单份动态上下文',
+                    strategySingle: '单份动态上下文（当前策略）',
                     strategyPreserve: '保留旧动态上下文原位',
                     strategyDescription: '单份模式保持现有行为；保留模式会把已缓存的旧动态上下文固定插回原回合位置，新回合上下文插入到新消息前。',
                     strategyPreserveWarning: '保留模式会增加请求 token；旧动态上下文越多，越容易触发上下文裁剪或总结。'
@@ -2461,6 +2473,7 @@ const zhCN = {
                 title: 'SubAgent Monitor',
                 subtitle: '以聊天窗口形式展示 SubAgent 的 System、Context、Prompt、AI 输出、思维过程和工具调用。',
                 runCount: '{count} 个运行',
+                closePanel: '关闭面板',
                 empty: '暂无 SubAgent 子对话记录。',
                 defaultAgentName: 'Sub-Agent',
                 loadedCount: '已加载 {loaded} / {total} 条记录',
@@ -2484,6 +2497,23 @@ const zhCN = {
                     cancelled: '已取消',
                     interrupted: '已中断'
                 }
+            }
+        },
+        diff: {
+            title: '变更',
+            fileCount: '{count} 个文件',
+            close: '关闭面板',
+            empty: '暂无待处理的变更',
+            noChange: '该文件没有内容差异',
+            accept: '接受',
+            reject: '拒绝',
+            acceptAll: '全部接受',
+            rejectAll: '全部拒绝',
+            actionFailed: '操作失败',
+            status: {
+                pending: '待处理',
+                accepted: '已接受',
+                rejected: '已拒绝'
             }
         },
         channels: {

@@ -18,7 +18,8 @@ import type {
   ChatStoreState,
   TabInfo,
   ConversationSessionSnapshot,
-  QueuedMessage
+  QueuedMessage,
+  TailVersionInfo
 } from './types'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
@@ -352,6 +353,23 @@ export function createChatState(): ChatStoreState {
   /** functionResponse.id -> 消息下标，随消息写入维护的权威索引 */
   const toolResponseIndex = ref<Map<string, number>>(new Map())
 
+  // ============ 对话尾部版本（重roll树状分叉） ============
+
+  /** conversationId -> 全部尾部版本摘要 */
+  const tailVersionsByConversation = ref<Record<string, TailVersionInfo[]>>({})
+
+  /** conversationId -> 是否正在拉取版本列表 */
+  const tailVersionsLoading = ref<Record<string, boolean>>({})
+
+  /** `${conversationId}:${branchIndex}:${versionId}` -> 是否正在切换版本 */
+  const tailVersionSwitching = ref<Set<string>>(new Set())
+
+  /**
+   * `${conversationId}:${branchIndex}` -> 当前恢复为 transcript 的版本 ID。
+   * null 表示活跃尾部是「最新生成的当前答案」（不是任何已保存版本）。
+   */
+  const activeTailVersionByBranch = ref<Record<string, string | null>>({})
+
   return {
     conversations,
     persistedConversationIds,
@@ -396,6 +414,10 @@ export function createChatState(): ChatStoreState {
     activeTabId,
     sessionSnapshots,
     backgroundStreamBuffers,
-    toolResponseCache
+    toolResponseCache,
+    tailVersionsByConversation,
+    tailVersionsLoading,
+    tailVersionSwitching,
+    activeTailVersionByBranch
   }
 }
