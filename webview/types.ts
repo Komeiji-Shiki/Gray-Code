@@ -55,6 +55,11 @@ export interface HandlerContext {
   sendError: (requestId: string, code: string, message: string) => void;
   postMessage?: (message: any) => void;
   openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
+  // 修改原因：Monitor 路由上下文把 view 覆盖为 undefined（流按 clientId 路由、storage 进度不能发到 Monitor），
+  //          但 vscode.diff 默认在“当前活动组”打开——焦点在 Monitor 面板时 diff 会开在 Monitor 列而不是主聊天侧。
+  // 修改方式：单独下发 diff 的目标列（主聊天所在列，侧边栏时回退主区域第一列），与 view 的解耦职责互不干扰。
+  // 修改目的：无论焦点在哪，diff 预览始终跟随主聊天所在的编辑器列。
+  diffViewColumn?: vscode.ViewColumn;
   
   // 工具函数
   getCurrentWorkspaceUri: () => string | null;
