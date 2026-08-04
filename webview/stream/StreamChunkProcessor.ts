@@ -143,14 +143,22 @@ export class StreamChunkProcessor {
 
   /**
    * 发送错误消息（立即刷新）
+   *
+   * @param type 底层错误类型（ChannelError.type，如 API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/
+   *             PARSE_ERROR）；透传给前端用于判断错误条可重试性（reroll/编辑分支流方案 B），
+   *             无底层类型（非 ChannelError 或 reroll 特有错误）时省略该字段。
    */
-  sendError(code: string, message: string): void {
+  sendError(code: string, message: string, type?: string): void {
     // 先 flush 缓冲的 chunk，确保前端先收到已有内容
     if (this.messageBuffer.length > 0) {
       this.flush();
     }
+    const error: { code: string; message: string; type?: string } = { code, message };
+    if (typeof type === 'string' && type.trim()) {
+      error.type = type;
+    }
     this.enqueue('error', {
-      error: { code, message }
+      error
     });
     this.flush();
   }

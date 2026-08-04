@@ -83,6 +83,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastCancelledStreamId: ref<string | null>(null),
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
+    _pendingBranchRefreshAfterStream: ref<string | null>(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
@@ -334,6 +335,39 @@ describe('retryAfterError', () => {
     expect(state.isLoading.value).toBe(false)
   })
 
+  it('方案 B：REROLL_ERROR 携带可重试底层 type 时错误条重试可用', async () => {
+    const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
+    const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, partial]),
+      _failedStreamMessageId: ref('msg_partial'),
+      error: ref({ code: 'REROLL_ERROR', message: 'boom', type: 'API_ERROR' })
+    })
+
+    await retryAfterError(state, createComputed())
+
+    // 通过入口守卫：回滚半截消息并发起 retryStream
+    expect(state.allMessages.value.some(m => m.id === 'msg_partial')).toBe(false)
+    const retryCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')
+    expect(retryCall).toBeDefined()
+  })
+
+  it('方案 B：REROLL_ERROR 无底层 type（reroll 特有错误）时不触发重试', async () => {
+    const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user]),
+      error: ref({ code: 'REROLL_ERROR', message: 'reroll result sync to branch graph failed' })
+    })
+
+    await retryAfterError(state, createComputed())
+
+    const retryCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')
+    expect(retryCall).toBeUndefined()
+    expect(state.allMessages.value).toHaveLength(1)
+  })
+
   it('H-3：部分失败/警告类恢复错误码同样不触发重试', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const state = createState({
@@ -446,6 +480,43 @@ describe('RETRYABLE_ERROR_CODES / isRetryableError（H-3 契约）', () => {
     expect(isRetryableError({ code: 'RESTORE_ERROR', message: 'x' })).toBe(false)
     expect(isRetryableError({ code: 'STREAM_ERROR', message: 'x' })).toBe(true)
   })
+
+  it('方案 B：REROLL_ERROR / EDIT_BRANCH_ERROR 可重试性取决于底层 type', () => {
+    // 携带可重试底层 type → 可重试
+    expect(isRetryableError({ code: 'REROLL_ERROR', message: 'x', type: 'API_ERROR' })).toBe(true)
+    expect(isRetryableError({ code: 'REROLL_ERROR', message: 'x', type: 'NETWORK_ERROR' })).toBe(true)
+    expect(isRetryableError({ code: 'EDIT_BRANCH_ERROR', message: 'x', type: 'TIMEOUT_ERROR' })).toBe(true)
+    expect(isRetryableError({ code: 'EDIT_BRANCH_ERROR', message: 'x', type: 'PARSE_ERROR' })).toBe(true)
+    // 无 type（reroll 特有错误，如 REROLL_FINISH_SYNC_FAILED，不属于底层流错误）→ 不可重试
+    expect(isRetryableError({ code: 'REROLL_ERROR', message: 'x' })).toBe(false)
+    expect(isRetryableError({ code: 'EDIT_BRANCH_ERROR', message: 'x' })).toBe(false)
+    // 底层 type 不可重试（CONFIG_ERROR/VALIDATION_ERROR/CANCELLED_ERROR）→ 不可重试
+    expect(isRetryableError({ code: 'REROLL_ERROR', message: 'x', type: 'CONFIG_ERROR' })).toBe(false)
+    expect(isRetryableError({ code: 'EDIT_BRANCH_ERROR', message: 'x', type: 'VALIDATION_ERROR' })).toBe(false)
+    expect(isRetryableError({ code: 'EDIT_BRANCH_ERROR', message: 'x', type: 'CANCELLED_ERROR' })).toBe(false)
+  })
+
+  it('方案 B：handleError 写入后端透传的底层 type（REROLL_ERROR + type=API_ERROR → 可重试）', () => {
+    const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([partial]),
+      streamingMessageId: ref('msg_partial')
+    })
+
+    handleError({
+      conversationId: 'conv_1',
+      type: 'error',
+      streamId: 'stream_1',
+      error: { code: 'REROLL_ERROR', message: '余额不足', type: 'API_ERROR' }
+    } as any, state)
+
+    expect(state.error.value?.code).toBe('REROLL_ERROR')
+    expect(state.error.value?.type).toBe('API_ERROR')
+    expect(isRetryableError(state.error.value)).toBe(true)
+    // 有内容半截消息保留并记录，供 retryAfterError 回滚
+    expect(state._failedStreamMessageId.value).toBe('msg_partial')
+  })
 })
 
 describe('sendMessage 清理失败残留', () => {
@@ -478,7 +549,7 @@ describe('sendMessage 清理失败残留', () => {
   })
 })
 
-describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () => {
+describe('retryFromMessage reroll 主流程（TREE-01）', () => {
   beforeEach(() => {
     vi.mocked(sendToExtension).mockClear()
     vi.mocked(sendToExtension).mockResolvedValue({ success: true })
@@ -486,7 +557,7 @@ describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () =>
     vi.mocked(loadCheckpoints).mockClear()
   })
 
-  it('deleteMessage IPC 抛异常时：重载最后一页 + loadCheckpoints + 复位流式状态，不发起 retryStream', async () => {
+  it('rerollStream IPC 抛异常时：重载最后一页 + loadCheckpoints + 复位流式状态与标记，不发起 retryStream/deleteMessage', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
     const assistant = createMessage({ id: 'msg_assistant', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
     const state = createState({
@@ -496,7 +567,7 @@ describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () =>
     })
 
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
-      if (type === 'deleteMessage') return Promise.reject(new Error('ipc boom'))
+      if (type === 'chat.rerollStream') return Promise.reject(new Error('ipc boom'))
       if (type === 'conversation.getMessagesPaged') {
         return Promise.resolve({
           total: 2,
@@ -511,16 +582,19 @@ describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () =>
 
     await retryFromMessage(state, createComputed(), 1, async () => {})
 
-    // 错误条展示 DELETE_ERROR（deleteMessage 失败，不再继续重试）
-    expect(state.error.value?.code).toBe('DELETE_ERROR')
+    // 错误条展示 RETRY_ERROR（reroll 启动失败，不再继续）
+    expect(state.error.value?.code).toBe('RETRY_ERROR')
     // 发起了最后一页重载
     const reloadCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')
     expect(reloadCall).toBeDefined()
     expect(reloadCall![1]).toMatchObject({ conversationId: 'conv_1' })
     // 重载检查点
     expect(loadCheckpoints).toHaveBeenCalled()
-    // 不发起 retryStream（中止重试）
+    // reroll 链路不触碰破坏性删除 / 旧重试接口
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    // 分支图刷新标记已复位（流未启动，不残留）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
     // 流式状态复位
     expect(state.isStreaming.value).toBe(false)
     expect(state.isWaitingForResponse.value).toBe(false)
@@ -531,7 +605,40 @@ describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () =>
     expect(state.allMessages.value[1].backendIndex).toBe(1)
   })
 
-  it('deleteMessage 返回 success=false 时同样中止重试（原有语义保持）', async () => {
+  it('reroll 成功发起：不 deleteMessage、不 retryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 assistantNodeId', async () => {
+    const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
+    const assistant = createMessage({ id: 'msg_assistant', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, assistant]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    await retryFromMessage(state, createComputed(), 1, async () => {})
+
+    // 发起 reroll 流（fire-and-forget），携带目标 assistant 节点 ID
+    const rerollCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.rerollStream')
+    expect(rerollCall).toBeDefined()
+    expect(rerollCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      assistantNodeId: 'msg_assistant',
+      configId: 'cfg_1'
+    })
+    // 不再调用破坏性删除 / 旧重试接口
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    // 窗口截断到目标消息之前 + 新流式占位
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', expect.any(String)])
+    expect(state.allMessages.value[1].streaming).toBe(true)
+    expect(state.streamingMessageId.value).toBe(state.allMessages.value[1].id)
+    // 分支图刷新标记置位（流结束后由 streamHandler 按会话消费）
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+    // 流式状态
+    expect(state.isStreaming.value).toBe(true)
+    expect(state.isWaitingForResponse.value).toBe(true)
+  })
+
+  it('rerollStream IPC 抛异常且会话已切换时：不重载原会话历史（避免污染当前会话窗口）', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
     const assistant = createMessage({ id: 'msg_assistant', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
     const state = createState({
@@ -541,28 +648,28 @@ describe('retryFromMessage deleteMessage 失败中止重试（FIX-C-2）', () =>
     })
 
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
-      if (type === 'deleteMessage') {
-        return Promise.resolve({ success: false, error: { code: 'BACKEND_DELETE_FAILED', message: 'boom' } })
-      }
-      if (type === 'conversation.getMessagesPaged') {
-        return Promise.resolve({ total: 2, messages: [] })
+      if (type === 'chat.rerollStream') {
+        // IPC 失败期间用户切换到 conv_2（窗口已由新会话接管）
+        state.currentConversationId.value = 'conv_2'
+        return Promise.reject(new Error('ipc boom'))
       }
       return Promise.resolve({ success: true })
     })
 
     await retryFromMessage(state, createComputed(), 1, async () => {})
 
-    expect(state.error.value?.code).toBe('BACKEND_DELETE_FAILED')
-    expect(loadCheckpoints).toHaveBeenCalled()
-    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
-    expect(state.isStreaming.value).toBe(false)
-    expect(state.isWaitingForResponse.value).toBe(false)
-    expect(state.isLoading.value).toBe(false)
-    expect(state.streamingMessageId.value).toBeNull()
+    // 会话已切换：不得重载原会话最后一页 / 检查点（避免污染 conv_2 的窗口与检查点）
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')).toBeUndefined()
+    expect(loadHistory).not.toHaveBeenCalled()
+    expect(loadCheckpoints).not.toHaveBeenCalled()
+    // 分支图刷新标记复位（本次 reroll 已中止，不残留）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    // 错误不写入当前会话（原会话无标签页快照可写）
+    expect(state.error.value).toBeNull()
   })
 })
 
-describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
+describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
   beforeEach(() => {
     vi.mocked(sendToExtension).mockClear()
     vi.mocked(sendToExtension).mockResolvedValue({ success: true })
@@ -570,9 +677,9 @@ describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
     vi.mocked(loadCheckpoints).mockClear()
   })
 
-  it('editAndRetryStream 抛异常时：错误码 EDIT_RETRY_ERROR + 重载历史 + 检查点恢复一致（M-9 同款）', async () => {
+  it('chat.editBranchStream IPC 抛异常时：错误码 EDIT_RETRY_ERROR + 重载最后一页 + 检查点恢复一致（reroll 同款）', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
-    const target = createMessage({ id: 'msg_target', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, target]),
@@ -581,32 +688,36 @@ describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
     })
 
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
-      if (type === 'editAndRetryStream') return Promise.reject(new Error('ipc boom'))
+      if (type === 'chat.editBranchStream') return Promise.reject(new Error('ipc boom'))
+      if (type === 'conversation.getMessagesPaged') {
+        // 模拟后端未变：编辑分支请求未送达，主历史仍是原消息
+        return Promise.resolve({
+          total: 2,
+          messages: [
+            { id: 'msg_user', role: 'user', index: 0, timestamp: 1, parts: [{ text: '问题' }] },
+            { id: 'msg_target', role: 'user', index: 1, timestamp: 2, parts: [{ text: '追问' }] }
+          ]
+        })
+      }
       return Promise.resolve({ success: true })
-    })
-
-    // 模拟 loadHistory 真实重载：把窗口恢复为“后端历史未变”的一致状态
-    const backendUnchanged = [
-      user,
-      createMessage({ id: 'msg_target', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
-    ]
-    vi.mocked(loadHistory).mockImplementationOnce(async (s: any) => {
-      s.allMessages.value = backendUnchanged
     })
 
     await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {})
 
     // 错误码 EDIT_RETRY_ERROR（仍可重试；此时本地已与后端一致，重试基于真实历史）
     expect(state.error.value?.code).toBe('EDIT_RETRY_ERROR')
-    // M-9 同款：会话未切换时重载历史 + 检查点
-    expect(loadHistory).toHaveBeenCalled()
+    // M-9 同款：会话未切换时重载最后一页 + 检查点
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')).toBeDefined()
     expect(loadCheckpoints).toHaveBeenCalled()
     // 本地窗口已恢复为后端一致状态（不再保留被截断/改写的本地状态）
     expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', 'msg_target'])
-    expect(state.allMessages.value[1].content).toBe('旧回答')
-    // 不自动发起 retryStream；editAndRetryStream 确实被调用过
+    expect(state.allMessages.value[1].content).toBe('追问')
+    // 主流程走 editBranchStream，不触碰破坏性删除 / 旧接口
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
-    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'editAndRetryStream')).toBeDefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'editAndRetryStream')).toBeUndefined()
+    // 分支图刷新标记已复位（流未启动，不残留）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
     // 流式状态复位
     expect(state.isStreaming.value).toBe(false)
     expect(state.isWaitingForResponse.value).toBe(false)
@@ -614,9 +725,47 @@ describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
     expect(state.streamingMessageId.value).toBeNull()
   })
 
+  it('编辑分支成功发起：不 deleteMessage/retryStream/editAndRetryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 userNodeId/newText', async () => {
+    const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {})
+
+    // 发起编辑分支流（fire-and-forget），携带被编辑用户消息的节点 ID 与编辑后文本
+    const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      userNodeId: 'msg_target',
+      newText: '新回答',
+      configId: 'cfg_1',
+      streamId: expect.any(String)
+    })
+    // 不再调用破坏性删除 / 旧重试 / 旧编辑接口
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'editAndRetryStream')).toBeUndefined()
+    // 窗口：目标消息改写 + 截断其后 + 新流式占位
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', 'msg_target', expect.any(String)])
+    expect(state.allMessages.value[0].content).toBe('问题')
+    expect(state.allMessages.value[1].content).toBe('新回答')
+    expect(state.allMessages.value[2].streaming).toBe(true)
+    expect(state.streamingMessageId.value).toBe(state.allMessages.value[2].id)
+    // 分支图刷新标记置位（流结束后由 streamHandler 按会话消费）
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+    // 流式状态
+    expect(state.isStreaming.value).toBe(true)
+    expect(state.isWaitingForResponse.value).toBe(true)
+  })
+
   it('会话已切换时不重载、不写当前会话状态', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
-    const target = createMessage({ id: 'msg_target', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, target]),
@@ -624,7 +773,7 @@ describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
     })
 
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
-      if (type === 'editAndRetryStream') {
+      if (type === 'chat.editBranchStream') {
         state.currentConversationId.value = 'conv_2'
         return Promise.reject(new Error('ipc boom'))
       }
@@ -633,8 +782,11 @@ describe('editAndRetry IPC 失败回滚本地（FIX-C-3）', () => {
 
     await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {})
 
-    // 会话已切换：validateSessionIdentity 失败，不重载
+    // 会话已切换：validateSessionIdentity 失败，不重载（含最后一页与检查点）
     expect(loadHistory).not.toHaveBeenCalled()
     expect(loadCheckpoints).not.toHaveBeenCalled()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')).toBeUndefined()
+    // 错误不写入当前会话（原会话无标签页快照可写）
+    expect(state.error.value).toBeNull()
   })
 })

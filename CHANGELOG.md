@@ -8,6 +8,27 @@
 
 ## [Unreleased]
 
+### Added
+  - 树状分支重 roll 前端主流程接线（此前仅后端完成）：消息「重试」与「回档并重试」从破坏性删除（deleteMessage + retryStream）切换为 `chat.rerollStream`（旧回答保留进分支图 sidecar，新候选生成后可经 BranchSwitcherBar 的「‹ 2/2 ›」切换回）；reroll 流结束（complete/error/cancelled）后自动刷新分支图；重试确认框三语文案同步为「保留当前回答、生成新版本」语义；`chat.rerollStream` 加入无超时请求白名单与 VSCodeRequest 类型联合
+  - 编辑用户消息前端主流程接入 `chat.editBranchStream`（此前仅后端完成）：消息「编辑」与「回档并编辑」从破坏性 `editAndRetryStream`（覆盖原消息）切换为分支编辑——后端创建编辑候选（新 user 节点）并截断主历史，原消息及其子树保留进分支图 sidecar（决策 7：旧分支保留，失败可切回）；本地窗口改写目标消息 + 截断 + 流式占位，置位分支图刷新标记（流结束后 BranchSwitcherBar 显示候选切换器）；流启动失败时重载最后一页 + 检查点恢复前后端一致；`chat.editBranchStream` 加入无超时请求白名单与 VSCodeRequest 类型联合；附件仅更新本地窗口（编辑分支接口无附件字段）
+  - 子代理设置页工具白名单/黑名单列表工具名称与悬停描述接入三语 i18n：新增公共模块 `frontend/src/utils/toolLocalization.ts`（工具显示名/描述本地化，缺失时机械转换/回退原文），工具设置页与子代理设置页共用同一套 `toolDisplayNames` / `toolDescriptions` 条目，MCP 外部工具自动回退英文原名
+  - 删除消息同步软删分支图子树（后端）：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删消息对应节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar，过期清理仍走保留期机制），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或无分支服务注册时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
+
+### Fixed
+  - reroll/编辑分支流前端修复：
+    - `_pendingBranchRefreshAfterStream` 标记改为按会话隔离（记录发起流的会话 ID）：会话切换后其他会话的终结 chunk 不再误消费并误刷分支图；切回原会话后由该会话的终结 chunk（或后台缓冲 flush）正确消费
+    - `retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点，与 editAndRetry 同款身份校验）
+    - 内容型 `toolIteration` 因「需用户确认 / 审批门闸 / 工具被取消」终结流时同样消费分支图刷新标记（此前标记残留，可能被后续无关终结事件消费）
+    - `restoreAndEdit` 补 R3-#13 同款按 id 重定位（await 恢复期间数组变化不再错改错删），恢复失败错误写入加会话归属校验
+    - `restoreAndRetry` / `restoreAndEdit` 的 `chat.rerollStream` / `chat.editBranchStream` 载荷补齐 `promptModeId`（与 messageActions 入口一致）
+    - i18n 新增 `hasMessage()` 静默 key 存在性检查；工具本地化（toolLocalization）缺失条目不再触发 `[i18n] Missing translation` console.warn 刷屏
+    - reroll/编辑分支流失败时错误条可重试（方案 B）：后端在流式失败时把底层 `ChannelError.type`（`API_ERROR` / `NETWORK_ERROR` / `TIMEOUT_ERROR` / `PARSE_ERROR` 等）透传到错误 chunk（`{ code, type?, message }`），前端 `isRetryableError` 对 `REROLL_ERROR` / `EDIT_BRANCH_ERROR` 改为按底层 type 判定可重试——携带可重试 type 时错误条显示「重试」；无 type（如 `REROLL_FINISH_SYNC_FAILED` 等 reroll 特有错误）或 type 不可重试（`CONFIG_ERROR` / `VALIDATION_ERROR` / `CANCELLED_ERROR`）时不显示；`ErrorInfo` 类型补可选 `type` 字段，`retryAfterError` 入口守卫改用 `isRetryableError` 保持与错误条判定一致
+    - 主聊天发起的 diff 预览同样跟随主聊天所在列：`vscode.diff` 的 `viewColumn` 参数在部分布局/版本下不生效（仍在当前活动编辑器组打开，焦点在 Monitor 面板时 diff 会落到 Monitor 列），现在主聊天上下文同样下发 `diffViewColumn`（与 Monitor 路由同语义，主聊天在侧边栏时回退主区域第一列），且 `openDiffView` 打开后用 `vscode.moveActiveEditor` 把 diff tab 校正到目标列（目标列即当前列时移动幂等）
+  - 修复后台子 Agent 完成回执插入尚未结束的主模型调用，并导致上下文从约 35 万 token 骤降至约 2 万 token（用户实测）：
+    - 根因一是前端收到 `complete` chunk 后会先清除 `isStreaming` / `isWaitingForResponse`，但后端流此时可能尚未执行 `StreamRequestHandler.finally`；后台任务回流仅依据前端状态判断空闲，随即创建同会话新流，触发 `StreamAbortManager.create()` 中止并替换仍在收尾的旧流。现在新增后端 `chat.awaitConversationIdle` 与 `StreamAbortManager.waitForIdle()`，回执发送前以运行控制器为生命周期唯一事实来源，等待旧流真正退出；等待期间若切换会话或启动新流则重新判定，不再依靠延时或前端瞬时状态猜测
+    - 根因二是后台回执经普通 `chatStream` 落盘时被标记为真实 user 消息，裁剪器将其识别为新回合；当前一个工具回合本身约 35 万 token 时，回合完整性约束会迫使裁剪器丢弃整个旧回合，只保留约 2 万 token 的回执回合。现在 `source: 'background_task'` 从前端请求贯通到后端历史，回执以 `isUserInput: false` 保存；合法裁剪起点、回合识别、当前回合定位、思考范围与 token 累加统一复用 `isRealUserMessage()`，后台回执视为原任务的异步延续，旧历史中缺少 `isUserInput` 的真实用户消息仍兼容；`source` 在渠道 formatter 发请求前剥离，历史重载时透传回前端以保持后台任务卡片样式
+    - 补充后端运行生命周期、回合边界、旧历史兼容和前端来源透传回归测试；根 TypeScript 检查、前端生产构建及目标测试通过
+
 ## [1.4.1] - 2026-08-04
 
 ### Fixed

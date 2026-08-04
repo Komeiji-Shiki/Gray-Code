@@ -481,6 +481,9 @@ export interface Content {
      */
     isUserInput?: boolean;
     
+    /** 消息来源：真实用户输入或系统生成的后台任务回执。仅用于内部历史语义与前端展示。 */
+    source?: 'user' | 'background_task';
+
     /**
      * 消息创建时间戳（毫秒）
      *

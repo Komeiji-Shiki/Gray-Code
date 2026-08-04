@@ -39,6 +39,7 @@ import {
 } from '../../modules/conversation/branch/BranchGraph';
 import { resolveEditTargetNode } from '../../modules/api/chat/services/ChatFlowService';
 import { BranchError } from '../../modules/conversation/branch/types';
+import { ChannelError, ErrorType } from '../../modules/channel/types';
 import { registerChatHandlers, editBranchStream } from '../../../webview/handlers/ChatHandlers';
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
@@ -573,5 +574,28 @@ describe('TREE-03 webview handler：chat.editBranchStream', () => {
         expect(errors).toHaveLength(0);
         expect(abortManager.isActive('c1')).toBe(false);
         expect(abortManager.get('c1')).toBeUndefined();
+    });
+
+    test('方案 B：流失败透传底层 ChannelError.type（EDIT_BRANCH_ERROR + type=TIMEOUT_ERROR，前端据此判断可重试）', async () => {
+        const posted: Array<{ type: string; data: any }> = [];
+        const fakeChatHandler = {
+            handleEditBranchStream: async function* (): AsyncGenerator<any> {
+                throw new ChannelError(ErrorType.TIMEOUT_ERROR, 'request timed out');
+            },
+        } as any;
+
+        const ctx = makeCtx({
+            chatHandler: fakeChatHandler,
+            view: { webview: { postMessage: (msg: any) => posted.push(msg) } } as any,
+        });
+
+        await editBranchStream({ conversationId: 'c1', newText: 'edited', configId: 'cfg' }, 'req-type-1', ctx);
+
+        // 请求侧错误码仍为 EDIT_BRANCH_ERROR
+        expect(errors).toEqual([{ requestId: 'req-type-1', code: 'EDIT_BRANCH_ERROR', message: 'request timed out' }]);
+        // 流式 error chunk 携带底层 type
+        const errorMsg = posted.find(m => m.type === 'streamChunk' && m.data?.type === 'error');
+        expect(errorMsg).toBeDefined();
+        expect(errorMsg!.data.error).toEqual({ code: 'EDIT_BRANCH_ERROR', message: 'request timed out', type: 'TIMEOUT_ERROR' });
     });
 });

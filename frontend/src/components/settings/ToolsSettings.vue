@@ -15,6 +15,7 @@ import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useDependency, TOOL_DEPENDENCIES, hasToolDependencies, getToolDependencies } from '@/composables/useDependency'
 import { useI18n } from '@/composables'
+import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import ReadFileConfig from './tools/files/read_file.vue'
 import WriteFileConfig from './tools/files/write_file.vue'
 import ListFilesConfig from './tools/files/list_files.vue'
@@ -233,23 +234,6 @@ async function disableAll() {
   for (const tool of enabledTools) {
     await toggleTool(tool.name, false)
   }
-}
-
-// 获取工具显示名称（优先 i18n，fallback 机械转换）
-function getToolDisplayName(name: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  // fallback: snake_case → Title Case
-  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-// 获取工具描述（优先 i18n，fallback 后端原文）
-function getToolDescription(name: string, fallback: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return fallback
 }
 
 // 获取分类显示名称
