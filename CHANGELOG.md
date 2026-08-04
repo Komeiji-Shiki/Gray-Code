@@ -1,7 +1,7 @@
 # Change Log
 
 
-## [Unreleased]
+## [1.4.0] - 2026-08-04
 
 ### Added
   - 桌面版变更查看面板（内嵌 GitHub 风格）：全屏 Diff 模态框改为主窗口右侧内嵌抽屉（非独立窗口），`vscode.diff` 拦截 → `host.openDiffPreview` 命令驱动打开，左侧文件列表（状态 + ±统计）与右侧统一 diff（hunk 头/双行号/增删着色），单文件与全部接受/拒绝、删除警戒提示、`diff.statusChanged` 状态同步；accept/reject 复用同一协议（详见 `electron-app/CHANGELOG.md`）
