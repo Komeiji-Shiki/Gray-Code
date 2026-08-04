@@ -877,6 +877,14 @@ export class DiffManager {
         toolId?: string,
         options?: CreatePendingDiffOptions
     ): Promise<PendingDiff> {
+        // 目标文档已有未保存编辑时中止：diff 审阅会用 WorkspaceEdit 整体替换文档内容，
+        // 会覆盖用户的未保存修改。用户已在工具确认弹窗显式批准的写入
+        // （confirmedByToolConfirmation）保留既有直接应用行为，跳过该检查。
+        const openDoc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, absolutePath));
+        if (openDoc?.isDirty && options?.confirmedByToolConfirmation !== true) {
+            throw new Error(t('tools.file.diffManager.unsavedChanges', { filePath }));
+        }
+
         const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const session = DiffReviewSession.create({
             id,
@@ -1307,6 +1315,16 @@ export class DiffManager {
             return;
         }
 
+        // 目标文档已有未保存编辑时中止：接下来会用 WorkspaceEdit 整体替换文档内容，
+        // 会覆盖用户在编辑器中的未保存修改。标记 diff 为 rejected 并报错，提示先保存。
+        const openDoc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+        if (openDoc?.isDirty) {
+            const unsavedChangesError = t('tools.file.diffManager.unsavedChanges', { filePath: diff.filePath });
+            diff.autoSaveError = unsavedChangesError;
+            this.finalizeRejectedDiff(diff);
+            throw new Error(unsavedChangesError);
+        }
+
         // 1. 打开并修改目标文档（不保存）。
         // 用 WorkspaceEdit 而非 showTextDocument + editor.edit：
         // - 不需要打开可见的文件本体 tab（后面只展示 diff tab），
@@ -1653,10 +1671,38 @@ export class DiffManager {
                     }
                 }
             }
-            // 2) 若磁盘内容已不同于diff 创建时的 originalContent：说明中途被外部写入/回滚，绕过doc.save 强制写入后再 revert
+            // 2) 若磁盘内容已不同于diff 创建时的 originalContent：说明中途被外部写入/回滚。
+            // 不再强制覆盖（强制写盘会吞掉外部修改）；改为拒绝本次 diff 并提示基于最新内容重新生成。
             else if (diskNormalized !== undefined && diskNormalized !== originalNormalized) {
-                fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
-                await revertOpenDocumentToDisk();
+                const externalModificationError = t('tools.file.diffManager.fileModifiedExternally', { filePath: diff.filePath });
+                diff.autoSaveError = externalModificationError;
+                this.finalizeRejectedDiff(diff);
+
+                // 编辑器缓冲区仍是 AI 内容：恢复为磁盘上的外部修改内容，
+                // 避免用户随后 Ctrl+S 把过期的 AI 内容写回磁盘吞掉外部修改
+                if (diskContent !== undefined) {
+                    try {
+                        const fullRange = new vscode.Range(
+                            doc.positionAt(0),
+                            doc.positionAt(doc.getText().length)
+                        );
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.replace(uri, fullRange, diskContent);
+                        const applied = await vscode.workspace.applyEdit(edit);
+                        if (applied) {
+                            await doc.save();
+                        }
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                try {
+                    vscode.window.showErrorMessage(externalModificationError);
+                } catch {
+                    // ignore
+                }
+                return false;
             }
             // 3) 磁盘仍为 originalContent：走 doc.save 快路径（保留 VSCode 的编码换行等保存策略）
             else {

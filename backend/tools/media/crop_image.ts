@@ -17,6 +17,7 @@ import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
+import { ensureMediaPathsSafe, MEDIA_MAX_INPUT_BYTES } from './pathGuard';
 
 /** 裁切任务类型常量 */
 const TASK_TYPE_CROP = 'crop_image';
@@ -128,6 +129,12 @@ async function readImageFile(imagePath: string): Promise<{ data: Buffer; mimeTyp
     }
 
     try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MEDIA_MAX_INPUT_BYTES) {
+            console.warn(`Image file exceeds ${MEDIA_MAX_INPUT_BYTES} bytes: ${imagePath}`);
+            return null;
+        }
+
         const content = await vscode.workspace.fs.readFile(uri);
         const ext = path.extname(imagePath).toLowerCase();
         let mimeType = 'image/png';
@@ -185,6 +192,11 @@ async function executeCropTask(
     // 验证坐标逻辑
     if (x1 >= x2 || y1 >= y2) {
         return { index, success: false, error: `Task ${index + 1}: x1 must be less than x2, y1 must be less than y2` };
+    }
+
+    const inputPathError = ensureMediaPathsSafe(image_path);
+    if (inputPathError) {
+        return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
     }
 
     try {
@@ -274,6 +286,11 @@ async function executeCropTask(
         const outputUri = resolveUri(output_path);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
+        }
+
+        const pathError = ensureMediaPathsSafe(image_path, output_path);
+        if (pathError) {
+            return { index, success: false, error: `Task ${index + 1}: ${pathError}` };
         }
 
         // 确保目录存在

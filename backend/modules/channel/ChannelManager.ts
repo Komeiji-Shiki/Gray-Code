@@ -10,6 +10,7 @@ import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
+import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
 import { formatterRegistry } from './formatters';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
@@ -25,7 +26,7 @@ import { ChannelError, ErrorType } from './types';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
-import { parseStreamBuffer } from './streamBufferParser';
+import { parseStreamBuffer, MAX_STREAM_BUFFER_CHARS } from './streamBufferParser';
 
 /**
  * 从上游 API 的非 2xx 响应体中提取人类可读的错误消息。
@@ -310,9 +311,21 @@ export class ChannelManager {
         // 7. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
-        const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
+        // retryCount 钳制到 [0, 20]：负数会跳过所有尝试，超大值会让请求挂着数小时
+        const rawRetryCount = (config as any).retryCount ?? 3;
+        const maxRetries = Number.isFinite(rawRetryCount) ? Math.min(Math.max(Math.floor(rawRetryCount), 0), 20) : 3;
         const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+
+        // 重试状态回调：优先使用请求级回调（SubAgent 等需要把状态路由到 Monitor 的调用方），
+        // 否则使用全局回调。suppressRetryNotification 只抑制全局回调，
+        // 不抑制显式传入的请求级回调——请求级回调是调用方主动订阅的。
+        const notifyRetryStatus = (status: Parameters<RetryStatusCallback>[0]): void => {
+            const callback = request.retryStatusCallback ?? this.retryStatusCallback;
+            if (!callback) return;
+            if (!request.retryStatusCallback && request.suppressRetryNotification) return;
+            callback(status);
+        };
         
         // 8. 执行 HTTP 调用（带重试）
         let lastError: any;
@@ -341,8 +354,8 @@ export class ChannelManager {
                 }
                 
                 // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
+                if (attempt > 1) {
+                    notifyRetryStatus({
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
@@ -371,8 +384,8 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                        this.retryStatusCallback({
+                    if (attempt > 1) {
+                        notifyRetryStatus({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
@@ -394,18 +407,16 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
-                        type: 'retrying',
-                        attempt,
-                        maxAttempts: maxRetries,
-                        error: errorMessage,
-                        errorDetails,
-                        nextRetryIn: retryInterval,
-                        createdAt: Date.now(),
-                        conversationId: request.conversationId
-                    });
-                }
+                notifyRetryStatus({
+                    type: 'retrying',
+                    attempt,
+                    maxAttempts: maxRetries,
+                    error: errorMessage,
+                    errorDetails,
+                    nextRetryIn: retryInterval,
+                    createdAt: Date.now(),
+                    conversationId: request.conversationId
+                });
                 
                 // 等待后重试（支持取消）
                 await this.delay(retryInterval, request.abortSignal);
@@ -495,9 +506,22 @@ export class ChannelManager {
         // 6. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
-        const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
-        const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        // 与非流式路径一致：钳制到 [0, 20]，防止用户配置超大重试次数把请求挂起数小时
+        const rawRetries = (config as any).retryCount ?? 3;         // 默认3次
+        const maxRetries = Math.max(0, Math.min(20, Number(rawRetries) || 0));
+        const rawRetryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        const retryInterval = Math.max(0, Number(rawRetryInterval) || 0);
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+
+        // 重试状态回调：优先使用请求级回调（SubAgent 等需要把状态路由到 Monitor 的调用方），
+        // 否则使用全局回调。suppressRetryNotification 只抑制全局回调，
+        // 不抑制显式传入的请求级回调——请求级回调是调用方主动订阅的。
+        const notifyRetryStatus = (status: Parameters<RetryStatusCallback>[0]): void => {
+            const callback = request.retryStatusCallback ?? this.retryStatusCallback;
+            if (!callback) return;
+            if (!request.retryStatusCallback && request.suppressRetryNotification) return;
+            callback(status);
+        };
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
@@ -506,40 +530,67 @@ export class ChannelManager {
         for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             // 缓存保活定时器（每次重试都重新计时）
             let keepAliveTimer: NodeJS.Timeout | undefined;
+            // 流是否已结束：结束后不再调度下一轮保活（catch/finally 中置位，
+            // 因此声明在 try 外）
+            let streamFinished = false;
+            // 流的空闲超时控制器句柄：executeStreamRequest 会把 resetTimeout 挂载进来，
+            // 保活请求成功 = 上游连接仍然活跃 → 同步刷新流的空闲超时，
+            // 让「LLM 模块自己的保活」成为流的活性信号（上游不回传心跳的静默期也能续命）。
+            const idleTimeoutHandle: { reset: () => void } = { reset: () => {} };
             
             try {
-                const stream = await this.executeStreamRequest(httpRequest, request.abortSignal);
+                const stream = await this.executeStreamRequest(httpRequest, request.abortSignal, idleTimeoutHandle);
                 
-                // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
-                        type: 'retrySuccess',
-                        attempt: attempt - 1,
-                        maxAttempts: maxRetries,
-                        createdAt: Date.now(),
-                        conversationId: request.conversationId
-                    });
-                }
-                
-                // 启动缓存保活循环定时器（每 4 分 30 秒 = 270000ms 发一次保活请求）
+                // 启动缓存保活调度（缓存 TTL 5 分钟，保活节奏为每 4 分 30 秒一次）
                 const requestStartTime = Date.now();
                 let keepAliveFiredCount = 0;
                 let hasToolUse = false;
-                
-                if (keepAliveEnabled) {
-                    keepAliveTimer = setInterval(async () => {
-                        keepAliveFiredCount++;
-                        this.log.info('prompt_caching_keepalive_sending', { count: keepAliveFiredCount });
-                        try {
-                            const keepAliveBody = buildKeepAliveBody();
-                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                // 保活请求在途标记：链式 setTimeout 下防止上一次未完成时下一次已触发
+                let keepAliveInFlight = false;
+
+                /**
+                 * 发送一次缓存保活请求（在途互斥 + 成功刷新流空闲超时）。
+                 * @returns true = 上游 2xx 接受保活（缓存 TTL 已刷新）
+                 */
+                const fireKeepAlive = async (): Promise<boolean> => {
+                    if (keepAliveInFlight) return false;
+                    keepAliveInFlight = true;
+                    keepAliveFiredCount++;
+                    this.log.info('prompt_caching_keepalive_sending', { count: keepAliveFiredCount });
+                    try {
+                        const keepAliveBody = buildKeepAliveBody();
+                        const ok = await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                        if (ok) {
                             this.log.info('prompt_caching_keepalive_sent', { count: keepAliveFiredCount });
-                        } catch (err: any) {
-                            this.log.warn('prompt_caching_keepalive_failed', { error: err.message });
+                            idleTimeoutHandle.reset();
                         }
-                    }, 270000);
+                        return ok;
+                    } catch (err: any) {
+                        this.log.warn('prompt_caching_keepalive_failed', { error: err.message });
+                        return false;
+                    } finally {
+                        keepAliveInFlight = false;
+                    }
+                };
+
+                if (keepAliveEnabled) {
+                    // 首个保活请求的调度时机：
+                    // - 缓存 TTL 是 5 分钟，首个保活最晚不得晚于 4 分钟；
+                    // - 但如果流的空闲超时更短（默认 120s），固定 4 分 30 秒的首发会晚于
+                    //   空闲超时触发——上游静默思考期间流已被固定超时掐断，保活根本来不及。
+                    //   因此首发提前到「空闲超时前 10 秒」（下限 30s、上限 4 分钟），
+                    //   保活成功即刷新流空闲超时，后续按 4 分 30 秒的缓存节奏继续。
+                    const streamTimeout = httpRequest.timeout || 120000;
+                    const firstKeepAliveDelay = Math.min(240000, Math.max(streamTimeout - 10000, 30000));
+                    const scheduleNextKeepAlive = (delay: number) => {
+                        if (streamFinished) return;
+                        keepAliveTimer = setTimeout(() => {
+                            void fireKeepAlive().then(() => scheduleNextKeepAlive(270000));
+                        }, delay);
+                    };
+                    scheduleNextKeepAlive(firstKeepAliveDelay);
                 }
-                
+
                 // 逐块解析和产出
                 for await (const rawChunk of stream) {
                     try {
@@ -564,23 +615,32 @@ export class ChannelManager {
                         );
                     }
                 }
-                
+
                 // 流正常结束：如果无工具调用且保活未触发过且已过 4 分钟，额外保活一次
                 // 防止用户下一轮输入时缓存刚好过期
                 if (keepAliveEnabled && !hasToolUse && keepAliveFiredCount === 0) {
                     const elapsed = Date.now() - requestStartTime;
                     if (elapsed >= 240000) {  // 4 分钟 = 240000ms
                         this.log.info('prompt_caching_exit_keepalive_sending', { elapsed });
-                        try {
-                            const keepAliveBody = buildKeepAliveBody();
-                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
-                            this.log.info('prompt_caching_exit_keepalive_sent');
-                        } catch (err: any) {
-                            this.log.warn('prompt_caching_exit_keepalive_failed', { error: err.message });
-                        }
+                        await fireKeepAlive();
                     }
                 }
-                
+
+                // 重试成功通知：必须放在「本次尝试真正跑完」之后——
+                // executeStreamRequest 是异步生成器，await 它只会拿到生成器对象，
+                // 请求实际尚未发出；若在创建后立即通知 retrySuccess，
+                // 重试页面会在重试请求真正完成前就消失（且重试再次失败时会闪现错误）。
+                // 只有走到这里（for-await 正常结束、无异常），重试才算成功。
+                if (attempt > 1) {
+                    notifyRetryStatus({
+                        type: 'retrySuccess',
+                        attempt: attempt - 1,
+                        maxAttempts: maxRetries,
+                        createdAt: Date.now(),
+                        conversationId: request.conversationId
+                    });
+                }
+
                 // 正常完成，退出重试循环
                 return;
             } catch (error) {
@@ -600,8 +660,8 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                        this.retryStatusCallback({
+                    if (attempt > 1) {
+                        notifyRetryStatus({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
@@ -623,30 +683,30 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
-                        type: 'retrying',
-                        attempt,
-                        maxAttempts: maxRetries,
-                        error: errorMessage,
-                        errorDetails,
-                        nextRetryIn: retryInterval,
-                        createdAt: Date.now(),
-                        conversationId: request.conversationId
-                    });
-                }
+                notifyRetryStatus({
+                    type: 'retrying',
+                    attempt,
+                    maxAttempts: maxRetries,
+                    error: errorMessage,
+                    errorDetails,
+                    nextRetryIn: retryInterval,
+                    createdAt: Date.now(),
+                    conversationId: request.conversationId
+                });
                 
-                // 等待后重试（支持取消）—— 先停保活定时器：错误后到 delay 完成之间定时器仍存活，
+                // 等待后重试（支持取消）—— 先停保活调度：错误后到 delay 完成之间定时器仍存活，
                 // 会在无活动流时发出保活请求
+                streamFinished = true;
                 if (keepAliveTimer) {
-                    clearInterval(keepAliveTimer);
+                    clearTimeout(keepAliveTimer);
                     keepAliveTimer = undefined;
                 }
                 await this.delay(retryInterval, request.abortSignal);
             } finally {
-                // 清理保活循环定时器（兜底）
+                // 清理保活调度定时器（兜底）
+                streamFinished = true;
                 if (keepAliveTimer) {
-                    clearInterval(keepAliveTimer);
+                    clearTimeout(keepAliveTimer);
                     keepAliveTimer = undefined;
                 }
             }
@@ -671,38 +731,67 @@ export class ChannelManager {
     }
 
     /**
-     * 发送缓存保活请求（fire-and-forget）
+     * 发送缓存保活请求
      *
      * 用于在流式请求进行中刷新 Anthropic Prompt Caching 的 5 分钟 TTL。
      * 保活请求使用与主请求相同的 headers/URL，但 max_tokens=5、stream=false。
      *
+     * 修复点：
+     * - 旧实现不检查 response.ok：非 2xx（429/5xx/错误体）也被当成「保活成功」，
+     *   缓存 TTL 实际已过期却静默继续，下一轮对话全价计费；
+     * - 瞬时网络失败不重试：一次闪断直接丢失一次 TTL 刷新窗口；
+     * - 返回布尔值供调用方判断「上游确实接受了保活」，成功后刷新流的空闲超时。
+     *
      * @param httpRequest 主请求选项（用于复用 URL 和 headers）
      * @param keepAliveBody 保活请求体（已设置 max_tokens=5, stream=false）
+     * @returns true = 上游 2xx 接受（缓存 TTL 已刷新）
      */
     private async sendKeepAliveRequest(
         httpRequest: HttpRequestOptions,
         keepAliveBody: any
-    ): Promise<void> {
+    ): Promise<boolean> {
         const { url, method, headers } = httpRequest;
         const proxyUrl = this.getProxyUrl();
         const fetchFn = createProxyFetch(proxyUrl);
 
-        // 保活请求有独立的短超时
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        // 保活请求有独立的短超时；瞬时失败重试一次（保活窗口错过即缓存过期）
+        const ATTEMPTS = 2;
+        const RETRY_DELAY_MS = 500;
 
-        try {
-            const response = await fetchFn(url, {
-                method,
-                headers,
-                body: JSON.stringify(keepAliveBody),
-                signal: controller.signal
-            });
-            // 读取并丢弃响应体，确保连接正常关闭
-            await response.text().catch(() => {});
-        } finally {
-            clearTimeout(timeoutId);
+        for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            try {
+                const response = await fetchFn(url, {
+                    method,
+                    headers,
+                    body: JSON.stringify(keepAliveBody),
+                    signal: controller.signal
+                });
+                // 读取并丢弃响应体，确保连接正常关闭
+                await response.text().catch(() => {});
+                if (!response.ok) {
+                    // 非 2xx：上游明确拒绝了本次刷新，不能算保活成功
+                    throw new ChannelError(
+                        ErrorType.API_ERROR,
+                        t('modules.channel.errors.apiError', { status: response.status })
+                    );
+                }
+                return true;
+            } catch (error: any) {
+                const timedOut = error?.name === 'AbortError';
+                if (timedOut || attempt >= ATTEMPTS - 1) {
+                    throw error instanceof ChannelError
+                        ? error
+                        : new ChannelError(ErrorType.NETWORK_ERROR, error?.message || 'Keep-alive request failed', error);
+                }
+                // 短暂等待后重试（重试期间不阻塞流本身）
+                await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            } finally {
+                clearTimeout(timeoutId);
+            }
         }
+        return false;
     }
     
     /**
@@ -777,11 +866,15 @@ export class ChannelManager {
      *
      * @param options 请求选项
      * @param externalSignal 外部取消信号
+     * @param idleTimeoutHandle 可选：暴露空闲超时重置函数。
+     *        调用方（LLM 保活模块）在保活请求成功后调用 handle.reset()，
+     *        把「上游连接仍然活跃」视为流的活性信号，刷新固定超时计时。
      * @returns 异步生成器，产生原始响应块
      */
     private async *executeStreamRequest(
         options: HttpRequestOptions,
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        idleTimeoutHandle?: { reset: () => void }
     ): AsyncGenerator<any> {
         const { url, method, headers, body, timeout = 120000 } = options;
         const proxyUrl = this.getProxyUrl();
@@ -802,6 +895,11 @@ export class ChannelManager {
                 controller.abort();
             }, timeout);
         };
+        
+        // 把重置函数暴露给调用方：LLM 保活请求成功后可刷新流的空闲超时
+        if (idleTimeoutHandle) {
+            idleTimeoutHandle.reset = resetTimeout;
+        }
         
         // 初始化超时
         resetTimeout();
@@ -837,6 +935,15 @@ export class ChannelManager {
                     resetTimeout();
                     
                     buffer += chunk;
+
+                    // 缓冲硬上限：上游异常/恶意代理持续发“永远解析不出”的数据时
+                    // 立即失败，避免内存无限增长
+                    if (buffer.length > MAX_STREAM_BUFFER_CHARS) {
+                        throw new ChannelError(
+                            ErrorType.NETWORK_ERROR,
+                            t('modules.channel.errors.streamBufferTooLarge', { limit: MAX_STREAM_BUFFER_CHARS })
+                        );
+                    }
                     
                     // 处理流式响应
                     const result = parseStreamBuffer(buffer);
@@ -919,6 +1026,15 @@ export class ChannelManager {
                         resetTimeout();
                         
                         buffer += decoder.decode(value, { stream: true });
+
+                        // 缓冲硬上限：上游异常/恶意代理持续发“永远解析不出”的数据时
+                        // 立即失败，避免内存无限增长
+                        if (buffer.length > MAX_STREAM_BUFFER_CHARS) {
+                            throw new ChannelError(
+                                ErrorType.NETWORK_ERROR,
+                                t('modules.channel.errors.streamBufferTooLarge', { limit: MAX_STREAM_BUFFER_CHARS })
+                            );
+                        }
                         
                         // 处理流式响应
                         const result = parseStreamBuffer(buffer);
@@ -1199,8 +1315,9 @@ export class ChannelManager {
                 for (const tool of serverTools.tools || []) {
                     // 将 MCP 工具转换为函数声明格式
                     // 工具名称格式：mcp__{serverId}__{toolName}
-                    // 使用双下划线分隔，因为 Gemini API 不允许函数名中包含多个冒号
-                    const toolName = `mcp__${serverTools.serverId}__${tool.name}`;
+                    // 使用统一 codec 编码（禁止手拼），decode 侧用 indexOf 解析，
+                    // 正确处理 serverId/toolName 含下划线的边界情况
+                    const toolName = encodeMcpToolName(serverTools.serverId, tool.name);
                     
                     // 根据服务器配置决定是否清理 schema
                     const rawSchema = tool.inputSchema || { type: 'object', properties: {} };
@@ -1236,8 +1353,14 @@ export class ChannelManager {
      * - $schema
      * - additionalProperties
      */
-    private cleanJsonSchema(schema: any): any {
+    private cleanJsonSchema(schema: any, depth: number = 0): any {
         if (!schema || typeof schema !== 'object') {
+            return schema;
+        }
+        // 深度护栏：外部 MCP 服务器可构造极深嵌套 schema，
+        // 无界递归会栈溢出导致扩展宿主崩溃（M6）
+        const MAX_DEPTH = 64;
+        if (depth > MAX_DEPTH) {
             return schema;
         }
         
@@ -1254,9 +1377,9 @@ export class ChannelManager {
             // 递归处理嵌套对象
             if (value && typeof value === 'object') {
                 if (Array.isArray(value)) {
-                    cleaned[key] = value.map(item => this.cleanJsonSchema(item));
+                    cleaned[key] = value.map(item => this.cleanJsonSchema(item, depth + 1));
                 } else {
-                    cleaned[key] = this.cleanJsonSchema(value);
+                    cleaned[key] = this.cleanJsonSchema(value, depth + 1);
                 }
             } else {
                 cleaned[key] = value;

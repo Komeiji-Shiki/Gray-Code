@@ -8,6 +8,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { isRegexPotentiallyCatastrophic } from '../../tools/utils';
 import {
     LOG_REC, TREE_REC, RAW_MAX, DEFAULT_MEMORY_CONFIG,
     type LogEntry, type WakeBlock, type WakeResult,
@@ -559,6 +560,11 @@ export class MemoryManager {
     async recall(regex: string): Promise<RecallResult> {
         let pat: RegExp;
         try {
+            // ReDoS 防线：嵌套量词等危险结构在编译前拒绝，
+            // 避免对记忆行做指数级回溯卡死扩展宿主
+            if (isRegexPotentiallyCatastrophic(regex)) {
+                die('pattern can cause catastrophic backtracking (e.g. nested quantifiers like (a+)+). Use literal text or simplify the pattern.');
+            }
             pat = new RegExp(regex, 'i');
         } catch (e: any) {
             die(`bad regex: ${e.message}`);

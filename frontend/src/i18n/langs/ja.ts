@@ -2502,17 +2502,43 @@ const ja: LanguageMessages = {
             title: '変更',
             fileCount: '{count} ファイル',
             close: 'パネルを閉じる',
-            empty: '処理待ちの変更はありません',
+            empty: '変更履歴はありません',
             noChange: 'このファイルに内容の差分はありません',
             accept: '承認',
             reject: '拒否',
             acceptAll: 'すべて承認',
             rejectAll: 'すべて拒否',
             actionFailed: '操作に失敗しました',
+            viewNewContent: '新しい内容を表示',
+            syntaxIssues: '構文エラー {count} 件',
+            noSyntaxIssues: '構文エラーはありません',
+            roundLabel: 'ラウンド {round}',
+            allProcessed: 'すべての変更は処理済みです（履歴は引き続き表示・比較できます）',
+            clearHistory: '履歴をクリア',
             status: {
                 pending: '処理待ち',
                 accepted: '承認済み',
                 rejected: '拒否済み'
+            }
+        },
+        codeView: {
+            title: 'コード表示',
+            close: 'パネルを閉じる',
+            empty: '左のワークスペースファイルツリーからファイルを選択するか、パスを入力してコードを開きます',
+            pathPlaceholder: 'ファイルパスを入力（例: src/main.ts）して Enter',
+            open: '開く',
+            recent: '最近開いた...',
+            refresh: '再読み込み',
+            memorySource: 'メモリ内コンテンツ',
+            jumpToLine: '行番号へ移動',
+            issuesFound: '構文エラーを {count} 件検出',
+            noIssues: '構文エラーはありません（全 {lines} 行）',
+            workspaceFiles: 'ワークスペースのファイル',
+            noWorkspace: 'ワークスペースフォルダが開かれていません（ファイルツリーは利用できません）',
+            refreshTree: 'ファイルツリーを更新',
+            treeEmpty: '（空のディレクトリ）',
+            errors: {
+                openFailed: 'ファイルを開けませんでした'
             }
         },
         channels: {

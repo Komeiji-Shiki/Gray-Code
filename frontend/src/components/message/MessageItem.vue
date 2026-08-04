@@ -804,7 +804,7 @@ function isChipSwitching(chip: VersionChip): boolean {
           :style="{
             '--loading-duration': '2.8s',
             '--loading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
-            '--loading-active-color': 'var(--vscode-charts-blue, #0050b3)',
+            '--loading-active-color': 'var(--vscode-charts-blue, #3794ff)',
             '--loading-amp': '4px'
           }"
         >

@@ -476,6 +476,8 @@ export function deepMerge(target: any, source: any): any {
     const result = { ...target };
     
     for (const key of Object.keys(source)) {
+        // 跳过原型污染危险键
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
         // 递归合并所有子节点
         result[key] = deepMerge(result[key], source[key]);
     }
@@ -542,4 +544,70 @@ export function applyCustomBody(originalBody: any, customBody?: CustomBodyConfig
     }
     
     return result;
+}
+
+/**
+ * 自定义标头键名校验正则：仅允许字母、数字、连字符
+ */
+const CUSTOM_HEADER_KEY_PATTERN = /^[a-zA-Z0-9-]+$/;
+
+/**
+ * 禁止覆盖的保留标头（大小写不敏感），防止 CRLF 注入或请求走私
+ */
+const RESERVED_HEADERS = new Set([
+    'host',
+    'content-length',
+    'transfer-encoding',
+    'connection',
+    'proxy-authorization',
+    'cookie',
+    'set-cookie',
+    'upgrade',
+    'te',
+    'trailer'
+]);
+
+// 已警告过的非法键，避免刷屏（每键仅警告一次）
+const warnedCustomHeaderKeys = new Set<string>();
+
+/**
+ * 校验单个自定义标头键名是否合法且非保留标头。
+ * 非法键直接跳过，可 console.warn 一次。
+ */
+export function isValidCustomHeaderKey(rawKey: string): boolean {
+    const key = rawKey.trim();
+    if (!CUSTOM_HEADER_KEY_PATTERN.test(key)) {
+        if (!warnedCustomHeaderKeys.has(key)) {
+            warnedCustomHeaderKeys.add(key);
+            console.warn(`[CustomHeader] invalid header key "${key}" skipped (allowed: letters, digits, hyphens)`);
+        }
+        return false;
+    }
+    if (RESERVED_HEADERS.has(key.toLowerCase())) {
+        if (!warnedCustomHeaderKeys.has(key)) {
+            warnedCustomHeaderKeys.add(key);
+            console.warn(`[CustomHeader] reserved header "${key}" cannot be overridden, skipped`);
+        }
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 应用自定义请求标头（含校验：非法键名与保留标头直接跳过）
+ *
+ * @param headers 目标标头对象（原地合并）
+ * @param customHeaders 自定义标头列表
+ * @param enabled 总开关（对应渠道配置的 customHeadersEnabled），关闭时不应用
+ */
+export function applyCustomHeaders(headers: Record<string, string>, customHeaders?: CustomHeader[], enabled?: boolean): void {
+    if (enabled !== undefined && !enabled) return;
+    if (!customHeaders) return;
+    for (const header of customHeaders) {
+        // 只添加启用的、有键名的标头
+        if (!header.enabled || !header.key || !header.key.trim()) continue;
+        const key = header.key.trim();
+        if (!isValidCustomHeaderKey(key)) continue;
+        headers[key] = header.value || '';
+    }
 }

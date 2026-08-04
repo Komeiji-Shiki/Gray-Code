@@ -17,11 +17,13 @@ import { t } from '../../i18n';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as fsCallback from 'fs';
 import * as crypto from 'crypto';
 import type { SettingsManager } from '../settings/SettingsManager';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import { getDiffManager } from '../../tools/file/diffManager';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
+import { isSafeId, isSafeRelativePath } from '../../core/idValidation';
 import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../../core/chatFocusGuard';
 import { Logger } from '../../core/logger';
 
@@ -346,6 +348,22 @@ export class CheckpointManager {
                     try {
                         await fs.mkdir(path.dirname(destPath), { recursive: true });
                         await fs.copyFile(srcPath, destPath);
+                        // TOCTOU 防护：复制与哈希是两个时刻，期间文件可能被并发修改。
+                        // 复制完成后重新哈希备份内容，与记录值不一致则回滚该备份文件
+                        // （记录为 unbacked，下一个检查点重新备份），
+                        // 避免“fileHashes 声称有备份、恢复时必报 hash_mismatch”的假完整状态。
+                        const expectedHash = currentHashes[change.path];
+                        if (expectedHash) {
+                            const backupHash = await this.getFileHash(destPath);
+                            if (backupHash !== expectedHash) {
+                                console.warn(`[CheckpointManager] Backup hash mismatch for ${change.path}, rolling back`);
+                                try {
+                                    await fs.rm(destPath, { force: true });
+                                } catch { /* ignore rollback failure */ }
+                                markUnbacked(change.path);
+                                continue;
+                            }
+                        }
                         fileCount++;
                     } catch (err) {
                         console.warn(`[CheckpointManager] Failed to copy ${change.path}:`, err);
@@ -452,18 +470,47 @@ export class CheckpointManager {
     private async readCheckpointListFromConversation(conversationId: string): Promise<CheckpointRecord[]> {
         const conversationManager = this.conversationManager as any;
 
+        let checkpoints: CheckpointRecord[] = [];
+
         if (typeof conversationManager.getCustomMetadata === 'function') {
-            const checkpoints = await conversationManager.getCustomMetadata(conversationId, 'checkpoints');
-            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
-        }
-
-        if (typeof conversationManager.getMetadata === 'function') {
+            const raw = await conversationManager.getCustomMetadata(conversationId, 'checkpoints');
+            checkpoints = Array.isArray(raw) ? raw as CheckpointRecord[] : [];
+        } else if (typeof conversationManager.getMetadata === 'function') {
             const metadata = await conversationManager.getMetadata(conversationId);
-            const checkpoints = metadata?.custom?.checkpoints;
-            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
+            const raw = metadata?.custom?.checkpoints;
+            checkpoints = Array.isArray(raw) ? raw as CheckpointRecord[] : [];
         }
 
-        return [];
+        return this.sanitizeCheckpointRecords(checkpoints);
+    }
+
+    /**
+     * 消毒检查点记录：拒绝 backupDir 非法（穿越/绝对路径）的记录。
+     *
+     * backupDir 会拼入 fs.rm / fs.cp / read 等路径操作，元数据一旦被
+     * 篡改（磁盘损坏、手工编辑、第三方扩展），非法 backupDir 可把删除
+     * 操作引到 checkpoints 目录之外。所有读取入口统一经过此处过滤，
+     * 非法记录被剔除且无法被删除/恢复/统计（日志留痕）。
+     */
+    private sanitizeCheckpointRecords(checkpoints: CheckpointRecord[]): CheckpointRecord[] {
+        const sanitized: CheckpointRecord[] = [];
+        for (const cp of checkpoints) {
+            if (
+                cp &&
+                typeof cp.backupDir === 'string' &&
+                cp.backupDir.length > 0 &&
+                cp.backupDir.length <= 200 &&
+                !cp.backupDir.includes('..') &&
+                !path.isAbsolute(cp.backupDir) &&
+                isSafeRelativePath(cp.backupDir) &&
+                path.basename(cp.backupDir) === cp.backupDir
+            ) {
+                sanitized.push(cp);
+            } else {
+                console.warn('[CheckpointManager] Dropped checkpoint record with unsafe backupDir:', cp?.id, cp?.backupDir);
+            }
+        }
+        return sanitized;
     }
 
     /**
@@ -510,12 +557,18 @@ export class CheckpointManager {
     }
     
     /**
-     * 计算文件的 MD5 哈希
+     * 计算文件的 MD5 哈希（流式读取，避免超大文件整块载入内存）
      */
     private async getFileHash(filePath: string): Promise<string | null> {
         try {
-            const content = await fs.readFile(filePath);
-            return crypto.createHash('md5').update(content).digest('hex');
+            const hash = crypto.createHash('md5');
+            await new Promise<void>((resolve, reject) => {
+                const stream = fsCallback.createReadStream(filePath);
+                stream.on('data', chunk => hash.update(chunk));
+                stream.on('end', () => resolve());
+                stream.on('error', reject);
+            });
+            return hash.digest('hex');
         } catch {
             return null;
         }
@@ -553,7 +606,11 @@ export class CheckpointManager {
                 // 旧记录没有 mtimeNs 时回退到 mtimeMs+size 比较（与旧行为一致）。
                 const stat = await fs.stat(file, { bigint: true });
                 const mtimeMs = Number(stat.mtimeMs);
-                const mtimeNs = stat.mtimeNs.toString();
+                // mtimeNs 在部分平台（如 Windows 某些文件系统）可能为 undefined，
+                // 直接 toString() 会抛错导致整个文件被静默剔除出快照。
+                const mtimeNs = stat.mtimeNs !== undefined && stat.mtimeNs !== null
+                    ? stat.mtimeNs.toString()
+                    : undefined;
                 const size = Number(stat.size);
                 stats[relativePath] = { mtimeMs, size, mtimeNs };
 
@@ -561,7 +618,7 @@ export class CheckpointManager {
                 if (previousStats && previousHashes) {
                     const prevStat = previousStats[relativePath];
                     const statUnchanged = prevStat
-                        ? (prevStat.mtimeNs !== undefined
+                        ? (mtimeNs !== undefined
                             ? prevStat.mtimeNs === mtimeNs
                             : prevStat.mtimeMs === mtimeMs && prevStat.size === size)
                         : false;
@@ -574,9 +631,11 @@ export class CheckpointManager {
                     }
                 }
 
-                // 回退：读出文件内容计算 MD5
-                const content = await fs.readFile(file);
-                hashes[relativePath] = crypto.createHash('md5').update(content).digest('hex');
+                // 回退：流式读出文件内容计算 MD5
+                const contentHash = await this.getFileHash(file);
+                if (contentHash) {
+                    hashes[relativePath] = contentHash;
+                }
             } catch {
                 // 文件无法访问（权限、已删除等），跳过
             }
@@ -613,6 +672,12 @@ export class CheckpointManager {
 
         // 文件恢复目标和工作区扫描都使用同一个 resolver，确保比较口径一致。
         for (const [relativePath, hash] of Object.entries(this.normalizeFileHashMap(fileHashes))) {
+            // 路径安全防线：拒绝含 `..`/绝对路径/盘符的键，
+            // 防止恢复时在工作区外 mkdir / 读写文件。
+            if (!isSafeRelativePath(relativePath)) {
+                console.warn(`[CheckpointManager] Dropped unsafe checkpoint path from restore target: ${relativePath}`);
+                continue;
+            }
             if (!(await resolver.isIgnored(relativePath, false))) {
                 filteredFileHashes[relativePath] = hash;
             }
@@ -621,6 +686,10 @@ export class CheckpointManager {
         const filteredEmptyDirs: string[] = [];
         // 空目录同样需要按当前规则过滤，否则 restore 会重新创建当前已忽略的目录壳。
         for (const relativePath of this.normalizePathList(emptyDirs)) {
+            if (!isSafeRelativePath(relativePath)) {
+                console.warn(`[CheckpointManager] Dropped unsafe checkpoint empty dir from restore target: ${relativePath}`);
+                continue;
+            }
             if (!(await resolver.isIgnored(relativePath, true))) {
                 filteredEmptyDirs.push(relativePath);
             }
@@ -1251,19 +1320,25 @@ export class CheckpointManager {
                 // （处理顺序旧→新是自洽的：更旧的项是否可删取决于更晚存活项的引用。）
                 for (let i = 0; i < excess && i < sorted.length; i++) {
                     const cp = sorted[i];
+                    if (deleted.has(cp.id)) {
+                        continue;
+                    }
                     const stillAlive = sorted.slice(i + 1).filter(c => !deleted.has(c.id));
-                    const dependent = stillAlive.find(c => c.baseCheckpointId === cp.id);
-                    if (dependent) {
+                    // 同一基快照可能被多个后继引用：逐个合并后再删除，
+                    // 否则 deleteCheckpoint 会因仍有后继引用而拒绝，链上文件也会丢失。
+                    for (const dependent of stillAlive.filter(c => c.baseCheckpointId === cp.id)) {
                         try {
                             await this.mergeCheckpointIntoSuccessor(conversationId, dependent, cp);
                         } catch (err) {
                             // 合并失败（如备份目录不可读）宁可保留也不断链
                             console.warn('[CheckpointManager] Failed to re-link checkpoint chain, keeping checkpoint:', err);
-                            continue;
                         }
                     }
-                    await this.deleteCheckpoint(conversationId, cp.id);
-                    deleted.add(cp.id);
+                    // 仅当确实删除成功才计入 deleted，避免“删失败却当作已删”污染
+                    // 后续依赖判断（stillAlive 过滤）。
+                    if (await this.deleteCheckpoint(conversationId, cp.id)) {
+                        deleted.add(cp.id);
+                    }
                 }
             }
         } catch (err) {

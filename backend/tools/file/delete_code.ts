@@ -8,7 +8,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 
@@ -37,6 +37,20 @@ interface DeleteResult {
     /** 自动保存失败原因；用于解释 rejected 的真实来源 */
     autoSaveError?: string;
     pendingDiffId?: string;
+}
+
+/**
+ * 判断 lines 是否带「幻影尾行」：文件内容以 '\n' 结尾时，split('\n') 会多出一个
+ * 尾部空串（如 "a\nb\n" → ['a','b','']）。该空串不是真实行，行号映射与删除
+ * 都必须以真实行计算，否则模型按 totalLines 删除时删的是幻影行：
+ * 表现为“假成功”（deletedLines 有值但一行未删）或把文件末尾换行吞掉。
+ * 判定规则与 insert_code 的 hasPhantomTailLine 保持一致。
+ */
+function hasPhantomTailLine(lines: string[]): boolean {
+    if (lines.length === 0) return false;
+    if (lines[lines.length - 1] !== '') return false;
+    if (lines.length === 1) return true;
+    return lines[lines.length - 2] !== '';
 }
 
 /**
@@ -87,11 +101,20 @@ async function deleteSingleFile(
     }
 
     try {
+        const rawBuffer = fs.readFileSync(absolutePath);
+        // 编码防护：非 UTF-8 文件读-改-写会永久损坏原编码
+        const encodingIssue = detectNonUtf8Encoding(rawBuffer);
+        if (encodingIssue) {
+            return { path: filePath, success: false, error: `Refusing to delete code: ${encodingIssue}. Convert the file to UTF-8 first.` };
+        }
         const originalContent = normalizeLineEndingsToLF(
-            fs.readFileSync(absolutePath, 'utf8')
+            rawBuffer.toString('utf8')
         );
         const originalLines = originalContent.split('\n');
-        const totalLines = originalLines.length;
+        // 幻影尾行不是真实行：范围校验与删除计数都以真实行为准
+        const totalLines = hasPhantomTailLine(originalLines)
+            ? originalLines.length - 1
+            : originalLines.length;
 
         // 范围校验
         if (startLine > totalLines) {

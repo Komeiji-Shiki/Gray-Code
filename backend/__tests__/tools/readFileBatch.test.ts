@@ -90,4 +90,30 @@ describe('read_file batch requests', () => {
         expect(mixed).toMatchObject({ success: false, error: 'Provide either path or files, not both.' });
         expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
     });
+
+    it('rejects batches with more than 20 files', async () => {
+        const files = Array.from({ length: 21 }, (_, i) => ({ path: `f${i}.txt` }));
+        const result = await createReadFileTool().handler({ files }) as any;
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('Too many files requested (21)');
+        expect(result.error).toContain('20');
+        expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+    });
+
+    it('rejects batches whose total size exceeds the byte budget', async () => {
+        // 每个文件 30MB，两个文件合计 60MB > 50MB 预算
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({
+            size: 30 * 1024 * 1024,
+            type: vscode.FileType.File
+        });
+
+        const result = await createReadFileTool().handler({
+            files: [{ path: 'a.txt' }, { path: 'b.txt' }]
+        }) as any;
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('exceeds the limit');
+        expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+    });
 });

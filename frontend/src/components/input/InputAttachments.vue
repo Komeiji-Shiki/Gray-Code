@@ -156,7 +156,7 @@ function hasPreview(attachment: Attachment): boolean {
 }
 
 .audio-placeholder {
-  background: linear-gradient(135deg, #3a3d41, #2d2d30);
+  background: var(--vscode-textCodeBlock-background);
   display: flex;
   align-items: center;
   justify-content: center;

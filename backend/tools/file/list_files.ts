@@ -9,12 +9,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines, mapWithConcurrency } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
 /**
  * 默认忽略的目录和文件
  */
-const DEFAULT_IGNORED = ['.git'];
+const DEFAULT_IGNORED = ['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.next', 'coverage'];
 
 /**
  * 获取忽略列表
@@ -189,7 +190,15 @@ export function createListFilesTool(): Tool {
                 required: ['paths']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context): Promise<ToolResult> => {
+            // 工作区外目录访问策略：与 read_file 相同的 deny/ask/allow 语义。
+            // resolveUriWithInfo 会解析工作区外的绝对路径，因此必须在 readDirectory 前拦截，
+            // 防止通过 list_files 枚举任意目录。
+            const accessError = ensureOutsideWorkspaceAccessApproved('list_files', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
+            }
+
             // 支持 paths 数组或单个 path（向后兼容）
             let pathList: string[] = [];
             

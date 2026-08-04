@@ -92,6 +92,7 @@ interface McpPrompt {
  */
 export class StdioMcpClient extends EventEmitter {
     private process: cp.ChildProcess | null = null;
+    private processExited = false;
     private requestId = 0;
     private pendingRequests: Map<number | string, {
         resolve: (result: any) => void;
@@ -143,30 +144,53 @@ export class StdioMcpClient extends EventEmitter {
             env: processEnv,
             cwd: this.cwd,
             stdio: ['pipe', 'pipe', 'pipe'],
-            // Windows: 使用 ComSpec 或简短文件名 cmd.exe，
-            // 让 CreateProcessW 通过系统目录搜索来定位，避免硬编码路径导致 ENOENT。
-            shell: process.platform === 'win32'
-                ? (process.env.ComSpec || 'cmd.exe')
-                : false
+            // 不用 shell 包装：命令与参数直通子进程，避免 cmd.exe 对含
+            // & | 引号等字符的参数做二次解释（命令注入面）。含空格的
+            // 可执行文件路径由调用方自行拼接为单个 command 字符串处理。
+            shell: false
         });
+        this.processExited = false;
 
         // 设置 UTF-8 编码，避免逐 chunk .toString() 截断多字节字符
         this.process.stdout?.setEncoding('utf8');
         this.process.stderr?.setEncoding('utf8');
 
+        // stdin 写入错误监听：进程退出与 write() 之间的竞态窗口内
+        // write() 会异步触发 EPIPE/ERR_STREAM_DESTROYED，无监听器时
+        // Node 会抛未捕获异常导致扩展宿主崩溃（H2）
+        this.process.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+            // 进程退出/销毁流导致的写入失败是正常竞态，静默吞掉；
+            // 仅当进程仍存活时上报（此时写入失败意味着真正的管道故障）
+            if (!this.processExited) {
+                this.emit('error', err);
+            }
+        });
+
         // 设置错误处理
         this.process.on('error', (err) => {
             this.emit('error', err);
+            // spawn 失败（ENOENT 等）时不会触发 'exit'，pending 请求会一直挂到超时；
+            // 必须在这里立即拒绝，让 connect() 尽快失败并清理
+            this.failPendingRequests(err);
         });
 
         this.process.on('exit', (code, signal) => {
+            this.processExited = true;
             this.emit('exit', code, signal);
             this.cleanup();
         });
 
-        // 收集 stderr (已 setEncoding，data 为 string)
+        // 收集 stderr (已 setEncoding，data 为 string)；带大小护栏，
+        // 防止服务器向 stderr 持续输出导致内存无界增长（M4）
+        const MAX_STDERR = 1024 * 1024;
+        let stderrTruncated = false;
         this.process.stderr?.on('data', (data: string) => {
-            this.stderrOutput += data;
+            if (this.stderrOutput.length < MAX_STDERR) {
+                this.stderrOutput += data.slice(0, MAX_STDERR - this.stderrOutput.length);
+            } else if (!stderrTruncated) {
+                stderrTruncated = true;
+                this.stderrOutput += '\n[stderr truncated]';
+            }
         });
 
         // 读取 stdout (已 setEncoding，data 为 string)
@@ -384,7 +408,17 @@ export class StdioMcpClient extends EventEmitter {
             });
             
             const message = JSON.stringify(request) + '\n';
-            this.process.stdin.write(message);
+            try {
+                if (this.processExited || this.process.stdin.destroyed) {
+                    const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+                    reject(new Error(`Process not running${errorInfo}`));
+                    return;
+                }
+                this.process.stdin.write(message);
+            } catch (error: any) {
+                const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+                reject(new Error(`Failed to write to MCP process: ${error?.message ?? error}${errorInfo}`));
+            }
         });
     }
     
@@ -403,7 +437,14 @@ export class StdioMcpClient extends EventEmitter {
         };
         
         const message = JSON.stringify(notification) + '\n';
-        this.process.stdin.write(message);
+        try {
+            if (this.processExited || this.process.stdin.destroyed) {
+                return;
+            }
+            this.process.stdin.write(message);
+        } catch {
+            // 进程退出竞态窗口内的写入失败静默忽略
+        }
     }
     
     /**
@@ -411,6 +452,15 @@ export class StdioMcpClient extends EventEmitter {
      */
     private handleData(data: string): void {
         this.buffer += data;
+        
+        // 缓冲区大小上限，防止服务器发送无界数据导致内存 DoS
+        const MAX_BUFFER_SIZE = 16 * 1024 * 1024;
+        if (this.buffer.length > MAX_BUFFER_SIZE) {
+            this.buffer = '';
+            this.emit('error', new Error(`MCP server output exceeded buffer limit (${MAX_BUFFER_SIZE} bytes), disconnecting`));
+            this.disconnect().catch(() => {});
+            return;
+        }
         
         // 处理每一行（JSON-RPC 消息以换行符分隔）
         let newlineIndex: number;
@@ -453,10 +503,21 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /**
+     * 拒绝所有等待中的请求（spawn 失败等不触发 exit 的路径使用）
+     */
+    private failPendingRequests(error: Error): void {
+        for (const [id, pending] of this.pendingRequests) {
+            pending.reject(error);
+        }
+        this.pendingRequests.clear();
+    }
+
+    /**
      * 清理资源
      */
     private cleanup(): void {
         this.process = null;
+        this.processExited = true;
         
         // 拒绝所有等待中的请求（包含 stderr 信息）
         const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';

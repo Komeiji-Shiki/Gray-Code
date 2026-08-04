@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
-> 💡 **无需 VS Code？** 试试 [GrayCode Desktop](electron-app/README.md) —— 基于本插件的完整独立桌面版（Windows / macOS / Linux）。
+> 💡 **不想装 VS Code？** 试试 [GrayCode Desktop](electron-app/README.md) —— 基于本插件的桌面版，内置 `vscode-shim` 兼容层，无需安装 VS Code（Windows / macOS / Linux）。
 
 ---
 
@@ -171,13 +171,13 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
 
-**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
+**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
 
 **从源码构建并安装** —— 当前仓库使用并提交 `package-lock.json`，统一使用 npm：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
+git clone https://github.com/czocelot/Gray-Code-ocelot.git
 cd Gray-Code
 
 # 安装根目录依赖
@@ -244,7 +244,7 @@ Gray-Code/
 
 ## 贡献
 
-欢迎通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
+欢迎通过 [Issues](https://github.com/czocelot/Gray-Code-ocelot/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
 
 ## 许可证
 

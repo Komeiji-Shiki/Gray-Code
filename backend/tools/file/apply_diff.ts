@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getDiffManager } from './diffManager';
-import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, detectNonUtf8Encoding } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
@@ -95,6 +95,11 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
     // 完整索引数组同时服务于唯一性计数与 startLine 定位，二者必须看到同一份真实匹配集。
     if (!normalizedSearch) return [];
 
+    // DoS 防护：高度重复的短 oldContent（如单个字符）在重叠扫描下会产生 O(n²/2) 的
+    // 字符比较并累积海量索引，卡死扩展宿主主线程。命中上限即截断——
+    // 调用方只需区分「唯一 / 多个」，截断后的数组语义不变。
+    const MAX_MATCHES = 20000;
+
     const result: number[] = [];
     let fromIndex = 0;
 
@@ -103,6 +108,9 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
         if (pos === -1) break;
 
         result.push(pos);
+        if (result.length >= MAX_MATCHES) {
+            break;
+        }
         fromIndex = pos + 1;
     }
 
@@ -1472,10 +1480,27 @@ ${descriptionSuffix}`,
                 return { success: false, error: `File not found: ${filePath}` };
             }
 
+            // 大小护栏：同步读入任意大小文件会阻塞扩展宿主主线程并吃掉等量内存
+            const MAX_DIFF_FILE_SIZE = 20 * 1024 * 1024;
+            const fileStat = fs.statSync(absolutePath);
+            if (fileStat.size > MAX_DIFF_FILE_SIZE) {
+                return {
+                    success: false,
+                    error: `File too large (${(fileStat.size / 1024 / 1024).toFixed(1)}MB) for apply_diff. Use search_in_files with targeted replacements instead.`
+                };
+            }
+
             const format = getApplyDiffFormat();
 
             try {
-                const originalContent = fs.readFileSync(absolutePath, 'utf8');
+                const rawBuffer = fs.readFileSync(absolutePath);
+                // 编码防护：UTF-16/GBK 等非 UTF-8 文件按 UTF-8 读-改-写会永久损坏，
+                // 明确拒绝而不是静默写坏
+                const encodingIssue = detectNonUtf8Encoding(rawBuffer);
+                if (encodingIssue) {
+                    return { success: false, error: `Refusing to apply diff: ${encodingIssue}. Convert the file to UTF-8 first.` };
+                }
+                const originalContent = rawBuffer.toString('utf8');
 
                 // ========== 统一 diff 模式 ==========
                 if (format === 'unified') {

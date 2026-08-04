@@ -1,6 +1,114 @@
 # Change Log
 
 
+## [1.5.1] - 2026-08-04
+
+### Added
+  - 代码查看面板自动打开工作区文件树：面板打开即列出工作区根目录（新 IPC `listWorkspaceDirectory`，工作区包含校验 + 默认忽略 `.git`/`node_modules`/`dist` 等重型目录），目录点击懒加载展开、文件点按即查看代码；工具栏新增文件树开关与刷新按钮；相对路径打开改为拼接工作区根 URI（修复 `file://相对路径` 被 `Uri.parse` 解析成 authority 导致工作区文件无法打开的问题）
+  - 变更查看面板支持展示并比对上一轮变更：已处理（已接受/已拒绝）条目在关闭面板后保留，重新打开可继续查看与比对历史 diff，不再只有待处理变更；条目按「轮」分组（连续推送视为同一轮，间隔超过 2s 视为新一轮），文件列表显示「第 N 轮」轮次分隔；全部处理完毕后显示提示条（历史条目仍可查看）；新增「清空历史」按钮显式清空记录
+  - 新增变更查看 Store 单元测试 7 例（`frontend/src/__tests__/stores/diffViewerStore.test.ts`）：push 建条目/关闭后保留/已处理条目重复推送保持状态/轮次分组/清空历史/批量接受只作用于待处理条目
+
+### Fixed
+  - 修复已接受的变更通过工具卡「查看差异」再次打开时状态被重置为待处理、重新出现接受/拒绝与全部接受/全部拒绝按钮：`diffStore.push` 对已存在条目保留原已解决状态（已接受/已拒绝），不再回退成 pending
+  - 修复变更查看面板对已处理条目仍渲染（仅禁用）接受/拒绝按钮：改为非待处理条目完全不渲染接受/拒绝按钮，历史变更只读查看与比对（全部接受/全部拒绝同样只在存在待处理条目时出现）
+  - 修复 SSE 心跳事件污染解析累积器导致长流被误判失败并反复超时重试：上游/网关在长时间思考期间周期性回传的 `data: keep_alive` / `keep-alive` / `ping` / `heartbeat` 等非 JSON 心跳行，旧实现会混入 `currentData` 并按「不完整 JSON」继续累积，之后所有真实事件全部解析失败，流结束时被误报「模型返回空内容」、触发无谓的 NETWORK_ERROR 重试；现在只有「看起来像 JSON 前缀」（`{`/`[` 开头）的内容才允许跨行累积，心跳行直接替换/丢弃，纯心跳流在结束时不再进入错误详情（unparsed），网关真实纯文本错误仍照常带出；新增 5 例回归测试
+  - 修复代理链路由 CONNECT 阶段 `http.request({ timeout })` 武装的 socket 空闲定时器残留：握手成功后旧定时器仍存活，长流式请求在「上游思考、无数据可发」的静默期超过固定 `timeout` 毫秒时触发 `proxyReq 'timeout'` → `destroy()` 把已转交的隧道 socket 销毁，正在进行的流被固定超时强行掐断（外部 keep-alive 心跳也救不回来）；现在 CONNECT 成功后立即 `socket.setTimeout(0)` 解除残留定时器，流的空闲超时统一交给 `ChannelManager.executeStreamRequest` 的可重置计时器（任意到达字节都会续期）
+  - 修复 LLM 模块缓存保活请求未正确判定成功：`sendKeepAliveRequest` 旧实现不检查 `response.ok`，非 2xx（429/5xx/错误体）也被当作「保活成功」，Anthropic Prompt Caching 的 5 分钟 TTL 实际已过期却静默继续、下一轮对话全价计费；现在非 2xx 明确抛错、瞬时失败自动重试一次（500ms 间隔），返回布尔值供调用方判断「上游确实接受本次刷新」
+  - 修复 LLM 模块保活调度与流空闲超时脱节：保活定时器从固定 4 分 30 秒的 `setInterval` 改为链式 `setTimeout`（首个保活提前到「流空闲超时前 10 秒」，下限 30s、上限 4 分钟），保活请求成功即通过 `idleTimeoutHandle.reset()` 刷新流的空闲超时——上游静默思考且不回传心跳时，流不再被固定超时掐断，而是靠 LLM 模块自己的保活续命；另加在途互斥（上一次保活未完成不叠加触发）与流结束即停调度（catch/finally 置 `streamFinished`，杜绝残留定时器）
+  - 修复重试成功事件在重试请求真正完成前就触发（重试页面过早消失）：`executeStreamRequest` 是异步生成器，`await` 它只拿到生成器对象、请求尚未发出，旧代码在生成器创建后立即广播 `retrySuccess`——重试页面在重试请求真正完成前就消失，且重试再次失败时会闪现错误面板；现在 `retrySuccess` 移到本次尝试的 `for-await` 正常结束后才广播（新增回归测试锁定：网络错误→重试→成功的事件序列）
+  - 修复 `GenerateRequest.retryStatusCallback`（请求级重试回调）从未被读取：`ChannelManager` 只使用全局 `retryStatusCallback`，导致 SubAgent executor 传入的重试状态路由（`retryFailedInThisCall` → `wait_for_monitor_action` 恢复路径）与 Monitor 内部重试展示全部失效；现在优先使用请求级回调，`suppressRetryNotification` 只抑制全局回调、不抑制显式传入的请求级回调（新增回归测试覆盖 4 种场景：重试重发请求、请求级回调路由、全部失败 retryFailed、skipRetry 不重试）
+  - 修复超时重试面板近乎透明、可读性差：`.retry-panel` / `.retry-header` / `.retry-error-json` 原本使用 rgba 低透明度背景叠加在聊天区上，错误信息与重试进度几乎不可读；全部改为不透明主题色背景（`editorWidget-background` / `editorGroupHeader-tabsBackground` / `textCodeBlock-background`，浅色主题同样有值），并加深面板阴影
+
+### Added
+  - 新增 ChannelManager 重试链路回归测试 4 例（`backend/__tests__/channel/channelManagerRetry.test.ts`，mock fetch 首答失败后成功）：验证重试真的重新发送 HTTP 请求（fetch 调用次数 = 尝试次数）、`retrying → retrySuccess` 事件序列、请求级回调在 `suppressRetryNotification` 下仍收到事件、全部重试失败抛错且不重复回调
+  - 新增重试面板生命周期前端测试 5 例（`frontend/src/stores/chat/__tests__/retryStatus.test.ts`）：retrying 显示面板、retrySuccess/retryFailed 消失面板、失败后可再次重试、非当前对话的重试状态写入标签页快照不污染当前面板
+
+### Changed
+  - 前端 i18n 新增 `components.diff.roundLabel/allProcessed/clearHistory` 与 `components.codeView.workspaceFiles/noWorkspace/refreshTree/treeEmpty` 三语翻译键；`components.diff.empty` 文案改为「暂无变更记录」；`components.codeView.empty` 文案提示从工作区文件树选择
+
+## [1.5.0] - 2026-08-04
+
+### Added
+  - 新增代码查看面板（内嵌右侧抽屉，与变更查看面板同布局体系）：工作区路径打开（复用 `readFileForContext` 的扩展端工作区校验）与内存内容查看（diff 新内容 / 工具结果片段），行号 + highlight.js 语法高亮 + 错误行标记 + 诊断列表点击跳转 + 最近打开列表 + 跳转行号输入；入口：聊天区右下角 dock 按钮、read_file 工具卡「代码面板查看」、变更面板「查看新内容」
+  - 新增纯前端基础语法检查引擎 `frontend/src/utils/syntaxCheck.ts`（零依赖、单次线性扫描）：JSON 真实解析报错（带行列定位）、C 系（JS/TS/JSX/Java/C/C++/C#/Go/Rust 等）括号/字符串/模板/注释平衡、Python、CSS 块注释、HTML/XML/Vue 标签匹配、Shell 引号；512KB / 2 万行护栏防大文件卡顿；配套 Vitest 17 例（含标签名截断回归）
+  - 变更查看面板（Diff Viewer）接入语法检查：文件列表显示新内容语法错误数徽标，详情区展示诊断列表（L行:列 + 消息），仅对支持检查的代码语言展示「未发现语法问题」，非代码文件不误导；「查看新内容」按钮一键在代码查看面板打开修改后内容
+  - Electron 桌面版 codicon 图标字体改为主进程运行时注入（insertCSS + 相对字体 URL 重写为绝对 `graycode://local/...`），不再依赖 patch-dist 静态补丁，前端 rebuild 后图标/徽标不再丢失；注入按 key 幂等（reload 先移除旧样式，修复规则翻倍累积）
+
+### Security
+  - 修复 `graycode://` 自定义协议可读取含 API Key 的用户数据目录（H-1）：服务根收窄为 `frontend/dist` / `resources` / `renderer` 静态资源白名单，用户数据目录（默认位于 REPO_ROOT 内）显式排除；hostname 强制为 `local`（`graycode://evil/` 一律 403）；500 错误返回固定文案，不再回显内部路径
+  - 修复 openPath/showInFolder 可执行扩展名黑名单不完整（H-2）：补充 `.hta` / `.lnk` / `.url` / `.reg` / `.iso` / `.vhd` / `.vhdx` / `.docm` / `.xlsm` / `.pptm` / `.svg`，阻断「AI 写入恶意文件 → 用户打开 → 任意代码执行」链路
+  - 修复 API Key 拼进 URL query（泄漏到访问日志/代理日志/浏览器历史）：Gemini token 计数（模板、`generateContent` 端点替换、裸路径三分支）与 generate_image 全部改走 `x-goog-api-key` 请求头，模板残留与 `key`/`api_key` query 统一剥离
+  - 修复 MCP StdioClient stdin 写入无 error 监听：进程退出与 `write()` 竞态窗口内 EPIPE/ERR_STREAM_DESTROYED 不再抛未捕获异常导致扩展宿主崩溃；spawn 失败（ENOENT）等不触发 exit 的路径立即拒绝挂起请求；Windows 移除 cmd.exe shell 包装（消除 `&`/`|`/引号参数的二次解释，命令注入面）
+  - 修复 MCP stderr 无界累积（与 stdout 对齐 1MB 护栏 + 截断标记）
+  - 修复 `SkillsHandlers.openDirectory` 可在任意位置创建目录并打开任意文件夹：只允许打开 skillsManager 管理的目录（绝对路径 containment 校验）
+  - 修复代理链路 header CRLF 注入面（纵深防御）：请求头值统一剥离 CR/LF
+  - 修复通知处理器把完整 payload（对话标题/正文）写入默认可见的 WARN 日志：只记录元数据，debug 级同样脱敏
+  - 修复 i18n 占位符可访问原型链属性（`{toString}` 类占位符）：改 `hasOwnProperty` 校验
+  - 修复 glob 连续 `**` 展开成多个可选 `.*` 组（长路径指数级回溯）：编译前折叠为单个 globstar
+  - Electron `fs:exists` native op 增加字符串类型校验（非字符串路径不再抛 TypeError）
+
+### Fixed
+  - 修复流式请求校验在 try 块外：非法 conversationId 时前端请求永久挂起 + `requestClients` 路由表泄漏（chatStream / retryStream / editAndRetryStream / toolConfirmation 四处），统一改为校验失败即回错误响应并清理路由表
+  - 修复 `cancelStream` 载荷解构无防御：data 缺失时 route() 抛错导致路由表条目永久泄漏，改为防御性取值 + 错误回执
+  - 修复 `WebviewClientRegistry.resolveClientId` 返回未注册 id：requested 未命中时回退到已注册客户端，避免 `requestClients` 记录无效条目、响应错投
+  - 修复 App.vue 监听 `diff.statusChanged` 消息类型写错（`'message'` vs `'command'`）：变更面板条目状态同步与删除警戒提示恢复生效
+  - 修复扩展端未实现 `subagents.monitor.setVisible`（与 Electron 版行为对齐）：Monitor 折叠时后端停止推送 llm_delta 高频增量
+  - 修复 `summarizeContext` 完成后重载无会话归属校验：切换会话竞态不再把新会话历史整体覆盖进 allMessages；前端将该消息加入无兜底超时列表，与后端分钟级长任务语义一致（180s 兜底超时误触发会把迟到响应误当广播推送）
+  - 修复 `restoreAndEdit` 错误路径无会话校验：跨会话不再污染新会话的错误/流式状态
+  - 修复发送失败错误展示依赖 `isStreaming` 判断：await 期间用户取消导致的竞态下，真实发送失败不再被静默吞掉
+  - 修复 `apply_diff` 重叠匹配 O(n²) 主线程 DoS（高频短 oldContent 卡死数分钟）：匹配数上限 2 万；同步读文件加 20MB 大小护栏
+  - 修复 `processQueue` 发送失败时排队消息永久丢失：失败消息放回队首（去重防死循环）
+  - 修复附件无大小上限（全量 base64 入内存可拖垮 webview）：50MB 上限（视频 200MB）；批量上传 try/finally 复位上传状态
+  - 修复 UsageStats 统计缓存客户端可控 key 无上限：LRU 上限 20 条
+  - 修复 HttpClient SSE 服务器结构化错误被当作解析错误吞掉：真实错误不再被替换成误导性的「超时」
+  - 修复 `cleanJsonSchema` 无深度护栏：外部 MCP 服务器构造的极深嵌套 schema 不再栈溢出（深度上限 64）
+  - 修复 DependencyManager `exec` 字符串拼接（POSIX 路径注入面）：改 `execFile` 参数数组直传
+  - 修复 execute_command 每数据块重建 GBK 解码器（表加载开销大）：预览解码器提升为复用实例
+  - 修复 HistoryPage 递归预加载风暴（数千条历史串行拉几十页）：单次挂载最多自动补齐 3 页，其余交给滚动触发
+  - 修复 i18n `translate` 正则参数键未转义（元字符键替换异常）；App 级声音去重集合无界增长（上限 1000 条）
+  - Electron：`workspace.fs.delete` 支持 `useTrash`（进回收站，与 VS Code 语义一致，不再永久删除）；applyEdit 对已删除文件不再静默重建残缺文件（ENOENT 明确报错）；documentCache 加 100 条 LRU 上限；overlay toast 超时自动移除前回执 `undefined`（后端 Promise 不再永久挂起）；后端初始化失败弹原生错误框（可打开数据目录/退出），不再白屏 + unhandled rejection；`will-navigate` 严格限定 `graycode://local/`
+
+### Changed
+  - `frontend/src/utils/vscode.ts` 的 UNBOUNDED_REQUEST_TYPES 增加 `summarizeContext`（与后端 NON_BLOCKING 语义对齐）
+  - 前端 i18n 新增 `components.codeView.*` 与 `components.diff.*`（viewNewContent/syntaxIssues/noSyntaxIssues）三语翻译键
+
+## [1.4.1] - 2026-08-04
+
+### Security
+  - 修复设置导出明文泄露 API Key：导出 JSON 前统一脱敏渠道 `apiKey` 与 MCP 服务器 `headers`/`env`（占位符 `***REDACTED***`）
+  - 修复 Markdown 图片 `src` 未转义 XSS：`MarkdownRenderer` image 渲染器输出前对 src 转义；`sanitizeHtml` 改为 scheme 白名单（href 仅 http/https/mailto/tel，src 仅 http/https/data:image），剥离 scheme 内控制字符并处理 `xlink:href`/`srcset`/`formaction`，阻断 `java\tscript:` 类绕过
+  - 修复 SubAgent Monitor 面板内联脚本注入：`__GRAYCODE_INITIAL_RUN_ID` 等 JSON 注入前转义 `<`（`</script>` 闭合绕过）
+  - 修复 conversationId 路径穿越：`ConversationManager` 存储层 `getConversationDir`/`getMetadataPath`/`getSnapshotPath` 与 `UsageIndexStore` 全部入口统一 `assertSafeId` 校验；webview 边界 `ChatHandlers`/`StreamRequestHandler`/`FileHandlers.summarizeContext`/`SubAgentMonitorPanel` 同步加校验
+  - 修复设置导入自动执行任意命令：导入的 MCP 服务器强制 `autoConnect: false`，并校验 SSE/HTTP 传输 URL 仅允许 http/https
+  - 修复代理链路 TLS 证书校验全关：默认 `rejectUnauthorized: true`，仅显式设置 `GRAYCODE_ALLOW_INSECURE_TLS=1` 才放行自签名证书
+  - 修复 Gemini 模型列表 API Key 出现在 URL query：密钥统一走 `x-goog-api-key` 头传输
+  - 修复 MCP 客户端响应缓冲无上限（内存 DoS）：`StdioClient`/`HttpClient` 缓冲上限 16MB，超限断开
+  - 修复深合并原型污染：`SettingsManager`/`configs/base.ts` 深合并跳过 `__proto__`/`constructor`/`prototype` 键；`toggleSkills` 拒绝危险技能名
+  - 修复自定义 Header CRLF 注入/保留头覆盖：header 键校验 `/^[a-zA-Z0-9-]+$/` 并禁止覆盖 Host/Content-Length/Transfer-Encoding 等保留头
+  - 修复 ReDoS 防护可绕过：`isRegexPotentiallyCatastrophic` 新增重叠分支交替检测（`(a|aa)+` 类）与贪婪无锚前缀检测，正则长度阈值收紧到 200
+  - 修复 realPath 缓存陈旧导致符号链接逃逸：缓存按最近存在祖先 mtime 失效，新建符号链接后 containment 判定立即重新解析
+  - Electron 桌面版安全基线：开启 `contextIsolation` + `sandbox`，preload 改用 `contextBridge` 白名单暴露；`graycode:native`/`renderer-to-backend` IPC 校验发送方为主窗口主框架；`shell:openExternal` 仅允许 http/https/mailto，`shell:openPath`/`showInFolder` 拒绝可执行扩展名；自定义协议不再 `bypassCSP`，生产 index.html 注入严格 CSP；外链恢复为系统浏览器打开
+
+### Fixed
+  - 修复 UI 对比度异常（桌面版 light 主题从未生效）：`ui.theme` 设置此前无任何代码消费，`theme.css` 的 light 变量块是死代码且大量变量缺失；现在 App.vue 按 `ui.theme`（light/dark/auto）维护 body 主题 class 并监听系统主题变化，light 块补全 60+ 变量（checkbox/hoverWidget/icon/ansi/placeholder/hint 等）
+  - 修复 Mermaid 图表浅色主题下白字白底：移除强制 `#ffffff`，改随 `--vscode-foreground`，按主题配黑白描边；`isDark` 检测补充桌面版主题 class
+  - 修复浅色主题下多组件硬编码色对比度不足：音频占位图渐变、TODO 状态徽章、危险按钮、行号徽章、Diff 面板、工具卡按钮边框、token 环形进度、overlay.js toast 等 12 处改为 `--vscode-*` 变量
+  - 修复语法高亮退化为单色：highlight.js 改走 `lib/core` + 常用语言子集（主 bundle 减约 900KB），并补充跟随主题的 `.hljs-*` 配色
+  - 修复 ToolMessage 自动确认计时器泄漏：全部组件卸载后停止倒计时，用户不可见时不再静默自动接受 diff
+  - 修复 diff 审阅破坏用户未保存编辑：创建/展示 diff 前检查目标文档 `isDirty` 并中止；磁盘内容被外部修改时不再强制覆盖，返回明确错误
+  - 修复 read_file 批量读取无上限：上限 20 个文件 / 50MB 总预算
+  - 修复 list_files 可枚举工作区外目录：纳入与 read_file 一致的 deny/ask/allow 策略，默认忽略 node_modules 等大目录
+  - 修复 execute_command 绕过 Shell 启用限制：shell 类型必须存在于配置且启用
+  - 修复流式路径重试次数未钳制：`retryCount` 钳制 [0,20]（与非流式一致）
+  - 清理测试残留：移除 `electron-app/data/` 中 3 个 smoke test 对话与 `release/win-unpacked/data/` 全部运行时数据，`dist:*` 打包脚本先清理 `release/` 防止测试数据随发布包分发
+  - 移除 limcode 品牌残留：设置导出默认文件名改为 `graycode-settings.json`、依赖默认安装目录改 `~/.graycode`（旧 `~/.limcode` 已装依赖时兼容沿用）、Anthropic user_id 前缀加兼容性说明
+
+### Changed
+  - `electron-app/package.json` 锁定 `electron ^43.2.0`（原 `latest` 不可复现）
+  - Vite dev server CORS 从 `*` 收窄为 localhost/vscode-webview 来源
+  - `.vscodeignore` 排除 `AUDIT_REMEDIATION.md`/`.github/`；`.gitignore` 补充密钥类文件模式
+  - MCP 工具名编码统一走 `encodeMcpToolName` codec（消除手拼与旧单下划线双规范）
+
 ## [1.4.0] - 2026-08-04
 
 ### Fixed

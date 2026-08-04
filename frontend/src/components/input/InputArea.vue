@@ -500,9 +500,9 @@ async function handleSummarize() {
 
 const tokenRingColor = computed(() => {
   const percent = chatStore.tokenUsagePercent
-  if (percent >= 90) return '#f14c4c'
-  if (percent >= 75) return '#cca700'
-  return '#89d185'
+  if (percent >= 90) return 'var(--vscode-charts-red)'
+  if (percent >= 75) return 'var(--vscode-charts-yellow)'
+  return 'var(--vscode-charts-green)'
 })
 
 const ringRadius = 8

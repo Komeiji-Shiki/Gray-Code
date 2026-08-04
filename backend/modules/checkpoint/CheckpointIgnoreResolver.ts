@@ -258,6 +258,16 @@ export class CheckpointIgnoreResolver {
             return false;
         }
 
+        // 路径安全防线：含 `..` 段、绝对路径、盘符的路径不属于检查点可见范围，
+        // 直接视为忽略（排除出快照与恢复目标），避免读取工作区外的 .gitignore
+        // 或让 restore 触碰工作区外路径。
+        if (
+            normalized.split('/').some(segment => segment === '..') ||
+            /^[A-Za-z]:/.test(normalized)
+        ) {
+            return true;
+        }
+
         if (normalized.split('/').some(segment => FORCED_IGNORED_SEGMENTS.has(segment))) {
             return true;
         }

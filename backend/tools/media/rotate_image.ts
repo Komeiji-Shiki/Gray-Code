@@ -21,6 +21,7 @@ import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
+import { ensureMediaPathsSafe, MEDIA_MAX_INPUT_BYTES } from './pathGuard';
 
 /** 旋转任务类型常量 */
 const TASK_TYPE_ROTATE = 'rotate_image';
@@ -108,6 +109,12 @@ async function readImageFile(imagePath: string): Promise<{ data: Buffer; mimeTyp
     }
 
     try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MEDIA_MAX_INPUT_BYTES) {
+            console.warn(`Image file exceeds ${MEDIA_MAX_INPUT_BYTES} bytes: ${imagePath}`);
+            return null;
+        }
+
         const content = await vscode.workspace.fs.readFile(uri);
         const ext = path.extname(imagePath).toLowerCase();
         let mimeType = 'image/png';
@@ -200,6 +207,11 @@ async function executeRotateTask(
         return { index, success: false, error: `Task ${index + 1}: angle is required and must be a valid number` };
     }
 
+    const inputPathError = ensureMediaPathsSafe(image_path);
+    if (inputPathError) {
+        return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
+    }
+
     try {
         // 检查是否已取消
         if (abortSignal?.aborted) {
@@ -264,6 +276,11 @@ async function executeRotateTask(
         const outputUri = resolveUri(output_path);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
+        }
+
+        const pathError = ensureMediaPathsSafe(image_path, output_path);
+        if (pathError) {
+            return { index, success: false, error: `Task ${index + 1}: ${pathError}` };
         }
 
         // 确保目录存在

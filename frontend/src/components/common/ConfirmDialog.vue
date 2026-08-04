@@ -178,7 +178,7 @@ const iconColor = computed(() => {
 
 .dialog-btn.confirm.danger {
   background: var(--vscode-errorForeground);
-  color: white;
+  color: var(--vscode-button-foreground, #fff);
 }
 
 .dialog-btn.confirm.danger:hover {

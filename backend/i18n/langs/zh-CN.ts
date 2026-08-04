@@ -1,4 +1,4 @@
-/**
+﻿/**
  * LimCode Backend - 中文语言包
  *
  * 注意：本文件是基准语言包，BackendLanguageMessages 类型由此文件自动推导，
@@ -174,6 +174,7 @@ const zhCN = {
                 streamRequestFailed: '流式请求失败: {error}',
                 requestTimeout: '请求超时 ({timeout}ms)',
                 requestTimeoutNoResponse: '请求超时 ({timeout}ms 内无响应)',
+                streamBufferTooLarge: '流式响应缓冲超过上限 ({limit} 字符)，已中止请求',
                 requestCancelled: '请求已取消',
                 requestAborted: '请求已中止',
                 noResponseBody: '没有响应体'
@@ -328,7 +329,9 @@ const zhCN = {
                 savedShort: '已保存: {filePath}',
                 rejected: '已拒绝修改: {filePath}',
                 diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)',
-                diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
+                diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查',
+                unsavedChanges: '文件 {filePath} 存在未保存的编辑。请先保存文件，再让 AI 生成 diff。',
+                fileModifiedExternally: '文件 {filePath} 在 diff 创建后被外部修改。请基于最新内容重新生成 diff。'
             },
             diffCodeLens: {
                 accept: '接受',
@@ -624,6 +627,7 @@ description: "简要描述该技能的功能及使用场景"
             fileNotInAnyWorkspace: '文件不在任何打开的工作区内',
             fileInOtherWorkspace: '文件属于其他工作区: {workspaceName}',
             readFileFailed: '读取文件失败',
+            listWorkspaceDirectoryFailed: '列出工作区目录失败',
             conversationFileNotExists: '对话文件不存在',
             cannotRevealInExplorer: '无法在文件管理器中显示',
             

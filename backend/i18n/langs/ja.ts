@@ -173,6 +173,7 @@ const ja: BackendLanguageMessages = {
                 streamRequestFailed: 'ストリームリクエストに失敗しました: {error}',
                 requestTimeout: 'リクエストがタイムアウトしました ({timeout}ms)',
                 requestTimeoutNoResponse: 'リクエストがタイムアウトしました ({timeout}ms 内に応答なし)',
+                streamBufferTooLarge: 'ストリーム応答バッファが上限 ({limit} 文字) を超えたため、リクエストを中止しました',
                 requestCancelled: 'リクエストがキャンセルされました',
                 requestAborted: 'リクエストが中止されました',
                 noResponseBody: 'レスポンスボディがありません'
@@ -327,7 +328,9 @@ const ja: BackendLanguageMessages = {
                 savedShort: '保存完了: {filePath}',
                 rejected: '変更を拒否しました: {filePath}',
                 diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)',
-                diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
+                diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。',
+                unsavedChanges: 'ファイル {filePath} には未保存の変更があります。diff を生成する前にファイルを保存してください。',
+                fileModifiedExternally: 'ファイル {filePath} は diff 作成後に外部から変更されました。最新の内容に基づいて diff を再生成してください。'
             },
             diffCodeLens: {
                 accept: '承認',
@@ -623,6 +626,7 @@ description: "このスキルの機能と使用場面の簡単な説明"
             fileNotInAnyWorkspace: 'ファイルが開いているワークスペースにありません',
             fileInOtherWorkspace: 'ファイルは別のワークスペースに属しています: {workspaceName}',
             readFileFailed: 'ファイルの読み取りに失敗しました',
+            listWorkspaceDirectoryFailed: 'ワークスペースのディレクトリ一覧の取得に失敗しました',
             conversationFileNotExists: '会話ファイルが存在しません',
             cannotRevealInExplorer: 'エクスプローラーで表示できません',
             

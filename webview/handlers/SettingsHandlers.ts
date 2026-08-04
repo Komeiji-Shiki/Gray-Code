@@ -470,7 +470,7 @@ export const exportSettings: MessageHandler = async (data, requestId, ctx) => {
 
         // 弹出保存对话框
         const result = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file('limcode-settings.json'),
+            defaultUri: vscode.Uri.file('graycode-settings.json'),
             filters: {
                 'JSON Files': ['json'],
                 'All Files': ['*']

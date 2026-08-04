@@ -15,6 +15,7 @@
  */
 
 import type { UsageIndex, UsageIndexFreshness, UsageIndexStore } from './usageStats';
+import { assertSafeId } from '../../core/idValidation';
 
 export class FileUsageIndexStore implements UsageIndexStore {
     constructor(
@@ -23,6 +24,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     ) {}
 
     private usagePath(conversationId: string): any {
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -31,6 +33,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     }
 
     private legacyHistoryPath(conversationId: string): any {
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -39,6 +42,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     }
 
     private segmentedIndexPath(conversationId: string): any {
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',

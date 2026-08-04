@@ -2502,17 +2502,43 @@ const en: LanguageMessages = {
             title: 'Changes',
             fileCount: '{count} file(s)',
             close: 'Close panel',
-            empty: 'No pending changes',
+            empty: 'No change records',
             noChange: 'No content difference for this file',
             accept: 'Accept',
             reject: 'Reject',
             acceptAll: 'Accept all',
             rejectAll: 'Reject all',
             actionFailed: 'Action failed',
+            viewNewContent: 'View new content',
+            syntaxIssues: '{count} syntax issue(s)',
+            noSyntaxIssues: 'No syntax issues found',
+            roundLabel: 'Round {round}',
+            allProcessed: 'All changes have been processed (history remains viewable)',
+            clearHistory: 'Clear history',
             status: {
                 pending: 'Pending',
                 accepted: 'Accepted',
                 rejected: 'Rejected'
+            }
+        },
+        codeView: {
+            title: 'Code Viewer',
+            close: 'Close panel',
+            empty: 'Select a file from the workspace tree on the left, or enter a path to open code',
+            pathPlaceholder: 'Enter a file path (e.g. src/main.ts) and press Enter',
+            open: 'Open',
+            recent: 'Recent...',
+            refresh: 'Reload',
+            memorySource: 'In-memory content',
+            jumpToLine: 'Jump to line',
+            issuesFound: '{count} syntax issue(s) found',
+            noIssues: 'No syntax issues found ({lines} lines)',
+            workspaceFiles: 'Workspace files',
+            noWorkspace: 'No workspace folder is open (file tree unavailable)',
+            refreshTree: 'Refresh file tree',
+            treeEmpty: '(empty directory)',
+            errors: {
+                openFailed: 'Failed to open file'
             }
         },
         channels: {

@@ -523,17 +523,17 @@ onBeforeUnmount(() => {
 
 .status-badge.in_progress {
   background: var(--vscode-charts-blue);
-  color: #fff;
+  color: var(--vscode-badge-foreground, #fff);
 }
 
 .status-badge.completed {
   background: var(--vscode-testing-iconPassed);
-  color: #fff;
+  color: var(--vscode-badge-foreground, #fff);
 }
 
 .status-badge.cancelled {
   background: var(--vscode-testing-iconFailed);
-  color: #fff;
+  color: var(--vscode-badge-foreground, #fff);
 }
 
 /* TODO ID - 继承 file-path 风格 */

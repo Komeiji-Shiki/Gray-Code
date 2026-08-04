@@ -19,6 +19,7 @@ import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
+import { ensureMediaPathsSafe, MEDIA_MAX_INPUT_BYTES } from './pathGuard';
 
 /** 抠图任务类型常量 */
 const TASK_TYPE_REMOVE_BG = 'remove_background';
@@ -132,6 +133,12 @@ async function readImageFile(imagePath: string): Promise<{ data: Buffer; mimeTyp
     }
 
     try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MEDIA_MAX_INPUT_BYTES) {
+            console.warn(`Image file exceeds ${MEDIA_MAX_INPUT_BYTES} bytes: ${imagePath}`);
+            return null;
+        }
+
         const content = await vscode.workspace.fs.readFile(uri);
         const ext = path.extname(imagePath).toLowerCase();
         let mimeType = 'image/png';
@@ -428,6 +435,11 @@ async function executeRemoveTask(
         return { index, success: false, error: `Task ${index + 1}: output_path is required` };
     }
 
+    const inputPathError = ensureMediaPathsSafe(image_path);
+    if (inputPathError) {
+        return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
+    }
+
     try {
         // 检查是否已取消
         if (abortSignal?.aborted) {
@@ -488,6 +500,11 @@ async function executeRemoveTask(
         if (mask_path) {
             const maskUri = resolveUri(mask_path);
             if (maskUri) {
+                const maskPathError = ensureMediaPathsSafe(image_path, output_path, mask_path);
+                if (maskPathError) {
+                    return { index, success: false, error: `Task ${index + 1}: ${maskPathError}` };
+                }
+
                 const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
                 try {
                     await vscode.workspace.fs.createDirectory(maskDirUri);
@@ -549,6 +566,11 @@ async function executeRemoveTask(
         const outputUri = resolveUri(output_path);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
+        }
+
+        const pathError = ensureMediaPathsSafe(image_path, output_path, mask_path);
+        if (pathError) {
+            return { index, success: false, error: `Task ${index + 1}: ${pathError}` };
         }
 
         const dirUri = vscode.Uri.joinPath(outputUri, '..');

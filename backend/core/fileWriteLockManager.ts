@@ -6,6 +6,8 @@
  * 修改目的：后来者收到"该文件正被 X 修改，先处理任务其他部分，稍后再回来"的提示，由 LLM 自行调度，避免死等与死锁。
  */
 
+import * as path from 'path';
+
 /**
  * 锁持有者标识。
  */
@@ -41,6 +43,7 @@ interface LockEntry {
  *
  * - 反斜杠统一为斜杠；
  * - 去除开头 './' 与末尾 '/'；
+ * - 折叠 `..` 段（`a/../b` 与 `b` 指向同一文件，必须命中同一把锁）；
  * - 小写化（Windows 文件系统不区分大小写；其他平台上保守地按不区分处理）；
  * - '.'、'' 归一为 ''，表示整个 workspace 根（与所有路径冲突）。
  */
@@ -53,8 +56,9 @@ export function normalizeLockPath(rawPath: string): string {
     if (p === '.' || p === '') {
         return '';
     }
-    // 折叠重复分隔符
-    p = p.replace(/\/{2,}/g, '/');
+    // 折叠重复分隔符与 .. 段（posix normalize 只做纯字符串折叠，
+    // 不依赖进程 cwd，也不会触碰盘符前缀）
+    p = path.posix.normalize(p);
     return p.toLowerCase();
 }
 

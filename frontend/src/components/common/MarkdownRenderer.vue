@@ -17,7 +17,7 @@ import type { Options } from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
 import type Renderer from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import hljs from 'highlight.js'
+import { hljs } from '@/utils/highlightSetup'
 import katex from 'katex'
 import { sendToExtension, showNotification } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -250,9 +250,12 @@ async function renderMermaid() {
 
     if (mermaidElements.length === 0) return
 
-    // 检查当前主题
+    // 检查当前主题（VS Code 宿主由 VS Code 维护 vscode-dark class；
+    // 桌面版由 App.vue 按 ui.theme 设置维护 vscode-dark / graycode-desktop-theme-light）
     const isDark = document.body.classList.contains('vscode-dark') ||
-                   document.body.classList.contains('vscode-high-contrast')
+                   document.body.classList.contains('vscode-high-contrast') ||
+                   (!document.body.classList.contains('graycode-desktop-theme-light') &&
+                    (window as any).__GRAYCODE_HOST === 'electron')
 
     try {
       const mermaid = await loadMermaid()
@@ -617,10 +620,10 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     
     // 检查是否是绝对 URL
     const isAbsoluteUrl = /^(https?:\/\/|data:)/i.test(src)
-    
+
     if (isAbsoluteUrl) {
       const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
-      return `<img src="${src}" alt="${escapeHtml(alt)}"${titleAttr} loading="lazy">`
+      return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${titleAttr} loading="lazy">`
     } else {
       // 相对路径，使用占位符，稍后异步加载
       const encodedPath = btoa(encodeURIComponent(src))
@@ -1893,6 +1896,138 @@ onUnmounted(()=> {
   font-style: normal; /* 避免外层（如思考块）设置斜体后影响代码 */
 }
 
+/* ============================================================
+   highlight.js 语法高亮主题（跟随 VS Code 主题变量）
+   此前代码块只有 hljs 输出的 span 而无任何 .hljs-* 颜色规则，
+   导致高亮退化为单色文本；这里按 VS Code 默认 Dark+/Light+ 语义配色。
+   ============================================================ */
+.markdown-content :deep(.hljs-keyword),
+.markdown-content :deep(.hljs-selector-tag),
+.markdown-content :deep(.hljs-literal),
+.markdown-content :deep(.hljs-section),
+.markdown-content :deep(.hljs-link),
+.markdown-content :deep(.hljs-meta .hljs-keyword),
+.markdown-content :deep(.hljs-function .hljs-keyword),
+.markdown-content :deep(.hljs-type),
+.markdown-content :deep(.hljs-built_in) {
+  color: var(--vscode-keywordForeground, #569cd6);
+}
+
+.markdown-content :deep(.hljs-string),
+.markdown-content :deep(.hljs-regexp),
+.markdown-content :deep(.hljs-addition) {
+  color: var(--vscode-string-foreground, #ce9178);
+}
+
+.markdown-content :deep(.hljs-title),
+.markdown-content :deep(.hljs-title.function_),
+.markdown-content :deep(.hljs-title.class_) {
+  color: var(--vscode-entityName-function, #dcdcaa);
+}
+
+.markdown-content :deep(.hljs-number),
+.markdown-content :deep(.hljs-symbol) {
+  color: var(--vscode-number-foreground, #b5cea8);
+}
+
+.markdown-content :deep(.hljs-comment),
+.markdown-content :deep(.hljs-quote) {
+  color: var(--vscode-comment-foreground, #6a9955);
+  font-style: italic;
+}
+
+.markdown-content :deep(.hljs-variable),
+.markdown-content :deep(.hljs-template-variable),
+.markdown-content :deep(.hljs-attribute),
+.markdown-content :deep(.hljs-attr),
+.markdown-content :deep(.hljs-params),
+.markdown-content :deep(.hljs-property) {
+  color: var(--vscode-variable-foreground, #9cdcfe);
+}
+
+.markdown-content :deep(.hljs-tag),
+.markdown-content :deep(.hljs-name),
+.markdown-content :deep(.hljs-selector-id),
+.markdown-content :deep(.hljs-selector-class),
+.markdown-content :deep(.hljs-selector-pseudo) {
+  color: var(--vscode-entity-name-tag, #569cd6);
+}
+
+.markdown-content :deep(.hljs-deletion) {
+  color: var(--vscode-entity-foreground, #f14c4c);
+}
+
+.markdown-content :deep(.hljs-emphasis) {
+  font-style: italic;
+}
+
+.markdown-content :deep(.hljs-strong) {
+  font-weight: bold;
+}
+
+.markdown-content :deep(.hljs-meta),
+.markdown-content :deep(.hljs-doctag) {
+  color: var(--vscode-meta-foreground, #d4d4d4);
+}
+
+.markdown-content :deep(.hljs-subst) {
+  color: var(--vscode-foreground);
+}
+
+.markdown-content :deep(.hljs-operator),
+.markdown-content :deep(.hljs-punctuation),
+.markdown-content :deep(.hljs-bullet) {
+  color: var(--vscode-foreground);
+}
+
+/* 浅色主题下调整暗色系默认值，保证对比度（覆盖仅在变量缺失时生效的 fallback） */
+body.vscode-light .markdown-content :deep(.hljs-keyword),
+body.vscode-light .markdown-content :deep(.hljs-selector-tag),
+body.vscode-light .markdown-content :deep(.hljs-literal),
+body.vscode-light .markdown-content :deep(.hljs-type),
+body.vscode-light .markdown-content :deep(.hljs-built_in) {
+  color: #0000ff;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-string),
+body.vscode-light .markdown-content :deep(.hljs-regexp),
+body.vscode-light .markdown-content :deep(.hljs-addition) {
+  color: #a31515;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-title),
+body.vscode-light .markdown-content :deep(.hljs-title.function_),
+body.vscode-light .markdown-content :deep(.hljs-title.class_) {
+  color: #795e26;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-number),
+body.vscode-light .markdown-content :deep(.hljs-symbol) {
+  color: #098658;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-comment),
+body.vscode-light .markdown-content :deep(.hljs-quote) {
+  color: #008000;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-variable),
+body.vscode-light .markdown-content :deep(.hljs-template-variable),
+body.vscode-light .markdown-content :deep(.hljs-attribute),
+body.vscode-light .markdown-content :deep(.hljs-attr),
+body.vscode-light .markdown-content :deep(.hljs-params),
+body.vscode-light .markdown-content :deep(.hljs-property) {
+  color: #001080;
+}
+
+body.vscode-light .markdown-content :deep(.hljs-tag),
+body.vscode-light .markdown-content :deep(.hljs-name),
+body.vscode-light .markdown-content :deep(.hljs-selector-id),
+body.vscode-light .markdown-content :deep(.hljs-selector-class),
+body.vscode-light .markdown-content :deep(.hljs-selector-pseudo) {
+  color: #800000;
+}
+
 /* 代码块/键盘按键等保持非斜体 */
 .markdown-content :deep(pre),
 .markdown-content :deep(code),
@@ -2259,20 +2394,38 @@ onUnmounted(()=> {
   opacity: 0;
 }
 
-/* 增加 Mermaid 文字对比度：强制白字黑边 (Meme 字体风格)，确保任何背景色下都清晰 */
+/* Mermaid 文字对比度：跟随主题前景色，深色主题加黑色描边，浅色主题加白色描边 */
 .markdown-content :deep(.mermaid text),
 .markdown-content :deep(.mermaid span),
 .zoomed-mermaid-content :deep(text),
 .zoomed-mermaid-content :deep(span) {
-  fill: #ffffff !important;
-  color: #ffffff !important;
+  fill: var(--vscode-foreground, #cccccc) !important;
+  color: var(--vscode-foreground, #cccccc) !important;
   font-weight: 600 !important;
-  text-shadow: 
-    -1px -1px 0 #000,  
+}
+
+body.vscode-dark .markdown-content :deep(.mermaid text),
+body.vscode-dark .markdown-content :deep(.mermaid span),
+body.vscode-dark .zoomed-mermaid-content :deep(text),
+body.vscode-dark .zoomed-mermaid-content :deep(span) {
+  text-shadow:
+    -1px -1px 0 #000,
      1px -1px 0 #000,
     -1px  1px 0 #000,
      1px  1px 0 #000,
      0px  0px 4px rgba(0,0,0,0.8) !important;
+}
+
+body.vscode-light .markdown-content :deep(.mermaid text),
+body.vscode-light .markdown-content :deep(.mermaid span),
+body.vscode-light .zoomed-mermaid-content :deep(text),
+body.vscode-light .zoomed-mermaid-content :deep(span) {
+  text-shadow:
+    -1px -1px 0 #fff,
+     1px -1px 0 #fff,
+    -1px  1px 0 #fff,
+     1px  1px 0 #fff,
+     0px  0px 4px rgba(255,255,255,0.9) !important;
 }
 
 /* 节点样式微调 */

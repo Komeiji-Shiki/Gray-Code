@@ -11,6 +11,7 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
+import { useCodeViewStore } from '@/stores/codeViewStore'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -20,6 +21,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const { openFile } = useOpenWorkspaceFile()
+const codeViewStore = useCodeViewStore()
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
@@ -228,6 +230,22 @@ async function copyFileContent(result: ReadResult) {
   }
 }
 
+// 在代码查看面板中打开（剥离行号前缀；内容缺失时回退为按路径重新读取）
+function openInCodeViewer(result: ReadResult) {
+  if (!result.content) {
+    void codeViewStore.openPath(result.path)
+    return
+  }
+  const lines = getContentLines(result.content)
+  const rawContent = lines
+    .map(line => {
+      const match = line.match(/^\s*\d+\s*\|\s?(.*)$/)
+      return match ? match[1] : line
+    })
+    .join('\n')
+  codeViewStore.openContent(result.path, rawContent)
+}
+
 // 清理定时器
 onBeforeUnmount(() => {
   for (const timeout of copyTimeouts.values()) {
@@ -292,6 +310,14 @@ onBeforeUnmount(() => {
               @click.stop="copyFileContent(result)"
             >
               <span :class="['codicon', isCopied(result.path) ? 'codicon-check' : 'codicon-copy']"></span>
+            </button>
+            <button
+              v-if="result.success"
+              class="action-btn"
+              :title="t('components.codeView.title')"
+              @click.stop="openInCodeViewer(result)"
+            >
+              <span class="codicon codicon-code"></span>
             </button>
           </div>
         </div>
@@ -571,7 +597,7 @@ onBeforeUnmount(() => {
   padding: 1px 6px;
   font-size: 10px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--vscode-badge-foreground, #fff);
   background: var(--vscode-charts-orange, #e69500);
   border-radius: 2px;
 }

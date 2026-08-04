@@ -8,7 +8,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 
@@ -120,8 +120,14 @@ async function insertSingleFile(
     }
 
     try {
+        const rawBuffer = fs.readFileSync(absolutePath);
+        // 编码防护：非 UTF-8 文件读-改-写会永久损坏原编码
+        const encodingIssue = detectNonUtf8Encoding(rawBuffer);
+        if (encodingIssue) {
+            return { path: filePath, success: false, error: `Refusing to insert code: ${encodingIssue}. Convert the file to UTF-8 first.` };
+        }
         const originalContent = normalizeLineEndingsToLF(
-            fs.readFileSync(absolutePath, 'utf8')
+            rawBuffer.toString('utf8')
         );
         const originalLines = originalContent.split('\n');
         const totalLines = originalLines.length;

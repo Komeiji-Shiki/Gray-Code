@@ -54,9 +54,13 @@ export class SubAgentConcurrencyLimiter {
         const raw = this.capacityProvider
             ? this.capacityProvider()
             : getGlobalSettingsManager()?.getSubAgentsConfig()?.maxConcurrentAgents;
-        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw === 0) {
-            // 未配置按默认 3；0 视为配置错误，按无限制处理避免死锁
-            return raw === 0 ? -1 : 3;
+        if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+            // 未配置按默认 3
+            return 3;
+        }
+        if (raw === 0) {
+            // 0 表示“禁止并发”，按串行（容量 1）处理，而不是无限制
+            return 1;
         }
         return raw < 0 ? -1 : Math.floor(raw);
     }

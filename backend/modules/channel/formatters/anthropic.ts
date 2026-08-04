@@ -45,7 +45,7 @@ import {
     extractPromptToolParts,
     IncrementalPromptToolParser
 } from '../../../tools/promptToolParser';
-import { applyCustomBody } from '../../config/configs/base';
+import { applyCustomBody, applyCustomHeaders } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
 import {
@@ -62,6 +62,8 @@ import type {
     HttpRequestOptions
 } from '../types';
 
+// 兼容性常量：发送给 Anthropic 的 user id 前缀（历史版本沿用 limcode 品牌）。
+// 修改会改变上游侧用户标识，可能影响 Anthropic 侧的用户级缓存/配额统计，请谨慎变更。
 const ANTHROPIC_USER_ID_PREFIX = 'limcode-conversation-';
 
 /**
@@ -206,14 +208,7 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         // 应用自定义标头（如果启用）
-        if ((config as any).customHeadersEnabled && (config as any).customHeaders) {
-            for (const header of (config as any).customHeaders) {
-                // 只添加启用的、有键名的标头
-                if (header.enabled && header.key && header.key.trim()) {
-                    headers[header.key.trim()] = header.value || '';
-                }
-            }
-        }
+        applyCustomHeaders(headers, (config as any).customHeaders, (config as any).customHeadersEnabled);
         
         // 修改原因：并行 SubAgent 与主会话共用同一 API Key 时，provider/网关侧需要区分不同运行域的请求。
         // 修改方式：启用 anthropicUserIdEnabled 且请求携带 conversationId（SubAgent 传 runId）时，

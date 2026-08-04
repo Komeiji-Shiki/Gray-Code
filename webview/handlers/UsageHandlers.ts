@@ -22,11 +22,23 @@ interface CachedStats {
     cachedAt: number;
 }
 
-/** 缓存 key 只由时间范围组成（全部/今天/近7天/近30天），条目数有界，无泄漏风险 */
+/** 缓存 key 只由时间范围组成；条目数加 LRU 上限（客户端可控 key，无上限会撑爆内存） */
 const statsCache = new Map<string, CachedStats>();
+const MAX_CACHE_ENTRIES = 20;
 
 function cacheKey(startTime?: number, endTime?: number): string {
     return `${startTime ?? ''}:${endTime ?? ''}`;
+}
+
+function setCachedStats(key: string, entry: CachedStats): void {
+    statsCache.delete(key);
+    statsCache.set(key, entry);
+    // 超过上限时淘汰最旧（Map 迭代序 = 插入序）
+    while (statsCache.size > MAX_CACHE_ENTRIES) {
+        const oldest = statsCache.keys().next().value;
+        if (oldest === undefined) break;
+        statsCache.delete(oldest);
+    }
 }
 
 /**
@@ -51,7 +63,7 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
       endTime,
       indexStore: ctx.conversationManager.getUsageIndexStore()
     });
-    statsCache.set(key, { result: stats, cachedAt: Date.now() });
+    setCachedStats(key, { result: stats, cachedAt: Date.now() });
     ctx.sendResponse(requestId, stats);
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_USAGE_STATS_ERROR', error?.message || 'Failed to aggregate usage stats');

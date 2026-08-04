@@ -17,7 +17,8 @@ import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import DiffViewerPanel from './components/diff/DiffViewerPanel.vue'
-import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore } from './stores'
+import CodeViewPanel from './components/codeView/CodeViewPanel.vue'
+import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore, useCodeViewStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage, setDetectedLanguage } from './i18n'
 import { copyToClipboard } from './utils'
@@ -41,6 +42,7 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
 const diffStore = useDiffStore()
+const codeViewStore = useCodeViewStore()
 
 // 播放错误提示音：同一错误去重，避免重复触发
 const lastErrorKey = ref('')
@@ -63,8 +65,17 @@ watch(errorRef, (err) => {
 
 // ============ 声音事件：去重状态 & 辅助函数 ============
 
-/** 已触发过 taskComplete 音效的 toolStatus id 集合（避免同一工具重复播放） */
+/** 已触发过 taskComplete 音效的 toolStatus id 集合（避免同一工具重复播放；有界防泄漏） */
 const soundPlayedToolIds = reactive(new Set<string>())
+const MAX_SOUND_DEDUP_ENTRIES = 1000
+function markSoundPlayed(toolId: string): void {
+  if (soundPlayedToolIds.has(toolId)) return
+  soundPlayedToolIds.add(toolId)
+  if (soundPlayedToolIds.size > MAX_SOUND_DEDUP_ENTRIES) {
+    const oldest = soundPlayedToolIds.values().next().value
+    if (oldest !== undefined) soundPlayedToolIds.delete(oldest)
+  }
+}
 
 /** 上一次各对话的 TODO 全部完成状态（false→true 时触发音效） */
 const todoAllDoneByConv = reactive(new Map<string, boolean>())
@@ -106,7 +117,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
 
   // create_plan 成功
   if (tool.name === 'create_plan') {
-    soundPlayedToolIds.add(tool.id)
+    markSoundPlayed(tool.id)
     dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
     return
   }
@@ -132,7 +143,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
 
     // 仅在 false→true 时播放
     if (isAllDone && !wasAllDone) {
-      soundPlayedToolIds.add(tool.id)
+      markSoundPlayed(tool.id)
       dispatchConversationCue('taskComplete', 'streamChunk', convId, chunk.createdAt)
     }
   }
@@ -314,16 +325,19 @@ function handleRemoveAttachment(id: string) {
 
 // 格式化错误详情
 function formatErrorDetails(details: any): string {
-  if (typeof details === 'string') {
-    // 如果是字符串，尝试解析为 JSON
-    try {
+  const maxLength = 2000
+  let result: string
+  try {
+    if (typeof details === 'string') {
       const parsed = JSON.parse(details)
-      return JSON.stringify(parsed, null, 2)
-    } catch {
-      return details
+      result = JSON.stringify(parsed, null, 2)
+    } else {
+      result = JSON.stringify(details, null, 2)
     }
+  } catch {
+    result = typeof details === 'string' ? details : String(details)
   }
-  return JSON.stringify(details, null, 2)
+  return result.length > maxLength ? `${result.slice(0, maxLength)}...` : result
 }
 
 // 处理粘贴文件
@@ -382,6 +396,17 @@ const diffPanelVisible = computed(() =>
   diffStore.open && settingsStore.currentView === 'chat'
 )
 
+// 代码查看面板：首次打开后保持挂载（v-show），保留滚动位置与已加载内容
+const visitedCodeView = ref(false)
+watch(() => codeViewStore.open, (open) => {
+  if (open) visitedCodeView.value = true
+}, { immediate: true })
+
+// 代码查看面板是否可见（聊天视图内且面板打开）
+const codePanelVisible = computed(() =>
+  codeViewStore.open && settingsStore.currentView === 'chat'
+)
+
 // 加载语言设置
 function resolveSelectionContextEnabled(appearance: any): boolean {
   if (!appearance) return true
@@ -397,6 +422,38 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 
   return (appearance.selectionContextHoverEnabled ?? true) ||
     (appearance.selectionContextCodeActionEnabled ?? true)
+}
+
+// ============ 桌面版主题：仅 Electron 宿主生效 ============
+// VS Code 宿主的 vscode-dark/vscode-light class 由 VS Code 自行维护，
+// 这里只在独立桌面版按 ui.theme 设置（light/dark/auto）切换 body class。
+const isElectronHost = (window as any).__GRAYCODE_HOST === 'electron'
+
+function resolveDesktopThemeLight(theme?: string): boolean {
+  if (theme === 'light') return true
+  if (theme === 'dark') return false
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false
+}
+
+function applyDesktopTheme(theme?: string): void {
+  if (!isElectronHost) return
+  const isLight = resolveDesktopThemeLight(theme)
+  document.body.classList.toggle('graycode-desktop-theme-light', isLight)
+  document.body.classList.toggle('vscode-light', isLight)
+  document.body.classList.toggle('vscode-dark', !isLight)
+}
+
+let mediaQueryDispose: (() => void) | null = null
+
+function watchDesktopThemeMedia(theme?: string): void {
+  mediaQueryDispose?.()
+  mediaQueryDispose = null
+  if (!isElectronHost || theme !== 'auto') return
+  if (typeof window.matchMedia !== 'function') return
+  const mq = window.matchMedia('(prefers-color-scheme: light)')
+  const onChange = () => applyDesktopTheme('auto')
+  mq.addEventListener?.('change', onChange)
+  mediaQueryDispose = () => mq.removeEventListener?.('change', onChange)
 }
 
 async function loadLanguageSettings() {
@@ -424,6 +481,10 @@ async function loadLanguageSettings() {
       settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
       settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
     }
+
+    // 应用桌面版主题（light / dark / auto）
+    applyDesktopTheme(response?.settings?.ui?.theme)
+    watchDesktopThemeMedia(response?.settings?.ui?.theme)
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
     configureSoundSettings(response?.settings?.ui?.sound)
@@ -500,7 +561,8 @@ onMounted(async () => {
     }
 
     // 后端 diff 状态推送 → 同步变更面板内的条目状态与删除警戒
-    if (message.type === 'message' && message.command === 'diff.statusChanged') {
+    // 注意：后端经 sendCommand 发送，type 为 'command'
+    if (message.type === 'command' && message.command === 'diff.statusChanged') {
       diffStore.syncStatuses(message.data?.pendingDiffs)
     }
 
@@ -561,6 +623,9 @@ onBeforeUnmount(() => {
 
   disposeVisibilityHooks?.()
   disposeVisibilityHooks = null
+
+  mediaQueryDispose?.()
+  mediaQueryDispose = null
 
   agentStopNotificationController?.dispose()
   agentStopNotificationController = null
@@ -694,6 +759,35 @@ onBeforeUnmount(() => {
           :visible="diffPanelVisible"
           @close="diffStore.close()"
         />
+
+        <!-- 代码查看面板（内嵌抽屉，支持基础语法报错检查） -->
+        <CodeViewPanel
+          v-if="languageLoaded && visitedCodeView"
+          :visible="codePanelVisible"
+          @close="codeViewStore.close()"
+        />
+
+        <!-- 面板快捷入口 dock（右下角，不遮挡输入区） -->
+        <div v-if="languageLoaded" class="view-dock">
+          <button
+            class="view-dock-btn"
+            :class="{ active: diffPanelVisible }"
+            type="button"
+            :title="t('components.diff.title')"
+            @click="diffPanelVisible ? diffStore.close() : diffStore.openPanel()"
+          >
+            <span class="codicon codicon-diff"></span>
+          </button>
+          <button
+            class="view-dock-btn"
+            :class="{ active: codePanelVisible }"
+            type="button"
+            :title="t('components.codeView.title')"
+            @click="codePanelVisible ? codeViewStore.close() : codeViewStore.openEmpty()"
+          >
+            <span class="codicon codicon-code"></span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -819,17 +913,21 @@ onBeforeUnmount(() => {
   bottom: 220px;
 }
 
-/* 重试状态面板（黑白灰配色，只有图标用黄色） */
+/* 重试状态面板（黑白灰配色，只有图标用黄色）
+   修改原因：旧背景 rgba(127,127,127,0.1) 透明度太高，面板叠加在聊天区上近乎透明，
+   错误信息与重试进度几乎不可读；header 与错误块同样用低透明度叠加。
+   修改方式：全部换成不透明背景（editorWidget/tabsBackground/codeBlock），
+   仅在主题变量缺失时回退到深色实体色。 */
 .retry-panel {
   position: absolute;
   bottom: 12px;
   left: 12px;
   right: 12px;
   z-index: 100;
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-widget-border, #454545);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   max-height: 200px;
 }
@@ -839,8 +937,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  background: var(--vscode-editorGroupHeader-tabsBackground, #2d2d30);
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.3));
 }
 
 .warning-icon {
@@ -904,7 +1002,7 @@ onBeforeUnmount(() => {
   word-break: break-word;
   white-space: pre-wrap;
   font-family: var(--vscode-editor-font-family, monospace);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--vscode-textCodeBlock-background, #1e1e1e);
   padding: 8px;
   border-radius: 4px;
   margin: 0;
@@ -921,6 +1019,43 @@ onBeforeUnmount(() => {
 
 .retry-countdown {
   color: var(--vscode-descriptionForeground);
+}
+
+/* 面板快捷入口 dock（右下角浮动，位于输入区上方） */
+.view-dock {
+  position: absolute;
+  right: 16px;
+  bottom: 68px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.view-dock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.15));
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  font-size: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: color 0.15s, background 0.15s;
+}
+
+.view-dock-btn:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.25));
+}
+
+.view-dock-btn.active {
+  color: var(--vscode-textLink-foreground, #3794ff);
+  border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 50%, transparent);
 }
 
 /* 加载容器 */

@@ -3,7 +3,19 @@
  */
 
 import { t } from '../../backend/i18n';
+import { assertSafeId } from '../../backend/core/idValidation';
 import type { HandlerContext, MessageHandler } from '../types';
+
+/**
+ * 依赖名将直接拼入文件系统路径（depsDir/name），
+ * 只允许 npm 包名常用字符，杜绝 `..` / 绝对路径 / 分隔符穿越。
+ */
+function validateDependencyName(name: unknown): string {
+  if (typeof name !== 'string' || !/^[A-Za-z0-9@._~-]{1,128}$/.test(name) || name.includes('..')) {
+    throw new Error('Invalid dependency name');
+  }
+  return name;
+}
 
 /**
  * 列出所有依赖
@@ -23,7 +35,7 @@ export const listDependencies: MessageHandler = async (data, requestId, ctx) => 
 export const installDependency: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { name } = data;
-    const success = await ctx.dependencyManager.install(name);
+    const success = await ctx.dependencyManager.install(validateDependencyName(name));
     ctx.sendResponse(requestId, { success });
   } catch (error: any) {
     ctx.sendError(requestId, 'INSTALL_DEPENDENCY_ERROR', error.message || t('webview.errors.installDependencyFailed'));
@@ -36,7 +48,7 @@ export const installDependency: MessageHandler = async (data, requestId, ctx) =>
 export const uninstallDependency: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { name } = data;
-    const success = await ctx.dependencyManager.uninstall(name);
+    const success = await ctx.dependencyManager.uninstall(validateDependencyName(name));
     ctx.sendResponse(requestId, { success });
   } catch (error: any) {
     ctx.sendError(requestId, 'UNINSTALL_DEPENDENCY_ERROR', error.message || t('webview.errors.uninstallDependencyFailed'));

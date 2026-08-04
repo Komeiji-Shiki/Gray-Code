@@ -78,6 +78,51 @@ export class SettingsExporter {
     ) {}
 
     /**
+     * 导出前脱敏：API Key 等敏感字段一律替换为占位符。
+     *
+     * 导出文件可能被分享/上传，明文密钥一旦外泄即永久泄露；
+     * 如需完整密钥，用户应使用存储路径迁移而非设置导出。
+     */
+    private redactExportData(data: SettingsExportData): SettingsExportData {
+        const redacted = JSON.parse(JSON.stringify(data)) as SettingsExportData;
+
+        // 渠道配置：apiKey 脱敏（ChannelConfig 为扁平结构，apiKey 直接在对象上；
+        // 部分旧格式可能嵌套在 config 下，一并处理）
+        for (const channel of redacted.channelConfigs ?? []) {
+            const rec = channel as unknown as Record<string, unknown>;
+            if (typeof rec.apiKey === 'string' && rec.apiKey.trim()) {
+                rec.apiKey = '***REDACTED***';
+            }
+            const nested = rec.config as Record<string, unknown> | undefined;
+            if (nested && typeof nested.apiKey === 'string' && nested.apiKey.trim()) {
+                nested.apiKey = '***REDACTED***';
+            }
+        }
+
+        // MCP 服务器：transport.env / transport.headers / transport.authTokens 中
+        // 所有非空值脱敏（可能含 Authorization/Bearer 等凭据）
+        for (const server of redacted.mcpServers ?? []) {
+            const rec = server as unknown as Record<string, unknown>;
+            const transport = rec.transport as Record<string, unknown> | undefined;
+            if (!transport) continue;
+            const redactMap = (map?: unknown): void => {
+                if (!map || typeof map !== 'object') return;
+                for (const key of Object.keys(map as Record<string, unknown>)) {
+                    const v = (map as Record<string, unknown>)[key];
+                    if (typeof v === 'string' && v.trim()) {
+                        (map as Record<string, unknown>)[key] = '***REDACTED***';
+                    }
+                }
+            };
+            redactMap(transport.env);
+            redactMap(transport.headers);
+            redactMap(transport.authTokens);
+        }
+
+        return redacted;
+    }
+
+    /**
      * 收集所有需要导出的数据
      */
     async collectExportData(): Promise<SettingsExportData> {
@@ -105,11 +150,11 @@ export class SettingsExporter {
     }
 
     /**
-     * 将导出数据序列化为 JSON 字符串
+     * 将导出数据序列化为 JSON 字符串（敏感字段已脱敏）
      */
     async exportToJson(pretty: boolean = true): Promise<string> {
         const data = await this.collectExportData();
-        return JSON.stringify(data, null, pretty ? 2 : undefined);
+        return JSON.stringify(this.redactExportData(data), null, pretty ? 2 : undefined);
     }
 
     /**
@@ -420,15 +465,36 @@ export class SettingsExporter {
 
         for (const server of servers) {
             try {
+                // 安全加固：导入的服务器一律不自动连接。
+                // 恶意/共享配置文件可能声明任意 stdio command 或指向内网地址，
+                // 自动连接会在用户无感知时 spawn 进程/发起请求。
+                const importedServer: McpServerConfig = { ...server, autoConnect: false };
+
+                // 校验传输类型与 URL scheme（仅 http/https），非法项直接跳过
+                const transport = importedServer.transport as { type?: string; url?: string } | undefined;
+                if (transport && (transport.type === 'sse' || transport.type === 'streamable-http')) {
+                    let parsed: URL;
+                    try {
+                        parsed = new URL(transport.url || '');
+                    } catch {
+                        console.warn(`[SettingsExporter] Skipping MCP server "${server.name || server.id}": invalid URL`);
+                        continue;
+                    }
+                    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                        console.warn(`[SettingsExporter] Skipping MCP server "${server.name || server.id}": unsupported URL scheme`);
+                        continue;
+                    }
+                }
+
                 const existing = await this.mcpManager.getServer(server.id);
 
                 if (existing) {
                     if (!options.overwrite) {
                         continue;
                     }
-                    await this.mcpManager.updateServer(server.id, server);
+                    await this.mcpManager.updateServer(server.id, importedServer);
                 } else {
-                    await this.mcpManager.createServer(server);
+                    await this.mcpManager.createServer(importedServer);
                 }
 
                 imported++;

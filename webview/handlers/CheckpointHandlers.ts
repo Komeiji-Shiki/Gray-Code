@@ -3,6 +3,7 @@
  */
 
 import { t } from '../../backend/i18n';
+import { assertSafeId } from '../../backend/core/idValidation';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -37,7 +38,7 @@ export const updateCheckpointConfig: MessageHandler = async (data, requestId, ct
 export const getCheckpoints: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId, withSize } = data;
-    const checkpoints = await ctx.checkpointManager.getCheckpoints(conversationId, { withSize });
+    const checkpoints = await ctx.checkpointManager.getCheckpoints(assertSafeId(conversationId, 'conversationId'), { withSize });
     ctx.sendResponse(requestId, { checkpoints });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_CHECKPOINTS_ERROR', error.message || t('webview.errors.getCheckpointsFailed'));
@@ -50,7 +51,10 @@ export const getCheckpoints: MessageHandler = async (data, requestId, ctx) => {
 export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId, checkpointId } = data;
-    const result = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId);
+    const result = await ctx.checkpointManager.restoreCheckpoint(
+      assertSafeId(conversationId, 'conversationId'),
+      assertSafeId(checkpointId, 'checkpointId')
+    );
 
     // 回退后刷新派生元数据（todoList / activeBuild），确保后续发给模型的 TODO_LIST 不过期。
     if (result?.success && ctx.chatHandler) {
@@ -69,7 +73,10 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
 export const deleteCheckpoint: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId, checkpointId } = data;
-    const success = await ctx.checkpointManager.deleteCheckpoint(conversationId, checkpointId);
+    const success = await ctx.checkpointManager.deleteCheckpoint(
+      assertSafeId(conversationId, 'conversationId'),
+      assertSafeId(checkpointId, 'checkpointId')
+    );
     ctx.sendResponse(requestId, { success });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_CHECKPOINT_ERROR', error.message || t('webview.errors.deleteCheckpointFailed'));
@@ -82,7 +89,7 @@ export const deleteCheckpoint: MessageHandler = async (data, requestId, ctx) => 
 export const deleteAllCheckpoints: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId } = data;
-    const result = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+    const result = await ctx.checkpointManager.deleteAllCheckpoints(assertSafeId(conversationId, 'conversationId'));
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_ALL_CHECKPOINTS_ERROR', error.message || t('webview.errors.deleteAllCheckpointsFailed'));
@@ -95,7 +102,16 @@ export const deleteAllCheckpoints: MessageHandler = async (data, requestId, ctx)
 export const deleteCheckpointsBatch: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { items } = data;
-    const results = await ctx.checkpointManager.deleteCheckpointsBatch(items);
+    const safeItems = Array.isArray(items)
+      ? items.map(item => ({
+          ...item,
+          conversationId: assertSafeId(item?.conversationId, 'conversationId'),
+          checkpointIds: Array.isArray(item?.checkpointIds)
+            ? item.checkpointIds.map(id => assertSafeId(id, 'checkpointId'))
+            : []
+        }))
+      : [];
+    const results = await ctx.checkpointManager.deleteCheckpointsBatch(safeItems);
     ctx.sendResponse(requestId, { results });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_CHECKPOINTS_BATCH_ERROR', error.message || t('webview.errors.deleteCheckpointsBatchFailed'));

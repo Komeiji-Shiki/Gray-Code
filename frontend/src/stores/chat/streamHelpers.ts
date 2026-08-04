@@ -11,9 +11,8 @@
 import type { Message } from '../../types'
 import type { ChatStoreState } from './types'
 import { generateId } from '../../utils/format'
-import { isPerfEnabled } from '../../utils/perf'
 // WP15: 统一 functionCall merge 纯函数入口。
-// 为什么从独立模块导入：Main Chat 和SubAgent Monitor 之前各自维护了相同的 normalizeNonEmptyString。
+// 为什么从独立模块导入：Main Chat 和 SubAgent Monitor 之前各自维护了相同的 normalizeNonEmptyString。
 // hasNonEmptyArgs、tryParseArgs、getFunctionCallMergeReason、mergeFunctionCall。
 // 怎么改：全部收敛到frontend/src/utils/functionCallMerge.ts，两边保持合并语义一致。
 // 目的：后续WP20 AgentRunEvent 统一 reducer 可以直接依赖这个模块。
@@ -25,19 +24,6 @@ import {
   getFunctionCallMergeReason,
   mergeFunctionCall as unifiedMergeFunctionCall
 } from '../../utils/functionCallMerge'
-
-
-const todoDebugPrinted = new Set<string>()
-function debugTodoOnce(key: string, data: Record<string, unknown>) {
-  if (!isPerfEnabled()) return
-  if (todoDebugPrinted.has(key)) return
-  todoDebugPrinted.add(key)
-  console.debug('[todo-debug][streamHelpers]', data)
-}
-
-function isTodoToolName(name: unknown): boolean {
-  return name === 'todo_write' || name === 'todo_update' || name === 'create_plan'
-}
 
 /**
  * 添加 functionCall 到消息
@@ -259,8 +245,6 @@ function normalizeNewFunctionCall(incoming: StreamFunctionCall): { args: Record<
 
 export function handleFunctionCallPart(part: any, message: Message): void {
   const fc = part.functionCall as StreamFunctionCall
-  const incomingHasPartial = typeof fc.partialArgs === 'string'
-  const incomingHasArgs = hasNonEmptyArgs(fc.args)
 
   let matched: { fc: StreamFunctionCall; reason: string } | null = null
   let isLastFunctionCall = true
@@ -282,41 +266,9 @@ export function handleFunctionCallPart(part: any, message: Message): void {
   }
 
   if (matched) {
-    if (isTodoToolName(fc.name) || isTodoToolName(matched.fc.name)) {
-      debugTodoOnce(`merge-${message.id}-${matched.fc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || matched.fc.name)}`, {
-        messageId: message.id,
-        action: 'merge_function_call_part',
-        incomingName: fc.name || null,
-        incomingId: normalizeNonEmptyString(fc.id) || null,
-        incomingItemId: normalizeNonEmptyString(fc.itemId) || null,
-        incomingIndex: fc.index ?? null,
-        incomingHasPartial,
-        incomingHasArgs,
-        lastName: matched.fc.name || null,
-        lastId: normalizeNonEmptyString(matched.fc.id) || null,
-        lastItemId: normalizeNonEmptyString(matched.fc.itemId) || null,
-        lastIndex: matched.fc.index ?? null,
-        canMerge: true,
-        canMergeReason: matched.reason
-      })
-    }
-
     const previousId = mergeFunctionCall(matched.fc, fc)
     syncToolEntryFromFunctionCall(message, matched.fc, previousId)
     return
-  }
-
-  if (isTodoToolName(fc.name)) {
-    debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
-      messageId: message.id,
-      action: 'append_new_function_call_part',
-      incomingName: fc.name,
-      incomingId: typeof fc.id === 'string' ? fc.id : null,
-      incomingItemId: typeof fc.itemId === 'string' ? fc.itemId : null,
-      incomingIndex: fc.index ?? null,
-      hasPartial: incomingHasPartial,
-      hasArgs: incomingHasArgs
-    })
   }
 
   const normalized = normalizeNewFunctionCall(fc)

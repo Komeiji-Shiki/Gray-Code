@@ -75,14 +75,10 @@ export class WebviewClientRegistry {
     if (fallback && this.clients.has(fallback)) {
       return fallback;
     }
-    if (requested) {
-      return requested;
-    }
-    if (fallback) {
-      return fallback;
-    }
-
-    return this.clients.keys().next().value;
+    // 注意：requested 未注册时不再返回 requested——返回无效 id 会让下游
+    // requestClients 记录无效条目，响应永远错投。回退到任一已注册客户端。
+    const first = this.clients.keys().next().value;
+    return first as WebviewClientId | undefined;
   }
 
   postMessage(clientId: unknown, message: Record<string, unknown>): boolean {
