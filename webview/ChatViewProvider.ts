@@ -842,6 +842,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             windowsAgentStopNotificationService: this.windowsAgentStopNotificationService,
             streamAbortControllers: this.messageRouter.getAbortManager() as any,
             diffPreviewProvider: this.diffPreviewProvider,
+            // 主聊天自身发起的 diff 也跟随主聊天所在列（与 Monitor 路由同语义）：
+            // 主聊天在侧边栏（无列）时 undefined，openDiffView 回退主区域第一列。
+            diffViewColumn: this.resolveMainChatDiffViewColumn(),
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),

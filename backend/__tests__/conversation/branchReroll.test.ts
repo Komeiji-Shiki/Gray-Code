@@ -36,6 +36,7 @@ import {
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
 import { BranchError } from '../../modules/conversation/branch/types';
+import { ChannelError, ErrorType } from '../../modules/channel/types';
 import { rerollStream } from '../../../webview/handlers/ChatHandlers';
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import type { HandlerContext } from '../../../webview/types';
@@ -545,5 +546,48 @@ describe('TREE-01 webview handler：chat.rerollStream（R6a-FIX H1 取消接线�
         expect(errors).toHaveLength(0);
         expect(abortManager.isActive('c1')).toBe(false);
         expect(abortManager.get('c1')).toBeUndefined();
+    });
+
+    test('方案 B：流失败透传底层 ChannelError.type（REROLL_ERROR + type=API_ERROR，前端据此判断可重试）', async () => {
+        const posted: Array<{ type: string; data: any }> = [];
+        const fakeChatHandler = {
+            handleRerollStream: async function* (): AsyncGenerator<any> {
+                throw new ChannelError(ErrorType.API_ERROR, 'balance insufficient');
+            },
+        } as any;
+
+        const ctx = makeCtx({
+            chatHandler: fakeChatHandler,
+            view: { webview: { postMessage: (msg: any) => posted.push(msg) } } as any,
+        });
+
+        await rerollStream({ conversationId: 'c1', configId: 'cfg' }, 'req-type-1', ctx);
+
+        // 请求侧错误码仍为 REROLL_ERROR
+        expect(errors).toEqual([{ requestId: 'req-type-1', code: 'REROLL_ERROR', message: 'balance insufficient' }]);
+        // 流式 error chunk 携带底层 type
+        const errorMsg = posted.find(m => m.type === 'streamChunk' && m.data?.type === 'error');
+        expect(errorMsg).toBeDefined();
+        expect(errorMsg!.data.error).toEqual({ code: 'REROLL_ERROR', message: 'balance insufficient', type: 'API_ERROR' });
+    });
+
+    test('方案 B：非 ChannelError（无 type）→ error chunk 不携带 type 字段', async () => {
+        const posted: Array<{ type: string; data: any }> = [];
+        const fakeChatHandler = {
+            handleRerollStream: async function* (): AsyncGenerator<any> {
+                throw new Error('boom');
+            },
+        } as any;
+
+        const ctx = makeCtx({
+            chatHandler: fakeChatHandler,
+            view: { webview: { postMessage: (msg: any) => posted.push(msg) } } as any,
+        });
+
+        await rerollStream({ conversationId: 'c1', configId: 'cfg' }, 'req-type-2', ctx);
+
+        const errorMsg = posted.find(m => m.type === 'streamChunk' && m.data?.type === 'error');
+        expect(errorMsg).toBeDefined();
+        expect(errorMsg!.data.error).toEqual({ code: 'REROLL_ERROR', message: 'boom' });
     });
 });

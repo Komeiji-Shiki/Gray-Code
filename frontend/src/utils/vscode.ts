@@ -38,6 +38,8 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'chatStream',
   'retryStream',
   'editAndRetryStream',
+  'chat.rerollStream',
+  'chat.editBranchStream',
   'toolConfirmation',
   'cancelStream',
   'deleteMessage',

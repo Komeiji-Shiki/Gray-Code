@@ -279,6 +279,15 @@ export interface ChatStoreState {
    */
   _failedStreamMessageId: Ref<string | null>
 
+  /**
+   * reroll/编辑分支流结束标记（TREE-01/TREE-03 前端接入）：retryFromMessage / editAndRetry /
+   * restoreAndRetry / restoreAndEdit 发起 chat.rerollStream / chat.editBranchStream 前置位
+   * （值为发起流的会话 ID）；streamHandler 在终结事件（complete/终结性 toolIteration/error/cancelled）
+   * 且该会话为当前会话时据此刷新分支图并复位——新候选落图后 BranchSwitcherBar 才能显示「‹ 2/2 ›」切换器。
+   * 会话已切换时标记保持惰性（不被其他会话的终结 chunk 消费），避免误刷其他会话的分支图。
+   */
+  _pendingBranchRefreshAfterStream: Ref<string | null>
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表（有序） */

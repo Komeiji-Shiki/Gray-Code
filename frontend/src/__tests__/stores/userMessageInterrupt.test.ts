@@ -45,6 +45,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastCancelledStreamId: ref<string | null>(null),
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
+    _pendingBranchRefreshAfterStream: ref<string | null>(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
@@ -123,6 +124,25 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     // 空闲路径会创建 user 消息 + assistant 占位
     expect(state.allMessages.value).toHaveLength(2)
     expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('后台任务回执来源随 chatStream 请求传给后端', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      isStreaming: ref(false),
+      isWaitingForResponse: ref(false),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 0 } as any])
+    })
+
+    const result = await sendMessage(state, createComputed(), '[Background task completed]', undefined, {
+      source: 'background_task'
+    })
+
+    expect(result).toBe(true)
+    const call = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')
+    expect(call?.[1]).toMatchObject({ source: 'background_task' })
+    expect(state.allMessages.value[0].source).toBe('background_task')
   })
 
   it('忙时带附件 → 不回退插入路径（返回 false，不投递）', async () => {

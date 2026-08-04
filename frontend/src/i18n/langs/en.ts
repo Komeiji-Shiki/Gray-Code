@@ -148,7 +148,7 @@ const en: LanguageMessages = {
             },
             retryDialog: {
                 title: 'Retry Message',
-                message: 'Are you sure you want to retry this message? This will delete this message and subsequent messages, then request a new AI response.',
+                message: 'Generate a new version of this message? The current response will be kept, and you can switch between versions afterwards.',
                 checkpointHint: 'A tool execution backup was detected before this message. You can choose to restore to before tool execution and then retry.',
                 cancel: 'Cancel',
                 retry: 'Retry',
@@ -2405,6 +2405,7 @@ const en: LanguageMessages = {
                     read_skill: 'Read Skill',
                     toggle_skills: 'Toggle Skills',
                     subagents: 'Subagents',
+                    agent_send_message: 'Send Agent Message',
                 },
                 toolDescriptions: {
                     read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
@@ -2454,6 +2455,7 @@ const en: LanguageMessages = {
                     read_skill: 'Read a skill\'s content and instructions.',
                     toggle_skills: 'Enable or disable skills for subsequent requests.',
                     subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
+                    agent_send_message: 'Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: the recipient sees it appended to its most recent tool result. Address by targetRunId (an active sub-agent run in this conversation) or targetAgentName ("main" reaches the main session). Replies in the same thread increment hopDepth; after 5 hops delivery is rejected (loop protection). You are identified automatically; you cannot impersonate another agent.',
                 },
             },
             tokenCountSettings: {

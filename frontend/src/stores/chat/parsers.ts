@@ -261,6 +261,7 @@ export function contentToMessage(content: Content, id?: string): Message {
     timestamp: Date.now(),
     parts: normalizedParts,
     tools: toolUsages.length > 0 ? toolUsages : undefined,
+    source: content.source,
     // 总结消息标记（通常由 contentToMessageEnhanced 处理，这里保持一致）
     isSummary: content.isSummary,
     isAutoSummary: content.isAutoSummary,
@@ -364,6 +365,7 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
     parts: normalizedParts,
     tools: toolUsages.length > 0 ? toolUsages : undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
+    source: content.source,
     isFunctionResponse,  // 标记是否为纯 functionResponse 消息
     isSummary: content.isSummary,  // 标记是否为总结消息
     isAutoSummary: content.isAutoSummary,  // 标记是否为自动触发的总结消息

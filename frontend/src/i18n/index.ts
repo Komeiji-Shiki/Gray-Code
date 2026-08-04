@@ -130,6 +130,27 @@ export function t(key: string, params?: Record<string, any>): string {
 }
 
 /**
+ * 检查翻译 key 是否存在（静默，不输出缺失警告）。
+ *
+ * 用于“可选翻译”场景：如动态工具名的本地化（toolLocalization），
+ * 缺失时需要回退机械转换/原文，而不是让 t() 为每个缺失 key 刷一条 console.warn。
+ */
+export function hasMessage(key: string): boolean {
+    const keys = key.split('.');
+    let result: any = currentMessages.value;
+
+    for (const k of keys) {
+        if (result && typeof result === 'object' && k in result) {
+            result = result[k];
+        } else {
+            return false;
+        }
+    }
+
+    return typeof result === 'string';
+}
+
+/**
  * 组合式函数 - 在组件中使用
  */
 export function useI18n() {

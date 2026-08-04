@@ -49,6 +49,12 @@ describe('parsers - BR-01 content.id 透传', () => {
     expect(enhanced.id).toBeTruthy()
   })
 
+  it('后台任务来源在普通与增强转换中都被保留', () => {
+    const background = content({ source: 'background_task' })
+    expect(contentToMessage(background).source).toBe('background_task')
+    expect(contentToMessageEnhanced(background).source).toBe('background_task')
+  })
+
   it('空字符串 id 视为缺失，回退 generateId', () => {
     const msg = contentToMessage(content({ role: 'model', id: '' }))
     expect(msg.id).toBeTruthy()

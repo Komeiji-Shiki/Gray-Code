@@ -105,6 +105,27 @@ export const cancelSummarizeRequest: MessageHandler = async (data, requestId, ct
   ctx.sendResponse(requestId, { cancelled });
 };
 
+export const awaitConversationIdle: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'CONVERSATION_IDLE_INVALID_CONVERSATION', 'Invalid conversation ID');
+    return;
+  }
+
+  const abortManager = ctx.streamAbortControllers as any;
+  if (typeof abortManager?.waitForIdle === 'function') {
+    await abortManager.waitForIdle(conversationId);
+  } else {
+    // HandlerContext 仍允许测试/旧调用点传普通 Map；没有活跃控制器时可直接视为空闲。
+    const controller = abortManager?.get?.(conversationId);
+    if (controller) {
+      await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
+    }
+  }
+
+  ctx.sendResponse(requestId, { idle: true });
+};
+
 /**
  * 用户消息插入（U1：主会话收件）
  *
@@ -258,7 +279,10 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
       return;
     }
     const message = error?.message || 'reroll failed';
-    processor.sendError('REROLL_ERROR', message);
+    // 方案 B：底层流错误（ChannelError）携带 type（API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/
+    // PARSE_ERROR 等），透传给前端用于判断错误条可重试性；非底层流错误（无 type）保持 undefined。
+    const type = typeof error?.type === 'string' ? error.type : undefined;
+    processor.sendError('REROLL_ERROR', message, type);
     ctx.sendError(requestId, 'REROLL_ERROR', message);
   } finally {
     // 流结束/取消/异常统一注销控制器（delete 带引用校验，不会误删新流控制器）
@@ -361,7 +385,10 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
       return;
     }
     const message = error?.message || 'edit branch failed';
-    processor.sendError('EDIT_BRANCH_ERROR', message);
+    // 方案 B：底层流错误（ChannelError）携带 type（API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/
+    // PARSE_ERROR 等），透传给前端用于判断错误条可重试性；非底层流错误（无 type）保持 undefined。
+    const type = typeof error?.type === 'string' ? error.type : undefined;
+    processor.sendError('EDIT_BRANCH_ERROR', message, type);
     ctx.sendError(requestId, 'EDIT_BRANCH_ERROR', message);
   } finally {
     // 流结束/取消/异常统一注销控制器（delete 带引用校验，不会误删新流控制器）
@@ -386,6 +413,7 @@ export function registerChatHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('deleteSingleMessage', deleteSingleMessage);
   registry.set('cancelSummarizeRequest', cancelSummarizeRequest);
   registry.set('chatInput.focusState', chatInputFocusState);
+  registry.set('chat.awaitConversationIdle', awaitConversationIdle);
   registry.set('chat.sendInterruptMessage', sendInterruptMessage);
   registry.set('chat.rerollStream', rerollStream);
   registry.set('chat.editBranchStream', editBranchStream);

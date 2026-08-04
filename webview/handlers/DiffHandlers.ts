@@ -425,6 +425,14 @@ async function openDiffView(
     preview: false,
     viewColumn
   });
+  // 兜底：vscode.diff 的 viewColumn 参数在部分布局/版本下不生效（会在当前活动编辑器组打开，
+  // 焦点在 Monitor 面板时 diff 会落到 Monitor 列）。用 moveActiveEditor 把刚打开的 diff tab
+  // 校正到目标列；目标列即当前列时移动是幂等的。
+  try {
+    await vscode.commands.executeCommand('vscode.moveActiveEditor', { to: 'position', value: viewColumn });
+  } catch (moveErr) {
+    console.warn('[DiffHandlers] Failed to move diff preview to target column:', moveErr);
+  }
 }
 
 /**

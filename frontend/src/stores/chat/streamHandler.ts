@@ -25,6 +25,7 @@ import {
   handleCancelled,
   handleError
 } from './streamChunkHandlers'
+import { loadBranchGraph } from './branchActions'
 
 // 重新导出辅助函数，保持向后兼容
 export {
@@ -76,6 +77,28 @@ function warnLateApprovalGatedChunk(chunk: StreamChunk, state: ChatStoreState): 
     type: chunk.type
   })
   state._lastApprovalGatedStreamId.value = null
+}
+
+/**
+ * reroll / 编辑分支流终结后刷新分支图（TREE-01/TREE-03 前端接入）。
+ *
+ * retryFromMessage / editAndRetry / restoreAndRetry / restoreAndEdit 发起
+ * chat.rerollStream / chat.editBranchStream 前置位（值为发起流的会话 ID）；
+ * 本函数在终结事件（complete / 终结性 toolIteration / error / cancelled）后消费该标记：
+ * 刷新分支图（fire-and-forget）并复位——新候选落图后 BranchSwitcherBar 才能显示
+ * 「‹ 2/2 ›」切换器（失败候选也保留，决策 10：可切回查看）。
+ *
+ * 会话隔离：标记只被“发起流所在的会话”的终结 chunk 消费——
+ * 当前会话与标记会话不一致时保持惰性（不刷新其他会话的分支图），
+ * 待切回原会话后由该会话的终结 chunk（或后台缓冲 flush）消费。
+ */
+function maybeRefreshBranchAfterStream(state: ChatStoreState): void {
+  const pendingConversationId = state._pendingBranchRefreshAfterStream.value
+  if (!pendingConversationId) return
+  if (pendingConversationId !== state.currentConversationId.value) return
+  state._pendingBranchRefreshAfterStream.value = null
+  // fire-and-forget：刷新不阻塞 chunk 处理；loadBranchGraph 内部按当前会话读取并校验归属
+  void loadBranchGraph(state)
 }
 
 /**
@@ -132,9 +155,16 @@ export function handleStreamChunk(
     case 'toolIteration':
       if (chunk.content) {
         handleToolIteration(chunk, state, currentModelName, addCheckpoint)
+        // 工具迭代可能因「需用户确认 / 审批门闸 / 工具被取消」而终结流（后端不再发 complete）：
+        // handleToolIteration 终结路径会把 activeStreamId 置空，据此消费分支图刷新标记；
+        // 非终结路径（继续下一轮工具循环）activeStreamId 保持原值，不提前消费。
+        if (state.activeStreamId.value === null) {
+          maybeRefreshBranchAfterStream(state)
+        }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
         resetTerminalStreamState(state)
+        maybeRefreshBranchAfterStream(state)
       }
       break
       
@@ -145,6 +175,7 @@ export function handleStreamChunk(
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
         resetTerminalStreamState(state)
       }
+      maybeRefreshBranchAfterStream(state)
       nextTick(() => processQueue())
       break
       
@@ -162,11 +193,13 @@ export function handleStreamChunk(
       
     case 'cancelled':
       handleCancelled(chunk, state)
+      maybeRefreshBranchAfterStream(state)
       nextTick(() => processQueue())
       break
 
     case 'error':
       handleError(chunk, state)
+      maybeRefreshBranchAfterStream(state)
       nextTick(() => processQueue())
       break
   }
