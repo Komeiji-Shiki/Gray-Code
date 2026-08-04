@@ -80,14 +80,14 @@ export class ElectronContext {
     this.globalState = new FileMemento(path.join(this.globalStoragePath, 'global-state.json'));
     this.workspaceState = new FileMemento(path.join(options.userDataPath, 'workspace-state.json'));
     this.extension = {
-      id: 'komeiji-shiki.graycode',
+      id: 'czocelot.graycode',
       extensionPath: this.extensionPath,
       extensionUri: this.extensionUri,
       packageJSON: {
         name: 'graycode',
         displayName: 'Gray Code',
-        version: '1.3.1',
-        publisher: 'Komeiji-Shiki'
+        version: '1.5.2',
+        publisher: 'czocelot'
       }
     };
     // normalize Windows-style extensionPath for globalStorageUri consistency

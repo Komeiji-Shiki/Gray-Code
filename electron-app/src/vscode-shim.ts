@@ -1561,11 +1561,11 @@ export const extensions = {
   getExtension(id: string) {
     // 独立版没有真正的扩展宿主，但公告/版本检查需要 extensionPath 与版本号，
     // 提供最小 stub 让 SettingsHandler 的公告逻辑在桌面版也能工作。
-    if (id === 'Komeiji-Shiki.graycode') {
+    if (id === 'czocelot.graycode') {
       return {
         id,
         extensionPath: resolveRepoRoot(),
-        packageJSON: { version: '1.3.1', name: 'graycode', displayName: 'Gray Code' }
+        packageJSON: { version: '1.5.2', name: 'graycode', displayName: 'Gray Code' }
       };
     }
     return undefined;

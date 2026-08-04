@@ -8,6 +8,11 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.5.2] - 2026-08-04
+
+### Merged
+  - 同步合入上游 150a287（分支 reroll/编辑前端主流程接线、删除消息同步分支图、后台回执上下文骤降修复、子代理工具本地化）：reroll/编辑分支流的候选切换、后台回执上下文骤降修复与分支流失败可重试等详见根 `CHANGELOG.md` [1.5.2]；桌面版公告/版本信息（扩展 stub）同步为 `czocelot.graycode` / v1.5.2
+
 ## [1.5.1] - 2026-08-04
 
 ### Added
