@@ -2,10 +2,14 @@
  * LimCode - MCP 工具适配器
  *
  * 将 MCP 工具转换为内置工具格式，支持 XML/JSON/Function Call
+ *
+ * WP12：MCP 工具名编解码统一走 mcpToolNameCodec（mcp__<serverId>__<toolName>），
+ * 不再使用旧的单下划线 mcp_<serverId>_<tool> 约定与手写 split('_') 解析。
  */
 
 import type { ToolDeclaration, Tool, ToolResult, MultimodalData } from '../../tools/types';
 import type { McpToolDefinition, McpToolCallResult } from './types';
+import { encodeMcpToolName, decodeMcpToolName } from './mcpToolNameCodec';
 
 /**
  * MCP 工具参数 JSON Schema
@@ -28,9 +32,9 @@ export function mcpToolToDeclaration(
     tool: McpToolDefinition,
     serverId: string
 ): ToolDeclaration {
-    // MCP 工具名称格式：mcp_<serverId>_<toolName>
-    // 或者简化为：mcp_<toolName>（如果只有一个服务器）
-    const toolName = `mcp_${serverId}_${tool.name}`;
+    // WP12：统一用 codec 编码 MCP 工具名（mcp__<serverId>__<toolName>，
+    // 支持 serverId/toolName 含单下划线的边界情况）
+    const toolName = encodeMcpToolName(serverId, tool.name);
 
     // 将 MCP 的 inputSchema 转换为 ToolDeclaration 的 parameters
     const parameters = convertInputSchemaToParameters(tool.inputSchema);
@@ -139,24 +143,16 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
 /**
  * 从工具名称中提取 MCP 服务器 ID 和原始工具名
  *
- * @param toolName 完整工具名称（如 mcp_server1_read_file）
+ * @param toolName 完整工具名称（如 mcp__server1__read_file）
  * @returns [serverId, originalToolName] 或 null
  */
 export function parseMcpToolName(toolName: string): [string, string] | null {
-    if (!toolName.startsWith('mcp_')) {
+    // WP12：统一用 codec 解码（indexOf 定位分隔符，serverId 含单下划线时不再错分）
+    const decoded = decodeMcpToolName(toolName);
+    if (!decoded) {
         return null;
     }
-
-    // 格式：mcp_<serverId>_<toolName>
-    const parts = toolName.substring(4).split('_');
-    if (parts.length < 2) {
-        return null;
-    }
-
-    const serverId = parts[0];
-    const originalToolName = parts.slice(1).join('_');
-
-    return [serverId, originalToolName];
+    return [decoded.serverId, decoded.toolName];
 }
 
 /**
@@ -220,50 +216,4 @@ export function collectAllMcpToolDeclarations(
     }
 
     return declarations;
-}
-
-/**
- * 生成 MCP 工具的简短名称（不带服务器 ID）
- * 用于当只有一个 MCP 服务器时简化工具名称
- *
- * @param toolName 原始工具名称
- * @returns 简短工具名称
- */
-export function mcpToolSimpleName(toolName: string): string {
-    return `mcp_${toolName}`;
-}
-
-/**
- * MCP 工具注册选项
- */
-export interface McpToolRegistrationOptions {
-    /** 是否使用简短名称（省略服务器 ID） */
-    useSimpleName?: boolean;
-    /** 工具名称前缀 */
-    prefix?: string;
-}
-
-/**
- * 将 MCP 工具定义转换为标准工具声明（带选项）
- */
-export function mcpToolToDeclarationWithOptions(
-    tool: McpToolDefinition,
-    serverId: string,
-    options: McpToolRegistrationOptions = {}
-): ToolDeclaration {
-    const { useSimpleName = false, prefix = 'mcp' } = options;
-
-    // 根据选项决定工具名称格式
-    const toolName = useSimpleName
-        ? `${prefix}_${tool.name}`
-        : `${prefix}_${serverId}_${tool.name}`;
-
-    const parameters = convertInputSchemaToParameters(tool.inputSchema);
-
-    return {
-        name: toolName,
-        description: tool.description || `MCP Tool: ${tool.name}`,
-        category: 'mcp',
-        parameters
-    };
 }

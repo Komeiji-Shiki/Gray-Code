@@ -98,4 +98,21 @@ describe('ConversationManager.rejectToolCalls 原子性（R2 4.1）', () => {
         // 无任何拒绝被写入
         expect(history.some(m => m.parts?.some(p => p.functionCall?.rejected))).toBe(false);
     });
+
+    test('目标消息无 parts（历史中存在无 parts 消息）不抛 TypeError，无拒绝写入', async () => {
+        const { adapter } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-rej-noparts', 'NoParts');
+        await manager.addContent('conv-rej-noparts', makeContent('user', 'run tools'));
+
+        // 注入一条无 parts 的 model 消息（历史中可能出现无 parts 消息）
+        const history = await manager.getHistory('conv-rej-noparts');
+        const noParts = { role: 'model', timestamp: Date.now() } as unknown as Content;
+        await adapter.saveHistory('conv-rej-noparts', [...history, noParts]);
+        const noPartsIndex = (await manager.getHistory('conv-rej-noparts')).length - 1;
+
+        await expect(manager.rejectToolCalls('conv-rej-noparts', noPartsIndex)).resolves.toBeUndefined();
+        const after = await manager.getHistory('conv-rej-noparts');
+        expect(after.some(m => m.parts?.some(p => p.functionCall?.rejected))).toBe(false);
+    });
 });

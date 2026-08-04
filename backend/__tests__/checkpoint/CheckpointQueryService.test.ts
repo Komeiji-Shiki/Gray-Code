@@ -1,3 +1,4 @@
+import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -191,6 +192,123 @@ describe('CheckpointQueryService', () => {
         expect(maxActive).toBeGreaterThan(1); // 确实并发读取
         expect(maxActive).toBeLessThanOrEqual(8); // DEFAULT_CHECKPOINT_CONCURRENCY 有界
         expect(manager.getMetadataLight).toHaveBeenCalledTimes(40);
+    });
+
+    test('CP-PATH-1: getCheckpoints(withSize) 拒绝扫描越界 backupDir（记录保留、大小按 0、不写回）', async () => {
+        const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-query-path-'));
+        try {
+            const checkpointsDir = path.join(storageRoot, 'checkpoints');
+            await fs.mkdir(checkpointsDir, { recursive: true });
+            // 存档目录外的“受害者”目录：若扫描发生将统计到 secret.txt 的大小
+            const victimDir = path.join(storageRoot, 'victim');
+            await fs.mkdir(victimDir, { recursive: true });
+            await fs.writeFile(path.join(victimDir, 'secret.txt'), 'secret-data', 'utf-8');
+
+            const manager = {
+                getCustomMetadata: jest.fn().mockResolvedValue([
+                    // 无 backupBytes → 触发懒扫描；backupDir 含 ../ 越界
+                    makeRecord({ id: 'cp-1', backupDir: `..${path.sep}victim` })
+                ]),
+                updateCustomMetadata: jest.fn()
+            };
+            const manifestRepository = { loadManifest: jest.fn(), clearCache: jest.fn() };
+            const service = new CheckpointQueryService(
+                manager as unknown as ConversationManager,
+                checkpointsDir,
+                manifestRepository as unknown as CheckpointManifestRepository,
+                (conversationId: string) => `Chat ${conversationId}`
+            );
+
+            const result = await service.getCheckpoints('conv-1', { withSize: true });
+
+            // 记录保留（与删除路径“拒绝但保留记录”一致），但绝不扫描越界目录：大小按 0 计
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe('cp-1');
+            expect(result[0].backupBytes).toBe(0);
+            expect(result[0].size).toBe(0);
+            // 不写回摘要缓存（越界目录不存在可写回的合法大小）
+            expect(manager.updateCustomMetadata).not.toHaveBeenCalled();
+        } finally {
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PATH-1: backupDirectoryExists 对越界目录名返回 false（即使外部目录真实存在）', async () => {
+        const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-query-path-'));
+        try {
+            const checkpointsDir = path.join(storageRoot, 'checkpoints');
+            await fs.mkdir(checkpointsDir, { recursive: true });
+            const victimDir = path.join(storageRoot, 'victim');
+            await fs.mkdir(victimDir, { recursive: true });
+
+            const manager = {
+                getCustomMetadata: jest.fn(),
+                getMetadataLight: jest.fn(),
+                listConversations: jest.fn(),
+                updateCustomMetadata: jest.fn()
+            };
+            const manifestRepository = { loadManifest: jest.fn(), clearCache: jest.fn() };
+            const service = new CheckpointQueryService(
+                manager as unknown as ConversationManager,
+                checkpointsDir,
+                manifestRepository as unknown as CheckpointManifestRepository,
+                (conversationId: string) => `Chat ${conversationId}`
+            );
+
+            // 越界目录真实存在也视为不存在（绝不 stat/access 存档目录外路径）
+            await expect(service.backupDirectoryExists(`..${path.sep}victim`)).resolves.toBe(false);
+            await expect(service.backupDirectoryExists('..')).resolves.toBe(false);
+            await expect(service.backupDirectoryExists('cp_ok')).resolves.toBe(false); // 目录不存在
+            await fs.mkdir(path.join(checkpointsDir, 'cp_ok'));
+            await expect(service.backupDirectoryExists('cp_ok')).resolves.toBe(true); // 合法名正常判定
+        } finally {
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PATH-1: pruneMissingBackupCheckpointRecords 裁剪越界 backupDir 的记录', async () => {
+        const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-query-path-'));
+        try {
+            const checkpointsDir = path.join(storageRoot, 'checkpoints');
+            await fs.mkdir(checkpointsDir, { recursive: true });
+            await fs.mkdir(path.join(checkpointsDir, 'cp_ok'), { recursive: true });
+            const victimDir = path.join(storageRoot, 'victim');
+            await fs.mkdir(victimDir, { recursive: true });
+            await fs.writeFile(path.join(victimDir, 'secret.txt'), 'secret', 'utf-8');
+
+            let stored: CheckpointRecord[] = [
+                makeRecord({ id: 'cp-ok', backupDir: 'cp_ok' }),
+                makeRecord({ id: 'cp-evil', messageIndex: 1, backupDir: `..${path.sep}victim` })
+            ];
+            const manager = {
+                getCustomMetadata: jest.fn().mockResolvedValue(stored),
+                updateCustomMetadata: jest.fn().mockImplementation(
+                    async (_cid: string, _key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
+                        const next = await updater(stored);
+                        if (next !== stored) {
+                            stored = next as CheckpointRecord[];
+                        }
+                        return stored;
+                    }
+                )
+            };
+            const manifestRepository = { loadManifest: jest.fn(), clearCache: jest.fn() };
+            const service = new CheckpointQueryService(
+                manager as unknown as ConversationManager,
+                checkpointsDir,
+                manifestRepository as unknown as CheckpointManifestRepository,
+                (conversationId: string) => `Chat ${conversationId}`
+            );
+
+            const result = await service.pruneMissingBackupCheckpointRecords('conv-1', stored);
+
+            // 越界记录被裁剪（无法安全恢复），合法记录保留
+            expect(result.prunedCount).toBe(1);
+            expect(result.checkpoints.map(c => c.id)).toEqual(['cp-ok']);
+            expect(stored.map(c => c.id)).toEqual(['cp-ok']);
+        } finally {
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
     });
 });
 

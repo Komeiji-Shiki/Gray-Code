@@ -31,6 +31,16 @@ import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 const DEFAULT_EXCLUDE = '**/node_modules/**';
 
 /**
+ * ReDoS 防护：正则源串长度上限（超出直接拒绝，不尝试完整 ReDoS 检测）
+ */
+const MAX_REGEX_SOURCE_LENGTH = 500;
+
+/**
+ * 替换模式 matches 收集预算上限：防止 maxFiles×高频 query 产生数百万条匹配全量回传
+ */
+const MAX_REPLACE_MATCHES = 20000;
+
+/**
  * 获取 search_in_files 工具配置（带默认值兜底）
  */
 function getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
@@ -513,6 +523,7 @@ async function searchAndReplaceInDirectory(
     processedFiles: number;
     skippedFiles: SkippedFileInfo[];
     cancelled: boolean;
+    truncated: boolean;
 }> {
     // 本地克隆，理由同 searchInDirectory：隔离 g 标志正则的 lastIndex 状态
     const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
@@ -521,6 +532,9 @@ async function searchAndReplaceInDirectory(
     const skippedFiles: SkippedFileInfo[] = [];
     let totalReplacements = 0;
     let cancelledBySignal = false;
+    // matches 仅用于向模型报告匹配位置，maxFiles×高频 query 可产生数百万条；
+    // 加预算上限防止 data.matches 全量回传导致内存与响应体爆炸（替换本身不受影响）
+    let matchesTruncated = false;
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
     const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
@@ -620,20 +634,25 @@ async function searchAndReplaceInDirectory(
 
             while ((match = searchRegex.exec(originalText)) !== null) {
                 const rawMatchText = match[0] ?? '';
-                const matchText = rawMatchText.length > maxMatchPreviewChars
-                    ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
-                    : rawMatchText;
-                const pos = offsetToLineCol(match.index);
+                if (matches.length < MAX_REPLACE_MATCHES) {
+                    const matchText = rawMatchText.length > maxMatchPreviewChars
+                        ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
+                        : rawMatchText;
+                    const pos = offsetToLineCol(match.index);
 
-                matches.push({
-                    file: relativePath,
-                    workspace: workspaceName || undefined,
-                    line: pos.line,
-                    column: pos.column,
-                    match: matchText,
-                    // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
-                    context: ''
-                });
+                    matches.push({
+                        file: relativePath,
+                        workspace: workspaceName || undefined,
+                        line: pos.line,
+                        column: pos.column,
+                        match: matchText,
+                        // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
+                        context: ''
+                    });
+                } else {
+                    // 达到收集预算上限：停止收集匹配，但继续计数与执行替换
+                    matchesTruncated = true;
+                }
 
                 fileReplacementCount++;
 
@@ -731,7 +750,7 @@ async function searchAndReplaceInDirectory(
         }
     }
     
-    return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal };
+    return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal, truncated: matchesTruncated };
 }
 
 /**
@@ -933,17 +952,39 @@ export function createSearchInFilesTool(): Tool {
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
                 const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
-                const searchRegex = isRegex
-                    ? new RegExp(query, flags)
-                    : new RegExp(escapeRegExp(query), flags);
+                // ReDoS 防护（最小方案）：不尝试完整检测，仅按源串长度拒绝超长正则
+                //（如模型拼接的查询），并捕获构造异常给出可读错误，避免灾难性回溯阻塞扩展宿主
+                const regexSource = isRegex ? query : escapeRegExp(query);
+                if (regexSource.length > MAX_REGEX_SOURCE_LENGTH) {
+                    return {
+                        success: false,
+                        error: `Search query too long to use as regular expression (${regexSource.length} characters, maximum ${MAX_REGEX_SOURCE_LENGTH}). Please simplify the query.`
+                    };
+                }
+                let searchRegex: RegExp;
+                try {
+                    searchRegex = new RegExp(regexSource, flags);
+                } catch (e) {
+                    return {
+                        success: false,
+                        error: `Invalid regular expression: ${e instanceof Error ? e.message : String(e)}`
+                    };
+                }
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
                 const excludePattern = getExcludePattern(searchConfig);
                 
                 // 解析路径，确定搜索范围
-                const { workspace: targetWorkspace, relativePath, isExplicit } = parseWorkspacePath(searchPath);
+                const parsedPath = parseWorkspacePath(searchPath);
+                const { workspace: targetWorkspace, relativePath, isExplicit } = parsedPath;
                 const pathWarning = createPossibleMultiplePathsWarning(searchPath);
+
+                // 多根工作区下未带前缀/未知前缀的 path 解析失败时，不再静默回退到第一个工作区，
+                // 直接把解析错误透传给模型；'.' 表示搜索所有工作区，是文档化的例外
+                if (parsedPath.error && !(searchPath === '.' && workspaces.length > 1)) {
+                    return { success: false, error: parsedPath.error };
+                }
                 
                 if (isReplaceMode) {
                     // 替换模式
@@ -952,6 +993,7 @@ export function createSearchInFilesTool(): Tool {
                     let allSkippedFiles: SkippedFileInfo[] = [];
                     let totalReplacements = 0;
                     let anyCancelled = false;
+                    let anyTruncated = false;
                     
                     if (isExplicit && targetWorkspace) {
                         // 显式指定了工作区，只搜索该工作区
@@ -978,6 +1020,7 @@ export function createSearchInFilesTool(): Tool {
                         allSkippedFiles = result.skippedFiles;
                         totalReplacements = result.totalReplacements;
                         anyCancelled = result.cancelled;
+                        anyTruncated = result.truncated;
                     } else if (searchPath === '.' && workspaces.length > 1) {
                         // 搜索所有工作区
                         let remainingFiles = maxFiles;
@@ -1001,6 +1044,7 @@ export function createSearchInFilesTool(): Tool {
                             allReplacements.push(...result.replacements);
                             allSkippedFiles.push(...result.skippedFiles);
                             totalReplacements += result.totalReplacements;
+                            anyTruncated = anyTruncated || result.truncated;
                             // 按”实际处理过的文件数”扣减（含有匹配但未产生变化的文件），
                             // 与 searchAndReplaceInDirectory 内部的 maxFiles 语义保持一致
                             remainingFiles -= result.processedFiles;
@@ -1036,6 +1080,7 @@ export function createSearchInFilesTool(): Tool {
                         allSkippedFiles = result.skippedFiles;
                         totalReplacements = result.totalReplacements;
                         anyCancelled = result.cancelled;
+                        anyTruncated = result.truncated;
                     }
 
                     // 0 命中诊断：帮模型区分“真没匹配”和“大小写语义差异导致的漏匹配”
@@ -1044,6 +1089,12 @@ export function createSearchInFilesTool(): Tool {
                         zeroMatchHint = caseSensitive
                             ? 'No matches found. Note: replace mode matches case-sensitively by default while search mode is case-insensitive by default. If you located the target via a search-mode query, retry with caseSensitive=false or adjust the query casing.'
                             : 'No matches found even with case-insensitive matching. Verify the query text, target path and file pattern.';
+                    }
+
+                    // 多工作区聚合时各目录独立封顶，这里再对总量兜底，保证回传的 matches 有硬上限
+                    if (allMatches.length > MAX_REPLACE_MATCHES) {
+                        allMatches = allMatches.slice(0, MAX_REPLACE_MATCHES);
+                        anyTruncated = true;
                     }
 
                     return {
@@ -1062,6 +1113,7 @@ export function createSearchInFilesTool(): Tool {
                             results: allReplacements,
                             filesModified: allReplacements.length,
                             totalReplacements,
+                            truncated: anyTruncated,
                             caseSensitive,
                             skippedFiles: allSkippedFiles.length > 0 ? allSkippedFiles : undefined,
                             zeroMatchHint,

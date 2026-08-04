@@ -47,6 +47,13 @@ export function validateToolArgs(
         return null;
     }
 
+    // args 为 null/字符串/数字/数组等非对象值时，validateObjectValue 中 `key in obj`
+    // 会对原始类型抛 TypeError，导致整个工具批次崩溃。先在此守卫，把非 JSON 对象
+    // 参数转成可读错误返回，让模型自行修正。
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+        return `${toolName} failed: parameters must be a JSON object, got ${args === null ? 'null' : typeof args}`;
+    }
+
     const issues: string[] = [];
     validateObjectValue(args, schema.properties, schema.required, '', issues, 0);
 

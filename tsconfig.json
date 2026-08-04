@@ -15,9 +15,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "outDir": "./dist",
-    "rootDir": ".",
     "types": ["node", "vscode"]
   },
   "include": [

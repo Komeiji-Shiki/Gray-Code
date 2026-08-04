@@ -94,6 +94,10 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
             }
             resolve(null)
           }
+          img.onerror = () => {
+            // 缩略图加载失败：不阻塞附件添加，仅跳过尺寸元数据
+            resolve(null)
+          }
         })
       } catch (error) {
         console.error(t('composables.useAttachments.errors.createThumbnailFailed'), error)
@@ -218,14 +222,41 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
       // 要尝试的时间点（秒）
       const timePoints = [0.1, 1, 2, 5]
       let currentTimeIndex = 0
+      // 是否已 settle（resolve/reject/超时任一发生），防止重复回调
+      let settled = false
+
+      /** 统一清理：清除超时定时器与对象 URL */
+      function cleanup(): void {
+        window.clearTimeout(timeoutId)
+        URL.revokeObjectURL(video.src)
+      }
+
+      // 整体超时：防止 Promise 永不 settle
+      // （如 duration 为 NaN 时 currentTime 设为 NaN 后 onseeked 永不触发）
+      const timeoutId = window.setTimeout(() => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
+      }, 10000)
       
       video.onloadedmetadata = () => {
+        if (settled) return
+        // duration 非法（NaN/Infinity/<=0）时直接放弃截帧，
+        // 避免设置无效 currentTime 后 onseeked 永不触发导致 Promise 挂起
+        if (!Number.isFinite(video.duration) || video.duration <= 0) {
+          settled = true
+          cleanup()
+          reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
+          return
+        }
         // 使用视频时长的 10% 或第一个时间点
         const targetTime = Math.min(video.duration * 0.1, timePoints[0])
         video.currentTime = Math.max(0.1, targetTime)
       }
       
       video.onseeked = () => {
+        if (settled) return
         // 设置缩略图大小
         const maxSize = 200
         let width = video.videoWidth || 320
@@ -265,12 +296,22 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         }
         
         // 清理
-        URL.revokeObjectURL(video.src)
+        settled = true
+        cleanup()
         resolve(canvas.toDataURL('image/jpeg', 0.8))
       }
       
       video.onerror = () => {
-        URL.revokeObjectURL(video.src)
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
+      }
+      
+      video.onabort = () => {
+        if (settled) return
+        settled = true
+        cleanup()
         reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
       }
       

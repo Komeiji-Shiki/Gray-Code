@@ -17,6 +17,39 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 const DEFAULT_IGNORED = ['.git'];
 
 /**
+ * 递归列出的最大深度（0 表示只列根目录直属一层；到达深度后不再下钻）
+ */
+const MAX_RECURSIVE_DEPTH = 10;
+
+/**
+ * 递归列出收集的条目总数上限（文件 + 目录）；达到上限后停止收集并标记 truncated。
+ *
+ * 修改原因：递归无深度/条目上限时，巨型目录树耗时与输出均无界，
+ * 且每个文本文件还要并发读流统计行数。
+ * 修改方式：与 find_files/fileTree 的预算截断惯例一致，超出后置 truncated 标志。
+ */
+const MAX_RECURSIVE_ENTRIES = 5000;
+
+/**
+ * 递归遍历时额外跳过的常见巨型目录。
+ *
+ * 修改原因：默认忽略列表只有 .git，用户未配置自定义忽略时，
+ * node_modules/dist 等巨型目录会被整树遍历，递归无界。
+ * 修改方式：仅在递归下钻时跳过（不影响非递归的顶层显式列出）。
+ */
+const RECURSIVE_SKIP_DIRS = ['.git', 'node_modules', 'dist', 'out', 'build', 'target', 'coverage', '.venv', 'venv', '__pycache__', '.cache'];
+
+/**
+ * 递归遍历共享状态：条目计数与截断标志
+ */
+interface RecursiveTraversalState {
+    /** 已收集的条目数（文件 + 目录） */
+    entryCount: number;
+    /** 是否因深度/条目上限被截断 */
+    truncated: boolean;
+}
+
+/**
  * 获取忽略列表
  *
  * 从设置管理器获取用户配置的忽略列表，如果未配置则使用默认值
@@ -104,6 +137,8 @@ interface ListResult {
     fileCount: number;
     dirCount: number;
     success: boolean;
+    /** 递归列出时是否因深度/条目上限被截断 */
+    truncated?: boolean;
     error?: string;
 }
 
@@ -115,11 +150,29 @@ async function listDirectoryRecursive(
     basePath: string,
     entries: Entry[],
     ignorePatterns: string[],
-    pendingLineCounts: PendingLineCount[]
+    pendingLineCounts: PendingLineCount[],
+    depth: number,
+    state: RecursiveTraversalState
 ): Promise<void> {
+    // 深度上限：到达最大深度后不再下钻。该目录的条目已由父层记录，但其子内容未展开，
+    // 结果不完整，标记 truncated 让模型知道可针对性列出子目录。
+    if (depth >= MAX_RECURSIVE_DEPTH) {
+        state.truncated = true;
+        return;
+    }
+    if (state.truncated) {
+        return;
+    }
+
     const items = await vscode.workspace.fs.readDirectory(dirUri);
     
     for (const [name, type] of items) {
+        // 条目总数上限：预算已满且仍有未处理条目，停止收集并标记截断
+        if (state.entryCount >= MAX_RECURSIVE_ENTRIES) {
+            state.truncated = true;
+            break;
+        }
+        
         // 跳过忽略的目录和文件
         if (shouldIgnore(name, ignorePatterns)) {
             continue;
@@ -130,15 +183,21 @@ async function listDirectoryRecursive(
         const relativePath = basePath ? `${basePath}/${name}` : name;
         
         if (type === vscode.FileType.Directory) {
+            // 跳过常见巨型目录，防止递归无界（不影响非递归的顶层显式列出）
+            if (RECURSIVE_SKIP_DIRS.includes(name)) {
+                continue;
+            }
             entries.push({ name: relativePath + '/', type: 'directory' });
+            state.entryCount++;
             // 递归进入子目录
             const subDirUri = vscode.Uri.joinPath(dirUri, name);
-            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns, pendingLineCounts);
+            await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns, pendingLineCounts, depth + 1, state);
         } else if (type === vscode.FileType.File) {
             const fileUri = vscode.Uri.joinPath(dirUri, name);
             // 行数不在遍历循环里逐个 await，而是收集后统一受控并发填充
             const entry: Entry = { name: relativePath, type: 'file' };
             entries.push(entry);
+            state.entryCount++;
             pendingLineCounts.push({ entry, uri: fileUri, filePath: relativePath });
         }
     }
@@ -182,7 +241,7 @@ export function createListFilesTool(): Tool {
                     },
                     recursive: {
                         type: 'boolean',
-                        description: '是否递归列出子目录。false 时只列出指定目录直属的一层；true 时递归列出所有子目录内容。',
+                        description: '是否递归列出子目录。false 时只列出指定目录直属的一层；true 时递归列出所有子目录内容（最大深度 10、最多 5000 个条目，超出后截断并置 truncated）。',
                         default: false
                     }
                 },
@@ -238,9 +297,14 @@ export function createListFilesTool(): Tool {
                     const entries: Entry[] = [];
                     const pendingLineCounts: PendingLineCount[] = [];
                     
+                    // 递归结果是否被截断（深度/条目上限）
+                    let truncated = false;
+
                     if (recursive) {
-                        // 递归列出
-                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns, pendingLineCounts);
+                        // 递归列出（带深度与条目上限，超出即截断）
+                        const state: RecursiveTraversalState = { entryCount: 0, truncated: false };
+                        await listDirectoryRecursive(dirUri, '', entries, ignorePatterns, pendingLineCounts, 0, state);
+                        truncated = state.truncated;
                     } else {
                         // 只列出顶层
                         const items = await vscode.workspace.fs.readDirectory(dirUri);
@@ -284,7 +348,8 @@ export function createListFilesTool(): Tool {
                         entries,
                         fileCount,
                         dirCount,
-                        success: true
+                        success: true,
+                        truncated
                     });
                     totalFiles += fileCount;
                     totalDirs += dirCount;

@@ -8,10 +8,12 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type { LanguageMessages } from '@/i18n/types'
 import zhCN from '@/i18n/langs/zh-CN'
 import en from '@/i18n/langs/en'
+import ja from '@/i18n/langs/ja'
 
 const messages: Record<string, LanguageMessages> = {
     'zh-CN': zhCN,
-    'en': en
+    'en': en,
+    'ja': ja
 }
 
 // 导出 messages 对象供外部使用

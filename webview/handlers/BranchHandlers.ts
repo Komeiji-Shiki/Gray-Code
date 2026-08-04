@@ -95,8 +95,63 @@ function collectPathToolNames(
  * 仅改写内存中的响应对象（repository.load 的返回），不落盘。
  */
 function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): void {
-    for (const node of Object.values(graph.nodes)) {
+    // 自顶向下单次 DFS 累积 root→节点路径上的工具名集合（O(n)），
+    // 替代原实现对每个节点沿 parentId 链回溯到 root 的 O(n²) 方案。
+    const nodes = graph.nodes;
+
+    // 预构建 parentId → 子节点 id 邻接表，避免 DFS 过程中反复全表扫描（保持整体 O(n)）。
+    const childrenByParent = new Map<string, string[]>();
+    for (const [id, node] of Object.entries(nodes)) {
+        if (!node?.parentId) continue;
+        const siblings = childrenByParent.get(node.parentId);
+        if (siblings) {
+            siblings.push(id);
+        } else {
+            childrenByParent.set(node.parentId, [id]);
+        }
+    }
+
+    const visited = new Set<string>();
+
+    const visit = (nodeId: string, pathToolNames: Set<string>): void => {
+        if (visited.has(nodeId)) {
+            return;
+        }
+        visited.add(nodeId);
+        const node = nodes[nodeId];
         if (!node) {
+            return;
+        }
+        const enriched = node as ConversationBranchNode & {
+            hasWorkspaceState?: boolean;
+            wroteToWorkspace?: boolean;
+        };
+        enriched.hasWorkspaceState =
+            typeof node.workspaceCheckpointId === 'string' && node.workspaceCheckpointId.length > 0;
+        const ownToolNames = collectToolNamesFromParts(node.parts);
+        for (const name of ownToolNames) {
+            pathToolNames.add(name);
+        }
+        enriched.wroteToWorkspace = Array.from(pathToolNames).some(name => WRITE_TOOL_NAMES.has(name));
+        for (const childId of childrenByParent.get(nodeId) ?? []) {
+            visit(childId, pathToolNames);
+        }
+        // 回溯：移除本节点贡献的工具名，避免兄弟分支的路径集合互相污染
+        for (const name of ownToolNames) {
+            pathToolNames.delete(name);
+        }
+    };
+
+    // 根节点：无 parentId 或 parentId 悬空（父节点不存在）。一次 DFS 覆盖整棵正常树。
+    for (const [id, node] of Object.entries(nodes)) {
+        if (node && (!node.parentId || !nodes[node.parentId])) {
+            visit(id, new Set<string>());
+        }
+    }
+
+    // 兜底：环等异常结构下 DFS 覆盖不到的节点，沿用原回溯路径收集，保证全部被充实。
+    for (const [id, node] of Object.entries(nodes)) {
+        if (!node || visited.has(id)) {
             continue;
         }
         const enriched = node as ConversationBranchNode & {

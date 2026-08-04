@@ -47,7 +47,9 @@ export class ProxySettingsService {
     async updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
         const oldValue = this.core.settings.proxy;
         this.core.settings.proxy = {
-            enabled: true,
+            // 不再强制默认 enabled:true（首次只设置 URL 会隐式启用代理）。
+            // 展开顺序保证：proxySettings.enabled ?? 原值 ?? false。
+            enabled: false,
             ...this.core.settings.proxy,
             ...proxySettings
         } as ProxySettings;

@@ -63,6 +63,16 @@ watch(errorRef, (err) => {
 
 /** 已触发过 taskComplete 音效的 toolStatus id 集合（避免同一工具重复播放） */
 const soundPlayedToolIds = reactive(new Set<string>())
+/** 去重集合容量上限：超出后整体清空，防止随会话运行无限增长 */
+const SOUND_PLAYED_TOOL_IDS_LIMIT = 500
+
+/** 记录已播放音效的工具 id（带容量上限，防止无限增长） */
+function addSoundPlayedToolId(toolId: string): void {
+  soundPlayedToolIds.add(toolId)
+  if (soundPlayedToolIds.size > SOUND_PLAYED_TOOL_IDS_LIMIT) {
+    soundPlayedToolIds.clear()
+  }
+}
 
 /** 上一次各对话的 TODO 全部完成状态（false→true 时触发音效） */
 const todoAllDoneByConv = reactive(new Map<string, boolean>())
@@ -104,7 +114,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
 
   // create_plan 成功
   if (tool.name === 'create_plan') {
-    soundPlayedToolIds.add(tool.id)
+    addSoundPlayedToolId(tool.id)
     dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
     return
   }
@@ -127,6 +137,15 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
     const wasAllDone = todoAllDoneByConv.get(convId) ?? false
 
     todoAllDoneByConv.set(convId, isAllDone)
+
+    // 容量上限：防止 Map 随会话运行无限增长；清空时保留当前会话条目，避免当前会话重复播放
+    if (todoAllDoneByConv.size > SOUND_PLAYED_TOOL_IDS_LIMIT) {
+      const currentValue = todoAllDoneByConv.get(convId)
+      todoAllDoneByConv.clear()
+      if (currentValue !== undefined) {
+        todoAllDoneByConv.set(convId, currentValue)
+      }
+    }
 
     // 仅在 false→true 时播放
     if (isAllDone && !wasAllDone) {
@@ -202,18 +221,21 @@ function handleNewTab() {
 async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!content.trim() && messageAttachments.length === 0) return
 
-  // 先立即清除附件，不需要等待响应完成
+  // 先判断待确认分支：走“拒绝待确认工具”路径时不 clearAttachments，
+  // 避免带附件输入在拒绝待确认工具时被静默丢弃
+  if (chatStore.hasPendingToolConfirmation) {
+    try {
+      await chatStore.rejectPendingToolsWithAnnotation(content)
+    } catch (err) {
+      console.error('发送失败:', err)
+    }
+    return
+  }
+
+  // 正常发送消息：先立即清除附件，不需要等待响应完成
   clearAttachments()
 
   try {
-    // 检查是否有待确认的工具调用
-    // 如果有，则发送内容作为批注并拒绝所有待确认工具
-    if (chatStore.hasPendingToolConfirmation) {
-      await chatStore.rejectPendingToolsWithAnnotation(content)
-      return
-    }
-
-    // 正常发送消息（传递附件）
     await chatStore.sendMessage(content, messageAttachments, options)
   } catch (err) {
     console.error('发送失败:', err)

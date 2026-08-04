@@ -17,7 +17,7 @@ import type { ConversationManager } from '../conversation/ConversationManager';
 import { Logger } from '../../core/logger';
 import type { CheckpointRecord } from './CheckpointManager';
 import type { CheckpointSummary } from './types';
-import { CheckpointManifestRepository } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 
 const log = Logger.get('CheckpointQueryService');
@@ -106,11 +106,19 @@ export class CheckpointQueryService {
 
                 let backupBytes = record.backupBytes;
                 if (typeof backupBytes !== 'number') {
-                    backupBytes = await this.getDirectorySize(
-                        path.join(this.checkpointsDir, record.backupDir)
-                    );
-                    // 写回摘要缓存：下次不再扫描（旧存档一次性迁移）
-                    await this.writeBackBackupBytes(conversationId, record.id, backupBytes);
+                    // CP-PATH-1: 读取侧与删除侧同一校验口径——损坏/恶意 backupDir（如 ../../victim）
+                    // 绝不拼进路径扫描（getDirectorySize 会对该目录递归 readdir/stat，可能越过
+                    // checkpointsDir 读取外部目录）。处理方式与删除路径一致：跳过该操作、记录保留、告警。
+                    if (!isSafeCheckpointDirName(record.backupDir)) {
+                        console.warn(`[CheckpointQueryService] Refusing to scan unsafe backupDir ${record.backupDir} for checkpoint ${record.id}`);
+                        backupBytes = 0;
+                    } else {
+                        backupBytes = await this.getDirectorySize(
+                            path.join(this.checkpointsDir, record.backupDir)
+                        );
+                        // 写回摘要缓存：下次不再扫描（旧存档一次性迁移）
+                        await this.writeBackBackupBytes(conversationId, record.id, backupBytes);
+                    }
                 }
                 result.push({ ...summary, backupBytes, size: backupBytes });
             }
@@ -258,6 +266,13 @@ export class CheckpointQueryService {
 
     /** 判断某个备份目录是否存在 */
     async backupDirectoryExists(backupDir: string): Promise<boolean> {
+        // CP-PATH-1: 越界/损坏目录名视为不存在（不触碰文件系统）——
+        // 下游 pruneMissingBackupCheckpointRecords 会据此裁剪无法安全恢复的记录，
+        // 保证恶意记录不会带着越界目录名继续流入恢复扫描路径。
+        if (!isSafeCheckpointDirName(backupDir)) {
+            console.warn(`[CheckpointQueryService] Refusing to check unsafe backupDir ${backupDir}`);
+            return false;
+        }
         try {
             const backupPath = path.join(this.checkpointsDir, backupDir);
             await fs.access(backupPath);

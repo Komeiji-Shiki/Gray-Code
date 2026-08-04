@@ -779,10 +779,9 @@ onMounted(async () => {
                 <span class="tool-count">{{ builtinTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item">
+                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item" :title="tool.description">
                   <div class="tool-info">
                     <span class="tool-name">{{ tool.name }}</span>
-                    <span v-if="tool.description" class="tool-description">{{ tool.description }}</span>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
@@ -800,10 +799,9 @@ onMounted(async () => {
                 <span class="tool-count">{{ mcpTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item">
+                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item" :title="tool.description">
                   <div class="tool-info">
                     <span class="tool-name">{{ tool.name }}</span>
-                    <span v-if="tool.description" class="tool-description">{{ tool.description }}</span>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
@@ -1482,14 +1480,6 @@ input[type="number"]::-webkit-inner-spin-button {
   font-size: 13px;
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family), monospace;
-}
-
-.tool-description {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
 }
 
 .no-tools {

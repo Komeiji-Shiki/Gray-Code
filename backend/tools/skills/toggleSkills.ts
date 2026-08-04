@@ -96,11 +96,14 @@ async function handleToggleSkills(args: Record<string, boolean>): Promise<ToolRe
         }
     }
     
-    // If some skills not found, return partial success
+    // If some skills not found, return partial success with warnings
+    // (error 字段语义为失败信息，不能与 success: true 同时出现)
     if (notFound.length > 0) {
         return {
             success: true,
-            error: `Some skills not found: ${notFound.join(', ')}`
+            data: {
+                warnings: [`Some skills not found and were skipped: ${notFound.join(', ')}`]
+            }
         };
     }
     

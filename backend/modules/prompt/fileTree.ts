@@ -9,6 +9,35 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { globPatternToRegExp } from './glob'
 
+// ========== 忽略模式正则缓存 ==========
+// 原实现每文件×每模式重复 new RegExp（shouldIgnore 在两个位置各编译一次），
+// 大工作区下每条消息都会产生大量重复编译。这里按 `${flags}\u0000${source}` 缓存编译结果；
+// 注意 flags 必须进 key：自定义忽略模式用 'i'，gitignore 通配模式用 ''（保持与旧实现一致）。
+const ignoreRegexCache = new Map<string, RegExp>()
+let ignoreRegexCompileCount = 0
+let ignoreRegexHitCount = 0
+
+function getCachedIgnoreRegex(source: string, flags: string): RegExp {
+    const key = `${flags}\u0000${source}`
+    const cached = ignoreRegexCache.get(key)
+    if (cached) {
+        ignoreRegexHitCount++
+        return cached
+    }
+    const regex = new RegExp(source, flags)
+    ignoreRegexCompileCount++
+    if (ignoreRegexCache.size >= 512) {
+        ignoreRegexCache.clear()
+    }
+    ignoreRegexCache.set(key, regex)
+    return regex
+}
+
+/** 获取忽略模式正则缓存的统计（供测试断言编译次数） */
+export function getIgnoreRegexCacheStats(): { compiles: number; hits: number; size: number } {
+    return { compiles: ignoreRegexCompileCount, hits: ignoreRegexHitCount, size: ignoreRegexCache.size }
+}
+
 /**
  * 工作区信息
  */
@@ -42,18 +71,67 @@ function parseGitignore(gitignorePath: string): string[] {
 }
 
 /**
+ * 单条 gitignore 模式匹配判断（提取自原 shouldIgnore 循环，语义一致）：
+ * - 目录模式（/ 结尾）仅在目标是目录时命中
+ * - / 开头为仓库根锚定模式
+ * - 含 * 时按 gitignore 通配（* 不跨段、** 跨任意段且可匹配零个目录段）
+ * - 否则按精确匹配（含父目录前缀匹配）
+ */
+function matchesGitignorePattern(relativePath: string, pattern: string, isDirectory: boolean): boolean {
+    const baseName = path.basename(relativePath)
+    let p = pattern
+
+    // 处理目录模式（以 / 结尾）
+    const isDirPattern = p.endsWith('/')
+    if (isDirPattern) {
+        p = p.slice(0, -1)
+        if (!isDirectory) {
+            return false
+        }
+    }
+
+    // 处理以 / 开头的绝对路径模式
+    const isAbsolute = p.startsWith('/')
+    if (isAbsolute) {
+        p = p.slice(1)
+    }
+
+    // 简单的模式匹配
+    if (p.includes('*')) {
+        // 通配符模式：gitignore 语义——* 不跨目录段、** 跨任意段且 **/ 零段可选
+        const regex = getCachedIgnoreRegex('^' + globPatternToRegExp(p) + '$', '')
+        return regex.test(baseName) || regex.test(relativePath.replace(/\\/g, '/'))
+    }
+
+    // 精确匹配
+    if (baseName === p || relativePath === p || relativePath.startsWith(p + '/')) {
+        return true
+    }
+    // 检查路径中是否包含该目录
+    if (relativePath.includes('/' + p + '/') || relativePath.startsWith(p + '/')) {
+        return true
+    }
+    return false
+}
+
+/**
  * 检查文件/目录是否应该被忽略
+ *
+ * gitignore 否定语义：支持 `!` 前缀（如 `*.log` + `!keep.log` 时 keep.log 重新包含）。
+ * 采用「最后命中规则生效」求值：排除命中置 true，`!` 否定命中置 false。
+ * 若某文件所在父目录已被排除，遍历时不会进入该目录，文件根本不会被求值——
+ * 这与 git 的「不能重新包含被排除目录下的文件」语义天然一致。
  */
 function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boolean, customIgnorePatterns: string[] = []): boolean {
     const baseName = path.basename(relativePath)
     
-    // 检查是否在自定义忽略列表中（从配置中获取）
+    // 检查是否在自定义忽略列表中（从配置中获取；配置为明确排除，不支持否定）
     for (const ignore of customIgnorePatterns) {
         if (ignore.includes('*')) {
             // 通配符模式 - 支持 ** 匹配任意目录层级（gitignore 式：**/x 也匹配根级 x，* 不跨目录段）
             const regexStr = globPatternToRegExp(ignore)
             
-            const regex = new RegExp(`^${regexStr}$|/${regexStr}$|^${regexStr}/|/${regexStr}/`, 'i')
+            const regex = getCachedIgnoreRegex(`^${regexStr}$|/${regexStr}$|^${regexStr}/|/${regexStr}/`, 'i')
             if (regex.test(relativePath.replace(/\\/g, '/')) || regex.test(baseName)) {
                 return true
             }
@@ -62,41 +140,31 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
         }
     }
     
-    // 检查 gitignore 规则
+    // gitignore 规则
+    if (patterns.some(p => p.startsWith('!'))) {
+        // 存在 ! 否定规则：按 gitignore 语义完整求值（最后命中规则生效）
+        let ignored = false
+        for (const pattern of patterns) {
+            if (pattern.startsWith('\\!')) {
+                // 转义的 \! 视为字面 ! 开头的模式
+                if (matchesGitignorePattern(relativePath, pattern.slice(1), isDirectory)) {
+                    ignored = true
+                }
+            } else if (pattern.startsWith('!')) {
+                if (matchesGitignorePattern(relativePath, pattern.slice(1), isDirectory)) {
+                    ignored = false
+                }
+            } else if (matchesGitignorePattern(relativePath, pattern, isDirectory)) {
+                ignored = true
+            }
+        }
+        return ignored
+    }
+
+    // 无否定规则：保持原有早退快速路径（最常见的场景，避免逐条全量求值）
     for (const pattern of patterns) {
-        let p = pattern
-        
-        // 处理目录模式（以 / 结尾）
-        const isDirPattern = p.endsWith('/')
-        if (isDirPattern) {
-            p = p.slice(0, -1)
-            if (!isDirectory) {
-                continue
-            }
-        }
-        
-        // 处理以 / 开头的绝对路径模式
-        const isAbsolute = p.startsWith('/')
-        if (isAbsolute) {
-            p = p.slice(1)
-        }
-        
-        // 简单的模式匹配
-        if (p.includes('*')) {
-            // 通配符模式：gitignore 语义——* 不跨目录段、** 跨任意段且 **/ 零段可选
-            const regex = new RegExp('^' + globPatternToRegExp(p) + '$')
-            if (regex.test(baseName) || regex.test(relativePath.replace(/\\/g, '/'))) {
-                return true
-            }
-        } else {
-            // 精确匹配
-            if (baseName === p || relativePath === p || relativePath.startsWith(p + '/')) {
-                return true
-            }
-            // 检查路径中是否包含该目录
-            if (relativePath.includes('/' + p + '/') || relativePath.startsWith(p + '/')) {
-                return true
-            }
+        if (matchesGitignorePattern(relativePath, pattern, isDirectory)) {
+            return true
         }
     }
     
@@ -114,6 +182,23 @@ interface FileTreeNode {
 }
 
 /**
+ * 文件树节点数量预算（目录+文件计数）。
+ * 原实现 readdirSync 全同步递归遍历，maxDepth=-1 在调用方映射为 100 层，
+ * 巨型目录树下每条消息都会遍历整棵目录树；这里对节点总数设上限，超出即截断并标记 truncated。
+ * 调用方 getWorkspaceFileTree 为同步签名（PromptManager.generateFileTreeSection 同步调用），
+ * 异步化需要改动整条调用链，故采用预算限制的最小方案。
+ */
+export const FILE_TREE_MAX_NODES = 10000
+
+/** 递归共享的节点预算 */
+interface FileTreeBudget {
+    /** 剩余可添加节点数 */
+    remaining: number
+    /** 是否因超出预算被截断 */
+    truncated: boolean
+}
+
+/**
  * 递归获取文件树
  */
 function buildFileTree(
@@ -122,9 +207,14 @@ function buildFileTree(
     patterns: string[],
     depth: number = 0,
     maxDepth: number = 2,
-    customIgnorePatterns: string[] = []
+    customIgnorePatterns: string[] = [],
+    budget: FileTreeBudget = { remaining: FILE_TREE_MAX_NODES, truncated: false }
 ): FileTreeNode[] {
     if (depth > maxDepth) {
+        return []
+    }
+    if (budget.remaining <= 0) {
+        budget.truncated = true
         return []
     }
     
@@ -134,6 +224,11 @@ function buildFileTree(
         const entries = fs.readdirSync(dirPath, { withFileTypes: true })
         
         for (const entry of entries) {
+            if (budget.remaining <= 0) {
+                budget.truncated = true
+                break
+            }
+
             const fullPath = path.join(dirPath, entry.name)
             const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
             
@@ -148,12 +243,13 @@ function buildFileTree(
             }
             
             if (entry.isDirectory()) {
-                const children = buildFileTree(fullPath, rootPath, patterns, depth + 1, maxDepth, customIgnorePatterns)
+                const children = buildFileTree(fullPath, rootPath, patterns, depth + 1, maxDepth, customIgnorePatterns, budget)
                 if (children.length > 0) {
                     node.children = children
                 }
             }
             
+            budget.remaining--
             nodes.push(node)
         }
         
@@ -208,16 +304,20 @@ function treeToLines(nodes: FileTreeNode[], prefix: string = ''): string[] {
  * @param customIgnorePatterns 自定义忽略模式
  * @returns 文件列表字符串，一行一个
  */
-function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2, customIgnorePatterns: string[] = []): string {
+function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES): string {
     // 解析 .gitignore
     const gitignorePath = path.join(workspacePath, '.gitignore')
     const patterns = parseGitignore(gitignorePath)
     
-    // 构建文件树
-    const tree = buildFileTree(workspacePath, workspacePath, patterns, 0, maxDepth, customIgnorePatterns)
+    // 构建文件树（带节点预算）
+    const budget: FileTreeBudget = { remaining: Math.max(0, nodeBudget), truncated: false }
+    const tree = buildFileTree(workspacePath, workspacePath, patterns, 0, maxDepth, customIgnorePatterns, budget)
     
-    // 转换为行列表
+    // 转换为行列表；预算耗尽时追加截断标记，让模型知道文件树不完整
     const lines = treeToLines(tree)
+    if (budget.truncated) {
+        lines.push(`... (file tree truncated: exceeded ${nodeBudget} nodes)`)
+    }
     
     return lines.join('\n')
 }
@@ -228,7 +328,7 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
  * @param customIgnorePatterns 自定义忽略模式
  * @returns 文件列表字符串，一行一个
  */
-export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns: string[] = []): string {
+export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES): string {
     const workspaceFolders = vscode.workspace.workspaceFolders
     if (!workspaceFolders || workspaceFolders.length === 0) {
         return ''
@@ -236,7 +336,7 @@ export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns:
     
     // 单工作区模式
     if (workspaceFolders.length === 1) {
-        return getSingleWorkspaceFileTree(workspaceFolders[0].uri.fsPath, maxDepth, customIgnorePatterns)
+        return getSingleWorkspaceFileTree(workspaceFolders[0].uri.fsPath, maxDepth, customIgnorePatterns, nodeBudget)
     }
     
     // 多工作区模式
@@ -245,7 +345,7 @@ export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns:
     for (const folder of workspaceFolders) {
         const workspaceName = folder.name
         const workspacePath = folder.uri.fsPath
-        const fileTree = getSingleWorkspaceFileTree(workspacePath, maxDepth, customIgnorePatterns)
+        const fileTree = getSingleWorkspaceFileTree(workspacePath, maxDepth, customIgnorePatterns, nodeBudget)
         
         if (fileTree) {
             // 添加工作区标题和缩进的文件树

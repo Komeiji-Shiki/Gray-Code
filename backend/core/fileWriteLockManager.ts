@@ -6,6 +6,9 @@
  * 修改目的：后来者收到"该文件正被 X 修改，先处理任务其他部分，稍后再回来"的提示，由 LLM 自行调度，避免死等与死锁。
  */
 
+import * as path from 'path';
+import { resolveFileToolPathWithInfo } from '../tools/utils';
+
 /**
  * 锁持有者标识。
  */
@@ -56,6 +59,34 @@ export function normalizeLockPath(rawPath: string): string {
     // 折叠重复分隔符
     p = p.replace(/\/{2,}/g, '/');
     return p.toLowerCase();
+}
+
+/**
+ * 把写目标原始路径解析为绝对规范路径（锁 key 的输入）。
+ *
+ * 修改原因：旧实现直接用模型提供的原始路径做锁 key，只做大小写/分隔符/./前缀归一，
+ * 不解析 .. 与相对/绝对路径等价关系——同一物理文件的不同写法会得到不同 key，
+ * 可以绕过互斥锁导致并行覆盖。
+ * 修改方式：加锁前统一解析为绝对规范形式：
+ * - 空串 '' 保持 ''（整个 workspace 根锁，与所有路径互斥；checkpoint 存档锁依赖此语义）；
+ * - 相对路径 / 工作区前缀路径 / file:// URI 复用 resolveFileToolPathWithInfo 解析为绝对
+ *   fsPath（保留多工作区前缀与工作区外绝对路径语义，与工具侧解析口径一致）；
+ * - 解析失败（无工作区、多工作区未加前缀等）回退 path.resolve，保证同一写法仍映射到同一 key。
+ */
+export function resolveLockPath(rawPath: string): string {
+    const trimmed = String(rawPath || '').trim();
+    if (trimmed === '') {
+        return '';
+    }
+    try {
+        const info = resolveFileToolPathWithInfo(trimmed);
+        if (info.uri?.fsPath) {
+            return info.uri.fsPath;
+        }
+    } catch {
+        // 解析异常时回退 path.resolve，保持确定性
+    }
+    return path.resolve(trimmed);
 }
 
 /**
@@ -156,7 +187,8 @@ export class FileWriteLockManager {
     private readonly locks = new Map<string, LockEntry>();
 
     tryAcquire(paths: string[], holder: LockHolder): TryAcquireResult {
-        const keys = paths.map(p => ({ key: normalizeLockPath(p), display: p }));
+        // 锁 key 使用绝对规范路径：同一物理文件的不同写法（.. / 相对 / 绝对 / file://）归一为同一 key
+        const keys = paths.map(p => ({ key: normalizeLockPath(resolveLockPath(p)), display: p }));
         const conflicts: LockConflict[] = [];
 
         for (const { key } of keys) {
@@ -224,7 +256,8 @@ export class FileWriteLockManager {
 
     release(paths: string[], holder: LockHolder): void {
         for (const p of paths) {
-            const key = normalizeLockPath(p);
+            // 与 tryAcquire 使用同一解析结果，保证等价写法能正确释放
+            const key = normalizeLockPath(resolveLockPath(p));
             const entry = this.locks.get(key);
             if (!entry || entry.holder.id !== holder.id) {
                 continue;

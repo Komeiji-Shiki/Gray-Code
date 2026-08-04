@@ -24,6 +24,58 @@ import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
 
 /**
+ * 判断字段名是否属于敏感字段（API Key、Token、密钥等）
+ */
+function isSensitiveFieldName(name: string): boolean {
+    return /^(api[-_]?key|apikey|authorization|x-api-key|access[-_]?token|auth[-_]?token|secret|password|token)$/i.test(name);
+}
+
+/**
+ * 判断对象是否为 { key, value, enabled } 形态的键值条目
+ *
+ * customHeaders 与 customBody.items 中的条目都符合此形态
+ */
+function isKeyValueItem(obj: Record<string, unknown>): boolean {
+    return typeof obj.key === 'string' && 'enabled' in obj;
+}
+
+/**
+ * 递归脱敏配置中的敏感信息（不修改原对象，返回新对象）
+ *
+ * 仅用于 exportConfig 的 includeSensitive=false 路径：
+ * - 任意层级的 apiKey / token / secret / authorization 等字段 → '***REDACTED***'
+ * - customHeaders 条目（{ key, value, enabled }）的 value（可能为 Authorization）→ '***REDACTED***'
+ * - customBody 条目的 value 及 advanced 模式的 json（可能内嵌密钥）→ '***REDACTED***'
+ */
+function redactSensitiveConfig(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((item) => redactSensitiveConfig(item));
+    }
+    if (value === null || typeof value !== 'object') {
+        return value;
+    }
+    
+    const source = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    
+    for (const [key, val] of Object.entries(source)) {
+        if (isSensitiveFieldName(key)) {
+            result[key] = '***REDACTED***';
+        } else if (key === 'value' && typeof val === 'string' && isKeyValueItem(source)) {
+            // customHeaders / customBody 条目的 value：可能为 Authorization 或内嵌密钥的 JSON
+            result[key] = '***REDACTED***';
+        } else if (key === 'json' && typeof val === 'string') {
+            // customBody advanced 模式：整个 JSON 字符串可能内嵌密钥
+            result[key] = '***REDACTED***';
+        } else {
+            result[key] = redactSensitiveConfig(val);
+        }
+    }
+    
+    return result;
+}
+
+/**
  * 配置管理器
  * 
  * 提供统一的配置管理接口，支持多种 LLM API 格式
@@ -602,16 +654,15 @@ export class ConfigManager {
             throw new Error(t('modules.config.errors.configNotFound', { configId }));
         }
         
-        const exported = { ...config };
-        
-        // 移除敏感信息
+        // 不包含敏感信息：递归脱敏
+        // 覆盖 apiKey、customHeaders 的 value（如 Authorization）、
+        // customBody 的 value/json、tokenCountApiConfig.apiKey 等嵌套敏感字段
         if (!options.includeSensitive) {
-            if ('apiKey' in exported) {
-                (exported as any).apiKey = '***REDACTED***';
-            }
+            return redactSensitiveConfig(config);
         }
         
-        return exported;
+        // 包含敏感信息：原样导出（getConfig 已返回深拷贝，无需再复制）
+        return config;
     }
     
     /**

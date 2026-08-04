@@ -12,7 +12,7 @@ export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'
 
 /** 支持的语言 */
-export type Language = 'zh-CN' | 'en'
+export type Language = 'zh-CN' | 'en' | 'ja'
 
 export const useSettingsStore = defineStore('settings', () => {
   // 当前视图（默认为聊天）

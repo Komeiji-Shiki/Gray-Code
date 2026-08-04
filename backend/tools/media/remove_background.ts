@@ -14,7 +14,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
-import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, formatFileSize } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -22,6 +23,16 @@ import { getSharp } from '../../modules/dependencies';
 
 /** 抠图任务类型常量 */
 const TASK_TYPE_REMOVE_BG = 'remove_background';
+
+/** 抠图输入文件大小上限：超过后先拦截，避免超大图全量读入内存并浪费 API 调用 */
+const MAX_REMOVE_BG_IMAGE_BYTES = 50 * 1024 * 1024;
+/** 逐像素合成最大像素数（约 16MP，4096x4096 为边界值）：超过后在主线程逐像素循环会长时间阻塞并分配数百 MB 缓冲 */
+const MAX_REMOVE_BG_PIXELS = 16 * 1024 * 1024;
+
+/** 生成图片过大的可读错误（供 API 调用前与逐像素合成前两处共用） */
+function buildRemoveBgImageTooLargeError(index: number, width: number, height: number): string {
+    return `Task ${index + 1}: Image is too large (${width}x${height} = ${width * height} pixels, limit ${MAX_REMOVE_BG_PIXELS.toLocaleString()} ≈ 16MP). Resize the image first (e.g. resize_image) before removing the background.`;
+}
 
 /**
  * 抠图输出事件类型
@@ -125,10 +136,18 @@ interface GeminiImageResponse {
 /**
  * 读取图片文件
  */
-async function readImageFile(imagePath: string): Promise<{ data: Buffer; mimeType: string } | null> {
-    const uri = resolveUri(imagePath);
+async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
     if (!uri) {
         return null;
+    }
+
+    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
+    if (isOutsideWorkspace) {
+        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context);
+        if (readAccessError) {
+            return null;
+        }
     }
 
     try {
@@ -415,7 +434,8 @@ async function executeRemoveTask(
     task: RemoveTask,
     index: number,
     config: RemoveBackgroundConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    context?: ToolContext
 ): Promise<TaskResult> {
     const { image_path, output_path, subject_description, mask_path } = task;
 
@@ -435,9 +455,18 @@ async function executeRemoveTask(
         }
 
         // 1. 读取原图
-        const imageFile = await readImageFile(image_path);
+        const imageFile = await readImageFile(image_path, context);
         if (!imageFile) {
             return { index, success: false, error: `Task ${index + 1}: Cannot read image: ${image_path}` };
+        }
+
+        // 输入文件大小护栏：超大图全量读入后还会 base64 编码并发送给 API，先按文件大小拦截。
+        if (imageFile.data.byteLength > MAX_REMOVE_BG_IMAGE_BYTES) {
+            return {
+                index,
+                success: false,
+                error: `Task ${index + 1}: Image file is too large (${formatFileSize(imageFile.data.byteLength)}, limit ${formatFileSize(MAX_REMOVE_BG_IMAGE_BYTES)}). Resize the image (e.g. resize_image) before removing the background.`
+            };
         }
 
         const base64Data = imageFile.data.toString('base64');
@@ -449,6 +478,14 @@ async function executeRemoveTask(
         try {
             const rawDimensions = await getImageDimensionsAsync(imageFile.data, imageFile.mimeType);
             if (rawDimensions) {
+                // 像素数护栏：超大图（如 50MP）在 API 调用后的逐像素合成会长时间阻塞主线程，先拦截，避免浪费 API 调用。
+                if (rawDimensions.width * rawDimensions.height > MAX_REMOVE_BG_PIXELS) {
+                    return {
+                        index,
+                        success: false,
+                        error: buildRemoveBgImageTooLargeError(index, rawDimensions.width, rawDimensions.height)
+                    };
+                }
                 const ratio = calculateAspectRatio(rawDimensions.width, rawDimensions.height);
                 dimensions = {
                     width: rawDimensions.width,
@@ -485,9 +522,13 @@ async function executeRemoveTask(
         }
 
         // 3. 保存遮罩图（如果指定了路径）
+        // 语义特殊：按读路径处理（resolveFileToolPathWithInfo + read 策略审批）
         if (mask_path) {
-            const maskUri = resolveUri(mask_path);
-            if (maskUri) {
+            const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path);
+            const maskAccessError = maskOutside
+                ? ensureOutsideWorkspaceAccessApproved('read_file', { path: mask_path }, context)
+                : null;
+            if (maskUri && !maskAccessError) {
                 const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
                 try {
                     await vscode.workspace.fs.createDirectory(maskDirUri);
@@ -512,9 +553,21 @@ async function executeRemoveTask(
         
         const maskBuffer = Buffer.from(maskImage.data, 'base64');
         const originalMeta = await sharp(imageFile.data).metadata();
+
+        // 像素数护栏（权威兜底）：逐像素合成是主线程 width*height 次 JS 循环，进入前必须校验尺寸。
+        // 此处以 sharp metadata（合成循环实际使用的尺寸源）为准，即使前面 getImageDimensionsAsync 失败也能拦截。
+        if (originalMeta.width && originalMeta.height && originalMeta.width * originalMeta.height > MAX_REMOVE_BG_PIXELS) {
+            return {
+                index,
+                success: false,
+                error: buildRemoveBgImageTooLargeError(index, originalMeta.width, originalMeta.height)
+            };
+        }
         
+        // 显式 fit: 'fill'：遮罩必须无裁切地拉伸到原图尺寸，否则宽高比不一致时
+        // 默认 fit: 'cover' 会裁掉遮罩边缘，导致主体缺失/错位
         const resizedMask = await sharp(maskBuffer)
-            .resize(originalMeta.width, originalMeta.height)
+            .resize(originalMeta.width, originalMeta.height, { fit: 'fill' })
             .greyscale()
             .raw()
             .toBuffer();
@@ -546,9 +599,17 @@ async function executeRemoveTask(
             .toBuffer();
 
         // 保存结果
-        const outputUri = resolveUri(output_path);
+        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
+        }
+
+        // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
+        if (outputOutside) {
+            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context);
+            if (writeAccessError) {
+                return { index, success: false, error: `Task ${index + 1}: ${writeAccessError}` };
+            }
         }
 
         const dirUri = vscode.Uri.joinPath(outputUri, '..');
@@ -757,7 +818,7 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
             try {
                 // 并发执行所有任务
                 const results = await Promise.all(
-                    tasks.map((task, index) => executeRemoveTask(task, index, config, abortSignal))
+                    tasks.map((task, index) => executeRemoveTask(task, index, config, abortSignal, context))
                 );
 
                 // 统计结果

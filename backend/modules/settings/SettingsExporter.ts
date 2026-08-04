@@ -521,7 +521,10 @@ export class SettingsExporter {
         const lines: string[] = [];
         lines.push('---');
         lines.push(`name: ${skill.name}`);
-        lines.push(`description: ${skill.description}`);
+        // description 用 JSON.stringify 生成双引号 YAML 标量：
+        // 不加引号直接写入时，含换行/引号/冒号行的描述导出再导入后 frontmatter 解析错乱。
+        // 解析端（SkillsManager.parseFrontmatter）配套支持双引号值反转义，保证往返一致。
+        lines.push(`description: ${JSON.stringify(skill.description)}`);
         lines.push('---');
         lines.push('');
         lines.push(skill.content);
