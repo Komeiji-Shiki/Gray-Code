@@ -8,7 +8,10 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-04
+
 ### Changed
+  - SubAgent Monitor 运行列表改多行布局（用户反馈）：run tabs 从单行横向滚动改为 `flex-wrap` 自动换行，tab 在行内伸展铺满（`flex: 1 1 170px`），子 agent 数量多时不再横向翻找；限制最大高度约 3 行，run 极多时退化为纵向滚动，不占满整个面板
   - Diff 应用与展示性能重构：`apply_diff`、`write_file`、`search_in_files` 共用带编辑距离预算的 Myers 行级差分，移除 Webview 主线程上的二维 LCS 表和模板内同一 diff 最多 5 次重复计算；每个文件/块改为响应式缓存一次统计与行结果，超长展开内容通过 `VirtualDiffLines` 仅渲染可视窗口，降低大文件和批量替换时的 CPU、内存与 DOM 开销
   - 后端 diff 应用增加快速路径：互不重叠且唯一匹配的结构化 hunks 先规划位置并一次拼接文件，保留依赖前序修改、缩进容错和歧义场景的原逐块语义；unified patch 改为整块单次 `splice`，fallback 先按首行筛选候选再校验完整块，避免逐行修改数组和无条件嵌套扫描
   - 存档排除配置编辑器美化：设置页「自定义排除模式」与「每类别模式编辑」从裸 textarea 改为 chips 风格模式列表编辑器（`PatternListEditor`）——已有模式以标签卡片展示、悬停逐个删除，输入框回车添加、粘贴多行自动拆条去重，添加/删除即时保存；类别编辑面板补充标题栏与「清空（恢复默认）」按钮并补齐样式；自定义模式标签旁新增规则数量徽标；三语文案同步
@@ -44,6 +47,7 @@
   - 本轮新增测试：子 agent 嵌套（15 例：深度限制/父过滤传播/级联清理）、用户消息插入（8 例：忙时投递/频率限制/失败回退）、分支接线（BranchService 23 + BranchHandlers 6 + BranchGraph 扩展 5）、迁移与完整性（BranchMigration 15 + integrityCheck 32）、复审修复（用量重建/队列超时/重读校验/原子化 9、agentInbox 剥离 11、错误码与重试 8、前端 UX 9、嵌套权限逃逸回归 等）
 
 ### Fixed
+  - 修复 SubAgent Monitor 面板抢走 diff 预览位置（用户反馈）：`vscode.diff` 不带 viewColumn 时在「当前活动编辑器组」打开，焦点在 Monitor（Beside 列）时 diff 会开在 Monitor 旁边而非主聊天侧；现在 Monitor 路由上下文下发 `diffViewColumn`（经 tabGroups 按 viewType 定位主聊天所在列，侧边栏时回退主区域第一列），`openDiffView` 显式传 `viewColumn`——无论焦点在哪，diff 都固定跟随主聊天所在列；`HandlerContext` 新增 `diffViewColumn` 字段，主聊天自己发起的 diff 行为不变
   - 修复前台 SubAgent 转后台（detach）机制的三处残留缺陷（复查 R7c）：① 循环顶部/工具执行前/启动检查三处取消判定仍裸读父 abortSignal，转后台的 run 在后续迭代或工具调用前仍会被旧流 abort 杀死（绝大多数真实场景失效）——统一改为 `parentAbort()`（detached 后视为无父信号）；② 排队期间 detach 后，acquire 成功时启动检查与超时桥（对已 abort 信号注册的 onParentAbort）仍会杀掉 run——超时桥注册加 `!detachedFromParent` 保护；③ detach 把 acquire 桥的 run 控制信号监听一并移除，排队中已转后台的 run 失去 Monitor 终止响应——acquire 桥拆分父信号/控制信号两部分，detach 只摘父信号；新增回归测试（多轮迭代继续执行、排队-detach 继续执行）
   - 修复用户发消息时前台子 agent 被连带杀掉（用户实测）：此前新流启动（StreamAbortManager.create）会 abort 旧流，而前台 SubAgent 的 abort 信号挂在主会话工具循环上，旧流取消会连带终止还在干活的子代理；现在 `SubAgentRunController` 增加 `attachedToParent` 标记与 `detachFromParent`（转后台）能力——`StreamAbortManager.create` 在 abort 旧流**之前**先把该会话活跃前台 SubAgent 转为后台（executor 同步解绑父 abort 信号的组合监听、排队唤醒桥与超时桥），run 继续执行至完成，结果经 Monitor/事件总线呈现（广播 `run_detached` 事件）；后台 run（attachedToParent=false）不受影响，保留 TaskManager 取消能力；新增回归测试 11 例（runController detach 语义 5、StreamAbortManager 转后台矩阵 4、executor 集成含对照组 2）
   - 修复后台子 agent 完成消息被截断（用户实测）：`buildSubAgentSection` 此前把后台 SubAgent 最终报告按 4000 字符截断，并以 `[Truncated N more characters. Open Monitor to view the full transcript.]` 收尾，而 Monitor 是人类 UI、主模型没有访问路径，研究/审查报告被腰斩（前台不传 background 的回复完整，因 functionResponse 无截断）；现在回执完整内联结果正文，与前台载荷同规格——完整结果本就要经 postMessage 转发给 Monitor（现状无截断），回执再经 chatStream 与普通用户消息同路径发送，无新增载荷上限；新增回归测试锁定超长报告不再截断
