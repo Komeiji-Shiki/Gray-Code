@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>一个面向 VS Code 的 AI 编程助手扩展</strong>
+  <strong>AI 编程助手：VS Code 扩展 + 独立桌面版（免安装）</strong>
 </p>
 
 <p align="center">
@@ -18,13 +18,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
-> 💡 **不想装 VS Code？** 试试 [GrayCode Desktop](electron-app/README.md) —— 基于本插件的桌面版，内置 `vscode-shim` 兼容层，无需安装 VS Code（Windows / macOS / Linux）。
+> 🚀 **GrayCode Desktop（独立桌面版）** —— 无需安装 VS Code，开箱即用（Windows / macOS / Linux）。
+>
+> 最新版下载（[Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)）：
+> [安装版](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [免安装便携版](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [免安装 zip](https://github.com/czocelot/Gray-Code-ocelot/releases/latest)
+>
+> 本仓库同时维护基于上游 [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code) 的 VS Code 扩展，桌面版与扩展共享同一套 backend / frontend / webview 代码。
 
 ---
 
@@ -41,7 +46,7 @@
 - [上下文与提示词](#上下文与提示词)
 - [MCP Skills and Sub-Agents](#mcp-skills-and-sub-agents)
 - [数据存储与同步](#数据存储与同步)
-- [安装与更新](#安装与更新)
+- [安装与更新（桌面版下载 / 版本更新方法）](#安装与更新)
 - [本地开发](#本地开发)
 - [项目结构](#项目结构)
 - [常见问题](#常见问题)
@@ -81,8 +86,9 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 **子代理（Sub-Agents）** —— 可配置专用子代理限定工具集与提示词；子代理支持嵌套（子代理可再派生子代理，深度上限 2，权限继承父级）；支持前台/后台两种模式，后台子代理通过任务栏查看与取消；用户发送新消息时前台子代理自动转为后台继续运行而不会被中断；子代理之间及与主对话之间可通过 `agent_send_message` 互相通信（信箱机制，随最近一次工具调用结果注入）。
 
-HEAD
 ## 快速开始
+
+> 💡 **桌面版用户**：下载并打开 GrayCode Desktop 后直接进入聊天页，以下步骤与扩展版完全一致。
 
 1. **安装并打开聊天面板** —— 安装扩展后点击 VS Code 左侧活动栏的 Gray Code 图标，或在命令面板执行 `GrayCode: 打开聊天面板`。
 2. **新建并配置渠道** —— 打开聊天面板右上角设置 → 渠道，点击新建渠道，选择渠道类型（Gemini、OpenAI Compatible、OpenAI Responses 或 Anthropic），填写 API URL 和 API Key，添加或拉取模型列表，选择默认模型。流式输出、工具模式、思考配置、自动重试等高级选项按需开启。
@@ -90,7 +96,6 @@ HEAD
 4. **开始对话** —— 输入需求即可。
 
 第一次可以试试：「请阅读这个项目的结构，告诉我主要模块分别负责什么，并给出上手建议」，或者「请帮我定位为什么某个功能异常。先搜索相关代码，分析原因，确认方案后再修改」。
-pstream/main
 
 ## 模型渠道配置
 
@@ -176,16 +181,36 @@ pstream/main
 
 ## 安装与更新
 
+### GrayCode Desktop（桌面版，推荐）
+
+无需安装 VS Code，内置 `vscode-shim` 兼容层，功能与扩展版一致（Windows x64 / macOS / Linux）。
+
+**首次安装**
+
+- **安装版**：下载 `GrayCode.Setup.<版本>.exe`，双击运行，安装目录可自选
+- **免安装便携版**：下载 `GrayCode-Portable-<版本>.exe`，双击即用；或下载 `GrayCode-<版本>-win.zip`，解压后运行 `GrayCode.exe`
+- 数据默认保存在程序目录旁的 `data/` 文件夹（删除程序目录即完成卸载）；可通过 `--user-data-dir <路径>` 或环境变量 `GRAYCODE_USER_DATA_DIR` 指定数据位置
+- 安装包未做代码签名，首次运行出现 SmartScreen / 系统安全提示属正常，选择「仍要运行」即可
+
+**更新版本（桌面版用户）**
+
+- **安装版**：下载并运行新版安装程序覆盖安装即可，设置与对话数据自动保留
+- **便携版**：下载新版 exe / zip 替换旧程序文件即可，`data/` 数据目录保留
+- 升级前如担心数据，可先备份 `data/` 目录，或在设置 → 通用中「导出设置」
+- 下载地址：[GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)
+
+### VS Code 扩展版
+
 要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
 
-**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
+**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
 
 **从源码构建并安装** —— 当前仓库使用并提交 `package-lock.json`，统一使用 npm：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
-cd Gray-Code
+git clone https://github.com/czocelot/Gray-Code-ocelot.git
+cd Gray-Code-ocelot
 
 # 安装根目录依赖
 npm ci
@@ -199,6 +224,18 @@ npm run build
 # 打包 VSIX
 npx @vscode/vsce package
 ```
+
+### 开发者：发布新版本 / 同步上游更新
+
+本仓库是基于上游 [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code) 的 fork，发布新版本的完整流程：
+
+1. **同步上游**：`git fetch upstream && git merge upstream/main`，解决冲突时保留本仓库的 fork 增量（electron-app / 变更查看面板 / 安全护栏等），参考仓库既有的 `merge: 合入上游 vX.Y.Z` 提交的处理方式
+2. **更新版本号**：修改根目录 `package.json` 与 `electron-app/package.json` 的 `version` 字段
+3. **更新变更日志**：在根目录 `CHANGELOG.md` 与 `electron-app/CHANGELOG.md` 添加对应版本条目
+4. **验证**：`npm run typecheck`、`npm test`、`npm --prefix frontend run test`、`npm run build`（扩展版构建）；`npm --prefix electron-app run e2e`（桌面版端到端回归）
+5. **打包桌面版**：`npm --prefix electron-app run dist:win`，产物在 `electron-app/release/`（安装版 / 便携版 / zip；macOS / Linux 使用 `dist:mac` / `dist:linux`）
+6. **打 tag 并发布**：`git tag v<版本> && git push origin v<版本>`，然后在 GitHub Releases 创建发布、填写变更说明并上传 `electron-app/release/` 下的产物
+7. **（可选）回传上游**：将本仓库的改进通过 Pull Request 提交回上游仓库，注意先完成步骤 1 保证与上游同步、无冲突
 
 ## 本地开发
 
@@ -217,6 +254,7 @@ Gray-Code/
 │   ├── core/                # 核心上下文、日志等
 │   ├── modules/             # 渠道、配置、会话、MCP、提示词、设置等模块
 │   └── tools/               # 内置工具实现
+├── electron-app/            # GrayCode Desktop（Electron 桌面版，内置 vscode-shim）
 ├── frontend/                # Vue 3 + Pinia + Vite Webview 前端
 │   ├── src/__tests__/       # 前端 Vitest 测试
 │   ├── src/components/      # 聊天、输入区、设置页等组件
