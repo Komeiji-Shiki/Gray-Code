@@ -4,6 +4,12 @@
  * 定义全局设置的类型和接口
  */
 
+import type { CheckpointExclusionConfig } from '../checkpoint/types';
+import {
+    DEFAULT_ENABLED_PROFILES,
+    DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES
+} from '../checkpoint/CheckpointExclusionProfiles';
+
 /**
  * 工具启用状态配置
  *
@@ -464,8 +470,17 @@ export interface CheckpointConfig {
     
     /**
      * 自定义忽略模式（追加到默认 .gitignore 规则）
+     *
+     * @deprecated 遗留字段：新写入请使用 `exclusion.customPatterns`；
+     * 读取时两者都会生效（customIgnorePatterns 在前）。
      */
     customIgnorePatterns?: string[];
+
+    /**
+     * 排除配置（EX-08）：默认排除类别开关、单文件大小上限、自定义排除模式。
+     * 缺省时按 DEFAULT_CHECKPOINT_CONFIG 的默认值处理（类别全开、50 MiB 上限）。
+     */
+    exclusion?: CheckpointExclusionConfig;
     
     [key: string]: unknown;
 }
@@ -1346,6 +1361,14 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
 
     /**
+     * 全局默认迭代次数（-1 表示无限制）。
+     *
+     * 未单独配置 maxIterations 的 agent（含 General Worker）继承该默认值；
+     * 单独配置的 agent 优先使用自己的 maxIterations。默认 80。
+     */
+    defaultMaxIterations?: number;
+
+    /**
      * 是否启用通用 Worker（傻瓜式多 agent 模式）。
      *
      * 启用后主模型可直接派发零配置的 "General Worker"：
@@ -1362,7 +1385,8 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     agents: [],
     maxConcurrentAgents: 3,
     failureModeAfterRetries: 'fail_parent_tool',
-    generalWorkerEnabled: true
+    generalWorkerEnabled: true,
+    defaultMaxIterations: 80
 };
 
 /**
@@ -1968,22 +1992,64 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
     beforeTools: [
         'apply_diff',
         'write_file',
+        'insert_code',
         'delete_file',
+        'delete_code',
         'create_directory',
         'execute_command',
-        'generate_image'
+        'search_in_files',
+        'generate_image',
+        'remove_background',
+        'crop_image',
+        'resize_image',
+        'rotate_image',
+        'create_plan',
+        'update_plan',
+        'create_design',
+        'update_design',
+        'create_progress',
+        'update_progress',
+        'record_progress_milestone',
+        'create_review',
+        'record_review_milestone',
+        'finalize_review',
+        'reopen_review'
     ],
     afterTools: [
         'apply_diff',
         'write_file',
+        'insert_code',
         'delete_file',
+        'delete_code',
         'create_directory',
         'execute_command',
-        'generate_image'
+        'search_in_files',
+        'generate_image',
+        'remove_background',
+        'crop_image',
+        'resize_image',
+        'rotate_image',
+        'create_plan',
+        'update_plan',
+        'create_design',
+        'update_design',
+        'create_progress',
+        'update_progress',
+        'record_progress_milestone',
+        'create_review',
+        'record_review_milestone',
+        'finalize_review',
+        'reopen_review'
     ],
     messageCheckpoint: DEFAULT_MESSAGE_CHECKPOINT_CONFIG,
     maxCheckpoints: -1,  // -1 表示无上限
-    customIgnorePatterns: []
+    customIgnorePatterns: [],
+    // EX-08: 排除配置默认值（类别全开、单文件 50 MiB 上限、无自定义模式）
+    exclusion: {
+        enabledProfiles: { ...DEFAULT_ENABLED_PROFILES },
+        maxFileSizeBytes: DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
+        customPatterns: []
+    }
 };
 
 /**

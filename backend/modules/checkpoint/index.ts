@@ -8,7 +8,23 @@
  * - 后续检查点：始终使用增量备份，只存储与上一个检查点相比有变化的文件
  * - 无变化时：创建空的增量备份（不复制任何文件，只记录文件哈希）
  * - 恢复时：从增量链中查找每个文件的最新版本
+ *
+ * CPF-01/CPF-12：完整存档数据（fileHashes/fileStats/excluded/ignoreSnapshot）写入
+ * 独立 manifest（CheckpointManifestRepository），查询与保留策略拆分为独立服务。
  */
 
 export { CheckpointManager } from './CheckpointManager';
-export type { CheckpointRecord, FileChange } from './CheckpointManager';
+export type {
+    CheckpointRecord,
+    FileChange,
+    RestoreResult,
+    RestorePreviewResult,
+    CheckpointExcludedNote,
+    BatchCheckpointDeleteItem,
+    BatchCheckpointDeleteResult
+} from './CheckpointManager';
+export { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from './CheckpointManifestRepository';
+export { CheckpointQueryService } from './CheckpointQueryService';
+export { CheckpointRetentionService } from './CheckpointRetentionService';
+export { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, CheckpointAbortError, throwIfAborted } from './checkpointConcurrency';
+export type { CheckpointManifest, CheckpointSummary, CheckpointOperationProgress } from './types';

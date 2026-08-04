@@ -73,6 +73,7 @@ import {
   getCheckpointsForMessage as getCheckpointsFn,
   hasCheckpoint as hasCheckpointFn,
   addCheckpoint as addCheckpointFn,
+  previewRestore as previewRestoreFn,
   restoreCheckpoint as restoreCheckpointFn,
   restoreAndRetry as restoreAndRetryFn,
   restoreAndDelete as restoreAndDeleteFn,
@@ -95,6 +96,7 @@ import {
   retryLastMessage as retryLastMessageFn,
   retryFromMessage as retryFromMessageFn,
   retryAfterError as retryAfterErrorFn,
+  dismissError as dismissErrorFn,
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
@@ -190,6 +192,7 @@ export const useChatStore = defineStore('chat', () => {
   const retryFromMessage = (messageIndex: number) => 
     retryFromMessageFn(state, computed, messageIndex, cancelStream)
   const retryAfterError = () => retryAfterErrorFn(state, computed)
+  const dismissError = () => dismissErrorFn(state)
   
   const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[]) =>
     editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream)
@@ -479,13 +482,15 @@ export const useChatStore = defineStore('chat', () => {
   const getCheckpointsForMessage = (messageIndex: number) => getCheckpointsFn(state, messageIndex)
   const hasCheckpoint = (messageIndex: number) => hasCheckpointFn(state, messageIndex)
   const addCheckpoint = (checkpoint: any) => addCheckpointFn(state, checkpoint)
-  const restoreCheckpoint = (checkpointId: string) => restoreCheckpointFn(state, checkpointId)
-  const restoreAndRetry = (messageIndex: number, checkpointId: string) =>
-    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream)
-  const restoreAndDelete = (messageIndex: number, checkpointId: string) =>
-    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream)
-  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string) =>
-    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream)
+  const previewRestore = (checkpointId: string) => previewRestoreFn(state, checkpointId)
+  const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean) =>
+    restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles)
+  const restoreAndRetry = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
+    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked)
+  const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
+    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked)
+  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean) =>
+    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
 
@@ -664,6 +669,8 @@ export const useChatStore = defineStore('chat', () => {
     pendingToolCalls: computed.pendingToolCalls,
     todoSnapshot,
     checkpointsByMessageIndex,
+    previewRestore,
+    isRestorePreviewing: state.isRestorePreviewing,
 
     // 对话管理
     createNewConversation,
@@ -681,6 +688,7 @@ export const useChatStore = defineStore('chat', () => {
     retryLastMessage,
     retryFromMessage,
     retryAfterError,
+    dismissError,
     cancelStream,
     rejectPendingToolsWithAnnotation,
     editAndRetry,

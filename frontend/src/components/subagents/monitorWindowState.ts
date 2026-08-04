@@ -128,6 +128,39 @@ export function replaceRunContentWindow(
 }
 
 /**
+ * 尾部校准窗口合并（保留用户已加载的更早历史）。
+ *
+ * 修改原因（P3）：工具调用/内容更新事件到达时，Monitor 会对聚焦 run 重新拉取“最新 20 条”尾部窗口并整体替换，
+ * 用户通过“加载更早消息”prepend 进来的历史被一并清掉，阅读位置被弹回最新页。
+ * 修改方式：当 incoming 是新的尾部窗口且当前窗口存在早于 incoming.startIndex 的前缀时，
+ *          只替换重叠/尾部部分，前缀原对象引用保留；没有前缀时退化为纯 replace。
+ * 修改目的：工具调用触发的刷新只更新消息内容，不重置用户正在阅读的窗口位置。
+ */
+export function replaceRunContentWindowPreservingPrefix(
+  incoming: SubAgentRunContentWindowState | undefined,
+  current?: SubAgentRunContentWindowState
+): SubAgentRunContentWindowState | undefined {
+  if (!shouldApplyRunContentWindow(current, incoming)) return current
+  if (!incoming) return current
+  if (!current || current.runId !== incoming.runId) return incoming
+
+  // 计算当前窗口中严格早于 incoming.startIndex 的前缀（“加载更早消息”prepend 的部分）
+  const prefix = (current.contents || []).filter((content, offset) => {
+    const backendIndex = typeof content.index === 'number' ? content.index : current.startIndex + offset
+    return backendIndex < incoming.startIndex
+  })
+  if (prefix.length === 0) return incoming
+
+  return {
+    ...incoming,
+    contents: [...prefix, ...(incoming.contents || [])],
+    startIndex: Math.min(current.startIndex, incoming.startIndex),
+    // 前缀仍在窗口内，能否继续往前加载取决于前缀所在窗口的信息
+    hasMoreBefore: current.hasMoreBefore
+  }
+}
+
+/**
  * 当前窗口是否已落后于后端 transcript。
  *
  * 修改原因：Monitor 过去只判断"有没有窗口缓存"，于是两个相反的毛病同时存在：

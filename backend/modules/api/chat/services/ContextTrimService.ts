@@ -278,7 +278,8 @@ export class ContextTrimService {
         dynamicContextStrategy: DynamicContextStrategy = 'single'
     ): Promise<ContextTrimInfo & { normalization: NormalizedTrimStartResult }> {
         const normalization = this.normalizeTrimStartIndex(fullHistory, minimumStartIndex, candidateStartIndex);
-        const history = await this.conversationManager.getHistoryForAPI(conversationId, {
+        // HIS-03/04：调用方已加载 fullHistory，直接复用格式化，避免同一迭代内第二次 loadHistory
+        const history = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
             ...historyOptions,
             startIndex: normalization.startIndex,
             includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
@@ -580,7 +581,8 @@ export class ContextTrimService {
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
+            // HIS-03/04：fullHistory 已在上面加载，直接复用，避免同一迭代内第二次 loadHistory
+            const history = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
                 startIndex: 0,
                 includeTurnDynamicContext: dynamicContextStrategy === 'preserve'

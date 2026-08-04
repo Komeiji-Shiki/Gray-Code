@@ -16,6 +16,118 @@ function isVisibleWindowMessage(message: Message): boolean {
   return message.isFunctionResponse !== true
 }
 
+/**
+ * 可见消息增量缓存（HIS-12）。
+ *
+ * 背景：messages computed 对流式期间的每次 chunk 变更都会全窗口重扫
+ * （≤800 条 filter），形成 O(n) / chunk 的扫描成本。
+ *
+ * 正确性依据（本仓库的变更模式）：
+ * - 消息的可见性（isFunctionResponse）在消息对象创建后不变；
+ * - 流式期间 replaceMessageAt 只原地替换“流式消息”（窗口最后一个元素，同 id 同长度）；
+ * - 追加/删除/整体替换都会改变数组引用或长度；
+ * - 中间位置的同长度替换会命中陈旧缓存（指纹只校验首尾元素）——state.replaceMessageAt 在
+ *   index !== length-1 时主动 clearVisibleChatMessagesCache（L1），其余修改全部产生新数组引用。
+ *
+ * 因此缓存可用 (sourceRef, sourceLength, first, last) 四个 O(1) 指纹验证：
+ * 指纹不匹配 → 全量重建；仅尾部追加 → 只过滤新增尾部；仅尾部替换 → 原地更新缓存尾元素。
+ * 任何指纹变化（含未知变更）都回退全量 filter，不产生陈旧数据。
+ */
+interface VisibleMessagesCacheEntry {
+  source: Message[]
+  sourceLength: number
+  firstSourceElement: Message | undefined
+  lastSourceElement: Message | undefined
+  visible: Message[]
+}
+
+const visibleMessagesCache = new WeakMap<ChatStoreState, VisibleMessagesCacheEntry>()
+
+export function getVisibleChatMessagesCached(state: ChatStoreState): Message[] {
+  const source = state.allMessages.value
+  const cached = visibleMessagesCache.get(state)
+
+  const buildFull = (): Message[] => {
+    const visible = source.filter(isVisibleWindowMessage)
+    visibleMessagesCache.set(state, {
+      source,
+      sourceLength: source.length,
+      firstSourceElement: source[0],
+      lastSourceElement: source[source.length - 1],
+      visible
+    })
+    return visible
+  }
+
+  if (!cached || cached.source !== source) {
+    return buildFull()
+  }
+
+  if (source.length < cached.sourceLength) {
+    // 有元素被移除（splice / 截断 / 未知变更）：全量重建
+    return buildFull()
+  }
+
+  if (source.length === cached.sourceLength) {
+    // 同长度：首元素变化 = 未知结构性变更 → 重建；
+    // 仅尾部元素被替换（流式原地更新，同 id）→ 可见性不变，只把缓存尾元素指向新对象
+    if (source[0] !== cached.firstSourceElement) {
+      return buildFull()
+    }
+    const newLast = source[source.length - 1]
+    if (newLast === cached.lastSourceElement) {
+      // 完全未变（Vue 重复求值）：直接返回缓存
+      return cached.visible
+    }
+    const oldLast = cached.lastSourceElement
+    const lastVisibleIndex = cached.visible.length - 1
+    if (lastVisibleIndex >= 0 && cached.visible[lastVisibleIndex] === oldLast) {
+      if (isVisibleWindowMessage(newLast)) {
+        // 尾元素仍是可见消息：原地替换引用
+        const nextVisible = cached.visible.slice()
+        nextVisible[lastVisibleIndex] = newLast
+        visibleMessagesCache.set(state, {
+          source,
+          sourceLength: source.length,
+          firstSourceElement: source[0],
+          lastSourceElement: newLast,
+          visible: nextVisible
+        })
+        return nextVisible
+      }
+      // 尾元素从可见变为不可见（防御：正常流式不会发生）→ 重建
+      return buildFull()
+    }
+    // 尾元素之前缓存里没有它（异常态）→ 重建
+    return buildFull()
+  }
+
+  // 长度增长：可能是纯尾部追加，也可能是“尾部替换 + 追加”等组合。
+  // 若旧尾元素身份未变 → 只有追加，增量过滤新增尾部；否则重建。
+  if (cached.sourceLength > 0 && source[cached.sourceLength - 1] !== cached.lastSourceElement) {
+    return buildFull()
+  }
+  const added: Message[] = []
+  for (let i = cached.sourceLength; i < source.length; i++) {
+    if (isVisibleWindowMessage(source[i])) {
+      added.push(source[i])
+    }
+  }
+  const visible = added.length > 0 ? cached.visible.concat(added) : cached.visible
+  visibleMessagesCache.set(state, {
+    source,
+    sourceLength: source.length,
+    firstSourceElement: source[0],
+    lastSourceElement: source[source.length - 1],
+    visible
+  })
+  return visible
+}
+
+export function clearVisibleChatMessagesCache(state: ChatStoreState): void {
+  visibleMessagesCache.delete(state)
+}
+
 function getMessageAbsoluteIndex(message: Message | undefined, fallbackIndex: number): number {
   if (typeof message?.backendIndex === 'number' && Number.isFinite(message.backendIndex)) {
     return message.backendIndex
