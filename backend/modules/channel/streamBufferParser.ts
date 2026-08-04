@@ -20,6 +20,38 @@ export interface StreamBufferParseResult {
     unparsed?: string;
 }
 
+/** 流式缓冲硬上限：超过即丢弃并报错，防止失控上游/恶意代理把扩展宿主内存打爆 */
+export const MAX_STREAM_BUFFER_CHARS = 20 * 1024 * 1024;
+/** 单条 SSE data 行的硬上限 */
+export const MAX_SSE_LINE_CHARS = 5 * 1024 * 1024;
+
+/**
+ * SSE 心跳/保活载荷识别。
+ *
+ * 上游（或中间网关）在长时间思考/等待期间会周期性回传 keep-alive 类事件，
+ * 常见形态：
+ * - `data: keep_alive` / `data: keep-alive` / `data: keepalive`
+ * - `data: ping` / `data: heartbeat`
+ * - 纯空白 data 行
+ *
+ * 这类载荷不是 JSON，也不是错误文本。把它当成「不完整的 JSON」继续累积，
+ * 会让后续所有真实事件全部解析失败（currentData 被心跳文本污染），
+ * 流结束时被误报为「模型返回空内容」并触发无谓的超时重试。
+ */
+const KEEPALIVE_RE = /^(keep[_-]?alive|keepalive|ping|heartbeat)$/i;
+
+function isKeepAlivePayload(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return true;
+    return KEEPALIVE_RE.test(trimmed);
+}
+
+/** 判断一段文本是否可能是「尚未收完的 JSON」前缀（多行 data 事件拼接用） */
+function looksLikeJsonPrefix(text: string): boolean {
+    const trimmed = text.trim();
+    return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
 /**
  * 解析流式响应缓冲区
  *
@@ -33,6 +65,14 @@ export interface StreamBufferParseResult {
 export function parseStreamBuffer(buffer: string, final = false): StreamBufferParseResult {
     const chunks: any[] = [];
     let remaining = '';
+
+    if (buffer.length > MAX_STREAM_BUFFER_CHARS) {
+        return {
+            chunks: [],
+            remaining: '',
+            unparsed: `Stream buffer exceeded ${MAX_STREAM_BUFFER_CHARS} characters and was dropped`
+        };
+    }
 
     // 按行检测 SSE 格式
     // Gemini 使用 ?alt=sse 时返回这种格式
@@ -54,6 +94,13 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
             if (line.startsWith('data:')) {
                 const piece = line.slice(5).trim();
 
+                // 单条 data 行超限：上游异常（如未按 SSE 分帧的二进制/日志流），
+                // 直接丢弃整段，避免 currentData 无限累积
+                if (piece.length > MAX_SSE_LINE_CHARS) {
+                    currentData = '';
+                    continue;
+                }
+
                 // 跳过结束标记
                 if (piece === '[DONE]') {
                     currentData = '';
@@ -63,7 +110,14 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                 if (currentData) {
                     // 之前累积的内容还不完整：SSE 多行 data 事件按规范用单个换行连接，
                     // 而不是覆盖丢弃（旧实现这里直接覆盖，事件内容静默丢失）。
-                    currentData += '\n' + piece;
+                    // 但只有「看起来像 JSON 前缀」的内容才允许继续累积——
+                    // 心跳类纯文本（keep_alive/ping 等）直接替换掉，
+                    // 防止污染 currentData 导致后续真实事件全部解析失败。
+                    if (looksLikeJsonPrefix(currentData)) {
+                        currentData += '\n' + piece;
+                    } else {
+                        currentData = piece;
+                    }
                 } else {
                     // 开始新的数据
                     currentData = piece;
@@ -75,7 +129,7 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                         chunks.push(JSON.parse(currentData));
                         currentData = '';
                     } catch (e) {
-                        // 不完整，需要继续累积
+                        // 不完整，需要继续累积（或保持为可替换的心跳内容）
                     }
                 }
             } else if (currentData && line.trim()) {
@@ -84,7 +138,9 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                 // chunked 大小指示器通常是纯十六进制数字
                 const isChunkedSize = /^[0-9a-fA-F]+$/.test(line.trim());
 
-                if (!isChunkedSize) {
+                // 与 data: 行同规则：只有 JSON 前缀内容才允许跨行续接，
+                // 心跳类纯文本（keep_alive/ping 等）不会被延续行越撑越大
+                if (!isChunkedSize && looksLikeJsonPrefix(currentData)) {
                     currentData += line;
 
                     try {
@@ -104,6 +160,10 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                 try {
                     chunks.push(JSON.parse(currentData));
                 } catch (e) {
+                    // 心跳类纯文本在流结束时直接丢弃（不是错误，不应进入错误详情）
+                    if (isKeepAlivePayload(currentData)) {
+                        return { chunks, remaining: '', unparsed: undefined };
+                    }
                     // 解析不了就原样带出去：上游可能是用纯文本报的错
                     return { chunks, remaining: '', unparsed: currentData };
                 }

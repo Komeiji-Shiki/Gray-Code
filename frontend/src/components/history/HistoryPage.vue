@@ -18,6 +18,9 @@ const settingsStore = useSettingsStore()
 const scrollbarRef = ref<any>(null)
 let scrollEl: HTMLElement | null = null
 let scrollTicking = false
+// 单次挂载最多自动补齐页数：数千条历史时递归补齐会串行拉几十页，造成 IPC 风暴（M9）
+let autoFillPages = 0
+const MAX_AUTO_FILL_PAGES = 3
 
 function checkShouldLoadMore() {
   if (!scrollEl) return
@@ -27,8 +30,11 @@ function checkShouldLoadMore() {
   // 提前 400px 触发预加载，做到无感
   if (remaining <= 400) {
     chatStore.loadMoreConversations().then(() => {
-      // 如果加载后仍然不足以产生滚动条，继续补齐下一页（直到有足够内容或没有更多）
-      requestAnimationFrame(() => checkShouldLoadMore())
+      // 如果加载后仍然不足以产生滚动条，继续补齐下一页（限页数，其余交给滚动触发）
+      if (autoFillPages < MAX_AUTO_FILL_PAGES) {
+        autoFillPages++
+        requestAnimationFrame(() => checkShouldLoadMore())
+      }
     })
   }
 }

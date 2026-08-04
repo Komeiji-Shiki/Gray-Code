@@ -235,7 +235,7 @@ function handleRestoreAndRetry() {
 
 .dialog-btn.restore {
   background: var(--vscode-editorInfo-foreground);
-  color: white;
+  color: var(--vscode-button-foreground, #fff);
 }
 
 .dialog-btn.restore:hover {

@@ -1,12 +1,12 @@
 {
   "name": "graycode-desktop",
-  "version": "1.4.0",
-  "description": "GrayCode standalone desktop app (Electron) - AI coding assistant without VS Code",
+  "version": "1.5.1",
+  "description": "GrayCode desktop app (Electron) - AI coding assistant, no VS Code installation needed (runs on a built-in vscode-shim compat layer)",
   "author": {
-    "name": "Komeiji-Shiki",
-    "url": "https://github.com/Komeiji-Shiki/Gray-Code"
+    "name": "czocelot",
+    "url": "https://github.com/czocelot/Gray-Code-ocelot"
   },
-  "homepage": "https://github.com/Komeiji-Shiki/Gray-Code",
+  "homepage": "https://github.com/czocelot/Gray-Code-ocelot",
   "license": "MIT",
   "private": true,
   "main": "dist/main.js",
@@ -18,10 +18,11 @@
     "dev": "electron .",
     "e2e": "node build.mjs && cross-env GRAYCODE_E2E=1 electron .",
     "smoke": "node build.mjs && cross-env GRAYCODE_UISMOKE=1 electron .",
-    "dist": "npm run build:all && electron-builder",
-    "dist:win": "npm run build:all && electron-builder --win",
-    "dist:mac": "npm run build:all && electron-builder --mac",
-    "dist:linux": "npm run build:all && electron-builder --linux"
+    "clean:release": "node -e \"require('fs').rmSync('release', { recursive: true, force: true })\"",
+    "dist": "npm run clean:release && npm run build:all && electron-builder",
+    "dist:win": "npm run clean:release && npm run build:all && electron-builder --win",
+    "dist:mac": "npm run clean:release && npm run build:all && electron-builder --mac",
+    "dist:linux": "npm run clean:release && npm run build:all && electron-builder --linux"
   },
   "build": {
     "appId": "dev.graycode.desktop",
@@ -40,6 +41,10 @@
       {
         "from": "../resources",
         "to": "resources"
+      },
+      {
+        "from": "renderer",
+        "to": "renderer"
       }
     ],
     "win": {
@@ -73,7 +78,7 @@
   "devDependencies": {
     "@types/node": "^24.10.2",
     "cross-env": "^7.0.3",
-    "electron": "latest",
+    "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.27.2",
     "typescript": "^5.9.3"

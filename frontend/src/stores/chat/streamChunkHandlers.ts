@@ -627,7 +627,7 @@ export function handleToolIteration(
       if (r && typeof r.id === 'string') {
         toolResultMap.set(r.id, r)
       }
-      if ((r.result as any).cancelled && r.id) {
+      if ((r.result as any)?.cancelled && r.id) {
         cancelledToolIds.add(r.id)
       }
     }

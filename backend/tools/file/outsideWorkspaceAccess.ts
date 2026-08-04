@@ -21,6 +21,7 @@ export type OutsideWorkspaceAccessAction = 'read' | 'write';
  */
 export type OutsideWorkspaceAwareToolName =
     | 'read_file'
+    | 'list_files'
     | 'write_file'
     | 'apply_diff'
     | 'delete_file'
@@ -30,6 +31,7 @@ export type OutsideWorkspaceAwareToolName =
 
 const OUTSIDE_WORKSPACE_AWARE_TOOLS = new Set<string>([
     'read_file',
+    'list_files',
     'write_file',
     'apply_diff',
     'delete_file',
@@ -80,7 +82,8 @@ function getWritePolicy(toolName: OutsideWorkspaceAwareToolName, settingsManager
 }
 
 function getPolicy(toolName: OutsideWorkspaceAwareToolName, settingsManager?: SettingsManager): OutsideWorkspaceReadAccess | OutsideWorkspaceWriteAccess {
-    return toolName === 'read_file'
+    // 只读工具（read_file/list_files）共用 read_file 的 deny/ask/allow 策略
+    return toolName === 'read_file' || toolName === 'list_files'
         ? getReadPolicy(settingsManager)
         : getWritePolicy(toolName, settingsManager);
 }
@@ -99,6 +102,16 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
 
     // delete_file/create_directory：paths 字符串数组
     if (toolName === 'delete_file' || toolName === 'create_directory') {
+        const fromArray = extractNonEmptyStrings((args as any).paths);
+        if (fromArray.length > 0) {
+            return fromArray;
+        }
+        const single = (args as any).path;
+        return typeof single === 'string' && single.trim().length > 0 ? [single] : [];
+    }
+
+    // list_files：paths 字符串数组（兼容单个 path）
+    if (toolName === 'list_files') {
         const fromArray = extractNonEmptyStrings((args as any).paths);
         if (fromArray.length > 0) {
             return fromArray;
@@ -146,13 +159,15 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
 }
 
 function getDeniedBySettingsMessage(toolName: OutsideWorkspaceAwareToolName, filePaths: string[]): string {
-    const action = toolName === 'read_file' ? 'Reading' : 'Writing';
+    const isReadOnly = toolName === 'read_file' || toolName === 'list_files';
+    const action = isReadOnly ? 'Reading' : 'Writing';
     const target = filePaths.length > 0 ? filePaths.join(', ') : 'outside-workspace path';
     return `${action} files outside the workspace is disabled in settings for ${toolName}: ${target}`;
 }
 
 function getRequiresConfirmationMessage(toolName: OutsideWorkspaceAwareToolName, filePaths: string[]): string {
-    const action = toolName === 'read_file' ? 'read' : 'write';
+    const isReadOnly = toolName === 'read_file' || toolName === 'list_files';
+    const action = isReadOnly ? 'read' : 'write';
     const target = filePaths.length > 0 ? filePaths.join(', ') : 'outside-workspace path';
     return `${toolName} needs user confirmation before it can ${action} outside-workspace files: ${target}`;
 }

@@ -127,7 +127,10 @@ export function t(key: string, params?: Record<string, any>): string {
         // 如果有参数，替换占位符
         if (params) {
             return result.replace(/\{(\w+)\}/g, (match, paramName) => {
-                return params[paramName] !== undefined ? String(params[paramName]) : match;
+                // hasOwnProperty 防护：{toString} 这类占位符不得访问原型链方法
+                return Object.prototype.hasOwnProperty.call(params, paramName)
+                    ? String(params[paramName])
+                    : match;
             });
         }
         return result;

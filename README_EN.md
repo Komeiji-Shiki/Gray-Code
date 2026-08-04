@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
-> 💡 **No VS Code?** Try [GrayCode Desktop](electron-app/README.md) — the full standalone desktop edition built on this extension (Windows / macOS / Linux).
+> 💡 **Don't want VS Code?** Try [GrayCode Desktop](electron-app/README.md) — the desktop edition of this extension, backed by a `vscode-shim` compat layer, no VS Code installation needed (Windows / macOS / Linux).
 
 ---
 
@@ -181,14 +181,14 @@ Prompt entries can be reordered, enabled or disabled, duplicated, and converted 
 
 VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is not published to the VS Code Marketplace; install it from a VSIX package or from source.
 
-**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
+**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
 
 **Build and install from source** — This repository uses npm and commits `package-lock.json`:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Komeiji-Shiki/Gray-Code.git
-cd Gray-Code
+git clone https://github.com/czocelot/Gray-Code-ocelot.git
+cd Gray-Code-ocelot
 
 # Install root dependencies
 npm ci
@@ -254,7 +254,7 @@ Gray-Code/
 
 ## Contributing
 
-Issues and pull requests are welcome through [GitHub Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
+Issues and pull requests are welcome through [GitHub Issues](https://github.com/czocelot/Gray-Code-ocelot/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
 
 ## License
 

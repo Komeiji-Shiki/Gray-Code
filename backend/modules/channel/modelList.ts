@@ -7,7 +7,7 @@
 
 import { t } from '../../i18n';
 import type { ChannelConfig } from '../config/types';
-import type { CustomHeader } from '../config/configs/base';
+import { applyCustomHeaders } from '../config/configs/base';
 import { createProxyFetch } from './proxyFetch';
 
 /**
@@ -32,17 +32,11 @@ export interface ModelInfo {
 
 /**
  * 从渠道配置中提取已启用的自定义标头，合并到已有的 headers 对象中
+ * （含键名校验与保留标头过滤，见 base.ts 的 applyCustomHeaders）
  */
-function applyCustomHeaders(headers: Record<string, string>, config: ChannelConfig): void {
+function applyCustomHeadersFromConfig(headers: Record<string, string>, config: ChannelConfig): void {
   const cfg = config as any;
-  if (cfg.customHeadersEnabled && cfg.customHeaders) {
-    for (const header of cfg.customHeaders as CustomHeader[]) {
-      // 只添加启用的、有键名的标头
-      if (header.enabled && header.key && header.key.trim()) {
-        headers[header.key.trim()] = header.value || '';
-      }
-    }
-  }
+  applyCustomHeaders(headers, cfg.customHeaders, cfg.customHeadersEnabled);
 }
 
 /**
@@ -91,10 +85,6 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
     // 循环获取所有分页数据
     do {
       const params = new URLSearchParams({ pageSize: '1000' });
-      // 未启用 useAuthorizationHeader 时，将 apiKey 放入 query parameter
-      if (!(config as any).useAuthorizationHeader) {
-        params.set('key', apiKey);
-      }
       if (pageToken) {
         params.set('pageToken', pageToken);
       }
@@ -104,10 +94,12 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       if ((config as any).useAuthorizationHeader) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       } else {
+        // 始终通过 header 传递密钥（x-goog-api-key），避免 apiKey 出现在 URL query 中
+        // 被代理/网关访问日志记录
         headers['x-goog-api-key'] = apiKey;
       }
       // 应用自定义标头
-      applyCustomHeaders(headers, config);
+      applyCustomHeadersFromConfig(headers, config);
 
       const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
 
@@ -185,7 +177,7 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
         'Authorization': `Bearer ${apiKey}`
       };
       // 应用自定义标头
-      applyCustomHeaders(headers, config);
+      applyCustomHeadersFromConfig(headers, config);
 
       const response = await proxyFetch(`${url}/models?${params.toString()}`, {
         headers
@@ -282,7 +274,7 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
         headers['x-api-key'] = apiKey;
       }
       // 应用自定义标头
-      applyCustomHeaders(headers, config);
+      applyCustomHeadersFromConfig(headers, config);
 
       const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
         headers

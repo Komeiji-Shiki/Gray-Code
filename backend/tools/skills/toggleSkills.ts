@@ -14,15 +14,25 @@ import { getSkillsManager } from '../../modules/skills';
  * Generate tool parameters based on currently enabled skills
  * Only enabled skills are included in the tool parameters
  */
+/**
+ * 原型污染危险键名（技能名为这些键时会导致对象原型被污染）
+ */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function generateSkillsToolDeclaration(): ToolDeclaration {
     const skillsManager = getSkillsManager();
-    const properties: Record<string, any> = {};
+    // 使用无原型对象，从根源上避免 __proto__ 等键污染原型链
+    const properties: Record<string, any> = Object.create(null);
     
     if (skillsManager) {
         // Only include enabled skills in tool parameters
         const enabledSkills = skillsManager.getEnabledSkills();
         
         for (const skill of enabledSkills) {
+            // 拒绝原型污染危险键名
+            if (DANGEROUS_KEYS.has(skill.name)) {
+                continue;
+            }
             properties[skill.name] = {
                 type: 'boolean',
                 description: skill.description

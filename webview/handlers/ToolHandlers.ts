@@ -219,8 +219,9 @@ export const updateExecuteCommandConfig: MessageHandler = async (data, requestId
 export const checkShellAvailability: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { shellType, path } = data;
-    const { checkShellAvailability } = require('../../backend/tools/terminal');
-    const result = await checkShellAvailability(shellType, path);
+    // 静态导入替代运行时 require：类型安全且不破坏 ESM 打包（L2）
+    const { checkShellAvailability: checkShell } = await import('../../backend/tools/terminal');
+    const result = await checkShell(shellType, path);
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'CHECK_SHELL_ERROR', error.message || t('webview.errors.checkShellFailed'));

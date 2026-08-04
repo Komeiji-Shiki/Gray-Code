@@ -4,6 +4,7 @@
  * Post-process frontend/dist for the standalone Electron app:
  *  - copy theme.css + overlay.js into dist
  *  - inject codicons stylesheet, theme, overlay, and sound assets into index.html
+ *  - inject a strict Content-Security-Policy meta (production hardening)
  */
 
 import fs from 'fs';
@@ -30,13 +31,32 @@ const soundAssets = JSON.stringify({
   taskError: { url: 'graycode://local/resources/sound/taskError.mp3', name: 'taskError.mp3' }
 });
 
+// 内联引导脚本改为外部文件：配合严格 CSP（script-src 'self'）时内联脚本会被拦截
+fs.writeFileSync(
+  path.join(distDir, 'sound-assets.js'),
+  `window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${soundAssets};\n`,
+  'utf-8'
+);
+
 let html = fs.readFileSync(indexHtml, 'utf-8');
 
 const headInject = [
   '<link href="../../resources/codicons/codicon.css" rel="stylesheet">',
   '<link href="./theme.css" rel="stylesheet">',
-  `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${soundAssets};</script>`
+  '<script src="./sound-assets.js"></script>'
 ].join('\n    ');
+
+// 严格 CSP：脚本仅允许同源（graycode://local），样式允许内联（Vue 动态注入 style 标签需要），
+// 图片/媒体允许同源与 data:/blob:（附件渲染），连接仅同源。
+const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'"
+].join('; ');
 
 if (!html.includes('codicon.css')) {
   html = html.replace('</head>', `    ${headInject}\n  </head>`);
@@ -44,6 +64,13 @@ if (!html.includes('codicon.css')) {
 
 if (!html.includes('overlay.js')) {
   html = html.replace('<script type="module"', '    <script src="./overlay.js"></script>\n    <script type="module"');
+}
+
+// 若已存在旧的内联 sound assets 脚本则移除（升级场景）
+html = html.replace(/<script>window\.__GRAYCODE_BUILTIN_SOUND_ASSETS[^<]*<\/script>/g, '');
+
+if (!html.includes('Content-Security-Policy')) {
+  html = html.replace('</head>', `    <meta http-equiv="Content-Security-Policy" content="${CSP}">\n  </head>`);
 }
 
 fs.writeFileSync(indexHtml, html, 'utf-8');

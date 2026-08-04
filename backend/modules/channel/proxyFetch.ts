@@ -37,6 +37,18 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
 const USER_AGENT = 'GrayCode';
 
 /**
+ * TLS 证书校验开关。
+ *
+ * 安全加固：默认拒绝自签名/无效证书（防止代理链路 MITM 窃取 API Key 与对话内容）；
+ * 仅当显式设置环境变量 GRAYCODE_ALLOW_INSECURE_TLS=1 时才放行（抓包/自建自签名代理场景）。
+ * 该开关读取一次，进程生命周期内保持。
+ */
+export const ALLOW_INSECURE_TLS = (() => {
+    const raw = process.env.GRAYCODE_ALLOW_INSECURE_TLS;
+    return raw === '1' || raw === 'true' || raw === 'TRUE';
+})();
+
+/**
  * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。
  * 多处 onAbort / finally 共用同一个实现。
  */
@@ -198,7 +210,7 @@ async function fetchWithProxy(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            ...(proxyLeg.request === https.request ? { rejectUnauthorized: !ALLOW_INSECURE_TLS } : {}),
             headers: reqHeaders
         });
 
@@ -230,12 +242,21 @@ async function fetchWithProxy(
                 return;
             }
 
+            // CONNECT 阶段 http.request({ timeout }) 在 socket 上武装的空闲定时器必须立即解除：
+            // 否则长流式请求在「上游思考、无数据可发」的静默期超过 timeout 毫秒时，
+            // 旧定时器会触发 proxyReq 'timeout' → destroy() 把已转交的隧道 socket 销毁，
+            // 正在进行的流被固定超时强行掐断（keep-alive 心跳也无法挽救）。
+            // 流的空闲超时由 ChannelManager.executeStreamRequest 自己的可重置计时器管理。
+            if (typeof socket.setTimeout === 'function') {
+                socket.setTimeout(0);
+            }
+
             if (isHttps) {
                 // 在隧道上建立 TLS 连接
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: false // 允许自签名证书（抓包用）
+                    rejectUnauthorized: !ALLOW_INSECURE_TLS
                 }, () => {
                     sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
                 });
@@ -312,9 +333,12 @@ function sendRequestOverSocket(
 
     // 确保 User-Agent 被包含
     const headersWithUserAgent = { 'User-Agent': USER_AGENT, ...init.headers };
+    // 防御纵深：header 名/值剥离 CR/LF，防止含换行的配置值构造请求头注入/走私（L3）
+    const sanitizeHeaderValue = (value: unknown): string =>
+        String(value).replace(/[\r\n]+/g, ' ').trim();
     const headers = [
         `Host: ${targetUrl.hostname}`,
-        ...Object.entries(headersWithUserAgent).map(([k, v]) => `${k}: ${v}`),
+        ...Object.entries(headersWithUserAgent).map(([k, v]) => `${k}: ${sanitizeHeaderValue(v)}`),
         `Content-Length: ${bodyBuffer.length}`,
         'Connection: close',
         '',
@@ -676,7 +700,7 @@ export async function* proxyStreamFetch(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            ...(proxyLeg.request === https.request ? { rejectUnauthorized: !ALLOW_INSECURE_TLS } : {}),
             headers: reqHeaders
         });
         
@@ -686,12 +710,21 @@ export async function* proxyStreamFetch(
                 finishReject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
                 return;
             }
-            
+
+            // CONNECT 阶段 http.request({ timeout }) 武装的 socket 空闲定时器必须立即解除：
+            // 否则流式请求在「上游思考、无数据可发」的静默期超过 timeout 毫秒时，
+            // 旧定时器触发 proxyReq 'timeout' → destroy() 把已转交的隧道 socket 销毁，
+            // 正在进行的流被固定超时强行掐断（keep-alive 心跳也无法挽救）。
+            // 流的空闲超时由 ChannelManager.executeStreamRequest 的可重置计时器管理。
+            if (typeof socket.setTimeout === 'function') {
+                socket.setTimeout(0);
+            }
+
             if (isHttps) {
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: false
+                    rejectUnauthorized: !ALLOW_INSECURE_TLS
                 }, () => {
                     finishResolve(tlsSocket);
                 });
@@ -965,11 +998,13 @@ export async function* proxyStreamFetch(
                             if (decoded) {
                                 // 流式解码：跨 chunk 的多字节字符由 TextDecoder 内部缓冲拼接
                                 dataQueue.push(decoder.decode(decoded, { stream: true }));
+                                notify();
                             }
                         } else {
                             // 非 chunked：同样走流式解码，跨包多字节字符由 TextDecoder 缓冲拼接
                             dataQueue.push(decoder.decode(rawBuffer, { stream: true }));
                             rawBuffer = Buffer.alloc(0);
+                            notify();
                         }
                     }
                 };
@@ -1026,11 +1061,31 @@ export async function* proxyStreamFetch(
             });
         };
         
-        // 数据队列
+        // 数据队列（生产者：socket data 事件；消费者：下方 for-await 循环）
         const dataQueue: string[] = [];
         let readPromise: Promise<void> | null = null;
         let readError: unknown = null;
         let isReading = true;
+
+        // 生产-消费唤醒：队列为空且仍在读取时，等待 socket 事件驱动的唤醒，
+        // 替代每 10ms 空转轮询（模型生成 token 的间隔常达数秒，期间事件循环每秒被无谓唤醒 100 次）
+        let wakePromise: Promise<void> | null = null;
+        let wakeResolve: (() => void) | null = null;
+        const notify = () => {
+            if (wakeResolve) {
+                const resolve = wakeResolve;
+                wakeResolve = null;
+                wakePromise = null;
+                resolve();
+            }
+        };
+        const waitForData = (): Promise<void> => {
+            if (wakePromise) return wakePromise;
+            wakePromise = new Promise<void>((resolve) => {
+                wakeResolve = resolve;
+            });
+            return wakePromise;
+        };
         
         // 启动后台数据读取
         readPromise = readData()
@@ -1039,20 +1094,28 @@ export async function* proxyStreamFetch(
             })
             .finally(() => {
                 isReading = false;
+                notify();
             });
-        
-        // 使用轮询方式 yield 数据，避免阻塞
-        while (isReading || dataQueue.length > 0) {
-            // 检查是否已取消
-            if (init.signal?.aborted) {
-                break;
+
+        try {
+            while (isReading || dataQueue.length > 0) {
+                // 检查是否已取消
+                if (init.signal?.aborted) {
+                    break;
+                }
+
+                if (dataQueue.length > 0) {
+                    yield dataQueue.shift()!;
+                } else if (isReading) {
+                    // 无数据时挂起等待 socket 数据 / 结束 / 关闭事件唤醒
+                    await waitForData();
+                }
             }
-            
-            if (dataQueue.length > 0) {
-                yield dataQueue.shift()!;
-            } else if (isReading) {
-                // 等待一小段时间后重试
-                await new Promise(resolve => setTimeout(resolve, 10));
+        } finally {
+            // 唤醒 promise 挂起时同步清理，避免悬挂引用
+            if (wakeResolve) {
+                wakeResolve = null;
+                wakePromise = null;
             }
         }
 

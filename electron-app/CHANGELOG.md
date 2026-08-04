@@ -8,6 +8,41 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.5.1] - 2026-08-04
+
+### Added
+  - 代码查看面板自动打开工作区文件树：面板打开即列出工作区根目录（复用新 IPC `listWorkspaceDirectory`，工作区包含校验 + 默认忽略 `.git`/`node_modules`/`dist` 等重型目录），目录懒加载展开、文件点按即查看代码；工具栏新增文件树开关与刷新按钮；相对路径打开改为拼接工作区根 URI（修复 `file://相对路径` 被解析成 authority 导致工作区文件无法打开的问题）
+  - 变更查看面板展示并比对上一轮变更：已处理（已接受/已拒绝）条目在关闭面板后保留，重新打开可继续查看与比对历史 diff；条目按「轮」分组（连续推送为同一轮，间隔超过 2s 视为新一轮），文件列表显示「第 N 轮」轮次分隔；全部处理完毕后显示提示条；新增「清空历史」按钮
+
+### Fixed
+  - 修复已接受的变更通过工具卡「查看差异」再次打开时状态被重置为待处理、重新出现接受/拒绝与全部接受/全部拒绝按钮：已处理条目保持已解决状态，且非待处理条目不渲染接受/拒绝按钮，历史变更只读查看与比对
+  - 修复 SSE 心跳事件污染解析累积器导致长流被误判失败并反复超时重试：`data: keep_alive`/`keep-alive`/`ping`/`heartbeat` 等非 JSON 心跳行不再混入跨行 JSON 累积，后续真实事件可正常解析，纯心跳流结束时不再误入错误详情（详见根 `CHANGELOG.md` [1.5.1]）
+  - 修复代理 CONNECT 后 socket 空闲定时器残留把长流掐断：握手成功即 `socket.setTimeout(0)` 解除固定超时，流的空闲超时统一由可重置计时器管理（收到任何字节都会续期）
+  - 修复 LLM 模块缓存保活未正确判定成功 + 与流空闲超时脱节：非 2xx 保活响应不再误报成功（瞬时失败自动重试一次）；首个保活提前到「流空闲超时前 10 秒」并成功后刷新流空闲超时，上游静默思考期间流不再被固定超时掐断（详见根 `CHANGELOG.md` [1.5.1]）
+  - 修复重试成功事件过早触发（重试页面在重试请求完成前消失）：`retrySuccess` 改为本次尝试流真正结束后广播；修复请求级 `retryStatusCallback` 从未被读取（SubAgent → Monitor 重试状态路由失效）；新增 ChannelManager 重试链路回归测试 4 例与重试面板生命周期前端测试 5 例（详见根 `CHANGELOG.md` [1.5.1]）
+  - 修复超时重试面板近乎透明、可读性差：重试面板/头部/错误块全部改为不透明主题色背景
+  - 新增变更查看 Store 单元测试 7 例（详见根 `CHANGELOG.md` [1.5.1]）
+
+## [1.5.0] - 2026-08-04
+
+### Security
+  - 修复 `graycode://` 自定义协议可读取用户数据目录（含 API Key 与全部对话历史，默认 `data/` 位于 REPO_ROOT 内）：服务根收窄为静态资源白名单（`frontend/dist`、`resources`、`renderer`），用户数据目录显式排除；hostname 强制为 `local`（`graycode://evil/` 拒绝）；500 错误返回固定文案，不再向渲染层回显内部路径/错误细节
+  - 修复 openPath/showInFolder 可执行扩展名黑名单不完整：补充 `.hta` / `.lnk` / `.url` / `.reg` / `.iso` / `.vhd` / `.vhdx` / `.docm` / `.xlsm` / `.pptm` / `.svg`，阻断「AI 在工作区写入恶意文件 → 用户打开 → 任意代码执行」链路
+  - 修复 MCP stdio 客户端 Windows 下经 cmd.exe shell 启动、args 可被二次解释：改 `shell: false` 直连 spawn
+  - `fs:exists` native op 增加字符串类型校验（非字符串路径不再抛 TypeError）
+
+### Fixed
+  - 修复前端 rebuild 后图标/徽标全丢（根因：`npm run build` 重新生成 dist 冲掉 patch-dist.mjs 注入的 codicon `<link>`）：codicon 字体 CSS 与 theme.css 同策略改为主进程运行时注入（`insertCSS`），相对字体 URL 重写为绝对 `graycode://local/resources/codicons/...`（否则按页面路径解析 404）；注入按 key 幂等管理（reload 先移除旧样式，顺带修复规则翻倍累积）
+  - 修复 `workspace.fs.delete` 忽略 `useTrash` 导致永久删除：`useTrash: true` 时走 `shell.trashItem` 进回收站，与 VS Code 语义一致
+  - 修复 applyEdit 对已删除文件静默重建残缺文件：ENOENT 明确报错
+  - 修复 documentCache 无界增长（长会话 GB 级膨胀）：100 条 LRU 上限
+  - 修复 overlay toast 超时自动移除但从不回执：移除前发送 `host.toastReply { id, selected: undefined }`，后端 `showMessage` Promise 不再永久挂起
+  - 修复后端初始化失败静默白屏 + unhandled rejection：弹原生错误对话框（可打开数据目录或退出）
+  - 修复 `will-navigate` 前缀校验过宽（`graycode://evil/` 等 host 变体）：严格限定 `graycode://local/`
+
+### Added
+  - 代码查看面板与变更查看面板的基础语法检查能力（引擎/入口与主项目同步，详见根 `CHANGELOG.md` [1.5.0]）
+
 ## [1.4.0] - 2026-08-04
 
 ### Fixed

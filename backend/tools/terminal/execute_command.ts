@@ -383,8 +383,10 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         }
         
         // 对于命令名，使用 where 命令检查 PATH
+        // 使用 execFile（参数数组）而非字符串拼接：shellPath 来自配置/消息，
+        // 字符串拼接会被 `&`、`|`、`;` 等字符注入成任意命令
         return new Promise((resolve) => {
-            cp.exec(`where ${shellPath}`, { timeout: 5000 }, (error) => {
+            cp.execFile('where', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {
@@ -406,8 +408,9 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         }
         
         // 对于命令名，使用 which 命令检查 PATH
+        // 同上：execFile 参数数组杜绝注入
         return new Promise((resolve) => {
-            cp.exec(`which ${shellPath}`, { timeout: 5000 }, (error) => {
+            cp.execFile('which', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {
@@ -512,18 +515,20 @@ function decodeWithMode(
     chunk: Buffer,
     modeRef: { mode: StreamDecodeMode },
     utf8Decoder: StringDecoder,
-    gbkDecoder?: TextDecoder
+    gbkDecoder?: TextDecoder,
+    gbkPreviewDecoder?: TextDecoder
 ): string {
     if (modeRef.mode === 'gbk' && gbkDecoder) {
         return gbkDecoder.decode(chunk, { stream: true });
     }
 
     const utf8Text = utf8Decoder.write(chunk);
-    if (!gbkDecoder) {
+    if (!gbkDecoder || !gbkPreviewDecoder) {
         return utf8Text;
     }
 
-    const gbkPreview = new TextDecoder('gbk').decode(chunk);
+    // 复用实例做非流式预览解码，避免每个 chunk 重建 GBK 解码器（表加载开销大）
+    const gbkPreview = gbkPreviewDecoder.decode(chunk);
     if (shouldFallbackToGbk(utf8Text, gbkPreview, chunk)) {
         modeRef.mode = 'gbk';
         return gbkDecoder.decode(chunk, { stream: true });
@@ -574,7 +579,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
             }
             
             // 使用 where 检查 PATH
-            cp.execSync(`where ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+            cp.execFileSync('where', [shellPath], { timeout: 3000, stdio: 'ignore' });
             return true;
         } else {
             // 绝对路径检查文件存在
@@ -585,7 +590,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
             }
             
             // 使用 which 检查 PATH
-            cp.execSync(`which ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+            cp.execFileSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
             return true;
         }
     } catch {
@@ -1009,9 +1014,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                 actualShellType = config.defaultShell as ShellType;
             }
             
-            // 检查 shell 是否启用
+            // 检查 shell 是否启用：shell 类型必须存在于配置表中且已启用，
+            // 否则拒绝执行（防止未知 shell 类型绕过已启用 Shell 限制）。
             const shellInfo = config.shells.find(s => s.type === actualShellType);
-            if (shellInfo && !shellInfo.enabled) {
+            if (!shellInfo || !shellInfo.enabled) {
                 return {
                     success: false,
                     error: `Shell "${actualShellType}" is not enabled, please enable it in settings and try again`
@@ -1227,6 +1233,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     const stderrUtf8Decoder = new StringDecoder('utf8');
                     const stdoutGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
                     const stderrGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
+                    // 预览解码复用实例：非流式 decode 判定 fallback 时逐 chunk 重建解码器开销大
+                    const stdoutGbkPreviewDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
+                    const stderrGbkPreviewDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
                     const stdoutDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
                     const stderrDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
 
@@ -1235,7 +1244,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
 
                     // 收集输出并实时推送
                     proc.stdout?.on('data', (data: Buffer) => {
-                        const text = decodeWithMode(data, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder);
+                        const text = decodeWithMode(data, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder, stdoutGbkPreviewDecoder);
                         const content = stdoutRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stdoutRemaining = lines.pop() || '';
@@ -1253,7 +1262,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     });
 
                     proc.stderr?.on('data', (data: Buffer) => {
-                        const text = decodeWithMode(data, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder);
+                        const text = decodeWithMode(data, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder, stderrGbkPreviewDecoder);
                         const content = stderrRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stderrRemaining = lines.pop() || '';

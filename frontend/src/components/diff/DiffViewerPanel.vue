@@ -9,13 +9,17 @@
 import { computed } from 'vue'
 import { useI18n } from '@/i18n'
 import { useDiffStore, type DiffViewerEntry } from '@/stores/diffStore'
+import { useCodeViewStore } from '@/stores/codeViewStore'
 import { buildHunks, computeDiffLines, diffStats } from '@/utils/diffLines'
+import { checkSyntax, supportsSyntaxCheck, type SyntaxIssue } from '@/utils/syntaxCheck'
+import { languageFromPath } from '@/utils/languageFromPath'
 
 const props = withDefaults(defineProps<{ visible?: boolean }>(), { visible: true })
 
 const emit = defineEmits<{ close: [] }>()
 
 const diffStore = useDiffStore()
+const codeViewStore = useCodeViewStore()
 const { t } = useI18n()
 
 function basename(path: string): string {
@@ -31,10 +35,35 @@ const statsByIndex = computed(() => {
   return map
 })
 
+/** 每个条目的新内容基础语法检查结果（仅对代码类文件生效） */
+const issuesByIndex = computed(() => {
+  const map: Record<number, SyntaxIssue[]> = {}
+  diffStore.entries.forEach((entry, index) => {
+    const lang = languageFromPath(entry.filePath)
+    map[index] = checkSyntax(entry.newContent, lang)
+  })
+  return map
+})
+
 const selectedHunks = computed(() => {
   const entry = diffStore.selectedEntry
   if (!entry) return []
   return buildHunks(computeDiffLines(entry.originalContent, entry.newContent))
+})
+
+const selectedIssues = computed(() => {
+  const entry = diffStore.selectedEntry
+  if (!entry) return []
+  return issuesByIndex.value[diffStore.selectedIndex] || []
+})
+
+/** 仅当语言支持检查且通过时展示“无语法问题”（避免误导非代码文件） */
+const selectedCheckedClean = computed(() => {
+  const entry = diffStore.selectedEntry
+  if (!entry) return false
+  if (!supportsSyntaxCheck(languageFromPath(entry.filePath))) return false
+  const issues = issuesByIndex.value[diffStore.selectedIndex]
+  return !!issues && issues.length === 0
 })
 
 function statusLabel(status: string): string {
@@ -49,8 +78,17 @@ function onAction(entry: DiffViewerEntry, accept: boolean) {
   void (accept ? diffStore.accept(index) : diffStore.reject(index))
 }
 
+/** 在代码查看面板中查看新内容（语法检查复用同一引擎） */
+function onViewNewContent(entry: DiffViewerEntry) {
+  codeViewStore.openContent(entry.filePath, entry.newContent)
+}
+
 function onClose() {
   emit('close')
+}
+
+function onClearHistory() {
+  diffStore.clearHistory()
 }
 </script>
 
@@ -80,6 +118,14 @@ function onClose() {
           @click="diffStore.acceptAll()"
         >{{ t('components.diff.acceptAll') }}
         </button>
+        <button
+          v-if="diffStore.entries.length > 0"
+          class="diff-btn"
+          type="button"
+          :title="t('components.diff.clearHistory')"
+          @click="onClearHistory"
+        >{{ t('components.diff.clearHistory') }}
+        </button>
         <button class="diff-btn diff-close-btn" type="button" :title="t('components.diff.close')" @click="onClose">
           <span class="codicon codicon-close"></span>
         </button>
@@ -93,41 +139,60 @@ function onClose() {
     <div v-else class="diff-body">
       <!-- 左侧：文件列表（GitHub 变更视图的 file list） -->
       <nav class="diff-file-list">
-        <button
+        <template
           v-for="(entry, index) in diffStore.entries"
           :key="entry.previewId + entry.sessionId"
-          class="diff-file-item"
-          :class="{
-            selected: index === diffStore.selectedIndex,
-            done: entry.status !== 'pending'
-          }"
-          type="button"
-          @click="diffStore.select(index)"
         >
-          <span class="diff-file-status" :class="'status-' + entry.status">
-            <span
-              v-if="entry.status === 'accepted'"
-              class="codicon codicon-check"
-            ></span>
-            <span v-else-if="entry.status === 'rejected'" class="codicon codicon-close"></span>
-            <span v-else class="codicon codicon-diff"></span>
-          </span>
-          <span class="diff-file-name">{{ basename(entry.filePath) }}</span>
-          <span
-            class="diff-file-stats"
-            :class="{ changed: statsByIndex[index]?.added + statsByIndex[index]?.deleted > 0 }"
+          <div
+            v-if="index === 0 || entry.round !== diffStore.entries[index - 1].round"
+            class="diff-round-separator"
           >
-            <template v-if="statsByIndex[index]">
-              <span class="add">+{{ statsByIndex[index].added }}</span>
-              <span class="del">-{{ statsByIndex[index].deleted }}</span>
-            </template>
-          </span>
-          <span v-if="entry.busy" class="codicon codicon-loading spin"></span>
-        </button>
+            {{ t('components.diff.roundLabel', { round: entry.round }) }}
+          </div>
+          <button
+            class="diff-file-item"
+            :class="{
+              selected: index === diffStore.selectedIndex,
+              done: entry.status !== 'pending'
+            }"
+            type="button"
+            @click="diffStore.select(index)"
+          >
+            <span class="diff-file-status" :class="'status-' + entry.status">
+              <span
+                v-if="entry.status === 'accepted'"
+                class="codicon codicon-check"
+              ></span>
+              <span v-else-if="entry.status === 'rejected'" class="codicon codicon-close"></span>
+              <span v-else class="codicon codicon-diff"></span>
+            </span>
+            <span class="diff-file-name">{{ basename(entry.filePath) }}</span>
+            <span
+              v-if="issuesByIndex[index] && issuesByIndex[index].length > 0"
+              class="diff-file-issues"
+              :title="t('components.diff.syntaxIssues', { count: issuesByIndex[index].length })"
+            >{{ issuesByIndex[index].length }}</span>
+            <span
+              class="diff-file-stats"
+              :class="{ changed: statsByIndex[index]?.added + statsByIndex[index]?.deleted > 0 }"
+            >
+              <template v-if="statsByIndex[index]">
+                <span class="add">+{{ statsByIndex[index].added }}</span>
+                <span class="del">-{{ statsByIndex[index].deleted }}</span>
+              </template>
+            </span>
+            <span v-if="entry.busy" class="codicon codicon-loading spin"></span>
+          </button>
+        </template>
       </nav>
 
       <!-- 右侧：统一 diff 详情 -->
       <main class="diff-detail">
+        <!-- 全部处理完毕提示条（历史条目仍可查看与比对） -->
+        <div v-if="diffStore.pendingCount === 0" class="diff-all-done">
+          <span class="codicon codicon-check-all"></span>
+          <span>{{ t('components.diff.allProcessed') }}</span>
+        </div>
         <div v-if="diffStore.selectedEntry" class="diff-detail-header">
           <span class="diff-file-path" :title="diffStore.selectedEntry.filePath">
             {{ diffStore.selectedEntry.filePath }}
@@ -136,6 +201,13 @@ function onClose() {
             <span v-if="diffStore.selectedEntry.error" class="diff-error" :title="diffStore.selectedEntry.error">
               {{ t('components.diff.actionFailed') }}
             </span>
+            <button
+              class="diff-btn"
+              type="button"
+              :title="t('components.diff.viewNewContent')"
+              @click="onViewNewContent(diffStore.selectedEntry)"
+            >{{ t('components.diff.viewNewContent') }}
+            </button>
             <span
               v-if="diffStore.selectedEntry.status !== 'pending'"
               class="diff-done-tag"
@@ -143,21 +215,47 @@ function onClose() {
             >
               {{ statusLabel(diffStore.selectedEntry.status) }}
             </span>
+            <!-- 已处理的变更（已接受/已拒绝）只读查看与比对，不再展示接受/拒绝按钮 -->
             <button
+              v-if="diffStore.selectedEntry.status === 'pending'"
               class="diff-btn danger"
               type="button"
-              :disabled="diffStore.selectedEntry.status !== 'pending' || diffStore.selectedEntry.busy || !diffStore.selectedEntry.sessionId"
+              :disabled="diffStore.selectedEntry.busy || !diffStore.selectedEntry.sessionId"
               @click="onAction(diffStore.selectedEntry, false)"
             >{{ t('components.diff.reject') }}
             </button>
             <button
+              v-if="diffStore.selectedEntry.status === 'pending'"
               class="diff-btn primary"
               type="button"
-              :disabled="diffStore.selectedEntry.status !== 'pending' || diffStore.selectedEntry.busy || !diffStore.selectedEntry.sessionId"
+              :disabled="diffStore.selectedEntry.busy || !diffStore.selectedEntry.sessionId"
               @click="onAction(diffStore.selectedEntry, true)"
             >{{ t('components.diff.accept') }}
             </button>
           </div>
+        </div>
+
+        <!-- 新内容基础语法检查结果 -->
+        <div v-if="selectedIssues.length > 0" class="diff-syntax-issues">
+          <div class="diff-syntax-header">
+            <span class="codicon codicon-warning"></span>
+            <span>{{ t('components.diff.syntaxIssues', { count: selectedIssues.length }) }}</span>
+          </div>
+          <div class="diff-syntax-list">
+            <span
+              v-for="(issue, issueIndex) in selectedIssues"
+              :key="issueIndex"
+              class="diff-syntax-item"
+            >L{{ issue.line }}:{{ issue.column }} {{ issue.message }}
+            </span>
+          </div>
+        </div>
+        <div
+          v-else-if="selectedCheckedClean"
+          class="diff-syntax-ok"
+        >
+          <span class="codicon codicon-check"></span>
+          <span>{{ t('components.diff.noSyntaxIssues') }}</span>
         </div>
 
         <div
@@ -279,11 +377,11 @@ function onClose() {
 }
 
 .diff-btn.danger {
-  background: #be1100;
+  background: var(--vscode-errorForeground);
 }
 
 .diff-btn.danger:hover:not(:disabled) {
-  background: #d11b08;
+  background: color-mix(in srgb, var(--vscode-errorForeground) 80%, black);
 }
 
 .diff-empty {
@@ -294,6 +392,29 @@ function onClose() {
   color: var(--vscode-descriptionForeground, #9d9d9d);
   font-size: 13px;
   padding: 24px;
+}
+
+/* 全部变更处理完毕提示条（历史条目仍可查看与比对） */
+.diff-all-done {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 30%, transparent);
+}
+
+/* 文件列表内的轮次分隔 */
+.diff-round-separator {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  text-transform: uppercase;
 }
 
 .diff-body {
@@ -338,6 +459,10 @@ function onClose() {
   color: var(--vscode-list-activeSelectionForeground, #ffffff);
 }
 
+.diff-file-item.done:not(.selected) .diff-file-name {
+  opacity: 0.65;
+}
+
 .diff-file-status {
   flex: none;
   display: inline-flex;
@@ -353,7 +478,7 @@ function onClose() {
 }
 
 .diff-file-status.status-rejected {
-  color: #f14c4c;
+  color: var(--vscode-errorForeground);
 }
 
 .diff-file-name {
@@ -375,6 +500,67 @@ function onClose() {
 
 .diff-file-stats .del {
   color: var(--vscode-gitDecoration-deletedResourceForeground, #f48771);
+}
+
+/* 文件列表中的语法错误数量徽标 */
+.diff-file-issues {
+  flex: none;
+  min-width: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* 新内容语法检查结果 */
+.diff-syntax-issues {
+  flex: none;
+  max-height: 30%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorError-foreground, #f14c4c) 40%, transparent);
+}
+
+.diff-syntax-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-editorError-foreground, #f14c4c);
+  background: color-mix(in srgb, var(--vscode-editorError-foreground, #f14c4c) 8%, transparent);
+}
+
+.diff-syntax-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.diff-syntax-item {
+  display: block;
+  padding: 2px 12px;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-syntax-ok {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
 }
 
 /* 右侧 diff 详情 */
@@ -414,7 +600,7 @@ function onClose() {
 
 .diff-error {
   font-size: 11px;
-  color: #f14c4c;
+  color: var(--vscode-errorForeground);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -429,13 +615,13 @@ function onClose() {
 }
 
 .diff-done-tag.tag-accepted {
-  color: #4ec9b0;
-  border-color: rgba(78, 201, 176, 0.4);
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+  border-color: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 40%, transparent);
 }
 
 .diff-done-tag.tag-rejected {
-  color: #f14c4c;
-  border-color: rgba(241, 76, 76, 0.4);
+  color: var(--vscode-errorForeground);
+  border-color: color-mix(in srgb, var(--vscode-errorForeground) 40%, transparent);
 }
 
 .diff-guard-warning {
@@ -445,9 +631,9 @@ function onClose() {
   gap: 6px;
   padding: 6px 12px;
   font-size: 12px;
-  color: #d18616;
-  background: rgba(209, 134, 22, 0.12);
-  border-bottom: 1px solid rgba(209, 134, 22, 0.3);
+  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground) 30%, transparent);
 }
 
 .diff-scroll {
@@ -465,9 +651,9 @@ function onClose() {
   font-family: var(--vscode-editor-font-family, Consolas, monospace);
   font-size: 12px;
   color: var(--vscode-textLink-foreground, #3794ff);
-  background: rgba(55, 148, 255, 0.16);
-  border-top: 1px solid rgba(55, 148, 255, 0.25);
-  border-bottom: 1px solid rgba(55, 148, 255, 0.25);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 16%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground) 25%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground) 25%, transparent);
 }
 
 .diff-row {
@@ -498,18 +684,18 @@ function onClose() {
 }
 
 .diff-row.deleted {
-  background: rgba(248, 81, 73, 0.22);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-deletedResourceForeground) 22%, transparent);
 }
 
 .diff-row.deleted .diff-ln-old {
-  background: rgba(248, 81, 73, 0.3);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-deletedResourceForeground) 30%, transparent);
 }
 
 .diff-row.added {
-  background: rgba(46, 160, 67, 0.22);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 22%, transparent);
 }
 
 .diff-row.added .diff-ln-new {
-  background: rgba(46, 160, 67, 0.3);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 30%, transparent);
 }
 </style>

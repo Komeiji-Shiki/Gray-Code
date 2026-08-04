@@ -441,7 +441,10 @@ export class BackendHost {
           this.toolDiffIds.set(d.toolId, list);
         }
       }
-      this.postToRenderer('message', 'diff.statusChanged', {
+      // 注意：前端经 onExtensionCommand / App.vue 只消费 { type: 'command', command: 'diff.statusChanged' }，
+      // 必须用 'command' 类型推送（与 webview/ChatViewProvider.sendCommand 一致），
+      // 否则桌面版变更面板的条目状态同步与删除警戒提示失效。
+      this.postToRenderer('command', 'diff.statusChanged', {
         pendingDiffs: pendingDiffs.map((d) => ({
           id: d.id,
           status: d.status,

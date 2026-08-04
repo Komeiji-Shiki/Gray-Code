@@ -266,6 +266,7 @@ export async function runE2E(): Promise<void> {
       resetCapture();
       mockScenario = 'apply_diff';
       const testFile = path.join(repoRoot, 'e2e-diff-test.txt');
+      try {
       fs.writeFileSync(testFile, 'line1\nline2\nline3\n', 'utf-8');
 
       const convId = 'e2e-conv-diff-' + Date.now();
@@ -310,7 +311,9 @@ export async function runE2E(): Promise<void> {
       const written = fs.readFileSync(testFile, 'utf-8');
       assert(written.includes('line1-replaced'), 'accepted diff written to disk');
       log('file after accept: ' + JSON.stringify(written));
-      fs.rmSync(testFile, { force: true });
+      } finally {
+        fs.rmSync(testFile, { force: true });
+      }
     }
 
     // =====================================================================
@@ -320,6 +323,7 @@ export async function runE2E(): Promise<void> {
       resetCapture();
       mockScenario = 'delete_file_confirm';
       const testFile = path.join(repoRoot, 'e2e-confirm-test.txt');
+      try {
       fs.writeFileSync(testFile, 'to be deleted\n', 'utf-8');
 
       // delete_file requires manual confirmation (default)
@@ -360,7 +364,9 @@ export async function runE2E(): Promise<void> {
       assert(completed, 'confirm stream completed');
       const deleted = !fs.existsSync(testFile);
       assert(deleted, 'confirmed delete_file removed the file');
-      if (!deleted) fs.rmSync(testFile, { force: true });
+      } finally {
+        fs.rmSync(testFile, { force: true });
+      }
     }
 
     // =====================================================================

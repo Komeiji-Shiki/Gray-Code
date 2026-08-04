@@ -13,6 +13,7 @@ import { resolveUri, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
+import { ensureMediaPathsSafe, MEDIA_MAX_INPUT_BYTES } from './pathGuard';
 
 /** 图像生成任务类型常量 */
 const TASK_TYPE_IMAGE_GEN = 'image_generation';
@@ -212,6 +213,12 @@ async function readReferenceImage(imgPath: string): Promise<{ data: string; mime
     }
 
     try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MEDIA_MAX_INPUT_BYTES) {
+            console.warn(`Image file exceeds ${MEDIA_MAX_INPUT_BYTES} bytes: ${imgPath}`);
+            return null;
+        }
+
         const content = await vscode.workspace.fs.readFile(uri);
         const ext = path.extname(imgPath).toLowerCase();
         let mimeType = 'image/png';
@@ -248,7 +255,8 @@ async function callGeminiImageApi(
 
     const model = config.model || 'gemini-3-pro-image-preview';
     const baseUrl = config.url || 'https://generativelanguage.googleapis.com/v1beta';
-    const url = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`;
+    // 密钥走 x-goog-api-key 请求头，不拼进 URL（避免泄漏到访问日志/代理日志/浏览器历史）
+    const url = `${baseUrl}/models/${model}:generateContent`;
 
     // 构建 parts
     const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [];
@@ -306,7 +314,8 @@ async function callGeminiImageApi(
     const response = await fetchFn(url, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
         },
         body: JSON.stringify(requestBody),
         signal: abortSignal
@@ -432,6 +441,11 @@ async function saveImage(buffer: Buffer, outputPath: string): Promise<void> {
         throw new Error('No workspace folder open');
     }
 
+    const pathError = ensureMediaPathsSafe(outputPath);
+    if (pathError) {
+        throw new Error(pathError);
+    }
+
     // 确保目录存在
     const dirUri = vscode.Uri.joinPath(uri, '..');
     try {
@@ -527,6 +541,15 @@ async function executeImageTask(
         };
     }
 
+    const outputPathError = ensureMediaPathsSafe(output_path);
+    if (outputPathError) {
+        return {
+            index,
+            success: false,
+            error: `Task ${index + 1}: ${outputPathError}`
+        };
+    }
+
     try {
         // 检查是否已取消
         if (abortSignal?.aborted) {
@@ -541,6 +564,15 @@ async function executeImageTask(
                 if (abortSignal?.aborted) {
                     return { index, success: false, error: `Task ${index + 1}: User cancelled image generation`, cancelled: true };
                 }
+                const imgPathError = ensureMediaPathsSafe(imgPath);
+                if (imgPathError) {
+                    return {
+                        index,
+                        success: false,
+                        error: `Task ${index + 1}: ${imgPathError}`
+                    };
+                }
+
                 const img = await readReferenceImage(imgPath);
                 if (!img) {
                     return {

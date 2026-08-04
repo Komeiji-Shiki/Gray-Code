@@ -11,7 +11,7 @@ import type { GeminiConfig } from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
 import { convertToolsToXML, convertFunctionCallToXML, convertFunctionResponseToXML } from '../../../tools/xmlFormatter';
 import { convertToolsToJSON, convertFunctionCallToJSON, convertFunctionResponseToJSON } from '../../../tools/jsonFormatter';
-import { applyCustomBody } from '../../config/configs/base';
+import { applyCustomBody, applyCustomHeaders } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import type {
     GenerateRequest,
@@ -210,14 +210,7 @@ export class GeminiFormatter extends BaseFormatter {
         }
         
         // 应用自定义标头（如果启用）
-        if (config.customHeadersEnabled && config.customHeaders) {
-            for (const header of config.customHeaders) {
-                // 只添加启用的、有键名的标头
-                if (header.enabled && header.key && header.key.trim()) {
-                    headers[header.key.trim()] = header.value || '';
-                }
-            }
-        }
+        applyCustomHeaders(headers, config.customHeaders, config.customHeadersEnabled);
         
         // 应用自定义 body（如果启用）
         const finalBody = applyCustomBody(body, config.customBody, config.customBodyEnabled);

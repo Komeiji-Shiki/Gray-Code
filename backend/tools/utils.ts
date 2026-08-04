@@ -7,11 +7,38 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fsp from 'fs/promises';
+import * as fsSync from 'fs';
 import { t } from '../i18n';
 
 // ==================== 文本工具（换行符统一） ====================
 
 const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * 检查文件字节是否为安全的 UTF-8 文本编码。
+ *
+ * UTF-16（含 BOM）与 GBK 等非 UTF-8 编码被按 UTF-8 解码后会产生乱码，
+ * diff 类工具（apply_diff/insert_code/delete_code）读-改-写会把原编码
+ * 永久损坏。命中即返回错误描述，由调用方拒绝处理该文件。
+ */
+export function detectNonUtf8Encoding(buffer: Buffer): string | null {
+    if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+        return null;
+    }
+    if (buffer.length >= 2) {
+        const b0 = buffer[0];
+        const b1 = buffer[1];
+        if ((b0 === 0xFF && b1 === 0xFE) || (b0 === 0xFE && b1 === 0xFF)) {
+            return 'file is UTF-16 encoded (unsupported by diff tools)';
+        }
+    }
+    try {
+        new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+        return null;
+    } catch {
+        return 'file is not valid UTF-8 text (possibly GBK/other legacy encoding)';
+    }
+}
 
 /**
  * 统一换行符为 LF（\n）。
@@ -221,10 +248,188 @@ export function normalizePathForComparison(fsPath: string): string {
     return IS_WINDOWS ? normalized.toLowerCase() : normalized;
 }
 
+/**
+ * 正则灾难性回溯（ReDoS）粗筛。
+ *
+ * 检测最常见的危险结构：分组内含量词、且分组后紧跟量词（如 `(a+)+`、
+ * `(x+x+)+y`、`(a*)*`、`(a+){2,}`），以及组内含重叠分支且组后跟量词
+ * （如 `(a|aa)+`、`(a|ab)+`）、超长模式/超大重复次数、无锚点的贪婪前缀。
+ * 命中即拒绝，避免在主线程上对长文本执行指数级回溯。
+ */
+export function isRegexPotentiallyCatastrophic(pattern: string): boolean {
+    if (typeof pattern !== 'string' || pattern.length === 0) {
+        return false;
+    }
+    if (pattern.length > 200) {
+        return true;
+    }
+    // 剥离转义序列与字符类后做结构分析
+    const stripped = pattern
+        .replace(/\\./g, '')
+        .replace(/\[[^\]]*\]/g, '');
+    // 分组内含量词，且分组后跟量词/限量词：(a+)+、(x+x+)+、(a+){2,}
+    if (/(\([^()]*[+*][^()]*\))([+*]|\{[0-9,]+\})/.test(stripped)) {
+        return true;
+    }
+    // 组内含两个以上备选分支（重叠交替）且组后跟量词：(a|aa)+、(a|ab)+、(ab|a)*
+    // 交替分支间存在公共前缀时，回溯可能呈指数级增长。
+    if (/\([^()]*\|[^()]*\)([+*]|\{[0-9,]+\})/.test(stripped)) {
+        return true;
+    }
+    // 单个非捕获组自身嵌套分组后跟量词：((a)+)+ 由内层规则捕获，外层兜底
+    if (/\([^()]*\([^()]*\)[^()]*\)[+*{]/.test(stripped)) {
+        return true;
+    }
+    // 极大的重复次数上限（如 a{1000000}）
+    const largeRepeat = stripped.match(/\{[0-9]+,([0-9]+)\}/);
+    if (largeRepeat && Number(largeRepeat[1]) > 10000) {
+        return true;
+    }
+    // 贪婪前缀且无锚点：.* 或 (?:.|\n)* 等开头（剥离后形如 .*、(?:.|)*）
+    // 会先吞掉尽可能多的输入，失败后再逐字符回退，放大后续分组的回溯代价。
+    // 已用 ^ 锚定（剥离不删除 ^）时回退范围受限，风险显著降低，不判高风险。
+    if (!/^\^/.test(pattern) && !/\$$/.test(pattern)) {
+        const greedyPrefixMatch = stripped.match(/^(\.\*|\([^()]*\.\|[^()]*\)\*)/);
+        if (greedyPrefixMatch) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
     const child = normalizePathForComparison(childPath);
     const parent = normalizePathForComparison(parentPath);
     return child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+}
+
+/** realpath 结果缓存（同一批工具调用内重复解析同一路径很常见）。
+ *
+ * 安全加固：缓存必须按“最近存在祖先”的 mtime 失效——
+ * 若解析后有人在祖先目录里新建了符号链接（如 mklink），旧缓存会把新链接路径
+ * 仍判定为祖先的普通子路径，导致 containment 检查绕过。命中缓存时重新 stat 祖先，
+ * mtime 变化即重新解析。
+ */
+const realPathCache = new Map<string, { resolved: string; ancestorMtimeMs: number }>();
+const REAL_PATH_CACHE_MAX = 512;
+
+/**
+ * 解析路径的真实位置；对不存在的路径，向上回溯到最近存在的祖先后拼接剩余段。
+ *
+ * 这使 containment 判定具备符号链接/目录联接感知能力：
+ * 工作区内指向外部的 symlink/junction 会被识别为“实际在工作区外”，
+ * 杜绝词法前缀比较被链接逃逸绕过。
+ */
+function resolveRealPathOrNearestExisting(filePath: string): string | null {
+    const cached = realPathCache.get(filePath);
+    if (cached !== undefined) {
+        // 命中缓存后校验祖先 mtime：目录内新增/移除条目（如新建符号链接）会更新目录 mtime，
+        // 此时缓存结果可能已失效，需要重新解析。
+        if (cached.resolved !== '') {
+            try {
+                const ancestor = nearestExistingAncestorOf(filePath);
+                if (ancestor !== null) {
+                    const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+                    if (stat && stat.mtimeMs === cached.ancestorMtimeMs) {
+                        return cached.resolved;
+                    }
+                    // mtime 变化：删除缓存走重新解析
+                    realPathCache.delete(filePath);
+                } else {
+                    return cached.resolved;
+                }
+            } catch {
+                // stat 失败（权限等）：保守起见重新解析
+                realPathCache.delete(filePath);
+            }
+        } else {
+            return cached.resolved;
+        }
+    }
+
+    let result: string | null = null;
+    const trailing: string[] = [];
+    let current = filePath;
+
+    while (true) {
+        try {
+            result = fsSync.realpathSync.native?.(current) ?? fsSync.realpathSync(current);
+            break;
+        } catch {
+            const parent = path.dirname(current);
+            if (parent === current) {
+                break;
+            }
+            trailing.unshift(path.basename(current));
+            current = parent;
+        }
+    }
+
+    if (result !== null && trailing.length > 0) {
+        result = path.join(result, ...trailing);
+    }
+
+    // 记录最近存在祖先的 mtime，用于缓存失效判断
+    let ancestorMtimeMs = 0;
+    try {
+        const ancestor = nearestExistingAncestorOf(filePath);
+        if (ancestor !== null) {
+            const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+            ancestorMtimeMs = stat?.mtimeMs ?? 0;
+        }
+    } catch {
+        ancestorMtimeMs = 0;
+    }
+
+    if (realPathCache.size >= REAL_PATH_CACHE_MAX) {
+        realPathCache.clear();
+    }
+    realPathCache.set(filePath, { resolved: result ?? '', ancestorMtimeMs });
+    return result;
+}
+
+/**
+ * 找到路径的“最近存在祖先”（不含自身解析失败的情况）：与解析逻辑同一套回溯，
+ * 供缓存失效判断使用。路径自身存在时返回自身。
+ */
+function nearestExistingAncestorOf(filePath: string): string | null {
+    let current = filePath;
+    while (true) {
+        if (fsSync.existsSync(current)) {
+            return current;
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return null;
+        }
+        current = parent;
+    }
+}
+
+/**
+ * 符号链接感知的“路径位于目录内或相等”判断。
+ *
+ * 词法判定通过后，再用 realpath 对双方做真实位置比较：
+ * 只有真实位置仍位于真实工作区内才算数。
+ */
+export function isPathInsideOrEqualReal(childPath: string, parentPath: string): boolean {
+    const lexical = isPathInsideOrEqual(childPath, parentPath);
+    if (!lexical) {
+        // 词法已判定在外：若真实位置仍在外，结论不变；realpath 只会让结果更严格，
+        // 但工作区根自身可能是符号链接（如 macOS /tmp），需用真实位置复核。
+        const realChild = resolveRealPathOrNearestExisting(childPath);
+        const realParent = resolveRealPathOrNearestExisting(parentPath);
+        if (realChild && realParent) {
+            return isPathInsideOrEqual(realChild, realParent);
+        }
+        return false;
+    }
+    const realChild = resolveRealPathOrNearestExisting(childPath);
+    const realParent = resolveRealPathOrNearestExisting(parentPath);
+    if (realChild && realParent) {
+        return isPathInsideOrEqual(realChild, realParent);
+    }
+    return lexical;
 }
 
 /**
@@ -232,7 +437,7 @@ function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
  */
 export function findWorkspaceForAbsolutePath(absolutePath: string): WorkspaceInfo | undefined {
     const workspaces = getAllWorkspaces();
-    return workspaces.find(workspace => isPathInsideOrEqual(absolutePath, workspace.fsPath));
+    return workspaces.find(workspace => isPathInsideOrEqualReal(absolutePath, workspace.fsPath));
 }
 
 /**
@@ -297,7 +502,7 @@ export function resolveFileToolPathWithInfo(pathStr: string): {
     const isOutsideWorkspace = !!(
         resolved.uri &&
         resolved.workspace &&
-        !isPathInsideOrEqual(resolved.uri.fsPath, resolved.workspace.fsPath)
+        !isPathInsideOrEqualReal(resolved.uri.fsPath, resolved.workspace.fsPath)
     );
 
     return {

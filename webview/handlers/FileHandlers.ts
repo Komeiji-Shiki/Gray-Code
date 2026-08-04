@@ -10,6 +10,7 @@ import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { resolveUriWithInfo } from '../../backend/tools/utils';
 import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute } from '../utils/WorkspaceUtils';
+import { assertSafeId } from '../../backend/core/idValidation';
 import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
 import { getPlanSourceStatusFromContent, type PlanSourceStatusResult } from '../../backend/tools/plan/sourceArtifactSection';
 import type { PinnedFileItem } from '../../backend/modules/settings/types';
@@ -52,6 +53,82 @@ export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
 export const getWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
   const uri = ctx.getCurrentWorkspaceUri();
   ctx.sendResponse(requestId, uri);
+};
+
+/**
+ * 列出工作区内指定目录（代码查看面板文件树用）。
+ *
+ * - path 为空字符串时列出工作区根目录；
+ * - 只返回当前目录直属一层的条目（目录/文件），展开由前端懒加载；
+ * - 目录先于文件排序，并按默认忽略列表过滤常见重型目录（.git/node_modules 等）；
+ * - 目标目录必须位于工作区内（getRelativePathFromAbsolute 校验，防止越界枚举）。
+ */
+export const listWorkspaceDirectory: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const workspaceUri = ctx.getCurrentWorkspaceUri();
+    if (!workspaceUri) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        errorCode: 'NO_WORKSPACE',
+        error: t('webview.errors.noWorkspaceOpen')
+      });
+      return;
+    }
+
+    const relDir = typeof data?.path === 'string' ? data.path : '';
+    const safeRelDir = relDir.replace(/\\/g, '/').replace(/^\/+/, '');
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.find(
+      (f) => f.uri.toString() === workspaceUri
+    ) || vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        errorCode: 'NO_WORKSPACE',
+        error: t('webview.errors.noWorkspaceOpen')
+      });
+      return;
+    }
+
+    const dirUri = safeRelDir
+      ? vscode.Uri.joinPath(workspaceFolder.uri, ...safeRelDir.split('/'))
+      : workspaceFolder.uri;
+
+    // 工作区包含校验：解析后仍必须位于工作区内
+    const resolvedRel = getRelativePathFromAbsolute(dirUri.fsPath);
+    if (resolvedRel === null || resolvedRel === undefined) {
+      throw new Error(t('webview.errors.fileNotInWorkspace'));
+    }
+
+    const items = await vscode.workspace.fs.readDirectory(dirUri);
+
+    const DEFAULT_IGNORED = ['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.next', 'coverage'];
+    const shouldIgnore = (name: string): boolean => DEFAULT_IGNORED.includes(name);
+
+    const entries = items
+      .filter(([name]) => !shouldIgnore(name))
+      .map(([name, type]) => {
+        const isDir = type === vscode.FileType.Directory;
+        return {
+          name,
+          path: safeRelDir ? `${safeRelDir}/${name}` : name,
+          type: isDir ? 'directory' : 'file'
+        };
+      })
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    ctx.sendResponse(requestId, {
+      success: true,
+      workspaceUri,
+      path: safeRelDir,
+      entries
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'LIST_WORKSPACE_DIRECTORY_ERROR', error.message || t('webview.errors.listWorkspaceDirectoryFailed'));
+  }
 };
 
 export const getRelativePath: MessageHandler = async (data, requestId, ctx) => {
@@ -993,14 +1070,15 @@ export const revealConversationInExplorer: MessageHandler = async (data, request
 // ========== 上下文总结 ==========
 
 export const summarizeContext: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = assertSafeId(data.conversationId, 'conversationId');
   const abortManager = ctx.streamAbortControllers as any;
   const controller = abortManager?.createSummary
-    ? abortManager.createSummary(data.conversationId)
+    ? abortManager.createSummary(conversationId)
     : new AbortController();
 
   try {
     const result = await ctx.chatHandler.handleSummarizeContext({
-      conversationId: data.conversationId,
+      conversationId,
       configId: data.configId,
       abortSignal: controller.signal
     });
@@ -1023,7 +1101,7 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
     // 引用校验：同一会话两个 summarize 交叠时，旧者的 finally 不能误删新者的控制器
     // （deleteSummary 仅在传入的引用仍是当前条目时才删除）。
     if (abortManager?.deleteSummary) {
-      abortManager.deleteSummary(data.conversationId, controller);
+      abortManager.deleteSummary(conversationId, controller);
     }
   }
 };
@@ -1630,6 +1708,7 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   // 工作区信息
   registry.set('getWorkspaceUri', getWorkspaceUri);
   registry.set('getRelativePath', getRelativePath);
+  registry.set('listWorkspaceDirectory', listWorkspaceDirectory);
   
   // 固定文件管理
   registry.set('getPinnedFilesConfig', getPinnedFilesConfig);

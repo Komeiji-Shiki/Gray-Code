@@ -231,6 +231,9 @@ export async function sendMessage(
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   let originConvId: string | null = state.currentConversationId.value
+  // 本请求是否成功建立了流式占位（catch 中用它判断是否要展示发送错误，
+  // 而不是依赖 isStreaming——取消竞态下 isStreaming 会被 cancelStream 复位）
+  let streamStarted = false
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
   
   try {
@@ -294,6 +297,7 @@ export async function sendMessage(
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
+    streamStarted = true
 
     const conv = state.conversations.value.find(c => c.id === targetConvId)
     if (conv) {
@@ -345,7 +349,11 @@ export async function sendMessage(
     })
 
   } catch (err: any) {
-    if (state.isStreaming.value) {
+    // 发送失败的错误展示不依赖 isStreaming 判断：
+    // 用户在 await 期间调用了 cancelStream 时 isStreaming 已被置 false，
+    // 此时真正的发送失败（IPC 异常等）会被静默吞掉（M1）。
+    // 用「流式是否在本请求中建立」判断是否展示错误。
+    if (streamStarted) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'

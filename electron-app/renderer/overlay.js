@@ -32,17 +32,17 @@
 @keyframes gcToastIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
 .gc-toast-header{display:flex;align-items:center;gap:8px;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--vscode-widget-border,#454545)}
 .gc-toast-header .gc-toast-ico{flex:none;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff}
-.gc-toast.info .gc-toast-ico{background:#007acc}
-.gc-toast.warning .gc-toast-ico{background:#d18616}
-.gc-toast.error .gc-toast-ico{background:#f14c4c}
+.gc-toast.info .gc-toast-ico{background:var(--vscode-button-background,#007acc)}
+.gc-toast.warning .gc-toast-ico{background:var(--vscode-editorWarning-foreground,#d18616)}
+.gc-toast.error .gc-toast-ico{background:var(--vscode-editorError-foreground,#f14c4c)}
 .gc-toast-detail{padding:8px 12px;font-size:12px;color:var(--vscode-descriptionForeground,#9d9d9d);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}
 .gc-toast-actions{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--vscode-widget-border,#454545)}
 .gc-btn{pointer-events:auto;border:1px solid var(--vscode-button-border,rgba(255,255,255,.07));background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#fff);border-radius:3px;padding:4px 12px;font-size:12px;cursor:pointer;font-family:inherit}
 .gc-btn:hover{background:var(--vscode-button-secondaryHoverBackground,#45494e)}
 .gc-btn.primary{background:var(--vscode-button-background,#0e639c)}
 .gc-btn.primary:hover{background:var(--vscode-button-hoverBackground,#1177bb)}
-.gc-btn.danger{background:#be1100}
-.gc-btn.danger:hover{background:#d11b08}
+.gc-btn.danger{background:var(--vscode-errorForeground,#be1100)}
+.gc-btn.danger:hover{background:color-mix(in srgb,var(--vscode-errorForeground,#be1100) 80%,black)}
 .gc-modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);pointer-events:auto;z-index:2147483001;animation:gcFade .12s ease}
 @keyframes gcFade{from{opacity:0}to{opacity:1}}
 .gc-modal-box{width:520px;max-width:calc(100vw - 48px);max-height:calc(100vh - 80px);background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-widget-border,#454545);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden}
@@ -98,7 +98,11 @@
       el.remove();
     });
     root.appendChild(el);
-    setTimeout(() => el.remove(), 10000);
+    // 超时自动移除时回执 undefined，否则后端 showMessage 的 Promise 永久挂起（M-5）
+    setTimeout(() => {
+      replyToast(payload.id, undefined);
+      el.remove();
+    }, 10000);
   }
 
   function replyToast(id, selected) {

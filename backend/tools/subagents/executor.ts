@@ -87,6 +87,15 @@ export async function resolveSubAgentAvailableTools(
     const allowlist = mode === 'whitelist' ? (toolsConfig.whitelist || toolsConfig.list || []) : undefined;
     const denylist = mode === 'blacklist' ? (toolsConfig.blacklist || toolsConfig.list || []) : undefined;
 
+    // 危险工具防护：子代理是无人值守的（没有逐工具确认层），execute_command /
+    // delete_file 默认对子代理不可用——除非用户在 whitelist 模式下显式列出它们。
+    // 这保证「主会话需确认才执行」的危险操作不会被子代理静默执行
+    // （如恶意仓库内容诱导主模型派发子代理后直接跑任意命令）。
+    const SUBAGENT_DEFAULT_BLOCKED_TOOLS = ['execute_command', 'delete_file'];
+    const blockedByDefault = SUBAGENT_DEFAULT_BLOCKED_TOOLS.filter(
+        toolName => !(mode === 'whitelist' && (allowlist || []).includes(toolName))
+    );
+
     // 修改原因：SubAgent 过去直接读取 toolRegistry/MCP 并自己清理 schema，导致工具声明与主会话动态声明分叉。
     // 修改方式：统一委托 ToolDeclarationResolver，并把 SubAgent 自己的 provider config、工具白名单和黑名单作为输入。
     // 修改目的：read_file 多模态说明、图片工具过滤、MCP schema 清理等以后只需要升级一个入口。
@@ -105,7 +114,7 @@ export async function resolveSubAgentAvailableTools(
         includeMcp,
         allowlist,
         denylist,
-        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES]
+        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES, ...blockedByDefault]
     }) || [];
 }
 

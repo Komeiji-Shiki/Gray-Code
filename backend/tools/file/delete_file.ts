@@ -102,11 +102,29 @@ export function createDeleteFileTool(): Tool {
                 // 防护：解析结果等于任一工作区根 → 递归删除整个工作区，拒绝。
                 // （ToolExecutionService 的 outsideWorkspaceAccess 只拦截工作区之外的路径，
                 //   拦不住根目录本身，因此这里必须显式校验。）
-                if (rootFsPaths.includes(normalizePathForComparison(uri.fsPath))) {
+                const resolvedFs = normalizePathForComparison(uri.fsPath);
+                if (rootFsPaths.includes(resolvedFs)) {
                     results.push({
                         path: filePath,
                         success: false,
                         error: `Refusing to delete workspace root: ${uri.fsPath}`
+                    });
+                    failCount++;
+                    continue;
+                }
+
+                // 防护：解析结果是任一工作区根的祖先目录（如 '../'、'sub/../../' 会解析到
+                // 工作区父目录，'./..' 同样）。递归删除祖先目录会把整个工作区连同其父级
+                // 内容一并抹掉，必须拒绝。字符串前缀比较即可：祖先路径是根的严格前缀。
+                const isAncestorOfWorkspaceRoot = rootFsPaths.some(root => {
+                    const trimmedRoot = root.replace(/\/+$/, '');
+                    return trimmedRoot.length > 0 && trimmedRoot.startsWith(resolvedFs.replace(/\/+$/, '') + '/');
+                });
+                if (isAncestorOfWorkspaceRoot) {
+                    results.push({
+                        path: filePath,
+                        success: false,
+                        error: `Refusing to delete a parent directory of the workspace root: ${uri.fsPath}`
                     });
                     failCount++;
                     continue;

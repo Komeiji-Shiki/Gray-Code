@@ -438,7 +438,8 @@ export async function restoreAndEdit(
     })
     
   } catch (err: any) {
-    if (state.isStreaming.value) {
+    // 会话已切换时不得污染新会话的错误/流式状态（H1/M2）
+    if (state.isStreaming.value && validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_EDIT_ERROR',
         message: err.message || '回档并编辑失败'
@@ -518,9 +519,12 @@ export async function summarizeContext(
     })
     
     if (result.success && result.summaryContent) {
-      // 重新加载历史以获取更新后的消息列表
-      await loadHistory()
-      
+      // 重新加载历史以获取更新后的消息列表；
+      // 用户在此期间切换会话时跳过重载，避免把新会话历史整体覆盖进 allMessages（H1）
+      if (validateSessionIdentity(state, originConversationId)) {
+        await loadHistory()
+      }
+
       return {
         success: true,
         summarizedMessageCount: result.summarizedMessageCount

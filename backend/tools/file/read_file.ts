@@ -40,6 +40,11 @@ const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
 // 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
 const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
 
+// 批量读取护栏：单次调用最多 20 个文件，且累计字节预算 50MB，
+// 防止一次批量读取把任意多个文件同时载入内存导致内存暴涨。
+const MAX_BATCH_FILE_COUNT = 20;
+const MAX_BATCH_TOTAL_BYTES = 50 * 1024 * 1024;
+
 const log = Logger.get('ReadFileTool');
 
 /**
@@ -624,12 +629,37 @@ export function createReadFileTool(
                 return { success: false, error: `files[${invalidRequestIndex}].path is required` };
             }
 
+            // 批量文件数量上限：超过 20 个文件时拒绝，提示分批读取
+            if (fileRequests.length > MAX_BATCH_FILE_COUNT) {
+                return {
+                    success: false,
+                    error: `Too many files requested (${fileRequests.length}). The maximum is ${MAX_BATCH_FILE_COUNT} files per read_file call. Please split the read into batches of ${MAX_BATCH_FILE_COUNT} files or fewer.`
+                };
+            }
+
             const results: ReadResult[] = [];
             const allMultimodal: MultimodalData[] = [];
             let successCount = 0;
             let failCount = 0;
 
+            // 批量读取总字节预算：先取 stat 累计大小，超限直接报错
+            let totalBatchBytes = 0;
             for (const fileReq of fileRequests) {
+                try {
+                    const { uri: statUri } = resolveUriWithInfo(fileReq.path);
+                    if (statUri) {
+                        totalBatchBytes += (await vscode.workspace.fs.stat(statUri)).size;
+                    }
+                } catch {
+                    // 单个文件 stat 失败（不存在/权限等）由 readSingleFile 统一处理
+                }
+                if (totalBatchBytes > MAX_BATCH_TOTAL_BYTES) {
+                    return {
+                        success: false,
+                        error: `Batch read total size (${formatFileSize(totalBatchBytes)}) exceeds the limit (${formatFileSize(MAX_BATCH_TOTAL_BYTES)}). Please read the files in smaller batches.`
+                    };
+                }
+
                 // 行范围只对文本文件有意义；非文本/多模态文件即使误传也忽略。
                 let lineRange: LineRange | undefined;
                 if (!isBinaryFile(fileReq.path) && (fileReq.startLine !== undefined || fileReq.endLine !== undefined)) {

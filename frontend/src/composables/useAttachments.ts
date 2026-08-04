@@ -87,11 +87,21 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         const img = new Image()
         img.src = thumbnail
         await new Promise((resolve) => {
+          const timeoutId = setTimeout(() => {
+            img.onload = null
+            img.onerror = null
+            resolve(null)
+          }, 10000)
           img.onload = () => {
+            clearTimeout(timeoutId)
             attachment.metadata = {
               width: img.width,
               height: img.height
             }
+            resolve(null)
+          }
+          img.onerror = () => {
+            clearTimeout(timeoutId)
             resolve(null)
           }
         })
@@ -141,16 +151,19 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     const results: Attachment[] = []
     const total = files.length
 
-    for (let i = 0; i < files.length; i++) {
-      const attachment = await addAttachment(files[i])
-      if (attachment) {
-        results.push(attachment)
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const attachment = await addAttachment(files[i])
+        if (attachment) {
+          results.push(attachment)
+        }
+        uploadProgress.value = Math.round(((i + 1) / total) * 100)
       }
-      uploadProgress.value = Math.round(((i + 1) / total) * 100)
+    } finally {
+      // 任何路径（含未捕获异常）都必须复位上传状态
+      uploading.value = false
+      uploadProgress.value = 0
     }
-
-    uploading.value = false
-    uploadProgress.value = 0
 
     return results
   }
@@ -218,7 +231,15 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
       // 要尝试的时间点（秒）
       const timePoints = [0.1, 1, 2, 5]
       let currentTimeIndex = 0
-      
+
+      const timeoutId = setTimeout(() => {
+        video.onloadedmetadata = null
+        video.onseeked = null
+        video.onerror = null
+        if (video.src) URL.revokeObjectURL(video.src)
+        reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
+      }, 10000)
+
       video.onloadedmetadata = () => {
         // 使用视频时长的 10% 或第一个时间点
         const targetTime = Math.min(video.duration * 0.1, timePoints[0])
@@ -266,10 +287,12 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         
         // 清理
         URL.revokeObjectURL(video.src)
+        clearTimeout(timeoutId)
         resolve(canvas.toDataURL('image/jpeg', 0.8))
       }
       
       video.onerror = () => {
+        clearTimeout(timeoutId)
         URL.revokeObjectURL(video.src)
         reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
       }

@@ -45,6 +45,10 @@ const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
 const applyDiffProgress = ref<Map<string, number>>(new Map())
 const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
 
+// 当前挂载的 ToolMessage 实例数：全部卸载后必须停止自动确认倒计时，
+// 否则计时器会在用户完全不可见时继续走到点，静默自动接受 pending diff（数据安全缺陷）。
+let mountedToolMessageInstances = 0
+
 
 
 // --- Apply Diff 确认逻辑 ---
@@ -244,6 +248,8 @@ function startDiffTimer(sessionId: string, delay: number) {
   if (processingDiffSessionIds.value.has(sessionId)) return
   if (diffActionErrors.value.has(sessionId)) return
   if (delay <= 0) return
+  // 无可见实例时不启动倒计时（恢复挂载后由 watchEffect 重新启动）
+  if (mountedToolMessageInstances <= 0) return
 
   
   applyDiffTimeLeft.value.set(sessionId, delay)
@@ -258,7 +264,10 @@ function startDiffTimer(sessionId: string, delay: number) {
     
     if (remaining <= 0) {
       stopDiffTimer(sessionId)
-      confirmDiff(sessionId)
+      // 全部实例已卸载时只停止倒计时，不执行自动接受
+      if (mountedToolMessageInstances > 0) {
+        confirmDiff(sessionId)
+      }
     }
   }, 50)
   
@@ -446,10 +455,21 @@ onBeforeUnmount(() => {
   // 注意：模块级 applyDiffTimers 不在此清理，由 diff.statusChanged 统一维护
   unregisterApplyDiffConfigChanged()
   unregisterStatusChanged()
+
+  // 最后一个实例卸载时停掉全部倒计时，避免用户不可见时静默自动接受 diff；
+  // 重新挂载后 watchEffect 会为仍 pending 的会话按需重启计时器。
+  mountedToolMessageInstances -= 1
+  if (mountedToolMessageInstances <= 0) {
+    mountedToolMessageInstances = 0
+    for (const sessionId of Array.from(applyDiffTimers.keys())) {
+      stopDiffTimer(sessionId)
+    }
+  }
 })
 
 // 异步初始化：获取 diff 工具配置（仅此一步需要 await，留在 onMounted 内）
 onMounted(async () => {
+  mountedToolMessageInstances += 1
   try {
     const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>('tools.getToolConfig', {
       toolName: 'apply_diff'
@@ -1543,7 +1563,7 @@ const ToolContentHost = defineComponent({
   gap: 4px;
   padding: 4px 12px;
   background: transparent;
-  border: 1px solid #555555;
+  border: 1px solid var(--vscode-widget-border);
   border-radius: 2px;
   color: var(--vscode-foreground);
   font-size: 11px;
@@ -1555,7 +1575,7 @@ const ToolContentHost = defineComponent({
 
 .diff-preview-btn:hover {
   background: rgba(128, 128, 128, 0.1);
-  border-color: #777777;
+  border-color: var(--vscode-button-hoverBackground);
 }
 
 .diff-preview-btn:active {
@@ -1588,7 +1608,7 @@ const ToolContentHost = defineComponent({
   gap: 4px;
   padding: 4px 12px;
   background: transparent;
-  border: 1px solid #555555;
+  border: 1px solid var(--vscode-widget-border);
   border-radius: 2px;
   color: var(--vscode-foreground);
   font-size: 11px;
@@ -1600,7 +1620,7 @@ const ToolContentHost = defineComponent({
 
 .tool-action-btn:hover {
   background: rgba(128, 128, 128, 0.1);
-  border-color: #777777;
+  border-color: var(--vscode-button-hoverBackground);
 }
 
 .tool-action-btn:active {

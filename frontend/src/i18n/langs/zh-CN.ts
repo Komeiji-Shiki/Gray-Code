@@ -2503,17 +2503,43 @@ const zhCN = {
             title: '变更',
             fileCount: '{count} 个文件',
             close: '关闭面板',
-            empty: '暂无待处理的变更',
+            empty: '暂无变更记录',
             noChange: '该文件没有内容差异',
             accept: '接受',
             reject: '拒绝',
             acceptAll: '全部接受',
             rejectAll: '全部拒绝',
             actionFailed: '操作失败',
+            viewNewContent: '查看新内容',
+            syntaxIssues: '{count} 个语法问题',
+            noSyntaxIssues: '未发现语法问题',
+            roundLabel: '第 {round} 轮',
+            allProcessed: '所有变更均已处理（历史变更仍可查看与比对）',
+            clearHistory: '清空历史',
             status: {
                 pending: '待处理',
                 accepted: '已接受',
                 rejected: '已拒绝'
+            }
+        },
+        codeView: {
+            title: '代码查看',
+            close: '关闭面板',
+            empty: '从左侧工作区文件树选择文件，或输入路径打开代码',
+            pathPlaceholder: '输入文件路径（如 src/main.ts）后回车',
+            open: '打开',
+            recent: '最近打开...',
+            refresh: '重新加载',
+            memorySource: '内存内容',
+            jumpToLine: '跳转行号',
+            issuesFound: '发现 {count} 个语法问题',
+            noIssues: '未发现语法问题（共 {lines} 行）',
+            workspaceFiles: '工作区文件',
+            noWorkspace: '未打开工作区文件夹（文件树不可用）',
+            refreshTree: '刷新文件树',
+            treeEmpty: '（空目录）',
+            errors: {
+                openFailed: '打开文件失败'
             }
         },
         channels: {

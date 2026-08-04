@@ -13,6 +13,7 @@
  */
 
 import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content, ConversationTailVersion } from './types';
+import { assertSafeId } from '../../core/idValidation';
 
 // 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
 // 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
@@ -517,6 +518,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     ) {}
 
     private getLegacyHistoryPath(conversationId: string): any {
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -525,6 +527,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getConversationDir(conversationId: string): any {
+        // conversationId 来自 webview 消息层，不可信；Uri.joinPath 会归一化 `..` 段，
+        // 若不加校验可逃逸出 conversations 目录。这里做存储层兜底防线。
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -541,6 +546,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getMetadataPath(conversationId: string): any {
+        assertSafeId(conversationId, 'conversationId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -549,6 +555,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getSnapshotPath(snapshotId: string): any {
+        assertSafeId(snapshotId, 'snapshotId');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'snapshots',

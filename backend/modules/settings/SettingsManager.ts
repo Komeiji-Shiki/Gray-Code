@@ -98,9 +98,20 @@ import {
  * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
  * 其它子字段全部丢失），这里对纯对象逐层合并。
  */
+const DANGEROUS_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * 判断键名是否为原型污染危险键
+ */
+function isDangerousProtoKey(key: string): boolean {
+    return DANGEROUS_PROTO_KEYS.has(key);
+}
+
 function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
     for (const [key, value] of Object.entries(override)) {
+        // 跳过原型污染危险键
+        if (isDangerousProtoKey(key)) continue;
         const baseValue = (base as Record<string, unknown>)[key];
         if (
             value !== null && typeof value === 'object' && !Array.isArray(value) &&
@@ -229,6 +240,8 @@ export class SettingsManager {
 
         // 遍历 default 的所有 key
         for (const key of Object.keys(defaultConfig)) {
+            // 跳过原型污染危险键
+            if (isDangerousProtoKey(key)) continue;
             const defaultValue = (defaultConfig as Record<string, any>)[key];
             const storedValue = storedConfig[key];
 
@@ -240,6 +253,8 @@ export class SettingsManager {
 
         // 保留 stored 中独有的 key（用户可能新增了我们当前版本未知但应该保留的配置）
         for (const key of Object.keys(storedConfig)) {
+            // 跳过原型污染危险键
+            if (isDangerousProtoKey(key)) continue;
             if (!(key in defaultConfig)) {
                 merged[key] = storedConfig[key];
             }

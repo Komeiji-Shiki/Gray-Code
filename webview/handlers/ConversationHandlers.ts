@@ -3,13 +3,40 @@
  */
 
 import { t } from '../../backend/i18n';
+import { assertSafeId } from '../../backend/core/idValidation';
 import type { HandlerContext, MessageHandler } from '../types';
+
+/**
+ * 内部元数据键：只能由后端写入，webview 不可覆盖。
+ * 这些键控制检查点链、审批门、尾部版本等安全敏感状态。
+ */
+const PROTECTED_METADATA_KEYS = new Set([
+  'checkpoints',
+  'pendingApprovalGate',
+  'tailVersions',
+  'trimState'
+]);
+
+function validateConversationId(conversationId: unknown): string {
+  return assertSafeId(conversationId, 'conversationId');
+}
+
+function validateCustomMetadataKey(key: unknown): string {
+  if (typeof key !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) {
+    throw new Error('Invalid metadata key format');
+  }
+  if (PROTECTED_METADATA_KEYS.has(key) || key.startsWith('_')) {
+    throw new Error(`Metadata key "${key}" is reserved for internal use`);
+  }
+  return key;
+}
 
 /**
  * 创建对话
  */
 export const createConversation: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, title, workspaceUri } = data;
+  validateConversationId(conversationId);
   const wsUri = workspaceUri || ctx.getCurrentWorkspaceUri();
   await ctx.conversationManager.createConversation(conversationId, title, wsUri);
   ctx.sendResponse(requestId, { success: true });
@@ -28,7 +55,7 @@ export const listConversations: MessageHandler = async (data, requestId, ctx) =>
  */
 export const getConversationMetadata: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId } = data;
-  const metadata = await ctx.conversationManager.getMetadata(conversationId);
+  const metadata = await ctx.conversationManager.getMetadata(validateConversationId(conversationId));
   ctx.sendResponse(requestId, metadata);
 };
 
@@ -37,13 +64,13 @@ export const getConversationMetadata: MessageHandler = async (data, requestId, c
  */
 export const setTitle: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, title } = data;
-  await ctx.conversationManager.setTitle(conversationId, title);
+  await ctx.conversationManager.setTitle(validateConversationId(conversationId), title);
   ctx.sendResponse(requestId, { success: true });
 };
 
 export const setWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, workspaceUri } = data;
-  await ctx.conversationManager.setWorkspaceUri(conversationId, workspaceUri);
+  await ctx.conversationManager.setWorkspaceUri(validateConversationId(conversationId), workspaceUri);
   ctx.sendResponse(requestId, { success: true });
 };
 
@@ -52,7 +79,8 @@ export const setWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
  */
 export const setCustomMetadata: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, key, value } = data;
-  await ctx.conversationManager.setCustomMetadata(conversationId, key, value);
+  const safeKey = validateCustomMetadataKey(key);
+  await ctx.conversationManager.setCustomMetadata(validateConversationId(conversationId), safeKey, value);
   ctx.sendResponse(requestId, { success: true });
 };
 
@@ -60,7 +88,7 @@ export const setCustomMetadata: MessageHandler = async (data, requestId, ctx) =>
  * 删除对话
  */
 export const deleteConversation: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId } = data;
+  const conversationId = validateConversationId(data?.conversationId);
   // 先删除该对话的所有检查点（包括备份目录）
   await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
   // 再删除对话本身
@@ -75,6 +103,10 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
 export const createBranchConversation: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { sourceConversationId, branchAtIndex, title, conversationId, workspaceUri } = data || {};
+    validateConversationId(sourceConversationId);
+    if (conversationId !== undefined && conversationId !== null && conversationId !== '') {
+      validateConversationId(conversationId);
+    }
     const resolvedWorkspaceUri = workspaceUri || ctx.getCurrentWorkspaceUri() || undefined;
     const result = await ctx.conversationManager.createBranchConversation(
       sourceConversationId,
@@ -96,7 +128,7 @@ export const createBranchConversation: MessageHandler = async (data, requestId, 
  */
 export const getMessages: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId } = data;
-  const messages = await ctx.conversationManager.getMessages(conversationId);
+  const messages = await ctx.conversationManager.getMessages(validateConversationId(conversationId));
   ctx.sendResponse(requestId, messages);
 };
 
@@ -105,7 +137,9 @@ export const getMessages: MessageHandler = async (data, requestId, ctx) => {
  */
 export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, beforeIndex, offset, limit } = data || {};
-  const result = await ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit });
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 500) : undefined;
+  const safeOffset = Number.isFinite(offset) ? Math.max(Number(offset), 0) : undefined;
+  const result = await ctx.conversationManager.getMessagesPaged(validateConversationId(conversationId), { beforeIndex, offset: safeOffset, limit: safeLimit });
   ctx.sendResponse(requestId, result);
 };
 
@@ -116,9 +150,11 @@ export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => 
  */
 export const loadConversationForView: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, beforeIndex, offset, limit } = data || {};
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 500) : undefined;
+  const safeOffset = Number.isFinite(offset) ? Math.max(Number(offset), 0) : undefined;
   const [metadata, result] = await Promise.all([
-    ctx.conversationManager.getMetadata(conversationId),
-    ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit })
+    ctx.conversationManager.getMetadata(validateConversationId(conversationId)),
+    ctx.conversationManager.getMessagesPaged(validateConversationId(conversationId), { beforeIndex, offset: safeOffset, limit: safeLimit })
   ]);
 
   const custom = (metadata?.custom || {}) as Record<string, unknown>;
@@ -139,7 +175,7 @@ export const loadConversationForView: MessageHandler = async (data, requestId, c
 export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, messageIndex, toolCallIds } = data;
   try {
-    await ctx.conversationManager.rejectToolCalls(conversationId, messageIndex, toolCallIds);
+    await ctx.conversationManager.rejectToolCalls(validateConversationId(conversationId), messageIndex, toolCallIds);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'REJECT_TOOL_CALLS_ERROR', error.message || t('webview.errors.rejectToolCallsFailed'));
@@ -152,7 +188,7 @@ export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
 export const saveTailVersion: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, branchIndex } = data || {};
   try {
-    const result = await ctx.conversationManager.saveTailVersion(conversationId, Number(branchIndex));
+    const result = await ctx.conversationManager.saveTailVersion(validateConversationId(conversationId), Number(branchIndex));
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'SAVE_TAIL_VERSION_ERROR', error.message || 'Failed to save tail version');
@@ -165,7 +201,7 @@ export const saveTailVersion: MessageHandler = async (data, requestId, ctx) => {
 export const listTailVersions: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId } = data || {};
   try {
-    const versions = await ctx.conversationManager.listTailVersions(conversationId);
+    const versions = await ctx.conversationManager.listTailVersions(validateConversationId(conversationId));
     ctx.sendResponse(requestId, { versions });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_TAIL_VERSIONS_ERROR', error.message || 'Failed to list tail versions');
@@ -179,7 +215,7 @@ export const restoreTailVersion: MessageHandler = async (data, requestId, ctx) =
   const { conversationId, branchIndex, versionId } = data || {};
   try {
     const result = await ctx.conversationManager.restoreTailVersion(
-      conversationId,
+      validateConversationId(conversationId),
       Number(branchIndex),
       versionId
     );
