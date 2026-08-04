@@ -1,7 +1,7 @@
 # Change Log
 
 
-## [Unreleased]
+## [1.3.2] - 2026-08-04
 
 ### Changed
   - 存档点创建/恢复主流程切换到新架构：创建改用 `CheckpointSnapshotBuilder`（多根工作区扫描、强制排除存档目录自身、流式哈希 + 有界并发、stat 复用），恢复改用 `CheckpointRestoreEngine`（增量链文件索引 O(1) 查询、scoped 路径安全解析、失败清单区分 missing_in_chain / hash_mismatch / copy_failed / delete_failed）；新存档记录工作区身份（`workspaceRoots` / `workspaceFingerprint`），恢复前校验当前工作区，跨项目恢复被明确拒绝；新存档备份目录改用 scoped 布局（`cp_xxx/ws_xxx/relative`），多根工作区同名文件不再互相覆盖；旧格式存档（相对路径键 + 旧布局）单根恢复保持兼容，多根下明确拒绝而非静默错恢复；存档创建/恢复进入工作区级互斥锁（等待进行中的写工具退出并阻止新写入），恢复失败路径转相对路径展示
