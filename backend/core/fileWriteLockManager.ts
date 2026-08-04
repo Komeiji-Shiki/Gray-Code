@@ -10,8 +10,8 @@
  * 锁持有者标识。
  */
 export interface LockHolder {
-    /** 'main' = 主会话；'subagent' = 子代理 run */
-    kind: 'main' | 'subagent';
+    /** 'main' = 主会话；'subagent' = 子代理 run；'checkpoint' = 存档操作 */
+    kind: 'main' | 'subagent' | 'checkpoint';
     /** 唯一标识：conversationId 或 runId */
     id: string;
     /** 展示名：撞车提示中告知对方是谁在占用（如 agent 名称或 'main session'） */
@@ -191,6 +191,35 @@ export class FileWriteLockManager {
             }
         }
         return { acquired: true };
+    }
+
+    async acquire(paths: string[], holder: LockHolder, abortSignal?: AbortSignal): Promise<void> {
+        while (true) {
+            if (abortSignal?.aborted) {
+                throw new Error('File write lock acquisition was cancelled');
+            }
+
+            const result = this.tryAcquire(paths, holder);
+            if (result.acquired) return;
+
+            await new Promise<void>((resolve, reject) => {
+                let settled = false;
+                const timer = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    abortSignal?.removeEventListener('abort', onAbort);
+                    resolve();
+                }, 25);
+                const onAbort = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    abortSignal?.removeEventListener('abort', onAbort);
+                    reject(new Error('File write lock acquisition was cancelled'));
+                };
+                abortSignal?.addEventListener('abort', onAbort, { once: true });
+            });
+        }
     }
 
     release(paths: string[], holder: LockHolder): void {

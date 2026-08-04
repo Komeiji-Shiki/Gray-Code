@@ -13,6 +13,7 @@
  */
 
 import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content } from './types';
+import { HistorySegmentCache } from './history/HistorySegmentCache';
 
 // 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
 // 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
@@ -63,7 +64,7 @@ export async function withMetadataWriteSerialized<T>(conversationId: string, act
     return current;
 }
 
-export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error';
+export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error' | 'segment_missing';
 
 export interface StorageReadResult<T> {
     value: T | null;
@@ -76,6 +77,23 @@ export interface StorageHistoryPage {
     startIndex: number;
     messages: ConversationHistory;
     format: 'paged' | 'legacy';
+}
+
+/**
+ * 历史索引结构信息（HIS-11）。
+ * 元数据完整性检查只需要索引结构（totalMessages/segments），不应解析段消息内容。
+ */
+export interface HistoryIndexInfo {
+    /** 历史是否存在（segmented index 或 legacy 单文件） */
+    exists: boolean;
+    /** 历史索引是否可读（index 解析成功且段文件齐全；legacy 文件存在且 JSON 可解析） */
+    readable: boolean;
+    /** segmented 索引的消息总数（仅 segmented 时提供） */
+    totalMessages?: number;
+    /** segmented 索引的段数（仅 segmented 时提供） */
+    segmentCount?: number;
+    errorCode?: StorageReadErrorCode;
+    errorMessage?: string;
 }
 
 export interface ConversationStorageIntegrity {
@@ -162,6 +180,14 @@ export interface IStorageAdapter {
     getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity>;
 
     /**
+     * 元数据损坏降级备份（可选）：把 {id}.meta.json 改名备份为
+     * {id}.meta.json.corrupt-{Date.now()}（只保留一份，改名失败不抛错）。
+     * ConversationManager.getMetadata 在 parse_error 降级时调用；
+     * 未实现的适配器跳过备份直接返回 fallback 元数据。
+     */
+    backupCorruptMetadata?(conversationId: string): Promise<void>;
+
+    /**
      * 获取对话在本地文件系统中的可定位位置。
      *
      * 修改原因：历史 UI 需要“在文件管理器中显示”对话记录，但 handler 不应该复制存储路径规则。
@@ -169,6 +195,20 @@ export interface IStorageAdapter {
      * 修改目的：保持存储布局的单一来源，并让按钮在 legacy/segmented 两种格式下都可用。
      */
     getConversationStorageLocation?(conversationId: string): Promise<ConversationStorageLocation | null>;
+
+    /**
+     * 追加历史（append-only 尾段写入，HIS-01）。
+     * 可选：未实现时调用方回退 saveHistory 全量重写。
+     * 实现约定：最后段未满 200 条只追加该段，满了新建下一段；
+     * 写临时尾段→原子替换→写临时 index→原子替换（index 是提交点）。
+     */
+    appendHistory?(conversationId: string, contents: ConversationHistory): Promise<void>;
+
+    /**
+     * 仅读取历史索引结构（不解析段消息内容，HIS-11）。
+     * 可选：未实现时调用方回退 getConversationIntegrity。
+     */
+    getHistoryIndexInfo?(conversationId: string): Promise<HistoryIndexInfo>;
     
     /**
      * 保存快照
@@ -243,6 +283,18 @@ export class MemoryStorageAdapter implements IStorageAdapter {
             endExclusive = Math.max(startIndex, Math.min(total, startIndex + limit));
         } else { startIndex = Math.max(0, total - limit); }
         return { value: { total, startIndex, messages: JSON.parse(JSON.stringify(history.slice(startIndex, endExclusive))), format: 'legacy' } };
+    }
+
+    /** 追加历史（append-only，HIS-01）：内存实现直接 push 后深拷贝保存 */
+    async appendHistory(conversationId: string, contents: ConversationHistory): Promise<void> {
+        const existing = this.histories.get(conversationId) ?? [];
+        this.histories.set(conversationId, JSON.parse(JSON.stringify(existing.concat(contents))));
+    }
+
+    /** 索引结构信息（HIS-11）：内存实现只查存在性，不解析消息 */
+    async getHistoryIndexInfo(conversationId: string): Promise<HistoryIndexInfo> {
+        const exists = this.histories.has(conversationId);
+        return { exists, readable: exists };
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
@@ -376,6 +428,29 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         return { value: { total, startIndex, messages: JSON.parse(JSON.stringify(history.slice(startIndex, endExclusive))), format: 'legacy' } };
     }
 
+    /** 追加历史（append-only，HIS-01）：globalState 直接追加后整体更新 */
+    async appendHistory(conversationId: string, contents: ConversationHistory): Promise<void> {
+        const key = `limcode.history.${conversationId}`;
+        const existing = (this.context.globalState.get(key) as ConversationHistory | undefined) || [];
+        await this.context.globalState.update(key, existing.concat(contents));
+
+        // 与 saveHistory 同链更新 updatedAt（避免覆盖 custom 字段）
+        await withMetadataWriteSerialized(conversationId, async () => {
+            const metaKey = `limcode.meta.${conversationId}`;
+            const meta = this.context.globalState.get(metaKey) as ConversationMetadata | undefined;
+            if (meta) {
+                meta.updatedAt = Date.now();
+                await this.context.globalState.update(metaKey, meta);
+            }
+        });
+    }
+
+    /** 索引结构信息（HIS-11）：globalState 只查存在性 */
+    async getHistoryIndexInfo(conversationId: string): Promise<HistoryIndexInfo> {
+        const key = `limcode.history.${conversationId}`;
+        return { exists: this.context.globalState.get(key) !== undefined, readable: true };
+    }
+
     async deleteHistory(conversationId: string): Promise<void> {
         const historyKey = `limcode.history.${conversationId}`;
         const metaKey = `limcode.meta.${conversationId}`;
@@ -483,10 +558,21 @@ interface FileHistoryIndex {
 export class FileSystemStorageAdapter implements IStorageAdapter {
     private static readonly HISTORY_SEGMENT_SIZE = 200;
 
+    /** 段读取并发上限（HIS-05）：受限于文件句柄与内存，取适中值 */
+    private static readonly SEGMENT_READ_CONCURRENCY = 4;
+
+    /** 段级 LRU 缓存（HIS-06）：命中跳过读盘；写提交后按会话整体失效 */
+    private readonly segmentCache = new HistorySegmentCache();
+
     constructor(
         private vscode: any, // VS Code API
         private baseDir: string // 存储目录的 URI
     ) {}
+
+    /** 供测试/诊断读取当前缓存段数 */
+    getHistorySegmentCacheSize(): number {
+        return this.segmentCache.size;
+    }
 
     private getLegacyHistoryPath(conversationId: string): any {
         return this.vscode.Uri.joinPath(
@@ -564,6 +650,101 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     private async exists(uri: any): Promise<boolean> {
         try { await this.vscode.workspace.fs.stat(uri); return true; }
         catch { return false; }
+    }
+
+    /**
+     * 原子覆盖：优先 overwrite rename（无窗口）；平台不支持时回退“删旧 + rename”。
+     * 调用方必须已保证写写串行（runSegmentedHistoryWriteSerialized 或单写者）。
+     */
+    private async renameOverwrite(src: any, dest: any): Promise<void> {
+        try {
+            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+        } catch {
+            try {
+                await this.vscode.workspace.fs.delete(dest, { useTrash: false });
+            } catch {
+                // ignore
+            }
+            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+        }
+    }
+
+    /** 写临时段文件 → 原子替换到线上段路径 */
+    private async atomicWriteSegment(tmpUri: any, destUri: any, messages: ConversationHistory): Promise<void> {
+        const content = messages.map(item => JSON.stringify(item)).join('\n');
+        await this.vscode.workspace.fs.writeFile(tmpUri, Buffer.from(content, 'utf8'));
+        await this.renameOverwrite(tmpUri, destUri);
+    }
+
+    /** 历史提交后统一维护 updatedAt（与 saveHistory 同链，避免覆盖 custom 字段） */
+    private async refreshUpdatedAt(conversationId: string): Promise<void> {
+        try {
+            await withMetadataWriteSerialized(conversationId, async () => {
+                const meta = await this.loadMetadata(conversationId);
+                if (meta) {
+                    meta.updatedAt = Date.now();
+                    await this.saveMetadata(meta);
+                }
+            });
+        } catch {
+            // 忽略元数据更新失败
+        }
+    }
+
+    /**
+     * 限流并发执行（HIS-05）：同时最多 concurrency 个任务在途，结果按输入顺序返回。
+     */
+    private async runBounded<T, R>(
+        items: readonly T[],
+        concurrency: number,
+        task: (item: T) => Promise<R>
+    ): Promise<R[]> {
+        const results: R[] = new Array(items.length);
+        let next = 0;
+        const workerCount = Math.max(1, Math.min(concurrency, items.length));
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+            while (next < items.length) {
+                const index = next++;
+                results[index] = await task(items[index]);
+            }
+        }));
+        return results;
+    }
+
+    /** 缓存 revision：任何历史提交都会改变 totalMessages，配合写后失效保证读到最新 */
+    private buildSegmentCacheRevision(index: FileHistoryIndex): string {
+        return String(index.totalMessages);
+    }
+
+    /**
+     * 读段（命中缓存跳过读盘，HIS-06）。
+     * M5：外部进程直接改段文件不会改变 totalMessages，revision 无法感知；
+     * 命中前先 stat 段文件并把 mtime 纳入缓存键，mtime 变化 → 缓存失效重读（成本可控，不解析内容）。
+     */
+    private async readSegmentCached(
+        conversationId: string,
+        historyDir: any,
+        segment: FileHistorySegmentIndexEntry,
+        revision: string
+    ): Promise<StorageReadResult<ConversationHistory>> {
+        const segmentUri = this.vscode.Uri.joinPath(historyDir, segment.file);
+        let mtimeKey = 'missing';
+        try {
+            const stat = await this.vscode.workspace.fs.stat(segmentUri);
+            mtimeKey = String(stat.mtime ?? 0);
+        } catch {
+            // 文件缺失/stat 失败：不命中缓存（由 readHistorySegment 返回 not_found/io_error）
+        }
+        const cacheKey = `${revision}::m${mtimeKey}`;
+        const cached = this.segmentCache.get(conversationId, segment.file, cacheKey);
+        if (cached) {
+            return { value: cached };
+        }
+        const result = await this.readHistorySegment(segmentUri);
+        if (result.value) {
+            this.segmentCache.set(conversationId, segment.file, cacheKey, result.value);
+        }
+        return result;
     }
 
     async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation> {
@@ -771,6 +952,187 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         } catch {
             // ignore
         }
+
+        // 写后失效（HIS-06）：本次提交后该会话所有缓存段不可信
+        this.segmentCache.invalidateConversation(conversationId);
+    }
+
+    /**
+     * 追加历史（append-only 尾段写入，HIS-01）。
+     *
+     * 崩溃一致性：写临时尾段→原子替换→写临时 index→原子替换。
+     * index 是有效历史的提交点：段文件先于 index 就位，崩溃时旧 index 不引用新内容
+     * （多出的行在 load 时按 index.count 截断，不会进入完整历史）。
+     * 再次 append 尾段前同样按 index.count 截断（H1），保证重试 at-most-once。
+     */
+    async appendHistory(conversationId: string, contents: ConversationHistory): Promise<void> {
+        const pending = Array.isArray(contents) ? contents : [];
+        if (pending.length === 0) return;
+
+        await runSegmentedHistoryWriteSerialized(conversationId, async () => {
+            const indexResult = await this.readHistoryIndex(conversationId);
+            const conversationDir = this.getConversationDir(conversationId);
+            const historyDir = this.getHistoryDir(conversationId);
+            const historyIndexPath = this.getHistoryIndexPath(conversationId);
+            // 注意：tmp 路径必须是 Uri 对象（见 writeSegmentedHistory 注释，字符串会触发 UriError）
+            const tmpSegmentPath = this.vscode.Uri.joinPath(conversationDir, 'history.append.tmp.ndjson');
+            const tmpIndexPath = this.vscode.Uri.joinPath(conversationDir, 'history.index.json.tmp');
+
+            if (!indexResult.value) {
+                // 尚无分段索引：legacy 或全新对话 → 合并后全量重写（罕见路径，保证语义正确）
+                const legacyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                const existing = legacyResult.value ?? [];
+                await this.writeSegmentedHistory(conversationId, existing.concat(pending));
+                await this.refreshUpdatedAt(conversationId);
+                return;
+            }
+
+            const index = indexResult.value;
+            const segments = index.segments.map(segment => ({ ...segment }));
+            let totalMessages = index.totalMessages;
+            let cursor = 0;
+
+            while (cursor < pending.length) {
+                const remainingCount = pending.length - cursor;
+
+                if (segments.length === 0) {
+                    // 空历史（createConversation 写入过 []）→ 新建 000000.ndjson
+                    const take = Math.min(remainingCount, FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE);
+                    const chunk = pending.slice(cursor, cursor + take);
+                    const file = '000000.ndjson';
+                    await this.vscode.workspace.fs.createDirectory(historyDir);
+                    await this.atomicWriteSegment(tmpSegmentPath, this.vscode.Uri.joinPath(historyDir, file), chunk);
+                    segments.push({ file, startIndex: totalMessages, endIndex: totalMessages + take - 1, count: take });
+                    totalMessages += take;
+                    cursor += take;
+                    continue;
+                }
+
+                const last = segments[segments.length - 1];
+                const freeSlots = FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE - last.count;
+                if (freeSlots > 0) {
+                    // 尾段未满：读尾段 → 追加 → 写临时 → 原子替换
+                    const take = Math.min(remainingCount, freeSlots);
+                    const chunk = pending.slice(cursor, cursor + take);
+                    const lastUri = this.vscode.Uri.joinPath(historyDir, last.file);
+                    const segmentResult = await this.readHistorySegment(lastUri);
+                    if (!segmentResult.value) {
+                        // M4：index 存在但尾段缺失/损坏时不再直接抛错，回退“legacy 或可读段合并全量重写”
+                        // 自愈（与 index 缺失时的兜底同语义；写后 legacy 被删除，损坏尾段被丢弃）。
+                        const legacyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                        let existing: ConversationHistory;
+                        if (legacyResult.value && legacyResult.value.length > 0) {
+                            existing = legacyResult.value;
+                        } else {
+                            existing = [];
+                            for (let i = 0; i < segments.length - 1; i++) {
+                                const seg = segments[i];
+                                const segResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, seg.file));
+                                if (!segResult.value) {
+                                    throw new Error(
+                                        `appendHistory: failed to read segment ${seg.file} ` +
+                                        `(${segResult.errorCode}) while repairing tail segment ${last.file}`
+                                    );
+                                }
+                                existing.push(...segResult.value.slice(0, seg.count));
+                            }
+                        }
+                        await this.writeSegmentedHistory(conversationId, existing.concat(pending.slice(cursor)));
+                        await this.refreshUpdatedAt(conversationId);
+                        return;
+                    }
+                    // H1：以 index.count 为提交点截断尾段残留（上次 append 尾段 rename 成功但 index
+                    // 写失败/崩溃时，尾段文件会多出未提交行），再拼接本次新增——at-most-once，
+                    // 调用方重试不会重复追加，totalMessages 与 Σcount 保持一致。
+                    const updated = segmentResult.value.slice(0, last.count).concat(chunk);
+                    await this.atomicWriteSegment(tmpSegmentPath, lastUri, updated);
+                    last.count = updated.length;
+                    last.endIndex = last.startIndex + updated.length - 1;
+                    totalMessages += take;
+                    cursor += take;
+                    continue;
+                }
+
+                // 尾段已满：新建下一段
+                const take = Math.min(remainingCount, FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE);
+                const chunk = pending.slice(cursor, cursor + take);
+                const file = `${String(segments.length).padStart(6, '0')}.ndjson`;
+                await this.vscode.workspace.fs.createDirectory(historyDir);
+                await this.atomicWriteSegment(tmpSegmentPath, this.vscode.Uri.joinPath(historyDir, file), chunk);
+                segments.push({ file, startIndex: totalMessages, endIndex: totalMessages + take - 1, count: take });
+                totalMessages += take;
+                cursor += take;
+            }
+
+            const nextIndex: FileHistoryIndex = {
+                version: 1,
+                segmentSize: FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE,
+                totalMessages,
+                segments,
+            };
+
+            // 提交点：先段后 index（写临时 index → 原子替换）
+            await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(nextIndex, null, 2), 'utf8'));
+            await this.renameOverwrite(tmpIndexPath, historyIndexPath);
+
+            // 写后失效（HIS-06）
+            this.segmentCache.invalidateConversation(conversationId);
+
+            await this.refreshUpdatedAt(conversationId);
+        });
+    }
+
+    /**
+     * 索引结构信息（HIS-11）：只读 index.json 或 legacy 存在性，不解析段消息内容。
+     * M1：
+     * - (a) legacy 单文件历史至少做一次 JSON.parse 探测，损坏 JSON 报不可读（旧行为误报 ok）；
+     * - (b) segmented 分支对 segments 逐个 stat 存在性（不解析内容），任一缺失报不可读（旧行为误报 ok）。
+     */
+    async getHistoryIndexInfo(conversationId: string): Promise<HistoryIndexInfo> {
+        const indexPath = this.getHistoryIndexPath(conversationId);
+        if (await this.exists(indexPath)) {
+            const result = await this.readHistoryIndex(conversationId);
+            if (!result.value) {
+                return {
+                    exists: true,
+                    readable: false,
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage,
+                };
+            }
+            // M1(b)：index 完好但段文件缺失 → readable=false（只 stat，保持 HIS-11 只读结构目标）
+            const historyDir = this.getHistoryDir(conversationId);
+            for (const segment of result.value.segments) {
+                if (!(await this.exists(this.vscode.Uri.joinPath(historyDir, segment.file)))) {
+                    return {
+                        exists: true,
+                        readable: false,
+                        totalMessages: result.value.totalMessages,
+                        segmentCount: result.value.segments.length,
+                        errorCode: 'segment_missing',
+                        errorMessage: `Missing history segment file ${segment.file} for ${conversationId}`,
+                    };
+                }
+            }
+            return {
+                exists: true,
+                readable: true,
+                totalMessages: result.value.totalMessages,
+                segmentCount: result.value.segments.length,
+            };
+        }
+        const legacyPath = this.getLegacyHistoryPath(conversationId);
+        if (await this.exists(legacyPath)) {
+            // M1(a)：legacy 分支至少做一次 JSON.parse 探测，损坏 JSON 报不可读
+            const legacyResult = await this.readJsonFile<ConversationHistory>(legacyPath);
+            return {
+                exists: true,
+                readable: legacyResult.value !== null,
+                errorCode: legacyResult.errorCode,
+                errorMessage: legacyResult.errorMessage,
+            };
+        }
+        return { exists: false, readable: false };
     }
 
     private async loadSegmentedHistory(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
@@ -779,14 +1141,24 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             return { value: null, errorCode: indexResult.errorCode, errorMessage: indexResult.errorMessage };
         }
 
+        const index = indexResult.value;
+        const revision = this.buildSegmentCacheRevision(index);
         const historyDir = this.getHistoryDir(conversationId);
+        // HIS-05：多段有界并发读取（结果按段顺序返回）
+        const results = await this.runBounded(index.segments, FileSystemStorageAdapter.SEGMENT_READ_CONCURRENCY, segment =>
+            this.readSegmentCached(conversationId, historyDir, segment, revision)
+        );
+
         const history: ConversationHistory = [];
-        for (const segment of indexResult.value.segments) {
-            const segmentResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file));
+        for (let i = 0; i < index.segments.length; i++) {
+            const segmentResult = results[i];
             if (!segmentResult.value) {
                 return { value: null, errorCode: segmentResult.errorCode, errorMessage: segmentResult.errorMessage };
             }
-            history.push(...segmentResult.value);
+            // 以 index.count 为提交点：崩溃残留（段文件多于 index 计数）不进入完整历史
+            // M2：返回前对元素做浅拷贝——缓存元素引用不再泄漏给调用方，
+            // 调用方对消息顶层属性的原地赋值（如 tokenCountByChannel = {...}）不会污染缓存。
+            history.push(...segmentResult.value.slice(0, index.segments[i].count).map(msg => ({ ...msg })));
         }
 
         return { value: history };
@@ -803,19 +1175,33 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
 
         const index = indexResult.value;
         const { startIndex, endExclusive } = this.buildPageRange(index.totalMessages, options);
+        const revision = this.buildSegmentCacheRevision(index);
         const historyDir = this.getHistoryDir(conversationId);
-        const messages: ConversationHistory = [];
 
-        for (const segment of index.segments) {
+        const relevant: Array<{ segment: FileHistorySegmentIndexEntry; segmentIndex: number }> = [];
+        for (let i = 0; i < index.segments.length; i++) {
+            const segment = index.segments[i];
             if (segment.endIndex < startIndex || segment.startIndex >= endExclusive) continue;
-            const segmentResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file));
+            relevant.push({ segment, segmentIndex: i });
+        }
+
+        // HIS-05：多段有界并发读取
+        const results = await this.runBounded(relevant, FileSystemStorageAdapter.SEGMENT_READ_CONCURRENCY, ({ segment }) =>
+            this.readSegmentCached(conversationId, historyDir, segment, revision)
+        );
+
+        const messages: ConversationHistory = [];
+        for (let k = 0; k < relevant.length; k++) {
+            const { segment } = relevant[k];
+            const segmentResult = results[k];
             if (!segmentResult.value) {
                 return { value: null, errorCode: segmentResult.errorCode, errorMessage: segmentResult.errorMessage };
             }
 
             const localStart = Math.max(0, startIndex - segment.startIndex);
             const localEndExclusive = Math.min(segment.count, endExclusive - segment.startIndex);
-            messages.push(...segmentResult.value.slice(localStart, localEndExclusive));
+            // M2：元素浅拷贝（见 loadSegmentedHistory 注释），避免缓存元素引用泄漏给调用方
+            messages.push(...segmentResult.value.slice(localStart, localEndExclusive).map(msg => ({ ...msg })));
         }
 
         return {
@@ -961,6 +1347,8 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         // 入队与 saveHistory/migrateLegacy 串行：否则 delete 先完成、队列里已排队的写
         // 随后会把已删除会话的目录重新创建（"删除后复活"），或写进行中删掉 tmp 目录导致写失败。
         await runSegmentedHistoryWriteSerialized(conversationId, async () => {
+            // 删除会话：清理该会话的全部段缓存（HIS-06）
+            this.segmentCache.invalidateConversation(conversationId);
             const historyUri = this.getLegacyHistoryPath(conversationId);
             const metaUri = this.getMetadataPath(conversationId);
             const conversationDir = this.getConversationDir(conversationId);
@@ -1012,10 +1400,80 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
     }
 
+    /**
+     * 元数据损坏降级备份：把 {id}.meta.json 改名备份为 {id}.meta.json.corrupt-{Date.now()}。
+     *
+     * 背景：meta.json 因历史非原子写截断（或外部原因）损坏（parse_error）时，
+     * ConversationManager.getMetadata 不再向调用方抛 UNKNOWN_ERROR，而是先把损坏文件
+     * 改名备份（保留损坏现场供人工排查），再返回从历史重建的 fallback 元数据。
+     *
+     * 约定：
+     * - 只保留一份备份：改名前列出并删除旧的 {id}.meta.json.corrupt-*（避免无限堆积）；
+     * - 改名失败不抛错（不阻塞降级主流程）；
+     * - 备份文件不会被自动清理（不参与日常删除），排查后可手动删除。
+     */
+    async backupCorruptMetadata(conversationId: string): Promise<void> {
+        const uri = this.getMetadataPath(conversationId);
+        if (!(await this.exists(uri))) {
+            return;
+        }
+        const conversationsDir = this.getConversationsRootDir();
+        const prefix = `${conversationId}.meta.json.corrupt-`;
+        // 只保留一份：先清理旧备份（列出 conversations 目录，删除匹配 .corrupt-* 前缀的文件）
+        try {
+            const entries = await this.vscode.workspace.fs.readDirectory(conversationsDir);
+            for (const [name] of entries as Array<[string, number]>) {
+                if (name.startsWith(prefix)) {
+                    try {
+                        await this.vscode.workspace.fs.delete(
+                            this.vscode.Uri.joinPath(conversationsDir, name),
+                            { useTrash: false }
+                        );
+                    } catch {
+                        // 旧备份删除失败忽略（后续 rename 仍可完成）
+                    }
+                }
+            }
+        } catch {
+            // 目录枚举失败不阻塞（后续 rename 仍可完成）
+        }
+        try {
+            // 注意：tmp/备份路径必须是 Uri 对象（字符串拼接会触发 UriError，见 writeSegmentedHistory 注释）
+            await this.renameOverwrite(uri, this.vscode.Uri.joinPath(conversationsDir, `${prefix}${Date.now()}`));
+        } catch {
+            // 改名失败不阻塞降级（原损坏文件保留，下次 getMetadata 会再次尝试）
+        }
+    }
+
+    /**
+     * 原子保存元数据：先写同目录临时文件 {id}.meta.json.tmp，再 rename 覆盖。
+     *
+     * 旧实现直接 writeFile 线上文件：写入中途崩溃/断电/被杀进程会留下截断的 meta.json
+     * （JSON.parse 报 Unterminated string → parse_error → 调用方报 UNKNOWN_ERROR）。
+     * 与 appendHistory/writeSegmentedHistory 的提交模式一致：tmp 写完后 rename 是唯一提交点，
+     * 崩溃时线上文件要么是完整旧版要么是完整新版，不会截断。
+     * 写入失败时清理 tmp（rename 未发生，原 meta.json 不受影响）。
+     */
     async saveMetadata(metadata: ConversationMetadata): Promise<void> {
         const uri = this.getMetadataPath(metadata.id);
         const content = JSON.stringify(metadata, null, 2);
-        await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        // 注意：tmp 路径必须是 Uri 对象（字符串拼接会触发 UriError，见 writeSegmentedHistory 注释）
+        const tmpUri = this.vscode.Uri.joinPath(
+            this.getConversationsRootDir(),
+            `${metadata.id}.meta.json.tmp`
+        );
+        try {
+            await this.vscode.workspace.fs.writeFile(tmpUri, Buffer.from(content, 'utf8'));
+            await this.renameOverwrite(tmpUri, uri);
+        } catch (error) {
+            // 写入失败：清理临时文件，不留垃圾；原 meta.json 保持完好（rename 未发生）
+            try {
+                await this.vscode.workspace.fs.delete(tmpUri, { useTrash: false });
+            } catch {
+                // 清理失败忽略
+            }
+            throw error;
+        }
     }
 
     async loadMetadata(conversationId: string): Promise<ConversationMetadata | null> {

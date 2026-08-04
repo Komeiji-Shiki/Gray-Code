@@ -520,7 +520,21 @@ const en: LanguageMessages = {
                 daysAgo: '{days} days ago',
                 restoreConfirmTitle: 'Restore Checkpoint',
                 restoreConfirmMessage: 'Are you sure you want to restore the workspace to this checkpoint? This will overwrite the corresponding files in your current workspace, and this action cannot be undone.',
-                restoreConfirmBtn: 'Restore'
+                restoreConfirmBtn: 'Restore',
+                restoreConfirmRetryTitle: 'Restore and Retry',
+                restoreConfirmDeleteTitle: 'Restore and Delete',
+                restoreConfirmEditTitle: 'Restore and Edit',
+                restorePreviewFailed: 'Unable to preview restore, please try again later',
+                restorePreviewFilesUpdated: '{count} files will be updated',
+                restorePreviewFilesDeleted: '{count} files will be deleted',
+                restorePreviewFilesUnchanged: '{count} files unchanged',
+                restorePreviewNoChanges: 'Workspace already matches the checkpoint; no file changes',
+                restorePreviewLegacy: 'Legacy checkpoint (no file manifest): restore will use backup contents and may overwrite workspace files; no files will be deleted',
+                restoreDeleteListTitle: 'The following {count} files will be deleted:',
+                restoreDeleteListMore: '...and {count} more files',
+                restoreDeleteListEmpty: 'No files will be deleted by this restore',
+                restoreDeleteUntrackedNote: 'Includes files created after the checkpoint was created (deleted after confirmation)',
+                restoreUnbackedTip: 'These files were not backed up when the checkpoint was created (too large or unreadable), so they will not be touched: {paths}'
             },
             continue: {
                 title: 'Conversation Paused',
@@ -1141,6 +1155,52 @@ const en: LanguageMessages = {
                             hint: 'Automatically clean up old checkpoints when exceeding this number, -1 means unlimited'
                         }
                     },
+                    exclusion: {
+                        title: 'Exclusion Configuration',
+                        description: 'Control which files are excluded from checkpoints. Default exclusion categories can be toggled individually; excluded files are not backed up but the reason is recorded. Click "Preview Exclusions" to inspect.',
+                        patterns: 'patterns',
+                        profiles: {
+                            logs: 'Log Files',
+                            aiModels: 'AI/ML Model Weights',
+                            datasets: 'Datasets',
+                            caches: 'Caches',
+                            pythonVenvs: 'Python Virtual Environments',
+                            buildArtifacts: 'Build Artifacts',
+                            largeMedia: 'Large Media Files',
+                            archives: 'Archives & Binaries'
+                        },
+                        maxFileSize: {
+                            label: 'Max Single File Size (MiB)',
+                            hint: 'Files larger than this are excluded from checkpoints (0 = unlimited, default 50)'
+                        },
+                        customPatterns: {
+                            label: 'Custom Exclusion Patterns',
+                            hint: 'One gitignore pattern per line. A leading ! re-includes default categories but cannot override forced exclusions (.git / node_modules / extension storage)',
+                            reincludeHint: 'Note: for directory-based default categories (e.g. data/, dist/), re-including files under them requires negating the directory itself, e.g. !data/ + !data/keep.txt',
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                        },
+                        preview: {
+                            button: 'Preview Exclusions',
+                            loading: 'Scanning...',
+                            failed: 'Preview failed, please retry',
+                            total: '{count} files/directories excluded, about {size}',
+                            partial: ' (some directories are too large; size stats may be incomplete)',
+                            empty: 'Nothing is excluded with the current configuration',
+                            count: '{count} items',
+                            rule: 'Rule',
+                            source: 'Source',
+                            other: 'Other (.gitignore / custom / size limit, etc.)',
+                            noSamples: 'No samples',
+                            reasons: {
+                                forced: 'Forced',
+                                default: 'Default category',
+                                gitignore: '.gitignore',
+                                custom: 'Custom',
+                                size: 'Size limit',
+                                unreadable: 'Unreadable'
+                            }
+                        }
+                    },
                     cleanup: {
                         title: 'Cleanup Checkpoints',
                         description: 'Manage and clean up checkpoints in batch to free up storage',
@@ -1153,6 +1213,7 @@ const en: LanguageMessages = {
                         selectAll: 'Select All',
                         selectedCount: '{count} selected',
                         selectedSize: 'Total {size}',
+                        totalSize: 'Total {size}',
                         deleteSelected: 'Delete Selected',
                         noCheckpointsInConversation: 'No checkpoints in this conversation',
                         checkpointFiles: '{count} files',
@@ -1171,6 +1232,25 @@ const en: LanguageMessages = {
                             warning: 'This operation cannot be undone',
                             cancel: 'Cancel',
                             delete: 'Delete'
+                        },
+                        rejectedByDependency: '{count} checkpoints kept because later checkpoints depend on them',
+                        deleteFailedCount: '{count} checkpoints failed to delete',
+                        deleteRequestFailed: 'Delete request failed, please retry',
+                        unbackedFiles: '{count} files not backed up',
+                        sizeIncomplete: 'Partially counted',
+                        sizeIncompleteHint: 'Some legacy checkpoints lack size records; total size only covers counted items',
+                        progress: {
+                            pending: 'Pending',
+                            scanning: 'Scanning',
+                            copying: 'Backing up',
+                            cleaning: 'Cleaning up',
+                            preparing: 'Preparing',
+                            restoring: 'Restoring',
+                            deleting: 'Deleting',
+                            done: 'Done',
+                            failed: 'Failed',
+                            cancelled: 'Cancelled',
+                            cancel: 'Cancel'
                         },
                         timeFormat: {
                             justNow: 'Just now',
@@ -1496,6 +1576,8 @@ const en: LanguageMessages = {
                 globalConfig: 'Global Configuration',
                 maxConcurrentAgents: 'Max Concurrent Agents',
                 maxConcurrentAgentsHint: 'Maximum number of sub-agents running at the same time; extra ones wait in a queue (-1 for unlimited)',
+                defaultMaxIterations: 'Default Max Iterations',
+                defaultMaxIterationsHint: 'Default iteration limit for sub-agents and General Worker without their own setting (1~200, -1 for unlimited)',
                 generalWorker: 'Enable General Worker (easy mode)',
                 generalWorkerHint: 'Lets the main model dispatch zero-config "General Worker" agents that inherit the current channel and full tool permissions; the model decides how many to use, no manual agent setup needed',
                 basicInfo: 'Basic Info',
@@ -2414,6 +2496,8 @@ const en: LanguageMessages = {
                 browse: 'Browse',
                 apply: 'Apply',
                 reset: 'Reset to Default',
+                openInExplorer: 'Open in Explorer',
+                openInExplorerTitle: 'Open the current storage directory in file explorer',
                 migrate: 'Migrate Data',
                 migrateHint: 'Migrate existing data to new path',
                 migrating: 'Migrating...',
@@ -2438,7 +2522,8 @@ const en: LanguageMessages = {
                     applyEmptyHint: 'Please select or enter a storage path first',
                     migrationSuccess: 'Data migration completed, please reload window for changes to take effect',
                     migrationFailed: 'Data migration failed: {error}',
-                    validationFailed: 'Path validation failed: {error}'
+                    validationFailed: 'Path validation failed: {error}',
+                    openInExplorerFailed: 'Failed to open storage directory: {error}'
                 },
                 reloadWindow: 'Reload Window'
             }

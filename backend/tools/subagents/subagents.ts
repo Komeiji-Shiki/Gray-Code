@@ -13,8 +13,11 @@ import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, g
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 import { TaskManager } from '../taskManager';
 import { MEMORY_TOOL_NAMES } from '../memory';
+import { TODO_TOOL_NAMES } from '../todo';
 
-const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>(['subagents', ...MEMORY_TOOL_NAMES]);
+// 修改原因：todo_write/todo_update 依赖主会话 conversationId，子代理执行路径无法使用，
+// 不应出现在子代理的工具描述/声明里（P1：避免子代理反复尝试调用报错浪费迭代）。
+const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>(['subagents', ...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES]);
 
 /** 通用 Worker 虚拟子代理的标识常量 */
 const GENERAL_WORKER_NAME = 'General Worker';
@@ -119,6 +122,13 @@ function getSubAgentsSettings() {
 }
 
 /**
+ * 全局默认迭代次数（P2）：未单独配置的 agent 与 General Worker 使用该值。
+ */
+function getGlobalDefaultMaxIterations(): number {
+    return getSubAgentsSettings().defaultMaxIterations ?? 80;
+}
+
+/**
  * 统一判断是否存在可用子代理（含动态 General Worker）。
  *
  * 修改原因：工具声明过滤只看 Registry 已启用计数，General Worker 是运行时
@@ -156,7 +166,7 @@ function generateAgentNameDescription(): string {
     for (const config of configs) {
         const tools = getAgentAvailableTools(config);
         const toolsStr = formatToolsList(tools, 8);
-        const maxIterStr = formatLimit(config.maxIterations, 50);
+        const maxIterStr = formatLimit(config.maxIterations, getGlobalDefaultMaxIterations());
         const maxRuntimeStr = formatLimit(config.maxRuntime, 1800);
         entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
     }
@@ -180,7 +190,8 @@ function generateAgentNameDescription(): string {
         }
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
-        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max 80 iterations, max 2400s runtime`);
+        const globalMaxIterations = getGlobalDefaultMaxIterations();
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max 2400s runtime`);
     }
 
     return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
@@ -308,7 +319,8 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
             channel: { channelId: channelConfigId },
             tools: { mode: 'all' },
-            maxIterations: 80,
+            // P2：General Worker 是零配置虚拟代理，迭代次数跟随全局默认配置（executor 会再回退到 50）
+            maxIterations: getGlobalDefaultMaxIterations(),
             maxRuntime: 2400,
             enabled: true
         };

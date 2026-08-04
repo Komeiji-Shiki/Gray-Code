@@ -3,6 +3,23 @@ import * as os from 'os';
 import * as path from 'path';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from '../../modules/checkpoint/CheckpointIgnoreResolver';
 
+// M-6: 用哨兵目录名 `blocked` 模拟不可读目录（readdir 失败），其余路径走真实实现
+jest.mock('fs/promises', () => {
+    const actual = jest.requireActual('fs/promises') as typeof import('fs/promises');
+    return {
+        ...actual,
+        readdir: jest.fn((dirPath: unknown, ...args: unknown[]) => {
+            const isBlocked = String(dirPath).split(/[\\/]/).filter(Boolean).pop() === 'blocked';
+            if (isBlocked) {
+                const error = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+                error.code = 'EACCES';
+                return Promise.reject(error);
+            }
+            return (actual.readdir as unknown as (...a: unknown[]) => Promise<unknown>)(dirPath, ...args);
+        })
+    };
+});
+
 /**
  * CheckpointIgnoreResolver 测试
  *
@@ -146,6 +163,347 @@ describe('CheckpointIgnoreResolver', () => {
             await expect(listTrackedPaths(rootDir)).resolves.toEqual([
                 'target/debug/app.exe'
             ]);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+});
+
+/**
+ * 四层排除模型（EX-01/EX-02）专项测试：
+ * - 默认排除类别（可关闭、可被自定义 ! 重新纳入）
+ * - 强制排除不可被 ! 否定
+ * - 扩展存储绝对路径强制排除（子树剪枝 + excluded 记录）
+ * - collectEntries 的 excluded 清单（原因/规则/来源）
+ * - checkIgnore 返回完整结果
+ */
+
+describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
+    test('applies default profiles when enabledProfiles is provided', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'debug.log', 'log');
+            await writeFile(rootDir, 'src/app.pyc', 'bytecode');
+            await writeFile(rootDir, 'dist/bundle.js', 'bundle');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], {
+                enabledProfiles: { logs: true, caches: true, buildArtifacts: true }
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['src/main.ts']);
+
+            const byPath = Object.fromEntries(excluded.map(e => [e.path, e]));
+            expect(byPath['debug.log']).toMatchObject({ reason: 'default', source: 'logs' });
+            expect(byPath['debug.log'].rule).toBe('*.log');
+            expect(byPath['src/app.pyc']).toMatchObject({ reason: 'default', source: 'caches' });
+            expect(byPath['dist']).toMatchObject({ reason: 'default', source: 'buildArtifacts', isDirectory: true });
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('disabling all profiles keeps profile-matching files tracked', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'debug.log', 'log');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const allOff: Record<string, boolean> = {};
+            for (const id of ['logs', 'aiModels', 'datasets', 'caches', 'pythonVenvs', 'buildArtifacts', 'largeMedia', 'archives']) {
+                allOff[id] = false;
+            }
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], { enabledProfiles: allOff });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['debug.log', 'src/main.ts']);
+            expect(excluded).toHaveLength(0);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('custom negation re-includes default profile files', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'debug.log', 'ignored');
+            await writeFile(rootDir, 'keep.log', 'kept');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['!keep.log'], {
+                enabledProfiles: { logs: true }
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['keep.log', 'src/main.ts']);
+            const excludedPaths = excluded.map(e => e.path);
+            expect(excludedPaths).toEqual(['debug.log']);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('custom negation cannot override forced exclusions', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, '.git/HEAD', 'ref');
+            await writeFile(rootDir, 'node_modules/pkg/index.js', 'module');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['!.git/', '!node_modules/', '!.git/HEAD'], {
+                enabledProfiles: {}
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['src/main.ts']);
+
+            const byPath = Object.fromEntries(excluded.map(e => [e.path, e]));
+            expect(byPath['.git']).toMatchObject({ reason: 'forced', source: 'forced' });
+            expect(byPath['node_modules']).toMatchObject({ reason: 'forced', source: 'forced' });
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('excludes extension storage absolute path and prunes the subtree (EX-02)', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            const storageRoot = path.join(rootDir, '.limcode');
+            await writeFile(storageRoot, 'checkpoints/cp_x/src/app.ts', 'backup copy');
+            await writeFile(storageRoot, 'conversations/conv.json', 'meta');
+            await writeFile(rootDir, 'src/app.ts', 'real code');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], {
+                excludeAbsolutePaths: [storageRoot]
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['src/app.ts']);
+
+            // 整棵存储子树只记录目录本身一次，不展开内部文件
+            const storageEntries = excluded.filter(e => e.path.startsWith('.limcode'));
+            expect(storageEntries).toHaveLength(1);
+            expect(storageEntries[0]).toMatchObject({
+                path: '.limcode',
+                reason: 'forced',
+                source: 'storage',
+                isDirectory: true
+            });
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('collectEntries records gitignore and custom reasons with rules', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, '.gitignore', '*.tmp\ngenerated/\n');
+            await writeFile(rootDir, 'a.tmp', 'ignored by gitignore');
+            await writeFile(rootDir, 'generated/out.js', 'ignored dir');
+            await writeFile(rootDir, 'secret.tmp', 'ignored by custom');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            // 自定义模式与 gitignore 不同：secret.tmp 仅由自定义命中
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['secret.tmp']);
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['.gitignore', 'src/main.ts']);
+
+            const byPath = Object.fromEntries(excluded.map(e => [e.path, e]));
+            expect(byPath['a.tmp']).toMatchObject({ reason: 'gitignore', source: '.gitignore', rule: '*.tmp' });
+            expect(byPath['generated']).toMatchObject({ reason: 'gitignore', source: '.gitignore', rule: 'generated/' });
+            expect(byPath['secret.tmp']).toMatchObject({ reason: 'custom', source: 'custom', rule: 'secret.tmp' });
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('nested gitignore negation can re-include a profile-ignored file', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'packages/a/.gitignore', '!keep.log\n');
+            await writeFile(rootDir, 'packages/a/keep.log', 're-included');
+            await writeFile(rootDir, 'packages/a/drop.log', 'ignored');
+            await writeFile(rootDir, 'other.log', 'ignored');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], {
+                enabledProfiles: { logs: true }
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['packages/a/.gitignore', 'packages/a/keep.log']);
+            const excludedPaths = excluded.map(e => e.path);
+            expect(excludedPaths).toContain('other.log');
+            expect(excludedPaths).toContain('packages/a/drop.log');
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('checkIgnore returns the full ignore result with reason', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'debug.log', 'log');
+            await writeFile(rootDir, 'node_modules/pkg/index.js', 'module');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], {
+                enabledProfiles: { logs: true }
+            });
+
+            const logResult = await resolver.checkIgnore('debug.log');
+            expect(logResult).toMatchObject({ ignored: true, reason: 'default', source: 'logs' });
+            expect(logResult.rule).toBe('*.log');
+
+            const forcedResult = await resolver.checkIgnore('node_modules/pkg/index.js');
+            expect(forcedResult).toMatchObject({ ignored: true, reason: 'forced', source: 'forced' });
+
+            const trackedResult = await resolver.checkIgnore('src/main.ts');
+            expect(trackedResult.ignored).toBe(false);
+
+            // isIgnored 保持布尔兼容
+            await expect(resolver.isIgnored('debug.log')).resolves.toBe(true);
+            await expect(resolver.isIgnored('src/main.ts')).resolves.toBe(false);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-1: custom patterns are evaluated after all scopes - custom ignore beats nested gitignore negation', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            // 自定义 `*.tmp` + 嵌套 .gitignore 的 `!keep.tmp`：设置页规则最后生效 → keep.tmp 仍被忽略
+            await writeFile(rootDir, 'nested/.gitignore', '!keep.tmp\n');
+            await writeFile(rootDir, 'nested/keep.tmp', 'kept by nested negation');
+            await writeFile(rootDir, 'nested/drop.tmp', 'ignored');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const tracked = await listTrackedPaths(rootDir, ['*.tmp']);
+            expect(tracked).toEqual(['nested/.gitignore', 'src/main.ts']);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-1: custom patterns are evaluated after all scopes - custom negation beats nested gitignore ignore', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            // 自定义 `!keep.tmp` + 嵌套 .gitignore 的 `*.tmp`：设置页规则最后生效 → keep.tmp 重新纳入
+            await writeFile(rootDir, 'nested/.gitignore', '*.tmp\n');
+            await writeFile(rootDir, 'nested/keep.tmp', 're-included by custom');
+            await writeFile(rootDir, 'nested/drop.tmp', 'ignored');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const tracked = await listTrackedPaths(rootDir, ['!keep.tmp']);
+            expect(tracked).toEqual(['nested/.gitignore', 'nested/keep.tmp', 'src/main.ts']);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-5: directory-type default category cannot be re-included by file-level negation alone', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'data/keep.txt', 'keep');
+            await writeFile(rootDir, 'data/drop.txt', 'drop');
+
+            // 仅 !data/keep.txt：data/ 目录仍命中 datasets 类别被整树剪枝
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['!data/keep.txt'], {
+                enabledProfiles: { datasets: true }
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual([]);
+            expect(excluded.some(e => e.path === 'data')).toBe(true);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-5: negating the directory itself plus file-level negation re-includes files under it', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'data/keep.txt', 'keep');
+            await writeFile(rootDir, 'data/drop.txt', 'drop');
+
+            // !data/ 重新纳入目录本身（子树可遍历）；文件仍需各自否定（!data/keep.txt）才能重新纳入
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['!data/', '!data/keep.txt'], {
+                enabledProfiles: { datasets: true }
+            });
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toContain('data/keep.txt');
+            // drop.txt 没有对应否定规则 → 仍被 data/ 排除（但目录本身不再被剪枝）
+            expect(tracked).not.toContain('data/drop.txt');
+            expect(excluded.some(e => e.path === 'data/drop.txt')).toBe(true);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('M-6: collectEntries records unreadable directories as unreadable excluded entries', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'src/main.ts', 'code');
+            await fs.mkdir(path.join(rootDir, 'blocked'), { recursive: true });
+            await writeFile(path.join(rootDir, 'blocked', 'secret.txt'), 'hidden');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir);
+            const { files, excluded } = await resolver.collectEntries();
+
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['src/main.ts']);
+            const blockedEntry = excluded.find(e => e.path === 'blocked');
+            expect(blockedEntry).toMatchObject({ reason: 'unreadable', isDirectory: true });
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('L-3: forced absolute path exclusion is case-insensitive on Windows', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            // 磁盘上是 .Limcode，排除配置写 .limcode
+            const storageRoot = path.join(rootDir, '.Limcode');
+            await writeFile(storageRoot, 'checkpoints/cp_x/a.txt', 'x');
+
+            const resolver = new CheckpointIgnoreResolver(rootDir, [], {
+                excludeAbsolutePaths: [path.join(rootDir, '.limcode')]
+            });
+            const { files, excluded } = await resolver.collectEntries();
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+
+            if (process.platform === 'win32') {
+                // win32：大小写差异仍强制排除（整树剪枝）
+                expect(tracked).toEqual([]);
+                expect(excluded.some(e => e.path === '.Limcode')).toBe(true);
+            } else {
+                // POSIX：大小写敏感，.Limcode 与 .limcode 是不同目录
+                expect(tracked).toEqual(['.Limcode/checkpoints/cp_x/a.txt']);
+            }
         } finally {
             await fs.rm(rootDir, { recursive: true, force: true });
         }

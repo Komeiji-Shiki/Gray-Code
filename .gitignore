@@ -62,3 +62,6 @@ limcode-settings*.json
 # local review notes
 report.md
 docs/
+
+# audit remediation notes (keep local, don't publish)
+AUDIT_REMEDIATION.md

@@ -1,0 +1,327 @@
+/**
+ * CheckpointQueryService - 存档查询 / 磁盘统计 / 缺失记录清理（CPF-12 拆分）。
+ *
+ * 从 CheckpointManager 抽出的查询侧逻辑：
+ * - getCheckpoints：返回轻量 CheckpointSummary（CPF-03），withSize 时优先用
+ *   创建时记录的 backupBytes，旧存档缺失时按需懒扫描并写回摘要缓存（CPF-09/CPF-10）
+ * - getAllConversationsWithCheckpoints：基于摘要字段聚合，不递归扫描磁盘（CPF-10）
+ * - getDirectorySize：有界并发递归统计（CPF-06）
+ * - pruneMissingBackupCheckpointRecords / removeOrphanBackupDirs：恢复前的记录裁剪
+ *
+ * 本服务不持有 CheckpointManager 引用，只依赖 conversationManager（元数据读写）、
+ * checkpointsDir 与 manifestRepository。
+ */
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import type { ConversationManager } from '../conversation/ConversationManager';
+import { Logger } from '../../core/logger';
+import type { CheckpointRecord } from './CheckpointManager';
+import type { CheckpointSummary } from './types';
+import { CheckpointManifestRepository } from './CheckpointManifestRepository';
+import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
+
+const log = Logger.get('CheckpointQueryService');
+
+/** 对话级存档统计（设置页清理视图使用） */
+export interface ConversationCheckpointStats {
+    conversationId: string;
+    title: string;
+    checkpointCount: number;
+    totalSize: number;
+    createdAt?: number;
+    updatedAt?: number;
+    /**
+     * 存在缺少 backupBytes 字段的旧存档：totalSize 可能不完整。
+     * 设置页展开该对话时通过 getCheckpoints(withSize) 懒扫描补齐（CPF-10）。
+     */
+    sizeIncomplete?: boolean;
+}
+
+export type CheckpointSummaryWithSize = CheckpointSummary & { size?: number };
+
+export class CheckpointQueryService {
+    constructor(
+        private readonly conversationManager: ConversationManager,
+        private readonly checkpointsDir: string,
+        private readonly manifestRepository: CheckpointManifestRepository,
+        private readonly defaultTitle: (conversationId: string) => string
+    ) {}
+
+    /** 读取对话元数据中的原始存档记录（内部使用，含旧格式完整字段） */
+    async getCheckpointRecords(conversationId: string): Promise<CheckpointRecord[]> {
+        const conversationManager = this.conversationManager as any;
+        if (typeof conversationManager.getCustomMetadata === 'function') {
+            const checkpoints = await conversationManager.getCustomMetadata(conversationId, 'checkpoints');
+            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
+        }
+        if (typeof conversationManager.getMetadata === 'function') {
+            const metadata = await conversationManager.getMetadata(conversationId);
+            const checkpoints = metadata?.custom?.checkpoints;
+            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
+        }
+        return [];
+    }
+
+    /**
+     * 获取对话的轻量存档摘要（CPF-03）。
+     *
+     * - 默认返回 CheckpointSummary（不含完整哈希映射）；
+     * - withSize=true 时附加 size 字段：优先用创建时记录的 backupBytes；
+     *   旧存档没有该字段时按需扫描备份目录一次，并把结果写回摘要缓存（CPF-09/CPF-10）。
+     */
+    async getCheckpoints(
+        conversationId: string,
+        options?: { withSize?: boolean }
+    ): Promise<CheckpointSummaryWithSize[]> {
+        try {
+            const records = await this.getCheckpointRecords(conversationId);
+            const result: CheckpointSummaryWithSize[] = [];
+            for (const record of records) {
+                const summary = await this.toSummary(record);
+                if (!options?.withSize) {
+                    result.push(summary);
+                    continue;
+                }
+
+                let backupBytes = record.backupBytes;
+                if (typeof backupBytes !== 'number') {
+                    backupBytes = await this.getDirectorySize(
+                        path.join(this.checkpointsDir, record.backupDir)
+                    );
+                    // 写回摘要缓存：下次不再扫描（旧存档一次性迁移）
+                    await this.writeBackBackupBytes(conversationId, record.id, backupBytes);
+                }
+                result.push({ ...summary, backupBytes, size: backupBytes });
+            }
+            return result;
+        } catch (err) {
+            console.error('[CheckpointQueryService] Failed to get checkpoints:', err);
+            return [];
+        }
+    }
+
+    /** 把记录映射为摘要；excludedCount 优先读记录字段（Agent A 的 excludedCount），缺失时从 manifest 统计 */
+    private async toSummary(record: CheckpointRecord): Promise<CheckpointSummary> {
+        let excludedCount = (record as CheckpointRecord & { excludedCount?: number }).excludedCount;
+        if (typeof excludedCount !== 'number') {
+            const manifest = await this.manifestRepository.loadManifest(record.id, record);
+            excludedCount = manifest ? manifest.excluded.length : 0;
+        }
+        return {
+            id: record.id,
+            conversationId: record.conversationId,
+            messageNodeId: record.messageNodeId,
+            messageIndex: record.messageIndex,
+            toolName: record.toolName,
+            phase: record.phase,
+            timestamp: record.timestamp,
+            type: record.type ?? 'full',
+            baseCheckpointId: record.baseCheckpointId,
+            contentHash: record.contentHash,
+            fileCount: record.fileCount,
+            backupBytes: typeof record.backupBytes === 'number' ? record.backupBytes : 0,
+            excludedCount,
+            manifestVersion: typeof record.manifestVersion === 'number' ? record.manifestVersion : 0
+        };
+    }
+
+    /**
+     * 获取所有包含存档的对话统计（CPF-10）。
+     *
+     * 只基于摘要字段（backupBytes）聚合 totalSize，绝不递归扫描每个存档目录；
+     * 旧存档缺 backupBytes 时标记 sizeIncomplete，由设置页展开时按需懒扫描补齐。
+     */
+    async getAllConversationsWithCheckpoints(): Promise<ConversationCheckpointStats[]> {
+        const results: ConversationCheckpointStats[] = [];
+        try {
+            const conversationIds = await this.conversationManager.listConversations();
+            for (const conversationId of conversationIds) {
+                try {
+                    const metadata = await this.conversationManager.getMetadata(conversationId);
+                    const records = (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
+                    if (!Array.isArray(records) || records.length === 0) {
+                        continue;
+                    }
+                    let totalSize = 0;
+                    let sizeIncomplete = false;
+                    for (const cp of records) {
+                        if (typeof cp.backupBytes === 'number') {
+                            totalSize += cp.backupBytes;
+                        } else {
+                            sizeIncomplete = true;
+                        }
+                    }
+                    results.push({
+                        conversationId,
+                        title: metadata?.title || this.defaultTitle(conversationId),
+                        checkpointCount: records.length,
+                        totalSize,
+                        createdAt: metadata?.createdAt,
+                        updatedAt: metadata?.updatedAt,
+                        sizeIncomplete: sizeIncomplete || undefined
+                    });
+                } catch {
+                    // 忽略单个对话的错误
+                }
+            }
+            results.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        } catch (err) {
+            console.error('[CheckpointQueryService] Failed to get all conversations with checkpoints:', err);
+        }
+        return results;
+    }
+
+    /** 计算目录总大小（有界并发递归，CPF-06）。跳过 manifest 元数据文件（不属于备份内容） */
+    async getDirectorySize(dirPath: string): Promise<number> {
+        let totalSize = 0;
+        try {
+            const entries = await fs.readdir(dirPath, { withFileTypes: true });
+            const subDirs: string[] = [];
+            for (const entry of entries) {
+                if (entry.name === 'manifest.json' || entry.name.endsWith('.tmp')) {
+                    continue; // CPF-01: manifest 是元数据，不计入备份占用
+                }
+                const fullPath = path.join(dirPath, entry.name);
+                if (entry.isDirectory()) {
+                    subDirs.push(fullPath);
+                } else if (entry.isFile()) {
+                    try {
+                        const stat = await fs.stat(fullPath);
+                        totalSize += stat.size;
+                    } catch {
+                        // 忽略无法访问的文件
+                    }
+                }
+            }
+            if (subDirs.length > 0) {
+                await runBounded(subDirs, DEFAULT_CHECKPOINT_CONCURRENCY, async dir => {
+                    totalSize += await this.getDirectorySize(dir);
+                });
+            }
+        } catch {
+            // 忽略无法访问的目录
+        }
+        return totalSize;
+    }
+
+    /** 把懒扫描得到的 backupBytes 写回元数据摘要缓存（CPF-09；失败不影响读取） */
+    private async writeBackBackupBytes(
+        conversationId: string,
+        checkpointId: string,
+        backupBytes: number
+    ): Promise<void> {
+        try {
+            await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
+                const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                if (list.some(cp => cp.id === checkpointId && typeof cp.backupBytes === 'number')) {
+                    return current; // 已缓存：跳过写回
+                }
+                return list.map(cp => (cp.id === checkpointId ? { ...cp, backupBytes } : cp));
+            });
+        } catch (err) {
+            console.warn('[CheckpointQueryService] Failed to write back backupBytes:', err);
+        }
+    }
+
+    /** 判断某个备份目录是否存在 */
+    async backupDirectoryExists(backupDir: string): Promise<boolean> {
+        try {
+            const backupPath = path.join(this.checkpointsDir, backupDir);
+            await fs.access(backupPath);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 清理孤儿备份目录：磁盘上存在但没有任何检查点记录引用的目录。
+     * 只在恢复/预览的存档锁内调用（prepareRestore → prune），只处理 `cp_*` 格式目录。
+     */
+    async removeOrphanBackupDirs(checkpoints: CheckpointRecord[]): Promise<void> {
+        try {
+            const knownDirs = new Set(checkpoints.map(cp => cp.backupDir));
+            const entries = await fs.readdir(this.checkpointsDir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                if (knownDirs.has(entry.name)) continue;
+                if (!/^cp_[a-z0-9_]+$/i.test(entry.name)) continue;
+                try {
+                    await fs.rm(path.join(this.checkpointsDir, entry.name), { recursive: true, force: true });
+                    this.manifestRepository.clearCache(entry.name);
+                    log.info('prune_orphan_backup_dir', { backupDir: entry.name });
+                } catch (err) {
+                    console.warn(`[CheckpointQueryService] Failed to remove orphan backup dir ${entry.name}:`, err);
+                }
+            }
+        } catch {
+            // checkpointsDir 不存在等：忽略
+        }
+    }
+
+    /**
+     * 裁剪缺失备份目录的存档记录（恢复前预检，锁外执行；真实过滤在链内基于最新列表重算）。
+     */
+    async pruneMissingBackupCheckpointRecords(
+        conversationId: string,
+        checkpoints: CheckpointRecord[]
+    ): Promise<{ checkpoints: CheckpointRecord[]; missingBackupDirs: string[]; prunedCount: number }> {
+        if (checkpoints.length === 0) {
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
+        }
+
+        const backupDirExists = new Map<string, boolean>();
+        const missingBackupDirs: string[] = [];
+        for (const checkpoint of checkpoints) {
+            if (!backupDirExists.has(checkpoint.backupDir)) {
+                const exists = await this.backupDirectoryExists(checkpoint.backupDir);
+                backupDirExists.set(checkpoint.backupDir, exists);
+            }
+            if (!backupDirExists.get(checkpoint.backupDir)) {
+                missingBackupDirs.push(checkpoint.backupDir);
+            }
+        }
+
+        const uniqueMissing = Array.from(new Set(missingBackupDirs));
+        if (uniqueMissing.length === 0) {
+            await this.removeOrphanBackupDirs(checkpoints);
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
+        }
+
+        try {
+            const pruned = await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', async current => {
+                const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
+                const kept: CheckpointRecord[] = [];
+                const foundMissing: string[] = [];
+                for (const cp of list) {
+                    if (backupDirExists.get(cp.backupDir) === false) {
+                        foundMissing.push(cp.backupDir);
+                        continue;
+                    }
+                    if (!backupDirExists.has(cp.backupDir)) {
+                        // 并发新增的检查点：现场核验，避免误删
+                        const exists = await this.backupDirectoryExists(cp.backupDir);
+                        backupDirExists.set(cp.backupDir, exists);
+                        if (!exists) {
+                            foundMissing.push(cp.backupDir);
+                            continue;
+                        }
+                    }
+                    kept.push(cp);
+                }
+                return foundMissing.length === 0 ? current : kept;
+            });
+
+            await this.removeOrphanBackupDirs(checkpoints);
+
+            if (Array.isArray(pruned)) {
+                const prunedCount = checkpoints.length - pruned.length;
+                return { checkpoints: pruned, missingBackupDirs: uniqueMissing, prunedCount };
+            }
+            return { checkpoints, missingBackupDirs: uniqueMissing, prunedCount: 0 };
+        } catch (err) {
+            console.warn('[CheckpointQueryService] Failed to prune checkpoint metadata:', err);
+            return { checkpoints, missingBackupDirs: uniqueMissing, prunedCount: 0 };
+        }
+    }
+}

@@ -520,7 +520,21 @@ const ja: LanguageMessages = {
                 daysAgo: '{days} 日前',
                 restoreConfirmTitle: 'チェックポイントを復元',
                 restoreConfirmMessage: 'ワークスペースをこのチェックポイントに復元してもよろしいですか？これにより、現在のワークスペース内の対応するファイルが上書きされ、この操作は元に戻せません。',
-                restoreConfirmBtn: '復元'
+                restoreConfirmBtn: '復元',
+                restoreConfirmRetryTitle: '復元して再試行',
+                restoreConfirmDeleteTitle: '復元して削除',
+                restoreConfirmEditTitle: '復元して編集',
+                restorePreviewFailed: '復元のプレビューに失敗しました。後でもう一度お試しください',
+                restorePreviewFilesUpdated: '{count} 個のファイルが更新されます',
+                restorePreviewFilesDeleted: '{count} 個のファイルが削除されます',
+                restorePreviewFilesUnchanged: '{count} 個のファイルは変更されません',
+                restorePreviewNoChanges: 'ワークスペースはチェックポイントと一致しており、ファイルの変更はありません',
+                restorePreviewLegacy: '旧形式のチェックポイント（ファイル一覧なし）です。バックアップ内容に基づいて復元され、ワークスペースのファイルを上書きする可能性があります。ファイルは削除されません',
+                restoreDeleteListTitle: '次の {count} 個のファイルが削除されます：',
+                restoreDeleteListMore: '…ほか {count} 個のファイル',
+                restoreDeleteListEmpty: 'この復元で削除されるファイルはありません',
+                restoreDeleteUntrackedNote: 'チェックポイント作成後に新規作成されたファイルを含みます（確認後に削除されます）',
+                restoreUnbackedTip: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths}'
             },
             continue: {
                 title: '会話が一時停止中',
@@ -1141,6 +1155,52 @@ const ja: LanguageMessages = {
                             hint: 'この数を超えると古いチェックポイントを自動的にクリーンアップします。-1 は無制限を意味します'
                         }
                     },
+                    exclusion: {
+                        title: '除外設定',
+                        description: 'チェックポイントから除外するファイルを制御します。デフォルトの除外カテゴリは個別にオン/オフできます。除外されたファイルはバックアップされませんが、理由が記録されます（「除外結果をプレビュー」で確認できます）。',
+                        patterns: 'ルール',
+                        profiles: {
+                            logs: 'ログファイル',
+                            aiModels: 'AI/ML モデル重み',
+                            datasets: 'データセット',
+                            caches: 'キャッシュ',
+                            pythonVenvs: 'Python 仮想環境',
+                            buildArtifacts: 'ビルド成果物',
+                            largeMedia: '大容量メディア',
+                            archives: 'アーカイブとバイナリ'
+                        },
+                        maxFileSize: {
+                            label: '単一ファイルサイズ上限 (MiB)',
+                            hint: 'このサイズを超えるファイルはチェックポイントに含まれません（0 = 無制限、デフォルト 50）'
+                        },
+                        customPatterns: {
+                            label: 'カスタム除外パターン',
+                            hint: '1 行に 1 つの gitignore パターン。! で始めるとデフォルトカテゴリを再び含められますが、強制除外（.git / node_modules / 拡張ストレージ）は上書きできません',
+                            reincludeHint: 'ヒント：デフォルトカテゴリがディレクトリ単位で除外する場合（data/ や dist/ など）、その下のファイルを再び含めるにはディレクトリ自体の否定も必要です。例: !data/ + !data/keep.txt',
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                        },
+                        preview: {
+                            button: '除外結果をプレビュー',
+                            loading: 'スキャン中...',
+                            failed: 'プレビューに失敗しました。再試行してください',
+                            total: '{count} 個のファイル/ディレクトリを除外、約 {size}',
+                            partial: '（一部のディレクトリが大きすぎるため、サイズ統計が不完全な場合があります）',
+                            empty: '現在の設定では何も除外されません',
+                            count: '{count} 件',
+                            rule: 'ルール',
+                            source: 'ソース',
+                            other: 'その他（.gitignore / カスタム / サイズ制限など）',
+                            noSamples: 'サンプルなし',
+                            reasons: {
+                                forced: '強制除外',
+                                default: 'デフォルトカテゴリ',
+                                gitignore: '.gitignore',
+                                custom: 'カスタム',
+                                size: 'サイズ上限',
+                                unreadable: '読み取り不可'
+                            }
+                        }
+                    },
                     cleanup: {
                         title: 'チェックポイントのクリーンアップ',
                         description: '会話ごとにチェックポイントを一括管理・削除してストレージを解放',
@@ -1153,6 +1213,7 @@ const ja: LanguageMessages = {
                         selectAll: 'すべて選択',
                         selectedCount: '{count} 件選択中',
                         selectedSize: '合計 {size}',
+                        totalSize: '合計 {size}',
                         deleteSelected: '選択を削除',
                         noCheckpointsInConversation: 'この会話にチェックポイントはありません',
                         checkpointFiles: '{count} ファイル',
@@ -1171,6 +1232,25 @@ const ja: LanguageMessages = {
                             warning: 'この操作は元に戻せません',
                             cancel: 'キャンセル',
                             delete: '削除'
+                        },
+                        rejectedByDependency: '{count} 件のチェックポイントは後続のチェックポイントから参照されているため保持されました',
+                        deleteFailedCount: '{count} 件のチェックポイントの削除に失敗しました',
+                        deleteRequestFailed: '削除リクエストに失敗しました。再試行してください',
+                        unbackedFiles: '{count} 件のファイルがバックアップされていません',
+                        sizeIncomplete: '一部未集計',
+                        sizeIncompleteHint: '一部の旧チェックポイントはサイズ記録がなく、合計は集計済みのみです',
+                        progress: {
+                            pending: '待機中',
+                            scanning: 'スキャン中',
+                            copying: 'バックアップ中',
+                            cleaning: 'クリーンアップ中',
+                            preparing: '準備中',
+                            restoring: '復元中',
+                            deleting: '削除中',
+                            done: '完了',
+                            failed: '失敗',
+                            cancelled: 'キャンセル済み',
+                            cancel: 'キャンセル'
                         },
                         timeFormat: {
                             justNow: 'たった今',
@@ -1496,6 +1576,8 @@ const ja: LanguageMessages = {
                 globalConfig: 'グローバル設定',
                 maxConcurrentAgents: '最大同時実行数',
                 maxConcurrentAgentsHint: '同時に実行できるサブエージェントの上限。超過分は順番待ちになります（-1 で無制限）',
+                defaultMaxIterations: 'デフォルトのイテレーション数',
+                defaultMaxIterationsHint: '個別設定のないサブエージェントと General Worker に適用される既定値（1〜200、-1 で無制限）',
                 generalWorker: '汎用ワーカーを有効化（お手軽モード）',
                 generalWorkerHint: 'メインモデルが設定不要の "General Worker" を直接派遣できます。現在のチャンネルと全ツール権限を継承し、数はモデルが自分で決定。エージェントの手動設定は不要です',
                 basicInfo: '基本情報',
@@ -2414,6 +2496,8 @@ const ja: LanguageMessages = {
                 browse: '参照',
                 apply: '適用',
                 reset: 'デフォルトにリセット',
+                openInExplorer: 'エクスプローラーで開く',
+                openInExplorerTitle: 'ファイルエクスプローラーで現在のストレージディレクトリを開く',
                 migrate: 'データを移行',
                 migrateHint: '既存のデータを新しいパスに移行',
                 migrating: '移行中...',
@@ -2438,7 +2522,8 @@ const ja: LanguageMessages = {
                     applyEmptyHint: '先にストレージパスを選択または入力してください',
                     migrationSuccess: 'データ移行が完了しました。変更を有効にするにはウィンドウを再読み込みしてください',
                     migrationFailed: 'データ移行に失敗しました: {error}',
-                    validationFailed: 'パスの検証に失敗しました: {error}'
+                    validationFailed: 'パスの検証に失敗しました: {error}',
+                    openInExplorerFailed: 'ストレージディレクトリを開けませんでした: {error}'
                 },
                 reloadWindow: 'ウィンドウを再読み込み'
             }

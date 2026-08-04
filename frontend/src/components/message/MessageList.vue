@@ -775,8 +775,22 @@ const pendingDeleteMessageId = ref<string | null>(null)
 const pendingDeleteBackendIndex = ref<number | null>(null)
 
 // 恢复检查点确认对话框状态
+// CP-09: 所有恢复入口（普通恢复 / 回档并重试 / 回档并删除 / 回档并编辑）
+// 先预览（计算待删除文件清单），确认框展示清单，用户确认后才真正执行恢复。
+interface PendingRestoreAction {
+  kind: 'restore' | 'retry' | 'delete' | 'edit'
+  checkpointId: string
+  messageId?: string
+  newContent?: string
+  attachments?: Attachment[]
+  preview: Awaited<ReturnType<typeof chatStore.previewRestore>>
+}
 const showRestoreConfirm = ref(false)
-const pendingCheckpoint = ref<CheckpointRecord | null>(null)
+const pendingRestoreAction = ref<PendingRestoreAction | null>(null)
+
+// 确认框展示的删除清单上限（超出显示省略计数）
+const RESTORE_DELETE_LIST_LIMIT = 30
+const isRestorePreviewing = computed(() => chatStore.isRestorePreviewing)
 
 
 // 计算要删除的消息数量（使用 allMessages）
@@ -843,10 +857,8 @@ async function handleRestoreAndDelete(checkpointId: string) {
   const actualIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
   if (actualIndex === -1) return
   
-  // 调用 restoreAndDelete 方法
-  await chatStore.restoreAndDelete(actualIndex, checkpointId)
-  pendingDeleteMessageId.value = null
-  pendingDeleteBackendIndex.value = null
+  // 先预览恢复（待删除文件清单），确认后才执行
+  await openRestoreConfirm({ kind: 'delete', checkpointId, messageId: pendingDeleteMessageId.value })
 }
 
 // 处理重试 - 直接调用 store 方法（确认已在 MessageItem 的 RetryDialog 中完成）
@@ -894,8 +906,8 @@ async function handleRestoreAndRetry(messageId: string, checkpointId: string) {
   const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
   if (actualIndex === -1) return
   
-  // 调用 restoreAndRetry 方法
-  await chatStore.restoreAndRetry(actualIndex, checkpointId)
+  // 先预览恢复（待删除文件清单），确认后才执行
+  await openRestoreConfirm({ kind: 'retry', checkpointId, messageId })
 }
 
 // 处理回档并编辑
@@ -904,8 +916,8 @@ async function handleRestoreAndEdit(messageId: string, newContent: string, attac
   const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
   if (actualIndex === -1) return
   
-  // 调用 restoreAndEdit 方法
-  await chatStore.restoreAndEdit(actualIndex, newContent, attachments, checkpointId)
+  // 先预览恢复（待删除文件清单），确认后才执行
+  await openRestoreConfirm({ kind: 'edit', checkpointId, messageId, newContent, attachments })
 }
 
 // 检查特定工具的检查点是否需要合并显示（前后内容一致时合并）
@@ -914,19 +926,128 @@ function shouldMergeForTool(messageIndex: number, toolName: string): boolean {
   return mergeableCheckpointKeys.value.has(`${messageIndex}:${toolName}`)
 }
 
-// 恢复检查点 - 显示确认对话框
+// 恢复检查点 - 先预览（计算待删除文件清单），确认框展示清单
 async function restoreCheckpoint(checkpoint: CheckpointRecord) {
-  pendingCheckpoint.value = checkpoint
-  showRestoreConfirm.value = true
+  await openRestoreConfirm({ kind: 'restore', checkpointId: checkpoint.id })
 }
 
-// 确认恢复检查点
-async function confirmRestore() {
-  if (pendingCheckpoint.value) {
-    await chatStore.restoreCheckpoint(pendingCheckpoint.value.id)
-    pendingCheckpoint.value = null
+// 预览恢复并打开确认框；预览失败（链断裂/存档缺失等）时直接展示错误，不弹确认
+async function openRestoreConfirm(action: Omit<PendingRestoreAction, 'preview'>) {
+  if (chatStore.isRestorePreviewing) return
+  chatStore.isRestorePreviewing = true
+  try {
+    const preview = await chatStore.previewRestore(action.checkpointId)
+    if (!preview.success) {
+      chatStore.error = {
+        code: 'RESTORE_PREVIEW_ERROR',
+        message: preview.error || t('components.message.checkpoint.restorePreviewFailed')
+      }
+      return
+    }
+    pendingRestoreAction.value = { ...action, preview }
+    showRestoreConfirm.value = true
+  } catch (err: any) {
+    chatStore.error = {
+      code: 'RESTORE_PREVIEW_ERROR',
+      message: err?.message || t('components.message.checkpoint.restorePreviewFailed')
+    }
+  } finally {
+    chatStore.isRestorePreviewing = false
   }
 }
+
+// 确认恢复检查点：按入口类型执行真正的恢复 / 回档操作
+async function confirmRestore() {
+  const action = pendingRestoreAction.value
+  if (!action) return
+  showRestoreConfirm.value = false
+  pendingRestoreAction.value = null
+
+  const { kind, checkpointId } = action
+
+  if (kind === 'restore') {
+    // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
+    const result = await chatStore.restoreCheckpoint(checkpointId, true)
+
+    // CP-10: 恢复失败 / 部分失败 / 快照未备份文件，向前端展示明确结果
+    if (result && !result.success) {
+      chatStore.error = {
+        code: 'RESTORE_ERROR',
+        message: result.error || '恢复检查点失败'
+      }
+    } else if (result?.failures && result.failures.length > 0) {
+      const shown = result.failures.slice(0, 5).map(f => `${f.path}: ${f.reason}`).join('；')
+      chatStore.error = {
+        code: 'RESTORE_PARTIAL_ERROR',
+        message: `恢复部分完成，以下文件失败：${shown}${result.failures.length > 5 ? ` 等 ${result.failures.length} 个文件` : ''}`
+      }
+    } else if (result?.unbackedPaths && result.unbackedPaths.length > 0) {
+      // 快照时未备份（超限/不可读）的文件不会被本次恢复删除或恢复，明确告知
+      const shown = result.unbackedPaths.slice(0, 5).join('、')
+      chatStore.error = {
+        code: 'RESTORE_UNBACKED_WARNING',
+        message: `以下文件在创建存档时未被备份（大小超限或不可读），本次恢复未处理它们：${shown}${result.unbackedPaths.length > 5 ? ` 等 ${result.unbackedPaths.length} 个文件` : ''}`
+      }
+    }
+    return
+  }
+
+  if (action.messageId === undefined) return
+  const actualIndex = chatStore.allMessages.findIndex(m => m.id === action.messageId)
+  if (actualIndex === -1) return
+
+  if (kind === 'retry') {
+    // 用户在确认框中已确认待删除文件清单 → 允许删除快照后新建文件
+    await chatStore.restoreAndRetry(actualIndex, checkpointId, true)
+  } else if (kind === 'delete') {
+    await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
+    pendingDeleteMessageId.value = null
+    pendingDeleteBackendIndex.value = null
+  } else if (kind === 'edit') {
+    await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
+  }
+}
+
+// 取消恢复确认：清理暂存的预览/动作状态，避免残留旧清单
+function cancelRestoreConfirm() {
+  pendingRestoreAction.value = null
+}
+
+// 确认框动态文案（按入口类型）
+const restoreConfirmTitle = computed(() => {
+  if (!pendingRestoreAction.value) return ''
+  const kind = pendingRestoreAction.value.kind
+  if (kind === 'retry') return t('components.message.checkpoint.restoreConfirmRetryTitle')
+  if (kind === 'delete') return t('components.message.checkpoint.restoreConfirmDeleteTitle')
+  if (kind === 'edit') return t('components.message.checkpoint.restoreConfirmEditTitle')
+  return t('components.message.checkpoint.restoreConfirmTitle')
+})
+
+const restoreConfirmMessage = computed(() => {
+  const preview = pendingRestoreAction.value?.preview
+  if (!preview) return ''
+  // 旧版存档（无 fileHashes）：预览无法预知数量，恢复以备份目录内容为准
+  if (preview.legacy) {
+    return t('components.message.checkpoint.restorePreviewLegacy')
+  }
+  const parts: string[] = []
+  if (preview.restored > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesUpdated', { count: preview.restored }))
+  if (preview.deleted > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesDeleted', { count: preview.deleted }))
+  if (preview.skipped > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesUnchanged', { count: preview.skipped }))
+  return parts.length > 0 ? parts.join('，') : t('components.message.checkpoint.restorePreviewNoChanges')
+})
+
+// 待删除文件清单：快照记录过的（deletablePaths）+ 快照后新建、需确认后删除的（untrackedPaths）
+const restoreDeletablePaths = computed(() => {
+  const preview = pendingRestoreAction.value?.preview
+  if (!preview) return []
+  return [...preview.deletablePaths, ...preview.untrackedPaths]
+})
+const restoreHasUntrackedPaths = computed(() => (pendingRestoreAction.value?.preview.untrackedPaths.length || 0) > 0)
+const restoreShownDeletablePaths = computed(() => restoreDeletablePaths.value.slice(0, RESTORE_DELETE_LIST_LIMIT))
+const restoreHiddenDeletableCount = computed(() => Math.max(0, restoreDeletablePaths.value.length - RESTORE_DELETE_LIST_LIMIT))
+
+const restoreUnbackedPaths = computed(() => pendingRestoreAction.value?.preview.unbackedPaths || [])
 
 // 获取检查点标签
 function getCheckpointLabel(cp: CheckpointRecord, phase: 'before' | 'after'): string {
@@ -1074,8 +1195,9 @@ function formatCheckpointTime(timestamp: number): string {
                 </div>
                 <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                 <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
-                  <button class="checkpoint-action" @click="restoreCheckpoint(cp)">
-                    <i class="codicon codicon-discard"></i>
+                  <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
+                    <i v-if="isRestorePreviewing" class="codicon codicon-loading codicon-modifier-spin"></i>
+                    <i v-else class="codicon codicon-discard"></i>
                   </button>
                 </Tooltip>
               </div>
@@ -1120,8 +1242,9 @@ function formatCheckpointTime(timestamp: number): string {
                   </div>
                   <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                   <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
-                    <button class="checkpoint-action" @click="restoreCheckpoint(cp)">
-                      <i class="codicon codicon-discard"></i>
+                    <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
+                      <i v-if="isRestorePreviewing" class="codicon codicon-loading codicon-modifier-spin"></i>
+                      <i v-else class="codicon codicon-discard"></i>
                     </button>
                   </Tooltip>
                 </div>
@@ -1200,7 +1323,7 @@ function formatCheckpointTime(timestamp: number): string {
               <button class="error-retry" @click="handleErrorRetry" :title="t('components.message.error.retry')">
                 <span class="codicon codicon-refresh"></span>
               </button>
-              <button class="error-dismiss" @click="chatStore.error = null" :title="t('components.message.error.dismiss')">
+              <button class="error-dismiss" @click="chatStore.dismissError()" :title="t('components.message.error.dismiss')">
                 ✕
               </button>
             </div>
@@ -1225,15 +1348,40 @@ function formatCheckpointTime(timestamp: number): string {
       @cancel="cancelDelete"
     />
     
-    <!-- 恢复检查点确认对话框 -->
+    <!-- 恢复检查点确认对话框（CP-09: 展示待删除文件清单，确认后才执行恢复） -->
     <ConfirmDialog
       v-model="showRestoreConfirm"
-      :title="t('components.message.checkpoint.restoreConfirmTitle')"
-      :message="t('components.message.checkpoint.restoreConfirmMessage')"
+      :title="restoreConfirmTitle"
+      :message="restoreConfirmMessage"
       :confirm-text="t('components.message.checkpoint.restoreConfirmBtn')"
       is-danger
       @confirm="confirmRestore"
-    />
+      @cancel="cancelRestoreConfirm"
+    >
+      <div v-if="restoreDeletablePaths.length > 0" class="restore-delete-section">
+        <div class="restore-delete-title">
+          {{ t('components.message.checkpoint.restoreDeleteListTitle', { count: restoreDeletablePaths.length }) }}
+        </div>
+        <div v-if="restoreHasUntrackedPaths" class="restore-delete-untracked-note">
+          {{ t('components.message.checkpoint.restoreDeleteUntrackedNote') }}
+        </div>
+        <div class="restore-delete-items">
+          <div v-for="path in restoreShownDeletablePaths" :key="path" class="restore-delete-item">
+            <i class="codicon codicon-close"></i>
+            <span class="restore-delete-path">{{ path }}</span>
+          </div>
+          <div v-if="restoreHiddenDeletableCount > 0" class="restore-delete-more">
+            {{ t('components.message.checkpoint.restoreDeleteListMore', { count: restoreHiddenDeletableCount }) }}
+          </div>
+        </div>
+      </div>
+      <div v-else class="restore-delete-empty">
+        {{ t('components.message.checkpoint.restoreDeleteListEmpty') }}
+      </div>
+      <div v-if="restoreUnbackedPaths.length > 0" class="restore-unbacked-tip">
+        {{ t('components.message.checkpoint.restoreUnbackedTip', { paths: restoreUnbackedPaths.slice(0, 5).join('、') }) }}
+      </div>
+    </ConfirmDialog>
     
   </div>
 </template>
@@ -1757,7 +1905,88 @@ function formatCheckpointTime(timestamp: number): string {
   background: var(--vscode-list-hoverBackground);
 }
 
+.checkpoint-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+}
+
 .checkpoint-action .codicon {
   font-size: 14px;
+}
+
+/* ============ 恢复确认：待删除文件清单（CP-09） ============ */
+.restore-delete-section {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border-radius: 4px;
+}
+
+.restore-delete-title {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-errorForeground);
+  background: var(--vscode-inputValidation-warningBackground, var(--vscode-editor-background));
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  position: sticky;
+  top: 0;
+}
+
+.restore-delete-untracked-note {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--vscode-editorWarning-foreground);
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+}
+
+.restore-delete-items {
+  padding: 4px 0;
+}
+
+.restore-delete-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.restore-delete-item .codicon {
+  font-size: 12px;
+  color: var(--vscode-errorForeground);
+  flex-shrink: 0;
+}
+
+.restore-delete-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.restore-delete-more {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-delete-empty {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.restore-unbacked-tip {
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 4px;
 }
 </style>
