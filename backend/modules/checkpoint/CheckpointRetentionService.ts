@@ -16,7 +16,7 @@ import { Logger } from '../../core/logger';
 import type { CheckpointConfig } from '../settings/types';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import type { CheckpointRecord } from './CheckpointManager';
-import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { isWorkspaceScopedKey } from './CheckpointRestoreEngine';
 
 const log = Logger.get('CheckpointRetentionService');
@@ -57,19 +57,28 @@ export class CheckpointRetentionService {
                         continue;
                     }
                     const stillAlive = sorted.slice(i + 1).filter(c => !deleted.has(c.id));
-                    // 同一基快照可能被多个后继引用：逐个合并后再删除，
-                    // 否则 deleteCheckpoint 会因仍有后继引用而拒绝，链上文件也会丢失。
-                    for (const dependent of stillAlive.filter(c => c.baseCheckpointId === cp.id)) {
+                    // CP-RET-1: 对引用被删项的全部后继循环执行合并——异常元数据可能出现
+                    // 多节点引用同一 base，只合并第一个会让其余依赖者悬空断链。
+                    const dependents = stillAlive.filter(c => c.baseCheckpointId === cp.id);
+                    let mergeFailed = false;
+                    for (const dependent of dependents) {
                         try {
                             await this.mergeCheckpointIntoSuccessor(conversationId, dependent, cp);
                         } catch (err) {
                             // 合并失败（如备份目录不可读）宁可保留也不断链
                             console.warn('[CheckpointRetentionService] Failed to re-link checkpoint chain, keeping checkpoint:', err);
+                            mergeFailed = true;
+                            break;
                         }
                     }
-                    // 仅当确实删除成功才计入 deleted，避免“删失败却当作已删”污染
-                    // 后续依赖判断（stillAlive 过滤）。
-                    if (await this.deps.deleteCheckpointInternal(conversationId, cp.id)) {
+                    if (mergeFailed) {
+                        // 合并失败必须中止删除，否则保留节点恢复时断链
+                        continue;
+                    }
+                    // CP-RET-1: 以删除返回值为准——删除被拒绝（被引用/backupDir 校验失败）
+                    // 时不得标记 deleted，否则后续迭代会把未删除节点当作已处理。
+                    const removed = await this.deps.deleteCheckpointInternal(conversationId, cp.id);
+                    if (removed) {
                         deleted.add(cp.id);
                     }
                 }
@@ -100,6 +109,14 @@ export class CheckpointRetentionService {
         successor: CheckpointRecord,
         removed: CheckpointRecord
     ): Promise<void> {
+        // CP-RET-2: 合并路径与删除路径同根因——backupDir 未校验时 fs.cp 可越界读写。
+        // 校验失败直接抛错：调用方（cleanupOldCheckpoints）会中止删除并保留节点。
+        if (!isSafeCheckpointDirName(removed.backupDir) || !isSafeCheckpointDirName(successor.backupDir)) {
+            throw new Error(
+                `[CheckpointRetentionService] Refusing to merge with unsafe backupDir: ` +
+                `removed=${removed.backupDir}, successor=${successor.backupDir}`
+            );
+        }
         const removedBackupPath = path.join(this.checkpointsDir, removed.backupDir);
         const successorBackupPath = path.join(this.checkpointsDir, successor.backupDir);
 

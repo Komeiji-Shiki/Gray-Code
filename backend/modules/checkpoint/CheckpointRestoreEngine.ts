@@ -13,8 +13,6 @@
  *
  * 本模块不依赖 CheckpointManager，是独立的纯文件系统逻辑。
  */
-import * as crypto from 'crypto';
-import { createReadStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
@@ -27,6 +25,7 @@ import {
     runBounded,
     throwIfAborted
 } from './checkpointConcurrency';
+import { hashFileStreaming } from './fileHashing';
 
 export type RestoreFailureReason = 'missing_in_chain' | 'hash_mismatch' | 'copy_failed' | 'delete_failed';
 
@@ -83,7 +82,11 @@ export interface RestoreEngineOptions {
     checkpointsDir: string;
     /** 当前工作区根目录集合 */
     roots: readonly RuntimeWorkspaceRoot[];
-    /** 快照时被忽略/未备份的路径：恢复时绝不能删除（scoped 键） */
+    /**
+     * 快照时被忽略/未备份的路径：恢复时绝不能删除（scoped 键）。
+     * 目录条目按前缀匹配保护其子树（`key === p || key.startsWith(p + '/')`），
+     * 见 isProtectedScopedPath。
+     */
     protectedScopedPaths?: ReadonlySet<string>;
     /**
      * 允许删除的路径白名单（scoped 键）。
@@ -147,10 +150,42 @@ export interface RestorePlan {
 }
 
 /**
+ * 判断 scoped 键是否受保护：精确命中，或任一祖先前缀命中。
+ *
+ * 快照时整目录被排除（如 `ws_x/dist`）时，manifest.excluded 只记录目录自身一条
+ * （CheckpointIgnoreResolver.collectEntries 命中目录后整棵子树不再遍历，不递归记录内部文件）；
+ * 用户放宽规则后目录内文件（`ws_x/dist/app.js`）进入 currentHashes，若只做精确匹配
+ * 会被当作“快照后新建文件”删除（deleteUntrackedFiles=true），违反 CP-09 语义。
+ * 前缀匹配使目录级保护覆盖其全部子树：`key === p || key.startsWith(p + '/')`。
+ *
+ * scoped 键统一使用 `/` 分隔符（toScopedKey 已归一化反斜杠），无需平台路径处理；
+ * 对文件级条目做前缀匹配无害（文件路径下不存在子文件键，且 `/` 边界保证
+ * `secret.log` 不会误保护 `secret.log.bak`）。
+ */
+export function isProtectedScopedPath(
+    scopedKey: string,
+    protectedScopedPaths: ReadonlySet<string>
+): boolean {
+    if (protectedScopedPaths.has(scopedKey)) {
+        return true;
+    }
+    // 逐级向上检查祖先前缀（跳过空串与根级边界）：
+    // `ws_x/dist/app.js` → `ws_x/dist` → `ws_x`
+    let slashIndex = scopedKey.lastIndexOf('/');
+    while (slashIndex > 0) {
+        if (protectedScopedPaths.has(scopedKey.slice(0, slashIndex))) {
+            return true;
+        }
+        slashIndex = scopedKey.lastIndexOf('/', slashIndex - 1);
+    }
+    return false;
+}
+
+/**
  * 计算恢复计划：归一化目标/当前状态，计算新增、修改、删除与跳过数量。
  *
  * 删除集合已应用两层过滤：
- * 1. 受保护路径（快照时未备份/被忽略，恢复时绝不能删）；
+ * 1. 受保护路径（快照时未备份/被忽略，恢复时绝不能删；目录条目按前缀匹配保护子树）；
  * 2. 删除白名单（只删快照 fileHashes 记录过的路径，#29 语义）。
  */
 export function computeRestorePlan(
@@ -190,7 +225,8 @@ export function computeRestorePlan(
     const untrackedToDelete: string[] = [];
     for (const scopedKey of Object.keys(currentScopedHashes)) {
         if (scopedKey in targetHashes) continue;
-        if (protectedScopedPaths.has(scopedKey)) continue;
+        // M-3（R7b 补充）：目录级排除条目只记录目录自身，此处按前缀匹配保护目录内文件
+        if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
         if (deletableScopedPaths && !deletableScopedPaths.has(scopedKey)) {
             // 快照后新建/未跟踪：默认保留，需用户确认后才删除（CP-09）
             untrackedToDelete.push(scopedKey);
@@ -204,7 +240,7 @@ export function computeRestorePlan(
     const untrackedEmptyDirs: string[] = [];
     for (const scopedKey of currentEmptyDirs) {
         if (targetEmptySet.has(scopedKey)) continue;
-        if (protectedScopedPaths.has(scopedKey)) continue;
+        if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
         untrackedEmptyDirs.push(scopedKey);
     }
 
@@ -365,36 +401,20 @@ export async function restoreWorkspaceSnapshot(
     // 1. 构建增量链文件索引（恢复执行时才需要）
     const fileIndex = buildFileIndex(chain, checkpointsDir, roots);
 
-    // 2. 删除多余文件（plan.toDelete 已过滤受保护路径；untracked 仅在确认后删除）
-    //    有界并发（CPF-06）；取消信号在循环内检查（CPF-11）
-    await runBounded(deletionList, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
-        throwIfAborted(options.signal);
-        let absolutePath: string;
-        try {
-            absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-        } catch {
-            failures.push({ path: scopedKey, reason: 'delete_failed' });
-            return;
-        }
-        try {
-            await fs.unlink(absolutePath);
-            deleted += 1;
-            deletedPaths.push(absolutePath);
-        } catch {
-            failures.push({ path: scopedKey, reason: 'delete_failed' });
-        }
-    });
-
-    // 3. 恢复需要添加/修改的文件（有界并发 + 进度回调 + 取消检查）
+    // 2. 恢复需要添加/修改的文件（有界并发 + 进度回调 + 取消检查）。
+    //    复制阶段先于删除阶段（CP-ORDER-1）：备份缺失/复制失败时用户当前文件保持完整，
+    //    不存在「已删未补」的破坏性中间态；全部复制成功后最后再删除多余文件。
     const filesToRestore = [...added, ...modified];
-    let restoredProcessed = 0;
+    // 进度 total 覆盖复制 + 删除全量（CP-PROG-1），删除阶段进度条不再停滞
+    const progressTotal = deletionList.length + filesToRestore.length;
+    let processed = 0;
     await runBounded(filesToRestore, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
         throwIfAborted(options.signal);
         const indexEntry = fileIndex.get(scopedKey);
         if (!indexEntry) {
             failures.push({ path: scopedKey, reason: 'missing_in_chain' });
-            restoredProcessed += 1;
-            options.onProgress?.(restoredProcessed, filesToRestore.length);
+            processed += 1;
+            options.onProgress?.(processed, progressTotal);
             return;
         }
 
@@ -403,18 +423,18 @@ export async function restoreWorkspaceSnapshot(
             destination = (await resolveScopedPath(scopedKey, roots)).absolutePath;
         } catch {
             failures.push({ path: scopedKey, reason: 'copy_failed' });
-            restoredProcessed += 1;
-            options.onProgress?.(restoredProcessed, filesToRestore.length);
+            processed += 1;
+            options.onProgress?.(processed, progressTotal);
             return;
         }
 
         try {
-            // 校验备份内容与目标哈希一致
-            const backupHash = await hashFile(indexEntry.backupPath);
+            // 校验备份内容与目标哈希一致（共享流式哈希实现，CP-DUP-1）
+            const backupHash = await hashFileStreaming(indexEntry.backupPath);
             if (backupHash !== indexEntry.hash) {
                 failures.push({ path: scopedKey, reason: 'hash_mismatch' });
-                restoredProcessed += 1;
-                options.onProgress?.(restoredProcessed, filesToRestore.length);
+                processed += 1;
+                options.onProgress?.(processed, progressTotal);
                 return;
             }
 
@@ -431,9 +451,39 @@ export async function restoreWorkspaceSnapshot(
                 failures.push({ path: scopedKey, reason: 'copy_failed' });
             }
         }
-        restoredProcessed += 1;
-        options.onProgress?.(restoredProcessed, filesToRestore.length);
+        processed += 1;
+        options.onProgress?.(processed, progressTotal);
     });
+
+    throwIfAborted(options.signal);
+
+    // 3. 删除多余文件（plan.toDelete 已过滤受保护路径；untracked 仅在确认后删除）。
+    //    仅在复制阶段全部成功后执行（CP-ORDER-1）：复制失败时跳过删除，
+    //    用户「本可保留」的当前文件不会在恢复失败后一并丢失。
+    //    有界并发（CPF-06）；取消信号在循环内检查（CPF-11）；删除阶段同样上报进度（CP-PROG-1）
+    if (failures.length === 0) {
+        await runBounded(deletionList, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
+            throwIfAborted(options.signal);
+            let absolutePath: string;
+            try {
+                absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
+            } catch {
+                failures.push({ path: scopedKey, reason: 'delete_failed' });
+                processed += 1;
+                options.onProgress?.(processed, progressTotal);
+                return;
+            }
+            try {
+                await fs.unlink(absolutePath);
+                deleted += 1;
+                deletedPaths.push(absolutePath);
+            } catch {
+                failures.push({ path: scopedKey, reason: 'delete_failed' });
+            }
+            processed += 1;
+            options.onProgress?.(processed, progressTotal);
+        });
+    }
 
     throwIfAborted(options.signal);
 
@@ -454,7 +504,8 @@ export async function restoreWorkspaceSnapshot(
     for (const scopedKey of currentEmptyDirs) {
         throwIfAborted(options.signal);
         if (targetEmptySet.has(scopedKey)) continue;
-        if (protectedScopedPaths.has(scopedKey)) continue;
+        // M-3（R7b 补充）：目录级保护前缀同样覆盖受保护目录下的空目录
+        if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
         if (!options.deleteUntrackedFiles) continue;
         try {
             const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
@@ -473,16 +524,4 @@ export async function restoreWorkspaceSnapshot(
         modifiedPaths,
         deletedPaths
     };
-}
-
-/** 流式计算文件 MD5 */
-async function hashFile(filePath: string): Promise<string> {
-    const hash = crypto.createHash('md5');
-    await new Promise<void>((resolve, reject) => {
-        const stream = createReadStream(filePath);
-        stream.on('error', reject);
-        stream.on('data', chunk => hash.update(chunk));
-        stream.on('end', () => resolve());
-    });
-    return hash.digest('hex');
 }

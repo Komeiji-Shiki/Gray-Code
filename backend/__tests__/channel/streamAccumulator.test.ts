@@ -57,16 +57,16 @@ describe('StreamAccumulator - contentRevision', () => {
         const afterShell = acc.getContentRevision();
 
         // 不完整的参数增量：投影不可见，不应递增
-        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '{"paths":' } }]));
+        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '{"path":' } }]));
         expect(acc.getContentRevision()).toBe(afterShell);
 
         // 增量拼接完成，JSON.parse 成功 → 工具调用"完成"，属于结构性变化
-        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '["a.txt"]}' } }]));
+        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '"a.txt"}' } }]));
         expect(acc.getContentRevision()).toBeGreaterThan(afterShell);
 
         const fc = acc.getFinalContent().parts.find(p => p.functionCall)?.functionCall;
         expect(fc?.name).toBe('read_file');
-        expect(fc?.args).toEqual({ paths: ['a.txt'] });
+        expect(fc?.args).toEqual({ path: 'a.txt' });
     });
 });
 
@@ -77,13 +77,13 @@ describe('StreamAccumulator - getNewCompletedFunctionCalls', () => {
         acc.add(chunkOf([{ functionCall: { name: 'read_file', index: 0, args: {} } }]));
         expect(acc.getNewCompletedFunctionCalls()).toHaveLength(0);
 
-        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '{"paths":["a.txt"]}' } }]));
+        acc.add(chunkOf([{ functionCall: { index: 0, partialArgs: '{"path":"a.txt"}' } }]));
 
         const completed = acc.getNewCompletedFunctionCalls();
         expect(completed).toHaveLength(1);
         expect(completed[0].name).toBe('read_file');
         expect(completed[0].id).toBeTruthy();
-        expect(completed[0].args).toEqual({ paths: ['a.txt'] });
+        expect(completed[0].args).toEqual({ path: 'a.txt' });
 
         // 同一调用绝不重复上报（重复上报 = 工具被重复执行）
         expect(acc.getNewCompletedFunctionCalls()).toHaveLength(0);
@@ -114,13 +114,13 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         const acc = new StreamAccumulator('json', makeIdFactory());
 
         acc.add(chunkOf([{ text: 'before ' }]));
-        acc.add(chunkOf([{ text: '<<<TOOL_CALL>>>\n{"tool": "read_file", "parameters": {"paths": ["a.txt"]}}\n<<<END_TOOL_CALL>>>' }]));
+        acc.add(chunkOf([{ text: '<<<TOOL_CALL>>>\n{"tool": "read_file", "parameters": {"path": "a.txt"}}\n<<<END_TOOL_CALL>>>' }]));
         acc.add(chunkOf([], { done: true }));
 
         const parts = acc.getFinalContent().parts;
         const fcPart = parts.find(p => p.functionCall);
         expect(fcPart?.functionCall?.name).toBe('read_file');
-        expect(fcPart?.functionCall?.args).toEqual({ paths: ['a.txt'] });
+        expect(fcPart?.functionCall?.args).toEqual({ path: 'a.txt' });
         expect(fcPart?.functionCall?.id).toBeTruthy();
     });
 
@@ -128,12 +128,12 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         const acc = new StreamAccumulator('xml', makeIdFactory());
 
         acc.add(chunkOf([{ text: '<tool_use>\n  <tool_name>read_' }]));
-        acc.add(chunkOf([{ text: 'file</tool_name>\n  <parameters>\n    <paths><item>a.txt</item></paths>\n  </parameters>\n</tool_use>' }]));
+        acc.add(chunkOf([{ text: 'file</tool_name>\n  <parameters>\n    <path>a.txt</path>\n  </parameters>\n</tool_use>' }]));
         acc.add(chunkOf([], { done: true }));
 
         const fcPart = acc.getFinalContent().parts.find(p => p.functionCall);
         expect(fcPart?.functionCall?.name).toBe('read_file');
-        expect(fcPart?.functionCall?.args).toEqual({ paths: ['a.txt'] });
+        expect(fcPart?.functionCall?.args).toEqual({ path: 'a.txt' });
     });
 
     it('思考（thought）文本中的工具标记不被当作真实调用', () => {

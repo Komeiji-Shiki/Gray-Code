@@ -86,11 +86,14 @@ export class CheckpointService {
                 index = history.length; // 新用户消息将插入的位置
             }
 
+            // BCP-01: 由消息索引反查稳定节点 ID；before 存档的“即将插入”位置通常无消息 → undefined，不阻塞
+            const messageNodeId = await this.conversationManager.getMessageNodeIdAt(conversationId, index);
             return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
                 conversationId,
                 index,
                 'user_message',
-                'before'
+                'before',
+                { messageNodeId }
             ));
         }
 
@@ -108,11 +111,14 @@ export class CheckpointService {
             index = history.length - 1; // 刚刚添加的用户消息
         }
 
+        // BCP-01: 由消息索引反查稳定节点 ID
+        const messageNodeId = await this.conversationManager.getMessageNodeIdAt(conversationId, index);
         return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             index,
             'user_message',
-            'after'
+            'after',
+            { messageNodeId }
         ));
     }
 
@@ -147,11 +153,14 @@ export class CheckpointService {
             const history = await this.conversationManager.getHistoryRef(conversationId);
             const index = history.length; // 模型消息将要插入的位置
 
+            // BCP-01: before 存档挂到“即将写入”索引上，该位置通常尚无消息 → nodeId 缺省，不阻塞
+            const messageNodeId = await this.conversationManager.getMessageNodeIdAt(conversationId, index);
             return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
                 conversationId,
                 index,
                 'model_message',
-                'before'
+                'before',
+                { messageNodeId }
             ));
         }
 
@@ -166,11 +175,14 @@ export class CheckpointService {
         }
         const index = history.length - 1; // 刚刚添加的模型消息
 
+        // BCP-01: 由消息索引反查稳定节点 ID
+        const messageNodeId = await this.conversationManager.getMessageNodeIdAt(conversationId, index);
         return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             index,
             'model_message',
-            'after'
+            'after',
+            { messageNodeId }
         ));
     }
 
@@ -179,6 +191,9 @@ export class CheckpointService {
      *
      * 这里不额外做开关判断，直接委托给 CheckpointManager，由其根据配置决定是否实际创建。
      *
+     * BCP-01: 支持显式传 messageNodeId（调用方已知节点时）；未传时由当前消息索引反查
+     * （工具执行所在的模型消息已在历史中，通常可解析到稳定节点 ID）。
+     *
      * M7: 支持透传 progress 回调（可选用）；返回值按 M1 摘要化（不含 fileHashes/fileStats）。
      */
     async createToolExecutionCheckpoint(
@@ -186,17 +201,24 @@ export class CheckpointService {
         messageIndex: number,
         toolName: string,
         phase: 'before' | 'after',
+        messageNodeId?: string,
         options?: { progress?: (progress: CheckpointOperationProgress) => void }
     ): Promise<CheckpointRecord | null> {
         if (!this.checkpointManager) {
             return null;
         }
+        // BCP-01: 未显式传 nodeId 时由索引反查（只读历史元数据，无副作用）
+        const resolvedNodeId = messageNodeId
+            ?? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex);
         return this.toStreamSummary(await this.checkpointManager.createCheckpoint(
             conversationId,
             messageIndex,
             toolName,
             phase,
-            options && options.progress ? { progress: options.progress } : undefined
+            {
+                ...(options && options.progress ? { progress: options.progress } : {}),
+                ...(resolvedNodeId ? { messageNodeId: resolvedNodeId } : {})
+            }
         ));
     }
 

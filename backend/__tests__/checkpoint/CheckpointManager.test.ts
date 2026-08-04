@@ -11,6 +11,7 @@ jest.mock('../../tools/file/diffManager', () => ({
 }));
 
 import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 /**
  * CheckpointManager restore 测试
@@ -125,6 +126,9 @@ async function createCheckpointManager(
     let metadataWriteChain: Promise<unknown> = Promise.resolve();
     const conversationManager = {
         getMetadata: jest.fn().mockImplementation(async (conversationId: string) => resolveMetadata(conversationId)),
+        getCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string) => {
+            return (resolveMetadata(conversationId).custom as Record<string, unknown>)[key];
+        }),
         setCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string, value: unknown) => {
             (resolveMetadata(conversationId).custom as Record<string, unknown>)[key] = value;
         }),
@@ -758,7 +762,9 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
             await writeFile(path.join(storageRoot, 'checkpoints', 'cp-ok'), 'x.txt', 'x\n');
             const manager = await createCheckpointManager(workspaceRoot, storageRoot, [withBackup, missing], []);
 
-            const result = await (manager as any).pruneMissingBackupCheckpointRecords(conversationId, [withBackup, missing]);
+            // L-10（R4 复查）：CheckpointManager 上的私有转发包装已删除（死代码），
+            // 该能力由 CheckpointQueryService 直接提供，测试改为调用 queryService。
+            const result = await (manager as any).queryService.pruneMissingBackupCheckpointRecords(conversationId, [withBackup, missing]);
 
             expect(result.prunedCount).toBe(1);
             const list = await manager.getCheckpoints(conversationId);
@@ -957,9 +963,267 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });
+
         }
     });
 
+
+    describe('CP-DEL-1 / CP-IDX-1 / CP-PREV-1（删除路径安全与链完整性）', () => {
+        test('deleteCheckpoint refuses unsafe backupDir without touching out-of-bounds path', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-del-unsafe';
+            const evilDir = `..${path.sep}outside`;
+            const evilCp = makeRecord({ id: 'cp-evil', conversationId, timestamp: 1000, backupDir: evilDir });
+
+            try {
+                const outsideDir = path.join(storageRoot, 'outside');
+                await writeFile(outsideDir, 'victim.txt', 'keep me');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [evilCp], []);
+
+                const deleted = await manager.deleteCheckpoint(conversationId, 'cp-evil');
+
+                expect(deleted).toBe(false);
+                // 记录保留（删除被拒绝），外部目录未被递归删除
+                const list = await manager.getCheckpoints(conversationId);
+                expect(list.map(c => c.id)).toEqual(['cp-evil']);
+                await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('deleteCheckpointsFromIndex keeps records with unsafe backupDir and deletes the rest', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-idx-unsafe';
+            const evilCp = makeRecord({
+                id: 'cp-evil', conversationId, messageIndex: 0, timestamp: 1000,
+                backupDir: `..${path.sep}outside`
+            });
+            const okCp = makeRecord({ id: 'cp-ok', conversationId, messageIndex: 1, timestamp: 2000 });
+
+            try {
+                const outsideDir = path.join(storageRoot, 'outside');
+                await writeFile(outsideDir, 'victim.txt', 'keep me');
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-ok'), 'x.txt', 'x');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [evilCp, okCp], []);
+
+                const deleted = await manager.deleteCheckpointsFromIndex(conversationId, 0);
+
+                expect(deleted).toBe(1); // 只删 cp-ok；cp-evil 因 backupDir 越界被保留
+                const list = await manager.getCheckpoints(conversationId);
+                expect(list.map(c => c.id)).toEqual(['cp-evil']);
+                await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
+                await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('deleteAllCheckpoints keeps records with unsafe backupDir', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-all-unsafe';
+            const evilCp = makeRecord({
+                id: 'cp-evil', conversationId, messageIndex: 0, timestamp: 1000,
+                backupDir: `..${path.sep}outside`
+            });
+            const okCp = makeRecord({ id: 'cp-ok', conversationId, messageIndex: 1, timestamp: 2000 });
+
+            try {
+                const outsideDir = path.join(storageRoot, 'outside');
+                await writeFile(outsideDir, 'victim.txt', 'keep me');
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-ok'), 'x.txt', 'x');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [evilCp, okCp], []);
+
+                const result = await manager.deleteAllCheckpoints(conversationId);
+
+                expect(result.success).toBe(true);
+                expect(result.deletedCount).toBe(1); // cp-ok 已删，cp-evil 保留
+                const list = await manager.getCheckpoints(conversationId);
+                expect(list.map(c => c.id)).toEqual(['cp-evil']);
+                await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
+                await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('deleteCheckpointsBatch reports unsafe backupDir in rejectedIds', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-batch-unsafe';
+            const evilCp = makeRecord({
+                id: 'cp-evil', conversationId, messageIndex: 0, timestamp: 1000,
+                backupDir: `..${path.sep}outside`
+            });
+            const okCp = makeRecord({ id: 'cp-ok', conversationId, messageIndex: 1, timestamp: 2000 });
+
+            try {
+                const outsideDir = path.join(storageRoot, 'outside');
+                await writeFile(outsideDir, 'victim.txt', 'keep me');
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-ok'), 'x.txt', 'x');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [evilCp, okCp], []);
+
+                const results = await manager.deleteCheckpointsBatch([
+                    { conversationId, checkpointIds: ['cp-evil', 'cp-ok'] }
+                ]);
+
+                expect(results[0].deletedIds).toEqual(['cp-ok']);
+                expect(results[0].rejectedIds).toEqual(['cp-evil']);
+                const list = await manager.getCheckpoints(conversationId);
+                expect(list.map(c => c.id)).toEqual(['cp-evil']);
+                await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-ok'))).resolves.toBe(false);
+                await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('keep me');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('CP-IDX-1: index deletion keeps base chain of retained nodes when message index regresses (edit + retry)', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-idx-closure';
+            // 序列：B(index=10) → 截断对话 → 重试产生 R(index=3, base=B) → 再次截断到 fromIndex=4。
+            // 仅按索引判断会删 B（10>=4）而留 R（3<4）→ R 的 baseCheckpointId 悬空（永久断链）；
+            // 祖先闭包必须强制保留 B。另有真正过期的 stale(index=5) 应被删除。
+            const baseContent = 'base content\n';
+            const targetContent = 'target content\n';
+            const b = makeRecord({
+                id: 'cp-b', conversationId, messageIndex: 10, timestamp: 1000, type: 'full',
+                fileHashes: { 'a.txt': hashContent(baseContent) }
+            });
+            const r = makeRecord({
+                id: 'cp-r', conversationId, messageIndex: 3, timestamp: 2000,
+                type: 'incremental', baseCheckpointId: 'cp-b',
+                fileHashes: { 'a.txt': hashContent(targetContent) },
+                changes: [{ path: 'a.txt', type: 'modified', hash: hashContent(targetContent) }]
+            });
+            const stale = makeRecord({ id: 'cp-stale', conversationId, messageIndex: 5, timestamp: 3000 });
+
+            try {
+                await writeFile(workspaceRoot, 'a.txt', 'current\n');
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-b'), 'a.txt', baseContent);
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-r'), 'a.txt', targetContent);
+                await writeFile(path.join(storageRoot, 'checkpoints', 'cp-stale'), 'x.txt', 'x');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [b, r, stale], []);
+
+                const deleted = await manager.deleteCheckpointsFromIndex(conversationId, 4);
+
+                expect(deleted).toBe(1); // 只删 stale
+                const list = await manager.getCheckpoints(conversationId);
+                expect(list.map(c => c.id).sort()).toEqual(['cp-b', 'cp-r']);
+                await expect(pathExists(path.join(storageRoot, 'checkpoints', 'cp-stale'))).resolves.toBe(false);
+                // R 的恢复链完好：基快照 B 仍在，恢复不报 chainBroken
+                const restore = await manager.restoreCheckpoint(conversationId, 'cp-r');
+                expect(restore.success).toBe(true);
+                await expect(fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).resolves.toBe(targetContent);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('CP-PREV-1: preview reports deleted (confirmed) and deletedIfUnconfirmed separately', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-preview-count';
+            const checkpointId = 'cp-preview-count';
+            const trackedContent = 'tracked v1\n';
+
+            try {
+                await writeFile(path.join(storageRoot, 'checkpoints', checkpointId), 'tracked.txt', trackedContent);
+                // 工作区：tracked.txt 内容已变化 + untracked.txt 快照后新建
+                await writeFile(workspaceRoot, 'tracked.txt', 'current changed\n');
+                await writeFile(workspaceRoot, 'untracked.txt', 'new file\n');
+
+                const checkpoint: CheckpointRecord = {
+                    id: checkpointId,
+                    conversationId,
+                    messageIndex: 0,
+                    toolName: 'write_file',
+                    phase: 'after',
+                    timestamp: Date.now(),
+                    backupDir: checkpointId,
+                    fileCount: 1,
+                    contentHash: 'hash-preview-count',
+                    type: 'full',
+                    fileHashes: { 'tracked.txt': hashContent(trackedContent) },
+                    emptyDirs: []
+                };
+
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+                const preview = await manager.previewRestore(conversationId, checkpointId);
+
+                expect(preview.success).toBe(true);
+                // untracked 默认保留：确认前实际只会删除 0 个文件
+                expect(preview.deletedIfUnconfirmed).toBe(0);
+                // 确认删除 untracked 后总数 = 1
+                expect(preview.deleted).toBe(1);
+                expect(preview.untrackedPaths).toEqual(['untracked.txt']);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('CP-LOCK-2: previewRestore runs without the global file write lock; restore acquires it', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+            const conversationId = 'conv-preview-lock';
+            const checkpointId = 'cp-preview-lock';
+            const trackedContent = 'tracked v1\n';
+
+            try {
+                const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+                await writeFile(backupRoot, 'tracked.txt', trackedContent);
+                // 工作区：tracked.txt（内容已变化）+ untracked.txt（快照后新建）
+                await writeFile(workspaceRoot, 'tracked.txt', 'current changed\n');
+                await writeFile(workspaceRoot, 'untracked.txt', 'new file\n');
+
+                const checkpoint: CheckpointRecord = {
+                    id: checkpointId,
+                    conversationId,
+                    messageIndex: 0,
+                    toolName: 'write_file',
+                    phase: 'after',
+                    timestamp: Date.now(),
+                    backupDir: checkpointId,
+                    fileCount: 1,
+                    contentHash: 'hash-preview-lock',
+                    type: 'full',
+                    fileHashes: { 'tracked.txt': hashContent(trackedContent) },
+                    emptyDirs: []
+                };
+
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+                const acquireSpy = jest.spyOn(fileWriteLockManager, 'acquire');
+
+                try {
+                    // 预览是纯计算：不得 acquire 全局文件写锁（否则扫描/哈希期间阻塞全部写工具）
+                    const preview = await manager.previewRestore(conversationId, checkpointId);
+                    expect(preview.success).toBe(true);
+                    expect(preview.restored).toBe(1);
+                    expect(acquireSpy).not.toHaveBeenCalled();
+
+                    // 对照：真正执行恢复仍必须取全局文件写锁
+                    const restore = await manager.restoreCheckpoint(conversationId, checkpointId);
+                    expect(restore.success).toBe(true);
+                    expect(acquireSpy).toHaveBeenCalled();
+                } finally {
+                    acquireSpy.mockRestore();
+                }
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+    });
     test('getCheckpoints withSize attaches backup dir sizes', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
@@ -1234,38 +1498,6 @@ describe('CheckpointManager path safety regressions', () => {
         };
     }
 
-    test('records with unsafe backupDir are dropped from all read paths', async () => {
-        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
-        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
-        const conversationId = 'conv-unsafe-backupdir';
-
-        try {
-            const safe = makeRecord({ id: 'cp-safe', conversationId, timestamp: 1000 });
-            const escaped = makeRecord({ id: 'cp-escape', conversationId, timestamp: 1001 });
-            // 篡改 backupDir 为穿越路径：任何读取入口都必须剔除该记录，
-            // 否则 fs.rm(recursive) 会删到 checkpoints 目录之外。
-            escaped.backupDir = '../..';
-            const absolute = makeRecord({ id: 'cp-abs', conversationId, timestamp: 1002 });
-            absolute.backupDir = path.join(storageRoot, 'elsewhere');
-
-            // 在目录外放一个文件，验证「穿越删除」不会发生
-            await writeFile(storageRoot, 'outside-marker.txt', 'must survive');
-
-            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [safe, escaped, absolute], []);
-
-            const listed = await manager.getCheckpoints(conversationId);
-            expect(listed.map(cp => cp.id)).toEqual(['cp-safe']);
-
-            // deleteAllCheckpoints 只能删掉目录内的合法备份目录
-            const result = await manager.deleteAllCheckpoints(conversationId);
-            expect(result.success).toBe(true);
-            await expect(pathExists(path.join(storageRoot, 'outside-marker.txt'))).resolves.toBe(true);
-        } finally {
-            await fs.rm(workspaceRoot, { recursive: true, force: true });
-            await fs.rm(storageRoot, { recursive: true, force: true });
-        }
-    });
-
     test('restore drops fileHashes entries with parent traversal segments', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
@@ -1365,4 +1597,73 @@ describe('CheckpointManager path safety regressions', () => {
         }
     });
 });
+
+    // ==================== BCP-01：createCheckpoint 关联 messageNodeId ====================
+
+    describe('BCP-01: createCheckpoint messageNodeId 关联', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+        });
+
+        test('options.messageNodeId 写入记录并透传到摘要（getCheckpoints 回读）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-bcp01-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-bcp01-storage-');
+            try {
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+                // 把 write_file 加入 after 配置，否则 createCheckpoint 直接跳过
+                ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                    enabled: true,
+                    beforeTools: ['write_file'],
+                    afterTools: ['write_file'],
+                    messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                    maxCheckpoints: -1,
+                    customIgnorePatterns: []
+                });
+
+                const cp = await manager.createCheckpoint('conv-bcp01', 3, 'write_file', 'after', {
+                    messageNodeId: 'node-abc'
+                });
+                expect(cp).not.toBeNull();
+                expect(cp!.messageNodeId).toBe('node-abc');
+                expect(cp!.messageIndex).toBe(3); // index 定位语义不回退
+
+                // 持久化后经查询服务回读：摘要同样透出 messageNodeId
+                const summaries = await manager.getCheckpoints('conv-bcp01');
+                expect(summaries).toHaveLength(1);
+                expect(summaries[0].messageNodeId).toBe('node-abc');
+                expect(summaries[0].messageIndex).toBe(3);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('不传 messageNodeId：记录与摘要无该字段（旧存档兼容）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-bcp01-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-bcp01-storage-');
+            try {
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+                ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                    enabled: true,
+                    beforeTools: ['write_file'],
+                    afterTools: ['write_file'],
+                    messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                    maxCheckpoints: -1,
+                    customIgnorePatterns: []
+                });
+
+                const cp = await manager.createCheckpoint('conv-bcp01', 3, 'write_file', 'after');
+                expect(cp).not.toBeNull();
+                expect(cp!.messageNodeId).toBeUndefined();
+
+                const summaries = await manager.getCheckpoints('conv-bcp01');
+                expect(summaries).toHaveLength(1);
+                expect(summaries[0].messageNodeId).toBeUndefined();
+                expect(summaries[0].messageIndex).toBe(3);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+    });
 });

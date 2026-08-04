@@ -7,6 +7,7 @@
  */
 
 import { SubAgentRunController } from '../../tools/subagents/runController';
+import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
 
 describe('SubAgentRunController - 暂停/继续/退出', () => {
     it('暂停后 waitUntilRunnable 挂起，继续后返回 running', async () => {
@@ -100,5 +101,59 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         const controller = new SubAgentRunController();
         controller.register('run_running', 'Agent');
         expect(controller.resume('run_running')).toBe(false);
+    });
+});
+
+
+describe('SubAgentRunController - 转后台（detach）', () => {
+    it('detachFromParent 解除父信号绑定：标记 detached、同步调用 listener、广播 run_detached', () => {
+        const controller = new SubAgentRunController();
+        controller.register('run_detach', 'Agent', 0, true);
+        let listenerCalled = false;
+        controller.registerDetachListener('run_detach', () => { listenerCalled = true; });
+        const types: string[] = [];
+        const dispose = subAgentRunEventBus.subscribe(event => {
+            if (event.runId === 'run_detach') types.push(event.type);
+        });
+        try {
+            expect(controller.detachFromParent('run_detach')).toBe(true);
+            expect(controller.isDetached('run_detach')).toBe(true);
+            expect(listenerCalled).toBe(true);
+            expect(types).toContain('run_detached');
+        } finally {
+            dispose();
+            controller.unregister('run_detach');
+        }
+    });
+
+    it('重复 detach 返回 false（幂等）', () => {
+        const controller = new SubAgentRunController();
+        controller.register('run_detach2', 'Agent', 0, true);
+        expect(controller.detachFromParent('run_detach2')).toBe(true);
+        expect(controller.detachFromParent('run_detach2')).toBe(false);
+        controller.unregister('run_detach2');
+    });
+
+    it('后台 run（attachedToParent=false）不被 detach，保留 TaskManager 取消能力', () => {
+        const controller = new SubAgentRunController();
+        controller.register('run_detach_bg', 'Agent', 0, false);
+        expect(controller.detachFromParent('run_detach_bg')).toBe(false);
+        expect(controller.isDetached('run_detach_bg')).toBe(false);
+        controller.unregister('run_detach_bg');
+    });
+
+    it('未注册的 run detach 返回 false', () => {
+        const controller = new SubAgentRunController();
+        expect(controller.detachFromParent('run_missing')).toBe(false);
+    });
+
+    it('unregister 清理 detach listener，detach 不再触发回调', () => {
+        const controller = new SubAgentRunController();
+        controller.register('run_detach3', 'Agent', 0, true);
+        let calls = 0;
+        controller.registerDetachListener('run_detach3', () => { calls++; });
+        controller.unregister('run_detach3');
+        expect(controller.detachFromParent('run_detach3')).toBe(false);
+        expect(calls).toBe(0);
     });
 });

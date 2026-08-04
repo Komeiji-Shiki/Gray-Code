@@ -29,6 +29,10 @@ export function generateRequestId(): string {
  *
  * - 流式对话：响应要等整轮工具循环跑完才回，时长由模型和工具决定
  * - 依赖安装 / 存储迁移：本身就是分钟级的长任务
+ * - checkpoint.restore / deleteBatch / previewRestore：大工作区恢复/批量删除/预览可能超过 180s，
+ *   超时会让前端误判失败而后端在互斥锁内继续执行，导致重复恢复/删除（checkpoint-frontend-review M-1）
+ * - deleteMessage：删除会话消息可能在后端互斥锁内等待其他回合收尾而超过 180s；
+ *   超时误判删除失败会触发前端重载/中止重试路径，而删除实际已生效，造成窗口与历史错位（FIX-C-2）
  */
 const UNBOUNDED_REQUEST_TYPES = new Set([
   'chatStream',
@@ -36,13 +40,17 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'editAndRetryStream',
   'toolConfirmation',
   'cancelStream',
+  'deleteMessage',
   'dependencies.install',
   'dependencies.uninstall',
   'storagePath.migrate',
   'storagePath.selectFolder',
   // 后端视为分钟级长任务（NON_BLOCKING），180s 兜底超时会先触发，
   // 后端稍后返回的响应因无匹配请求被当作广播推送误分发（M6）
-  'summarizeContext'
+  'summarizeContext',
+  'checkpoint.restore',
+  'checkpoint.deleteBatch',
+  'checkpoint.previewRestore'
 ])
 
 /**

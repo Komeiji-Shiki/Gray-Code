@@ -21,6 +21,7 @@ import type { McpManager } from '../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
 import { isMcpToolName, decodeMcpToolName } from '../../../mcp/mcpToolNameCodec';
 import type { ContentPart } from '../../../conversation/types';
+import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
 import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
@@ -30,6 +31,9 @@ import {
     toolCallNeedsOutsideWorkspaceConfirmation
 } from '../../../../tools/file/outsideWorkspaceAccess';
 import { fileWriteLockManager, getWritePathsForCall, type LockHolder } from '../../../../core/fileWriteLockManager';
+import { agentMailbox } from '../../../../tools/subagents/agentMailbox';
+import { Logger } from '../../../../core/logger';
+import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
 
 /**
  * 工具执行完整结果
@@ -85,11 +89,71 @@ export class ToolExecutionService {
     private toolRegistry?: ToolRegistry;
     private conversationStore?: ConversationStore;
 
+    /**
+     * MED-1：同一 (conversationId, runId) 下并发执行循环的 drain 权收敛。
+     *
+     * 主会话工具循环存在两个并发生成器：流式边执行早启动路径（executeFunctionCallsWithResults，
+     * 流式期间启动）与流式结束后的主循环（executeFunctionCallsWithProgress），两者共享 mailbox
+     * 身份 (conversationId, MAIN_SESSION_RUN_ID) 并各自调用 injectInboxMessages。drain 本身同步
+     * 互斥，但消息挂在哪个结果上取决于调度顺序——abort 丢弃路径会让消息随被丢弃的结果一起丢失。
+     *
+     * 收敛规则：每个执行循环启动时领取自增 epoch（key = conversationId + runId）；
+     * injectInboxMessages 只允许「最新启动」的循环 drain（它就是最终落盘的执行循环）。
+     * 早启动路径在主循环启动后自动失去 drain 权（只执行不 drain），消息统一挂在主循环结果上；
+     * 主循环不存在时（全部工具已早启动），早启动路径即最终落盘循环，仍正常 drain。
+     */
+    private readonly mailboxDrainEpochs = new Map<string, number>();
+    private mailboxDrainEpochCounter = 0;
+    private readonly log = Logger.get('ToolExec');
+
+    private claimMailboxDrainEpoch(
+        mailboxConversationId: string | undefined,
+        mailboxRunId: string | undefined
+    ): { key: string; epoch: number } | undefined {
+        if (!mailboxConversationId || !mailboxRunId) {
+            return undefined;
+        }
+        const key = `${mailboxConversationId}\u0000${mailboxRunId}`;
+        const epoch = ++this.mailboxDrainEpochCounter;
+        this.mailboxDrainEpochs.set(key, epoch);
+        return { key, epoch };
+    }
+
+    private isMailboxDrainOwner(key: string, epoch: number): boolean {
+        return this.mailboxDrainEpochs.get(key) === epoch;
+    }
+
+    private releaseMailboxDrainEpoch(key: string, epoch: number): void {
+        if (this.mailboxDrainEpochs.get(key) === epoch) {
+            this.mailboxDrainEpochs.delete(key);
+        }
+    }
+
+    /**
+     * E-2：清理指定会话的全部 mailbox drain epoch 条目（对话删除/复用时可调用）。
+     *
+     * 当前 mailboxDrainEpochs 本身是有界 Map（每 (conversationId, runId) 一条，
+     * 下次 claim 覆盖旧条目），配合生成器 finally 兜底释放（见 executeFunctionCallsWithProgress）
+     * 后，泄漏面已收敛到「被永久放弃的生成器」与「已删除会话」的少量数字条目。
+     * deleteConversation 的 A-COMM 信箱清理（agentMailbox.clearConversation）已由 FIX-G1 接线，
+     * 本方法不重复接线，供需要同步清理 epoch 条目的调用点与测试使用。
+     */
+    clearMailboxDrainEpochsForConversation(conversationId: string): void {
+        const prefix = `${conversationId}\u0000`;
+        for (const key of this.mailboxDrainEpochs.keys()) {
+            if (key.startsWith(prefix)) {
+                this.mailboxDrainEpochs.delete(key);
+            }
+        }
+    }
+
     constructor(
         toolRegistry?: ToolRegistry,
         mcpManager?: McpManager,
         settingsManager?: SettingsManager,
-        private checkpointService?: CheckpointService
+        private checkpointService?: CheckpointService,
+        /** BCP-01: 可选的 ConversationManager，用于按消息索引反查稳定节点 ID（未注入时由 CheckpointService 兜底反查） */
+        private conversationManager?: ConversationManager
     ) {
         this.toolRegistry = toolRegistry;
         this.mcpManager = mcpManager;
@@ -125,6 +189,35 @@ export class ToolExecutionService {
     }
 
     /**
+     * BCP-02：工具执行存档创建成功后，把存档 id fire-and-forget 绑定到分支节点。
+     *
+     * - 不阻塞工具循环（调用点以 void 丢弃返回值；失败仅 log.warn——绑定是派生态，
+     *   存档记录与主历史才是真源，与 TREE-05 appendHistoryToGraph 同哲学）；
+     * - 未注入 BranchService（getGlobalBranchService 未注册，如测试环境）或 nodeId 缺省
+     *   （before 存档位置尚无消息等）时直接跳过；
+     * - 锁序：createCheckpoint 持工作区存档锁，绑定走会话写锁——绝不在此处 await 绑定
+     *   （会形成「存档锁 → 会话锁」的嵌套等待，R1 死锁风险）。
+     */
+    private bindWorkspaceCheckpointBestEffort(
+        conversationId: string,
+        nodeId: string | undefined,
+        checkpointId: string
+    ): void {
+        const branchService = getGlobalBranchService();
+        if (!branchService || !nodeId || !checkpointId) {
+            return;
+        }
+        void branchService.bindWorkspaceCheckpoint(conversationId, nodeId, checkpointId).catch(error => {
+            this.log.warn('bind_workspace_checkpoint_failed', {
+                conversationId,
+                nodeId,
+                checkpointId,
+                error: (error as Error)?.message ?? String(error),
+            });
+        });
+    }
+
+    /**
      * 执行函数调用并返回函数响应 parts
      *
      * @param calls 函数调用列表
@@ -139,7 +232,10 @@ export class ToolExecutionService {
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
-        progressEmitter?: ToolProgressEmitter
+        progressEmitter?: ToolProgressEmitter,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number
     ): Promise<ContentPart[]> {
         const { responseParts } = await this.executeFunctionCallsWithResults(
             calls,
@@ -148,7 +244,12 @@ export class ToolExecutionService {
             config,
             abortSignal,
             promptModeSnapshot,
-            progressEmitter
+            progressEmitter,
+            undefined,
+            undefined,
+            mailboxConversationId,
+            mailboxRunId,
+            nestingDepth
         );
         return responseParts;
     }
@@ -178,7 +279,10 @@ export class ToolExecutionService {
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         executionOptions?: Set<string> | ToolProgressEmitter,
         progressEmitter?: ToolProgressEmitter,
-        attribution?: LockHolder
+        attribution?: LockHolder,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number
     ): Promise<ToolExecutionFullResult> {
         const generator = this.executeFunctionCallsWithProgress(
             calls,
@@ -189,7 +293,10 @@ export class ToolExecutionService {
             promptModeSnapshot,
             executionOptions,
             progressEmitter,
-            attribution
+            attribution,
+            mailboxConversationId,
+            mailboxRunId,
+            nestingDepth
         );
 
         let next = await generator.next();
@@ -201,13 +308,17 @@ export class ToolExecutionService {
 
 
     /**
-     * 执行函数调用（带进度事件）
+     * 执行函数调用（带进度事件）— 公共入口。
      *
      * 用于：前端“实时排队推进”展示。
      *
      * - 在每个工具开始前 yield {type:'start'}
      * - 在每个工具结束后 yield {type:'end'}（包含该工具的 ToolExecutionResult）
      * - 最终通过 generator return 返回完整 ToolExecutionFullResult（供调用方持久化 / 后续流程使用）
+     *
+     * MED-1：领取 drain epoch（最新启动的执行循环持有 (conversationId, runId) 的 drain 权）；
+     * E-2：try/finally 兜底释放 epoch——覆盖完成、abort 完成、异常抛出与被 return() 提前结束
+     * 的路径（旧实现只在完成路径 release，生成器异常/提前放弃会留下 Map 条目）。
      */
     async *executeFunctionCallsWithProgress(
         calls: FunctionCallInfo[],
@@ -218,12 +329,65 @@ export class ToolExecutionService {
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         executionOptions?: Set<string> | ToolProgressEmitter,
         progressEmitter?: ToolProgressEmitter,
-        attribution?: LockHolder
+        attribution?: LockHolder,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number
+    ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
+        // MED-1：领取 drain epoch——最新启动的执行循环持有 (conversationId, runId) 的 drain 权
+        const mailboxDrain = this.claimMailboxDrainEpoch(mailboxConversationId, mailboxRunId);
+        try {
+            return yield* this.executeFunctionCallsWithProgressCore(
+                calls,
+                conversationId,
+                messageIndex,
+                config,
+                abortSignal,
+                promptModeSnapshot,
+                executionOptions,
+                progressEmitter,
+                attribution,
+                mailboxConversationId,
+                mailboxRunId,
+                nestingDepth,
+                mailboxDrain
+            );
+        } finally {
+            // E-2：生成器异常/被提前 return() 时兜底释放（正常完成路径由核心 return 后同样
+            // 走到这里；release 幂等——非最新持有者不误删他人条目）
+            if (mailboxDrain) {
+                this.releaseMailboxDrainEpoch(mailboxDrain.key, mailboxDrain.epoch);
+            }
+        }
+    }
+
+    /**
+     * 执行函数调用（带进度事件）— 核心实现。
+     *
+     * 由公共入口 executeFunctionCallsWithProgress 委托驱动（claim/finally 释放集中在入口），
+     * 本方法只负责执行与 yield 事件；mailboxDrain 由入口传入。
+     */
+    private async *executeFunctionCallsWithProgressCore(
+        calls: FunctionCallInfo[],
+        conversationId?: string,
+        messageIndex?: number,
+        config?: BaseChannelConfig,
+        abortSignal?: AbortSignal,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        executionOptions?: Set<string> | ToolProgressEmitter,
+        progressEmitter?: ToolProgressEmitter,
+        attribution?: LockHolder,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number,
+        mailboxDrain?: { key: string; epoch: number }
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
         const resolvedProgressEmitter = typeof executionOptions === 'function'
             ? executionOptions
             : progressEmitter;
+
+        // MED-1/E-2：drain epoch 由公共入口领取并经参数传入，核心不再自行 claim（释放统一在入口 finally）
 
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -267,14 +431,21 @@ export class ToolExecutionService {
 
         // 在所有工具执行前创建一个检查点
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+            // BCP-01: 由消息索引反查节点 ID（注入 ConversationManager 时；否则 CheckpointService 兜底）
+            const messageNodeId = this.conversationManager
+                ? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex)
+                : undefined;
             const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 messageIndex,
                 toolNameForCheckpoint,
-                'before'
+                'before',
+                messageNodeId
             );
             if (beforeCheckpoint) {
                 checkpoints.push(beforeCheckpoint);
+                // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
+                void this.bindWorkspaceCheckpointBestEffort(conversationId, messageNodeId, beforeCheckpoint.id);
             }
         }
 
@@ -334,6 +505,9 @@ export class ToolExecutionService {
                     }
                 });
 
+                // A-COMM：每次工具调用完成后检查当前 run 的 inbox，把 agent 消息追加到该结果之后一起返回
+                this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults, mailboxDrain?.key, mailboxDrain?.epoch);
+
                 yield { type: 'end', call: executionCall, toolResult };
                 index++;
                 continue;
@@ -363,6 +537,9 @@ export class ToolExecutionService {
                 });
 
                 // 被策略拒绝的工具：直接给 end 事件（不发 start，避免 UI 把它当作“执行中”）
+                // A-COMM：拒绝结果同样携带 inbox 消息（若此时已有投递）
+                this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults, mailboxDrain?.key, mailboxDrain?.epoch);
+
                 yield { type: 'end', call: executionCall, toolResult };
                 index++;
                 continue;
@@ -398,7 +575,10 @@ export class ToolExecutionService {
                         promptModeSnapshot,
                         approvedToolCallIds,
                         resolvedProgressEmitter,
-                        attribution
+                        attribution,
+                        mailboxConversationId,
+                        mailboxRunId,
+                        nestingDepth
                     )
                 ));
 
@@ -414,6 +594,8 @@ export class ToolExecutionService {
                         toolResults,
                         multimodalAttachments
                     );
+                    // A-COMM：每次工具调用完成后检查当前 run 的 inbox，把 agent 消息追加到该结果之后一起返回
+                    this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults, mailboxDrain?.key, mailboxDrain?.epoch);
                     yield { type: 'end', call: group[k].executionCall, toolResult };
                 }
 
@@ -432,7 +614,10 @@ export class ToolExecutionService {
                 promptModeSnapshot,
                 approvedToolCallIds,
                 resolvedProgressEmitter,
-                attribution
+                attribution,
+                mailboxConversationId,
+                mailboxRunId,
+                nestingDepth
             );
 
             const toolResult = this.finalizeToolResponse(
@@ -447,6 +632,9 @@ export class ToolExecutionService {
                 multimodalAttachments
             );
 
+            // A-COMM：每次工具调用完成后检查当前 run 的 inbox，把 agent 消息追加到该结果之后一起返回
+            this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults, mailboxDrain?.key, mailboxDrain?.epoch);
+
             yield { type: 'end', call: executionCall, toolResult };
             index++;
         }
@@ -454,16 +642,25 @@ export class ToolExecutionService {
 
         // 在所有工具执行后创建一个检查点
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
+            // BCP-01: 由消息索引反查节点 ID（与 before 同消息，index 不变）
+            const messageNodeId = this.conversationManager
+                ? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex)
+                : undefined;
             const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 messageIndex,
                 toolNameForCheckpoint,
-                'after'
+                'after',
+                messageNodeId
             );
             if (afterCheckpoint) {
                 checkpoints.push(afterCheckpoint);
+                // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
+                void this.bindWorkspaceCheckpointBestEffort(conversationId, messageNodeId, afterCheckpoint.id);
             }
         }
+
+        // E-2：epoch 释放统一由公共入口的 finally 兜底（此处不再重复 release）
 
         return {
             responseParts,
@@ -591,7 +788,10 @@ export class ToolExecutionService {
         promptModeSnapshot: ResolvedPromptModeSnapshot | undefined,
         approvedToolCallIds: Set<string> | undefined,
         progressEmitter: ToolProgressEmitter | undefined,
-        attribution?: LockHolder
+        attribution?: LockHolder,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number
     ): Promise<Record<string, unknown>> {
         try {
             if (isMcpToolName(executionCall.name) && this.mcpManager) {
@@ -605,7 +805,10 @@ export class ToolExecutionService {
                 promptModeSnapshot,
                 approvedToolCallIds?.has(executionCall.id) === true,
                 progressEmitter,
-                attribution
+                attribution,
+                mailboxConversationId,
+                mailboxRunId,
+                nestingDepth
             );
         } catch (error) {
             const err = error as Error;
@@ -676,6 +879,103 @@ export class ToolExecutionService {
         return toolResult;
     }
 
+    /**
+     * A-COMM：每次工具调用完成后检查当前 run 的 inbox，把 agent 消息追加到
+     * 最近一次工具结果之后、与工具结果一起返回给模型（drain 语义，每条只投递一次）。
+     *
+     * 注入位置说明：
+     * - functionResponse.response 顶层与 data 子对象同时注入（覆盖 formatter 的 JSON/文本两条序列化路径）；
+     * - toolResult.result 同步注入（前端工具卡片可见）；
+     * - 先校验注入目标（最近一次工具结果必须是 functionResponse part）再 drain：
+     *   无注入目标时不消费 inbox，消息保留到下一次工具调用（FIX-B 5.2）；
+     * - 未传 mailbox 身份或 inbox 为空时零开销直接返回，不影响既有行为。
+     */
+    private injectInboxMessages(
+        mailboxConversationId: string | undefined,
+        mailboxRunId: string | undefined,
+        responseParts: ContentPart[],
+        toolResults: ToolExecutionResult[],
+        mailboxDrainKey?: string,
+        mailboxDrainEpoch?: number
+    ): void {
+        if (!mailboxConversationId || !mailboxRunId) {
+            return;
+        }
+
+        // MED-1：并发执行循环共享 mailbox 身份时，只允许「最新启动」的循环 drain——
+        // 早启动路径在主循环启动后只执行不 drain，消息统一挂在最终落盘的执行循环结果上
+        if (mailboxDrainKey !== undefined && mailboxDrainEpoch !== undefined
+            && !this.isMailboxDrainOwner(mailboxDrainKey, mailboxDrainEpoch)) {
+            return;
+        }
+
+        // 先校验注入目标再 drain：最近一次工具结果必须是 functionResponse part，
+        // 否则消息被消费后无处注入会丢失（FIX-B 5.2，防御性保护）
+        const lastPart = responseParts[responseParts.length - 1];
+        if (!lastPart?.functionResponse) {
+            return;
+        }
+        const lastResult = toolResults[toolResults.length - 1];
+
+        const messages = agentMailbox.drainMessages(mailboxConversationId, mailboxRunId);
+        if (messages.length === 0) {
+            return;
+        }
+
+        const inboxPayload = messages.map(m => ({
+            fromRunId: m.fromRunId,
+            ...(m.fromAgentName ? { fromAgentName: m.fromAgentName } : {}),
+            text: m.text,
+            threadId: m.threadId,
+            hopDepth: m.hopDepth,
+            createdAt: m.createdAt
+        }));
+
+        // 模型可见：追加到最近一次工具结果的 functionResponse.response。
+        // 顶层与 data 子对象同时注入（覆盖 formatter 的 JSON/文本两条序列化路径，FIX-B 5.3 对齐注释与实现）
+        const base = lastPart.functionResponse.response;
+        const enrichedResponse: Record<string, unknown> = {
+            ...(base && typeof base === 'object' ? (base as Record<string, unknown>) : {}),
+            agentInbox: inboxPayload
+        };
+        if (enrichedResponse.data && typeof enrichedResponse.data === 'object') {
+            enrichedResponse.data = {
+                ...(enrichedResponse.data as Record<string, unknown>),
+                agentInbox: inboxPayload
+            };
+        }
+        lastPart.functionResponse.response = enrichedResponse;
+
+        // 前端可见：同步注入 toolResult.result（含 data 子对象）
+        if (lastResult?.result && typeof lastResult.result === 'object') {
+            const result = lastResult.result as Record<string, unknown>;
+            result.agentInbox = inboxPayload;
+            const data = result.data;
+            if (data && typeof data === 'object') {
+                (data as Record<string, unknown>).agentInbox = inboxPayload;
+            }
+        }
+    }
+
+    /**
+     * E-1：无主循环路径的显式 drain——把指定 (conversationId, runId) 的 inbox 消息
+     * 注入给定结果（与 injectInboxMessages 相同的注入格式：functionResponse.response 顶层
+     * 与 data 子对象 + toolResult.result）。
+     *
+     * 供 ToolIterationLoopService 在「流式边执行已完成、无主循环」（autoPrefix 为空）分支调用：
+     * 此时早启动生成器不参与 drain（避免 abort 边角把已 drain 消息随被丢弃结果一起丢失，
+     * 见 E-1），由本方法在最终落盘前显式消费一次。不参与 epoch 竞争——
+     * 调用方保证自己是最终落盘路径；无注入目标（非 functionResponse part）时不消费 inbox。
+     */
+    drainInboxIntoResults(
+        mailboxConversationId: string | undefined,
+        mailboxRunId: string | undefined,
+        responseParts: ContentPart[],
+        toolResults: ToolExecutionResult[]
+    ): void {
+        this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults);
+    }
+
 
 
     /**
@@ -689,7 +989,10 @@ export class ToolExecutionService {
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         approvedByToolConfirmation?: boolean,
         progressEmitter?: ToolProgressEmitter,
-        attribution?: LockHolder
+        attribution?: LockHolder,
+        mailboxConversationId?: string,
+        mailboxRunId?: string,
+        nestingDepth?: number
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -771,6 +1074,21 @@ export class ToolExecutionService {
         };
 
         toolContext.promptModeSnapshot = promptModeSnapshot;
+
+        // A-COMM：注入信箱身份（会话 + runId），供 agent.sendMessage 识别发送方与会话边界；
+        // 子代理路径的 conversationId 参数为 undefined，信箱会话必须单独注入。
+        if (mailboxConversationId) {
+            toolContext.mailboxConversationId = mailboxConversationId;
+        }
+        if (mailboxRunId) {
+            toolContext.mailboxRunId = mailboxRunId;
+        }
+
+        // F2：注入嵌套深度（子代理 run 上下文的一部分），供 subagents 工具在派生子子 agent 时
+        // 计算 child depth = parent depth + 1 并做超限校验；主会话调用不传该值，深度按 0 处理。
+        if (typeof nestingDepth === 'number') {
+            toolContext.subagentDepth = nestingDepth;
+        }
 
         // 为特定工具添加配置
         this.addToolSpecificConfig(call.name, toolContext);

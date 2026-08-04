@@ -23,25 +23,44 @@ import {
     MessageFilter,
     HistorySnapshot,
     ConversationStats,
-    ConversationTailVersion,
-    ConversationTailVersionInfo,
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter } from './storage';
-import { withMetadataWriteSerialized } from './storage';
-import { cleanFunctionResponseForAPI } from './helpers';
+import { withMetadataWriteSerialized, withHangTimeout } from './storage';
+import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
+import { getGlobalBranchService } from './branch/BranchService';
+import { activePath, isFunctionResponseMessage } from './branch/BranchGraph';
+import { BranchError } from './branch/types';
+import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import { Logger } from '../../core/logger';
+import { createHash, randomUUID } from 'node:crypto';
 
 const log = Logger.get('ConversationManager');
 
+/** 会话写锁任务挂起超时（与 usage 队列 60s / 分段历史 60s 对齐；元数据链 30s 更短因小文件） */
+const CONVERSATION_WRITE_LOCK_HANG_TIMEOUT_MS = 60000;
+
 /**
- * 适配器不支持 saveTailVersions 时，尾部版本回退存储在 custom 元数据的键名。
+ * BR-02：确定性消息节点 ID 生成（RFC 4122 v5 风格）。
+ *
+ * namespace=conversationId，seed=role+index+timestamp。
+ * 幂等硬要求：同一历史多次迁移必须产出同一 ID 集合，因此迁移 ID 不能是随机值。
  */
-const TAIL_VERSIONS_META_KEY = 'tailVersions';
+export function deterministicNodeId(namespace: string, seed: string): string {
+    const hash = createHash('sha1');
+    hash.update(namespace, 'utf8');
+    hash.update('\u0000', 'utf8');
+    hash.update(seed, 'utf8');
+    const bytes = hash.digest();
+    bytes[6] = (bytes[6] & 0x0f) | 0x50; // RFC 4122 version 5
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const hex = bytes.toString('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 /**
  * 多模态能力（用于过滤历史中的多模态数据）
@@ -124,6 +143,23 @@ export interface CreateBranchConversationResult {
     messageCount: number;
     preview?: string;
     workspaceUri?: string;
+}
+
+/** TREE-06：主历史重写结果（rewriteHistoryFromBranchGraph） */
+export interface BranchHistoryRewriteResult {
+    /** 是否实际落盘重写了主历史（false = 主历史已等于活跃路径，无变更未写盘） */
+    rewritten: boolean;
+    /** 重写后的主历史消息数（含 functionResponse 拆分消息） */
+    historyLength: number;
+    /** 图活跃路径节点数（不含 functionResponse，决策 8） */
+    activePathLength: number;
+    /**
+     * 旧主历史与新主历史首次按 id 分歧的数组下标（含该下标；检查点从该索引起清理）。
+     * null = 无分歧（未重写 / 内容完全一致）。
+     */
+    divergenceIndex: number | null;
+    /** 重写后主历史消息 id 列表（含 functionResponse 消息 id，供校验/测试） */
+    historyIds: string[];
 }
 
 /**
@@ -220,7 +256,11 @@ export class ConversationManager {
 
     private async withConversationWriteLock<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
         const previous = this.conversationWriteQueues.get(conversationId) ?? Promise.resolve();
-        const current = previous.catch(() => undefined).then(task);
+        // R5b-2.1：挂起超时与其余队列对齐（usage 60s / 分段历史 60s / metadata 链 30s）。
+        // 任务长时间不结束视为挂起，按失败处理并让链继续前进，防止卡死任务永久阻塞该会话所有写入。
+        const current = previous.catch(() => undefined).then(() =>
+            withHangTimeout(task(), `conversationWriteLock(${conversationId})`, CONVERSATION_WRITE_LOCK_HANG_TIMEOUT_MS)
+        );
         const tail = current.then(() => undefined, () => undefined);
         this.conversationWriteQueues.set(conversationId, tail);
         void tail.then(() => {
@@ -229,6 +269,36 @@ export class ConversationManager {
             }
         });
         return current;
+    }
+
+    /**
+     * BR-07：公共会话写锁包装（供 BranchService 等外部模块把分支图读写放进会话写锁）。
+     *
+     * 锁序（从内到外，持内层锁时严禁获取外层锁，防止死锁）：
+     *   1. 会话写锁（本队列）——历史 mutate / 分支图读改写的最小互斥单元；
+     *   2. 存档操作锁（checkpointOperationLockManager.runExclusive，工作区级 + 可重入）；
+     *   3. 文件写锁（FileWriteLockManager.acquire）。
+     * 跨层操作必须从外层向内层获取；分支图写入与主历史写入共用同一把会话锁（BR-07），
+     * 保证崩溃后 sidecar 与主历史不会因交错写而长期不一致。
+     */
+    async runExclusive<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+        return await this.withConversationWriteLock(conversationId, task);
+    }
+
+    /**
+     * 已删除会话集合：删除后新发起的 append/mutate 在此短路，防止流式收尾把已删除会话
+     * 的历史目录重新创建（“删除后复活”竞态：delete 只排队到 storage 级写队列，保证已排队的
+     * 写先完成再删，但删除后新发起的写会排到 delete 之后 → 重新创建 {id}/history/ 幽灵会话）。
+     * 显式重建（createConversation 同 ID）时移除标记；删除失败时撤销标记。
+     */
+    private readonly deletedConversationIds = new Set<string>();
+    private static readonly MAX_DELETED_IDS = 10000;
+
+    /** append/mutate 入口短路：会话已被删除时拒绝写入（正常删除后不应再有写入） */
+    private assertNotDeleted(conversationId: string): void {
+        if (this.deletedConversationIds.has(conversationId)) {
+            throw new Error(`Conversation ${conversationId} has been deleted; refusing to write history`);
+        }
     }
 
     /**
@@ -259,6 +329,7 @@ export class ConversationManager {
         return new ConversationTranscriptRepository({
             loadContents: async () => await this.loadHistory(conversationId),
             saveContents: async contents => {
+                this.assertNotDeleted(conversationId);
                 // 落盘后同步缓存：避免下一次读重新走磁盘；同时元数据（存储层 saveHistory 会刷新 updatedAt）
                 // 必须失效，否则对话列表排序会读到陈旧时间戳。
                 await this.storage.saveHistory(conversationId, contents);
@@ -267,13 +338,24 @@ export class ConversationManager {
                 await this.updateUsageIndex(conversationId, contents);
             },
             // HIS-01/HIS-02：普通追加直通 append-only 尾段写入（不再读全量→push→全量写回）
+            // BR-01：委托调用发生在仓储互斥执行器（会话写锁）内，在这里读取尾消息 id、
+            //       为追加内容补齐稳定 id + 线性 parentId（同一批内依次链接），
+            //       保证并发追加时 parentId 也指向真实的上一消息。
             appendContents: async contents => {
+                this.assertNotDeleted(conversationId);
+                const tail = await this.readTailContent(conversationId);
+                let previous = tail;
+                const withNodeIds = contents.map(content => {
+                    const next = this.ensureNodeId(content, previous);
+                    previous = next;
+                    return next;
+                });
                 if (this.storage.appendHistory) {
-                    await this.storage.appendHistory(conversationId, contents);
+                    await this.storage.appendHistory(conversationId, withNodeIds);
                 } else {
                     // 无 append-only 存储（测试 fake 等）：回退全量读改写，语义不变
                     const history = await this.loadHistory(conversationId);
-                    history.push(...contents);
+                    history.push(...withNodeIds);
                     await this.storage.saveHistory(conversationId, history);
                 }
                 // 关键补丁：appendHistory 直写不经过 saveContents 的缓存回填/失效，走 append-only
@@ -281,7 +363,41 @@ export class ConversationManager {
                 // （聊天最后一条消息不显示）；metaCache 因存储层刷新 updatedAt 同样必须失效。
                 this.historyCache.delete(conversationId);
                 this.metaCache.delete(conversationId);
-                await this.updateUsageIndexAppend(conversationId, contents);
+                await this.updateUsageIndexAppend(conversationId, withNodeIds);
+
+                // TREE-05：主历史追加成功后，把新消息增量并入分支图。
+                // 仅当会话已有分支图、且图活跃尾不是「空占位候选」时执行——reroll/编辑分支的
+                // 流式窗口期活跃尾是空占位节点（内容由 finishReroll 回填），此时跳过，
+                // 避免与 finishReroll 的重命名/回填冲突（重复节点 id）；正常继续对话
+                // （活跃尾有内容，如候选已生成完毕）才增量并入，实现「切回候选后继续对话不破坏图」。
+                // appendHistoryToGraph 内部自行取会话写锁（BR-07），而此处已处于写锁内（不可重入），
+                // 因此不能 await——通过 promise 链排在当前写锁任务之后串行执行；失败仅告警，
+                // 不阻断主流程（主历史为唯一真源，图同步失败由下次读图/写图的自校验兜底）。
+                if (withNodeIds.length > 0) {
+                    const branchService = getGlobalBranchService();
+                    if (branchService) {
+                        void (async () => {
+                            try {
+                                const loaded = await branchService.getBranchGraph(conversationId);
+                                const graph = loaded.graph;
+                                if (!graph) {
+                                    return; // 线性对话未建图：不强制建
+                                }
+                                const tail = graph.activeTailNodeId ? graph.nodes[graph.activeTailNodeId] : undefined;
+                                if (tail && (tail.parts?.length ?? 0) === 0
+                                    && (tail.kind === 'reroll' || tail.kind === 'edit')) {
+                                    return; // 流式占位候选：跳过，由 finishReroll 回填
+                                }
+                                await branchService.appendHistoryToGraph(conversationId, withNodeIds);
+                            } catch (error) {
+                                log.warn('branch_append_sync_failed', {
+                                    conversationId,
+                                    error: (error as Error)?.message ?? String(error),
+                                });
+                            }
+                        })();
+                    }
+                }
             }
         }, fn => this.withConversationWriteLock(conversationId, fn));
     }
@@ -295,10 +411,25 @@ export class ConversationManager {
     private async updateUsageIndex(conversationId: string, history: ConversationHistory): Promise<void> {
         if (!this.usageIndexStore || history.length === 0) return;
         try {
+            if (typeof this.usageIndexStore.rebuild === 'function') {
+                // R2 1.1：把「读旧索引 + 重建 + 合并 subagent + 写回」整体移入 store 会话级
+                // 写队列。调用方此前在队列外读旧索引，期间并发到达的子代理归集条目会被重建
+                // 覆盖；rebuild 回调收到的是队列内最新盘面，subagent 条目按需合并保留。
+                // history 是本次刚落盘的最新历史（会话写锁内串行），main 条目直接由它重建。
+                await this.usageIndexStore.rebuild(conversationId, (previous) => {
+                    const rebuilt = buildConversationUsageIndex(conversationId, history);
+                    if (previous && Array.isArray(previous.messages)) {
+                        const subagentEntries = previous.messages.filter(m => m.source === 'subagent');
+                        if (subagentEntries.length > 0) {
+                            rebuilt.messages.push(...subagentEntries);
+                        }
+                    }
+                    return rebuilt;
+                });
+                return;
+            }
+            // 无 rebuild 的 store（内存实现等）：保留原有读改写兜底
             const rebuilt = buildConversationUsageIndex(conversationId, history);
-            // 修改原因：子代理归集条目（source='subagent'）不在主历史里，全量重建
-            //          必须从旧索引合并保留，否则主会话下次落盘后子代理消耗会从统计中消失。
-            // 修改方式：重建时读取旧索引，仅保留 source='subagent' 的条目追加到新索引。
             const previous = await this.usageIndexStore.read(conversationId);
             if (previous && Array.isArray(previous.messages)) {
                 const subagentEntries = previous.messages.filter(m => m.source === 'subagent');
@@ -404,7 +535,8 @@ export class ConversationManager {
         branchAtIndex: number,
         messageCount: number,
         preview: string | undefined,
-        createdAt: number
+        createdAt: number,
+        sourceNodeId?: string
     ): Record<string, unknown> {
         const copied: Record<string, unknown> = {};
         const allowedKeys = [
@@ -429,6 +561,8 @@ export class ConversationManager {
         copied.branch = {
             sourceConversationId,
             sourceMessageIndex: branchAtIndex,
+            // BR-09：sourceNodeId 与 sourceMessageIndex 双写（新字段为主，旧字段兼容过渡）
+            ...(sourceNodeId ? { sourceNodeId } : {}),
             createdAt
         };
 
@@ -500,6 +634,382 @@ export class ConversationManager {
         };
     }
 
+    // ==================== BR-01/BR-02：稳定消息节点 ID ====================
+
+    /**
+     * BR-01：为新写入/插入的内容补齐稳定节点 ID。
+     *
+     * - id：已有则保留，否则生成随机 UUID；
+     * - parentId：未定义（undefined）时取 parent 的 id（线性链接），首条为 null；显式 null/string 保留。
+     */
+    private ensureNodeId(content: Content, parent: Content | null | undefined): Content {
+        if (typeof content.id !== 'string' || content.id.length === 0) {
+            content.id = randomUUID();
+        }
+        if (content.parentId === undefined) {
+            content.parentId = parent?.id ?? null;
+        }
+        return content;
+    }
+
+    /**
+     * BR-02：幂等判据（自判定，无需额外标记文件）——历史中存在无 id 或 parentId 未定义的消息。
+     */
+    private static needsNodeIdMigration(history: ReadonlyArray<Content>): boolean {
+        return history.some(message =>
+            typeof message.id !== 'string' || message.id.length === 0
+            || message.parentId === undefined
+        );
+    }
+
+    /**
+     * BR-02：迁移前后的结构指纹（不含 id/parentId，用于写回后校验首尾消息与总数未变）。
+     */
+    private static computeHistoryFingerprint(history: ReadonlyArray<Content>): string {
+        if (history.length === 0) return 'empty';
+        const fingerprintOf = (content: Content | undefined): string => {
+            if (!content) return 'none';
+            const partKinds = (content.parts || []).map(part => {
+                if (part.functionCall) return 'fc';
+                if (part.functionResponse) return 'fr';
+                if (part.thought) return 'th';
+                if (part.inlineData) return 'in';
+                return 'tx';
+            }).join(',');
+            return createHash('sha256')
+                .update(String(content.role))
+                .update('\u0000').update(String(content.timestamp ?? ''))
+                .update('\u0000').update(String((content.parts || []).length))
+                .update('\u0000').update(partKinds)
+                .digest('hex');
+        };
+        return `${fingerprintOf(history[0])}|${fingerprintOf(history[history.length - 1])}`;
+    }
+
+    /** 轻量读取尾消息（只读最后一段，供 append 路径补 parentId；写锁内调用） */
+    private async readTailContent(conversationId: string): Promise<Content | null> {
+        const page = await this.storage.loadHistoryPage(conversationId, { limit: 1 });
+        const messages = page.value?.messages;
+        if (messages && messages.length > 0) {
+            return messages[messages.length - 1] ?? null;
+        }
+        return null;
+    }
+
+    /**
+     * BR-02：旧历史惰性补 ID（幂等迁移）。
+     *
+     * 检测到历史存在无 id（或 parentId 未定义）的消息时，在会话写锁内按数组顺序生成
+     * 确定性 ID（namespace=conversationId，seed=role+index+timestamp）+ 线性 parentId，
+     * 并全量重写一次（复用 saveHistory 分段原子写路径 + 用量索引全量重建）。
+     *
+     * 幂等保证：
+     * - 迁移后「全量有 id 且 parentId 已定义」作为幂等判据（自判定，无需额外标记文件）；
+     * - 确定性生成保证同一历史多次迁移产出同一 ID 集合；
+     * - 已有 id/parentId 的消息原样保留。
+     *
+     * 回滚/校验：迁移前记录 totalMessages + 首尾结构指纹，写回后回读校验；
+     * saveHistory 为 tmp+rename 原子写，校验失败即抛错（上层按迁移失败处理，不留下部分迁移状态）。
+     *
+     * @returns 是否发生了迁移
+     */
+    async ensureHistoryNodeIds(conversationId: string): Promise<boolean> {
+        return await this.withConversationWriteLock(conversationId, async () => {
+            const result = await this.storage.loadHistoryWithStatus(conversationId);
+            const history = result.value;
+            if (!history || history.length === 0) return false;
+
+            if (!ConversationManager.needsNodeIdMigration(history)) return false;
+
+            const beforeTotal = history.length;
+            const beforeFingerprint = ConversationManager.computeHistoryFingerprint(history);
+
+            const migrated = this.buildMigratedHistory(conversationId, history);
+
+            this.assertNotDeleted(conversationId);
+            await this.storage.saveHistory(conversationId, migrated);
+            // BR-02 直写 storage 不走仓储：迁移后同步缓存，并失效元数据（存储层刷新 updatedAt）
+            this.cacheHistory(conversationId, migrated);
+            this.metaCache.delete(conversationId);
+            await this.updateUsageIndex(conversationId, migrated);
+
+            const persisted = await this.storage.loadHistoryWithStatus(conversationId);
+            const afterTotal = persisted.value?.length ?? -1;
+            const afterFingerprint = ConversationManager.computeHistoryFingerprint(persisted.value ?? []);
+            if (afterTotal !== beforeTotal || afterFingerprint !== beforeFingerprint) {
+                throw new Error(
+                    `Node ID migration verification failed for conversation ${conversationId}: ` +
+                    `total ${beforeTotal}→${afterTotal}, fingerprint ${beforeFingerprint}→${afterFingerprint}`
+                );
+            }
+            return true;
+        });
+    }
+
+    /** BR-02：按数组顺序补齐确定性 id + 线性 parentId（纯函数，不落盘） */
+    private buildMigratedHistory(conversationId: string, history: ConversationHistory): ConversationHistory {
+        const migrated: ConversationHistory = [];
+        let previousId: string | null = null;
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+            const id = (typeof message.id === 'string' && message.id.length > 0)
+                ? message.id
+                : deterministicNodeId(conversationId, `${message.role}|${i}|${message.timestamp ?? ''}`);
+            // 线性链修复：parentId 未定义，或 i>0 时显式 null（主历史只有首条允许 root）→ 取前一条 id。
+            // 覆盖场景：读取时插入的 functionResponse 在父消息尚无 id 时被置 null，迁移时补回正确父链。
+            const hasValidParent = typeof message.parentId === 'string' && message.parentId.length > 0;
+            const parentId = hasValidParent
+                ? message.parentId
+                : (i === 0 ? null : previousId);
+            migrated.push({ ...message, id, parentId });
+            previousId = id;
+        }
+        return migrated;
+    }
+
+    // ==================== TREE-06：切换后主历史重写 ====================
+
+    /**
+     * TREE-06：从分支图活跃路径重建主历史——「切换后主历史 = 新活跃路径」的唯一真源操作。
+     *
+     * 语义：
+     * - 通过全局 BranchService 读取分支图（会话写锁内只读，图读不持图锁，无死锁）；
+     * - 沿 activePath 顺序把节点映射为主历史 Content[]：
+     *   · user/model/system 节点 → 一条消息（role / parts(剔除 functionResponse) / id /
+     *     parentId / timestamp / modelVersion / usageMetadata 取自节点，决策 8）；
+     *   · 节点 parts 中的 functionResponse 拆分回独立消息（role='user' + isFunctionResponse=true，
+     *     依附在所属节点消息之后）——与 importLinearHistory / finishReroll 的合并规则互为逆操作；
+     *   · 拆分出的 functionResponse 消息优先复用旧主历史对应 FR 消息 id（按「所属节点 id +
+     *     FR part id 集」匹配，匹配不到才生成随机 id；R8a-H1 幂等修复），并补齐
+     *     timestamp（R8a-L1）——保证含 FR 路径的重复切换 rewritten=false、检查点不被误删。
+     * - 重写前检查主历史非 FR 消息是否全部存在于图中（R8a-M2）：存在未同步消息
+     *   （appendHistoryToGraph 为锁外 fire-and-forget，同步完成前切换会丢消息）时抛
+     *   BRANCH_OPERATION_CONFLICT 拒绝切换，防止未入图消息被整体替换丢弃；
+     * - 与旧主历史逐元素按 id 比对：完全一致 → 不落盘（rewritten=false，幂等）；
+     *   否则全量重写——先失效上下文裁剪状态（R8a-M1：先于历史变更、幂等无害，避免
+     *   saveHistory 成功后 metadata 写失败抛错 → 图/历史永久分裂），再 storage.saveHistory
+     *   （分段原子写 + updatedAt）+ 用量索引全量重建，并返回 divergenceIndex
+     *   （旧历史与新历史首次 id 分歧的数组下标，检查点清理起点）。
+     *
+     * 锁边界（BR-07 / M-3 强约束）：
+     * - 本方法整体在 runExclusive（会话写锁）内执行；内部只调用不重复获取会话写锁的存储写入
+     *   （storage.saveHistory / updateUsageIndex / setCustomMetadata 各走独立写队列），
+     *   不触碰存档操作锁——「会话锁内严禁获取存档锁」（存档锁只能在会话锁之外获取，
+     *   见 BranchService 头部注释）；检查点清理由调用方在会话锁之外编排。
+     *
+     * @throws BranchError('BRANCH_STORAGE_CORRUPT') 分支图损坏（解析/语义）时拒绝重写；
+     *         BranchError('BRANCH_OPERATION_CONFLICT') 全局分支服务未注册时（调用方应先注册）。
+     */
+    async rewriteHistoryFromBranchGraph(conversationId: string): Promise<BranchHistoryRewriteResult> {
+        await this.ensureHistoryNodeIds(conversationId);
+        return await this.runExclusive(conversationId, async () => {
+            const branchService = getGlobalBranchService();
+            if (!branchService) {
+                throw new BranchError(
+                    'BRANCH_OPERATION_CONFLICT',
+                    'branch service is not registered; cannot rewrite main history from branch graph'
+                );
+            }
+            const loaded = await branchService.getBranchGraph(conversationId);
+            const graph = loaded.graph;
+            if (!graph || graph.rootNodeId === null) {
+                if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
+                    throw new BranchError(
+                        'BRANCH_STORAGE_CORRUPT',
+                        `cannot rewrite main history from corrupt branch graph: ${loaded.errorMessage ?? 'unknown error'}`
+                    );
+                }
+                // 线性模式（无图/空图）：主历史即活跃路径，无需重写（不强制建图）
+                const history = await this.getMessagesRaw(conversationId);
+                return {
+                    rewritten: false,
+                    historyLength: history.length,
+                    activePathLength: 0,
+                    divergenceIndex: null,
+                    historyIds: history.map(message => message.id ?? ''),
+                };
+            }
+
+            // 1. 活跃路径 → Content[]（functionResponse 拆分，决策 8）
+            const pathIds = activePath(graph);
+            const oldHistory = await this.getMessagesRaw(conversationId);
+
+            // R8a-M2：切换重写前一致性检查——主历史中存在于图之外（未同步进图）的消息。
+            // appendHistoryToGraph 是锁外 fire-and-forget（失败仅告警，ConversationManager
+            // appendContents 接线）；异步同步完成前切换或同步失败时，重写只取图节点内容
+            // （下述 nextContents），主历史尾部未入图的消息会被整体替换丢弃 → 此处拒绝切换并
+            // 返回明确错误（BRANCH_OPERATION_CONFLICT），等待同步收敛（或修复图）后重试；
+            // 不丢弃任何历史消息。判定口径：主历史非 functionResponse 消息的 id 必须存在于
+            // 图节点集合（FR 消息按决策 8 并入所属节点 parts，不单独成节点，故排除）。
+            const unsyncedCount = oldHistory.filter(message =>
+                !isFunctionResponseMessage(message) && !graph.nodes[message.id ?? '']).length;
+            if (unsyncedCount > 0) {
+                throw new BranchError(
+                    'BRANCH_OPERATION_CONFLICT',
+                    `switch rejected: ${unsyncedCount} message(s) in main history are not yet synced to ` +
+                    `the branch graph; retry after the pending append sync completes`
+                );
+            }
+
+            // R8a-H1：为拆分出的 functionResponse 消息构建旧主历史 id 复用查找表。
+            // 图不存 FR 消息 id（决策 8），旧主历史中的 FR id 是写入时生成的随机 UUID；每次重建
+            // 都重新随机生成会使「与旧主历史逐元素按 id 比对」必然失败（同一路径重复切换永远
+            // rewritten=true，且 divergenceIndex 落到首个 FR 位置 → 内容未变、索引仍有效的
+            // 检查点被误删）。匹配口径：key = 「所属节点 id + FR part id 集」——FR 消息依附的
+            // 最近非 FR 消息（写入时 FR 的 parentId 可能是前一条 FR，不能直接用作所属节点）与
+            // parts 中 functionResponse.id 的有序集合；精确匹配优先，同一节点拆分多条旧 FR 消息
+            // （逐条追加形态）时按并集兜底复用第一条旧 id；匹配不到才在步骤 2 生成新 id。
+            const oldFrIdsByKey = new Map<string, string[]>();
+            const oldFrUnionByOwner = new Map<string, { ids: string[]; firstId: string | null }>();
+            {
+                let ownerId: string | null = null;
+                for (const message of oldHistory) {
+                    if (!isFunctionResponseMessage(message)) {
+                        ownerId = message.id ?? null;
+                        continue;
+                    }
+                    const frIds = (message.parts ?? [])
+                        .map(part => part.functionResponse?.id)
+                        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+                        .sort();
+                    const messageId = message.id ?? '';
+                    if (ownerId === null || frIds.length === 0) continue;
+                    const key = `${ownerId}|${frIds.join(',')}`;
+                    const exact = oldFrIdsByKey.get(key) ?? [];
+                    exact.push(messageId);
+                    oldFrIdsByKey.set(key, exact);
+                    const union = oldFrUnionByOwner.get(ownerId) ?? { ids: [], firstId: null };
+                    if (!union.firstId && messageId) union.firstId = messageId;
+                    for (const id of frIds) {
+                        if (!union.ids.includes(id)) union.ids.push(id);
+                    }
+                    union.ids.sort();
+                    oldFrUnionByOwner.set(ownerId, union);
+                }
+            }
+
+            const nextContents: Content[] = [];
+            for (const nodeId of pathIds) {
+                const node = graph.nodes[nodeId]!;
+                const parts = node.parts ?? [];
+                const functionResponseParts = parts.filter(part => !!part.functionResponse);
+                const restParts = parts.filter(part => !part.functionResponse);
+                nextContents.push({
+                    role: node.role,
+                    parts: JSON.parse(JSON.stringify(restParts)),
+                    id: node.id,
+                    parentId: node.parentId,
+                    timestamp: node.timestamp ?? node.createdAt,
+                    modelVersion: node.modelVersion,
+                    usageMetadata: node.usageMetadata,
+                });
+                if (functionResponseParts.length > 0) {
+                    // R8a-H1：优先复用旧主历史中对应 FR 消息的 id（匹配不到留给步骤 2 生成）。
+                    // R8a-L1：拆分消息补 timestamp（所属节点 timestamp/createdAt），不再丢失。
+                    let reusedId: string | undefined;
+                    const frIds = functionResponseParts
+                        .map(part => part.functionResponse?.id)
+                        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+                        .sort();
+                    if (frIds.length > 0) {
+                        const exact = oldFrIdsByKey.get(`${node.id}|${frIds.join(',')}`);
+                        if (exact && exact.length > 0) {
+                            reusedId = exact.shift();
+                        } else {
+                            const union = oldFrUnionByOwner.get(node.id);
+                            if (union && union.firstId && union.ids.join(',') === frIds.join(',')) {
+                                reusedId = union.firstId;
+                            }
+                        }
+                    }
+                    nextContents.push({
+                        role: 'user',
+                        parts: JSON.parse(JSON.stringify(functionResponseParts)),
+                        isFunctionResponse: true,
+                        id: reusedId,
+                        timestamp: node.timestamp ?? node.createdAt,
+                    });
+                }
+            }
+            // 2. 拆分出的 functionResponse 消息补齐 id / 线性 parentId（parentId = 前一条消息 id）
+            for (let i = 0; i < nextContents.length; i += 1) {
+                const message = nextContents[i]!;
+                if (typeof message.id !== 'string' || message.id.length === 0) {
+                    message.id = randomUUID();
+                }
+                if (message.parentId === undefined) {
+                    message.parentId = i === 0 ? null : (nextContents[i - 1]!.id ?? null);
+                }
+            }
+
+            const historyIds = nextContents.map(message => message.id ?? '');
+
+            // 3. 与旧主历史逐元素按 id 比对：完全一致 → 不落盘（幂等，避免无变更全量重写）
+            let identical = oldHistory.length === nextContents.length;
+            if (identical) {
+                for (let i = 0; i < nextContents.length; i += 1) {
+                    if ((oldHistory[i]!.id ?? '') !== (nextContents[i]!.id ?? '')) {
+                        identical = false;
+                        break;
+                    }
+                }
+            }
+            if (identical) {
+                return {
+                    rewritten: false,
+                    historyLength: nextContents.length,
+                    activePathLength: pathIds.length,
+                    divergenceIndex: null,
+                    historyIds,
+                };
+            }
+
+            // 4. 分歧索引：旧历史与新历史首次按 id 分歧的数组下标（含该下标，检查点清理起点）。
+            //    初值 = min(旧,新)：旧历史更长（新路径为旧路径前缀）时即新历史长度（清理全部越界
+            //    检查点）；旧历史更短（新路径为旧路径延伸）时即新历史首个越界下标（旧历史无此索引，
+            //    清理效果等价）——与 BranchHistoryRewriteResult.divergenceIndex 注释一致
+            //    （R8a-L2：旧实现恒取新历史长度，在「旧短新长且旧为前缀」时与注释不符）。
+            let divergenceIndex = Math.min(oldHistory.length, nextContents.length);
+            const common = Math.min(oldHistory.length, nextContents.length);
+            for (let i = 0; i < common; i += 1) {
+                if ((oldHistory[i]!.id ?? '') !== (nextContents[i]!.id ?? '')) {
+                    divergenceIndex = i;
+                    break;
+                }
+            }
+
+            // 5. 全量重写：直接走 storage.saveHistory（分段原子写 + updatedAt），不走仓储
+            //    （仓储自带会话写锁，嵌套会死锁）；用量索引全量重建（TREE-08 口径：活跃路径）。
+            //    R8a-M1：invalidateContextManagementState（setCustomMetadata → saveMetadata）先于
+            //    saveHistory 执行——历史变更前失效 trim 状态幂等无害；避免「saveHistory 已成功、
+            //    metadata 写失败」时抛错 → handler 只回滚图而主历史保持新路径 → 图/历史永久分裂。
+            this.assertNotDeleted(conversationId);
+            await this.invalidateContextManagementState(conversationId, 'branch_path_switched');
+            await this.storage.saveHistory(conversationId, nextContents);
+            // TREE-06 直写 storage 不走仓储：重写后同步缓存，并失效元数据（存储层刷新 updatedAt）
+            this.cacheHistory(conversationId, nextContents);
+            this.metaCache.delete(conversationId);
+            await this.updateUsageIndex(conversationId, nextContents);
+
+            return {
+                rewritten: true,
+                historyLength: nextContents.length,
+                activePathLength: pathIds.length,
+                divergenceIndex,
+                historyIds,
+            };
+        });
+    }
+
+    /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
+    private toDisplayMessages(history: ConversationHistory): Content[] {
+        return history.map((message, index) => {
+            // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
+            const { turnDynamicContext, ...rest } = message;
+            return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
+        });
+    }
+
     /**
      * 规范化历史：补齐未响应的工具调用（rejected + functionResponse 插入），并在必要时写回存储。
      *
@@ -569,11 +1079,12 @@ export class ConversationManager {
 
                 // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
                 const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                history.splice(insertAt, 0, {
+                const parent = insertAt > 0 ? history[insertAt - 1] : null;
+                history.splice(insertAt, 0, this.ensureNodeId({
                     role: 'user',
                     parts: rejectedResponseParts,
                     isFunctionResponse: true
-                });
+                }, parent));
             }
 
             // 有新插入：返回新引用触发写回（契约：返回原引用=跳过写回）
@@ -590,6 +1101,8 @@ export class ConversationManager {
      * @param workspaceUri 工作区 URI（可选）
      */
     async createConversation(conversationId: string, title?: string, workspaceUri?: string): Promise<void> {
+        // 显式重建同一 ID：撤销“已删除”标记（删除后新会话可正常写入）
+        this.deletedConversationIds.delete(conversationId);
         // 检查存储中是否已存在
         const existing = await this.storage.loadHistoryWithStatus(conversationId);
         if (existing.value) {
@@ -636,7 +1149,13 @@ export class ConversationManager {
             throw new Error('Source conversation id is required');
         }
 
-        const history = await this.loadHistory(normalizedSourceId);
+        let history = await this.loadHistory(normalizedSourceId);
+        if (ConversationManager.needsNodeIdMigration(history)) {
+            // BR-01/BR-02：分支源历史先完成惰性补 ID（首次分支操作也是迁移触发点），
+            // 保证复制到新对话的历史带稳定节点 ID（BR-09 sourceNodeId 依赖）。
+            await this.ensureHistoryNodeIds(normalizedSourceId);
+            history = await this.loadHistory(normalizedSourceId);
+        }
         if (history.length === 0) {
             throw new Error('Cannot create a branch from an empty conversation');
         }
@@ -675,6 +1194,11 @@ export class ConversationManager {
             ? options.workspaceUri.trim()
             : sourceMeta?.workspaceUri;
 
+        // BR-09：分支点（复制到的最后一条消息）的稳定节点 ID——metadata 双写 + BranchGraph 建模的入参
+        const sourceNodeId = typeof branchHistory[branchHistory.length - 1]?.id === 'string'
+            ? branchHistory[branchHistory.length - 1]!.id
+            : undefined;
+
         const meta: ConversationMetadata = {
             id: targetConversationId,
             title,
@@ -687,7 +1211,8 @@ export class ConversationManager {
                 index,
                 messageCount,
                 preview,
-                now
+                now,
+                sourceNodeId
             )
         };
 
@@ -695,6 +1220,28 @@ export class ConversationManager {
         await this.updateUsageIndex(targetConversationId, branchHistory);
         await this.persistMetadata(meta);
         this.cacheHistory(targetConversationId, branchHistory);
+
+        // BR-09：跨对话「复制为新对话」建模进 BranchGraph（分支服务未注册时跳过——测试/旧环境不阻塞）
+        if (sourceNodeId) {
+            try {
+                const branchService = getGlobalBranchService();
+                if (branchService) {
+                    // 新对话：全量导入（kind='imported'）+ 图元数据 exportedFrom；
+                    // 源头对话：exportedRefs 列表记录导出关系（最小实现，不新增标注节点）。
+                    await branchService.initializeBranchConversation(
+                        targetConversationId,
+                        normalizedSourceId,
+                        sourceNodeId
+                    );
+                    await branchService.recordExport(normalizedSourceId, targetConversationId, sourceNodeId);
+                }
+            } catch (error) {
+                log.warn('branch_graph_init_failed', {
+                    conversationId: targetConversationId,
+                    error: (error as Error)?.message ?? String(error)
+                });
+            }
+        }
 
         return {
             conversationId: targetConversationId,
@@ -707,187 +1254,50 @@ export class ConversationManager {
         };
     }
 
-    // ==================== 对话尾部版本（重roll树状分叉） ====================
-
-    /** 每会话尾部版本上限：超出时按创建时间淘汰最旧版本 */
-    private static readonly TAIL_VERSIONS_MAX = 10;
-
-    /** 尾部版本摘要：取尾部第一条非空文本的截断 */
-    private getTailPreview(tail: ConversationHistory, maxLength = 50): string | undefined {
-        for (const message of tail) {
-            if (!message.parts) continue;
-            const text = message.parts
-                .map(part => typeof part.text === 'string' ? part.text : '')
-                .join('')
-                .trim();
-            if (text) {
-                return text.slice(0, maxLength);
-            }
-        }
-        return undefined;
-    }
-
-    private toTailVersionInfo(version: ConversationTailVersion): ConversationTailVersionInfo {
-        return {
-            id: version.id,
-            branchIndex: version.branchIndex,
-            createdAt: version.createdAt,
-            preview: version.preview,
-            messageCount: version.messageCount
-        };
-    }
-
-    private async loadStoredTailVersions(conversationId: string): Promise<ConversationTailVersion[]> {
-        try {
-            if (this.storage.loadTailVersions) {
-                const versions = await this.storage.loadTailVersions(conversationId);
-                if (Array.isArray(versions)) return versions;
-            }
-        } catch (error) {
-            console.warn('[ConversationManager] loadTailVersions failed:', error);
-        }
-        // 适配器不支持时回退到自定义元数据
-        const custom = await this.getCustomMetadata(conversationId, TAIL_VERSIONS_META_KEY);
-        return Array.isArray(custom) ? custom as ConversationTailVersion[] : [];
-    }
-
-    private async persistTailVersions(conversationId: string, versions: ConversationTailVersion[]): Promise<void> {
-        if (this.storage.saveTailVersions) {
-            await this.storage.saveTailVersions(conversationId, versions);
-        } else {
-            await this.setCustomMetadata(conversationId, TAIL_VERSIONS_META_KEY, versions);
-        }
-    }
-
-    /**
-     * 保存当前对话尾部（从 branchIndex 到末尾）为一个版本。
-     *
-     * 用于「重新生成 / 切换版本」前保留当前答案：内容与已有版本完全一致时跳过。
-     */
-    async saveTailVersion(
-        conversationId: string,
-        branchIndex: number
-    ): Promise<{ saved: boolean; versionId?: string; versions: ConversationTailVersionInfo[] }> {
-        const index = Math.floor(branchIndex);
-        if (!Number.isFinite(index) || index < 0) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: branchIndex }));
-        }
-
-        const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-
-        if (index >= history.length) {
-            // 分支点之后没有内容，无需保存
-            return { saved: false, versions: await this.listTailVersions(conversationId) };
-        }
-
-        const tail = history.slice(index).map(message => {
-            // 存储层可能在截断后为消息附加 index 字段；版本保存/恢复时这些索引已失效，
-            // 必须剥离，避免恢复后污染 transcript（前端索引由 getMessagesPaged 重新计算）。
-            if ('index' in message) {
-                const { index: _index, ...rest } = message;
-                return rest as Content;
-            }
-            return message;
-        });
-        const versions = await this.loadStoredTailVersions(conversationId);
-
-        // 与已有版本完全一致时跳过（避免切换/重roll 时重复落盘）
-        const tailJson = JSON.stringify(tail);
-        const existing = versions.find(v => v.branchIndex === index && JSON.stringify(v.messages) === tailJson);
-        if (existing) {
-            return { saved: false, versionId: existing.id, versions: versions.map(v => this.toTailVersionInfo(v)) };
-        }
-
-        const now = Date.now();
-        const version: ConversationTailVersion = {
-            id: `ver_${now}_${Math.random().toString(36).slice(2, 8)}`,
-            branchIndex: index,
-            createdAt: now,
-            preview: this.getTailPreview(tail),
-            messageCount: tail.length,
-            messages: this.cloneJson(tail)
-        };
-        const next = [...versions, version];
-        // 容量上限：按创建时间保留最近 TAIL_VERSIONS_MAX 个
-        if (next.length > ConversationManager.TAIL_VERSIONS_MAX) {
-            next.sort((a, b) => a.createdAt - b.createdAt);
-            next.splice(0, next.length - ConversationManager.TAIL_VERSIONS_MAX);
-        }
-        await this.persistTailVersions(conversationId, next);
-        return {
-            saved: true,
-            versionId: version.id,
-            versions: next.map(v => this.toTailVersionInfo(v))
-        };
-    }
-
-    /**
-     * 列出对话的全部尾部版本摘要（不含消息内容）。
-     */
-    async listTailVersions(conversationId: string): Promise<ConversationTailVersionInfo[]> {
-        const versions = await this.loadStoredTailVersions(conversationId);
-        return versions.map(v => this.toTailVersionInfo(v));
-    }
-
-    /**
-     * 切换到某个已保存的尾部版本。
-     *
-     * 切换前会把当前活跃尾部先保存为一个版本（内容重复时跳过），因此任何
-     * 版本都不会丢失；随后将 transcript 截断到 branchIndex 并恢复目标版本尾部。
-     */
-    async restoreTailVersion(
-        conversationId: string,
-        branchIndex: number,
-        versionId: string
-    ): Promise<{ versions: ConversationTailVersionInfo[] }> {
-        const index = Math.floor(branchIndex);
-        if (!Number.isFinite(index) || index < 0) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: branchIndex }));
-        }
-        if (!versionId) {
-            throw new Error('versionId is required');
-        }
-
-        // 1. 先保存当前尾部（防止切换丢失当前答案）
-        await this.saveTailVersion(conversationId, index);
-
-        const versions = await this.loadStoredTailVersions(conversationId);
-        const target = versions.find(v => v.id === versionId && v.branchIndex === index);
-        if (!target) {
-            throw new Error(`Tail version not found: ${versionId}`);
-        }
-
-        // 2. 截断到分支点并恢复目标尾部
-        const repository = this.getTranscriptRepository(conversationId);
-        await repository.mutateContents(history => {
-            if (index >= history.length) {
-                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index }));
-            }
-            history.splice(index);
-            history.push(...this.cloneJson(target.messages));
-            return history.slice();
-        });
-        await this.invalidateContextManagementState(conversationId, 'tail_version_restored');
-
-        return {
-            versions: versions.map(v => this.toTailVersionInfo(v))
-        };
-    }
-
     /**
      * 删除对话
      */
     async deleteConversation(conversationId: string): Promise<void> {
-        await this.storage.deleteHistory(conversationId);
-        this.invalidateCaches(conversationId);
-        // 用量索引随对话删除（失败忽略：统计侧按 missing 自然跳过）
-        if (this.usageIndexStore) {
-            try {
-                await this.usageIndexStore.remove(conversationId);
-            } catch {
-                // 忽略
+        // 先记入已删除集合再执行删除：删除进行中/完成后新发起的 append/mutate 被短路，
+        // 不会在 delete 之后重新创建历史目录（“删除后复活”）。已排队在 storage 写队列里的
+        // 旧写会先于 delete 完成（写写串行），随后被 delete 一并清掉。
+        this.deletedConversationIds.add(conversationId);
+        if (this.deletedConversationIds.size > ConversationManager.MAX_DELETED_IDS) {
+            // 防无界增长：淘汰最旧的已删除 ID（对应会话早已删除，不会再有新写入）
+            const oldest = this.deletedConversationIds.values().next().value;
+            if (oldest !== undefined) {
+                this.deletedConversationIds.delete(oldest);
             }
+        }
+        try {
+            // R2 3.2：删除与 append/mutate 共用会话写锁串行。此前 assertNotDeleted 只在
+            // append 委托入口检查，删除可滑入「断言未删 → 读尾 → 入队 storage 写」的异步
+            // 窗口：deleteHistory 先入队、append 的写随后入队，删除后新写重新创建历史目录
+            // （幽灵会话）。删除入锁后：在途 append 先完成（其 storage 写在 delete 之前入队），
+            // 删除后新发起的 append 在锁内被 assertNotDeleted 短路。
+            await this.withConversationWriteLock(conversationId, async () => {
+                await this.storage.deleteHistory(conversationId);
+                // R5b-1.3：usage remove 的 enqueue 必须在会话写锁内完成。锁外 enqueue 时，
+                // 在途 append 的 usage 写（appendUsage / 增量缺失回退读改写）可能晚于 remove
+                // 入队，删除后被回退写重新创建 usage.json（“复活”）。锁内 enqueue 保证 remove
+                // 排在在途 usage 写之后；删除后新发起的 append 已被 assertNotDeleted 短路。
+                if (this.usageIndexStore) {
+                    try {
+                        await this.usageIndexStore.remove(conversationId);
+                    } catch {
+                        // 索引不存在/删除失败忽略（统计侧按 missing 自然跳过）
+                    }
+                }
+                // MED-2：对话删除即清理 A-COMM 信箱（内存同步操作，与删除同一锁内原子执行；
+                // 删除失败不会走到这里，信箱状态与对话生命周期保持一致，防 ID 复用时限流/误注入）
+                agentMailbox.clearConversation(conversationId);
+            });
+            // 删除成功后统一失效内存缓存：已删除会话的历史/元数据快照不得再泄漏给下一次读取
+            this.invalidateCaches(conversationId);
+        } catch (error) {
+            // 删除失败：撤销标记，避免会话被冻结（后续 append/mutate 仍可用）
+            this.deletedConversationIds.delete(conversationId);
+            throw error;
         }
 
         // 清理孤儿快照：listSnapshots 已按会话过滤，删除对话时必须一并清理，
@@ -910,6 +1320,17 @@ export class ConversationManager {
         } catch {
             // diff 清理失败不影响对话删除
         }
+
+        // BR-04/BR-06：清理分支 sidecar（branches.json）
+        // 分支服务未注册（测试环境等）时跳过；清理失败不影响对话删除（残留为孤儿文件，无害）
+        try {
+            const branchService = getGlobalBranchService();
+            if (branchService) {
+                await branchService.deleteConversationBranch(conversationId);
+            }
+        } catch {
+            // sidecar 清理失败不影响对话删除
+        }
     }
 
     /**
@@ -930,6 +1351,10 @@ export class ConversationManager {
      * - 读路径拿到引用后禁止原地修改（如需要变更必须走仓储写入口，见 getTranscriptRepository）。
      */
     private async loadHistory(conversationId: string): Promise<ConversationHistory> {
+        if (this.deletedConversationIds.has(conversationId)) {
+            // 已删除会话：读路径不再自动重建（防止删除后读操作把会话“复活”为空历史）
+            return [];
+        }
         const cached = this.historyCache.get(conversationId);
         if (cached) {
             return cached;
@@ -953,6 +1378,11 @@ export class ConversationManager {
      */
     async getHistory(conversationId: string): Promise<Readonly<ConversationHistory>> {
         const history = await this.loadHistory(conversationId);
+        if (ConversationManager.needsNodeIdMigration(history)) {
+            // BR-02：读取入口惰性触发补 ID（显式触发，不做启动全扫）；迁移幂等，二次读取不再触发。
+            await this.ensureHistoryNodeIds(conversationId);
+            return JSON.parse(JSON.stringify(await this.loadHistory(conversationId)));
+        }
         return JSON.parse(JSON.stringify(history));
     }
 
@@ -980,6 +1410,16 @@ export class ConversationManager {
         parts: ContentPart[],
         metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary'>>
     ): Promise<void> {
+        // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，
+        // 防止上一回合滞留的 agent→main / 用户打断消息跨轮过期投递。
+        // 谓词与 addContent/addBatch/formatHistoryForAPI 统一（排除 functionResponse 与总结消息）。
+        if (isRealUserMessage({
+            role,
+            isFunctionResponse: metadata?.isFunctionResponse,
+            isSummary: metadata?.isSummary
+        })) {
+            agentMailbox.clearMainSessionInbox(conversationId);
+        }
         await this.getTranscriptRepository(conversationId).appendContent({
             role,
             parts: JSON.parse(JSON.stringify(parts)),
@@ -996,6 +1436,12 @@ export class ConversationManager {
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
+        }
+
+        // MED-3：新回合边界 = 真实 user 消息（排除 functionResponse / 总结消息——
+        // 自动总结发生在回合内，不得清空当轮尚未投递的信箱消息）
+        if (isRealUserMessage(contentCopy)) {
+            agentMailbox.clearMainSessionInbox(conversationId);
         }
 
         // HIS-02：纯追加（非 functionResponse）没有配对/去重逻辑，走 append-only 尾段写入，
@@ -1032,7 +1478,7 @@ export class ConversationManager {
                 return history; // 所有 parts 均已有响应，无需添加空消息（原引用=跳过写回）
             }
 
-            history.push({ ...contentCopy, parts: filteredParts });
+            history.push(this.ensureNodeId({ ...contentCopy, parts: filteredParts }, history[history.length - 1] ?? null));
             return history.slice();
         });
     }
@@ -1061,6 +1507,10 @@ export class ConversationManager {
             }
             return content;
         });
+        // MED-3：批次含真实 user 消息 = 新回合开始，清空主会话信箱未消费消息（防跨轮过期投递）
+        if (contentsCopy.some((content: Content) => isRealUserMessage(content))) {
+            agentMailbox.clearMainSessionInbox(conversationId);
+        }
         // HIS-02：批量追加是纯追加（无配对/去重逻辑），走 append-only 尾段写入
         await this.getTranscriptRepository(conversationId).appendContents(contentsCopy);
     }
@@ -1075,16 +1525,12 @@ export class ConversationManager {
      */
     async getMessages(conversationId: string): Promise<Content[]> {
         const history = await this.normalizeHistoryForDisplay(conversationId);
-
-        // 为每条消息添加 index 字段（绝对索引）
-        return history.map((message, index) => {
-            // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = message;
-            return {
-                ...JSON.parse(JSON.stringify(rest)),
-                index
-            };
-        });
+        if (ConversationManager.needsNodeIdMigration(history)) {
+            // BR-02：惰性补 ID（幂等），迁移后重新读取（normalize 返回的数组是迁移前形态）
+            await this.ensureHistoryNodeIds(conversationId);
+            return this.toDisplayMessages(await this.loadHistory(conversationId));
+        }
+        return this.toDisplayMessages(history);
     }
 
     /**
@@ -1139,6 +1585,70 @@ export class ConversationManager {
     }
 
     /**
+     * BCP-01: 按消息索引反查稳定节点 ID（存档关联 messageNodeId 用）。
+     *
+     * - 旧历史（无 id / parentId 未定义）先触发 BR-02 惰性补 ID（幂等），保证反查结果稳定；
+     * - index 越界或消息无 id 时返回 undefined：调用方按“无 nodeId”处理，
+     *   不阻塞既有按 messageIndex 的定位/删除路径（兼容旧存档）。
+     */
+    async getMessageNodeIdAt(conversationId: string, index: number): Promise<string | undefined> {
+        if (!Number.isInteger(index) || index < 0) {
+            return undefined;
+        }
+        // 直读磁盘（不经内存缓存）：调用方可能刚写入历史（含外部直写存储的迁移场景），
+        // 缓存可能滞后；反查是低频操作，直接读最保守。
+        const result = await this.storage.loadHistoryWithStatus(conversationId);
+        let history = result.value ?? [];
+        if (ConversationManager.needsNodeIdMigration(history)) {
+            // BR-02：写锁内幂等补 ID（迁移自判定），迁移后重新读取
+            await this.ensureHistoryNodeIds(conversationId);
+            const after = await this.storage.loadHistoryWithStatus(conversationId);
+            history = after.value ?? [];
+        }
+        const message = history[index];
+        return typeof message?.id === 'string' && message.id.length > 0 ? message.id : undefined;
+    }
+
+    /**
+     * 只读浅扫描（首次加载页用）：检查历史是否存在未响应的 functionCall（悬空工具调用），
+     * 以及是否存在缺 id 的消息（BR-02 迁移判据）。
+     * 只遍历检查、不深拷贝、不写回——正常路径（绝大多数历史无悬空调用/已迁移）可完全跳过
+     * normalizeHistoryForDisplay 的全量 JSON 深拷贝（HIS-13 后端收益）。
+     */
+    private async scanHistoryForInitialPage(conversationId: string): Promise<{ hasUnresolvedCalls: boolean; needsNodeIdMigration: boolean }> {
+        const result = await this.storage.loadHistoryWithStatus(conversationId);
+        const history = result.value;
+        if (!history) return { hasUnresolvedCalls: false, needsNodeIdMigration: false };
+
+        const respondedToolCallIds = new Set<string>();
+        for (const message of history) {
+            if (!message.parts) continue;
+            for (const part of message.parts) {
+                if (part.functionResponse?.id) {
+                    respondedToolCallIds.add(part.functionResponse.id);
+                }
+            }
+        }
+        let hasUnresolvedCalls = false;
+        for (const message of history) {
+            if (!message.parts) continue;
+            for (const part of message.parts) {
+                if (part.functionCall?.id
+                    && !respondedToolCallIds.has(part.functionCall.id)
+                    && !part.functionCall.rejected) {
+                    hasUnresolvedCalls = true;
+                    break;
+                }
+            }
+            if (hasUnresolvedCalls) break;
+        }
+        return {
+            hasUnresolvedCalls,
+            needsNodeIdMigration: ConversationManager.needsNodeIdMigration(history),
+        };
+    }
+
+    /**
      * 分页获取对话消息（仅返回一个窗口，避免一次性向 Webview 发送全量历史）
      *
      * - beforeIndex: 取 [0, beforeIndex) 区间内的最后 limit 条（用于上拉加载更早消息）
@@ -1157,7 +1667,17 @@ export class ConversationManager {
         // 补齐会插入消息、改变 index，必须发生在分页取数之前。
         const isInitialPage = options.beforeIndex === undefined && options.offset === undefined;
         if (isInitialPage) {
-            await this.normalizeHistoryForDisplay(conversationId);
+            // 单次全量浅扫描（无深拷贝）：悬空工具调用 + 缺节点 ID 检测。
+            const scan = await this.scanHistoryForInitialPage(conversationId);
+            if (scan.hasUnresolvedCalls) {
+                // 只有浅扫描命中悬空工具调用时才走 mutate + 深拷贝写回路径；
+                // 正常历史跳过 normalizeHistoryForDisplay 的全量 JSON 深拷贝。
+                await this.normalizeHistoryForDisplay(conversationId);
+            }
+            if (scan.needsNodeIdMigration) {
+                // BR-02：首次加载检测到缺 id 时在写锁内补 ID（幂等，之后不再触发）
+                await this.ensureHistoryNodeIds(conversationId);
+            }
         }
 
         // 缓存命中：直接从内存快照切片，避免磁盘段读取与解析
@@ -1293,11 +1813,12 @@ export class ConversationManager {
     ): Promise<void> {
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const index = Math.max(0, Math.min(position, history.length));
-            history.splice(index, 0, {
+            const parent = index > 0 ? history[index - 1] : null;
+            history.splice(index, 0, this.ensureNodeId({
                 role,
                 parts: JSON.parse(JSON.stringify(parts)),
                 timestamp: Date.now()  // 自动添加时间
-            } as Content);
+            } as Content, parent));
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, 'message_inserted');
@@ -1318,7 +1839,8 @@ export class ConversationManager {
         }
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const index = Math.max(0, Math.min(position, history.length));
-            history.splice(index, 0, contentCopy);
+            const parent = index > 0 ? history[index - 1] : null;
+            history.splice(index, 0, this.ensureNodeId(contentCopy, parent));
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, contentCopy.isSummary ? 'summary_inserted' : 'content_inserted');
@@ -1337,7 +1859,11 @@ export class ConversationManager {
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const start = Math.max(0, startIndex);
             const end = Math.min(history.length, endIndex + 1);
+            const deleted = history.slice(start, end);
             history.splice(start, end - start);
+            // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继
+            // parentId===被删id 的消息重链到被删消息的 parent；分支跨链不受影响）
+            repairParentChainAfterDelete(history, deleted);
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, 'message_range_deleted');
@@ -1734,22 +2260,25 @@ export class ConversationManager {
         // 历史思考回合数，默认 -1 表示全部
         const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
         
-        // 找到最后一个非函数响应的 user 消息的索引
+        // 找到最后一个非函数响应的 user 消息的索引（H1-1：与 MED-3 同谓词，
+        // 总结消息不构成回合边界——SummarizeService 在历史中间插入总结，
+        // 不得让总结之前的当轮 functionResponse 被判为历史而剥离 agentInbox）
         let lastNonFunctionResponseUserIndex = -1;
         for (let i = history.length - 1; i >= 0; i--) {
             const message = history[i];
-            if (message.role === 'user' && !message.isFunctionResponse) {
+            if (isRealUserMessage(message)) {
                 lastNonFunctionResponseUserIndex = i;
                 break;
             }
         }
         
         // 识别所有回合并计算哪些回合需要发送历史思考
-        // 回合定义：从一个非函数响应的 user 消息开始，到下一个非函数响应的 user 消息之前结束
+        // 回合定义：从一个真实 user 消息（排除 functionResponse / 总结消息，H1-1 与 MED-3 同谓词）
+        // 开始，到下一个真实 user 消息之前结束
         const roundStartIndices: number[] = [];
         for (let i = 0; i < history.length; i++) {
             const message = history[i];
-            if (message.role === 'user' && !message.isFunctionResponse) {
+            if (isRealUserMessage(message)) {
                 roundStartIndices.push(i);
             }
         }
@@ -1960,7 +2489,7 @@ export class ConversationManager {
          *
          * 同时清理不应发送给 AI 的内部字段（如 diffContentId）
          */
-        const processFunctionResponse = (part: ContentPart): ContentPart => {
+        const processFunctionResponse = (part: ContentPart, isHistoryMessage: boolean): ContentPart => {
             if (!part.functionResponse) {
                 return part;
             }
@@ -1981,9 +2510,13 @@ export class ConversationManager {
                 };
             }
             
-            // 清理不应发送给 AI 的内部字段（使用共享函数确保一致性）
+            // 清理不应发送给 AI 的内部字段（使用共享函数确保一致性）。
+            // HIGH-1：历史消息剥离 agentInbox（防跨轮重放）；当轮（isHistoryMessage=false）保留——
+            // injectInboxMessages 注入的 agent→main 信箱消息随工具结果落盘后，下一轮请求仍属
+            // 当前回合（lastNonFunctionResponseUserIndex 之后），保留才能让主模型真正看到。
             const cleanedResponse = cleanFunctionResponseForAPI(
-                part.functionResponse.response as Record<string, unknown>
+                part.functionResponse.response as Record<string, unknown>,
+                isHistoryMessage
             );
             
             return {
@@ -2037,7 +2570,7 @@ export class ConversationManager {
                 .map(part => processThoughtSignatures(part, isHistoryMessage, index))
                 .map(part => cleanInlineData(part, isFunctionResponse, isHistoryMessage))
                 .map(part => part ? cleanFunctionCall(part) : part)
-                .map(part => part ? processFunctionResponse(part) : part)
+                .map(part => part ? processFunctionResponse(part, isHistoryMessage) : part)
                 // 过滤空 part：
                 // - null（被 cleanInlineData 等过滤）
                 // - 空对象
@@ -2056,6 +2589,8 @@ export class ConversationManager {
             }
             
             // 保留必要的元数据字段
+            // BR-01：白名单过滤——id/parentId 等节点字段只用于存储与前端定位，不发送给模型
+            //        （新增字段必须显式加入白名单才会下发）。
             const result: Content = {
                 role: message.role,
                 parts
@@ -2228,6 +2763,24 @@ export class ConversationManager {
     }
 
     /**
+     * 轻量读取历史消息总数（updateSummary M3 钳制用，HIS-11）：
+     * 优先走只读 index JSON 的 getHistoryTotalMessages（1 次读、0 次逐段 stat）；
+     * 适配器未实现时回退 getHistoryIndexInfo（可能逐段 stat，仅旧适配器）。
+     * 返回 null 表示索引不可读 / legacy / 不存在（钳制应跳过）。
+     */
+    private async resolveHistoryTotalMessages(conversationId: string): Promise<number | null> {
+        if (typeof this.storage.getHistoryTotalMessages === 'function') {
+            try {
+                return await this.storage.getHistoryTotalMessages(conversationId);
+            } catch {
+                return null;
+            }
+        }
+        const indexInfo = await this.resolveHistoryIndexInfo(conversationId);
+        return typeof indexInfo?.totalMessages === 'number' ? indexInfo.totalMessages : null;
+    }
+
+    /**
      * 只读历史索引结构（不解析消息内容）。
      * 适配器实现 getHistoryIndexInfo 时优先使用；否则用完整性检查兜底（同样不读消息）。
      */
@@ -2273,21 +2826,20 @@ export class ConversationManager {
             if (messageCount !== undefined) {
                 // M3：钳制 messageCount 不超过实际历史提交数。appendHistory 失败但前端已乐观更新并
                 // 调 updateSummary 时，不钳制会让 custom.messageCount 永久超前于真实历史。
-                // getHistoryIndexInfo 只读 index 结构，成本低；索引不可读/legacy 时跳过钳制。
-                try {
-                    const indexInfo = await this.resolveHistoryIndexInfo(conversationId);
-                    if (typeof indexInfo?.totalMessages === 'number' && indexInfo.totalMessages >= 0) {
-                        messageCount = Math.min(messageCount, indexInfo.totalMessages);
-                    }
-                } catch {
-                    // 索引读取失败不影响本次摘要写入（按原值保存）
+                // 走轻量只读 index JSON（getHistoryTotalMessages：1 次读、0 次逐段 stat）；
+                // 索引不可读/legacy 时跳过钳制。
+                const totalMessages = await this.resolveHistoryTotalMessages(conversationId);
+                if (typeof totalMessages === 'number' && totalMessages >= 0) {
+                    messageCount = Math.min(messageCount, totalMessages);
                 }
                 meta.custom.messageCount = messageCount;
             }
             if (summary.preview !== undefined) {
                 meta.custom.preview = summary.preview;
             }
-            meta.updatedAt = Date.now();
+            // 注释语义：updatedAt 由历史提交路径（saveHistory/appendHistory 的 refreshUpdatedAt）
+            // 统一维护，不在此重复写——避免 appendHistory 失败但前端仍乐观调用 updateSummary 时，
+            // updatedAt 被无意义前移导致对话列表排序抖动。
             await this.storage.saveMetadata(meta);
         });
     }
@@ -2311,9 +2863,17 @@ export class ConversationManager {
      * 只读 meta.json（getMetadataLight），不做完整性检查、不解析历史。
      */
     async getConversationMetadataBatch(conversationIds: string[]): Promise<ConversationSummary[]> {
-        const ids = Array.isArray(conversationIds) ? conversationIds.slice(0, 200) : [];
+        const all = Array.isArray(conversationIds) ? conversationIds : [];
+        const truncated = all.length > 200;
+        const ids = all.slice(0, 200);
         if (ids.length === 0) return [];
-        return await this.runBounded(ids, 16, async conversationId => this.buildConversationSummary(conversationId));
+        const summaries = await this.runBounded(ids, 16, async conversationId => this.buildConversationSummary(conversationId));
+        // 截断标志：附加到数组对象上（保持数组主体不变，现有前端按“实际返回数”推进游标不受影响；
+        // 支持 structured clone 的通道可读到 truncated，纯 JSON 序列化通道忽略该字段）。
+        if (truncated) {
+            (summaries as ConversationSummary[] & { truncated?: boolean }).truncated = true;
+        }
+        return summaries;
     }
 
     private async buildConversationSummary(conversationId: string): Promise<ConversationSummary> {
@@ -2480,76 +3040,96 @@ export class ConversationManager {
         toolCallIds?: string[]
     ): Promise<void> {
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-        
-        if (messageIndex < 0 || messageIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
-        }
-        
-        const message = history[messageIndex];
         let modified = false;
-        
-        // 收集所有已有响应的工具 ID
-        const respondedToolIds = new Set<string>();
-        for (let i = messageIndex + 1; i < history.length; i++) {
-            const msg = history[i];
-            for (const part of msg.parts) {
-                if (part.functionResponse?.id) {
-                    respondedToolIds.add(part.functionResponse.id);
-                }
+
+        // R2 4.1：get→修改→replace 整体走仓储互斥执行器（withConversationWriteLock），
+        // 与 settleFunctionResponses / rejectAllPendingToolCalls / 其它 mutate 串行。
+        // 旧实现锁外 get + 锁内 replace：并发时基于旧快照的整体写回会把并发写入的
+        // 真实结果（如已追加的新消息）覆盖丢失。mutateContents 契约：无变更返回原引用
+        // 跳过写回，有变更返回新引用触发写回。
+        await repository.mutateContents((history) => {
+            if (messageIndex < 0 || messageIndex >= history.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
             }
-        }
-        
-        // 收集需要拒绝的工具调用
-        const rejectedCalls: Array<{ id: string; name: string }> = [];
-        
-        // 标记工具为拒绝状态
-        for (const part of message.parts) {
-            if (part.functionCall && part.functionCall.id) {
-                // 检查是否需要标记此工具
-                const shouldReject = toolCallIds
-                    ? toolCallIds.includes(part.functionCall.id)
-                    : !respondedToolIds.has(part.functionCall.id);
-                
-                if (shouldReject && !part.functionCall.rejected) {
-                    part.functionCall.rejected = true;
-                    modified = true;
-                    
-                    // 收集被拒绝的工具信息
-                    rejectedCalls.push({
-                        id: part.functionCall.id,
-                        name: part.functionCall.name || 'unknown'
-                    });
+
+            const message = history[messageIndex];
+            let localModified = false;
+
+            // 收集所有已有响应的工具 ID
+            const respondedToolIds = new Set<string>();
+            for (let i = messageIndex + 1; i < history.length; i++) {
+                const msg = history[i];
+                // R5b-2.3：与 rejectAllPendingToolCalls / normalizeHistoryForDisplay 对齐，
+                // 防御历史中存在无 parts 的消息时抛错
+                if (!msg.parts) {
+                    continue;
                 }
-            }
-        }
-        
-        // 为被拒绝的工具添加 functionResponse
-        if (rejectedCalls.length > 0) {
-            const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
-                functionResponse: {
-                    name: call.name,
-                    id: call.id,
-                    response: {
-                        success: false,
-                        error: t('modules.api.chat.errors.userRejectedTool'),
-                        rejected: true
+                for (const part of msg.parts) {
+                    if (part.functionResponse?.id) {
+                        respondedToolIds.add(part.functionResponse.id);
                     }
                 }
-            }));
-            
-            // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-            const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-            history.splice(insertAt, 0, {
-                role: 'user',
-                parts: rejectedResponseParts,
-                isFunctionResponse: true
-            });
-            modified = true;
-        }
+            }
+
+            // 收集需要拒绝的工具调用
+            const rejectedCalls: Array<{ id: string; name: string }> = [];
+
+            // 标记工具为拒绝状态
+            for (const part of message.parts) {
+                if (part.functionCall && part.functionCall.id) {
+                    // 检查是否需要标记此工具
+                    const shouldReject = toolCallIds
+                        ? toolCallIds.includes(part.functionCall.id)
+                        : !respondedToolIds.has(part.functionCall.id);
+
+                    if (shouldReject && !part.functionCall.rejected) {
+                        part.functionCall.rejected = true;
+                        localModified = true;
+
+                        // 收集被拒绝的工具信息
+                        rejectedCalls.push({
+                            id: part.functionCall.id,
+                            name: part.functionCall.name || 'unknown'
+                        });
+                    }
+                }
+            }
+
+            // 为被拒绝的工具添加 functionResponse
+            if (rejectedCalls.length > 0) {
+                const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
+                    functionResponse: {
+                        name: call.name,
+                        id: call.id,
+                        response: {
+                            success: false,
+                            error: t('modules.api.chat.errors.userRejectedTool'),
+                            rejected: true
+                        }
+                    }
+                }));
+
+                // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
+                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
+                const parent = insertAt > 0 ? history[insertAt - 1] : null;
+                history.splice(insertAt, 0, this.ensureNodeId({
+                    role: 'user',
+                    parts: rejectedResponseParts,
+                    isFunctionResponse: true
+                }, parent));
+                localModified = true;
+            }
+
+            if (localModified) {
+                modified = true;
+                // 有变更：返回新引用触发写回（mutateContents 契约：返回原引用=跳过写回）
+                return history.slice();
+            }
+            // 无变更：返回原引用跳过写回（此时没有任何原地修改）
+            return history;
+        });
 
         if (modified) {
-            await repository.replaceContents(history);
             await this.invalidateContextManagementState(conversationId, 'tool_calls_rejected');
         }
     }
@@ -2627,11 +3207,12 @@ export class ConversationManager {
 
                     // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
                     const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                    history.splice(insertAt, 0, {
+                    const parent = insertAt > 0 ? history[insertAt - 1] : null;
+                    history.splice(insertAt, 0, this.ensureNodeId({
                         role: 'user',
                         parts: rejectedResponseParts,
                         isFunctionResponse: true
-                    });
+                    }, parent));
                 }
                 changed = true;
                 // 有插入：返回新引用触发写回（mutateContents 契约：返回原引用=跳过写回）
@@ -2723,11 +3304,11 @@ export class ConversationManager {
             }
 
             if (newParts.length > 0) {
-                history.push({
+                history.push(this.ensureNodeId({
                     role: 'user',
                     parts: newParts,
                     isFunctionResponse: true,
-                });
+                }, history[history.length - 1] ?? null));
                 changed = true;
             }
 

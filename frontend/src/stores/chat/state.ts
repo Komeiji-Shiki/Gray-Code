@@ -19,7 +19,7 @@ import type {
   TabInfo,
   ConversationSessionSnapshot,
   QueuedMessage,
-  TailVersionInfo
+  BranchGraphData
 } from './types'
 import { clearVisibleChatMessagesCache } from './windowUtils'
 
@@ -367,22 +367,16 @@ export function createChatState(): ChatStoreState {
   /** functionResponse.id -> 消息下标，随消息写入维护的权威索引 */
   const toolResponseIndex = ref<Map<string, number>>(new Map())
 
-  // ============ 对话尾部版本（重roll树状分叉） ============
+  // ============ 树状分支（TREE-10） ============
 
-  /** conversationId -> 全部尾部版本摘要 */
-  const tailVersionsByConversation = ref<Record<string, TailVersionInfo[]>>({})
+  /** 当前对话的分支图（null = 无图 / 线性模式 / 损坏降级） */
+  const branchGraph = ref<BranchGraphData | null>(null)
 
-  /** conversationId -> 是否正在拉取版本列表 */
-  const tailVersionsLoading = ref<Record<string, boolean>>({})
+  /** 分支图拉取中 */
+  const branchGraphLoading = ref(false)
 
-  /** `${conversationId}:${branchIndex}:${versionId}` -> 是否正在切换版本 */
-  const tailVersionSwitching = ref<Set<string>>(new Set())
-
-  /**
-   * `${conversationId}:${branchIndex}` -> 当前恢复为 transcript 的版本 ID。
-   * null 表示活跃尾部是「最新生成的当前答案」（不是任何已保存版本）。
-   */
-  const activeTailVersionByBranch = ref<Record<string, string | null>>({})
+  /** 分支切换 / 候选删除进行中（TREE-07：切换期间锁定切换器交互） */
+  const isSwitchingBranch = ref(false)
 
   return {
     conversations,
@@ -431,9 +425,8 @@ export function createChatState(): ChatStoreState {
     sessionSnapshots,
     backgroundStreamBuffers,
     toolResponseCache,
-    tailVersionsByConversation,
-    tailVersionsLoading,
-    tailVersionSwitching,
-    activeTailVersionByBranch
+    branchGraph,
+    branchGraphLoading,
+    isSwitchingBranch
   }
 }

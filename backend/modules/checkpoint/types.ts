@@ -58,6 +58,8 @@ export type CheckpointExclusionProfileId =
 export interface CheckpointExclusionConfig {
     /** profileId -> 是否启用（缺省按默认值处理） */
     enabledProfiles: Record<string, boolean>;
+    /** 每类别自定义模式覆盖（profileId -> 模式清单；缺省/空数组 = 使用该类别默认清单） */
+    profilePatterns?: Record<string, string[]>;
     /** 单文件大小上限（字节）；0 或负数 = 不限制 */
     maxFileSizeBytes: number;
     /** 用户自定义排除模式（支持 `!` 否定，但不能覆盖强制排除） */
@@ -70,6 +72,8 @@ export interface CheckpointIgnoreSnapshot {
     forcedRulesVersion: number;
     defaultProfileVersion: number;
     enabledProfiles: Record<string, boolean>;
+    /** 与 CheckpointExclusionConfig.profilePatterns 同构（快照保留编辑后的每类别模式） */
+    profilePatterns?: Record<string, string[]>;
     maxFileSizeBytes: number;
     customPatterns: string[];
 }
@@ -166,4 +170,187 @@ export interface CheckpointOperationProgress {
     updatedAt: number;
     /** 可选的补充说明（如失败原因） */
     message?: string;
+}
+
+/* ======================================================================== */
+/* 以下为 L-11（R4 复查）从 CheckpointManager / CheckpointRestoreService 迁入的  */
+/* 公共类型：本文件成为这些类型的单一真源，两侧实现模块从此处导入并 re-export。 */
+/* ======================================================================== */
+
+/** 文件变更记录 */
+export interface FileChange {
+    /** 相对路径 */
+    path: string;
+    /** 变更类型 */
+    type: 'added' | 'modified' | 'deleted';
+    /** 文件哈希（仅 added/modified） */
+    hash?: string;
+}
+
+/** 恢复失败原因 */
+export type RestoreFailureReason = 'missing_in_chain' | 'hash_mismatch' | 'copy_failed' | 'delete_failed';
+
+/** 单个文件的恢复失败记录 */
+export interface RestoreFailure {
+    /** 相对路径 */
+    path: string;
+    /** 失败原因 */
+    reason: RestoreFailureReason;
+}
+
+/**
+ * EX-11: 恢复时的排除说明（区分「快照规则」与「当前规则」）。
+ *
+ * - 快照规则来自 manifest.ignoreSnapshot（该存档创建时的排除配置）；
+ * - 当前规则来自 settingsManager 的实时配置；
+ * - 恢复仍然严格按当前规则过滤目标（filterRestoreTargetScoped），
+ *   不会因为旧规则更宽而覆盖当前明确忽略的文件。
+ */
+export interface CheckpointExcludedNote {
+    /** 该存档创建时按当时规则排除的文件数（来自 manifest.excluded） */
+    excludedCount: number;
+    /** 快照规则与当前规则是否不一致（大小上限 / 自定义模式等） */
+    rulesChanged: boolean;
+    /** 可直接展示的说明文本（中文；前端可自行本地化） */
+    message: string;
+    /** 快照时的排除规则 */
+    snapshotRules?: CheckpointIgnoreSnapshot;
+    /** 当前排除规则 */
+    currentRules?: CheckpointIgnoreSnapshot;
+}
+
+/** 恢复结果 */
+export interface RestoreResult {
+    success: boolean;
+    restored: number;
+    deleted: number;
+    skipped: number;
+    error?: string;
+    missingBackupDirs?: string[];
+    autoPrunedCheckpointCount?: number;
+    /** 未能恢复/删除的文件清单（存在时 success 必为 false） */
+    failures?: RestoreFailure[];
+    /**
+     * 快照时未备份的文件（大小超限/不可读/复制失败）：恢复时受保护不会被删除。
+     * 值为对用户友好的相对路径（scoped 键解析失败时保留原值）。
+     */
+    unbackedPaths?: string[];
+    /** EX-11: 恢复时解释「该存档创建时按当时规则排除了哪些文件」（规则来自 manifest 快照） */
+    excludedNote?: CheckpointExcludedNote;
+}
+
+/**
+ * 恢复预览结果（CP-09）：执行恢复前先计算计划，供前端展示待删除文件清单并确认。
+ */
+export interface RestorePreviewResult {
+    success: boolean;
+    /** 将恢复（新增 + 修改）的文件数；legacy 存档为 -1（无法预知，以备份目录内容为准） */
+    restored: number;
+    /**
+     * 确认删除快照后新建文件时（restoreCheckpoint 传 deleteUntrackedFiles=true）将删除的文件数
+     * （快照记录过的路径 + 快照后新建文件）。
+     * CP-PREV-1: 与 deletedIfUnconfirmed 区分，避免“预览与执行严格一致”契约被误读。
+     */
+    deleted: number;
+    /**
+     * 未确认删除 untracked 文件时（默认 deleteUntrackedFiles=false）将删除的文件数，
+     * 仅含快照记录过的路径（untracked 默认保留，不参与该计数）。
+     * CP-PREV-1: 预览展示“将删除”时若调用方未确认 untracked 删除，应以本字段为准。
+     */
+    deletedIfUnconfirmed: number;
+    /** 与目标一致、无需操作的文件数；legacy 存档为 -1 */
+    skipped: number;
+    /** 将被删除的文件显示路径（快照记录过、按 #29 白名单删除；旧版存档无删除语义时为空） */
+    deletablePaths: string[];
+    /** 快照后新建的文件/空目录显示路径：默认保留，需用户确认后才删除（CP-09） */
+    untrackedPaths: string[];
+    /** 旧版存档（无 fileHashes）：预览无法给出精确数量，以恢复执行结果为准 */
+    legacy?: boolean;
+    error?: string;
+    /** 预检失败（链断裂等）时携带 */
+    failures?: RestoreFailure[];
+    missingBackupDirs?: string[];
+    autoPrunedCheckpointCount?: number;
+    unbackedPaths?: string[];
+    /** EX-11: 恢复预览同样携带排除说明（与 restoreCheckpoint 一致） */
+    excludedNote?: CheckpointExcludedNote;
+}
+
+/** 检查点记录 */
+export interface CheckpointRecord {
+    /** 唯一标识 */
+    id: string;
+    /** 关联的对话 ID */
+    conversationId: string;
+    /** 关联的消息索引 */
+    messageIndex: number;
+    /** 触发检查点的工具名称 */
+    toolName: string;
+    /** 检查点阶段 */
+    phase: 'before' | 'after';
+    /** 创建时间戳 */
+    timestamp: number;
+    /** 备份目录名 */
+    backupDir: string;
+    /** 备份的文件数量 */
+    fileCount: number;
+    /** 内容签名（用于比较两个检查点是否内容一致） */
+    contentHash: string;
+    /** 可选描述 */
+    description?: string;
+    /** 备份类型：full=完整备份，incremental=增量备份 */
+    type?: 'full' | 'incremental';
+    /** 增量备份基于的检查点 ID（仅增量备份有效） */
+    baseCheckpointId?: string;
+    /** 变更的文件列表（仅增量备份有效） */
+    changes?: FileChange[];
+    /** 所有文件的哈希映射（用于增量比较）。只包含真正备份成功的文件 */
+    fileHashes?: Record<string, string>;
+    /** 快照时的文件 stat 信息（用于增量哈希复用；旧记录无此字段时回退全量哈希） */
+    fileStats?: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }>;
+    /** 快照时的自定义忽略模式（restore 据此判断“快照时该路径是否可见”） */
+    ignorePatterns?: string[];
+    /** 快照时被排除的文件/目录数（EX-10；恢复时解释“为什么没有备份”） */
+    excludedCount?: number;
+    /** 快照时被排除路径的合计字节数（EX-10；size 排除等） */
+    excludedBytes?: number;
+    /** 快照时的排除规则快照（EX-10；恢复时与当前规则对比，解释规则差异） */
+    ignoreSnapshot?: CheckpointIgnoreSnapshot;
+    /** 快照时可见但备份复制失败的文件（restore 绝不能删除这些文件） */
+    unbackedPaths?: string[];
+    /** 空目录列表（相对路径） */
+    emptyDirs?: string[];
+    /** 存档时的工作区根目录集合（CP-01：恢复前校验当前工作区身份；旧存档无此字段） */
+    workspaceRoots?: CheckpointWorkspaceRoot[];
+    /** 工作区身份指纹（roots 集合的哈希，用于恢复前快速校验） */
+    workspaceFingerprint?: string;
+    /** 关联的消息节点 ID（树状分支扩展预留，与 CheckpointSummary 对齐） */
+    messageNodeId?: string;
+    /** CPF-09: 创建时记录的备份目录磁盘占用（字节）；旧存档缺失时按需懒扫描并写回 */
+    backupBytes?: number;
+    /** CPF-01: 本存档 manifest 的 schema 版本（写入 manifest.json 时记录） */
+    manifestVersion?: number;
+}
+
+/** 批量删除检查点的请求项 */
+export interface BatchCheckpointDeleteItem {
+    /** 关联的对话 ID */
+    conversationId: string;
+    /**
+     * 要删除的检查点 ID 列表
+     * 空数组表示删除该对话的全部检查点
+     */
+    checkpointIds: string[];
+}
+
+/** 批量删除检查点的单个对话处理结果 */
+export interface BatchCheckpointDeleteResult {
+    /** 关联的对话 ID */
+    conversationId: string;
+    /** 实际删除的检查点 ID */
+    deletedIds: string[];
+    /** 因被其他保留的检查点引用为基快照而被拒绝删除的 ID（保护增量链完整性） */
+    rejectedIds: string[];
+    /** 该对话的处理是否成功 */
+    success: boolean;
 }

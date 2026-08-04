@@ -84,3 +84,50 @@ describe('HistorySegmentCache', () => {
         expect(cache.size).toBe(0);
     });
 });
+
+describe('HistorySegmentCache 字节软上限与分桶失效', () => {
+    test('字节软上限：总估算字节超限时按 LRU 提前淘汰（即使段数未超上限）', () => {
+        const cache = new HistorySegmentCache(100, 300);
+        for (let i = 0; i < 20; i++) {
+            cache.set(`conv${i}`, 's0', 1, [makeContent('user', `message-${i}-with-some-length`)]);
+        }
+        // 单段约 55~60 字节，300 字节软上限 ≈ 5 段：段数远未到 100 就被字节上限淘汰
+        expect(cache.size).toBeLessThan(20);
+        expect(cache.estimatedBytes).toBeLessThanOrEqual(300);
+    });
+
+    test('estimatedBytes 在失效/淘汰后同步扣减', () => {
+        const cache = new HistorySegmentCache(100, 1024 * 1024);
+        cache.set('conv1', 's0', 1, [makeContent('user', 'aaaa')]);
+        expect(cache.estimatedBytes).toBeGreaterThan(0);
+        cache.invalidateConversation('conv1');
+        expect(cache.size).toBe(0);
+        expect(cache.estimatedBytes).toBe(0);
+    });
+
+    test('替换同键条目时字节数按新值重算（不重复累计）', () => {
+        const cache = new HistorySegmentCache(10, 1024 * 1024);
+        cache.set('conv1', 's0', 1, [makeContent('user', 'small')]);
+        cache.set('conv1', 's0', 1, [makeContent('user', 'x'), makeContent('user', 'y')]);
+        expect(cache.size).toBe(1);
+        const before = cache.estimatedBytes;
+        cache.set('conv1', 's0', 1, [makeContent('user', 'x'), makeContent('user', 'y')]);
+        expect(cache.estimatedBytes).toBe(before);
+    });
+
+    test('invalidateConversation 按分桶清理：只清指定会话，字节总数同步扣减', () => {
+        const cache = new HistorySegmentCache(8, 1024 * 1024);
+        cache.set('conv1', '000000.ndjson', 1, [makeContent('user', 'a')]);
+        cache.set('conv1', '000001.ndjson', 1, [makeContent('user', 'b')]);
+        cache.set('conv2', '000000.ndjson', 1, [makeContent('user', 'c')]);
+        const before = cache.estimatedBytes;
+
+        cache.invalidateConversation('conv1');
+
+        expect(cache.get('conv1', '000000.ndjson', 1)).toBeNull();
+        expect(cache.get('conv1', '000001.ndjson', 1)).toBeNull();
+        expect(cache.get('conv2', '000000.ndjson', 1)).not.toBeNull();
+        expect(cache.size).toBe(1);
+        expect(cache.estimatedBytes).toBeLessThan(before);
+    });
+});

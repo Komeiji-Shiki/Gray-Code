@@ -285,7 +285,8 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
       attachments: [],
       messageQueue: [],
       currentPromptModeId: 'code',
-      toolResponseCache: []
+      toolResponseCache: [],
+      branchGraph: null
     }
 
     const restored = new Map(snapshot.toolResponseCache)

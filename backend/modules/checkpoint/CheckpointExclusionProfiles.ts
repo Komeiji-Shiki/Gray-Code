@@ -224,15 +224,21 @@ export function resolveEnabledProfiles(
  * 收集启用的默认类别模式（扁平化，用于 resolver 根作用域注入）。
  *
  * 与 resolveEnabledProfiles 相同的缺省语义。
+ * profilePatterns 提供每类别自定义覆盖：某类别存在非空覆盖时用覆盖清单，
+ * 缺省/空数组则使用该类别的默认清单。
  */
 export function collectEnabledProfilePatterns(
-    enabledProfiles?: Record<string, boolean>
+    enabledProfiles?: Record<string, boolean>,
+    profilePatterns?: Record<string, string[]>
 ): string[] {
     const enabled = resolveEnabledProfiles(enabledProfiles);
     const enabledSet = new Set(enabled);
     return DEFAULT_EXCLUSION_PROFILES
         .filter(profile => enabledSet.has(profile.id))
-        .flatMap(profile => [...profile.patterns]);
+        .flatMap(profile => {
+            const override = profilePatterns?.[profile.id];
+            return override && override.length > 0 ? [...override] : [...profile.patterns];
+        });
 }
 
 /**
@@ -240,6 +246,7 @@ export function collectEnabledProfilePatterns(
  */
 export function buildIgnoreSnapshot(config: {
     enabledProfiles?: Record<string, boolean>;
+    profilePatterns?: Record<string, string[]>;
     maxFileSizeBytes?: number;
     customPatterns?: string[];
 }): CheckpointIgnoreSnapshot {
@@ -248,6 +255,11 @@ export function buildIgnoreSnapshot(config: {
         forcedRulesVersion: FORCED_RULES_VERSION,
         defaultProfileVersion: CHECKPOINT_EXCLUSION_PROFILE_VERSION,
         enabledProfiles: { ...DEFAULT_ENABLED_PROFILES, ...(config.enabledProfiles ?? {}) },
+        profilePatterns: config.profilePatterns
+            ? Object.fromEntries(
+                Object.entries(config.profilePatterns).map(([id, patterns]) => [id, [...patterns]])
+            )
+            : undefined,
         maxFileSizeBytes: typeof config.maxFileSizeBytes === 'number' && config.maxFileSizeBytes > 0
             ? config.maxFileSizeBytes
             : 0,
@@ -261,7 +273,8 @@ export type CheckpointExclusionPatternIssueReason =
     | 'absolute'       // 绝对路径模式（Windows 盘符 / UNC）
     | 'negation_only'  // 纯 `!`（无实际规则体）
     | 'traversal'      // `..` 越界模式
-    | 'newline';       // 包含换行（疑似注入）
+    | 'newline'        // 包含换行（疑似注入）
+    | 'blanket';       // 全忽略模式（`*` / `**` / `/**` / `/*`，会排除整个工作区）
 
 export interface CheckpointExclusionPatternIssue {
     pattern: string;
@@ -277,6 +290,7 @@ export interface CheckpointExclusionPatternIssue {
  * - 纯 `!`（无规则体）
  * - 含 `..` 越界的模式（`../foo`、`a/../../b`）
  * - 包含换行的模式（多行注入）
+ * - 全忽略模式（剥离 `!` 前缀后为 `*` / `**` / `/**` / `/*`，会排除整个工作区，EX-12-2）
  *
  * 返回所有问题；无问题时返回空数组。
  */
@@ -302,6 +316,11 @@ export function validateCustomExclusionPatterns(
 
         if (!body.trim() || body === '/') {
             issues.push({ pattern, reason: 'negation_only' });
+            continue;
+        }
+        // EX-12-2: 全忽略模式（含剥离 `!` 前缀后的变体）会排除整个工作区 → 拒绝
+        if (body === '*' || body === '**' || body === '/*' || body === '/**') {
+            issues.push({ pattern, reason: 'blanket' });
             continue;
         }
         // Windows 盘符（C:/...）或 UNC（//server/share）

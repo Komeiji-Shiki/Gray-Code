@@ -1319,10 +1319,14 @@ onBeforeUnmount(() => {
 
 .run-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  overflow-x: auto;
+  /* 修改原因：子 agent 数量多时单行横向滚动不好翻，改为多行换行。
+     修改方式：flex-wrap 自动折行；限制最大高度，run 极多时退化为纵向滚动而不是占满整个面板。 */
+  max-height: 172px;
+  overflow-y: auto;
 }
 
 .run-tab {
@@ -1330,7 +1334,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  min-width: 180px;
+  /* 修改原因：多行换行后若保持定宽，最后一行会留出难看的缺口。
+     修改方式：允许 tab 在行内伸展铺满，但每行至少 170px，避免单个 tab 过窄。 */
+  flex: 1 1 170px;
   padding: 6px 10px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 7px;

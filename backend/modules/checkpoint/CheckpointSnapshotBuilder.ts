@@ -14,8 +14,6 @@
  * 本模块不依赖 CheckpointManager，是独立的纯文件系统逻辑，
  * 便于单元测试与后续将 CheckpointManager 拆分为协调层。
  */
-import * as crypto from 'crypto';
-import { createReadStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { CheckpointIgnoreResolver, type CheckpointResolverExcludedEntry } from './CheckpointIgnoreResolver';
@@ -27,6 +25,9 @@ import {
     buildIgnoreSnapshot,
     DEFAULT_ENABLED_PROFILES
 } from './CheckpointExclusionProfiles';
+import { runBounded } from './checkpointConcurrency';
+import { hashFileStreaming } from './fileHashing';
+import { isExcludedAbsolutePath } from './checkpointPathUtils';
 import type {
     CheckpointExcludedEntry,
     CheckpointExclusionPreviewResult,
@@ -58,6 +59,8 @@ export interface SnapshotBuildOptions {
      * 需要全关时显式传 `false`（前端保存完整记录）。
      */
     enabledProfiles?: Record<string, boolean>;
+    /** 每类别自定义模式覆盖（profileId -> 模式清单；缺省/空数组 = 使用该类别的默认清单） */
+    profilePatterns?: Record<string, string[]>;
     /** 单文件大小上限（字节）；undefined 或 <= 0 表示不限制 */
     maxFileSizeBytes?: number;
     /** 强制排除的绝对路径（存档目录、临时目录等；位于工作区内时跳过） */
@@ -91,51 +94,6 @@ export interface CheckpointSnapshotBuildResult {
     roots: { rootId: string; fileCount: number; emptyDirCount: number }[];
 }
 
-/** 判断绝对路径是否位于任一强制排除目录内（win32 下统一小写比较，L-3） */
-function isExcludedAbsolutePath(absolutePath: string, excludePaths: readonly string[]): boolean {
-    if (excludePaths.length === 0) return false;
-    const normalized = path.resolve(absolutePath);
-    const caseFold = process.platform === 'win32'
-        ? (p: string) => p.toLowerCase()
-        : (p: string) => p;
-    const target = caseFold(normalized);
-    return excludePaths.some(excludePath => {
-        const excluded = caseFold(path.resolve(excludePath));
-        if (target === excluded) return true;
-        return target.startsWith(excluded + path.sep);
-    });
-}
-
-/** 简单的有界并发池：并发执行 tasks，返回按输入顺序的结果 */
-async function runBounded<T>(
-    items: readonly T[],
-    concurrency: number,
-    worker: (item: T) => Promise<void>
-): Promise<void> {
-    let nextIndex = 0;
-    const runNext = async (): Promise<void> => {
-        while (nextIndex < items.length) {
-            const index = nextIndex;
-            nextIndex += 1;
-            await worker(items[index]);
-        }
-    };
-    const workers = Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, () => runNext());
-    await Promise.all(workers);
-}
-
-/** 流式计算文件 MD5（不整文件读入内存） */
-async function hashFileStreaming(filePath: string): Promise<string> {
-    const hash = crypto.createHash('md5');
-    await new Promise<void>((resolve, reject) => {
-        const stream = createReadStream(filePath);
-        stream.on('error', reject);
-        stream.on('data', chunk => hash.update(chunk));
-        stream.on('end', () => resolve());
-    });
-    return hash.digest('hex');
-}
-
 /**
  * 构建一个工作区集合的快照。
  *
@@ -167,6 +125,7 @@ export async function buildWorkspaceSnapshot(
         const resolver = new CheckpointIgnoreResolver(root.fsPath, customIgnorePatterns ?? [], {
             // 缺省全部类别启用；`{}` 表示全部关闭
             enabledProfiles: options.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
+            profilePatterns: options.profilePatterns,
             excludeAbsolutePaths
         });
         const { files, dirs, excluded: resolverExcluded } = await resolver.collectEntries();
@@ -294,6 +253,8 @@ export interface ExclusionPreviewOptions {
     customIgnorePatterns?: string[];
     /** 默认排除类别启用状态（缺省＝全部启用） */
     enabledProfiles?: Record<string, boolean>;
+    /** 每类别自定义模式覆盖（profileId -> 模式清单；缺省/空数组 = 使用该类别的默认清单） */
+    profilePatterns?: Record<string, string[]>;
     /** 单文件大小上限（字节）；undefined 或 <= 0 表示不限制 */
     maxFileSizeBytes?: number;
     /** 强制排除的绝对路径（扩展存储根等） */
@@ -315,6 +276,7 @@ export async function previewExclusions(
 ): Promise<CheckpointExclusionPreviewResult> {
     const { roots, customIgnorePatterns, excludeAbsolutePaths = [] } = options;
     const enabledProfiles = options.enabledProfiles ?? DEFAULT_ENABLED_PROFILES;
+    const profilePatterns = options.profilePatterns;
     const maxSize = typeof options.maxFileSizeBytes === 'number' && options.maxFileSizeBytes > 0
         ? options.maxFileSizeBytes
         : undefined;
@@ -326,6 +288,7 @@ export async function previewExclusions(
     for (const root of roots) {
         const resolver = new CheckpointIgnoreResolver(root.fsPath, customIgnorePatterns ?? [], {
             enabledProfiles,
+            profilePatterns,
             excludeAbsolutePaths
         });
         const { files, excluded: resolverExcluded } = await resolver.collectEntries();
@@ -386,11 +349,16 @@ export async function previewExclusions(
         });
     }
 
+    // CP-PREV-2: runBounded 并发 push 的条目顺序不确定，聚合前按 path 排序，
+    // 保证 samples（前端“为什么被排除”示例）跨预览稳定且按字典序展示
+    allExcluded.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
     return {
         summary: aggregateExcluded(allExcluded),
         byProfile: aggregateByProfile(allExcluded),
         ignoreSnapshot: buildIgnoreSnapshot({
             enabledProfiles,
+            profilePatterns,
             maxFileSizeBytes: options.maxFileSizeBytes,
             customPatterns: customIgnorePatterns
         }),

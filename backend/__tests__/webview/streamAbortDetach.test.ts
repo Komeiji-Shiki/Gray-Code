@@ -1,0 +1,58 @@
+/**
+ * StreamAbortManager 转后台（detach）测试。
+ *
+ * 覆盖：新流启动（用户发新消息/重试/reroll 等）时，该会话活跃前台 SubAgent 转为后台
+ * 继续运行（detach），而不是被旧流 abort 连带杀掉；后台 run 与其他会话的 run 不受影响。
+ */
+
+import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
+import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
+import { subAgentRunController } from '../../tools/subagents/runController';
+
+describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => {
+    afterEach(() => {
+        subAgentRunController.unregister('detach_fg');
+        subAgentRunController.unregister('detach_bg');
+        subAgentRunController.unregister('detach_other');
+    });
+
+    it('create 新流时把该会话活跃前台 SubAgent detach：旧流被 abort 但 run 继续活跃', () => {
+        subAgentRunEventBus.createRun('detach_fg', 'Agent', undefined, { conversationId: 'conv_a' });
+        subAgentRunController.register('detach_fg', 'Agent', 0, true);
+
+        const manager = new StreamAbortManager();
+        const oldStream = manager.create('conv_a');
+        manager.create('conv_a'); // 用户发新消息：第二次 create 触发 detach + abort 旧流
+
+        expect(oldStream.signal.aborted).toBe(true); // 旧流确实被 abort
+        expect(subAgentRunController.isDetached('detach_fg')).toBe(true); // 但 SubAgent 已转后台
+        expect(subAgentRunController.isActive('detach_fg')).toBe(true); // 仍活跃，没有被杀
+        expect(subAgentRunController.getState('detach_fg')?.status).toBe('running');
+    });
+
+    it('后台 SubAgent 不受 detach 影响（保留 TaskManager 取消能力）', () => {
+        subAgentRunEventBus.createRun('detach_bg', 'Agent', undefined, { conversationId: 'conv_a' });
+        subAgentRunController.register('detach_bg', 'Agent', 0, false);
+
+        const manager = new StreamAbortManager();
+        manager.create('conv_a');
+
+        expect(subAgentRunController.isDetached('detach_bg')).toBe(false);
+    });
+
+    it('其他会话的活跃 SubAgent 不受影响', () => {
+        subAgentRunEventBus.createRun('detach_other', 'Agent', undefined, { conversationId: 'conv_b' });
+        subAgentRunController.register('detach_other', 'Agent', 0, true);
+
+        const manager = new StreamAbortManager();
+        manager.create('conv_a');
+
+        expect(subAgentRunController.isDetached('detach_other')).toBe(false);
+    });
+
+    it('无活跃 SubAgent 时 create 正常工作', () => {
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv_c');
+        expect(controller.signal.aborted).toBe(false);
+    });
+});

@@ -19,7 +19,6 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
-import { refreshTailVersions } from './tailVersionActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -580,9 +579,6 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     // HIS-13：先渲染最后一页（首屏即时显示），再异步补拉更早历史
     renderMessageWindow(state, page, total)
 
-    // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
-    void refreshTailVersions(state, conversationId)
-
     perfLog('conversation.window.firstPaint', {
       start: state.windowStartIndex.value,
       count: state.allMessages.value.length,
@@ -690,8 +686,8 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
       state.checkpoints.value = []
     }
   } catch (err) {
-    console.error('Failed to load checkpoints:', err)
-    state.checkpoints.value = []
+    // L-8：加载失败时保留旧值（不静默置空），避免后端瞬时错误导致检查点条全部消失
+    console.warn('[conversationActions] Failed to load checkpoints, keeping previous list:', err)
   }
 }
 
@@ -767,9 +763,6 @@ export async function switchConversation(
       // HIS-13：先渲染最后一页（首屏即时显示），再异步补拉更早历史
       renderMessageWindow(state, page, total)
       void backfillInitialVisibleWindow(state, requestedId, page, total)
-
-      // 重roll 分叉：拉取该对话的尾部版本摘要（不阻塞主链路）
-      void refreshTailVersions(state, requestedId)
 
       state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
       state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, requestedId)

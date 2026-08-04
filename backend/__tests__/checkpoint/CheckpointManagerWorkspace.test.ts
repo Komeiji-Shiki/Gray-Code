@@ -72,6 +72,9 @@ async function createCheckpointManager(options: CreateManagerOptions): Promise<C
     let metadataWriteChain: Promise<unknown> = Promise.resolve();
     const conversationManager = {
         getMetadata: jest.fn().mockImplementation(async (conversationId: string) => sharedMetadata),
+        getCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string) => {
+            return (sharedMetadata.custom as Record<string, unknown>)[key];
+        }),
         setCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string, value: unknown) => {
             (sharedMetadata.custom as Record<string, unknown>)[key] = value;
         }),

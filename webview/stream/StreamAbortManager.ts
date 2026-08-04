@@ -6,6 +6,8 @@
 
 import type * as vscode from 'vscode';
 import type { ConversationRunScope, IRunController, RunControllerSnapshot } from '../../backend/core/RunController';
+import { subAgentRunController } from '../../backend/tools/subagents/runController';
+import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
 
 /**
  * 流式请求管理器
@@ -24,6 +26,11 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 创建并存储新的 AbortController
    */
   create(conversationId: string): AbortController {
+    // 修改原因：新流启动（用户发新消息/重试/reroll 等）会 abort 旧流；旧流工具循环中等待结果的
+    // 前台 SubAgent 挂在父 abort 信号上，会被连带杀掉。用户发新消息应当让它们转为后台继续运行，
+    // 而不是终止——所以先 detach 该会话活跃前台 SubAgent，再 abort 旧流。
+    // 修改目的：用户发消息不再杀死正在干活的前台子代理；run 继续执行，结果经 Monitor/事件总线呈现。
+    this.detachActiveSubAgents(conversationId);
     // 同一会话已有活跃流时，先中止旧流再替换（与 createSummary 语义一致）。
     // 否则旧流完全不可取消，且旧流先结束时其 finally 的 delete 会误删新流的控制器。
     const existing = this.controllers.get(conversationId);
@@ -33,6 +40,27 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
     return controller;
+  }
+
+  /**
+   * 把该会话仍在前台等待的活跃 SubAgent 转为后台继续运行（detach）。
+   *
+   * 修改原因：前台 SubAgent 的 abort 信号挂在主会话工具循环上；本方法在 abort 旧流之前调用，
+   * 确保旧流取消不再连带杀掉还在干活的 SubAgent（与 background:true 语义一致）。
+   * 后台 run（attachedToParent=false）不受影响；已 detach 的 run 跳过；其他会话的 run 不受影响。
+   */
+  private detachActiveSubAgents(conversationId: string): void {
+    try {
+      const snapshots = subAgentRunEventBus.getSnapshots();
+      for (const snapshot of snapshots) {
+        if (snapshot.conversationId !== conversationId) continue;
+        if (!subAgentRunController.isActive(snapshot.runId)) continue;
+        if (subAgentRunController.isDetached(snapshot.runId)) continue;
+        subAgentRunController.detachFromParent(snapshot.runId);
+      }
+    } catch (err) {
+      console.warn('[StreamAbortManager] Failed to detach active subagents before starting new stream:', err);
+    }
   }
 
   /**

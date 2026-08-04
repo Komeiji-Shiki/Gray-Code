@@ -8,12 +8,11 @@ import type { HandlerContext, MessageHandler } from '../types';
 
 /**
  * 内部元数据键：只能由后端写入，webview 不可覆盖。
- * 这些键控制检查点链、审批门、尾部版本等安全敏感状态。
+ * 这些键控制检查点链、审批门等安全敏感状态。
  */
 const PROTECTED_METADATA_KEYS = new Set([
   'checkpoints',
   'pendingApprovalGate',
-  'tailVersions',
   'trimState'
 ]);
 
@@ -213,49 +212,6 @@ export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /**
- * 保存对话尾部版本（重roll分叉前保留当前答案）
- */
-export const saveTailVersion: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, branchIndex } = data || {};
-  try {
-    const result = await ctx.conversationManager.saveTailVersion(validateConversationId(conversationId), Number(branchIndex));
-    ctx.sendResponse(requestId, result);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SAVE_TAIL_VERSION_ERROR', error.message || 'Failed to save tail version');
-  }
-};
-
-/**
- * 列出对话的全部尾部版本摘要
- */
-export const listTailVersions: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId } = data || {};
-  try {
-    const versions = await ctx.conversationManager.listTailVersions(validateConversationId(conversationId));
-    ctx.sendResponse(requestId, { versions });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'LIST_TAIL_VERSIONS_ERROR', error.message || 'Failed to list tail versions');
-  }
-};
-
-/**
- * 切换到某个已保存的尾部版本（切换前自动保存当前活跃尾部）
- */
-export const restoreTailVersion: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, branchIndex, versionId } = data || {};
-  try {
-    const result = await ctx.conversationManager.restoreTailVersion(
-      validateConversationId(conversationId),
-      Number(branchIndex),
-      versionId
-    );
-    ctx.sendResponse(requestId, result);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'RESTORE_TAIL_VERSION_ERROR', error.message || 'Failed to restore tail version');
-  }
-};
-
-/**
  * 注册对话管理处理器
  */
 export function registerConversationHandlers(registry: Map<string, MessageHandler>): void {
@@ -269,9 +225,6 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.setCustomMetadata', setCustomMetadata);
   registry.set('conversation.deleteConversation', deleteConversation);
   registry.set('conversation.createBranchConversation', createBranchConversation);
-  registry.set('conversation.saveTailVersion', saveTailVersion);
-  registry.set('conversation.getTailVersions', listTailVersions);
-  registry.set('conversation.restoreTailVersion', restoreTailVersion);
 
   registry.set('conversation.getMessages', getMessages);
   registry.set('conversation.getMessagesPaged', getMessagesPaged);
