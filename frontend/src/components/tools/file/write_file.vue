@@ -11,6 +11,7 @@
 
 import { computed, ref, onBeforeUnmount, watch, onMounted } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { MarkdownRenderer } from '../../common'
 import ChannelSelector from '../../input/ChannelSelector.vue'
 import ModelSelector from '../../input/ModelSelector.vue'
@@ -19,8 +20,7 @@ import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { generateId } from '@/utils/format'
-import { computeDiffLines } from '@/utils/diffLines'
-import type { DiffLine } from '@/utils/diffLines'
+import { computeLineDiff, type LineDiffResult } from '@/utils/lineDiff'
 import { useChatStore } from '@/stores'
 import * as configService from '@/services/config'
 
@@ -333,11 +333,6 @@ function hasDiffContent(path: string): boolean {
   return diffContents.value.has(path)
 }
 
-// 获取 diff 内容
-function getDiffContent(path: string): DiffContent | undefined {
-  return diffContents.value.get(path)
-}
-
 // 是否正在加载
 function isLoadingDiff(path: string): boolean {
   return loadingDiffs.value.has(path)
@@ -492,43 +487,37 @@ function getActionLabel(action?: string): string {
 
 // ============ Diff 对比相关 ============
 
-// 行级 diff 计算为公共工具（frontend/src/utils/diffLines.ts）：
-// 变更查看面板（DiffViewerPanel.vue）与工具卡片共用同一实现。
-
-// 获取行号宽度
-function getDiffLineNumWidth(diffContent: DiffContent): number {
-  const oldLines = diffContent.originalContent.split('\n').length
-  const newLines = diffContent.newContent.split('\n').length
-  return String(Math.max(oldLines, newLines)).length
+interface RenderedFileDiff {
+  content: DiffContent
+  lineDiff: LineDiffResult
 }
 
-// 格式化行号
-function formatLineNum(num: number | undefined, width: number): string {
-  if (num === undefined) return ' '.repeat(width)
-  return String(num).padStart(width)
-}
+const renderedFileDiffs = computed(() => {
+  const rendered = new Map<string, RenderedFileDiff>()
+  for (const [path, content] of diffContents.value) {
+    rendered.set(path, {
+      content,
+      lineDiff: computeLineDiff(content.originalContent, content.newContent)
+    })
+  }
+  return rendered
+})
 
-// 获取统计信息
-function getDiffStats(diffLines: DiffLine[]) {
-  const deleted = diffLines.filter(l => l.type === 'deleted').length
-  const added = diffLines.filter(l => l.type === 'added').length
-  return { deleted, added }
+function getRenderedFileDiff(path: string): RenderedFileDiff | undefined {
+  return renderedFileDiffs.value.get(path)
 }
 
 // 预览 diff 行数
 const previewDiffLineCount = 20
 
-// 检查 diff 是否需要展开
-function needsDiffExpand(diffLines: DiffLine[]): boolean {
-  return diffLines.length > previewDiffLineCount
+function getDisplayDiffLines(diff: RenderedFileDiff, path: string) {
+  return isDiffExpanded(path)
+    ? diff.lineDiff.lines
+    : diff.lineDiff.lines.slice(0, previewDiffLineCount)
 }
 
-// 获取显示的 diff 行
-function getDisplayDiffLines(diffLines: DiffLine[], path: string): DiffLine[] {
-  if (expandedFiles.value.has(path + '_diff') || diffLines.length <= previewDiffLineCount) {
-    return diffLines
-  }
-  return diffLines.slice(0, previewDiffLineCount)
+function needsDiffExpand(diff: RenderedFileDiff): boolean {
+  return diff.lineDiff.lines.length > previewDiffLineCount
 }
 
 // 切换 diff 展开状态
@@ -723,43 +712,28 @@ onBeforeUnmount(() => {
         </div>
         
         <!-- Diff 视图 -->
-        <div v-else-if="hasDiffContent(file.path) && getViewMode(file.path) === 'diff'" class="diff-view">
+        <div v-else-if="getRenderedFileDiff(file.path) && getViewMode(file.path) === 'diff'" class="diff-view">
           <div class="diff-stats-bar">
             <span class="stat deleted">
               <span class="codicon codicon-remove"></span>
-              {{ getDiffStats(computeDiffLines(getDiffContent(file.path)!.originalContent, getDiffContent(file.path)!.newContent)).deleted }}
+              {{ getRenderedFileDiff(file.path)!.lineDiff.deleted }}
             </span>
             <span class="stat added">
               <span class="codicon codicon-add"></span>
-              {{ getDiffStats(computeDiffLines(getDiffContent(file.path)!.originalContent, getDiffContent(file.path)!.newContent)).added }}
+              {{ getRenderedFileDiff(file.path)!.lineDiff.added }}
             </span>
           </div>
-          <CustomScrollbar :horizontal="true" :max-height="300">
-            <div class="diff-lines">
-              <div
-                v-for="(line, lineIndex) in getDisplayDiffLines(computeDiffLines(getDiffContent(file.path)!.originalContent, getDiffContent(file.path)!.newContent), file.path)"
-                :key="lineIndex"
-                :class="['diff-line', `line-${line.type}`]"
-              >
-                <span class="line-nums">
-                  <span class="old-num">{{ formatLineNum(line.oldLineNum, getDiffLineNumWidth(getDiffContent(file.path)!)) }}</span>
-                  <span class="new-num">{{ formatLineNum(line.newLineNum, getDiffLineNumWidth(getDiffContent(file.path)!)) }}</span>
-                </span>
-                <span class="line-marker">
-                  <span v-if="line.type === 'deleted'" class="marker deleted">-</span>
-                  <span v-else-if="line.type === 'added'" class="marker added">+</span>
-                  <span v-else class="marker unchanged">&nbsp;</span>
-                </span>
-                <span class="line-content">{{ line.content || ' ' }}</span>
-              </div>
-            </div>
-          </CustomScrollbar>
+          <VirtualDiffLines
+            :lines="getDisplayDiffLines(getRenderedFileDiff(file.path)!, file.path)"
+            :line-number-width="getRenderedFileDiff(file.path)!.lineDiff.lineNumberWidth"
+            :max-height="300"
+          />
           
           <!-- 展开/收起按钮 -->
-          <div v-if="needsDiffExpand(computeDiffLines(getDiffContent(file.path)!.originalContent, getDiffContent(file.path)!.newContent))" class="expand-section">
+          <div v-if="needsDiffExpand(getRenderedFileDiff(file.path)!)" class="expand-section">
             <button class="expand-btn" @click="toggleDiffExpand(file.path)">
               <span :class="['codicon', isDiffExpanded(file.path) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isDiffExpanded(file.path) ? t('components.tools.file.writeFilePanel.collapse') : t('components.tools.file.writeFilePanel.expandRemaining', { count: computeDiffLines(getDiffContent(file.path)!.originalContent, getDiffContent(file.path)!.newContent).length - previewDiffLineCount }) }}
+              {{ isDiffExpanded(file.path) ? t('components.tools.file.writeFilePanel.collapse') : t('components.tools.file.writeFilePanel.expandRemaining', { count: getRenderedFileDiff(file.path)!.lineDiff.lines.length - previewDiffLineCount }) }}
             </button>
           </div>
         </div>

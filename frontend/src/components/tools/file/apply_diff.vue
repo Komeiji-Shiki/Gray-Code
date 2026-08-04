@@ -10,7 +10,9 @@
 
 import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
+import { computeLineDiff, type LineDiffResult } from '@/utils/lineDiff'
 import { onExtensionCommand } from '../../../utils/vscode'
 
 const props = defineProps<{
@@ -289,199 +291,32 @@ function getFileNameWithoutExt(filePath: string): string {
   return fileName
 }
 
-// 计算差异行
-interface DiffLine {
-  type: 'unchanged' | 'deleted' | 'added'
-  content: string
-  oldLineNum?: number
-  newLineNum?: number
+interface RenderedDiffBlock extends DiffBlock {
+  lineDiff: LineDiffResult
 }
 
-/**
- * 计算 diff 行
- * @param search 搜索内容
- * @param replace 替换内容
- * @param startLine 原文件起始行号（1-based），默认为 1
- * @param newStartLine 新文件起始行号（1-based）。unified diff hunks 的 old/new 起始行可能不同。
- */
-function computeDiffLines(search: string, replace: string, startLine: number = 1, newStartLine: number = startLine): DiffLine[] {
-  const searchLines = search.split('\n')
-  const replaceLines = replace.split('\n')
-  const result: DiffLine[] = []
-  
-  // 使用简单的最长公共子序列算法找出差异
-  const lcs = computeLCS(searchLines, replaceLines)
-  
-  let oldIdx = 0
-  let newIdx = 0
-  // 使用文件中的实际起始行号
-  let oldLineNum = startLine
-  let newLineNum = newStartLine
-  
-  for (const match of lcs) {
-    // 添加删除的行（在 search 中但不在 LCS 中）
-    while (oldIdx < match.oldIndex) {
-      result.push({
-        type: 'deleted',
-        content: searchLines[oldIdx],
-        oldLineNum: oldLineNum++
-      })
-      oldIdx++
+const renderedDiffList = computed((): RenderedDiffBlock[] => {
+  return diffList.value.map(diff => {
+    const oldStartLine = diff.start_line || 1
+    const newStartLine = diff.new_start_line ?? oldStartLine
+    return {
+      ...diff,
+      lineDiff: computeLineDiff(diff.search, diff.replace, { oldStartLine, newStartLine })
     }
-    
-    // 添加新增的行（在 replace 中但不在 LCS 中）
-    while (newIdx < match.newIndex) {
-      result.push({
-        type: 'added',
-        content: replaceLines[newIdx],
-        newLineNum: newLineNum++
-      })
-      newIdx++
-    }
-    
-    // 添加未更改的行
-    result.push({
-      type: 'unchanged',
-      content: searchLines[oldIdx],
-      oldLineNum: oldLineNum++,
-      newLineNum: newLineNum++
-    })
-    oldIdx++
-    newIdx++
-  }
-  
-  // 处理剩余的删除行
-  while (oldIdx < searchLines.length) {
-    result.push({
-      type: 'deleted',
-      content: searchLines[oldIdx],
-      oldLineNum: oldLineNum++
-    })
-    oldIdx++
-  }
-  
-  // 处理剩余的新增行
-  while (newIdx < replaceLines.length) {
-    result.push({
-      type: 'added',
-      content: replaceLines[newIdx],
-      newLineNum: newLineNum++
-    })
-    newIdx++
-  }
-  
-  return result
-}
-
-// 计算最长公共子序列
-interface LCSMatch {
-  oldIndex: number
-  newIndex: number
-}
-
-function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
-  const m = oldLines.length
-  const n = newLines.length
-
-  // 剥离公共前缀：这些行必然匹配，无需进入 DP
-  let prefixLen = 0
-  while (prefixLen < m && prefixLen < n && oldLines[prefixLen] === newLines[prefixLen]) {
-    prefixLen++
-  }
-
-  // 剥离公共后缀
-  let suffixLen = 0
-  while (
-    suffixLen < m - prefixLen &&
-    suffixLen < n - prefixLen &&
-    oldLines[m - 1 - suffixLen] === newLines[n - 1 - suffixLen]
-  ) {
-    suffixLen++
-  }
-
-  const coreOld = oldLines.slice(prefixLen, m - suffixLen)
-  const coreNew = newLines.slice(prefixLen, n - suffixLen)
-  const coreM = coreOld.length
-  const coreN = coreNew.length
-
-  // 核心区域 DP：面积过大时跳过（数千行 diff 的 O(m×n) 会占用数百 MB 内存并阻塞主线程）
-  const coreMatches: LCSMatch[] = []
-  if (coreM > 0 && coreN > 0 && coreM * coreN <= 1_000_000) {
-    // 创建 DP 表
-    const dp: number[][] = Array(coreM + 1).fill(null).map(() => Array(coreN + 1).fill(0))
-
-    for (let i = 1; i <= coreM; i++) {
-      for (let j = 1; j <= coreN; j++) {
-        if (coreOld[i - 1] === coreNew[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1] + 1
-        } else {
-          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
-        }
-      }
-    }
-
-    // 回溯找出匹配的行（索引需加回 prefixLen 偏移）
-    let i = coreM, j = coreN
-    while (i > 0 && j > 0) {
-      if (coreOld[i - 1] === coreNew[j - 1]) {
-        coreMatches.unshift({ oldIndex: prefixLen + i - 1, newIndex: prefixLen + j - 1 })
-        i--
-        j--
-      } else if (dp[i - 1][j] > dp[i][j - 1]) {
-        i--
-      } else {
-        j--
-      }
-    }
-  }
-
-  // 前缀匹配（前缀中所有行都匹配）
-  const result: LCSMatch[] = []
-  for (let k = 0; k < prefixLen; k++) {
-    result.push({ oldIndex: k, newIndex: k })
-  }
-
-  // 后缀匹配回填：剥离前后缀时已确认匹配，按原始索引追加到核心匹配之后
-  for (let k = 0; k < suffixLen; k++) {
-    coreMatches.push({ oldIndex: m - suffixLen + k, newIndex: n - suffixLen + k })
-  }
-
-  return result.concat(coreMatches)
-}
-
-// 获取行号宽度
-function getLineNumWidth(diff: DiffBlock): number {
-  const startLine = diff.start_line || 1
-  const newStartLine = diff.new_start_line ?? startLine
-  const searchLines = diff.search.split('\n').length
-  const replaceLines = diff.replace.split('\n').length
-  // 计算实际的最大行号（起始行号 + 行数 - 1）
-  const maxOldLineNum = startLine + searchLines - 1
-  const maxNewLineNum = newStartLine + replaceLines - 1
-  const maxLineNum = Math.max(maxOldLineNum, maxNewLineNum)
-  return String(maxLineNum).length
-}
-
-// 格式化行号
-function formatLineNum(num: number | undefined, width: number): string {
-  if (num === undefined) return ' '.repeat(width)
-  return String(num).padStart(width)
-}
+  })
+})
 
 // 预览行数
 const previewLineCount = 20
 
-// 检查是否需要展开按钮
-function needsExpand(diffLines: DiffLine[]): boolean {
-  return diffLines.length > previewLineCount
+function getDisplayLines(diff: RenderedDiffBlock, index: number) {
+  return expanded.value.has(index)
+    ? diff.lineDiff.lines
+    : diff.lineDiff.lines.slice(0, previewLineCount)
 }
 
-// 获取显示的 diff 行
-function getDisplayLines(diffLines: DiffLine[], index: number): DiffLine[] {
-  if (expanded.value.has(index) || diffLines.length <= previewLineCount) {
-    return diffLines
-  }
-  return diffLines.slice(0, previewLineCount)
+function needsExpand(diff: RenderedDiffBlock): boolean {
+  return diff.lineDiff.lines.length > previewLineCount
 }
 
 // 切换展开状态
@@ -523,13 +358,6 @@ async function copyReplace(diff: DiffBlock, index: number) {
   } catch (err) {
     console.error('复制失败:', err)
   }
-}
-
-// 获取统计信息
-function getDiffStats(diffLines: DiffLine[]) {
-  const deleted = diffLines.filter(l => l.type === 'deleted').length
-  const added = diffLines.filter(l => l.type === 'added').length
-  return { deleted, added }
 }
 
 // 清理定时器
@@ -605,7 +433,7 @@ onBeforeUnmount(() => {
         <!-- Diff 列表 -->
     <div class="diff-list">
       <div
-        v-for="(diff, index) in diffList"
+        v-for="(diff, index) in renderedDiffList"
         :key="index"
         class="diff-block"
         :class="{ 'is-failed': diff.success === false }"
@@ -632,11 +460,11 @@ onBeforeUnmount(() => {
             <span v-if="diff.success !== false" class="diff-stats">
               <span class="stat deleted">
                 <span class="codicon codicon-remove"></span>
-                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1)).deleted }}
+                {{ diff.lineDiff.deleted }}
               </span>
               <span class="stat added">
                 <span class="codicon codicon-add"></span>
-                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1)).added }}
+                {{ diff.lineDiff.added }}
               </span>
             </span>
           </div>
@@ -654,35 +482,17 @@ onBeforeUnmount(() => {
         
         <!-- Diff 内容 -->
         <div class="diff-content" v-if="diff.success !== false">
-          <CustomScrollbar :horizontal="true" :max-height="300">
-            <div class="diff-lines">
-              <div
-                v-for="(line, lineIndex) in getDisplayLines(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1), index)"
-                :key="lineIndex"
-                :class="['diff-line', `line-${line.type}`]"
-              >
-                <!-- 行号列 -->
-                <span class="line-nums">
-                  <span class="old-num">{{ formatLineNum(line.oldLineNum, getLineNumWidth(diff)) }}</span>
-                  <span class="new-num">{{ formatLineNum(line.newLineNum, getLineNumWidth(diff)) }}</span>
-                </span>
-                <!-- 差异标记 -->
-                <span class="line-marker">
-                  <span v-if="line.type === 'deleted'" class="marker deleted">-</span>
-                  <span v-else-if="line.type === 'added'" class="marker added">+</span>
-                  <span v-else class="marker unchanged">&nbsp;</span>
-                </span>
-                <!-- 内容 -->
-                <span class="line-content">{{ line.content || ' ' }}</span>
-              </div>
-            </div>
-          </CustomScrollbar>
+            <VirtualDiffLines
+              :lines="getDisplayLines(diff, index)"
+              :line-number-width="diff.lineDiff.lineNumberWidth"
+              :max-height="300"
+            />
           
           <!-- 展开/收起按钮 -->
-          <div v-if="needsExpand(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1))" class="expand-section">
+          <div v-if="needsExpand(diff)" class="expand-section">
             <button class="expand-btn" @click="toggleExpand(index)">
               <span :class="['codicon', isExpanded(index) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isExpanded(index) ? t('components.tools.file.applyDiffPanel.collapse') : t('components.tools.file.applyDiffPanel.expandRemaining', { count: computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1).length - previewLineCount }) }}
+              {{ isExpanded(index) ? t('components.tools.file.applyDiffPanel.collapse') : t('components.tools.file.applyDiffPanel.expandRemaining', { count: diff.lineDiff.lines.length - previewLineCount }) }}
             </button>
           </div>
         </div>

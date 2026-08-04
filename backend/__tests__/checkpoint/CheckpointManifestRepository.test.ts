@@ -230,4 +230,93 @@ describe('CheckpointManifestRepository', () => {
         repo.clearCache();
         expect(repo['cache'].size).toBe(0);
     });
+
+    describe('CP-PATH-1 / CP-CACHE-1（路径校验与 LRU 缓存）', () => {
+        function makeManifest(id: string): CheckpointManifest {
+            return {
+                version: CHECKPOINT_MANIFEST_VERSION,
+                checkpointId: id,
+                workspaceRoots: [],
+                files: { [`ws_a/${id}.txt`]: { hash: 'h', size: 1, mtimeMs: 1 } },
+                emptyDirs: [],
+                changes: [],
+                excluded: [],
+                ignoreSnapshot: {
+                    version: 1,
+                    forcedRulesVersion: 1,
+                    defaultProfileVersion: 1,
+                    enabledProfiles: {},
+                    maxFileSizeBytes: 0,
+                    customPatterns: []
+                }
+            };
+        }
+
+        test('getManifestPath 拒绝越界/绝对路径/盘符等非法 checkpointId（CP-PATH-1）', () => {
+            for (const evil of [
+                '../evil',
+                '..\\evil',
+                '..',
+                '.',
+                'cp-x/../../evil',
+                'C:\\evil',
+                'C:/evil',
+                '/abs/path',
+                'cp_1\0x'
+            ]) {
+                expect(() => repo.getManifestPath(evil)).toThrow('Unsafe checkpoint dir name');
+            }
+            // 合法 ID（含测试常用的连字符命名）放行
+            expect(repo.getManifestPath('cp-1')).toBe(
+                path.join(storageRoot, 'checkpoints', 'cp-1', 'manifest.json')
+            );
+            expect(repo.getManifestPath('cp_abc_123')).toContain('cp_abc_123');
+        });
+
+        test('loadManifest/writeManifest 对非法 checkpointId 抛错而非回退（CP-PATH-1）', async () => {
+            await expect(repo.loadManifest('../../evil')).rejects.toThrow('Unsafe checkpoint dir name');
+            await expect(
+                repo.loadManifest('../../evil', makeLegacyRecord({ id: '../../evil', backupDir: '../../evil' }))
+            ).rejects.toThrow('Unsafe checkpoint dir name');
+            await expect(repo.writeManifest('../evil', makeManifest('x'))).rejects.toThrow('Unsafe checkpoint dir name');
+            // 目录外文件未被触碰
+            await expect(fs.access(path.join(storageRoot, 'evil'))).rejects.toThrow();
+        });
+
+        test('缓存 LRU：超过上限淘汰最久未使用，淘汰后可从磁盘重读（CP-CACHE-1）', async () => {
+            const count = 40; // 上限 32
+            for (let i = 0; i < count; i++) {
+                await repo.writeManifest(`cp-lru-${i}`, makeManifest(`cp-lru-${i}`));
+            }
+            // 缓存有界
+            expect(repo['cache'].size).toBeLessThanOrEqual(32);
+            // 最旧的（cp-lru-0）已被淘汰，再次加载走磁盘
+            const reloaded = await repo.loadManifest('cp-lru-0');
+            expect(reloaded?.checkpointId).toBe('cp-lru-0');
+            // 磁盘文件真实存在
+            await expect(
+                fs.access(path.join(storageRoot, 'checkpoints', 'cp-lru-0', 'manifest.json'))
+            ).resolves.toBeUndefined();
+        });
+
+        test('缓存 LRU：命中的条目刷新为最新，不被优先淘汰（CP-CACHE-1）', async () => {
+            for (let i = 0; i < 32; i++) {
+                await repo.writeManifest(`cp-lru-b-${i}`, makeManifest(`cp-lru-b-${i}`));
+            }
+            // 访问 cp-lru-b-0，把它刷新为最新
+            await repo.loadManifest('cp-lru-b-0');
+            // 再写入 2 条，触发 2 次淘汰：应淘汰 cp-lru-b-1、cp-lru-b-2（而非刚访问的 0）
+            await repo.writeManifest('cp-lru-b-32', makeManifest('cp-lru-b-32'));
+            await repo.writeManifest('cp-lru-b-33', makeManifest('cp-lru-b-33'));
+            expect(repo['cache'].has('cp-lru-b-0')).toBe(true);
+            expect(repo['cache'].has('cp-lru-b-1')).toBe(false);
+            expect(repo['cache'].has('cp-lru-b-2')).toBe(false);
+        });
+
+        test('删除存档目录后 clearCache 使缓存失效（既有语义保持）', async () => {
+            await repo.writeManifest('cp-clear', makeManifest('cp-clear'));
+            repo.clearCache('cp-clear');
+            expect(repo['cache'].has('cp-clear')).toBe(false);
+        });
+    });
 });

@@ -49,7 +49,16 @@ describe('ConversationManager createBranchConversation', () => {
             workspaceUri: 'file:///source-workspace'
         });
 
-        await expect(storage.loadHistory(targetConversationId)).resolves.toEqual(sourceHistory.slice(0, 3));
+        // BR-01/BR-02：分支复制会先迁移源历史，复制内容带稳定 id + 线性 parentId；
+        // 其余字段与源历史完全一致（只复制到目标消息）。
+        const copiedHistory = await storage.loadHistory(targetConversationId);
+        expect(copiedHistory).toHaveLength(3);
+        expect(copiedHistory!.map(({ id, parentId, ...rest }) => rest))
+            .toEqual(sourceHistory.slice(0, 3).map(({ id, parentId, ...rest }) => rest));
+        expect(copiedHistory!.every(m => typeof m.id === 'string' && m.id.length > 0)).toBe(true);
+        expect(copiedHistory![0].parentId).toBeNull();
+        expect(copiedHistory![1].parentId).toBe(copiedHistory![0].id);
+        expect(copiedHistory![2].parentId).toBe(copiedHistory![1].id);
 
         const branchMetadata = await storage.loadMetadata(targetConversationId);
         expect(branchMetadata).toBeTruthy();

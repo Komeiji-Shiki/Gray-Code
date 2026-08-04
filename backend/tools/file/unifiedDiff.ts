@@ -417,136 +417,74 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
 
     for (let hunkIndex = 0; hunkIndex < parsed.hunks.length; hunkIndex++) {
         const hunk = parsed.hunks[hunkIndex];
+        const oldLines = hunk.lines
+            .filter(line => line.type === 'context' || line.type === 'del')
+            .map(line => line.content);
+        const replacementLines = hunk.lines
+            .filter(line => line.type === 'context' || line.type === 'add')
+            .map(line => line.content);
 
-        // 尝试在指定 startIndex 处应用 hunk，成功返回 { added, removed }，失败抛异常
-        const tryApplyAt = (startIndex: number): { added: number; removed: number } => {
-            if (startIndex < 0 || startIndex > lines.length) {
-                throw new Error(`Hunk start is out of range. ${hunk.header}`);
+        const matchesAt = (startIndex: number): boolean => {
+            if (startIndex < 0 || startIndex + oldLines.length > lines.length) return false;
+            for (let offset = 0; offset < oldLines.length; offset++) {
+                if (lines[startIndex + offset] !== oldLines[offset]) return false;
             }
-
-            let idx = startIndex;
-            let removed = 0;
-            let added = 0;
-
-            for (const line of hunk.lines) {
-                if (line.type === 'context') {
-                    const actual = lines[idx];
-                    if (actual !== line.content) {
-                        throw new Error(
-                            `Hunk context mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
-                        );
-                    }
-                    idx++;
-                    continue;
-                }
-
-                if (line.type === 'del') {
-                    const actual = lines[idx];
-                    if (actual !== line.content) {
-                        throw new Error(
-                            `Hunk context mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
-                        );
-                    }
-                    lines.splice(idx, 1);
-                    removed++;
-                    continue;
-                }
-
-                // add
-                lines.splice(idx, 0, line.content);
-                idx++;
-                added++;
-            }
-
-            return { added, removed };
+            return true;
         };
 
-        // 全局搜索 hunk 的 context+del 行文本块，返回所有匹配的 startIndex（0-based）
-        const searchHunkInFile = (): number[] => {
-            const oldLines = hunk.lines.filter(l => l.type === 'context' || l.type === 'del').map(l => l.content);
-            if (oldLines.length === 0) {
-                return []; // 纯 add hunk，无法搜索
-            }
-            const matches: number[] = [];
-            const scanLimit = lines.length - oldLines.length + 1;
-            for (let s = 0; s < scanLimit; s++) {
-                let match = true;
-                for (let j = 0; j < oldLines.length; j++) {
-                    if (lines[s + j] !== oldLines[j]) {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match) {
-                    matches.push(s);
-                }
-            }
-            return matches;
+        const applyAt = (startIndex: number): void => {
+            lines.splice(startIndex, oldLines.length, ...replacementLines);
         };
 
-        let snapshot = lines.slice();
+        const recordSuccess = (startIndex: number): void => {
+            const startLine = startIndex + 1;
+            const endLine = startLine + Math.max(replacementLines.length, 1) - 1;
+            appliedHunks.push({ index: hunkIndex, startLine, endLine });
+            results.push({ index: hunkIndex, ok: true, startLine, endLine });
+            delta += replacementLines.length - oldLines.length;
+        };
+
         let applied = false;
-
-        // 第一轮：按行号 + delta 定位
-        try {
-            if (hunk.oldStart >= 0) {
-                const baseOldStart = Math.max(1, hunk.oldStart);
-                const startIndex = baseOldStart - 1 + delta;
-                const { added, removed } = tryApplyAt(startIndex);
-
-                const newLen = computeHunkNewLen(hunk);
-                const startLine = startIndex + 1;
-                const endLine = startLine + Math.max(newLen, 1) - 1;
-                appliedHunks.push({ index: hunkIndex, startLine, endLine });
-                delta += added - removed;
-                results.push({ index: hunkIndex, ok: true, startLine, endLine });
+        if (hunk.oldStart >= 0) {
+            const baseOldStart = Math.max(1, hunk.oldStart);
+            const startIndex = baseOldStart - 1 + delta;
+            if (matchesAt(startIndex)) {
+                applyAt(startIndex);
+                recordSuccess(startIndex);
                 applied = true;
             }
-        } catch {
-            // 行号匹配失败，回滚并进入 fallback
-            lines.splice(0, lines.length, ...snapshot);
         }
 
-        // 第二轮 fallback：全局搜索 context+del 文本块，唯一匹配时重新应用
+        let fallbackMatches: number[] = [];
+        if (!applied && oldLines.length > 0) {
+            const firstLine = oldLines[0];
+            const scanLimit = lines.length - oldLines.length;
+            for (let startIndex = 0; startIndex <= scanLimit; startIndex++) {
+                if (lines[startIndex] === firstLine && matchesAt(startIndex)) {
+                    fallbackMatches.push(startIndex);
+                }
+            }
+
+            if (fallbackMatches.length === 1) {
+                const startIndex = fallbackMatches[0];
+                applyAt(startIndex);
+                recordSuccess(startIndex);
+                applied = true;
+            }
+        }
+
         if (!applied) {
-            snapshot = lines.slice(); // 刷新快照（虽然上面已回滚，保险起见）
-            const matches = searchHunkInFile();
-
-            if (matches.length === 1) {
-                try {
-                    const startIndex = matches[0];
-                    const { added, removed } = tryApplyAt(startIndex);
-
-                    const newLen = computeHunkNewLen(hunk);
-                    const startLine = startIndex + 1;
-                    const endLine = startLine + Math.max(newLen, 1) - 1;
-                    appliedHunks.push({ index: hunkIndex, startLine, endLine });
-                    delta += added - removed;
-                    results.push({ index: hunkIndex, ok: true, startLine, endLine });
-                    applied = true;
-                } catch (e) {
-                    // fallback 也失败了（理论上不应该，因为搜索已匹配），回滚
-                    lines.splice(0, lines.length, ...snapshot);
-                }
+            let error: string;
+            if (oldLines.length === 0) {
+                error = `Hunk context mismatch at ${hunk.header}. A pure-add hunk cannot be relocated without a valid line number.`;
+            } else if (fallbackMatches.length === 0) {
+                error = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found no match for the context/delete block (${oldLines.length} lines).`;
+            } else {
+                const candidateLines = fallbackMatches.map(index => index + 1);
+                error = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found ${fallbackMatches.length} matches (ambiguous). Candidate lines: ${candidateLines.join(', ')}.`;
             }
-
-            if (!applied) {
-                // 报告错误
-                const oldLines = hunk.lines.filter(l => l.type === 'context' || l.type === 'del').map(l => l.content);
-                let errorMsg: string;
-                if (matches.length === 0) {
-                    errorMsg = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found no match for the context/delete block (${oldLines.length} lines).`;
-                } else {
-                    const candidateLineNums = matches.map(m => m + 1);
-                    errorMsg = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found ${matches.length} matches (ambiguous). Candidate lines: ${candidateLineNums.join(', ')}.`;
-                }
-                results.push({
-                    index: hunkIndex,
-                    ok: false,
-                    error: errorMsg
-                });
-            }
-        }
+            results.push({ index: hunkIndex, ok: false, error });
+      }
     }
 
     return {

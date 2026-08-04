@@ -64,6 +64,54 @@ export function truncateFrom(contents: Content[], contentIndex: number): Content
     return normalizeIndexes(cloned.slice(0, contentIndex));
 }
 
+/**
+ * R5b-2.4：删除中间消息后修复线性 parentId 链。
+ *
+ * 删除会让「被删消息的直系后继」的 parentId 悬空指向已不存在的 id（needsNodeIdMigration
+ * 只修 null/undefined，不修悬空 string）。此函数把 parentId 直接指向被删 id 的消息重链到
+ * 被删消息的 parentId；若该 parent 也在本次删除中（连续删除），沿链向上解析到最近未删除
+ * 祖先（首条为 null）。
+ *
+ * 分支语义保留：parentId 指向未删除消息的跨链关系不受影响——只修 parentId 直接指向被删
+ * id 的消息（主链直系后继 / 挂在被删节点上的分支挂点），其余原样保留。
+ *
+ * @param remaining 删除后的消息数组（原地修改 parentId，不改变数组内容）
+ * @param deletedMessages 本次删除的消息（需含 id/parentId）
+ */
+export function repairParentChainAfterDelete(
+    remaining: Content[],
+    deletedMessages: ReadonlyArray<Content>
+): void {
+    const deletedById = new Map<string, string | null>();
+    for (const message of deletedMessages) {
+        if (message && typeof message.id === 'string' && message.id.length > 0) {
+            deletedById.set(message.id, message.parentId ?? null);
+        }
+    }
+    if (deletedById.size === 0) {
+        return;
+    }
+
+    for (const message of remaining) {
+        const direct = message.parentId;
+        if (typeof direct !== 'string' || !deletedById.has(direct)) {
+            continue;
+        }
+        // 沿被删链向上解析最近未删除祖先（被删消息的 parent 可能也在本次删除中）
+        let parentId: string | null = direct;
+        let guard = 0;
+        while (typeof parentId === 'string' && deletedById.has(parentId)) {
+            parentId = deletedById.get(parentId) ?? null;
+            if (++guard > deletedById.size) {
+                // 防御：异常长链时终止，退化为 null（根），避免死循环
+                parentId = null;
+                break;
+            }
+        }
+        message.parentId = parentId;
+    }
+}
+
 export function deleteLogicalMessage(contents: Content[], contentIndex: number): Content[] {
     const cloned = cloneContents(contents);
     if (contentIndex < 0 || contentIndex >= cloned.length) {
@@ -85,7 +133,10 @@ export function deleteLogicalMessage(contents: Content[], contentIndex: number):
         }
     }
 
+    const deletedMessages = cloned.filter((_, index) => indexesToDelete.has(index));
     const next = cloned.filter((_, index) => !indexesToDelete.has(index));
+    // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继重链到被删消息的 parent）
+    repairParentChainAfterDelete(next, deletedMessages);
     return normalizeIndexes(next);
 }
 

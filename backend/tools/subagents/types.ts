@@ -30,6 +30,14 @@ export type SubAgentType = string;
 export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action';
 
 /**
+ * 子代理嵌套深度上限（F2：子 agent 开子子 agent）。
+ *
+ * 深度以 0 为基准：主模型=0，子 agent=1，子子 agent=2。
+ * 派生子 agent 时 depth = 父 depth + 1；超过本上限（depth > 2）的嵌套派发会被拒绝并返回明确错误。
+ */
+export const MAX_SUBAGENT_NESTING_DEPTH = 2;
+
+/**
  * 子代理渠道配置
  * 
  * 指定子代理使用的 AI 渠道和模型
@@ -135,6 +143,15 @@ export interface SubAgentRequest {
     runId?: string;
 
     /**
+     * 是否后台模式（background: true 的 subagents 调用）。
+     *
+     * 修改原因：前台 SubAgent 的 abort 信号挂在主会话工具循环上，用户发新消息时旧流被 abort
+     * 会连带杀掉前台 SubAgent；转后台（detach）机制需要区分前台/后台——后台 run 本就使用
+     * 独立 AbortController，不应被 detach 影响（否则用户无法通过 TaskManager 取消后台任务）。
+     */
+    background?: boolean;
+
+    /**
      * 延续之前的子代理对话的 runId。
      *
      * 当指定此参数时，新子代理会继承旧 run 的完整对话历史（transcript），
@@ -161,6 +178,37 @@ export interface SubAgentRequest {
 
     /** 父请求继承的提示词模式快照（当前调用携带） */
     promptModeSnapshot?: ResolvedPromptModeSnapshot;
+
+    /**
+     * 本 run 的嵌套深度（主模型=0，子 agent=1，子子 agent=2）。
+     *
+     * 修改原因（F2）：子 agent 可以再开子 agent，深度必须随 run 上下文逐层 +1，
+     * 用于超限拒绝与 Monitor 元数据展示；缺省按 0（主模型直接派发）处理。
+     *
+     * L-8（R4 复查）：本字段仅允许框架注入——subagents handler 按
+     * `context.subagentDepth + 1` 计算后传入，模型不可控；模型传入的值
+     * 会被 executor 规范化为非负整数（非法值按 0 处理），不构成提权面。
+     */
+    depth?: number;
+
+    /**
+     * 派生本 run 的父 run 的 runId（主模型直接派发时缺省）。
+     *
+     * 修改原因（F2）：父 run 结束时需要级联清理其派生的子 run（含排队/后台），
+     * 子 run 也要能把自己从父 run 的派生列表里摘除。
+     */
+    parentRunId?: string;
+
+    /**
+     * 继承自父 run 的可用工具限制（H-1，R4 复查）。
+     *
+     * 嵌套派发时由 subagents handler 从父 run 的可用工具集复制（仅框架注入，
+     * 模型不可控）；executor 解析出本 run 的工具后取交集：
+     * `最终可用工具 = 自身配置解析结果 ∩ inheritedToolFilter`，
+     * 防止 mode='all' 的 General Worker（或其他子代理）获得父代理自身
+     * 没有的写/执行权限。主模型直接派发时缺省（不限制）。
+     */
+    inheritedToolFilter?: string[];
 }
 
 /**

@@ -11,10 +11,12 @@ import type {
     SubAgentToolCall,
     SubAgentExecutor,
     SubAgentExecutorContext,
-    SubAgentExecutorFactory
+    SubAgentExecutorFactory,
+    SubAgentToolsConfig
 } from './types';
 import type { ToolDeclaration } from '../types';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
+import { WRITE_TOOLS } from './presets';
 import { MEMORY_TOOL_NAMES } from '../memory';
 import { TODO_TOOL_NAMES } from '../todo';
 import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
@@ -28,6 +30,7 @@ import type { SubAgentRunStatus } from './runEventBus';
 import { subAgentRunController } from './runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from './concurrencyLimiter';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
+import { agentMailbox } from './agentMailbox';
 
 /**
  * 子代理内部工具执行结果。
@@ -43,6 +46,144 @@ interface SubAgentExecutedToolCall {
     responseParts?: ContentPart[];
     toolResults?: ToolExecutionResult[];
     multimodalAttachments?: ContentPart[];
+}
+
+/**
+ * F2：追加到子 agent system prompt 的中文说明。
+ *
+ * 修改原因：子 agent 现在可以使用 subagents 工具派生子子 agent，但大多数任务不需要；
+ * 直接写进 executor 组装 prompt 的位置，所有子 agent（含 General Worker 与自定义提示词）统一生效。
+ * 修改目的：引导模型只在真正需要独立复查或主模型明确指示时才嵌套派发，避免滥用。
+ * 仅在本次 run 的工具集实际包含 subagents 时追加，白名单不含 subagents 的 agent 不收到该说明。
+ */
+const SUBAGENT_NESTING_PROMPT_NOTICE = [
+    '',
+    '你可以使用 subagents 工具派生子 agent 协助工作，但一般不需要——仅当你的代码或输出需要另一个 agent 独立复查，或主模型明确下达指令时才使用。子 agent 的最终结果会汇总到你的输出，并最终返回给主模型。'
+].join('\n');
+
+/**
+ * 写/执行类工具集合（H-1 / M-7 共享口径）。
+ *
+ * subagents 工具派发的 General Worker 是 mode='all'（全量非 memory 工具），
+ * 若父代理自身缺少任一写/执行工具，嵌套派发会让子代理获得父代理没有的能力
+ * （绕过只读沙箱）。因此只有「完整拥有本集合全部工具」的子代理才允许持有
+ * subagents 工具；不具备的代理直接把 subagents 从可用工具集中移除。
+ */
+export const WRITE_CAPABILITY_TOOLS = [...WRITE_TOOLS, 'execute_command'];
+
+/**
+ * H1-4：子代理发给子模型的 history 剥离已投递的 agentInbox，防重放。
+ *
+ * 背景：子代理本地 history 直进 formatter（不经 formatHistoryForAPI），工具结果里的
+ * agentInbox（本 run 信箱已 drain 的消息）会被原样发给子模型。同 run 后续迭代与
+ * continueFromRunId 续跑都会重放这些已投递消息（prompt 膨胀、模型可能重复响应）。
+ *
+ * 语义（与主路径 formatHistoryForAPI「当轮保留、跨轮剥离」对齐）：只保留**最后一条**
+ * 消息中尚未投递过的 agentInbox——工具结果入 history 后第一次发给子模型的请求即是投递；
+ * 更早条目中的 agentInbox 一律剥离。只做浅拷贝（functionResponse.response 内其余字段
+ * 原样引用），不改写持久化 transcript。
+ */
+export function stripReplayedAgentInboxForModel(history: Content[]): Content[] {
+    const lastIndex = history.length - 1;
+    let changed = false;
+    const stripped = history.map((message, index) => {
+        if (index === lastIndex || !message.parts?.some(part => part.functionResponse)) {
+            return message;
+        }
+        const newParts: ContentPart[] = [];
+        let partsChanged = false;
+        for (const part of message.parts) {
+            if (!part.functionResponse) {
+                newParts.push(part);
+                continue;
+            }
+            const response = part.functionResponse.response;
+            if (!response || typeof response !== 'object' || Array.isArray(response)) {
+                newParts.push(part);
+                continue;
+            }
+            const cleaned = { ...(response as Record<string, unknown>) };
+            delete cleaned.agentInbox;
+            if (cleaned.data && typeof cleaned.data === 'object' && !Array.isArray(cleaned.data)) {
+                cleaned.data = { ...(cleaned.data as Record<string, unknown>) };
+                delete (cleaned.data as Record<string, unknown>).agentInbox;
+            }
+            newParts.push({
+                ...part,
+                functionResponse: {
+                    ...part.functionResponse,
+                    response: cleaned
+                }
+            });
+            partsChanged = true;
+        }
+        if (!partsChanged) {
+            return message;
+        }
+        changed = true;
+        return { ...message, parts: newParts };
+    });
+    return changed ? stripped : history;
+}
+
+/**
+ * 判断子代理工具配置是否「不具备完整写/执行能力」（H-1，R4 复查）。
+ *
+ * - mode 'all' / 'builtin'：内置工具含全部写/执行工具 → 具备
+ * - mode 'mcp'：无内置写/执行工具 → 不具备
+ * - mode 'whitelist'：白名单必须包含全部写/执行工具才具备
+ * - mode 'blacklist'：黑名单命中任一写/执行工具即不具备
+ *
+ * M-7（R4 复查）：本函数是 subagents.ts getAgentAvailableTools（同步声明路径）与
+ * resolveSubAgentAvailableTools（本文件，异步 resolver 路径）共用的裁剪口径，
+ * 两侧对 subagents 工具的去留保持一致，避免声明描述与实际工具集分叉。
+ */
+export function agentLacksWriteCapability(toolsConfig: SubAgentToolsConfig): boolean {
+    switch (toolsConfig.mode) {
+        case 'all':
+        case 'builtin':
+            return false;
+        case 'mcp':
+            return true;
+        case 'whitelist': {
+            const whitelist = new Set(toolsConfig.whitelist || toolsConfig.list || []);
+            return !WRITE_CAPABILITY_TOOLS.every(tool => whitelist.has(tool));
+        }
+        case 'blacklist': {
+            const blacklist = new Set(toolsConfig.blacklist || toolsConfig.list || []);
+            return WRITE_CAPABILITY_TOOLS.some(tool => blacklist.has(tool));
+        }
+        default:
+            return true;
+    }
+}
+
+/**
+ * 父 run 可用工具注册表（H-1，R4 复查）。
+ *
+ * 嵌套派发时，subagents handler 需要把「父 run 实际允许的工具集」传播给子 run：
+ * 子 run 最终可用工具 = 子配置解析结果 ∩ 父 run 可用工具，避免子代理（尤其是
+ * mode='all' 的 General Worker）获得父代理自身没有的写/执行权限。
+ * 由于 ToolExecutionService 的 toolContext 无法携带额外字段（文件边界限制），
+ * 这里用 runId 索引父 run 的可用工具集：executor 在解析出工具后注册（
+ * setRunAllowedTools），run 结束时在最外层 finally 清理（clearRunAllowedTools）；
+ * 主模型直接派发（无 mailboxRunId）不走此表。
+ */
+const runAllowedToolsRegistry = new Map<string, Set<string>>();
+
+/** 注册某个 run 实际允许的工具名集合（供嵌套派发时继承） */
+export function setRunAllowedTools(runId: string, tools: Set<string>): void {
+    runAllowedToolsRegistry.set(runId, tools);
+}
+
+/** 读取某个 run 实际允许的工具名集合（不存在时返回 undefined） */
+export function getRunAllowedTools(runId: string): Set<string> | undefined {
+    return runAllowedToolsRegistry.get(runId);
+}
+
+/** run 结束时清理其工具限制登记，避免内存残留 */
+export function clearRunAllowedTools(runId: string): void {
+    runAllowedToolsRegistry.delete(runId);
 }
 
 /**
@@ -107,7 +248,7 @@ export async function resolveSubAgentAvailableTools(
         context.mcpManager
     );
 
-    return resolver.resolve({
+    const resolved = resolver.resolve({
         multimodalEnabled: channelConfig.multimodalToolsEnabled,
         channelType: channelConfig.type,
         toolMode: channelConfig.toolMode,
@@ -118,9 +259,22 @@ export async function resolveSubAgentAvailableTools(
         denylist,
         // 修改原因：todo_write/todo_update 依赖主会话 ToolContext.conversationId 读写会话元数据，
         // 子代理执行路径不注入该值，声明了也必然失败并浪费迭代。
-        // 修改方式：与 subagents/memory 工具一起从子代理可用工具中排除，主会话 todo 功能不受影响。
-        excludeToolNames: ['subagents', ...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES, ...blockedByDefault]
+        // 修改方式：与 memory 工具一起从子代理可用工具中排除，主会话 todo 功能不受影响。
+        // F2：不再排除 subagents——子 agent 需要能派生子子 agent（嵌套）；
+        // subagents 工具不依赖 conversationId（General Worker 只依赖 channelConfigId），
+        // 放开不会引入 todo 类的"声明了但必然失败"问题；深度上限由 subagents handler 在派发前校验。
+        // 安全加固：危险工具（execute_command/delete_file）默认排除，whitelist 显式列出时放行。
+        excludeToolNames: [...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES, ...blockedByDefault]
     }) || [];
+
+    // H-1（R4 复查）：对不具备完整写/执行能力的代理，从可用工具集中移除 subagents——
+    // 防止只读/受限代理（blacklist 排除写工具、whitelist 缺写工具、mcp 等）派发
+    // mode='all' 的 General Worker 获得自身没有的写/执行权限（权限逃逸）。
+    // M-7：与 subagents.ts getAgentAvailableTools 共用 agentLacksWriteCapability 口径。
+    if (agentLacksWriteCapability(toolsConfig)) {
+        return resolved.filter(decl => decl.name !== 'subagents');
+    }
+    return resolved;
 }
 
 /**
@@ -135,7 +289,9 @@ async function executeToolCall(
     agentConfig?: SubAgentConfig,
     callId?: string,
     runId?: string,
-    agentName?: string
+    agentName?: string,
+    mailboxConversationId?: string,
+    nestingDepth?: number
 ): Promise<SubAgentExecutedToolCall> {
     const executionCall = {
         id: callId || `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -169,8 +325,10 @@ async function executeToolCall(
         }
 
         // 校验子代理自身的工具白名单
-        // 即使 AI 不应该调用不在列表里的工具，这里做防御性校验
-        if (allowedToolNames && allowedToolNames.size > 0) {
+        // 即使 AI 不应该调用不在列表里的工具，这里做防御性校验。
+        // M-6（R4 复查）：allowedToolNames 为空 Set 时语义是「本 run 无任何可用工具」，
+        // 必须拒绝一切工具调用；旧实现 `size > 0` 才校验会把空集错误地当成「不校验」。
+        if (allowedToolNames) {
             if (!allowedToolNames.has(toolName)) {
                 const error = `Tool not allowed for this sub-agent: ${toolName}`;
                 emitToolFailure(error);
@@ -231,7 +389,14 @@ async function executeToolCall(
                 // 修改原因：文件写锁需要知道执行归属，才能在撞车提示中告知对方是哪个 agent 在占用。
                 // 修改方式：SubAgent 链路显式传入 subagent 归属（runId + agent 名称）。
                 // 修改目的：主会话与各 SubAgent 在同一把全局锁上互斥，提示文案可追溯到具体持有者。
-                { kind: 'subagent', id: actualRunId, label: agentName || 'sub-agent' }
+                { kind: 'subagent', id: actualRunId, label: agentName || 'sub-agent' },
+                // A-COMM：子代理信箱按主会话 conversationId + 本 run runId 挂载（conversationId 参数保持 undefined，
+                // 避免子代理工具调用意外获得主会话 conversationId 而改变既有工具行为）。
+                mailboxConversationId,
+                actualRunId,
+                // F2：把本 run 的嵌套深度随工具上下文透传（ToolExecutionService 注入 toolContext.subagentDepth），
+                // 子代理内部的 subagents 工具调用据此得知父 run 深度（见 subagents.ts executeSubAgent）。
+                nestingDepth
             );
 
             const toolResult = fullResult.toolResults?.[0];
@@ -392,6 +557,14 @@ export function createDefaultExecutor(
             requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         );
 
+        // F2：嵌套深度——由派发方（subagents handler）按“父深度 + 1”计算后随 request 传入；
+        // 缺省按 0（主模型直接派发）处理。深度用于：超限校验已在 handler 完成，这里负责
+        // 写入 run 元数据（run_created payload + runController 记录）供 Monitor 展示，
+        // 并随工具执行上下文透传给下一层 subagents 工具调用。
+        const depth = Number.isInteger(request.depth) && (request.depth ?? 0) >= 0
+            ? Math.floor(request.depth!)
+            : 0;
+
         // 修改原因：子代理对话延续——允许新子代理继承旧 run 的完整 transcript，实现跨调用的对话接力。
         // 修改方式：从 runEventBus 读取旧 run 的 contents 作为 baseContents；校验旧 run 已处于终态。
         // 修改目的：主模型可通过 continueFromRunId 参数指定延续目标，避免每次从零开始。
@@ -460,7 +633,9 @@ export function createDefaultExecutor(
         subAgentRunEventBus.createRun(runId, config.name, {
             agentType: request.agentType,
             prompt: request.prompt,
-            context: request.context
+            context: request.context,
+            // F2：深度随 run_created payload 暴露，Monitor 可按需展示嵌套层级。
+            depth
         }, {
             conversationId: currentConversationId,
             conversationStore: currentConversationStore,
@@ -469,7 +644,41 @@ export function createDefaultExecutor(
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
         // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
-        subAgentRunController.register(runId, config.name);
+        // F2：注册时携带嵌套深度；若本 run 由另一个子 agent 派生，同时登记父子关系，
+        // 供父 run 结束时级联清理（见最外层 finally 的 cascadeExitChildren）。
+        subAgentRunController.register(runId, config.name, depth, !request.background);
+        if (request.parentRunId) {
+            subAgentRunController.registerChild(request.parentRunId, runId);
+        }
+
+        // 转后台（detach）：用户发新消息时 StreamAbortManager 会把该会话前台 SubAgent 转为后台
+        // （subAgentRunController.detachFromParent），本回调同步解绑父 abort 信号，run 继续执行；
+        // 后续 createOperationSignal 不再组合父信号。后台模式（background:true）不注册——
+        // 其 abort 信号本就独立于父轮，detach 不应影响 TaskManager 取消能力。
+        let detachedFromParent = false;
+        let currentOperationHandle: { detachParent: () => void } | undefined;
+        // 转后台（detach）后父 abort 信号对 run 不再有约束力——所有取消检查必须经由
+        // 本 helper 读取父信号（detached 后视为无父信号），否则 detach 后旧流 abort
+        // 仍会在下一轮迭代/工具执行前杀死 run（R7c E1）。
+        const parentAbort = (): AbortSignal | undefined => (detachedFromParent ? undefined : abortSignal);
+        // acquire 桥的父信号部分与 run 控制信号部分分开管理（R7c E3）：detach 只摘父信号，
+        // 保留 run 控制信号——排队中已转后台的 run 仍能被 Monitor pause/exit 唤醒。
+        let releaseParentAcquireListener: (() => void) | undefined;
+        if (!request.background) {
+            subAgentRunController.registerDetachListener(runId, () => {
+                detachedFromParent = true;
+                try {
+                    currentOperationHandle?.detachParent();
+                    releaseParentAcquireListener?.();
+                    // 父 abort 还会通过超时桥接器（onParentAbort → timeoutController.abort）传播，
+                    // 必须一并摘除，否则 detach 后旧流 abort 仍会中止当前操作。
+                    releaseParentAbortBridge?.();
+                    releaseParentAbortBridge = undefined;
+                } catch (err) {
+                    console.warn(`[SubAgentExecutor] Failed to detach run ${runId} from parent signal:`, err);
+                }
+            });
+        }
 
         // 修改原因：多个 SubAgent 并行派发时需要全局并发上限，超出的 run 必须排队而不是被拒绝。
         // 修改方式：createRun 后先 emit run_queued 进入排队状态，acquire 全局信号量成功后 emit run_started 恢复 running。
@@ -483,10 +692,41 @@ export function createDefaultExecutor(
                 queueLength: subAgentConcurrencyLimiter.getQueueLength()
             }
         });
+        // F2：排队等待席位时除了父 abortSignal，还要监听本 run 自己的控制信号——
+        // 这样父 run 级联退出（cascadeExitChildren → exit(childRunId)）能唤醒排队中的子 run，
+        // 而不是让它一直等到有席位释放。
+        let acquireSignal: AbortSignal | undefined = abortSignal;
+        let releaseAcquireSignal: (() => void) | undefined;
+        const runControlSignal = subAgentRunController.getAbortSignal(runId);
+        if (runControlSignal) {
+            const acquireController = new AbortController();
+            const onAcquireAbort = () => acquireController.abort();
+            if (abortSignal && !detachedFromParent) {
+                abortSignal.addEventListener('abort', onAcquireAbort, { once: true });
+            }
+            runControlSignal.addEventListener('abort', onAcquireAbort, { once: true });
+            acquireSignal = acquireController.signal;
+            releaseParentAcquireListener = () => {
+                if (abortSignal) {
+                    abortSignal.removeEventListener('abort', onAcquireAbort);
+                }
+            };
+            const releaseRunControlAcquireListener = () => {
+                runControlSignal.removeEventListener('abort', onAcquireAbort);
+            };
+            releaseAcquireSignal = () => {
+                releaseParentAcquireListener?.();
+                releaseRunControlAcquireListener();
+            };
+        }
         try {
-            await subAgentConcurrencyLimiter.acquire(runId, abortSignal);
+            await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
         } catch (queueError) {
             subAgentRunController.unregister(runId);
+            // F2：排队被取消的早退路径也要从父 run 的派生列表里摘除，避免残留孤儿登记
+            if (request.parentRunId) {
+                subAgentRunController.unregisterChild(request.parentRunId, runId);
+            }
             const message = queueError instanceof SubAgentQueueCancelledError
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
                 : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
@@ -502,12 +742,20 @@ export function createDefaultExecutor(
                 error: message,
                 cancelled: true
             };
+        } finally {
+            releaseAcquireSignal?.();
+            releaseAcquireSignal = undefined;
         }
         subAgentRunEventBus.emit({
             runId,
             agentName: config.name,
             type: 'run_started'
         });
+
+        // A-COMM：run 真正启动后注册为「本对话下已知」，agent.sendMessage 才能按 runId/名称寻址到它；
+        // 排队被取消/接续校验失败等未真正启动的早退路径不会留下“已知 run”残留；
+        // run 结束/取消时在最外层 finally 中注销并清理 inbox。
+        agentMailbox.registerRun(currentConversationId, runId, config.name);
 
         // 修改原因：子代理设置界面新增「默认迭代次数」全局配置，未单独配置的 agent 应继承该默认值。
         // 修改方式：优先取 per-agent maxIterations，其次取全局 defaultMaxIterations，最后回退 50。
@@ -550,7 +798,7 @@ export function createDefaultExecutor(
                     timeoutController?.abort();
                 }
             }, 500);
-            if (abortSignal) {
+            if (abortSignal && !detachedFromParent) {
                 const onParentAbort = () => {
                     if (timeoutId) {
                         clearInterval(timeoutId);
@@ -574,15 +822,23 @@ export function createDefaultExecutor(
         interface OperationSignalHandle {
             signal: AbortSignal | undefined;
             release: () => void;
+            /** 只解绑父 abort 信号的监听（转后台 detach 用），超时与 controller 信号保持绑定 */
+            detachParent: () => void;
         }
 
         const createOperationSignal = (): OperationSignalHandle => {
-            const signals = [abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
+            // 转后台（detach）后不再组合父 abort 信号：detachedFromParent 由 detach 回调置位，
+            // 新建的组合信号只响应超时与 controller 信号，旧流 abort 不再影响本 run。
+            const signals = [detachedFromParent ? undefined : abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
                 .filter((signal): signal is AbortSignal => !!signal);
-            if (signals.length === 0) return { signal: undefined, release: () => undefined };
+            if (signals.length === 0) {
+                currentOperationHandle = undefined;
+                return { signal: undefined, release: () => undefined, detachParent: () => undefined };
+            }
             const controller = new AbortController();
             const abort = () => controller.abort();
             const attached: AbortSignal[] = [];
+            let parentSignal: AbortSignal | undefined;
             for (const signal of signals) {
                 if (signal.aborted) {
                     controller.abort();
@@ -590,16 +846,28 @@ export function createDefaultExecutor(
                 }
                 signal.addEventListener('abort', abort, { once: true });
                 attached.push(signal);
+                if (signal === abortSignal) parentSignal = signal;
             }
-            return {
+            const handle: OperationSignalHandle = {
                 signal: controller.signal,
                 release: () => {
                     for (const signal of attached) {
                         signal.removeEventListener('abort', abort);
                     }
                     attached.length = 0;
+                    if (currentOperationHandle === handle) currentOperationHandle = undefined;
+                },
+                detachParent: () => {
+                    if (parentSignal && attached.includes(parentSignal)) {
+                        parentSignal.removeEventListener('abort', abort);
+                        const idx = attached.indexOf(parentSignal);
+                        if (idx >= 0) attached.splice(idx, 1);
+                        parentSignal = undefined;
+                    }
                 }
             };
+            currentOperationHandle = handle;
+            return handle;
         };
 
         let lastResponse: string = '';
@@ -680,8 +948,8 @@ export function createDefaultExecutor(
         };
         
         try {
-            // 检查是否取消
-            if (abortSignal?.aborted || timeoutController?.signal.aborted) {
+            // 检查是否取消（detach 后父信号不再约束——转后台的 run 不应在此被旧流 abort 终止）
+            if (parentAbort()?.aborted || timeoutController?.signal.aborted) {
                 return finalizeRun({
                     success: false,
                     error: 'Cancelled before execution',
@@ -705,12 +973,30 @@ export function createDefaultExecutor(
                 ...context,
                 promptModeSnapshot: currentPromptModeSnapshot
             });
+
+            // H-1（R4 复查）：嵌套派发时继承父 run 的工具限制——
+            // 子 run 最终可用工具 = 自身配置解析结果 ∩ 父 run 可用工具
+            // （白名单取交集 / 黑名单取并集在「先按自身配置解析、再取交集」的口径下等价）。
+            // inheritedToolFilter 仅由框架注入（subagents handler 从父 run 复制），模型不可控。
+            let effectiveTools = availableTools;
+            if (request.inheritedToolFilter) {
+                const inheritedSet = new Set(request.inheritedToolFilter);
+                effectiveTools = availableTools.filter(decl => inheritedSet.has(decl.name));
+            }
             
-            // 构建允许的工具名称集合，用于执行时的防御性校验
-            const allowedToolNames = new Set(availableTools.map(t => t.name));
+            // 构建允许的工具名称集合，用于执行时的防御性校验（空集 = 无任何可用工具，拒绝一切调用）
+            const allowedToolNames = new Set(effectiveTools.map(t => t.name));
+            // H-1：把本 run 的最终可用工具按 runId 注册，供内层 subagents 工具派发时继承
+            // （run 结束时在最外层 finally 清理）。
+            setRunAllowedTools(runId, allowedToolNames);
             
             // 构建系统提示词
-            const systemPrompt = config.systemPrompt;
+            // F2：当本次 run 的工具集实际包含 subagents 工具时，追加中文嵌套说明，
+            // 引导模型只在确实需要独立复查或主模型明确指示时才派生子子 agent。
+            // L-9（R4 复查）：config.systemPrompt 可能为 undefined，拼接前兜底为空串。
+            const systemPrompt = allowedToolNames.has('subagents')
+                ? `${config.systemPrompt ?? ''}${SUBAGENT_NESTING_PROMPT_NOTICE}`
+                : config.systemPrompt;
             
             // 构建用户提示词
             let userPrompt = request.prompt;
@@ -735,8 +1021,8 @@ export function createDefaultExecutor(
                     return controlWaitResult;
                 }
 
-                // 检查是否取消或超时
-                if (abortSignal?.aborted || timeoutController?.signal.aborted) {
+                // 检查是否取消或超时（detach 后父信号不再约束，转后台的 run 继续执行）
+                if (parentAbort()?.aborted || timeoutController?.signal.aborted) {
                     const timeoutCheck = checkTimeout();
                     const isTimeout = timeoutCheck.exceeded;
                     return finalizeRun({
@@ -785,10 +1071,14 @@ export function createDefaultExecutor(
                 let retryFailedInThisCall = false;
                 const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
-                    history: history,
+                    // H1-4：剥离已投递的 agentInbox（只保留最后一条未投递消息的），
+                    // 防止同 run 后续迭代 / continueFromRunId 续跑重放已 drain 的信箱消息
+                    history: stripReplayedAgentInboxForModel(history),
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: operationSignal,
-                    toolOverrides: availableTools.length > 0 ? availableTools : undefined,
+                    // H-1：toolOverrides 使用继承过滤后的 effectiveTools（子 run 不向模型暴露
+                    // 父 run 不允许的工具），与 allowedToolNames 防御性校验口径一致。
+                    toolOverrides: effectiveTools.length > 0 ? effectiveTools : undefined,
                     suppressRetryNotification: true,
                     // 修改原因：DeepSeek KVCache 按 user_id 隔离、Anthropic metadata.user_id 区分运行域都依赖请求携带稳定标识。
                     // 修改方式：SubAgent 用 runId 作为 conversationId，每个 run 拥有独立缓存域（formatter 会哈希，不泄露原始 ID）。
@@ -992,7 +1282,7 @@ export function createDefaultExecutor(
                 for (const call of currentToolCalls) {
                     // 执行工具前检查超时
                     const timeoutCheck = checkTimeout();
-                    if (timeoutCheck.exceeded || abortSignal?.aborted || timeoutController?.signal.aborted) {
+                    if (timeoutCheck.exceeded || parentAbort()?.aborted || timeoutController?.signal.aborted) {
                         return finalizeRun({
                             success: false,
                             response: lastResponse,
@@ -1018,7 +1308,11 @@ export function createDefaultExecutor(
                             config,
                             call.id,
                             runId,
-                            config.name
+                            config.name,
+                            // A-COMM：子代理信箱会话使用本次调用的动态主会话 ID
+                            currentConversationId,
+                            // F2：把本 run 的嵌套深度随工具上下文透传，供内层 subagents 工具做深度校验
+                            depth
                         );
                     } finally {
                         toolOperation.release();
@@ -1102,8 +1396,22 @@ export function createDefaultExecutor(
             // 修改原因：run 完成、失败或取消后不能继续显示为可控制的活跃执行，也不能继续占用并发席位。
             // 修改方式：executor 最外层 finally 注销 runController 活跃记录并释放全局信号量席位（release 幂等）。
             // 修改目的：避免历史 run 卡死并发队列或展示会影响主工具的控制按钮。
+            // F2：级联清理——本 run 结束时退出其派生的所有子 run（含排队/后台），防止孤儿 run 继续运行；
+            // 同时把自己从父 run 的派生列表里摘除（父 run 已结束时会由它的 cascadeExitChildren 清空，这里幂等）。
+            subAgentRunController.cascadeExitChildren(
+                runId,
+                'Parent sub-agent run ended; nested sub-agent runs were cancelled.'
+            );
             subAgentRunController.unregister(runId);
+            if (request.parentRunId) {
+                subAgentRunController.unregisterChild(request.parentRunId, runId);
+            }
             subAgentConcurrencyLimiter.release(runId);
+            // H-1：run 结束时清理本 run 在 runAllowedToolsRegistry 中的工具限制登记，
+            // 避免内存残留；嵌套子 run 在派发时已把父限制复制进自己的 request，不受影响。
+            clearRunAllowedTools(runId);
+            // A-COMM：run 结束/取消时注销信箱已知记录并清理该 run 的 inbox，避免内存残留与误投递。
+            agentMailbox.unregisterRun(currentConversationId, runId);
             // 修改原因：run 异常退出时可能残留未释放的文件写锁（正常路径已在工具执行 finally 中释放）。
             // 修改方式：按 runId 兜底清理该 run 持有的全部锁。
             // 修改目的：避免锁泄漏导致其他 agent 永久无法修改相关文件。

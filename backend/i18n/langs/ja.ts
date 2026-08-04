@@ -92,7 +92,14 @@ const ja: BackendLanguageMessages = {
                 chainBroken: '増分チェーンが破損しています：参照先のベースチェックポイントが見つかりません',
                 partialFailure: '"{toolName}" {phase}の状態に復元しましたが、{count} 件の失敗があります',
                 workspaceMismatch: '現在のワークスペースがチェックポイント記録のワークスペースと一致しないため、復元を拒否しました',
-                multiRootLegacyNotSupported: '旧形式のチェックポイント（相対パス形式）はマルチルートワークスペースでは復元できません'
+                multiRootLegacyNotSupported: '旧形式のチェックポイント（相対パス形式）はマルチルートワークスペースでは復元できません',
+                checkpointNotFound: 'チェックポイントが見つかりません',
+                manifestMissing: 'チェックポイントのバックアップデータが見つかりません（manifest が見つかりません）',
+                cannotBuildChain: 'チェックポイントの増分チェーンを構築できません',
+                backupDirNotFound: 'バックアップディレクトリが見つかりません: {dirs}',
+                moreFailures: 'ほか {count} 件の失敗',
+                excludedNote: 'このチェックポイントは作成時の除外ルールで {count} 個のファイルを除外しました',
+                excludedNoteChanged: 'このチェックポイントは作成時の除外ルールで {count} 個のファイルを除外しました。現在の除外ルールは変更されているため、復元は現在のルールに従います'
             },
             defaultConversationTitle: '会話 {conversationId}',
             errors: {
@@ -110,12 +117,14 @@ const ja: BackendLanguageMessages = {
                 invalidCheckpointExclusionPatterns: 'チェックポイント除外ルールが無効です: {detail}',
                 invalidCheckpointExclusionProfiles: 'チェックポイント除外カテゴリが無効です: {detail}',
                 invalidCheckpointMaxFileSize: '単一ファイルサイズ上限は有限の数値である必要があります',
+                invalidCheckpointConfigField: 'チェックポイント設定フィールドが無効です: {field}',
                 exclusionPatternReason: {
                     empty: '空パターン',
                     absolute: '絶対パスパターン',
                     negationOnly: '! のみの否定（ルール本体なし）',
                     traversal: '.. による越界',
-                    newline: '改行を含む'
+                    newline: '改行を含む',
+                    blanket: 'ワークスペース全体を除外するパターン'
                 }
             },
             storage: {
@@ -643,6 +652,12 @@ description: "このスキルの機能と使用場面の簡単な説明"
             cannotRevealInExplorer: 'エクスプローラーで表示できません',
             
             deleteMessageFailed: 'メッセージの削除に失敗しました',
+            
+            interruptMessageInvalidConversation: '無効な会話 ID です',
+            interruptMessageEmptyText: 'メッセージ本文を空にすることはできません',
+            interruptMessageConversationNotFound: '会話が見つかりません',
+            interruptMessageRateLimited: 'メッセージの挿入が頻繁すぎます。しばらくしてから再試行してください',
+            interruptMessageFailed: 'メッセージの挿入に失敗しました',
             
             getModelsFailed: 'モデル一覧の取得に失敗しました',
             addModelsFailed: 'モデルの追加に失敗しました',

@@ -66,6 +66,7 @@ docs/
 # audit remediation notes (keep local, don't publish)
 AUDIT_REMEDIATION.md
 
+HEAD
 # electron desktop build artifacts
 electron-app/release/
 electron-app/*.tar.gz
@@ -84,3 +85,6 @@ electron-app/data/
 credentials*
 secrets*
 *.secret
+# historical planning/research docs (mission complete, keep local)
+.graycode/
+checkpoint-history-branch-architecture.plan.mdpstream/main

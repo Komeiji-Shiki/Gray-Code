@@ -6,10 +6,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
 import { assertSafeId } from '../../backend/core/idValidation';
-import { subAgentRunController } from '../../backend/tools/subagents/runController';
-import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
 import { previewExclusions as runExclusionPreview } from '../../backend/modules/checkpoint/CheckpointSnapshotBuilder';
 import { createRuntimeWorkspaceRoots } from '../../backend/modules/checkpoint/CheckpointWorkspace';
+import { cancelStreamAndSubAgents, detectDirtyFilesInWorkspace } from '../utils/WorkspaceRestoreGuard';
 import {
     DEFAULT_ENABLED_PROFILES,
     DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
@@ -36,7 +35,10 @@ export const getCheckpointConfig: MessageHandler = async (data, requestId, ctx) 
 export const updateCheckpointConfig: MessageHandler = async (data, requestId, ctx) => {
   const result = await ctx.settingsHandler.updateCheckpointConfig({ config: data.config });
   if (result.success) {
-    ctx.sendResponse(requestId, { success: true });
+    // M-10: 返回后端归一化后的配置（后端会合并默认启用类别、把非法值（如 maxFileSizeBytes 负数）归零等）。
+    // 前端保存成功后以返回值覆盖本地值，避免本地 UI 与后端权威值长期脱节。
+    const settings = (result as { settings?: { toolsConfig?: { checkpoint?: unknown } } }).settings;
+    ctx.sendResponse(requestId, { success: true, config: settings?.toolsConfig?.checkpoint ?? null });
   } else {
     const errorResult = result as { success: false; error: { code: string; message: string } };
     ctx.sendError(requestId, 'UPDATE_CHECKPOINT_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.updateCheckpointConfigFailed'));
@@ -71,36 +73,38 @@ export const previewRestore: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 恢复检查点
+ *
+ * BCP-05（决策 11）：恢复前检测未保存（dirty）文件——命中且未确认时返回
+ * { success: false, dirtyFiles: string[] } 并**不执行恢复**（不再静默丢弃用户未保存内容），
+ * 前端弹确认框后带 confirmedDiscardDirty=true 重试。
+ * 检测放在「取消流 + SubAgent」之前：用户取消确认时不产生任何副作用（流保持原状）。
+ * 入参新增：{ confirmedDiscardDirty?: boolean }
  */
 export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { conversationId, checkpointId, deleteUntrackedFiles } = data;
+    const { conversationId, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty } = data;
+
+    // BCP-05（决策 11）：dirty 拦截。命中且未确认 → 返回 dirtyFiles，不做任何写入。
+    if (confirmedDiscardDirty !== true) {
+      const dirtyFiles = detectDirtyFilesInWorkspace();
+      if (dirtyFiles.length > 0) {
+        ctx.sendResponse(requestId, {
+          success: false,
+          restored: 0,
+          deleted: 0,
+          skipped: 0,
+          dirtyFiles,
+        });
+        return;
+      }
+    }
 
     // CP-04/CP-12: 恢复前先取消该对话正在运行的流式请求，防止恢复后
     // 迟到的流式 chunk 继续写入已回退的历史；再取消该对话关联的活跃
     // SubAgent（其后续工具调用可能继续写工作区文件，与恢复结果冲突）。
-    // streamAbortControllers 实际上是 StreamAbortManager（类型声明为 Map）
-    const abortManager = ctx.streamAbortControllers as any;
-    if (abortManager?.cancel) {
-      abortManager.cancel(conversationId);
-    } else if (abortManager?.get) {
-      const controller = abortManager.get(conversationId);
-      if (controller) {
-        controller.abort();
-        abortManager.delete(conversationId);
-      }
-    }
-
-    try {
-      const snapshots = subAgentRunEventBus.getSnapshots();
-      for (const snapshot of snapshots) {
-        if (snapshot.conversationId === conversationId && subAgentRunController.isActive(snapshot.runId)) {
-          subAgentRunController.cancel(snapshot.runId, 'checkpoint restore');
-        }
-      }
-    } catch (err) {
-      console.warn('[CheckpointHandlers] Failed to cancel subagents before restore:', err);
-    }
+    // M-11: 取消逻辑独立 try/catch——取消只是“尽力而为”的前置清理，
+    // 取消失败不应阻断恢复主流程，更不应误报 RESTORE_CHECKPOINT_ERROR。
+    await cancelStreamAndSubAgents(ctx, conversationId);
 
     const result = await ctx.checkpointManager.restoreCheckpoint(
       assertSafeId(conversationId, 'conversationId'),
@@ -123,11 +127,23 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
 };
 
 /**
+ * 校验非空字符串 ID（L-9：各 handler 入参校验）。
+ * 非法参数直接返回对应明确错误码，避免落入通用 HANDLER_ERROR 或触发后端异常。
+ */
+function isValidId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
  * 删除检查点
  */
 export const deleteCheckpoint: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId, checkpointId } = data ?? {};
+  if (!isValidId(conversationId) || !isValidId(checkpointId)) {
+    ctx.sendError(requestId, 'DELETE_CHECKPOINT_ERROR', 'Invalid conversationId or checkpointId');
+    return;
+  }
   try {
-    const { conversationId, checkpointId } = data;
     const success = await ctx.checkpointManager.deleteCheckpoint(
       assertSafeId(conversationId, 'conversationId'),
       assertSafeId(checkpointId, 'checkpointId')
@@ -142,8 +158,12 @@ export const deleteCheckpoint: MessageHandler = async (data, requestId, ctx) => 
  * 删除所有检查点
  */
 export const deleteAllCheckpoints: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId } = data ?? {};
+  if (!isValidId(conversationId)) {
+    ctx.sendError(requestId, 'DELETE_ALL_CHECKPOINTS_ERROR', 'Invalid conversationId');
+    return;
+  }
   try {
-    const { conversationId } = data;
     const result = await ctx.checkpointManager.deleteAllCheckpoints(assertSafeId(conversationId, 'conversationId'));
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
@@ -155,8 +175,18 @@ export const deleteAllCheckpoints: MessageHandler = async (data, requestId, ctx)
  * 批量删除检查点（支持跨对话，checkpointIds 为空数组表示删除该对话全部）
  */
 export const deleteCheckpointsBatch: MessageHandler = async (data, requestId, ctx) => {
+  const { items } = data ?? {};
+  // 与后端 BatchCheckpointDeleteItem 对齐：{ conversationId, checkpointIds: string[] }（空数组 = 删除该对话全部）
+  const isValidBatchItem = (item: any): boolean =>
+    !!item && typeof item === 'object'
+    && isValidId(item.conversationId)
+    && Array.isArray(item.checkpointIds)
+    && item.checkpointIds.every(isValidId);
+  if (!Array.isArray(items) || !items.every(isValidBatchItem)) {
+    ctx.sendError(requestId, 'DELETE_CHECKPOINTS_BATCH_ERROR', 'Invalid items: expected [{ conversationId, checkpointIds: string[] }]');
+    return;
+  }
   try {
-    const { items } = data;
     const safeItems = Array.isArray(items)
       ? items.map(item => ({
           ...item,
@@ -194,8 +224,12 @@ export const getAllConversationsWithCheckpoints: MessageHandler = async (data, r
  * （summary.manifestVersion > 0）再调用，避免 null 歧义。
  */
 export const getManifest: MessageHandler = async (data, requestId, ctx) => {
+  const { checkpointId } = data ?? {};
+  if (!isValidId(checkpointId)) {
+    ctx.sendError(requestId, 'GET_CHECKPOINT_MANIFEST_ERROR', 'Invalid checkpointId');
+    return;
+  }
   try {
-    const { checkpointId } = data;
     const manifest = await ctx.checkpointManager.getManifest(checkpointId);
     ctx.sendResponse(requestId, { manifest });
   } catch (error: any) {

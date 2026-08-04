@@ -8,7 +8,8 @@
 
 import { getSubAgentsTool } from '../../tools/subagents/subagents';
 import { subAgentRegistry } from '../../tools/subagents/registry';
-import { createDefaultExecutor, getSubAgentExecutorContext } from '../../tools/subagents/executor';
+import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools } from '../../tools/subagents/executor';
+import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { TaskManager } from '../../tools/taskManager';
 import type { SubAgentConfig } from '../../tools/subagents/types';
 
@@ -21,8 +22,12 @@ jest.mock('../../tools/subagents/registry', () => ({
 }));
 
 jest.mock('../../tools/subagents/executor', () => ({
+    // H-1（R4 复查）：agentLacksWriteCapability 使用真实实现（纯函数），
+    // 让声明裁剪逻辑在测试中与生产一致；executor 入口仍 mock。
+    ...jest.requireActual('../../tools/subagents/executor'),
     createDefaultExecutor: jest.fn(),
-    getSubAgentExecutorContext: jest.fn(() => ({}))
+    getSubAgentExecutorContext: jest.fn(() => ({})),
+    getRunAllowedTools: jest.fn(() => undefined)
 }));
 
 jest.mock('../../core/settingsContext', () => ({
@@ -276,5 +281,78 @@ describe('SubAgents 工具后台分支', () => {
         const requestArg = customExecutor.mock.calls[0][0];
         expect(requestArg.conversationId).toBe('conv_1');
         expect(requestArg.agentType).toBe('tester');
+    });
+
+    it('H-1：嵌套派发 General Worker 时，request 携带继承自父 run 的工具限制（inheritedToolFilter）', async () => {
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_gw', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        // 启用 General Worker，并让父 run 只读（无写/执行工具）
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
+            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: true })
+        });
+        (getRunAllowedTools as jest.Mock).mockReturnValue(new Set(['read_file', 'list_files', 'get_symbols']));
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'General Worker', prompt: 'nested research' },
+            {
+                toolId: 'tool_gw',
+                abortSignal: new AbortController().signal,
+                channelConfigId: 'channel_1',
+                mailboxConversationId: 'conv_1',
+                mailboxRunId: 'parent_run_readonly',
+                subagentDepth: 1
+            }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        const request = fakeExecutor.mock.calls[0][0];
+        // 父 run 的工具限制随请求传给 executor（子 run 工具 = 子配置 ∩ 父限制）
+        expect(request.inheritedToolFilter).toEqual(['read_file', 'list_files', 'get_symbols']);
+        // 嵌套深度/父子关系保持既有语义
+        expect(request.depth).toBe(2);
+        expect(request.parentRunId).toBe('parent_run_readonly');
+        expect(request.conversationId).toBe('conv_1');
+    });
+
+    it('H-1：主模型直接派发（无 mailboxRunId）时不携带 inheritedToolFilter', async () => {
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_direct', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getRunAllowedTools as jest.Mock).mockClear();
+
+        const tool = getSubAgentsTool();
+        await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            { toolId: 'tool_direct', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        );
+
+        const request = fakeExecutor.mock.calls[0][0];
+        expect(request.inheritedToolFilter).toBeUndefined();
+        expect(request.parentRunId).toBeUndefined();
+        expect(getRunAllowedTools).not.toHaveBeenCalled();
+    });
+
+    it('H-1：blacklist 预设（deep-researcher）在工具声明描述中不暴露 subagents（无法派发嵌套）', () => {
+        const blacklistConfig: SubAgentConfig = {
+            ...TEST_CONFIG,
+            type: 'deep-researcher',
+            name: 'Deep Researcher',
+            tools: {
+                mode: 'blacklist',
+                blacklist: ['write_file', 'apply_diff', 'insert_code', 'delete_code', 'delete_file', 'create_directory', 'execute_command']
+            }
+        };
+        (subAgentRegistry.getAllConfigs as jest.Mock).mockReturnValue([blacklistConfig]);
+
+        const decl = getSubAgentsTool().declaration as any;
+        const agentDesc = decl.parameters.properties.agentName.description as string;
+        expect(agentDesc).toContain('Deep Researcher');
+        expect(agentDesc).not.toContain('subagents');
+        expect(agentDesc).not.toContain('write_file');
+        expect(agentDesc).not.toContain('execute_command');
     });
 });

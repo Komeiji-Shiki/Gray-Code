@@ -4,7 +4,7 @@
  * 包含检查点的 CRUD 和恢复操作
  */
 
-import type { Message, Attachment, CheckpointRecord } from '../../types'
+import type { Message, Attachment, CheckpointRecord, CheckpointManifest } from '../../types'
 import type { ChatStoreState, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
@@ -13,6 +13,7 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { loadCheckpoints, refreshCurrentConversationBuildSession, loadHistory } from './conversationActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
+import { pendingDirtyConfirm } from './dirtyConfirmState'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
@@ -160,17 +161,25 @@ export async function previewExclusions(): Promise<ExclusionPreviewResult | null
  *
  * @param deleteUntrackedFiles 是否删除快照后新建的文件（CP-09）。
  *        用户在恢复确认框中确认了待删除文件清单后传 true。
+ * @param confirmedDiscardDirty BCP-05（决策 11）：用户已在未保存文件确认框中确认
+ *        「丢弃更改并继续」后传 true（后端据此跳过 dirty 拦截）；缺省 false。
+ *
+ * BCP-05（决策 11）：后端在恢复前检测未保存（dirty）文件——命中且未确认时返回
+ * { success: false, dirtyFiles: string[] }（不执行恢复），本函数透传并在
+ * pendingDirtyConfirm 中登记待确认动作（DirtyFilesConfirm.vue 据此弹确认框）。
  */
 export async function restoreCheckpoint(
   state: ChatStoreState,
   checkpointId: string,
-  deleteUntrackedFiles?: boolean
+  deleteUntrackedFiles?: boolean,
+  confirmedDiscardDirty?: boolean
 ): Promise<{
   success: boolean
   restored: number
   deleted?: number
   skipped?: number
   error?: string
+  dirtyFiles?: string[]
   missingBackupDirs?: string[]
   autoPrunedCheckpointCount?: number
   failures?: Array<{ path: string; reason: string }>
@@ -187,6 +196,7 @@ export async function restoreCheckpoint(
       deleted?: number
       skipped?: number
       error?: string
+      dirtyFiles?: string[]
       missingBackupDirs?: string[]
       autoPrunedCheckpointCount?: number
       failures?: Array<{ path: string; reason: string }>
@@ -196,19 +206,34 @@ export async function restoreCheckpoint(
       {
         conversationId: state.currentConversationId.value,
         checkpointId,
-        deleteUntrackedFiles: deleteUntrackedFiles === true
+        deleteUntrackedFiles: deleteUntrackedFiles === true,
+        ...(confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {})
       }
     )
     
     const normalized = result || { success: false, restored: 0, error: 'Unknown error' }
-    if ((normalized.autoPrunedCheckpointCount || 0) > 0) {
+    // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，前端弹确认框
+    // （已确认（confirmedDiscardDirty=true）时后端不会返回 dirtyFiles，此处再防御一次）
+    if (confirmedDiscardDirty !== true && normalized.dirtyFiles && normalized.dirtyFiles.length > 0) {
+      pendingDirtyConfirm.value = {
+        kind: 'restore',
+        files: normalized.dirtyFiles,
+        restore: {
+          entry: 'restore',
+          checkpointId,
+          deleteUntrackedFiles: deleteUntrackedFiles === true
+        }
+      }
+      return normalized
+    }
+    if (normalized.success) {
+      // R3-#14: 恢复成功后无条件刷新检查点列表（此前仅在 autoPrune 时刷新，
+      // 恢复导致的列表变化可能未反映到前端）
       try {
         await loadCheckpoints(state)
       } catch (error) {
-        console.error('[checkpointActions] Failed to refresh checkpoints after auto prune:', error)
+        console.error('[checkpointActions] Failed to refresh checkpoints after restore:', error)
       }
-    }
-    if (normalized.success) {
       // 回退后同步会话元数据（activeBuild/todoList）到前端，避免继续显示旧的 Build 壳。
       await refreshCurrentConversationBuildSession(state)
     }
@@ -228,6 +253,7 @@ export async function restoreCheckpoint(
  * @param currentModelName 当前模型名称
  * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
  *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
+ * @param confirmedDiscardDirty BCP-05（决策 11）：用户已在未保存文件确认框中确认后传 true。
  */
 export async function restoreAndRetry(
   state: ChatStoreState,
@@ -235,7 +261,8 @@ export async function restoreAndRetry(
   checkpointId: string,
   currentModelName: string,
   cancelStream: () => Promise<void>,
-  confirmedDeleteUntracked: boolean = false
+  confirmedDeleteUntracked: boolean = false,
+  confirmedDiscardDirty?: boolean
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -252,14 +279,33 @@ export async function restoreAndRetry(
 
   // 校验归属
   if (!validateSessionIdentity(state, originConvId)) return
-  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+  // R3-#13: 按 id 定位后重算索引（await cancelStream 期间数组可能已变化，
+  // 直接以下标重读校验/切片会错位），目标消息不存在时中止
+  const targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+  if (targetIndex === -1) return
 
   state.error.value = null
   state.isLoading.value = true
 
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作（含本入口参数），
+    // 不写错误条（确认框由 DirtyFilesConfirm.vue 弹出），流程在此暂停等待确认。
+    if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
+      pendingDirtyConfirm.value = {
+        kind: 'restore',
+        files: restoreResult.dirtyFiles,
+        restore: {
+          entry: 'retry',
+          checkpointId,
+          deleteUntrackedFiles: confirmedDeleteUntracked,
+          messageId: targetMessageId
+        }
+      }
+      state.isLoading.value = false
+      return
+    }
     if (!restoreResult.success) {
       if (validateSessionIdentity(state, originConvId)) {
         state.error.value = {
@@ -272,10 +318,10 @@ export async function restoreAndRetry(
     }
 
     // 2. 计算后端索引（在删除本地消息之前）
-    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
+    const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
 
     // 3. 删除该消息及后续的本地消息和检查点
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
     rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
@@ -303,12 +349,13 @@ export async function restoreAndRetry(
           code: 'DELETE_MESSAGE_ERROR',
           message: '回档后删除旧消息失败，已中止重试。请刷新对话后重试。'
         }
-      }
-      // 本地窗口已截断而后端历史未删：重新加载历史恢复一致（CP-11）
-      try {
-        await loadHistory(state)
-      } catch (reloadErr) {
-        console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
+        // 本地窗口已截断而后端历史未删：重新加载历史 + 检查点恢复一致（CP-11 / M-2）
+        try {
+          await loadHistory(state)
+          await loadCheckpoints(state)
+        } catch (reloadErr) {
+          console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
+        }
       }
       state.isLoading.value = false
       return
@@ -376,13 +423,15 @@ export async function restoreAndRetry(
  * @param checkpointId 检查点 ID
  * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
  *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
+ * @param confirmedDiscardDirty BCP-05（决策 11）：用户已在未保存文件确认框中确认后传 true。
  */
 export async function restoreAndDelete(
   state: ChatStoreState,
   messageIndex: number,
   checkpointId: string,
   cancelStream: () => Promise<void>,
-  confirmedDeleteUntracked: boolean = false
+  confirmedDeleteUntracked: boolean = false,
+  confirmedDiscardDirty?: boolean
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -399,14 +448,31 @@ export async function restoreAndDelete(
 
   // 校验归属
   if (!validateSessionIdentity(state, originConvId)) return
-  if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
+  // R3-#13: 按 id 定位后重算索引（await cancelStream 期间数组可能已变化）
+  const targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+  if (targetIndex === -1) return
 
   state.error.value = null
   state.isLoading.value = true
 
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
+    if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
+      pendingDirtyConfirm.value = {
+        kind: 'restore',
+        files: restoreResult.dirtyFiles,
+        restore: {
+          entry: 'delete',
+          checkpointId,
+          deleteUntrackedFiles: confirmedDeleteUntracked,
+          messageId: targetMessageId
+        }
+      }
+      state.isLoading.value = false
+      return
+    }
     if (!restoreResult.success) {
       if (validateSessionIdentity(state, originConvId)) {
         state.error.value = {
@@ -419,10 +485,10 @@ export async function restoreAndDelete(
     }
 
     // 2. 计算后端索引（在删除本地消息之前）
-    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
+    const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
 
     // 3. 删除该消息及后续的本地消息和检查点
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
     rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
     setTotalMessagesFromWindow(state)
@@ -451,9 +517,10 @@ export async function restoreAndDelete(
         code: 'DELETE_MESSAGE_ERROR',
         message: '回档后删除旧消息失败，请刷新对话后检查历史状态。'
       }
-      // 本地窗口已截断而后端历史未删：重新加载历史恢复一致（CP-11）
+      // 本地窗口已截断而后端历史未删：重新加载历史 + 检查点恢复一致（CP-11 / M-2）
       try {
         await loadHistory(state)
+        await loadCheckpoints(state)
       } catch (reloadErr) {
         console.error('[checkpointActions] Failed to reload history after delete failure:', reloadErr)
       }
@@ -483,6 +550,7 @@ export async function restoreAndDelete(
  * @param currentModelName 当前模型名称
  * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
  *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
+ * @param confirmedDiscardDirty BCP-05（决策 11）：用户已在未保存文件确认框中确认后传 true。
  */
 export async function restoreAndEdit(
   state: ChatStoreState,
@@ -492,7 +560,8 @@ export async function restoreAndEdit(
   checkpointId: string,
   currentModelName: string,
   cancelStream: () => Promise<void>,
-  confirmedDeleteUntracked: boolean = false
+  confirmedDeleteUntracked: boolean = false,
+  confirmedDiscardDirty?: boolean
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -523,7 +592,24 @@ export async function restoreAndEdit(
   
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked)
+    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
+    if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
+      pendingDirtyConfirm.value = {
+        kind: 'restore',
+        files: restoreResult.dirtyFiles,
+        restore: {
+          entry: 'edit',
+          checkpointId,
+          deleteUntrackedFiles: confirmedDeleteUntracked,
+          messageId: targetMessageId,
+          newContent,
+          attachments
+        }
+      }
+      state.isLoading.value = false
+      return
+    }
     if (!restoreResult.success) {
       state.error.value = {
         code: 'RESTORE_ERROR',
@@ -607,119 +693,26 @@ export async function restoreAndEdit(
       state.isStreaming.value = false
       state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
+      // M-9：本地已截断窗口并改写消息内容，而后端历史未变：
+      // 会话未切换时重载历史 + 检查点恢复前后端一致，避免幽灵不一致状态
+      if (validateSessionIdentity(state, originConvId)) {
+        try {
+          await loadHistory(state)
+          await loadCheckpoints(state)
+        } catch (reloadErr) {
+          console.error('[checkpointActions] Failed to reload after restoreAndEdit failure:', reloadErr)
+        }
+      }
     }
   } finally {
     state.isLoading.value = false
   }
 }
 
-/**
- * 总结上下文
- *
- * 将旧的对话历史压缩为一条总结消息
- * 所有参数（keepRecentRounds、summarizePrompt）从后端配置读取
- *
- * @returns 总结结果
- */
-export async function summarizeContext(
-  state: ChatStoreState,
-  loadHistory: () => Promise<void>
-): Promise<{
-  success: boolean
-  summarizedMessageCount?: number
-  errorCode?: string
-  error?: string
-}> {
-  const originConversationId = state.currentConversationId.value
-
-  const setManualSummaryStatusForConversation = (
-    status: { isSummarizing: boolean; mode?: 'auto' | 'manual'; message?: string } | null
-  ) => {
-    // 当前仍是原对话，直接更新当前状态
-    if (!originConversationId || originConversationId === state.currentConversationId.value) {
-      state.autoSummaryStatus.value = status
-      return
-    }
-
-    // 对话已切换，更新原对话对应标签页快照，避免跨对话污染
-    const tab = state.openTabs.value.find(t => t.conversationId === originConversationId)
-    if (!tab) return
-
-    const snapshot = state.sessionSnapshots.value.get(tab.id)
-    if (snapshot) {
-      snapshot.autoSummaryStatus = status ? { ...status } : null
-    }
-  }
-
-  if (!originConversationId) {
-    return { success: false, errorCode: 'NO_CONVERSATION', error: 'No conversation selected' }
-  }
-  
-  if (!state.configId.value) {
-    return { success: false, errorCode: 'NO_CONFIG', error: 'No config selected' }
-  }
-
-  // 显示底部提示（对话级隔离）
-  setManualSummaryStatusForConversation({
-    isSummarizing: true,
-    mode: 'manual'
-  })
-  
-  try {
-    // 只传递必要参数，所有配置项从后端读取
-    const result = await sendToExtension<{
-      success: boolean
-      summaryContent?: any
-      summarizedMessageCount?: number
-      error?: { code: string; message: string }
-    }>('summarizeContext', {
-      conversationId: originConversationId,
-      configId: state.configId.value
-    })
-    
-    if (result.success && result.summaryContent) {
-      // 重新加载历史以获取更新后的消息列表；
-      // 用户在此期间切换会话时跳过重载，避免把新会话历史整体覆盖进 allMessages（H1）
-      if (validateSessionIdentity(state, originConversationId)) {
-        await loadHistory()
-      }
-
-      return {
-        success: true,
-        summarizedMessageCount: result.summarizedMessageCount
-      }
-    } else {
-      return {
-        success: false,
-        errorCode: result.error?.code,
-        error: result.error?.message || 'Summarize failed'
-      }
-    }
-  } catch (err: any) {
-    return {
-      success: false,
-      errorCode: err?.code,
-      error: err.message || 'Summarize failed'
-    }
-  } finally {
-    // 结束提示（对话级隔离）
-    setManualSummaryStatusForConversation(null)
-  }
-}
-
-/**
- * 取消当前对话的总结请求（仅取消总结 API，不影响后续 AI 响应）
- */
-export async function cancelSummarizeRequest(state: ChatStoreState): Promise<void> {
-  const conversationId = state.currentConversationId.value
-  if (!conversationId) return
-
-  try {
-    await sendToExtension('cancelSummarizeRequest', { conversationId })
-  } catch (error) {
-    console.error('[checkpointActions] Failed to cancel summarize request:', error)
-  }
-}
+// ============ 上下文总结（L-2：职责拆分，实现在 messageActions，此处 re-export 保持导出名不变） ============
+// 总结上下文与 checkpoint 职责无关，已迁至 messageActions.ts；
+// chatStore 等调用方仍从本模块导入，re-export 保证调用方零改动。
+export { summarizeContext, cancelSummarizeRequest } from './messageActions'
 
 // ============ 存档操作进度 / 取消（M7，CPF-11） ============
 
@@ -752,8 +745,10 @@ export async function pollOperationProgress(
     )
     return result?.progress ?? null
   } catch (error: any) {
+    // M-1/M-4：错误向上抛出（不吞成 null）。null 只表示“无进行中操作”，
+    // 调用方（设置页轮询）据此区分“瞬时 IPC 错误（重试）”与“操作已结束（停止轮询）”。
     console.error('[checkpointActions] Failed to poll operation progress:', error)
-    return null
+    throw error
   }
 }
 
@@ -771,5 +766,26 @@ export async function cancelCheckpointOperation(operationId: string): Promise<bo
   } catch (error: any) {
     console.error('[checkpointActions] Failed to cancel operation:', error)
     return false
+  }
+}
+
+/**
+ * 获取存档完整 manifest（EX-11 / L-9：checkpoint.getManifest 前端调用方）。
+ *
+ * 设置页「排除详情」入口使用：展示该存档创建时的排除统计/排除规则快照摘要。
+ * 旧版存档（无 manifest 文件）后端返回 { manifest: null }，调用方据此提示不可用。
+ */
+export async function getCheckpointManifest(
+  checkpointId: string
+): Promise<{ manifest: CheckpointManifest | null; error?: string }> {
+  try {
+    const result = await sendToExtension<{ manifest: CheckpointManifest | null }>(
+      'checkpoint.getManifest',
+      { checkpointId }
+    )
+    return { manifest: result?.manifest ?? null }
+  } catch (error: any) {
+    console.error('[checkpointActions] Failed to load checkpoint manifest:', error)
+    return { manifest: null, error: error?.message || 'Failed to load checkpoint manifest' }
   }
 }

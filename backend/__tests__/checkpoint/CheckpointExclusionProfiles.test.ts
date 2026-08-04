@@ -149,6 +149,35 @@ describe('CheckpointExclusionProfiles', () => {
         expect(patterns).toContain('dist/'); // buildArtifacts 默认启用
     });
 
+    test('collectEnabledProfilePatterns uses per-profile overrides when provided', () => {
+        const overrides = { logs: ['app-*.log'] };
+        const patterns = collectEnabledProfilePatterns({ logs: true, aiModels: false }, overrides);
+        expect(patterns).toContain('app-*.log');
+        expect(patterns).not.toContain('*.log'); // 默认清单被覆盖
+        expect(patterns).not.toContain('*.safetensors'); // aiModels 关闭
+    });
+
+    test('collectEnabledProfilePatterns falls back to defaults for empty override', () => {
+        const patterns = collectEnabledProfilePatterns({ logs: true }, { logs: [] });
+        expect(patterns).toContain('*.log');
+        expect(patterns).not.toContain('app-*.log');
+    });
+
+    test('buildIgnoreSnapshot keeps profilePatterns snapshot (deep copy)', () => {
+        const snapshot = buildIgnoreSnapshot({
+            enabledProfiles: { logs: true },
+            profilePatterns: { logs: ['app-*.log'] },
+            maxFileSizeBytes: 0,
+            customPatterns: ['*.tmp']
+        });
+        expect(snapshot.profilePatterns?.logs).toEqual(['app-*.log']);
+        // 深拷贝：修改输入不影响快照
+        const input = { logs: ['x'] };
+        const snap2 = buildIgnoreSnapshot({ profilePatterns: input });
+        input.logs.push('y');
+        expect(snap2.profilePatterns?.logs).toEqual(['x']);
+    });
+
     test('buildIgnoreSnapshot produces the manifest snapshot shape', () => {
         const snapshot = buildIgnoreSnapshot({
             enabledProfiles: { logs: false },
@@ -201,5 +230,13 @@ describe('CheckpointExclusionProfiles', () => {
         const issues = validateCustomExclusionPatterns(['*.log\n*.secret']);
         expect(issues).toHaveLength(1);
         expect(issues[0].reason).toBe('newline');
+    });
+
+    test('validateCustomExclusionPatterns rejects blanket workspace-wide patterns (EX-12-2)', () => {
+        const issues = validateCustomExclusionPatterns(['*', '**', '/**', '/*', '!*', '!**', '*.log']);
+        expect(issues).toHaveLength(6);
+        expect(issues.every(i => i.reason === 'blanket')).toBe(true);
+        // `**/cache/**` 之类限定子树的模式仍然合法
+        expect(validateCustomExclusionPatterns(['**/cache/**', '!important/model.gguf'])).toEqual([]);
     });
 });

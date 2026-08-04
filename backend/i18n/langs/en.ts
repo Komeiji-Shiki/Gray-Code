@@ -92,7 +92,14 @@ const en: BackendLanguageMessages = {
                 chainBroken: 'Incremental chain is broken: a referenced base checkpoint is missing',
                 partialFailure: 'Restored to "{toolName}" {phase} state with {count} failure(s)',
                 workspaceMismatch: 'Current workspace does not match the workspace recorded in this checkpoint; restore refused',
-                multiRootLegacyNotSupported: 'Legacy checkpoints (relative path format) cannot be restored in a multi-root workspace'
+                multiRootLegacyNotSupported: 'Legacy checkpoints (relative path format) cannot be restored in a multi-root workspace',
+                checkpointNotFound: 'Checkpoint not found',
+                manifestMissing: 'Checkpoint backup data is missing (manifest not found)',
+                cannotBuildChain: 'Cannot build checkpoint chain',
+                backupDirNotFound: 'Backup directory not found: {dirs}',
+                moreFailures: 'and {count} more failures',
+                excludedNote: 'This checkpoint excluded {count} file(s) under the exclusion rules in effect when it was created',
+                excludedNoteChanged: 'This checkpoint excluded {count} file(s) under the rules in effect when it was created; current exclusion rules have changed, restore will follow current rules'
             },
             defaultConversationTitle: 'Conversation {conversationId}',
             errors: {
@@ -110,12 +117,14 @@ const en: BackendLanguageMessages = {
                 invalidCheckpointExclusionPatterns: 'Invalid checkpoint exclusion pattern(s): {detail}',
                 invalidCheckpointExclusionProfiles: 'Invalid checkpoint exclusion profile(s): {detail}',
                 invalidCheckpointMaxFileSize: 'Max file size must be a finite number',
+                invalidCheckpointConfigField: 'Invalid checkpoint config field: {field}',
                 exclusionPatternReason: {
                     empty: 'empty pattern',
                     absolute: 'absolute path pattern',
                     negationOnly: 'bare ! negation (no rule body)',
                     traversal: 'contains .. traversal',
-                    newline: 'contains newline'
+                    newline: 'contains newline',
+                    blanket: 'excludes the entire workspace'
                 }
             },
             storage: {
@@ -643,6 +652,12 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             cannotRevealInExplorer: 'Cannot reveal in explorer',
             
             deleteMessageFailed: 'Failed to delete message',
+            
+            interruptMessageInvalidConversation: 'Invalid conversation ID',
+            interruptMessageEmptyText: 'Message text must not be empty',
+            interruptMessageConversationNotFound: 'Conversation not found',
+            interruptMessageRateLimited: 'Messages can be inserted too frequently, please try again later',
+            interruptMessageFailed: 'Failed to insert message',
             
             getModelsFailed: 'Failed to get models list',
             addModelsFailed: 'Failed to add models',

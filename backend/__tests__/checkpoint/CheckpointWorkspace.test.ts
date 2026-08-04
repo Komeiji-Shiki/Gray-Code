@@ -45,6 +45,18 @@ describe('createWorkspaceRootId', () => {
         const id = createWorkspaceRootId('file:///a/workspace');
         expect(id).toMatch(/^ws_[a-f0-9]{16}$/);
     });
+
+    test('case-folds uri case on case-insensitive filesystems (win32/darwin)', () => {
+        const upper = createWorkspaceRootId('file:///A/Workspace');
+        const lower = createWorkspaceRootId('file:///a/workspace');
+        if (process.platform === 'win32' || process.platform === 'darwin') {
+            // Windows / macOS 默认大小写不敏感：同一目录不同大小写的 URI 必须同 rootId
+            expect(upper).toBe(lower);
+        } else {
+            // POSIX：大小写敏感，不同大小写视为不同目录
+            expect(upper).not.toBe(lower);
+        }
+    });
 });
 
 describe('createRuntimeWorkspaceRoots', () => {

@@ -9,6 +9,7 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
+import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
 
 /** 最大标签页数量 */
 const MAX_TABS = 100
@@ -48,7 +49,9 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     attachments: [...state.attachments.value],
     messageQueue: [...state.messageQueue.value],
     currentPromptModeId: state.currentPromptModeId.value,
-    toolResponseCache: Array.from(state.toolResponseCache.value.entries())
+    toolResponseCache: Array.from(state.toolResponseCache.value.entries()),
+    // TREE-12：分支图快照（null = 无图 / 线性模式）；图按整体替换维护（无原地修改），共享引用安全
+    branchGraph: state.branchGraph.value
   }
 }
 
@@ -89,6 +92,8 @@ export function restoreSessionFromSnapshot(
   state.toolResponseCache.value = Array.isArray(snapshot.toolResponseCache)
     ? new Map(snapshot.toolResponseCache)
     : new Map()
+  // TREE-12：恢复分支图快照（切标签页回来恢复分支视图状态）；旧快照无此字段时回退 null
+  state.branchGraph.value = snapshot.branchGraph ?? null
 }
 
 /**
@@ -121,6 +126,8 @@ export function resetConversationState(state: ChatStoreState): void {
   state.attachments.value = []
   state.messageQueue.value = []
   state.currentPromptModeId.value = 'code'
+  // TREE-12：新空白会话无分支图（等待 loadBranchGraph 拉取）
+  state.branchGraph.value = null
 }
 
 /**
@@ -200,6 +207,11 @@ export function closeTab(
   // 移除标签页
   const newTabs = tabs.filter(t => t.id !== tabId)
   state.openTabs.value = newTabs
+
+  // M2-1：清理 MessageList 模块级 UI 状态（tabId 全局唯一不复用，每关一个标签页泄漏一条）。
+  // 注意：必须在移除标签页后调用；MessageList 的 saveCurrentUiState 已带
+  // 「已关闭标签页不保存」保护，避免关闭活跃标签页时 watcher 把旧记录写回。
+  pruneMessageListUiStateByTab(new Set(newTabs.map(t => t.id)))
 
   // 如果关闭的是当前活跃标签页
   if (state.activeTabId.value === tabId) {

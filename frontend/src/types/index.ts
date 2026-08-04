@@ -721,6 +721,53 @@ export interface CheckpointRecord {
   manifestVersion?: number
 }
 
+// ============ 检查点 manifest 相关类型（EX-11 查看存档排除清单） ============
+
+/**
+ * 存档创建时的排除规则快照（EX-10，随 manifest 保存）。
+ * 与后端 backend/modules/checkpoint/types.ts 的 CheckpointIgnoreSnapshot 对齐。
+ */
+export interface CheckpointManifestIgnoreSnapshot {
+  version: number
+  forcedRulesVersion: number
+  defaultProfileVersion: number
+  enabledProfiles: Record<string, boolean>
+  /** 与排除配置 profilePatterns 同构（快照保留编辑后的每类别模式） */
+  profilePatterns?: Record<string, string[]>
+  maxFileSizeBytes: number
+  customPatterns: string[]
+}
+
+/** 一条被排除路径的记录（manifest.excluded 条目） */
+export interface CheckpointManifestExcludedEntry {
+  /** 工作区作用域路径（`rootId/relative/path`） */
+  path: string
+  /** 排除原因分类（forced/default/gitignore/custom/size/...） */
+  reason: string
+  /** 命中的具体规则模式（如 `*.log`、`logs/`）；gitignore/自定义规则才有 */
+  rule?: string
+  /** 规则来源说明（如 `logs` 类别名、`.gitignore` 路径、`custom`） */
+  source?: string
+  /** 文件字节数（reason === 'size' 时存在） */
+  size?: number
+}
+
+/**
+ * 存档完整 manifest（CPF-01/CPF-03，checkpoint.getManifest 返回）。
+ * 与后端 backend/modules/checkpoint/types.ts 的 CheckpointManifest 对齐；
+ * 前端只消费排除统计/排除规则快照摘要。旧版存档无 manifest 文件时返回 null。
+ */
+export interface CheckpointManifest {
+  version: number
+  checkpointId: string
+  /** 被排除文件总数（后端摘要字段；缺省时可由 excluded 长度推导） */
+  excludedCount?: number
+  /** 被排除路径的完整清单（样本之外的全部） */
+  excluded?: CheckpointManifestExcludedEntry[]
+  /** 该存档创建时的排除规则快照 */
+  ignoreSnapshot?: CheckpointManifestIgnoreSnapshot
+}
+
 // ============ 模型相关类型 ============
 
 /**

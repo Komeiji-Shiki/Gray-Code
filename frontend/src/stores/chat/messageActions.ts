@@ -6,12 +6,13 @@
 
 import type { Message, Attachment, Content } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from './types'
-import { triggerRef } from 'vue'
+import { triggerRef, shallowRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import {
   createAndPersistConversation,
   MESSAGES_PAGE_SIZE,
+  loadHistory,
   loadCheckpoints,
   refreshCurrentConversationBuildSession,
   syncConversationWorkspaceUri
@@ -22,8 +23,7 @@ import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
-import { rebuildMessageIndexById } from './state'
-import { saveTailVersionForRetry, resetActiveTailVersionsForConversation, setActiveTailVersion } from './tailVersionActions'
+import { rebuildMessageIndexById, appendMessage } from './state'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -76,6 +76,111 @@ export interface SendMessageOptions {
   dynamicContextStrategyOverride?: 'single' | 'preserve'
   /** 消息来源，'background_task' 时前端渲染为后台任务卡片而非普通用户消息 */
   source?: 'user' | 'background_task'
+}
+
+/**
+ * 用户消息插入（U1）单条文本长度上限（与后端 mailbox 约定一致）
+ */
+export const INTERRUPT_MESSAGE_MAX_LENGTH = 4000
+
+/**
+ * U1（用户消息插入）投递结果的轻量回显状态（M3-1）。
+ *
+ * 忙时投递只把用户消息写入主会话 inbox，窗口内不落任何痕迹、不推 chunk；
+ * 这里记录「最近投递 / 投递失败」状态，由 MessageList 在消息区给出轻量提示：
+ * - ① 投递成功：提示「已投递，将在当前回合结束后处理」，避免用户看不到结果；
+ * - ③ 投递失败（如 INTERRUPT_MESSAGE_RATE_LIMITED）：给出可见错误反馈，
+ *   不写 state.error（避免打断进行中的回合）。
+ */
+export interface InterruptDeliveryNotice {
+  conversationId: string
+  text: string
+  kind: 'delivered' | 'error'
+  errorCode?: string
+  errorMessage?: string
+  createdAt: number
+}
+
+/** 提示保留时长：超过后自动从列表中移除 */
+export const INTERRUPT_NOTICE_TTL_MS = 10_000
+/** 同一时刻最多保留的投递提示条数（防御性兜底） */
+export const INTERRUPT_NOTICE_MAX = 3
+
+export const recentInterruptDeliveries = shallowRef<InterruptDeliveryNotice[]>([])
+
+/** 记录一条投递提示：同一会话同类型只保留最新一条；超出上限丢弃最旧；TTL 后自动移除 */
+export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'createdAt'>): void {
+  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now() }
+  const filtered = recentInterruptDeliveries.value.filter(
+    n => !(n.conversationId === full.conversationId && n.kind === full.kind)
+  )
+  recentInterruptDeliveries.value = [full, ...filtered].slice(0, INTERRUPT_NOTICE_MAX)
+  setTimeout(() => {
+    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.createdAt !== full.createdAt)
+  }, INTERRUPT_NOTICE_TTL_MS)
+}
+
+/** 清除指定会话的投递提示（当前回合结束时由 MessageList 调用） */
+export function clearInterruptDeliveries(conversationId: string): void {
+  recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.conversationId !== conversationId)
+}
+
+/**
+ * 忙时投递（U1）：把用户消息改走 chat.sendInterruptMessage（主会话收件箱）。
+ *
+ * - 不排队、不乐观插入窗口、不创建 assistant 占位、不修改流式状态；
+ * - 带附件/超长文本不回退插入（附件无法随 inbox 文本投递），返回 false 保持既有队列语义；
+ * - 投递失败（会话不存在、频率限制等）不打断进行中的回合，仅告警并返回 false。
+ *
+ * @returns true 表示已投递到主会话 inbox（由注入点在最近一次工具调用完成后带出）
+ */
+async function deliverInterruptMessage(
+  state: ChatStoreState,
+  messageText: string,
+  attachments?: Attachment[]
+): Promise<boolean> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return false
+  if (attachments && attachments.length > 0) return false
+
+  const text = messageText.trim()
+  if (!text || text.length > INTERRUPT_MESSAGE_MAX_LENGTH) return false
+
+  try {
+    const result = await sendToExtension<{
+      success: boolean
+      error?: { code?: string; message?: string }
+    }>('chat.sendInterruptMessage', {
+      conversationId,
+      text
+    })
+    if (result?.success) {
+      // M3-1 ①：投递成功 -> 记录轻量回显（MessageList 消息区提示「已投递」）
+      recordInterruptDelivery({ conversationId, text, kind: 'delivered' })
+      return true
+    }
+    // M3-1 ③：投递被拒绝（如 INTERRUPT_MESSAGE_RATE_LIMITED）-> 可见反馈，
+    // 不写 state.error，避免打断进行中的回合；返回 false 保持既有队列语义
+    console.warn('[messageActions] chat.sendInterruptMessage rejected:', result)
+    recordInterruptDelivery({
+      conversationId,
+      text,
+      kind: 'error',
+      errorCode: result?.error?.code,
+      errorMessage: result?.error?.message
+    })
+    return false
+  } catch (error) {
+    console.warn('[messageActions] chat.sendInterruptMessage failed:', error)
+    recordInterruptDelivery({
+      conversationId,
+      text,
+      kind: 'error',
+      errorCode: undefined,
+      errorMessage: error instanceof Error ? error.message : String(error)
+    })
+    return false
+  }
 }
 
 /**
@@ -176,6 +281,8 @@ function upsertHiddenFunctionResponseMessage(
           { ...msg, parts: nextParts },
           ...all.slice(i + 1)
         ]
+        // M3-2：整数组替换后重建 message.id -> 下标 与 functionResponse.id -> 下标 索引
+        rebuildMessageIndexById(state)
         // ★ 同步更新 toolResponseCache，避免 getToolResponseById 返回旧缓存
         // 导致 replayTodoStateFromMessages 看不到 planExecutionPrompt 等新合并字段
         if (payload.id) {
@@ -208,7 +315,8 @@ function upsertHiddenFunctionResponseMessage(
       }
     }]
   }
-  state.allMessages.value.push(responseMessage)
+  // M3-2：与 appendMessage 对齐，增量维护 messageIndexById / toolResponseIndex
+  appendMessage(state, responseMessage)
 }
 
 export async function sendMessage(
@@ -221,6 +329,14 @@ export async function sendMessage(
   const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
   if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return false
+
+  // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
+  // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
+  // 让主模型在工具循环中尽快感知用户输入。
+  // 隐藏发送（计划确认等 functionResponse）与带附件消息不走插入路径，保持既有语义。
+  if (!isHiddenSend && (state.isStreaming.value || state.isWaitingForResponse.value)) {
+    return deliverInterruptMessage(state, messageText, attachments)
+  }
 
   state.error.value = null
   if (state.isWaitingForResponse.value) return false
@@ -279,9 +395,6 @@ export async function sendMessage(
       }
       state.allMessages.value.push(userMessage)
     }
-
-    // 新用户消息意味着尾部变化：重roll 分叉的活跃版本标记重置为「最新当前答案」
-    resetActiveTailVersionsForConversation(state, targetConvId)
 
     const assistantMessageId = generateId()
     const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
@@ -397,6 +510,49 @@ export async function retryLastMessage(
 }
 
 /**
+ * retryFromMessage：deleteMessage 失败（resp.success=false 或 IPC 抛异常）后的统一恢复（FIX-C-2）。
+ *
+ * 此时本地已截断窗口（slice + clearCheckpointsFromIndex），而后端历史未删；
+ * 若继续 retryStream 会导致窗口/历史错位（幽灵或重复消息）。
+ * 这里重载最后一页 + 检查点恢复前后端一致，并复位流式状态，中止本次重试。
+ */
+async function recoverAfterDeleteFailure(
+  state: ChatStoreState,
+  originConvId: string
+): Promise<void> {
+  // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
+  try {
+    const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      conversationId: originConvId,
+      limit: MESSAGES_PAGE_SIZE
+    })
+    const page = result?.messages || []
+    state.totalMessages.value = result?.total ?? page.length
+    state.windowStartIndex.value = page[0]?.index ?? 0
+    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+    rebuildMessageIndexById(state)
+  } catch (reloadErr) {
+    console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
+  }
+
+  // M-2: 失败重载历史后同步重载检查点——getMessagesPaged 只拉消息页，不重载 checkpoints，
+  // 否则后端历史未删、检查点仍存在，而前端窗口只有消息没有存档条（前后端不一致）。
+  if (state.currentConversationId.value === originConvId) {
+    try {
+      await loadCheckpoints(state)
+    } catch (reloadErr) {
+      console.error('[messageActions] retryFromMessage: failed to reload checkpoints after delete failure:', reloadErr)
+    }
+  }
+
+  state.streamingMessageId.value = null
+  state.isStreaming.value = false
+  state.activeStreamId.value = null
+  state.isWaitingForResponse.value = false
+  state.isLoading.value = false
+}
+
+/**
  * 从指定消息重试
  */
 export async function retryFromMessage(
@@ -491,13 +647,6 @@ export async function retryFromMessage(
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
 
-  // ★ 重roll 树状分叉：截断前先把「当前回答及其后续内容」保存为版本，
-  // 新回答生成后可在消息上随时切回旧版本（DeepSeek 网页版交互）。
-  // 失败不阻塞重roll 本身（版本保存是尽力而为的增强）。
-  await saveTailVersionForRetry(state, originConvId, backendIndex)
-  // 重roll 后该分支点的活跃尾部变为「最新当前答案」
-  setActiveTailVersion(state, originConvId, backendIndex, null)
-
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
@@ -516,30 +665,20 @@ export async function retryFromMessage(
         message: err?.message || 'Failed to delete messages in backend'
       })
 
-      // 尝试回滚：重新从后端拉取”最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
-      try {
-        const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-          conversationId: originConvId,
-          limit: MESSAGES_PAGE_SIZE
-        })
-        const page = result?.messages || []
-        state.totalMessages.value = result?.total ?? page.length
-        state.windowStartIndex.value = page[0]?.index ?? 0
-        state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
-        rebuildMessageIndexById(state)
-      } catch (reloadErr) {
-        console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
-      }
-
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
-      state.isLoading.value = false
+      await recoverAfterDeleteFailure(state, originConvId)
       return
     }
-  } catch (err) {
-    console.error('Failed to delete messages from backend:', err)
+  } catch (err: any) {
+    // FIX-C-2：deleteMessage 的 IPC 抛异常与 resp.success=false 同等对待——
+    // 本地已截断窗口（slice + clearCheckpointsFromIndex）而后端历史未删，
+    // 必须重载最后一页 + 检查点并复位流式状态后中止重试，不能带着错位状态继续 retryStream。
+    console.error('[messageActions] retryFromMessage: deleteMessage threw, aborting retry:', err)
+    safeSetError(state, originConvId, {
+      code: err.code || 'DELETE_ERROR',
+      message: err.message || 'Failed to delete messages in backend'
+    })
+    await recoverAfterDeleteFailure(state, originConvId)
+    return
   }
 
   
@@ -625,6 +764,41 @@ export function dismissError(state: ChatStoreState): void {
 }
 
 /**
+ * 可重试错误码集合（H-3 + FIX-C-1）。
+ *
+ * 错误条“重试”按钮仅在这些错误码时显示/启用：它们都代表 LLM 流式生成失败，
+ * 重试语义是 retryAfterError → retryStream 重新生成最后一条助手消息。
+ *
+ * FIX-C-1：后端流式错误 chunk 的 code 来自 backend/modules/channel/types.ts 的
+ * ChannelError.type（CONFIG_ERROR/NETWORK_ERROR/API_ERROR/PARSE_ERROR/VALIDATION_ERROR/
+ * TIMEOUT_ERROR/CANCELLED_ERROR）或 UNKNOWN_ERROR——真实流式失败（余额不足/断网/5xx）
+ * 以此到达前端。并入可重试集合（修复 B7 引入的功能回归）：
+ * - API_ERROR / NETWORK_ERROR / TIMEOUT_ERROR / PARSE_ERROR：可重试（重试有意义）
+ * - CANCELLED_ERROR（用户主动取消）、CONFIG_ERROR / VALIDATION_ERROR（配置/参数问题，
+ *   重试无意义）、UNKNOWN_ERROR（语义不明，保守不重试）不在此列。
+ *
+ * 恢复/预览类错误（RESTORE_ERROR / RESTORE_PARTIAL_ERROR / RESTORE_UNBACKED_WARNING /
+ * RESTORE_PREVIEW_ERROR 等）不在此列：对它们点击“重试”不应触发 LLM 重新生成（H-3 语义不变）。
+ */
+export const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'STREAM_ERROR',
+  'RETRY_ERROR',
+  'EDIT_RETRY_ERROR',
+  'API_ERROR',
+  'NETWORK_ERROR',
+  'TIMEOUT_ERROR',
+  'PARSE_ERROR'
+])
+
+/**
+ * 错误是否可重试（H-3）：仅流式生成类错误码允许通过错误条“重试”。
+ */
+export function isRetryableError(error: ErrorInfo | null | undefined): boolean {
+  if (!error) return false
+  return RETRYABLE_ERROR_CODES.has(error.code)
+}
+
+/**
  * 错误后重试
  */
 export async function retryAfterError(
@@ -633,6 +807,14 @@ export async function retryAfterError(
 ): Promise<void> {
   if (!state.currentConversationId.value) return
   if (state.isLoading.value || state.isStreaming.value) return
+
+  // H-3: 恢复/预览类错误不是 LLM 流式错误——点击重试会错误地触发 retryStream 重新生成。
+  // 只有可重试错误码才继续；恢复类结果由独立提示（MessageList restoreNotice）展示。
+  // 注：needsContinueButton 仅在 error 为空时成立，因此“继续对话”不受此守卫影响。
+  const currentError = state.error.value
+  if (currentError && !RETRYABLE_ERROR_CODES.has(currentError.code)) {
+    return
+  }
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   const originConvId = state.currentConversationId.value
@@ -653,6 +835,9 @@ export async function retryAfterError(
     } catch (err) {
       console.error('[messageActions] retryAfterError: failed to delete partial message in backend:', err)
     }
+    // FIX-C-4：await 后校验会话归属——await 期间当前会话可能已切换，
+    // 中止后续写操作（清错误/建占位/retryStream 都不应落到新会话）。
+    if (!validateSessionIdentity(state, originConvId)) return
   }
 
   state.error.value = null
@@ -752,10 +937,6 @@ export async function editAndRetry(
   clearCheckpointsFromIndex(state, backendMessageIndex)
   setTotalMessagesFromWindow(state)
 
-  // 编辑用户消息也会改变后续尾部：重置重roll 分叉的活跃版本标记
-  resetActiveTailVersionsForConversation(state, originConvId)
-
-  
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
     id: assistantMessageId,
@@ -811,6 +992,18 @@ export async function editAndRetry(
       state.isStreaming.value = false
       state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
+      // FIX-C-3（M-9 同款）：IPC 失败时本地已截断窗口并改写目标消息内容，而后端历史未变。
+      // 会话未切换时重载历史 + 检查点恢复前后端一致，避免幽灵不一致状态；
+      // 此时错误条仍显示 EDIT_RETRY_ERROR（可重试），但重试基于重载后的真实后端历史，
+      // 不会带着错位的本地窗口继续生成。
+      if (validateSessionIdentity(state, originConvId)) {
+        try {
+          await loadHistory(state)
+          await loadCheckpoints(state)
+        } catch (reloadErr) {
+          console.error('[messageActions] Failed to reload after editAndRetry failure:', reloadErr)
+        }
+      }
     }
   } finally {
     state.isLoading.value = false
@@ -878,8 +1071,6 @@ export async function deleteMessage(
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
-      // 删除后续消息：重置重roll 分叉的活跃版本标记
-      resetActiveTailVersionsForConversation(state, originConvId)
       await refreshCurrentConversationBuildSession(state)
     } else {
       const err = response?.error
@@ -951,9 +1142,6 @@ export async function deleteSingleMessage(
       state.historyFolded.value = false
       state.foldedMessageCount.value = 0
 
-      // 删除单条消息也会改变尾部：重置重roll 分叉的活跃版本标记
-      resetActiveTailVersionsForConversation(state, originConvId)
-
       await loadCheckpoints(state)
       await refreshCurrentConversationBuildSession(state)
     }
@@ -982,4 +1170,112 @@ export function clearMessages(state: ChatStoreState): void {
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
+}
+
+
+// ============ 上下文总结（L-2：从 checkpointActions 迁入，职责归位） ============
+
+/**
+ * 总结上下文
+ *
+ * 将旧的对话历史压缩为一条总结消息
+ * 所有参数（keepRecentRounds、summarizePrompt）从后端配置读取
+ *
+ * @returns 总结结果
+ */
+export async function summarizeContext(
+  state: ChatStoreState,
+  loadHistory: () => Promise<void>
+): Promise<{
+  success: boolean
+  summarizedMessageCount?: number
+  errorCode?: string
+  error?: string
+}> {
+  const originConversationId = state.currentConversationId.value
+
+  const setManualSummaryStatusForConversation = (
+    status: { isSummarizing: boolean; mode?: 'auto' | 'manual'; message?: string } | null
+  ) => {
+    // 当前仍是原对话，直接更新当前状态
+    if (!originConversationId || originConversationId === state.currentConversationId.value) {
+      state.autoSummaryStatus.value = status
+      return
+    }
+
+    // 对话已切换，更新原对话对应标签页快照，避免跨对话污染
+    const tab = state.openTabs.value.find(t => t.conversationId === originConversationId)
+    if (!tab) return
+
+    const snapshot = state.sessionSnapshots.value.get(tab.id)
+    if (snapshot) {
+      snapshot.autoSummaryStatus = status ? { ...status } : null
+    }
+  }
+
+  if (!originConversationId) {
+    return { success: false, errorCode: 'NO_CONVERSATION', error: 'No conversation selected' }
+  }
+
+  if (!state.configId.value) {
+    return { success: false, errorCode: 'NO_CONFIG', error: 'No config selected' }
+  }
+
+  // 显示底部提示（对话级隔离）
+  setManualSummaryStatusForConversation({
+    isSummarizing: true,
+    mode: 'manual'
+  })
+
+  try {
+    // 只传递必要参数，所有配置项从后端读取
+    const result = await sendToExtension<{
+      success: boolean
+      summaryContent?: any
+      summarizedMessageCount?: number
+      error?: { code: string; message: string }
+    }>('summarizeContext', {
+      conversationId: originConversationId,
+      configId: state.configId.value
+    })
+
+    if (result.success && result.summaryContent) {
+      // 重新加载历史以获取更新后的消息列表
+      await loadHistory()
+
+      return {
+        success: true,
+        summarizedMessageCount: result.summarizedMessageCount
+      }
+    } else {
+      return {
+        success: false,
+        errorCode: result.error?.code,
+        error: result.error?.message || 'Summarize failed'
+      }
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      errorCode: err?.code,
+      error: err.message || 'Summarize failed'
+    }
+  } finally {
+    // 结束提示（对话级隔离）
+    setManualSummaryStatusForConversation(null)
+  }
+}
+
+/**
+ * 取消当前对话的总结请求（仅取消总结 API，不影响后续 AI 响应）
+ */
+export async function cancelSummarizeRequest(state: ChatStoreState): Promise<void> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return
+
+  try {
+    await sendToExtension('cancelSummarizeRequest', { conversationId })
+  } catch (error) {
+    console.error('[messageActions] Failed to cancel summarize request:', error)
+  }
 }

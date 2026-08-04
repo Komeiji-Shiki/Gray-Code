@@ -79,6 +79,52 @@ export interface ConfigInfo {
   maxContextTokens?: number
 }
 
+// ============ 树状分支（TREE-10 候选切换器数据源） ============
+
+/** 分支节点（后端 ConversationBranchNode 的前端投影，仅保留 UI 所需字段） */
+export interface BranchNodeData {
+  id: string
+  parentId: string | null
+  role: 'user' | 'model' | 'system'
+  kind?: 'normal' | 'reroll' | 'edit' | 'continue' | 'imported' | 'exported'
+  createdAt?: number
+  timestamp?: number
+  modelVersion?: string
+  activeChildId?: string | null
+  label?: string
+  deleted?: boolean
+  /** 轻量内容投影（仅用于候选摘要展示） */
+  parts?: Array<{ text?: string; functionCall?: { name?: string } }>
+  /** BCP-04：是否绑定工作区存档（后端 getBranchGraph/switchBranchCandidate 响应富化） */
+  hasWorkspaceState?: boolean
+  /** BCP-04：root→该节点路径上是否执行过写工具（后端富化，决策 1 判据之一） */
+  wroteToWorkspace?: boolean
+}
+
+/** 候选摘要（后端 BranchCandidateSummary 投影） */
+export interface BranchCandidateSummaryData {
+  nodeId: string
+  parentId: string | null
+  kind?: string
+  createdAt?: number
+  timestamp?: number
+  modelVersion?: string
+  label?: string
+  preview?: string
+  deleted?: boolean
+}
+
+/** 分支图（后端 ConversationBranchGraph 投影，TREE-10 数据源） */
+export interface BranchGraphData {
+  version?: number
+  rootNodeId: string | null
+  activeTailNodeId: string | null
+  activeChildId?: string | null
+  nodes: Record<string, BranchNodeData>
+  candidateSummaries?: BranchCandidateSummaryData[]
+  exportedFrom?: { conversationId: string; nodeId: string }
+}
+
 // ============ Build（Plan 执行）相关 ============
 
 export type BuildStatus = 'running' | 'done'
@@ -115,25 +161,6 @@ export interface QueuedMessage {
   timestamp: number
   /** 入队时的会话 ID（null 表示无会话归属，兜底兼容旧队列项） */
   conversationId: string | null
-}
-
-/**
- * 对话尾部版本摘要（重roll树状分叉）。
- *
- * 每条 AI 回答被重新生成时，旧回答及其后续内容保存为一个版本；
- * 版本列表按创建时间排序，配合「当前活跃尾部」构成 v1/v2/v3… 分叉，
- * 可随时来回切换（DeepSeek 网页版交互）。
- */
-export interface TailVersionInfo {
-  id: string
-  /** 分支点：AI 回答消息的后端索引 */
-  branchIndex: number
-  /** 创建时间戳 */
-  createdAt: number
-  /** 版本摘要（尾部第一条非空文本的截断） */
-  preview?: string
-  /** 尾部消息数 */
-  messageCount: number
 }
 
 /**
@@ -275,25 +302,14 @@ export interface ChatStoreState {
    */
   toolResponseIndex: Ref<Map<string, number>>
 
-  // ============ 对话尾部版本（重roll树状分叉） ============
+  // ============ 树状分支（TREE-10） ============
 
-  /** conversationId -> 该对话的全部尾部版本摘要（不含消息内容） */
-  tailVersionsByConversation: Ref<Record<string, TailVersionInfo[]>>
-
-  /** conversationId -> 是否正在拉取版本列表 */
-  tailVersionsLoading: Ref<Record<string, boolean>>
-
-  /**
-   * 正在切换版本的标记：`${conversationId}:${branchIndex}:${versionId}` -> boolean。
-   * 用于版本切换期间在消息上显示加载态、防止重复点击。
-   */
-  tailVersionSwitching: Ref<Set<string>>
-
-  /**
-   * `${conversationId}:${branchIndex}` -> 当前恢复为 transcript 的版本 ID。
-   * null 表示活跃尾部是「最新生成的当前答案」。用于版本切换器的位置/高亮显示。
-   */
-  activeTailVersionByBranch: Ref<Record<string, string | null>>
+  /** 当前对话的分支图（null = 无图 / 线性模式 / 损坏降级） */
+  branchGraph: Ref<BranchGraphData | null>
+  /** 分支图拉取中 */
+  branchGraphLoading: Ref<boolean>
+  /** 分支切换 / 候选删除进行中（TREE-07：切换期间锁定切换器交互） */
+  isSwitchingBranch: Ref<boolean>
 }
 
 /**
@@ -386,6 +402,8 @@ export interface ConversationSessionSnapshot {
   currentPromptModeId: string
   /** 工具响应缓存快照（toolCallId -> response 条目数组，用于新 Map 重建） */
   toolResponseCache: Array<[string, Record<string, unknown>]>
+  /** 分支图快照（TREE-12：切标签页回来恢复分支视图状态；null = 无图/线性模式） */
+  branchGraph: BranchGraphData | null
 }
 
 /**

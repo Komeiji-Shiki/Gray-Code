@@ -293,6 +293,7 @@ const en: LanguageMessages = {
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
             sendWhileBusy: 'Send new message (a running command moves to background, AI responds first)',
+            interruptDelivered: 'Inserted into the current turn — AI will handle it shortly',
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
@@ -403,6 +404,33 @@ const en: LanguageMessages = {
                 viewResponse: 'View response',
                 branchFromHere: 'Branch from here'
             },
+            branch: {
+                previous: 'Previous candidate',
+                next: 'Next candidate',
+                candidateList: 'Candidate list',
+                switchTo: 'Switch to this candidate',
+                delete: 'Delete candidate',
+                deleteConfirm: 'Click again to confirm deletion',
+                active: 'Active',
+                noPreview: '(no preview)',
+                workspaceConfirmTitle: 'Switch Branch',
+                workspaceConfirmMessage: 'This branch used write tools or has a workspace checkpoint. Restore the workspace together?',
+                workspaceConfirmChatOnly: 'Chat only',
+                workspaceConfirmChatAndWorkspace: 'Switch & restore workspace',
+                workspaceConfirmCancel: 'Cancel'
+            },
+            branchTree: {
+                open: 'Branch tree',
+                close: 'Close',
+                title: 'Branch tree',
+                empty: 'No branches yet',
+                deleted: 'Deleted',
+                restore: 'Restore',
+                rename: 'Rename',
+                renamePlaceholder: 'Enter a branch label…',
+                save: 'Save',
+                cancel: 'Cancel'
+            },
             responseViewer: {
                 commonMode: 'Common mode',
                 advancedMode: 'Advanced mode',
@@ -492,13 +520,6 @@ const en: LanguageMessages = {
                 }
             },
             emptyResponse: '(Empty response from model)',
-            tailVersion: {
-                title: 'Answer versions',
-                current: 'Latest',
-                prev: 'Previous version',
-                next: 'Next version',
-                switching: 'Switching…'
-            },
             stats: {
                 responseDuration: 'Response Duration',
                 tokenRate: 'Token Rate'
@@ -547,7 +568,24 @@ const en: LanguageMessages = {
                 restoreDeleteListMore: '...and {count} more files',
                 restoreDeleteListEmpty: 'No files will be deleted by this restore',
                 restoreDeleteUntrackedNote: 'Includes files created after the checkpoint was created (deleted after confirmation)',
-                restoreUnbackedTip: 'These files were not backed up when the checkpoint was created (too large or unreadable), so they will not be touched: {paths}'
+                restoreUnbackedTip: 'These files were not backed up when the checkpoint was created (too large or unreadable), so they will not be touched: {paths}',
+                restoreResultErrorTitle: 'Restore Failed',
+                restoreResultPartialTitle: 'Restore Partially Completed',
+                restoreResultWarningTitle: 'Unbacked Files Notice',
+                restoreResultSuccessTitle: 'Restore Completed',
+                restoreResultFailed: 'Failed to restore checkpoint',
+                restoreResultPartial: 'Restore partially completed. The following files failed: {files}',
+                restoreResultPartialMore: 'Restore partially completed. The following files failed: {files} and {count} more files',
+                restoreResultUnbacked: 'The following files were not backed up when the checkpoint was created (too large or unreadable) and were not processed by this restore: {paths}',
+                restoreResultUnbackedMore: 'The following files were not backed up when the checkpoint was created (too large or unreadable) and were not processed by this restore: {paths} and {count} more files',
+                restoreResultSuccess: 'Workspace restored to checkpoint ({count} files)',
+                restoreResultSuccessWithPrune: 'Workspace restored to checkpoint ({count} files); {pruned} old checkpoints were auto-pruned',
+                restoreConversationChanged: 'Conversation switched; restore was cancelled',
+                dirtyConfirmTitle: 'Unsaved Changes',
+                dirtyConfirmMessage: 'Restoring will discard unsaved changes in {count} file(s). Continue?',
+                dirtyConfirmDiscard: 'Discard changes & continue',
+                dirtyConfirmCancel: 'Cancel',
+                dirtyConfirmMore: '...and {count} more files'
             },
             continue: {
                 title: 'Conversation Paused',
@@ -558,6 +596,10 @@ const en: LanguageMessages = {
                 title: 'Request Failed',
                 retry: 'Retry',
                 dismiss: 'Dismiss'
+            },
+            interrupt: {
+                delivered: 'Delivered "{text}" — will be processed after the current round ends',
+                deliverFailed: 'Message not delivered: {detail}'
             },
             tool: {
                 parameters: 'Parameters',
@@ -1122,6 +1164,8 @@ const en: LanguageMessages = {
             checkpoint: {
                 title: 'Checkpoint Settings',
                 loading: 'Loading config...',
+                loadError: 'Failed to load checkpoint configuration. Settings are disabled to avoid overwriting the existing configuration.',
+                loadRetry: 'Retry',
                 sections: {
                     enable: {
                         label: 'Enable Checkpoint Feature',
@@ -1172,6 +1216,7 @@ const en: LanguageMessages = {
                         title: 'Exclusion Configuration',
                         description: 'Control which files are excluded from checkpoints. Default exclusion categories can be toggled individually; excluded files are not backed up but the reason is recorded. Click "Preview Exclusions" to inspect.',
                         patterns: 'patterns',
+                        patternsAdd: 'Add',
                         profiles: {
                             logs: 'Log Files',
                             aiModels: 'AI/ML Model Weights',
@@ -1184,13 +1229,24 @@ const en: LanguageMessages = {
                         },
                         maxFileSize: {
                             label: 'Max Single File Size (MiB)',
-                            hint: 'Files larger than this are excluded from checkpoints (0 = unlimited, default 50)'
+                            hint: 'Files larger than this are excluded from checkpoints (0 = unlimited, default 50)',
+                            invalid: 'Enter a valid number (MiB, 0 = unlimited)'
                         },
                         customPatterns: {
                             label: 'Custom Exclusion Patterns',
                             hint: 'One gitignore pattern per line. A leading ! re-includes default categories but cannot override forced exclusions (.git / node_modules / extension storage)',
                             reincludeHint: 'Note: for directory-based default categories (e.g. data/, dist/), re-including files under them requires negating the directory itself, e.g. !data/ + !data/keep.txt',
-                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf',
+                            empty: 'No custom patterns yet. Type a pattern and press Enter to add.'
+                        },
+                        profilePatterns: {
+                            edit: 'Edit Patterns',
+                            save: 'Save',
+                            cancel: 'Cancel',
+                            hint: 'Override this category\'s default exclusion patterns; clear and save to restore defaults',
+                            placeholder: 'One gitignore pattern per line',
+                            empty: 'Using this category\'s default patterns; saving an empty list restores defaults',
+                            clear: 'Clear (restore defaults)'
                         },
                         preview: {
                             button: 'Preview Exclusions',
@@ -1252,6 +1308,21 @@ const en: LanguageMessages = {
                         unbackedFiles: '{count} files not backed up',
                         sizeIncomplete: 'Partially counted',
                         sizeIncompleteHint: 'Some legacy checkpoints lack size records; total size only covers counted items',
+                        manifestDetail: 'Exclusion Details',
+                        manifestLoadFailed: 'Failed to load exclusion manifest',
+                        manifestUnavailable: 'This checkpoint is in legacy format; no exclusion manifest is available',
+                        manifestExcludedCount: 'Excluded files',
+                        manifestNote: 'This checkpoint excluded {count} files using the exclusion rules at creation time',
+                        manifestRulesChanged: 'Current exclusion rules have changed; restore will follow current rules',
+                        manifestIgnoreSnapshot: 'Exclusion Rules Snapshot',
+                        manifestRuleVersion: 'Rules version',
+                        manifestForcedRulesVersion: 'Forced rules version',
+                        manifestDefaultProfileVersion: 'Default profiles version',
+                        manifestMaxFileSize: 'Max file size',
+                        manifestEnabledProfiles: 'Enabled exclusion profiles',
+                        manifestCustomPatterns: 'Custom exclusion patterns',
+                        manifestNone: 'None',
+                        manifestClose: 'Close',
                         progress: {
                             pending: 'Pending',
                             scanning: 'Scanning',
@@ -1263,13 +1334,34 @@ const en: LanguageMessages = {
                             done: 'Done',
                             failed: 'Failed',
                             cancelled: 'Cancelled',
-                            cancel: 'Cancel'
+                            cancel: 'Cancel',
+                            cancelFailed: 'Cancel failed, please retry',
+                            stale: 'Operation has not made progress for a long time and may be stuck; try cancelling or refreshing the settings page'
                         },
                         timeFormat: {
                             justNow: 'Just now',
                             minutesAgo: '{count} minutes ago',
                             hoursAgo: '{count} hours ago',
                             daysAgo: '{count} days ago'
+                        }
+                    },
+                    branchCleanup: {
+                        title: 'Branch Cleanup',
+                        description: 'Manage soft-deleted branch candidates to free up storage. Deleted branches can be kept for a retention period before automatic cleanup, or cleaned up manually in one click.',
+                        deletedCountLabel: 'Deleted Branches',
+                        deletedCountValue: '{count} across {conversations} conversation(s)',
+                        deletedCountEmpty: 'No deleted branches',
+                        countLoadFailed: 'Failed to load deleted branch count',
+                        pruneButton: 'Clean Up Expired Soft-Deletes',
+                        pruneLoading: 'Cleaning...',
+                        pruneSuccess: 'Cleaned up {count} expired branch node(s)',
+                        pruneFailed: 'Cleanup failed: {message}',
+                        pruneSkipped: 'Branch data in {count} conversation(s) was not cleaned up (conversation no longer exists)',
+                        retention: {
+                            label: 'Soft-Delete Retention (days)',
+                            hint: 'Deleted branches are auto-cleaned after this many days; enter 0 to never auto-clean (manual cleanup only)',
+                            invalid: 'Enter a non-negative integer (0 = never auto-clean)',
+                            save: 'Save'
                         }
                     }
                 }
@@ -2550,7 +2642,10 @@ const en: LanguageMessages = {
             dismiss: 'Dismiss',
             pendingReport: 'Result pending report to the model',
             outputTitle: 'Command output',
-            noOutput: 'No output yet'
+            noOutput: 'No output yet',
+            viewCollapsed: 'Collapse',
+            viewMedium: 'Scroll view',
+            viewExpanded: 'Expand all'
         },
         subagents: {
             monitor: {

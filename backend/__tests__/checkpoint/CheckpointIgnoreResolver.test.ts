@@ -482,7 +482,7 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
         }
     });
 
-    test('L-3: forced absolute path exclusion is case-insensitive on Windows', async () => {
+    test('L-3/EX-CASE-2: forced absolute path exclusion is case-insensitive on win32/darwin', async () => {
         const rootDir = await createTempWorkspace();
 
         try {
@@ -496,14 +496,73 @@ describe('CheckpointIgnoreResolver - exclusion layers (EX-01/EX-02)', () => {
             const { files, excluded } = await resolver.collectEntries();
             const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
 
-            if (process.platform === 'win32') {
-                // win32：大小写差异仍强制排除（整树剪枝）
+            if (process.platform === 'win32' || process.platform === 'darwin') {
+                // win32 / darwin（大小写不敏感卷）：大小写差异仍强制排除（整树剪枝）
                 expect(tracked).toEqual([]);
                 expect(excluded.some(e => e.path === '.Limcode')).toBe(true);
             } else {
-                // POSIX：大小写敏感，.Limcode 与 .limcode 是不同目录
+                // Linux 等 POSIX：大小写敏感，.Limcode 与 .limcode 是不同目录
                 expect(tracked).toEqual(['.Limcode/checkpoints/cp_x/a.txt']);
             }
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('EX-CASE-1: forced .git / node_modules segments match case-insensitively on win32/darwin', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, '.GIT/HEAD', 'ref');
+            await writeFile(rootDir, 'NODE_MODULES/pkg/index.js', 'module');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            // ! 否定规则试图重新纳入，强制排除不可被覆盖
+            const resolver = new CheckpointIgnoreResolver(rootDir, ['!.GIT/', '!NODE_MODULES/'], {
+                enabledProfiles: {}
+            });
+            const { files, excluded } = await resolver.collectEntries();
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+
+            if (process.platform === 'win32' || process.platform === 'darwin') {
+                // 大小写不敏感文件系统：.GIT / NODE_MODULES 命中强制排除，! 否定无效
+                expect(tracked).toEqual(['src/main.ts']);
+                const byPath = Object.fromEntries(excluded.map(e => [e.path, e]));
+                expect(byPath['.GIT']).toMatchObject({ reason: 'forced', source: 'forced' });
+                expect(byPath['NODE_MODULES']).toMatchObject({ reason: 'forced', source: 'forced' });
+            } else {
+                // POSIX：大小写敏感，.GIT / NODE_MODULES 是普通目录，不会被强制排除
+                expect(tracked).toEqual(['.GIT/HEAD', 'NODE_MODULES/pkg/index.js', 'src/main.ts']);
+            }
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-SYMLINK-1: records symlinks in excluded as unsupported_file_type', async () => {
+        const rootDir = await createTempWorkspace();
+
+        try {
+            await writeFile(rootDir, 'real/file.txt', 'data');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+            try {
+                await fs.symlink(path.join(rootDir, 'real'), path.join(rootDir, 'alias'), 'dir');
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') {
+                    // Windows 上创建符号链接可能需要权限，跳过该用例。
+                    return;
+                }
+                throw error;
+            }
+
+            const resolver = new CheckpointIgnoreResolver(rootDir);
+            const { files, excluded } = await resolver.collectEntries();
+            const tracked = files.map(f => normalizeCheckpointPath(path.relative(rootDir, f))).sort();
+            expect(tracked).toEqual(['real/file.txt', 'src/main.ts']);
+
+            // 符号链接不再静默丢弃：记录到 excluded 清单并给出原因
+            const symlinkEntry = excluded.find(e => e.path === 'alias');
+            expect(symlinkEntry).toMatchObject({ reason: 'unsupported_file_type', source: 'filesystem' });
         } finally {
             await fs.rm(rootDir, { recursive: true, force: true });
         }

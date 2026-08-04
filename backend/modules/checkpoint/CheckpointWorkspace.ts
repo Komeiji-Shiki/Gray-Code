@@ -45,7 +45,11 @@ export class CheckpointPathError extends Error {
 
 function normalizeWorkspaceUri(uri: string): string {
     const normalized = uri.trim().replace(/\\/g, '/').replace(/\/+$/g, '');
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+    // Windows 与 macOS 默认文件系统不区分大小写（EX-CASE-2 / CP-WS-1）：
+    // 同一目录不同大小写的 URI 必须生成相同的 rootId / 指纹
+    return (process.platform === 'win32' || process.platform === 'darwin')
+        ? normalized.toLowerCase()
+        : normalized;
 }
 
 function hash(value: string): string {

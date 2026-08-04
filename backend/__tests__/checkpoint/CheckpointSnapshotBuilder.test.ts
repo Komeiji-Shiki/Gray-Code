@@ -7,6 +7,7 @@ import {
     previewExclusions,
     type SnapshotBuildOptions
 } from '../../modules/checkpoint/CheckpointSnapshotBuilder';
+import { hashFileStreaming } from '../../modules/checkpoint/fileHashing';
 import {
     createRuntimeWorkspaceRoots,
     createWorkspaceScopedPath
@@ -259,6 +260,87 @@ describe('CheckpointSnapshotBuilder', () => {
             expect(Object.keys(result.fileHashes)).toEqual([
                 createWorkspaceScopedPath(roots[0].id, 'src/app.ts')
             ]);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-DUP-1: snapshot hashing converges to the shared hashFileStreaming implementation', async () => {
+        const rootDir = await createTempWorkspace();
+        try {
+            await writeFile(rootDir, 'src/main.ts', 'shared hash');
+
+            const roots = createRuntimeWorkspaceRoots([
+                { name: 'ws', uri: `file:///${rootDir.replace(/\\/g, '/')}`, fsPath: rootDir }
+            ]);
+            const result = await buildWorkspaceSnapshot({ roots });
+
+            // 共享实现与 crypto 直算一致，且快照构建器（现引用共享函数）产出一致
+            const absolutePath = path.join(rootDir, 'src', 'main.ts');
+            const sharedHash = await hashFileStreaming(absolutePath);
+            expect(sharedHash).toBe(md5('shared hash'));
+            expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'src/main.ts')]).toBe(sharedHash);
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-DUP-1: forced absolute-path exclusion is case-insensitive on case-insensitive platforms', async () => {
+        // 大小写折叠只在 win32 / darwin（默认大小写不敏感卷）生效；大小写敏感平台跳过
+        if (process.platform !== 'win32' && process.platform !== 'darwin') {
+            return;
+        }
+        const rootDir = await createTempWorkspace();
+        try {
+            await writeFile(rootDir, 'src/app.ts', 'code');
+            const checkpointDir = path.join(rootDir, '.limcode', 'checkpoints');
+            await writeFile(path.join(checkpointDir, 'cp_x', 'src', 'app.ts'), 'backup copy');
+
+            const roots = createRuntimeWorkspaceRoots([
+                { name: 'ws', uri: `file:///${rootDir.replace(/\\/g, '/')}`, fsPath: rootDir }
+            ]);
+            // 排除配置使用不同大小写（.LIMCODE/CHECKPOINTS）→ 仍应命中强制排除
+            const upperDir = path.join(rootDir, '.LIMCODE', 'CHECKPOINTS');
+            const result = await buildWorkspaceSnapshot({ roots, excludeAbsolutePaths: [upperDir] });
+
+            expect(Object.keys(result.fileHashes)).toEqual([
+                createWorkspaceScopedPath(roots[0].id, 'src/app.ts')
+            ]);
+            expect(result.fileHashes[createWorkspaceScopedPath(roots[0].id, 'src/app.ts')]).toBe(md5('code'));
+        } finally {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PREV-2: preview exclusion samples are sorted by path and stable across runs', async () => {
+        const rootDir = await createTempWorkspace();
+        try {
+            // 大量超限文件由 runBounded 并发 push（顺序不确定）+ resolver 层顺序条目（logs）
+            for (let i = 0; i < 30; i += 1) {
+                await writeFile(rootDir, `big-${String(i).padStart(2, '0')}.bin`, 'x'.repeat(200));
+            }
+            await writeFile(rootDir, 'debug.log', 'log');
+            await writeFile(rootDir, 'src/main.ts', 'code');
+
+            const roots = createRuntimeWorkspaceRoots([
+                { name: 'ws', uri: `file:///${rootDir.replace(/\\/g, '/')}`, fsPath: rootDir }
+            ]);
+            const options = { roots, enabledProfiles: { logs: true }, maxFileSizeBytes: 100 };
+            const first = await previewExclusions(options);
+            const second = await previewExclusions(options);
+
+            const paths1 = first.summary.samples.map(s => s.path);
+            const paths2 = second.summary.samples.map(s => s.path);
+            // 两次预览顺序一致（确定性）
+            expect(paths1).toEqual(paths2);
+            // 且按 path 字典序（CP-PREV-2：收集完成后排序再截取样本）
+            const sorted = [...paths1].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+            expect(paths1).toEqual(sorted);
+            // 各 profile 桶的 samples 同样稳定
+            expect(first.byProfile.logs.samples.map(s => s.path))
+                .toEqual(second.byProfile.logs.samples.map(s => s.path));
+            expect(first.byProfile.other.samples.length).toBeGreaterThan(0);
+            expect(first.summary.excludedCount).toBe(31); // 30 超限 + 1 日志
         } finally {
             await fs.rm(rootDir, { recursive: true, force: true });
         }

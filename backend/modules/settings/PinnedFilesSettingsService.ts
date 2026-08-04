@@ -1,0 +1,151 @@
+/**
+ * GrayCode - 固定文件（Pinned Files）设置服务
+ *
+ * 从 SettingsManager.ts 拆分而来：负责固定文件配置段。
+ * SettingsManager 聚合委托本服务。
+ */
+
+import type { PinnedFilesConfig, PinnedFileItem } from './types';
+import { DEFAULT_PINNED_FILES_CONFIG } from './types';
+import { SettingsCore } from './SettingsCore';
+
+/**
+ * 固定文件配置服务
+ *
+ * 对应原 SettingsManager 的「固定文件配置管理」段。
+ */
+export class PinnedFilesSettingsService {
+    private core: SettingsCore;
+
+    constructor(core: SettingsCore) {
+        this.core = core;
+    }
+
+    /**
+     * 获取固定文件配置
+     */
+    getPinnedFilesConfig(): Readonly<PinnedFilesConfig> {
+        return this.core.getToolsConfigEntry('pinned_files', DEFAULT_PINNED_FILES_CONFIG);
+    }
+
+    /**
+     * 更新固定文件配置
+     */
+    async updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
+        const oldConfig = this.getPinnedFilesConfig();
+        await this.core.saveToolsConfigEntry('pinned_files', oldConfig, { ...oldConfig, ...config });
+    }
+
+    /**
+     * 获取固定文件列表
+     */
+    getPinnedFiles(): PinnedFileItem[] {
+        return this.getPinnedFilesConfig().files || [];
+    }
+
+    /**
+     * 获取启用的固定文件列表
+     */
+    getEnabledPinnedFiles(): PinnedFileItem[] {
+        return this.getPinnedFiles().filter(file => file.enabled);
+    }
+
+    /**
+     * 添加固定文件
+     * @param path 文件路径（相对于工作区）
+     * @param workspaceUri 工作区 URI
+     * @returns 新添加的文件项
+     */
+    async addPinnedFile(path: string, workspaceUri: string): Promise<PinnedFileItem> {
+        const files = [...this.getPinnedFiles()];
+        
+        // 检查是否已存在（同一工作区同一路径）
+        if (files.some(f => f.path === path && f.workspaceUri === workspaceUri)) {
+            throw new Error(`File already pinned: ${path}`);
+        }
+        
+        const newFile: PinnedFileItem = {
+            id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            path,
+            workspaceUri,
+            enabled: true,
+            addedAt: Date.now()
+        };
+        
+        files.push(newFile);
+        await this.updatePinnedFilesConfig({ files });
+        
+        return newFile;
+    }
+
+    /**
+     * 获取当前工作区的固定文件列表
+     * @param workspaceUri 当前工作区 URI
+     */
+    getPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
+        return this.getPinnedFiles().filter(f => f.workspaceUri === workspaceUri);
+    }
+
+    /**
+     * 获取当前工作区启用的固定文件列表
+     * @param workspaceUri 当前工作区 URI
+     */
+    getEnabledPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
+        return this.getPinnedFilesForWorkspace(workspaceUri).filter(f => f.enabled);
+    }
+
+    /**
+     * 移除固定文件
+     * @param id 文件 ID
+     */
+    async removePinnedFile(id: string): Promise<void> {
+        const files = this.getPinnedFiles().filter(f => f.id !== id);
+        await this.updatePinnedFilesConfig({ files });
+    }
+
+    /**
+     * 切换固定文件的启用状态
+     * @param id 文件 ID
+     * @param enabled 是否启用
+     */
+    async setPinnedFileEnabled(id: string, enabled: boolean): Promise<void> {
+        const files = this.getPinnedFiles().map(f =>
+            f.id === id ? { ...f, enabled } : f
+        );
+        await this.updatePinnedFilesConfig({ files });
+    }
+
+    /**
+     * 更新固定文件路径
+     * @param id 文件 ID
+     * @param newPath 新路径
+     */
+    async updatePinnedFilePath(id: string, newPath: string): Promise<void> {
+        const files = this.getPinnedFiles().map(f =>
+            f.id === id ? { ...f, path: newPath } : f
+        );
+        await this.updatePinnedFilesConfig({ files });
+    }
+
+    /**
+     * 清空所有固定文件
+     */
+    async clearPinnedFiles(): Promise<void> {
+        await this.updatePinnedFilesConfig({ files: [] });
+    }
+
+    /**
+     * 检查文件是否已固定
+     * @param path 文件路径
+     */
+    isFilePinned(path: string): boolean {
+        return this.getPinnedFiles().some(f => f.path === path);
+    }
+
+    /**
+     * 获取固定文件段落标题
+     */
+    getPinnedFilesSectionTitle(): string {
+        return this.getPinnedFilesConfig().sectionTitle || 'PINNED FILES CONTENT';
+    }
+}

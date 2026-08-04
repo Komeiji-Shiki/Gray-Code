@@ -1,7 +1,26 @@
 /**
- * LimCode - 设置管理器
- * 
- * 负责全局设置的管理、持久化和通知
+ * LimCode - 设置管理器（门面）
+ *
+ * 负责全局设置的管理、持久化和通知。
+ *
+ * 实现已按主题拆分（纯重构，行为零变化）：
+ * - SettingsCore：共享状态（settings/storage/监听器）与基础设施（深合并、toolsConfig 读写）
+ * - CheckpointSettingsService：存档点配置段
+ * - PromptSettingsService：系统提示词/模式配置段
+ * - ToolsSettingsService：工具启用/自动执行/工具配置/Shell/工具模式段
+ * - MemorySettingsService：记忆配置段
+ * - ContextSettingsService：上下文感知/诊断配置段
+ * - PinnedFilesSettingsService：固定文件配置段
+ * - SkillsSettingsService：Skills 配置段
+ * - ImageToolsSettingsService：图像工具配置段
+ * - ProxySettingsService：代理配置段
+ * - SummarizeSettingsService：总结配置段
+ * - TokenCountSettingsService：Token 计数配置段
+ * - UISettingsService：UI 设置/公告版本段
+ * - StoragePathSettingsService：存储路径配置段
+ * - SubAgentsSettingsService：子代理配置段
+ *
+ * 本类聚合委托各服务，公共方法签名与导出保持不变。
  */
 
 import type {
@@ -41,7 +60,6 @@ import type {
     ResolvedPromptModeSnapshot,
     DynamicContextStrategy,
     StoragePathConfig,
-    StorageStats,
     TokenCountConfig,
     SkillsConfig,
     SkillConfigItem,
@@ -50,103 +68,31 @@ import type {
     HistorySearchToolConfig,
     MemoryToolConfig
 } from './types';
-import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
-import { t } from '../../i18n';
-import { validateCustomExclusionPatterns, DEFAULT_EXCLUSION_PROFILES } from '../checkpoint/CheckpointExclusionProfiles';
+import { DEFAULT_GLOBAL_SETTINGS } from './types';
 import {
-    DEFAULT_GLOBAL_SETTINGS,
-    DEFAULT_LIST_FILES_CONFIG,
-    DEFAULT_FIND_FILES_CONFIG,
-    DEFAULT_SEARCH_IN_FILES_CONFIG,
-    DEFAULT_READ_FILE_CONFIG,
-    DEFAULT_WRITE_FILE_CONFIG,
-    DEFAULT_APPLY_DIFF_CONFIG,
-    DEFAULT_DELETE_FILE_CONFIG,
-    DEFAULT_CHECKPOINT_CONFIG,
-    DEFAULT_TOOL_AUTO_EXEC_CONFIG,
-    DEFAULT_SUMMARIZE_CONFIG,
-    DEFAULT_GENERATE_IMAGE_CONFIG,
-    DEFAULT_REMOVE_BACKGROUND_CONFIG,
-    DEFAULT_CROP_IMAGE_CONFIG,
-    DEFAULT_RESIZE_IMAGE_CONFIG,
-    DEFAULT_ROTATE_IMAGE_CONFIG,
-    DEFAULT_CONTEXT_AWARENESS_CONFIG,
-    DEFAULT_DIAGNOSTICS_CONFIG,
-    DEFAULT_PINNED_FILES_CONFIG,
-    DEFAULT_SKILLS_CONFIG,
-    DEFAULT_SYSTEM_PROMPT_CONFIG,
-    DEFAULT_MODE_ID,
-    DESIGN_MODE_ID,
-    PLAN_MODE_ID,
-    ASK_MODE_ID,
-    REVIEW_MODE_ID,
-    CODE_PROMPT_MODE,
-    DESIGN_PROMPT_MODE,
-    PLAN_PROMPT_MODE,
-    ASK_PROMPT_MODE,
-    REVIEW_PROMPT_MODE,
-    DEFAULT_MAX_TOOL_ITERATIONS,
-    CHAT_HISTORY_PROMPT_ENTRY_ID,
-    DEFAULT_TOKEN_COUNT_CONFIG,
-    DEFAULT_SUBAGENTS_CONFIG,
-    DEFAULT_HISTORY_SEARCH_CONFIG,
-    DEFAULT_MEMORY_TOOL_CONFIG,
-    BUILTIN_MODE_TOOL_POLICIES,
-    getDefaultExecuteCommandConfig
-} from './types';
+    SettingsCore,
+    type SettingsStorage
+} from './SettingsCore';
+import { CheckpointSettingsService } from './CheckpointSettingsService';
+import { PromptSettingsService } from './PromptSettingsService';
+import { MemorySettingsService } from './MemorySettingsService';
+import { ToolsSettingsService } from './ToolsSettingsService';
+import { ContextSettingsService } from './ContextSettingsService';
+import { PinnedFilesSettingsService } from './PinnedFilesSettingsService';
+import { SkillsSettingsService } from './SkillsSettingsService';
+import { ImageToolsSettingsService } from './ImageToolsSettingsService';
+import { ProxySettingsService } from './ProxySettingsService';
+import { SummarizeSettingsService } from './SummarizeSettingsService';
+import { TokenCountSettingsService } from './TokenCountSettingsService';
+import { UISettingsService } from './UISettingsService';
+import { StoragePathSettingsService } from './StoragePathSettingsService';
+import { SubAgentsSettingsService } from './SubAgentsSettingsService';
 
-/**
- * 递归深合并纯对象（数组与原始值直接覆盖），用于工具配置与默认配置合并。
- * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
- * 其它子字段全部丢失），这里对纯对象逐层合并。
- */
-const DANGEROUS_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/**
- * 判断键名是否为原型污染危险键
- */
-function isDangerousProtoKey(key: string): boolean {
-    return DANGEROUS_PROTO_KEYS.has(key);
-}
-
-function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
-    const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
-    for (const [key, value] of Object.entries(override)) {
-        // 跳过原型污染危险键
-        if (isDangerousProtoKey(key)) continue;
-        const baseValue = (base as Record<string, unknown>)[key];
-        if (
-            value !== null && typeof value === 'object' && !Array.isArray(value) &&
-            baseValue !== null && typeof baseValue === 'object' && !Array.isArray(baseValue)
-        ) {
-            out[key] = deepMergeToolsConfig(baseValue as object, value as object);
-        } else {
-            out[key] = value;
-        }
-    }
-    return out as T;
-}
-
-/**
- * 设置存储接口
- * 
- * 抽象存储层，支持不同的存储实现
- */
-export interface SettingsStorage {
-    /**
-     * 加载设置
-     */
-    load(): Promise<GlobalSettings | null>;
-    
-    /**
-     * 保存设置
-     */
-    save(settings: GlobalSettings): Promise<void>;
-}
+export type { SettingsStorage };
 
 /**
  * 设置管理器
- * 
+ *
  * 功能：
  * 1. 全局设置的读写
  * 2. 设置持久化
@@ -154,44 +100,54 @@ export interface SettingsStorage {
  * 4. 工具启用/禁用管理
  */
 export class SettingsManager {
-    private settings: GlobalSettings;
-    private listeners: Set<SettingsChangeListener> = new Set();
-    private storage: SettingsStorage;
-    
+    private core: SettingsCore;
+    private checkpoint: CheckpointSettingsService;
+    private prompt: PromptSettingsService;
+    private memory: MemorySettingsService;
+    private tools: ToolsSettingsService;
+    private context: ContextSettingsService;
+    private pinnedFiles: PinnedFilesSettingsService;
+    private skills: SkillsSettingsService;
+    private imageTools: ImageToolsSettingsService;
+    private proxy: ProxySettingsService;
+    private summarize: SummarizeSettingsService;
+    private tokenCount: TokenCountSettingsService;
+    private ui: UISettingsService;
+    private storagePath: StoragePathSettingsService;
+    private subagents: SubAgentsSettingsService;
+
     constructor(storage: SettingsStorage) {
-        this.storage = storage;
-        this.settings = this.cloneConfig(DEFAULT_GLOBAL_SETTINGS);
+        this.core = new SettingsCore(storage);
+        this.checkpoint = new CheckpointSettingsService(this.core);
+        this.prompt = new PromptSettingsService(this.core);
+        this.memory = new MemorySettingsService(this.core);
+        this.tools = new ToolsSettingsService(this.core, this.memory);
+        this.context = new ContextSettingsService(this.core);
+        this.pinnedFiles = new PinnedFilesSettingsService(this.core);
+        this.skills = new SkillsSettingsService(this.core);
+        this.imageTools = new ImageToolsSettingsService(this.core);
+        this.proxy = new ProxySettingsService(this.core);
+        this.summarize = new SummarizeSettingsService(this.core);
+        this.tokenCount = new TokenCountSettingsService(this.core);
+        this.ui = new UISettingsService(this.core);
+        this.storagePath = new StoragePathSettingsService(this.core);
+        this.subagents = new SubAgentsSettingsService(this.core);
     }
 
-    private cloneConfig<T>(value: T): T {
-        if (value === undefined || value === null) return value;
-        if (typeof value !== 'object') return value;
-        if (Array.isArray(value)) {
-            return value.map(item => this.cloneConfig(item)) as T;
-        }
-
-        const cloned: Record<string, any> = {};
-        for (const key of Object.keys(value as Record<string, any>)) {
-            cloned[key] = this.cloneConfig((value as Record<string, any>)[key]);
-        }
-
-        return cloned as T;
-    }
-    
     /**
      * 初始化：从存储加载设置
      */
     async initialize(): Promise<void> {
-        const stored = await this.storage.load();
+        const stored = await this.core.storage.load();
         if (stored) {
             // 使用深度合并处理所有配置，确保默认值不会因用户配置部分子字段而丢失
-            this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
+            this.core.settings = this.core.deepMergeConfig(this.core.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
 
             // lastUpdated 需要使用最新的或当前时间
-            this.settings.lastUpdated = stored.lastUpdated || Date.now();
+            this.core.settings.lastUpdated = stored.lastUpdated || Date.now();
 
             // 显式迁移内置模式的 toolPolicy（幂等，仅未定制时填充默认值）
-            await this.migratePromptModeToolPolicies();
+            await this.prompt.migratePromptModeToolPolicies();
         }
     }
 
@@ -201,242 +157,96 @@ export class SettingsManager {
      * 用于导入设置后通知 PromptManager 等缓存持有者刷新。
      * 事件形态与 updateSettings 一致，确保现有监听器能识别。
      */
-    async reloadAndNotify(): Promise<void> {
-        const oldSettings = { ...this.settings };
-        const stored = await this.storage.load();
-        if (stored) {
-            this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
-            this.settings.lastUpdated = stored.lastUpdated || Date.now();
-        }
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
-        });
+    reloadAndNotify(): Promise<void> {
+        return this.core.reloadAndNotify();
     }
 
-    /**
-     * 辅助方法：深度合并配置对象（递归）
-     * 
-     * 用于处理复杂的嵌套配置结构。
-     * 确保如果在 DEFAULT_CONFIG 中存在，而在 STORED_CONFIG 中不存在（或只有部分属性）时，
-     * 能够完整保留默认配置的子属性。
-     */
-    private deepMergeConfig<T>(defaultConfig: T, storedConfig: any): T {
-        // 基本类型或数组/null/undefined，直接使用 stored 的值（如果存在），否则回退到 default
-        if (storedConfig === undefined) {
-            return defaultConfig;
-        }
-
-        // 处理基础类型或特殊对象类型
-        if (
-            typeof defaultConfig !== 'object' || defaultConfig === null ||
-            typeof storedConfig !== 'object' || storedConfig === null ||
-            Array.isArray(defaultConfig) || Array.isArray(storedConfig)
-        ) {
-            return storedConfig as T;
-        }
-
-        const merged = { ...defaultConfig } as Record<string, any>;
-
-        // 遍历 default 的所有 key
-        for (const key of Object.keys(defaultConfig)) {
-            // 跳过原型污染危险键
-            if (isDangerousProtoKey(key)) continue;
-            const defaultValue = (defaultConfig as Record<string, any>)[key];
-            const storedValue = storedConfig[key];
-
-            if (storedValue !== undefined) {
-                // 递归深合并
-                merged[key] = this.deepMergeConfig(defaultValue, storedValue);
-            }
-        }
-
-        // 保留 stored 中独有的 key（用户可能新增了我们当前版本未知但应该保留的配置）
-        for (const key of Object.keys(storedConfig)) {
-            // 跳过原型污染危险键
-            if (isDangerousProtoKey(key)) continue;
-            if (!(key in defaultConfig)) {
-                merged[key] = storedConfig[key];
-            }
-        }
-
-        return merged as T;
-    }
-    
     /**
      * 获取完整设置
      */
     getSettings(): Readonly<GlobalSettings> {
-        return { ...this.settings };
+        return this.core.getSettings();
     }
-    
+
     /**
      * 更新设置（部分更新）
      */
-    async updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
-        const oldSettings = { ...this.settings };
-        
-        // 合并更新
-        this.settings = {
-            ...this.settings,
-            ...updates,
-            lastUpdated: Date.now()
-        };
-        
-        // 保存到存储
-        await this.storage.save(this.settings);
-        
-        // 通知变更
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
-        });
+    updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
+        return this.core.updateSettings(updates);
     }
-    
+
     // ========== 工具调用配置 ==========
-    
+
     /**
      * 获取单回合最大工具调用次数
      */
     getMaxToolIterations(): number {
-        return this.settings.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+        return this.tools.getMaxToolIterations();
     }
-    
+
     /**
      * 设置单回合最大工具调用次数
      *
      * @param value 最大次数，-1 表示无限制，正整数表示具体次数
      */
-    async setMaxToolIterations(value: number): Promise<void> {
-        // -1 表示无限制，正整数表示具体次数，最小为 1
-        const safeValue = value === -1 ? -1 : Math.max(1, value);
-        const oldValue = this.settings.maxToolIterations;
-        this.settings.maxToolIterations = safeValue;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'maxToolIterations',
-            oldValue,
-            newValue: safeValue,
-            settings: this.settings
-        });
+    setMaxToolIterations(value: number): Promise<void> {
+        return this.tools.setMaxToolIterations(value);
     }
-    
+
     // ========== 渠道管理 ==========
-    
+
     /**
      * 获取当前激活的渠道 ID
      */
     getActiveChannelId(): string | undefined {
-        return this.settings.activeChannelId;
+        return this.tools.getActiveChannelId();
     }
-    
+
     /**
      * 设置激活的渠道 ID
      */
-    async setActiveChannelId(channelId: string): Promise<void> {
-        const oldValue = this.settings.activeChannelId;
-        this.settings.activeChannelId = channelId;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'channel',
-            path: 'activeChannelId',
-            oldValue,
-            newValue: channelId,
-            settings: this.settings
-        });
+    setActiveChannelId(channelId: string): Promise<void> {
+        return this.tools.setActiveChannelId(channelId);
     }
-    
+
     // ========== 工具管理 ==========
-    
+
     /**
      * 获取工具启用状态
      */
     getToolsEnabled(): Readonly<ToolsEnabledState> {
-        return { ...this.settings.toolsEnabled };
+        return this.tools.getToolsEnabled();
     }
-    
+
     /**
      * 检查工具是否启用
-     * 
+     *
      * @param toolName 工具名称
      * @returns 是否启用（未配置时默认启用）
      */
     isToolEnabled(toolName: string): boolean {
-        if (isMemoryToolName(toolName) && !this.isMemoryEnabled()) {
-            return false;
-        }
-        // 如果未配置，默认启用
-        return this.settings.toolsEnabled[toolName] !== false;
+        return this.tools.isToolEnabled(toolName);
     }
-    
+
     /**
      * 设置工具启用状态
-     * 
+     *
      * @param toolName 工具名称
      * @param enabled 是否启用
      */
-    async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
-        if (enabled && isMemoryToolName(toolName) && !this.isMemoryEnabled()) {
-            throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
-        }
-        const oldValue = { ...this.settings.toolsEnabled };
-        this.settings.toolsEnabled[toolName] = enabled;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsEnabled',
-            oldValue,
-            newValue: this.settings.toolsEnabled,
-            settings: this.settings
-        });
+    setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
+        return this.tools.setToolEnabled(toolName, enabled);
     }
-    
+
     /**
      * 批量设置工具启用状态
-     * 
+     *
      * @param states 工具名称到启用状态的映射
      */
-    async setToolsEnabled(states: ToolsEnabledState): Promise<void> {
-        const oldValue = { ...this.settings.toolsEnabled };
-        const normalizedStates = { ...states };
-        if (!this.isMemoryEnabled()) {
-            for (const toolName of MEMORY_TOOL_NAMES) {
-                if (normalizedStates[toolName] === true) {
-                    delete normalizedStates[toolName];
-                }
-            }
-        }
-        this.settings.toolsEnabled = {
-            ...this.settings.toolsEnabled,
-            ...normalizedStates
-        };
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolsEnabled',
-            oldValue,
-            newValue: this.settings.toolsEnabled,
-            settings: this.settings
-        });
+    setToolsEnabled(states: ToolsEnabledState): Promise<void> {
+        return this.tools.setToolsEnabled(states);
     }
-    
+
     /**
      * 获取启用的工具列表
      *
@@ -444,18 +254,18 @@ export class SettingsManager {
      * @returns 启用的工具名称数组
      */
     getEnabledTools(allTools: string[]): string[] {
-        return allTools.filter(name => this.isToolEnabled(name));
+        return this.tools.getEnabledTools(allTools);
     }
-    
+
     // ========== 工具自动执行管理 ==========
-    
+
     /**
      * 获取工具自动执行配置
      */
     getToolAutoExecConfig(): Readonly<ToolAutoExecConfig> {
-        return this.settings.toolAutoExec || DEFAULT_TOOL_AUTO_EXEC_CONFIG;
+        return this.tools.getToolAutoExecConfig();
     }
-    
+
     /**
      * 检查工具是否可以自动执行（无需用户确认）
      *
@@ -463,62 +273,26 @@ export class SettingsManager {
      * @returns true = 自动执行，false = 需要确认
      */
     isToolAutoExec(toolName: string): boolean {
-        const config = this.settings.toolAutoExec || DEFAULT_TOOL_AUTO_EXEC_CONFIG;
-        // 如果未配置，默认自动执行
-        if (config[toolName] === undefined) {
-            return true;
-        }
-        return config[toolName];
+        return this.tools.isToolAutoExec(toolName);
     }
-    
+
     /**
      * 设置工具是否可以自动执行
      *
      * @param toolName 工具名称
      * @param autoExec true = 自动执行，false = 需要确认
      */
-    async setToolAutoExec(toolName: string, autoExec: boolean): Promise<void> {
-        const oldConfig = { ...this.getToolAutoExecConfig() };
-        
-        if (!this.settings.toolAutoExec) {
-            this.settings.toolAutoExec = { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG };
-        }
-        this.settings.toolAutoExec[toolName] = autoExec;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolAutoExec', // 修正 path 为父对象路径或针对特定工具的正确结构
-            oldValue: oldConfig,
-            newValue: this.settings.toolAutoExec,
-            settings: this.settings
-        });
+    setToolAutoExec(toolName: string, autoExec: boolean): Promise<void> {
+        return this.tools.setToolAutoExec(toolName, autoExec);
     }
-    
+
     /**
      * 批量设置工具自动执行配置
      */
-    async setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {
-        const oldConfig = this.getToolAutoExecConfig();
-        this.settings.toolAutoExec = {
-            ...this.settings.toolAutoExec,
-            ...config
-        };
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'tools',
-            path: 'toolAutoExec',
-            oldValue: oldConfig,
-            newValue: this.settings.toolAutoExec,
-            settings: this.settings
-        });
+    setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {
+        return this.tools.setToolAutoExecConfig(config);
     }
-    
+
     /**
      * 获取需要确认的工具列表
      *
@@ -526,237 +300,181 @@ export class SettingsManager {
      * @returns 需要确认的工具名称数组
      */
     getToolsRequiringConfirmation(allTools: string[]): string[] {
-        return allTools.filter(name => !this.isToolAutoExec(name));
+        return this.tools.getToolsRequiringConfirmation(allTools);
     }
-    
+
     // ========== 工具配置管理 ==========
-    
+
     /**
      * 获取工具配置
      */
     getToolsConfig(): Readonly<ToolsConfig> {
-        return this.settings.toolsConfig || {};
-    }
-    
-    /**
-     * 读取 toolsConfig.<key> 配置，并与默认配置深合并。
-     *
-     * 与默认配置 merge 可避免历史配置缺少后续版本新增的字段。
-     * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
-     * 其它子字段全部丢失），这里对纯对象递归深合并，数组与原始值仍直接覆盖。
-     */
-    private getToolsConfigEntry<T extends object>(key: string, defaults: Readonly<T>): Readonly<T> {
-        const cfg = this.settings.toolsConfig?.[key] as unknown as Partial<T> | undefined;
-        return deepMergeToolsConfig(defaults, cfg || {});
-    }
-
-    /**
-     * 写回 toolsConfig.<key> 配置并广播变更事件。
-     *
-     * 所有 toolsConfig 下的配置保存/通知逻辑统一收口于此。
-     */
-    private async saveToolsConfigEntry<T extends object>(key: string, oldConfig: Readonly<T>, newConfig: T): Promise<void> {
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        this.settings.toolsConfig[key] = newConfig as unknown as Record<string, unknown>;
-        this.settings.lastUpdated = Date.now();
-
-        await this.storage.save(this.settings);
-
-        this.notifyChange({
-            type: 'tools',
-            path: `toolsConfig.${key}`,
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+        return this.tools.getToolsConfig();
     }
 
     /**
      * 获取 read_file 工具配置
      */
     getReadFileConfig(): Readonly<ReadFileToolConfig> {
-        return this.getToolsConfigEntry('read_file', DEFAULT_READ_FILE_CONFIG);
+        return this.tools.getReadFileConfig();
     }
 
     /**
      * 获取 write_file 工具配置
      */
     getWriteFileConfig(): Readonly<WriteFileToolConfig> {
-        return this.getToolsConfigEntry('write_file', DEFAULT_WRITE_FILE_CONFIG);
+        return this.tools.getWriteFileConfig();
     }
 
     /**
      * 获取 list_files 工具配置
      */
     getListFilesConfig(): Readonly<ListFilesToolConfig> {
-        return this.getToolsConfigEntry('list_files', DEFAULT_LIST_FILES_CONFIG);
+        return this.tools.getListFilesConfig();
     }
-    
+
     /**
      * 更新 list_files 工具配置
      */
-    async updateListFilesConfig(config: Partial<ListFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getListFilesConfig();
-        await this.saveToolsConfigEntry('list_files', oldConfig, { ...oldConfig, ...config });
+    updateListFilesConfig(config: Partial<ListFilesToolConfig>): Promise<void> {
+        return this.tools.updateListFilesConfig(config);
     }
-    
+
     /**
      * 获取 find_files 工具配置
      */
     getFindFilesConfig(): Readonly<FindFilesToolConfig> {
-        return this.getToolsConfigEntry('find_files', DEFAULT_FIND_FILES_CONFIG);
+        return this.tools.getFindFilesConfig();
     }
-    
+
     /**
      * 更新 find_files 工具配置
      */
-    async updateFindFilesConfig(config: Partial<FindFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getFindFilesConfig();
-        await this.saveToolsConfigEntry('find_files', oldConfig, { ...oldConfig, ...config });
+    updateFindFilesConfig(config: Partial<FindFilesToolConfig>): Promise<void> {
+        return this.tools.updateFindFilesConfig(config);
     }
-    
+
     /**
      * 获取 search_in_files 工具配置
      */
     getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
-        return this.getToolsConfigEntry('search_in_files', DEFAULT_SEARCH_IN_FILES_CONFIG);
+        return this.tools.getSearchInFilesConfig();
     }
-    
+
     /**
      * 更新 search_in_files 工具配置
      */
-    async updateSearchInFilesConfig(config: Partial<SearchInFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getSearchInFilesConfig();
-        await this.saveToolsConfigEntry('search_in_files', oldConfig, { ...oldConfig, ...config });
+    updateSearchInFilesConfig(config: Partial<SearchInFilesToolConfig>): Promise<void> {
+        return this.tools.updateSearchInFilesConfig(config);
     }
-    
+
     /**
      * 更新工具配置
      */
-    async updateToolConfig(toolName: string, config: Record<string, unknown>): Promise<void> {
-        const oldConfig = this.settings.toolsConfig?.[toolName] || {};
-        await this.saveToolsConfigEntry(toolName, oldConfig, { ...oldConfig, ...config });
+    updateToolConfig(toolName: string, config: Record<string, unknown>): Promise<void> {
+        return this.tools.updateToolConfig(toolName, config);
     }
-    
+
     /**
      * 获取 apply_diff 工具配置
      */
     getApplyDiffConfig(): Readonly<ApplyDiffToolConfig> {
-        return this.getToolsConfigEntry('apply_diff', DEFAULT_APPLY_DIFF_CONFIG);
+        return this.tools.getApplyDiffConfig();
     }
-    
+
     /**
      * 更新 apply_diff 工具配置
      */
-    async updateApplyDiffConfig(config: Partial<ApplyDiffToolConfig>): Promise<void> {
-        const oldConfig = this.getApplyDiffConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
-            newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
-        }
-        await this.saveToolsConfigEntry('apply_diff', oldConfig, newConfig);
+    updateApplyDiffConfig(config: Partial<ApplyDiffToolConfig>): Promise<void> {
+        return this.tools.updateApplyDiffConfig(config);
     }
 
     /**
      * 获取 history_search 工具配置
      */
     getHistorySearchConfig(): Readonly<HistorySearchToolConfig> {
-        return this.getToolsConfigEntry('history_search', DEFAULT_HISTORY_SEARCH_CONFIG);
+        return this.tools.getHistorySearchConfig();
     }
 
     /**
      * 更新 history_search 工具配置
      */
-    async updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
-        const oldConfig = this.getHistorySearchConfig();
-        await this.saveToolsConfigEntry('history_search', oldConfig, { ...oldConfig, ...config });
+    updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
+        return this.tools.updateHistorySearchConfig(config);
     }
 
-    
     /**
      * 获取 delete_file 工具配置
      */
     getDeleteFileConfig(): Readonly<DeleteFileToolConfig> {
-        return this.getToolsConfigEntry('delete_file', DEFAULT_DELETE_FILE_CONFIG);
+        return this.tools.getDeleteFileConfig();
     }
-    
+
     /**
      * 更新 delete_file 工具配置
      */
-    async updateDeleteFileConfig(config: Partial<DeleteFileToolConfig>): Promise<void> {
-        const oldConfig = this.getDeleteFileConfig();
-        await this.saveToolsConfigEntry('delete_file', oldConfig, { ...oldConfig, ...config });
+    updateDeleteFileConfig(config: Partial<DeleteFileToolConfig>): Promise<void> {
+        return this.tools.updateDeleteFileConfig(config);
     }
-    
+
     /**
      * 获取 execute_command 工具配置
      */
     getExecuteCommandConfig(): Readonly<ExecuteCommandToolConfig> {
-        return this.getToolsConfigEntry('execute_command', getDefaultExecuteCommandConfig());
+        return this.tools.getExecuteCommandConfig();
     }
-    
+
     /**
      * 更新 execute_command 工具配置
      */
-    async updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
-        const oldConfig = this.getExecuteCommandConfig();
-        await this.saveToolsConfigEntry('execute_command', oldConfig, { ...oldConfig, ...config });
+    updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
+        return this.tools.updateExecuteCommandConfig(config);
     }
-    
+
     /**
      * 获取启用的 Shell 列表
      */
     getEnabledShells(): ShellConfig[] {
-        const config = this.getExecuteCommandConfig();
-        return config.shells.filter(shell => shell.enabled);
+        return this.tools.getEnabledShells();
     }
-    
+
     /**
      * 获取默认 Shell 类型
      */
     getDefaultShell(): string {
-        return this.getExecuteCommandConfig().defaultShell;
+        return this.tools.getDefaultShell();
     }
-    
+
     /**
      * 设置默认 Shell
      */
-    async setDefaultShell(shellType: string): Promise<void> {
-        await this.updateExecuteCommandConfig({ defaultShell: shellType });
+    setDefaultShell(shellType: string): Promise<void> {
+        return this.tools.setDefaultShell(shellType);
     }
-    
+
     /**
      * 更新 Shell 配置
      */
-    async updateShellConfig(shellType: string, updates: Partial<ShellConfig>): Promise<void> {
-        const config = this.getExecuteCommandConfig();
-        const shells = config.shells.map(shell =>
-            shell.type === shellType ? { ...shell, ...updates } : shell
-        );
-        await this.updateExecuteCommandConfig({ shells });
+    updateShellConfig(shellType: string, updates: Partial<ShellConfig>): Promise<void> {
+        return this.tools.updateShellConfig(shellType, updates);
     }
-    
+
     /**
      * 启用/禁用 Shell
      */
-    async setShellEnabled(shellType: string, enabled: boolean): Promise<void> {
-        await this.updateShellConfig(shellType, { enabled });
+    setShellEnabled(shellType: string, enabled: boolean): Promise<void> {
+        return this.tools.setShellEnabled(shellType, enabled);
     }
-    
+
     // ========== 存档点配置管理 ==========
-    
+
     /**
      * 获取存档点配置
      */
     getCheckpointConfig(): Readonly<CheckpointConfig> {
-        return this.getToolsConfigEntry('checkpoint', DEFAULT_CHECKPOINT_CONFIG);
+        return this.checkpoint.getCheckpointConfig();
     }
-    
+
     /**
      * 更新存档点配置
      *
@@ -764,145 +482,66 @@ export class SettingsManager {
      * （空模式、绝对路径、纯 `!`、`..` 越界、换行注入），以及未知默认类别 id、
      * 非有限数值的单文件大小上限。
      */
-    async updateCheckpointConfig(config: Partial<CheckpointConfig>): Promise<void> {
-        const patternsToValidate: string[] = [
-            ...(config.exclusion?.customPatterns ?? []),
-            ...(config.customIgnorePatterns ?? [])
-        ];
-        if (patternsToValidate.length > 0) {
-            const issues = validateCustomExclusionPatterns(patternsToValidate);
-            if (issues.length > 0) {
-                const detail = issues
-                    .map(issue => `"${issue.pattern}" (${this.exclusionPatternIssueText(issue.reason)})`)
-                    .join('; ');
-                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionPatterns', { detail }));
-            }
-        }
-
-        // L-4: enabledProfiles 未知 profile id（前端可能发送损坏/过期的配置）→ 拒绝保存
-        if (config.exclusion?.enabledProfiles !== undefined) {
-            const enabledProfiles = config.exclusion.enabledProfiles;
-            if (typeof enabledProfiles !== 'object' || Array.isArray(enabledProfiles)) {
-                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionProfiles', {
-                    detail: String(enabledProfiles)
-                }));
-            }
-            const knownIds = new Set<string>(DEFAULT_EXCLUSION_PROFILES.map(profile => profile.id));
-            const unknownIds = Object.keys(enabledProfiles).filter(id => !knownIds.has(id));
-            if (unknownIds.length > 0) {
-                throw new Error(t('modules.settings.errors.invalidCheckpointExclusionProfiles', {
-                    detail: unknownIds.join(', ')
-                }));
-            }
-        }
-
-        // L-4: maxFileSizeBytes 非有限数值（NaN / 字符串）→ 拒绝保存
-        if (config.exclusion && config.exclusion.maxFileSizeBytes !== undefined) {
-            const size = config.exclusion.maxFileSizeBytes;
-            if (typeof size !== 'number' || !Number.isFinite(size)) {
-                throw new Error(t('modules.settings.errors.invalidCheckpointMaxFileSize'));
-            }
-        }
-
-        // 负数上限归一化为 0（0 = 不限制）
-        if (config.exclusion && typeof config.exclusion.maxFileSizeBytes === 'number' && config.exclusion.maxFileSizeBytes < 0) {
-            config.exclusion.maxFileSizeBytes = 0;
-        }
-
-        const oldConfig = this.getCheckpointConfig();
-        await this.saveToolsConfigEntry('checkpoint', oldConfig, { ...oldConfig, ...config });
+    updateCheckpointConfig(config: Partial<CheckpointConfig>): Promise<void> {
+        return this.checkpoint.updateCheckpointConfig(config);
     }
 
-    /** 排除模式校验失败的局部原因文案（EX-12） */
-    private exclusionPatternIssueText(reason: string): string {
-        const key = `modules.settings.errors.exclusionPatternReason.${reason}` as const;
-        const localized = t(key);
-        return localized === key ? reason : localized;
-    }
-    
     /**
      * 检查工具是否需要在执行前创建备份
      */
     shouldCreateBeforeCheckpoint(toolName: string): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && config.beforeTools.includes(toolName);
+        return this.checkpoint.shouldCreateBeforeCheckpoint(toolName);
     }
-    
+
     /**
      * 检查工具是否需要在执行后创建备份
      */
     shouldCreateAfterCheckpoint(toolName: string): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && config.afterTools.includes(toolName);
+        return this.checkpoint.shouldCreateAfterCheckpoint(toolName);
     }
-    
+
     /**
      * 启用/禁用存档点功能
      */
-    async setCheckpointEnabled(enabled: boolean): Promise<void> {
-        await this.updateCheckpointConfig({ enabled });
+    setCheckpointEnabled(enabled: boolean): Promise<void> {
+        return this.checkpoint.setCheckpointEnabled(enabled);
     }
-    
+
     /**
      * 设置工具的备份阶段
      */
-    async setToolCheckpointPhase(toolName: string, before: boolean, after: boolean): Promise<void> {
-        const config = this.getCheckpointConfig();
-        
-        const beforeTools = [...config.beforeTools];
-        const afterTools = [...config.afterTools];
-        
-        // 更新 beforeTools
-        const beforeIndex = beforeTools.indexOf(toolName);
-        if (before && beforeIndex === -1) {
-            beforeTools.push(toolName);
-        } else if (!before && beforeIndex !== -1) {
-            beforeTools.splice(beforeIndex, 1);
-        }
-        
-        // 更新 afterTools
-        const afterIndex = afterTools.indexOf(toolName);
-        if (after && afterIndex === -1) {
-            afterTools.push(toolName);
-        } else if (!after && afterIndex !== -1) {
-            afterTools.splice(afterIndex, 1);
-        }
-        
-        await this.updateCheckpointConfig({ beforeTools, afterTools });
+    setToolCheckpointPhase(toolName: string, before: boolean, after: boolean): Promise<void> {
+        return this.checkpoint.setToolCheckpointPhase(toolName, before, after);
     }
-    
+
     /**
      * 检查是否需要在用户消息前创建存档点
      */
     shouldCreateBeforeUserMessageCheckpoint(): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && (config.messageCheckpoint?.beforeMessages?.includes('user') ?? false);
+        return this.checkpoint.shouldCreateBeforeUserMessageCheckpoint();
     }
-    
+
     /**
      * 检查是否需要在用户消息后创建存档点
      */
     shouldCreateAfterUserMessageCheckpoint(): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && (config.messageCheckpoint?.afterMessages?.includes('user') ?? false);
+        return this.checkpoint.shouldCreateAfterUserMessageCheckpoint();
     }
-    
+
     /**
      * 检查是否需要在模型消息前创建存档点
      */
     shouldCreateBeforeModelMessageCheckpoint(): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && (config.messageCheckpoint?.beforeMessages?.includes('model') ?? false);
+        return this.checkpoint.shouldCreateBeforeModelMessageCheckpoint();
     }
-    
+
     /**
      * 检查是否需要在模型消息后创建存档点（不包含工具调用的纯文本回复）
      */
     shouldCreateAfterModelMessageCheckpoint(): boolean {
-        const config = this.getCheckpointConfig();
-        return config.enabled && (config.messageCheckpoint?.afterMessages?.includes('model') ?? false);
+        return this.checkpoint.shouldCreateAfterModelMessageCheckpoint();
     }
-    
+
     /**
      * 检查是否只在最外层创建模型消息存档点
      *
@@ -910,48 +549,34 @@ export class SettingsManager {
      * 当返回 false 时，每次迭代都创建存档点
      */
     isModelOuterLayerOnly(): boolean {
-        const config = this.getCheckpointConfig();
-        // 默认为 true（只在最外层创建）
-        return config.messageCheckpoint?.modelOuterLayerOnly ?? true;
+        return this.checkpoint.isModelOuterLayerOnly();
     }
-    
+
     // ========== 工具模式管理 ==========
-    
+
     /**
      * 获取默认工具模式
      */
     getDefaultToolMode(): 'function_call' | 'xml' | 'json' {
-        return this.settings.defaultToolMode || 'function_call';
+        return this.tools.getDefaultToolMode();
     }
-    
+
     /**
      * 设置默认工具模式
      */
-    async setDefaultToolMode(mode: 'function_call' | 'xml' | 'json'): Promise<void> {
-        const oldValue = this.settings.defaultToolMode;
-        this.settings.defaultToolMode = mode;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'toolMode',
-            path: 'defaultToolMode',
-            oldValue,
-            newValue: mode,
-            settings: this.settings
-        });
+    setDefaultToolMode(mode: 'function_call' | 'xml' | 'json'): Promise<void> {
+        return this.tools.setDefaultToolMode(mode);
     }
-    
+
     // ========== 代理设置管理 ==========
-    
+
     /**
      * 获取代理设置
      */
     getProxySettings(): Readonly<ProxySettings> {
-        return this.settings.proxy || { enabled: false };
+        return this.proxy.getProxySettings();
     }
-    
+
     /**
      * 获取有效的代理 URL
      *
@@ -959,741 +584,412 @@ export class SettingsManager {
      * @returns 代理 URL 或 undefined
      */
     getEffectiveProxyUrl(): string | undefined {
-        const proxy = this.settings.proxy;
-        if (proxy?.enabled && proxy.url && proxy.url.trim()) {
-            return proxy.url.trim();
-        }
-        return undefined;
+        return this.proxy.getEffectiveProxyUrl();
     }
-    
+
     /**
      * 更新代理设置
      */
-    async updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
-        const oldValue = this.settings.proxy;
-        this.settings.proxy = {
-            enabled: true,
-            ...this.settings.proxy,
-            ...proxySettings
-        } as ProxySettings;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'proxy',
-            path: 'proxy',
-            oldValue,
-            newValue: this.settings.proxy,
-            settings: this.settings
-        });
+    updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
+        return this.proxy.updateProxySettings(proxySettings);
     }
-    
+
     /**
      * 设置代理启用状态
      */
-    async setProxyEnabled(enabled: boolean): Promise<void> {
-        await this.updateProxySettings({ enabled });
+    setProxyEnabled(enabled: boolean): Promise<void> {
+        return this.proxy.setProxyEnabled(enabled);
     }
-    
+
     /**
      * 设置代理 URL
      */
-    async setProxyUrl(url: string | undefined): Promise<void> {
-        await this.updateProxySettings({ url });
+    setProxyUrl(url: string | undefined): Promise<void> {
+        return this.proxy.setProxyUrl(url);
     }
-    
+
     // ========== 总结配置管理 ==========
-    
+
     /**
      * 获取总结配置
      */
     getSummarizeConfig(): Readonly<SummarizeConfig> {
-        return this.getToolsConfigEntry('summarize', DEFAULT_SUMMARIZE_CONFIG);
+        return this.summarize.getSummarizeConfig();
     }
-    
+
+    /**
+     * 更新总结配置
+     */
+    updateSummarizeConfig(config: Partial<SummarizeConfig>): Promise<void> {
+        return this.summarize.updateSummarizeConfig(config);
+    }
+
     // ========== 记忆配置管理 ==========
 
     /**
      * 长期记忆总开关。
      */
     isMemoryEnabled(): boolean {
-        return this.getMemoryConfig().enabled !== false;
+        return this.memory.isMemoryEnabled();
     }
-    
+
     /**
      * 获取记忆工具配置
      */
     getMemoryConfig(): Readonly<MemoryToolConfig> {
-        return this.getToolsConfigEntry('memory', DEFAULT_MEMORY_TOOL_CONFIG);
+        return this.memory.getMemoryConfig();
     }
-    
+
     /**
      * 更新记忆工具配置
      */
-    async updateMemoryConfig(config: Partial<MemoryToolConfig>): Promise<void> {
-        const oldConfig = this.getMemoryConfig();
-        await this.saveToolsConfigEntry('memory', oldConfig, { ...oldConfig, ...config });
+    updateMemoryConfig(config: Partial<MemoryToolConfig>): Promise<void> {
+        return this.memory.updateMemoryConfig(config);
     }
-    
+
     // ========== 图像生成配置管理 ==========
-    
+
     /**
      * 获取图像生成工具配置
      */
     getGenerateImageConfig(): Readonly<GenerateImageToolConfig> {
-        return this.getToolsConfigEntry('generate_image', DEFAULT_GENERATE_IMAGE_CONFIG);
+        return this.imageTools.getGenerateImageConfig();
     }
-    
+
     /**
      * 更新图像生成工具配置
      */
-    async updateGenerateImageConfig(config: Partial<GenerateImageToolConfig>): Promise<void> {
-        const oldConfig = this.getGenerateImageConfig();
-        await this.saveToolsConfigEntry('generate_image', oldConfig, { ...oldConfig, ...config });
+    updateGenerateImageConfig(config: Partial<GenerateImageToolConfig>): Promise<void> {
+        return this.imageTools.updateGenerateImageConfig(config);
     }
-    
+
     // ========== 抠图工具配置管理 ==========
-    
+
     /**
      * 获取抠图工具配置
      */
     getRemoveBackgroundConfig(): Readonly<RemoveBackgroundToolConfig> {
-        return this.getToolsConfigEntry('remove_background', DEFAULT_REMOVE_BACKGROUND_CONFIG);
+        return this.imageTools.getRemoveBackgroundConfig();
     }
-    
+
     /**
      * 更新抠图工具配置
      */
-    async updateRemoveBackgroundConfig(config: Partial<RemoveBackgroundToolConfig>): Promise<void> {
-        const oldConfig = this.getRemoveBackgroundConfig();
-        await this.saveToolsConfigEntry('remove_background', oldConfig, { ...oldConfig, ...config });
+    updateRemoveBackgroundConfig(config: Partial<RemoveBackgroundToolConfig>): Promise<void> {
+        return this.imageTools.updateRemoveBackgroundConfig(config);
     }
-    
+
     // ========== 裁切图片工具配置管理 ==========
-    
+
     /**
      * 获取裁切图片工具配置
      */
     getCropImageConfig(): Readonly<CropImageToolConfig> {
-        return this.getToolsConfigEntry('crop_image', DEFAULT_CROP_IMAGE_CONFIG);
+        return this.imageTools.getCropImageConfig();
     }
-    
+
     /**
      * 更新裁切图片工具配置
      */
-    async updateCropImageConfig(config: Partial<CropImageToolConfig>): Promise<void> {
-        const oldConfig = this.getCropImageConfig();
-        await this.saveToolsConfigEntry('crop_image', oldConfig, { ...oldConfig, ...config });
+    updateCropImageConfig(config: Partial<CropImageToolConfig>): Promise<void> {
+        return this.imageTools.updateCropImageConfig(config);
     }
-    
+
     // ========== 缩放图片工具配置管理 ==========
-    
+
     /**
      * 获取缩放图片工具配置
      */
     getResizeImageConfig(): Readonly<ResizeImageToolConfig> {
-        return this.getToolsConfigEntry('resize_image', DEFAULT_RESIZE_IMAGE_CONFIG);
+        return this.imageTools.getResizeImageConfig();
     }
-    
+
     /**
      * 更新缩放图片工具配置
      */
-    async updateResizeImageConfig(config: Partial<ResizeImageToolConfig>): Promise<void> {
-        const oldConfig = this.getResizeImageConfig();
-        await this.saveToolsConfigEntry('resize_image', oldConfig, { ...oldConfig, ...config });
+    updateResizeImageConfig(config: Partial<ResizeImageToolConfig>): Promise<void> {
+        return this.imageTools.updateResizeImageConfig(config);
     }
-    
+
     // ========== 旋转图片工具配置管理 ==========
-    
+
     /**
      * 获取旋转图片工具配置
      */
     getRotateImageConfig(): Readonly<RotateImageToolConfig> {
-        return this.getToolsConfigEntry('rotate_image', DEFAULT_ROTATE_IMAGE_CONFIG);
+        return this.imageTools.getRotateImageConfig();
     }
-    
+
     /**
      * 更新旋转图片工具配置
      */
-    async updateRotateImageConfig(config: Partial<RotateImageToolConfig>): Promise<void> {
-        const oldConfig = this.getRotateImageConfig();
-        await this.saveToolsConfigEntry('rotate_image', oldConfig, { ...oldConfig, ...config });
+    updateRotateImageConfig(config: Partial<RotateImageToolConfig>): Promise<void> {
+        return this.imageTools.updateRotateImageConfig(config);
     }
-    
-    /**
-     * 更新总结配置
-     */
-    async updateSummarizeConfig(config: Partial<SummarizeConfig>): Promise<void> {
-        const oldConfig = this.getSummarizeConfig();
-        await this.saveToolsConfigEntry('summarize', oldConfig, { ...oldConfig, ...config });
-    }
-    
+
     // ========== 上下文感知配置管理 ==========
-    
+
     /**
      * 获取上下文感知配置
      */
     getContextAwarenessConfig(): Readonly<ContextAwarenessConfig> {
-        return this.getToolsConfigEntry('context_awareness', DEFAULT_CONTEXT_AWARENESS_CONFIG);
+        return this.context.getContextAwarenessConfig();
     }
-    
+
     /**
      * 更新上下文感知配置
      */
-    async updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
-        const oldConfig = this.getContextAwarenessConfig();
-        await this.saveToolsConfigEntry('context_awareness', oldConfig, { ...oldConfig, ...config });
+    updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
+        return this.context.updateContextAwarenessConfig(config);
     }
-    
+
     /**
      * 检查是否应该包含工作区文件树
      */
     shouldIncludeWorkspaceFiles(): boolean {
-        return this.getContextAwarenessConfig().includeWorkspaceFiles;
+        return this.context.shouldIncludeWorkspaceFiles();
     }
-    
+
     /**
      * 获取文件树最大深度
      * @returns 最大深度，-1 表示无限制
      */
     getMaxFileDepth(): number {
-        return this.getContextAwarenessConfig().maxFileDepth;
+        return this.context.getMaxFileDepth();
     }
-    
+
     /**
      * 检查是否应该包含打开的标签页
      */
     shouldIncludeOpenTabs(): boolean {
-        return this.getContextAwarenessConfig().includeOpenTabs;
+        return this.context.shouldIncludeOpenTabs();
     }
-    
+
     /**
      * 获取打开标签页最大数量
      * @returns 最大数量，-1 表示无限制
      */
     getMaxOpenTabs(): number {
-        return this.getContextAwarenessConfig().maxOpenTabs;
+        return this.context.getMaxOpenTabs();
     }
-    
+
     /**
      * 检查是否应该包含当前活动编辑器路径
      */
     shouldIncludeActiveEditor(): boolean {
-        return this.getContextAwarenessConfig().includeActiveEditor;
+        return this.context.shouldIncludeActiveEditor();
     }
-    
+
     /**
      * 获取自定义忽略模式
      */
     getContextIgnorePatterns(): string[] {
-        return this.getContextAwarenessConfig().ignorePatterns || [];
+        return this.context.getContextIgnorePatterns();
     }
-    
+
     // ========== 诊断信息配置管理 ==========
-    
+
     /**
      * 获取诊断信息配置
      */
     getDiagnosticsConfig(): Readonly<DiagnosticsConfig> {
-        return this.getContextAwarenessConfig().diagnostics || DEFAULT_DIAGNOSTICS_CONFIG;
+        return this.context.getDiagnosticsConfig();
     }
-    
+
     /**
      * 更新诊断信息配置
      */
-    async updateDiagnosticsConfig(config: Partial<DiagnosticsConfig>): Promise<void> {
-        const contextConfig = this.getContextAwarenessConfig();
-        const oldConfig = this.getDiagnosticsConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        await this.updateContextAwarenessConfig({
-            ...contextConfig,
-            diagnostics: newConfig
-        });
+    updateDiagnosticsConfig(config: Partial<DiagnosticsConfig>): Promise<void> {
+        return this.context.updateDiagnosticsConfig(config);
     }
-    
+
     /**
      * 检查诊断功能是否启用
      */
     isDiagnosticsEnabled(): boolean {
-        return this.getDiagnosticsConfig().enabled;
+        return this.context.isDiagnosticsEnabled();
     }
-    
+
     /**
      * 设置诊断功能启用状态
      */
-    async setDiagnosticsEnabled(enabled: boolean): Promise<void> {
-        await this.updateDiagnosticsConfig({ enabled });
+    setDiagnosticsEnabled(enabled: boolean): Promise<void> {
+        return this.context.setDiagnosticsEnabled(enabled);
     }
-    
+
     /**
      * 获取包含的诊断严重程度级别
      */
     getDiagnosticsSeverities(): string[] {
-        return this.getDiagnosticsConfig().includeSeverities;
+        return this.context.getDiagnosticsSeverities();
     }
-    
+
     /**
      * 设置包含的诊断严重程度级别
      */
-    async setDiagnosticsSeverities(severities: ('error' | 'warning' | 'information' | 'hint')[]): Promise<void> {
-        await this.updateDiagnosticsConfig({ includeSeverities: severities });
+    setDiagnosticsSeverities(severities: ('error' | 'warning' | 'information' | 'hint')[]): Promise<void> {
+        return this.context.setDiagnosticsSeverities(severities);
     }
-    
+
     // ========== 固定文件配置管理 ==========
-    
+
     /**
      * 获取固定文件配置
      */
     getPinnedFilesConfig(): Readonly<PinnedFilesConfig> {
-        return this.getToolsConfigEntry('pinned_files', DEFAULT_PINNED_FILES_CONFIG);
+        return this.pinnedFiles.getPinnedFilesConfig();
     }
-    
+
     /**
      * 更新固定文件配置
      */
-    async updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
-        const oldConfig = this.getPinnedFilesConfig();
-        await this.saveToolsConfigEntry('pinned_files', oldConfig, { ...oldConfig, ...config });
+    updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
+        return this.pinnedFiles.updatePinnedFilesConfig(config);
     }
-    
+
     /**
      * 获取固定文件列表
      */
     getPinnedFiles(): PinnedFileItem[] {
-        return this.getPinnedFilesConfig().files || [];
+        return this.pinnedFiles.getPinnedFiles();
     }
-    
+
     /**
      * 获取启用的固定文件列表
      */
     getEnabledPinnedFiles(): PinnedFileItem[] {
-        return this.getPinnedFiles().filter(file => file.enabled);
+        return this.pinnedFiles.getEnabledPinnedFiles();
     }
-    
+
     /**
      * 添加固定文件
      * @param path 文件路径（相对于工作区）
      * @param workspaceUri 工作区 URI
      * @returns 新添加的文件项
      */
-    async addPinnedFile(path: string, workspaceUri: string): Promise<PinnedFileItem> {
-        const files = [...this.getPinnedFiles()];
-        
-        // 检查是否已存在（同一工作区同一路径）
-        if (files.some(f => f.path === path && f.workspaceUri === workspaceUri)) {
-            throw new Error(`File already pinned: ${path}`);
-        }
-        
-        const newFile: PinnedFileItem = {
-            id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            path,
-            workspaceUri,
-            enabled: true,
-            addedAt: Date.now()
-        };
-        
-        files.push(newFile);
-        await this.updatePinnedFilesConfig({ files });
-        
-        return newFile;
+    addPinnedFile(path: string, workspaceUri: string): Promise<PinnedFileItem> {
+        return this.pinnedFiles.addPinnedFile(path, workspaceUri);
     }
-    
+
     /**
      * 获取当前工作区的固定文件列表
      * @param workspaceUri 当前工作区 URI
      */
     getPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
-        return this.getPinnedFiles().filter(f => f.workspaceUri === workspaceUri);
+        return this.pinnedFiles.getPinnedFilesForWorkspace(workspaceUri);
     }
-    
+
     /**
      * 获取当前工作区启用的固定文件列表
      * @param workspaceUri 当前工作区 URI
      */
     getEnabledPinnedFilesForWorkspace(workspaceUri: string): PinnedFileItem[] {
-        return this.getPinnedFilesForWorkspace(workspaceUri).filter(f => f.enabled);
+        return this.pinnedFiles.getEnabledPinnedFilesForWorkspace(workspaceUri);
     }
-    
+
     /**
      * 移除固定文件
      * @param id 文件 ID
      */
-    async removePinnedFile(id: string): Promise<void> {
-        const files = this.getPinnedFiles().filter(f => f.id !== id);
-        await this.updatePinnedFilesConfig({ files });
+    removePinnedFile(id: string): Promise<void> {
+        return this.pinnedFiles.removePinnedFile(id);
     }
-    
+
     /**
      * 切换固定文件的启用状态
      * @param id 文件 ID
      * @param enabled 是否启用
      */
-    async setPinnedFileEnabled(id: string, enabled: boolean): Promise<void> {
-        const files = this.getPinnedFiles().map(f =>
-            f.id === id ? { ...f, enabled } : f
-        );
-        await this.updatePinnedFilesConfig({ files });
+    setPinnedFileEnabled(id: string, enabled: boolean): Promise<void> {
+        return this.pinnedFiles.setPinnedFileEnabled(id, enabled);
     }
-    
+
     /**
      * 更新固定文件路径
      * @param id 文件 ID
      * @param newPath 新路径
      */
-    async updatePinnedFilePath(id: string, newPath: string): Promise<void> {
-        const files = this.getPinnedFiles().map(f =>
-            f.id === id ? { ...f, path: newPath } : f
-        );
-        await this.updatePinnedFilesConfig({ files });
+    updatePinnedFilePath(id: string, newPath: string): Promise<void> {
+        return this.pinnedFiles.updatePinnedFilePath(id, newPath);
     }
-    
+
     /**
      * 清空所有固定文件
      */
-    async clearPinnedFiles(): Promise<void> {
-        await this.updatePinnedFilesConfig({ files: [] });
+    clearPinnedFiles(): Promise<void> {
+        return this.pinnedFiles.clearPinnedFiles();
     }
-    
+
     /**
      * 检查文件是否已固定
      * @param path 文件路径
      */
     isFilePinned(path: string): boolean {
-        return this.getPinnedFiles().some(f => f.path === path);
+        return this.pinnedFiles.isFilePinned(path);
     }
-    
+
     /**
      * 获取固定文件段落标题
      */
     getPinnedFilesSectionTitle(): string {
-        return this.getPinnedFilesConfig().sectionTitle || 'PINNED FILES CONTENT';
+        return this.pinnedFiles.getPinnedFilesSectionTitle();
     }
-    
+
     // ========== Skills 配置管理 ==========
-    
+
     /**
      * 获取 Skills 配置
      */
     getSkillsConfig(): Readonly<SkillsConfig> {
-        return this.getToolsConfigEntry('skills', DEFAULT_SKILLS_CONFIG);
+        return this.skills.getSkillsConfig();
     }
-    
+
     /**
      * 更新 Skills 配置
      */
-    async updateSkillsConfig(config: Partial<SkillsConfig>): Promise<void> {
-        const oldConfig = this.getSkillsConfig();
-        await this.saveToolsConfigEntry('skills', oldConfig, { ...oldConfig, ...config });
+    updateSkillsConfig(config: Partial<SkillsConfig>): Promise<void> {
+        return this.skills.updateSkillsConfig(config);
     }
-    
+
     /**
      * 获取 Skills 列表
      */
     getSkills(): SkillConfigItem[] {
-        return this.getSkillsConfig().skills || [];
+        return this.skills.getSkills();
     }
-    
+
     /**
      * 设置 Skill 启用状态
      */
-    async setSkillEnabled(id: string, enabled: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
-        const skills = [...this.getSkills()];
-        const skill = skills.find(s => s.id === id);
-        
-        if (skill) {
-            skill.enabled = enabled;
-            if (metadata?.name) skill.name = metadata.name;
-            if (metadata?.description) skill.description = metadata.description;
-        } else {
-            // 如果 skill 不存在，创建新的配置项
-            skills.push({
-                id,
-                name: metadata?.name || id,
-                description: metadata?.description || '',
-                enabled,
-                sendContent: true
-            });
-        }
-        
-        await this.updateSkillsConfig({ skills });
+    setSkillEnabled(id: string, enabled: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
+        return this.skills.setSkillEnabled(id, enabled, metadata);
     }
-    
-    /**
-    
+
     /**
      * 移除 Skill 配置
      */
-    async removeSkillConfig(id: string): Promise<void> {
-        const skills = this.getSkills().filter(s => s.id !== id);
-        await this.updateSkillsConfig({ skills });
+    removeSkillConfig(id: string): Promise<void> {
+        return this.skills.removeSkillConfig(id);
     }
-    
+
     /**
      * 获取启用的 Skills
      */
     getEnabledSkills(): SkillConfigItem[] {
-        return this.getSkills().filter(s => s.enabled);
+        return this.skills.getEnabledSkills();
     }
-    
+
     // ========== 系统提示词配置管理 ==========
-    
+
     /**
      * 获取系统提示词配置
-     * 
+     *
      * 版本迁移：
      * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式 + 计划模式 + 询问模式 + 审查模式
      * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（design/plan/ask/review）
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
-        const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
-
-        const normalizeMode = (mode: PromptMode): PromptMode => {
-            const normalizedMode = this.normalizePromptModeSnapshot(mode);
-            return normalizedMode;
-        };
-        
-        // 情况1：没有 modes 字段（老版本）
-        if (!config.modes) {
-            return {
-                ...config,
-                currentModeId: DEFAULT_MODE_ID,
-                dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy),
-                modes: {
-                    [DEFAULT_MODE_ID]: {
-                        ...CODE_PROMPT_MODE,
-                        // 保留用户原有的模板配置
-                        template: config.template || CODE_PROMPT_MODE.template,
-                        dynamicTemplateEnabled: config.dynamicTemplateEnabled ?? CODE_PROMPT_MODE.dynamicTemplateEnabled,
-                        dynamicTemplate: config.dynamicTemplate || CODE_PROMPT_MODE.dynamicTemplate,
-                        dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy)
-                    },
-                    [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
-                    'plan': PLAN_PROMPT_MODE,
-                    'ask': ASK_PROMPT_MODE,
-                    [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
-                }
-            };
-        }
-        
-        // 情况2：已有 modes，补齐缺失的内置模式，并同步内置模式的 toolPolicy
-        const modes = { ...config.modes };
-        let needsUpdate = false;
-        
-        // 补齐缺失的内置模式（不覆盖已有配置）
-        if (!modes[DESIGN_MODE_ID]) {
-            modes[DESIGN_MODE_ID] = DESIGN_PROMPT_MODE;
-            needsUpdate = true;
-        }
-        
-        if (!modes['plan']) {
-            modes['plan'] = PLAN_PROMPT_MODE;
-            needsUpdate = true;
-        }
-        
-        if (!modes['ask']) {
-            modes['ask'] = ASK_PROMPT_MODE;
-            needsUpdate = true;
-        }
-
-        if (!modes[REVIEW_MODE_ID]) {
-            modes[REVIEW_MODE_ID] = REVIEW_PROMPT_MODE;
-            needsUpdate = true;
-        }
-
-        // 内置模式的 toolPolicy 不再在 getter 中强制回滚。
-        // 迁移由 migratePromptModeToolPolicies() 显式处理，
-        // 运行时由 normalizePromptModeSnapshot() 按 toolPolicyCustomized 标记回退。
-        const builtInModeIds = new Set([
-            DESIGN_MODE_ID,
-            PLAN_MODE_ID,
-            ASK_MODE_ID,
-            REVIEW_MODE_ID,
-        ]);
-
-        const dynamicContextStrategy = this.normalizeDynamicContextStrategy(config.dynamicContextStrategy);
-        for (const [modeId, mode] of Object.entries(modes)) {
-            const normalizedMode = this.normalizePromptModeSnapshot(mode);
-            if (
-                mode.promptAssemblyMode !== normalizedMode.promptAssemblyMode ||
-                !this.promptEntriesEqual(normalizedMode.promptEntries, Array.isArray(mode.promptEntries) ? mode.promptEntries : undefined)
-            ) {
-                modes[modeId] = {
-                    ...mode,
-                    promptAssemblyMode: normalizedMode.promptAssemblyMode,
-                    ...(normalizedMode.promptEntries ? { promptEntries: normalizedMode.promptEntries } : {})
-                };
-                if (!normalizedMode.promptEntries) delete (modes[modeId] as any).promptEntries;
-                needsUpdate = true;
-            }
-            if (mode.dynamicContextStrategy !== undefined) {
-                const normalizedModeStrategy = this.normalizeDynamicContextStrategy(mode.dynamicContextStrategy);
-                if (mode.dynamicContextStrategy !== normalizedModeStrategy) {
-                    modes[modeId] = {
-                        ...modes[modeId],
-                        dynamicContextStrategy: normalizedModeStrategy
-                    };
-                    needsUpdate = true;
-                }
-            }
-        }
-        
-        if (needsUpdate) {
-            return {
-                ...config,
-                modes,
-                dynamicContextStrategy
-            };
-        }
-
-        return {
-            ...config,
-            dynamicContextStrategy
-        };
-    }
-
-    /**
-     * 规范化动态上下文策略
-     */
-    private normalizeDynamicContextStrategy(value: unknown): DynamicContextStrategy {
-        return value === 'preserve' ? 'preserve' : 'single';
-    }
-
-    /**
-     * 规范化提示词组装方式。
-     *
-     * 默认 legacy，避免旧配置里已有 promptEntries 时被隐式切到预设条目模式。
-     */
-    private normalizePromptAssemblyMode(value: unknown): PromptAssemblyMode {
-        return value === 'entries' ? 'entries' : 'legacy';
-    }
-
-    /**
-     * 规范化提示词预设条目。
-     *
-     * 读取配置时只做内存归一化；保存模式时会把归一化结果持久化。
-     */
-    private normalizePromptEntries(value: unknown, assemblyMode: PromptAssemblyMode = 'legacy'): PromptEntry[] | undefined {
-        if (!Array.isArray(value)) {
-            return assemblyMode === 'entries' ? [this.createDefaultChatHistoryPromptEntry()] : undefined;
-        }
-
-        const normalized: PromptEntry[] = [];
-        const usedIds = new Set<string>();
-
-        value.forEach((item, index) => {
-            if (!item || typeof item !== 'object') return;
-            const raw = item as Partial<PromptEntry> & Record<string, unknown>;
-
-            const fallbackId = `entry_${index}`;
-            let id = typeof raw.id === 'string' && raw.id.trim()
-                ? raw.id.trim()
-                : fallbackId;
-            if (usedIds.has(id)) {
-                id = `${id}_${index}`;
-            }
-            usedIds.add(id);
-
-            const type: PromptEntryType = raw.type === 'chat_history' ? 'chat_history' : 'prompt';
-            const role: PromptEntryRole = type === 'chat_history'
-                ? 'user'
-                : raw.role === 'user' || raw.role === 'assistant' || raw.role === 'system'
-                ? raw.role
-                : 'system';
-            const name = typeof raw.name === 'string' && raw.name.trim()
-                ? raw.name.trim()
-                : type === 'chat_history'
-                    ? 'Chat History'
-                    : `Prompt ${index + 1}`;
-            const order = typeof raw.order === 'number' && Number.isFinite(raw.order)
-                ? raw.order
-                : index;
-
-            normalized.push({
-                id,
-                name,
-                type,
-                enabled: type === 'chat_history' ? true : raw.enabled !== false,
-                role,
-                content: type === 'chat_history' ? '' : typeof raw.content === 'string' ? raw.content : '',
-                order
-            });
-        });
-
-        if (assemblyMode === 'entries') {
-            return this.ensureChatHistoryPromptEntry(normalized);
-        }
-
-        return normalized.length > 0 ? normalized : undefined;
-    }
-
-    private createDefaultChatHistoryPromptEntry(order = 1000): PromptEntry {
-        return {
-            id: CHAT_HISTORY_PROMPT_ENTRY_ID,
-            name: 'Chat History',
-            type: 'chat_history',
-            enabled: true,
-            role: 'user',
-            content: '',
-            order
-        };
-    }
-
-    private ensureChatHistoryPromptEntry(entries: PromptEntry[]): PromptEntry[] {
-        const result: PromptEntry[] = [];
-        let hasChatHistory = false;
-
-        for (const entry of entries) {
-            if (entry.type !== 'chat_history') {
-                result.push(entry);
-                continue;
-            }
-
-            if (hasChatHistory) {
-                continue;
-            }
-
-            hasChatHistory = true;
-            result.push({
-                ...entry,
-                id: CHAT_HISTORY_PROMPT_ENTRY_ID,
-                name: entry.name.trim() || 'Chat History',
-                type: 'chat_history',
-                enabled: true,
-                role: 'user',
-                content: ''
-            });
-        }
-
-        if (!hasChatHistory) {
-            result.push(this.createDefaultChatHistoryPromptEntry(result.length));
-        }
-
-        return result
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-            .map((entry, index) => ({ ...entry, order: index }));
-    }
-
-    private promptEntriesEqual(a?: PromptEntry[], b?: PromptEntry[]): boolean {
-        if (!a && !b) return true;
-        if (!a || !b) return false;
-        if (a.length !== b.length) return false;
-
-        return a.every((entry, index) => {
-            const other = b[index];
-            return !!other &&
-                entry.id === other.id &&
-                entry.name === other.name &&
-                (entry.type || 'prompt') === (other.type || 'prompt') &&
-                entry.enabled === other.enabled &&
-                entry.role === other.role &&
-                entry.content === other.content &&
-                entry.order === other.order;
-        });
+        return this.prompt.getSystemPromptConfig();
     }
 
     /**
@@ -1703,38 +999,28 @@ export class SettingsManager {
         modeSnapshot?: ResolvedPromptModeSnapshot,
         override?: DynamicContextStrategy
     ): DynamicContextStrategy {
-        if (override) {
-            return this.normalizeDynamicContextStrategy(override);
-        }
-
-        const config = this.getSystemPromptConfig();
-        return this.normalizeDynamicContextStrategy(
-            modeSnapshot?.dynamicContextStrategy ?? config.dynamicContextStrategy
-        );
+        return this.prompt.resolveDynamicContextStrategy(modeSnapshot, override);
     }
-    
+
     /**
      * 更新系统提示词配置
      */
-    async updateSystemPromptConfig(config: Partial<SystemPromptConfig>): Promise<void> {
-        const oldConfig = this.getSystemPromptConfig();
-        await this.saveToolsConfigEntry('system_prompt', oldConfig, { ...oldConfig, ...config });
+    updateSystemPromptConfig(config: Partial<SystemPromptConfig>): Promise<void> {
+        return this.prompt.updateSystemPromptConfig(config);
     }
-    
+
     /**
      * 获取默认提示词模式 ID
      */
     getDefaultPromptModeId(): string {
-        return this.getSystemPromptConfig().currentModeId || DEFAULT_MODE_ID;
+        return this.prompt.getDefaultPromptModeId();
     }
-    
+
     /**
      * 获取默认提示词模式
      */
     getDefaultPromptMode(): PromptMode | null {
-        const config = this.getSystemPromptConfig();
-        const modeId = this.getDefaultPromptModeId();
-        return config.modes?.[modeId] || null;
+        return this.prompt.getDefaultPromptMode();
     }
 
     /**
@@ -1743,70 +1029,42 @@ export class SettingsManager {
      * 优先使用传入的 modeId；如果未提供或无效，则回退到设置中的默认模式。
      */
     resolvePromptMode(modeId?: string): ResolvedPromptModeSnapshot {
-        const config = this.getSystemPromptConfig();
-        const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
-
-        const fallbackModeId = this.getDefaultPromptModeId();
-        const resolvedMode =
-            (normalizedModeId ? config.modes?.[normalizedModeId] : undefined)
-            || config.modes?.[fallbackModeId]
-            || config.modes?.[DEFAULT_MODE_ID];
-
-        if (!resolvedMode) {
-            return {
-                ...this.normalizePromptModeSnapshot(CODE_PROMPT_MODE)
-            };
-        }
-
-        return this.normalizePromptModeSnapshot(resolvedMode);
+        return this.prompt.resolvePromptMode(modeId);
     }
 
     /**
      * 获取当前激活的模式 ID（向后兼容，语义等同于默认模式 ID）
      */
     getCurrentPromptModeId(): string {
-        return this.getDefaultPromptModeId();
+        return this.prompt.getCurrentPromptModeId();
     }
-    
+
     /**
      * 获取当前激活的模式（向后兼容，语义等同于默认模式）
      */
     getCurrentPromptMode(): PromptMode | null {
-        return this.getDefaultPromptMode();
+        return this.prompt.getCurrentPromptMode();
     }
-    
+
     /**
      * 获取所有模式
      */
     getAllPromptModes(): PromptMode[] {
-        const config = this.getSystemPromptConfig();
-        return Object.values(config.modes || {});
+        return this.prompt.getAllPromptModes();
     }
-    
+
     /**
      * 设置默认提示词模式
      */
-    async setCurrentPromptMode(modeId: string): Promise<void> {
-        const config = this.getSystemPromptConfig();
-        if (!config.modes?.[modeId]) {
-            throw new Error(`Mode not found: ${modeId}`);
-        }
-        await this.updateSystemPromptConfig({ currentModeId: modeId });
+    setCurrentPromptMode(modeId: string): Promise<void> {
+        return this.prompt.setCurrentPromptMode(modeId);
     }
-    
+
     /**
      * 添加或更新模式
      */
-    async savePromptMode(mode: PromptMode): Promise<void> {
-        const config = this.getSystemPromptConfig();
-        // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
-        // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值
-        if ('toolPolicy' in (mode as any)) {
-            (mode as PromptMode).toolPolicyCustomized = true;
-        }
-        const snapshot = this.normalizePromptModeSnapshot(mode);
-        const modes = { ...config.modes, [mode.id]: snapshot };
-        await this.updateSystemPromptConfig({ modes });
+    savePromptMode(mode: PromptMode): Promise<void> {
+        return this.prompt.savePromptMode(mode);
     }
 
     /**
@@ -1815,179 +1073,68 @@ export class SettingsManager {
      * 只更新模式显示名，不用前端传回的整份模式快照覆盖已保存配置，避免新建模式
      * 在编辑过程中重命名时把模板、条目或工具策略回滚成旧值。
      */
-    async renamePromptMode(modeId: string, name: string): Promise<PromptMode> {
-        const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
-        const normalizedName = typeof name === 'string' ? name.trim() : '';
-
-        if (!normalizedModeId) {
-            throw new Error('Mode id is required');
-        }
-        if (!normalizedName) {
-            throw new Error('Mode name is required');
-        }
-
-        const config = this.getSystemPromptConfig();
-        const existingMode = config.modes?.[normalizedModeId];
-        if (!existingMode) {
-            throw new Error(`Mode not found: ${normalizedModeId}`);
-        }
-
-        const updatedMode = this.normalizePromptModeSnapshot({ ...existingMode, id: normalizedModeId, name: normalizedName });
-        const modes = { ...config.modes, [normalizedModeId]: updatedMode };
-        await this.updateSystemPromptConfig({ modes });
-        return updatedMode;
-    }
-
-    private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
-        const promptAssemblyMode = this.normalizePromptAssemblyMode(mode.promptAssemblyMode);
-        const promptEntries = this.normalizePromptEntries(mode.promptEntries, promptAssemblyMode);
-
-        // 用户未定制 toolPolicy 的内置模式，运行时回退到内置默认值
-        let toolPolicy: string[] | undefined;
-        if (mode.toolPolicyCustomized !== true && BUILTIN_MODE_TOOL_POLICIES[mode.id]) {
-            toolPolicy = [...BUILTIN_MODE_TOOL_POLICIES[mode.id]];
-        } else if (Array.isArray(mode.toolPolicy)) {
-            toolPolicy = [...mode.toolPolicy];
-        }
-
-        return {
-            ...mode,
-            promptAssemblyMode,
-            toolPolicy,
-            ...(promptEntries ? { promptEntries } : {})
-        };
-    }
-    
-    /**
-     * 显式迁移内置提示词模式的 toolPolicy（幂等）。
-     *
-     * 仅对 toolPolicyCustomized !== true 的内置模式生效：
-     * 将其 toolPolicy 设置为 BUILTIN_MODE_TOOL_POLICIES 中的默认值，
-     * 设置 toolPolicyCustomized = false 标记为「未定制」。
-     *
-     * 迁移完成后立即落盘。后续 initialize() 调用可重复执行——已定制的模式不会受影响。
-     */
-    private async migratePromptModeToolPolicies(): Promise<void> {
-        const config = this.settings.toolsConfig?.system_prompt;
-        if (!config?.modes) return;
-
-        const modes = { ...config.modes };
-        let changed = false;
-
-        const builtInModeIds = new Set([
-            DESIGN_MODE_ID,
-            PLAN_MODE_ID,
-            ASK_MODE_ID,
-            REVIEW_MODE_ID,
-        ]);
-
-        for (const modeId of builtInModeIds) {
-            const mode = modes[modeId];
-            if (!mode) continue;
-            if (mode.toolPolicyCustomized === true) continue;
-
-            const builtInPolicy = BUILTIN_MODE_TOOL_POLICIES[modeId];
-            if (!this.arraysEqual(mode.toolPolicy, builtInPolicy as string[])) {
-                modes[modeId] = {
-                    ...mode,
-                    toolPolicy: builtInPolicy ? [...builtInPolicy] : undefined,
-                    toolPolicyCustomized: false,
-                };
-                changed = true;
-            } else if (mode.toolPolicyCustomized !== false) {
-                // toolPolicy 已匹配但标记未设置，补齐标记
-                modes[modeId] = { ...mode, toolPolicyCustomized: false };
-                changed = true;
-            }
-        }
-
-        if (changed) {
-            this.settings.toolsConfig = {
-                ...this.settings.toolsConfig,
-                system_prompt: { ...config, modes },
-            };
-            await this.storage.save(this.settings);
-        }
+    renamePromptMode(modeId: string, name: string): Promise<PromptMode> {
+        return this.prompt.renamePromptMode(modeId, name);
     }
 
     /**
      * 删除模式
      */
-    async deletePromptMode(modeId: string): Promise<void> {
-        const config = this.getSystemPromptConfig();
-        const modes = { ...config.modes };
-        
-        // 至少保留一个模式
-        if (Object.keys(modes).length <= 1) {
-            throw new Error('Cannot delete the last mode');
-        }
-        
-        delete modes[modeId];
-        
-        // 如果删除的是当前模式，切换到第一个可用的模式
-        let currentModeId = config.currentModeId;
-        if (currentModeId === modeId) {
-            const remainingModes = Object.keys(modes);
-            currentModeId = remainingModes[0] || DEFAULT_MODE_ID;
-        }
-        await this.updateSystemPromptConfig({ modes, currentModeId });
+    deletePromptMode(modeId: string): Promise<void> {
+        return this.prompt.deletePromptMode(modeId);
     }
-    
+
     /**
      * 获取系统提示词模板（根据当前模式）
      */
     getSystemPromptTemplate(): string {
-        const mode = this.getDefaultPromptMode();
-        return mode?.template || this.getSystemPromptConfig().template;
+        return this.prompt.getSystemPromptTemplate();
     }
-    
+
     /**
      * 获取动态上下文模板（根据当前模式）
      */
     getDynamicContextTemplate(): string {
-        const mode = this.getDefaultPromptMode();
-        return mode?.dynamicTemplate || this.getSystemPromptConfig().dynamicTemplate || '';
+        return this.prompt.getDynamicContextTemplate();
     }
-    
+
     /**
      * 检查动态上下文是否启用（根据当前模式）
      */
     isDynamicTemplateEnabled(): boolean {
-        const mode = this.getDefaultPromptMode();
-        return mode?.dynamicTemplateEnabled ?? this.getSystemPromptConfig().dynamicTemplateEnabled;
+        return this.prompt.isDynamicTemplateEnabled();
     }
-    
+
     /**
      * 获取自定义前缀
      */
     getSystemPromptPrefix(): string {
-        return this.getSystemPromptConfig().customPrefix;
+        return this.prompt.getSystemPromptPrefix();
     }
-    
+
     /**
      * 获取自定义后缀
      */
     getSystemPromptSuffix(): string {
-        return this.getSystemPromptConfig().customSuffix;
+        return this.prompt.getSystemPromptSuffix();
     }
-    
+
     // ========== Token 计数配置管理 ==========
-    
+
     /**
      * 获取 Token 计数配置
      */
     getTokenCountConfig(): Readonly<TokenCountConfig> {
-        return this.getToolsConfigEntry('token_count', DEFAULT_TOKEN_COUNT_CONFIG);
+        return this.tokenCount.getTokenCountConfig();
     }
-    
+
     /**
      * 更新 Token 计数配置
      */
-    async updateTokenCountConfig(config: Partial<TokenCountConfig>): Promise<void> {
-        const oldConfig = this.getTokenCountConfig();
-        await this.saveToolsConfigEntry('token_count', oldConfig, { ...oldConfig, ...config });
+    updateTokenCountConfig(config: Partial<TokenCountConfig>): Promise<void> {
+        return this.tokenCount.updateTokenCountConfig(config);
     }
-    
+
     /**
      * 检查指定渠道的 Token 计数是否已启用
      *
@@ -1995,286 +1142,167 @@ export class SettingsManager {
      * @returns 是否启用
      */
     isTokenCountEnabled(channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses'): boolean {
-        const config = this.getTokenCountConfig();
-        return config[channelType]?.enabled ?? false;
+        return this.tokenCount.isTokenCountEnabled(channelType);
     }
-    
+
     // ========== UI 设置管理 ==========
-    
+
     /**
      * 获取 UI 设置
      */
     getUISettings() {
-        return this.settings.ui || {};
+        return this.ui.getUISettings();
     }
-    
+
     /**
      * 更新 UI 设置
      */
-    async updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
-        const oldValue = this.settings.ui;
-        // 深合并：避免仅更新 ui.sound.cues 等子字段时覆盖整个对象
-        const currentUI = (this.settings.ui || {}) as NonNullable<GlobalSettings['ui']>;
-        this.settings.ui = this.deepMergeConfig(currentUI, uiSettings) as NonNullable<GlobalSettings['ui']>;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'ui',
-            path: 'ui',
-            oldValue,
-            newValue: this.settings.ui,
-            settings: this.settings
-        });
+    updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
+        return this.ui.updateUISettings(uiSettings);
     }
-    
+
     // ========== 公告版本管理 ==========
-    
+
     /**
      * 获取用户上次查看的公告版本
      */
     getLastReadAnnouncementVersion(): string | undefined {
-        return this.settings.lastReadAnnouncementVersion;
+        return this.ui.getLastReadAnnouncementVersion();
     }
-    
+
     /**
      * 设置用户上次查看的公告版本
      */
-    async setLastReadAnnouncementVersion(version: string): Promise<void> {
-        const oldValue = this.settings.lastReadAnnouncementVersion;
-        this.settings.lastReadAnnouncementVersion = version;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'full',
-            path: 'lastReadAnnouncementVersion',
-            oldValue: oldValue,
-            newValue: version,
-            settings: this.settings
-        });
+    setLastReadAnnouncementVersion(version: string): Promise<void> {
+        return this.ui.setLastReadAnnouncementVersion(version);
     }
-    
+
     // ========== 事件监听 ==========
-    
+
     /**
      * 添加设置变更监听器
      */
     addChangeListener(listener: SettingsChangeListener): void {
-        this.listeners.add(listener);
+        this.core.addChangeListener(listener);
     }
-    
+
     /**
      * 移除设置变更监听器
      */
     removeChangeListener(listener: SettingsChangeListener): void {
-        this.listeners.delete(listener);
+        this.core.removeChangeListener(listener);
     }
-    
-    /**
-     * 通知设置变更
-     */
-    /**
-     * 比较两个数组是否相等（用于 toolPolicy 比较）
-     */
-    private arraysEqual(a?: string[], b?: string[]): boolean {
-        if (!a && !b) return true;
-        if (!a || !b) return false;
-        if (a.length !== b.length) return false;
-        const sortedA = [...a].sort();
-        const sortedB = [...b].sort();
-        return sortedA.every((v, i) => v === sortedB[i]);
-    }
-    
-    private notifyChange(event: SettingsChangeEvent): void {
-        for (const listener of this.listeners) {
-            // 异步执行，避免阻塞
-            Promise.resolve(listener(event)).catch(error => {
-                console.error('Settings change listener error:', error);
-            });
-        }
-    }
-    
+
     // ========== 存储路径管理 ==========
-    
+
     /**
      * 获取存储路径配置
      */
     getStoragePathConfig(): Readonly<StoragePathConfig> {
-        return this.settings.storagePath || {};
+        return this.storagePath.getStoragePathConfig();
     }
-    
+
     /**
      * 获取自定义数据存储路径
      * 如果未设置返回 undefined
      */
     getCustomDataPath(): string | undefined {
-        return this.settings.storagePath?.customDataPath;
+        return this.storagePath.getCustomDataPath();
     }
-    
+
     /**
      * 更新存储路径配置
      */
-    async updateStoragePathConfig(config: Partial<StoragePathConfig>): Promise<void> {
-        const oldConfig = this.getStoragePathConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        this.settings.storagePath = newConfig;
-        this.settings.lastUpdated = Date.now();
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'storagePath',
-            path: 'storagePath',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
-        });
+    updateStoragePathConfig(config: Partial<StoragePathConfig>): Promise<void> {
+        return this.storagePath.updateStoragePathConfig(config);
     }
-    
+
     /**
      * 设置自定义数据存储路径
      * 设置后需要迁移数据
      */
-    async setCustomDataPath(path: string | undefined): Promise<void> {
-        await this.updateStoragePathConfig({
-            customDataPath: path,
-            migrationStatus: path ? 'pending' : 'none'
-        });
+    setCustomDataPath(path: string | undefined): Promise<void> {
+        return this.storagePath.setCustomDataPath(path);
     }
-    
+
     /**
      * 标记迁移开始
      */
-    async markMigrationStarted(): Promise<void> {
-        await this.updateStoragePathConfig({
-            migrationStatus: 'in_progress'
-        });
+    markMigrationStarted(): Promise<void> {
+        return this.storagePath.markMigrationStarted();
     }
-    
+
     /**
      * 标记迁移完成
      */
-    async markMigrationCompleted(): Promise<void> {
-        await this.updateStoragePathConfig({
-            migrationStatus: 'completed',
-            lastMigrationAt: Date.now(),
-            migrationError: undefined
-        });
+    markMigrationCompleted(): Promise<void> {
+        return this.storagePath.markMigrationCompleted();
     }
-    
+
     /**
      * 标记迁移失败
      */
-    async markMigrationFailed(error: string): Promise<void> {
-        await this.updateStoragePathConfig({
-            migrationStatus: 'failed',
-            migrationError: error
-        });
+    markMigrationFailed(error: string): Promise<void> {
+        return this.storagePath.markMigrationFailed(error);
     }
-    
+
     // ========== 工具方法 ==========
-    
+
     /**
      * 重置为默认设置
      */
-    async reset(): Promise<void> {
-        const oldSettings = { ...this.settings };
-        this.settings = {
-            ...DEFAULT_GLOBAL_SETTINGS,
-            lastUpdated: Date.now()
-        };
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
-        });
+    reset(): Promise<void> {
+        return this.core.reset();
     }
-    
+
     // ========== 子代理管理 ==========
-    
+
     /**
      * 获取子代理配置
      */
     getSubAgentsConfig(): SubAgentsConfig {
-        return {
-            ...DEFAULT_SUBAGENTS_CONFIG,
-            ...(this.settings.toolsConfig?.subagents || {})
-        };
+        return this.subagents.getSubAgentsConfig();
     }
-    
+
     /**
      * 获取所有子代理
      */
     getSubAgents(): SubAgentConfigItem[] {
-        return this.getSubAgentsConfig().agents || [];
+        return this.subagents.getSubAgents();
     }
-    
+
     /**
      * 获取单个子代理
      */
     getSubAgent(type: string): SubAgentConfigItem | undefined {
-        return this.getSubAgents().find(a => a.type === type);
+        return this.subagents.getSubAgent(type);
     }
-    
+
     /**
      * 添加子代理
      */
-    async addSubAgent(agent: SubAgentConfigItem): Promise<void> {
-        const config = this.getSubAgentsConfig();
-        const agents = [...config.agents, agent];
-        
-        await this.updateSubAgentsConfig({ agents });
+    addSubAgent(agent: SubAgentConfigItem): Promise<void> {
+        return this.subagents.addSubAgent(agent);
     }
-    
+
     /**
      * 更新子代理
      */
-    async updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
-        const config = this.getSubAgentsConfig();
-        const index = config.agents.findIndex(a => a.type === type);
-        
-        if (index === -1) {
-            return false;
-        }
-        
-        const agents = [...config.agents];
-        agents[index] = { ...agents[index], ...updates };
-        
-        await this.updateSubAgentsConfig({ agents });
-        return true;
+    updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
+        return this.subagents.updateSubAgent(type, updates);
     }
-    
+
     /**
      * 删除子代理
      */
-    async deleteSubAgent(type: string): Promise<boolean> {
-        const config = this.getSubAgentsConfig();
-        const agents = config.agents.filter(a => a.type !== type);
-        
-        if (agents.length === config.agents.length) {
-            return false;
-        }
-        
-        await this.updateSubAgentsConfig({ agents });
-        return true;
+    deleteSubAgent(type: string): Promise<boolean> {
+        return this.subagents.deleteSubAgent(type);
     }
-    
+
     /**
      * 更新子代理配置
      */
-    async updateSubAgentsConfig(config: Partial<SubAgentsConfig>): Promise<void> {
-        const oldConfig = this.getSubAgentsConfig();
-        await this.saveToolsConfigEntry('subagents', oldConfig, { ...oldConfig, ...config });
+    updateSubAgentsConfig(config: Partial<SubAgentsConfig>): Promise<void> {
+        return this.subagents.updateSubAgentsConfig(config);
     }
 }

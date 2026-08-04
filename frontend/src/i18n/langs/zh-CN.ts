@@ -294,6 +294,7 @@ const zhCN = {
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
             sendWhileBusy: '发送新消息（正在运行的命令将转入后台，AI 优先响应）',
+            interruptDelivered: '已插入到当前回合，AI 将尽快处理',
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
             skills: 'Skills',
@@ -404,6 +405,33 @@ const zhCN = {
                 viewResponse: '查看回复',
                 branchFromHere: '从这里创建分支'
             },
+            branch: {
+                previous: '上一个候选',
+                next: '下一个候选',
+                candidateList: '候选列表',
+                switchTo: '切换到该候选',
+                delete: '删除候选',
+                deleteConfirm: '再次点击确认删除',
+                active: '当前',
+                noPreview: '（无预览）',
+                workspaceConfirmTitle: '切换候选分支',
+                workspaceConfirmMessage: '该分支执行过写工具或绑定了工作区存档。是否连工作区一起恢复？',
+                workspaceConfirmChatOnly: '仅切换聊天',
+                workspaceConfirmChatAndWorkspace: '切换并恢复工作区',
+                workspaceConfirmCancel: '取消'
+            },
+            branchTree: {
+                open: '查看分支树',
+                close: '关闭',
+                title: '分支树',
+                empty: '暂无分支',
+                deleted: '已删除',
+                restore: '恢复',
+                rename: '重命名',
+                renamePlaceholder: '输入分支标签…',
+                save: '保存',
+                cancel: '取消'
+            },
             responseViewer: {
                 commonMode: '常用模式',
                 advancedMode: '高级模式',
@@ -493,13 +521,6 @@ const zhCN = {
                 }
             },
             emptyResponse: '（模型返回空内容）',
-            tailVersion: {
-                title: '回答版本',
-                current: '最新',
-                prev: '上一个版本',
-                next: '下一个版本',
-                switching: '切换中…'
-            },
             stats: {
                 responseDuration: '响应时间',
                 tokenRate: 'Token 速率'
@@ -548,7 +569,24 @@ const zhCN = {
                 restoreDeleteListMore: '……等 {count} 个文件',
                 restoreDeleteListEmpty: '本次恢复不会删除任何文件',
                 restoreDeleteUntrackedNote: '包含存档创建后新建的文件（确认后一并删除）',
-                restoreUnbackedTip: '以下文件在创建存档时未备份（大小超限或不可读），本次恢复不会处理：{paths}'
+                restoreUnbackedTip: '以下文件在创建存档时未备份（大小超限或不可读），本次恢复不会处理：{paths}',
+                restoreResultErrorTitle: '恢复失败',
+                restoreResultPartialTitle: '恢复部分完成',
+                restoreResultWarningTitle: '未备份文件提示',
+                restoreResultSuccessTitle: '恢复完成',
+                restoreResultFailed: '恢复检查点失败',
+                restoreResultPartial: '恢复部分完成，以下文件失败：{files}',
+                restoreResultPartialMore: '恢复部分完成，以下文件失败：{files} 等 {count} 个文件',
+                restoreResultUnbacked: '以下文件在创建存档时未被备份（大小超限或不可读），本次恢复未处理它们：{paths}',
+                restoreResultUnbackedMore: '以下文件在创建存档时未被备份（大小超限或不可读），本次恢复未处理它们：{paths} 等 {count} 个文件',
+                restoreResultSuccess: '工作区已恢复到存档点（{count} 个文件）',
+                restoreResultSuccessWithPrune: '工作区已恢复到存档点（{count} 个文件），并自动清理了 {pruned} 个旧存档',
+                restoreConversationChanged: '对话已切换，恢复操作已取消',
+                dirtyConfirmTitle: '存在未保存的更改',
+                dirtyConfirmMessage: '恢复将丢弃 {count} 个未保存文件的更改，确定继续吗？',
+                dirtyConfirmDiscard: '丢弃更改并继续',
+                dirtyConfirmCancel: '取消',
+                dirtyConfirmMore: '……等 {count} 个文件'
             },
             continue: {
                 title: '对话等待中',
@@ -559,6 +597,10 @@ const zhCN = {
                 title: '请求失败',
                 retry: '重试',
                 dismiss: '关闭'
+            },
+            interrupt: {
+                delivered: '已投递「{text}」，将在当前回合结束后处理',
+                deliverFailed: '消息未能投递：{detail}'
             },
             tool: {
                 parameters: '参数',
@@ -1123,6 +1165,8 @@ const zhCN = {
             checkpoint: {
                 title: '存档点设置',
                 loading: '加载配置...',
+                loadError: '加载存档点配置失败，设置已禁用，避免覆盖已有配置。',
+                loadRetry: '重试',
                 sections: {
                     enable: {
                         label: '启用存档点功能',
@@ -1173,6 +1217,7 @@ const zhCN = {
                         title: '排除配置',
                         description: '控制哪些文件不会进入存档。默认排除类别可分别开关；被排除的文件不会被备份，但会记录原因，可点击“预览排除结果”查看。',
                         patterns: '条规则',
+                        patternsAdd: '添加',
                         profiles: {
                             logs: '日志文件',
                             aiModels: 'AI/ML 模型权重',
@@ -1185,13 +1230,24 @@ const zhCN = {
                         },
                         maxFileSize: {
                             label: '单文件大小上限 (MiB)',
-                            hint: '超过此大小的文件不会进入存档（0 = 不限制，默认 50）'
+                            hint: '超过此大小的文件不会进入存档（0 = 不限制，默认 50）',
+                            invalid: '请输入有效的数字（MiB，0 表示不限制）'
                         },
                         customPatterns: {
                             label: '自定义排除模式',
                             hint: '每行一个 gitignore 模式；以 ! 开头可重新纳入默认类别，但不能覆盖强制排除（.git / node_modules / 扩展存储）',
                             reincludeHint: '提示：默认类别按目录排除时（如 data/、dist/），重新纳入其下文件需同时否定目录本身，例如 !data/ + !data/keep.txt',
-                            placeholder: '*.log\ngenerated/\n!important/model.gguf'
+                            placeholder: '*.log\ngenerated/\n!important/model.gguf',
+                            empty: '暂无自定义模式，输入后按回车添加'
+                        },
+                        profilePatterns: {
+                            edit: '编辑模式',
+                            save: '保存',
+                            cancel: '取消',
+                            hint: '覆盖该类别的默认排除模式；清空并保存则恢复默认清单',
+                            placeholder: '每行一个 gitignore 模式',
+                            empty: '使用该类别的默认排除模式，保存空清单可恢复默认',
+                            clear: '清空（恢复默认）'
                         },
                         preview: {
                             button: '预览排除结果',
@@ -1253,6 +1309,21 @@ const zhCN = {
                         unbackedFiles: '{count} 个文件未备份',
                         sizeIncomplete: '部分未统计',
                         sizeIncompleteHint: '部分旧存档缺少大小记录，总大小为已统计部分',
+                        manifestDetail: '排除详情',
+                        manifestLoadFailed: '排除清单加载失败',
+                        manifestUnavailable: '该存档为旧格式，无排除清单可查看',
+                        manifestExcludedCount: '排除文件数',
+                        manifestNote: '该存档创建时按当时的排除规则排除了 {count} 个文件',
+                        manifestRulesChanged: '当前排除规则已变化，恢复将按当前规则执行',
+                        manifestIgnoreSnapshot: '排除规则快照',
+                        manifestRuleVersion: '规则版本',
+                        manifestForcedRulesVersion: '强制规则版本',
+                        manifestDefaultProfileVersion: '默认类别版本',
+                        manifestMaxFileSize: '单文件大小上限',
+                        manifestEnabledProfiles: '启用的排除类别',
+                        manifestCustomPatterns: '自定义排除模式',
+                        manifestNone: '无',
+                        manifestClose: '关闭',
                         progress: {
                             pending: '等待中',
                             scanning: '扫描中',
@@ -1264,13 +1335,34 @@ const zhCN = {
                             done: '完成',
                             failed: '失败',
                             cancelled: '已取消',
-                            cancel: '取消'
+                            cancel: '取消',
+                            cancelFailed: '取消失败，请重试',
+                            stale: '操作长时间无进展，可能已挂起；可尝试取消或刷新设置页'
                         },
                         timeFormat: {
                             justNow: '刚刚',
                             minutesAgo: '{count} 分钟前',
                             hoursAgo: '{count} 小时前',
                             daysAgo: '{count} 天前'
+                        }
+                    },
+                    branchCleanup: {
+                        title: '分支清理',
+                        description: '管理已删除（软删）的分支候选，释放存储空间。删除的分支可先保留一段时间再自动清理，也可手动一键清理。',
+                        deletedCountLabel: '已删除分支',
+                        deletedCountValue: '{count} 个（分布在 {conversations} 个对话）',
+                        deletedCountEmpty: '暂无已删除分支',
+                        countLoadFailed: '加载已删除分支数量失败',
+                        pruneButton: '一键清理过期软删',
+                        pruneLoading: '清理中...',
+                        pruneSuccess: '已清理 {count} 个过期分支节点',
+                        pruneFailed: '清理失败：{message}',
+                        pruneSkipped: '{count} 个对话的分支数据未清理（会话已不存在）',
+                        retention: {
+                            label: '软删保留期（天）',
+                            hint: '删除的分支保留此天数后自动清理；填写 0 表示不自动清理（仅手动清理）',
+                            invalid: '请输入非负整数（0 = 不自动清理）',
+                            save: '保存'
                         }
                     }
                 }
@@ -2551,7 +2643,10 @@ const zhCN = {
             dismiss: '清除',
             pendingReport: '结果待汇报给模型',
             outputTitle: '命令输出',
-            noOutput: '暂无输出'
+            noOutput: '暂无输出',
+            viewCollapsed: '折叠',
+            viewMedium: '中展开（滚动查看）',
+            viewExpanded: '完全展开'
         },
         subagents: {
             monitor: {

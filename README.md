@@ -18,9 +18,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Komeiji-Shiki/Gray-Code?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
@@ -76,6 +76,12 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 **对话与体验** —— 多对话标签页，支持同时保留多个工作现场。对话历史自动保存，可查看、恢复、迁移旧历史。消息队列让 AI 忙碌时可以继续输入，后续自动排队。工具执行状态、token 使用、思考内容、响应耗时等信息可视化。自动存档点可按策略为关键消息或工具执行创建恢复点。声音提醒和 Windows 通知适合长时间任务完成或等待确认时提醒你。中英日文界面与外观设置。用量统计页面从对话历史回溯聚合 token 用量，支持总览 + 按对话/按模型/按日期三个维度，含条形图可视化和成本估算，支持时间范围筛选。Mermaid 图表渲染让 Markdown 代码块中的 Mermaid 语法自动渲染为流程图、时序图等图表。
 
+
+**树状分支对话** —— 重新生成（reroll）与编辑用户消息不再破坏历史：旧回答保留为候选分支，同一父节点下可管理多个候选（上限 10 个），支持左右切换候选并重建当前活跃路径，每个候选可继续向下对话形成独立子分支；消息区顶部的候选切换器（‹ 2/3 ›）与完整分支树面板可查看/切换/重命名/软删除分支（软删可恢复，保留期默认 30 天，设置页可一键清理）。分支切换默认仅切聊天，检测到分支执行过写工具或持有工作区存档时提示是否连同工作区存档一起恢复（恢复前统一拦截未保存文件并确认，不再静默丢弃未保存内容）；存档与分支节点双向关联（工具执行自动绑定），分支删除时按引用计数清理不再使用的存档。用量统计包含全部分支（非活跃候选的消耗也计入）。
+
+**子代理（Sub-Agents）** —— 可配置专用子代理限定工具集与提示词；子代理支持嵌套（子代理可再派生子代理，深度上限 2，权限继承父级）；支持前台/后台两种模式，后台子代理通过任务栏查看与取消；用户发送新消息时前台子代理自动转为后台继续运行而不会被中断；子代理之间及与主对话之间可通过 `agent.sendMessage` 互相通信（信箱机制，随最近一次工具调用结果注入）。
+
+HEAD
 ## 快速开始
 
 1. **安装并打开聊天面板** —— 安装扩展后点击 VS Code 左侧活动栏的 Gray Code 图标，或在命令面板执行 `GrayCode: 打开聊天面板`。
@@ -84,6 +90,7 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 4. **开始对话** —— 输入需求即可。
 
 第一次可以试试：「请阅读这个项目的结构，告诉我主要模块分别负责什么，并给出上手建议」，或者「请帮我定位为什么某个功能异常。先搜索相关代码，分析原因，确认方案后再修改」。
+pstream/main
 
 ## 模型渠道配置
 
@@ -171,13 +178,13 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
 
-**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
+**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
 
 **从源码构建并安装** —— 当前仓库使用并提交 `package-lock.json`，统一使用 npm：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/czocelot/Gray-Code-ocelot.git
+git clone https://github.com/Komeiji-Shiki/Gray-Code.git
 cd Gray-Code
 
 # 安装根目录依赖
@@ -244,7 +251,7 @@ Gray-Code/
 
 ## 贡献
 
-欢迎通过 [Issues](https://github.com/czocelot/Gray-Code-ocelot/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
+欢迎通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
 
 ## 许可证
 

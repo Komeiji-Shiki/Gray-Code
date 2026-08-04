@@ -22,16 +22,33 @@ export type TranscriptContentsMutator = (contents: Content[]) => Content[];
 
 export interface ITranscriptRepository {
     getContents(): Promise<Content[]>;
+    /**
+     * 追加单条内容。
+     * 返回值语义（显式声明，消除与 replace/mutate 的分叉）：
+     * append 系列返回【本次已追加内容的独立副本】（新增内容，不是完整历史）；
+     * 需要完整历史请调用 getContents。
+     */
     appendContent(content: Content): Promise<Content[]>;
-    /** 批量追加（append-only 优化，HIS-02）：不走读全量→push→全量写回，直接追加尾段。 */
+    /**
+     * 批量追加（append-only 优化，HIS-02）：不走读全量→push→全量写回，直接追加尾段。
+     * 返回值语义同 appendContent：本次已追加内容的独立副本。
+     */
     appendContents(contents: Content[]): Promise<Content[]>;
+    /** 整体替换。返回值：保存后的完整历史（真实落盘形态，见 saveAndReload）。 */
     replaceContents(contents: Content[]): Promise<Content[]>;
+    /** 变换后保存。返回值：保存后的完整历史（真实落盘形态，见 saveAndReload）。 */
     mutateContents(mutator: TranscriptContentsMutator): Promise<Content[]>;
 }
 
 export interface TranscriptRepositoryDelegate {
     loadContents(): Promise<Content[]>;
-    saveContents(contents: Content[]): Promise<void>;
+    /**
+     * 保存完整内容。
+     * 可选返回【落盘形态】：适配器若能在 save 时拿到最终保存形态（如补了 timestamp/index），
+     * 返回 Content[] 可让仓储跳过写后全量回读（saveAndReload 直接采用）；
+     * 返回 void 时仓储回退“写后 getContents 回读”（兼容既有适配器，语义不变）。
+     */
+    saveContents(contents: Content[]): Promise<Content[] | void>;
     /**
      * 可选：append-only 落盘（HIS-01/HIS-02）。
      * 未实现时仓储回退 get→push→save（保留旧语义）。
@@ -73,6 +90,8 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         // 长对话下成本随历史长度增长。append-only 路径只克隆新增消息，并委托给适配器的追加落盘。
         // 修改方式：独占执行器内只克隆新增内容 → 委托 appendContents 落盘 → 返回新增内容的独立副本
         // （不再回读全量历史：落盘内容与传入内容一致，时间戳等由上层/适配器补全）。
+        // 返回值语义（接口注释已显式声明）：append 系列返回【本次已追加内容的独立副本】，
+        // 不是完整历史；与 replace/mutate 的“保存后的完整历史”语义不同，调用方不应混用。
         // 修改目的：追加路径避免全量读、全量克隆与全量重写，同时保持仓储边界的只读/复制语义。
         const run = this.exclusive ?? ((fn: () => Promise<Content[]>) => fn());
         return run(async () => {
@@ -104,9 +123,13 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
      */
     private async saveAndReload(contents: Content[]): Promise<Content[]> {
         // 修改原因：不同适配器在 save 时可能补 timestamp/index 或触发持久化副作用，直接返回传入数组会丢失“真实已保存快照”。
-        // 修改方式：保存后重新走一次 getContents，返回适配器最终落地的数据形态。
+        // 修改方式：优先采用委托 saveContents 返回的落盘形态（省去写后全量回读 + 深拷贝）；
+        //          委托返回 void（既有适配器）时回退“写后 getContents 回读”，语义保持不变。
         // 修改目的：调用方拿到的结果与真实 transcript 状态一致，避免主聊天与 SubAgent 对返回值语义产生分叉。
-        await this.delegate.saveContents(cloneTranscriptContents(contents));
+        const persisted = await this.delegate.saveContents(cloneTranscriptContents(contents));
+        if (Array.isArray(persisted)) {
+            return cloneTranscriptContents(persisted);
+        }
         return await this.getContents();
     }
 
