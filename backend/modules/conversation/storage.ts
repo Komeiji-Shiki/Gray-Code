@@ -18,6 +18,19 @@ import { Logger } from '../../core/logger';
 
 const log = Logger.get('storage');
 
+/**
+ * 校验会被直接用作文件/目录名的存储 ID。
+ *
+ * conversationId / snapshotId 会来自 Webview 消息和导入数据，不能在未校验时交给
+ * Uri.joinPath。只允许项目当前生成器使用的 ASCII 安全集合，既覆盖 conv_*、UUID、
+ * 测试中的 c-*，也从根源拒绝 ..、路径分隔符、盘符与 URI 编码绕过。
+ */
+export function assertSafeStorageId(value: unknown, label = 'storage id'): asserts value is string {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) {
+        throw new Error(`Unsafe ${label}: ${String(value)}`);
+    }
+}
+
 // 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
 // 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
 // 锁只保证写写互斥，读（load）不参与，读侧已有容错。
@@ -684,6 +697,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getLegacyHistoryPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -692,6 +706,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getConversationDir(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -716,6 +731,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getMetadataPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -724,6 +740,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getSnapshotPath(snapshotId: string): any {
+        assertSafeStorageId(snapshotId, 'snapshot id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'snapshots',

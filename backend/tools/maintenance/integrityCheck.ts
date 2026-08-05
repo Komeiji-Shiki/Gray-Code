@@ -47,6 +47,7 @@ import type { BranchPathConsistencyResult } from '../../modules/conversation/bra
 import type { ConversationBranchGraph } from '../../modules/conversation/branch/types';
 import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { assertSafeStorageId } from '../../modules/conversation/storage';
 
 export type IntegrityScope = 'history' | 'checkpoint' | 'branch';
 
@@ -153,6 +154,7 @@ export async function checkHistoryIntegrity(
     baseDir: string,
     conversationId: string
 ): Promise<IntegritySectionReport> {
+    assertSafeStorageId(conversationId, 'conversation id');
     const convDir = path.join(baseDir, 'conversations', conversationId);
     const indexPath = path.join(convDir, 'history.index.json');
     const historyDir = path.join(convDir, 'history');
@@ -497,6 +499,7 @@ export async function readCheckpointRecordsFromMeta(
     baseDir: string,
     conversationId: string
 ): Promise<CheckpointRecord[]> {
+    assertSafeStorageId(conversationId, 'conversation id');
     const metaPath = path.join(baseDir, 'conversations', `${conversationId}.meta.json`);
     let raw: string;
     try {
@@ -517,6 +520,7 @@ export async function readCheckpointRecordsFromMeta(
  * 段内容解析失败的行跳过（损坏已在 checkHistoryIntegrity 中报告）。
  */
 export async function readHistoryIdsFromSegments(baseDir: string, conversationId: string): Promise<string[]> {
+    assertSafeStorageId(conversationId, 'conversation id');
     const indexPath = path.join(baseDir, 'conversations', conversationId, 'history.index.json');
     const historyDir = path.join(baseDir, 'conversations', conversationId, 'history');
     let raw: string;

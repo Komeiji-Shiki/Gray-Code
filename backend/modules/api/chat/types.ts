@@ -4,7 +4,7 @@
  * 定义对话相关的请求和响应类型
  */
 
-import type { Content } from '../../conversation/types';
+import type { Content, SummaryTokenStats } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
 import type { DynamicContextStrategy } from '../../settings/types';
@@ -555,10 +555,12 @@ export interface SummarizeContextSuccessData {
     summaryContent: Content;
     /** 被总结的消息数量 */
     summarizedMessageCount: number;
-    /** 总结前的上下文 token 数（promptTokenCount） */
+    /** @deprecated 总结模型请求的 promptTokenCount；不是主上下文大小。 */
     beforeTokenCount?: number;
-    /** 总结后的内容 token 数（candidatesTokenCount） */
+    /** @deprecated 总结模型请求的 candidatesTokenCount；不是主上下文大小。 */
     afterTokenCount?: number;
+    /** 主上下文压缩统计。 */
+    summaryTokenStats?: SummaryTokenStats;
     /** 总结消息插入位置（完整历史中的绝对索引） */
     insertIndex?: number;
 }

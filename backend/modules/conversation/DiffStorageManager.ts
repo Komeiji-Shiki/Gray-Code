@@ -112,7 +112,14 @@ export class DiffStorageManager {
      * 获取 diff 文件路径
      */
     private getDiffFilePath(conversationId: string, diffId: string): string {
+        this.assertSafeDiffId(diffId);
         return path.join(this.getDiffsDir(conversationId), `${diffId}.json`);
+    }
+
+    private assertSafeDiffId(diffId: unknown): asserts diffId is string {
+        if (typeof diffId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(diffId)) {
+            throw new Error(`Unsafe diff id: ${String(diffId)}`);
+        }
     }
     
     /**
@@ -191,6 +198,7 @@ export class DiffStorageManager {
         diffId?: string
     ): Promise<DiffReference> {
         const id = diffId || this.generateDiffId();
+        this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
         await this.persistGlobalDiff(id, diffContent);
@@ -210,6 +218,7 @@ export class DiffStorageManager {
         diffId?: string
     ): DiffReference {
         const id = diffId || this.generateDiffId();
+        this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
         void this.persistGlobalDiff(id, diffContent).catch(error => {
@@ -239,6 +248,7 @@ export class DiffStorageManager {
     }
 
     private async persistGlobalDiff(id: string, content: DiffContent): Promise<void> {
+        this.assertSafeDiffId(id);
         const diffsDir = path.join(this.basePath, 'diffs', '__global__');
         await this.ensureDir(diffsDir);
         await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content), 'utf8');
@@ -276,6 +286,7 @@ export class DiffStorageManager {
      * @returns Diff 内容，如果不存在返回 null
      */
     public async loadGlobalDiff(diffId: string): Promise<DiffContent | null> {
+        this.assertSafeDiffId(diffId);
         const cached = this.globalDiffCache.get(diffId);
         if (cached) {
             // Map 重新插入保持最近访问项在尾部，容量淘汰按 LRU 近似执行。

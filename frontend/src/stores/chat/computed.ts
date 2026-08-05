@@ -60,10 +60,24 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   
   /** 当前使用的 Tokens（从最后一条助手消息获取） */
   const usedTokens = computed(() => {
+    let latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
+    for (const msg of state.allMessages.value) {
+      const estimated = msg.summaryTokenStats?.estimatedContextTokenCountAfter
+      if (msg.isSummary && typeof estimated === 'number') {
+        if (!latestSummaryEstimate || msg.timestamp >= latestSummaryEstimate.timestamp) {
+          latestSummaryEstimate = { timestamp: msg.timestamp, tokens: estimated }
+        }
+      }
+    }
     // 从后往前找最后一条助手消息
     for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
       const msg = state.allMessages.value[i]
       if (msg.role === 'assistant' && msg.metadata?.usageMetadata) {
+        // 总结消息会插入到被压缩范围的末尾，数组位置早于保留消息；用 timestamp 判断
+        // 它是否发生在这条旧 usage 之后。下一次真实主回复到达后自然恢复使用真实值。
+        if (latestSummaryEstimate && latestSummaryEstimate.timestamp >= msg.timestamp) {
+          return latestSummaryEstimate.tokens
+        }
         return msg.metadata.usageMetadata.totalTokenCount || 0
       }
     }
