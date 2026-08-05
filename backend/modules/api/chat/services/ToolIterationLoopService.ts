@@ -739,7 +739,8 @@ export class ToolIterationLoopService {
                     summarizeResult = await this.summarizeService.handleAutoSummarize(
                         conversationId,
                         configId,
-                        merged.signal
+                        merged.signal,
+                        modelOverride
                     );
                 } finally {
                     merged.dispose();
@@ -1657,7 +1658,8 @@ export class ToolIterationLoopService {
                     summarizeResult = await this.summarizeService.handleAutoSummarize(
                         conversationId,
                         configId,
-                        merged.signal
+                        merged.signal,
+                        modelOverride
                     );
                 } finally {
                     merged.dispose();
