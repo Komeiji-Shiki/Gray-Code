@@ -250,6 +250,32 @@ const ja: LanguageMessages = {
             openConversation: 'クリックしてこの会話を開く'
         },
 
+        usageTime: {
+            title: '使用時間',
+            refresh: '更新',
+            loading: '集計中…',
+            loadFailed: '読み込みに失敗しました',
+            empty: '使用時間データはまだありません（エディターでの操作で記録が始まります）',
+            today: '今日',
+            currentSession: '現在の連続作業',
+            totalInRange: '期間内合計',
+            range7d: '直近 7 日',
+            range30d: '直近 30 日',
+            range90d: '直近 90 日',
+            range1y: '直近 1 年',
+            rangeAll: 'すべて',
+            hours: '時間',
+            minutes: '分',
+            durationHM: '{hours}時間{minutes}分',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: '1 日あたりの使用時間',
+            monthlyTitle: '月ごとの使用時間（月をクリックで日別詳細）',
+            monthActiveDays: '{days} 日間アクティブ',
+            expandMonth: 'この月の日別詳細を展開',
+            heatmapTitle: '直近 7 日間の活動ヒートマップ（ホバーで詳細）'
+        },
+
         history: {
             title: '会話履歴',
             empty: '会話履歴がありません',
@@ -397,8 +423,12 @@ const ja: LanguageMessages = {
                 assistant: 'アシスタント'
             },
             actions: {
+                edit: 'メッセージを編集',
+                copy: 'コピー',
+                retry: '再生成',
                 viewResponse: '応答を見る',
-                branchFromHere: 'ここから分岐'
+                branchFromHere: 'ここから分岐',
+                delete: 'メッセージを削除'
             },
             branch: {
                 previous: '前の候補',
@@ -909,7 +939,8 @@ const ja: LanguageMessages = {
                 sound: '通知システム',
                 appearance: '外観',
                 memory: '記憶',
-                general: '一般'
+                general: '一般',
+                usage: '使用量統計'
             },
             channelSettings: {
                 selector: {
@@ -1139,6 +1170,7 @@ const ja: LanguageMessages = {
                     design: 'デザイン',
                     notification: '通知',
                     agents: 'エージェント',
+                    activity: '使用時間',
                     other: 'その他'
                 },
                 badges: {
@@ -2069,6 +2101,11 @@ const ja: LanguageMessages = {
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
+                    },
+                    usage: {
+                        title: '使用時間と統計',
+                        description: '使用時間とトークン使用量の統計を表示',
+                        openFullPage: '詳細な統計を表示'
                     }
                 },
                 proxy: {
@@ -2359,6 +2396,7 @@ const ja: LanguageMessages = {
                     notification: '通知',
                     agents: 'エージェント',
                     mcp: 'MCP ツール',
+                    activity: '使用時間',
                     other: 'その他'
                 },
                 dependency: {

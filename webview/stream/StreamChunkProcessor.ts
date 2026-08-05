@@ -13,6 +13,7 @@
  */
 
 import type * as vscode from 'vscode';
+import { markAiActive } from '../../backend/modules/activity';
 
 /** chunk 类型消息的节流间隔（毫秒） */
 const CHUNK_THROTTLE_MS = 50;
@@ -55,6 +56,8 @@ export class StreamChunkProcessor {
    * @returns 是否为错误类型
    */
   processChunk(chunk: any): boolean {
+    // AI 正在生成：视为用户在场（主人在看输出，可能不操作编辑器）
+    markAiActive();
     if (!this.getView()) return false;
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
@@ -110,7 +113,10 @@ export class StreamChunkProcessor {
       this.enqueue('autoSummary', {
         autoSummary: true,
         summaryContent: chunk.summaryContent,
-        insertIndex: chunk.insertIndex
+        insertIndex: chunk.insertIndex,
+        // H1：物理替换语义——后端已删除 [insertIndex, insertIndex + removedCount) 区间消息
+        // 并插入总结；透传给前端同步删除本地窗口中的被替换消息。缺省/0 = 旧纯插入语义。
+        removedCount: chunk.removedCount
       });
     } else if ('content' in chunk && chunk.content && !('cancelled' in chunk)) {
       this.enqueue('complete', {

@@ -12,6 +12,7 @@
 
 import { ref, computed, watch, onMounted } from 'vue'
 import { CustomScrollbar } from '../common'
+import UsageTimeSection from './UsageTimeSection.vue'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '../../i18n'
@@ -277,6 +278,9 @@ const tabs = computed(() => ([
     </div>
 
     <CustomScrollbar class="page-content">
+      <!-- 使用时间统计（独立于 token 用量，编辑器活跃即有数据） -->
+      <UsageTimeSection />
+
       <!-- 加载中 -->
       <div v-if="isLoading" class="state-hint">
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
