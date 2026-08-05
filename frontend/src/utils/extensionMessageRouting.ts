@@ -16,6 +16,33 @@ export interface PendingRequestHandler<T = any> {
 export type ExtensionMessageRoutingResult = 'ignored' | 'resolved' | 'rejected' | 'broadcast'
 
 /**
+ * 显式广播消息类型白名单。
+ *
+ * 扩展端主动推送的消息（命令 / 流式 chunk / 更新 / 进度 / 事件等）都不携带 requestId，
+ * 且类型必须出现在此集合中才会被广播给订阅者；其余类型一律忽略。
+ *
+ * 修改原因：请求超时（如 20s 兜底）后 requestId 会从 pendingRequests 摘除，后端稍后返回的
+ * 响应（携带 requestId 与 type）不再有匹配的等待者——过去会落进「有 type 即广播」分支，
+ * 被当作主动推送消息分发给所有订阅者（后台任务回执、流式状态等被误消费）。
+ * 修改方式：带 requestId 但无匹配等待者的消息按「迟到响应」静默丢弃并记录 debug 日志；
+ * 只有不带 requestId 且命中广播类型白名单的消息才进入 broadcast。
+ */
+const BROADCAST_MESSAGE_TYPES = new Set([
+  'command',
+  'streamChunk',
+  'streamChunkBatch',
+  'workspaceUri',
+  'retryStatus',
+  'taskEvent',
+  'terminalOutput',
+  'imageGenOutput',
+  'dependencyProgress',
+  'storageMigrationProgress',
+  'subagentMonitor.event',
+  'subagentMonitor.manifest'
+])
+
+/**
  * 把一条来自扩展端的消息分派给等待中的请求或推送订阅者。
  *
  * @param message 原始消息（可能是任意值，非对象一律忽略）
@@ -42,11 +69,25 @@ export function routeExtensionMessage(
       handler.resolve(payload.data)
       return 'resolved'
     }
-    handler.reject(new Error(payload.error?.message || 'Unknown error'))
+    // 保留后端 sendError 的错误码（code）：调用方 catch 中统一按 err.code 取错误码
+    // （如 INTERRUPT_MESSAGE_RATE_LIMITED / MESSAGE_CHANGED），丢弃会导致错误码丢失
+    const error = new Error(payload.error?.message || 'Unknown error') as Error & { code?: string }
+    if (payload.error?.code) {
+      error.code = payload.error.code
+    }
+    handler.reject(error)
     return 'rejected'
   }
 
-  if (!payload.type) {
+  // 带 requestId 但无匹配等待者：请求已超时被摘除（或被其他监听器消费），
+  // 这是迟到的响应而非推送消息——静默丢弃，防止被当作广播误分发。
+  if (requestId) {
+    console.debug('[extensionMessageRouting] dropped stale response (requestId not pending):', requestId)
+    return 'ignored'
+  }
+
+  // 无 requestId：只有显式声明为广播的消息类型才分发
+  if (!payload.type || !BROADCAST_MESSAGE_TYPES.has(payload.type)) {
     return 'ignored'
   }
 

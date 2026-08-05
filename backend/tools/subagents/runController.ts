@@ -12,6 +12,17 @@ import type { IRunController, RunControllerSnapshot, SubAgentRunScope } from '..
 
 export type SubAgentControlAction = 'pause' | 'resume' | 'exit';
 
+/**
+ * waitUntilRunnable 的最长等待时限（墙钟时间）。
+ *
+ * 修改原因：pause / awaiting_monitor_action 后若用户不再操作（窗口关闭、无人接管），
+ * executor 会永久挂在 waiter 上，run 及其并发席位被无限占用。
+ * 修改方式：超过该时限自动 exit 该 run，让等待方以 cancelled 结算。
+ * 修改目的：超时兜底基于墙钟时间，独立于 maxRuntime 的"暂停时长扣除"逻辑，
+ *           不受 getInactiveDurationMs 影响，无人接管的 run 最终必然收敛。
+ */
+export const SUB_AGENT_PAUSE_WAIT_TIMEOUT_MS = 30 * 60 * 1000; // 30 分钟
+
 export interface SubAgentRunControlState {
     runId: string;
     agentName?: string;
@@ -348,12 +359,42 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         // 修改原因：executor 在 pause 或 awaiting_monitor_action 时需要挂起主工具 Promise，而不是返回失败。
         // 修改方式：等待 resume/exit 事件；resume 返回 running，exit 返回 cancelled。
         // 修改目的：让 Monitor 顶部控制按钮可以决定同一个 run 的后续命运。
-        await new Promise<void>((resolve) => {
-            record.waiters.push(resolve);
+        // 修改原因：用户不再操作时该等待会无限挂起，run 和并发席位被永久占用。
+        // 修改方式：等待超过时限自动 exit 该 run；等待期结束（resume/exit/超时）时清除定时器，
+        //           不会在 run 恢复运行后误杀正常执行的 run。
+        // 修改目的：无人接管的 run 最终收敛为 cancelled，超时兜底不受暂停时长扣除影响。
+        return new Promise<'running' | 'cancelled' | 'inactive'>((resolve) => {
+            let settled = false;
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const finish = (status: 'running' | 'cancelled' | 'inactive') => {
+                if (settled) return;
+                settled = true;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                resolve(status);
+            };
+            const onWake = () => {
+                const latest = this.activeRuns.get(runId);
+                if (!latest) {
+                    finish('inactive');
+                    return;
+                }
+                finish(latest.status === 'cancelled' ? 'cancelled' : 'running');
+            };
+            record.waiters.push(onWake);
+            timeoutId = setTimeout(() => {
+                // 先从唤醒列表移除自己，避免 exit 的 notifyWaiters 重复结算
+                const index = record.waiters.indexOf(onWake);
+                if (index >= 0) {
+                    record.waiters.splice(index, 1);
+                }
+                if (this.activeRuns.has(runId)) {
+                    this.exit(runId, '等待用户操作超过 30 分钟，自动终止 SubAgent 执行');
+                }
+                finish(this.activeRuns.has(runId) ? 'cancelled' : 'inactive');
+            }, SUB_AGENT_PAUSE_WAIT_TIMEOUT_MS);
         });
-        const latest = this.activeRuns.get(runId);
-        if (!latest) return 'inactive';
-        return latest.status === 'cancelled' ? 'cancelled' : 'running';
     }
 
     /**

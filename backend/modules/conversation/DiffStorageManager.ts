@@ -539,8 +539,14 @@ export class DiffStorageManager {
             
             log.info('diffs_migrated', { processed, newBasePath });
         } catch (error) {
-            // 旧目录不存在，只需更新路径
-            this.basePath = newBasePath;
+            // 仅「旧目录不存在」（ENOENT）是正常情况：无数据可迁移，直接换路径
+            if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+                this.basePath = newBasePath;
+                return;
+            }
+            // 迁移过程其他异常：保留旧 basePath 并记录日志，绝不静默切换路径丢数据
+            log.error('diffs_migrate_failed', { error: error instanceof Error ? error.message : String(error) });
+            throw error;
         }
     }
 }

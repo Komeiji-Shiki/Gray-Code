@@ -8,6 +8,33 @@
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-05
+
+### Merged
+  - 同步上游 PR #9（上游 1.4.1：生命周期/存储/总结/安全加固），保留 fork 的 electron-app / 变更查看面板 / 媒体路径护栏 / 独立版本号增量
+    - 上游改进包括：对话删除前停止并排空主流 + 子代理（abortAndWaitForCompletion + subagent exit/flush，有界等待）、编辑「真·原地保存」（keep 模式只改写目标消息文本，不再截断后续消息/软删分支/重新生成，本地 user 消息补近似 parentId 防根节点误判）、`NODE_NOT_FOUND`/`INVALID_BRANCH_RELATION` 消息编辑 id 对齐与根节点编辑自动降级 keep、候选切换器（BranchSwitcherBar）挂载位置修正、存储 ID 统一 `assertSafeStorageId` 校验、分段历史写入串行化与挂起超时、SubAgent transcript 持久化改进、token 统计与 preservedUserInputs 预算、前端分支树面板重构（branchTreeLayout）等
+    - 冲突解决记录：webview CSP 采纳上游 nonce 方案并保留 fork 的 `<` 转义（safeJson）；`deleteConversation`/`deleteSingleMessage` 合并 fork assertSafeId 与上游 abort/子代理排空；`editBranch` keep 模式合并上游真·原地保存与 fork 的索引/工具缓存重建；`loadGlobalDiff` 保留 fork 优雅降级（不安全 id 返回 null 而非抛错）；CHANGELOG 保留 fork 版本体系不并入上游 1.4.1 条目
+    - 上游新测试适配 fork 语义：`DELETE_CONVERSATION_INVALID_ID` 错误消息统一、`loadGlobalDiff` 期望调整为 null 降级
+
+### Fixed
+  - 修复 `TokenCountService` 四路提供商（Gemini/OpenAI 兼容/OpenAI Responses/Anthropic）计数请求无超时、无 abort 信号：单点挂死会拖死每次模型请求前的 `preCountUserMessageTokensBatch`（整个回合无限期挂起且停止按钮无法中断）；为每个计数请求加 15s 超时 + 外部 abort 透传，超时走本地估算降级（详见 `TokenCountService.fetchWithTimeout`）
+  - 修复 `execute_command` 同步 shell 检测用 `execSync` 字符串拼接（`where ${shellPath}`）：customPath 来自工作区设置，含 `&`/`|`/`;` 时被 shell 二次解释执行任意命令（工具声明构建时同步触发、无需确认）；改为 `execFileSync` 参数数组；同步版 `timeout` 参数对 NaN/负数归一化
+  - 修复 `ConfigManager` 未校验 timeout 配置：NaN/负数/0 直接进 `setTimeout` 导致所有请求瞬时超时/abort；`validateConfig` + `executeRequest`/`executeStreamRequest` 双重钳制（默认 60s，上限 1h）
+  - 修复 `StdioMcpClient.disconnect` 对僵尸进程固定等待 10 秒（exit 事件永不触发）：exitCode/signalCode 已置位直接清理，treeKill 报错立即 resolve；MCP 握手 clientInfo 版本由硬编码 1.0.5 统一为 `createGrayCodeMcpClientInfo()`
+  - 修复 `DiffStorageManager.migrateTo` 迁移中途失败静默切换 basePath（旧目录剩余 diff 数据静默丢失）：仅 ENOENT（旧目录不存在）才换路径，其他迁移异常保留旧路径并报错
+  - 修复 `chatStream.source` 字段在 webview 层被丢弃：后台任务回执（`source: 'background_task'`）被当成真实用户输入（isUserInput/回合语义/历史渲染全部错乱）；`handleChatStream` 解构与透传补齐 `source`
+  - 修复 `deleteMessage`/`editBranchStream` 的 `messageId` 在 webview 层被丢弃：后端 MESSAGE_CHANGED 防索引漂移校验形同虚设（并发删除/压缩后可能误删其他消息）；`DeleteToMessageRequestData`/`EditBranchRequestData` 声明 `messageId` 并透传
+  - 修复 `chat.awaitConversationIdle` 后端无限等待（前端 20s 超时摘除 requestId 后，迟到响应被误当广播分发）：handler 加 15s deadline（返回 `{ idle: true, stale: true }`）；`extensionMessageRouting` 增加广播白名单，无匹配 requestId 的响应静默丢弃并记录 debug 日志
+  - 修复 IPC 启动失败后空占位 assistant 消息永不清理（幽灵「生成中」）：`cleanupFailedSendPlaceholder` 与 handleError 占位清理等效（空占位删除、有内容登记 `_failedStreamMessageId`）
+  - 修复会话快照缺失 `_failedStreamMessageId`/`_lastCancelledStreamId`/`_lastApprovalGatedStreamId`：标签页切换后重试回滚失效、取消检测误判、半截幽灵消息残留
+  - 修复审批门闸终止的 toolIteration 后 `processQueue` 永不触发：候选区排队消息无限期冻结，终结路径补 `processQueue()` 调度
+  - 修复 `backgroundStreamBuffers` 超 2000 上限淘汰可能丢掉终结事件（complete/error/cancelled 等）：标签页永久「生成中」；按流保留终结事件只丢普通数据 chunk
+  - 修复 `SubAgentRunController.waitUntilRunnable` 无限等待（暂停中 run 永久占用并发席位）：30 分钟超时自动 exit；`concurrencyLimiter` 排队加 60s 超时；`fileWriteLockManager.acquire` 轮询加 60s 整体上限（超时抛明确错误）
+  - 修复 `proxyFetch` TLS 握手窗口 abort 信号丢失（CONNECT 成功与 tls.connect 之间取消被吞、socket 悬挂）：桥接 abort 监听覆盖窗口期
+  - 修复 `deliverInterruptMessage` 错误码丢失（后端 INTERRUPT_MESSAGE_RATE_LIMITED 等被吞为通用文案）、`recordInterruptDelivery` TTL 定时器不随 clear 取消、`switchBranchCandidate` 的 `isSwitchingBranch` 在会话切换后不复位（finally 无条件复位）
+  - 修复 electron-app 退出不等待 `dispose()`（异步写队列被截断导致设置/对话落盘丢失）：before-quit preventDefault + await dispose + 10s 超时兜底；`loadURL` 无 catch（页面加载失败主进程崩溃）改为错误对话框退出；新增单实例锁（重复启动并发写同一 data/ 目录损坏配置）；主进程安装 unhandledRejection 保护（不再崩溃）；`vscode-shim` 硬编码 `1.99.0` 改为读根 package.json；`JsonFileMemento.update` 非原子写改为 tmp+rename+串行队列；IPC 消息队列每项 60s 超时（渲染层挂起不再冻结整个通道）、toast 5 分钟 TTL；安装版数据目录不可写时回退 `appData/GrayCode` 并告警（详见 `electron-app/CHANGELOG.md` [1.6.2]）
+  - 修复公告版本解析：CHANGELOG 正则不支持 `## [1.3.1-1]` 预发布条目且重复版本号重复展示；正则支持可选预发布段、compareVersions 遵循预发布 < 正式版、重复版本去重
+
 ## [1.6.1] - 2026-08-05
 
 ### Fixed

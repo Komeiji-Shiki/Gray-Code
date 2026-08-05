@@ -350,6 +350,15 @@ export interface DeleteToMessageRequestData {
      * 支持用户反复回档到同一位置。
      */
     preserveCheckpointId?: string;
+
+    /**
+     * 可选，被删除消息的消息 ID（防索引漂移校验）。
+     *
+     * 请求带 messageId 时，后端会校验 targetIndex 处消息 id 一致；
+     * 不一致说明索引已漂移（并发插入/删除/上下文压缩等），返回 MESSAGE_CHANGED。
+     * 旧前端不带该字段时保持旧行为（仅按索引操作）。
+     */
+    messageId?: string;
 }
 
 /**

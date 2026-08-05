@@ -37,6 +37,13 @@ function installStdioEpipeGuard(): void {
 }
 installStdioEpipeGuard();
 
+// 未处理拒绝保护：Node 22 起 unhandledRejection 默认是致命错误，会让主进程直接退出。
+// 异步链上的偶发错误（插件/三方代码的 promise 泄漏等）不应拖垮整个应用，记录日志即可。
+// 日志经 console.error 走 stderr，管道断裂由 installStdioEpipeGuard 兜底，不会二次崩溃。
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandled rejection:', reason);
+});
+
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 
@@ -53,6 +60,20 @@ function readRootVersion(): string {
 // 不写入系统路径（AppData / Program Files）。复制一份应用目录即可得到互不影响的独立实例。
 // 显式覆盖：`--user-data-dir <path>` 命令行参数或 `GRAYCODE_USER_DATA_DIR` 环境变量优先。
 // 必须在任何 app.getPath('userData') 使用之前调用 app.setPath，因此放在模块顶层。
+// 目录可写性探测：安装版可能被装进 Program Files 等受保护位置，目录对普通用户只读，
+// 直接写入会全部失败且表现不透明。尝试创建/写入/删除探针文件验证可写性。
+function probeWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probeFile = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probeFile, 'probe', 'utf-8');
+    fs.rmSync(probeFile, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveUserDataDir(): string {
   const cliIndex = process.argv.indexOf('--user-data-dir');
   const cliDir = cliIndex > -1 ? process.argv[cliIndex + 1] : undefined;
@@ -70,7 +91,17 @@ function resolveUserDataDir(): string {
       return path.join(path.resolve(portableDir), 'data');
     }
     // 安装版 / zip 免安装版：数据目录与可执行文件同级（win-unpacked/GrayCode.exe → win-unpacked/data）
-    return path.join(path.dirname(app.getPath('exe')), 'data');
+    const installDataDir = path.join(path.dirname(app.getPath('exe')), 'data');
+    if (probeWritable(installDataDir)) {
+      return installDataDir;
+    }
+    // 安装目录不可写（如 Program Files 安装后目录只读）：回退到系统 AppData 数据目录，
+    // 保证会话/设置等仍可持久化，而不是静默丢失。
+    const fallbackDir = path.join(app.getPath('appData'), 'GrayCode');
+    console.warn(
+      `[main] user data dir is not writable (${installDataDir}), falling back to ${fallbackDir}`
+    );
+    return fallbackDir;
   }
   // 开发版（electron .）：数据目录在 electron-app/data（已加入 .gitignore）
   return path.join(path.resolve(__dirname, '..'), 'data');
@@ -320,7 +351,7 @@ export function registerCustomProtocol(): void {
       const mime = MIME_BY_EXT[path.extname(fsPath).toLowerCase()];
       const cached = fileCache.get(fsPath);
       if (cached && cached.mtimeMs === stat.mtimeMs) {
-        return new Response(cached.body, {
+        return new Response(cached.body as unknown as BodyInit, {
           status: 200,
           headers: { 'Content-Type': cached.mime }
         });
@@ -333,7 +364,7 @@ export function registerCustomProtocol(): void {
         const oldest = fileCache.keys().next().value;
         if (oldest) fileCache.delete(oldest);
       }
-      return new Response(body, {
+      return new Response(body as unknown as BodyInit, {
         status: 200,
         headers: { 'Content-Type': contentType }
       });
@@ -535,7 +566,25 @@ function createWindow(): void {
     mainWindow = null;
   });
 
-  void mainWindow.loadURL(`${CUSTOM_SCHEME}://local/frontend/dist/index.html`);
+  mainWindow.loadURL(`${CUSTOM_SCHEME}://local/frontend/dist/index.html`).catch((error) => {
+    // 加载失败（如 graycode:// 静态资源缺失/损坏）不能让未捕获的 rejection 崩掉主进程；
+    // 弹错误对话框说明后退出（与下方后端初始化失败的 M-8 模式一致）。
+    console.error('Failed to load main window:', error);
+    const win = mainWindow;
+    if (win && !win.isDestroyed()) {
+      void dialog
+        .showMessageBox(win, {
+          type: 'error',
+          title: 'GrayCode Failed to Start',
+          message: 'The main window failed to load.',
+          detail: String(error?.message || error),
+          buttons: ['Quit']
+        })
+        .finally(() => app.exit(1));
+    } else {
+      app.exit(1);
+    }
+  });
 
   // Debug: GRAYCODE_DIAG=1 dumps renderer diagnostics to stdout.
   if (process.env.GRAYCODE_DIAG === '1') {
@@ -897,7 +946,9 @@ function createWindow(): void {
   }
 
   // restore workspace
-  void backendHost.ready.then(() => {
+  // createBackend() 总在 createWindow() 之前调用，backendHost 必然已就绪；用可选链兜底
+  if (backendHost) {
+    void backendHost.ready.then(() => {
     const folders = filterExistingFolders(loadWorkspaceState());
     if (folders.length > 0) {
       void setWorkspaceFolders(folders);
@@ -932,6 +983,7 @@ function createWindow(): void {
       app.exit(1);
     }
   });
+  }
 }
 
 // ============================================================================
@@ -940,44 +992,80 @@ function createWindow(): void {
 
 app.setName('GrayCode Desktop');
 
-if (process.env.GRAYCODE_E2E === '1') {
-  app.whenReady().then(async () => {
-    const { runE2E } = await import('./e2e');
-    await runE2E();
-  });
-} else if (process.env.GRAYCODE_MONITOR_SMOKE === '1') {
-  app.whenReady().then(async () => {
-    const { runMonitorSmoke } = await import('./monitor-smoke');
-    await runMonitorSmoke();
-  });
+// ============================================================================
+// 单实例锁：同一数据目录同时跑两个实例会让串行写队列交错、状态互相覆盖。
+// 未获得锁的实例直接退出；重复启动时通过 second-instance 聚焦已有窗口。
+// ============================================================================
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
 } else {
-  app.whenReady().then(() => {
-  registerCustomProtocol();
-  registerNativeOps();
-  buildMenu();
-  createBackend();
-  createWindow();
-
-  app.on('activate', () => {
-    // macOS：点击 Dock 图标时若无窗口则重建；已有窗口时恢复/聚焦。
-    // BackendHost 与 IPC 监听只创建一次，这里只重建窗口，避免双重注册。
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    } else if (mainWindow && !mainWindow.isDestroyed()) {
+  app.on('second-instance', () => {
+    // 聚焦已有窗口（最小化则先恢复）；macOS 下窗口可能已关闭，重建一个。
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
     }
-  });
   });
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    void backendHost?.dispose();
-    app.quit();
-  }
-});
+if (gotSingleInstanceLock) {
+  if (process.env.GRAYCODE_E2E === '1') {
+    app.whenReady().then(async () => {
+      const { runE2E } = await import('./e2e');
+      await runE2E();
+    });
+  } else if (process.env.GRAYCODE_MONITOR_SMOKE === '1') {
+    app.whenReady().then(async () => {
+      const { runMonitorSmoke } = await import('./monitor-smoke');
+      await runMonitorSmoke();
+    });
+  } else {
+    app.whenReady().then(() => {
+      registerCustomProtocol();
+      registerNativeOps();
+      buildMenu();
+      createBackend();
+      createWindow();
 
-app.on('before-quit', () => {
-  void backendHost?.dispose();
-});
+      app.on('activate', () => {
+        // macOS：点击 Dock 图标时若无窗口则重建；已有窗口时恢复/聚焦。
+        // BackendHost 与 IPC 监听只创建一次，这里只重建窗口，避免双重注册。
+        if (BrowserWindow.getAllWindows().length === 0) {
+          createWindow();
+        } else if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+        }
+      });
+    });
+  }
+
+  app.on('window-all-closed', () => {
+    // macOS 保留窗口常驻惯例：关闭窗口不退出（activate 时重建）；非 mac 走 app.quit()
+    // 触发 before-quit 里的异步 dispose 流程。
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+
+  let quitting = false;
+
+  app.on('before-quit', (event) => {
+    // 等待异步写队列排空再退出：直接 quit 会截断 JsonFileMemento/JsonConfigStore 的
+    // 串行写队列与进行中的流处理，丢数据。preventDefault 后 await dispose()，
+    // 10s 超时兜底（dispose 卡死也必须能退出），然后 app.exit(0) 结束进程。
+    if (quitting) return;
+    quitting = true;
+    event.preventDefault();
+    const disposeDone = backendHost ? backendHost.dispose() : Promise.resolve();
+    void Promise.race([
+      disposeDone,
+      new Promise<void>((resolve) => setTimeout(resolve, 10_000))
+    ]).finally(() => {
+      app.exit(0);
+    });
+  });
+}

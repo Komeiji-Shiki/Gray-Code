@@ -100,6 +100,8 @@ export class BackendHost {
   /** 子代理 Monitor 内嵌面板桥（事件推送 + monitor 协议消息处理） */
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
   private messageHandlingQueue: Promise<void> = Promise.resolve();
+  /** 单条消息处理超时：handler 卡死（挂起的工具调用/等待 toast 回复等）不应把整个串行队列冻结 */
+  private static readonly MESSAGE_HANDLING_TIMEOUT_MS = 60_000;
   private unsubscribers: Array<() => void> = [];
   private diffPreviewContents = new Map<string, string>();
   private diffPreviewChangeEmitter = new (require('events').EventEmitter)();
@@ -250,7 +252,7 @@ export class BackendHost {
     runId?: string,
     conversationId?: string,
     sendTo?: (message: any) => void
-  ): () => void {
+  ): { dispose(): void } {
     return this.clientRegistry.register({
       clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
       runScope: runId
@@ -341,7 +343,7 @@ export class BackendHost {
     await this.settingsManager.initialize();
     this.windowsAgentStopNotificationService = new WindowsAgentStopNotificationService({ settingsManager: this.settingsManager });
 
-    this.storagePathManager = new StoragePathManager(this.settingsManager, this.context);
+    this.storagePathManager = new StoragePathManager(this.settingsManager, this.context as any);
     await this.storagePathManager.ensureDirectories();
 
     const effectiveDataUri = this.storagePathManager.getEffectiveDataUri();
@@ -390,7 +392,7 @@ export class BackendHost {
     this.checkpointManager = new CheckpointManager(
       this.settingsManager,
       this.conversationManager,
-      this.context,
+      this.context as any,
       this.storagePathManager.getEffectiveDataPath()
     );
     await this.checkpointManager.initialize();
@@ -435,7 +437,7 @@ export class BackendHost {
       toolExecutionService: this.chatHandler.getToolExecutionService()
     });
 
-    this.dependencyManager = DependencyManager.getInstance(this.context, this.storagePathManager.getDependenciesPath());
+    this.dependencyManager = DependencyManager.getInstance(this.context as any, this.storagePathManager.getDependenciesPath());
     await this.dependencyManager.initialize();
     toolRegistry.setDependencyChecker({
       isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
@@ -502,7 +504,7 @@ export class BackendHost {
 
   private getWorkspacePath(): string | undefined {
     const folders = vscode.workspace.workspaceFolders;
-    return folders?.[0]?.fsPath;
+    return folders?.[0]?.uri.fsPath;
   }
 
   private async ensureDefaultConfig(): Promise<void> {
@@ -567,7 +569,10 @@ export class BackendHost {
       clientId: WEBVIEW_CLIENT_IDS.mainChat,
       runScope: { type: 'conversation', conversationId: 'main-chat' } as any,
       webviewHost: { webview: this.fakeWebviewForClient() } as any,
-      postMessage: (message) => this.postToRenderer('raw', message),
+      postMessage: (message) => {
+        this.postToRenderer('raw', message);
+        return true;
+      },
       isAlive: () => true
     });
   }
@@ -705,8 +710,33 @@ export class BackendHost {
     }
 
     this.messageHandlingQueue = this.messageHandlingQueue
-      .then(() => this.routeMessage(message))
+      .then(() => this.handleWithTimeout(this.routeMessage(message), message?.requestId))
       .catch((err) => console.error('[BackendHost] message handling error:', err));
+  }
+
+  /** 给单个消息处理加超时：超时对该请求回 error（格式与 routeMessage 的错误响应一致），
+   *  并放行队列让后续消息继续处理，避免一条卡死的 handler 永久冻结 IPC 通道。 */
+  private async handleWithTimeout(work: Promise<void>, requestId?: string): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        console.error('[BackendHost] message handling timed out:', requestId);
+        if (requestId) {
+          this.postToRenderer(
+            'error',
+            requestId,
+            'HANDLER_TIMEOUT',
+            'Message handler timed out (60s); the request has been dropped.'
+          );
+        }
+        resolve();
+      }, BackendHost.MESSAGE_HANDLING_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([work, timedOut]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**

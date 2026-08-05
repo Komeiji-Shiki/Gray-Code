@@ -22,7 +22,7 @@ import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
-import { rebuildMessageIndexById, appendMessage } from './state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById, removeMessageAt } from './state'
 import { translate } from '../../composables/useI18n'
 import { useSettingsStore } from '../settingsStore'
 
@@ -39,6 +39,29 @@ function resetPendingSendState(state: ChatStoreState): void {
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   state._lastCancelledStreamId.value = null
+}
+
+/**
+ * 发送启动失败（IPC 抛错 / webview 校验失败只 sendError 不发 error chunk 等）后，
+ * 清理本次创建的空占位 assistant 消息。
+ *
+ * 与 streamChunkHandlers.handleError 的空占位删除逻辑等效：仅当 streamingMessageId
+ * 仍指向本次创建的占位且消息为空（localOnly、无 content/tools/parts 内容）时移除并复位；
+ * 有内容则保留展示并登记 _failedStreamMessageId 供 retryAfterError 回滚（后端从未持久化）。
+ * 否则空占位会永久残留，界面一直显示「生成中」（后续 error chunk 已被 streamId 过滤丢弃）。
+ */
+function cleanupFailedSendPlaceholder(state: ChatStoreState, placeholderId: string): void {
+  if (state.streamingMessageId.value !== placeholderId) return
+  const placeholder = state.allMessages.value.find(m => m.id === placeholderId)
+  // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
+  const hasPartsContent = !!placeholder?.parts?.some(p => p.text || p.functionCall)
+  if (placeholder && placeholder.localOnly && !placeholder.content && !placeholder.tools && !hasPartsContent) {
+    removeMessageAt(state, getMessageIndexById(state, placeholderId))
+    state._failedStreamMessageId.value = null
+  } else {
+    state._failedStreamMessageId.value = placeholder ? placeholder.id : null
+  }
+  state.streamingMessageId.value = null
 }
 
 /**
@@ -124,6 +147,9 @@ export const INTERRUPT_NOTICE_MAX = 3
 
 export const recentInterruptDeliveries = shallowRef<InterruptDeliveryNotice[]>([])
 
+/** 投递提示的 TTL 定时器（key: conversationId:kind -> timer），clearInterruptDeliveries 时同步取消 */
+const interruptNoticeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 /** 记录一条投递提示：同一会话同类型只保留最新一条；超出上限丢弃最旧；TTL 后自动移除 */
 export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'createdAt'>): void {
   const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now() }
@@ -131,13 +157,26 @@ export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'c
     n => !(n.conversationId === full.conversationId && n.kind === full.kind)
   )
   recentInterruptDeliveries.value = [full, ...filtered].slice(0, INTERRUPT_NOTICE_MAX)
-  setTimeout(() => {
+  // 同一会话同类型提示被新提示替换时，先取消旧定时器再登记新定时器
+  const timerKey = `${full.conversationId}:${full.kind}`
+  const existingTimer = interruptNoticeTimers.get(timerKey)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+  interruptNoticeTimers.set(timerKey, setTimeout(() => {
+    interruptNoticeTimers.delete(timerKey)
     recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.createdAt !== full.createdAt)
-  }, INTERRUPT_NOTICE_TTL_MS)
+  }, INTERRUPT_NOTICE_TTL_MS))
 }
 
-/** 清除指定会话的投递提示（当前回合结束时由 MessageList 调用） */
+/** 清除指定会话的投递提示（当前回合结束时由 MessageList 调用），并同步取消对应 TTL 定时器 */
 export function clearInterruptDeliveries(conversationId: string): void {
+  for (const [key, timer] of interruptNoticeTimers) {
+    if (key.startsWith(`${conversationId}:`)) {
+      clearTimeout(timer)
+      interruptNoticeTimers.delete(key)
+    }
+  }
   recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.conversationId !== conversationId)
 }
 
@@ -186,13 +225,14 @@ async function deliverInterruptMessage(
       errorMessage: result?.error?.message
     })
     return false
-  } catch (error) {
+  } catch (error: any) {
     console.warn('[messageActions] chat.sendInterruptMessage failed:', error)
     recordInterruptDelivery({
       conversationId,
       text,
       kind: 'error',
-      errorCode: undefined,
+      // 从 rejection 中取出后端 sendError 的错误码（与 sendMessage 等 catch 的 err.code 约定一致）
+      errorCode: error?.code,
       errorMessage: error instanceof Error ? error.message : String(error)
     })
     return false
@@ -375,6 +415,9 @@ export async function sendMessage(
   // 而不是依赖 isStreaming——取消竞态下 isStreaming 会被 cancelStream 复位）
   let streamStarted = false
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
+  // 本次发送创建的 assistant 占位消息 ID（catch 中据此判断占位是否仍属于本请求，
+  // 避免误删新请求的占位）
+  const assistantMessageId = generateId()
   
   try {
     if (!state.currentConversationId.value) {
@@ -424,7 +467,6 @@ export async function sendMessage(
       state.allMessages.value.push(userMessage)
     }
 
-    const assistantMessageId = generateId()
     const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -515,6 +557,11 @@ export async function sendMessage(
     }
 
   } catch (err: any) {
+    // 发送失败（postMessage 抛错 / webview 校验失败只 sendError 不发 error chunk）：
+    // 不会有 error chunk 到达来清理占位，且 resetPendingSendState 清空 activeStreamId 后，
+    // 迟到的 error chunk 也会被 streamId 过滤丢弃——这里直接本地清理本次创建的空占位，
+    // 避免「生成中」幽灵消息永久残留（与 handleError 的空占位删除逻辑等效）。
+    cleanupFailedSendPlaceholder(state, assistantMessageId)
     // 发送失败的错误展示不依赖 isStreaming 判断：
     // 用户在 await 期间调用了 cancelStream 时 isStreaming 已被置 false，
     // 此时真正的发送失败（IPC 异常等）会被静默吞掉（M1）。

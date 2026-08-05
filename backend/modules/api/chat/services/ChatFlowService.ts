@@ -126,6 +126,13 @@ export interface EditBranchRequestData {
   userNodeId?: string;
   /** 新文本（替换用户消息的文本 parts） */
   newText: string;
+  /**
+   * 可选，被编辑消息的消息 ID（与 userNodeId 同源；前端二者均传目标消息 id）。
+   *
+   * 供后端做防索引漂移校验（与 EditAndRetryRequestData.messageId 同语义）；
+   * 旧前端不带该字段时保持旧行为。
+   */
+  messageId?: string;
   /** 配置 ID */
   configId: string;
   /** 模型覆盖（可选） */
@@ -2486,9 +2493,8 @@ export class ChatFlowService {
 
     try {
       // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移误删其他消息。
-      // 注意：DeleteToMessageRequestData 未声明该字段（types.ts 仅允许为
-      // EditAndRetryRequestData 增加 messageId），这里按可选读取，旧前端不传时保持旧行为。
-      const requestMessageId = (request as { messageId?: string }).messageId;
+      // DeleteToMessageRequestData 已声明该可选字段，旧前端不传时保持旧行为。
+      const requestMessageId = request.messageId;
       // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
       // 必须同时用于 M1 校验：在校验与删除之间不得有其他写入（rejectAllPendingToolCalls 只追加）。
       const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);

@@ -139,7 +139,7 @@ export async function runE2E(): Promise<void> {
     userDataPath: userData,
     extensionPath: path.resolve(__dirname, '..', '..'),
     postToRenderer: () => undefined,
-    native: async () => undefined,
+    native: async <T = any>() => undefined as T,
     onOpenDiffPreview: (payload) => capturedPreviews.push(payload)
   });
 

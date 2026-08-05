@@ -57,6 +57,11 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     pendingBranchReplayContext: state._pendingBranchReplayContext.value
       ? { ...state._pendingBranchReplayContext.value }
       : null,
+    // 流式终结辅助状态：不进快照会导致切标签页后丢失，
+    // 重试回滚失效（_failedStreamMessageId）/ 取消检测误判（_lastCancelledStreamId 等）
+    failedStreamMessageId: state._failedStreamMessageId.value,
+    lastCancelledStreamId: state._lastCancelledStreamId.value,
+    lastApprovalGatedStreamId: state._lastApprovalGatedStreamId.value,
     // TREE-12：分支图快照（null = 无图 / 线性模式）；图按整体替换维护（无原地修改），共享引用安全
     branchGraph: state.branchGraph.value
   }
@@ -103,6 +108,10 @@ export function restoreSessionFromSnapshot(
   state._pendingBranchReplayContext.value = snapshot.pendingBranchReplayContext
     ? { ...snapshot.pendingBranchReplayContext }
     : null
+  // 恢复流式终结辅助状态（旧快照无此字段时回退 null）
+  state._failedStreamMessageId.value = snapshot.failedStreamMessageId ?? null
+  state._lastCancelledStreamId.value = snapshot.lastCancelledStreamId ?? null
+  state._lastApprovalGatedStreamId.value = snapshot.lastApprovalGatedStreamId ?? null
   // TREE-12：恢复分支图快照（切标签页回来恢复分支视图状态）；旧快照无此字段时回退 null
   state.branchGraph.value = snapshot.branchGraph ?? null
 }
@@ -369,11 +378,26 @@ export function bufferBackgroundChunk(
   buffer.push(chunk)
 
   // 缓冲上限保护：用户停留在其他标签页期间，长工具循环/长文本流会逐 chunk 累积。
-  // 超过上限时丢弃最旧 chunk，避免切回标签页时全量同步回放导致 UI 卡死。
-  // 丢弃最旧 chunk 是安全的：终结事件（complete/toolIteration 等）携带完整内容快照，
-  // 回放时仍能重建最终消息状态。
-  if (buffer.length > MAX_BACKGROUND_BUFFER_CHUNKS) {
-    buffer.splice(0, buffer.length - MAX_BACKGROUND_BUFFER_CHUNKS)
+  // 超过上限时只丢弃最旧普通数据 chunk，保留终结事件（complete/error/cancelled/
+  // awaitingConfirmation/toolIteration）：终结事件负责复位快照流式状态，若被丢弃，
+  // 切回标签页回放后流状态无法复位（标签页永久「生成中」）。
+  // 终结事件携带完整内容快照，回放时仍能重建最终消息状态。
+  const TERMINAL_CHUNK_TYPES = new Set(['complete', 'error', 'cancelled', 'awaitingConfirmation', 'toolIteration'])
+  let evictCount = buffer.length - MAX_BACKGROUND_BUFFER_CHUNKS
+  if (evictCount > 0) {
+    const kept: StreamChunk[] = []
+    for (const item of buffer) {
+      if (evictCount > 0 && !TERMINAL_CHUNK_TYPES.has(item.type)) {
+        evictCount -= 1
+        continue
+      }
+      kept.push(item)
+    }
+    // 极端兜底：可丢的普通数据 chunk 不足时（缓冲区几乎全是终结事件），仍从最旧开始丢弃
+    if (evictCount > 0) {
+      kept.splice(0, evictCount)
+    }
+    buffers.set(convId, kept)
   }
 
   if (snapshot) {

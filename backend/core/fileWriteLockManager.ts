@@ -31,6 +31,9 @@ export type TryAcquireResult =
     | { acquired: true }
     | { acquired: false; conflicts: LockConflict[] };
 
+/** acquire 轮询等待锁的最大时限（60 秒）。 */
+export const FILE_LOCK_ACQUIRE_TIMEOUT_MS = 60 * 1000;
+
 interface LockEntry {
     holder: LockHolder;
     /** 原始（未归一化）路径，用于提示展示 */
@@ -228,9 +231,16 @@ export class FileWriteLockManager {
     }
 
     async acquire(paths: string[], holder: LockHolder, abortSignal?: AbortSignal): Promise<void> {
+        // 修改原因：轮询等待锁的 while 循环无限进行，持有者异常时等待者永久挂起。
+        // 修改方式：加整体等待上限 60 秒，超时抛明确错误；abort 监听逻辑保持原样。
+        // 修改目的：锁等待有界，失败以明确错误收敛而不是无限轮询。
+        const deadline = Date.now() + FILE_LOCK_ACQUIRE_TIMEOUT_MS;
         while (true) {
             if (abortSignal?.aborted) {
                 throw new Error('File write lock acquisition was cancelled');
+            }
+            if (Date.now() >= deadline) {
+                throw new Error('File lock acquisition timed out after 60s');
             }
 
             const result = this.tryAcquire(paths, holder);
@@ -243,7 +253,7 @@ export class FileWriteLockManager {
                     settled = true;
                     abortSignal?.removeEventListener('abort', onAbort);
                     resolve();
-                }, 25);
+                }, Math.min(25, Math.max(1, deadline - Date.now())));
                 const onAbort = () => {
                     if (settled) return;
                     settled = true;

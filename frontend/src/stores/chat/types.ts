@@ -421,6 +421,12 @@ export interface ConversationSessionSnapshot {
   pendingBranchRefreshAfterStream?: string | null
   /** 当前分支流的原请求快照（标签页切换期间保持） */
   pendingBranchReplayContext?: BranchStreamReplayContext | null
+  /** 失败流保留的半截消息 ID（标签页切换期间保持，重试回滚用；旧快照无此字段） */
+  failedStreamMessageId?: string | null
+  /** 上一次被 cancelStream 取消的 streamingMessageId（标签页切换期间保持，防迟到 chunk 误判；旧快照无此字段） */
+  lastCancelledStreamId?: string | null
+  /** 最近一个因审批门闸停止的 streamId（标签页切换期间保持，迟到 chunk 诊断用；旧快照无此字段） */
+  lastApprovalGatedStreamId?: string | null
   /** 分支图快照（TREE-12：切标签页回来恢复分支视图状态；null = 无图/线性模式） */
   branchGraph: BranchGraphData | null
 }
