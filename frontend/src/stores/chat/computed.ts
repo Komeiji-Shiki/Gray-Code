@@ -29,9 +29,9 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     if (state.workspaceFilter.value === 'all' || !state.currentWorkspaceUri.value) {
       return sortedConversations.value
     }
-    // 筛选当前工作区的对话
+    // 筛选当前工作区的对话；未绑定工作区的对话视为跟随当前工作区
     return sortedConversations.value.filter(c => {
-      if (c.workspaceUri === state.currentWorkspaceUri.value) return true
+      if (!c.workspaceUri || c.workspaceUri === state.currentWorkspaceUri.value) return true
       return !!c.integrityStatus && c.integrityStatus !== 'ok'
     })
   })
@@ -60,8 +60,21 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   
   /** 当前使用的 Tokens（从最后一条助手消息获取） */
   const usedTokens = computed(() => {
+    const messages = state.allMessages.value
+    // 单趟逆序扫描（原实现为「正序找最新总结估算」+「逆序找最后一条助手消息」两趟循环，
+    // 流式期间每次 chunk 都会使该 computed 失效，合并为一趟减少一半数组访问）：
+    // - lastAssistantUsage：数组中的最后一条带 usageMetadata 的助手消息
+    // - latestSummaryEstimate：全部总结消息中 timestamp 最大的估算（与正序扫描取 max 等价）
     let latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
-    for (const msg of state.allMessages.value) {
+    let lastAssistantUsage: { timestamp: number; totalTokenCount: number } | undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role === 'assistant' && msg.metadata?.usageMetadata && !lastAssistantUsage) {
+        lastAssistantUsage = {
+          timestamp: msg.timestamp,
+          totalTokenCount: msg.metadata.usageMetadata.totalTokenCount || 0
+        }
+      }
       const estimated = msg.summaryTokenStats?.estimatedContextTokenCountAfter
       if (msg.isSummary && typeof estimated === 'number') {
         if (!latestSummaryEstimate || msg.timestamp >= latestSummaryEstimate.timestamp) {
@@ -69,19 +82,13 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
         }
       }
     }
-    // 从后往前找最后一条助手消息
-    for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
-      const msg = state.allMessages.value[i]
-      if (msg.role === 'assistant' && msg.metadata?.usageMetadata) {
-        // 总结消息会插入到被压缩范围的末尾，数组位置早于保留消息；用 timestamp 判断
-        // 它是否发生在这条旧 usage 之后。下一次真实主回复到达后自然恢复使用真实值。
-        if (latestSummaryEstimate && latestSummaryEstimate.timestamp >= msg.timestamp) {
-          return latestSummaryEstimate.tokens
-        }
-        return msg.metadata.usageMetadata.totalTokenCount || 0
-      }
+    if (!lastAssistantUsage) return 0
+    // 总结消息会插入到被压缩范围的末尾，数组位置早于保留消息；用 timestamp 判断
+    // 它是否发生在这条旧 usage 之后。下一次真实主回复到达后自然恢复使用真实值。
+    if (latestSummaryEstimate && latestSummaryEstimate.timestamp >= lastAssistantUsage.timestamp) {
+      return latestSummaryEstimate.tokens
     }
-    return 0
+    return lastAssistantUsage.totalTokenCount
   })
   
   /**

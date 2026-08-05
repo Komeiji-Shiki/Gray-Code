@@ -37,6 +37,19 @@
 ### Added
   - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
 
+### Fixed
+  - 多工作区修复（子智能体全链路审查 + 合并后回归核查）：
+    - 切换已绑定工作区的对话时同步扩展端激活工作区：此前仅恢复 UI 显示、后端 WorkspaceManager 未同步，聊天顶部选择器与文件操作（文件树/打开文件/固定文件/搜索/保存图片）指向不同项目且分歧无法自愈；现在切换对话即 `workspace.setActive` 到对话绑定工作区（失败仅告警）
+    - 历史页「当前工作区」筛选纳入未绑定工作区的对话（未绑定 = 跟随当前工作区）：此前升级前的全部存量对话与从未打开工作区时创建的对话被默认筛选隐藏，历史页打开工作区后默认一片空白
+    - `setActiveWorkspace` 重绑定对话失败时回滚激活工作区（此前重绑定失败无回滚无提示，前后端激活值分歧）
+    - 分支对话创建不再以激活工作区兜底：此前前端未传 workspaceUri 时 handler 会错误绑定到当前活动项目，绕过后端「分支继承源对话工作区」逻辑（ConversationHandlers.createBranchConversation）
+  - 默认对话标题自动附加工作区名（格式 `标题 [工作区名]`，无工作区时不加）：多项目同时编辑时对话列表/标签页/历史页可按项目区分；标签页标题同步同一逻辑（新增公共 `buildConversationTitle`）
+  - 性能优化（子智能体审查实施，全部有回归测试）：
+    - `getMetadataLight` 接入 metaCache（对话列表每页 30 条摘要从 30 次磁盘读 + JSON parse → 0 次磁盘 IO；命中返回深拷贝防污染，`not_found` 负缓存，io/parse 错误不污染；写路径统一失效/回填）
+    - `usedTokens` 两趟 O(n) 正序+逆序扫描合并为单趟逆序扫描（流式期间每个 chunk 使该 computed 失效，访问量减半，语义等价由新测试锁定）
+    - 预览文本 `.filter().pop()` 全量扫描改逆序首个命中即 break；`isLateTerminalChunkWithoutStreamId` 与 `handleError` 占位定位从 O(n) `.find()` 改 `getMessageIndexById` Map 索引；batch 跳过诊断块消除每终结 batch 的 `slice+filter` 临时数组分配
+  - 新增测试：`getMetadataLight` 缓存行为（命中不读盘/深拷贝防污染/负缓存与写路径覆盖，3 例）、`usedTokens` 合并后语义等价（6 例）
+
 ## [1.6.2] - 2026-08-05
 
 ### Merged

@@ -251,6 +251,7 @@ export function setWorkspaceList(state: ChatStoreState, list: WorkspaceFolderInf
 export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: string | null): Promise<any> {
   // 提前捕获目标对话：await 期间用户可能切换对话，防止把工作区绑定到错误的对话上
   const conversationId = state.currentConversationId.value
+  const prevActiveUri = state.currentWorkspaceUri.value
   let resp: any
   try {
     resp = await sendToExtension<any>('workspace.setActive', { workspaceUri })
@@ -279,6 +280,13 @@ export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: st
         }
       } catch (error) {
         console.warn('[configActions] Failed to rebind conversation workspace URI:', error)
+        // 回滚激活工作区，保持前后端一致
+        try {
+          await sendToExtension('workspace.setActive', { workspaceUri: prevActiveUri })
+          setCurrentWorkspaceUri(state, prevActiveUri)
+        } catch (rollbackError) {
+          console.warn('[configActions] Failed to rollback active workspace:', rollbackError)
+        }
       }
     }
   }
