@@ -8,12 +8,6 @@
 
 ## [Unreleased]
 
-### Changed
-  - 系统提示词设置页保存按钮加大加宽：模式选择栏右上角保存按钮从 24×24 纯图标改为带「保存配置」文字、最小宽度 88px 的实底主色按钮（图标 + 文字 + hover 变色），与旁边的小图标操作按钮区分开，不再不显眼。
-  - 修复流式平滑尾巴与渐进 markdown 衔接处字号跳变：思考块展开态下 CharFlow 流式尾巴此前继承全局 `--vscode-font-size`（大字号、正常色、直体），与已提升段落的 md 渲染（`--lim-md-font-size: 12px` 灰斜体小字）前后相接时字号/颜色/字重同时跳变。现 `.thought-flow-content` 与 `.tail-stream` 显式对齐同容器 MarkdownRenderer 的 `--lim-md-*` 字体规格（思考块 12px/1.5 灰斜体，正文 13px/1.6 正常色），流式尾巴与已定型段落视觉连续；正文 tail-stream 同步固定规格，用户调大 VSCode 字号后正文也不会再出现跳变。
-  - 开屏动画改为可选：外观设置新增「开屏动画」开关（`ui.appearance.splashEnabled`，默认开启），关闭后启动不再渲染 Splash 直接进入主界面；启动时随外观设置全局加载，保存/重置与其余外观项一致（后端 `generalTypes` 同步补字段类型与默认值）。
-  - 措辞统一：Splash 相关代码注释、i18n 文案与 CHANGELOG 中「灰码少女」的称呼统一改为「Gray logo」（图形线稿取自 resources/icon.svg）。
-
 ## [1.4.2] - 2026-08-06
 
 ### Fixed
@@ -43,8 +37,12 @@
   - 修复 TPS 条在 Agent 工具执行/思考停顿（>2s 无 token）时误显示随机模拟数据并来回切换：TpsBar 引入「流活跃」信号（`chatStore.isStreaming || isWaitingForResponse`）——流活跃期间只显示真实（衰减）曲线、禁止启动模拟；模拟阶段加视觉区分（透明度降低）。修复 `tpsMeter.record` 无容量上限（webview 隐藏/后台流停表期间 events 无界增长）：记录上限 1000 条、超出丢最旧。
   - 修复设置持久化丢失（自动执行/工具策略/预设条目开关重启回滚）：`VSCodeSettingsStorage` 保存快照此前直接保存活对象引用，保存成功后对同一对象的原地变更（`toolAutoExec[tool] = x`、`toolsConfig[key] = v` 等嵌套写入）会被 `deepEqual` 的 `a === b` 引用短路误判为「无变化」而跳过写盘，表现为自动执行开关/工具策略/预设条目开关重启后回滚。现快照改存深拷贝（`deepCloneValue`，`structuredClone` + JSON 往返回退），与活对象解耦；`saveToolsConfigEntry` / `setToolAutoExec` / `setToolEnabled` 同步改为整体替换对象（与既有 `setToolsEnabled` 约定一致）；新增原地变更 + 重启读回归测试。
   - 用量统计页展示读取失败被跳过的对话明细：`aggregateUsageStats` 统计被跳过对话时收集 `skippedConversationDetails`（标题尽力读取，meta 读取失败/无标题时回退 conversationId），用量页在跳过提示下新增明细列表（标题单行省略截断，悬停显示 conversationId 完整值）。
+  - 修复流式平滑尾巴与渐进 markdown 衔接处字号跳变：思考块展开态下 CharFlow 流式尾巴此前继承全局 `--vscode-font-size`（大字号、正常色、直体），与已提升段落的 md 渲染（`--lim-md-font-size: 12px` 灰斜体小字）前后相接时字号/颜色/字重同时跳变。现 `.thought-flow-content` 与 `.tail-stream` 显式对齐同容器 MarkdownRenderer 的 `--lim-md-*` 字体规格（思考块 12px/1.5 灰斜体，正文 13px/1.6 正常色），流式尾巴与已定型段落视觉连续；正文 tail-stream 同步固定规格，用户调大 VSCode 字号后正文也不会再出现跳变。
 
 ### Changed
+  - 系统提示词设置页保存按钮加大加宽：模式选择栏右上角保存按钮从 24×24 纯图标改为带「保存配置」文字、最小宽度 88px 的实底主色按钮（图标 + 文字 + hover 变色），与旁边的小图标操作按钮区分开，不再不显眼。
+  - 开屏动画改为可选：外观设置新增「开屏动画」开关（`ui.appearance.splashEnabled`，默认开启），关闭后启动不再渲染 Splash 直接进入主界面；启动时随外观设置全局加载，保存/重置与其余外观项一致（后端 `generalTypes` 同步补字段类型与默认值）。
+  - 措辞统一：Splash 相关代码注释、i18n 文案与 CHANGELOG 中「灰码少女」的称呼统一改为「Gray logo」（图形线稿取自 resources/icon.svg）。
   - TPS 实时可视化条改为可选：外观设置新增「TPS 实时可视化条」开关（`ui.appearance.tpsBarEnabled`，默认开启），关闭后输入区底部不再渲染曲线（tpsMeter 随之停表，重新开启后从当前流重新统计）；启动时随外观设置全局加载，保存/重置与其余外观项一致。
   - 流式输出期间已完成段落即时渲染 markdown（渐进式提升）：`CharFlow` 新增 `settledText`/`promote`——已定型文本到达安全段落边界（以空行 `\n\n` 结尾、且行首代码围栏 ```/~~~ 配对，未闭合代码块整块保留到围栏闭合）时，把该前缀从字符流水线剥离并交给 `MessageItem` 新增的渐进 `MarkdownRenderer` 即时渲染，未完成尾巴继续逐字淡入；长回答不再等到输出结束才出现格式。段落切换/终结时渐进内容随显示层释放（稳定块完整接管，无重复显示）；档位切换与组件重建（切标签页）时 promote 边界（`promotedText`）随 entry 继承/重放，CharFlow 只恢复未提升尾巴，显示连续不跳变。
   - 初次载入「开始动画」升级为完整叙事（Splash.vue）：蓝图点阵背景 + 晕影聚焦；笔尖光点沿描线路径执笔画出 Gray logo（SMIL `animateMotion` + `mpath` 直接引用线稿 path，先帽后身，与描线 `stroke-dashoffset` 同曲线同节奏）；完稿瞬间线条定影提亮、此后呼吸待机；标题改为「Gray 粗 / Code 细」+ 蓝色终端光标 `▍` 闪烁 + 副标题「AI CODING ASSISTANT」；原横线脉冲替换为 3-bit 格雷码等待线（000→001→011→010→110→111→101→100 循环，每步恰好只变一位，ready 后归一为蓝色实线）；淡出升级为 blur+scale 消散，`.chat-view` 加 0.3s 淡入承接；`DRAW_TOTAL_MS` 1400→1700、`minDisplayMs` 默认 1100→1700，描线/定影/格雷码时间轴严格对齐；prefers-reduced-motion 分支同步更新（SMIL 光点直接隐藏）；测试常量同步。
