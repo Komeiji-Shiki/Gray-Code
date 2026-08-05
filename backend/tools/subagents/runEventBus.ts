@@ -173,6 +173,15 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<SubAgentRunStatus> = new Set<SubAgentRu
     'interrupted'
 ]);
 
+/**
+ * flushRun 落盘重试次数上限。
+ *
+ * 修改原因：终态元数据/transcript 写入失败或写入期间产生新变更时，flushRun 需要重新排队等待；
+ *          重试次数写死为魔数 3 不易维护，也无法在日志中解释“为什么是 3 次”。
+ * 修改方式：提取为命名常量，与 PERSIST_THROTTLE_MS 等持久化参数并列。
+ */
+const MAX_FLUSH_RETRY_ATTEMPTS = 3;
+
 function cloneContentsForWindow(contents: Content[]): Content[] {
     // 修改原因：按需 transcript window 会被前端本地流式 delta 临时修改，不能把事件总线内存对象引用直接交出去。
     // 修改方式：只对窗口切片做 JSON 深拷贝，而不是像旧 snapshots 首包那样复制所有 run 的完整 contents。
@@ -264,6 +273,15 @@ function toManifest(snapshot: SubAgentRunSnapshot): SubAgentRunManifest {
     };
 }
 
+function providerHistoryBucketKey(content: Content): string {
+    const parts = content.parts || [];
+    // 粗指纹：role + parts 数量 + 首个文本部分的长度。
+    // 绝大多数消息在这一层即可区分，避免对大型 parts（图片/长工具结果）做全量 stringify。
+    const firstPart = parts[0] as { text?: unknown } | undefined;
+    const firstTextLength = typeof firstPart?.text === 'string' ? firstPart.text.length : 0;
+    return `${content.role}:${parts.length}:${firstTextLength}`;
+}
+
 function providerHistoryKey(content: Content): string {
     return JSON.stringify({ role: content.role, parts: content.parts || [] });
 }
@@ -272,19 +290,37 @@ function buildLastSentHistoryProjection(
     contents: Content[],
     lastSentHistory: Content[]
 ): NonNullable<SubAgentTranscriptData['lastSentHistoryProjection']> {
-    const contentIndicesByKey = new Map<string, number[]>();
+    // 两级索引：先按粗桶（role + parts 数量 + 首文本长度）分组，桶内再惰性建立精确 key 索引。
+    // 与直接把每个 content 全量 stringify 作 Map key 相比，桶内无匹配时（绝大多数情况）不会
+    // 为大型 parts 产生大字符串；同一桶的精确索引也只构建一次。
+    const contentIndicesByBucket = new Map<string, number[]>();
     contents.forEach((content, index) => {
-        const key = providerHistoryKey(content);
-        const indices = contentIndicesByKey.get(key) ?? [];
+        const bucket = providerHistoryBucketKey(content);
+        const indices = contentIndicesByBucket.get(bucket) ?? [];
         indices.push(index);
-        contentIndicesByKey.set(key, indices);
+        contentIndicesByBucket.set(bucket, indices);
     });
+    const exactIndexByBucket = new Map<string, Map<string, number[]>>();
+    const getExactIndex = (bucket: string): Map<string, number[]> => {
+        let exact = exactIndexByBucket.get(bucket);
+        if (exact) return exact;
+        exact = new Map<string, number[]>();
+        for (const index of contentIndicesByBucket.get(bucket) ?? []) {
+            const key = providerHistoryKey(contents[index]);
+            const indices = exact.get(key) ?? [];
+            indices.push(index);
+            exact.set(key, indices);
+        }
+        exactIndexByBucket.set(bucket, exact);
+        return exact;
+    };
     const consumedByKey = new Map<string, number>();
     return {
         version: 1,
         entries: lastSentHistory.map(content => {
+            const exact = getExactIndex(providerHistoryBucketKey(content));
             const key = providerHistoryKey(content);
-            const indices = contentIndicesByKey.get(key) ?? [];
+            const indices = exact.get(key) ?? [];
             const consumed = consumedByKey.get(key) ?? 0;
             const contentIndex = indices[consumed];
             if (contentIndex === undefined) {
@@ -853,7 +889,7 @@ export class SubAgentRunEventBus {
     async flushRun(runId: string): Promise<void> {
         const snapshot = this.snapshots.get(runId);
         if (!snapshot?.conversationId || snapshot.transcriptLoaded === false) return;
-        for (let attempt = 0; attempt < 3; attempt++) {
+        for (let attempt = 0; attempt < MAX_FLUSH_RETRY_ATTEMPTS; attempt++) {
             const timer = this.persistTimers.get(runId);
             if (timer) {
                 clearTimeout(timer);
@@ -866,7 +902,7 @@ export class SubAgentRunEventBus {
             const error = this.persistErrors.get(runId);
             const dirty = this.pendingPersists.has(runId) || this.persistTimers.has(runId);
             if (!error && !dirty) return;
-            if (attempt === 2 && error) throw error;
+            if (attempt === MAX_FLUSH_RETRY_ATTEMPTS - 1 && error) throw error;
         }
         throw new Error(`SubAgent persistence did not become idle for run ${runId}`);
     }

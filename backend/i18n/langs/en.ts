@@ -292,7 +292,9 @@ const en: BackendLanguageMessages = {
                     messageNotFound: 'Message not found: index {messageIndex}',
                     canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}',
                     messageChanged: 'Message has changed, please refresh and try again',
-                    editTargetNotInHistory: 'The selected message is no longer in the current conversation history; it may have been removed by context compaction'
+                    editTargetNotInHistory: 'The selected message is no longer in the current conversation history; it may have been removed by context compaction',
+                    contextOverflow: 'Unable to build a legal request within the model context window: the smallest candidate needs about {estimatedInputTokens} input tokens, exceeding the {inputTokenLimit}-token window. Please increase the model context window, or reduce history/keep budget',
+                    summarizeContextOverflow: 'Content to summarize plus the summary prompt exceeds the summarization model context limit. Please increase the summarization model context window or adjust the keep budget'
                 },
                 prompts: {
                     defaultSummarizePrompt: `Please summarize the above conversation content concisely, output the summary directly without any format markers.

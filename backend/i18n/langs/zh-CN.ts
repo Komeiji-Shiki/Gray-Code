@@ -293,7 +293,9 @@ const zhCN = {
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
                     canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
                     messageChanged: '消息已变化，请刷新后重试',
-                    editTargetNotInHistory: '所选消息不在当前对话历史中，可能已被上下文压缩移除'
+                    editTargetNotInHistory: '所选消息不在当前对话历史中，可能已被上下文压缩移除',
+                    contextOverflow: '无法在模型上下文窗口内构造合法请求：最小候选约需 {estimatedInputTokens} 个输入 token，超出 {inputTokenLimit} token 的窗口。请增大模型上下文窗口，或清理历史/调整保留预算',
+                    summarizeContextOverflow: '待总结内容和总结提示词超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
                 },
                 prompts: {
                     defaultSummarizePrompt: `请将以上对话内容进行简洁总结，直接输出总结内容，不需要任何格式标记。
