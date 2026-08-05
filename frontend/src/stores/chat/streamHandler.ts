@@ -302,14 +302,21 @@ export function handleStreamChunkBatch(
     skipChunksBefore = lastTerminalIndex
 
     // 诊断日志：记录被跳过的 chunk 事件信息，方便排查工具调用消失等问题
+    // 用循环计数代替 slice+filter 分配临时数组（终结 batch 每次都会走到这里）
     if (typeof console !== 'undefined' && console.debug) {
-      const skippedChunks = chunks.slice(0, skipChunksBefore).filter(c => c.type === 'chunk')
-      if (skippedChunks.length > 0) {
+      let skippedCount = 0
+      let hasFunctionCall = false
+      for (let k = 0; k < skipChunksBefore; k++) {
+        const c = chunks[k]
+        if (c.type !== 'chunk') continue
+        skippedCount++
+        if (!hasFunctionCall && c.chunk?.delta?.some((p: any) => p.functionCall)) {
+          hasFunctionCall = true
+        }
+      }
+      if (skippedCount > 0) {
         const terminalType = chunks[lastTerminalIndex]?.type
-        const hasFunctionCall = skippedChunks.some(c =>
-          c.chunk?.delta?.some((p: any) => p.functionCall)
-        )
-        console.debug(`[streamHandler] batch skip: ${skippedChunks.length} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
+        console.debug(`[streamHandler] batch skip: ${skippedCount} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
       }
     }
   }
