@@ -1474,6 +1474,7 @@ watch(selectedChannel, () => {
             :title="t('components.settings.promptSettings.saveButton')"
           >
             <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
+            <span class="save-action-text">{{ t('components.settings.promptSettings.saveButton') }}</span>
           </button>
           <span class="mode-actions-divider"></span>
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
@@ -2294,7 +2295,22 @@ watch(selectedChannel, () => {
 }
 
 .save-action-btn {
-  color: var(--vscode-terminal-ansiGreen);
+  min-width: 88px;
+  height: 28px;
+  padding: 0 12px;
+  gap: 6px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.save-action-btn .codicon {
+  font-size: 15px;
+}
+
+.save-action-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
 }
 
 .save-action-btn:disabled {
