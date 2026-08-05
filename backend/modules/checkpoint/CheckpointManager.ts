@@ -475,6 +475,14 @@ export class CheckpointManager {
                             reportProgress({ processed: copiedCount });
                         });
 
+                        // 复制失败（markUnbacked 剔除）的文件已从 currentHashes 剔除，
+                        // changes 必须按同一口径过滤（复制失败发生在记录 change 之后）：
+                        // manifest.files 只含真正备份成功的文件，若 changes 仍引用未落盘路径，
+                        // 恢复/增量链会指向不存在的备份文件
+                        if (unbackedPathSet.size > 0) {
+                            changes = changes.filter(c => !unbackedPathSet.has(c.path));
+                        }
+
                         log.info('incremental_backup', { added: added.length, modified: modified.length, deleted: deleted.length, unbacked: unbackedPaths.length });
                     }
 

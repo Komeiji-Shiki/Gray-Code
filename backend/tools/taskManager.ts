@@ -336,12 +336,38 @@ class TaskManagerClass {
     }
     
     /**
-     * 清理已完成的任务（通常不需要，因为 unregisterTask 会自动清理）
-     * 这个方法主要用于清理可能因异常而未正常清理的任务
+     * 驻留超过此时长（毫秒）仍未注销的任务视为泄漏（超时兜底，阈值足够大，正常长任务不受影响）
+     */
+    private static readonly CLEANUP_STALE_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+    /**
+     * 清理异常泄漏的任务。
+     *
+     * 正常生命周期中，任务在终态（completed/cancelled/error）时由 unregisterTask
+     * 从 activeTasks 移除并发出终态事件，因此 activeTasks 中不会残留「已终态」的条目；
+     * 本方法清扫的是「应该已终态却仍驻留」的泄漏任务：
+     * - 已取消（abortController 已触发）但从未走 unregisterTask 注销的任务：
+     *   补发 cancelled 终态事件后移除，前端任务条不会永久停留在「已取消但无结果」；
+     * - 超时兜底：驻留超过 CLEANUP_STALE_TASK_TIMEOUT_MS 的任务同样视为泄漏，
+     *   中止其 abortController、补发 cancelled 事件后移除。
+     *
+     * 兼容性：unregisterTask 后续对已清理 ID 的调用是安全空操作（Map 查不到即返回），
+     * 不会重复发事件；正在正常执行且未超时的任务不受影响。
      */
     cleanup(): void {
-        // 当前实现中，任务在完成时会自动清理
-        // 这个方法保留以备将来扩展
+        const now = Date.now();
+        for (const [id, task] of [...this.activeTasks]) {
+            const stale = now - task.startTime > TaskManagerClass.CLEANUP_STALE_TASK_TIMEOUT_MS;
+            if (task.abortController.signal.aborted || stale) {
+                this.activeTasks.delete(id);
+                this.emitEvent({
+                    taskId: id,
+                    taskType: task.type,
+                    type: 'cancelled',
+                    data: { reason: stale ? 'cleanup_stale' : 'cleanup_aborted' }
+                });
+            }
+        }
     }
 }
 

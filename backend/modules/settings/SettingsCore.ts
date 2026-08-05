@@ -232,8 +232,10 @@ export class SettingsCore {
      */
     async reset(): Promise<void> {
         const oldSettings = { ...this.settings };
+        // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
+        // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
         this.settings = {
-            ...DEFAULT_GLOBAL_SETTINGS,
+            ...this.cloneConfig(DEFAULT_GLOBAL_SETTINGS),
             lastUpdated: Date.now()
         };
         

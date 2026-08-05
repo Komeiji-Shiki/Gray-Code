@@ -174,7 +174,9 @@ export async function buildWorkspaceSnapshot(
                 const prevStat = previous?.fileStats[scopedPath];
                 const statUnchanged = prevStat
                     ? (prevStat.mtimeNs !== undefined
-                        ? prevStat.mtimeNs === mtimeNs
+                        // mtimeNs 分支同样必须校验 size：在 mtime 精度粗糙的文件系统（FAT32/SMB/容器挂载卷）上，
+                        // 同一时间刻度内文件被重写且字节数不变时会错误复用旧哈希，恢复时静默得到过期内容
+                        ? prevStat.mtimeNs === mtimeNs && prevStat.size === size
                         : prevStat.mtimeMs === mtimeMs && prevStat.size === size)
                     : false;
                 if (

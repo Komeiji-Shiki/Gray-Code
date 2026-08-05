@@ -78,6 +78,9 @@ export class McpManager {
     
     /** 每个 serverId 的 in-flight connect promise（防止并发 connect 假成功） */
     private connectPromises: Map<string, Promise<void>> = new Map();
+
+    /** 每个 serverId 的列表刷新链（串行化并发 list_changed 通知刷新，防止旧刷新覆盖新数据） */
+    private refreshChains: Map<string, Promise<void>> = new Map();
     
     /** 事件监听器 */
     private listeners: Map<McpEventType, Set<McpEventListener>> = new Map();
@@ -816,7 +819,9 @@ export class McpManager {
                     if (!this.isCurrentGeneration(info.config.id, generation)) {
                         return;
                     }
-                    this.handleServerNotification(info, client, method, params);
+                    // fire-and-forget：handleServerNotification 内部按 serverId 串行化、
+                    // 自带异常兜底，不会产生未处理的 rejection（async 监听器 rejection 兜底）
+                    void this.handleServerNotification(info, client, generation, method, params);
                 });
                 break;
             }
@@ -951,12 +956,18 @@ export class McpManager {
      * 收到列表变更通知（notifications/tools|resources|prompts/list_changed）时，
      * 重新拉取列表并刷新 info.capabilities 缓存，供 ToolDeclarationResolver 等
      * 消费方在下一次工具声明重建时使用新数据。
+     * - 同一 serverId 的刷新按到达顺序串行执行（per-server 刷新链），
+     *   避免并发刷新时旧结果覆盖新结果
+     * - 刷新完成写入 capabilities 前重查代际：await 期间若已 disconnect/重连，
+     *   不得用旧 client 的空列表覆盖新连接的能力缓存
      * - 刷新失败仅记日志，不重连（避免服务器临时故障时无谓重连）
      * - 刷新成功广播 server:capabilities_updated 事件，供前端等订阅方感知
+     * - 全程不向外抛出 rejection（async 监听器兜底：链尾 catch）
      */
     private async handleServerNotification(
         info: McpServerInfo,
         client: StdioMcpClient,
+        generation: number,
         method: string,
         params?: any
     ): Promise<void> {
@@ -966,40 +977,61 @@ export class McpManager {
             return;
         }
 
-        try {
-            await client.refreshLists();
-        } catch (error) {
-            // 刷新失败仅记日志，不重连
-            console.error(`[MCP] Failed to refresh lists for ${info.config.id} after ${method}:`, error);
-            return;
-        }
+        const serverId = info.config.id;
+        // per-server 刷新链：后到的通知排在先到的之后执行，旧刷新不得覆盖新数据
+        const previous = this.refreshChains.get(serverId) ?? Promise.resolve();
+        const refresh = previous.then(async () => {
+            // 排队期间可能已 disconnect/重连：代际已变则跳过本次刷新
+            if (!this.isCurrentGeneration(serverId, generation)) {
+                return;
+            }
 
-        // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
-        info.capabilities = {
-            tools: client.getTools().map(t => ({
-                name: t.name,
-                description: t.description,
-                inputSchema: t.inputSchema
-            })),
-            resources: client.getResources().map(r => ({
-                uri: r.uri,
-                name: r.name,
-                description: r.description,
-                mimeType: r.mimeType
-            })),
-            prompts: client.getPrompts().map(p => ({
-                name: p.name,
-                description: p.description,
-                arguments: p.arguments
-            }))
-        };
+            try {
+                await client.refreshLists();
+            } catch (error) {
+                // 刷新失败仅记日志，不重连
+                console.error(`[MCP] Failed to refresh lists for ${serverId} after ${method}:`, error);
+                return;
+            }
 
-        this.emitEvent({
-            type: 'server:capabilities_updated',
-            serverId: info.config.id,
-            data: { method },
-            timestamp: Date.now()
+            // 写入前重查代际：await 期间可能已 disconnect/重连，
+            // 不得用旧 client 的空列表覆盖新连接的能力缓存
+            if (!this.isCurrentGeneration(serverId, generation)) {
+                return;
+            }
+
+            // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
+            info.capabilities = {
+                tools: client.getTools().map(t => ({
+                    name: t.name,
+                    description: t.description,
+                    inputSchema: t.inputSchema
+                })),
+                resources: client.getResources().map(r => ({
+                    uri: r.uri,
+                    name: r.name,
+                    description: r.description,
+                    mimeType: r.mimeType
+                })),
+                prompts: client.getPrompts().map(p => ({
+                    name: p.name,
+                    description: p.description,
+                    arguments: p.arguments
+                }))
+            };
+
+            this.emitEvent({
+                type: 'server:capabilities_updated',
+                serverId,
+                data: { method },
+                timestamp: Date.now()
+            });
         });
+        // 链尾兜底：异常不得让刷新链断裂，也不得产生未处理的 rejection（监听器无 await 方）
+        this.refreshChains.set(serverId, refresh.catch(error => {
+            console.error(`[MCP] Unexpected error during list refresh for ${serverId}:`, error);
+        }));
+        await this.refreshChains.get(serverId);
     }
 
     /**
