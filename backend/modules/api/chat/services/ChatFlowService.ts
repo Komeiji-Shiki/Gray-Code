@@ -1621,11 +1621,11 @@ export class ChatFlowService {
       const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId, request.mode);
 
       // 3.8 按编辑模式分流：
-      // - 'keep'：原地改写活跃路径上的原消息（保持当前分支，不产生新候选）；
+      // - 'keep'：真·原地保存——只改写目标消息文本，后续消息与分支全部保留，不重新生成；
       // - 'branch'（默认）：创建编辑候选（新 user 节点 kind='edit'，文本=编辑后内容）+ 激活 + 摘要
       //   （旧用户节点及其子树完整保留进 sidecar——先建图后截断，线性模式首次建图不丢旧消息）
       if (request.mode === 'keep') {
-        // —— keep 模式：直接改写原消息，保持当前分支 ——
+        // —— keep 模式：只改写目标消息，后续内容全部保留 ——
         const targetIndex = historyBefore.findIndex(message => message.id === target.nodeId);
         if (targetIndex === -1) {
           yield {
@@ -1638,51 +1638,23 @@ export class ChatFlowService {
           return;
         }
 
-        // 3.8.1 先建图后截断：把完整旧历史并入分支图（无图时建线性基线图），
-        //     截断后再软删被移除的子树——保证旧版本可回看（与 branch 模式 editCandidate 时机对齐）
+        // 3.8.1 建图（图节点内容同步需要；无图时建线性基线图）
         await branchService.ensureBranchGraph(conversationId);
 
-        // 3.8.2 截断前清理目标消息之后的所有旧检查点（索引错位会让新内容命中旧检查点）
-        await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex);
-
-        // 3.8.3 改写目标消息（清除 token 计数，强制在裁剪评估中重新计算）
+        // 3.8.2 改写目标消息（清除 token 计数，强制在裁剪评估中重新计算）
         await this.conversationManager.updateMessage(conversationId, targetIndex, {
           parts: [{ text: request.newText }],
           isUserInput: true,
           tokenCountByChannel: {},
         });
 
-        // 3.8.4 截断目标消息之后的内容（旧子树整体移出主历史；图侧同步软删为候选，可切回查看）
-        const historyAfterEdit = await this.conversationManager.getHistoryRef(conversationId);
-        if (targetIndex + 1 < historyAfterEdit.length) {
-          // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树
-          const deletedFromMessageId = historyAfterEdit[targetIndex + 1]?.id ?? null;
-          const lastKeptMessageId = historyAfterEdit[targetIndex]?.id ?? null;
-          await this.conversationManager.deleteMessagesInRange(
-            conversationId,
-            targetIndex + 1,
-            historyAfterEdit.length - 1,
-          );
-          await this.rebuildTodoListMetadataFromHistory(conversationId);
-          try {
-            await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
-              lastKeptMessageId,
-            });
-          } catch (error) {
-            // 失败仅告警不阻断：主历史为唯一真源，图侧由下次读图/写图自校验兜底
-            this.log.warn('edit_keep_branch_delete_sync_failed', {
-              conversationId,
-              targetIndex,
-              error: (error as Error)?.message ?? String(error),
-            });
-          }
-        }
-
-        // 3.8.5 同步分支图：改写活跃节点内容 + 更新候选摘要（BR-01 同源：节点 id == Content.id）
+        // 3.8.3 同步分支图节点内容 + 更新候选摘要（BR-01 同源：节点 id == Content.id）
         await branchService.updateActiveNodeParts(conversationId, target.nodeId, [{ text: request.newText }]);
 
-        // 3.8.6 清除裁剪状态（编辑后应重新计算裁剪起点）
+        // 3.8.4 清除裁剪状态（编辑后应重新计算裁剪起点）
         await this.toolIterationLoopService.clearTrimState(conversationId);
+        // 真·原地保存语义：不截断后续消息、不软删图子树、不删除检查点、不创建候选、不重新生成。
+        // 后续 AI 回复与分支树保持原样，只有这条消息的文本被更新。
         // editStarted 保持 undefined：无候选节点，流结束后无需 finishReroll
       } else {
         // —— branch 模式：创建编辑候选并切换分支 ——
@@ -1739,12 +1711,13 @@ export class ChatFlowService {
       this.diffInterruptService.resetUserInterrupt(conversationId);
     }
 
-    // 5. 工具调用循环（编辑后用户消息内容变化 → 新回合语义，与 editAndRetryStream 一致；
-    //    模型消息前检查点保持默认开启）
-    const maxToolIterations = this.getMaxToolIterations();
-    let finishError: { code: string; message: string } | undefined;
-    try {
-      for await (const output of this.toolIterationLoopService.runToolLoop({
+    // 5. 工具调用循环（branch 模式：编辑后用户消息内容变化 → 新回合语义；
+    //    keep 模式为真·原地保存：不重新生成，流直接完成）
+    if (request.mode !== 'keep') {
+      const maxToolIterations = this.getMaxToolIterations();
+      let finishError: { code: string; message: string } | undefined;
+      try {
+        for await (const output of this.toolIterationLoopService.runToolLoop({
         conversationId,
         configId,
         config,
@@ -1788,6 +1761,19 @@ export class ChatFlowService {
         conversationId,
         error: finishError,
       };
+    }
+    } else {
+      // keep 模式：不重新生成——直接结束流（complete 仅用于通知前端复位流状态，
+      // 前端无占位消息、不消费 content）
+      const tail = await this.conversationManager.getMessagesRaw(conversationId);
+      yield {
+        conversationId,
+        content: tail[tail.length - 1] ?? {
+          role: 'user',
+          parts: [{ text: request.newText }],
+          timestamp: Date.now(),
+        },
+      } satisfies ChatStreamCompleteData;
     }
   }
 

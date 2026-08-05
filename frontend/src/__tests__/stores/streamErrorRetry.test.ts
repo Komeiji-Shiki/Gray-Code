@@ -804,7 +804,7 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
 
   it('chat.editBranchStream IPC 请求级失败后：恢复原消息并重放原编辑请求', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
-    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_user' })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, target]),
@@ -893,16 +893,20 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
       newText: '改过的第一条',
       mode: 'keep'
     })
-    // 本地窗口同样改写根消息并截断
+    // 真·原地保存：只改写目标消息，窗口不截断、不创建占位——后续消息（answer）保留
     expect(state.allMessages.value[0].content).toBe('改过的第一条')
-    expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_root', 'msg_answer'])
+    // 不创建流式占位、不置 streamingMessageId（后端不重新生成，complete 仅复位状态）
+    expect(state.streamingMessageId.value).toBeNull()
+    // 分支图刷新标记不置位（keep 不产生候选）
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
     // 错误重放上下文携带 keep 模式（错误条重试保持同一语义）
     expect(state._pendingBranchReplayContext.value).toMatchObject({ kind: 'editBranch', mode: 'keep' })
   })
 
   it('编辑分支成功发起：不 deleteMessage/retryStream/editAndRetryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 userNodeId/newText', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
-    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_user' })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, target]),
@@ -940,7 +944,7 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
 
   it('会话已切换时不重载、不写当前会话状态', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
-    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
+    const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_user' })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, target]),
