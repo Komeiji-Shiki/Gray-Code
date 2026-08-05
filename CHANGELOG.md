@@ -9,7 +9,8 @@
 ## [Unreleased]
 
 ### Fixed
-  - 修复流式平滑输出折叠思考预览变空（被透明字符“挤出去”）：折叠预览是单行滚动容器，CharFlow 开启 `followEnd` 后每次 append 滚到最右端，而新字符带 `animation-delay` 错峰淡入——delay 期间 `opacity: 0` 但占据布局宽度，滚动目标恰好落在透明占位字符上，高 tps 时预览区永远显示空白占位。现折叠预览（`MessageRenderBlock`）注册显示层时禁用淡入（`noFade`，直接文本追加），最右端始终是真实可见字符；展开态保留逐字淡入。
+  - 修复流式平滑输出折叠思考预览变空/出现省略号（透明占位字符与换行占位“挤空”预览）：折叠预览是单行滚动容器（`nowrap` + `followEnd` 滚到最右），此前只禁用了淡入（`noFade` 经 `reducedMotion` 参数“碰巧生效”），但换行符在 `nowrap` 下渲染成占位空格、`text-overflow: ellipsis` 在滚动失效时把后续内容全部变成“...”，高 tps 长思考时预览区仍会被挤成空白。现在 `CharFlow` 构造改为显式 options：`noFade` 正式实现（直接文本追加）；新增 `squashLineBreaks`（换行折叠为零宽空格 `\u200B`，append/restore 两条路径都处理）与 `tailWindow`（折叠预览只保留最近 64 字符，长思考内容有界）；折叠预览 CSS 改 `text-overflow: clip`（流式期间不再出现省略号）；展开态保留逐字淡入。
+  - 思考块展开态接入渐进分段 markdown 渲染（思维链分段渲染）：`MessageRenderBlock` 展开态注册显示层时启用 `onPromote`，已定型完整段落（空行分隔 + 代码围栏配对）即时由 `MarkdownRenderer` 渲染格式（列表/代码块不再等整段结束），未完成尾巴继续在 CharFlow 逐字淡入；`registerSmoothDisplay` 注册后立即尝试提升已定型段落（重建/展开后不用等下一个字符才出格式），折叠态（单行预览不适合分段格式）保持纯文本流并用 `restoreFull` 显示完整累计文本。
   - TPS 条移除空闲期随机模拟假数据并修复归零/统计口径：`TpsBar` 删除「流不活跃时伪造 ~12 tok/s 波动」的模拟逻辑（含 is-sim 视觉弱化），流结束/空闲时直接绘制 `tpsMeter` 真实 EMA 衰减曲线——柱子自然变矮滚出屏幕、不再被瞬间清空，归零后保持 `0.0 tok/s` 与空画布直到下一轮真实流；`tpsMeter` 新增归零阈值 `SETTLE_EPS`（无事件时 EMA 衰减到 0.05 tok/s 以下精确归零，浮点衰减不再悬停在不可见小值）；工具调用输出计入 TPS：`streamChunkHandlers` 在 functionCall 增量到达时按函数名 + 参数 JSON 长度粗估 `record`（此前仅文本 delta 计入，工具参数流式输出期间曲线错误回落）。
   - 删除消息范围或单条消息前等待主流真正退出：`deleteMessage` / `deleteSingleMessage` 先经 `abortAndWaitForCompletion`（或 `cancel` + `waitForIdle`）等待流退出再执行删除，避免停止后的迟到写入覆盖删除结果。
   - 修复扩展宿主重启后子代理 Monitor 永久显示 running/queued：加载历史 run 记录时把上一宿主遗留的非终态记录纠正为 `interrupted`（当前进程仍活跃的 run 不受影响，按快照存在性区分）。
@@ -32,6 +33,8 @@
   - 修复流式平滑档位实时切换跳变：off→on 时新建 streamer 以当前 part 已累计真实文本为显示基线（不再整段消失重打）；on→off 时立即 flush + dispose + 删除显示文本，切回真实内容。
   - 修复流式结束/中断时超长代码块高度塌缩导致阅读位置丢失：`MarkdownRenderer` 流式期间记录实际高度超过限制的代码块，`is-streaming` 类解除时对这些块保留展开态（`keep-expanded`，`max-height: none`），用户点击换行按钮或滚动离开该块后恢复正常高度限制；流式类采用「滞后副本」过渡，杜绝先塌缩再弹回的闪烁。
   - 修复 TPS 条在 Agent 工具执行/思考停顿（>2s 无 token）时误显示随机模拟数据并来回切换：TpsBar 引入「流活跃」信号（`chatStore.isStreaming || isWaitingForResponse`）——流活跃期间只显示真实（衰减）曲线、禁止启动模拟；模拟阶段加视觉区分（透明度降低）。修复 `tpsMeter.record` 无容量上限（webview 隐藏/后台流停表期间 events 无界增长）：记录上限 1000 条、超出丢最旧。
+  - 修复设置持久化丢失（自动执行/工具策略/预设条目开关重启回滚）：`VSCodeSettingsStorage` 保存快照此前直接保存活对象引用，保存成功后对同一对象的原地变更（`toolAutoExec[tool] = x`、`toolsConfig[key] = v` 等嵌套写入）会被 `deepEqual` 的 `a === b` 引用短路误判为「无变化」而跳过写盘，表现为自动执行开关/工具策略/预设条目开关重启后回滚。现快照改存深拷贝（`deepCloneValue`，`structuredClone` + JSON 往返回退），与活对象解耦；`saveToolsConfigEntry` / `setToolAutoExec` / `setToolEnabled` 同步改为整体替换对象（与既有 `setToolsEnabled` 约定一致）；新增原地变更 + 重启读回归测试。
+  - 用量统计页展示读取失败被跳过的对话明细：`aggregateUsageStats` 统计被跳过对话时收集 `skippedConversationDetails`（标题尽力读取，meta 读取失败/无标题时回退 conversationId），用量页在跳过提示下新增明细列表（标题单行省略截断，悬停显示 conversationId 完整值）。
 
 ### Changed
   - TPS 实时可视化条改为可选：外观设置新增「TPS 实时可视化条」开关（`ui.appearance.tpsBarEnabled`，默认开启），关闭后输入区底部不再渲染曲线（tpsMeter 随之停表，重新开启后从当前流重新统计）；启动时随外观设置全局加载，保存/重置与其余外观项一致。
