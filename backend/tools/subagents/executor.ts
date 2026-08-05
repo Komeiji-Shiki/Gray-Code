@@ -604,9 +604,15 @@ export function createDefaultExecutor(
         // 修改目的：让 pending、完成态和历史态的 Open details 都能定位同一次运行，同时兼容非主聊天入口。
         const requestedRunId = typeof request.runId === 'string' && request.runId.trim() ? request.runId.trim() : undefined;
         // 预分配的 runId 可能撞上同一 toolId 上一次仍在运行的 run，交给事件总线判重
-        const runId = subAgentRunEventBus.allocateRunId(
-            requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-        );
+        // 修改原因：续跑必须复用旧 runId——run 记录、transcript、provider 缓存域三位一体；
+        //          用新 runId 会在 Monitor 里出现第二条记录，续跑退化为「新 run 前置旧 transcript」。
+        // 修改方式：continueFromRunId 存在时直接沿用旧 runId（快照存在性已由上方续跑校验保证），
+        //          普通新 run 仍走 allocateRunId 判重。
+        const runId = request.continueFromRunId
+            ? request.continueFromRunId
+            : subAgentRunEventBus.allocateRunId(
+                requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            );
 
         // F2：嵌套深度——由派发方（subagents handler）按“父深度 + 1”计算后随 request 传入；
         // 缺省按 0（主模型直接派发）处理。深度用于：超限校验已在 handler 完成，这里负责
@@ -699,17 +705,29 @@ export function createDefaultExecutor(
             isUserInput: true,
             timestamp: Date.now()
         } as Content;
-        subAgentRunEventBus.createRun(runId, config.name, {
-            agentType: request.agentType,
-            prompt: request.prompt,
-            context: request.context,
-            // F2：深度随 run_created payload 暴露，Monitor 可按需展示嵌套层级。
-            depth
-        }, {
-            conversationId: currentConversationId,
-            conversationStore: currentConversationStore,
-            initialContents: [...baseContents, initialPromptContent]
-        });
+        if (request.continueFromRunId) {
+            // 续跑：复用旧快照继续（保留 contents/events/lastSentHistory，不重建 run），
+            // 只追加本次的 Invocation 卡片；run_resumed 由 resumeRun 广播，Monitor 记录唯一。
+            subAgentRunEventBus.resumeRun(runId, config.name, {
+                depth
+            }, {
+                conversationId: currentConversationId,
+                conversationStore: currentConversationStore,
+                initialContents: [initialPromptContent]
+            });
+        } else {
+            subAgentRunEventBus.createRun(runId, config.name, {
+                agentType: request.agentType,
+                prompt: request.prompt,
+                context: request.context,
+                // F2：深度随 run_created payload 暴露，Monitor 可按需展示嵌套层级。
+                depth
+            }, {
+                conversationId: currentConversationId,
+                conversationStore: currentConversationStore,
+                initialContents: [...baseContents, initialPromptContent]
+            });
+        }
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
         // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
