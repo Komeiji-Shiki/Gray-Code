@@ -523,7 +523,8 @@ onMounted(async () => {
   })
   
   // 异步初始化 chatStore（加载历史对话等）
-  chatStore.initialize()
+  // onMounted 回调本身是 async，这里 await 并 catch：初始化失败不产生未处理 rejection，且有错误日志
+  await chatStore.initialize().catch(err => console.error('[App] chatStore.initialize failed', err))
 })
 
 onBeforeUnmount(() => {

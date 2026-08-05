@@ -87,6 +87,9 @@ export interface SmoothDisplayOptions {
 const entries = new Map<string, SmoothEntry>()
 /** 显示目标注册表：messageId → 当前挂载的 CharFlow 宿主 */
 const displays = new Map<string, SmoothDisplay>()
+/** 反向索引：CharFlow 宿主 → messageId。消息 id 迁移后 unregister 按宿主定位新键时
+ *  无需 O(n) 全表扫描（原实现 Array.from(displays.entries()).find(...)） */
+const hostToMessageId = new Map<HTMLElement, string>()
 
 /** smoothTexts 快照的最小间隔（ms）：组件判定/恢复用，不需要跟随每帧动画 */
 const SNAPSHOT_INTERVAL_MS = 120
@@ -166,6 +169,7 @@ export function registerSmoothDisplay(
   }
   if (existing) {
     existing.flow.dispose()
+    hostToMessageId.delete(existing.host)
     displays.delete(messageId)
   }
 
@@ -188,6 +192,7 @@ export function registerSmoothDisplay(
     }
   }
   displays.set(messageId, { host, flow, followEnd, noFade, squashLineBreaks, tailWindow, restoreFull, onPromote })
+  hostToMessageId.set(host, messageId)
   if (entry && onPromote) {
     // 注册后立即尝试提升已定型完整段落：展开/重建后不用等下一个字符才出格式
     maybePromote(entry)
@@ -203,15 +208,17 @@ export function unregisterSmoothDisplay(messageId: string, host?: HTMLElement | 
   let existing = displays.get(key)
 
   if (host && existing?.host !== host) {
-    const relocated = Array.from(displays.entries()).find(([, display]) => display.host === host)
-    if (!relocated) return
-    key = relocated[0]
-    existing = relocated[1]
+    // 消息 id 迁移后按宿主定位新键（hostToMessageId 反向索引，O(1)）
+    const relocatedKey = hostToMessageId.get(host)
+    if (relocatedKey === undefined) return
+    key = relocatedKey
+    existing = displays.get(key)
   }
 
   if (!existing || (host && existing.host !== host)) return
   existing.flow.dispose()
   displays.delete(key)
+  hostToMessageId.delete(existing.host)
 }
 
 /**
@@ -352,6 +359,7 @@ export function migrateSmoothStream(fromId: string, toId: string): void {
   if (display !== undefined) {
     displays.delete(fromId)
     displays.set(toId, display)
+    hostToMessageId.set(display.host, toId)
   }
 }
 
@@ -365,6 +373,7 @@ export function disposeAllSmoothStreams(): void {
     display.flow.dispose()
   }
   displays.clear()
+  hostToMessageId.clear()
 }
 
 /** 当前是否有该消息的活跃平滑实例（供测试/诊断） */

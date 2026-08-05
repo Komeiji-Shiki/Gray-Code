@@ -133,18 +133,29 @@ export class MessageRouter {
     if (NON_BLOCKING_MESSAGE_TYPES.has(type)) {
       trackRequestClient();
       const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
-      handler(data, requestId, routedCtx).catch((error) => {
-        console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
-        // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息，
-        // 先 delete 会导致错误必然错投主聊天，Monitor 面板请求永久挂起。
-        try {
-          this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
-        } catch {
-          // 发送错误失败则静默忽略
+      handler(data, requestId, routedCtx).then(
+        () => {
+          // handler 成功但未调用 sendResponse/sendError（成功但不回复）时，
+          // requestClients 条目会永久残留。createRoutedContext 的 sendResponse/sendError
+          // 会同步删除条目，因此这里用 has() 判断 handler 是否已回复过：
+          // 已回复则条目已被删，无需（也不应）再删；未回复则兜底删除防泄漏。
+          if (this.requestClients.has(requestId)) {
+            this.requestClients.delete(requestId);
+          }
+        },
+        (error) => {
+          console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
+          // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息，
+          // 先 delete 会导致错误必然错投主聊天，Monitor 面板请求永久挂起。
+          try {
+            this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
+          } catch {
+            // 发送错误失败则静默忽略
+          }
+          // sendRoutedError 内部成功路由时会删除条目；回退路径不删，这里兜底清理防泄漏。
+          this.requestClients.delete(requestId);
         }
-        // sendRoutedError 内部成功路由时会删除条目；回退路径不删，这里兜底清理防泄漏。
-        this.requestClients.delete(requestId);
-      });
+      );
       return true;
     }
 

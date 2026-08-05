@@ -13,6 +13,13 @@ import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { useI18n } from '../composables/useI18n'
 
 /**
+ * 终端输出缓冲上限（字符数）。
+ * 长驻终端的累积输出可能达到数 MB：无上限时每次追加都是 O(n²) 字符串拼接，
+ * 且整段输出作为响应式状态会触发整段重渲染。超过上限后截断，仅保留最近部分。
+ */
+const MAX_TERMINAL_OUTPUT = 200 * 1024
+
+/**
  * 终端输出事件类型（与后端对应）
  */
 export interface TerminalOutputEvent {
@@ -177,9 +184,9 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
         
         terminal.lastUpdate = now
-        // 追加输出
+        // 追加输出（有界：超过 MAX_TERMINAL_OUTPUT 后截断仅保留尾部，避免 O(n²) 拼接与整段重渲染）
         if (data) {
-          terminal.output += data
+          terminal.output = (terminal.output + data).slice(-MAX_TERMINAL_OUTPUT)
         }
         break
         

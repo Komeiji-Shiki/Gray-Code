@@ -7,6 +7,9 @@ import {
   type PendingAgentActionType
 } from '../utils/pendingAgentAction'
 
+// 说明：本控制器所有过程日志统一使用 console.debug（而非 console.log）——
+// 每次 agent 回合结束都会经过这里输出多条日志，log 级别会在控制台刷屏；
+// debug 级别默认隐藏，需要排查时再开启 verbose 输出。错误路径仍用 console.error。
 const LOG_PREFIX = '[agent-stop-notification][frontend]'
 
 export type AgentStopNotificationReason = 'error' | 'awaiting_user_action' | 'continue_required'
@@ -71,12 +74,12 @@ export class AgentStopNotificationController {
     this.chatStore = options.chatStore
     this.sendToExtension = options.sendToExtension
     this.getRuntimeSoundSettings = options.getSoundSettings ?? getSoundSettings
-    console.log(LOG_PREFIX, 'controller initialized')
+    console.debug(LOG_PREFIX, 'controller initialized')
 
     this.runningWatch = watch(
       () => this.isAgentRunning(),
       (isRunning, wasRunning) => {
-        console.log(LOG_PREFIX, 'running state changed', {
+        console.debug(LOG_PREFIX, 'running state changed', {
           wasRunning,
           isRunning,
           isStreaming: this.chatStore.isStreaming,
@@ -92,7 +95,7 @@ export class AgentStopNotificationController {
           // 新一轮开始：清除上一轮用户取消遗留的 suppressNextStop，
           // 避免“取消后立即发送新消息”时新一轮正常结束的 stop 被误判为用户取消而吞掉通知
           this.suppressNextStop = false
-          console.log(LOG_PREFIX, 'agent entered running state, reset last dedupe key')
+          console.debug(LOG_PREFIX, 'agent entered running state, reset last dedupe key')
           return
         }
 
@@ -108,17 +111,17 @@ export class AgentStopNotificationController {
 
   markUserCancelled(): void {
     if (!this.isAgentRunning()) {
-      console.log(LOG_PREFIX, 'markUserCancelled ignored because agent is not running')
+      console.debug(LOG_PREFIX, 'markUserCancelled ignored because agent is not running')
       return
     }
 
     this.suppressNextStop = true
-    console.log(LOG_PREFIX, 'marked next stop as user-cancelled')
+    console.debug(LOG_PREFIX, 'marked next stop as user-cancelled')
   }
 
   clearUserCancelled(): void {
     this.suppressNextStop = false
-    console.log(LOG_PREFIX, 'cleared user-cancel suppression flag')
+    console.debug(LOG_PREFIX, 'cleared user-cancel suppression flag')
   }
 
   dispose(): void {
@@ -126,7 +129,7 @@ export class AgentStopNotificationController {
     this.runningWatch = undefined
     this.suppressNextStop = false
     this.lastSentDedupeKey = ''
-    console.log(LOG_PREFIX, 'controller disposed')
+    console.debug(LOG_PREFIX, 'controller disposed')
   }
 
   private isAgentRunning(): boolean {
@@ -141,7 +144,7 @@ export class AgentStopNotificationController {
     const settings = this.getNotificationSettings()
 
     if (!settings.enabled) {
-      console.log(LOG_PREFIX, 'skip notify because Windows notifications are disabled', {
+      console.debug(LOG_PREFIX, 'skip notify because Windows notifications are disabled', {
         reason,
         settings
       })
@@ -155,7 +158,7 @@ export class AgentStopNotificationController {
         : settings.cases.continueRequired
 
     if (!enabled) {
-      console.log(LOG_PREFIX, 'skip notify because notification case is disabled', {
+      console.debug(LOG_PREFIX, 'skip notify because notification case is disabled', {
         reason,
         settings
       })
@@ -195,7 +198,7 @@ export class AgentStopNotificationController {
       errorCode: normalizeText(error.code)
     }
 
-    console.log(LOG_PREFIX, 'built error payload', {
+    console.debug(LOG_PREFIX, 'built error payload', {
       reason: payload.reason,
       dedupeKey: payload.dedupeKey,
       errorCode: payload.errorCode,
@@ -222,7 +225,7 @@ export class AgentStopNotificationController {
       path: action.path
     }
 
-    console.log(LOG_PREFIX, 'built awaiting_user_action payload', {
+    console.debug(LOG_PREFIX, 'built awaiting_user_action payload', {
       reason: payload.reason,
       dedupeKey: payload.dedupeKey,
       actionType: payload.actionType,
@@ -250,7 +253,7 @@ export class AgentStopNotificationController {
       actionType: 'continue'
     }
 
-    console.log(LOG_PREFIX, 'built continue_required payload', {
+    console.debug(LOG_PREFIX, 'built continue_required payload', {
       reason: payload.reason,
       dedupeKey: payload.dedupeKey,
       actionType: payload.actionType,
@@ -261,13 +264,13 @@ export class AgentStopNotificationController {
 
   private buildPayload(): AgentStopNotificationPayload | null {
     if (this.chatStore.retryStatus?.isRetrying) {
-      console.log(LOG_PREFIX, 'skip notification because retrying is active')
+      console.debug(LOG_PREFIX, 'skip notification because retrying is active')
       return null
     }
 
     const errorPayload = this.buildErrorPayload()
     if (errorPayload) {
-      console.log(LOG_PREFIX, 'selected error payload')
+      console.debug(LOG_PREFIX, 'selected error payload')
       return errorPayload
     }
 
@@ -278,23 +281,23 @@ export class AgentStopNotificationController {
       conversationId: this.chatStore.currentConversationId
     })
 
-    console.log(LOG_PREFIX, 'resolved pending action', pendingAction)
+    console.debug(LOG_PREFIX, 'resolved pending action', pendingAction)
 
     if (pendingAction) {
       const payload = this.buildAwaitingUserActionPayload(pendingAction)
       if (payload) {
-        console.log(LOG_PREFIX, 'selected awaiting_user_action payload')
+        console.debug(LOG_PREFIX, 'selected awaiting_user_action payload')
       }
       return payload
     }
 
     const continuePayload = this.buildContinueRequiredPayload()
     if (continuePayload) {
-      console.log(LOG_PREFIX, 'selected continue_required payload')
+      console.debug(LOG_PREFIX, 'selected continue_required payload')
       return continuePayload
     }
 
-    console.log(LOG_PREFIX, 'no notification payload matched current stop state', {
+    console.debug(LOG_PREFIX, 'no notification payload matched current stop state', {
       hasError: !!this.chatStore.error,
       needsContinueButton: this.chatStore.needsContinueButton,
       hasPendingToolConfirmation: this.chatStore.hasPendingToolConfirmation,
@@ -308,7 +311,7 @@ export class AgentStopNotificationController {
     await nextTick()
     await Promise.resolve()
 
-    console.log(LOG_PREFIX, 'handling agent stopped event after state settled', {
+    console.debug(LOG_PREFIX, 'handling agent stopped event after state settled', {
       isStreaming: this.chatStore.isStreaming,
       isWaitingForResponse: this.chatStore.isWaitingForResponse,
       hasError: !!this.chatStore.error,
@@ -318,24 +321,24 @@ export class AgentStopNotificationController {
     })
 
     if (this.isAgentRunning()) {
-      console.log(LOG_PREFIX, 'stop handling aborted because agent resumed running')
+      console.debug(LOG_PREFIX, 'stop handling aborted because agent resumed running')
       return
     }
 
     if (this.suppressNextStop) {
       this.suppressNextStop = false
-      console.log(LOG_PREFIX, 'skip notification because stop was marked as user-cancelled')
+      console.debug(LOG_PREFIX, 'skip notification because stop was marked as user-cancelled')
       return
     }
 
     const payload = this.buildPayload()
     if (!payload) {
-      console.log(LOG_PREFIX, 'skip notification because no payload was produced')
+      console.debug(LOG_PREFIX, 'skip notification because no payload was produced')
       return
     }
 
     if (payload.dedupeKey === this.lastSentDedupeKey) {
-      console.log(LOG_PREFIX, 'skip notification because dedupe key already sent in current stop cycle', {
+      console.debug(LOG_PREFIX, 'skip notification because dedupe key already sent in current stop cycle', {
         dedupeKey: payload.dedupeKey
       })
       return
@@ -344,9 +347,9 @@ export class AgentStopNotificationController {
     this.lastSentDedupeKey = payload.dedupeKey
 
     try {
-      console.log(LOG_PREFIX, 'sending notification payload to extension', payload)
+      console.debug(LOG_PREFIX, 'sending notification payload to extension', payload)
       const result = await this.sendToExtension('notifications.agentStop', payload)
-      console.log(LOG_PREFIX, 'extension responded to notification payload', result)
+      console.debug(LOG_PREFIX, 'extension responded to notification payload', result)
     } catch (error) {
       console.error('[agent-stop-notification] Failed to send notification payload:', error)
     }
