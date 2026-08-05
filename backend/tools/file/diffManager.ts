@@ -55,6 +55,17 @@ export interface PendingDiff {
      * - 删除：`- | baseLine | 内容` （baseLine 为系统建议保存内容中的1-based 行号）
      */
     userEditedContent?: string;
+    /**
+     * 预览前文档中的用户未保存内容（仅当打开文档时 doc.isDirty 才设置）。
+     *
+     * 为什么要新增：预览会把 buffer 覆盖为 AI 版本，若目标文档原本就有未保存修改，
+     * 拒绝/取消/中断恢复时回写磁盘 originalContent 会丢失用户的未保存内容（H1 数据丢失）。
+     * 怎么改：预览前发现 dirty 时记录用户版本，并拒绝本次预览（不覆盖 buffer、不显示 diff 视图），
+     * 工具链据此返回可读错误提示用户先保存；拒绝/取消路径检测到该字段时跳过 buffer 恢复，
+     * 避免把用户未保存内容回滚成磁盘原文。
+     * 目的：在任何失败路径下都不丢失用户未保存内容。
+     */
+    userUnsavedContentBeforePreview?: string;
     /** 创建时间 */
     timestamp: number;
     /** 状态*/
@@ -769,6 +780,27 @@ export class DiffManager {
         this.notifySaveComplete(diff);
     }
 
+    /**
+     * 删除"本次会话预创建且未成功应用"的新文件残留（H2）。
+     *
+     * 为什么下沉到公共终结路径：write_file 预创建空文件后，acquireWriteLockForDiff 冲突、
+     * autoSave 失败、用户取消等所有失败路径都会走到 finalizeRejectedDiff/finalizeCancelledDiff，
+     * 只在个别路径清理会漏掉残留空文件。
+     * 为什么只在拒绝/取消路径调用：newFile 语义是"目标文件之前不存在、AI 要新建"，
+     * 确认接受后该文件应保留（finalizeAcceptedDiff 不调用本方法）。
+     * 已删除/不存在的文件 unlink 会抛错，统一吞掉。
+     */
+    private removeNewFileResidue(diff: PendingDiff): void {
+        if (!diff.newFile) {
+            return;
+        }
+        try {
+            fs.unlinkSync(diff.absolutePath);
+        } catch (e) {
+            console.warn(`[DiffManager] Failed to remove new file ${diff.filePath}:`, e);
+        }
+    }
+
     private finalizeRejectedDiff(diff: PendingDiff): void {
         if (diff.status !== 'pending') {
             return;
@@ -782,6 +814,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
         this.notifyStatusChange();
     }
@@ -799,6 +832,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
     }
 
@@ -1394,7 +1428,10 @@ export class DiffManager {
                     targetDoc.positionAt(0),
                     targetDoc.positionAt(targetDoc.getText().length)
                 );
-                edit.replace(fileUri, fullRange, diff.originalContent);
+                // H1：预览前若已捕获用户未保存内容（dirty 拒绝预览场景），
+                // 恢复时优先回写用户版本而非磁盘 originalContent，避免丢失未保存编辑。
+                const restoreContent = diff.userUnsavedContentBeforePreview ?? diff.originalContent;
+                edit.replace(fileUri, fullRange, restoreContent);
                 await vscode.workspace.applyEdit(edit);
             } catch {
                 // ignore
@@ -1412,6 +1449,30 @@ export class DiffManager {
         //   避免多开一个 tab 并把焦点从聊天输入框抢走（用户可能正在打字）
         const document = await vscode.workspace.openTextDocument(fileUri);
         if (!isPending()) {
+            return;
+        }
+
+        // H1 数据丢失防护：目标文档存在未保存修改时拒绝本次预览。
+        //
+        // 为什么拒绝而不是"记录用户版本 + 预览后恢复"：
+        // - 预览覆盖 buffer 显示 AI 版本后，拒绝/取消恢复时若回写磁盘 originalContent，
+        //   用户的未保存内容会永久丢失（本 bug 的根因）；
+        // - diff 对象仅存在于内存，若会话在预览期间被 reload（扩展重启/工作区重载），
+        //   用户 buffer 无法从任何持久化源恢复；
+        // - "接受"路径同样有风险：缓冲区的用户未保存内容可能被 AI 内容静默覆盖。
+        // 取舍：dirty 时直接不覆盖 buffer、不显示 diff 视图，记录用户版本并向用户提示先保存，
+        // 工具结果返回可读错误（autoSaveError），用户保存后重试即可。简单可靠，零数据丢失。
+        if (document && document.isDirty) {
+            diff.userUnsavedContentBeforePreview = document.getText();
+            diff.autoSaveError = 'The file has unsaved changes in the editor. Save the file first, then retry the tool call. The change was not applied to avoid overwriting your unsaved edits.';
+            try {
+                vscode.window.showWarningMessage?.(
+                    `"${diff.filePath}" 存在未保存的修改。为避免丢失您的内容，本次修改未应用。请先保存文件（Ctrl+S）后再重试。`
+                );
+            } catch {
+                // ignore
+            }
+            this.finalizeRejectedDiff(diff);
             return;
         }
 
@@ -1918,38 +1979,42 @@ export class DiffManager {
             }
 
             // 1. 恢复文件内容
-            const uri = vscode.Uri.file(diff.absolutePath);
-            const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+            // H1：预览因目标文档 dirty 被拒绝时，buffer 从未被覆盖过，仍是用户未保存版本；
+            // 这里任何恢复动作都会把用户未保存内容回滚成磁盘原文，必须整体跳过。
+            if (diff.userUnsavedContentBeforePreview === undefined) {
+                const uri = vscode.Uri.file(diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
 
-            if (doc) {
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    doc.positionAt(0),
-                    doc.positionAt(doc.getText().length)
-                );
-                edit.replace(uri, fullRange, diff.originalContent);
-                const applied = await vscode.workspace.applyEdit(edit);
-                if (!applied) {
-                    throw new Error(`Failed to restore original content for ${diff.filePath}`);
-                }
-
-                // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
-                // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
-                // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
-                // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
-                try {
-                    await doc.save();
-                } catch {
-                    // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
-                    try {
-                        await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
-                    } catch {
-                        // ignore
+                if (doc) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(doc.getText().length)
+                    );
+                    edit.replace(uri, fullRange, diff.originalContent);
+                    const applied = await vscode.workspace.applyEdit(edit);
+                    if (!applied) {
+                        throw new Error(`Failed to restore original content for ${diff.filePath}`);
                     }
+
+                    // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
+                    // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
+                    // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
+                    // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
+                    try {
+                        await doc.save();
+                    } catch {
+                        // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
+                        try {
+                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                        } catch {
+                            // ignore
+                        }
+                    }
+                } else {
+                    // 如果文档没打开，直接写回原始文件内容确保万无一失
+                    fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
                 }
-            } else {
-                // 如果文档没打开，直接写回原始文件内容确保万无一失
-                fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
             }
 
             // write_file 新建文件被拒绝：关 tab 并删除残留空文件
@@ -2288,32 +2353,36 @@ export class DiffManager {
             await this.closeDiffTabAndCleanNewFile(id, diff);
 
             // 3. 尝试恢复文件到原始状态
-            try {
-                const uri = vscode.Uri.file(diff.absolutePath);
-                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
-                if (doc && doc.isDirty) {
-                    // 恢复到原始内容
-                    const edit = new vscode.WorkspaceEdit();
-                    const fullRange = new vscode.Range(
-                        doc.positionAt(0),
-                        doc.positionAt(doc.getText().length)
-                    );
-                    edit.replace(uri, fullRange, diff.originalContent);
-                    await vscode.workspace.applyEdit(edit);
-                    // 必须 save() 清理 dirty——否则 VSCode 弹出"是否保存更改？"对话框
-                    try {
-                        await doc.save();
-                    } catch {
-                        // doc.save 失败时回退到 revert
+            // H1：预览因目标文档 dirty 被拒绝的 diff，buffer 仍是用户未保存版本，
+            // 恢复动作会覆盖用户未保存内容，必须跳过（关闭 diff 标签页不影响用户内容）。
+            if (diff.userUnsavedContentBeforePreview === undefined) {
+                try {
+                    const uri = vscode.Uri.file(diff.absolutePath);
+                    const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+                    if (doc && doc.isDirty) {
+                        // 恢复到原始内容
+                        const edit = new vscode.WorkspaceEdit();
+                        const fullRange = new vscode.Range(
+                            doc.positionAt(0),
+                            doc.positionAt(doc.getText().length)
+                        );
+                        edit.replace(uri, fullRange, diff.originalContent);
+                        await vscode.workspace.applyEdit(edit);
+                        // 必须 save() 清理 dirty——否则 VSCode 弹出"是否保存更改？"对话框
                         try {
-                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                            await doc.save();
                         } catch {
-                            // ignore
+                            // doc.save 失败时回退到 revert
+                            try {
+                                await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                            } catch {
+                                // ignore
+                            }
                         }
                     }
+                } catch (err) {
+                    console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
                 }
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
             }
         }
 

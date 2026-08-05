@@ -18,6 +18,10 @@ export type OutsideWorkspaceAccessAction = 'read' | 'write';
  * resolveUri 接受绝对路径，但之前完全不受工作区外策略管控——
  * “禁止工作区外写入”设置对它们形同虚设（例如 delete_file 传绝对路径可直接删除工作区外文件）。
  * 修改方式：将四个写类工具纳入策略覆盖，写策略复用 write_file 的配置（apply_diff 用自己的）。
+ *
+ * search_in_files：path 参数可以是目录/文件绝对路径，解析后可能落在工作区外；
+ * 纳入策略覆盖后按模式区分——search 只读沿用读策略（deny/ask/allow），
+ * replace 写入沿用写策略（deny/ask），与 read_file/write_file 行为一致。
  */
 export type OutsideWorkspaceAwareToolName =
     | 'read_file'
@@ -26,7 +30,8 @@ export type OutsideWorkspaceAwareToolName =
     | 'delete_file'
     | 'create_directory'
     | 'insert_code'
-    | 'delete_code';
+    | 'delete_code'
+    | 'search_in_files';
 
 const OUTSIDE_WORKSPACE_AWARE_TOOLS = new Set<string>([
     'read_file',
@@ -35,11 +40,12 @@ const OUTSIDE_WORKSPACE_AWARE_TOOLS = new Set<string>([
     'delete_file',
     'create_directory',
     'insert_code',
-    'delete_code'
+    'delete_code',
+    'search_in_files'
 ]);
 
 /** 自身带 diff 审阅确认层的写类工具 */
-const DIFF_REVIEW_WRITE_TOOLS = new Set<string>(['write_file', 'apply_diff', 'insert_code', 'delete_code']);
+const DIFF_REVIEW_WRITE_TOOLS = new Set<string>(['write_file', 'apply_diff', 'insert_code', 'delete_code', 'search_in_files']);
 
 export interface OutsideWorkspaceAccessCheck {
     isOutsideWorkspace: boolean;
@@ -79,10 +85,23 @@ function getWritePolicy(toolName: OutsideWorkspaceAwareToolName, settingsManager
         : fallback;
 }
 
-function getPolicy(toolName: OutsideWorkspaceAwareToolName, settingsManager?: SettingsManager): OutsideWorkspaceReadAccess | OutsideWorkspaceWriteAccess {
-    return toolName === 'read_file'
-        ? getReadPolicy(settingsManager)
-        : getWritePolicy(toolName, settingsManager);
+function getPolicy(
+    toolName: OutsideWorkspaceAwareToolName,
+    settingsManager?: SettingsManager,
+    args?: Record<string, unknown>
+): OutsideWorkspaceReadAccess | OutsideWorkspaceWriteAccess {
+    if (toolName === 'read_file') {
+        return getReadPolicy(settingsManager);
+    }
+
+    // search_in_files 读写模式混合：search 只读沿用读策略，replace 写入沿用写策略
+    if (toolName === 'search_in_files') {
+        return (args as any)?.mode === 'replace'
+            ? getWritePolicy(toolName, settingsManager)
+            : getReadPolicy(settingsManager);
+    }
+
+    return getWritePolicy(toolName, settingsManager);
 }
 
 function extractNonEmptyStrings(values: unknown): string[] {
@@ -178,6 +197,24 @@ export function isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName: strin
     return getApplyDiffConfig(settingsManager).autoSave !== true;
 }
 
+/**
+ * 判断工具调用是否被手动 diff 审阅覆盖（此时 ask 策略无需再叠加聊天确认）。
+ * search_in_files 只有 replace 模式走 diff 审阅（search 模式是只读的，永远需要按读策略确认）。
+ */
+function isDiffReviewCoveredForCall(
+    toolName: OutsideWorkspaceAwareToolName,
+    args: Record<string, unknown> | undefined,
+    settingsManager?: SettingsManager
+): boolean {
+    if (!DIFF_REVIEW_WRITE_TOOLS.has(toolName)) {
+        return false;
+    }
+    if (toolName === 'search_in_files' && (args as any)?.mode !== 'replace') {
+        return false;
+    }
+    return getApplyDiffConfig(settingsManager).autoSave !== true;
+}
+
 export function getOutsideWorkspaceAccessCheck(
     toolName: OutsideWorkspaceAwareToolName,
     args: Record<string, unknown> | undefined,
@@ -189,7 +226,7 @@ export function getOutsideWorkspaceAccessCheck(
         .filter(resolved => resolved.isOutsideWorkspace)
         .map(resolved => resolved.displayPath);
 
-    const policy = getPolicy(toolName, settingsManager);
+    const policy = getPolicy(toolName, settingsManager, args);
     const isOutsideWorkspace = outsidePaths.length > 0;
 
     if (!isOutsideWorkspace) {
@@ -213,7 +250,7 @@ export function getOutsideWorkspaceAccessCheck(
         };
     }
 
-    if (policy === 'ask' && isOutsideWorkspaceWriteCoveredByManualDiffReview(toolName, settingsManager)) {
+    if (policy === 'ask' && isDiffReviewCoveredForCall(toolName, args, settingsManager)) {
         return {
             isOutsideWorkspace: true,
             policy,

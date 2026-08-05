@@ -294,13 +294,14 @@ onMounted(async () => {
           <input
             type="number"
             :value="summarizeConfig.keepRecentRounds"
-            min="0"
+            min="1"
             max="10"
             @input="(e: any) => updateConfigField('keepRecentRounds', Number(e.target.value))"
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsUnit') }}</span>
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsHint') }}</p>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsMinNote') }}</p>
       </div>
 
       <div class="form-group">

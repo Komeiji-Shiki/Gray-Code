@@ -65,6 +65,20 @@ interface SymbolInfo {
 }
 
 /**
+ * 单文件符号数量上限：符号提供器对大型/生成文件可能返回海量符号
+ *（含层级展开后的总数），超出后截断并在返回 JSON 中置 truncated 标记。
+ */
+const MAX_SYMBOLS_PER_FILE = 500;
+
+/**
+ * 符号转换预算：跨层级递归共享，超出后停止展开子树并置 truncated。
+ */
+interface SymbolBudget {
+    remaining: number;
+    truncated: boolean;
+}
+
+/**
  * 单个文件的符号结果
  */
 interface FileSymbolResult {
@@ -73,12 +87,20 @@ interface FileSymbolResult {
     symbolCount?: number;
     symbols?: SymbolInfo[];
     error?: string;
+    /** 符号数量超过上限被截断（调用方聚合到总结果中） */
+    truncated?: boolean;
 }
 
 /**
- * 将 VSCode DocumentSymbol 转换为简化的符号信息
+ * 将 VSCode DocumentSymbol 转换为简化的符号信息（受预算约束，超限返回 undefined）。
  */
-function convertDocumentSymbol(symbol: vscode.DocumentSymbol): SymbolInfo {
+function convertDocumentSymbol(symbol: vscode.DocumentSymbol, budget: SymbolBudget): SymbolInfo | undefined {
+    if (budget.remaining <= 0) {
+        budget.truncated = true;
+        return undefined;
+    }
+    budget.remaining--;
+
     const info: SymbolInfo = {
         name: symbol.name,
         kind: SymbolKindNames[symbol.kind] || 'unknown',
@@ -91,7 +113,20 @@ function convertDocumentSymbol(symbol: vscode.DocumentSymbol): SymbolInfo {
     }
     
     if (symbol.children && symbol.children.length > 0) {
-        info.children = symbol.children.map(convertDocumentSymbol);
+        const children: SymbolInfo[] = [];
+        for (const child of symbol.children) {
+            const converted = convertDocumentSymbol(child, budget);
+            if (converted) {
+                children.push(converted);
+            }
+            if (budget.remaining <= 0) {
+                budget.truncated = true;
+                break;
+            }
+        }
+        if (children.length > 0) {
+            info.children = children;
+        }
     }
     
     return info;
@@ -142,23 +177,41 @@ async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): P
             };
         }
         
-        // 转换符号
+        // 转换符号（带数量预算：超限截断并置 truncated）
         let convertedSymbols: SymbolInfo[];
+        const budget: SymbolBudget = { remaining: MAX_SYMBOLS_PER_FILE, truncated: false };
         
         // 检查是 DocumentSymbol 还是 SymbolInformation
         if ('children' in symbols[0] || 'range' in symbols[0]) {
             // DocumentSymbol (更新的格式，有层级结构)
-            convertedSymbols = (symbols as vscode.DocumentSymbol[]).map(convertDocumentSymbol);
+            const rawSymbols = symbols as vscode.DocumentSymbol[];
+            const converted: SymbolInfo[] = [];
+            for (const symbol of rawSymbols) {
+                const convertedSymbol = convertDocumentSymbol(symbol, budget);
+                if (convertedSymbol) {
+                    converted.push(convertedSymbol);
+                }
+                if (budget.remaining <= 0) {
+                    budget.truncated = true;
+                    break;
+                }
+            }
+            convertedSymbols = converted;
         } else {
             // SymbolInformation (旧格式，扁平结构)
-            convertedSymbols = (symbols as vscode.SymbolInformation[]).map(convertSymbolInformation);
+            const rawSymbols = symbols as vscode.SymbolInformation[];
+            convertedSymbols = rawSymbols
+                .slice(0, MAX_SYMBOLS_PER_FILE)
+                .map(convertSymbolInformation);
+            budget.truncated = rawSymbols.length > MAX_SYMBOLS_PER_FILE;
         }
         
         return {
             path: filePath,
             success: true,
             symbolCount: countSymbols(convertedSymbols),
-            symbols: convertedSymbols
+            symbols: convertedSymbols,
+            truncated: budget.truncated
         };
     } catch (error) {
         return {
@@ -241,6 +294,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             }
             
             const allSuccess = failCount === 0;
+            const anyTruncated = results.some(result => result.truncated === true);
             const failedDetails = results
                 .filter(result => !result.success)
                 .map(result => `${result.path}: ${result.error || 'Unknown symbol provider error'}`)
@@ -252,7 +306,8 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
                     successCount,
                     failCount,
                     totalCount: pathList.length,
-                    totalSymbolCount
+                    totalSymbolCount,
+                    truncated: anyTruncated
                 },
                 error: allSuccess ? undefined : `${failCount} file(s) failed to get symbols: ${failedDetails}`
             };
