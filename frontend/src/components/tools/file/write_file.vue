@@ -521,16 +521,35 @@ function getRenderedFileDiff(path: string): RenderedFileDiff | undefined {
 // 预览 diff 行数
 const previewDiffLineCount = 20
 
-// 展开/折叠展示行的稳定引用缓存（同 apply_diff 面板）
+// 模板兜底用共享空数组（避免 key 缺失时每次渲染创建新数组引用）
+const EMPTY_DISPLAY_LINES: LineDiffEntry[] = []
+
+// 展开/折叠展示行的稳定引用缓存（同 apply_diff 面板）：
+// 同一 path 的结果对象在展开状态或行差分源（lineDiff 引用）变化前保持不变，
+// 展开/折叠任一文件时只有该 path 重建，其余文件的折叠 slice 复用缓存对象。
+interface DisplayLinesEntry {
+  expanded: boolean
+  source: LineDiffResult
+  lines: LineDiffEntry[]
+}
+const displayLinesCache = new Map<string, DisplayLinesEntry>()
 const displayDiffLinesByPath = computed(() => {
   const map = new Map<string, LineDiffEntry[]>()
   for (const [path, diff] of renderedFileDiffs.value) {
-    map.set(
-      path,
-      isDiffExpanded(path)
-        ? diff.lineDiff.lines
-        : diff.lineDiff.lines.slice(0, previewDiffLineCount)
-    )
+    const source = diff.lineDiff
+    const isExpandedFlag = isDiffExpanded(path)
+    const cached = displayLinesCache.get(path)
+    if (cached && cached.expanded === isExpandedFlag && cached.source === source) {
+      map.set(path, cached.lines)
+      continue
+    }
+    const lines = isExpandedFlag ? source.lines : source.lines.slice(0, previewDiffLineCount)
+    displayLinesCache.set(path, { expanded: isExpandedFlag, source, lines })
+    map.set(path, lines)
+  }
+  // 清理已消失的 path（renderedFileDiffs 缩短时）
+  for (const key of Array.from(displayLinesCache.keys())) {
+    if (!renderedFileDiffs.value.has(key)) displayLinesCache.delete(key)
   }
   return map
 })
@@ -743,7 +762,7 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <VirtualDiffLines
-            :lines="displayDiffLinesByPath.get(file.path) || []"
+            :lines="displayDiffLinesByPath.get(file.path) || EMPTY_DISPLAY_LINES"
             :line-number-width="getRenderedFileDiff(file.path)!.lineDiff.lineNumberWidth"
             :max-height="300"
           />

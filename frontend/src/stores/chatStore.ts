@@ -678,6 +678,7 @@ export const useChatStore = defineStore('chat', () => {
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
+    smoothTexts: state.smoothTexts,
     error: state.error,
     
     // 计算属性

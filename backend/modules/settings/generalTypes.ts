@@ -221,6 +221,16 @@ export interface GlobalSettings {
             selectionContextEnabled?: boolean;
 
             /**
+             * 流式平滑输出档位
+             *
+             * - off: 关闭（原始逐块输出）
+             * - smooth: 灵敏（lookahead 220ms）
+             * - balanced: 标准（lookahead 320ms）
+             * - silky: 丝滑（lookahead 450ms）
+             */
+            smoothStreaming?: 'off' | 'smooth' | 'balanced' | 'silky';
+
+            /**
              * 兼容旧版：是否启用选中文本悬浮入口
              * @deprecated 请改用 selectionContextEnabled
              */
@@ -335,7 +345,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: '',
-            selectionContextEnabled: true
+            selectionContextEnabled: true,
+            smoothStreaming: 'balanced'
         },
         sound: {
             enabled: false,

@@ -227,6 +227,12 @@ export interface ChatStoreState {
   streamingMessageId: Ref<string | null>
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   activeStreamId: Ref<string | null>
+  /**
+   * 平滑流式显示层：messageId -> 当前正在输出的段落（最后一个 text/thought part）的平滑文本。
+   * 真实内容（parts/content）由流式累加，此 Map 只驱动显示节奏；
+   * 流式结束/中止时由调用方 delete 对应键，UI 切回真实 content。
+   */
+  smoothTexts: Map<string, string>
   /** 等待AI响应状态 */
   isWaitingForResponse: Ref<boolean>
   /** 重试状态 */

@@ -345,17 +345,36 @@ function getRenderedSearchDiff(path: string): RenderedSearchDiff | undefined {
 // Diff 展开状态
 const expandedDiffs = ref<Set<string>>(new Set())
 
-// 展开/折叠展示行的稳定引用缓存：同一 path 的结果对象在展开状态变化前保持不变，
-// 避免模板内 slice 每次渲染生成新数组、让 VirtualDiffLines 反复整体重渲染。
+// 模板兜底用共享空数组（避免 key 缺失时每次渲染创建新数组引用）
+const EMPTY_DISPLAY_LINES: DisplayDiffLine[] = []
+const EMPTY_MATCHES: SearchMatch[] = []
+
+// 展开/折叠展示行的稳定引用缓存：同一 path 的结果对象在展开状态或上下文行源
+// （contextualLines 引用）变化前保持不变，避免模板内 slice 每次渲染生成新数组、
+// 让 VirtualDiffLines 反复整体重渲染；展开/折叠任一文件时只有该 path 重建。
+interface DisplayLinesEntry {
+  expanded: boolean
+  source: DisplayDiffLine[]
+  lines: DisplayDiffLine[]
+}
+const displayLinesCache = new Map<string, DisplayLinesEntry>()
 const displayDiffLinesByPath = computed(() => {
   const map = new Map<string, DisplayDiffLine[]>()
   for (const [path, diff] of renderedSearchDiffs.value) {
-    map.set(
-      path,
-      expandedDiffs.value.has(path)
-        ? diff.contextualLines
-        : diff.contextualLines.slice(0, previewDiffLineCount)
-    )
+    const source = diff.contextualLines
+    const isExpandedFlag = expandedDiffs.value.has(path)
+    const cached = displayLinesCache.get(path)
+    if (cached && cached.expanded === isExpandedFlag && cached.source === source) {
+      map.set(path, cached.lines)
+      continue
+    }
+    const lines = isExpandedFlag ? source : source.slice(0, previewDiffLineCount)
+    displayLinesCache.set(path, { expanded: isExpandedFlag, source, lines })
+    map.set(path, lines)
+  }
+  // 清理已消失的 path（renderedSearchDiffs 缩短时）
+  for (const key of Array.from(displayLinesCache.keys())) {
+    if (!renderedSearchDiffs.value.has(key)) displayLinesCache.delete(key)
   }
   return map
 })
@@ -509,7 +528,7 @@ function isDiffExpanded(path: string): boolean {
             </span>
           </div>
           <VirtualDiffLines
-            :lines="displayDiffLinesByPath.get(replaceResult.file) || []"
+            :lines="displayDiffLinesByPath.get(replaceResult.file) || EMPTY_DISPLAY_LINES"
             :line-number-width="getRenderedSearchDiff(replaceResult.file)!.lineDiff.lineNumberWidth"
             :max-height="300"
           />
@@ -528,7 +547,7 @@ function isDiffExpanded(path: string): boolean {
           <CustomScrollbar :max-height="200">
             <div class="match-items">
               <div
-                v-for="(match, index) in matchesByFile.get(replaceResult.file) || []"
+                v-for="(match, index) in matchesByFile.get(replaceResult.file) || EMPTY_MATCHES"
                 :key="`${match.line}-${index}`"
                 class="match-item-compact"
               >

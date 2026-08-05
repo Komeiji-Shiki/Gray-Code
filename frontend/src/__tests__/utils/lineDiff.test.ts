@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeLineDiff, computeLineDiffCached, formatDiffLineNumber } from '../../utils/lineDiff'
+import { computeLineDiff, computeLineDiffCached, clearLineDiffCache, formatDiffLineNumber } from '../../utils/lineDiff'
 
 describe('computeLineDiff', () => {
   it('preserves unchanged lines and reports inserted and deleted lines', () => {
@@ -161,6 +161,53 @@ describe('computeLineDiffCached', () => {
     const plain = computeLineDiff(oldContent, newContent)
     expect(cached.lines).toEqual(plain.lines)
     expect(cached.degraded).toBe(plain.degraded)
+  })
+
+  it('stays exact with zero budget when the core already matches', () => {
+    // editDistanceLimit=0：核心区域相同（trim 后为空）时不退化，走 Myers 得到精确结果
+    const result = computeLineDiff('a\nb', 'a\nb', { editDistanceLimit: 0 })
+    expect(result.degraded).toBe(false)
+    expect(result.lines.every(line => line.type === 'unchanged')).toBe(true)
+  })
+
+  it('degrades when edit distance limit is zero and content differs', () => {
+    // 无公共行且 n+m > 0（limit 为 0）→ 快速失败退化
+    const result = computeLineDiff('a', 'b', { editDistanceLimit: 0 })
+    expect(result.degraded).toBe(true)
+    expect(result.deleted).toBe(1)
+    expect(result.added).toBe(1)
+  })
+
+  it('degrades on negative edit distance limit', () => {
+    // 负预算不可能完成：主循环不执行，直接退化输出
+    const result = computeLineDiff('a\nb', 'a\nc', { editDistanceLimit: -1 })
+    expect(result.degraded).toBe(true)
+  })
+
+  it('evicts the oldest entry after the FIFO cache reaches 32 entries', () => {
+    clearLineDiffCache()
+    const oldContent = ['seed'].join('\n')
+    const first = computeLineDiffCached(oldContent, 'v0')
+    for (let i = 1; i <= 32; i++) {
+      computeLineDiffCached(oldContent, `v${i}`)
+    }
+    // 第 33 条插入时挤出最老的 v0：再次查询返回新计算的对象（引用不同）
+    const rehit = computeLineDiffCached(oldContent, 'v0')
+    expect(rehit).not.toBe(first)
+    // 最近一次仍命中缓存（同一对象引用）
+    const lastFirst = computeLineDiffCached(oldContent, 'v32')
+    const lastHit = computeLineDiffCached(oldContent, 'v32')
+    expect(lastHit).toBe(lastFirst)
+  })
+
+  it('clearLineDiffCache forces recomputation', () => {
+    const oldContent = ['alpha', 'beta'].join('\n')
+    const newContent = ['alpha', 'gamma'].join('\n')
+    const before = computeLineDiffCached(oldContent, newContent)
+    clearLineDiffCache()
+    const after = computeLineDiffCached(oldContent, newContent)
+    expect(after).not.toBe(before)
+    expect(after.lines).toEqual(before.lines)
   })
 })
 

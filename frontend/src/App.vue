@@ -16,6 +16,7 @@ import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
+import Splash from './components/Splash.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage } from './i18n'
@@ -34,6 +35,8 @@ const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMoni
 
 // 语言是否已加载
 const languageLoaded = ref(false)
+// 开始动画是否已完成（Splash 淡出后置 true，移除组件）
+const splashDone = ref(false)
 
 // 使用 Pinia Store
 const chatStore = useChatStore()
@@ -538,12 +541,12 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 等待语言加载完成 -->
-    <template v-if="!languageLoaded">
-      <div class="loading-container">
-        <i class="codicon codicon-loading spin"></i>
-      </div>
-    </template>
+    <!-- 开始动画：灰码少女一笔画（ready 沿用 languageLoaded，淡出后移除）；TPS 实时可视化条位于聊天面板底部 TpsBar -->
+    <Splash
+      v-if="!splashDone"
+      :ready="languageLoaded"
+      @done="splashDone = true"
+    />
     
     <!-- 聊天视图 - 使用 v-show 避免销毁组件，保持滚动位置 -->
     <div v-show="languageLoaded && settingsStore.currentView === 'chat'" class="chat-view">
@@ -834,19 +837,5 @@ onBeforeUnmount(() => {
 
 .retry-countdown {
   color: var(--vscode-descriptionForeground);
-}
-
-/* 加载容器 */
-.loading-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  color: var(--vscode-foreground);
-}
-
-.loading-container .codicon {
-  font-size: 24px;
-  opacity: 0.6;
 }
 </style>

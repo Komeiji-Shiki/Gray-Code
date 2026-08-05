@@ -309,19 +309,38 @@ const renderedDiffList = computed((): RenderedDiffBlock[] => {
 // 预览行数
 const previewLineCount = 20
 
+// 模板兜底用共享空数组（避免 key 缺失时每次渲染创建新数组引用）
+const EMPTY_DISPLAY_LINES: LineDiffEntry[] = []
+
 // 展开/折叠展示行的稳定引用缓存：
-// 同一 index 的结果对象在 expanded/renderedDiffList 变化前保持不变，
-// 避免模板内 slice 每次渲染生成新数组、让 VirtualDiffLines 反复整体重渲染。
+// 同一 index 的结果对象在 expanded 状态或行差分源（lineDiff 引用）变化前保持不变，
+// 避免模板内 slice 每次渲染生成新数组、让 VirtualDiffLines 反复整体重渲染；
+// 展开/折叠任一 hunk 时只有该 index 重建，其余未展开 hunk 的折叠 slice 复用缓存对象。
+interface DisplayLinesEntry {
+  expanded: boolean
+  source: LineDiffResult
+  lines: LineDiffEntry[]
+}
+const displayLinesCache = new Map<number, DisplayLinesEntry>()
 const displayLinesByIndex = computed(() => {
   const map = new Map<number, LineDiffEntry[]>()
   renderedDiffList.value.forEach((diff, index) => {
-    map.set(
-      index,
-      expanded.value.has(index)
-        ? diff.lineDiff.lines
-        : diff.lineDiff.lines.slice(0, previewLineCount)
-    )
+    const source = diff.lineDiff
+    if (!source) return
+    const isExpandedFlag = expanded.value.has(index)
+    const cached = displayLinesCache.get(index)
+    if (cached && cached.expanded === isExpandedFlag && cached.source === source) {
+      map.set(index, cached.lines)
+      return
+    }
+    const lines = isExpandedFlag ? source.lines : source.lines.slice(0, previewLineCount)
+    displayLinesCache.set(index, { expanded: isExpandedFlag, source, lines })
+    map.set(index, lines)
   })
+  // 清理已消失的 index（renderedDiffList 缩短时）
+  for (const key of Array.from(displayLinesCache.keys())) {
+    if (key >= renderedDiffList.value.length) displayLinesCache.delete(key)
+  }
   return map
 })
 
@@ -493,7 +512,7 @@ onBeforeUnmount(() => {
         <!-- Diff 内容 -->
         <div class="diff-content" v-if="diff.success !== false">
             <VirtualDiffLines
-              :lines="displayLinesByIndex.get(index) || []"
+              :lines="displayLinesByIndex.get(index) || EMPTY_DISPLAY_LINES"
               :line-number-width="diff.lineDiff.lineNumberWidth"
               :max-height="300"
             />

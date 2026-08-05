@@ -6,6 +6,10 @@
 
 import type { Content, Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
+import { tpsMeter } from '../../utils/tpsMeter'
+import { pushSmoothText, finishSmoothStream } from './smoothStreamManager'
+import { useSettingsStore } from '../settingsStore'
+import type { SmoothMode } from '../../utils/smoothStream'
 import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
 import { contentToMessage, contentToMessageEnhanced } from './parsers'
@@ -214,6 +218,44 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
 }
 
 /**
+ * 平滑流式：真实内容已累加（addTextToMessage / processStreamingText），
+ * 这里把增量文本送入显示层蓄水池（SmoothStreamer）；TPS 等指标吃真实 chunk，不经此层。
+ * 段落身份（thought/text + part 索引）变化时由 manager 自动重置蓄水池。
+ */
+function pushSmoothTextForMessage(message: Message, deltaText: string, state: ChatStoreState): void {
+  let mode: SmoothMode
+  try {
+    mode = useSettingsStore().smoothStreaming
+  } catch {
+    mode = 'off'
+  }
+  if (mode === 'off' || !deltaText) return
+  const parts = message.parts
+  if (!parts || parts.length === 0) return
+  const lastPart = parts[parts.length - 1]
+  if (typeof lastPart.text !== 'string') return
+  const partKey = `${lastPart.thought === true ? 'thought' : 'text'}:${parts.length - 1}`
+  pushSmoothText(message.id, partKey, deltaText, mode, (displayText) => {
+    state.smoothTexts.set(message.id, displayText)
+  })
+}
+
+/**
+ * 终结清理：放完积压（不丢尾巴）、销毁实例并删除显示文本，UI 切回真实 content。
+ * 同时清理传入 id 与当前 streamingMessageId（cancelled 可能把占位 id 替换为后端持久化 id）。
+ */
+export function finishSmoothStreamForState(state: ChatStoreState, messageId?: string | null): void {
+  const ids = new Set<string>()
+  if (messageId) ids.add(messageId)
+  if (state.streamingMessageId.value) ids.add(state.streamingMessageId.value)
+  for (const id of ids) {
+    finishSmoothStream(id)
+    // smoothTexts 为本模块新增的显示层字段；测试 mock 状态可能不含它，缺失时跳过清理
+    state.smoothTexts?.delete(id)
+  }
+}
+
+/**
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
@@ -239,11 +281,15 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     if (!snapshotContent) {
       for (const part of chunk.chunk.delta) {
         if (part.text) {
+          // TPS 实时可视化：按文本长度粗估 token 到达（供应商无逐 chunk usage 时）
+          tpsMeter.record(Math.ceil(part.text.length / 3))
           if (part.thought) {
             addTextToMessage(message, part.text, true)
           } else {
             processStreamingText(message, part.text, state)
           }
+          // 平滑显示层：真实内容已累加，这里驱动打字节奏（关闭时直通，无副作用）
+          pushSmoothTextForMessage(message, part.text, state)
         }
 
         // 处理工具调用（原生 function call format）
@@ -942,6 +988,9 @@ export function handleComplete(
     }
   }
   
+  // 平滑流式：放完积压并清理显示文本（真实 content 已由 complete 替换）
+  finishSmoothStreamForState(state)
+  
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isStreaming.value = false
@@ -1187,6 +1236,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
       replaceMessageAt(state, messageIndex, updatedMessage)
     }
   }
+  // 平滑流式：放完积压并清理显示文本（半截内容已由 cancelled 替换/保留）
+  finishSmoothStreamForState(state)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isStreaming.value = false
@@ -1260,6 +1311,9 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   } else {
     state._failedStreamMessageId.value = null
   }
+  
+  // 平滑流式：放完积压并清理显示文本（半截消息已保留/删除）
+  finishSmoothStreamForState(state)
   
   state.activeStreamId.value = null
   state.isStreaming.value = false

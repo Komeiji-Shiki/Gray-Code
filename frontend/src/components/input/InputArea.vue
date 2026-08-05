@@ -12,6 +12,7 @@ import MessageQueue from './MessageQueue.vue'
 import InputAttachments from './InputAttachments.vue'
 import PinnedFilesWidget from './PinnedFilesWidget.vue'
 import SkillsWidget from './SkillsWidget.vue'
+import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
 import type { ChannelOption, PromptMode } from './types'
@@ -608,6 +609,9 @@ watch(() => settingsStore.promptModesVersion, () => {
         <BranchTreePanel />
       </div>
 
+      <!-- TPS 实时可视化：总结上下文按钮左侧（最底部一行） -->
+      <TpsBar class="tps-slot" />
+
       <div class="toolbar-right">
         <Tooltip :content="t('components.input.summarizeContext')" placement="top">
           <IconButton
@@ -708,6 +712,12 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm, 8px);
+}
+
+/* TPS 实时可视化条：占据底部行中间弹性区，总结上下文按钮左侧 */
+.tps-slot {
+  justify-content: center;
+  padding: 0 8px;
 }
 
 .attach-button :deep(i.codicon) {
