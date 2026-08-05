@@ -1962,6 +1962,7 @@ const ja: LanguageMessages = {
                     keepRounds: '最少保持ラウンド数',
                     keepRoundsUnit: 'ラウンド',
                     keepRoundsHint: '保持バジェットの下限保護として、少なくとも最近の N ラウンドは要約されません',
+                    keepRoundsMinNote: '下限は 1 ラウンドです（バックエンドが最低 1 ラウンドを強制します）',
                     keepTokens: '直近保持バジェット',
                     keepTokensHint: '要約時に圧縮せず保持する直近コンテキストの量：トークン数（例 30000）またはモデル最大コンテキストに対する割合（例 25%）。実際の範囲はこのバジェット内でラウンド境界に揃えられます',
                     maxAttempts: '自動要約の最大試行回数',
@@ -3459,7 +3460,8 @@ const ja: LanguageMessages = {
                 restoreDeleteFailed: '復元して削除に失敗しました',
                 noConfigSelected: '設定が選択されていません',
                 summarizeFailed: '要約に失敗しました',
-                restoreEditFailed: '復元して編集に失敗しました'
+                restoreEditFailed: '復元して編集に失敗しました',
+                messageChanged: 'メッセージが変更されました。履歴を更新して再試行してください'
             },
             relativeTime: {
                 justNow: 'たった今',

@@ -1962,6 +1962,7 @@ const en: LanguageMessages = {
                     keepRounds: 'Minimum Rounds to Keep',
                     keepRoundsUnit: 'rounds',
                     keepRoundsHint: 'Lower-bound protection for the keep budget: at least the most recent N rounds are never summarized',
+                    keepRoundsMinNote: 'Minimum is 1 round (backend enforces at least 1 round)',
                     keepTokens: 'Keep Recent Budget',
                     keepTokensHint: 'How much recent context to keep unsummarized: a token count (e.g. 30000) or a percentage of the model context window (e.g. 25%). The actual range aligns to round boundaries within this budget',
                     maxAttempts: 'Max Auto-Summarize Attempts',
@@ -3459,7 +3460,8 @@ const en: LanguageMessages = {
                 restoreDeleteFailed: 'Restore and delete failed',
                 noConfigSelected: 'No config selected',
                 summarizeFailed: 'Summarize failed',
-                restoreEditFailed: 'Restore and edit failed'
+                restoreEditFailed: 'Restore and edit failed',
+                messageChanged: 'Message has changed, please refresh the history and try again'
             },
             relativeTime: {
                 justNow: 'Just now',

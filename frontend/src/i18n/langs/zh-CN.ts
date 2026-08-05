@@ -1963,6 +1963,7 @@ const zhCN = {
                     keepRounds: '最少保留轮数',
                     keepRoundsUnit: '轮',
                     keepRoundsHint: '作为保留预算的下限保护，至少保留最近 N 轮对话不参与总结',
+                    keepRoundsMinNote: '下限为 1 轮（后端强制至少保留 1 轮）',
                     keepTokens: '保留内容预算',
                     keepTokensHint: '总结时保留最近约多少上下文不被压缩：填 token 数（如 30000）或相对模型最大上下文的百分比（如 25%），实际范围按此预算对齐到轮边界',
                     maxAttempts: '自动总结最大尝试次数',
@@ -3460,7 +3461,8 @@ const zhCN = {
                 restoreDeleteFailed: '回档并删除失败',
                 noConfigSelected: '未选择配置',
                 summarizeFailed: '总结失败',
-                restoreEditFailed: '回档并编辑失败'
+                restoreEditFailed: '回档并编辑失败',
+                messageChanged: '消息已发生变化，请刷新历史后重试'
             },
             relativeTime: {
                 justNow: '刚刚',
