@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-## [1.7.0] - 2026-08-05
+## [1.6.4] - 2026-08-05
 
 ### Merged
   - 同步上游 49a37f2..10c565c（PR #11/#13 等：启动动画 Splash、TPS 实时可视化与流式平滑输出（SmoothStreamer / smoothTexts / TpsBar）、上下文预算三层重构（`ContextBudgetExceededError` / `CONTEXT_OVERFLOW` 仅真实超窗抛出、模型窗口软/信封/硬边界、固定 prompt 计入预算、低收益总结跳过）、diff 工具行级差分缓存与批量加载并行化、子代理 transcript 索引投影与惰性加载（`lastSentHistoryProjection`）、run 终态落盘 flushRun、单会话停止不再取消全局未决 diff、对话删除检查点清理失败显式报错、上游回移植 fork 的 `getMetadataLight` 元数据缓存等性能优化），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏 / 多工作区 / 独立版本号增量
