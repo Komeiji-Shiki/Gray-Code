@@ -7,7 +7,7 @@
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
 import { ref, onMounted } from 'vue'
-import { CustomCheckbox } from '../common'
+import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
@@ -66,6 +66,40 @@ const entriesTotal = ref(0)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
 const editSaving = ref(false)
+// 待删除的条目（确认框展示；确认后调用 deleteMemoryEntry）
+const deleteCandidate = ref<LogEntry | null>(null)
+const showDeleteConfirm = ref(false)
+const deleteSaving = ref(false)
+
+// 请求删除：弹出确认框
+function requestDeleteEntry(entry: LogEntry) {
+  deleteCandidate.value = entry
+  showDeleteConfirm.value = true
+}
+
+// 确认删除单条原始记忆
+async function confirmDeleteEntry() {
+  const entry = deleteCandidate.value
+  if (!entry) return
+  deleteSaving.value = true
+  try {
+    await sendToExtension('deleteMemoryEntry', { id: entry.id })
+    deleteCandidate.value = null
+    showDeleteConfirm.value = false
+    // 删除后 id 重编号：整表重载（不能只按 id 过滤本地列表）
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to delete entry'
+  } finally {
+    deleteSaving.value = false
+  }
+}
+
+// 取消删除
+function cancelDeleteEntry() {
+  deleteCandidate.value = null
+  showDeleteConfirm.value = false
+}
 
 // 加载配置
 async function loadConfig() {
@@ -352,10 +386,24 @@ onMounted(() => {
               <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
+              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving" @click="requestDeleteEntry(entry)">
+                <i class="codicon codicon-trash"></i>
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- 删除单条记忆确认 -->
+      <ConfirmDialog
+        v-model="showDeleteConfirm"
+        :title="t('components.settings.settingsPanel.memory.rawEntries.deleteConfirmTitle')"
+        :message="t('components.settings.settingsPanel.memory.rawEntries.deleteConfirmMessage', { id: deleteCandidate?.id ?? '' })"
+        :confirm-text="t('common.delete')"
+        is-danger
+        @confirm="confirmDeleteEntry"
+        @cancel="cancelDeleteEntry"
+      />
 
       <!-- 提示 -->
       <div class="info-box">

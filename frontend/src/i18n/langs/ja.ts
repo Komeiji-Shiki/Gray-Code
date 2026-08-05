@@ -2168,7 +2168,9 @@ const ja: LanguageMessages = {
                     rawEntries: {
                         title: '生の記憶エントリ',
                         description: '生の記憶エントリを表示・編集します。編集すると関連する要約がクリアされます（次回の圧縮時に再構築されます）。',
-                        empty: 'まだ記憶エントリがありません。'
+                        empty: 'まだ記憶エントリがありません。',
+                        deleteConfirmTitle: '記憶エントリを削除',
+                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
                     }
                 },
 

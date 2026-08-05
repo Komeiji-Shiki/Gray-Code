@@ -214,6 +214,27 @@ export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
 };
 
 /**
+ * 删除单条原始记忆（真·单条删除：该条之后的记录 id 前移一格并重编号，
+ * 相关树摘要由 MemoryManager 清空，下次 recall/compress 重建）
+ */
+export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { id } = data;
+    if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (non-negative integer) is required.');
+    }
+    await mgr.deleteEntry(id);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_MEMORY_ENTRY_ERROR', error.message || 'Failed to delete memory entry');
+  }
+};
+
+/**
  * 获取图像生成配置
  */
 export const getGenerateImageConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -372,6 +393,7 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('updateMemoryConfig', updateMemoryConfig);
   registry.set('getMemoryEntries', getMemoryEntries);
   registry.set('updateMemoryEntry', updateMemoryEntry);
+  registry.set('deleteMemoryEntry', deleteMemoryEntry);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);

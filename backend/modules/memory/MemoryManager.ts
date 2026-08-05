@@ -760,6 +760,85 @@ export class MemoryManager {
         await this.dropSummariesCovering(id);
     }
 
+    /**
+     * deleteEntry: 删除单条原始记忆（真·单条删除，不连坐 truncateLog）。
+     *
+     * LOG 记录 id = 物理序号（内嵌于记录头 "#id date text"），删除中间某条后其后的
+     * 记录 id 整体前移一格，所有树摘要（按 [lo,hi) 块寻址）随之失效，一并清空
+     * （下次 recall/compress 按需重建，与 updateEntry/truncateLog 的摘要清理语义一致）。
+     * 采用「读全量 → 过滤 → 重编号 → tmp+rename 原子写回」，崩溃安全；
+     * 与 truncateLog 的物理截断不同，本方法不会误删目标之后的记忆。
+     * 仅删除最后一条时后续 id 不变，树摘要可保留。
+     */
+    async deleteEntry(id: number): Promise<{ removed: number }> {
+        const release = await this.lock.acquire();
+        let T = 0;
+        try {
+            const logPath = this.logPath();
+            await this.repair(logPath, LOG_REC);
+            T = await this.logLen();
+            if (id < 0 || id >= T) {
+                die(`No memory at index ${id}.`);
+            }
+
+            if (T === 1) {
+                // 唯一一条：直接清空
+                const handle = await fs.open(logPath, 'r+');
+                try {
+                    await handle.truncate(0);
+                } finally {
+                    await handle.close();
+                }
+            } else {
+                let rebuilt: Buffer[] = [];
+                const buf = Buffer.alloc(T * LOG_REC);
+                const handle = await fs.open(logPath, 'r');
+                try {
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+                    const content = buf.subarray(0, bytesRead);
+                    for (let i = 0; i < T; i++) {
+                        const rec = content.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const str = rec.toString('utf-8').trimEnd();
+                        if (!str) break;
+                        if (i === id) continue;
+                        const parsed = parse(str);
+                        rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
+                    }
+                } finally {
+                    await handle.close();
+                }
+                // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
+                // tmp+rename 原子替换，崩溃不损坏线上文件。
+                const tmpPath = `${logPath}.tmp`;
+                await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
+                await fs.rename(tmpPath, logPath);
+            }
+
+            // 删除中间记录后其后的 id 全部变号：清空旧长度 T 下所有树摘要（块索引全部失效）。
+            // 直接用文件操作清空而不调用 treeDrop：treeDrop 内部会重新 acquire 锁（AsyncLock
+            // 不可重入，持锁调用会死锁），且其循环以当前 logLen 为界，无法清理 size > 当前
+            // 长度的旧树文件。此处仍在锁内：与并发 treePut/logAppend 串行，无交错写风险。
+            if (T > 0 && id < T - 1) {
+                for (let size = 2; size <= T; size *= 2) {
+                    const p = this.treePath(size);
+                    const n = await this.count(p, TREE_REC);
+                    if (n > 0) {
+                        const th = await fs.open(p, 'r+');
+                        try {
+                            await th.truncate(0);
+                        } finally {
+                            await th.close();
+                        }
+                    }
+                }
+            }
+        } finally {
+            release();
+        }
+
+        return { removed: 1 };
+    }
+
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */
     private async dropSummariesCovering(id: number): Promise<void> {
         const T = await this.logLen();

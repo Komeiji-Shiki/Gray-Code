@@ -2169,7 +2169,9 @@ const zhCN = {
                     rawEntries: {
                         title: '原始记忆条目',
                         description: '查看和编辑原始记忆条目。编辑会清除相关摘要（下次压缩时重新构建）。',
-                        empty: '暂无记忆条目。'
+                        empty: '暂无记忆条目。',
+                        deleteConfirmTitle: '删除记忆条目',
+                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
                     }
                 },
 

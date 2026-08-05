@@ -2168,7 +2168,9 @@ const en: LanguageMessages = {
                     rawEntries: {
                         title: 'Raw Memory Entries',
                         description: 'View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).',
-                        empty: 'No memory entries yet.'
+                        empty: 'No memory entries yet.',
+                        deleteConfirmTitle: 'Delete memory entry',
+                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).'
                     }
                 },
 
