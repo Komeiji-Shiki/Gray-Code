@@ -20,6 +20,7 @@ import {
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
+import type { StreamFunctionCall } from '../../utils/functionCallMerge'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -339,6 +340,15 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 
         // 处理工具调用（原生 function call format）
         if (part.functionCall) {
+          // TPS 实时可视化：工具调用（函数名 + 参数 JSON）也是模型输出，按文本长度粗估计入。
+          // partialArgs 为流式增量（args 是其已解析子集），优先计增量；
+          // 无 partialArgs 时（非流式/最终态）按完整 args JSON 计。
+          const fc = part.functionCall as StreamFunctionCall
+          const fcNameLen = typeof fc.name === 'string' ? fc.name.length : 0
+          const fcBodyLen = typeof fc.partialArgs === 'string'
+            ? fc.partialArgs.length
+            : (fc.args && typeof fc.args === 'object' ? JSON.stringify(fc.args).length : 0)
+          tpsMeter.record(Math.ceil((fcNameLen + fcBodyLen) / 3))
           handleFunctionCallPart(part, message)
         }
       }
