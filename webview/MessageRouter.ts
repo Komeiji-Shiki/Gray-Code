@@ -50,7 +50,12 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   // 若在串行队列中 await 会阻塞 cancelStream / checkpoint.cancelOperation / 消息删除等全部 IPC，
   // 导致 webview 消息通道整体冻结；fire-and-forget 让取消类消息始终能及时送达。
   'checkpoint.previewExclusions',
-  'checkpoint.getAllConversationsWithCheckpoints'
+  'checkpoint.getAllConversationsWithCheckpoints',
+  // Monitor 控制消息必须绕过普通 handler 队列；否则前面一次慢磁盘读取会让暂停/退出点击排队，
+  // 用户看到按钮可点却迟迟没有任何效果。
+  'subagents.pauseRun',
+  'subagents.resumeRun',
+  'subagents.exitRun'
 ]);
 
 /**
@@ -258,7 +263,9 @@ export class MessageRouter {
           break;
         }
         const { conversationId } = data;
-        this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
+        this.streamHandler.cancelStream(conversationId, requestId, {
+          preserveSubAgents: data.preserveSubAgents === true
+        }).catch(console.error);
         break;
 
       // H2（R6a-FIX）：reroll/editBranch 长流按 fire-and-forget 处理（与 chatStream/retryStream 同），

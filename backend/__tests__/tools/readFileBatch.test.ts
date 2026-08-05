@@ -54,6 +54,21 @@ describe('read_file batch requests', () => {
         });
     });
 
+    it('treats an empty files default as absent when path is provided', async () => {
+        const result = await createReadFileTool().handler({
+            path: 'a.txt',
+            files: [],
+            startLine: 1,
+            endLine: 1
+        }) as any;
+
+        expect(result.success).toBe(true);
+        expect(result.data.results[0]).toMatchObject({
+            path: 'a.txt',
+            content: '   1 | a1'
+        });
+    });
+
     it('reads multiple files in input order with independent line ranges', async () => {
         const result = await createReadFileTool().handler({
             files: [

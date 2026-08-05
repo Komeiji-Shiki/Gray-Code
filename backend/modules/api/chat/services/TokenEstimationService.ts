@@ -11,6 +11,7 @@
  */
 
 import type { Content, ContentPart, ChannelTokenCounts } from '../../../conversation/types';
+import { cleanFunctionResponseForAPI } from '../../../conversation/helpers';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { TokenCountService } from '../../../channel/TokenCountService';
@@ -194,7 +195,7 @@ export class TokenEstimationService {
                 continue;
             }
             
-            messagesToCount.push({ index, message });
+            messagesToCount.push({ index, message: this.cleanMessageForTokenCount(message) });
         }
         
         if (messagesToCount.length === 0) {
@@ -396,6 +397,25 @@ export class TokenEstimationService {
         return tokenCounts;
     }
     
+    /** 使用与历史 API 格式化一致的 functionResponse 字段集合进行计数，避免 UI/运行时元数据虚增裁剪预算。 */
+    private cleanMessageForTokenCount(message: Content): Content {
+        return {
+            ...message,
+            parts: message.parts.map(part => {
+                if (!part.functionResponse) return part;
+                return {
+                    ...part,
+                    functionResponse: {
+                        ...part.functionResponse,
+                        response: cleanFunctionResponseForAPI(
+                            part.functionResponse.response as Record<string, unknown>
+                        ) as Record<string, unknown>
+                    }
+                };
+            })
+        };
+    }
+
     /**
      * 估算一条消息的 token 数
      *
@@ -423,7 +443,10 @@ export class TokenEstimationService {
                 tokens += Math.ceil((part.functionCall.name.length + argsStr.length) / 4);
             }
             if (part.functionResponse) {
-                const responseStr = JSON.stringify(part.functionResponse.response);
+                const cleanedResponse = cleanFunctionResponseForAPI(
+                    part.functionResponse.response as Record<string, unknown>
+                );
+                const responseStr = JSON.stringify(cleanedResponse);
                 tokens += Math.ceil((part.functionResponse.name.length + responseStr.length) / 4);
                 // 如果有 parts（多模态数据）
                 if (part.functionResponse.parts) {

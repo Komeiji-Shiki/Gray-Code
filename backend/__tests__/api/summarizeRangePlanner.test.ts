@@ -10,7 +10,8 @@
 import {
     resolveKeepRecentTokenBudget,
     planSummarizeRounds,
-    planIntraRoundSplit
+    planIntraRoundSplit,
+    planSummarizeMessages
 } from '../../modules/api/chat/services/summarizeRangePlanner';
 import { DEFAULT_KEEP_RECENT_TOKENS } from '../../modules/settings/types';
 import type { Content } from '../../modules/conversation/types';
@@ -242,4 +243,89 @@ describe('planIntraRoundSplit', () => {
         const result = planIntraRoundSplit({ messages, messageTokens, keepBudgetTokens: 10000 });
         expect(result).toEqual({ cutIndex: 1 });
     });
+});
+
+describe('planSummarizeMessages', () => {
+    const user = (text: string): Content => ({ role: 'user', parts: [{ text }], isUserInput: true });
+    const modelText = (text: string): Content => ({ role: 'model', parts: [{ text }] });
+    const fc = (id: string): Content => ({
+        role: 'model',
+        parts: [{ functionCall: { name: 'tool', args: {}, id } }]
+    });
+    const fr = (id: string): Content => ({
+        role: 'user',
+        isFunctionResponse: true,
+        parts: [{ functionResponse: { name: 'tool', response: {}, id } }]
+    });
+
+    it('多轮历史中的肥工具轮按安全 model 边界细分，而不是整轮总结', () => {
+        const messages = [
+            user('old'), modelText('old answer'),
+            user('fat'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('fat done'),
+            user('current'), modelText('current answer')
+        ];
+        const messageTokens = [10, 10, 10, 40, 40, 40, 40, 10, 10, 10];
+
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens,
+            keepBudgetTokens: 100,
+            minKeepRounds: 1,
+            mode: 'auto'
+        });
+
+        // 轮级算法会直接切到 current(index 8)；细粒度算法保留 fat 轮尾部的完成消息。
+        expect(plan).toEqual({ cutIndex: 7, boundary: 'intra_round' });
+        expect(validateHistoryIntegrityForTest(messages.slice(plan!.cutIndex))).toBe(true);
+    });
+
+    it('候选切点会拆散 functionCall/functionResponse 时继续寻找后续安全边界', () => {
+        const messages = [
+            user('q'),
+            fc('a'),
+            modelText('intermediate'),
+            fr('a'),
+            fc('b'),
+            fr('b'),
+            modelText('done'),
+            user('next'),
+            modelText('next answer')
+        ];
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens: messages.map(() => 100),
+            keepBudgetTokens: 700,
+            minKeepRounds: 1,
+            mode: 'auto'
+        });
+
+        expect(plan).toEqual({ cutIndex: 4, boundary: 'intra_round' });
+    });
+
+    it('多轮历史的当前长轮自身超预算时也允许轮内切分', () => {
+        const messages = [
+            user('old'), modelText('old answer'),
+            user('current'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('done')
+        ];
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens: [50, 50, 100, 200, 200, 200, 200, 100],
+            keepBudgetTokens: 550,
+            minKeepRounds: 1,
+            mode: 'auto'
+        });
+
+        expect(plan).toEqual({ cutIndex: 5, boundary: 'intra_round' });
+    });
+
+    function validateHistoryIntegrityForTest(history: Content[]): boolean {
+        const calls = new Set<string>();
+        for (const message of history) {
+            for (const part of message.parts) {
+                if (part.functionCall?.id) calls.add(part.functionCall.id);
+                if (part.functionResponse?.id && !calls.has(part.functionResponse.id)) return false;
+            }
+        }
+        return true;
+    }
 });

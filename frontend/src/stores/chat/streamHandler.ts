@@ -102,6 +102,30 @@ function maybeRefreshBranchAfterStream(state: ChatStoreState): void {
 }
 
 /**
+ * 消费当前分支流的重放上下文。
+ *
+ * 成功/取消时直接清理；只有包装后的分支流错误才写入 ErrorInfo，普通 API_ERROR 等仍沿用 retryStream。
+ */
+function finishBranchStreamTracking(state: ChatStoreState, preserveForBranchError = false): void {
+  const replayContext = state._pendingBranchReplayContext.value
+  if (replayContext?.conversationId === state.currentConversationId.value) {
+    const error = state.error.value
+    const isMatchingBranchError = !!error && (
+      (replayContext.kind === 'reroll' && error.code === 'REROLL_ERROR') ||
+      (replayContext.kind === 'editBranch' && error.code === 'EDIT_BRANCH_ERROR')
+    )
+    if (preserveForBranchError && isMatchingBranchError) {
+      state.error.value = {
+        ...error,
+        branchReplayContext: replayContext
+      }
+    }
+    state._pendingBranchReplayContext.value = null
+  }
+  maybeRefreshBranchAfterStream(state)
+}
+
+/**
  * 处理单条流式响应
  */
 export function handleStreamChunk(
@@ -159,12 +183,12 @@ export function handleStreamChunk(
         // handleToolIteration 终结路径会把 activeStreamId 置空，据此消费分支图刷新标记；
         // 非终结路径（继续下一轮工具循环）activeStreamId 保持原值，不提前消费。
         if (state.activeStreamId.value === null) {
-          maybeRefreshBranchAfterStream(state)
+          finishBranchStreamTracking(state)
         }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
         resetTerminalStreamState(state)
-        maybeRefreshBranchAfterStream(state)
+        finishBranchStreamTracking(state)
       }
       break
       
@@ -175,7 +199,7 @@ export function handleStreamChunk(
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
         resetTerminalStreamState(state)
       }
-      maybeRefreshBranchAfterStream(state)
+      finishBranchStreamTracking(state)
       nextTick(() => processQueue())
       break
       
@@ -193,13 +217,13 @@ export function handleStreamChunk(
       
     case 'cancelled':
       handleCancelled(chunk, state)
-      maybeRefreshBranchAfterStream(state)
+      finishBranchStreamTracking(state)
       nextTick(() => processQueue())
       break
 
     case 'error':
       handleError(chunk, state)
-      maybeRefreshBranchAfterStream(state)
+      finishBranchStreamTracking(state, true)
       nextTick(() => processQueue())
       break
   }

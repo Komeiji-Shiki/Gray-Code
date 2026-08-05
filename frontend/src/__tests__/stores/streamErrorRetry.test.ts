@@ -18,7 +18,7 @@ import type { Ref } from 'vue'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, CheckpointRecord } from '../../stores/chat/types'
-import { handleError } from '../../stores/chat/streamChunkHandlers'
+import { handleComplete, handleError } from '../../stores/chat/streamChunkHandlers'
 import {
   retryAfterError,
   retryFromMessage,
@@ -84,6 +84,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
@@ -335,22 +336,75 @@ describe('retryAfterError', () => {
     expect(state.isLoading.value).toBe(false)
   })
 
-  it('方案 B：REROLL_ERROR 携带可重试底层 type 时错误条重试可用', async () => {
+  it('REROLL_ERROR 流式失败重放 reroll，不退回 retryStream', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题' })
     const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([user, partial]),
       _failedStreamMessageId: ref('msg_partial'),
-      error: ref({ code: 'REROLL_ERROR', message: 'boom', type: 'API_ERROR' })
+      error: ref({
+        code: 'REROLL_ERROR',
+        message: 'boom',
+        type: 'API_ERROR',
+        branchReplayContext: {
+          kind: 'reroll',
+          conversationId: 'conv_1',
+          assistantNodeId: 'msg_original_answer',
+          configId: 'cfg_1',
+          promptModeId: 'code'
+        }
+      })
     })
 
     await retryAfterError(state, createComputed())
 
-    // 通过入口守卫：回滚半截消息并发起 retryStream
     expect(state.allMessages.value.some(m => m.id === 'msg_partial')).toBe(false)
-    const retryCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')
-    expect(retryCall).toBeDefined()
+    const rerollCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.rerollStream')
+    expect(rerollCall).toBeDefined()
+    expect(rerollCall![1]).toMatchObject({ conversationId: 'conv_1', configId: 'cfg_1' })
+    // 流式失败后原目标已进入 sidecar，交给后端按当前活跃路径选择失败候选。
+    expect(rerollCall![1]).not.toHaveProperty('assistantNodeId')
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'deleteMessage')).toBeUndefined()
+  })
+
+  it('EDIT_BRANCH_ERROR 流式失败重放编辑分支，并保留编辑文本', async () => {
+    const parent = createMessage({ id: 'msg_parent', role: 'assistant', content: '上一条回答' })
+    const editedUser = createMessage({ id: 'msg_edited_user', role: 'user', content: '编辑后的问题' })
+    const partial = createMessage({ id: 'msg_partial', role: 'assistant', content: '半截回答', localOnly: true })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([parent, editedUser, partial]),
+      _failedStreamMessageId: ref('msg_partial'),
+      error: ref({
+        code: 'EDIT_BRANCH_ERROR',
+        message: 'boom',
+        type: 'TIMEOUT_ERROR',
+        branchReplayContext: {
+          kind: 'editBranch',
+          conversationId: 'conv_1',
+          userNodeId: 'msg_original_user',
+          newText: '编辑后的问题',
+          configId: 'cfg_1',
+          promptModeId: 'code'
+        }
+      })
+    })
+
+    await retryAfterError(state, createComputed())
+
+    const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      newText: '编辑后的问题',
+      configId: 'cfg_1'
+    })
+    expect(editCall![1]).not.toHaveProperty('userNodeId')
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    // 窗口裁剪会移除最前面的孤立 assistant；编辑后的 user 与新占位必须保留。
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_edited_user', expect.any(String)])
   })
 
   it('方案 B：REROLL_ERROR 无底层 type（reroll 特有错误）时不触发重试', async () => {
@@ -557,7 +611,57 @@ describe('retryFromMessage reroll 主流程（TREE-01）', () => {
     vi.mocked(loadCheckpoints).mockClear()
   })
 
-  it('rerollStream IPC 抛异常时：重载最后一页 + loadCheckpoints + 复位流式状态与标记，不发起 retryStream/deleteMessage', async () => {
+  it('流完成后采用后端稳定节点 ID，重试不会再发送前端临时占位 ID', async () => {
+    const user = createMessage({ id: 'server-user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
+    const placeholder = createMessage({
+      id: '1785860200670_2ojp0foff',
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      localOnly: true,
+      backendIndex: 1
+    })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, placeholder]),
+      streamingMessageId: ref(placeholder.id),
+      activeStreamId: ref('stream_1'),
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    handleComplete({
+      conversationId: 'conv_1',
+      type: 'complete',
+      streamId: 'stream_1',
+      content: {
+        id: 'server-assistant-node',
+        parentId: 'server-user',
+        role: 'model',
+        parts: [{ text: '完整回答' }],
+        timestamp: 2
+      }
+    } as any, state, () => {}, vi.fn())
+
+    expect(state.allMessages.value[1]).toMatchObject({
+      id: 'server-assistant-node',
+      content: '完整回答',
+      localOnly: false,
+      streaming: false
+    })
+
+    await retryFromMessage(state, createComputed(), 1, async () => {})
+
+    const rerollCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.rerollStream')
+    expect(rerollCall?.[1]).toMatchObject({
+      conversationId: 'conv_1',
+      assistantNodeId: 'server-assistant-node'
+    })
+    expect(rerollCall?.[1]?.assistantNodeId).not.toBe('1785860200670_2ojp0foff')
+  })
+
+  it('rerollStream IPC 请求级失败后：重载一致状态并按原目标重放 reroll', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
     const assistant = createMessage({ id: 'msg_assistant', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
     const state = createState({
@@ -584,6 +688,12 @@ describe('retryFromMessage reroll 主流程（TREE-01）', () => {
 
     // 错误条展示 RETRY_ERROR（reroll 启动失败，不再继续）
     expect(state.error.value?.code).toBe('RETRY_ERROR')
+    expect(state.error.value?.branchReplayContext).toMatchObject({
+      kind: 'reroll',
+      conversationId: 'conv_1',
+      assistantNodeId: 'msg_assistant',
+      configId: 'cfg_1'
+    })
     // 发起了最后一页重载
     const reloadCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')
     expect(reloadCall).toBeDefined()
@@ -603,6 +713,21 @@ describe('retryFromMessage reroll 主流程（TREE-01）', () => {
     // 窗口恢复为后端重载结果
     expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_user', 'msg_assistant'])
     expect(state.allMessages.value[1].backendIndex).toBe(1)
+
+    // 请求尚未启动，重试必须使用原始 assistant 节点，而不是追加普通 retryStream。
+    vi.mocked(sendToExtension).mockClear()
+    vi.mocked(sendToExtension).mockResolvedValue({ success: true })
+    await retryAfterError(state, createComputed())
+
+    const replayCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.rerollStream')
+    expect(replayCall).toBeDefined()
+    expect(replayCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      assistantNodeId: 'msg_assistant',
+      configId: 'cfg_1'
+    })
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(state.allMessages.value.map(message => message.id)).toEqual(['msg_user', expect.any(String)])
   })
 
   it('reroll 成功发起：不 deleteMessage、不 retryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 assistantNodeId', async () => {
@@ -677,7 +802,7 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
     vi.mocked(loadCheckpoints).mockClear()
   })
 
-  it('chat.editBranchStream IPC 抛异常时：错误码 EDIT_RETRY_ERROR + 重载最后一页 + 检查点恢复一致（reroll 同款）', async () => {
+  it('chat.editBranchStream IPC 请求级失败后：恢复原消息并重放原编辑请求', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
     const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })
     const state = createState({
@@ -706,6 +831,13 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
 
     // 错误码 EDIT_RETRY_ERROR（仍可重试；此时本地已与后端一致，重试基于真实历史）
     expect(state.error.value?.code).toBe('EDIT_RETRY_ERROR')
+    expect(state.error.value?.branchReplayContext).toMatchObject({
+      kind: 'editBranch',
+      conversationId: 'conv_1',
+      userNodeId: 'msg_target',
+      newText: '新回答',
+      configId: 'cfg_1'
+    })
     // M-9 同款：会话未切换时重载最后一页 + 检查点
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getMessagesPaged')).toBeDefined()
     expect(loadCheckpoints).toHaveBeenCalled()
@@ -723,6 +855,22 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
     expect(state.isWaitingForResponse.value).toBe(false)
     expect(state.isLoading.value).toBe(false)
     expect(state.streamingMessageId.value).toBeNull()
+
+    vi.mocked(sendToExtension).mockClear()
+    vi.mocked(sendToExtension).mockResolvedValue({ success: true })
+    await retryAfterError(state, createComputed())
+
+    const replayCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(replayCall).toBeDefined()
+    expect(replayCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      userNodeId: 'msg_target',
+      newText: '新回答',
+      configId: 'cfg_1'
+    })
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
+    expect(state.allMessages.value[1].content).toBe('新回答')
+    expect(state.allMessages.value[2].streaming).toBe(true)
   })
 
   it('编辑分支成功发起：不 deleteMessage/retryStream/editAndRetryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 userNodeId/newText', async () => {

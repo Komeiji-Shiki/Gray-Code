@@ -33,7 +33,7 @@ import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repai
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
-import { activePath, isFunctionResponseMessage } from './branch/BranchGraph';
+import { activePath, findUnsyncedFunctionResponses, isFunctionResponseMessage } from './branch/BranchGraph';
 import { BranchError } from './branch/types';
 import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import { Logger } from '../../core/logger';
@@ -237,6 +237,15 @@ export class ConversationManager {
      */
     private readonly deletedConversationIds = new Set<string>();
     private static readonly MAX_DELETED_IDS = 10000;
+
+    /**
+     * 同一会话 ID 的首次创建合并表。
+     *
+     * loadHistory 的按需创建可能与前端显式 createConversation 同时发生；两条路径都采用
+     * “先查不存在、再落盘”时，后到者会把正常竞态误报成“对话已存在”。这里只合并仍在进行的
+     * 创建，创建完成后的显式重复调用仍按原语义报错。
+     */
+    private readonly conversationCreations = new Map<string, Promise<void>>();
 
     /** append/mutate 入口短路：会话已被删除时拒绝写入（正常删除后不应再有写入） */
     private assertNotDeleted(conversationId: string): void {
@@ -779,15 +788,23 @@ export class ConversationManager {
             // appendContents 接线）；异步同步完成前切换或同步失败时，重写只取图节点内容
             // （下述 nextContents），主历史尾部未入图的消息会被整体替换丢弃 → 此处拒绝切换并
             // 返回明确错误（BRANCH_OPERATION_CONFLICT），等待同步收敛（或修复图）后重试；
-            // 不丢弃任何历史消息。判定口径：主历史非 functionResponse 消息的 id 必须存在于
-            // 图节点集合（FR 消息按决策 8 并入所属节点 parts，不单独成节点，故排除）。
+            // 不丢弃任何历史消息。判定口径分两层：
+            // 1) 主历史非 functionResponse 消息的 id 必须存在于图节点集合（FR 消息按决策 8
+            //    并入所属节点 parts，不单独成节点，故排除）；
+            // 2) FR 消息内容必须已并入所属节点 parts——findUnsyncedFunctionResponses 沿主历史
+            //    以最近非 FR 消息 id 为 owner，校验 FR parts 的 functionResponse.id 集合是
+            //    owner 节点 parts 中 FR id 集合的子集；owner 节点已入图但 FR 内容未同步
+            //    （addContent(FR) 走 mutateContents 不触发图同步 / appendHistoryToGraph 同步
+            //    失败）时，重写会静默丢弃 FR 内容，同样拒绝。
             const unsyncedCount = oldHistory.filter(message =>
                 !isFunctionResponseMessage(message) && !graph.nodes[message.id ?? '']).length;
-            if (unsyncedCount > 0) {
+            const unsyncedFunctionResponses = findUnsyncedFunctionResponses(oldHistory, graph);
+            if (unsyncedCount > 0 || unsyncedFunctionResponses.length > 0) {
                 throw new BranchError(
                     'BRANCH_OPERATION_CONFLICT',
                     `switch rejected: ${unsyncedCount} message(s) in main history are not yet synced to ` +
-                    `the branch graph; retry after the pending append sync completes`
+                    `the branch graph (${unsyncedFunctionResponses.length} functionResponse message(s) ` +
+                    `not yet synced to their owner node parts); retry after the pending append sync completes`
                 );
             }
 
@@ -1038,6 +1055,24 @@ export class ConversationManager {
      * @param workspaceUri 工作区 URI（可选）
      */
     async createConversation(conversationId: string, title?: string, workspaceUri?: string): Promise<void> {
+        const inFlight = this.conversationCreations.get(conversationId);
+        if (inFlight) {
+            await inFlight;
+            return;
+        }
+
+        const creation = this.createConversationInternal(conversationId, title, workspaceUri);
+        this.conversationCreations.set(conversationId, creation);
+        try {
+            await creation;
+        } finally {
+            if (this.conversationCreations.get(conversationId) === creation) {
+                this.conversationCreations.delete(conversationId);
+            }
+        }
+    }
+
+    private async createConversationInternal(conversationId: string, title?: string, workspaceUri?: string): Promise<void> {
         // 显式重建同一 ID：撤销“已删除”标记（删除后新会话可正常写入）
         this.deletedConversationIds.delete(conversationId);
         // 检查存储中是否已存在
@@ -1352,7 +1387,7 @@ export class ConversationManager {
     /**
      * 添加完整的 Content 对象（对 functionResponse 自动去重）
      */
-    async addContent(conversationId: string, content: Content): Promise<void> {
+    async addContent(conversationId: string, content: Content): Promise<Content | undefined> {
         const contentCopy = JSON.parse(JSON.stringify(content));
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
@@ -1368,14 +1403,17 @@ export class ConversationManager {
         // HIS-02：纯追加（非 functionResponse）没有配对/去重逻辑，走 append-only 尾段写入，
         // 不再读全量历史做去重（避免长对话下每次追加都全量重写）。
         if (!contentCopy.isFunctionResponse || !contentCopy.parts) {
-            await this.getTranscriptRepository(conversationId).appendContents([contentCopy]);
-            return;
+            const [persistedContent] = await this.getTranscriptRepository(conversationId).appendContents([contentCopy]);
+            // appendContents 返回本次真实落盘副本，其中包含委托补齐的稳定 id / parentId。
+            // 流式调用方需要把它原样回传前端，避免前端临时消息 ID 被误当作分支节点 ID。
+            return persistedContent;
         }
 
         // functionResponse 保留配对语义：去重 + 追加整体放入仓储互斥执行器，
         // 两个并发 addContent 基于同一旧快照各自追加时，同一 tool_use_id 会出现两条
         // functionResponse（会触发 API 400）。锁内重新收集 existingResponseIds 再过滤；
         // 全部被过滤时返回原引用跳过写回。
+        let appendedContent: Content | undefined;
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
             // 去重：过滤掉历史中已有响应的 tool call ID。
             // 这是一道安全网，防止 cancelStream→rejectAllPendingToolCalls 与工具执行循环之间的
@@ -1399,9 +1437,15 @@ export class ConversationManager {
                 return history; // 所有 parts 均已有响应，无需添加空消息（原引用=跳过写回）
             }
 
-            history.push(this.ensureNodeId({ ...contentCopy, parts: filteredParts }, history[history.length - 1] ?? null));
+            const persistedContent = this.ensureNodeId(
+                { ...contentCopy, parts: filteredParts },
+                history[history.length - 1] ?? null
+            );
+            history.push(persistedContent);
+            appendedContent = this.cloneJson(persistedContent);
             return history.slice();
         });
+        return appendedContent;
     }
 
     /**

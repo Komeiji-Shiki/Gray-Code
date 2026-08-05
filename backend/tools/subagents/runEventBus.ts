@@ -60,6 +60,18 @@ export interface SubAgentRunPersistedRecord {
      * 修改目的：为后续统一 AgentRunEvent replay 保留单调时序基础。
      */
     eventSequence?: number;
+    /**
+     * 最后一次实际发送给 provider 的 history（generate 前剥离重放 agentInbox 后的请求历史）。
+     *
+     * 修改原因：Monitor 展示的 contents 首条是 # SubAgent Invocation 卡片，从未发给 provider；
+     *          continueFromRunId 续跑若以 contents 为前缀，请求历史与旧 run 从第 0 条就不同，
+     *          provider 侧前缀缓存（DeepSeek KVCache / Anthropic user_id 域）必然 miss。
+     * 修改方式：executor 每次 generate 前把剥离后的请求历史经 updateLastSentHistory 写入本字段，
+     *          随现有 metadata 一起持久化/恢复；续跑时优先取它作为 baseContents。
+     * 修改目的：续跑请求前缀与旧 run 最后一次实际发送逐条一致，命中 provider 前缀缓存；
+     *          旧 metadata 缺该字段时由 executor 降级处理（过滤卡片 contents）。
+     */
+    lastSentHistory?: Content[];
 }
 
 export interface SubAgentRunSnapshot extends SubAgentRunPersistedRecord {
@@ -549,6 +561,30 @@ export class SubAgentRunEventBus {
         return this.replaceContents(runId, nextContents);
     }
 
+    /**
+     * 记录某 run 最后一次实际发送给 provider 的 history（供 continueFromRunId 续跑精确复用）。
+     *
+     * 修改原因：续跑必须以「旧 run 真正发给 provider 的请求前缀」为 baseContents，
+     *          而不是 Monitor 展示用的 contents（首条是 # SubAgent Invocation 卡片、从未发给模型），
+     *          否则续跑请求从第 0 条起就与旧 run 不同，provider 前缀缓存（DeepSeek KVCache /
+     *          Anthropic user_id 域）必然 miss。
+     * 修改方式：深拷贝存入 snapshot.lastSentHistory，只更新时间与入队持久化；
+     *          不调用 commitContentChange / bumpContentRevision，不发 content_snapshot 事件。
+     * 修改目的：续跑复用旧 run 的 provider 前缀缓存，同时不污染 Monitor 的 contents 与 contentRevision。
+     */
+    updateLastSentHistory(runId: string, history: Content[]): void {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot) {
+            return;
+        }
+        ensureSnapshotProtocolFields(snapshot);
+        const now = Date.now();
+        snapshot.lastSentHistory = JSON.parse(JSON.stringify(history || [])) as Content[];
+        snapshot.updatedAt = now;
+        // 与内容类写入共用节流持久化窗口；不 bump contentRevision、不发 content_snapshot
+        this.enqueuePersist(runId);
+    }
+
     subscribe(listener: SubAgentRunListener): () => void {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
@@ -653,7 +689,12 @@ export class SubAgentRunEventBus {
                 // 修改方式：缺失字段统一补 0，保留已有新格式字段。
                 // 修改目的：历史 run 也能参与前端 stale window 判断，不需要专门兼容分支。
                 contentRevision: Number.isFinite(record.contentRevision) ? record.contentRevision! : 0,
-                eventSequence: Number.isFinite(record.eventSequence) ? record.eventSequence! : 0
+                eventSequence: Number.isFinite(record.eventSequence) ? record.eventSequence! : 0,
+                // 修改原因：lastSentHistory 是续跑复用 provider 前缀缓存的唯一依据，恢复时深拷贝避免与持久化对象共享引用。
+                // 修改方式：仅在字段为数组时显式重建；旧数据缺字段时保持 undefined，由 executor 降级处理。
+                ...(Array.isArray(record.lastSentHistory)
+                    ? { lastSentHistory: JSON.parse(JSON.stringify(record.lastSentHistory)) as Content[] }
+                    : {})
             };
             this.snapshots.set(record.runId, snapshot);
             this.stores.set(record.runId, store);
@@ -745,7 +786,13 @@ export class SubAgentRunEventBus {
                     updatedAt: snapshot.updatedAt,
                     contents: snapshot.contents,
                     contentRevision: snapshot.contentRevision,
-                    eventSequence: snapshot.eventSequence
+                    eventSequence: snapshot.eventSequence,
+                    // 修改原因：续跑要复用旧 run 最后一次实际发送给 provider 的 history（lastSentHistory），
+                    //          它必须与 contents 一起落盘，重载/内存淘汰后仍可恢复。
+                    // 修改方式：随现有 metadata 持久化；缺失时保持 undefined，不污染旧格式。
+                    ...(Array.isArray(snapshot.lastSentHistory)
+                        ? { lastSentHistory: snapshot.lastSentHistory }
+                        : {})
                 };
                 persistedMap[runId] = record;
                 await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);

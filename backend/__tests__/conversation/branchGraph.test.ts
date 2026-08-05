@@ -12,6 +12,7 @@ import {
     collectDeletedNodes,
     createEmptyBranchGraph,
     editCandidate,
+    findUnsyncedFunctionResponses,
     importLinearHistory,
     insertNode,
     isDeletedNodeExpired,
@@ -663,6 +664,124 @@ describe('importLinearHistory（MIG-01 / BR-09 线性导入）', () => {
         } finally {
             warnSpy.mockRestore();
         }
+    });
+});
+describe('findUnsyncedFunctionResponses（R8a-M2：FR 内容同步校验）', () => {
+    const frPart = (id: string) => ({ functionResponse: { id, name: 'toolA', response: { success: true } } });
+    const frMessage = (id: string | undefined, frIds: string[]) => ({
+        role: 'user',
+        parts: frIds.map(frPart),
+        id,
+        isFunctionResponse: true,
+    });
+
+    /** 图：root → u → a；owner a 的 parts = [text] + 指定 FR parts */
+    function graphWithOwnerFr(frIds: string[]): ConversationBranchGraph {
+        let g = createEmptyBranchGraph();
+        g = insertNode(g, node('root', null, { createdAt: 1 }));
+        g = insertNode(g, node('u', 'root', { role: 'user', createdAt: 2 }));
+        g = insertNode(g, node('a', 'u', {
+            role: 'model',
+            createdAt: 3,
+            parts: [{ text: 'calling' }, ...frIds.map(frPart)],
+        }));
+        return g;
+    }
+
+    test('FR id 缺失于 owner 节点 parts → 报出该 FR 消息 id', () => {
+        const graph = graphWithOwnerFr([]); // owner a 的 parts 无任何 FR
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ functionCall: { id: 't1', name: 'toolA', args: {} } }], id: 'a', parentId: 'root' },
+            frMessage('fr1', ['t1']),
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual(['fr1']);
+    });
+
+    test('FR 已并入 owner 节点 parts → 不报（子集匹配而非全等：owner 含更多 FR 不误报）', () => {
+        const graph = graphWithOwnerFr(['t1', 't2']); // owner 已同步 t1、t2
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ functionCall: { id: 't1', name: 'toolA', args: {} } }], id: 'a', parentId: 'root' },
+            frMessage('fr1', ['t1']), // 只含 t1：是 {t1,t2} 的子集 → 不报
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual([]);
+    });
+
+    test('多条 FR 消息对同一 owner 各自子集匹配：只报缺失的那条', () => {
+        const graph = graphWithOwnerFr(['t1']); // owner 只同步了 t1
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [
+                { functionCall: { id: 't1', name: 'toolA', args: {} } },
+                { functionCall: { id: 't2', name: 'toolB', args: {} } },
+            ], id: 'a', parentId: 'root' },
+            frMessage('fr1', ['t1']), // 已同步 → 不报
+            frMessage('fr2', ['t2']), // 未同步 → 报
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual(['fr2']);
+    });
+
+    test('owner 沿主历史切换：FR 只关联最近非 FR 消息', () => {
+        let graph = createEmptyBranchGraph();
+        graph = insertNode(graph, node('root', null, { createdAt: 1 }));
+        graph = insertNode(graph, node('a', 'root', { role: 'model', createdAt: 2 }));
+        graph = insertNode(graph, node('b', 'a', { role: 'model', createdAt: 3, parts: [frPart('t2')] }));
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ functionCall: { id: 't1', name: 'toolA', args: {} } }], id: 'a', parentId: 'root' },
+            frMessage('fr1', ['t1']), // owner = a（未同步 t1 → 报）
+            { role: 'model', parts: [{ functionCall: { id: 't2', name: 'toolB', args: {} } }], id: 'b', parentId: 'a' },
+            frMessage('fr2', ['t2']), // owner = b（已同步 → 不报）
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual(['fr1']);
+    });
+
+    test('首条即 FR（owner 为 null）→ 跳过不报', () => {
+        const graph = graphWithOwnerFr([]);
+        const history = [frMessage('fr0', ['t1'])] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual([]);
+    });
+
+    test('owner 消息无 id → 跳过不报（无法关联 owner 节点）', () => {
+        const graph = graphWithOwnerFr([]);
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], parentId: null }, // 无 id
+            { role: 'model', parts: [{ text: 'a' }], parentId: null },
+            frMessage('fr1', ['t1']),
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual([]);
+    });
+
+    test('owner 节点不在图中 → 跳过不报（由现有非 FR 检查兜底，避免重复计数）', () => {
+        const graph = graphWithOwnerFr([]);
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ text: 'ghost-a' }], id: 'ghostA', parentId: 'root' }, // 图外 owner
+            frMessage('fr1', ['t1']),
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual([]);
+    });
+
+    test('FR part 无 id / 空 id → 跳过不报', () => {
+        const graph = graphWithOwnerFr([]);
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ text: 'a' }], id: 'a', parentId: 'root' },
+            { role: 'user', parts: [{ functionResponse: { name: 'toolA', response: {} } }], id: 'fr1', isFunctionResponse: true }, // 无 id
+            { role: 'user', parts: [{ functionResponse: { id: '', name: 'toolB', response: {} } }], id: 'fr2', isFunctionResponse: true }, // 空 id
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual([]);
+    });
+
+    test('FR 消息自身无 id 且内容未同步 → 报空串占位', () => {
+        const graph = graphWithOwnerFr([]);
+        const history = [
+            { role: 'user', parts: [{ text: 'q' }], id: 'root', parentId: null },
+            { role: 'model', parts: [{ functionCall: { id: 't1', name: 'toolA', args: {} } }], id: 'a', parentId: 'root' },
+            { role: 'user', parts: [frPart('t1')], isFunctionResponse: true }, // 消息无 id
+        ] as any;
+        expect(findUnsyncedFunctionResponses(history, graph)).toEqual(['']);
     });
 });
 

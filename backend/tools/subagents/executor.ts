@@ -48,6 +48,49 @@ interface SubAgentExecutedToolCall {
     multimodalAttachments?: ContentPart[];
 }
 
+/** 不响应 AbortSignal 的工具最多允许用于清理的时间；超时后 SubAgent 必须收敛终态。 */
+export const SUBAGENT_TOOL_ABORT_GRACE_MS = 500;
+
+type AbortableOperationOutcome<T> =
+    | { status: 'completed'; value: T }
+    | { status: 'failed'; error: unknown }
+    | { status: 'aborted' };
+
+async function waitForAbortableOperation<T>(
+    operation: Promise<T>,
+    signal: AbortSignal | undefined,
+    graceMs: number
+): Promise<AbortableOperationOutcome<T>> {
+    const settled = operation.then<AbortableOperationOutcome<T>, AbortableOperationOutcome<T>>(
+        value => ({ status: 'completed', value }),
+        error => ({ status: 'failed', error })
+    );
+    if (!signal) return await settled;
+
+    let releaseAbortListener: () => void = () => undefined;
+    const aborted = new Promise<AbortableOperationOutcome<T>>(resolve => {
+        const onAbort = () => resolve({ status: 'aborted' });
+        if (signal.aborted) {
+            resolve({ status: 'aborted' });
+            return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        releaseAbortListener = () => signal.removeEventListener('abort', onAbort);
+    });
+
+    const first = await Promise.race([settled, aborted]);
+    releaseAbortListener();
+    if (first.status !== 'aborted') return first;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const graceExpired = new Promise<AbortableOperationOutcome<T>>(resolve => {
+        timer = setTimeout(() => resolve({ status: 'aborted' }), Math.max(0, graceMs));
+    });
+    const afterGrace = await Promise.race([settled, graceExpired]);
+    if (timer) clearTimeout(timer);
+    return afterGrace;
+}
+
 /**
  * F2：追加到子 agent system prompt 的中文说明。
  *
@@ -363,7 +406,7 @@ async function executeToolCall(
             // 修改原因：SubAgent 不能再复制主工具执行逻辑，否则多模态、MCP、工具配置和参数校验会继续分叉。
             // 修改方式：优先调用 ChatHandler 注入的 ToolExecutionService，并传入 SubAgent 自己的 provider config。
             // 修改目的：让 SubAgent 内部工具调用和主会话工具调用共享同一套执行、校验和 functionResponse 打包逻辑。
-            const fullResult = await context.toolExecutionService.executeFunctionCallsWithResults(
+            const toolExecution = context.toolExecutionService.executeFunctionCallsWithResults(
                 [executionCall],
                 undefined,
                 undefined,
@@ -388,6 +431,24 @@ async function executeToolCall(
                 // 子代理内部的 subagents 工具调用据此得知父 run 深度（见 subagents.ts executeSubAgent）。
                 nestingDepth
             );
+            const executionOutcome = await waitForAbortableOperation(
+                toolExecution,
+                abortSignal,
+                SUBAGENT_TOOL_ABORT_GRACE_MS
+            );
+            if (executionOutcome.status === 'aborted') {
+                const error = 'Cancelled (tool did not stop within the abort grace period)';
+                emitToolFailure(error, { cancelled: true });
+                return {
+                    result: { success: false, cancelled: true, error },
+                    success: false,
+                    error
+                };
+            }
+            if (executionOutcome.status === 'failed') {
+                throw executionOutcome.error;
+            }
+            const fullResult = executionOutcome.value;
 
             const toolResult = fullResult.toolResults?.[0];
             const resultPayload: Record<string, unknown> = toolResult?.result ?? { success: false, error: `Tool produced no result: ${toolName}` };
@@ -598,7 +659,25 @@ export function createDefaultExecutor(
                     error: `Cannot continue from run "${request.continueFromRunId}": the run is still ${oldSnapshot.status}. Only terminal runs (completed / failed / cancelled) can be continued.`
                 };
             }
-            baseContents = oldSnapshot.contents || [];
+            // 修改原因：续跑必须以「旧 run 最后一次实际发送给 provider 的 history」为前缀，
+            //         而不是 Monitor 展示用的 contents——contents 首条是 # SubAgent Invocation 卡片，
+            //         从未发给模型；以 contents 续跑会让请求前缀从第 0 条就与旧 run 不同，
+            //         provider 前缀缓存（DeepSeek KVCache / Anthropic user_id 域）必然 miss。
+            // 修改方式：优先取 oldSnapshot.lastSentHistory（深拷贝，保证与旧 run 实际发送逐条一致）；
+            //          旧记录缺该字段时降级为从 contents 过滤掉含 '# SubAgent Invocation' 的
+            //          初始卡片消息，其余保留（至少不再把卡片发给模型）。
+            // 修改目的：continueFromRunId 续跑能命中旧 run 的 provider 前缀缓存，不浪费首轮 token。
+            if (Array.isArray(oldSnapshot.lastSentHistory)) {
+                baseContents = JSON.parse(JSON.stringify(oldSnapshot.lastSentHistory)) as Content[];
+            } else {
+                baseContents = JSON.parse(JSON.stringify(
+                    (oldSnapshot.contents || []).filter(
+                        content => !(content.parts || []).some(
+                            part => typeof part.text === 'string' && part.text.includes('# SubAgent Invocation')
+                        )
+                    )
+                )) as Content[];
+            }
         }
 
         const initialPromptContent: Content = {
@@ -1052,11 +1131,14 @@ export function createDefaultExecutor(
                 const operation = createOperationSignal();
                 const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
+                // H1-4：剥离已投递的 agentInbox（只保留最后一条未投递消息的），
+                // 防止同 run 后续迭代 / continueFromRunId 续跑重放已 drain 的信箱消息。
+                // 剥离结果就是本轮实际发送给 provider 的请求历史，随后立即记录到事件总线
+                // （lastSentHistory），供 continueFromRunId 续跑精确复用前缀（见 baseContents 选取逻辑）。
+                const sentHistory = stripReplayedAgentInboxForModel(history);
                 const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
-                    // H1-4：剥离已投递的 agentInbox（只保留最后一条未投递消息的），
-                    // 防止同 run 后续迭代 / continueFromRunId 续跑重放已 drain 的信箱消息
-                    history: stripReplayedAgentInboxForModel(history),
+                    history: sentHistory,
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: operationSignal,
                     // H-1：toolOverrides 使用继承过滤后的 effectiveTools（子 run 不向模型暴露
@@ -1092,7 +1174,9 @@ export function createDefaultExecutor(
                     // 修改目的：避免 SubAgent 工具声明和工具调用解析在不同 prompt mode 下再次分叉。
                     promptModeSnapshot: currentPromptModeSnapshot
                 };
-                
+                // 立即记录本轮实际发送给 provider 的 history：续跑时以此为前缀才能命中旧 run 的 provider 缓存
+                subAgentRunEventBus.updateLastSentHistory(runId, sentHistory);
+
                 // 如果指定了模型，设置模型覆盖
                 if (config.channel.modelId) {
                     generateRequest.modelOverride = config.channel.modelId;

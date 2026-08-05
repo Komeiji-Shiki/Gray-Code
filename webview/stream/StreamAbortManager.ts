@@ -97,6 +97,17 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   }
 
   /**
+   * 为“开始新回合”取消旧流：先把前台 SubAgent 转为后台，再中止父回合。
+   *
+   * 普通 cancel 仍表示用户显式停止，会保留父级取消传播；只有排队消息的“立即发送”
+   * 等明确替换当前回合的操作才调用本方法。
+   */
+  cancelForNewTurn(conversationId: string): boolean {
+    this.detachActiveSubAgents(conversationId);
+    return this.cancel(conversationId);
+  }
+
+  /**
    * 获取当前仍有活跃主流请求的对话 ID 列表
    */
   listConversationIds(): string[] {

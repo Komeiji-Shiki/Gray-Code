@@ -324,9 +324,18 @@ export class StreamRequestHandler {
   /**
    * 取消流
    */
-  async cancelStream(conversationId: string, requestId: string): Promise<void> {
-    // 1. 取消流式请求
-    this.deps.abortManager.cancel(conversationId);
+  async cancelStream(
+    conversationId: string,
+    requestId: string,
+    options: { preserveSubAgents?: boolean } = {}
+  ): Promise<void> {
+    // “立即发送排队消息”是在替换当前回合：必须先解除前台 SubAgent 的父信号绑定，
+    // 再取消旧流。普通停止操作仍走 cancel，继续保持真正终止的语义。
+    if (options.preserveSubAgents === true) {
+      this.deps.abortManager.cancelForNewTurn(conversationId);
+    } else {
+      this.deps.abortManager.cancel(conversationId);
+    }
 
     await this.cleanupAbortedConversations([conversationId]);
 

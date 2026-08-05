@@ -237,12 +237,14 @@ function findLinearParentId(history: ReadonlyArray<Content>, index: number): str
 }
 
 /**
- * M1（R6a-FIX）：解析 reroll 主历史截断起始索引（startReroll 保留到父用户节点，截断从其后开始）。
+ * 解析 reroll 主历史截断起始索引。
  *
- * 与 BranchService.resolveRerollTarget 同规则：显式 assistantNodeId 或活跃路径最后一条 model 消息；
- * 父节点 = 目标之前最后一个非 functionResponse 的 user 消息（决策 8：FR 不参与节点链接）。
- * 返回截断起始索引（= 父用户节点 index + 1）；无法定位目标时返回 -1（startReroll 会抛校验错误，
- * 此处仅用于提前清理旧检查点，无需重复报错）。
+ * reroll 是“单条助手消息重新生成”：显式 assistantNodeId 或最后一条 model 消息就是截断点。
+ * 目标之前的所有历史均保留，包括工具调用模型消息与其后的 functionResponse；因此工具续接回答
+ * 重新生成时不会退回最近的用户消息，也不会重复执行已经完成的工具。
+ *
+ * 无法定位目标或目标位于首条消息时返回 -1（startReroll 会负责正式的关系校验；
+ * 此函数只用于流启动前清理目标消息及其后续检查点）。
  */
 export function resolveRerollTruncateIndex(
   history: ReadonlyArray<Content>,
@@ -259,16 +261,7 @@ export function resolveRerollTruncateIndex(
       }
     }
   }
-  if (targetIndex <= 0) {
-    return -1;
-  }
-  for (let i = targetIndex - 1; i >= 0; i -= 1) {
-    const message = history[i];
-    if (message.role === 'user' && !isFunctionResponseMessage(message)) {
-      return i + 1;
-    }
-  }
-  return -1;
+  return targetIndex > 0 ? targetIndex : -1;
 }
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
@@ -1335,9 +1328,8 @@ export class ChatFlowService {
         return;
       }
 
-      // M1（R6a-FIX）：startReroll 内部会把主历史截断到父用户节点之后；截断前清理截断点之后的
-      // 旧检查点（与 handleEditAndRetryStream 的 deleteCheckpointsFromIndex 对齐）。否则旧回合
-      // 检查点原样保留在相同索引，新候选消息会命中旧检查点（索引错位，回档/恢复可能恢复到错误状态）。
+      // startReroll 会从目标助手消息自身开始截断；截断前先清理同一起点及之后的旧检查点。
+      // 对工具续接回答，目标前的模型工具调用与 functionResponse 都会保留。
       const historyBeforeTruncate = await this.conversationManager.getMessagesRaw(conversationId);
       const truncateIndex = resolveRerollTruncateIndex(historyBeforeTruncate, request.assistantNodeId);
       if (truncateIndex > 0) {

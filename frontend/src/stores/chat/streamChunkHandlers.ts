@@ -4,7 +4,7 @@
  * 处理各种类型的 StreamChunk
  */
 
-import type { Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
+import type { Content, Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
 import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
@@ -21,6 +21,24 @@ import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
+}
+
+/**
+ * 把后端已持久化的 Content 投影为消息，并用稳定节点 ID 替换前端流式占位 ID。
+ *
+ * 旧后端没有回传 content.id 时保留占位 ID；新后端回传稳定 ID 时同步
+ * streamingMessageId，保证后续工具状态/确认事件仍能定位到同一条消息。
+ */
+function contentToPersistedMessage(content: Content, currentMessage: Message, state: ChatStoreState): Message {
+  const persistedId = typeof content.id === 'string' && content.id.trim()
+    ? content.id
+    : currentMessage.id
+  const persistedMessage = contentToMessage(content, persistedId)
+
+  if (persistedId !== currentMessage.id && state.streamingMessageId.value === currentMessage.id) {
+    state.streamingMessageId.value = persistedId
+  }
+  return persistedMessage
 }
 
 /**
@@ -273,7 +291,7 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     const existingModelVersion = message.metadata?.modelVersion
     const existingTools = message.tools
 
-    const finalMessage = contentToMessage(chunk.content, message.id)
+    const finalMessage = contentToPersistedMessage(chunk.content, message, state)
 
     // 诊断日志
     const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
@@ -469,7 +487,7 @@ export function handleAwaitingConfirmation(
     const existingModelVersion = message.metadata?.modelVersion
     const existingTools = message.tools
 
-    const finalMessage = contentToMessage(chunk.content, message.id)
+    const finalMessage = contentToPersistedMessage(chunk.content, message, state)
 
     // 合并 tools：以 finalMessage.tools 的顺序为基准，保留 existingTools 的运行态字段
     const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools) || []
@@ -647,7 +665,7 @@ export function handleToolIteration(
     const existingTools = message.tools
     const existingModelVersion = message.metadata?.modelVersion
     
-    const finalMessage = contentToMessage(chunk.content!, message.id)
+    const finalMessage = contentToPersistedMessage(chunk.content!, message, state)
     
     // 诊断日志
     const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
@@ -858,7 +876,7 @@ export function handleComplete(
     // 保存原有的 modelVersion（使用创建时的模型，不从 API 响应更新）
     const existingModelVersion = message.metadata?.modelVersion
     
-    const finalMessage = contentToMessage(chunk.content!, message.id)
+    const finalMessage = contentToPersistedMessage(chunk.content!, message, state)
     
     // 诊断日志
     const fcCountComplete = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
@@ -1102,9 +1120,19 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
         return tool
       })
       
+      // 取消时若半截内容已经落盘，后端会回传稳定节点 ID；同步替换本地占位 ID，
+      // 否则随后对该消息重试会把前端临时 ID 误发给分支图。
+      const persistedId = typeof chunk.content?.id === 'string' && chunk.content.id.trim()
+        ? chunk.content.id
+        : message.id
+      if (persistedId !== message.id && state.streamingMessageId.value === message.id) {
+        state.streamingMessageId.value = persistedId
+      }
+
       // 创建更新后的消息对象
       const updatedMessage: Message = {
         ...message,
+        id: persistedId,
         streaming: false,
         // cancelled 场景：若消息非空，后端通常已持久化 partial（用户取消）。
         // 即使极端情况下未持久化，localOnly=false 也只会影响“是否走后端索引”的分支，

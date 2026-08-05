@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /**
- * BranchSwitcherBar - 候选切换器 + 分支状态 UI（TREE-10）
+ * BranchSwitcherBar - 消息内联候选切换器（DeepSeek 风格，TREE-10）
  *
- * 展示位置：消息区顶部（MessageList.vue 挂载）。
- * 展示条件：当前对话存在分支图，且当前活跃尾节点的父节点下有 ≥2 个候选；
- * 无分支图 / 单候选 / 无当前对话时整个组件隐藏。
+ * 展示位置：由 MessageActions.vue 挂载在对应消息的操作栏内，和复制 / 重试按钮同一行；
+ * 也支持普通模式单独挂载（用于组件测试与独立复用）。
+ * 在哪条消息处重 roll / 编辑过分支，就在那条消息的操作栏显示切换器，而非消息区顶部。
  *
- * 数据源：chatStore.branchGraph（loadBranchGraph / refreshBranchGraph 拉取 conversation.getBranchGraph）。
+ * 数据源：chatStore.branchGraph + parentNodeId（buildCandidateGroupAt 推导该父节点的候选组）。
  * 交互：
  * - ‹ / ›：切换到上一个 / 下一个候选（conversation.switchBranchCandidate，TREE-07 重建链路）；
- * - 中间「2 / 3」：展开候选列表，点击候选切换；hover 展示模型版本 / 节点类型；
+ * - 中间「2 / 3」：展开候选列表（fixed 定位浮层，防滚动容器裁剪），点击候选切换；
+ *   hover 展示模型版本 / 节点类型；
  * - 列表项删除按钮：软删除非活跃候选（conversation.deleteBranchCandidate，两步确认防误删）。
  *
  * 竞态：isSwitchingBranch 期间禁用全部按钮（store 侧同时拒绝并发操作）。
@@ -17,30 +18,42 @@
 import { ref, computed } from 'vue'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
-import { buildCandidateGroup, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
+import { buildCandidateGroupAt, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
 import { ConfirmDialog } from '../common'
-import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 import type { BranchNodeData } from '../../stores/chat/types'
 import type { SwitchBranchWorkspaceMode } from '../../stores/chat/branchActions'
+
+const props = defineProps<{
+  /** 候选组的父节点（消息）ID；该消息有 ≥2 个子候选时显示切换器 */
+  parentNodeId: string
+  /** 是否作为消息操作栏内的紧凑按钮组渲染 */
+  compact?: boolean
+}>()
 
 const { t } = useI18n()
 const chatStore = useChatStore()
 
 const listOpen = ref(false)
+/** 候选列表 fixed 定位锚点（消息内 absolute 会被滚动容器裁剪） */
+const positionRef = ref<HTMLElement | null>(null)
+const listStyle = ref<{ left: string; top: string; maxHeight: number }>({
+  left: '0px',
+  top: '0px',
+  maxHeight: 320
+})
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
 const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
 
-/** 当前活跃尾节点的兄弟候选组（null = 无图 / 无候选） */
-const group = computed(() => buildCandidateGroup(chatStore.branchGraph))
+/** 该父节点下的候选组（null = 无图 / 无候选 / 单候选） */
+const group = computed(() => buildCandidateGroupAt(chatStore.branchGraph, props.parentNodeId))
 
-/** 无分支图 / 单候选 / 无当前对话时隐藏 */
+/** 无当前对话 / 无候选组时隐藏 */
 const visible = computed(() => {
   if (!chatStore.currentConversationId) return false
-  const g = group.value
-  return g !== null && g.candidates.length >= 2
+  return group.value !== null
 })
 
 const total = computed(() => group.value?.candidates.length ?? 0)
@@ -66,6 +79,23 @@ function candidateTitle(node: BranchNodeData): string {
   if (typeof node.modelVersion === 'string' && node.modelVersion) meta.push(node.modelVersion)
   if (typeof node.kind === 'string' && node.kind) meta.push(node.kind)
   return meta.join(' · ')
+}
+
+/** 展开 / 收起候选列表（展开时按锚点实时定位，fixed 浮层不受滚动容器裁剪） */
+function toggleList(): void {
+  if (listOpen.value) {
+    listOpen.value = false
+    return
+  }
+  const anchor = positionRef.value
+  if (!anchor) return
+  const rect = anchor.getBoundingClientRect()
+  listStyle.value = {
+    left: `${Math.max(8, rect.left)}px`,
+    top: `${rect.bottom + 4}px`,
+    maxHeight: Math.max(160, Math.min(320, window.innerHeight - rect.bottom - 16))
+  }
+  listOpen.value = true
 }
 
 function switchTo(nodeId: string): void {
@@ -111,7 +141,7 @@ function toggleDelete(nodeId: string): void {
 </script>
 
 <template>
-  <div v-if="visible" class="branch-switcher-bar">
+  <div v-if="visible" class="branch-switcher-bar" :class="{ compact: props.compact }">
     <button
       class="branch-switcher-btn"
       :disabled="chatStore.isSwitchingBranch"
@@ -121,49 +151,16 @@ function toggleDelete(nodeId: string): void {
       <i class="codicon codicon-chevron-left"></i>
     </button>
 
-    <div class="branch-switcher-center">
+    <div ref="positionRef" class="branch-switcher-center">
       <button
         class="branch-switcher-position"
         :disabled="chatStore.isSwitchingBranch"
         :title="t('components.message.branch.candidateList')"
-        @click="listOpen = !listOpen"
+        @click="toggleList"
       >
         <span class="branch-switcher-position-text">{{ activeIndex + 1 }} / {{ total }}</span>
         <i class="codicon" :class="listOpen ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
       </button>
-
-      <div v-if="listOpen" class="branch-candidate-list">
-        <div
-          v-for="candidate in group?.candidates ?? []"
-          :key="candidate.id"
-          class="branch-candidate-row"
-          :class="{ active: candidate.id === activeCandidate?.id }"
-        >
-          <button
-            class="branch-candidate-main"
-            :title="candidateTitle(candidate) || t('components.message.branch.switchTo')"
-            @click="switchTo(candidate.id)"
-          >
-            <span class="branch-candidate-preview">{{ candidatePreview(candidate) }}</span>
-            <span v-if="candidate.id === activeCandidate?.id" class="branch-candidate-active">
-              {{ t('components.message.branch.active') }}
-            </span>
-          </button>
-          <button
-            v-if="candidate.id !== activeCandidate?.id"
-            class="branch-candidate-delete"
-            :class="{ confirming: pendingDeleteNodeId === candidate.id }"
-            :title="
-              pendingDeleteNodeId === candidate.id
-                ? t('components.message.branch.deleteConfirm')
-                : t('components.message.branch.delete')
-            "
-            @click="toggleDelete(candidate.id)"
-          >
-            <i class="codicon" :class="pendingDeleteNodeId === candidate.id ? 'codicon-check' : 'codicon-trash'"></i>
-          </button>
-        </div>
-      </div>
     </div>
 
     <button
@@ -178,6 +175,39 @@ function toggleDelete(nodeId: string): void {
     <span v-if="chatStore.isSwitchingBranch" class="branch-switcher-loading">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
     </span>
+
+    <div v-if="listOpen" class="branch-candidate-list" :style="listStyle">
+      <div
+        v-for="candidate in group?.candidates ?? []"
+        :key="candidate.id"
+        class="branch-candidate-row"
+        :class="{ active: candidate.id === activeCandidate?.id }"
+      >
+        <button
+          class="branch-candidate-main"
+          :title="candidateTitle(candidate) || t('components.message.branch.switchTo')"
+          @click="switchTo(candidate.id)"
+        >
+          <span class="branch-candidate-preview">{{ candidatePreview(candidate) }}</span>
+          <span v-if="candidate.id === activeCandidate?.id" class="branch-candidate-active">
+            {{ t('components.message.branch.active') }}
+          </span>
+        </button>
+        <button
+          v-if="candidate.id !== activeCandidate?.id"
+          class="branch-candidate-delete"
+          :class="{ confirming: pendingDeleteNodeId === candidate.id }"
+          :title="
+            pendingDeleteNodeId === candidate.id
+              ? t('components.message.branch.deleteConfirm')
+              : t('components.message.branch.delete')
+          "
+          @click="toggleDelete(candidate.id)"
+        >
+          <i class="codicon" :class="pendingDeleteNodeId === candidate.id ? 'codicon-check' : 'codicon-trash'"></i>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- BCP-04：目标分支执行过写工具 / 有工作区存档时的模式确认框（决策 1：默认仅切聊天） -->
@@ -195,31 +225,65 @@ function toggleDelete(nodeId: string): void {
       {{ t('components.message.branch.workspaceConfirmChatAndWorkspace') }}
     </button>
   </ConfirmDialog>
-
-  <!-- BCP-05（决策 11）：恢复 / 切换恢复的未保存文件确认框（常驻挂载） -->
-  <DirtyFilesConfirm />
 </template>
 
 <style scoped>
-/* 样式沿用 MessageList build-bar / 检查点条的 VS Code 主题 token（GrayCode 面板风格） */
+/* 普通模式：保留为独立消息内联条（兼容单独挂载与组件测试） */
 .branch-switcher-bar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm, 8px);
-  padding: 6px var(--spacing-md, 16px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  gap: 4px;
+  width: fit-content;
+  margin: 2px 0 6px var(--spacing-md, 16px);
+  padding: 2px 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
   background: var(--vscode-editor-background);
-  flex-shrink: 0;
   user-select: none;
 }
+
+/* 消息操作栏内的紧凑按钮组：与复制 / 重试 IconButton 共用同一行和高度 */
+.branch-switcher-bar.compact {
+  height: 24px;
+  margin: 0;
+  padding: 0 2px;
+  gap: 0;
+  border: none;
+  background: transparent;
+}
+
+.branch-switcher-bar.compact .branch-switcher-btn {
+  width: 18px;
+  height: 22px;
+  padding: 0;
+}
+
+.branch-switcher-bar.compact .branch-switcher-position {
+  height: 22px;
+  padding: 1px 3px;
+  background: transparent;
+}
+
+.branch-switcher-bar.compact .branch-switcher-position:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.branch-switcher-bar.compact .branch-switcher-position-text {
+  min-width: 28px;
+}
+
+.branch-switcher-bar.compact .branch-switcher-loading {
+  padding: 0 2px;
+}
+
 
 .branch-switcher-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--vscode-panel-border);
+  width: 20px;
+  height: 20px;
+  border: none;
   border-radius: var(--radius-sm, 2px);
   background: transparent;
   color: var(--vscode-descriptionForeground);
@@ -233,7 +297,6 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-center {
-  position: relative;
   min-width: 0;
 }
 
@@ -241,8 +304,8 @@ function toggleDelete(nodeId: string): void {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
+  padding: 1px 6px;
+  border: none;
   border-radius: var(--radius-sm, 2px);
   background: var(--vscode-editor-inactiveSelectionBackground);
   color: var(--vscode-foreground);
@@ -257,18 +320,16 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-position-text {
-  min-width: 34px;
+  min-width: 30px;
   text-align: center;
 }
 
+/* fixed 浮层：消息内 absolute 会被滚动容器裁剪，展开时按锚点实时定位 */
 .branch-candidate-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 1000;
   min-width: 260px;
   max-width: min(420px, 60vw);
-  max-height: min(40vh, 320px);
   overflow: auto;
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);

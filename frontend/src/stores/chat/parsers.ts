@@ -230,12 +230,10 @@ function extractToolUsages(parts: Content['parts']): ToolUsage[] {
 /**
  * BR-01：读取后端透传的稳定节点 id（content.id）。
  *
- * 前端 Content 类型暂未声明该字段（文件边界限制），此处用安全读取避免类型报错；
  * 旧后端/旧消息无 id 时返回 undefined，调用方回退 generateId。
  */
 function getContentNodeId(content: Content): string | undefined {
-  const id = (content as { id?: unknown }).id
-  return typeof id === 'string' && id.length > 0 ? id : undefined
+  return typeof content.id === 'string' && content.id.length > 0 ? content.id : undefined
 }
 
 /**

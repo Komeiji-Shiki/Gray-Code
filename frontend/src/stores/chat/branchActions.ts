@@ -10,7 +10,7 @@
  *   → 分支图刷新（loadBranchGraph）；失败回滚 UI 状态
  * - deleteBranchCandidate：conversation.deleteBranchCandidate（软删除，仅非活跃候选，
  *   活跃路径不变）→ 刷新分支图
- * - buildCandidateGroup：从分支图推导「当前活跃尾节点的兄弟候选组」，供 BranchSwitcherBar 使用
+ * - buildCandidateGroupAt：从分支图推导「指定父节点下的候选组」（≥2 候选），供消息内联的 BranchSwitcherBar 使用
  *
  * 竞态防护（TREE-13）：
  * - 切换 / 删除前检查 isStreaming / isWaitingForResponse，命中写 BRANCH_BUSY 错误条并拒绝；
@@ -60,31 +60,7 @@ export interface BranchCandidateGroup {
   activeIndex: number
 }
 
-/**
- * 从分支图推导「当前活跃尾节点的兄弟候选组」（TREE-10 切换器数据源）。
- *
- * 语义：候选 = 与活跃尾节点同父节点的全部非删除节点（决策 4：单 parentId 索引）。
- * 无图 / 无活跃尾 / 尾节点缺失 / 组内无候选时返回 null（组件据此隐藏）。
- */
-export function buildCandidateGroup(graph: BranchGraphData | null): BranchCandidateGroup | null {
-  if (!graph || !graph.nodes) return null
-  const tailId = graph.activeTailNodeId
-  if (!tailId) return null
-  const tail = graph.nodes[tailId]
-  if (!tail) return null
 
-  const candidates = Object.values(graph.nodes)
-    .filter(node => node && !node.deleted && node.parentId === tail.parentId)
-    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
-
-  if (candidates.length === 0) return null
-
-  return {
-    parentNodeId: tail.parentId ?? null,
-    candidates,
-    activeIndex: candidates.findIndex(candidate => candidate.id === tailId)
-  }
-}
 
 /**
  * 活跃路径 ID 链（TREE-11 分支树面板数据源）：从 root 沿 activeChildId 走到活跃尾。
@@ -109,6 +85,39 @@ export function buildActivePathIds(graph: BranchGraphData | null): string[] {
     cursor = current.activeChildId ?? null
   }
   return path
+}
+
+/**
+ * 从分支图推导「指定父节点下的候选组」（DeepSeek 风格消息内联切换器数据源，TREE-10）。
+ *
+ * 语义：候选 = 该父节点的全部非删除子节点（决策 4：单 parentId 索引），按 createdAt 升序；
+ * activeIndex = 活跃路径（root → activeChildId → 尾）中经过该父节点的那个子候选。
+ * 返回 null：无图 / 父节点 ID 非法 / 候选不足 2 个（无分支点，切换器无意义）/
+ * 活跃候选不在组内（数据不一致，防御性隐藏）。
+ */
+export function buildCandidateGroupAt(
+  graph: BranchGraphData | null,
+  parentNodeId: string
+): BranchCandidateGroup | null {
+  if (!graph || !graph.nodes || !parentNodeId) return null
+
+  const candidates = Object.values(graph.nodes)
+    .filter(node => node && !node.deleted && node.parentId === parentNodeId)
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+
+  // 切换器只在有 ≥2 个候选的分支点显示（重 roll / 编辑过才出现切换入口）
+  if (candidates.length < 2) return null
+
+  // 活跃下标：活跃路径上经过该父节点的子候选（父节点在活跃路径上时必恰好命中一个）
+  const activeSet = new Set(buildActivePathIds(graph))
+  const activeIndex = candidates.findIndex(candidate => activeSet.has(candidate.id))
+  if (activeIndex < 0) return null
+
+  return {
+    parentNodeId,
+    candidates,
+    activeIndex
+  }
 }
 
 /**

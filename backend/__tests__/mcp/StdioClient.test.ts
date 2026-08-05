@@ -33,6 +33,38 @@ function createFakeProcess(overrides: { stdinWrite?: () => void } = {}) {
     return proc;
 }
 
+/**
+ * 创建能对 initialize / tools/call 等请求自动响应的假进程。
+ * respondToCallTool 为 false 时，tools/call 请求不响应（用于验证外部中止路径）。
+ */
+function createFakeProcessWithResponder(respondToCallTool = true) {
+    const proc = createFakeProcess();
+    proc.stdin.on('data', (data: Buffer) => {
+        const line = data.toString().trim();
+        if (!line) return;
+        let msg;
+        try {
+            msg = JSON.parse(line);
+        } catch {
+            return;
+        }
+        let result: any;
+        if (msg.method === 'initialize') {
+            result = {
+                protocolVersion: '2024-11-05',
+                serverInfo: { name: 'fake', version: '1.0.0' },
+                capabilities: {},
+            };
+        } else if (msg.method === 'tools/call' && respondToCallTool) {
+            result = { content: [{ type: 'text', text: 'ok' }] };
+        } else {
+            return; // 其他请求不响应
+        }
+        proc.stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
+    });
+    return proc;
+}
+
 function writeTempScript(content: string): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-stdio-test-'));
     const file = path.join(dir, 'server.js');
@@ -198,5 +230,84 @@ describe('StdioMcpClient', () => {
 
         await client.disconnect();
         fs.rmSync(path.dirname(scriptFile), { recursive: true, force: true });
+    });
+
+    // ==================== 外部 abort 中止 ====================
+
+    it('should reject the pending request and clean up on external abort', async () => {
+        // tools/call 不响应，让请求保持 pending 直到外部中止
+        const fake = createFakeProcessWithResponder(false);
+        spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+
+        const client = new StdioMcpClient('node', [], undefined, undefined, 30000);
+        client.on('error', () => {});
+        await client.connect();
+
+        const controller = new AbortController();
+        const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
+        const exitListenersBefore = fake.listenerCount('exit');
+
+        const pending = client.callTool('t', { a: 1 }, controller.signal);
+        await Promise.resolve();
+        expect(fake.listenerCount('exit')).toBe(exitListenersBefore + 1);
+
+        controller.abort();
+
+        await expect(pending).rejects.toThrow(/aborted/i);
+
+        // pending 已清理
+        expect((client as any).pendingRequests.size).toBe(0);
+        // exit 监听已摘除（回到基线）
+        expect(fake.listenerCount('exit')).toBe(exitListenersBefore);
+        // abort 监听已摘除
+        expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+    });
+
+    it('should reject immediately without writing to stdin when the signal is already aborted', async () => {
+        const fake = createFakeProcessWithResponder();
+        spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+
+        const client = new StdioMcpClient('node', [], undefined, undefined, 30000);
+        client.on('error', () => {});
+        await client.connect();
+
+        const controller = new AbortController();
+        controller.abort();
+        const writeSpy = jest.spyOn(fake.stdin, 'write');
+        const exitListenersBefore = fake.listenerCount('exit');
+
+        await expect(client.callTool('t', {}, controller.signal)).rejects.toThrow(/aborted/i);
+
+        // 已中止的信号不写 stdin、不注册监听、不留 pending
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(fake.listenerCount('exit')).toBe(exitListenersBefore);
+        expect((client as any).pendingRequests.size).toBe(0);
+    });
+
+    it('should remove abort/exit listeners after a successful resolve (no leak)', async () => {
+        const fake = createFakeProcessWithResponder();
+        spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+
+        const client = new StdioMcpClient('node', [], undefined, undefined, 30000);
+        client.on('error', () => {});
+        await client.connect();
+
+        const controller = new AbortController();
+        const signal = controller.signal;
+        const addSpy = jest.spyOn(signal, 'addEventListener');
+        const removeSpy = jest.spyOn(signal, 'removeEventListener');
+        const exitListenersBefore = fake.listenerCount('exit');
+
+        const result = await client.callTool('t', { a: 1 }, signal);
+        expect(result).toEqual({ content: [{ type: 'text', text: 'ok' }] });
+
+        // 所有添加的 abort 监听都已摘除
+        const added = addSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        const removed = removeSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        expect(added).toBeGreaterThanOrEqual(1);
+        expect(added).toBe(removed);
+        // exit 监听回到基线、pending 无残留
+        expect(fake.listenerCount('exit')).toBe(exitListenersBefore);
+        expect((client as any).pendingRequests.size).toBe(0);
     });
 });

@@ -59,16 +59,28 @@ describe('stripReplayedAgentInboxForModel（H1-4）', () => {
         expect(frParts[1].data.agentInbox).toHaveLength(1);
     });
 
-    it('continueFromRunId 续跑：旧 run transcript（baseContents）中的 agentInbox 全部剥离', () => {
-        const history: Content[] = [
+    it('continueFromRunId 续跑：baseContents 取自 lastSentHistory，旧 fr 的 agentInbox 已在发送时剥离，续跑不再二次剥离', () => {
+        // 旧 run 最后一次实际发送给 provider 的 history（lastSentHistory）：executor 在 generate 前
+        // 已用本函数剥离 agentInbox 后存入 runEventBus，旧 fr 不再是最后一条 → 发送时即被剥离。
+        const lastSentHistory = stripReplayedAgentInboxForModel([
             { role: 'user', parts: [{ text: 'old task' }] },
             { role: 'model', parts: [{ functionCall: { id: 'call_old', name: 'stub_tool', args: {} } }] },
             frContent('call_old', 'old-msg'),
+            { role: 'model', parts: [{ text: 'old final reply' }] }  // fr 不再是最后一条
+        ]);
+        // 发送时剥离成立：lastSentHistory 中已无任何 agentInbox
+        expect(JSON.stringify(lastSentHistory)).not.toContain('agentInbox');
+
+        // 续跑：baseContents（lastSentHistory 深拷贝）+ 新 user 消息
+        const continuationHistory: Content[] = [
+            ...lastSentHistory,
             { role: 'user', parts: [{ text: 'new prompt' }] }  // 最后一条（无 functionResponse）→ 不保留任何 agentInbox
         ];
 
-        const stripped = stripReplayedAgentInboxForModel(history);
+        const stripped = stripReplayedAgentInboxForModel(continuationHistory);
 
+        // 续跑不再发生实际剥离：输入已无 agentInbox，strip 是幂等 no-op（内容逐条一致）
+        expect(stripped).toEqual(continuationHistory);
         const frParts = stripped
             .filter(m => m.parts?.some(p => !!p.functionResponse))
             .map(m => (m.parts![0] as any).functionResponse.response);
@@ -76,6 +88,7 @@ describe('stripReplayedAgentInboxForModel（H1-4）', () => {
         expect(frParts[0].agentInbox).toBeUndefined();
         expect(frParts[0].data.agentInbox).toBeUndefined();
         expect(frParts[0].success).toBe(true);
+        expect(frParts[0].data.applied).toBe(true);
     });
 
     it('浅拷贝：不改写原始 history（持久化 transcript 不受影响）', () => {
