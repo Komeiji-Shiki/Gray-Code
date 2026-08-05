@@ -80,10 +80,9 @@ function createCompletedRun(runId: string, conversationId?: string): void {
 
 describe('SubAgent executor - 续跑缓存域（任务1）', () => {
     afterEach(() => {
-        subAgentConcurrencyLimiter.release('cache_new_run');
+        subAgentConcurrencyLimiter.release('cache_old_run');
         subAgentConcurrencyLimiter.release('cache_plain_run');
         subAgentConcurrencyLimiter.release('cache_old_multi');
-        subAgentConcurrencyLimiter.release('cache_new_multi');
     });
 
     it('continueFromRunId 续跑时 conversationId 沿用旧 runId（缓存域天然一致）', async () => {
@@ -107,6 +106,8 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
         const request = generateMock.mock.calls[0][0];
         // 续跑时 conversationId 沿用旧 runId：user_id 哈希输入与旧 run 一致，缓存域天然相同
         expect(request.conversationId).toBe('cache_old_run');
+        // run 复用：续跑沿用旧 runId（run 记录 / transcript / 缓存域三位一体）
+        expect(result.runId).toBe('cache_old_run');
     });
 
     it('普通新 run 仍用新 runId，行为不变', async () => {
@@ -211,11 +212,20 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
             ...oldHistories[1],
             { role: 'user', parts: [{ text: 'continue again' }] }
         ]);
+        // provider 前缀缓存命中条件：续跑发送历史的前缀与旧 run 最后一次实际发送逐条一致
+        expect(run2SentHistory.slice(0, oldHistories[1].length)).toEqual(oldHistories[1]);
         // history[0] 不含 # SubAgent Invocation 卡片（续跑前缀与旧 run 实际发送逐条一致）
         expect(JSON.stringify(run2SentHistory[0])).not.toContain('SubAgent Invocation');
         expect(run2SentHistory[0]).toEqual({ role: 'user', parts: [{ text: 'do something' }] });
-        // conversationId 沿用旧 runId（缓存域不变）
+        // 缓存域一致：conversationId 沿用旧 runId
         expect(run2Request.conversationId).toBe(oldRunId);
+        // run 复用：续跑沿用旧 runId，Monitor 里是同一条记录（事件时间线连续：两次 run_completed + 一次 run_resumed）
+        expect(result2.runId).toBe(oldRunId);
+        const resumedSnapshot = subAgentRunEventBus.getSnapshot(oldRunId)!;
+        expect(resumedSnapshot.events.some(e => e.type === 'run_resumed')).toBe(true);
+        expect(resumedSnapshot.events.filter(e => e.type === 'run_completed')).toHaveLength(2);
+        // 续跑后的 lastSentHistory 更新为续跑轮实际发送的历史
+        expect(resumedSnapshot.lastSentHistory).toEqual(run2SentHistory);
     });
 });
 

@@ -8,6 +8,26 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 删除消息范围或单条消息前等待主流真正退出：`deleteMessage` / `deleteSingleMessage` 先经 `abortAndWaitForCompletion`（或 `cancel` + `waitForIdle`）等待流退出再执行删除，避免停止后的迟到写入覆盖删除结果。
+  - 修复扩展宿主重启后子代理 Monitor 永久显示 running/queued：加载历史 run 记录时把上一宿主遗留的非终态记录纠正为 `interrupted`（当前进程仍活跃的 run 不受影响，按快照存在性区分）。
+  - 修复 shell 可用性检测的命令拼接注入面：`checkShellAvailability` 的 wsl / where / which 检测从 `cp.exec` 字符串拼接改为 `cp.execFile` argv 数组传递（customPath 属用户可控配置，不再拼进 shell 命令）。
+  - Webview CSP 加固：ChatViewProvider 与 SubAgentMonitorPanel 的内联脚本从 `'unsafe-inline'` 改为 nonce 机制（每面板随机 nonce，脚本标签显式携带），不再依赖内联执行豁免。
+  - 前端正则高亮 ReDoS 护栏：新增 `regexGuard`（源长度 500 上限 + 危险分组量词检测 + 构造失败回退），history_search 高亮不再因畸形正则阻塞 Webview 渲染线程（与后端搜索护栏同一限制）。
+
+### Changed
+  - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
+  - 子代理工具白名单/黑名单改为按分类分组展示：新增公共工具分类模块 `frontend/src/utils/toolCategory.ts`（工具设置页与子代理设置页共用同一套分类名/图标映射），子代理面板工具列表从「内置工具 / MCP 工具」两个平铺大列表改为按后端 category 分组的分类卡片（文件、搜索、终端、媒体等，MCP 独立成组，缺省分类归入「其他」）；每个工具项显示本地化名称 + 等宽工具 ID + 描述，MCP 分类文案接入三语 i18n；工具设置页同步改用公共分类模块（展示行为不变）。
+  - 分支树面板「完整消息」升级为「完整消息图」（高级模式）：由目录树缩进改为轨道式泳道布局——每条消息一行，轨道列数由同时存在的候选分支决定（候选分支走完即释放轨道、后续新候选复用，不再随消息数量无限向右扩展）；分叉以水平连接线表达，活跃路径轨道线高亮；默认折叠连续线性段，新增「展开完整消息」开关可查看全部节点；「分支导航」缩略版保持不变，三语文案同步。
+  - 总结 Token 统计改为「主上下文压缩量」口径：新增 `SummaryTokenStats`（被替换历史估算 token、新摘要 token、估算节省量、总结前主上下文 token 与总结后估算值），总结消息落库与前端展示均使用新口径（历史 → 摘要 + 节省量），旧记录明确标注为「总结模型请求输入 → 输出」（`beforeTokenCount` / `afterTokenCount` 标记 deprecated）；会话用量指示器在总结后优先使用新估算值，下一次真实主回复后自动恢复实际用量（timestamp 判断新旧）。
+  - 被裁剪历史的逐字用户输入保险档案上限从 160k 字符降至 64k（约 40k → 16k token），省略标记文本计入预算，避免保险副本吃掉默认上下文保留预算、使总结后上下文几乎不下降。
+  - 存储路径加固：conversationId / snapshotId / diffId 统一白名单校验（`^[A-Za-z0-9_-]+$`，新增 `assertSafeStorageId` / `assertSafeDiffId`），覆盖 FileSystemStorageAdapter、UsageIndexStore、DiffStorageManager 与 integrityCheck，从根源拒绝 `..`、路径分隔符、盘符与 URI 编码绕过。
+  - 根项目与前端锁文件同步（npm audit 均为 0 vulnerabilities，根项目声明 engines.node >=20）。
+  - 子代理续跑（`continueFromRunId`）改为「同一条 run 接着跑」：runId 复用旧 run（Monitor 记录唯一、transcript 一条线连续，不再出现第二条不同身份的记录），身份强制沿用旧 run 的 agent（系统提示/工具集不变，本次调用传入的 agentName 被忽略，旧 agent 已被删除时拒绝续跑），provider 前缀缓存命中条件不变（仍以 `lastSentHistory` 为请求前缀、`conversationId` 沿用旧 runId）；续跑经 `run_resumed` 事件标记，前端工具卡 pending 阶段直接沿用 `continueFromRunId` 关联 Monitor。
+
+### Added
+  - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）。
+
 ## [1.4.1] - 2026-08-05
 
 ### Changed

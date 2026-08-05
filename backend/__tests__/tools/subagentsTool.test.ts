@@ -8,6 +8,7 @@
 
 import { getSubAgentsTool } from '../../tools/subagents/subagents';
 import { subAgentRegistry } from '../../tools/subagents/registry';
+import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
 import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools } from '../../tools/subagents/executor';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { TaskManager } from '../../tools/taskManager';
@@ -281,6 +282,56 @@ describe('SubAgents 工具后台分支', () => {
         const requestArg = customExecutor.mock.calls[0][0];
         expect(requestArg.conversationId).toBe('conv_1');
         expect(requestArg.agentType).toBe('tester');
+    });
+
+    it('续跑时沿用旧 run 的 agent 身份（忽略本次传入的 agentName），以旧身份解析配置', async () => {
+        // 旧 run 属于静态注册的 'Test Agent'（tester 类型）
+        subAgentRunEventBus.createRun('cont_ident_old', 'Test Agent', { agentType: 'tester', prompt: 'old' }, {
+            conversationId: 'conv_1',
+            initialContents: []
+        });
+        subAgentRunEventBus.emit({ runId: 'cont_ident_old', agentName: 'Test Agent', type: 'run_completed', timestamp: Date.now() });
+
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'cont_ident_old', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            // 本次传入与旧 run 不同的 agentName：必须被忽略，沿用 'Test Agent' 身份
+            { agentName: 'Other Agent', prompt: 'continue', continueFromRunId: 'cont_ident_old' },
+            { toolId: 'tool_ident', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        // 身份继承：executor 收到旧 run 的 agentType（tester），而不是 'Other Agent' 的
+        const request = fakeExecutor.mock.calls[0][0];
+        expect(request.agentType).toBe('tester');
+        expect(request.continueFromRunId).toBe('cont_ident_old');
+        // 返回给前端展示的 agentName 也是旧身份
+        expect(result.data.agentName).toBe('Test Agent');
+    });
+
+    it('续跑目标旧 agent 已不存在时拒绝，不派发 executor', async () => {
+        // 旧 run 属于一个已被删除的 agent（registry 中查不到）
+        subAgentRunEventBus.createRun('cont_ghost_old', 'Ghost Agent', { agentType: 'ghost', prompt: 'old' }, {
+            conversationId: 'conv_1'
+        });
+        subAgentRunEventBus.emit({ runId: 'cont_ghost_old', agentName: 'Ghost Agent', type: 'run_completed', timestamp: Date.now() });
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue(undefined);
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'continue', continueFromRunId: 'cont_ghost_old' },
+            { toolId: 'tool_ghost', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('Ghost Agent');
+        expect(result.error).toContain('not found');
+        // 身份解析失败发生在派发之前
+        expect(createDefaultExecutor).not.toHaveBeenCalled();
     });
 
     it('H-1：嵌套派发 General Worker 时，request 携带继承自父 run 的工具限制（inheritedToolFilter）', async () => {

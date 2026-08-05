@@ -29,7 +29,14 @@ function getSubAgentResultRunId(result: unknown): string {
 function getSubAgentRunId(tool: ToolUsage): string {
   const resultRunId = getSubAgentResultRunId(tool.result)
   if (resultRunId) return resultRunId
-  return tool.result ? '' : getSubAgentRunIdFromToolId(tool.id)
+  if (tool.result) return ''
+  // 续跑：后端复用旧 runId（不按 toolId 推导新 runId），pending 阶段直接沿用 continueFromRunId，
+  // 否则卡片与 Monitor 里同一条记录会关联不上（看起来像两条不同的子代理）。
+  const continueFromRunId = (tool.args as any)?.continueFromRunId
+  if (typeof continueFromRunId === 'string' && continueFromRunId.trim()) {
+    return continueFromRunId.trim()
+  }
+  return getSubAgentRunIdFromToolId(tool.id)
 }
 
 // 注册 subagents 工具
