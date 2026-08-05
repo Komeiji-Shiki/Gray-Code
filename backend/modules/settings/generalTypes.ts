@@ -53,6 +53,16 @@ export interface ProxySettings {
      * 例如: http://127.0.0.1:7890
      */
     url?: string;
+    
+    /**
+     * 是否跳过 TLS 证书校验（仅用于自签名证书调试）
+     *
+     * - true: 传递 rejectUnauthorized: false，跳过证书校验（抓包/自签名场景）
+     * - false（默认）: 校验证书
+     *
+     * 默认值：false（校验证书）
+     */
+    insecureSkipVerify?: boolean;
 }
 
 /**

@@ -17,11 +17,15 @@ import {
     normalizeLineEndingsToLF,
     escapeRegExp,
     detectSuspectedRegexIntent,
-    createSuspectedRegexSuggestion
+    createSuspectedRegexSuggestion,
+    resolveFileToolPathWithInfo
 } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { validateRegexPattern } from './regexGuard';
+import type { LockHolder } from '../../core/fileWriteLockManager';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../modules/settings/types';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 
@@ -29,11 +33,6 @@ import type { SearchInFilesToolConfig } from '../../modules/settings/types';
  * 默认排除模式
  */
 const DEFAULT_EXCLUDE = '**/node_modules/**';
-
-/**
- * ReDoS 防护：正则源串长度上限（超出直接拒绝，不尝试完整 ReDoS 检测）
- */
-const MAX_REGEX_SOURCE_LENGTH = 500;
 
 /**
  * 替换模式 matches 收集预算上限：防止 maxFiles×高频 query 产生数百万条匹配全量回传
@@ -515,7 +514,9 @@ async function searchAndReplaceInDirectory(
     config: Readonly<SearchInFilesToolConfig>,
     toolId?: string,
     abortSignal?: AbortSignal,
-    conversationId?: string
+    conversationId?: string,
+    checkpointReady?: Promise<unknown>,
+    lockHolder?: LockHolder
 ): Promise<{
     matches: SearchMatch[];
     replacements: ReplaceResult[];
@@ -689,7 +690,13 @@ async function searchAndReplaceInDirectory(
                     blocks,
                     undefined,
                     toolId,
-                    { conversationId }
+                    {
+                        conversationId,
+                        // checkpoint 写盘屏障 + 写盘锁持有者身份：与 write_file/apply_diff 一致，
+                        // 替换模式同样参与 checkpoint 写盘屏障（M9）
+                        checkpointReady,
+                        lockHolder
+                    }
                 );
 
                 const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
@@ -805,6 +812,37 @@ async function getSearchRootAndPattern(
         effectivePattern: filePattern
     };
 }
+
+/**
+ * 工作区外访问策略自检（H3）。
+ *
+ * 为什么需要：search_in_files 的 path 参数可以是目录/文件绝对路径，
+ * 解析出 searchRoot 后若位于工作区外，必须与 read_file/write_file 一样受外部访问策略管控。
+ * 除了 ToolExecutionService 的统一拦截（白名单 + path 提取），这里在 handler 内再兜底一次，
+ * 覆盖子代理/直调工具链路等绕过服务层的执行路径。
+ * search 模式沿用读策略（deny/ask/allow），replace 模式沿用写策略（deny/ask）。
+ */
+function getSearchRootAccessError(
+    searchRoot: vscode.Uri,
+    args: Record<string, unknown>,
+    context?: import('../types').ToolContext
+): string | null {
+    const info = resolveFileToolPathWithInfo(searchRoot.fsPath);
+    if (!info.isOutsideWorkspace) {
+        return null;
+    }
+    return ensureOutsideWorkspaceAccessApproved(
+        'search_in_files',
+        { path: searchRoot.fsPath, mode: args.mode },
+        context
+    );
+}
+
+/**
+ * 工作区外访问被策略拒绝/需要确认时抛出，由 handler 顶层捕获并直接透传可读错误
+ *（与 read_file 返回的访问错误信息保持一致，不额外包装 "Search failed:" 前缀）。
+ */
+class OutsideWorkspaceAccessError extends Error {}
 
 function createPossibleMultiplePathsWarning(searchPath: string): SearchPathWarningInfo | undefined {
     const normalized = (searchPath || '').trim();
@@ -952,24 +990,17 @@ export function createSearchInFilesTool(): Tool {
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
                 const flags = (isReplaceMode ? 'g' : 'gm') + (caseSensitive ? '' : 'i');
-                // ReDoS 防护（最小方案）：不尝试完整检测，仅按源串长度拒绝超长正则
-                //（如模型拼接的查询），并捕获构造异常给出可读错误，避免灾难性回溯阻塞扩展宿主
+                // ReDoS 防护：长度上限 + 嵌套量词危险模式检测 + 构造异常捕获（共享 regexGuard），
+                // 避免灾难性回溯阻塞扩展宿主
                 const regexSource = isRegex ? query : escapeRegExp(query);
-                if (regexSource.length > MAX_REGEX_SOURCE_LENGTH) {
+                const guardedRegex = validateRegexPattern(regexSource, flags);
+                if (!guardedRegex.ok) {
                     return {
                         success: false,
-                        error: `Search query too long to use as regular expression (${regexSource.length} characters, maximum ${MAX_REGEX_SOURCE_LENGTH}). Please simplify the query.`
+                        error: guardedRegex.error
                     };
                 }
-                let searchRegex: RegExp;
-                try {
-                    searchRegex = new RegExp(regexSource, flags);
-                } catch (e) {
-                    return {
-                        success: false,
-                        error: `Invalid regular expression: ${e instanceof Error ? e.message : String(e)}`
-                    };
-                }
+                const searchRegex = guardedRegex.regex;
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();
@@ -1002,6 +1033,10 @@ export function createSearchInFilesTool(): Tool {
                             relativePath,
                             filePattern
                         );
+                        const accessError = getSearchRootAccessError(searchRoot, args, context);
+                        if (accessError) {
+                            return { success: false, error: accessError };
+                        }
                         const result = await searchAndReplaceInDirectory(
                             searchRoot,
                             effectivePattern,
@@ -1013,7 +1048,9 @@ export function createSearchInFilesTool(): Tool {
                             searchConfig,
                             context?.toolId,
                             context?.abortSignal,
-                            context?.conversationId
+                            context?.conversationId,
+                            context?.checkpointReady as Promise<unknown> | undefined,
+                            context?.lockHolder as LockHolder | undefined
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -1038,7 +1075,9 @@ export function createSearchInFilesTool(): Tool {
                                 searchConfig,
                                 context?.toolId,
                                 context?.abortSignal,
-                                context?.conversationId
+                                context?.conversationId,
+                                context?.checkpointReady as Promise<unknown> | undefined,
+                                context?.lockHolder as LockHolder | undefined
                             );
                             allMatches.push(...result.matches);
                             allReplacements.push(...result.replacements);
@@ -1062,6 +1101,10 @@ export function createSearchInFilesTool(): Tool {
                             relativePath,
                             filePattern
                         );
+                        const accessError = getSearchRootAccessError(searchRoot, args, context);
+                        if (accessError) {
+                            return { success: false, error: accessError };
+                        }
                         const result = await searchAndReplaceInDirectory(
                             searchRoot,
                             effectivePattern,
@@ -1073,7 +1116,9 @@ export function createSearchInFilesTool(): Tool {
                             searchConfig,
                             context?.toolId,
                             context?.abortSignal,
-                            context?.conversationId
+                            context?.conversationId,
+                            context?.checkpointReady as Promise<unknown> | undefined,
+                            context?.lockHolder as LockHolder | undefined
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
@@ -1142,6 +1187,10 @@ export function createSearchInFilesTool(): Tool {
                                 relativePath,
                                 filePattern
                             );
+                            const accessError = getSearchRootAccessError(searchRoot, args, context);
+                            if (accessError) {
+                                throw new OutsideWorkspaceAccessError(accessError);
+                            }
                             results.push(...await searchInDirectory(
                                 searchRoot,
                                 effectivePattern,
@@ -1179,6 +1228,10 @@ export function createSearchInFilesTool(): Tool {
                                 relativePath,
                                 filePattern
                             );
+                            const accessError = getSearchRootAccessError(searchRoot, args, context);
+                            if (accessError) {
+                                throw new OutsideWorkspaceAccessError(accessError);
+                            }
                             results.push(...await searchInDirectory(
                                 searchRoot,
                                 effectivePattern,
@@ -1241,6 +1294,10 @@ export function createSearchInFilesTool(): Tool {
                     };
                 }
             } catch (error) {
+                if (error instanceof OutsideWorkspaceAccessError) {
+                    // 工作区外访问被策略拒绝/需要确认：直接透传可读错误（与 read_file 一致）
+                    return { success: false, error: error.message };
+                }
                 return {
                     success: false,
                     error: `Search failed: ${error instanceof Error ? error.message : String(error)}`

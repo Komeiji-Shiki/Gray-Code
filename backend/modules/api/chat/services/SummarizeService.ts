@@ -6,6 +6,8 @@
 
 import { t } from '../../../../i18n';
 import { Logger } from '../../../../core/logger';
+import { ErrorType } from '../../../channel/types';
+import { isRealUserMessage } from '../../../conversation/helpers';
 import type { ConfigManager } from '../../../config/ConfigManager';
 import type {ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
@@ -227,11 +229,7 @@ export class SummarizeService {
             const messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, summarizeEndIndex);
 
             // 计算“本次总结后，累计覆盖了多少条原始消息”
-            const previousSummarizedCount = lastSummaryIndex >= 0
-                ? (typeof fullHistory[lastSummaryIndex]?.summarizedMessageCount === 'number'
-                    ? (fullHistory[lastSummaryIndex].summarizedMessageCount as number)
-                    : lastSummaryIndex)
-                : 0;
+            const previousSummarizedCount = this.resolvePreviousSummarizedCount(fullHistory, lastSummaryIndex);
             // 这次新纳入总结的消息数量（不包含旧 summary 本身）
             const newlySummarizedCount = summarizeEndIndex - historyStartIndex;
             const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
@@ -392,6 +390,16 @@ export class SummarizeService {
         } catch (error) {
             const err = error as any;
             this.log.error('manual.exception', { conversationId: request.conversationId, code: err.code, message: err.message });
+            // 用户取消（abort）不是普通失败：返回 ABORTED，避免调用方把它当作失败重试
+            if (this.isAbortError(err)) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'ABORTED',
+                        message: t('modules.api.chat.errors.summarizeAborted')
+                    }
+                };
+            }
             return {
                 success: false,
                 error: {
@@ -446,33 +454,58 @@ export class SummarizeService {
                     }
 
                     // 清理 functionResponse.response 中的内部字段
-                    if (cleanedPart.functionResponse?.response && typeof cleanedPart.functionResponse.response === 'object') {
-                        let cleanedResponse = cleanedPart.functionResponse.response as Record<string, unknown>;
-                        const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = cleanedResponse;
+                    // 与 conversation/helpers.cleanFunctionResponseForAPI 行为对齐：
+                    // 顶层剥离 diffContentId/diffId/diffs/pendingDiffId/agentInbox（A-COMM 信箱消息，
+                    // drain 一次性语义，禁止历史重放），data 层额外剥离 toolId/terminalId/multiRoot/
+                    // command/cwd/shell/channelName/modelId/steps 等运行时元数据（仅供前端 UI 展示）；
+                    // response / data 为数组时没有内部字段语义，原样返回（防止把数组误当对象解构）
+                    if (cleanedPart.functionResponse) {
+                        const rawResponse = cleanedPart.functionResponse.response as Record<string, unknown> | undefined;
 
-                        if (rest.data && typeof rest.data === 'object') {
-                            const { diffContentId: dataDiffContentId, diffId: dataDiffId, diffs: dataDiffs, pendingDiffId: dataPendingDiffId, ...dataRest } = rest.data as Record<string, unknown>;
+                        if (rawResponse && typeof rawResponse === 'object' && !Array.isArray(rawResponse)) {
+                            const { diffContentId, diffId, diffs, pendingDiffId, agentInbox, ...rest } = rawResponse;
 
-                            if (Array.isArray(dataRest.results)) {
-                                dataRest.results = (dataRest.results as Array<Record<string, unknown>>).map(item => {
-                      if (item && typeof item === 'object') {
-                                        const { diffContentId: itemDiffContentId, pendingDiffId: itemPendingDiffId, ...itemRest } = item;
-                                        return itemRest;
-                                    }
-                                    return item;
-                                });
+                            if (rest.data && typeof rest.data === 'object' && !Array.isArray(rest.data)) {
+                                const {
+                                    diffContentId: dataDiffContentId,
+                                    diffId: dataDiffId,
+                                    diffs: dataDiffs,
+                                    pendingDiffId: dataPendingDiffId,
+                                    toolId: dataToolId,
+                                    terminalId: dataTerminalId,
+                                    multiRoot: dataMultiRoot,
+                                    command: dataCommand,
+                                    cwd: dataCwd,
+                                    shell: dataShell,
+                                    channelName: dataChannelName,
+                                    modelId: dataModelId,
+                                    steps: dataSteps,
+                                    agentInbox: dataAgentInbox,
+                                    ...dataRest
+                                } = rest.data as Record<string, unknown>;
+
+                                // data.results 数组中的每个元素同样剥离 diffContentId / pendingDiffId
+                                if (Array.isArray(dataRest.results)) {
+                                    dataRest.results = (dataRest.results as Array<Record<string, unknown>>).map(item => {
+                                        if (item && typeof item === 'object' && !Array.isArray(item)) {
+                                            const { diffContentId: itemDiffContentId, pendingDiffId: itemPendingDiffId, ...itemRest } = item;
+                                            return itemRest;
+                                        }
+                                        return item;
+                                    });
+                                }
+
+                                rest.data = dataRest;
                             }
 
-                            rest.data = dataRest;
+                            cleanedPart = {
+                                ...cleanedPart,
+                                functionResponse: {
+                                    ...cleanedPart.functionResponse,
+                                    response: rest
+                                }
+                            };
                         }
-
-                        cleanedPart = {
-                            ...cleanedPart,
-                            functionResponse: {
-                                ...cleanedPart.functionResponse,
-                                response: rest
-                            }
-                        };
                     }
 
                     return cleanedPart;
@@ -650,13 +683,19 @@ export class SummarizeService {
             const summarizeModelMaxContext = config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
             const maxInputTokens = Math.floor(summarizeModelMaxContext * configSummarizeMaxInputRatio);
 
-            // 估算待总结消息的 token 量
-            const estimatedTokens = this.estimateMessagesTokens(messagesToSummarize);
+            // 估算待总结消息的 token 量（口径与 resolveSummarizeRange 的预算估算一致：
+            // 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，避免两套口径不一致
+            // 导致规划出的范围必然超出总结模型上下文）
+            const channelType = config.type;
+            let estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
             let insertIndex = summarizeEndIndex;
 
-            if (estimatedTokens > maxInputTokens) {
-                // 超出了总结模型上下文：保留最后一轮工具交互，缩小总结范围
-                // 找到最后一对 functionCall + functionResponse
+            // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下
+            // 每次重新扫描当前 messagesToSummarize 中最后一对 functionCall + functionResponse；
+            // 若该轮起点（真实用户消息）在总结范围内则整轮一起排除（保持语义完整，
+            // 避免把同一轮的工具交互拆散在总结消息两侧），轮首在范围之外时仅排除该工具交互
+            while (estimatedTokens > maxInputTokens) {
+                // 找到当前范围内最后一对 functionCall + functionResponse
                 let lastToolInteractionStart = -1;
                 for (let i = messagesToSummarize.length - 1; i >= 0; i--) {
                     const msg = messagesToSummarize[i];
@@ -666,19 +705,42 @@ export class SummarizeService {
                     }
                 }
 
-                if (lastToolInteractionStart > 0) {
-                    // 把最后一轮工具交互排除在总结范围外
-                    // 总结到该交互之前的所有消息
-                    const newEndIndex = summarizeInputStartIndex + lastToolInteractionStart;
-                    messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
-   insertIndex = newEndIndex;
-                    this.log.warn('auto.context_overflow_trimmed', {
-                        conversationId, estimatedTokens, maxInputTokens,
-                        originalRange: `${summarizeInputStartIndex}-${summarizeEndIndex}`,
-                        newRange: `${summarizeInputStartIndex}-${newEndIndex}`
-                    });
+                if (lastToolInteractionStart < 0) {
+                    // 没有可排除的工具交互了
+                    break;
                 }
-                // 如果找不到工具交互或排除后仍然为空，继续用原始范围尝试（让 API 自己处理截断）
+
+                // 定位该工具交互所属轮次的起点（其之前最近的真实用户消息），整轮一起排除
+                let roundStart = -1;
+                for (let i = lastToolInteractionStart; i >= 0; i--) {
+                    if (isRealUserMessage(messagesToSummarize[i])) {
+                        roundStart = i;
+                        break;
+                    }
+                }
+
+                const cutIndex = roundStart >= 0 ? roundStart : lastToolInteractionStart;
+                if (cutIndex <= 0) {
+                    // 排除后总结范围为空（仅剩的轮自身仍超限），无法再收缩
+                    break;
+                }
+
+                const prevEndIndex = insertIndex;
+                const newEndIndex = summarizeInputStartIndex + cutIndex;
+                if (newEndIndex >= prevEndIndex) {
+                    // 防御：范围没有缩小
+                    break;
+                }
+
+                // 把该轮（或该工具交互）排除在总结范围外，重新估算剩余内容
+                messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
+                insertIndex = newEndIndex;
+                this.log.warn('auto.context_overflow_trimmed', {
+                    conversationId, estimatedTokens, maxInputTokens,
+                    originalRange: `${summarizeInputStartIndex}-${prevEndIndex}`,
+                    newRange: `${summarizeInputStartIndex}-${newEndIndex}`
+                });
+                estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
             }
 
             if (messagesToSummarize.length === 0) {
@@ -692,12 +754,22 @@ export class SummarizeService {
                 };
             }
 
+            // 全部可排除的工具交互轮都排除后仍超限：返回显式错误，不把必败的超限请求发给 API
+            if (estimatedTokens > maxInputTokens) {
+                this.log.warn('auto.context_overflow_unresolvable', {
+                    conversationId, estimatedTokens, maxInputTokens, insertIndex
+                });
+                return {
+                    success: false,
+                    error: {
+                        code: 'CONTEXT_OVERFLOW',
+                        message: '待总结内容超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
+                    }
+                };
+            }
+
             // 7. 计算累计覆盖的原始消息数
-            const previousSummarizedCount = lastSummaryIndex >= 0
-                ? (typeof fullHistory[lastSummaryIndex]?.summarizedMessageCount === 'number'
-                    ? (fullHistory[lastSummaryIndex].summarizedMessageCount as number)
-                    : lastSummaryIndex)
-                : 0;
+            const previousSummarizedCount = this.resolvePreviousSummarizedCount(fullHistory, lastSummaryIndex);
             const newlySummarizedCount = insertIndex - historyStartIndex;
             const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
 
@@ -849,6 +921,16 @@ export class SummarizeService {
         } catch (error) {
             const err = error as any;
             this.log.error('auto.exception', { conversationId, code: err.code, message: err.message });
+            // 用户取消（abort）不是普通失败：返回 ABORTED，避免调用方把它当作失败重试
+            if (this.isAbortError(err)) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'ABORTED',
+                        message: t('modules.api.chat.errors.summarizeAborted')
+                    }
+                };
+            }
             return {
                 success: false,
                 error: {
@@ -988,14 +1070,56 @@ export class SummarizeService {
      * 估算一组消息的 token 数
      *
      * 用于判断待总结内容是否超出总结模型上下文。
-     * 本地估算的安全系数由 TokenEstimationService 统一处理（1.5）。
+     * 口径与 resolveSummarizeRange 的预算估算（estimateMessageTokensForBudget）一致：
+     * 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，保证溢出判断与范围规划一致。
+     *
+     * @param channelType 当前渠道类型（tokenCountByChannel 的取值口径）
      */
-    private estimateMessagesTokens(messages: Content[]): number {
+    private estimateMessagesTokens(messages: Content[], channelType: string): number {
         let total = 0;
         for (const msg of messages) {
-            total += this.estimateSingleMessageTokensLocally(msg);
+            total += this.estimateMessageTokensForBudget(msg, channelType);
         }
         return total;
+    }
+
+    /**
+     * 解析此前总结累计覆盖的原始消息数
+     *
+     * 从最后一个总结消息读取其 summarizedMessageCount（该值是截至该次总结的累计覆盖数）；
+     * 若该字段缺失（历史数据不完整），则往前找更早的总结消息，取最近一个有该字段的累计值；
+     * 仍找不到则回退 0。不再回退到数组下标——多条总结时下标与累计覆盖数不一致，会错算计数。
+     */
+    private resolvePreviousSummarizedCount(fullHistory: Content[], lastSummaryIndex: number): number {
+        if (lastSummaryIndex < 0) {
+            return 0;
+        }
+        for (let i = lastSummaryIndex; i >= 0; i--) {
+            const msg = fullHistory[i];
+            if (!msg?.isSummary) {
+                continue;
+            }
+            if (typeof msg.summarizedMessageCount === 'number') {
+                return msg.summarizedMessageCount;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 判断错误是否为用户取消（abort）
+     *
+     * ChannelError 的取消类型为 ErrorType.CANCELLED_ERROR（channel/types.ts）；
+     * 原生 fetch 中断会抛出 name === 'AbortError' 的 DOMException；
+     * 部分调用方还会用 code='CANCELLED' / 'ABORTED' 标记取消。
+     */
+    private isAbortError(err: any): boolean {
+        return !!err && (
+            err.type === ErrorType.CANCELLED_ERROR
+            || err.name === 'AbortError'
+            || err.code === 'CANCELLED'
+            || err.code === 'ABORTED'
+        );
     }
 
     /**

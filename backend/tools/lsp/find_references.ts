@@ -18,6 +18,12 @@ import {
 const MAX_CONTEXT_LINES = 10;
 
 /**
+ * 引用结果数量上限：LSP 对高频符号（如 Object/console）可能返回海量引用，
+ * 超出后截断收集并在返回 JSON 中置 truncated 标记，防止响应体与内存暴涨。
+ */
+const MAX_REFERENCES = 500;
+
+/**
  * 引用位置信息
  */
 interface ReferenceLocation {
@@ -145,6 +151,7 @@ Returns references grouped by file, with line numbers and code content.`;
                             totalCount: 0,
                             fileCount: 0,
                             references: [],
+                            truncated: false,
                             message: 'No references found. The symbol may not be used, or no language server is available.'
                         }
                     };
@@ -154,8 +161,15 @@ Returns references grouped by file, with line numbers and code content.`;
                 const groupedMap = new Map<string, ReferenceLocation[]>();
                 // 缓存已打开的文档
                 const docCache = new Map<string, vscode.TextDocument>();
-                
+                let collectedCount = 0;
+
                 for (const ref of references) {
+                    // 结果上限：超出后停止读取内容与分组，避免海量引用撑爆响应体
+                    if (collectedCount >= MAX_REFERENCES) {
+                        break;
+                    }
+                    collectedCount++;
+
                     // 获取相对路径
                     const workspaceFolder = vscode.workspace.getWorkspaceFolder(ref.uri);
                     let relativePath: string;
@@ -240,7 +254,8 @@ Returns references grouped by file, with line numbers and code content.`;
                         symbol: symbolName,
                         totalCount: references.length,
                         fileCount: groupedReferences.length,
-                        references: groupedReferences
+                        references: groupedReferences,
+                        truncated: references.length > MAX_REFERENCES
                     }
                 };
             } catch (error) {
