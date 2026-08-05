@@ -863,6 +863,37 @@ export class ContextTrimService {
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
+            // 手动总结是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
+            // 总结消息只会插入历史而不会物理删除旧消息；若这里仍从 0 发送，手动总结
+            // 虽然显示成功，下一次请求却会继续携带全部旧历史，等同于完全没有压缩。
+            const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
+            if (lastSummaryIndex >= 0) {
+                const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                    conversationId,
+                    fullHistory,
+                    historyOptions,
+                    lastSummaryIndex,
+                    lastSummaryIndex,
+                    dynamicContextStrategy
+                );
+                this.log.info('manual_summary_boundary_applied', {
+                    conversationId,
+                    summaryStartIndex: lastSummaryIndex,
+                    fullHistoryLength: fullHistory.length,
+                    historyLength: normalizedHistory.history.length
+                });
+                return {
+                    history: normalizedHistory.history,
+                    trimStartIndex: normalizedHistory.trimStartIndex,
+                    contextManagementDecision: {
+                        enabled: false,
+                        mode: 'off',
+                        source: policy.source,
+                        action: 'manual_summary_applied'
+                    }
+                };
+            }
+
             // HIS-03/04：fullHistory 已在上面加载，直接复用，避免同一迭代内第二次 loadHistory
             const history = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
