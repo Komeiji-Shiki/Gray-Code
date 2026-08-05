@@ -250,6 +250,32 @@ const en: LanguageMessages = {
             openConversation: 'Click to open this conversation'
         },
 
+        usageTime: {
+            title: 'Usage Time',
+            refresh: 'Refresh',
+            loading: 'Loading…',
+            loadFailed: 'Failed to load',
+            empty: 'No usage time data yet (activity in the editor starts recording)',
+            today: 'Today',
+            currentSession: 'Current session',
+            totalInRange: 'Total in range',
+            range7d: '7 days',
+            range30d: '30 days',
+            range90d: '90 days',
+            range1y: '1 year',
+            rangeAll: 'All',
+            hours: 'h',
+            minutes: 'm',
+            durationHM: '{hours}h {minutes}m',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: 'Daily usage',
+            monthlyTitle: 'Monthly usage (click a month for daily details)',
+            monthActiveDays: '{days} active days',
+            expandMonth: 'Expand daily details for this month',
+            heatmapTitle: 'Activity heatmap (last 7 days, hover for details)'
+        },
+
         history: {
             title: 'Chat History',
             empty: 'No conversations yet',
@@ -397,8 +423,12 @@ const en: LanguageMessages = {
                 assistant: 'Assistant'
             },
             actions: {
+                edit: 'Edit message',
+                copy: 'Copy',
+                retry: 'Regenerate',
                 viewResponse: 'View response',
-                branchFromHere: 'Branch from here'
+                branchFromHere: 'Branch from here',
+                delete: 'Delete message'
             },
             branch: {
                 previous: 'Previous candidate',
@@ -909,7 +939,8 @@ const en: LanguageMessages = {
                 sound: 'Notification System',
                 appearance: 'Appearance',
                 memory: 'Memory',
-                general: 'General'
+                general: 'General',
+                usage: 'Usage Statistics'
             },
             channelSettings: {
                 selector: {
@@ -1139,6 +1170,7 @@ const en: LanguageMessages = {
                     design: 'Design',
                     notification: 'Notifications',
                     agents: 'Agents',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 badges: {
@@ -2069,6 +2101,11 @@ const en: LanguageMessages = {
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
+                    },
+                    usage: {
+                        title: 'Usage Time & Statistics',
+                        description: 'View your usage time and token statistics',
+                        openFullPage: 'View Full Statistics'
                     }
                 },
                 proxy: {
@@ -2359,6 +2396,7 @@ const en: LanguageMessages = {
                     notification: 'Notifications',
                     agents: 'Agents',
                     mcp: 'MCP Tools',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 dependency: {

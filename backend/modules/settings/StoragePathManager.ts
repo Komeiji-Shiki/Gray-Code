@@ -15,7 +15,7 @@ import type { StorageStats } from './types';
 /**
  * 存储路径管理器
  */
-const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills'];
+const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills', 'activity'];
 
 export class StoragePathManager {
     private defaultDataPath: string;
@@ -95,6 +95,13 @@ export class StoragePathManager {
     }
     
     /**
+     * 获取活动统计存储目录
+     */
+    getActivityPath(): string {
+        return path.join(this.getEffectiveDataPath(), 'activity');
+    }
+    
+    /**
      * 确保所有存储目录存在
      * 注意：settings 目录只在默认路径创建，不在自定义路径创建
      */
@@ -107,7 +114,8 @@ export class StoragePathManager {
             path.join(basePath, 'checkpoints'),
             path.join(basePath, 'mcp'),
             path.join(basePath, 'dependencies'),
-            path.join(basePath, 'diffs')
+            path.join(basePath, 'diffs'),
+            path.join(basePath, 'activity')
         ];
         
         // settings 目录只在默认路径创建
@@ -207,17 +215,18 @@ export class StoragePathManager {
     async getStorageStats(targetPath?: string): Promise<StorageStats> {
         const basePath = targetPath || this.getEffectiveDataPath();
         
-        const [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills] = await Promise.all([
+        const [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity] = await Promise.all([
             this.getDirectorySize(path.join(basePath, 'conversations')),
             this.getDirectorySize(path.join(basePath, 'checkpoints')),
             this.getDirectorySize(path.join(basePath, 'snapshots')),
             this.getDirectorySize(path.join(basePath, 'mcp')),
             this.getDirectorySize(path.join(basePath, 'dependencies')),
             this.getDirectorySize(path.join(basePath, 'diffs')),
-            this.getDirectorySize(path.join(basePath, 'skills'))
+            this.getDirectorySize(path.join(basePath, 'skills')),
+            this.getDirectorySize(path.join(basePath, 'activity'))
         ]);
 
-        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills];
+        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity];
         const totalSize = allStats.reduce((sum, stat) => sum + stat.size, 0);
         const fileCount = allStats.reduce((sum, stat) => sum + stat.count, 0);
         

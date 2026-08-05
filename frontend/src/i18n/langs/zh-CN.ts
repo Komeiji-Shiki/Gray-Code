@@ -251,6 +251,32 @@ const zhCN = {
             openConversation: '点击打开此对话'
         },
 
+        usageTime: {
+            title: '使用时间',
+            refresh: '刷新',
+            loading: '正在统计…',
+            loadFailed: '加载失败',
+            empty: '暂无使用时间数据（在编辑器中活动即可开始记录）',
+            today: '今日已用',
+            currentSession: '当前连续工作',
+            totalInRange: '范围内合计',
+            range7d: '近 7 天',
+            range30d: '近 30 天',
+            range90d: '近 90 天',
+            range1y: '近 1 年',
+            rangeAll: '全部',
+            hours: '小时',
+            minutes: '分钟',
+            durationHM: '{hours}小时{minutes}分钟',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: '每日使用时长',
+            monthlyTitle: '每月使用时长（点击月份查看每日明细）',
+            monthActiveDays: '{days} 天活跃',
+            expandMonth: '展开该月每日明细',
+            heatmapTitle: '最近 7 天作息热力（悬停查看详情）'
+        },
+
         history: {
             title: '对话历史',
             empty: '暂无对话记录',
@@ -398,8 +424,12 @@ const zhCN = {
                 assistant: '助手'
             },
             actions: {
+                edit: '编辑消息',
+                copy: '复制',
+                retry: '重新生成',
                 viewResponse: '查看回复',
-                branchFromHere: '从这里创建分支'
+                branchFromHere: '从这里创建分支',
+                delete: '删除消息'
             },
             branch: {
                 previous: '上一个候选',
@@ -910,7 +940,8 @@ const zhCN = {
                 sound: '通知系统',
                 appearance: '外观',
                 memory: '记忆',
-                general: '通用'
+                general: '通用',
+                usage: '用量统计'
             },
             channelSettings: {
                 selector: {
@@ -1140,6 +1171,7 @@ const zhCN = {
                     design: '设计',
                     notification: '通知',
                     agents: '代理',
+                    activity: '使用时间',
                     other: '其他'
                 },
                 badges: {
@@ -2070,6 +2102,11 @@ const zhCN = {
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
+                    },
+                    usage: {
+                        title: '使用时间与用量',
+                        description: '查看你的使用时间与 Token 用量统计',
+                        openFullPage: '查看完整统计'
                     }
                 },
                 proxy: {
@@ -2360,6 +2397,7 @@ const zhCN = {
                     notification: '通知',
                     agents: '代理',
                     mcp: 'MCP 工具',
+                    activity: '使用时间',
                     other: '其他'
                 },
                 dependency: {

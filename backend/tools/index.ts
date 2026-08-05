@@ -40,6 +40,7 @@ export * from './review';
 export * from './history';
 export * from './notification';
 export * from './memory';
+export * from './activity';
 
 // 导出工具辅助函数
 export * from './utils';
@@ -78,6 +79,7 @@ function collectAllToolRegistrations(): ToolRegistration[] {
     const { getHistoryToolRegistrations } = require('./history');
     const { getNotificationToolRegistrations } = require('./notification');
     const { getMemoryToolRegistrations } = require('./memory');
+    const { getActivityToolRegistrations } = require('./activity');
 
     return [
         ...getFileToolRegistrations(),
@@ -92,7 +94,8 @@ function collectAllToolRegistrations(): ToolRegistration[] {
         ...getReviewToolRegistrations(),
         ...getHistoryToolRegistrations(),
         ...getNotificationToolRegistrations(),
-        ...getMemoryToolRegistrations()
+        ...getMemoryToolRegistrations(),
+        ...getActivityToolRegistrations()
     ];
 }
 
