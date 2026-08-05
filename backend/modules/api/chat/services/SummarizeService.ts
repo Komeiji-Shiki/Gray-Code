@@ -13,6 +13,7 @@ import type {ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { Content } from '../../../conversation/types';
+import type { SummaryTokenStats } from '../../../conversation/types';
 import type { GenerateResponse, StreamChunk } from '../../../channel/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
@@ -89,6 +90,47 @@ export class SummarizeService {
      */
     setSettingsManager(settingsManager: SettingsManager): void {
         this.settingsManager = settingsManager;
+    }
+
+    private getLatestMainContextTokenCount(history: Content[]): number | undefined {
+        for (let i = history.length - 1; i >= 0; i--) {
+            const message = history[i];
+            if (message.role !== 'model' || !message.usageMetadata) continue;
+            const prompt = message.usageMetadata.promptTokenCount;
+            if (typeof prompt === 'number' && Number.isFinite(prompt)) return Math.max(0, prompt);
+            const total = message.usageMetadata.totalTokenCount;
+            if (typeof total === 'number' && Number.isFinite(total)) return Math.max(0, total);
+        }
+        return undefined;
+    }
+
+    private buildSummaryTokenStats(options: {
+        fullHistory: Content[];
+        messagesToSummarize: Content[];
+        summaryText: string;
+        channelType: string;
+        providerSummaryTokens?: number;
+    }): SummaryTokenStats {
+        const sourceTokenCount = this.estimateMessagesTokens(options.messagesToSummarize, options.channelType);
+        const summaryTokenCount = typeof options.providerSummaryTokens === 'number'
+            ? Math.max(0, options.providerSummaryTokens)
+            : this.estimateSingleMessageTokensLocally({ role: 'user', parts: [{ text: options.summaryText }] });
+        const estimatedTokensSaved = Math.max(0, sourceTokenCount - summaryTokenCount);
+        const contextTokenCountBefore = this.getLatestMainContextTokenCount(options.fullHistory);
+        return {
+            sourceTokenCount,
+            summaryTokenCount,
+            estimatedTokensSaved,
+            ...(contextTokenCountBefore !== undefined
+                ? {
+                    contextTokenCountBefore,
+                    estimatedContextTokenCountAfter: Math.max(
+                        0,
+                        contextTokenCountBefore - sourceTokenCount + summaryTokenCount
+                    )
+                }
+                : {})
+        };
     }
 
     /**
@@ -355,6 +397,15 @@ export class SummarizeService {
             // 这样用户可以保留每一次总结的历史记录；同时后续上下文裁剪/下一次总结都会自动使用“最后一个总结消息”。
             const insertIndex = summarizeEndIndex;
 
+            const mainConfig = await this.configManager.getConfig(configId) || config;
+            const summaryTokenStats = this.buildSummaryTokenStats({
+                fullHistory,
+                messagesToSummarize,
+                summaryText,
+                channelType: mainConfig.type,
+                providerSummaryTokens: afterTokenCount
+            });
+
             // 12. 创建总结消息并添加到历史
             const summaryContent: Content = {
                 role: 'user',
@@ -362,6 +413,7 @@ export class SummarizeService {
                 index: insertIndex,
                 isSummary: true,
                 summarizedMessageCount: totalSummarizedCount,
+                summaryTokenStats,
                 usageMetadata: {
                     promptTokenCount: beforeTokenCount,
                     candidatesTokenCount: afterTokenCount
@@ -375,7 +427,8 @@ export class SummarizeService {
                 insertIndex,
                 totalSummarizedCount,
                 promptTokens: beforeTokenCount,
-                completionTokens: afterTokenCount
+                completionTokens: afterTokenCount,
+                summaryTokenStats
             });
 
             return {
@@ -384,6 +437,7 @@ export class SummarizeService {
                 summarizedMessageCount: totalSummarizedCount,
                 beforeTokenCount,
                 afterTokenCount,
+                summaryTokenStats,
                 insertIndex
             };
 
@@ -881,6 +935,15 @@ export class SummarizeService {
                 };
             }
 
+            const mainConfig = await this.configManager.getConfig(configId) || config;
+            const summaryTokenStats = this.buildSummaryTokenStats({
+                fullHistory,
+                messagesToSummarize,
+                summaryText,
+                channelType: mainConfig.type,
+                providerSummaryTokens: afterTokenCount
+            });
+
             // 12. 创建总结消息并插入到历史
             const summaryContent: Content = {
                 role: 'user',
@@ -889,6 +952,7 @@ export class SummarizeService {
                 isSummary: true,
                 isAutoSummary: true,
                 summarizedMessageCount: totalSummarizedCount,
+                summaryTokenStats,
                 usageMetadata: {
                     promptTokenCount: beforeTokenCount,
                     candidatesTokenCount: afterTokenCount
@@ -902,7 +966,8 @@ export class SummarizeService {
                 insertIndex,
                 totalSummarizedCount,
                 promptTokens: beforeTokenCount,
-                completionTokens: afterTokenCount
+                completionTokens: afterTokenCount,
+                summaryTokenStats
             });
 
             return {
@@ -911,6 +976,7 @@ export class SummarizeService {
                 summarizedMessageCount: totalSummarizedCount,
                 beforeTokenCount,
                 afterTokenCount,
+                summaryTokenStats,
                 insertIndex
             };
 

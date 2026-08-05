@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
 import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
@@ -565,15 +566,16 @@ export class SubAgentMonitorPanel {
 
         const devServerUrl = this.devServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
+        const nonce = randomBytes(16).toString('base64');
         const csp = [
             "default-src 'none'",
             `img-src ${webview.cspSource} https: data:`,
             `font-src ${webview.cspSource}`,
             `style-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
-            `script-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
+            `script-src ${webview.cspSource} 'nonce-${nonce}' ${devServerOrigin || ''}`,
             `connect-src ${devServerOrigin || ''}`
         ].join('; ');
-        const bootstrap = `<script>window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
+        const bootstrap = `<script nonce="${nonce}">window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
 
         if (devServerUrl) {
             return `<!DOCTYPE html>
@@ -588,8 +590,8 @@ export class SubAgentMonitorPanel {
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="${devServerUrl}/@vite/client"></script>
-  <script type="module" src="${devServerUrl}/src/main.ts"></script>
+  <script nonce="${nonce}" type="module" src="${devServerUrl}/@vite/client"></script>
+  <script nonce="${nonce}" type="module" src="${devServerUrl}/src/main.ts"></script>
 </body>
 </html>`;
         }
@@ -607,7 +609,7 @@ export class SubAgentMonitorPanel {
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="${scriptUri}"></script>
+  <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
     }

@@ -273,6 +273,13 @@ function normalizePersistedMap(raw: unknown): Record<string, SubAgentRunPersiste
 }
 
 export class SubAgentRunEventBus {
+    private markStaleRecordInterrupted(record: SubAgentRunPersistedRecord): boolean {
+        if (TERMINAL_RUN_STATUSES.has(record.status)) return false;
+        record.status = 'interrupted';
+        record.updatedAt = Date.now();
+        return true;
+    }
+
     getTranscriptRepository(runId: string): ITranscriptRepository {
         // 修改原因：SubAgent 子 transcript 需要与主聊天共享同一仓储抽象，而不暴露事件总线内部的 snapshot/persist 细节。
         // 修改方式：为指定 runId 创建一个绑定当前事件总线的 SubAgentTranscriptRepository。
@@ -724,6 +731,7 @@ export class SubAgentRunEventBus {
         const persistedMap = normalizePersistedMap(raw);
         const snapshots: SubAgentRunSnapshot[] = [];
         let migratedLegacyRecord = false;
+        let interruptedStaleRecord = false;
 
         for (const record of Object.values(persistedMap)) {
             const existing = this.snapshots.get(record.runId);
@@ -731,6 +739,9 @@ export class SubAgentRunEventBus {
                 snapshots.push(existing);
                 continue;
             }
+            // 扩展宿主重启后，元数据中的非终态 run 已不可能继续执行；及时纠正状态，
+            // 避免 Monitor 永久显示 running/queued。当前进程仍活跃的 run 已命中上面的 snapshot 分支。
+            interruptedStaleRecord = this.markStaleRecordInterrupted(record) || interruptedStaleRecord;
             const external = record.transcriptRef && store.loadSubAgentTranscript
                 ? await store.loadSubAgentTranscript(conversationId, record.runId)
                 : null;
@@ -767,7 +778,7 @@ export class SubAgentRunEventBus {
             this.stores.set(record.runId, store);
             snapshots.push(snapshot);
         }
-        if (migratedLegacyRecord) {
+        if (migratedLegacyRecord || interruptedStaleRecord) {
             await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
         }
         this.evictSnapshotsIfNeeded();

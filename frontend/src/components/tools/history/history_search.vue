@@ -15,6 +15,7 @@ import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '@/composables'
 import { escapeRegExp } from '@/utils/format'
+import { createSafeUiRegex } from '@/utils/regexGuard'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -243,7 +244,8 @@ function buildHighlightPatterns(content: string): RegExp[] {
 
   try {
     if (isRegex.value) {
-      return [new RegExp(query.value, 'gi')]
+      const pattern = createSafeUiRegex(query.value, 'gi')
+      return pattern ? [pattern] : []
     }
 
     const exactPattern = new RegExp(escapeRegExp(query.value), 'gi')
