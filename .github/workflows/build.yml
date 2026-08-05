@@ -7,6 +7,11 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# 同一分支连续推送自动取消在跑的旧构建，避免排队浪费
+concurrency:
+  group: graycode-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -31,6 +36,17 @@ jobs:
           npm ci
           npm ci --prefix frontend
           npm ci --prefix electron-app
+
+      - name: Typecheck (backend + frontend + electron)
+        run: |
+          npx tsc -p ./ --noEmit
+          npm --prefix frontend run typecheck
+          npm --prefix electron-app run typecheck
+
+      - name: Unit tests (backend jest + frontend vitest)
+        run: |
+          npm test
+          npm --prefix frontend test
 
       - name: Install Linux GUI dependencies (xvfb for headless Electron)
         if: matrix.os == 'ubuntu-latest'

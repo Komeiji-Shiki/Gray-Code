@@ -4,6 +4,7 @@
   "description": "GrayCode desktop app (Electron) - AI coding assistant, no VS Code installation needed (runs on a built-in vscode-shim compat layer)",
   "author": {
     "name": "czocelot",
+    "email": "264626877+czocelot@users.noreply.github.com",
     "url": "https://github.com/czocelot/Gray-Code-ocelot"
   },
   "homepage": "https://github.com/czocelot/Gray-Code-ocelot",
@@ -12,6 +13,9 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "node build.mjs",
+    "build:dev": "node build.mjs --dev",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc -p . --noEmit",
     "build:all": "npm --prefix ../frontend run build && node patch-dist.mjs && node build.mjs",
     "patch": "node patch-dist.mjs",
     "start": "npm run build:all && electron .",

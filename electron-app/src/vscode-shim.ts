@@ -738,12 +738,23 @@ export interface WorkspaceFolder {
 let workspaceFolderUris: string[] = [];
 
 export function __setWorkspaceFolders(fsPaths: string[]): void {
-  workspaceFolderUris = [...fsPaths];
-  workspaceOnDidChangeFolders.fire({ added: getWorkspaceFolders(), removed: [] });
+  const next = [...fsPaths];
+  const prev = workspaceFolderUris;
+  // 按新旧列表差集生成 added/removed：避免把保留的文件夹重复报为 added（技能重复扫描），
+  // 也让被移除的文件夹触发 removed 清理（此前 removed 恒为空）
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  const addedPaths = next.filter(p => !prevSet.has(p));
+  const removedPaths = prev.filter(p => !nextSet.has(p));
+  workspaceFolderUris = next;
+  workspaceOnDidChangeFolders.fire({
+    added: addedPaths.map(p => buildWorkspaceFolder(p, next.indexOf(p))),
+    removed: removedPaths.map(p => buildWorkspaceFolder(p, prev.indexOf(p)))
+  });
 }
 
-function getWorkspaceFolders(): WorkspaceFolder[] {
-  return workspaceFolderUris.map((fsPath, index) => ({
+function buildWorkspaceFolder(fsPath: string, index: number): WorkspaceFolder {
+  return {
     uri: Uri.file(fsPath),
     name: path.basename(fsPath) || fsPath,
     index,
@@ -751,7 +762,11 @@ function getWorkspaceFolders(): WorkspaceFolder[] {
     // folder.fsPath directly in several places (CheckpointManager, tool path
     // resolution, uri containment checks). Provide it so those paths work.
     fsPath
-  }));
+  };
+}
+
+function getWorkspaceFolders(): WorkspaceFolder[] {
+  return workspaceFolderUris.map((fsPath, index) => buildWorkspaceFolder(fsPath, index));
 }
 
 const workspaceOnDidChangeFolders = new EventEmitter<{ added: WorkspaceFolder[]; removed: WorkspaceFolder[] }>();
@@ -1610,14 +1625,21 @@ function resolveRepoRoot(): string {
   return process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 }
 
+// 打包后 package.json 永不变化：memoize 免每次 getExtension() 同步读盘（公告/版本检查多路径调用）
+let cachedPackageMetadata: { version: string; name: string; displayName: string } | null = null;
+
 function readRootPackageMetadata(): { version: string; name: string; displayName: string } {
+  if (cachedPackageMetadata) {
+    return cachedPackageMetadata;
+  }
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(resolveRepoRoot(), 'package.json'), 'utf-8'));
-    return {
+    cachedPackageMetadata = {
       version: typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0',
       name: typeof pkg.name === 'string' && pkg.name ? pkg.name : 'graycode',
       displayName: typeof pkg.displayName === 'string' && pkg.displayName ? pkg.displayName : 'Gray Code'
     };
+    return cachedPackageMetadata;
   } catch {
     return { version: '0.0.0', name: 'graycode', displayName: 'Gray Code' };
   }

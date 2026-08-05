@@ -19,6 +19,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
         entryFileNames: 'index.js',
@@ -27,6 +28,21 @@ export default defineConfig({
             return 'index.css';
           }
           return 'assets/[name][extname]';
+        },
+        // 大体积静态依赖拆出独立 chunk，缩小主入口（graycode:// 协议与 VS Code webview
+        // 均按相对路径加载 assets/ 下的 chunk，mtime 缓存已覆盖）
+        manualChunks(id) {
+          if (id.includes('node_modules/vue') || id.includes('node_modules/@vue') || id.includes('node_modules/pinia')) {
+            return 'vendor-vue';
+          }
+          if (id.includes('node_modules/highlight.js')) {
+            return 'vendor-highlight';
+          }
+          if (id.includes('node_modules/katex') || id.includes('node_modules/markdown-it')) {
+            return 'vendor-markdown';
+          }
+          // mermaid/cytoscape 保持 Vite 原生动态 import 分包（modulepreload 不会提前拉取）
+          return undefined;
         }
       }
     }

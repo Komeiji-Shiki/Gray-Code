@@ -386,13 +386,14 @@ export class BackendHost {
     });
     setWorkspaceManager(this.workspaceManager);
     // 新增的工作区文件夹：项目技能立即重新扫描
-    this.unsubscribers.push(
-        vscode.workspace.onDidChangeWorkspaceFolders((event) => {
-            for (const folder of event.added) {
-                getSkillsManager()?.addWorkspacePath(folder.uri.fsPath);
-            }
-        })
-    );
+    {
+      const disposable = vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+        for (const folder of event.added) {
+          getSkillsManager()?.addWorkspacePath(folder.uri.fsPath);
+        }
+      });
+      this.unsubscribers.push(() => disposable.dispose());
+    }
 
     await createSkillsManager({
         workspacePaths: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),

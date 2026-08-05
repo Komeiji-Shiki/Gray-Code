@@ -14,7 +14,6 @@ const path = require('path');
 // 需要在 node_modules 中保留的包（不能打进 bundle）
 const externalModules = [
     'vscode',
-    'typescript',
 ];
 
 const outdir = path.join(__dirname, 'dist');

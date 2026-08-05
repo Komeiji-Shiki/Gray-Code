@@ -12,6 +12,11 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const vscodeAlias = path.resolve(__dirname, 'src', 'vscode-shim.ts');
 
+// --dev / --watch：开发模式保留 sourcemap 与未压缩代码（可读栈 + 源码映射）；
+// 默认（发布）压缩并关闭 sourcemap
+const isDev = process.argv.includes('--dev') || process.argv.includes('--watch');
+const isWatch = process.argv.includes('--watch');
+
 const common = {
   bundle: true,
   platform: 'node',
@@ -21,21 +26,51 @@ const common = {
   alias: { vscode: vscodeAlias },
   logLevel: 'info',
   legalComments: 'none',
-  // 发布产物压缩（主进程 bundle 含整个 backend，体积数 MB）
-  minify: true,
-  sourcemap: false
+  minify: !isDev,
+  sourcemap: isDev
 };
 
-await build({
-  ...common,
-  entryPoints: [path.resolve(__dirname, 'src', 'main.ts')],
-  outfile: path.resolve(__dirname, 'dist', 'main.js')
-});
+async function buildOnce() {
+  await build({
+    ...common,
+    entryPoints: [path.resolve(__dirname, 'src', 'main.ts')],
+    outfile: path.resolve(__dirname, 'dist', 'main.js')
+  });
 
-await build({
-  ...common,
-  entryPoints: [path.resolve(__dirname, 'src', 'preload.ts')],
-  outfile: path.resolve(__dirname, 'dist', 'preload.js')
-});
+  await build({
+    ...common,
+    entryPoints: [path.resolve(__dirname, 'src', 'preload.ts')],
+    outfile: path.resolve(__dirname, 'dist', 'preload.js')
+  });
+}
 
-console.log('[build] done');
+if (isWatch) {
+  const ctx = await (await import('esbuild')).context({
+    ...common,
+    entryPoints: [
+      path.resolve(__dirname, 'src', 'main.ts'),
+      path.resolve(__dirname, 'src', 'preload.ts')
+    ],
+    outdir: path.resolve(__dirname, 'dist'),
+    entryNames: '[name]',
+    plugins: [
+      {
+        name: 'rebuild-logger',
+        setup(build) {
+          build.onEnd((result) => {
+            if (result.errors.length > 0) {
+              console.error(`[esbuild] rebuild failed with ${result.errors.length} error(s)`);
+            } else {
+              console.log('[esbuild] rebuild done');
+            }
+          });
+        }
+      }
+    ]
+  });
+  await ctx.watch();
+  console.log('[esbuild] watching for changes... (Ctrl+C to stop)');
+} else {
+  await buildOnce();
+  console.log('[build] done');
+}

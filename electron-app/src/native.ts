@@ -55,11 +55,17 @@ function isAllowedOpenPath(filePath: string): boolean {
   }
 }
 
+/** 窗口可能已销毁（关闭竞态）：isDestroyed 的窗口传给 dialog/webContents 会抛 "Object has been destroyed" */
+function usableWindow(win: BrowserWindow | null): BrowserWindow | null {
+  return win && !win.isDestroyed() ? win : null;
+}
+
 export async function runNative<T = any>(
   op: string,
   payload: any,
   win: BrowserWindow | null
 ): Promise<T> {
+  const w = usableWindow(win);
   switch (op) {
     case 'workspace:pickFolder':
       pickWorkspaceHandler?.();
@@ -77,8 +83,8 @@ export async function runNative<T = any>(
           ...(options.canSelectMany ? (['multiSelections'] as const) : [])
         ]
       };
-      const result = win
-        ? await dialog.showOpenDialog(win, dialogOptions)
+      const result = w
+        ? await dialog.showOpenDialog(w, dialogOptions)
         : await dialog.showOpenDialog(dialogOptions);
       return { filePaths: result.filePaths, canceled: result.canceled } as T;
     }
@@ -89,8 +95,8 @@ export async function runNative<T = any>(
         defaultPath: options.defaultUri?.fsPath,
         filters: options.filters
       };
-      const result = win
-        ? await dialog.showSaveDialog(win, dialogOptions)
+      const result = w
+        ? await dialog.showSaveDialog(w, dialogOptions)
         : await dialog.showSaveDialog(dialogOptions);
       return { filePath: result.filePath, canceled: result.canceled } as T;
     }
@@ -124,7 +130,9 @@ export async function runNative<T = any>(
     case 'clipboard:read':
       return clipboard.readText() as T;
     case 'window:reload':
-      win?.webContents.reload();
+      if (w && !w.webContents.isDestroyed()) {
+        w.webContents.reload();
+      }
       return { ok: true } as T;
     case 'fs:exists': {
       // 类型校验：非字符串路径会直接让 existsSync 抛 TypeError

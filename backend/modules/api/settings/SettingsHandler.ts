@@ -1023,25 +1023,20 @@ export class SettingsHandler {
                 return '';
             }
             
-            const content = fs.readFileSync(changelogPath, 'utf-8');
-            
-            // 解析所有版本及其内容（版本号支持可选预发布段，如 [1.3.1-1]）
-            const versionBlockRegex = /## \[(\d+\.\d+\.\d+(?:-\d+)?)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
-            const versions: { version: string; content: string }[] = [];
-            const seenVersions = new Set<string>();
-
-            let match;
-            while ((match = versionBlockRegex.exec(content)) !== null) {
-                // CHANGELOG 中同一版本号可能出现多次（历史编辑遗留），只取第一个匹配，避免重复展示
-                if (seenVersions.has(match[1])) {
-                    continue;
+            // 解析缓存：CHANGELOG.md（数百 KB）按 mtime 缓存解析结果，仅文件变化时重解析。
+            // 公告检查在版本升级后的首次启动与设置页重复触发，此前每次都全量读+正则解析。
+            const stat = fs.statSync(changelogPath);
+            let cached = SettingsHandler.changelogParseCache.get(changelogPath);
+            if (!cached || cached.mtimeMs !== stat.mtimeMs || cached.size !== stat.size) {
+                const content = fs.readFileSync(changelogPath, 'utf-8');
+                const versions = SettingsHandler.parseChangelogVersions(content);
+                cached = { mtimeMs: stat.mtimeMs, size: stat.size, versions };
+                if (SettingsHandler.changelogParseCache.size >= 8) {
+                    SettingsHandler.changelogParseCache.clear();
                 }
-                seenVersions.add(match[1]);
-                versions.push({
-                    version: match[1],
-                    content: match[2].trim()
-                });
+                SettingsHandler.changelogParseCache.set(changelogPath, cached);
             }
+            const versions = cached.versions;
             
             // 筛选需要的版本（大于 fromVersion 且小于等于 toVersion）
             const relevantVersions = versions.filter(v => {
@@ -1078,5 +1073,33 @@ export class SettingsHandler {
             console.error('Failed to read changelog:', error);
             return '';
         }
+    }
+
+    /** CHANGELOG 解析缓存（路径 → mtime+size+版本列表） */
+    private static readonly changelogParseCache = new Map<string, {
+        mtimeMs: number;
+        size: number;
+        versions: { version: string; content: string }[];
+    }>();
+
+    /** 解析 CHANGELOG 全部版本块（版本号支持可选预发布段，如 [1.3.1-1]；重复版本只取第一个） */
+    private static parseChangelogVersions(content: string): { version: string; content: string }[] {
+        const versionBlockRegex = /## \[(\d+\.\d+\.\d+(?:-\d+)?)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
+        const versions: { version: string; content: string }[] = [];
+        const seenVersions = new Set<string>();
+
+        let match;
+        while ((match = versionBlockRegex.exec(content)) !== null) {
+            // CHANGELOG 中同一版本号可能出现多次（历史编辑遗留），只取第一个匹配，避免重复展示
+            if (seenVersions.has(match[1])) {
+                continue;
+            }
+            seenVersions.add(match[1]);
+            versions.push({
+                version: match[1],
+                content: match[2].trim()
+            });
+        }
+        return versions;
     }
 }
