@@ -233,7 +233,8 @@ describe('M3/H5：非流式循环自动总结的回合级计数与 abort 信号'
             undefined,
             'single',
             undefined,
-            321
+            321,
+            undefined
         );
         expect(channelManager.generate).toHaveBeenCalledTimes(1);
     });

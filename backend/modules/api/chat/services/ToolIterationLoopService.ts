@@ -709,7 +709,8 @@ export class ToolIterationLoopService {
                 promptModeSnapshot,
                 modelOverride,
                 dynamicContextStrategy,
-                { allowStateAdvance: !contextManagementEvaluatedForTurn }
+                { allowStateAdvance: !contextManagementEvaluatedForTurn },
+                abortSignal
             );
 
             this.log.debug('stream.trim_result', {
@@ -838,7 +839,8 @@ export class ToolIterationLoopService {
                     modelOverride,
                     dynamicContextStrategy,
                     this.granularFallbackStartByConversation.get(conversationId),
-                    trimResult.fixedPromptTokens
+                    trimResult.fixedPromptTokens,
+                    abortSignal
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }
@@ -1643,7 +1645,8 @@ export class ToolIterationLoopService {
                 promptModeSnapshot,
                 modelOverride,
                 dynamicContextStrategy,
-                { allowStateAdvance: !contextManagementEvaluatedForTurn }
+                { allowStateAdvance: !contextManagementEvaluatedForTurn },
+                abortSignal
             );
 
             this.log.debug('nonstream.trim_result', {
@@ -1722,7 +1725,8 @@ export class ToolIterationLoopService {
                     modelOverride,
                     dynamicContextStrategy,
                     this.granularFallbackStartByConversation.get(conversationId),
-                    trimResult.fixedPromptTokens
+                    trimResult.fixedPromptTokens,
+                    abortSignal
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }

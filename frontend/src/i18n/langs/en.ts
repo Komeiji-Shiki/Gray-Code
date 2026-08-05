@@ -2471,7 +2471,7 @@ const en: LanguageMessages = {
                     memory_recall: 'Search all permanent memories with regex support.',
                     memory_compress: 'Execute pending memory compression and merging.',
                     memory_zoom: 'Expand a memory tree node to view details.',
-                    memory_forget: 'Discard an incorrect memory tree summary (original memories preserved).',
+                    memory_forget: 'Delete raw memories: a single numeric ID means truncation mode, removing that ID and all memories after it; IDs are listed in the Raw Memory Entries section of the settings page.',
                     memory_config: 'View or modify the permanent memory system configuration parameters.',
                     insert_code: 'Insert code before a specified line. Use "last line + 1" to append at the end.',
                     delete_code: 'Delete code within a specified line range in files.',

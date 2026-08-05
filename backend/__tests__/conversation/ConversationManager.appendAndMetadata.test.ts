@@ -440,6 +440,47 @@ describe('getMetadataLight 元数据缓存（PERF）', () => {
         expect(meta?.title).toBe('NC'); // 写路径覆盖负缓存
         expect(fake.readCalls).toHaveLength(0);
     });
+
+    test('负缓存 null 不遮蔽 getMetadata 的历史重建 fallback（有历史无 meta.json 的会话）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-missing-meta', 'MissingMeta');
+        await manager.addBatch('conv-missing-meta', [makeContent('user', 'a'), makeContent('model', 'b')]);
+
+        // 模拟 meta.json 丢失（损坏改名备份 / 手动删除）而历史仍在
+        const metaPath = Array.from(fake.files.keys()).find(p => p.endsWith('/conv-missing-meta.meta.json'));
+        expect(metaPath).toBeDefined();
+        fake.files.delete(metaPath!);
+
+        // 对话列表分页先走 getMetadataLight → 负缓存 null
+        expect(await manager.getMetadataLight('conv-missing-meta')).toBeNull();
+
+        // getMetadata 不得被负缓存遮蔽：历史存在时应走磁盘路径重建 fallback
+        const meta = await manager.getMetadata('conv-missing-meta');
+        expect(meta).not.toBeNull();
+        expect(meta!.id).toBe('conv-missing-meta');
+        // createFallbackMetadata 默认标题（本地化「对话 <id>」）
+        expect(meta!.title).toContain('conv-missing-meta');
+        // 重建结果回填缓存：后续 getMetadataLight 直接命中，不再返回 null
+        expect(await manager.getMetadataLight('conv-missing-meta')).not.toBeNull();
+    });
+
+    test('getMetadata 损坏降级 fallback 回填缓存后 getMetadataLight 不再负缓存 null', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-corrupt-meta', 'CorruptMeta');
+        await manager.addBatch('conv-corrupt-meta', [makeContent('user', 'a')]);
+
+        // 直接把 meta.json 写成损坏内容（parse_error 降级路径）
+        const metaPath = Array.from(fake.files.keys()).find(p => p.endsWith('/conv-corrupt-meta.meta.json'));
+        expect(metaPath).toBeDefined();
+        fake.files.set(metaPath!, '{ not valid json');
+
+        const meta = await manager.getMetadata('conv-corrupt-meta');
+        expect(meta).not.toBeNull();
+        // 降级后回填缓存：getMetadataLight 不再返回 null（标题/时间戳不持续缺失）
+        expect(await manager.getMetadataLight('conv-corrupt-meta')).not.toBeNull();
+    });
 });
 
 describe('getMetadata 完整性检查只读 index（HIS-11）', () => {

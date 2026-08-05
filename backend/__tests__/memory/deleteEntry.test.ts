@@ -117,13 +117,47 @@ describe('MemoryManager.deleteEntry', () => {
             for (const t of ['m1', 'm2', 'm3', 'm4']) {
                 await mm.note(t);
             }
-            // 构造一个覆盖全部 [0,4) 的树摘要（size=4 块）
+            // 写入一个覆盖全量 [0,4) 的树摘要（size=4 块）
             await (mm as any).treePut(0, 4, 'summary of all');
 
             await mm.deleteEntry(1);
-            // 删除后 id 变号：全部树摘要清空，treeGet 返回 null
+            // 删除中间记录 id 重编号，树摘要整体失效，treeGet 返回 null
             const summary = await (mm as any).treeGet(0, 4);
             expect(summary).toBeNull();
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('删除最后一条时覆盖被删记录的尾部树摘要被截断、未覆盖块的摘要保留', async () => {
+        const { mm, dir } = setup();
+        try {
+            await mm.init();
+            for (const t of ['m1', 'm2', 'm3', 'm4']) {
+                await mm.note(t);
+            }
+            // 写入 size=2 的两块：块 [0,2) 与块 [2,4)
+            await (mm as any).treePut(0, 2, 'sum 01');
+            await (mm as any).treePut(2, 4, 'sum 23');
+            // 写入覆盖全量的 size=4 块
+            await (mm as any).treePut(0, 4, 'sum 0123');
+
+            // 删除最后一条（id=3）：被删记录 3 之后的尾部块 [2,4) 覆盖了已删内容，必须失效
+            await mm.deleteEntry(3);
+
+            const tail2 = await (mm as any).treeGet(2, 4);
+            expect(tail2).toBeNull();
+            const all4 = await (mm as any).treeGet(0, 4);
+            expect(all4).toBeNull();
+            // 完全位于保留区 [0,3) 内的块 [0,2) 摘要不受影响
+            const head2 = await (mm as any).treeGet(0, 2);
+            expect(head2).toBe('sum 01');
+
+            // 回归：删除后追加新记录使长度回升，被删记录 3 的内容不得借陈旧摘要重现
+            await mm.note('m5');
+            await mm.note('m6'); // 长度回到 4，size=2 块 [2,4) 的槽位重新可写
+            const entries = await mm.listEntries();
+            expect(entries.map(e => e.text)).toEqual(['m1', 'm2', 'm3', 'm5', 'm6']);
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }

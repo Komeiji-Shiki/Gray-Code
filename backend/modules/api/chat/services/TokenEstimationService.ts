@@ -66,7 +66,8 @@ export class TokenEstimationService {
         conversationId: string,
         channelType?: string,
         messageIndex?: number,
-        forceRecount?: boolean
+        forceRecount?: boolean,
+        externalSignal?: AbortSignal
     ): Promise<void> {
         if (!this.settingsManager) {
             return;
@@ -106,7 +107,8 @@ export class TokenEstimationService {
             const result = await this.tokenCountService.countTokens(
                 normalizedChannelType,
                 tokenCountConfig,
-                [targetMessage]
+                [targetMessage],
+                externalSignal
             );
             
             if (result.success && result.totalTokens !== undefined) {
@@ -165,7 +167,8 @@ export class TokenEstimationService {
         conversationId: string,
         channelType: string | undefined,
         messageIndices: number[],
-        forceRecount?: boolean
+        forceRecount?: boolean,
+        externalSignal?: AbortSignal
     ): Promise<void> {
         if (!this.settingsManager || messageIndices.length === 0) {
             return;
@@ -214,7 +217,8 @@ export class TokenEstimationService {
                 this.tokenCountService.countTokens(
                     normalizedChannelType!,
                     tokenCountConfig,
-                    [message]
+                    [message],
+                    externalSignal
                 )
             );
             
@@ -286,7 +290,8 @@ export class TokenEstimationService {
      */
     async countSystemPromptTokens(
         systemPrompt: string,
-        channelType?: string
+        channelType?: string,
+        externalSignal?: AbortSignal
     ): Promise<number> {
         if (!this.settingsManager) {
             // 没有设置管理器，直接估算
@@ -310,7 +315,8 @@ export class TokenEstimationService {
             const result = await this.tokenCountService.countTokens(
                 normalizedChannelType,
                 tokenCountConfig,
-                [systemMessage]
+                [systemMessage],
+                externalSignal
             );
             
             if (result.success && result.totalTokens !== undefined) {
@@ -333,7 +339,8 @@ export class TokenEstimationService {
      */
     async countTextTokensBatch(
         texts: (string | null | undefined)[],
-        channelType?: string
+        channelType?: string,
+        externalSignal?: AbortSignal
     ): Promise<number[]> {
         if (!this.settingsManager) {
             // 没有设置管理器，直接估算
@@ -375,7 +382,8 @@ export class TokenEstimationService {
             return this.tokenCountService.countTokens(
                 normalizedChannelType!,
                 tokenCountConfig,
-                [message]
+                [message],
+                externalSignal
             );
         });
         

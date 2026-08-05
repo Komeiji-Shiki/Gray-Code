@@ -4,10 +4,13 @@
 
 import { t } from '../../backend/i18n';
 import { assertSafeId } from '../../backend/core/idValidation';
+import { Logger } from '../../backend/core/logger';
 import { subAgentRunController } from '../../backend/tools/subagents/runController';
 import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../stream/StreamAbortManager';
 import type { HandlerContext, MessageHandler } from '../types';
+
+const log = Logger.get('ConversationHandlers');
 
 /**
  * 内部元数据键：只能由后端写入，webview 不可覆盖。
@@ -150,6 +153,15 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
   }
   await ctx.conversationManager.deleteConversation(conversationId);
   subAgentRunEventBus.forgetConversation(conversationId);
+  // 清理回合内 fallback 切点缓存与持久化 trimState（不阻断删除，失败仅告警）
+  try {
+    await ctx.chatHandler.handleConversationDeleted(conversationId);
+  } catch (error) {
+    log.warn('conversation_delete_trim_cleanup_failed', {
+      conversationId,
+      error: String(error)
+    });
+  }
   ctx.sendResponse(requestId, { success: true });
 };
 

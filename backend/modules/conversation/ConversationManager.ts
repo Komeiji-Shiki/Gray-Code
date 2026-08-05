@@ -244,7 +244,9 @@ export class ConversationManager {
      */
     private async persistMetadata(meta: ConversationMetadata): Promise<void> {
         await this.storage.saveMetadata(meta);
-        this.cacheMetadata(meta.id, meta);
+        // 缓存存快照：调用方保存后可能继续原地修改 meta 对象（如刷新 updatedAt 复用），
+        // 引用共享会让缓存读到被污染的值；读侧统一经 structuredClone 返回。
+        this.cacheMetadata(meta.id, structuredClone(meta));
     }
 
     /**
@@ -627,7 +629,8 @@ export class ConversationManager {
         }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {
-            this.cacheMetadata(conversationId, result.value);
+            // 缓存存快照、返回深拷贝：调用方原地修改返回值不污染缓存
+            this.cacheMetadata(conversationId, structuredClone(result.value));
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
@@ -2817,7 +2820,16 @@ export class ConversationManager {
         // （当前实现会在 'ok' 时删除该字段）。返回深拷贝，防止调用方污染缓存。
         const cached = this.metaCache.get(conversationId);
         if (cached !== undefined) {
-            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+            if (cached !== null) {
+                return structuredClone(cached) as ConversationMetadata;
+            }
+            // 负缓存 null 只代表 meta.json 缺失，不代表会话不存在：历史仍存在时
+            // 必须继续走磁盘路径按历史重建 fallback（防止先被 getMetadataLight 负缓存
+            // 后，标题/时间戳一直缺失直到下次写入）。
+            const probe = await this.resolveHistoryIndexInfo(conversationId);
+            if (!probe?.exists) {
+                return null;
+            }
         }
 
         // 完整性检查需要真实磁盘状态，这里仍直接读存储；读取结果顺带回填元数据缓存，
@@ -2898,7 +2910,8 @@ export class ConversationManager {
         // 回填 metaCache：损坏降级（backupCorruptMetadata 改名后 getMetadataLight 曾负缓存 null）
         // 或元数据缺失场景下，getMetadataLight / getCustomMetadata 后续直接读到重建结果，
         // 不再重复走磁盘，也不因陈旧负缓存而让对话列表标题/时间戳持续缺失。
-        this.cacheMetadata(conversationId, fallback);
+        // 缓存存快照、返回深拷贝：调用方原地修改返回值不污染缓存。
+        this.cacheMetadata(conversationId, structuredClone(fallback));
         return fallback;
     }
 
@@ -3046,8 +3059,9 @@ export class ConversationManager {
         }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {
-            this.cacheMetadata(conversationId, result.value);
-            return result.value;
+            // 缓存存快照、返回深拷贝：调用方原地修改返回值不污染缓存
+            this.cacheMetadata(conversationId, structuredClone(result.value));
+            return structuredClone(result.value) as ConversationMetadata;
         }
         // 与 loadStoredMetadata 相同的降级语义：仅 not_found 才做负缓存，
         // io_error/parse_error 不缓存（parse_error 由 getMetadata 走损坏降级，不在此污染缓存）

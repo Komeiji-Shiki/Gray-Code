@@ -615,9 +615,9 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
     let available = false;
     try {
         if (platform === 'win32') {
-            // WSL 特殊处理
+            // WSL 特殊处理（与其它检测一致走 argv 参数数组，杜绝字符串拼接注入面）
             if (shellType === 'wsl') {
-                cp.execSync('wsl --status', { timeout: 3000, stdio: 'ignore' });
+                cp.execFileSync('wsl.exe', ['--status'], { timeout: 3000, stdio: 'ignore' });
             } else if (shellPath.includes('\\') || shellPath.includes('/')) {
                 // 绝对路径检查文件存在
                 fs.accessSync(shellPath, fs.constants.X_OK);

@@ -461,6 +461,12 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
 
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
     replaceMessageAt(state, messageIndex, updatedMessage)
+    // H1：toolsExecuting 阶段消息已置 streaming=false，正文输出结束（后续为工具执行）。
+    // 平滑显示层在此终结：放完积压、销毁实例并删除显示文本，UI 立即切回真实 content。
+    // 正常流随后有 toolIteration/complete 兜底清理，此处覆盖「toolsExecuting 后无终结
+    // 事件（异常终止 / 会话重置）」的泄漏路径；工具返回后若模型续写正文，pushSmoothText
+    // 会以当前 part 真实文本为基线重建实例（与段落切换语义一致，不丢不闪）。
+    finishSmoothStreamForState(state, message.id)
   }
   // 注意：不改变 streaming 状态，工具还在执行中
 }

@@ -1407,27 +1407,11 @@ export class BranchService {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {
             await this.assertConversationWritable(conversationId);
-            const loaded = await this.repository.load(conversationId);
-            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is corrupt for ${conversationId}; refusing to append (${loaded.errorMessage ?? 'unknown error'})`
-                );
-            }
-            if (!loaded.graph) {
+            let graph = await this.loadGraphCached(conversationId);
+            if (!graph) {
                 // 线性对话未建图：不强制建（图只在首次分支/导入时建立）
                 return false;
             }
-            // M-2：语义损坏图不追加（与写路径拒绝覆盖一致）
-            const validation = validate(loaded.graph);
-            if (!validation.valid) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is semantically corrupt for ${conversationId}; refusing to append (${validation.issues.map(i => i.message).join('; ')})`
-                );
-            }
-
-            let graph = loaded.graph;
             // 首条新消息的父节点 = 当前活跃尾（未插入节点前）；之后为上一个已插入节点
             let cursor: string | null = graph.activeTailNodeId;
             let previousCreatedAt = cursor !== null && graph.nodes[cursor]
@@ -1529,25 +1513,11 @@ export class BranchService {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {
             await this.assertConversationWritable(conversationId);
-            const loaded = await this.repository.load(conversationId);
-            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is corrupt for ${conversationId}; refusing to sync delete (${loaded.errorMessage ?? 'unknown error'})`
-                );
-            }
-            if (!loaded.graph) {
+            const graph = await this.loadGraphCached(conversationId);
+            if (!graph) {
                 // 线性对话未建图：删除不同步（主历史为唯一真源，不强制建图）
                 return empty;
             }
-            const validation = validate(loaded.graph);
-            if (!validation.valid) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is semantically corrupt for ${conversationId}; refusing to sync delete (${validation.issues.map(i => i.message).join('; ')})`
-                );
-            }
-            const graph = loaded.graph;
             let anchorNodeId: string | null = graph.nodes[deletedFromMessageId] ? deletedFromMessageId : null;
             let excludeNode = false;
             if (anchorNodeId === null) {
@@ -1711,12 +1681,11 @@ export class BranchService {
         });
     }
 
-    /** 读图用于写入：无图 → 主历史建线性基线；损坏（解析或语义）→ 抛 BRANCH_STORAGE_CORRUPT（不覆盖） */
-    private async loadGraphForWrite(conversationId: string): Promise<ConversationBranchGraph> {
-        // BS-4：已删除会话拒绝写（防删除后迟到写重建 sidecar）。检查在会话写锁内进行，
-        // 与 deleteConversation 的锁序一致：delete 先入已删除集合 → 锁内删文件 → 释放锁，
-        // 迟到写入锁后在此被拒，不会与删除交错产生幽灵 sidecar。
-        await this.assertConversationWritable(conversationId);
+    /**
+     * 读图（缓存优先，写路径与 append/syncDelete 共用）：无图 → null；损坏（解析或语义）→
+     * 抛 BRANCH_STORAGE_CORRUPT（不静默覆盖）。建线性基线仅限 loadGraphForWrite 的职责。
+     */
+    private async loadGraphCached(conversationId: string): Promise<ConversationBranchGraph | null> {
         const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
         const cached = await getBranchGraphCached(cacheKey);
         if (cached) {
@@ -1749,6 +1718,19 @@ export class BranchService {
                 );
             }
             return loaded.graph;
+        }
+        return null;
+    }
+
+    /** 读图用于写入：无图 → 主历史建线性基线；损坏（解析或语义）→ 抛 BRANCH_STORAGE_CORRUPT（不覆盖） */
+    private async loadGraphForWrite(conversationId: string): Promise<ConversationBranchGraph> {
+        // BS-4：已删除会话拒绝写（防删除后迟到写重建 sidecar）。检查在会话写锁内进行，
+        // 与 deleteConversation 的锁序一致：delete 先入已删除集合 → 锁内删文件 → 释放锁，
+        // 迟到写入锁后在此被拒，不会与删除交错产生幽灵 sidecar。
+        await this.assertConversationWritable(conversationId);
+        const graph = await this.loadGraphCached(conversationId);
+        if (graph) {
+            return graph;
         }
         // 无 sidecar：以主历史建线性基线图（主历史是活跃路径的唯一真源）
         const history = await this.conversationManager.getMessagesRaw(conversationId);

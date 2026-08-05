@@ -125,7 +125,7 @@ function findMyersMatches(
     return { matches: [], degraded: true }
   }
   // 第 d 层的 frontier 只覆盖对角线 [-d, d]，按层动态分配大小 2d+3：
-  // 相比每层固定 2*limit+3，trace 总内存约为原来的 1/4。
+  // 相比每层固定 2*limit+3，trace 总内存约为原来的 1/2（Σ(2d+3) ≈ L² vs 2L²）。
   const trace: Int32Array[] = []
   let frontier = new Int32Array(3)
   let foundDistance = -1
@@ -283,6 +283,8 @@ export function computeLineDiff(
 /**
  * 带缓存的 computeLineDiff：同一对内容重复计算时直接返回上一次的结果对象引用。
  * 适用于组件在流式结果更新/重渲染期间反复求值的场景（hunk 内容字符串引用不变即可命中）。
+ * 淘汰语义：上限 MAX_CACHE_ENTRIES 条、命中条目移到队首的 LRU（无命中的顺序插入下
+ * 与 FIFO 等价；文档化「32 条 FIFO」仅为行为下限，LRU 是超集）。
  *
  * 共享只读契约：返回的 LineDiffResult 及其 lines 数组为共享对象（命中缓存时同一引用），
  * 消费方只读使用，不得 mutate；需要修改时先复制。缓存键中的预算同样受

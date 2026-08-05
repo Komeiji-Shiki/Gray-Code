@@ -154,7 +154,8 @@ async function setWorkspaceFolders(folders: string[]): Promise<void> {
 }
 
 async function pickWorkspaceFolder(): Promise<void> {
-  if (!mainWindow) return;
+  // 窗口可能已销毁（关闭竞态）：isDestroyed 的窗口传给 dialog 会抛 "Object has been destroyed"
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open Workspace Folder',
     buttonLabel: 'Choose Folder',
@@ -485,15 +486,28 @@ function buildMenu(): void {
         {
           label: 'About GrayCode Desktop',
           click: () => {
-            void dialog.showMessageBox(mainWindow!, {
-              type: 'info',
-              title: 'About',
-              message: 'GrayCode Desktop',
-              detail:
-                `GrayCode AI coding assistant (standalone desktop edition)\n` +
-                `Based on GrayCode v${readRootVersion()}\n` +
-                `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
-            });
+            // macOS 关闭全部窗口后 mainWindow 为 null / 已销毁：退化为无父窗口对话框
+            // （与 native.ts 的 usableWindow 模式一致，避免 mainWindow! 抛 TypeError 崩溃）
+            const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+            void (w
+              ? dialog.showMessageBox(w, {
+                type: 'info',
+                title: 'About',
+                message: 'GrayCode Desktop',
+                detail:
+                  `GrayCode AI coding assistant (standalone desktop edition)\n` +
+                  `Based on GrayCode v${readRootVersion()}\n` +
+                  `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
+              })
+              : dialog.showMessageBox({
+                type: 'info',
+                title: 'About',
+                message: 'GrayCode Desktop',
+                detail:
+                  `GrayCode AI coding assistant (standalone desktop edition)\n` +
+                  `Based on GrayCode v${readRootVersion()}\n` +
+                  `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
+              }));
           }
         }
       ]
@@ -1060,11 +1074,17 @@ if (gotSingleInstanceLock) {
     if (quitting) return;
     quitting = true;
     event.preventDefault();
-    const disposeDone = backendHost ? backendHost.dispose() : Promise.resolve();
+    // dispose 可能同步抛错（cancelAllStreams/TaskManager 未包 try 时）：
+    // 用 Promise.resolve().then 包裹，保证超时兜底与 app.exit(0) 始终可达
+    const disposeDone = backendHost
+      ? Promise.resolve().then(() => backendHost!.dispose())
+      : Promise.resolve();
     void Promise.race([
       disposeDone,
       new Promise<void>((resolve) => setTimeout(resolve, 10_000))
-    ]).finally(() => {
+    ]).catch(() => {
+      // dispose 抛错不阻塞退出
+    }).finally(() => {
       app.exit(0);
     });
   });

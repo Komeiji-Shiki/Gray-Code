@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { t } from '../../i18n';
+import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
 /**
  * JSON-RPC 请求
@@ -132,10 +133,7 @@ export class HttpMcpClient extends EventEmitter {
             capabilities: {
                 roots: { listChanged: true }
             },
-            clientInfo: {
-                name: 'GrayCode',
-                version: '1.0.5'
-            }
+            clientInfo: createGrayCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;

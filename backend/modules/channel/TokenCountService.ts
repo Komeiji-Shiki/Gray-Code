@@ -135,7 +135,8 @@ export class TokenCountService {
     async countTokens(
         channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         const channelConfig = config[channelType];
         
@@ -156,13 +157,13 @@ export class TokenCountService {
         try {
             switch (channelType) {
                 case 'gemini':
-                    return await this.countGeminiTokens(channelConfig, contents);
+                    return await this.countGeminiTokens(channelConfig, contents, externalSignal);
                 case 'openai':
-                    return await this.countOpenAITokens(channelConfig, contents);
+                    return await this.countOpenAITokens(channelConfig, contents, externalSignal);
                 case 'openai-responses':
-                    return await this.countOpenAIResponsesTokens(channelConfig, contents);
+                    return await this.countOpenAIResponsesTokens(channelConfig, contents, externalSignal);
                 case 'anthropic':
-                    return await this.countAnthropicTokens(channelConfig, contents);
+                    return await this.countAnthropicTokens(channelConfig, contents, externalSignal);
                 default:
                     return {
                         success: false,
@@ -193,7 +194,8 @@ export class TokenCountService {
      */
     async countTokensWithChannelConfig(
         channelConfig: ChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         const method = channelConfig.tokenCountMethod || 'channel_default';
         const apiConfig = channelConfig.tokenCountApiConfig;
@@ -222,13 +224,13 @@ export class TokenCountService {
         try {
             switch (actualMethod) {
                 case 'gemini':
-                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents, externalSignal);
                 case 'openai_custom':
-                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents, externalSignal);
                 case 'openai_responses':
-                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents, externalSignal);
                 case 'anthropic':
-                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents, externalSignal);
                 case 'local':
                     return this.countLocalTokens(contents);
                 default:
@@ -258,11 +260,12 @@ export class TokenCountService {
     async countTokensBatch(
         channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
-        contentsList: Content[][]
+        contentsList: Content[][],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult[]> {
         // 并行执行所有计数请求
         const promises = contentsList.map(contents => 
-            this.countTokens(channelType, config, contents)
+            this.countTokens(channelType, config, contents, externalSignal)
         );
         
         return Promise.all(promises);
@@ -297,7 +300,8 @@ export class TokenCountService {
     private async countGeminiTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url || channelConfig.url;
@@ -360,7 +364,7 @@ export class TokenCountService {
                 'x-goog-api-key': apiKey
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -389,7 +393,8 @@ export class TokenCountService {
     private async countOpenAITokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url;
@@ -451,7 +456,7 @@ export class TokenCountService {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -488,7 +493,8 @@ export class TokenCountService {
     private async countOpenAIResponsesTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url || (channelConfig.type === 'openai-responses' ? channelConfig.url : undefined);
@@ -567,7 +573,7 @@ export class TokenCountService {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -603,7 +609,8 @@ export class TokenCountService {
     private async countAnthropicTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const baseUrl = apiConfig?.url || channelConfig.url;
@@ -646,7 +653,7 @@ export class TokenCountService {
                 'anthropic-version': '2023-06-01'
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -689,7 +696,8 @@ export class TokenCountService {
      */
     private async countGeminiTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 构建 URL（{key} 模板替换为空并清理残留 query；密钥走 x-goog-api-key 请求头，
         // 避免密钥出现在 URL 而泄漏到访问日志 / 代理日志 / 浏览器历史）
@@ -724,7 +732,7 @@ export class TokenCountService {
                 'x-goog-api-key': config.apiKey
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -760,7 +768,8 @@ export class TokenCountService {
      */
     private async countOpenAITokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 如果没有配置 baseUrl，返回失败让调用方回退到估算
         if (!config.baseUrl) {
@@ -812,7 +821,7 @@ export class TokenCountService {
                 'Authorization': `Bearer ${config.apiKey}`
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -865,7 +874,8 @@ export class TokenCountService {
      */
     private async countOpenAIResponsesTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         if (!config.baseUrl) {
             return {
@@ -925,7 +935,7 @@ export class TokenCountService {
                 'Authorization': `Bearer ${config.apiKey}`
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;
@@ -973,7 +983,8 @@ export class TokenCountService {
      */
     private async countAnthropicTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
         // 清理并转换内容格式为 Anthropic messages 格式
         const messages = contents.map(content => {
@@ -1003,7 +1014,7 @@ export class TokenCountService {
                 'anthropic-version': '2023-06-01'
             },
             body: JSON.stringify(requestBody)
-        });
+        }, externalSignal);
         
         if (!response.ok) {
             let errorBody: string;

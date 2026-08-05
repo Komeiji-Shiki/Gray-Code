@@ -8,6 +8,28 @@
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-08-05
+
+### Fixed
+  - **记忆删除的树摘要残留（子智能体审查修复）**：`MemoryManager.deleteEntry` 删除最后一条记忆（id=T-1）时不再清空覆盖被删记录的尾部树摘要——删除后 T 收缩，`TREE/2` 的 `[T-2,T)` 块、`TREE/4` 的 `[0,T)` 块等仍引用已删内容；此后 `note` 使长度回升时 `wake`/`zoom` 会重现已删除的记忆且 `pending()` 认为该块已压缩而永不重建。现按新长度截断树文件（与 `truncateLog` 同口径）：完全位于保留区内的块摘要保留、覆盖被删记录的块清空。另将重建循环的逐条全量 `Buffer.alloc(T*LOG_REC)` 改为单条 `LOG_REC` 复用缓冲（超大记忆集删除不再有内存尖峰），损坏文件中的空记录改为跳过而非 break（后续有效记录不再被静默丢弃）。新增「删尾条目树摘要截断 + 摘要不重现已删内容」回归测试
+  - **分支图 append / 删除同步绕过了 60s TTL 缓存（声称未落地）**：`appendHistoryToGraph` 与 `syncGraphAfterHistoryDelete` 此前直接 `repository.load()` 全量读盘，主历史每次 append 的「读图 → 改 → 原子写回」仍重复全量磁盘 IO。现收敛到与 `loadGraphForWrite` 共用的 `loadGraphCached`（缓存命中 + mtime/size 校验 + 语义损坏拒绝覆盖），热路径磁盘 IO 实际削减
+  - **metaCache 未命中路径返回活引用**：`getMetadataLight` / `loadStoredMetadata` 的未命中路径把刚缓存的 `result.value` 原引用直接返回、`getMetadata` 损坏 fallback 路径把已缓存的 `fallback` 原引用返回——调用方原地修改会污染缓存。现缓存一律存 `structuredClone` 快照、返回深拷贝；`persistMetadata` 写后回填同样存快照（保存后原地改 meta 不再污染缓存）
+  - **负缓存 null 遮蔽 getMetadata 的历史重建 fallback**：meta.json 缺失（not_found）时 `getMetadataLight` 先负缓存 null，后续 `getMetadata` 命中 null 直接返回，不再走磁盘路径按历史重建——有历史无 meta.json 的会话标题/时间戳持续缺失直到下次写入。现 `getMetadata` 命中 null 时先探测历史索引：历史仍存在则继续走磁盘重建并回填缓存。新增 2 项回归测试
+  - **getMetadataLight 声称的 structuredClone 未落地**：命中路径仍是 `JSON.parse(JSON.stringify(...))`（序列化往返开销与声称不符），现统一改为 `structuredClone`
+  - **流式平滑显示层在 toolsExecuting 后泄漏**：`handleToolsExecuting` 收到 content 后消息已置非流式、正文输出结束，但未终结平滑条目（`smoothTexts` + manager entry）——流在 toolsExecuting 后异常终止（无终结事件且未走 cancelStream）时条目残留。现该分支补 `finishSmoothStreamForState`（放完积压、销毁实例、删除显示文本，UI 立即切回真实 content）；工具返回后模型续写正文时 `pushSmoothText` 以当前 part 真实文本为基线重建实例（与段落切换语义一致）。新增回归测试
+  - **前端 i18n 参数替换的 `$` 替换模式注入**：`useI18n.translate` 用字符串替换 `result.replace(regex, String(params[key]))`，参数值含 `$&`/`$1`/`$'` 时被 `String.replace` 解释成替换模式（如文件名 `price$1.txt` 变 `price.txt`）。现改为函数替换 `() => String(params[paramKey])`（与核心 i18n 模块写法一致）。新增回归测试
+  - **Electron About 菜单在 macOS 关窗后崩溃**：`dialog.showMessageBox(mainWindow!, ...)` 无空值/销毁守卫，macOS 关闭全部窗口（window-all-closed 不退出）后点击 About 抛 "Object has been destroyed"；现与 `native.ts` 的 `usableWindow` 模式一致退化为无父窗口对话框。`pickWorkspaceFolder` 同步补 isDestroyed 检查；before-quit 的 `dispose()` 改经 `Promise.resolve().then` 包裹（dispose 同步抛错不再绕过超时兜底与 `app.exit(0)`）
+  - **HttpClient MCP 握手 clientInfo 版本硬编码 1.0.5**：HTTP/SSE MCP 传输的 `initialize` 仍硬编码过期版本，与 Stdio 客户端不一致（已统一走 `createGrayCodeMcpClientInfo`）；现 HTTP 客户端同样改用统一工厂函数
+  - **TokenCountService 外部 abort 透传是死代码（声称未落地）**：`fetchWithTimeout` 的 `externalSignal` 参数存在但 8 个计数请求调用点无一处传入，停止流/切会话时进行中的计数请求只能等 15s 超时。现贯通全链：`countTokens` / `countTokensWithChannelConfig` / `countTokensBatch` → 四路提供商方法 → `fetchWithTimeout`，`TokenEstimationService`（preCountUserMessageTokensBatch / countSystemPromptTokens / countTextTokensBatch）与 `ContextTrimService.getHistoryWithContextTrimInfo` / `getHistoryWithGranularFallback` 透传，`ToolIterationLoopService` 流式/非流式两路径以回合 `abortSignal` 传入——停止按钮可立即中断回合前的计数请求
+  - **execute_command WSL 同步检测仍用 `execSync` 字符串拼接**：`checkShellAvailabilitySync` 的 `wsl --status` 是常量字符串（无注入面），但与"同步检测统一 execFileSync 参数数组"的口径不符；现改为 `execFileSync('wsl.exe', ['--status'])`
+  - **ContextTrimService 窗口未知时拒绝退化为 UNKNOWN_ERROR**：`getHistoryWithGranularFallback` 的 `throwContextOverflow` 在模型 `contextWindow` 未知且无合法候选（历史结构损坏）时抛普通 `Error`，前端错误码退化为 `UNKNOWN_ERROR`；现以渠道 `maxContextTokens` 作为 envelope 参考上限照常抛 `ContextBudgetExceededError`（保持 CONTEXT_OVERFLOW 语义）
+  - **会话删除不清理回合级 fallback 切点缓存**：`granularFallbackStartByConversation` Map 在对话删除路径未挂钩，已删会话条目缓慢累积；新增 `ChatHandler.handleConversationDeleted`（清 `clearTrimState`），`deleteConversation` handler 删除成功后调用（失败仅告警不阻断删除）
+  - 清理 App.vue 遗留 `.loading-container` 死样式（changelog [1.6.4] 声称已清理但实际残留）；修正 lineDiff trace 内存注释（实际约 1/2，非 1/4）与缓存淘汰语义文档（命中移队首的 LRU，非字面 FIFO）
+
+### Tests
+  - 后端：deleteEntry 删尾树摘要截断、metaCache 负缓存不遮蔽 fallback 重建、损坏降级回填后 getMetadataLight 不再负缓存 null、nonStreamAutoSummarizeTurn 适配 abort 透传新签名
+  - 前端：handleToolsExecuting 平滑条目清理（含无 content 不动条目）、useI18n 参数值 `$&`/`$1`/`$'` 原样输出
+
 ## [1.6.4] - 2026-08-05
 
 ### Merged

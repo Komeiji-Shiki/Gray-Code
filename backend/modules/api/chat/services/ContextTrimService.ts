@@ -673,7 +673,8 @@ export class ContextTrimService {
     private async countAndUpdateMessageTokens(
         conversationId: string,
         channelType: string,
-        messages: Array<{ index: number; message: Content }>
+        messages: Array<{ index: number; message: Content }>,
+        externalSignal?: AbortSignal
     ): Promise<number[]> {
         if (messages.length === 0) {
             return [];
@@ -684,7 +685,9 @@ export class ContextTrimService {
         await this.tokenEstimationService.preCountUserMessageTokensBatch(
             conversationId,
             channelType,
-            messageIndices
+            messageIndices,
+            undefined,
+            externalSignal
         );
         
         // 返回计算后的 token 数（从更新后的消息中获取）
@@ -730,7 +733,8 @@ export class ContextTrimService {
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         stableStartIndex?: number,
-        fixedPromptTokens = 0
+        fixedPromptTokens = 0,
+        externalSignal?: AbortSignal
     ): Promise<ContextTrimInfo> {
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
         if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
@@ -772,9 +776,12 @@ export class ContextTrimService {
         );
 
         const throwContextOverflow = (minimumLegalHistoryTokens = 0): never => {
-            if (hardInputTokenLimit === undefined) {
-                throw new Error('Context overflow rejection requires a known model context window');
-            }
+            // 走到这里说明没有任何合法候选（历史结构损坏，所有切点均未通过完整性校验）。
+            // 即使模型窗口未知也必须以可识别错误码显式拒绝：用渠道 maxContextTokens 作为
+            // envelope 参考上限报 CONTEXT_OVERFLOW，避免退化为 UNKNOWN_ERROR 让前端无法区分
+            // （changelog 口径：CONTEXT_OVERFLOW 仅在「最小合法请求仍超窗」时抛出——此处
+            // 最小合法请求根本不存在，同样属于不可构建请求的拒绝语义）。
+            const effectiveHardLimit = hardInputTokenLimit ?? fallbackEnvelopeInputTokenLimit;
             const estimatedMinimumInputTokens = normalizedFixedPromptTokens + minimumLegalHistoryTokens;
             this.log.error('trim.fallback_context_overflow', {
                 conversationId,
@@ -790,9 +797,12 @@ export class ContextTrimService {
                 fallbackEnvelopeHistoryBudgetTokens,
                 minimumLegalHistoryTokens,
                 estimatedMinimumInputTokens,
-                originalHistoryLength: fullHistory.length
+                originalHistoryLength: fullHistory.length,
+                note: hardInputTokenLimit === undefined
+                    ? 'model window unknown; rejecting with channel maxContextTokens as reference limit'
+                    : undefined
             });
-            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, hardInputTokenLimit);
+            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, effectiveHardLimit);
         };
 
         // 回合内稳定起点优先：工具结果增长不再把切点往后推（否则每轮 retainedHistory 开头漂移，
@@ -1019,7 +1029,8 @@ export class ContextTrimService {
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        evaluationOptions: ContextTrimEvaluationOptions = {}
+        evaluationOptions: ContextTrimEvaluationOptions = {},
+        externalSignal?: AbortSignal
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
@@ -1212,9 +1223,9 @@ export class ContextTrimService {
 
         // 并行执行文本计数和消息计数
         const [textTokenResults, messageTokenResults] = await Promise.all([
-            this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
+            this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType, externalSignal),
             missingTokenMessages.length > 0
-                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
+                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages, externalSignal)
                 : Promise.resolve([] as number[])
         ]);
 
@@ -1277,7 +1288,7 @@ export class ContextTrimService {
                     !!text?.trim()
                 );
             const preservedDynamicContextTexts = preservedDynamicContextEntries.map(entry => entry.text!);
-            const preservedDynamicContextTokens = await this.tokenEstimationService.countTextTokensBatch(preservedDynamicContextTexts, channelType);
+            const preservedDynamicContextTokens = await this.tokenEstimationService.countTextTokensBatch(preservedDynamicContextTexts, channelType, externalSignal);
             preservedDynamicContextEntries.forEach((entry, index) => {
                 preservedDynamicContextTokenByIndex.set(entry.index, preservedDynamicContextTokens[index] ?? 0);
             });

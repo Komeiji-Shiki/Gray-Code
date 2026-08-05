@@ -239,6 +239,15 @@ export class ChatHandler {
     getToolExecutionService(): ToolExecutionService {
         return this.toolExecutionService;
     }
+
+    /**
+     * 会话删除时的内存状态清理钩子：清掉 ToolIterationLoopService 的回合内
+     * fallback 切点缓存（granularFallbackStartByConversation）与 ContextTrimService
+     * 的持久化 trimState——已删会话的条目不再缓慢累积。
+     */
+    handleConversationDeleted(conversationId: string): Promise<void> {
+        return this.toolIterationLoopService.clearTrimState(conversationId);
+    }
     
     /**
      * 设置 Diff 存储管理器（可选）

@@ -311,7 +311,6 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
     if (cached && cached.expiresAt > Date.now() && cached.gitignoreMtime === gitignoreMtime) {
         return cached.result;
     }
-
     // 解析 .gitignore
     const gitignorePath = path.join(workspacePath, '.gitignore')
     const patterns = parseGitignore(gitignorePath)
@@ -328,6 +327,15 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
     
     const result = lines.join('\n')
     fileTreeCache.set(cacheKey, { result, expiresAt: Date.now() + FILE_TREE_CACHE_TTL_MS, gitignoreMtime });
+    // 顺带清理过期条目：键组合（nodeBudget/ignorePatterns 变化）多样时防止过期条目累积
+    if (fileTreeCache.size > 64) {
+        const now = Date.now();
+        for (const [key, entry] of fileTreeCache) {
+            if (entry.expiresAt <= now) {
+                fileTreeCache.delete(key);
+            }
+        }
+    }
     return result;
 }
 

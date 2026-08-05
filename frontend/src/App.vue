@@ -1072,17 +1072,4 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 50%, transparent);
 }
 
-/* 加载容器 */
-.loading-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  color: var(--vscode-foreground);
-}
-
-.loading-container .codicon {
-  font-size: 24px;
-  opacity: 0.6;
-}
 </style>

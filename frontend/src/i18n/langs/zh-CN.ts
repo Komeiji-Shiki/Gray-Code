@@ -2472,7 +2472,7 @@ const zhCN = {
                     memory_recall: '搜索全部永久记忆，支持正则表达式匹配。',
                     memory_compress: '执行待处理的记忆压缩合并，优化记忆存储。',
                     memory_zoom: '展开记忆树节点查看详细内容。',
-                    memory_forget: '丢弃错误的记忆树摘要（不删除原始记忆）。',
+                    memory_forget: '删除原始记忆：单个数字 ID 是截断模式，会删除该 ID 及之后所有记忆；记忆 ID 可在设置页「原始记忆条目」中查看。',
                     memory_config: '查看或修改永久记忆系统的配置参数。',
                     insert_code: '在指定行前插入代码，可用「最后一行 + 1」追加到文件末尾。',
                     delete_code: '删除文件中指定行范围内的代码。',
