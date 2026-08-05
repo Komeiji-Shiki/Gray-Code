@@ -10,6 +10,7 @@
 
 ### Changed
   - 欢迎页「欢迎使用 GrayCode」图标从 codicon 对话气泡改为开屏动画同款的手绘 Gray logo：内联 SVG 静态完稿态（灰阶色块 + 细描边线稿，颜色变量与 Splash.vue 同源，亮/暗主题自适应）。
+  - 修复欢迎页 Gray logo 图标右侧头发色块缺失：复制 Splash 色块层时遗漏第二个 `fill-hair` path（`M 587.0 408.0...`），后半头发只有线稿描边、色块透明；现补齐与 Splash.vue 一致的 7 个色块 path（body×2 / hair×2 / face×1 / cap×2）。
 
 ## [1.4.2] - 2026-08-06
 
