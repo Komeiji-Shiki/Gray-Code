@@ -137,6 +137,7 @@ const ja: LanguageMessages = {
                 checkpointHint: 'このメッセージの前にツール実行のバックアップが検出されました。ツール実行前に復元してから編集することで、ファイルの変更を回復できます。',
                 cancel: 'キャンセル',
                 save: '保存',
+                saveInPlace: 'その場で保存（ブランチを維持）',
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',

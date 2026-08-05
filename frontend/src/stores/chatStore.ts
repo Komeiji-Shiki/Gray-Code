@@ -204,8 +204,8 @@ export const useChatStore = defineStore('chat', () => {
   const retryAfterError = () => retryAfterErrorFn(state, computed)
   const dismissError = () => dismissErrorFn(state)
   
-  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[]) =>
-    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream)
+  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[], mode?: 'branch' | 'keep') =>
+    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream, mode)
   
   const deleteMessage = (targetIndex: number) => deleteMessageFn(state, targetIndex, cancelStream)
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)

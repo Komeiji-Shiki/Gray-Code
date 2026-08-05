@@ -138,6 +138,7 @@ const zhCN = {
                 checkpointHint: '检测到此消息前有工具执行的备份，您可以选择回档到工具执行前再编辑，以恢复文件变更。',
                 cancel: '取消',
                 save: '保存',
+                saveInPlace: '原地保存（保持当前分支）',
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',

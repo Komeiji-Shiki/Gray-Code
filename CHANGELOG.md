@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
+  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
+
+### Added
+  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
+
 ## [1.4.1] - 2026-08-05
 
 ### Added

@@ -439,6 +439,77 @@ export class BranchService {
     }
 
     /**
+     * 确保分支图 sidecar 存在（TREE-03 keep 模式前置）：无图时以主历史建线性基线图。
+     *
+     * 用于「先建图后截断」——让截断前的完整旧历史先进图，截断后再软删被移除的子树，
+     * 保证旧版本可回看（与 branch 模式 editCandidate 的惰性建图时机对齐，MIG-01）。
+     * 已有图 / sidecar 损坏（抛 BRANCH_STORAGE_CORRUPT，不覆盖）→ 幂等。
+     *
+     * @returns true 表示本次新建了图；false 表示图已存在或无需建图
+     */
+    async ensureBranchGraph(conversationId: string): Promise<boolean> {
+        await this.conversationManager.ensureHistoryNodeIds(conversationId);
+        return await this.conversationManager.runExclusive(conversationId, async () => {
+            await this.assertConversationWritable(conversationId);
+            const loaded = await this.repository.load(conversationId);
+            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
+                throw new BranchError(
+                    'BRANCH_STORAGE_CORRUPT',
+                    `branches.json is corrupt for ${conversationId}; refusing to ensure branch graph (${loaded.errorMessage ?? 'unknown error'})`
+                );
+            }
+            if (loaded.graph) {
+                return false; // 已有图：无需重建
+            }
+            const history = await this.conversationManager.getMessagesRaw(conversationId);
+            const graph = importLinearHistory(history);
+            await this.validateAndSave(conversationId, graph);
+            return true;
+        });
+    }
+
+    /**
+     * 原地更新活跃路径上指定节点的 parts（保持分支的编辑，TREE-03 keep 模式底座）。
+     *
+     * 与 editCandidate 的区别：不创建新候选、不切换分支——直接改写节点内容并同步候选摘要，
+     * 保证分支图与主历史一致（BR-01：节点 id == Content.id；之后切回该分支时展示编辑后的文本）。
+     *
+     * @param nodeId 目标节点（须在当前活跃路径上）
+     * @param parts 新的消息内容
+     */
+    async updateActiveNodeParts(
+        conversationId: string,
+        nodeId: string,
+        parts: ContentPart[]
+    ): Promise<{ nodeId: string }> {
+        return await this.mutateGraph(conversationId, graph => {
+            const node = graph.nodes[nodeId];
+            if (!node) {
+                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
+            }
+            if (!activePath(graph).includes(nodeId)) {
+                throw new BranchError(
+                    'INVALID_BRANCH_RELATION',
+                    `node ${nodeId} is not on the active path`
+                );
+            }
+            const next = updateNodeContent(graph, nodeId, { parts });
+            const summary = buildCandidateSummary({ ...node, parts });
+            const withSummary = upsertCandidateSummary(next, {
+                nodeId,
+                parentId: node.parentId,
+                kind: node.kind,
+                createdAt: node.createdAt,
+                timestamp: node.timestamp,
+                modelVersion: node.modelVersion,
+                label: node.label,
+                preview: summary.preview,
+            });
+            return { next: withSummary, result: { nodeId } };
+        });
+    }
+
+    /**
      * 创建编辑分支候选（TREE-03 底座）：在旧用户节点的父节点下新增 edit 候选并切换 activeChildId，
      * 旧子树完整保留。无分支图时同样先建线性基线图。
      */
