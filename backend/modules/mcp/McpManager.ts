@@ -28,10 +28,31 @@ import { HttpMcpClient } from './HttpClient';
 import { MCP_SERVER_ID_PATTERN } from './mcpToolNameCodec';
 
 /**
- * 生成唯一 ID
+ * 生成唯一 ID（名称无法 slug 化或 slug 冲突时的回退方案）
  */
 function generateId(): string {
     return `mcp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/**
+ * 将服务器名称转换为可读的 slug ID
+ *
+ * 规则：
+ * - 转为小写，空白替换为单下划线
+ * - 仅保留字母、数字、下划线、中划线
+ * - 折叠连续下划线（避免双下划线破坏 MCP 工具名解码）
+ * - 结果不符合 MCP_SERVER_ID_PATTERN 时返回空串（调用方回退随机 ID）
+ */
+function slugifyServerName(name: string): string {
+    const slug = name
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_-]/g, '')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .replace(/^-+|-+$/g, '');
+    return MCP_SERVER_ID_PATTERN.test(slug) ? slug : '';
 }
 
 /**
@@ -184,7 +205,7 @@ export class McpManager {
      * @param customId 自定义 ID（可选，不提供则自动生成）
      */
     async createServer(input: CreateMcpServerInput, customId?: string): Promise<string> {
-        const id = customId || generateId();
+        const id = customId || await this.generateReadableId(input.name);
         
         // 验证 ID 是否可用
         const validation = await this.validateServerId(id);
@@ -216,6 +237,30 @@ export class McpManager {
         }
         
         return config.id;
+    }
+
+    /**
+     * 生成可读的服务器 ID：优先基于名称生成 slug，冲突或无法生成时回退随机 ID
+     */
+    private async generateReadableId(name: string): Promise<string> {
+        const slug = slugifyServerName(name);
+        if (slug) {
+            // slug 未被占用时直接使用
+            const direct = await this.validateServerId(slug);
+            if (direct.valid) {
+                return slug;
+            }
+            // slug 被占用时追加数字后缀（_2、_3 …），最多尝试 100 次
+            for (let i = 2; i <= 100; i++) {
+                const candidate = `${slug}_${i}`;
+                const validation = await this.validateServerId(candidate);
+                if (validation.valid) {
+                    return candidate;
+                }
+            }
+        }
+        // 名称无法 slug 化（如纯中文）或全部冲突时回退随机 ID
+        return generateId();
     }
 
     /**
