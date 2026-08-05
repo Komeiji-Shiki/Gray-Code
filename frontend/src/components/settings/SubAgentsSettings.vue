@@ -15,6 +15,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
+import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
 
 const { t } = useI18n()
 
@@ -171,15 +172,8 @@ const toolModeOptions = computed<SelectOption[]>(() => [
   { value: 'blacklist', label: t('components.settings.subagents.toolMode.blacklist') }
 ])
 
-// 内置工具列表
-const builtinTools = computed(() => 
-  allTools.value.filter(t => t.source === 'builtin')
-)
-
-// MCP 工具列表
-const mcpTools = computed(() => 
-  allTools.value.filter(t => t.source === 'mcp')
-)
+// 按分类分组的全部工具（内置 + MCP，MCP 归入 mcp 分类）
+const toolsByCategory = computed(() => groupToolsByCategory(allTools.value))
 
 // 当前工具列表（白名单或黑名单）
 const currentToolList = computed(() => {
@@ -772,37 +766,21 @@ onMounted(async () => {
               <span v-else>{{ t('components.settings.subagents.blacklistHint') }}</span>
             </div>
             
-            <!-- 内置工具 -->
-            <div v-if="builtinTools.length > 0" class="tool-category">
+            <!-- 按分类分组的工具列表 -->
+            <div v-for="(categoryTools, category) in toolsByCategory" :key="category" class="tool-category">
               <div class="category-header">
-                <i class="codicon codicon-tools"></i>
-                <span>{{ t('components.settings.subagents.builtinTools') }}</span>
-                <span class="tool-count">{{ builtinTools.length }}</span>
+                <i :class="['codicon', getCategoryIcon(category)]"></i>
+                <span>{{ getCategoryName(category) }}</span>
+                <span class="tool-count">{{ categoryTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
+                <div v-for="tool in categoryTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
                   <div class="tool-info">
-                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
-                  </div>
-                  <CustomCheckbox
-                    :modelValue="isToolSelected(tool.name)"
-                    @update:modelValue="toggleTool(tool.name, $event)"
-                  />
-                </div>
-              </div>
-            </div>
-            
-            <!-- MCP 工具 -->
-            <div v-if="mcpTools.length > 0" class="tool-category">
-              <div class="category-header">
-                <i class="codicon codicon-plug"></i>
-                <span>{{ t('components.settings.subagents.mcpTools') }}</span>
-                <span class="tool-count">{{ mcpTools.length }}</span>
-              </div>
-              <div class="tool-items">
-                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
-                  <div class="tool-info">
-                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
+                    <div class="tool-name-row">
+                      <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
+                      <span class="tool-id">{{ tool.name }}</span>
+                    </div>
+                    <div class="tool-description">{{ getToolDescription(tool.name, tool.description) }}</div>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
@@ -1460,7 +1438,9 @@ input[type="number"]::-webkit-inner-spin-button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   transition: background 0.15s;
 }
@@ -1477,10 +1457,35 @@ input[type="number"]::-webkit-inner-spin-button {
   min-width: 0;
 }
 
+.tool-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .tool-name {
+  flex-shrink: 0;
   font-size: 13px;
+  font-weight: 600;
   color: var(--vscode-foreground);
+}
+
+.tool-id {
+  overflow: hidden;
   font-family: var(--vscode-editor-font-family), monospace;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-description {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .no-tools {

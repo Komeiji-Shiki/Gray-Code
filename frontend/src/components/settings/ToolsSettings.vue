@@ -16,6 +16,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { useDependency, TOOL_DEPENDENCIES, hasToolDependencies, getToolDependencies } from '@/composables/useDependency'
 import { useI18n } from '@/composables'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
+import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
 import ReadFileConfig from './tools/files/read_file.vue'
 import WriteFileConfig from './tools/files/write_file.vue'
 import ListFilesConfig from './tools/files/list_files.vue'
@@ -118,64 +119,7 @@ const isLoading = ref(false)
 const savingTools = ref<Set<string>>(new Set())
 
 // 按分类分组的工具
-const toolsByCategory = computed(() => {
-  const grouped: Record<string, ToolInfo[]> = {}
-  
-  for (const tool of tools.value) {
-    const category = tool.category || '其他'
-    if (!grouped[category]) {
-      grouped[category] = []
-    }
-    grouped[category].push(tool)
-  }
-  
-  return grouped
-})
-
-// 分类显示名称获取函数
-function getCategoryName(category: string): string {
-  const mapping: Record<string, string> = {
-    'file': 'components.settings.toolsSettings.categories.file',
-    'search': 'components.settings.toolsSettings.categories.search',
-    'terminal': 'components.settings.toolsSettings.categories.terminal',
-    'lsp': 'components.settings.toolsSettings.categories.lsp',
-    'media': 'components.settings.toolsSettings.categories.media',
-    'plan': 'components.settings.toolsSettings.categories.plan',
-    'todo': 'components.settings.toolsSettings.categories.todo',
-    'history': 'components.settings.toolsSettings.categories.history',
-    'memory': 'components.settings.toolsSettings.categories.memory',
-    'review': 'components.settings.toolsSettings.categories.review',
-    'progress': 'components.settings.toolsSettings.categories.progress',
-    'skills': 'components.settings.toolsSettings.categories.skills',
-    'design': 'components.settings.toolsSettings.categories.design',
-    'notification': 'components.settings.toolsSettings.categories.notification',
-    'agents': 'components.settings.toolsSettings.categories.agents',
-    'other': 'components.settings.toolsSettings.categories.other',
-    '其他': 'components.settings.toolsSettings.categories.other'
-  }
-  return t(mapping[category] || mapping['其他'])
-}
-
-// 分类图标映射
-const categoryIcons: Record<string, string> = {
-  'file': 'codicon-file',
-  'search': 'codicon-search',
-  'terminal': 'codicon-terminal',
-  'lsp': 'codicon-symbol-class',
-  'media': 'codicon-file-media',
-  'plan': 'codicon-notebook',
-  'todo': 'codicon-checklist',
-  'history': 'codicon-history',
-  'memory': 'codicon-database',
-  'review': 'codicon-eye',
-  'progress': 'codicon-graph-line',
-  'skills': 'codicon-lightbulb',
-  'design': 'codicon-paintcan',
-  'notification': 'codicon-bell',
-  'agents': 'codicon-account',
-  '其他': 'codicon-extensions',
-  'other': 'codicon-extensions'
-}
+const toolsByCategory = computed(() => groupToolsByCategory(tools.value))
 
 // 加载工具列表
 async function loadTools() {
@@ -234,16 +178,6 @@ async function disableAll() {
   for (const tool of enabledTools) {
     await toggleTool(tool.name, false)
   }
-}
-
-// 获取分类显示名称
-function getCategoryDisplayName(category: string): string {
-  return getCategoryName(category)
-}
-
-// 获取分类图标
-function getCategoryIcon(category: string): string {
-  return categoryIcons[category] || 'codicon-extensions'
 }
 
 // 加载最大工具调用次数配置
@@ -356,7 +290,7 @@ onMounted(() => {
       >
         <div class="category-header">
           <i :class="['codicon', getCategoryIcon(category)]"></i>
-          <span>{{ getCategoryDisplayName(category) }}</span>
+          <span>{{ getCategoryName(category) }}</span>
           <span class="category-count">{{ categoryTools.length }}</span>
         </div>
         

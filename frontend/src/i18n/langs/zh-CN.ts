@@ -422,9 +422,9 @@ const zhCN = {
                 empty: '暂无分支',
                 nodeCount: '{count} 个节点',
                 navigationMode: '分支导航',
-                fullMode: '完整消息',
+                fullMode: '完整消息图',
                 navigationHint: '折叠连续消息，只显示分支点与候选',
-                fullHint: '显示所有消息，横向位置只随分支变化',
+                fullHint: '轨道式完整消息图：轨道数随同时存在的候选分支变化',
                 collapsedMessages: '已折叠 {count} 条连续消息',
                 candidateCount: '{count} 个候选',
                 deleted: '已删除',
@@ -433,7 +433,9 @@ const zhCN = {
                 rename: '重命名',
                 renamePlaceholder: '输入分支标签…',
                 save: '保存',
-                cancel: '取消'
+                cancel: '取消',
+                expandAllMessages: '展开完整消息',
+                collapseLinearMessages: '收起线性段'
             },
             responseViewer: {
                 commonMode: '常用模式',
@@ -1717,8 +1719,6 @@ const zhCN = {
                     whitelist: '白名单',
                     blacklist: '黑名单'
                 },
-                builtinTools: '内置工具',
-                mcpTools: 'MCP 工具',
                 noTools: '暂无可用工具',
                 whitelistHint: '勾选的工具将被允许使用',
                 blacklistHint: '勾选的工具将被禁止使用',
@@ -2358,6 +2358,7 @@ const zhCN = {
                     design: '设计',
                     notification: '通知',
                     agents: '代理',
+                    mcp: 'MCP 工具',
                     other: '其他'
                 },
                 dependency: {

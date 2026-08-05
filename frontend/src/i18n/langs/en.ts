@@ -421,9 +421,9 @@ const en: LanguageMessages = {
                 empty: 'No branches yet',
                 nodeCount: '{count} nodes',
                 navigationMode: 'Branch navigation',
-                fullMode: 'All messages',
+                fullMode: 'Message graph',
                 navigationHint: 'Collapse linear messages and focus on branch points',
-                fullHint: 'Show every message; horizontal lanes change only at branches',
+                fullHint: 'Track-based full message graph: lanes follow concurrent candidate branches',
                 collapsedMessages: '{count} linear messages collapsed',
                 candidateCount: '{count} candidates',
                 deleted: 'Deleted',
@@ -432,7 +432,9 @@ const en: LanguageMessages = {
                 rename: 'Rename',
                 renamePlaceholder: 'Enter a branch label…',
                 save: 'Save',
-                cancel: 'Cancel'
+                cancel: 'Cancel',
+                expandAllMessages: 'Expand all messages',
+                collapseLinearMessages: 'Collapse linear runs'
             },
             responseViewer: {
                 commonMode: 'Common mode',
@@ -1716,8 +1718,6 @@ const en: LanguageMessages = {
                     whitelist: 'Whitelist',
                     blacklist: 'Blacklist'
                 },
-                builtinTools: 'Built-in Tools',
-                mcpTools: 'MCP Tools',
                 noTools: 'No tools available',
                 whitelistHint: 'Checked tools will be allowed',
                 blacklistHint: 'Checked tools will be blocked',
@@ -2357,6 +2357,7 @@ const en: LanguageMessages = {
                     design: 'Design',
                     notification: 'Notifications',
                     agents: 'Agents',
+                    mcp: 'MCP Tools',
                     other: 'Other'
                 },
                 dependency: {
