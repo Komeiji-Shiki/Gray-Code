@@ -82,6 +82,35 @@ export function closeSocketGracefully(socket: import('net').Socket): Promise<voi
 }
 
 /**
+ * 窗口期 abort 桥接。
+ *
+ * 修改原因：fetchWithProxy / proxyStreamFetch 在 CONNECT 成功后先摘除旧 abort 监听，
+ *           而新监听要等 tls.connect 异步回调（TLS 握手完成）才挂载，窗口期内 abort 信号丢失，
+ *           TLS 握手悬挂、请求永不收敛。
+ * 修改方式：窗口期挂一次性监听，记录已 abort 状态并立即销毁隧道 socket；
+ *           握手成功或失败后调用 release 摘除桥接（幂等）。
+ * 修改目的：TLS 握手阶段的取消与握手前后保持同一语义（AbortError + 连接清理）。
+ */
+export function createAbortBridge(
+    signal: AbortSignal | undefined,
+    onAbort: () => void
+): { aborted: () => boolean; release: () => void } {
+    let didAbort = false;
+    if (!signal) {
+        return { aborted: () => false, release: () => undefined };
+    }
+    const handler = () => {
+        didAbort = true;
+        onAbort();
+    };
+    signal.addEventListener('abort', handler, { once: true });
+    return {
+        aborted: () => didAbort,
+        release: () => signal.removeEventListener('abort', handler)
+    };
+}
+
+/**
  * 解析代理 URL → 连接参数。
  *
  * - 正确区分 https://（https.request + 默认 443）和 http://（http.request + 默认 80）
@@ -265,6 +294,15 @@ async function fetchWithProxy(
                 socket.setTimeout(0);
             }
 
+            // 修改原因：旧监听已在上面摘除，而新监听要等 tls.connect 异步回调（TLS 握手完成）
+            //           才由 sendRequestOverSocket 挂载，窗口期内 abort 信号丢失、握手悬挂。
+            // 修改方式：窗口期挂桥接监听（once），记录已 abort 状态并销毁隧道 socket；
+            //           TLS 握手结束（成功或出错）或走非 TLS 分支时摘除桥接。
+            // 修改目的：握手阶段取消与握手前后语义一致（AbortError + 连接清理），不悬挂。
+            const bridge = createAbortBridge(init.signal, () => {
+                closeSocketGracefully(socket);
+            });
+
             if (isHttps) {
                 // 在隧道上建立 TLS 连接
                 // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
@@ -273,14 +311,23 @@ async function fetchWithProxy(
                     servername: targetHost,
                     ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
+                    bridge.release();
+                    if (bridge.aborted()) {
+                        // 窗口期内已被取消：立即销毁，不发送任何请求
+                        tlsSocket.destroy();
+                        reject(createAbortError());
+                        return;
+                    }
                     sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
                 });
 
                 tlsSocket.on('error', (error: Error) => {
-                    reject(new Error(`TLS error: ${error.message}`));
+                    bridge.release();
+                    reject(bridge.aborted() ? createAbortError() : new Error(`TLS error: ${error.message}`));
                 });
             } else {
-                // HTTP 请求直接通过隧道
+                // HTTP 请求直接通过隧道（窗口期为同步段，直接摘除桥接）
+                bridge.release();
                 sendRequestOverSocket(socket, targetUrl, init, resolve, reject);
             }
         });
@@ -743,6 +790,19 @@ export async function* proxyStreamFetch(
                 socket.setTimeout(0);
             }
 
+            // CONNECT 成功后旧监听已无用（proxyReq 职责结束），立即摘除；
+            // 窗口期取消改由下面的桥接监听接管，避免与新监听双重处理。
+            cleanupAbortListener();
+
+            // 修改原因：旧监听已摘除，而新监听要等 tls.connect 异步回调（TLS 握手完成）
+            //           且 socket Promise resolve 后才挂载，窗口期内 abort 信号丢失、握手悬挂。
+            // 修改方式：窗口期挂桥接监听（once），记录已 abort 状态并销毁隧道 socket；
+            //           TLS 握手结束（成功或出错）或走非 TLS 分支时摘除桥接。
+            // 修改目的：握手阶段取消与握手前后语义一致（AbortError + 连接清理），不悬挂。
+            const bridge = createAbortBridge(init.signal, () => {
+                closeSocketGracefully(socket);
+            });
+
             if (isHttps) {
                 // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
                 const tlsSocket = tls.connect({
@@ -750,13 +810,23 @@ export async function* proxyStreamFetch(
                     servername: targetHost,
                     ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
+                    bridge.release();
+                    if (bridge.aborted()) {
+                        // 窗口期内已被取消：立即销毁，不进入流式发送流程
+                        tlsSocket.destroy();
+                        finishReject(createAbortError());
+                        return;
+                    }
                     finishResolve(tlsSocket);
                 });
                 
                 tlsSocket.on('error', (error: Error) => {
-                    finishReject(new Error(`TLS error: ${error.message}`));
+                    bridge.release();
+                    finishReject(bridge.aborted() ? createAbortError() : new Error(`TLS error: ${error.message}`));
                 });
             } else {
+                // 非 TLS 分支为同步段，直接摘除桥接
+                bridge.release();
                 finishResolve(socket);
             }
         });

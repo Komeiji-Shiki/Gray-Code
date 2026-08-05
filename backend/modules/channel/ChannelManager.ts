@@ -816,13 +816,17 @@ export class ChannelManager {
      */
     private async executeRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): Promise<HttpResponse> {
         const { url, method, headers, body, timeout = 60000 } = options;
+        // timeout 钳制：非法值（非数字/NaN/负数/0）归一到 60000，上限 1 小时，防止 NaN 进入 setTimeout
+        const effectiveTimeout = Number.isFinite(timeout) && timeout > 0
+            ? Math.min(timeout, 3600000)
+            : 60000;
         const proxyUrl = this.getProxyUrl();
         
         // 使用代理 fetch 或原生 fetch
         const fetchFn = createProxyFetch(proxyUrl);
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
         
         // 监听外部取消信号
         const onExternalAbort = () => controller.abort();
@@ -885,7 +889,7 @@ export class ChannelManager {
                 }
                 throw new ChannelError(
                     ErrorType.TIMEOUT_ERROR,
-                    t('modules.channel.errors.requestTimeout', { timeout })
+                    t('modules.channel.errors.requestTimeout', { timeout: effectiveTimeout })
                 );
             }
             throw error;
@@ -914,6 +918,10 @@ export class ChannelManager {
         idleTimeoutHandle?: { reset: () => void }
     ): AsyncGenerator<any> {
         const { url, method, headers, body, timeout = 120000 } = options;
+        // timeout 钳制：非法值（非数字/NaN/负数/0）归一到 60000，上限 1 小时，防止 NaN 进入 setTimeout
+        const effectiveTimeout = Number.isFinite(timeout) && timeout > 0
+            ? Math.min(timeout, 3600000)
+            : 60000;
         const proxyUrl = this.getProxyUrl();
         
         const controller = new AbortController();
@@ -930,7 +938,7 @@ export class ChannelManager {
             timeoutId = setTimeout(() => {
                 isTimedOut = true;
                 controller.abort();
-            }, timeout);
+            }, effectiveTimeout);
         };
         
         // 把重置函数暴露给调用方：LLM 保活请求成功后可刷新流的空闲超时
@@ -960,7 +968,7 @@ export class ChannelManager {
                     method,
                     headers,
                     body: body ? JSON.stringify(body) : undefined,
-                    timeout,
+                    timeout: effectiveTimeout,
                     signal: controller.signal
                 }, proxyUrl)) {
                     // 检查是否已取消
@@ -1020,7 +1028,7 @@ export class ChannelManager {
                 if (isTimedOut) {
                     throw new ChannelError(
                         ErrorType.TIMEOUT_ERROR,
-                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
+                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout: effectiveTimeout })
                     );
                 }
             } else {
@@ -1111,7 +1119,7 @@ export class ChannelManager {
                     if (isTimedOut) {
                         throw new ChannelError(
                             ErrorType.TIMEOUT_ERROR,
-                            t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
+                            t('modules.channel.errors.requestTimeoutNoResponse', { timeout: effectiveTimeout })
                         );
                     }
                 } finally {
@@ -1154,7 +1162,7 @@ export class ChannelManager {
                 if (isTimedOut) {
                     throw new ChannelError(
                         ErrorType.TIMEOUT_ERROR,
-                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
+                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout: effectiveTimeout })
                     );
                 }
                 throw new ChannelError(

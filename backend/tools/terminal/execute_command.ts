@@ -610,7 +610,9 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
                 // 使用 where 检查 PATH
-                cp.execSync(`where ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                // 参数必须通过 argv 传递，不能拼进命令字符串：shellPath 来自配置/消息，
+                // 字符串拼接会被 `&`、`|`、`;` 等字符注入成任意命令
+                cp.execFileSync('where.exe', [shellPath], { timeout: 3000, stdio: 'ignore' });
             }
         } else {
             // 绝对路径检查文件存在
@@ -618,7 +620,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
                 // 使用 which 检查 PATH
-                cp.execSync(`which ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                cp.execFileSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
             }
         }
         available = true;
@@ -1014,7 +1016,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             const command = args.command as string;
             const cwd = args.cwd as string | undefined;
             const shell = (args.shell as ShellType) || 'default';
-            const timeout = (args.timeout as number) ?? 60000;
+            // timeout 归一化：非有限数或负数一律 60000（0 表示不超时）
+            const rawTimeout = (args.timeout as number) ?? 60000;
+            const timeout = Number.isFinite(rawTimeout) && rawTimeout >= 0 ? rawTimeout : 60000;
             // 修改原因：长耗时命令会阻塞主对话，用户只能干等。
             // 修改方式：background=true 时进程启动后立即返回；不挂外部 abortSignal、不设 timeout，
             //          退出时结果经 TaskManager 完成事件回流。

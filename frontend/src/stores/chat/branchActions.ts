@@ -370,9 +370,9 @@ export async function switchBranchCandidate(
     }
     return false
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.isSwitchingBranch.value = false
-    }
+    // 无论会话归属校验是否通过都复位切换锁，避免 isSwitchingBranch 永久残留
+    // （错误处理仍保留在 catch 内按归属执行）
+    state.isSwitchingBranch.value = false
   }
 }
 

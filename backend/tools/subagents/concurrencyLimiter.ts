@@ -20,6 +20,23 @@ export class SubAgentQueueCancelledError extends Error {
     }
 }
 
+/**
+ * 排队等待超时抛出的错误。
+ *
+ * 修改原因：前方 run 长期占用席位时，排队者会无限等待，run 与事件总线状态悬挂。
+ * 修改方式：超过排队时限 reject 该等待者，移出队列并清理监听。
+ * 修改目的：排队等待有界；executor 会把它作为明确的席位获取失败处理（非取消语义）。
+ */
+export class SubAgentQueueTimeoutError extends Error {
+    constructor(runId: string) {
+        super(`SubAgent run "${runId}" timed out after 60s waiting in the concurrency queue.`);
+        this.name = 'SubAgentQueueTimeoutError';
+    }
+}
+
+/** 排队等待席位的最大时限（60 秒）。 */
+export const SUB_AGENT_QUEUE_TIMEOUT_MS = 60 * 1000;
+
 interface QueueEntry {
     runId: string;
     resolve: () => void;
@@ -96,16 +113,32 @@ export class SubAgentConcurrencyLimiter {
                 return;
             }
 
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
             const entry: QueueEntry = {
                 runId,
                 resolve,
                 reject,
                 cleanup: () => {
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = undefined;
+                    }
                     if (abortSignal) {
                         abortSignal.removeEventListener('abort', onAbort);
                     }
                 }
             };
+            // 修改原因：前方 run 长期占用席位时排队者无限等待，占用队列与事件总线状态。
+            // 修改方式：入队即启动 60 秒兜底定时器，超时移出队列并以 SubAgentQueueTimeoutError 拒绝。
+            // 修改目的：排队等待有界；cleanup（取消/获准/超时）时一并清除定时器，不残留。
+            timeoutId = setTimeout(() => {
+                const index = this.queue.indexOf(entry);
+                if (index >= 0) {
+                    this.queue.splice(index, 1);
+                }
+                entry.cleanup();
+                reject(new SubAgentQueueTimeoutError(runId));
+            }, SUB_AGENT_QUEUE_TIMEOUT_MS);
             const onAbort = () => {
                 const index = this.queue.indexOf(entry);
                 if (index >= 0) {

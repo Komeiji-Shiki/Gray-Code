@@ -6,6 +6,7 @@
 
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
+import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -208,10 +209,7 @@ export class StdioMcpClient extends EventEmitter {
             capabilities: {
                 roots: { listChanged: true }
             },
-            clientInfo: {
-                name: 'GrayCode',
-                version: '1.0.5'
-            }
+            clientInfo: createGrayCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;
@@ -260,8 +258,28 @@ export class StdioMcpClient extends EventEmitter {
      */
     async disconnect(): Promise<void> {
         if (this.process && this.process.pid) {
+            // 进程已退出（exitCode/signalCode 已置位）：exit 事件不会再触发，
+            // 直接清理返回，避免僵尸进程场景下空等 10s 兜底
+            if (this.process.exitCode !== null || this.process.signalCode !== null) {
+                this.cleanup();
+                return;
+            }
             const pid = this.process.pid;
             let timeoutHandle: NodeJS.Timeout | undefined;
+            // treeKill 回调报错（进程不存在）时立即 resolve，不等 10s 兜底
+            let treeKillFailed = false;
+            const treeKillError = new Promise<void>((resolve) => {
+                treeKill(pid, 'SIGTERM', (err?: Error) => {
+                    if (err) {
+                        treeKillFailed = true;
+                        if (timeoutHandle) {
+                            clearTimeout(timeoutHandle);
+                        }
+                        try { treeKill(pid, 'SIGKILL'); } catch {}
+                        resolve();
+                    }
+                });
+            });
             const exitOrTimeout = Promise.race([
                 new Promise<void>((resolve) => {
                     this.process!.once('exit', () => {
@@ -272,15 +290,16 @@ export class StdioMcpClient extends EventEmitter {
                         resolve();
                     });
                 }),
+                treeKillError,
                 new Promise<void>((resolve) => {
+                    // treeKill 已报错时不再武装兜底定时器
+                    if (treeKillFailed) {
+                        resolve();
+                        return;
+                    }
                     timeoutHandle = setTimeout(resolve, 10000);
                 })
             ]);
-            treeKill(pid, 'SIGTERM', (err?: Error) => {
-                if (err) {
-                    try { treeKill(pid, 'SIGKILL'); } catch {}
-                }
-            });
             await exitOrTimeout;
             this.cleanup();
         } else {

@@ -964,19 +964,35 @@ export class SettingsHandler {
     /**
      * 比较两个版本号
      * 返回: -1 表示 a < b, 0 表示 a == b, 1 表示 a > b
+     * 支持可选预发布段（如 1.3.1-1）：预发布 < 对应正式版（1.3.1-1 < 1.3.1）。
      */
+    private parseVersion(v: string): { parts: number[]; pre: number } {
+        const m = /^(\d+\.\d+\.\d+)(?:-(\d+))?$/.exec((v || '').trim());
+        if (!m) {
+            return { parts: [0], pre: -1 };
+        }
+        return {
+            parts: m[1].split('.').map((n) => parseInt(n, 10) || 0),
+            pre: m[2] !== undefined ? (parseInt(m[2], 10) || 0) : -1
+        };
+    }
+
     private compareVersions(a: string, b: string): number {
-        const aParts = a.split('.').map(n => parseInt(n, 10) || 0);
-        const bParts = b.split('.').map(n => parseInt(n, 10) || 0);
-        
-        const maxLen = Math.max(aParts.length, bParts.length);
+        const pa = this.parseVersion(a);
+        const pb = this.parseVersion(b);
+
+        const maxLen = Math.max(pa.parts.length, pb.parts.length);
         for (let i = 0; i < maxLen; i++) {
-            const aNum = aParts[i] || 0;
-            const bNum = bParts[i] || 0;
+            const aNum = pa.parts[i] || 0;
+            const bNum = pb.parts[i] || 0;
             if (aNum < bNum) return -1;
             if (aNum > bNum) return 1;
         }
-        return 0;
+        // 基础版本相同：无预发布段（pre=-1）视为正式版，正式版 > 预发布
+        if (pa.pre === pb.pre) return 0;
+        if (pa.pre === -1) return 1;
+        if (pb.pre === -1) return -1;
+        return pa.pre < pb.pre ? -1 : 1;
     }
     
     /**
@@ -1005,12 +1021,18 @@ export class SettingsHandler {
             
             const content = fs.readFileSync(changelogPath, 'utf-8');
             
-            // 解析所有版本及其内容
-            const versionBlockRegex = /## \[(\d+\.\d+\.\d+)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
+            // 解析所有版本及其内容（版本号支持可选预发布段，如 [1.3.1-1]）
+            const versionBlockRegex = /## \[(\d+\.\d+\.\d+(?:-\d+)?)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
             const versions: { version: string; content: string }[] = [];
-            
+            const seenVersions = new Set<string>();
+
             let match;
             while ((match = versionBlockRegex.exec(content)) !== null) {
+                // CHANGELOG 中同一版本号可能出现多次（历史编辑遗留），只取第一个匹配，避免重复展示
+                if (seenVersions.has(match[1])) {
+                    continue;
+                }
+                seenVersions.add(match[1]);
                 versions.push({
                     version: match[1],
                     content: match[2].trim()

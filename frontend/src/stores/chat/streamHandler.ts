@@ -184,11 +184,15 @@ export function handleStreamChunk(
         // 非终结路径（继续下一轮工具循环）activeStreamId 保持原值，不提前消费。
         if (state.activeStreamId.value === null) {
           finishBranchStreamTracking(state)
+          // 终结路径与 complete/cancelled/error 一致：调度 processQueue，
+          // 否则审批门闸终止的回合后排队队列永不触发（卡死）
+          nextTick(() => processQueue())
         }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
         resetTerminalStreamState(state)
         finishBranchStreamTracking(state)
+        nextTick(() => processQueue())
       }
       break
       

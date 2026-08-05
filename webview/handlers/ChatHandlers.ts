@@ -36,7 +36,7 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
  * 删除消息（删除到指定位置）
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId: rawConversationId, targetIndex, preserveCheckpointId } = data || {};
+  const { conversationId: rawConversationId, targetIndex, preserveCheckpointId, messageId } = data || {};
   const conversationId = assertSafeId(rawConversationId, 'conversationId');
 
   // 先取消该对话的流式请求（如果有）
@@ -68,7 +68,9 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
     const result = await ctx.chatHandler.handleDeleteToMessage({
       conversationId,
       targetIndex,
-      preserveCheckpointId
+      preserveCheckpointId,
+      // M1：透传消息 id 供后端做防索引漂移校验（可选；旧前端不传时保持旧行为）
+      messageId
     });
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
@@ -130,18 +132,39 @@ export const awaitConversationIdle: MessageHandler = async (data, requestId, ctx
     return;
   }
 
+  // 等待必须带超时兜底（15s，小于前端 20s 超时）：若后端 waitForIdle 在极端挂死场景
+  // 不返回，前端 20s 超时后会摘除 requestId，后端稍后返回的响应会被当作广播误分发。
+  // 超时后照常返回 { idle: true, stale: true }，前端不感知差异，响应也不会迟到。
+  const IDLE_WAIT_TIMEOUT_MS = 15_000;
+  let stale = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      stale = true;
+      resolve();
+    }, IDLE_WAIT_TIMEOUT_MS);
+  });
+
   const abortManager = ctx.streamAbortControllers as any;
-  if (typeof abortManager?.waitForIdle === 'function') {
-    await abortManager.waitForIdle(conversationId);
-  } else {
-    // HandlerContext 仍允许测试/旧调用点传普通 Map；没有活跃控制器时可直接视为空闲。
-    const controller = abortManager?.get?.(conversationId);
-    if (controller) {
-      await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
+  const idle = (async () => {
+    if (typeof abortManager?.waitForIdle === 'function') {
+      await abortManager.waitForIdle(conversationId);
+    } else {
+      // HandlerContext 仍允许测试/旧调用点传普通 Map；没有活跃控制器时可直接视为空闲。
+      const controller = abortManager?.get?.(conversationId);
+      if (controller) {
+        await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
     }
+  })();
+
+  try {
+    await Promise.race([idle, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
-  ctx.sendResponse(requestId, { idle: true });
+  ctx.sendResponse(requestId, stale ? { idle: true, stale: true } : { idle: true });
 };
 
 /**
@@ -332,7 +355,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
  * 由 MessageRouter 以 fire-and-forget 方式调用（STREAM_MESSAGE_TYPES 含 chat.editBranchStream，H2）。
  */
 export const editBranchStream: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, userNodeId, newText, configId, modelOverride, promptModeId, streamId, mode } = data || {};
+  const { conversationId, userNodeId, newText, configId, modelOverride, promptModeId, streamId, mode, messageId } = data || {};
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()
       || typeof newText !== 'string' || !newText.trim()) {
@@ -383,6 +406,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     const stream = ctx.chatHandler.handleEditBranchStream({
       conversationId,
       userNodeId: typeof userNodeId === 'string' && userNodeId.trim() ? userNodeId : undefined,
+      // M1：透传消息 id 供后端做防索引漂移校验（可选；旧前端不传时保持旧行为）
+      messageId,
       newText,
       configId,
       modelOverride,

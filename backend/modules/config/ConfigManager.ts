@@ -453,7 +453,14 @@ export class ConfigManager {
     async validateConfig(config: ChannelConfig): Promise<ValidationResult> {
         const errors: string[] = [];
         const warnings: string[] = [];
-        
+
+        // timeout 钳制：非法值（非数字/NaN/负数/0）归一到 60000，上限 1 小时，防止 NaN 进入 setTimeout
+        if (typeof config.timeout !== 'number' || !Number.isFinite(config.timeout) || config.timeout <= 0) {
+            config.timeout = 60000;
+        } else if (config.timeout > 3600000) {
+            config.timeout = 3600000;
+        }
+
         // 基础字段验证
         if (!config.name || config.name.trim().length === 0) {
             errors.push(t('modules.config.validation.nameRequired'));

@@ -170,7 +170,9 @@ export class StreamRequestHandler {
       modelOverride,
       hiddenFunctionResponse,
       promptModeId,
-      dynamicContextStrategyOverride
+      dynamicContextStrategyOverride,
+      // 消息来源：background_task 时后端不把回执当作真实用户新回合（isUserInput 判定）
+      source
     } = data;
     
     // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在新用户消息之后）
@@ -190,6 +192,7 @@ export class StreamRequestHandler {
         hiddenFunctionResponse,
         promptModeId: this.normalizePromptModeId(promptModeId),
         dynamicContextStrategyOverride,
+        source,
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });

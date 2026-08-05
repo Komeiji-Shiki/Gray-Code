@@ -17,6 +17,9 @@ import {
     buildUnsupportedAttachmentText
 } from './formatters/mediaParts';
 
+/** 计数请求超时（毫秒）：超时自动中止，调用方走本地估算降级 */
+const COUNT_REQUEST_TIMEOUT_MS = 15000;
+
 /**
  * Token 计数结果
  */
@@ -46,6 +49,27 @@ export class TokenCountService {
      */
     setProxyUrl(proxyUrl?: string) {
         this.proxyUrl = proxyUrl;
+    }
+
+    /**
+     * 执行带超时的计数请求：15s 超时自动中止，外部 abort 或超时任一触发即中止
+     */
+    private async fetchWithTimeout(url: string, init: RequestInit, externalSignal?: AbortSignal): Promise<Response> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), COUNT_REQUEST_TIMEOUT_MS);
+        const onExternalAbort = () => controller.abort();
+        if (externalSignal) {
+            externalSignal.addEventListener('abort', onExternalAbort);
+        }
+        try {
+            const proxyFetch = createProxyFetch(this.proxyUrl);
+            return await proxyFetch(url, { ...init, signal: controller.signal });
+        } finally {
+            clearTimeout(timeoutId);
+            if (externalSignal) {
+                externalSignal.removeEventListener('abort', onExternalAbort);
+            }
+        }
     }
 
     /**
@@ -329,8 +353,7 @@ export class TokenCountService {
             contents: geminiContents
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(countUrl, {
+        const response = await this.fetchWithTimeout(countUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -421,8 +444,7 @@ export class TokenCountService {
             requestBody.model = model;
         }
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(url, {
+        const response = await this.fetchWithTimeout(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -538,8 +560,7 @@ export class TokenCountService {
             requestBody.model = model;
         }
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(countUrl, {
+        const response = await this.fetchWithTimeout(countUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -617,8 +638,7 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(countUrl, {
+        const response = await this.fetchWithTimeout(countUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -697,8 +717,7 @@ export class TokenCountService {
             contents: geminiContents
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(url, {
+        const response = await this.fetchWithTimeout(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -786,8 +805,7 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(config.baseUrl, {
+        const response = await this.fetchWithTimeout(config.baseUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -900,8 +918,7 @@ export class TokenCountService {
             instructions: instructions || undefined
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(url, {
+        const response = await this.fetchWithTimeout(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -978,8 +995,7 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
-        const response = await proxyFetch(config.baseUrl, {
+        const response = await this.fetchWithTimeout(config.baseUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

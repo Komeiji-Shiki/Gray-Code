@@ -39,7 +39,7 @@ export async function runMonitorSmoke(): Promise<void> {
     userDataPath: userData,
     extensionPath: path.resolve(__dirname, '..', '..'),
     postToRenderer: (message) => received.push(message),
-    native: async () => undefined,
+    native: async <T = any>() => undefined as T,
     onOpenDiffPreview: () => undefined
   });
   await host.ready;

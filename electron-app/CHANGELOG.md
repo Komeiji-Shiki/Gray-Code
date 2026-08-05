@@ -8,6 +8,21 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.2] - 2026-08-05
+
+### Fixed
+  - 修复退出不等待 `BackendHost.dispose()`（异步写队列被截断，设置/对话/用量落盘中途丢失）：`before-quit` preventDefault + await dispose + 10s 超时兜底 + `app.exit(0)`（macOS 关窗不退出语义保留）
+  - 修复 `mainWindow.loadURL()` 无 catch：页面加载失败（损坏安装/资源缺失）时 unhandled rejection 直接崩主进程，改为弹错误对话框后退出
+  - 新增单实例锁：便携版/安装版重复启动会并发写同一 `data/` 目录（多文件非原子写，配置互相覆盖、memento 丢失）；`requestSingleInstanceLock` 未获锁即退出，`second-instance` 聚焦已有窗口
+  - 修复主进程无 unhandledRejection 保护（Node 22 默认终止进程）：入口安装只记录不崩溃的守卫（EPIPE 由既有守卫兜底）
+  - 修复 IPC 消息队列无超时：任一阻塞 handler 等渲染层回复永不到达（toast 未渲染/面板隐藏/渲染层重载）时整条队列死锁，后续全部 IPC 永久挂起；每条消息加 60s 超时并回 `HANDLER_TIMEOUT` 错误
+  - 修复 `pendingToasts` 只增不删：showMessage/showQuickPick/showInputBox 的等待 Promise 无 TTL，泄漏挂起；加 5 分钟 TTL 自动 resolve(undefined)（调用方按取消处理）并清理定时器
+  - 修复 `vscode-shim` 硬编码 `version: '1.99.0'`：改为读取根 `package.json` 版本，与扩展真实版本同源
+  - 修复 `JsonFileMemento.update` 非原子写：并发 update 交错写盘互相覆盖丢更新、写一半崩溃留下损坏 JSON（下次启动静默清空）；改为 tmp+rename+串行写队列（与 JsonConfigStore.save 同款）
+  - 修复安装版数据目录写入受保护位置（Program Files 等）时数据静默丢失：写入前探测可写性，不可写回退 `appData/GrayCode` 并打印明确错误日志
+  - 公告版本解析：CHANGELOG 正则不支持 `## [1.3.1-1]` 预发布条目、重复版本号重复展示；正则支持可选预发布段、compareVersions 遵循预发布 < 正式版、重复版本去重（backend 公共部分，详见根 `CHANGELOG.md` [1.6.2]）
+  - 同步合入上游 PR #9 与全仓审查修复（backend/frontend/webview 公共部分）：详见根 `CHANGELOG.md` [1.6.2]；桌面版构建产物版本同步为 v1.6.2
+
 ## [1.6.1] - 2026-08-05
 
 ### Fixed

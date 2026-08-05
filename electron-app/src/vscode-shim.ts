@@ -732,6 +732,7 @@ export interface WorkspaceFolder {
   uri: Uri;
   name: string;
   index: number;
+  fsPath: string;
 }
 
 let workspaceFolderUris: string[] = [];
@@ -1180,22 +1181,41 @@ export function __setWindowFocused(focused: boolean): void {
 
 interface PendingToast {
   resolve: (value: any) => void;
+  clearTtl: () => void;
 }
 
 // Bridge: renderer replies on these ids (via host.native)
 let toastCounter = 0;
 const pendingToasts = new Map<number, PendingToast>();
+// 等待 toast 回复的超时：渲染层（或整个渲染进程）挂掉后 pendingToasts 只增不删，
+// 对应等待的 Promise 永远不 resolve，调用方（工具调用等）会永久挂起。
+// TTL 过期后按“未选择/取消”处理（resolve(undefined)），与渲染层返回 undefined 语义一致。
+const TOAST_TTL_MS = 5 * 60 * 1000;
+
+function setToastTtl(id: number, pending: PendingToast): void {
+  const ttl = setTimeout(() => {
+    const p = pendingToasts.get(id);
+    if (p) {
+      pendingToasts.delete(id);
+      p.resolve(undefined);
+    }
+  }, TOAST_TTL_MS);
+  pending.clearTtl = () => clearTimeout(ttl);
+}
 
 function showMessage(type: 'info' | 'warning' | 'error', message: string, options?: any, items: any[] = []): Promise<any> {
   return new Promise((resolve) => {
     const id = ++toastCounter;
-    pendingToasts.set(id, { resolve });
+    const pending: PendingToast = { resolve, clearTtl: () => undefined };
+    pendingToasts.set(id, pending);
+    setToastTtl(id, pending);
     const h = host();
     if (h) {
       h.postCommand('host.toast', { id, type, message, detail: options?.detail, items });
     } else {
       console[type === 'error' ? 'error' : type === 'warning' ? 'warn' : 'log'](`[GrayCode] ${message}`);
       pendingToasts.delete(id);
+      pending.clearTtl();
       resolve(undefined);
     }
   });
@@ -1205,6 +1225,7 @@ export function __resolveToast(id: number, selected: any): void {
   const pending = pendingToasts.get(id);
   if (pending) {
     pendingToasts.delete(id);
+    pending.clearTtl();
     pending.resolve(selected);
   }
 }
@@ -1215,7 +1236,7 @@ function showQuickPick(items: any[], options?: any): Promise<any> {
       typeof item === 'string' ? { label: item, value: item } : { ...item }
     );
     const id = ++toastCounter;
-    pendingToasts.set(id, {
+    const pending: PendingToast = {
       resolve: (selected: any) => {
         if (options?.canPickMany === true) {
           // VS Code 契约：canPickMany=true 时返回数组（取消时 undefined）。
@@ -1224,13 +1245,17 @@ function showQuickPick(items: any[], options?: any): Promise<any> {
         } else {
           resolve(selected);
         }
-      }
-    });
+      },
+      clearTtl: () => undefined
+    };
+    pendingToasts.set(id, pending);
+    setToastTtl(id, pending);
     const h = host();
     if (h) {
       h.postCommand('host.quickPick', { id, items: normalized, options: options || {} });
     } else {
       pendingToasts.delete(id);
+      pending.clearTtl();
       resolve(undefined);
     }
   });
@@ -1239,12 +1264,15 @@ function showQuickPick(items: any[], options?: any): Promise<any> {
 function showInputBox(_options?: any): Promise<string | undefined> {
   return new Promise((resolve) => {
     const id = ++toastCounter;
-    pendingToasts.set(id, { resolve });
+    const pending: PendingToast = { resolve, clearTtl: () => undefined };
+    pendingToasts.set(id, pending);
+    setToastTtl(id, pending);
     const h = host();
     if (h) {
       h.postCommand('host.inputBox', { id, options: _options || {} });
     } else {
       pendingToasts.delete(id);
+      pending.clearTtl();
       resolve(undefined);
     }
   });
@@ -1485,15 +1513,15 @@ export const commands = {
       case 'vscode.executeDocumentSymbolProvider': {
         const { getDocumentSymbols } = await import('./builtinLsp');
         const uri: Uri = args[0];
-        return getDocumentSymbols(uri);
+        return getDocumentSymbols(uri) as unknown as T;
       }
       case 'vscode.executeDefinitionProvider': {
         const { getDefinitions } = await import('./builtinLsp');
-        return getDefinitions(args[0], args[1]);
+        return getDefinitions(args[0], args[1]) as unknown as T;
       }
       case 'vscode.executeReferenceProvider': {
         const { getReferences } = await import('./builtinLsp');
-        return getReferences(args[0], args[1]);
+        return getReferences(args[0], args[1]) as unknown as T;
       }
       default: {
         const fn = registeredCommands.get(id);
@@ -1601,6 +1629,7 @@ function readRootPackageMetadata(): { version: string; name: string; displayName
 
 class JsonFileMemento {
   private data: Record<string, any> = {};
+  private writeQueue: Promise<void> = Promise.resolve();
   constructor(private readonly file: string) {
     try {
       this.data = JSON.parse(fs.readFileSync(this.file, 'utf-8'));
@@ -1616,14 +1645,18 @@ class JsonFileMemento {
   }
   update(key: string, value: any): Thenable<void> {
     this.data[key] = value;
-    try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    } catch {
-      // ignore
-    }
-    return fsp
-      .writeFile(this.file, JSON.stringify(this.data, null, 2), 'utf-8')
+    // 与 JsonConfigStore.save 同一套原子写策略：串行写队列 + 临时文件 + rename，
+    // 避免并发 update 交错覆盖内容，也避免写一半崩溃留下损坏的 JSON（同文件 560-570）。
+    const content = JSON.stringify(this.data, null, 2);
+    this.writeQueue = this.writeQueue
+      .then(async () => {
+        await fsp.mkdir(path.dirname(this.file), { recursive: true });
+        const tmp = this.file + '.tmp';
+        await fsp.writeFile(tmp, content, 'utf-8');
+        await fsp.rename(tmp, this.file);
+      })
       .catch((err) => console.warn('[vscode-shim] memento persist failed:', err));
+    return this.writeQueue;
   }
 }
 
@@ -1641,7 +1674,9 @@ export function __initMementoPaths(userDataPath: string): void {
   globalState = globalStateMemento;
 }
 
-export const version = '1.99.0';
+// 版本号从根 package.json 读取（与 ElectronContext.readRootPackageVersion 同一来源），
+// 不再硬编码：扩展升级时公告/版本检查逻辑用的 vscode.version 才能与真实版本一致。
+export const version: string = readRootPackageMetadata().version;
 export const extensionMode = ExtensionMode.Production;
 // 使用 let + 延迟赋值：__initMementoPaths 在 BackendHost 构造时调用，
 // 而 ES module namespace 是 live binding，此后 vscode.workspaceState 访问到的是真实 Memento。
