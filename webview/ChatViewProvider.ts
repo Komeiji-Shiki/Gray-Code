@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { randomBytes } from 'crypto';
 import { t, setLanguage as setBackendLanguage } from '../backend/i18n';
 import type { SupportedLanguage } from '../backend/i18n';
 import {
@@ -1188,8 +1189,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private buildCsp(webview: vscode.Webview, devServerOrigin?: string): string {
-        const scriptSrc = [webview.cspSource, "'unsafe-inline'"];
+    private buildCsp(webview: vscode.Webview, nonce: string, devServerOrigin?: string): string {
+        const scriptSrc = [webview.cspSource, `'nonce-${nonce}'`];
         const styleSrc = [webview.cspSource, "'unsafe-inline'"];
         const imgSrc = [webview.cspSource, 'data:', 'blob:'];
         const mediaSrc = [webview.cspSource, 'data:', 'blob:'];
@@ -1229,8 +1230,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
-        const cspContent = this.buildCsp(webview, devServerOrigin);
-        const builtinSoundAssetsScript = `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
+        const nonce = randomBytes(16).toString('base64');
+        const cspContent = this.buildCsp(webview, nonce, devServerOrigin);
+        const builtinSoundAssetsScript = `<script nonce="${nonce}">window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
@@ -1246,8 +1248,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="app"></div>
-    <script type="module" src="${devServerUrl}/@vite/client"></script>
-    <script type="module" src="${devServerUrl}/src/main.ts"></script>
+    <script nonce="${nonce}" type="module" src="${devServerUrl}/@vite/client"></script>
+    <script nonce="${nonce}" type="module" src="${devServerUrl}/src/main.ts"></script>
 </body>
 </html>`;
         }
@@ -1266,7 +1268,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="app"></div>
-    <script type="module" src="${scriptUri}"></script>
+    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
     }

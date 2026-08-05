@@ -539,7 +539,11 @@ const zhCN = {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
-                autoTriggered: '自动触发'
+                autoTriggered: '自动触发',
+                compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
+                legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
+                historyTokenLabel: '历史',
+                requestTokenLabel: '请求'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',
