@@ -144,29 +144,23 @@ describe('M3/H5：非流式循环自动总结的回合级计数与 abort 信号'
         expect(summarizeService2.handleAutoSummarize).toHaveBeenCalledTimes(2);
     });
 
-    it('H5：handleAutoSummarize 收到 merged abort 信号（主请求取消时信号已中止）', async () => {
+    it('D2：主请求已取消时非流式循环在 while 顶部立即返回 cancelled，不再发起总结/API 请求', async () => {
         const summarizeService = createSummarizeServiceMock(5);
         const { service } = createHarness(summarizeService);
 
         const mainController = new AbortController();
         mainController.abort(); // 主请求已取消
 
-        await service.runNonStreamLoop(
+        const result = await service.runNonStreamLoop(
             'c1', 'cfg-1', config, 10,
             undefined, undefined, 'single', true,
             mainController.signal,
             undefined,
         );
 
-        // 每次自动总结尝试都必须收到 abort 信号（H5 修复前第三参为 undefined）
-        const calls = summarizeService.handleAutoSummarize.mock.calls as Array<
-            [string, string, AbortSignal | undefined]
-        >;
-        expect(calls.length).toBeGreaterThan(0);
-        for (const call of calls) {
-            expect(call[2]).toBeDefined();
-            expect(call[2]!.aborted).toBe(true);
-        }
+        // 与流式路径（runToolLoop 循环顶部 cancelled）对齐：不再尝试总结，也不发主请求
+        expect(result).toEqual({ exceededMaxIterations: false, cancelled: true });
+        expect(summarizeService.handleAutoSummarize).not.toHaveBeenCalled();
     });
 
     it('H5：仅取消总结（summarizeAbortSignal）也能中止总结调用，不影响主请求信号', async () => {

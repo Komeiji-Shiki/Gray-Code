@@ -221,8 +221,18 @@ export interface ChatStreamAutoSummaryData {
     autoSummary: true;
     /** 自动总结内容 */
     summaryContent: Content;
-    /** 总结消息插入位置（完整历史中的绝对索引） */
+    /** 总结消息插入位置（完整历史中的绝对索引）
+     *
+     * 后端执行「删除被总结区间 + 插入总结」的原子替换后，该值 = 被删除区间的起点
+     * （即总结消息在替换完成后的新下标）。 */
     insertIndex: number;
+    /**
+     * 本次总结物理删除的原始消息数。
+     *
+     * H1 协议：> 0 时前端应删除本地 [insertIndex, insertIndex + removedCount) 区间的消息
+     * 并把后续消息索引前移 removedCount；缺省/0 表示旧版纯插入语义（前端保持旧行为）。
+     */
+    removedCount?: number;
 }
 
 /**
@@ -564,8 +574,18 @@ export interface SummarizeContextSuccessData {
     afterTokenCount?: number;
     /** 主上下文压缩统计。 */
     summaryTokenStats?: SummaryTokenStats;
-    /** 总结消息插入位置（完整历史中的绝对索引） */
+    /** 总结消息插入位置（完整历史中的绝对索引）。
+     *
+     * 自动总结执行「删除被总结区间 + 插入总结」的原子替换后，该值 = 被删除区间的起点
+     * （替换完成后总结消息在历史数组中的新下标）。 */
     insertIndex?: number;
+    /**
+     * 本次总结物理删除的原始消息数。
+     *
+     * 自动总结（handleAutoSummarize）执行替换语义时为 [historyStartIndex, insertIndex) 的长度；
+     * 手动总结仍为纯插入语义，恒为 0。前端据此把本地消息列表同步为替换后的形态。
+     */
+    removedCount: number;
 }
 
 /**

@@ -230,6 +230,8 @@ export interface NonStreamToolLoopResult {
     content?: Content;
     /** 是否超过最大工具迭代次数 */
     exceededMaxIterations: boolean;
+    /** 是否因主请求取消（abortSignal.aborted）提前终止（与流式路径的 cancelled 输出对齐） */
+    cancelled?: boolean;
 }
 
 /**
@@ -250,6 +252,26 @@ export class ToolIterationLoopService {
      * 持续后移，provider 前缀缓存无法命中；新回合（isNewTurn）与总结成功后重新评估时清除。
      */
     private readonly granularFallbackStartByConversation = new Map<string, number>();
+
+    /**
+     * 会话级 Map 最大条目数（M5）。
+     *
+     * 会话删除路径（webview 层 deleteConversation → ConversationManager.deleteConversation）
+     * 不经过本服务，无法在该路径挂清理 hook；这里在 set 处保持有界，超出后淘汰最旧条目
+     * （仅影响被淘汰会话的“回合内起点复用 / 尝试计数”，下一回合自然重新规划/清零，无副作用）。
+     */
+    private static readonly MAX_CONVERSATION_SCOPED_MAP_ENTRIES = 512;
+
+    /** M5：会话级 Map 写入时保持有界（淘汰最旧条目，防止删除会话后条目残留导致无界增长） */
+    private evictOldestIfOversized<K>(map: Map<K, unknown>): void {
+        while (map.size > ToolIterationLoopService.MAX_CONVERSATION_SCOPED_MAP_ENTRIES) {
+            const oldestKey = map.keys().next().value;
+            if (oldestKey === undefined) {
+                break;
+            }
+            map.delete(oldestKey);
+        }
+    }
 
     constructor(
         private channelManager: ChannelManager,
@@ -404,6 +426,8 @@ export class ToolIterationLoopService {
         const current = this.turnAutoSummarizeAttempts.get(conversationId);
         if (isNewTurn || anchor !== current?.turnStartMessageId) {
             this.turnAutoSummarizeAttempts.set(conversationId, { turnStartMessageId: anchor, attempts: 0 });
+            // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+            this.evictOldestIfOversized(this.turnAutoSummarizeAttempts);
             return 0;
         }
         return current.attempts;
@@ -755,7 +779,9 @@ export class ToolIterationLoopService {
                             conversationId,
                             autoSummary: true as const,
                             summaryContent: summarizeResult.summaryContent,
-                            insertIndex: summarizeResult.insertIndex
+                            insertIndex: summarizeResult.insertIndex,
+                            // H1：本次总结物理删除的消息数；缺省/0 时前端保持纯插入旧行为
+                            removedCount: summarizeResult.removedCount ?? 0
                         } satisfies ChatStreamAutoSummaryData;
                     }
 
@@ -835,6 +861,8 @@ export class ToolIterationLoopService {
                     trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+                // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+                this.evictOldestIfOversized(this.granularFallbackStartByConversation);
             }
 
             // 一旦本回合即将真正请求主模型，后续工具迭代固定复用当前裁剪起点。
@@ -1620,6 +1648,12 @@ export class ToolIterationLoopService {
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
 
+            // D2：与流式路径（runToolLoop 循环顶部）对齐——主请求取消时立即返回，
+            // 不再发起新一轮 API 请求（此前会继续调 generate，取消语义依赖 provider 侧）。
+            if (abortSignal?.aborted) {
+                return { exceededMaxIterations: false, cancelled: true };
+            }
+
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
             let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
@@ -1711,6 +1745,8 @@ export class ToolIterationLoopService {
                     trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+                // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+                this.evictOldestIfOversized(this.granularFallbackStartByConversation);
             }
 
             contextManagementEvaluatedForTurn = true;

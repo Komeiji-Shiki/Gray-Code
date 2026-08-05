@@ -289,6 +289,8 @@ const en: BackendLanguageMessages = {
                     noMessagesToSummarize: 'No messages to summarize',
                     summarizeAborted: 'Summarize request aborted',
                     emptySummary: 'AI generated summary is empty',
+                    lowQualitySummary: 'AI generated summary is too short and may lose important information; history was not replaced',
+                    summarizeRangeStale: 'Conversation history changed while summarizing; the summary range is stale and was not written',
                     messageNotFound: 'Message not found: index {messageIndex}',
                     canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}',
                     messageChanged: 'Message has changed, please refresh and try again',

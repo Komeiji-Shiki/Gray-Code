@@ -1029,8 +1029,10 @@ export class ContextTrimService {
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
             // 手动总结是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
-            // 总结消息只会插入历史而不会物理删除旧消息；若这里仍从 0 发送，手动总结
-            // 虽然显示成功，下一次请求却会继续携带全部旧历史，等同于完全没有压缩。
+            // 手动总结仍为纯插入语义（历史只增长）；自动总结（handleAutoSummarize）已改为
+            // “删除被总结区间 + 插入总结”的原子替换，不会再有被总结原始消息残留。
+            // 无论哪种语义，这里都从最后一个总结消息开始发送，避免把总结边界之前的内容
+            // 重新携带进请求（插入不删除时若仍从 0 发送，会等同于完全没有压缩）。
             const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
             if (lastSummaryIndex >= 0) {
                 const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
@@ -1343,8 +1345,9 @@ export class ContextTrimService {
         });
         
         // ========== 自动总结模式 ==========
-        // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
-        // 由 ToolIterationLoopService 在发送请求前触发总结
+        // 自动总结模式下不做裁剪，而是返回「最后一个总结消息及其之后」的历史 + needsAutoSummarize
+        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。自动总结成功后历史已被物理
+        // 替换（总结消息代替被总结区间），token 估算口径与模型视角一致，不会每轮反复触发。
         if (policy.mode === 'summarize') {
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
