@@ -10,6 +10,7 @@
  */
 
 import { t, hasMessage } from '../i18n'
+import { isMcpToolName, decodeMcpToolName } from './tools/mcp/mcpToolNameCodec'
 
 const TOOL_DISPLAY_NAME_PREFIX = 'components.settings.toolsSettings.toolDisplayNames.'
 const TOOL_DESCRIPTION_PREFIX = 'components.settings.toolsSettings.toolDescriptions.'
@@ -24,6 +25,13 @@ function toTitleCase(name: string): string {
  * 用 hasMessage 预检避免 t() 对缺失 key 的 console.warn 刷屏（MCP 动态工具名几乎都无条目）。
  */
 export function getToolDisplayName(name: string): string {
+  // MCP 外部工具（mcp__<serverId>__<toolName>）：先解码出原始工具名再机械转换，
+  // 避免把整条编码名（含 serverId）转成 "Mcp Mcp 1785407697930 ... Search" 这种不可读格式。
+  // 解码失败（非标准格式）时回退到通用逻辑。
+  if (isMcpToolName(name)) {
+    const decoded = decodeMcpToolName(name)
+    if (decoded) return toTitleCase(decoded.toolName)
+  }
   const i18nKey = `${TOOL_DISPLAY_NAME_PREFIX}${name}`
   if (hasMessage(i18nKey)) return t(i18nKey)
   return toTitleCase(name)
