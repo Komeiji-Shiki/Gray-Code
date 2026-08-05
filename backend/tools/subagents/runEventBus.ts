@@ -435,6 +435,61 @@ export class SubAgentRunEventBus {
         return snapshot;
     }
 
+    /**
+     * 续跑：复用已终态 run 的快照继续执行（continueFromRunId 语义）。
+     *
+     * 修改原因：续跑过去会 createRun 重建快照，Monitor 里出现两条相同身份的 run，
+     *          且 events 清空、contentRevision/eventSequence 重置，展示上像两个不同的子代理。
+     * 修改方式：快照已存在时不清空 contents/events/lastSentHistory，不重置协议序号，
+     *          仅把状态从终态切回 running、追加本次 initialContents，并广播 run_resumed
+     *          （事件类型与 Monitor 暂停恢复复用同一语义，emit 已有 status 映射）。
+     * 修改目的：续跑 = 同一条 run 接着跑——transcript 一条线连续、Monitor 记录唯一、
+     *          provider 前缀缓存命中条件不变；快照缺失时防御性回退 createRun。
+     */
+    resumeRun(
+        runId: string,
+        agentName?: string,
+        payload?: unknown,
+        options?: {
+            conversationId?: string;
+            conversationStore?: SubAgentRunConversationStore;
+            initialContents?: Content[];
+        }
+    ): SubAgentRunSnapshot {
+        const existing = this.snapshots.get(runId);
+        if (!existing) {
+            // 防御：续跑校验已保证快照存在（内存或持久化恢复），缺失时退化为新建
+            return this.createRun(runId, agentName, payload, options);
+        }
+        const now = Date.now();
+        const fromStatus = existing.status;
+        existing.status = 'running';
+        existing.updatedAt = now;
+        if (agentName) {
+            existing.agentName = agentName;
+        }
+        if (options?.conversationId) {
+            existing.conversationId = options.conversationId;
+            if (options.conversationStore) {
+                this.stores.set(runId, options.conversationStore);
+            }
+        }
+        this.emit({
+            runId,
+            agentName,
+            type: 'run_resumed',
+            timestamp: now,
+            payload: {
+                ...(payload || {}),
+                fromStatus
+            }
+        });
+        for (const content of options?.initialContents ?? []) {
+            this.appendContent(runId, content);
+        }
+        return existing;
+    }
+
     emit(event: ToolProgressEvent & { runId: string; agentName?: string }): void {
         const timestamp = event.timestamp || Date.now();
         const normalized: SubAgentRunEvent = {

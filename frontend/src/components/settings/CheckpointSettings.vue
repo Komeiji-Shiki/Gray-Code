@@ -433,17 +433,19 @@ onUnmounted(() => {
             :disabled="!config.enabled"
             @update:modelValue="(v: boolean) => toggleProfile(profileId, v)"
           />
-          <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
-            {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
-          </span>
-          <button
-            class="profile-edit-btn"
-            :disabled="!config.enabled"
-            @click="openProfileEditor(profileId)"
-          >
-            <i class="codicon codicon-edit"></i>
-            {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.edit') }}
-          </button>
+          <div class="profile-row-actions">
+            <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
+              {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
+            </span>
+            <button
+              class="profile-edit-btn"
+              :disabled="!config.enabled"
+              @click="openProfileEditor(profileId)"
+            >
+              <i class="codicon codicon-edit"></i>
+              {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.edit') }}
+            </button>
+          </div>
         </div>
 
         <!-- 类别模式编辑面板 -->
@@ -1784,14 +1786,46 @@ onUnmounted(() => {
 .profile-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 4px 0;
+}
+
+/* 右侧操作列：规则计数 + 编辑按钮整体右对齐，计数紧贴按钮左侧，不再随行漂移居中 */
+.profile-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .profile-patterns {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   white-space: nowrap;
+}
+
+.profile-edit-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.profile-edit-btn:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.profile-edit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .patterns-row {

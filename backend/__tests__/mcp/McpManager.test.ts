@@ -133,6 +133,37 @@ describe('McpManager', () => {
                 manager.createServer(makeTestInput({ name: 'Bad' }), 'bad__id')
             ).rejects.toThrow();
         });
+
+        it('should generate readable ID from name when customId is omitted', async () => {
+            await manager.initialize();
+            const id = await manager.createServer(makeTestInput({ name: 'My Server' }));
+            expect(id).toBe('my_server');
+
+            const info = await manager.getServerInfo(id);
+            expect(info).not.toBeNull();
+            expect(info!.config.name).toBe('My Server');
+        });
+
+        it('should sanitize name into a valid slug (whitespace, special chars, double underscore)', async () => {
+            await manager.initialize();
+            const id = await manager.createServer(makeTestInput({ name: '  Foo  Bar!!  ' }));
+            expect(id).toBe('foo_bar');
+        });
+
+        it('should append numeric suffix when slug is already taken', async () => {
+            await manager.initialize();
+            const first = await manager.createServer(makeTestInput({ name: 'My Server' }));
+            expect(first).toBe('my_server');
+
+            const second = await manager.createServer(makeTestInput({ name: 'My Server' }));
+            expect(second).toBe('my_server_2');
+        });
+
+        it('should fall back to random ID when name cannot be slugified', async () => {
+            await manager.initialize();
+            const id = await manager.createServer(makeTestInput({ name: '我的服务器' }));
+            expect(id).toMatch(/^mcp_\d+_[a-z0-9]+$/);
+        });
     });
 
     // ==================== #1/#3: connect failure cleanup ====================

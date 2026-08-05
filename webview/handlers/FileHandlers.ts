@@ -1126,6 +1126,7 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
     const result = await ctx.chatHandler.handleSummarizeContext({
       conversationId,
       configId: data.configId,
+      modelOverride: data.modelOverride,
       abortSignal: controller.signal
     });
     ctx.sendResponse(requestId, result);

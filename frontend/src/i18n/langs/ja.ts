@@ -431,9 +431,9 @@ const ja: LanguageMessages = {
                 empty: '分岐はまだありません',
                 nodeCount: '{count} ノード',
                 navigationMode: '分岐ナビゲーション',
-                fullMode: 'すべてのメッセージ',
+                fullMode: 'メッセージグラフ',
                 navigationHint: '連続メッセージを折りたたみ、分岐点と候補を表示します',
-                fullHint: 'すべてのメッセージを表示し、分岐時のみ横方向へ展開します',
+                fullHint: 'トラック形式の全メッセージグラフ：レーンは同時に存在する候補ブランチに応じて変化します',
                 collapsedMessages: '連続する {count} 件のメッセージを折りたたみ',
                 candidateCount: '{count} 件の候補',
                 deleted: '削除済み',
@@ -442,7 +442,9 @@ const ja: LanguageMessages = {
                 rename: '名前を変更',
                 renamePlaceholder: '分岐ラベルを入力…',
                 save: '保存',
-                cancel: 'キャンセル'
+                cancel: 'キャンセル',
+                expandAllMessages: '全メッセージを展開',
+                collapseLinearMessages: '線形部分を折りたたむ'
             },
             responseViewer: {
                 commonMode: '通常モード',
@@ -1726,8 +1728,6 @@ const ja: LanguageMessages = {
                     whitelist: 'ホワイトリスト',
                     blacklist: 'ブラックリスト'
                 },
-                builtinTools: '組み込みツール',
-                mcpTools: 'MCP ツール',
                 noTools: '利用可能なツールなし',
                 whitelistHint: 'チェックされたツールのみ使用可能',
                 blacklistHint: 'チェックされたツールはブロックされます',
@@ -2366,6 +2366,7 @@ const ja: LanguageMessages = {
                     design: 'デザイン',
                     notification: '通知',
                     agents: 'エージェント',
+                    mcp: 'MCP ツール',
                     other: 'その他'
                 },
                 dependency: {

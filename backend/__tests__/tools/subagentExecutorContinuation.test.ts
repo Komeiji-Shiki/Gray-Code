@@ -60,11 +60,11 @@ const MARKER_CONTENT: Content = {
 
 describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
     afterEach(() => {
-        subAgentConcurrencyLimiter.release('new_same');
-        subAgentConcurrencyLimiter.release('new_restored');
+        subAgentConcurrencyLimiter.release('cont_same');
+        subAgentConcurrencyLimiter.release('cont_restored');
     });
 
-    it('同一 conversationId 的终态 run 可以接续', async () => {
+    it('同一 conversationId 的终态 run 可以接续（runId 复用旧 run，同一条记录继续）', async () => {
         createCompletedRun('cont_same', 'conv_1', [MARKER_CONTENT]);
         const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
 
@@ -78,9 +78,18 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
 
         // maxIterations=0 立即失败；若接续被拒会返回 run not found / different conversation
         expect(result.error).toContain('Exceeded maximum iterations');
-        // 新 run 继承了旧 run 的 transcript
-        const snapshot = subAgentRunEventBus.getSnapshot('new_same')!;
+        // 续跑沿用旧 runId：不产生第二个 run 记录，transcript 一条线连续
+        expect(subAgentRunEventBus.getSnapshot('new_same')).toBeUndefined();
+        const snapshot = subAgentRunEventBus.getSnapshot('cont_same')!;
+        // 旧 transcript 保留（MARKER），新的 Invocation 卡片追加在后
         expect(snapshot.contents.some(c => c.parts.some(p => (p as any).text === 'OLD TRANSCRIPT MARKER'))).toBe(true);
+        expect(snapshot.contents).toHaveLength(2);
+        expect(JSON.stringify(snapshot.contents[1])).toContain('SubAgent Invocation');
+        // 事件时间线保留并追加 run_resumed
+        expect(snapshot.events.some(e => e.type === 'run_created')).toBe(true);
+        expect(snapshot.events.some(e => e.type === 'run_resumed')).toBe(true);
+        // maxIterations=0 立即失败，最终状态为 failed
+        expect(snapshot.status).toBe('failed');
     });
 
     it('不同 conversationId 的 run 被拒绝，且不泄漏旧对话信息', async () => {
@@ -100,8 +109,12 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
         // 错误信息不包含旧对话 ID 或 transcript 内容
         expect(result.error).not.toContain('conv_other');
         expect(result.error).not.toContain('OLD TRANSCRIPT MARKER');
-        // 跨会话拒绝发生在新 run 创建和持久化之前
+        // 跨会话拒绝发生在续跑（resumeRun）之前：旧 run 保持终态，无 run_resumed、内容未追加
         expect(subAgentRunEventBus.getSnapshot('new_other')).toBeUndefined();
+        const oldSnapshot = subAgentRunEventBus.getSnapshot('cont_other')!;
+        expect(oldSnapshot.status).toBe('completed');
+        expect(oldSnapshot.events.some(e => e.type === 'run_resumed')).toBe(false);
+        expect(oldSnapshot.contents).toHaveLength(1);
     });
 
     it('正在运行的 run 仍然不能接续', async () => {
@@ -139,7 +152,7 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
 
 describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () => {
     afterEach(() => {
-        subAgentConcurrencyLimiter.release('new_lsh');
+        subAgentConcurrencyLimiter.release('cont_lsh_old');
     });
 
     it('updateLastSentHistory 深拷贝存入快照，不污染 Monitor contents 与 contentRevision，不发 content_snapshot', () => {
@@ -194,21 +207,26 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
         });
 
         expect(result.error).toContain('Exceeded maximum iterations');
-        const snapshot = subAgentRunEventBus.getSnapshot('new_lsh')!;
-        // 新 run transcript 前缀 = lastSentHistory（逐条一致），不含卡片
-        expect(snapshot.contents[0]).toEqual({ role: 'user', parts: [{ text: 'old task' }] });
+        // 续跑沿用旧 runId：transcript 一条线连续——旧 contents（含卡片）保留，续跑新卡片追加在后
+        const snapshot = subAgentRunEventBus.getSnapshot('cont_lsh_old')!;
+        expect(snapshot.contents).toHaveLength(3);
+        expect(JSON.stringify(snapshot.contents[0])).toContain('SubAgent Invocation');
         expect(snapshot.contents[1]).toEqual({ role: 'model', parts: [{ text: 'old reply' }] });
-        expect(JSON.stringify(snapshot.contents.slice(0, 2))).not.toContain('SubAgent Invocation');
-        // 新 run 自己的卡片仍在（Monitor 展示语义不变）
         expect(JSON.stringify(snapshot.contents[2])).toContain('SubAgent Invocation');
+        expect(snapshot.contents[2].parts?.some(p => (p as any).text?.includes('continue'))).toBe(true);
+        // lastSentHistory 保持旧 run 最后一次实际发送的历史（generate 前仍以此为前缀，缓存命中条件不变）
+        expect(snapshot.lastSentHistory).toEqual([
+            { role: 'user', parts: [{ text: 'old task' }] },
+            { role: 'model', parts: [{ text: 'old reply' }] }
+        ]);
     });
 });
 
 describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
     afterEach(() => {
-        subAgentConcurrencyLimiter.release('new_restored');
-        subAgentConcurrencyLimiter.release('new_restored_lsh');
-        subAgentConcurrencyLimiter.release('new_legacy');
+        subAgentConcurrencyLimiter.release('cont_restored');
+        subAgentConcurrencyLimiter.release('cont_restored_lsh');
+        subAgentConcurrencyLimiter.release('cont_legacy');
     });
 
     it('内存无快照时，从当前对话持久化记录恢复并接续', async () => {
@@ -245,9 +263,12 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         expect(result.error).toContain('Exceeded maximum iterations');
         // 恢复过程只加载了当前对话的记录
         expect(store.getCustomMetadata).toHaveBeenCalledWith('conv_1', 'subAgentRuns');
-        // 新 run 继承了恢复出的 transcript
-        const snapshot = subAgentRunEventBus.getSnapshot('new_restored')!;
+        // 续跑沿用旧 runId：恢复出的快照被直接复用（内容保留 + 新卡片追加）
+        expect(subAgentRunEventBus.getSnapshot('new_restored')).toBeUndefined();
+        const snapshot = subAgentRunEventBus.getSnapshot('cont_restored')!;
         expect(snapshot.contents.some(c => c.parts.some(p => (p as any).text === 'OLD TRANSCRIPT MARKER'))).toBe(true);
+        expect(snapshot.contents).toHaveLength(2);
+        expect(JSON.stringify(snapshot.contents[1])).toContain('SubAgent Invocation');
     });
 
     it('持久化记录带 lastSentHistory 时，恢复后接续以它为前缀（而非卡片 contents）', async () => {
@@ -295,12 +316,15 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
             { role: 'user', parts: [{ text: 'old task' }] },
             { role: 'model', parts: [{ text: 'old reply' }] }
         ]);
-        expect(restoredOld.lastSentHistory).not.toBe((persisted.cont_restored_lsh as any).lastSentHistory);
-        // 新 run transcript 以 lastSentHistory 为前缀，卡片被排除在模型前缀之外
-        const snapshot = subAgentRunEventBus.getSnapshot('new_restored_lsh')!;
-        expect(snapshot.contents[0]).toEqual({ role: 'user', parts: [{ text: 'old task' }] });
+        // 注：不再断言「与持久化对象不共享引用」——续跑复用同一 runId 后，finalizeRun 的
+        // flushPersist 会把快照引用写回持久化记录（快照即最新真源），共享引用是正常行为。
+        // 续跑沿用旧 runId：恢复出的 transcript 一条线连续（卡片 + old reply + 续跑新卡片）
+        expect(subAgentRunEventBus.getSnapshot('new_restored_lsh')).toBeUndefined();
+        const snapshot = subAgentRunEventBus.getSnapshot('cont_restored_lsh')!;
+        expect(snapshot.contents).toHaveLength(3);
+        expect(JSON.stringify(snapshot.contents[0])).toContain('SubAgent Invocation');
         expect(snapshot.contents[1]).toEqual({ role: 'model', parts: [{ text: 'old reply' }] });
-        expect(JSON.stringify(snapshot.contents.slice(0, 2))).not.toContain('SubAgent Invocation');
+        expect(JSON.stringify(snapshot.contents[2])).toContain('SubAgent Invocation');
     });
 
     it('旧记录缺 lastSentHistory 时降级：过滤掉 # SubAgent Invocation 卡片，其余保留', async () => {
@@ -340,12 +364,13 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         });
 
         expect(result.error).toContain('Exceeded maximum iterations');
-        const snapshot = subAgentRunEventBus.getSnapshot('new_legacy')!;
-        // 卡片被过滤，其余 transcript 保留为前缀（2 条剩余 + 新 run 自己的卡片）
-        expect(snapshot.contents).toHaveLength(3);
-        expect(JSON.stringify(snapshot.contents[0])).not.toContain('SubAgent Invocation');
-        expect(snapshot.contents[0]).toEqual({ role: 'model', parts: [{ text: 'legacy reply' }] });
-        expect((snapshot.contents[1].parts![0] as any).functionResponse?.name).toBe('t');
+        // 续跑沿用旧 runId：旧 transcript 原样保留（卡片 + legacy reply + 工具结果）+ 续跑新卡片
+        const snapshot = subAgentRunEventBus.getSnapshot('cont_legacy')!;
+        expect(snapshot.contents).toHaveLength(4);
+        expect(JSON.stringify(snapshot.contents[0])).toContain('SubAgent Invocation');
+        expect(snapshot.contents[1]).toEqual({ role: 'model', parts: [{ text: 'legacy reply' }] });
+        expect((snapshot.contents[2].parts![0] as any).functionResponse?.name).toBe('t');
+        expect(JSON.stringify(snapshot.contents[3])).toContain('SubAgent Invocation');
     });
 
     it('恢复出的快照仍执行会话归属校验（归属不同时拒绝）', async () => {
@@ -382,6 +407,11 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('belongs to a different conversation');
+        // 拒绝发生在续跑之前：旧快照保持终态，无 run_resumed、内容未追加
         expect(subAgentRunEventBus.getSnapshot('new_foreign')).toBeUndefined();
+        const oldSnapshot = subAgentRunEventBus.getSnapshot('cont_foreign')!;
+        expect(oldSnapshot.status).toBe('completed');
+        expect(oldSnapshot.events.some(e => e.type === 'run_resumed')).toBe(false);
+        expect(oldSnapshot.contents).toHaveLength(1);
     });
 });

@@ -162,6 +162,36 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(result.history.slice(1)).toEqual(summarizedHistory.slice(2));
     });
 
+    it('自动上下文管理关闭时仍应用用户显式创建的手动总结边界', async () => {
+        const summarizedHistory: Content[] = [
+            { role: 'user', parts: [{ text: '最初目标' }], isUserInput: true },
+            { role: 'model', parts: [{ text: '很长的旧回答' }] },
+            { role: 'user', parts: [{ text: '手动总结' }], isSummary: true },
+            { role: 'model', parts: [{ text: '总结后的回答' }] }
+        ];
+        const { service } = createTurnScopedHarness(summarizedHistory);
+
+        const result = await service.getHistoryWithContextTrimInfo(
+            'conv-manual-summary',
+            {
+                contextManagementEnabled: false,
+                contextThresholdEnabled: false,
+                autoSummarizeEnabled: false
+            } as any,
+            {}
+        );
+
+        expect(result.trimStartIndex).toBe(2);
+        expect(result.history[0]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[0].parts[0].text).toContain('最初目标');
+        expect(result.history.slice(1)).toEqual(summarizedHistory.slice(2));
+        expect(result.contextManagementDecision).toMatchObject({
+            enabled: false,
+            mode: 'off',
+            action: 'manual_summary_applied'
+        });
+    });
+
     it('升级后清除可能在工具回合中途写入的旧裁剪状态', async () => {
         const { service, conversationManager } = createTurnScopedHarness(largeSubAgentHistory, {
             trimStartIndex: 2

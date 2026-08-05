@@ -8,6 +8,35 @@
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-05
+
+### Merged
+  - 同步上游 016706f..49a37f2（PR #10 等：子代理续跑同 run 身份与 transcript、分支树面板重构为轨道式泳道「完整消息图」+ 工具分类分组、总结模型透传（summarizeContext 处理器 / 自动总结当前模型 / 独立总结渠道隔离）、上下文管理关闭时手动总结边界生效、MCP server ID 由服务器名生成可读 ID），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏 / 多工作区 / 独立版本号增量
+    - 上游 1.4.1 条目原文（部分内容已随 PR #9 在 [1.6.2] 记录，此处为上游条目全文，供核对）：
+
+### Fixed
+  - 删除消息范围或单条消息前等待主流真正退出：`deleteMessage` / `deleteSingleMessage` 先经 `abortAndWaitForCompletion`（或 `cancel` + `waitForIdle`）等待流退出再执行删除，避免停止后的迟到写入覆盖删除结果。
+  - 修复扩展宿主重启后子代理 Monitor 永久显示 running/queued：加载历史 run 记录时把上一宿主遗留的非终态记录纠正为 `interrupted`（当前进程仍活跃的 run 不受影响，按快照存在性区分）。
+  - 修复 shell 可用性检测的命令拼接注入面：`checkShellAvailability` 的 wsl / where / which 检测从 `cp.exec` 字符串拼接改为 `cp.execFile` argv 数组传递（customPath 属用户可控配置，不再拼进 shell 命令）。
+  - Webview CSP 加固：ChatViewProvider 与 SubAgentMonitorPanel 的内联脚本从 `'unsafe-inline'` 改为 nonce 机制（每面板随机 nonce，脚本标签显式携带），不再依赖内联执行豁免。
+  - 前端正则高亮 ReDoS 护栏：新增 `regexGuard`（源长度 500 上限 + 危险分组量词检测 + 构造失败回退），history_search 高亮不再因畸形正则阻塞 Webview 渲染线程（与后端搜索护栏同一限制）。
+  - 修复手动总结请求丢失当前对话模型：`summarizeContext` 处理器此前只转发 `conversationId` / `configId` / `abortSignal`，前端载荷中的 `modelOverride` 在 webview 层被丢弃，频道配置 `model` 为空时总结请求仍发送空模型名（HTTP 404: No available providers at the moment）。处理器现原样透传 `modelOverride`，与后端 `SummarizeService` 的模型透传修复（含独立总结渠道隔离与默认模型回落）闭环；新增处理器层透传回归测试。
+  - 修复总结请求不携带当前对话实际选中的模型：频道配置 `model` 为空、用户在界面临时选择模型时，手动总结（`SummarizeService.handleSummarizeContext` 读取请求 `modelOverride`）与流式/非流式自动总结（`ToolIterationLoopService` 两处调用透传当前回合 `modelOverride`）此前均向 OpenAI 兼容接口发送空模型名（HTTP 404: No available providers at the moment）；使用独立总结渠道时主动隔离主对话模型，未显式指定总结模型则回落到独立渠道自身默认模型，不再错误继承主对话的 `modelOverride`。
+  - 修复手动总结假成功：上下文管理关闭时发送路径直接从索引 0 读取历史，忽略已存在的手动 summary 边界（总结消息只插入历史而不物理删除旧消息），界面显示总结成功、下一次请求却仍携带全部旧上下文。现 `ContextTrimService` 在策略禁用时也查找并应用最后一条总结边界作为发送历史起点（decision.action = `manual_summary_applied`）。
+
+### Changed
+  - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
+  - 子代理工具白名单/黑名单改为按分类分组展示：新增公共工具分类模块 `frontend/src/utils/toolCategory.ts`（工具设置页与子代理设置页共用同一套分类名/图标映射），子代理面板工具列表从「内置工具 / MCP 工具」两个平铺大列表改为按后端 category 分组的分类卡片（文件、搜索、终端、媒体等，MCP 独立成组，缺省分类归入「其他」）；每个工具项显示本地化名称 + 等宽工具 ID + 描述，MCP 分类文案接入三语 i18n；工具设置页同步改用公共分类模块（展示行为不变）。
+  - 分支树面板「完整消息」升级为「完整消息图」（高级模式）：由目录树缩进改为轨道式泳道布局——每条消息一行，轨道列数由同时存在的候选分支决定（候选分支走完即释放轨道、后续新候选复用，不再随消息数量无限向右扩展）；分叉以水平连接线表达，活跃路径轨道线高亮；默认折叠连续线性段，新增「展开完整消息」开关可查看全部节点；「分支导航」缩略版保持不变，三语文案同步。
+  - 总结 Token 统计改为「主上下文压缩量」口径：新增 `SummaryTokenStats`（被替换历史估算 token、新摘要 token、估算节省量、总结前主上下文 token 与总结后估算值），总结消息落库与前端展示均使用新口径（历史 → 摘要 + 节省量），旧记录明确标注为「总结模型请求输入 → 输出」（`beforeTokenCount` / `afterTokenCount` 标记 deprecated）；会话用量指示器在总结后优先使用新估算值，下一次真实主回复后自动恢复实际用量（timestamp 判断新旧）。
+  - 被裁剪历史的逐字用户输入保险档案上限从 160k 字符降至 64k（约 40k → 16k token），省略标记文本计入预算，避免保险副本吃掉默认上下文保留预算、使总结后上下文几乎不下降。
+  - 存储路径加固：conversationId / snapshotId / diffId 统一白名单校验（`^[A-Za-z0-9_-]+$`，新增 `assertSafeStorageId` / `assertSafeDiffId`），覆盖 FileSystemStorageAdapter、UsageIndexStore、DiffStorageManager 与 integrityCheck，从根源拒绝 `..`、路径分隔符、盘符与 URI 编码绕过。
+  - 根项目与前端锁文件同步（npm audit 均为 0 vulnerabilities，根项目声明 engines.node >=20）。
+  - 子代理续跑（`continueFromRunId`）改为「同一条 run 接着跑」：runId 复用旧 run（Monitor 记录唯一、transcript 一条线连续，不再出现第二条不同身份的记录），身份强制沿用旧 run 的 agent（系统提示/工具集不变，本次调用传入的 agentName 被忽略，旧 agent 已被删除时拒绝续跑），provider 前缀缓存命中条件不变（仍以 `lastSentHistory` 为请求前缀、`conversationId` 沿用旧 runId）；续跑经 `run_resumed` 事件标记，前端工具卡 pending 阶段直接沿用 `continueFromRunId` 关联 Monitor。
+
+### Added
+  - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
+
 ## [1.6.2] - 2026-08-05
 
 ### Merged
@@ -101,13 +130,26 @@
 
 ## [1.4.1] - 2026-08-05
 
+### Changed
+  - 分支树面板改造成双模式“分支历史”：默认“分支导航”会折叠连续线性消息，只保留根节点、分支点、候选入口、命名/删除节点与当前尾部；“完整消息”显示所有节点，但普通父子消息沿用同一纵向轨道，只有真正的兄弟候选才横向展开，不再随对话长度形成一路向右的阶梯。面板同时增加节点计数、角色标签、精简时间、悬停操作按钮和窄窗口适配，保留候选切换、工作区恢复确认、软删除、恢复与重命名能力，三语文案同步。
+  - 子代理完整 transcript 从 conversation `.meta.json` 迁移到 `conversations/<conversationId>/subagents/<runId>.json` 独立原子文件；元数据仅保留状态、计数、修订号和 `transcriptRef`，不再重复内嵌 `contents` 与 `lastSentHistory`（包括图片 Base64）。旧内嵌记录首次加载时自动迁移并清除大字段，Monitor 历史与续跑 provider 前缀保持完整。
+
 ### Added
   - 树状分支重 roll 前端主流程接线（此前仅后端完成）：消息「重试」与「回档并重试」从破坏性删除（deleteMessage + retryStream）切换为 `chat.rerollStream`（旧回答保留进分支图 sidecar，新候选生成后可经 BranchSwitcherBar 的「‹ 2/2 ›」切换回）；reroll 流结束（complete/error/cancelled）后自动刷新分支图；重试确认框三语文案同步为「保留当前回答、生成新版本」语义；`chat.rerollStream` 加入无超时请求白名单与 VSCodeRequest 类型联合
   - 编辑用户消息前端主流程接入 `chat.editBranchStream`（此前仅后端完成）：消息「编辑」与「回档并编辑」从破坏性 `editAndRetryStream`（覆盖原消息）切换为分支编辑——后端创建编辑候选（新 user 节点）并截断主历史，原消息及其子树保留进分支图 sidecar（决策 7：旧分支保留，失败可切回）；本地窗口改写目标消息 + 截断 + 流式占位，置位分支图刷新标记（流结束后 BranchSwitcherBar 显示候选切换器）；流启动失败时重载最后一页 + 检查点恢复前后端一致；`chat.editBranchStream` 加入无超时请求白名单与 VSCodeRequest 类型联合；附件仅更新本地窗口（编辑分支接口无附件字段）
   - 子代理设置页工具白名单/黑名单列表工具名称与悬停描述接入三语 i18n：新增公共模块 `frontend/src/utils/toolLocalization.ts`（工具显示名/描述本地化，缺失时机械转换/回退原文），工具设置页与子代理设置页共用同一套 `toolDisplayNames` / `toolDescriptions` 条目，MCP 外部工具自动回退英文原名
   - 删除消息同步软删分支图子树（后端）：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删消息对应节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar，过期清理仍走保留期机制），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或无分支服务注册时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
+  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 为真·原地保存——只改写活跃路径上目标用户消息的文本，**后续消息、检查点与分支全部保留**，不截断、不软删、不创建候选、不重新生成；后端 `ensureBranchGraph` 建图（无图时建线性基线）后 `updateMessage` 改写主历史 + `updateActiveNodeParts` 同步图节点内容，流直接完成（complete 仅通知前端复位状态）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`；`editAndRetry` / `restoreAndEdit` 本地同样只改目标消息（不截断窗口、不创建占位），发送时本地 user 消息补近似 `parentId`（首条为 null）供根节点判断
 
 ### Fixed
+  - 修复流停止等待竞态：`waitForIdle()` 现在同时等待当前控制器和已退休旧流的 finally；`cancel()` 不再让既有等待者永久挂起，也不会在旧流仍处于工具结算窗口时假报空闲；`cancelAll()` 在视图/扩展销毁时统一释放全部退休链。
+  - 修复删除会话与运行任务/元数据写入竞态：删除前先中止并等待主流退出，退出该会话全部前台与后台子代理，等待 executor 注销及 transcript/索引持久化排空，再删除检查点和会话；会话物理删除同时进入元数据共享写链，进行中的巨大 `.meta.json` 写不能在删除后通过晚到 rename 复活幽灵文件。
+  - 修复「原地保存（保持当前分支）」误删整个分支：keep 模式原实现为「改写 + 截断其后内容 + 软删图子树 + 重新生成」，用户点击后目标消息之后的全部消息与分支候选被移除。现改为真·原地保存语义（只改目标消息文本，后续消息 / 检查点 / 分支全部保留，不重新生成），后端去掉 `deleteCheckpointsFromIndex` / `deleteMessagesInRange` / `syncGraphAfterHistoryDelete` 与工具循环（keep 模式流直接完成），前端不截断窗口、不创建占位、不置分支图刷新标记；错误条重放（`replayBranchStreamAfterError`）对 keep 上下文同样不截断、不创建占位；根节点编辑降级 keep 时走同一语义
+  - 修复编辑第一条消息（根节点）报 `INVALID_BRANCH_RELATION: cannot edit the root node`：BranchGraph 为单根模型，根节点没有父节点可挂编辑候选（TREE-03 遗留「根节点编辑暂拒」）。现在编辑根节点时前端自动降级为「原地保存」语义（keep 模式——只改写根消息，后续内容保留，与编辑对话框「保持当前分支」按钮一致）：`resolveEditTargetNode` 新增 `mode` 参数、keep 模式放行根节点（图模式与线性模式都支持），`editAndRetry` / `restoreAndEdit` 检测目标消息 `parentId == null` 时自动以 `mode='keep'` 发起 `chat.editBranchStream`（错误条重放上下文同步携带 keep 模式）；`contentToMessage` / `contentToMessageEnhanced` 透传 `content.parentId`（Message 类型新增 `parentId` 字段），前端据此识别根节点
+  - 修复编辑用户消息报 `NODE_NOT_FOUND: node not found: <id>`（新对话首条消息即必现）：前端发送用户消息时窗口消息 id 用 `generateId()` 生成，但 `chatStream` 请求只传文本、不传 id，后端落库时由 `ensureNodeId` 另行生成 `randomUUID()`——窗口 id 与主历史/分支图 Content.id 永远不一致，编辑/重试按 id 定位必失败（assistant 消息经流式 `contentToPersistedMessage` 有 id 对齐机制，user 消息没有）。现在 `chatStream` 请求新增 `messageId` 字段（`ChatRequestData.messageId`），前端 `sendMessage` 携带窗口 user 消息 id，后端 `addMessage` 原样落库（省略时仍由后端生成，兼容旧客户端）；工具确认批注同款修复（`annotationMessageId` 经 `toolConfirmation` → `handleToolConfirmation` → `addContent` 透传）。已打开会话中的历史遗留不一致消息，重新加载历史（切走再切回）后窗口 id 与后端对齐
+  - 修复候选切换器（BranchSwitcherBar）挂载位置：切换器改为跟随「当前活跃的候选消息」（用户重 roll / 编辑过的消息本身），而非候选组的父节点——此前 `user:1 → ai:2 → ai:3` 重试 3 后切换器显示在 2 上（候选组挂在父节点 2 下），现在显示在 3'（3 的位置）上；新增 `buildCandidateGroupForNode`（按消息节点推导所属候选组，仅活跃成员返回），`BranchSwitcherBar` prop 从 `parentNodeId` 改为 `nodeId`
+  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
+  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
   - reroll/编辑分支流前端修复：
     - `_pendingBranchRefreshAfterStream` 标记改为按会话隔离（记录发起流的会话 ID）：会话切换后其他会话的终结 chunk 不再误消费并误刷分支图；切回原会话后由该会话的终结 chunk（或后台缓冲 flush）正确消费
     - `retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点，与 editAndRetry 同款身份校验）
@@ -184,6 +226,10 @@
   - 放宽同参数重复失败调用护栏：失败次数改为只统计没有其他真实工具调用介入的连续同签名失败，执行诊断、修改文件或其它成功调用后允许原参数重跑测试；真正连续原样失败仍会被短路，默认系统提示同步允许相关状态变化后的重新验证。
   - 完善分支候选切换数据源与状态同步：新增 `buildCandidateGroupAt` 按父节点推导候选组（取代原先只取「活跃尾兄弟组」的 `buildCandidateGroup`），`BranchSwitcherBar` 接收 `parentNodeId`，多个分支点可各自计算「‹ N/M ›」候选状态；候选列表使用 fixed 定位浮层防止被消息滚动容器裁剪；`DirtyFilesConfirm` 由 `MessageList` 常驻挂载，分支切换遇到未保存文件时确认框不受组件显隐影响。
   - 按消息操作栏重新整理分支交互：候选切换器不再作为消息下方独立一列，改为嵌入 `MessageActions`，与复制 / 重试按钮保持同一行和高度；分支树面板改为论坛评论树式连接线布局，用竖向树干与横向分叉线表达父子关系，活跃路径只高亮导线，只有活跃尾节点显示「当前」，分支点显示未删除候选数量，并补齐中英日三语文案。
+
+### Tests
+  - 新增分支历史纯布局测试，覆盖 20 条线性消息不增加横向轨道、兄弟候选独立轨道、导航模式连续消息折叠及特殊节点保留；更新组件测试覆盖双模式切换与既有管理交互。
+  - 新增子代理独立 transcript 新格式/旧数据迁移、文件系统原子写与会话级清理、停止前后空闲等待、运行中会话删除生命周期顺序测试。
 
 ## [1.4.0] - 2026-08-04
 
