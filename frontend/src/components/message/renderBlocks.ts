@@ -49,15 +49,18 @@ export function getRenderBlockMemoDeps(
   isThoughtExpanded: boolean,
   isThinking: boolean,
   thinkingTimeDisplay: string | null,
+  smoothDisplayActive = false,
 ): unknown[] {
-  // 平滑流式说明：流式期间 MessageItem 会把匹配 partKey 的 text/thought 块 text 替换为
-  // 平滑显示文本，因此 text 已是渲染输出的完整输入，v-memo 无需额外依赖 partKey/partCount。
+  // 活动平滑块的字符由 CharFlow 手动写入宿主，block.text 不再影响 Vue 输出；
+  // 因此不能让每次真实 delta 或低频快照使 v-memo 失效。
   if (block.type === 'tool') {
     return [block.type, block.tools, isStreaming, isUser]
   }
 
   if (block.type === 'thought') {
-    return [block.type, block.text ?? '', isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay]
+    return smoothDisplayActive
+      ? [block.type, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay, true]
+      : [block.type, block.text ?? '', isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay, false]
   }
 
   return [block.type, block.text ?? '', isStreaming, isUser]

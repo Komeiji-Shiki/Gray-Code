@@ -4,17 +4,21 @@
  * memo 边界由父组件 MessageItem.vue 放在 v-for 同一组件元素上；本组件内部不声明 memo，也不引入 display:contents 或额外 wrapper。
  */
 
+import { onUnmounted, ref, watch } from 'vue'
 import type { RenderBlock } from './renderBlocks'
 import { hasContextBlocks } from '../../types/contextParser'
 import { useI18n } from '../../i18n'
 import ToolMessage from './ToolMessage.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import { MarkdownRenderer } from '../common'
+import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
 const { t } = useI18n()
 
-defineProps<{
+const props = defineProps<{
   block: RenderBlock
+  /** 消息 ID；仅活动思维 CharFlow 注册时需要 */
+  messageId?: string
   /** 消息角色，决定 Markdown 是否仅渲染 LaTeX */
   messageRole: 'user' | 'assistant' | 'tool'
   /** 消息是否仍在流式输出 */
@@ -27,9 +31,50 @@ defineProps<{
   thinkingTimeDisplay: string | null
   /** 后端消息索引，透传给 ToolMessage 保持 diff/action 语义 */
   messageBackendIndex?: number
+  /** 当前思维块是否由 CharFlow 直接驱动显示 */
+  smoothDisplayActive?: boolean
   /** 思考块展开/收起切换，由父组件提供以避免本展示组件新增 emits */
   toggleThought: () => void
 }>()
+
+const thoughtFlowHostRef = ref<HTMLElement | null>(null)
+let registeredThoughtHost: HTMLElement | null = null
+let registeredThoughtMessageId: string | null = null
+
+function releaseThoughtDisplay(): void {
+  if (!registeredThoughtHost || !registeredThoughtMessageId) return
+  unregisterSmoothDisplay(registeredThoughtMessageId, registeredThoughtHost)
+  registeredThoughtHost = null
+  registeredThoughtMessageId = null
+}
+
+watch(
+  [
+    () => props.messageId,
+    () => props.smoothDisplayActive === true,
+    () => props.isThoughtExpanded,
+    thoughtFlowHostRef
+  ],
+  ([messageId, active, expanded, host]) => {
+    if (
+      registeredThoughtHost &&
+      (!active || registeredThoughtHost !== host || registeredThoughtMessageId !== messageId)
+    ) {
+      releaseThoughtDisplay()
+    }
+    if (active && messageId && host && !registeredThoughtHost) {
+      // 折叠预览：noFade 禁用错峰淡入——动画 delay 期间字符透明但占位，
+      // followEnd 滚动到最右会看到整片透明占位（预览“被空格挤出变空”）；
+      // 展开态保留逐字淡入。
+      registerSmoothDisplay(messageId, host, { followEnd: !expanded, noFade: !expanded })
+      registeredThoughtHost = host
+      registeredThoughtMessageId = messageId
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
+
+onUnmounted(releaseThoughtDisplay)
 </script>
 
 <template>
@@ -56,12 +101,23 @@ defineProps<{
       >
         {{ thinkingTimeDisplay }}
       </span>
-      <span v-if="!isThoughtExpanded" class="thought-preview">
+      <span
+        v-if="!isThoughtExpanded && smoothDisplayActive"
+        ref="thoughtFlowHostRef"
+        class="thought-preview thought-flow-preview"
+      ></span>
+      <span v-else-if="!isThoughtExpanded" class="thought-preview">
         {{ (block.text || '').slice(0, 50) }}{{ (block.text || '').length > 50 ? '...' : '' }}
       </span>
     </div>
     <div v-if="isThoughtExpanded" class="thought-content">
+      <div
+        v-if="smoothDisplayActive"
+        ref="thoughtFlowHostRef"
+        class="thought-text thought-flow-content"
+      ></div>
       <MarkdownRenderer
+        v-else
         :content="block.text || ''"
         :latex-only="false"
         :is-streaming="isStreaming"
@@ -187,9 +243,19 @@ defineProps<{
   white-space: nowrap;
 }
 
+.thought-flow-preview {
+  display: block;
+  min-width: 0;
+  scroll-behavior: auto;
+}
+
 .thought-content {
   padding: 12px;
   border-top: none;
+}
+
+.thought-flow-content {
+  min-height: 1lh;
 }
 
 .thought-block :deep(.thought-text p) {
