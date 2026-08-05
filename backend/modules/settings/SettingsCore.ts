@@ -153,7 +153,12 @@ export class SettingsCore {
         if (!this.settings.toolsConfig) {
             this.settings.toolsConfig = {};
         }
-        this.settings.toolsConfig[key] = newConfig as unknown as Record<string, unknown>;
+        // 整体替换 toolsConfig 对象（而非原地改 toolsConfig[key]）：任何存储实现的
+        // diff 快照都不会因「同对象引用复用」而漏写嵌套配置（同 setToolsEnabled 约定）
+        this.settings.toolsConfig = {
+            ...this.settings.toolsConfig,
+            [key]: newConfig as unknown as Record<string, unknown>
+        };
         this.settings.lastUpdated = Date.now();
 
         await this.storage.save(this.settings);

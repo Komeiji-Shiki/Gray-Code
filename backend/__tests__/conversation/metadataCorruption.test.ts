@@ -112,7 +112,12 @@ describe('getMetadata 损坏降级（parse_error → fallback + 备份，不抛 
         // 人为截断 meta.json（损坏）→ loadMetadataWithStatus 返回 parse_error
         fake.files.set(metaPath('conv-custom-corrupt'), '{ "id": "conv-custom-corrupt"');
 
-        // 不抛 UNKNOWN_ERROR，按缺失返回 undefined
+        // 缓存温态：写路径已回填 metaCache（setCustomMetadata → persistMetadata），
+        // 损坏发生在写之后，命中缓存返回最后已知值（与 getMetadataLight 缓存语义一致）
+        await expect(manager.getCustomMetadata('conv-custom-corrupt', 'todoList')).resolves.toEqual([{ id: 't1', text: 'a' }]);
+
+        // 冷启动（清缓存）后：磁盘 parse_error 按缺失降级，不抛错返回 undefined
+        manager.clearCaches();
         await expect(manager.getCustomMetadata('conv-custom-corrupt', 'todoList')).resolves.toBeUndefined();
     });
 });
