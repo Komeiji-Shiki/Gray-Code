@@ -26,6 +26,11 @@
   - 上下文溢出错误消息本地化与投影性能优化：`SummarizeService` 的 `CONTEXT_OVERFLOW` 与 `ContextBudgetExceededError` 对外消息改走 i18n（zh-CN/en/ja），`ChatHandler.formatError` 统一按 code 透出并携带估算参数（流式/非流式同一出口）；终态 `lastSentHistory` 索引投影改为「粗桶 + 惰性精确索引」两级匹配（大型 parts 不再全量 stringify 作 Map key），`flushRun` 落盘重试次数提取为 `MAX_FLUSH_RETRY_ATTEMPTS` 常量
 
 ### Changed
+  - 移植 fork 的全仓性能优化（保留插件形态，不涉及桌面版 electron 层）：
+    - `getMetadataLight` 接入会话元数据 LRU 缓存（256 条）：对话列表分页（每页 30 条）、用量统计与检查点查询的逐对话读取从「每次 fs 读 + JSON parse」降为纯内存命中；所有写路径统一失效/回填——`saveMetadata` 落盘点收敛为 `persistMetadata`（写后回填缓存），`saveHistory`/`appendHistory`/历史迁移/分支全量重写等刷新 `updatedAt` 的路径失效缓存，删除会话同步失效（含负缓存）；读侧返回深拷贝防调用方污染
+    - `usedTokens` 两趟循环（正序找最新总结估算 + 逆序找最后一条助手 usage）合并为单趟逆序扫描：流式期间每个 chunk 都会使该 computed 失效，数组访问量减半；语义等价（新增 6 例回归测试覆盖 usage/总结估算 timestamp 优先级）
+    - 占位消息定位 Map 索引化：`isLateTerminalChunkWithoutStreamId` 与 `handleError` 的 O(n) `find` 改为 `getMessageIndexById`（与其它热路径一致）
+    - `handleStreamChunkBatch` 诊断日志不再 `slice + filter` 分配临时数组，改为循环计数（终结 batch 每次都会走到）
   - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
   - 子代理工具白名单/黑名单改为按分类分组展示：新增公共工具分类模块 `frontend/src/utils/toolCategory.ts`（工具设置页与子代理设置页共用同一套分类名/图标映射），子代理面板工具列表从「内置工具 / MCP 工具」两个平铺大列表改为按后端 category 分组的分类卡片（文件、搜索、终端、媒体等，MCP 独立成组，缺省分类归入「其他」）；每个工具项显示本地化名称 + 等宽工具 ID + 描述，MCP 分类文案接入三语 i18n；工具设置页同步改用公共分类模块（展示行为不变）。
   - 分支树面板「完整消息」升级为「完整消息图」（高级模式）：由目录树缩进改为轨道式泳道布局——每条消息一行，轨道列数由同时存在的候选分支决定（候选分支走完即释放轨道、后续新候选复用，不再随消息数量无限向右扩展）；分叉以水平连接线表达，活跃路径轨道线高亮；默认折叠连续线性段，新增「展开完整消息」开关可查看全部节点；「分支导航」缩略版保持不变，三语文案同步。
@@ -36,6 +41,7 @@
   - 子代理续跑（`continueFromRunId`）改为「同一条 run 接着跑」：runId 复用旧 run（Monitor 记录唯一、transcript 一条线连续，不再出现第二条不同身份的记录），身份强制沿用旧 run 的 agent（系统提示/工具集不变，本次调用传入的 agentName 被忽略，旧 agent 已被删除时拒绝续跑），provider 前缀缓存命中条件不变（仍以 `lastSentHistory` 为请求前缀、`conversationId` 沿用旧 runId）；续跑经 `run_resumed` 事件标记，前端工具卡 pending 阶段直接沿用 `continueFromRunId` 关联 Monitor。
 
 ### Added
+  - 新增回归测试：`getMetadataLight` 元数据缓存（写路径回填免读盘 / 深拷贝防污染 / 负缓存 / append 与删除后失效重读，5 例）、`usedTokens` 单趟逆序语义等价（6 例）。
   - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
 
 ## [1.4.1] - 2026-08-05
