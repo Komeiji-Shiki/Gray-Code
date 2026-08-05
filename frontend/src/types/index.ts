@@ -102,6 +102,14 @@ export interface UsageMetadata {
   candidatesTokensDetails?: TokenDetailsEntry[]
 }
 
+export interface SummaryTokenStats {
+  sourceTokenCount: number
+  summaryTokenCount: number
+  estimatedTokensSaved: number
+  contextTokenCountBefore?: number
+  estimatedContextTokenCountAfter?: number
+}
+
 /**
  * Content - Gemini API 消息格式
  */
@@ -122,6 +130,7 @@ export interface Content {
   modelVersion?: string
   /** Token 使用统计（仅 model 消息有值） */
   usageMetadata?: UsageMetadata
+  summaryTokenStats?: SummaryTokenStats
   /** 系统内部消息来源；background_task 用于恢复后台任务卡片并排除新回合语义。 */
   source?: 'user' | 'background_task'
   /** 是否为函数响应消息 */
@@ -244,6 +253,8 @@ export interface Message {
    * 总结消息覆盖的消息数量
    */
   summarizedMessageCount?: number
+  /** 主上下文压缩统计；与总结模型请求 usage 分离。 */
+  summaryTokenStats?: SummaryTokenStats
   /** 是否为自动触发的总结消息 */
   isAutoSummary?: boolean
 }
