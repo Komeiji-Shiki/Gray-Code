@@ -186,10 +186,49 @@ export interface ConversationSummary {
  * - 自动维护元数据
  * - 支持思考签名、函数调用等高级特性
  * - 可直接将历史发送给 Gemini API
- * - 无内存缓存，每次操作直接读写存储，确保数据一致性
+ * - 元数据轻量读（getMetadataLight）带 LRU 内存缓存：所有写路径统一失效/回填，
+ *   对话列表分页（每页 30 条）与用量统计/检查点查询的逐对话读取不再重复走磁盘
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter, private readonly usageIndexStore?: UsageIndexStore) {}
+
+    /** 会话元数据 LRU（容量上限：对话列表分页 + 打开标签页通常远小于此） */
+    private static readonly META_CACHE_CAPACITY = 256;
+
+    private readonly metaCache = new Map<string, ConversationMetadata | null>();
+
+    private touchMetaCache(conversationId: string): void {
+        const value = this.metaCache.get(conversationId);
+        if (value !== undefined) {
+            this.metaCache.delete(conversationId);
+            this.metaCache.set(conversationId, value);
+        }
+        if (this.metaCache.size > ConversationManager.META_CACHE_CAPACITY) {
+            const oldest = this.metaCache.keys().next().value;
+            if (oldest !== undefined) {
+                this.metaCache.delete(oldest);
+            }
+        }
+    }
+
+    private cacheMetadata(conversationId: string, metadata: ConversationMetadata | null): void {
+        this.metaCache.set(conversationId, metadata);
+        this.touchMetaCache(conversationId);
+    }
+
+    /** 供测试/诊断清理元数据缓存 */
+    clearMetadataCache(): void {
+        this.metaCache.clear();
+    }
+
+    /**
+     * 元数据落盘并同步缓存：所有 ConversationManager 层级的 saveMetadata 都应走这里，
+     * 保证写后读（getMetadataLight）命中缓存而不是重新走磁盘。
+     */
+    private async persistMetadata(meta: ConversationMetadata): Promise<void> {
+        await this.storage.saveMetadata(meta);
+        this.cacheMetadata(meta.id, meta);
+    }
 
     /**
      * 同一会话的 read-modify-write 串行队列（历史 mutate、自定义元数据等）。
@@ -284,6 +323,8 @@ export class ConversationManager {
             saveContents: async contents => {
                 this.assertNotDeleted(conversationId);
                 await this.storage.saveHistory(conversationId, contents);
+                // 存储层 saveHistory 会刷新 updatedAt：失效元数据缓存，否则对话列表排序读到陈旧时间戳
+                this.metaCache.delete(conversationId);
                 await this.updateUsageIndex(conversationId, contents);
                 // PERF：返回落盘形态。存储适配器（FileSystem/Memory/VSCode）对消息内容只做
                 // JSON 往返序列化，不补 timestamp/index 等字段（与 append 委托不同），
@@ -312,6 +353,8 @@ export class ConversationManager {
                     history.push(...withNodeIds);
                     await this.storage.saveHistory(conversationId, history);
                 }
+                // append-only/回退都会刷新 updatedAt：失效元数据缓存，避免对话列表排序读到陈旧时间戳
+                this.metaCache.delete(conversationId);
                 await this.updateUsageIndexAppend(conversationId, withNodeIds);
 
                 // TREE-05：主历史追加成功后，把新消息增量并入分支图。
@@ -680,6 +723,8 @@ export class ConversationManager {
 
             this.assertNotDeleted(conversationId);
             await this.storage.saveHistory(conversationId, migrated);
+            // 迁移直写不走仓储：同步失效元数据缓存（存储层刷新 updatedAt）
+            this.metaCache.delete(conversationId);
             await this.updateUsageIndex(conversationId, migrated);
 
             const persisted = await this.storage.loadHistoryWithStatus(conversationId);
@@ -943,6 +988,9 @@ export class ConversationManager {
             this.assertNotDeleted(conversationId);
             await this.invalidateContextManagementState(conversationId, 'branch_path_switched');
             await this.storage.saveHistory(conversationId, nextContents);
+            // 全量重写直写不走仓储：invalidateContextManagementState 已回填旧 custom，
+            // 必须在 saveHistory 刷新 updatedAt 后再失效一次，保证缓存与落盘形态一致
+            this.metaCache.delete(conversationId);
             await this.updateUsageIndex(conversationId, nextContents);
 
             return {
@@ -1098,7 +1146,7 @@ export class ConversationManager {
 
         await this.storage.saveHistory(conversationId, []);
         await this.updateUsageIndex(conversationId, []);
-        await this.storage.saveMetadata(meta);
+        await this.persistMetadata(meta);
     }
 
 
@@ -1188,7 +1236,7 @@ export class ConversationManager {
 
         await this.storage.saveHistory(targetConversationId, branchHistory);
         await this.updateUsageIndex(targetConversationId, branchHistory);
-        await this.storage.saveMetadata(meta);
+        await this.persistMetadata(meta);
 
         // BR-09：跨对话「复制为新对话」建模进 BranchGraph（分支服务未注册时跳过——测试/旧环境不阻塞）
         if (sourceNodeId) {
@@ -1260,6 +1308,8 @@ export class ConversationManager {
                 // MED-2：对话删除即清理 A-COMM 信箱（内存同步操作，与删除同一锁内原子执行；
                 // 删除失败不会走到这里，信箱状态与对话生命周期保持一致，防 ID 复用时限流/误注入）
                 agentMailbox.clearConversation(conversationId);
+                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读
+                this.metaCache.delete(conversationId);
             });
         } catch (error) {
             // 删除失败：撤销标记，避免会话被冻结（后续 append/mutate 仍可用）
@@ -2628,7 +2678,7 @@ export class ConversationManager {
                 meta.title = title;
                 meta.updatedAt = Date.now();
             }
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -2652,7 +2702,7 @@ export class ConversationManager {
                 meta.workspaceUri = workspaceUri;
                 meta.updatedAt = Date.now();
             }
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -2813,7 +2863,7 @@ export class ConversationManager {
             // 注释语义：updatedAt 由历史提交路径（saveHistory/appendHistory 的 refreshUpdatedAt）
             // 统一维护，不在此重复写——避免 appendHistory 失败但前端仍乐观调用 updateSummary 时，
             // updatedAt 被无意义前移导致对话列表排序抖动。
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -2847,7 +2897,7 @@ export class ConversationManager {
                     return; // 无变化，跳过写回
                 }
                 meta.custom.messageCount = count;
-                await this.storage.saveMetadata(meta);
+                await this.persistMetadata(meta);
             });
         } catch (error) {
             log.warn('conversation.messageCountSyncFailed', {
@@ -2866,7 +2916,23 @@ export class ConversationManager {
      * 避免每次统计都为每个对话额外读一次历史（getMetadata 的 loadHistoryPage）。
      */
     async getMetadataLight(conversationId: string): Promise<ConversationMetadata | null> {
+        // 与 getMetadata 同源：metaCache 是最近一次持久化快照（所有写路径统一失效/回填），
+        // 命中即跳过磁盘 IO——对话列表分页（每页 30 条）与用量统计/检查点查询的逐对话读取
+        // 从「每次 fs 读 + JSON parse」降为纯内存命中。返回深拷贝，防止调用方污染缓存。
+        const cached = this.metaCache.get(conversationId);
+        if (cached !== undefined) {
+            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+        }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
+        if (result.value) {
+            this.cacheMetadata(conversationId, result.value);
+            return result.value;
+        }
+        // 与 loadStoredMetadata 相同的降级语义：仅 not_found 才做负缓存，
+        // io_error/parse_error 不缓存（parse_error 的 getMetadata 走损坏降级，不在此污染缓存）
+        if (!result.errorCode || result.errorCode === 'not_found') {
+            this.cacheMetadata(conversationId, null);
+        }
         return result.value ?? null;
     }
 
@@ -2982,7 +3048,7 @@ export class ConversationManager {
             meta.custom[key] = value;
             meta.updatedAt = Date.now();
 
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
         });
     }
 
@@ -3022,7 +3088,7 @@ export class ConversationManager {
 
             meta.custom[key] = next;
             meta.updatedAt = Date.now();
-            await this.storage.saveMetadata(meta);
+            await this.persistMetadata(meta);
             return next;
         });
     }

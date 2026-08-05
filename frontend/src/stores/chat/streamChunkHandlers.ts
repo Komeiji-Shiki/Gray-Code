@@ -45,7 +45,8 @@ function isLateTerminalChunkWithoutStreamId(chunk: StreamChunk, state: ChatStore
   if (chunk.streamId || !state.activeStreamId.value) return false
   if (!chunk.conversationId) return true
   if (chunk.conversationId !== state.currentConversationId.value) return true
-  const targetMessage = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
+  const targetIndex = getMessageIndexById(state, state.streamingMessageId.value)
+  const targetMessage = targetIndex >= 0 ? state.allMessages.value[targetIndex] : undefined
   if (!targetMessage) return false
   return typeof chunk.createdAt === 'number' && chunk.createdAt < targetMessage.timestamp
 }
@@ -1291,7 +1292,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   }
   
   if (state.streamingMessageId.value) {
-    const messageToRemove = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
+    const errorMessageIndex = getMessageIndexById(state, state.streamingMessageId.value)
+    const messageToRemove = errorMessageIndex >= 0 ? state.allMessages.value[errorMessageIndex] : undefined
     
     // 删除空的占位消息（不依赖 streaming 标记；网络中断等场景可能已被提前置为非 streaming）
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
