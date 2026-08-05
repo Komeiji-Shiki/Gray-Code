@@ -342,7 +342,10 @@ export class MemoryManager {
             return Array.from({ length: T }, (_, i) => [i, i + 1] as [number, number]);
         }
         let lo = 0.0, hi = 1.0;
-        for (let i = 0; i < 60; i++) {
+        // 32 次迭代即可把区间缩到 < 1e-9（60 次对阈值精度无增益，却多付约一倍 _cover 开销）；
+        // 每次 _cover 最坏 O(块数)，记忆量大时浪费明显，区间足够窄时提前退出。
+        for (let i = 0; i < 32; i++) {
+            if (hi - lo < 1e-9) break;
             const mid = (lo + hi) / 2;
             if (this._cover(T, mid).length > budget) {
                 lo = mid;
