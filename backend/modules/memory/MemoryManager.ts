@@ -14,6 +14,7 @@ import {
     type NoteResult, type RecallResult, type CompressResult,
     type ZoomResult, type NapPrompt, type MemoryConfig,
 } from './types';
+import { validateRegexPattern } from '../../tools/search/regexGuard';
 
 // ─── 工具函数 ─────────────────────────────────────────
 
@@ -571,12 +572,12 @@ export class MemoryManager {
      * recall: 正则搜索全部记忆。
      */
     async recall(regex: string): Promise<RecallResult> {
-        let pat: RegExp;
-        try {
-            pat = new RegExp(regex, 'i');
-        } catch (e: any) {
-            die(`bad regex: ${e.message}`);
+        // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
+        const guarded = validateRegexPattern(regex, 'i');
+        if (!guarded.ok) {
+            die(`bad regex: ${guarded.error}`);
         }
+        const pat = guarded.regex;
 
         // 用 head 指针代替 shift() 淘汰旧匹配：shift 是 O(n)，命中量大时整体退化为 O(n²)。
         // head 记录已被淘汰的窗口起点；淘汰数超过存活数一半时 splice 压缩数组（摊还 O(1)），

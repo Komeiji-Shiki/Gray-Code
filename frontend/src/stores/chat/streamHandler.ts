@@ -269,6 +269,13 @@ export function handleStreamChunkBatch(
     if (!TERMINAL_TYPES.has(candidate.type)) {
       continue
     }
+    // H3：content-less 终结 chunk（后端可能只发终结信号、不携带替代内容，见
+    // resetTerminalStreamState 注释）不触发“跳过前序增量”优化——其前序 chunk 的增量
+    // 解析不能被跳过，否则整段回答会因内容无处落地而空白。
+    // handleStreamChunk 对这类终结 chunk 只做状态复位，消息内容完全依赖前序增量累积。
+    if (!candidate.content) {
+      continue
+    }
     // stale stream / 非当前会话的终结事件不应触发“跳过前序 chunk”优化，
     // 否则可能误跳过当前活跃请求的有效增量。
     if (isChunkForCurrentActiveStream(candidate)) {

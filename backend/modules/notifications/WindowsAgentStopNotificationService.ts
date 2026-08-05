@@ -406,6 +406,14 @@ export class WindowsAgentStopNotificationService {
       }
     }
 
+    // 先记录去重键再弹窗：两个并发相同 dedupeKey 的 notify 在 JS 单线程内
+    // 会在第一个 await（showToast）之前同步完成 check+record，保证只弹一次
+    this.rememberDedupe(dedupeKey, now)
+    log.debug('dedupe_key_remembered', {
+      dedupeKey,
+      storedAt: now
+    })
+
     const rendered = this.buildRenderedNotification(payload.reason, settings.content, {
       actionType: payload.actionType,
       actionLabel: payload.actionLabel
@@ -424,12 +432,6 @@ export class WindowsAgentStopNotificationService {
       log.debug('notify_finished_without_toast', { ...result })
       return result
     }
-
-    this.rememberDedupe(dedupeKey, now)
-    log.debug('dedupe_key_remembered', {
-      dedupeKey,
-      storedAt: now
-    })
 
     return result
   }

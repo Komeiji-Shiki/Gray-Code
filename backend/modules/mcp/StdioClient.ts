@@ -288,6 +288,49 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /**
+     * 刷新工具/资源/提示列表缓存
+     *
+     * 服务器通过 notifications/tools|resources|prompts/list_changed 通知列表变化时调用，
+     * 重新请求列表并覆盖本地缓存。逐项独立 try/catch：单项失败不影响其他列表，
+     * 失败项保留旧缓存。
+     */
+    async refreshLists(): Promise<void> {
+        if (!this.process || !this.process.stdin) {
+            throw new Error('Process not started');
+        }
+        
+        // 刷新工具列表（如果支持）
+        if (this.capabilities?.tools) {
+            try {
+                const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
+                this.tools = toolsResult.tools || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh tools list:', error);
+            }
+        }
+        
+        // 刷新资源列表（如果支持）
+        if (this.capabilities?.resources) {
+            try {
+                const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
+                this.resources = resourcesResult.resources || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh resources list:', error);
+            }
+        }
+        
+        // 刷新提示列表（如果支持）
+        if (this.capabilities?.prompts) {
+            try {
+                const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
+                this.prompts = promptsResult.prompts || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh prompts list:', error);
+            }
+        }
+    }
+    
+    /**
      * 获取服务器信息
      */
     getServerInfo(): { name: string; version: string } | undefined {

@@ -101,7 +101,9 @@ export function getExtensionFromMime(mimeType: string): string {
  * 检查 Content 是否只包含 functionResponse（工具执行结果）
  */
 export function isOnlyFunctionResponse(content: Content): boolean {
-  return content.parts.length > 0 && content.parts.every(p => p.functionResponse !== undefined)
+  // M1：后端消息可能缺 parts 字段（旧后端/异常数据），零容错会抛 TypeError 导致整个历史加载崩溃
+  const parts = Array.isArray(content.parts) ? content.parts : []
+  return parts.length > 0 && parts.every(p => p.functionResponse !== undefined)
 }
 
 type FunctionCallPart = NonNullable<Content['parts'][number]['functionCall']> & {
@@ -240,7 +242,9 @@ function getContentNodeId(content: Content): string | undefined {
  * 将 Content 转换为 Message
  */
 export function contentToMessage(content: Content, id?: string): Message {
-  const normalizedParts = normalizeFunctionCallParts(content.parts)
+  // M1：后端消息可能缺 parts 字段，按空数组容错，避免 normalizeFunctionCallParts 抛 TypeError
+  const sourceParts = Array.isArray(content.parts) ? content.parts : []
+  const normalizedParts = normalizeFunctionCallParts(sourceParts)
   const textParts = normalizedParts.filter(p => p.text && !p.thought)
   const text = textParts.map(p => p.text).join('')
   
@@ -292,7 +296,9 @@ export function contentToMessage(content: Content, id?: string): Message {
  * 同时会从 inlineData 中提取附件信息
  */
 export function contentToMessageEnhanced(content: Content, id?: string): Message {
-  const normalizedParts = normalizeFunctionCallParts(content.parts)
+  // M1：后端消息可能缺 parts 字段，按空数组容错，避免 normalizeFunctionCallParts 抛 TypeError
+  const sourceParts = Array.isArray(content.parts) ? content.parts : []
+  const normalizedParts = normalizeFunctionCallParts(sourceParts)
   const textParts = normalizedParts.filter(p => p.text && !p.thought)
   const text = textParts.map(p => p.text).join('')
   

@@ -313,6 +313,15 @@ export interface EditAndRetryRequestData {
      * 使其不随检查点清理而消失，支持反复回档到同一位置。
      */
     preserveCheckpointId?: string;
+
+    /**
+     * 可选，被编辑消息的消息 ID（防索引漂移校验）。
+     *
+     * 请求带 messageId 时，后端会读取 messageIndex 处的消息并校验 id 一致；
+     * 不一致说明索引已漂移（并发插入/删除/上下文压缩等），返回 MESSAGE_CHANGED。
+     * 旧前端不带该字段时保持旧行为（仅按索引操作）。
+     */
+    messageId?: string;
 }
 
 // ==================== 删除消息 ====================

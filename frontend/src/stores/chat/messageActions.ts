@@ -23,6 +23,23 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById, appendMessage } from './state'
+import { translate } from '../../composables/useI18n'
+import { useSettingsStore } from '../settingsStore'
+
+/**
+ * H5：复位“本次 sendMessage 遗留的流式/待发送状态”。
+ *
+ * sendMessage 在 await 间隙提前终止（如会话已切换导致 validateSessionIdentity 失败）
+ * 时必须复位本次发送设置的标志，否则 isStreaming/isWaitingForResponse/streamingMessageId
+ * 会永久残留，界面一直卡在“等待响应”。
+ */
+function resetPendingSendState(state: ChatStoreState): void {
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state._lastCancelledStreamId.value = null
+}
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -427,7 +444,15 @@ export async function sendMessage(
     await syncConversationWorkspaceUri(state, targetConvId)
 
     // 写入全局状态前校验会话归属，防止跨会话投递
-    if (!validateSessionIdentity(state, targetConvId)) return false
+    if (!validateSessionIdentity(state, targetConvId)) {
+      // H5(a)：会话已切换：复位本次发送设置的流式状态，避免 isStreaming 等永久残留。
+      // 仅当当前 streamingMessageId 仍是本次发送的占位时才复位，
+      // 避免误清新会话自己正在进行的流。
+      if (state.streamingMessageId.value === assistantMessageId) {
+        resetPendingSendState(state)
+      }
+      return false
+    }
 
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
@@ -462,16 +487,23 @@ export async function sendMessage(
       streamId
     })
 
+    // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
+    // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
+    if (!validateSessionIdentity(state, targetConvId)) {
+      console.warn('[messageActions] sendMessage: conversation switched while chatStream in flight; stream continues in background', {
+        targetConvId,
+        currentConversationId: state.currentConversationId.value
+      })
+      return false
+    }
+
   } catch (err: any) {
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
+      resetPendingSendState(state)
     }
     return false
   } finally {
@@ -1123,6 +1155,8 @@ export async function editAndRetry(
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId,
       newText: newMessage,
       configId: state.configId.value,
       modelOverride,
@@ -1142,10 +1176,15 @@ export async function editAndRetry(
     // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
     state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
+      // MESSAGE_CHANGED：目标消息已被其他操作改动（索引漂移校验失败），提示用户刷新历史，
+      // 不附带 branchReplayContext（重放已无意义）
+      const isMessageChanged = err?.code === 'MESSAGE_CHANGED'
       safeSetError(state, originConvId, {
-        code: err.code || 'EDIT_RETRY_ERROR',
-        message: err.message || 'Edit and retry failed',
-        branchReplayContext: branchReplayContext ?? undefined
+        code: isMessageChanged ? 'MESSAGE_CHANGED' : (err.code || 'EDIT_RETRY_ERROR'),
+        message: isMessageChanged
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err.message || 'Edit and retry failed'),
+        branchReplayContext: isMessageChanged ? undefined : (branchReplayContext ?? undefined)
       })
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，避免跨会话污染
@@ -1208,7 +1247,9 @@ export async function deleteMessage(
   try {
     const response = await sendToExtension<any>('deleteMessage', {
       conversationId: originConvId,
-      targetIndex: backendIndex
+      targetIndex: backendIndex,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId
     })
 
     // 再次校验归属
@@ -1223,14 +1264,18 @@ export async function deleteMessage(
       const err = response?.error
       safeSetError(state, originConvId, {
         code: err?.code || 'DELETE_ERROR',
-        message: err?.message || 'Delete failed'
+        message: err?.code === 'MESSAGE_CHANGED'
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err?.message || 'Delete failed')
       })
       console.error('[messageActions] deleteMessage failed:', response)
     }
   } catch (err: any) {
     safeSetError(state, originConvId, {
       code: err.code || 'DELETE_ERROR',
-      message: err.message || 'Delete failed'
+      message: err.code === 'MESSAGE_CHANGED'
+        ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+        : (err.message || 'Delete failed')
     })
   }
 }

@@ -2424,6 +2424,12 @@ export class ConversationManager {
             }
         }
         
+        // 已见的 functionCall id 集合（BR-07 防御）：functionCall → functionResponse
+        // 按 id 一一对应。functionCall 被截断/reroll 后，残留的孤儿 functionResponse
+        // 在 Anthropic 渠道会引用不存在的 tool_use（400 错误），需要在下发前剔除。
+        // 顺序遍历历史：先登记 functionCall id，再校验后续 functionResponse 是否匹配。
+        const seenFunctionCallIds = new Set<string>();
+        
         /**
          * 清理 functionCall 中的内部字段
          *
@@ -2499,6 +2505,14 @@ export class ConversationManager {
             // 检查消息是否是工具响应（用于决定是否应用多模态能力过滤）
             const isFunctionResponse = !!message.isFunctionResponse;
             
+            // 登记本消息中的 functionCall id（BR-07）：后续的 functionResponse 只有
+            // 出现在该集合中才被保留，被截断/reroll 后残留的孤儿 functionResponse 将被过滤。
+            for (const part of message.parts) {
+                if (part.functionCall?.id) {
+                    seenFunctionCallIds.add(part.functionCall.id);
+                }
+            }
+            
             let parts = message.parts;
             
             // 处理思考内容 (Thought Text/Reasoning Content)
@@ -2541,6 +2555,13 @@ export class ConversationManager {
                 //   这类 part 在不同模型/渠道下可能导致兼容性问题。
                 .filter((part): part is ContentPart => {
                     if (part === null) return false;
+                    // BR-07：孤儿 functionResponse 过滤——functionResponse.id 必须匹配
+                    // 已见的 functionCall id（见 processMessage 开头的登记）。无 id 的
+                    // functionResponse（Gemini 等按顺序配对的渠道）保守保留，不做激进过滤。
+                    if (part.functionResponse && part.functionResponse.id
+                        && !seenFunctionCallIds.has(part.functionResponse.id)) {
+                        return false;
+                    }
                     const keys = Object.keys(part);
                     if (keys.length === 0) return false;
                     if (keys.length === 1 && keys[0] === 'thought' && (part as any).thought === true) return false;
