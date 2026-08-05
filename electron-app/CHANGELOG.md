@@ -8,6 +8,18 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.1] - 2026-08-05
+
+### Fixed
+  - 修复主进程 stdout/stderr EPIPE 崩溃：输出重定向到管道且读取端提前关闭时，Node 把后续 `console.log` 的 EPIPE 当未捕获异常，Electron 主进程弹错崩溃（e2e 大量日志复现）；入口挂 stdout/stderr 错误守卫，仅吞 EPIPE
+  - 修复 `BackendHost.previewToSessionId` 无界增长（500 条 FIFO 上限）
+  - 修复 auto-open diff 路径 `resolveOriginalContent` 拿到空 previewId（计算提前，去掉对 filePath 兜底的隐性依赖）
+  - 修复 `vscode.diff` shim 的 `preview` 字段语义反转（`options?.preview === true`）
+  - 修复 dialog 无窗口时 `win!` 传 null 抛 TypeError（退化为无父窗口对话框）
+  - 修复 `chat.awaitConversationIdle` 阻塞整条消息队列（加入 NON_BLOCKING_MESSAGE_TYPES）与前端等待无超时（20s 超时放弃本次 flush 重试，绝不提前写入回执）
+  - 修复 `StreamAbortManager` 退休旧流 delete 且无新流接管时不唤醒 idleWaiters（纯停止场景后台回执永久挂起）
+  - 同步合入第一/二轮全仓审查修复（backend/frontend/webview 公共部分）：详见根 `CHANGELOG.md` [1.6.1]
+
 ## [1.6.0] - 2026-08-05
 
 ### Merged

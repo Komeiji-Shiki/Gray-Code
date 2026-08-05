@@ -8,17 +8,47 @@
 
 ## [Unreleased]
 
-### Fixed
-  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
-  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
+## [1.6.1] - 2026-08-05
 
-### Added
-  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
+### Fixed
+  - 修复 `ConversationManager` 合并引入 metaCache 后两处漏同步：`updateSummary` 与 `syncMessageCountAfterStructuralChange` 直写 storage 导致 `getMetadata` 读到陈旧 messageCount/preview（对话列表计数漂移），改走 `persistMetadata`（写盘 + 同步缓存）
+  - 修复 `ChannelManager` 流式请求结束后在途保活成功回调重建永不清理的空闲超时定时器（挂起引用 + 120s 后 abort 已废弃 controller）：生成器 finally 将 `idleTimeoutHandle.reset` 置为 no-op；非流式路径 `retryInterval` 与流式一致钳制（非法值不再以 NaN 进入 delay）
+  - 修复 `TokenCountService` 模板分支残留空 `key=` 查询参数（统一走 `stripKeyQuery`）
+  - 修复 `remove_background` mask_path 按读策略审批可被读策略 allow 绕过写策略 deny（mask_path 是写入目标，改按写策略审批）
+  - 修复 `BranchSwitcherBar` 模块级共享监听器标记：多条消息各挂实例时任一实例卸载会误移除其他实例正在使用的滚动/缩放监听（移入组件实例作用域）
+  - 修复 `toolActions` 插入/删除消息后未重建 `messageIndexById`/`toolResponseIndex`（被取消工具卡片 hasToolResponse 持续 miss）
+  - 修复 `StreamAbortManager` 退休旧流 delete 且会话无新流接管时不唤醒 `idleWaiters`（纯停止场景 `chat.awaitConversationIdle` 永久挂起、后台回执被静默丢弃）
+  - 修复桌面版主进程 stdout/stderr EPIPE 崩溃：输出被重定向到管道（CI/终端工具/脚本 `2>&1 | ...`）且读取端提前关闭时，Node 把后续 `console.log` 抛出的 EPIPE 当作未捕获异常，Electron 主进程直接弹「A JavaScript error occurred in the main process」崩溃（e2e 大量日志场景复现）；现在主进程入口挂 stdout/stderr 错误守卫，仅吞 EPIPE、其余错误照常抛出（详见 `electron-app/CHANGELOG.md` [1.6.1]）
+  - 修复非流式请求遇非 JSON 错误体（代理网关 HTML/纯文本 429/5xx）时丢失真实状态码与上游错误信息：`executeRequest` 先判 status 再读体，错误体按 JSON → 文本降级解析并透出 `HTTP <status>: <message>`（`API_ERROR`），与流式路径对齐
+  - 修复 Gemini 模型列表分页无守卫：上游/中转站异常重复返回 `nextPageToken` 时模型列表接口永久拉取；补页数上限（500）+ cursor 去重，与 OpenAI/Claude 分支一致
+  - 修复 `ContextTrimService` 并发删除导致 `estimateMessageTokens(undefined)` 崩溃中断整个回合：index 越界消息按 0 token 处理
+  - 修复 `StdioClient.disconnect` 10s 兜底定时器在进程先退出时悬挂不清理（MCP 频繁重启累积悬空 handle）
+  - 修复流式路径 `buildRequest` 失败未包 `VALIDATION_ERROR`（与非流式路径不一致，前端错误分类漂移为 UNKNOWN_ERROR）
+  - 加固 `regexGuard` ReDoS 检测：改用分组栈扫描，识别嵌套分组/lookaround 绕过（`((a+)+)`、`(?=(a+))+`、`(a?)+`），同时保持字符类内括号/量词、`(?:...)` 非捕获组、无外层量词嵌套的正确放行；补 9 例回归测试
+  - 修复 `remove_background` mask_path 写入被策略拒绝时静默跳过但结果仍报成功：与 output_path 一致改为显式失败（此前读策略 allow 可绕过写策略 deny 把遮罩写入工作区外，且任务伪装成功）
+  - 修复 `execute_command` 单行输出无长度上限：无换行巨块（如 `print('x'*2e9)`）不再无界累积内存与响应体，单行 1MB 上限、超限截断保留尾部并计入 omittedOutputLines
+  - 修复 `delete_code` 整文件删除时产出 `{startLine:1,endLine:0}` 非法块（endLine 下限钳到 1）
+  - 修复子代理后台执行同步抛错时任务残留 running（Promise 链包裹），并清除一处重复 catch 语法错误
+  - 修复 `generate_image` 对 API 返回超大体图片无字节护栏（与输入侧 50MB 上限对齐）
+  - 修复前端「无 streamId 的迟到 complete」覆盖新流占位消息并复位 activeStreamId 导致新回答永久丢失（H4 守卫补全到 handleComplete）
+  - 修复前端 batch 跳过优化把无 streamId 的陈旧终结事件当作当前流，误跳过当前活跃流真实增量（只认携带 streamId 的终结事件）
+  - 修复 `messageActions` 8 处截断路径（删除/重试/编辑/回档/重放失败）未重建 `messageIndexById`/`toolResponseIndex`、未清空 `toolResponseCache`（被取消工具卡持续 miss、缓存读到已删除轮的响应）
+  - 修复会话切换/新建/重置未清空消息索引与 `_failedStreamMessageId`（残留旧会话条目）
+  - 修复 `handleAutoSummary` 窗口前插入未同步折叠提示（foldedMessageCount 虚高）
+  - 修复后台任务回执 `chat.awaitConversationIdle` 无超时导致回执永久滞留、且阻塞整条消息队列：前端调用加 20s 超时（超时放弃本次 flush 下次重试，绝不提前写入回执），消息路由加入非阻塞白名单
+  - 修复 `BackendHost.previewToSessionId` 无界增长（500 条 FIFO 上限）
+  - 修复桌面版 auto-open diff 路径下 `resolveOriginalContent` 拿到的 previewId 恒为空（previewId/filePath 计算提前）
+  - 修复 `vscode.diff` shim 的 `preview` 字段语义反转（`options?.preview === true` 与 VS Code 一致）
+  - 修复桌面版 dialog 无窗口时 `win!` 传 null 抛 TypeError（退化为无父窗口对话框）
 
 ## [1.6.0] - 2026-08-05
 
 ### Merged
-  - 同步合入上游 c7d2e16（PR #8：分支 UI/流式竞态/上下文裁剪 fallback 稳定/总结请求去图/编辑保持当前分支/工具安全）：上下文裁剪 fallback 切点回合内稳定、总结请求不再携带图片/文件载荷、编辑支持「保持当前分支」模式等详见上方 [Unreleased]；保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量
+  - 同步合入上游 c7d2e16（PR #8：分支 UI/流式竞态/上下文裁剪 fallback 稳定/总结请求去图/编辑保持当前分支/工具安全），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量：
+    - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
+    - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
+    - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
+    - 其余 PR #8 内容（LSP 工具、regexGuard、cancelForNewTurn、流式竞态等）见上游仓库 CHANGELOG
 
 ### Fixed
   - 修复桌面版打包产物（安装版/便携版/zip）通用界面版本号恒为 0.0.0：打包只含 `electron-app/dist`，根 `package.json`（运行时版本唯一来源）与 `CHANGELOG.md` 未打入，设置页应用信息 / About 对话框 / 版本更新公告全部落到兜底 `0.0.0`，公告因版本恒等永不弹出新版本更新内容；现在 electron-builder `extraResources` 追加根 `package.json` 与 `CHANGELOG.md`（详见 `electron-app/CHANGELOG.md` [1.6.0]）
