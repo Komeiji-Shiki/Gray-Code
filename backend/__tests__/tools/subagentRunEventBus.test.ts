@@ -606,3 +606,55 @@ describe('SubAgentRunEventBus - runId 分配', () => {
         expect(bus.allocateRunId('subagent_run_tool_1')).toBe('subagent_run_tool_1__3');
     });
 });
+describe('SubAgentRunEventBus - resumeRun（续跑复用快照）', () => {
+    it('快照存在时保留 contents/events/lastSentHistory，状态切回 running 并广播 run_resumed', () => {
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('resume_old', 'Tester', undefined, {
+            conversationId: 'conv_1',
+            initialContents: [textContent('user', 'old marker')]
+        });
+        bus.updateLastSentHistory('resume_old', [textContent('user', 'sent-1')]);
+        bus.emit({ runId: 'resume_old', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+
+        const before = bus.getSnapshot('resume_old')!;
+        const eventsBefore = before.events.length;
+        const revisionBefore = before.contentRevision;
+        const seqBefore = before.eventSequence;
+
+        const resumed = bus.resumeRun('resume_old', 'Tester', { depth: 1 }, {
+            conversationId: 'conv_1',
+            initialContents: [textContent('user', 'continue card')]
+        });
+
+        // 复用同一快照对象，未重建
+        expect(resumed).toBe(before);
+        expect(resumed.status).toBe('running');
+        // contents 保留旧内容 + 追加新内容
+        expect(resumed.contents).toHaveLength(2);
+        expect((resumed.contents[0].parts![0] as any).text).toBe('old marker');
+        expect((resumed.contents[1].parts![0] as any).text).toBe('continue card');
+        // lastSentHistory 保留（续跑 generate 前仍以此为前缀）
+        expect(resumed.lastSentHistory).toEqual([textContent('user', 'sent-1')]);
+        // 事件 journal 保留并追加 run_resumed
+        expect(resumed.events.length).toBeGreaterThan(eventsBefore);
+        expect(resumed.events.some(e => e.type === 'run_resumed')).toBe(true);
+        const resumedEvent = resumed.events.find(e => e.type === 'run_resumed')!;
+        expect((resumedEvent.payload as any).fromStatus).toBe('completed');
+        // 协议序号继续递增（不重置）
+        expect(resumed.contentRevision).toBeGreaterThan(revisionBefore);
+        expect(resumed.eventSequence).toBeGreaterThan(seqBefore);
+    });
+
+    it('快照不存在时防御性回退 createRun', () => {
+        const bus = new SubAgentRunEventBus();
+        const snapshot = bus.resumeRun('resume_fallback', 'Tester', undefined, {
+            initialContents: [textContent('user', 'x')]
+        });
+        expect(snapshot.runId).toBe('resume_fallback');
+        expect(snapshot.status).toBe('running');
+        expect(snapshot.contents).toHaveLength(1);
+        // 走 createRun 路径：广播的是 run_created 而非 run_resumed
+        expect(snapshot.events.some(e => e.type === 'run_created')).toBe(true);
+        expect(snapshot.events.some(e => e.type === 'run_resumed')).toBe(false);
+    });
+});
