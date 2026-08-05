@@ -15,6 +15,15 @@
 ### Added
   - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
 
+## [1.6.0] - 2026-08-05
+
+### Merged
+  - 同步合入上游 c7d2e16（PR #8：分支 UI/流式竞态/上下文裁剪 fallback 稳定/总结请求去图/编辑保持当前分支/工具安全）：上下文裁剪 fallback 切点回合内稳定、总结请求不再携带图片/文件载荷、编辑支持「保持当前分支」模式等详见上方 [Unreleased]；保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏等增量
+
+### Fixed
+  - 修复桌面版打包产物（安装版/便携版/zip）通用界面版本号恒为 0.0.0：打包只含 `electron-app/dist`，根 `package.json`（运行时版本唯一来源）与 `CHANGELOG.md` 未打入，设置页应用信息 / About 对话框 / 版本更新公告全部落到兜底 `0.0.0`，公告因版本恒等永不弹出新版本更新内容；现在 electron-builder `extraResources` 追加根 `package.json` 与 `CHANGELOG.md`（详见 `electron-app/CHANGELOG.md` [1.6.0]）
+  - 修复桌面版便携式（GrayCode-Portable-*.exe）数据目录解析错误：portable 启动器解压到 `%TEMP%` 运行、退出即整目录删除，旧逻辑把数据目录算在临时目录里导致每次启动都是全新应用、更新替换 exe 后数据无法保留；现在识别 `PORTABLE_EXECUTABLE_DIR` 并把数据写入便携 exe 旁 `data/`（详见 `electron-app/CHANGELOG.md` [1.6.0]）
+
 ## [1.5.2] - 2026-08-04
 
 ### Merged

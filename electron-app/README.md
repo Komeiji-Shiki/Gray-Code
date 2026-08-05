@@ -8,10 +8,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
 
-基于 [GrayCode](https://github.com/Komeiji-Shiki/Gray-Code)（VS Code AI 编程助手插件 v1.3.1）构建的独立桌面应用。
+GrayCode Desktop 是基于 [GrayCode](https://github.com/Komeiji-Shiki/Gray-Code)（VS Code AI 编程助手扩展）的独立桌面版应用。
 同一套后端代码、同一套前端界面，通过 Electron 主进程中的 `vscode` API 兼容层（shim）运行在原生桌面环境 —— **无需安装 VS Code**。
 
-Built on top of [GrayCode](https://github.com/Komeiji-Shiki/Gray-Code) (VS Code AI coding assistant extension v1.3.1).
+Built on top of [GrayCode](https://github.com/Komeiji-Shiki/Gray-Code) (VS Code AI coding assistant extension).
 The same backend, the same UI — running in a native desktop window via an Electron main-process `vscode` API shim. **No VS Code required.**
 
 ---
