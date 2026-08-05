@@ -361,7 +361,7 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         // WSL 需要特殊检测
         if (shellType === 'wsl') {
             return new Promise((resolve) => {
-                cp.exec('wsl --status', { timeout: 5000 }, (error) => {
+                cp.execFile('wsl.exe', ['--status'], { timeout: 5000 }, (error) => {
                     if (error) {
                         resolve({ available: false, reason: t('tools.terminal.shellCheck.wslNotInstalled') });
                     } else {
@@ -384,7 +384,8 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         
         // 对于命令名，使用 where 命令检查 PATH
         return new Promise((resolve) => {
-            cp.exec(`where ${shellPath}`, { timeout: 5000 }, (error) => {
+            // 参数必须通过 argv 传递，不能拼进 shell 命令；customPath 属于用户可控配置。
+            cp.execFile('where.exe', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {
@@ -407,7 +408,7 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         
         // 对于命令名，使用 which 命令检查 PATH
         return new Promise((resolve) => {
-            cp.exec(`which ${shellPath}`, { timeout: 5000 }, (error) => {
+            cp.execFile('which', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {

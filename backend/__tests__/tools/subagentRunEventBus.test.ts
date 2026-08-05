@@ -539,6 +539,38 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         expect(external.readMetadata().legacy_run.lastSentHistory).toBeUndefined();
         expect(external.readMetadata().legacy_run.transcriptRef).toBe('subagents/legacy_run.json');
     });
+
+    it('首次加载时把上次宿主进程遗留的非终态 run 标记为 interrupted', async () => {
+        const external = createExternalStore({
+            stale_run: {
+                runId: 'stale_run', agentName: 'Agent', status: 'running', createdAt: 1, updatedAt: 2,
+                contents: [textContent('user', 'legacy running')]
+            }
+        });
+        const bus = new SubAgentRunEventBus();
+
+        const [loaded] = await bus.loadConversationSnapshots('conv_stale', external.store);
+
+        expect(loaded.status).toBe('interrupted');
+        expect(external.readMetadata().stale_run.status).toBe('interrupted');
+        expect(external.readMetadata().stale_run.transcriptRef).toBe('subagents/stale_run.json');
+    });
+
+    it('重复加载同会话时不把当前进程的活跃 run 误标为 interrupted', async () => {
+        const external = createExternalStore();
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('active_run', 'Agent', undefined, {
+            conversationId: 'conv_active',
+            conversationStore: external.store,
+            initialContents: [textContent('user', 'working')]
+        });
+        await bus.flushConversation('conv_active');
+
+        const [loaded] = await bus.loadConversationSnapshots('conv_active', external.store);
+
+        expect(loaded.status).toBe('running');
+        expect(external.readMetadata().active_run.status).toBe('running');
+    });
 });
 describe('SubAgentRunEventBus - runId 分配', () => {
     it('runId 未被占用时原样返回', () => {
