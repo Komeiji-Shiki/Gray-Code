@@ -479,6 +479,67 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
         expect(c2?.['run_c2']).toBeDefined();
     });
 });
+
+
+describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
+    function createExternalStore(initialMetadata?: unknown) {
+        let metadata = initialMetadata;
+        const transcripts = new Map<string, { contents: Content[]; lastSentHistory?: Content[] }>();
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata() { return metadata; },
+            async setCustomMetadata(_conversationId, _key, value) { metadata = value; },
+            async saveSubAgentTranscript(conversationId, runId, data) {
+                transcripts.set(`${conversationId}:${runId}`, JSON.parse(JSON.stringify(data)));
+                return `subagents/${runId}.json`;
+            },
+            async loadSubAgentTranscript(conversationId, runId) {
+                return transcripts.get(`${conversationId}:${runId}`) ?? null;
+            }
+        };
+        return { store, transcripts, readMetadata: () => metadata as Record<string, any> };
+    }
+
+    it('正式新路径只在元数据保存轻量索引，完整内容写入独立 transcript', async () => {
+        const bus = new SubAgentRunEventBus();
+        const external = createExternalStore();
+        bus.createRun('run_external', 'Agent', undefined, {
+            conversationId: 'conv_external',
+            conversationStore: external.store,
+            initialContents: [textContent('user', '包含大内容')]
+        });
+        bus.updateLastSentHistory('run_external', [textContent('user', 'provider history')]);
+        await bus.flushConversation('conv_external');
+
+        const record = external.readMetadata().run_external;
+        expect(record.transcriptRef).toBe('subagents/run_external.json');
+        expect(record.contentCount).toBe(1);
+        expect(record.contents).toBeUndefined();
+        expect(record.lastSentHistory).toBeUndefined();
+        expect(external.transcripts.get('conv_external:run_external')).toEqual({
+            contents: [textContent('user', '包含大内容')],
+            lastSentHistory: [textContent('user', 'provider history')]
+        });
+    });
+
+    it('读取旧内嵌格式时迁移到独立 transcript 并清除元数据大字段', async () => {
+        const legacyContents = [textContent('user', 'legacy')];
+        const legacyHistory = [textContent('model', 'history')];
+        const external = createExternalStore({
+            legacy_run: {
+                runId: 'legacy_run', agentName: 'Agent', status: 'completed', createdAt: 1, updatedAt: 2,
+                contents: legacyContents, lastSentHistory: legacyHistory
+            }
+        });
+        const bus = new SubAgentRunEventBus();
+        const loaded = await bus.loadConversationSnapshots('conv_legacy', external.store);
+
+        expect(loaded[0].contents).toEqual(legacyContents);
+        expect(loaded[0].lastSentHistory).toEqual(legacyHistory);
+        expect(external.readMetadata().legacy_run.contents).toBeUndefined();
+        expect(external.readMetadata().legacy_run.lastSentHistory).toBeUndefined();
+        expect(external.readMetadata().legacy_run.transcriptRef).toBe('subagents/legacy_run.json');
+    });
+});
 describe('SubAgentRunEventBus - runId 分配', () => {
     it('runId 未被占用时原样返回', () => {
         const bus = new SubAgentRunEventBus();

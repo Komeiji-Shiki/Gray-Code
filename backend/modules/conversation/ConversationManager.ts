@@ -2936,6 +2936,23 @@ export class ConversationManager {
         return this.storage.getConversationsDirFsPath?.();
     }
 
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: { contents: Content[]; lastSentHistory?: Content[] }): Promise<string> {
+        if (!this.storage.saveSubAgentTranscript) {
+            throw new Error('SubAgent transcript storage is unavailable');
+        }
+        return await this.storage.saveSubAgentTranscript(conversationId, runId, data);
+    }
+
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<{ contents: Content[]; lastSentHistory?: Content[] } | null> {
+        return this.storage.loadSubAgentTranscript
+            ? await this.storage.loadSubAgentTranscript(conversationId, runId)
+            : null;
+    }
+
+    async deleteSubAgentTranscript(conversationId: string, runId: string): Promise<void> {
+        await this.storage.deleteSubAgentTranscript?.(conversationId, runId);
+    }
+
     /**
      * 设置自定义元数据
      */

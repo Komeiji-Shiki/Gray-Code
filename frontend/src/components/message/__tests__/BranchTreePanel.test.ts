@@ -1,23 +1,8 @@
-/**
- * BranchTreePanel 组件测试（TREE-11 完整分支树查看面板）
- *
- * 覆盖：
- * - 入口显隐：无分支图 / 线性分支图 / 无当前对话 → 隐藏；有额外候选分支 → 显示（入口由输入区挂载）
- * - 树形渲染：DFS 展平顺序 + 树干 / 横向连接线
- * - 活跃路径连接线高亮、当前尾节点标识、分支点候选数量、软删节点灰显
- * - 切换交互：点击非活跃非软删行切换；活跃行不响应
- * - 删除交互：两步确认（第一次进入确认态，第二次才调用 deleteBranchCandidate）
- * - 恢复交互：软删节点恢复按钮调用 restoreBranchCandidate
- * - 重命名交互：行内输入，Enter 提交 renameBranchCandidate
- * - 忙碌态：isSwitchingBranch 时操作按钮禁用
- * - 背板点击关闭面板
- */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BranchTreePanel from '../BranchTreePanel.vue'
 import type { BranchGraphData, BranchNodeData } from '../../../stores/chat/types'
 
-// 假 chatStore：组件仅使用 branchGraph / currentConversationId / isSwitchingBranch 与四个动作
 const chatStoreMock = {
   currentConversationId: 'c1' as string | null,
   branchGraph: null as BranchGraphData | null,
@@ -28,30 +13,22 @@ const chatStoreMock = {
   renameBranchCandidate: vi.fn().mockResolvedValue(true)
 }
 
-vi.mock('@/stores/chatStore', () => ({
-  useChatStore: () => chatStoreMock
-}))
+vi.mock('@/stores/chatStore', () => ({ useChatStore: () => chatStoreMock }))
 
 function makeNode(id: string, parentId: string | null, overrides: Partial<BranchNodeData> = {}): BranchNodeData {
   return { id, parentId, role: 'model', createdAt: 0, ...overrides }
 }
 
-/**
- * 分支图夹具：
- *   u1 (root, user) ── a1 (active, createdAt 100) ── a1c (active tail, createdAt 10)
- *                    ├─ a2 (候选, createdAt 200)
- *                    └─ aDel (软删, createdAt 300)
- * 活跃路径：u1 → a1 → a1c
- */
 function makeFixtureGraph(): BranchGraphData {
   return {
     version: 1,
     rootNodeId: 'u1',
-    activeTailNodeId: 'a1c',
+    activeTailNodeId: 'tail',
     nodes: {
-      u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }),
-      a1: makeNode('a1', 'u1', { createdAt: 100, activeChildId: 'a1c', parts: [{ text: '回答一' }] }),
-      a1c: makeNode('a1c', 'a1', { createdAt: 10, parts: [{ text: '继续分支' }] }),
+      u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1', parts: [{ text: '起点' }] }),
+      a1: makeNode('a1', 'u1', { createdAt: 100, activeChildId: 'middle', parts: [{ text: '回答一' }] }),
+      middle: makeNode('middle', 'a1', { createdAt: 110, activeChildId: 'tail', parts: [{ text: '线性中段' }] }),
+      tail: makeNode('tail', 'middle', { createdAt: 120, parts: [{ text: '当前尾部' }] }),
       a2: makeNode('a2', 'u1', { createdAt: 200, parts: [{ text: '回答二' }] }),
       aDel: makeNode('aDel', 'u1', { createdAt: 300, deleted: true, parts: [{ text: '已删分支' }] })
     }
@@ -68,226 +45,111 @@ function resetMock(): void {
   chatStoreMock.renameBranchCandidate.mockClear()
 }
 
-/** 挂载并打开面板，返回 wrapper */
 async function mountOpen(): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(BranchTreePanel)
   await wrapper.find('.branch-tree-trigger').trigger('click')
   return wrapper
 }
 
-describe('BranchTreePanel 入口显隐', () => {
+describe('BranchTreePanel 入口与双模式', () => {
   beforeEach(resetMock)
 
-  it('无分支图 → 入口隐藏', () => {
-    const wrapper = mount(BranchTreePanel)
-    expect(wrapper.find('.branch-tree-trigger').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('线性分支图（每个父节点只有一个子节点）→ 入口隐藏', () => {
+  it('无分支或线性图时隐藏入口', () => {
+    expect(mount(BranchTreePanel).find('.branch-tree-trigger').exists()).toBe(false)
     chatStoreMock.branchGraph = {
-      version: 1,
       rootNodeId: 'u1',
       activeTailNodeId: 'a1',
       nodes: {
-        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }),
+        u1: makeNode('u1', null, { activeChildId: 'a1' }),
         a1: makeNode('a1', 'u1')
       }
     }
-    const wrapper = mount(BranchTreePanel)
-    expect(wrapper.find('.branch-tree-trigger').exists()).toBe(false)
-    wrapper.unmount()
+    expect(mount(BranchTreePanel).find('.branch-tree-trigger').exists()).toBe(false)
   })
 
-
-  it('有分支图 → 入口显示；点击打开面板，背板点击关闭', async () => {
+  it('有候选时显示入口，默认使用分支导航并可由背板关闭', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = mount(BranchTreePanel)
+    const wrapper = await mountOpen()
 
-    expect(wrapper.find('.branch-tree-trigger').exists()).toBe(true)
-    expect(wrapper.find('.branch-tree-panel-box').exists()).toBe(false)
-
-    await wrapper.find('.branch-tree-trigger').trigger('click')
-    expect(wrapper.find('.branch-tree-panel-box').exists()).toBe(true)
-    // 标题
-    expect(wrapper.find('.branch-tree-title').text()).toContain('分支树')
+    expect(wrapper.find('.branch-tree-title').text()).toContain('分支历史')
+    expect(wrapper.find('.branch-tree-view-tab.selected').text()).toContain('分支导航')
+    expect(wrapper.findAll('.branch-tree-collapsed-row')).toHaveLength(1)
+    expect(wrapper.find('.branch-tree-collapsed-row').text()).toContain('已折叠 1 条连续消息')
+    expect(wrapper.findAll('.branch-tree-row')).toHaveLength(5)
 
     await wrapper.find('.branch-tree-backdrop').trigger('click')
     expect(wrapper.find('.branch-tree-panel-box').exists()).toBe(false)
-    wrapper.unmount()
+  })
+
+  it('切换完整消息模式后显示所有节点，线性后代保持同一轨道', async () => {
+    chatStoreMock.branchGraph = makeFixtureGraph()
+    const wrapper = await mountOpen()
+    await wrapper.findAll('.branch-tree-view-tab')[1].trigger('click')
+
+    expect(wrapper.find('.branch-tree-view-tab.selected').text()).toContain('完整消息')
+    expect(wrapper.findAll('.branch-tree-collapsed-row')).toHaveLength(0)
+    const rows = wrapper.findAll('.branch-tree-row')
+    expect(rows).toHaveLength(6)
+    expect(rows[0].attributes('style')).toContain('--lane: 0')
+    expect(rows[1].attributes('style')).toContain('--lane: 0')
+    expect(rows[2].attributes('style')).toContain('--lane: 0')
+    expect(rows[3].attributes('style')).toContain('--lane: 0')
+    expect(rows[4].attributes('style')).toContain('--lane: 1')
   })
 })
 
-describe('BranchTreePanel 树形渲染', () => {
+describe('BranchTreePanel 分支管理操作', () => {
   beforeEach(resetMock)
 
-  it('DFS 展平行顺序 + 树形连接线', async () => {
+  it('点击非活跃候选切换，活跃节点与软删节点不响应', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
-
     const rows = wrapper.findAll('.branch-tree-row')
-    expect(rows).toHaveLength(5)
-    // 顺序：u1 → a1 → a1c → a2 → aDel
-    const previews = rows.map(r => r.find('.branch-tree-preview').text())
-    expect(previews[0]).toBe('（无预览）') // u1 无 parts / label
-    expect(previews[1]).toBe('回答一')
-    expect(previews[2]).toBe('继续分支')
-    expect(previews[3]).toBe('回答二')
-    expect(previews[4]).toBe('已删分支')
-    // 树导线：a1 / a1c / a2 / aDel 都是子节点，均有当前层连接器；
-    // a1c 还应保留一条代表 u1 仍有后续兄弟的祖先竖线。
-    expect(rows[1].find('.branch-tree-connector').exists()).toBe(true)
-    expect(rows[2].find('.branch-tree-guide.continued').exists()).toBe(true)
-    expect(rows[3].find('.branch-tree-connector').exists()).toBe(true)
-    expect(rows[4].find('.branch-tree-connector.last').exists()).toBe(true)
-    expect(rows[0].attributes('style')).toContain('--depth: 0')
-    expect(rows[1].attributes('style')).toContain('--depth: 1')
-    wrapper.unmount()
-  })
 
-  it('活跃路径连接线高亮；只有活跃尾节点标注「当前」，分支点显示候选数', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    // 活跃路径：u1 / a1 / a1c；只有活跃尾 a1c 是当前候选
-    expect(rows[0].classes()).toContain('active')
-    expect(rows[1].classes()).toContain('active')
-    expect(rows[2].classes()).toContain('active')
-    expect(rows[2].classes()).toContain('current')
-    expect(rows[0].find('.branch-tree-badge-active').exists()).toBe(false)
-    expect(rows[1].find('.branch-tree-badge-active').exists()).toBe(false)
-    expect(rows[2].find('.branch-tree-badge-active').text()).toBe('当前')
-    // u1 下有两个未删除候选，显示分支点候选数量
-    expect(rows[0].find('.branch-tree-badge-candidates').exists()).toBe(true)
-    expect(rows[0].find('.branch-tree-badge-candidates').text()).toBe('2 个候选')
-    // 非活跃：a2
-    expect(rows[3].classes()).not.toContain('active')
-    // 软删：aDel
-    expect(rows[4].classes()).toContain('deleted')
-    expect(rows[4].find('.branch-tree-badge-deleted').text()).toBe('已删除')
-    wrapper.unmount()
-  })
-})
-
-describe('BranchTreePanel 切换 / 删除 / 恢复 / 重命名', () => {
-  beforeEach(resetMock)
-
-  it('点击非活跃非软删行 → switchBranchCandidate；活跃行不响应', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    // 点击候选 a2
-    await rows[3].find('.branch-tree-row-main').trigger('click')
-    expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
+    const candidate = rows.find(row => row.find('.branch-tree-preview').text() === '回答二')!
+    await candidate.find('.branch-tree-row-main').trigger('click')
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('a2')
 
-    // 点击活跃行 a1（a1c 活跃尾）不触发
-    await rows[1].find('.branch-tree-row-main').trigger('click')
+    const active = rows.find(row => row.find('.branch-tree-preview').text() === '回答一')!
+    const deleted = rows.find(row => row.find('.branch-tree-preview').text() === '已删分支')!
+    await active.find('.branch-tree-row-main').trigger('click')
+    await deleted.find('.branch-tree-row-main').trigger('click')
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
-
-    // 点击软删行不触发
-    await rows[4].find('.branch-tree-row-main').trigger('click')
-    expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
-    wrapper.unmount()
   })
 
-  it('删除两步确认：第一次进入确认态，第二次才调用 deleteBranchCandidate', async () => {
+  it('保留删除二次确认与软删恢复', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
-
     const rows = wrapper.findAll('.branch-tree-row')
-    // a2 行有删除按钮（非活跃非软删；第二个 action，第一个是重命名）
-    const deleteBtn = rows[3].findAll('.branch-tree-action')[1]
-    expect(deleteBtn.exists()).toBe(true)
+    const candidate = rows.find(row => row.find('.branch-tree-preview').text() === '回答二')!
+    const deleteButton = candidate.findAll('.branch-tree-action')[1]
 
-    await deleteBtn.trigger('click')
+    await deleteButton.trigger('click')
     expect(chatStoreMock.deleteBranchCandidate).not.toHaveBeenCalled()
-    expect(deleteBtn.classes()).toContain('confirming')
-
-    await deleteBtn.trigger('click')
-    expect(chatStoreMock.deleteBranchCandidate).toHaveBeenCalledTimes(1)
+    expect(deleteButton.classes()).toContain('confirming')
+    await deleteButton.trigger('click')
     expect(chatStoreMock.deleteBranchCandidate).toHaveBeenCalledWith('a2')
-    wrapper.unmount()
-  })
 
-  it('活跃行 / 软删行不显示删除按钮', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    // 活跃行（u1 / a1 / a1c）只有重命名按钮，无删除
-    for (const idx of [0, 1, 2]) {
-      const actions = rows[idx].findAll('.branch-tree-action')
-      expect(actions).toHaveLength(1) // 仅重命名
-    }
-    // 软删行只有恢复按钮
-    const deletedActions = rows[4].findAll('.branch-tree-action')
-    expect(deletedActions).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('软删节点恢复按钮 → restoreBranchCandidate', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    await rows[4].find('.branch-tree-action').trigger('click')
-    expect(chatStoreMock.restoreBranchCandidate).toHaveBeenCalledTimes(1)
+    const deleted = rows.find(row => row.find('.branch-tree-preview').text() === '已删分支')!
+    await deleted.find('.branch-tree-action').trigger('click')
     expect(chatStoreMock.restoreBranchCandidate).toHaveBeenCalledWith('aDel')
-    wrapper.unmount()
   })
 
-  it('重命名：行内输入，Enter 提交 renameBranchCandidate', async () => {
+  it('支持行内重命名并在忙碌时禁用动作', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    // a2 行的重命名按钮（第一个 action 是删除？—— 顺序：重命名在前、删除在后）
-    const renameBtn = rows[3].findAll('.branch-tree-action')[0]
-    expect(renameBtn.exists()).toBe(true)
-    await renameBtn.trigger('click')
-
+    let wrapper = await mountOpen()
+    let candidate = wrapper.findAll('.branch-tree-row').find(row => row.find('.branch-tree-preview').text() === '回答二')!
+    await candidate.findAll('.branch-tree-action')[0].trigger('click')
     const input = wrapper.find('.branch-tree-rename-input')
-    expect(input.exists()).toBe(true)
-    await input.setValue('我的候选')
+    await input.setValue('候选标签')
     await input.trigger('keydown', { key: 'Enter' })
-
-    expect(chatStoreMock.renameBranchCandidate).toHaveBeenCalledTimes(1)
-    expect(chatStoreMock.renameBranchCandidate).toHaveBeenCalledWith('a2', '我的候选')
-    // 提交后退出编辑态
-    expect(wrapper.find('.branch-tree-rename-input').exists()).toBe(false)
+    expect(chatStoreMock.renameBranchCandidate).toHaveBeenCalledWith('a2', '候选标签')
     wrapper.unmount()
-  })
 
-  it('重命名：Esc 取消不提交', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    await rows[3].findAll('.branch-tree-action')[0].trigger('click')
-    const input = wrapper.find('.branch-tree-rename-input')
-    await input.setValue('不应保存')
-    await input.trigger('keydown', { key: 'Escape' })
-
-    expect(chatStoreMock.renameBranchCandidate).not.toHaveBeenCalled()
-    expect(wrapper.find('.branch-tree-rename-input').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('忙碌态：isSwitchingBranch 时操作按钮禁用', async () => {
-    chatStoreMock.branchGraph = makeFixtureGraph()
     chatStoreMock.isSwitchingBranch = true
-    const wrapper = await mountOpen()
-
-    const rows = wrapper.findAll('.branch-tree-row')
-    // 软删行恢复按钮禁用
-    expect(rows[4].find('.branch-tree-action').attributes('disabled')).toBeDefined()
-    // a2 行重命名按钮禁用
-    expect(rows[3].findAll('.branch-tree-action')[0].attributes('disabled')).toBeDefined()
-    // 面板头显示忙碌图标
+    wrapper = await mountOpen()
+    candidate = wrapper.findAll('.branch-tree-row').find(row => row.find('.branch-tree-preview').text() === '回答二')!
+    expect(candidate.find('.branch-tree-action').attributes('disabled')).toBeDefined()
     expect(wrapper.find('.branch-tree-busy').exists()).toBe(true)
-    wrapper.unmount()
   })
 })

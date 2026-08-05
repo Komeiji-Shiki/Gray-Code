@@ -63,6 +63,20 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 释放指定旧流的退出信号（其 finally 已执行）。若该代就是当前链尾，一并移除记录防残留；
    * 不是链尾时只释放自身（链式 promise 会继续等待后续代）。
    */
+  private releaseIdleWaiters(conversationId: string): void {
+    const waiters = this.idleWaiters.get(conversationId);
+    if (!waiters) return;
+    this.idleWaiters.delete(conversationId);
+    for (const resolve of waiters) resolve();
+  }
+
+  private releaseAllRetiredExits(): void {
+    const resolvers = Array.from(this.retiredResolvers.values());
+    this.retiredResolvers.clear();
+    this.retiredExits.clear();
+    for (const resolve of resolvers) resolve();
+  }
+
   private releaseRetiredExit(conversationId: string, controller: AbortController): void {
     const resolver = this.retiredResolvers.get(controller);
     if (!resolver) return;
@@ -205,10 +219,11 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
     if (controller) {
       controller.abort();
-      this.controllers.delete(conversationId);
-      // 记录退出信号：旧流 finally 的 delete() 走引用不匹配分支时仍能释放，
-      // 供「停止后立即重发」的新流等待（H1 写序竞态）。
+      // 先登记退休链，再从活跃表移除并释放 waitForIdle 的当前代等待者。等待者醒来后会
+      // 继续检查 retiredExits，直到旧流 finally 真正释放该代信号，不会假报空闲。
       this.trackRetiredExit(conversationId, controller);
+      this.controllers.delete(conversationId);
+      this.releaseIdleWaiters(conversationId);
       cancelled = true;
     }
 
@@ -286,19 +301,24 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 已执行。后台任务回执若只看前端 isStreaming，会在这个窗口创建新流并中止旧流。
    * 本方法以控制器 Map 为唯一生命周期事实来源；空闲时立即返回，活跃时由 delete() 唤醒。
    */
-  waitForIdle(conversationId: string): Promise<void> {
-    if (!this.controllers.has(conversationId)) {
-      return Promise.resolve();
-    }
-
-    return new Promise(resolve => {
-      let waiters = this.idleWaiters.get(conversationId);
-      if (!waiters) {
-        waiters = new Set();
-        this.idleWaiters.set(conversationId, waiters);
+  async waitForIdle(conversationId: string): Promise<void> {
+    while (true) {
+      if (this.controllers.has(conversationId)) {
+        await new Promise<void>(resolve => {
+          let waiters = this.idleWaiters.get(conversationId);
+          if (!waiters) {
+            waiters = new Set();
+            this.idleWaiters.set(conversationId, waiters);
+          }
+          waiters.add(resolve);
+        });
+        continue;
       }
-      waiters.add(resolve);
-    });
+
+      const retired = this.retiredExits.get(conversationId);
+      if (!retired) return;
+      await retired.chain;
+    }
   }
 
   /**
@@ -351,13 +371,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     if (controller) {
       this.releaseRetiredExit(conversationId, controller);
     }
-    const waiters = this.idleWaiters.get(conversationId);
-    if (waiters) {
-      this.idleWaiters.delete(conversationId);
-      for (const resolve of waiters) {
-        resolve();
-      }
-    }
+    this.releaseIdleWaiters(conversationId);
   }
 
   /**
@@ -419,6 +433,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       }
     }
     this.controllers.clear();
+    // cancelAll 仅用于视图/扩展整体销毁，不会有后续写入；直接终结所有退休链，避免销毁等待者挂起。
+    this.releaseAllRetiredExits();
     for (const waiters of this.idleWaiters.values()) {
       for (const resolve of waiters) {
         resolve();
