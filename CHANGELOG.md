@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Changed
+  - 欢迎页「欢迎使用 GrayCode」图标从 codicon 对话气泡改为开屏动画同款的手绘 Gray logo：内联 SVG 静态完稿态（灰阶色块 + 细描边线稿，颜色变量与 Splash.vue 同源，亮/暗主题自适应）。
+
 ## [1.4.2] - 2026-08-06
 
 ### Fixed
