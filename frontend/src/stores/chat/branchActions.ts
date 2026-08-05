@@ -10,7 +10,8 @@
  *   → 分支图刷新（loadBranchGraph）；失败回滚 UI 状态
  * - deleteBranchCandidate：conversation.deleteBranchCandidate（软删除，仅非活跃候选，
  *   活跃路径不变）→ 刷新分支图
- * - buildCandidateGroupAt：从分支图推导「指定父节点下的候选组」（≥2 候选），供消息内联的 BranchSwitcherBar 使用
+ * - buildCandidateGroupAt：从分支图推导「指定父节点下的候选组」（≥2 候选）
+ * - buildCandidateGroupForNode：推导「消息节点所属的候选组」（切换器跟随活跃候选消息，而非父节点）
  *
  * 竞态防护（TREE-13）：
  * - 切换 / 删除前检查 isStreaming / isWaitingForResponse，命中写 BRANCH_BUSY 错误条并拒绝；
@@ -118,6 +119,37 @@ export function buildCandidateGroupAt(
     candidates,
     activeIndex
   }
+}
+
+/**
+ * 从分支图推导「消息节点所属的候选组」（BranchSwitcherBar 挂载语义，TREE-10）。
+ *
+ * 语义：切换器跟随当前活跃的候选消息显示——用户在哪条消息上重 roll / 编辑过分支，
+ * 切换器就在那条消息（重试后生成的新回答）旁，而不是挂在候选组的父节点上。
+ * 例如 user:1 → ai:2 → ai:3，重试 3 后候选组 {3, 3'} 挂在 2 下，切换器显示在
+ * 活跃候选 3'（即 3 的位置）上，而非 2 上。
+ *
+ * 给定消息节点 nodeId：
+ * - 若其父节点下有 ≥2 个非删除候选（候选组存在）；
+ * - 且 nodeId 是该组当前活跃成员（活跃路径经过它，主历史 UI 上可见的消息）；
+ * 则返回该组；否则返回 null（无图 / 节点缺失或软删 / 根节点 / 单候选 / 非活跃成员）。
+ *
+ * 非活跃成员不返回：旧候选不在主历史 UI 上（sidecar），不会渲染切换器；
+ * 活跃路径切换后图刷新，切换器自动跟随新的活跃候选。
+ */
+export function buildCandidateGroupForNode(
+  graph: BranchGraphData | null,
+  nodeId: string
+): BranchCandidateGroup | null {
+  if (!graph?.nodes || !nodeId) return null
+  const node = graph.nodes[nodeId]
+  if (!node || node.deleted || node.parentId === null) return null
+
+  const group = buildCandidateGroupAt(graph, node.parentId)
+  if (!group || group.activeIndex < 0) return null
+
+  const active = group.candidates[group.activeIndex]
+  return active && active.id === nodeId ? group : null
 }
 
 /**

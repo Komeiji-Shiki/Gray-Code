@@ -67,11 +67,16 @@ async function runEditBranchFlow(
     conversationId: string,
     newText: string,
     userNodeId?: string,
-): Promise<{ newUserNodeId: string; modelCandidateNodeId: string; parentNodeId: string }> {
+): Promise<{ newUserNodeId: string; modelCandidateNodeId: string; parentNodeId: string | null }> {
     const graphResult = await service.getBranchGraph(conversationId);
     const history = await manager.getMessagesRaw(conversationId);
     const target = resolveEditTargetNode(graphResult.graph, history, userNodeId);
 
+    // 测试复刻 branch 流程：根节点在 resolveEditTargetNode 已被拒绝（branch 模式），
+    // 此处的 parentNodeId 在运行时必非 null（类型上为 null 时拒绝编辑根节点）
+    if (target.parentNodeId === null) {
+        throw new Error('branch-mode edit of root node should have been rejected');
+    }
     const created = await service.editCandidate(conversationId, target.parentNodeId, {
         role: 'user',
         parts: [{ text: newText }],
@@ -302,8 +307,10 @@ describe('TREE-03 编辑用户消息分支（编排组合）', () => {
         expectBranchError(() => resolveEditTargetNode(graph, history, 'no-such-node'), 'NODE_NOT_FOUND');
         // 非 user（M2）→ INVALID_BRANCH_RELATION
         expectBranchError(() => resolveEditTargetNode(graph, history, m2), 'INVALID_BRANCH_RELATION', /not a user node/);
-        // 根节点 U1（无父节点可挂编辑候选）→ INVALID_BRANCH_RELATION
+        // 根节点 U1（无父节点可挂编辑候选）→ INVALID_BRANCH_RELATION（branch 模式）
         expectBranchError(() => resolveEditTargetNode(graph, history, u1), 'INVALID_BRANCH_RELATION', /root node/);
+        // keep 模式（原地改写）放行根节点：parentNodeId=null（不创建候选，不使用父节点）
+        expect(resolveEditTargetNode(graph, history, u1, 'keep')).toEqual({ nodeId: u1, parentNodeId: null });
 
         // 缺省：活跃路径最后一条可编辑用户消息 = U2
         expect(resolveEditTargetNode(graph, history)).toEqual({ nodeId: u2, parentNodeId: m1 });

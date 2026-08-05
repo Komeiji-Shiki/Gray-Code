@@ -1363,7 +1363,8 @@ export class ConversationManager {
         conversationId: string,
         role: 'user' | 'model' | 'system',
         parts: ContentPart[],
-        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source'>>
+        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source'>>,
+        messageId?: string,
     ): Promise<void> {
         // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，
         // 防止上一回合滞留的 agent→main / 用户打断消息跨轮过期投递。
@@ -1380,6 +1381,9 @@ export class ConversationManager {
             role,
             parts: JSON.parse(JSON.stringify(parts)),
             timestamp: Date.now(),  // 自动添加时间
+            // BR-01：前端发送时携带稳定节点 id（窗口消息 id 与后端落库 id 对齐，
+            // 编辑/重试/分支操作才能按 id 定位）；省略时由仓储委托补齐（ensureNodeId）。
+            ...(typeof messageId === 'string' && messageId.length > 0 ? { id: messageId } : {}),
             ...metadata  // 合并可选元数据
         } as Content);
     }
