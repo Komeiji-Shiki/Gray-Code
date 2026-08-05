@@ -10,6 +10,7 @@ import type { StreamChunk } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
 import { nextTick } from 'vue'
 import { bufferBackgroundChunk, updateTabStreamingStatus } from './tabActions'
+import { isPerfEnabled } from '../../utils/perf'
 
 import {
   handleChunkType,
@@ -315,8 +316,8 @@ export function handleStreamChunkBatch(
     skipChunksBefore = lastTerminalIndex
 
     // 诊断日志：记录被跳过的 chunk 事件信息，方便排查工具调用消失等问题
-    // 用循环计数代替 slice+filter 分配临时数组（终结 batch 每次都会走到这里）
-    if (typeof console !== 'undefined' && console.debug) {
+    // 用循环计数代替 slice+filter 分配临时数组（终结 batch 每次都会走到这里）；仅性能诊断开关开启时统计
+    if (isPerfEnabled()) {
       let skippedCount = 0
       let hasFunctionCall = false
       for (let k = 0; k < skipChunksBefore; k++) {

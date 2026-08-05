@@ -8,6 +8,18 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.7.0] - 2026-08-05
+
+### Merged
+  - 同步合入上游 49a37f2..10c565c（PR #11/#13：启动动画、TPS 实时可视化与流式平滑输出、上下文预算三层重构、diff 行级差分缓存、子代理 transcript 索引投影、fork 性能优化回移植）：详见根 `CHANGELOG.md` [1.7.0]；桌面版构建产物版本同步为 v1.7.0
+
+### Changed
+  - 工作区文件树 30s TTL 缓存（gitignore mtime 失效）、`getMetadataLight` 缓存命中改 `structuredClone`、HistorySegmentCache 字节估算改抽样、i18n 占位符正则缓存、ToolMessage 倒计时 50→200ms、Shell 可用性缓存 5 分钟 TTL、流式热路径诊断日志加性能开关（以上均为 backend/frontend 公共部分，详见根 `CHANGELOG.md` [1.7.0]）
+  - Electron 主进程/预加载脚本生产构建压缩（`minify: true`，关闭 sourcemap）：安装体积与启动解析时间下降
+
+### Fixed
+  - 移除无引用的运行时依赖 `@vscode/codicons` 与 `nanoid`（根 package.json，详见根 `CHANGELOG.md` [1.7.0]）
+
 ## [1.6.3] - 2026-08-05
 
 ### Merged

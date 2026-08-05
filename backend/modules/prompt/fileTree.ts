@@ -305,6 +305,13 @@ function treeToLines(nodes: FileTreeNode[], prefix: string = ''): string[] {
  * @returns 文件列表字符串，一行一个
  */
 function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES): string {
+    const cacheKey = getFileTreeCacheKey(workspacePath, maxDepth, customIgnorePatterns, nodeBudget);
+    const cached = fileTreeCache.get(cacheKey);
+    const gitignoreMtime = getGitignoreMtime(workspacePath);
+    if (cached && cached.expiresAt > Date.now() && cached.gitignoreMtime === gitignoreMtime) {
+        return cached.result;
+    }
+
     // 解析 .gitignore
     const gitignorePath = path.join(workspacePath, '.gitignore')
     const patterns = parseGitignore(gitignorePath)
@@ -319,7 +326,49 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
         lines.push(`... (file tree truncated: exceeded ${nodeBudget} nodes)`)
     }
     
-    return lines.join('\n')
+    const result = lines.join('\n')
+    fileTreeCache.set(cacheKey, { result, expiresAt: Date.now() + FILE_TREE_CACHE_TTL_MS, gitignoreMtime });
+    return result;
+}
+
+// ==================== 文件树 TTL 缓存 ====================
+// 工具循环中每轮请求都会重建整棵文件树（同步 readdirSync 递归，大工作区阻塞后端）。
+// getSystemPrompt 已有 60s 缓存，但 WORKSPACE_FILES 动态上下文不走该缓存；
+// 这里按 (workspacePath + maxDepth + 自定义忽略模式 + 节点预算) 键控加 30s TTL 缓存，
+// .gitignore 的 mtime 纳入每次命中的校验（改动即失效，其余文件改动接受 TTL 内的短时陈旧）。
+const FILE_TREE_CACHE_TTL_MS = 30_000;
+
+interface FileTreeCacheEntry {
+    result: string;
+    expiresAt: number;
+    gitignoreMtime: number | null;
+}
+
+const fileTreeCache = new Map<string, FileTreeCacheEntry>();
+
+function getFileTreeCacheKey(workspacePath: string, maxDepth: number, customIgnorePatterns: string[], nodeBudget: number): string {
+    return `${workspacePath}\u0000${maxDepth}\u0000${customIgnorePatterns.join('\u0001')}\u0000${nodeBudget}`;
+}
+
+function getGitignoreMtime(workspacePath: string): number | null {
+    try {
+        return fs.statSync(path.join(workspacePath, '.gitignore')).mtimeMs;
+    } catch {
+        return null;
+    }
+}
+
+/** 供测试/诊断清理文件树缓存（可选指定工作区路径，不传清空全部） */
+export function invalidateFileTreeCache(workspacePath?: string): void {
+    if (!workspacePath) {
+        fileTreeCache.clear();
+        return;
+    }
+    for (const key of fileTreeCache.keys()) {
+        if (key.startsWith(workspacePath + '\u0000')) {
+            fileTreeCache.delete(key);
+        }
+    }
 }
 
 /**

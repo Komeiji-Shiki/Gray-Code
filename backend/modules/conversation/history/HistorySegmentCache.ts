@@ -51,10 +51,20 @@ export class HistorySegmentCache {
         return `${conversationId}::${segmentFile}::${revision}`;
     }
 
-    /** 估算一段消息的字节数（JSON 序列化长度；失败时按 0 计，不阻塞缓存写入） */
+    /**
+     * 估算一段消息的字节数（抽样序列化长度，用于字节软上限；失败时按 0 计，不阻塞缓存写入）。
+     *
+     * 全量 JSON.stringify 会让缓存写入成本翻倍（段内可能含数十 MB 的超大工具结果），
+     * 这里按前 16 条消息采样按比例外推——长度软上限仅用于 LRU 淘汰优先级，无需精确。
+     */
     static estimateBytes(messages: ReadonlyArray<Content>): number {
+        if (messages.length === 0) return 0;
+        const SAMPLE_SIZE = 16;
+        const sample = messages.length <= SAMPLE_SIZE ? messages : messages.slice(0, SAMPLE_SIZE);
         try {
-            return JSON.stringify(messages).length;
+            const sampleBytes = JSON.stringify(sample).length;
+            if (messages.length <= SAMPLE_SIZE) return sampleBytes;
+            return Math.round((sampleBytes / sample.length) * messages.length);
         } catch {
             return 0;
         }

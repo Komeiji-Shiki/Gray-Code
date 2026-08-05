@@ -19,6 +19,19 @@ const messages: Record<string, LanguageMessages> = {
 // 导出 messages 对象供外部使用
 export { messages }
 
+// 参数占位符正则缓存：translate 在消息列表/工具卡渲染中是高频调用，
+// 每次都 new RegExp 有编译开销；按转义后的参数键缓存 RegExp 实例。
+const paramRegexCache = new Map<string, RegExp>()
+
+function getParamRegex(escapedKey: string): RegExp {
+    let regex = paramRegexCache.get(escapedKey)
+    if (!regex) {
+        regex = new RegExp(`\\{${escapedKey}\\}`, 'g')
+        paramRegexCache.set(escapedKey, regex)
+    }
+    return regex
+}
+
 /**
  * 把用户配置的语言解析为可用的语言包 key。
  * 'auto'（跟随系统）按浏览器语言解析，与核心 i18n 模块的解析规则保持一致。
@@ -66,7 +79,7 @@ export function translate(lang: string, key: string, params?: Record<string, any
     if (params) {
         return Object.keys(params).reduce((result, paramKey) => {
             const escapedKey = paramKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            return result.replace(new RegExp(`\\{${escapedKey}\\}`, 'g'), String(params[paramKey]))
+            return result.replace(getParamRegex(escapedKey), String(params[paramKey]))
         }, value)
     }
     

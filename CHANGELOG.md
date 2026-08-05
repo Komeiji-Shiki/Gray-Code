@@ -8,6 +8,24 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-05
+
+### Merged
+  - 同步上游 49a37f2..10c565c（PR #11/#13 等：启动动画 Splash、TPS 实时可视化与流式平滑输出（SmoothStreamer / smoothTexts / TpsBar）、上下文预算三层重构（`ContextBudgetExceededError` / `CONTEXT_OVERFLOW` 仅真实超窗抛出、模型窗口软/信封/硬边界、固定 prompt 计入预算、低收益总结跳过）、diff 工具行级差分缓存与批量加载并行化、子代理 transcript 索引投影与惰性加载（`lastSentHistoryProjection`）、run 终态落盘 flushRun、单会话停止不再取消全局未决 diff、对话删除检查点清理失败显式报错、上游回移植 fork 的 `getMetadataLight` 元数据缓存等性能优化），保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏 / 多工作区 / 独立版本号增量
+
+### Changed
+  - 工作区文件树按 (工作区 + 深度 + 自定义忽略模式 + 节点预算) 键控加 30s TTL 缓存：工具循环中每轮请求同步重建整棵目录树（`readdirSync` 全递归，最多 10000 节点）的磁盘 IO 与正则求值大幅减少；`.gitignore` 的 mtime 纳入每次命中校验（改动即失效重建），其余文件变更接受 TTL 内短时陈旧（与 `getSystemPrompt` 60s 缓存同级语义）；新增 `invalidateFileTreeCache` 供测试/诊断清理
+  - `getMetadataLight` 缓存命中返回从 `JSON.parse(JSON.stringify(...))` 深拷贝改为 `structuredClone`：对话列表分页（每页 30 条 × 16 并发）命中路径的序列化往返开销显著下降
+  - `HistorySegmentCache.estimateBytes` 从全量 `JSON.stringify` 改为前 16 条消息抽样按比例外推：段内可能含数十 MB 超大工具结果，缓存写入不再付出二次全量序列化成本（字节软上限仅用于 LRU 淘汰优先级，无需精确）
+  - 前端 i18n 参数替换的占位符正则按转义键缓存（`useI18n.translate` 在消息列表/工具卡渲染中高频调用，不再每次 `new RegExp`）
+  - ToolMessage 自动确认倒计时从 50ms tick 降频为 200ms：有 pending diff 时每秒响应式更新从 20 次降为 5 次（显示粒度 100ms 不变）
+  - Shell 可用性检测缓存加 5 分钟 TTL：运行期间新装 shell（如 WSL）不再需要重启才能被工具声明识别
+  - 流式热路径诊断日志（`handleToolsExecuting` / `handleToolIteration` / `handleComplete` / `handleStreamChunkBatch` 跳批统计）改由性能诊断开关（`localStorage.graycode.perf=1`）门控：默认关闭时不再执行模板字符串拼接与计数
+  - 生产构建压缩：根 esbuild 单次构建与 Electron 桌面构建 `minify: true` / 关闭 sourcemap（watch 模式保留原始形态）；主进程 bundle 体积与启动解析时间下降
+
+### Fixed
+  - 移除无引用的运行时依赖 `@vscode/codicons`（图标由 `resources/codicons` 内置 CSS/字体与 VS Code 宿主提供）与 `nanoid`（ID 生成实际走 `generateId`/`randomUUID`），锁文件同步后 npm audit 仍为 0 漏洞
+
 ## [1.6.3] - 2026-08-05
 
 ### Merged

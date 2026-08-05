@@ -20,6 +20,7 @@ import {
 import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, trimWindowFromTop } from './windowUtils'
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
+import { isPerfEnabled } from '../../utils/perf'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -407,9 +408,11 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
 
     const finalMessage = contentToPersistedMessage(chunk.content, message, state)
 
-    // 诊断日志
+    // 诊断日志（仅性能诊断开关开启时输出：每次终结 batch 都会执行，热路径下无谓拼接）
     const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
-    console.debug(`[handleToolsExecuting] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+    if (isPerfEnabled()) {
+      console.debug(`[handleToolsExecuting] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+    }
 
     // 合并 tools：以 finalMessage.tools 的顺序为基准，保留 existingTools 的运行态字段
     const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools) || []
@@ -784,9 +787,11 @@ export function handleToolIteration(
     
     const finalMessage = contentToPersistedMessage(chunk.content!, message, state)
     
-    // 诊断日志
+    // 诊断日志（仅性能诊断开关开启时输出）
     const fcCount = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
-    console.debug(`[handleToolIteration] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+    if (isPerfEnabled()) {
+      console.debug(`[handleToolIteration] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCount}`)
+    }
 
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
     if (finalMessage.metadata) {
@@ -1019,9 +1024,11 @@ export function handleComplete(
     
     const finalMessage = contentToPersistedMessage(chunk.content!, message, state)
     
-    // 诊断日志
+    // 诊断日志（仅性能诊断开关开启时输出）
     const fcCountComplete = finalMessage.parts?.filter(p => p.functionCall).length ?? 0
-    console.debug(`[handleComplete] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCountComplete}`)
+    if (isPerfEnabled()) {
+      console.debug(`[handleComplete] msgId=${message.id} existingTools=${existingTools?.length ?? 0} contentTools=${finalMessage.tools?.length ?? 0} fcParts=${fcCountComplete}`)
+    }
 
     // 恢复原有的 modelVersion
     if (existingModelVersion && finalMessage.metadata) {
