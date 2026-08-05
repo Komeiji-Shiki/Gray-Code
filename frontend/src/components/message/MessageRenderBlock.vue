@@ -287,6 +287,14 @@ onUnmounted(releaseThoughtDisplay)
 
 .thought-flow-content {
   min-height: 1lh;
+  /* 与 .thought-block 内 MarkdownRenderer 的字体规格保持一致（12px 灰斜体）：
+   * CharFlow 手动 DOM 不经过 Vue，但字体属性可继承，host 上对齐后
+   * 已提升的 md 段落与正在流式的尾巴不再有字号/颜色/字重跳变 */
+  font-size: var(--lim-md-font-size, 12px);
+  line-height: var(--lim-md-line-height, 1.5);
+  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  font-style: var(--lim-md-font-style, italic);
+  word-break: break-word;
 }
 
 .thought-block :deep(.thought-text p) {
