@@ -33,6 +33,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 外观设置：选中内容入口开关
   const selectionContextEnabled = ref(true)
+
+  // 外观设置：TPS 实时可视化条开关（隐藏后仍继续采样，重新开启立即恢复）
+  const tpsBarEnabled = ref(true)
   
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
@@ -91,6 +94,10 @@ export const useSettingsStore = defineStore('settings', () => {
   function setSelectionContextEnabled(enabled: boolean) {
     selectionContextEnabled.value = enabled
   }
+
+  function setTpsBarEnabled(enabled: boolean) {
+    tpsBarEnabled.value = enabled
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -106,6 +113,7 @@ export const useSettingsStore = defineStore('settings', () => {
     appearanceLoadingText,
     smoothStreaming,
     selectionContextEnabled,
+    tpsBarEnabled,
     promptModesVersion,
 
     // 方法
@@ -119,6 +127,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setAppearanceLoadingText,
     setSmoothStreaming,
     setSelectionContextEnabled,
+    setTpsBarEnabled,
     refreshPromptModes
   }
 })

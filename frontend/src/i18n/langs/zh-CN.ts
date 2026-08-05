@@ -2605,6 +2605,10 @@ const zhCN = {
                     balanced: '标准',
                     silky: '丝滑'
                 },
+                tpsBar: {
+                    title: 'TPS 实时可视化条',
+                    description: '在输入区底部显示实时 tokens/秒 曲线。隐藏后停止采样，重新开启后从当前流重新统计。'
+                },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },

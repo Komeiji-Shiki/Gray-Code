@@ -2604,6 +2604,10 @@ const ja: LanguageMessages = {
                     balanced: '標準',
                     silky: 'なめらか'
                 },
+                tpsBar: {
+                    title: 'TPS リアルタイム可視化バー',
+                    description: '入力エリア下部にリアルタイムのトークン/秒 曲線を表示します。非表示中はサンプリングを停止し、再度有効にすると現在のストリームから再集計します。'
+                },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'
             },

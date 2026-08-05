@@ -414,6 +414,7 @@ async function loadLanguageSettings() {
       const appearance = response.settings.ui.appearance
       settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
       settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
+      settingsStore.setTpsBarEnabled(appearance.tpsBarEnabled !== false)
     }
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
