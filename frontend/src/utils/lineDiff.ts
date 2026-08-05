@@ -31,10 +31,20 @@ interface Match {
 const DEFAULT_EDIT_DISTANCE_LIMIT = 768
 
 /**
+ * Myers 主循环的编辑距离预算上限：trace 逐层保存 frontier，内存为 O(limit²)。
+ * 调用方传入超大 editDistanceLimit 时钳制到此值，避免 trace 内存失控。
+ */
+const MAX_EDIT_DISTANCE_LIMIT = 4096
+
+/**
  * 按 (oldContent, newContent, 起始行, 预算) 缓存最近一次行级差分结果。
  * 字符串以值相等比较（JS 字符串不可区分引用，值相等即视为同一输入），
  * 返回同一结果对象引用：组件流式更新/重渲染时不再重复 Myers 计算，
  * 下游虚拟列表收到的 props 引用也保持稳定。
+ *
+ * 共享只读契约：命中缓存时返回的对象（含 result.lines 数组）为共享引用，
+ * 消费方不得 mutate（增删行/改字段都会污染缓存并影响其他消费方）；
+ * 需要修改时先复制（如 lines.slice() / 展开对象）。
  */
 const MAX_CACHE_ENTRIES = 32
 
@@ -106,11 +116,12 @@ function findMyersMatches(
   if (n === 0 || m === 0) return { matches: [], degraded: false }
 
   const { oldIds, newIds } = toLineIds(oldLines, newLines)
-  const limit = Math.min(n + m, editDistanceLimit)
+  // 预算同时受 n+m（距离上界）与调用方预算（含 MAX_EDIT_DISTANCE_LIMIT 钳制）约束
+  const limit = Math.min(n + m, editDistanceLimit, MAX_EDIT_DISTANCE_LIMIT)
   // 快速失败：新旧核心区域完全没有公共行时，最小编辑距离即 n+m（全部删除+全部插入）。
-  // 若 n+m 已超出预算，再跑 Myers 也必然耗尽预算（且结果与退化一致），直接跳过主循环；
+  // 先判 n+m > limit 再查公共行：无公共行扫描是 O(n+m) 全量操作，预算已超时无需先执行；
   // 预算充足（n+m <= limit）时仍需走 Myers 以得到 degraded=false 的精确结果。
-  if (!sharesAnyLine(oldIds, newIds) && n + m > limit) {
+  if (n + m > limit && !sharesAnyLine(oldIds, newIds)) {
     return { matches: [], degraded: true }
   }
   // 第 d 层的 frontier 只覆盖对角线 [-d, d]，按层动态分配大小 2d+3：
@@ -272,6 +283,10 @@ export function computeLineDiff(
 /**
  * 带缓存的 computeLineDiff：同一对内容重复计算时直接返回上一次的结果对象引用。
  * 适用于组件在流式结果更新/重渲染期间反复求值的场景（hunk 内容字符串引用不变即可命中）。
+ *
+ * 共享只读契约：返回的 LineDiffResult 及其 lines 数组为共享对象（命中缓存时同一引用），
+ * 消费方只读使用，不得 mutate；需要修改时先复制。缓存键中的预算同样受
+ * MAX_EDIT_DISTANCE_LIMIT 钳制，与 findMyersMatches 的实际执行预算保持一致。
  */
 export function computeLineDiffCached(
   oldContent: string,
@@ -280,7 +295,10 @@ export function computeLineDiffCached(
 ): LineDiffResult {
   const oldStartLine = options?.oldStartLine ?? 1
   const newStartLine = options?.newStartLine ?? oldStartLine
-  const editDistanceLimit = options?.editDistanceLimit ?? DEFAULT_EDIT_DISTANCE_LIMIT
+  const editDistanceLimit = Math.min(
+    options?.editDistanceLimit ?? DEFAULT_EDIT_DISTANCE_LIMIT,
+    MAX_EDIT_DISTANCE_LIMIT
+  )
 
   for (let i = 0; i < diffResultCache.length; i++) {
     const entry = diffResultCache[i]
@@ -320,6 +338,7 @@ export function computeLineDiffCached(
 
 /**
  * 清空行级差分缓存。用于会话切换/长时间运行后的主动释放（大文件 diff 的 lines 可达数万 entry）。
+ * 当前调用方：MessageList.vue 的 onBeforeUnmount（消息列表卸载即不再有 diff 面板消费方）。
  * 缓存本身有界（MAX_CACHE_ENTRIES），此函数只提供按需清空的入口，不影响自动淘汰语义。
  */
 export function clearLineDiffCache(): void {

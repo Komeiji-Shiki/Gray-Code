@@ -294,6 +294,7 @@ const zhCN = {
             pinnedFiles: '固定文件',
             skills: 'Skills',
             summarizeContext: '总结上下文',
+            tpsTooltip: 'TPS（tokens per second）',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',

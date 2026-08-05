@@ -9,6 +9,7 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
+import { clearAllSmoothForState } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
 
 /** 最大标签页数量 */
@@ -111,6 +112,8 @@ export function restoreSessionFromSnapshot(
  * 重置当前会话状态为空白
  */
 export function resetConversationState(state: ChatStoreState): void {
+  // H1：会话重置前清理所有平滑条目（销毁实例 + 删除显示文本），UI 切回真实 content
+  clearAllSmoothForState(state)
   state.currentConversationId.value = null
   state.allMessages.value = []
   state.windowStartIndex.value = 0
@@ -228,6 +231,9 @@ export function closeTab(
 
   // 如果关闭的是当前活跃标签页
   if (state.activeTabId.value === tabId) {
+    // H1：关闭活跃标签页时，后端 cancelled 会被 bufferBackgroundChunk 丢弃、前端收不到终结
+    // 事件——这里在切换前本地清理该会话的平滑显示层（真实内容已由后端持久化/取消保留）
+    clearAllSmoothForState(state)
     if (newTabs.length > 0) {
       // 切换到相邻标签页（优先右边，否则左边）
       const nextIndex = Math.min(tabIndex, newTabs.length - 1)
@@ -257,6 +263,10 @@ export function switchTab(
 ): void {
   const currentTabId = state.activeTabId.value
   if (currentTabId === targetTabId) return
+
+  // H1：切换标签页前清理当前会话的平滑条目——切走后该会话的 chunk 进入后台缓冲，
+  // 显示层实例不再被驱动；返回时由缓冲回放按真实文本基线重建（H3），不会跳变/残留。
+  clearAllSmoothForState(state)
 
   // 确认目标标签页存在
   const targetTab = state.openTabs.value.find(t => t.id === targetTabId)

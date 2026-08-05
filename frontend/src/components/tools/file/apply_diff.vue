@@ -337,9 +337,13 @@ const displayLinesByIndex = computed(() => {
     displayLinesCache.set(index, { expanded: isExpandedFlag, source, lines })
     map.set(index, lines)
   })
-  // 清理已消失的 index（renderedDiffList 缩短时）
+  // 清理已消失的 index（renderedDiffList 缩短时）；同步修剪展开集合，
+  // 避免按 index 残留的展开标记在列表重新变长时让“新块默认展开”（A-L4）
   for (const key of Array.from(displayLinesCache.keys())) {
-    if (key >= renderedDiffList.value.length) displayLinesCache.delete(key)
+    if (key >= renderedDiffList.value.length) {
+      displayLinesCache.delete(key)
+      expanded.value.delete(key)
+    }
   }
   return map
 })

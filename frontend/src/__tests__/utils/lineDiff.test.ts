@@ -88,6 +88,34 @@ describe('computeLineDiff', () => {
     expect(result.added).toBe(1)
   })
 
+  it('does not fast-fail when n + m exactly equals the budget', () => {
+    // 边界：n+m === limit 不满足快速失败条件（n+m > limit），走 Myers 得到精确结果。
+    // 若误判为“超出预算”会错误退化，且输出与精确结果不一致。
+    const result = computeLineDiff('a\nb', 'c\nd', { editDistanceLimit: 4 })
+    expect(result.degraded).toBe(false)
+    expect(result.deleted).toBe(2)
+    expect(result.added).toBe(2)
+    expect(result.lines).toEqual([
+      { type: 'deleted', content: 'a', oldLineNum: 1 },
+      { type: 'deleted', content: 'b', oldLineNum: 2 },
+      { type: 'added', content: 'c', newLineNum: 1 },
+      { type: 'added', content: 'd', newLineNum: 2 }
+    ])
+  })
+
+  it('clamps an oversized edit distance limit to bound trace memory', () => {
+    // 核心无公共行且 n+m 与 editDistanceLimit 都很大：若未钳制，limit = min(n+m, 100000) = 4200，
+    // 不满足快速失败条件（n+m > limit 为假），Myers 会跑完并找到精确距离（degraded=false）。
+    // 钳制后 limit = 4096，n+m=4200 > 4096 触发快速失败退化——观测结果证明钳制生效。
+    const coreOld = ['shared', ...Array.from({ length: 2100 }, (_, i) => `o-${i}`)]
+    const coreNew = ['shared', ...Array.from({ length: 2100 }, (_, i) => `n-${i}`)]
+    const result = computeLineDiff(coreOld.join('\n'), coreNew.join('\n'), { editDistanceLimit: 100000 })
+
+    expect(result.degraded).toBe(true)
+    expect(result.deleted).toBe(2100)
+    expect(result.added).toBe(2100)
+  })
+
   it('fast-fail output matches the exhausted-budget fallback', () => {
     // 无公共行且超预算（快速失败）与有小公共行但距离超预算（预算耗尽退化）的输出语义一致：
     // 均为整段核心标记为删除 + 新增，无 unchanged 行混入
@@ -117,6 +145,37 @@ describe('computeLineDiffCached', () => {
     const first = computeLineDiffCached(oldContent, newContent)
     const second = computeLineDiffCached(oldContent, newContent)
     expect(second).toBe(first)
+  })
+
+  it('enforces the shared read-only contract: same reference and stable content across calls', () => {
+    // 契约守卫（A-M3）：命中缓存返回同一引用（结果对象与其 lines 数组均共享），
+    // 且在不 mutate 的前提下多次调用内容稳定。消费方不得修改共享对象。
+    const oldContent = ['alpha', 'beta', 'gamma', 'delta'].join('\n')
+    const newContent = ['alpha', 'delta', 'gamma', 'omega'].join('\n')
+
+    const first = computeLineDiffCached(oldContent, newContent)
+    const second = computeLineDiffCached(oldContent, newContent)
+    expect(second).toBe(first)
+    expect(second.lines).toBe(first.lines)
+    expect(second.added).toBe(first.added)
+    expect(second.deleted).toBe(first.deleted)
+    expect(second.degraded).toBe(first.degraded)
+
+    // 快照（复制）后再查询：共享对象未被污染，内容保持一致
+    const snapshot = first.lines.map(line => ({ ...line }))
+    const third = computeLineDiffCached(oldContent, newContent)
+    expect(third).toBe(first)
+    expect(third.lines).toEqual(snapshot)
+    expect(third.lines).toEqual(first.lines)
+  })
+
+  it('normalizes oversized edit distance limits in the cache key', () => {
+    // 钳制后的预算参与缓存键：传入超限预算与钳制预算应命中同一结果（引用一致）
+    const oldContent = ['alpha', 'beta'].join('\n')
+    const newContent = ['alpha', 'gamma'].join('\n')
+    const clamped = computeLineDiffCached(oldContent, newContent, { editDistanceLimit: 100000 })
+    const capped = computeLineDiffCached(oldContent, newContent, { editDistanceLimit: 4096 })
+    expect(capped).toBe(clamped)
   })
 
   it('honors start line / edit distance in the cache key', () => {

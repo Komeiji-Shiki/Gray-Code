@@ -109,6 +109,12 @@ const containerRef = ref<HTMLElement | null>(null)
 // 代码块换行状态（同一条消息内尽量保持；key 为 data-block-id）
 const codeWrapOverrides = new Map<string, boolean>() // true => nowrap
 
+// 流式期间“超高”代码块（自然高度超过折叠阈值，流式结束恢复 max-height 后会塌缩）：
+// 结束/中断时为这些块保留展开态（keep-expanded），避免布局跳动丢失阅读位置；
+// 用户点击换行按钮或滚动离开该块后恢复正常高度限制。
+const CODE_BLOCK_COLLAPSE_HEIGHT = 400
+const streamingOverHeightBlockIds = new Set<string>()
+
 // 复制按钮状态计时器存储
 const copyTimers = new Map<HTMLButtonElement, number>()
 
@@ -1007,6 +1013,10 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
 // 渲染结果（用 shallowRef 而不是 computed，便于在流式阶段节流，且保持已完成消息的 HTML 引用稳定）
 const renderedContent = shallowRef('')
 
+// 流式类的“滞后副本”：isStreaming 变 false 时先保留 is-streaming 类，
+// 等完成态渲染把 keep-expanded 应用到超高块后再解除，使过渡原子化（无塌缩跳变）。
+const isStreamingClassActive = ref(props.isStreaming)
+
 const STREAM_RENDER_DEBOUNCE_MS = 120
 const STREAM_RENDER_MAX_WAIT_MS = 180
 /**
@@ -1156,6 +1166,11 @@ function scheduleRender() {
   clearRenderTimer()
 
   if (props.isStreaming) {
+    // 新流开始：激活流式类并清空上一轮的展开态记录（超高块会在每次渲染后重新测量记录）
+    if (!isStreamingClassActive.value) {
+      isStreamingClassActive.value = true
+      streamingOverHeightBlockIds.clear()
+    }
     const now = Date.now()
     const shouldRenderLeading = !!props.content && renderedContent.value === ''
     const shouldRenderByMaxWait = !!props.content && now - lastStreamingRenderAt >= STREAM_RENDER_MAX_WAIT_MS
@@ -1239,17 +1254,32 @@ function scheduleRender() {
 }
 
 /**
- * 回填代码块的换行状态与按钮提示
+ * 回填代码块的换行状态与按钮提示；同时维护流式保留展开态（B-M1）：
+ * - 流式期间/收尾窗口（is-streaming 类尚未解除，pre 仍为自然高度）测量并记录超高块；
+ * - 非流式时按记录恢复 keep-expanded（is-streaming 类负责流式期间的放开）；
+ * - 收尾窗口记录完毕后解除流式类，使过渡原子化。
  */
 function applyCodeBlockWrapStates() {
   if (!containerRef.value) return
 
   const blocks = containerRef.value.querySelectorAll<HTMLElement>('.code-block-container[data-block-id]')
+  // 记录窗口：流式期间，或“流式类尚未解除”的收尾窗口（此时 pre 仍为自然高度，可测 scrollHeight）
+  const recording = props.isStreaming || isStreamingClassActive.value
+
   blocks.forEach((block) => {
     const blockId = block.getAttribute('data-block-id') || ''
     const isNoWrap = codeWrapOverrides.get(blockId) === true
 
     block.classList.toggle('is-nowrap', isNoWrap)
+
+    if (recording) {
+      const pre = block.querySelector<HTMLElement>('pre.code-block-wrapper')
+      if (pre && pre.scrollHeight > CODE_BLOCK_COLLAPSE_HEIGHT) {
+        streamingOverHeightBlockIds.add(blockId)
+      }
+    }
+    // 非流式时按记录恢复展开态（流式期间由 is-streaming 类放开高度，无需 keep-expanded）
+    block.classList.toggle('keep-expanded', !props.isStreaming && streamingOverHeightBlockIds.has(blockId))
 
     const wrapBtn = block.querySelector<HTMLButtonElement>('.code-wrap-btn')
     if (wrapBtn) {
@@ -1261,6 +1291,59 @@ function applyCodeBlockWrapStates() {
       wrapBtn.setAttribute('aria-pressed', String(isNoWrap))
     }
   })
+
+  // 流式结束：keep-expanded 已就位后解除流式类（过渡原子化，无塌缩跳变）
+  if (!props.isStreaming && isStreamingClassActive.value) {
+    isStreamingClassActive.value = false
+  }
+
+  // 用户滚动离开后恢复正常高度限制（IntersectionObserver 观察 keep-expanded 块）
+  observeKeepExpandedBlocks(blocks)
+}
+
+let keepExpandedObserver: IntersectionObserver | null = null
+const keepExpandedObservedBlocks = new Set<HTMLElement>()
+
+/**
+ * 释放某个代码块的流式保留展开态：恢复正常高度限制并停止观察。
+ * 触发时机：用户点击换行按钮，或该块滚动离开视口（IntersectionObserver）。
+ */
+function releaseKeepExpandedBlock(block: HTMLElement, blockId: string) {
+  streamingOverHeightBlockIds.delete(blockId)
+  block.classList.remove('keep-expanded')
+  keepExpandedObserver?.unobserve(block)
+  keepExpandedObservedBlocks.delete(block)
+}
+
+/** 观察 keep-expanded 块：一旦滚出视口即恢复正常高度限制 */
+function observeKeepExpandedBlocks(blocks: NodeListOf<HTMLElement>) {
+  // jsdom 等无 IntersectionObserver 的环境直接跳过（保留展开态直到用户点击换行按钮）
+  if (typeof IntersectionObserver === 'undefined') return
+
+  // 修剪已从 DOM 移除的观察目标（v-html 重建后旧元素失效）
+  for (const block of Array.from(keepExpandedObservedBlocks)) {
+    if (!block.isConnected) {
+      keepExpandedObserver?.unobserve(block)
+      keepExpandedObservedBlocks.delete(block)
+    }
+  }
+
+  if (!keepExpandedObserver) {
+    keepExpandedObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) continue
+        const block = entry.target as HTMLElement
+        releaseKeepExpandedBlock(block, block.getAttribute('data-block-id') || '')
+      }
+    })
+  }
+
+  for (const block of blocks) {
+    if (!block.classList.contains('keep-expanded')) continue
+    if (keepExpandedObservedBlocks.has(block)) continue
+    keepExpandedObservedBlocks.add(block)
+    keepExpandedObserver.observe(block)
+  }
 }
 
 /**
@@ -1283,6 +1366,9 @@ function handleCodeToolbarClick(event: Event) {
     } else {
       codeWrapOverrides.set(blockId, true)
     }
+
+    // 手动点击换行按钮视为用户已接管该块的展示：清除流式保留展开态，恢复正常高度限制（B-M1）
+    releaseKeepExpandedBlock(block, blockId)
 
     applyCodeBlockWrapStates()
     return
@@ -1556,11 +1642,14 @@ onUnmounted(()=> {
     window.clearTimeout(timer)
   })
   copyTimers.clear()
+  keepExpandedObserver?.disconnect()
+  keepExpandedObserver = null
+  keepExpandedObservedBlocks.clear()
 })
 </script>
 
 <template>
-  <div ref="containerRef" class="markdown-content" :class="{ 'is-streaming': isStreaming }" v-html="renderedContent"></div>
+  <div ref="containerRef" class="markdown-content" :class="{ 'is-streaming': isStreamingClassActive }" v-html="renderedContent"></div>
 
   <!-- 沉浸式全屏查看 -->
   <Teleport to="body">
@@ -1848,17 +1937,28 @@ onUnmounted(()=> {
   scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4)) transparent;
 }
 
-.markdown-content :deep(.code-block-container.is-nowrap pre.code-block-wrapper) {
-  overflow-x: auto; /* 不换行时开启横向滚动 */
-}
-
 /* 流式期间长代码块不限制高度（自然展开，用户跟随输出阅读）：
  * v-html 每次内容更新会整体重建 DOM，pre.code-block-wrapper 作为内部滚动容器会被销毁重建，
  * scrollTop 因此被重置为 0——流式输出中长代码块一旦出现滚动条就无法滚动。
- * 流式期间去掉 max-height 让代码块随输出自然增高；流式结束后移除 is-streaming 类、恢复 max-height 限制与内部滚动。 */
+ * 流式期间去掉 max-height 让代码块随输出自然增高。
+ * 注意：这里用 overflow: visible（同时声明两轴）。若只声明 overflow-y: visible，
+ * 与基础规则的 overflow-x: hidden 并存时，计算值会变成 overflow-y: auto（声明无效）；
+ * 换行开关（.is-nowrap 的 overflow-x: auto）在本规则之后声明，同优先级按源码顺序覆盖生效。 */
 .markdown-content.is-streaming :deep(.code-block-container pre.code-block-wrapper) {
   max-height: none;
-  overflow-y: visible;
+  overflow: visible;
+}
+
+.markdown-content :deep(.code-block-container.is-nowrap pre.code-block-wrapper) {
+  /* 不换行时开启横向滚动（置于流式规则之后：同优先级按源码顺序覆盖其 overflow-x） */
+  overflow-x: auto;
+}
+
+/* 流式结束/中断：对“流式期间超高”的代码块保留展开态（keep-expanded），
+ * 避免 is-streaming 类移除瞬间高度从自然高度塌缩回 400px、视口上移丢失阅读位置；
+ * 用户点击换行按钮或滚动离开该块后恢复正常限制（见 applyCodeBlockWrapStates）。 */
+.markdown-content :deep(.code-block-container.keep-expanded pre.code-block-wrapper) {
+  max-height: none;
 }
 
 /* 代码块内的 code */
