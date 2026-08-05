@@ -156,7 +156,10 @@ export class SummarizeService {
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         try {
             const { conversationId, configId } = request;
-            this.log.info('manual.start', { conversationId, configId });
+            const currentModelOverride = typeof request.modelOverride === 'string'
+                ? request.modelOverride.trim() || undefined
+                : undefined;
+            this.log.info('manual.start', { conversationId, configId, modelOverride: currentModelOverride || null });
 
             // 从设置中读取总结配置
             let configKeepRecentRounds = 2;  // 默认值
@@ -190,15 +193,15 @@ export class SummarizeService {
 
             // 2. 确定使用的渠道配置
             let actualConfigId = configId;
-            let actualModelId: string | undefined;
+            let actualModelId: string | undefined = currentModelOverride;
 
             if (useSeparateModel && summarizeChannelId) {
                 const summarizeConfig = await this.configManager.getConfig(summarizeChannelId);
                 if (summarizeConfig && summarizeConfig.enabled) {
                     actualConfigId = summarizeChannelId;
-                    if (summarizeModelId) {
-                        actualModelId = summarizeModelId;
-                    }
+                    // 已切换到独立渠道后，不得继续沿用主对话的 modelOverride；
+                    // 未显式选择总结模型时应回落到独立渠道自己的默认模型。
+                    actualModelId = summarizeModelId.trim() || undefined;
                     this.log.info('manual.dedicated_model', { channelId: summarizeChannelId, modelId: summarizeModelId || 'default' });
                 } else {
                     this.log.warn('manual.dedicated_channel_unavailable', { channelId: summarizeChannelId });
@@ -605,10 +608,14 @@ export class SummarizeService {
     async handleAutoSummarize(
         conversationId: string,
         configId: string,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        modelOverride?: string
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         try {
-            this.log.info('auto.start', { conversationId, configId });
+            const currentModelOverride = typeof modelOverride === 'string'
+                ? modelOverride.trim() || undefined
+                : undefined;
+            this.log.info('auto.start', { conversationId, configId, modelOverride: currentModelOverride || null });
 
             // 从设置中读取总结配置
             let keepRecentRounds = 2;
@@ -641,15 +648,13 @@ export class SummarizeService {
 
             // 1. 确定使用的渠道配置
             let actualConfigId = configId;
-            let actualModelId: string | undefined;
+            let actualModelId: string | undefined = currentModelOverride;
 
             if (useSeparateModel && summarizeChannelId) {
                 const summarizeConfig = await this.configManager.getConfig(summarizeChannelId);
                 if (summarizeConfig && summarizeConfig.enabled) {
                     actualConfigId = summarizeChannelId;
-                    if (summarizeModelId) {
-                        actualModelId = summarizeModelId;
-                    }
+                    actualModelId = summarizeModelId.trim() || undefined;
                     this.log.info('auto.dedicated_model', { channelId: summarizeChannelId, modelId: summarizeModelId || 'default' });
                 } else {
                     this.log.warn('auto.dedicated_channel_unavailable', { channelId: summarizeChannelId });

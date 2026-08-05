@@ -35,7 +35,7 @@ export interface ContextTrimInfo {
         enabled: boolean;
         mode: 'off' | 'trim' | 'summarize';
         source: 'explicit' | 'legacy';
-        action: 'disabled' | 'not_needed' | 'saved_state_reused' | 'turn_state_reused' | 'trim_applied' | 'auto_summarize_needed' | 'fallback_trim_applied' | 'fallback_stable_start_reused';
+        action: 'disabled' | 'manual_summary_applied' | 'not_needed' | 'saved_state_reused' | 'turn_state_reused' | 'trim_applied' | 'auto_summarize_needed' | 'fallback_trim_applied' | 'fallback_stable_start_reused';
     };
 }
 

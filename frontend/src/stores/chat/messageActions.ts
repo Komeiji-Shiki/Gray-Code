@@ -1463,7 +1463,8 @@ export async function summarizeContext(
       error?: { code: string; message: string }
     }>('summarizeContext', {
       conversationId: originConversationId,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride: resolveConversationModelOverride(state)
     })
 
     if (result.success && result.summaryContent) {
