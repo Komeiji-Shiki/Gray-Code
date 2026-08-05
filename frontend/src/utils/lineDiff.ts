@@ -318,6 +318,14 @@ export function computeLineDiffCached(
   return result
 }
 
+/**
+ * 清空行级差分缓存。用于会话切换/长时间运行后的主动释放（大文件 diff 的 lines 可达数万 entry）。
+ * 缓存本身有界（MAX_CACHE_ENTRIES），此函数只提供按需清空的入口，不影响自动淘汰语义。
+ */
+export function clearLineDiffCache(): void {
+  diffResultCache.length = 0
+}
+
 export function formatDiffLineNumber(value: number | undefined, width: number): string {
   return value === undefined ? ' '.repeat(width) : String(value).padStart(width)
 }

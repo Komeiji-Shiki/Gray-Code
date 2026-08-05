@@ -1560,7 +1560,7 @@ onUnmounted(()=> {
 </script>
 
 <template>
-  <div ref="containerRef" class="markdown-content" v-html="renderedContent"></div>
+  <div ref="containerRef" class="markdown-content" :class="{ 'is-streaming': isStreaming }" v-html="renderedContent"></div>
 
   <!-- 沉浸式全屏查看 -->
   <Teleport to="body">
@@ -1850,6 +1850,15 @@ onUnmounted(()=> {
 
 .markdown-content :deep(.code-block-container.is-nowrap pre.code-block-wrapper) {
   overflow-x: auto; /* 不换行时开启横向滚动 */
+}
+
+/* 流式期间长代码块不限制高度（自然展开，用户跟随输出阅读）：
+ * v-html 每次内容更新会整体重建 DOM，pre.code-block-wrapper 作为内部滚动容器会被销毁重建，
+ * scrollTop 因此被重置为 0——流式输出中长代码块一旦出现滚动条就无法滚动。
+ * 流式期间去掉 max-height 让代码块随输出自然增高；流式结束后移除 is-streaming 类、恢复 max-height 限制与内部滚动。 */
+.markdown-content.is-streaming :deep(.code-block-container pre.code-block-wrapper) {
+  max-height: none;
+  overflow-y: visible;
 }
 
 /* 代码块内的 code */

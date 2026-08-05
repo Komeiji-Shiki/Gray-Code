@@ -360,13 +360,11 @@ watchEffect(() => {
 let lastPendingDiffsKey = ''
 const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: any) => {
   const pendingDiffs: any[] = Array.isArray(data?.pendingDiffs) ? data.pendingDiffs : []
-  const payloadKey = JSON.stringify(pendingDiffs.map((d: any) => [
-    d.id,
-    d.toolId,
-    d.filePath,
-    d.diffGuardWarning,
-    d.diffGuardDeletePercent
-  ]))
+  // 轻量去重键：字段值拼接（\u0000 分隔字段、| 分隔条目），避免 JSON.stringify 序列化开销；
+  // 业务字段（id/toolId/filePath/warning/percent）不含这两个分隔符，语义与 JSON 键等价。
+  const payloadKey = pendingDiffs
+    .map((d: any) => [d.id, d.toolId, d.filePath, d.diffGuardWarning, d.diffGuardDeletePercent].join('\u0000'))
+    .join('|')
   if (payloadKey === lastPendingDiffsKey) {
     return
   }

@@ -127,6 +127,10 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
+// 平滑流式显示层：当前消息正在流出的段落（最后一个 text/thought part）的平滑文本。
+// 流式期间存在（含空字符串占位，表示新段落从 0 开始打字），终结后由 store 删除。
+const smoothText = computed<string | undefined>(() => chatStore.smoothTexts.get(props.message.id))
+
 
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
@@ -337,6 +341,20 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushThought()
   flushText()
   flushTools()
+
+  // 平滑流式显示：流式期间用显示层文本替换最后一个文本/思考块（当前正在流出的段落）。
+  // smoothText 为 undefined（未开启/已终结）时保持真实 parts 文本；
+  // 为空字符串表示新段落刚开始打字，首帧从空开始避免跳变。
+  const smooth = smoothText.value
+  if (smooth !== undefined && isStreaming.value) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i]
+      if (b.type === 'text' || b.type === 'thought') {
+        blocks[i] = { ...b, text: smooth }
+        break
+      }
+    }
+  }
 
   // 引用稳定化：复用上一次内容相同的 text/thought block 的对象引用，
   // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染

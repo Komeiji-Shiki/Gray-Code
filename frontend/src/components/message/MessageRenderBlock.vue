@@ -64,6 +64,7 @@ defineProps<{
       <MarkdownRenderer
         :content="block.text || ''"
         :latex-only="false"
+        :is-streaming="isStreaming"
         class="thought-text"
       />
     </div>
