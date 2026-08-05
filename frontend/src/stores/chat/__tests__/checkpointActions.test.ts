@@ -547,7 +547,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 
@@ -580,7 +580,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 
@@ -635,7 +635,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 
