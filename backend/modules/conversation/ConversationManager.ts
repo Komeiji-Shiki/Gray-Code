@@ -1441,7 +1441,9 @@ export class ConversationManager {
 
     /**
      * 获取对话历史的引用（用于直接发送给 API）
-     * 注意: 每次调用都从存储读取最新数据
+     * 注意: 命中 historyCache 时返回缓存数组引用（非深拷贝）；写路径统一失效缓存，
+     * 返回的一定是「最近一次写盘后的形态」。调用方必须保持只读纪律：
+     * 需要原地修改（如总结预剪裁）时先自行浅拷贝，避免污染缓存。
      */
     async getHistoryRef(conversationId: string): Promise<ConversationHistory> {
         return await this.loadHistory(conversationId);
@@ -2893,6 +2895,10 @@ export class ConversationManager {
         if (integrityStatus) {
             fallback.integrityStatus = integrityStatus;
         }
+        // 回填 metaCache：损坏降级（backupCorruptMetadata 改名后 getMetadataLight 曾负缓存 null）
+        // 或元数据缺失场景下，getMetadataLight / getCustomMetadata 后续直接读到重建结果，
+        // 不再重复走磁盘，也不因陈旧负缓存而让对话列表标题/时间戳持续缺失。
+        this.cacheMetadata(conversationId, fallback);
         return fallback;
     }
 
@@ -3214,10 +3220,13 @@ export class ConversationManager {
      * 与 getMetadataLight 相同的降级语义：meta.json 损坏（parse_error）/读失败（io_error）时
      * 不向调用方抛错，返回 undefined（调用方按缺失处理），避免 todo/checkpoints/trimState 等
      * 工具侧因元数据损坏整体中断。
+     *
+     * 走 metaCache（命中免磁盘 IO）：trimState/todoList/pinnedFiles/skills/subAgentRuns 等
+     * 键在工具迭代热路径每轮读取多次，此前每次都是整份 meta.json 的磁盘读 + JSON parse。
      */
     async getCustomMetadata(conversationId: string, key: string): Promise<unknown> {
-        const result = await this.storage.loadMetadataWithStatus(conversationId);
-        return result.value?.custom?.[key];
+        const meta = await this.getMetadataLight(conversationId);
+        return meta?.custom?.[key];
     }
 
     // ==================== 工具调用管理 ====================

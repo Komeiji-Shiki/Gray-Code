@@ -11,6 +11,9 @@ import type { Content } from '../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
 import { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 import type { ToolProgressEvent } from '../types';
+import { Logger } from '../../core/logger';
+
+const logger = Logger.get('SubAgentRunEventBus');
 
 export const SUBAGENT_RUNS_METADATA_KEY = 'subAgentRuns';
 
@@ -127,6 +130,8 @@ export interface SubAgentRunContentWindowOptions {
 export interface SubAgentRunConversationStore {
     getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
     setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    /** 可选原子读改写（ConversationManager 提供）；缺失时 flushPersist 回退到 get+set 读改写 */
+    updateCustomMetadata?(conversationId: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>): Promise<unknown>;
     saveSubAgentTranscript?(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string>;
     loadSubAgentTranscript?(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null>;
     deleteSubAgentTranscript?(conversationId: string, runId: string): Promise<void>;
@@ -1051,63 +1056,80 @@ export class SubAgentRunEventBus {
         }
         this.pendingPersists.add(runId);
 
-        // 修改原因：持久化队列原按 runId 串行，但「读整份 metadata → 改一条 → 写回整份」的读改写
-        //          作用于 conversation 级文档；同一会话并行运行的多个 run 并发读改写时，后写者会
-        //          覆盖先写者写入的对方 run 记录，导致 transcript 丢失。
-        // 修改方式：队列改为按 conversationId 串行——同一会话的落盘排队执行，后一个写入总是基于
-        //          前一个写入完成后的盘面重新读取合并；pendingPersists 仍按 runId 合并同一 run 的
-        //          连续请求，不同会话之间互不阻塞。
-        // 修改目的：同一会话两个 run 并发 flush 不再互相覆盖，同时保持原有节流与合并时序。
-        const conversationId = snapshot.conversationId;
-        const previous = this.persistQueues.get(conversationId) || Promise.resolve();
-        const next = previous
-            .catch(() => undefined)
-            .then(async () => {
-                // 进入真正写入前清除脏标记：写入期间发生的新变更会重新排队一次后续写入
-                this.pendingPersists.delete(runId);
-                const terminal = TERMINAL_RUN_STATUSES.has(snapshot.status);
-                const transcriptData: SubAgentTranscriptData = {
-                    contents: snapshot.contents,
-                    ...(Array.isArray(snapshot.lastSentHistory)
-                        ? (terminal
-                            ? { lastSentHistoryProjection: buildLastSentHistoryProjection(snapshot.contents, snapshot.lastSentHistory) }
-                            : { lastSentHistory: snapshot.lastSentHistory })
-                        : {})
-                };
-                const transcriptRef = store.saveSubAgentTranscript
-                    ? await store.saveSubAgentTranscript(conversationId, runId, transcriptData)
-                    : undefined;
-                const raw = await store.getCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY);
-                const persistedMap = normalizePersistedMap(raw);
-                ensureSnapshotProtocolFields(snapshot);
-                const record: SubAgentRunPersistedRecord = {
-                    runId: snapshot.runId,
-                    agentName: snapshot.agentName,
-                    status: snapshot.status,
-                    createdAt: snapshot.createdAt,
-                    updatedAt: snapshot.updatedAt,
-                    contentCount: snapshot.contents.length,
-                    contentRevision: snapshot.contentRevision,
-                    eventSequence: snapshot.eventSequence,
-                    preview: extractContentPreview(snapshot.contents[snapshot.contents.length - 1]),
-                    lastMessageRole: snapshot.contents[snapshot.contents.length - 1]?.role,
-                    ...(transcriptRef
-                        ? { transcriptRef }
-                        : {
+                // 修改原因：持久化队列原按 runId 串行，但「读整份 metadata → 改一条 → 写回整份」的读改写
+                //          作用于 conversation 级文档；同一会话并行运行的多个 run 并发读改写时，后写者会
+                //          覆盖先写者写入的对方 run 记录，导致 transcript 丢失。
+                // 修改方式：队列改为按 conversationId 串行——同一会话的落盘排队执行，后一个写入总是基于
+                //          前一个写入完成后的盘面重新读取合并；pendingPersists 仍按 runId 合并同一 run 的
+                //          连续请求，不同会话之间互不阻塞。
+                // 修改目的：同一会话两个 run 并发 flush 不再互相覆盖，同时保持原有节流与合并时序。
+                // PERF：记录构造与「读整份 subAgentRuns map → 插入 → 写回」合并为单次原子
+                // updateCustomMetadata（链内读改写），不再先 getCustomMetadata 全量读盘再写链内重读。
+                const conversationId = snapshot.conversationId;
+                const previous = this.persistQueues.get(conversationId) || Promise.resolve();
+                const next = previous
+                    .catch(() => undefined)
+                    .then(async () => {
+                        // 进入真正写入前清除脏标记：写入期间发生的新变更会重新排队一次后续写入
+                        this.pendingPersists.delete(runId);
+                        const terminal = TERMINAL_RUN_STATUSES.has(snapshot.status);
+                        const transcriptData: SubAgentTranscriptData = {
                             contents: snapshot.contents,
-                            ...(Array.isArray(snapshot.lastSentHistory) ? { lastSentHistory: snapshot.lastSentHistory } : {})
-                        })
-                };
-                persistedMap[runId] = record;
+                            ...(Array.isArray(snapshot.lastSentHistory)
+                                ? (terminal
+                                    ? { lastSentHistoryProjection: buildLastSentHistoryProjection(snapshot.contents, snapshot.lastSentHistory) }
+                                    : { lastSentHistory: snapshot.lastSentHistory })
+                                : {})
+                        };
+                        const transcriptRef = store.saveSubAgentTranscript
+                            ? await store.saveSubAgentTranscript(conversationId, runId, transcriptData)
+                            : undefined;
+                        ensureSnapshotProtocolFields(snapshot);
+                        const record: SubAgentRunPersistedRecord = {
+                            runId: snapshot.runId,
+                            agentName: snapshot.agentName,
+                            status: snapshot.status,
+                            createdAt: snapshot.createdAt,
+                            updatedAt: snapshot.updatedAt,
+                            contentCount: snapshot.contents.length,
+                            contentRevision: snapshot.contentRevision,
+                            eventSequence: snapshot.eventSequence,
+                            preview: extractContentPreview(snapshot.contents[snapshot.contents.length - 1]),
+                            lastMessageRole: snapshot.contents[snapshot.contents.length - 1]?.role,
+                            ...(transcriptRef
+                                ? { transcriptRef }
+                                : {
+                                    contents: snapshot.contents,
+                                    ...(Array.isArray(snapshot.lastSentHistory) ? { lastSentHistory: snapshot.lastSentHistory } : {})
+                                })
+                        };
 
-                await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
-                this.persistErrors.delete(runId);
-            })
-            .catch(error => {
-                this.pendingPersists.delete(runId);
-                this.persistErrors.set(runId, error);
-                console.warn('[SubAgentRunEventBus] Failed to persist SubAgent run:', error);
-            });
+                        // PERF：记录构造与「读整份 subAgentRuns map → 插入 → 写回」合并为单次原子
+                        // updateCustomMetadata（链内读改写），不再先 getCustomMetadata 全量读盘再写链内重读；
+                        // store 未实现 updateCustomMetadata（测试/旧适配器）时回退读改写。
+                        await (store.updateCustomMetadata
+                            ? store.updateCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, current => {
+                                const persistedMap = normalizePersistedMap(current);
+                                persistedMap[runId] = record;
+                                return persistedMap;
+                            })
+                            : (async () => {
+                                const raw = await store.getCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY);
+                                const persistedMap = normalizePersistedMap(raw);
+                                persistedMap[runId] = record;
+                                await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
+                            })());
+                        this.persistErrors.delete(runId);
+                    })
+                    .catch(error => {
+                        this.pendingPersists.delete(runId);
+                        this.persistErrors.set(runId, error);
+                        logger.warn('subagent.persist_failed', {
+                            runId,
+                            conversationId,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    });
 
         this.persistQueues.set(conversationId, next);
     }

@@ -42,6 +42,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import * as fsp from 'fs/promises';
 import { Logger } from '../../../core/logger';
 import type { Content, ContentPart, UsageMetadata } from '../types';
 import {
@@ -85,6 +86,77 @@ import {
 } from '../../checkpoint/checkpointRefCounts';
 
 const log = Logger.get('BranchService');
+
+// ==================== 分支图内存缓存 ====================
+// 主历史每次 append 都在会话写锁内「读 branches.json → 改 → 原子写回」，
+// 读图路径（分支切换 / usageStats / Monitor）也无缓存；大图反复读改写是磁盘 IO 热路径。
+// 这里按分支文件完整路径（baseDir + conversationId，天然区分多工作区/多数据目录）做短 TTL 缓存：
+// - 写入（validateAndSave / saveBranchGraph）成功后回填快照，deleteConversationBranch 失效；
+// - 读取命中返回快照的深拷贝，杜绝调用方原地修改污染缓存（图仅经锁内读写的约定不变）；
+// - 每次命中前 stat 文件（mtime + size，与 storage.readSegmentCached 同模式）：文件被
+//   仓储之外的路径直接改写（测试/外部工具）时缓存自动失效重读，不依赖 TTL 过期；
+// - 损坏/缺失态不缓存（错误降级路径保持原语义）。
+const BRANCH_GRAPH_CACHE_TTL_MS = 60_000;
+
+interface BranchGraphCacheEntry {
+    graph: ConversationBranchGraph;
+    expiresAt: number;
+    mtimeMs: number | null;
+    size: number | null;
+}
+
+const branchGraphCache = new Map<string, BranchGraphCacheEntry>();
+
+function getBranchGraphCacheKey(repository: BranchGraphRepository, conversationId: string): string {
+    return repository.getBranchesFilePath(conversationId);
+}
+
+function statBranchesFile(filePath: string): Promise<{ mtimeMs: number | null; size: number | null }> {
+    return fsp.stat(filePath)
+        .then(st => ({ mtimeMs: st.mtimeMs, size: st.size }))
+        .catch(() => ({ mtimeMs: null, size: null }));
+}
+
+/** 命中返回缓存图（深拷贝，可安全修改）；过期 / 文件被外部改写 / 未命中返回 null */
+async function getBranchGraphCached(key: string): Promise<ConversationBranchGraph | null> {
+    const entry = branchGraphCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        branchGraphCache.delete(key);
+        return null;
+    }
+    const stat = await statBranchesFile(key);
+    if (stat.mtimeMs !== entry.mtimeMs || stat.size !== entry.size) {
+        // 文件在缓存后被仓储之外的路径改写：缓存陈旧，失效后走磁盘重读
+        branchGraphCache.delete(key);
+        return null;
+    }
+    return structuredClone(entry.graph);
+}
+
+/** 写入成功后回填快照（并刷新 TTL）；存快照防止调用方后续修改污染缓存 */
+async function setBranchGraphCached(key: string, graph: ConversationBranchGraph): Promise<void> {
+    const stat = await statBranchesFile(key);
+    branchGraphCache.set(key, {
+        graph: structuredClone(graph),
+        expiresAt: Date.now() + BRANCH_GRAPH_CACHE_TTL_MS,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+    });
+}
+
+/** 供测试/诊断清理分支图缓存（可选按会话，不传清空全部） */
+export function invalidateBranchGraphCache(conversationId?: string): void {
+    if (!conversationId) {
+        branchGraphCache.clear();
+        return;
+    }
+    for (const key of branchGraphCache.keys()) {
+        if (key.endsWith(`/${conversationId}/branches.json`) || key.endsWith(`\\${conversationId}\\branches.json`)) {
+            branchGraphCache.delete(key);
+        }
+    }
+}
 
 /** 模块级单例（与 DiffStorageManager 同模式）：由 webview BranchHandlers 懒初始化后注册。 */
 let globalBranchService: BranchService | undefined;
@@ -281,6 +353,12 @@ export class BranchService {
      * 此处对 loaded.graph 做 validate() + activePath() 语义校验，损坏同样返回 errorCode。
      */
     async getBranchGraph(conversationId: string): Promise<BranchGraphReadResult> {
+        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
+        const cached = await getBranchGraphCached(cacheKey);
+        if (cached) {
+            // 缓存内图在回填时已通过 validate + activePath（见下与 validateAndSave），直接复用
+            return { graph: cached };
+        }
         const loaded = await this.repository.load(conversationId);
         if (loaded.graph) {
             const validation = validate(loaded.graph);
@@ -300,6 +378,8 @@ export class BranchService {
                     errorMessage: `active path resolution failed: ${(error as Error)?.message ?? String(error)}`,
                 };
             }
+            // 校验通过才回填缓存（损坏态不缓存，保持降级语义）
+            await setBranchGraphCached(cacheKey, loaded.graph);
         }
         return loaded;
     }
@@ -313,7 +393,11 @@ export class BranchService {
      * - 存在可用：exists=true。
      */
     async getBranchGraphMeta(conversationId: string): Promise<BranchGraphMetaResult> {
-        const loaded = await this.repository.load(conversationId);
+        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
+        const cached = await getBranchGraphCached(cacheKey);
+        const loaded = cached
+            ? { graph: cached } as BranchGraphReadResult
+            : await this.repository.load(conversationId);
         const base: BranchGraphMetaResult = {
             conversationId,
             exists: false,
@@ -343,6 +427,8 @@ export class BranchService {
             return { ...base, corrupted: true, errorCode: 'BRANCH_STORAGE_CORRUPT' };
         }
         try {
+            // M-2 校验通过：回填缓存（缓存命中路径已跳过校验，见 getBranchGraph 注释）
+            await setBranchGraphCached(cacheKey, graph);
             return {
                 conversationId,
                 exists: true,
@@ -379,6 +465,8 @@ export class BranchService {
             await this.assertConversationWritable(conversationId);
             await this.repository.save(conversationId, graph);
         });
+        // 写后回填缓存（调用方传入的 graph 可能被后续复用/修改，只存快照）
+        await setBranchGraphCached(getBranchGraphCacheKey(this.repository, conversationId), graph);
     }
 
     /**
@@ -391,6 +479,7 @@ export class BranchService {
      * 本方法是级联清理路径，不做已删除会话检查（删除进行中/刚完成时正是它被调用的时机）。
      */
     async deleteConversationBranch(conversationId: string): Promise<void> {
+        branchGraphCache.delete(getBranchGraphCacheKey(this.repository, conversationId));
         await this.conversationManager.runExclusive(conversationId, async () => {
             await this.repository.deleteConversation(conversationId);
         });
@@ -1628,6 +1717,12 @@ export class BranchService {
         // 与 deleteConversation 的锁序一致：delete 先入已删除集合 → 锁内删文件 → 释放锁，
         // 迟到写入锁后在此被拒，不会与删除交错产生幽灵 sidecar。
         await this.assertConversationWritable(conversationId);
+        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
+        const cached = await getBranchGraphCached(cacheKey);
+        if (cached) {
+            // 缓存内图已通过 validate + activePath（回填点保证），可直接修改
+            return cached;
+        }
         const loaded = await this.repository.load(conversationId);
         if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
             throw new BranchError(
@@ -1670,6 +1765,8 @@ export class BranchService {
             );
         }
         await this.repository.save(conversationId, graph);
+        // 写后回填缓存（存快照：调用方持有的 graph 对象后续可能继续被修改）
+        await setBranchGraphCached(getBranchGraphCacheKey(this.repository, conversationId), graph);
     }
 
     /** childrenIndex 便捷透出（供外部/测试检查候选顺序） */

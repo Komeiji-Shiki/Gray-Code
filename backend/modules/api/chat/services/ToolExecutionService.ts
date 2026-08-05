@@ -1345,7 +1345,8 @@ export class ToolExecutionService {
                 });
             } else {
                 // 渠道不支持 function_call 模式的多模态（如 OpenAI）
-                console.log(`[Multimodal] Channel ${channelType} does not support function_call multimodal, image data will be discarded`);
+                // 工具循环中每次丢弃都会命中，用 debug 级（默认不输出）避免刷屏
+                this.log.debug('multimodal_discarded', { channelType });
                 delete (response as any).multimodal;
 
                 // 构建函数响应 part
