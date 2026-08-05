@@ -623,7 +623,7 @@ export class ConversationManager {
     private async loadStoredMetadata(conversationId: string): Promise<ConversationMetadata | null> {
         const cached = this.metaCache.get(conversationId);
         if (cached !== undefined) {
-            return cached;
+            return cached === null ? null : structuredClone(cached) as ConversationMetadata;
         }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {

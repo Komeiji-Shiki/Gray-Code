@@ -20,7 +20,10 @@ const common = {
   external: ['electron'],
   alias: { vscode: vscodeAlias },
   logLevel: 'info',
-  legalComments: 'none'
+  legalComments: 'none',
+  // 发布产物压缩（主进程 bundle 含整个 backend，体积数 MB）
+  minify: true,
+  sourcemap: false
 };
 
 await build({

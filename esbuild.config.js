@@ -29,8 +29,9 @@ const buildOptions = {
     format: 'cjs',
     target: 'node18',
     external: externalModules,
-    sourcemap: true,
-    minify: false,
+    // 单次构建（发布产物）压缩并关闭 sourcemap；watch 模式保留原始形态便于调试
+    sourcemap: isWatch,
+    minify: !isWatch,
     keepNames: true,
     tsconfig: 'tsconfig.json',
     define: {

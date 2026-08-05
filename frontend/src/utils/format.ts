@@ -80,14 +80,6 @@ export function truncateText(text: string, maxLength: number): string {
   return text.substring(0, maxLength) + '...'
 }
 
-// 高亮搜索关键词
-export function highlightText(text: string, keyword: string): string {
-  if (!keyword) return text
-  
-  const regex = new RegExp(`(${escapeRegExp(keyword)})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
-}
-
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

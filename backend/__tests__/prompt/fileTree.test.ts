@@ -84,15 +84,40 @@ describe('fileTree buildFileTree', () => {
         const customPatterns = ['*.zz3', '*.zz4']
 
         const before = getIgnoreRegexCacheStats()
-        getWorkspaceFileTree(10, customPatterns)
+        const firstResult = getWorkspaceFileTree(10, customPatterns)
         const afterFirst = getIgnoreRegexCacheStats()
-        getWorkspaceFileTree(10, customPatterns)
+        const secondResult = getWorkspaceFileTree(10, customPatterns)
         const afterSecond = getIgnoreRegexCacheStats()
 
         // 第一次调用完成全部编译（gitignore 2 条 + 自定义 2 条）
         expect(afterFirst.compiles - before.compiles).toBe(4)
-        // 第二次调用零编译、有命中
+        // 第二次调用零编译
         expect(afterSecond.compiles).toBe(afterFirst.compiles)
+        // 文件树 TTL 缓存：第二次调用整体命中，不重新执行任何正则求值（命中数不变），结果一致
+        expect(afterSecond.hits).toBe(afterFirst.hits)
+        expect(secondResult).toBe(firstResult)
+    })
+
+    it('文件树缓存：gitignore mtime 变化时自动失效重建', () => {
+        write('.gitignore', '*.alpha\n')
+        write('a.alpha', 'a')
+        write('b.txt', 'b')
+        write('c.alpha', 'c')
+
+        const before = getIgnoreRegexCacheStats()
+        const first = getWorkspaceFileTree(10)
+        expect(first).toContain('b.txt')
+        expect(first).not.toContain('a.alpha')
+        const afterFirst = getIgnoreRegexCacheStats()
+
+        // 修改 .gitignore（mtime 变化 → 缓存失效）：新规则生效，无需等待 TTL
+        write('.gitignore', '*.alpha\n*.txt\n')
+        const second = getWorkspaceFileTree(10)
+        expect(second).not.toContain('b.txt')
+        expect(second).not.toContain('a.alpha')
+        // 重建后正则重新求值（命中数增加）；*.txt 是新增模式，编译数 +1（*.alpha 仍命中缓存）
+        const afterSecond = getIgnoreRegexCacheStats()
+        expect(afterSecond.compiles).toBe(afterFirst.compiles + 1)
         expect(afterSecond.hits).toBeGreaterThan(afterFirst.hits)
     })
 })

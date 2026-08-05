@@ -585,21 +585,28 @@ function getOSName(): string {
  * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存。
  * 修改目的：工具创建只做一轮检测，避免重复 execSync 阻塞。
  */
-const shellAvailabilityCache = new Map<string, boolean>();
+const SHELL_AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface ShellAvailabilityCacheEntry {
+    available: boolean;
+    expiresAt: number;
+}
+
+const shellAvailabilityCache = new Map<string, ShellAvailabilityCacheEntry>();
 
 function getShellAvailabilityCacheKey(shellType: string, customPath?: string): string {
     return `${shellType}:${customPath ?? ''}`;
 }
 
 /**
- * 同步检测 Shell 是否可用（带模块级缓存）
+ * 同步检测 Shell 是否可用（带模块级 TTL 缓存：用户运行期间新装 shell 在 5 分钟内可被重新识别）
  */
 function checkShellAvailabilitySync(shellType: string, customPath?: string): boolean {
     // 缓存命中直接返回，避免重复 execSync 阻塞
     const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
     const cached = shellAvailabilityCache.get(cacheKey);
-    if (cached !== undefined) {
-        return cached;
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.available;
     }
 
     const platform = os.platform();
@@ -634,7 +641,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
         available = false;
     }
 
-    shellAvailabilityCache.set(cacheKey, available);
+    shellAvailabilityCache.set(cacheKey, { available, expiresAt: Date.now() + SHELL_AVAILABILITY_CACHE_TTL_MS });
     return available;
 }
 

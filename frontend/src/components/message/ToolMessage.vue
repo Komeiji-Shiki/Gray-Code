@@ -269,7 +269,7 @@ function startDiffTimer(sessionId: string, delay: number) {
         confirmDiff(sessionId)
       }
     }
-  }, 50)
+  }, 200)
   
   applyDiffTimers.set(sessionId, timer)
 }
