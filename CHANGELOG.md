@@ -16,15 +16,28 @@
 ### Changed
   - 工作区文件树按 (工作区 + 深度 + 自定义忽略模式 + 节点预算) 键控加 30s TTL 缓存：工具循环中每轮请求同步重建整棵目录树（`readdirSync` 全递归，最多 10000 节点）的磁盘 IO 与正则求值大幅减少；`.gitignore` 的 mtime 纳入每次命中校验（改动即失效重建），其余文件变更接受 TTL 内短时陈旧（与 `getSystemPrompt` 60s 缓存同级语义）；新增 `invalidateFileTreeCache` 供测试/诊断清理
   - `getMetadataLight` 缓存命中返回从 `JSON.parse(JSON.stringify(...))` 深拷贝改为 `structuredClone`：对话列表分页（每页 30 条 × 16 并发）命中路径的序列化往返开销显著下降
-  - `HistorySegmentCache.estimateBytes` 从全量 `JSON.stringify` 改为前 16 条消息抽样按比例外推：段内可能含数十 MB 超大工具结果，缓存写入不再付出二次全量序列化成本（字节软上限仅用于 LRU 淘汰优先级，无需精确）
+  - `getCustomMetadata` 改走 metaCache（复用 `getMetadataLight`）：trimState / todoList / pinnedFiles / skills / subAgentRuns 等键在工具迭代热路径每轮读取多次，此前每次都是整份 meta.json 的磁盘读 + JSON parse
+  - `getMetadata` 损坏降级（fallback 重建）结果回填 metaCache：损坏文件改名备份后 `getMetadataLight` 曾负缓存 null，导致对话列表标题/时间戳持续缺失直到下次写入；现重建即回填，且与轻量读共享同一缓存
+  - SubAgent `flushPersist` 落盘从「getCustomMetadata 全量读 + setCustomMetadata 链内重读」合并为单次原子 `updateCustomMetadata`（链内读改写）：子代理流式期间每 1.5s 的落盘 IO 减半，且消除两次读取不一致的隐含分支；store 未实现原子接口时自动回退读改写
+  - 分支图（branches.json）按文件路径（baseDir + conversationId，天然区分多工作区）加 60s TTL 内存缓存：主历史每次 append 的「读图 → 改 → 原子写回」不再重复全量磁盘 IO；命中前 stat 校验 mtime+size，文件被仓储之外的路径改写时自动失效；缓存存/取均为快照深拷贝，杜绝调用方原地修改污染
+  - 历史段缓存字节估算从全量 `JSON.stringify` 改为前 16 条抽样按比例外推：段内可能含数十 MB 超大工具结果，缓存写入不再付出二次全量序列化成本（字节软上限仅用于 LRU 淘汰优先级，无需精确）
   - 前端 i18n 参数替换的占位符正则按转义键缓存（`useI18n.translate` 在消息列表/工具卡渲染中高频调用，不再每次 `new RegExp`）
+  - 消息项加 `content-visibility: auto` + `contain-intrinsic-size`：长对话上拉展开后视口外消息由浏览器原生跳过渲染/样式计算（兼容性回退 = 无样式类特性，仅失去优化）
+  - 工具结果合并逻辑收敛为公共 `utils/toolResult.mergeToolResult`（MessageList / MessageTaskCards / todoList 三处实现语义分叉统一）；工具名/描述 i18n 收敛到 `utils/toolLocalization`（useCheckpointConfig / AutoExecSettings / DependencySettings）
   - ToolMessage 自动确认倒计时从 50ms tick 降频为 200ms：有 pending diff 时每秒响应式更新从 20 次降为 5 次（显示粒度 100ms 不变）
   - Shell 可用性检测缓存加 5 分钟 TTL：运行期间新装 shell（如 WSL）不再需要重启才能被工具声明识别
-  - 流式热路径诊断日志（`handleToolsExecuting` / `handleToolIteration` / `handleComplete` / `handleStreamChunkBatch` 跳批统计）改由性能诊断开关（`localStorage.graycode.perf=1`）门控：默认关闭时不再执行模板字符串拼接与计数
+  - 流式热路径诊断日志（`handleToolsExecuting` / `handleToolIteration` / `handleComplete` / `handleStreamChunkBatch` 跳批统计）改由性能诊断开关（`localStorage.graycode.perf=1`）门控：默认关闭时不再执行模板字符串拼接与计数；agentStopNotificationController 生命周期调试日志改由 `localStorage.graycode.debug=1` 开关门控
   - 生产构建压缩：根 esbuild 单次构建与 Electron 桌面构建 `minify: true` / 关闭 sourcemap（watch 模式保留原始形态）；主进程 bundle 体积与启动解析时间下降
+  - 前端主入口分包：vue/pinia、highlight.js、katex+markdown-it 拆为独立 vendor chunk（主入口 2.38MB → 1.55MB），mermaid/cytoscape 保持原生动态 import 懒加载（不做 modulepreload 预取）；桌面端 `graycode://` 协议与 VS Code webview 均按相对路径加载，mtime 缓存已覆盖
+  - Electron 桌面版主进程包：`readRootPackageMetadata` memoize（打包后 package.json 不变，公告/版本检查多路径不再重复同步读盘）；`__setWorkspaceFolders` 按新旧列表差集生成 added/removed（此前把保留文件夹重复报为 added 导致技能重复扫描、被移除文件夹不触发清理）；dialog/reload 对已销毁窗口（`isDestroyed`）加固，不再抛 "Object has been destroyed"
+  - 公告检查的 CHANGELOG.md（数百 KB）解析按 mtime+size 缓存：升级后首次启动与设置页重复触发不再全量读+正则解析
+  - `esbuild.config.js` 移除无引用的 external `typescript`；`electron-app/build.mjs` 支持 `--dev`（保留 sourcemap/未压缩）与 `--watch`；electron-app 新增 `typecheck` script（首次接入即修复工作区变更监听从未真正 dispose 的隐患）；CI 增加后端 jest + 前端 vitest 单测与三端 typecheck 步骤、同一分支连续推送自动取消旧构建（concurrency）
 
 ### Fixed
   - 移除无引用的运行时依赖 `@vscode/codicons`（图标由 `resources/codicons` 内置 CSS/字体与 VS Code 宿主提供）与 `nanoid`（ID 生成实际走 `generateId`/`randomUUID`），锁文件同步后 npm audit 仍为 0 漏洞
+  - **设置持久化丢失（重启回滚）**：`VSCodeSettingsStorage.save()` 的「只写变更键」快照直接保存活对象引用，保存成功后同一嵌套对象的原地变更（自动执行 `toolAutoExec`、工具策略 `toolPolicy`、预设条目 `promptEntries.enabled`、`toolsConfig.*` 各类工具配置、单工具开关）被 `deepEqual` 的 `a===b` 引用短路误判为「无变化」而跳过写盘——UI 显示正常但重启全部回滚。快照改存深拷贝与活对象解耦；`saveToolsConfigEntry` / `setToolAutoExec` / `setToolEnabled` 同步改为整体替换对象（防御任何存储实现）；新增「load 后原地变更 ×2 + 重启读回」回归测试
+  - **原始记忆条目无法删除（功能缺失）**：设置页「原始记忆条目」此前只有查看/编辑、无删除入口。新增 `MemoryManager.deleteEntry`（真·单条删除：读全量 → 过滤 → 重编号 → tmp/rename 原子写回，删除中间条目后其后的 id 前移一格并清空旧树摘要；与 `truncateLog` 的尾部截断不同，不会连坐误删之后的记忆）、`deleteMemoryEntry` handler、设置页删除按钮 + 确认框（三语 i18n）；`memory_forget` 工具描述强调「单个数字 ID 是截断模式，会删除该 ID 及之后所有记忆」，防模型/用户误解连坐误删；新增 6 项回归测试
+  - 清理遗留调试输出：App.vue 复制/加载日志、SoundSettings 预览日志、ToolExecutionService 多模态丢弃日志（降级 debug）、format.ts 5 个无引用死函数、test/jest.setup.ts 空文件；三处 hover 定时器（InlineContextMessage / ContextBlocks / InputBox）补卸载清理
 
 ## [1.6.3] - 2026-08-05
 

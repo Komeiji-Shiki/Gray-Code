@@ -14,11 +14,16 @@ are tracked in the root `CHANGELOG.md`.
   - 同步合入上游 49a37f2..10c565c（PR #11/#13：启动动画、TPS 实时可视化与流式平滑输出、上下文预算三层重构、diff 行级差分缓存、子代理 transcript 索引投影、fork 性能优化回移植）：详见根 `CHANGELOG.md` [1.6.4]；桌面版构建产物版本同步为 v1.6.4
 
 ### Changed
-  - 工作区文件树 30s TTL 缓存（gitignore mtime 失效）、`getMetadataLight` 缓存命中改 `structuredClone`、HistorySegmentCache 字节估算改抽样、i18n 占位符正则缓存、ToolMessage 倒计时 50→200ms、Shell 可用性缓存 5 分钟 TTL、流式热路径诊断日志加性能开关（以上均为 backend/frontend 公共部分，详见根 `CHANGELOG.md` [1.6.4]）
+  - 工作区文件树 30s TTL 缓存（gitignore mtime 失效）、`getMetadataLight` 缓存命中改 `structuredClone`、`getCustomMetadata` 走 metaCache、`getMetadata` fallback 回填缓存、SubAgent flushPersist 单次原子写、分支图内存缓存、HistorySegmentCache 字节估算改抽样、i18n 占位符正则缓存、工具结果合并/toolLocalization 收敛、消息项 content-visibility、ToolMessage 倒计时 50→200ms、Shell 可用性缓存 5 分钟 TTL、流式热路径诊断日志加性能开关（以上均为 backend/frontend 公共部分，详见根 `CHANGELOG.md` [1.6.4]）
   - Electron 主进程/预加载脚本生产构建压缩（`minify: true`，关闭 sourcemap）：安装体积与启动解析时间下降
+  - `readRootPackageMetadata` memoize（打包后 package.json 不变，公告/版本检查不再重复同步读盘）；`__setWorkspaceFolders` 差集事件（修复技能重复扫描与移除不清理）；dialog/reload 对已销毁窗口加固
+  - `build.mjs` 支持 `--dev`（sourcemap/未压缩）与 `--watch`；新增 `typecheck` script（首次接入即修复工作区变更监听从未 dispose 的隐患）；author 补 email 字段（Linux deb maintainer）
+  - 前端主入口分包（vue/highlight/katex vendor chunk，主入口 2.38MB→1.55MB，mermaid 保持懒加载）；公告 CHANGELOG 解析 mtime 缓存（backend 公共部分）
 
 ### Fixed
   - 移除无引用的运行时依赖 `@vscode/codicons` 与 `nanoid`（根 package.json，详见根 `CHANGELOG.md` [1.6.4]）
+  - 设置持久化丢失（自动执行/工具策略/预设条目开关重启回滚）：VSCodeSettingsStorage 快照改存深拷贝 + 各写点整体替换对象（backend 公共部分，详见根 `CHANGELOG.md` [1.6.4]）
+  - 原始记忆条目新增单条删除（设置页此前无删除入口；MemoryManager.deleteEntry + deleteMemoryEntry handler + 三语确认框，详见根 `CHANGELOG.md` [1.6.4]）
 
 ## [1.6.3] - 2026-08-05
 
