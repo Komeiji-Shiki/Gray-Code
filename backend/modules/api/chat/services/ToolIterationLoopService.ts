@@ -200,6 +200,15 @@ export class ToolIterationLoopService {
     private summarizeService?: SummarizeService;
     private readonly log = Logger.get('ToolLoop');
 
+    /**
+     * 各会话「当前真实用户回合」已确定的 fallback 细粒度裁剪起点（绝对索引）。
+     *
+     * 自动总结失败后 fallback 不写 trimState，但同一回合内的多次工具迭代（含工具确认后的续跑
+     * runToolLoop）必须复用同一起点：工具结果增长时若每轮重新规划切点，retainedHistory 开头会
+     * 持续后移，provider 前缀缓存无法命中；新回合（isNewTurn）与总结成功后重新评估时清除。
+     */
+    private readonly granularFallbackStartByConversation = new Map<string, number>();
+
     constructor(
         private channelManager: ChannelManager,
         private conversationManager: ConversationManager,
@@ -370,6 +379,8 @@ export class ToolIterationLoopService {
      */
     async clearTrimState(conversationId: string): Promise<void> {
         await this.contextTrimService.clearTrimState(conversationId);
+        // 编辑/删除/回档等历史结构变更后，旧 fallback 切点可能错位，一并清除。
+        this.granularFallbackStartByConversation.delete(conversationId);
     }
 
     /**
@@ -502,6 +513,10 @@ export class ToolIterationLoopService {
         // 只能复用已有起点；否则前台 SubAgent 的大 functionResponse 会在回合中途挤掉整段旧历史。
         let contextManagementEvaluatedForTurn = !isNewTurn;
         let autoSummarizeAttempts = 0;
+        // 新回合（含总结成功后重新评估）不继承上一回合的 fallback 切点，重新规划。
+        if (isNewTurn) {
+            this.granularFallbackStartByConversation.delete(conversationId);
+        }
         // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
         const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
             ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
@@ -709,13 +724,20 @@ export class ToolIterationLoopService {
             if (trimResult.needsAutoSummarize) {
                 // 总结失败、总结服务不可用或本回合尝试次数耗尽：使用不持久化的细粒度安全裁剪，
                 // 不再把超阈值全量历史直接交给 provider，也不永久修改 trimState。
+                // 回合内首次评估（含总结成功后重新评估）重新规划切点；后续工具迭代复用已确定起点，
+                // 保持 retainedHistory 前缀稳定（provider 前缀缓存命中）。
+                if (!contextManagementEvaluatedForTurn) {
+                    this.granularFallbackStartByConversation.delete(conversationId);
+                }
                 trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
                     conversationId,
                     config,
                     historyOptions,
                     modelOverride,
-                    dynamicContextStrategy
+                    dynamicContextStrategy,
+                    this.granularFallbackStartByConversation.get(conversationId)
                 );
+                this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }
 
             // 一旦本回合即将真正请求主模型，后续工具迭代固定复用当前裁剪起点。
@@ -1434,6 +1456,10 @@ export class ToolIterationLoopService {
         // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
         let contextManagementEvaluatedForTurn = !isNewTurn;
         let autoSummarizeAttempts = 0;
+        // 新回合不继承上一回合的 fallback 切点，重新规划。
+        if (isNewTurn) {
+            this.granularFallbackStartByConversation.delete(conversationId);
+        }
         // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
         const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
             ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
@@ -1556,13 +1582,19 @@ export class ToolIterationLoopService {
             }
 
             if (trimResult.needsAutoSummarize) {
+                // 与流式路径一致：回合内首次评估重新规划切点，后续迭代复用已确定起点（前缀缓存稳定）。
+                if (!contextManagementEvaluatedForTurn) {
+                    this.granularFallbackStartByConversation.delete(conversationId);
+                }
                 trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
                     conversationId,
                     config,
                     historyOptions,
                     modelOverride,
-                    dynamicContextStrategy
+                    dynamicContextStrategy,
+                    this.granularFallbackStartByConversation.get(conversationId)
                 );
+                this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }
 
             contextManagementEvaluatedForTurn = true;

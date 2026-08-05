@@ -791,7 +791,7 @@ onBeforeUnmount(() => {
 })
 
 const emit = defineEmits<{
-  edit: [messageId: string, newContent: string, attachments: Attachment[]]
+  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
   delete: [messageId: string]
   retry: [messageId: string]
   copy: [content: string]
@@ -887,8 +887,8 @@ const deleteCount = computed(() => {
 
 
 // 处理编辑
-function handleEdit(messageId: string, newContent: string, attachments: Attachment[]) {
-  emit('edit', messageId, newContent, attachments)
+function handleEdit(messageId: string, newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
+  emit('edit', messageId, newContent, attachments, mode)
 }
 
 // 处理删除 - 显示确认对话框

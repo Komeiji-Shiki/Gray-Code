@@ -137,6 +137,7 @@ const en: LanguageMessages = {
                 checkpointHint: 'A tool execution backup was detected before this message. You can choose to restore to before tool execution and then edit to recover file changes.',
                 cancel: 'Cancel',
                 save: 'Save',
+                saveInPlace: 'Save In Place (Keep Branch)',
                 restoreToUserMessage: 'Restore to before user message',
                 restoreToAssistantMessage: 'Restore to before assistant message',
                 restoreToToolBatch: 'Restore to before batch tool execution',

@@ -897,7 +897,8 @@ async function replayBranchStreamAfterError(
         configId: context.configId,
         modelOverride: context.modelOverride,
         streamId,
-        promptModeId: context.promptModeId
+        promptModeId: context.promptModeId,
+        mode: context.mode ?? 'branch'
       })
     }
   } catch (err: any) {
@@ -1027,7 +1028,8 @@ export async function retryAfterError(
 }
 
 /**
- * 编辑并重发消息（TREE-03：主流程走 chat.editBranchStream——创建编辑候选，不覆盖原消息）。
+ * 编辑并重发消息（TREE-03：主流程走 chat.editBranchStream——创建编辑候选，不覆盖原消息；
+ * mode='keep' 时原地改写原消息，保持当前分支）。
  */
 export async function editAndRetry(
   state: ChatStoreState,
@@ -1035,7 +1037,8 @@ export async function editAndRetry(
   messageIndex: number,
   newMessage: string,
   attachments: Attachment[] | undefined,
-  cancelStream: CancelStreamCallback
+  cancelStream: CancelStreamCallback,
+  mode: 'branch' | 'keep' = 'branch'
 ): Promise<void> {
   if ((!newMessage.trim() && (!attachments || attachments.length === 0)) || !state.currentConversationId.value) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
@@ -1105,7 +1108,8 @@ export async function editAndRetry(
       newText: newMessage,
       configId: state.configId.value,
       modelOverride,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      mode
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -1123,7 +1127,8 @@ export async function editAndRetry(
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      mode
     })
   } catch (err: any) {
     const branchReplayContext = replayContext

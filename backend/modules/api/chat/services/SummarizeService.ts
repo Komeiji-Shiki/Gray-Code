@@ -428,21 +428,17 @@ export class SummarizeService {
                         };
                     }
 
-                    // 清理 inlineData 中的元数据字段
+                    // 图片等内联媒体替换为文本占位符：总结模型无需加载图片字节，
+                    // 既省输入 token，也避免不支持多模态的总结渠道直接报错。
                     if (cleanedPart.inlineData) {
-                        if (config.type === 'gemini') {
-                            const { id, name, ...cleanedInlineData } = cleanedPart.inlineData;
-                            cleanedPart = {
-                                ...cleanedPart,
-                                inlineData: cleanedInlineData
-                            };
-                        } else {
-                            const { id, name, displayName, ...cleanedInlineData } = cleanedPart.inlineData;
-                            cleanedPart = {
-                                ...cleanedPart,
-                                inlineData: cleanedInlineData
-                            };
-                        }
+                        cleanedPart = {
+                            text: `[Image: ${cleanedPart.inlineData.displayName || cleanedPart.inlineData.mimeType || 'attachment'}]`
+                        };
+                    } else if (cleanedPart.fileData) {
+                        // 文件引用同样转占位符（用户贴入的图片文件等不被总结请求携带）。
+                        cleanedPart = {
+                            text: `[File: ${cleanedPart.fileData.displayName || cleanedPart.fileData.fileUri || 'attachment'}]`
+                        };
                     }
 
                     // 清理 functionResponse.response 中的内部字段

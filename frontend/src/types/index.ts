@@ -613,6 +613,8 @@ export type BranchStreamReplayContext =
       configId: string
       modelOverride?: string
       promptModeId?: string
+      /** 编辑模式：'branch' 新建分支（默认）；'keep' 原地改写原消息，保持当前分支 */
+      mode?: 'branch' | 'keep'
     }
 
 export interface ErrorInfo {

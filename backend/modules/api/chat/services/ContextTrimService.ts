@@ -648,17 +648,35 @@ export class ContextTrimService {
     }
 
     /**
+     * 请求级细粒度裁剪的公共出口：把切点后的历史补成合法的角色顺序（model 开头时前置临时 user 占位）。
+     */
+    private normalizeFallbackHistoryStart(history: Content[]): Content[] {
+        return history[0]?.role === 'model'
+            ? [{
+                role: 'user' as const,
+                parts: [{ text: '[Earlier context was temporarily omitted after summarization failed.]' }],
+                isSummary: true
+            }, ...history]
+            : history;
+    }
+
+    /**
      * 自动总结不可用或失败时的请求级细粒度裁剪。
      *
      * 该路径不写 trimState，不永久遮蔽 transcript；它按消息 token 预算选择安全切点，允许在长工具回合
      * 内部从 model 边界开始，并用临时 user 标记保证 provider 的角色顺序合法。
+     *
+     * @param stableStartIndex 同一真实用户回合内已确定的切点（绝对索引）。工具结果增长时复用该起点，
+     * 保持每轮请求 retainedHistory 前缀一致，让 provider 前缀缓存可以命中；仅当完整性校验失败或
+     * 估算 token 超过硬上限（maxContextTokens 的 95%）时才重新规划切点。新回合/总结成功后传 undefined。
      */
     async getHistoryWithGranularFallback(
         conversationId: string,
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
         modelOverride?: string,
-        dynamicContextStrategy: DynamicContextStrategy = 'single'
+        dynamicContextStrategy: DynamicContextStrategy = 'single',
+        stableStartIndex?: number
     ): Promise<ContextTrimInfo> {
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
         if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
@@ -671,6 +689,52 @@ export class ContextTrimService {
         const threshold = this.calculateThreshold(config.contextThreshold ?? '80%', maxContextTokens);
         // 为系统提示词、动态上下文和 provider 包装预留 10%，避免 fallback 刚好贴住硬上限。
         const historyBudgetTokens = Math.max(1, Math.floor(threshold * 0.9));
+
+        // 回合内稳定起点优先：工具结果增长不再把切点往后推（否则每轮 retainedHistory 开头漂移，
+        // provider 前缀缓存只能命中 history 之前的固定系统/工具段）。
+        // 硬上限取 maxContextTokens 的 95%：软预算可以略超（fallback 是最后防线），
+        // 但绝不能顶到 provider 的硬上限——系统提示词、动态上下文与工具定义还要占一部分。
+        if (typeof stableStartIndex === 'number' && stableStartIndex >= historyStartIndex && stableStartIndex < fullHistory.length) {
+            const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
+                ...historyOptions,
+                startIndex: stableStartIndex,
+                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
+            });
+            if (validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) {
+                const historyWithUserInputs = this.prependPreservedUserInputs(
+                    suffix,
+                    fullHistory,
+                    stableStartIndex
+                );
+                const estimatedStableTokens = historyWithUserInputs.reduce(
+                    (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
+                    0
+                );
+                const stableHardLimit = Math.floor(maxContextTokens * 0.95);
+                if (estimatedStableTokens <= stableHardLimit) {
+                    const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                    this.log.warn('trim.fallback_stable_start_reused', {
+                        conversationId,
+                        stableStartIndex,
+                        estimatedStableTokens,
+                        stableHardLimit,
+                        originalHistoryLength: fullHistory.length,
+                        fallbackHistoryLength: history.length
+                    });
+                    return {
+                        history,
+                        trimStartIndex: stableStartIndex,
+                        contextManagementDecision: {
+                            enabled: true,
+                            mode: 'summarize',
+                            source: this.resolveContextManagementPolicy(config).source,
+                            action: 'fallback_stable_start_reused'
+                        }
+                    };
+                }
+            }
+        }
+
         const messageTokens = messages.map(message => {
             const byChannel = message.tokenCountByChannel?.[channelType];
             if (typeof byChannel === 'number') return byChannel;
@@ -719,13 +783,7 @@ export class ContextTrimService {
                 0
             );
             if (estimatedFallbackTokens > historyBudgetTokens) continue;
-            const history = historyWithUserInputs[0]?.role === 'model'
-                ? [{
-                    role: 'user' as const,
-                    parts: [{ text: '[Earlier context was temporarily omitted after summarization failed.]' }],
-                    isSummary: true
-                }, ...historyWithUserInputs]
-                : historyWithUserInputs;
+            const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
             this.log.warn('trim.fallback_granular_applied', {
                 conversationId,
                 absoluteStartIndex,

@@ -41,8 +41,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  /** 普通编辑 */
-  edit: [newContent: string, attachments: Attachment[]]
+  /** 普通编辑（mode：'branch' 新建分支（默认）；'keep' 原地改写原消息，保持当前分支） */
+  edit: [newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
   /** 回档并编辑 */
   restoreAndEdit: [newContent: string, attachments: Attachment[], checkpointId: string]
   cancel: []
@@ -401,11 +401,11 @@ const canSubmit = computed(() => {
   return hasText || hasContexts || hasAttachments
 })
 
-function handleEdit() {
+function handleEdit(mode: 'branch' | 'keep' = 'branch') {
   const finalContent = getFinalContent()
   if (finalContent || allAttachments.value.length > 0) {
     visible.value = false
-    emit('edit', finalContent, serializeAttachments(allAttachments.value))
+    emit('edit', finalContent, serializeAttachments(allAttachments.value), mode)
     clearAttachments()
     editorNodes.value = []
   }
@@ -530,9 +530,18 @@ function handleRemoveAttachment(id: string) {
             </button>
 
             <button
+              class="dialog-btn keep-branch"
+              :disabled="!canSubmit"
+              @click="handleEdit('keep')"
+            >
+              <i class="codicon codicon-source-control"></i>
+              {{ t('components.common.editDialog.saveInPlace') }}
+            </button>
+
+            <button
               class="dialog-btn confirm"
               :disabled="!canSubmit"
-              @click="handleEdit"
+              @click="handleEdit('branch')"
             >
               {{ t('components.common.editDialog.save') }}
             </button>
@@ -709,6 +718,20 @@ function handleRemoveAttachment(id: string) {
 }
 
 .dialog-btn.restore .codicon {
+  font-size: 12px;
+}
+
+.dialog-btn.keep-branch {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.dialog-btn.keep-branch:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.dialog-btn.keep-branch .codicon {
   font-size: 12px;
 }
 
