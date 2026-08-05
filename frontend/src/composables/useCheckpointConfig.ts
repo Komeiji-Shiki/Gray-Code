@@ -54,21 +54,10 @@ export type UpdateCheckpointConfigField = (
   value: any
 ) => Promise<boolean>
 
-// 获取工具显示名称（优先 i18n，fallback 机械转换）
-export function getToolDisplayName(name: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-// 获取工具描述（优先 i18n，fallback 原文）
-export function getToolDescription(name: string, fallback: string): string {
-  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return fallback
-}
+// 工具显示名/描述 i18n 辅助：统一复用 utils/toolLocalization 的实现（含 MCP 工具名解码），
+// 避免重复实现导致行为分叉（如 MCP 编码名被机械转换成 "Mcp Mcp ... Search"）。
+// 独立导出，供 CheckpointSettings / useCheckpointCleanup 复用。
+export { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 
 export function useCheckpointConfig() {
   const chatStore = useChatStore()

@@ -16,6 +16,7 @@ import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
+import { isMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
 
 const { t } = useI18n()
 
@@ -62,6 +63,7 @@ interface ToolInfo {
   category?: string
   source: 'builtin' | 'mcp'
   serverId?: string
+  serverName?: string
 }
 
 // 预设模板（与后端 backend/tools/subagents/presets.ts 同构）
@@ -216,6 +218,11 @@ async function toggleTool(toolName: string, selected: boolean) {
   })
 }
 
+// 判断是否为 MCP 工具（category 标记或编码名前缀均可识别）
+function isMcpTool(tool: ToolInfo): boolean {
+  return tool.category === 'mcp' || isMcpToolName(tool.name)
+}
+
 // ==================== 方法 ====================
 
 // 加载子代理列表和全局配置
@@ -304,7 +311,8 @@ async function loadTools() {
       description: t.description || '',
       category: 'mcp',
       source: 'mcp' as const,
-      serverId: t.serverId
+      serverId: t.serverId,
+      serverName: t.serverName
     }))
     
     allTools.value = [...builtinTools, ...mcpTools]
@@ -777,8 +785,12 @@ onMounted(async () => {
                 <div v-for="tool in categoryTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
                   <div class="tool-info">
                     <div class="tool-name-row">
-                      <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
-                      <span class="tool-id">{{ tool.name }}</span>
+                      <span class="tool-name" :title="isMcpTool(tool) ? tool.name : undefined">{{ getToolDisplayName(tool.name) }}</span>
+                      <span v-if="isMcpTool(tool)" class="mcp-badge">
+                        <i class="codicon codicon-plug"></i>
+                        {{ tool.serverName }}
+                      </span>
+                      <span v-if="!isMcpTool(tool)" class="tool-id">{{ tool.name }}</span>
                     </div>
                     <div class="tool-description">{{ getToolDescription(tool.name, tool.description) }}</div>
                   </div>
@@ -1459,16 +1471,19 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .tool-name-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
 .tool-name {
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
   color: var(--vscode-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-id {
@@ -1478,6 +1493,24 @@ input[type="number"]::-webkit-inner-spin-button {
   color: var(--vscode-descriptionForeground);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mcp-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgba(var(--vscode-textLink-foreground), 0.1);
+  color: var(--vscode-textLink-foreground);
+  border: 1px solid var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  font-size: 10px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.mcp-badge .codicon {
+  font-size: 10px;
 }
 
 .tool-description {
