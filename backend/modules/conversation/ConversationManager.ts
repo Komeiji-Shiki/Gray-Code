@@ -3029,7 +3029,23 @@ export class ConversationManager {
      * 避免每次统计都为每个对话额外读一次历史（getMetadata 的 loadHistoryPage）。
      */
     async getMetadataLight(conversationId: string): Promise<ConversationMetadata | null> {
+        // 与 getMetadata 同源：metaCache 是最近一次持久化快照（所有写路径统一失效/回填），
+        // 命中即跳过磁盘 IO——对话列表分页（每页 30 条）与用量统计/检查点查询的逐对话读取
+        // 从「每次 fs 读 + JSON parse」降为纯内存命中。返回深拷贝，防止调用方污染缓存。
+        const cached = this.metaCache.get(conversationId);
+        if (cached !== undefined) {
+            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+        }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
+        if (result.value) {
+            this.cacheMetadata(conversationId, result.value);
+            return result.value;
+        }
+        // 与 loadStoredMetadata 相同的降级语义：仅 not_found 才做负缓存，
+        // io_error/parse_error 不缓存（parse_error 由 getMetadata 走损坏降级，不在此污染缓存）
+        if (!result.errorCode || result.errorCode === 'not_found') {
+            this.cacheMetadata(conversationId, null);
+        }
         return result.value ?? null;
     }
 
