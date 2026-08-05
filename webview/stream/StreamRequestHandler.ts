@@ -164,6 +164,7 @@ export class StreamRequestHandler {
 
     const {
       message,
+      messageId,
       configId,
       attachments,
       modelOverride,
@@ -182,6 +183,7 @@ export class StreamRequestHandler {
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
         message,
+        messageId,
         configId,
         modelOverride,
         attachments,
@@ -357,7 +359,7 @@ export class StreamRequestHandler {
       this.deps.finalizeRequest(requestId);
       return;
     }
-    const { toolResponses, annotation, configId, modelOverride, promptModeId } = data;
+    const { toolResponses, annotation, annotationMessageId, configId, modelOverride, promptModeId } = data;
     
     // H1：等待旧流完全退出后再登记新控制器（避免旧流结算与工具确认结算交错写历史）
     await this.awaitOldStreamCompletion(conversationId);
@@ -370,6 +372,7 @@ export class StreamRequestHandler {
         conversationId,
         toolResponses,
         annotation,
+        annotationMessageId,
         configId,
         modelOverride,
         promptModeId: this.normalizePromptModeId(promptModeId),

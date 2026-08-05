@@ -103,10 +103,11 @@ function handleCopy() {
       @click="emit('retry')"
     />
 
-    <!-- 候选切换器：与复制 / 重试共用消息操作栏，不再单独占一行 -->
+    <!-- 候选切换器：与复制 / 重试共用消息操作栏，不再单独占一行；
+         跟随消息自身的节点 ID（该消息是某候选组的当前活跃成员时才显示） -->
     <BranchSwitcherBar
       v-if="canBranch"
-      :parent-node-id="message.id"
+      :node-id="message.id"
       compact
     />
 

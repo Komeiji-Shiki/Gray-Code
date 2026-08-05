@@ -421,12 +421,19 @@ const ja: LanguageMessages = {
                 workspaceConfirmCancel: 'キャンセル'
             },
             branchTree: {
-                open: '分岐ツリー',
+                open: '分岐履歴を表示',
                 close: '閉じる',
-                title: '分岐ツリー',
+                title: '分岐履歴',
                 empty: '分岐はまだありません',
+                nodeCount: '{count} ノード',
+                navigationMode: '分岐ナビゲーション',
+                fullMode: 'すべてのメッセージ',
+                navigationHint: '連続メッセージを折りたたみ、分岐点と候補を表示します',
+                fullHint: 'すべてのメッセージを表示し、分岐時のみ横方向へ展開します',
+                collapsedMessages: '連続する {count} 件のメッセージを折りたたみ',
                 candidateCount: '{count} 件の候補',
                 deleted: '削除済み',
+                system: 'システム',
                 restore: '復元',
                 rename: '名前を変更',
                 renamePlaceholder: '分岐ラベルを入力…',
@@ -537,7 +544,11 @@ const ja: LanguageMessages = {
                 title: 'コンテキスト要約',
                 compressed: '{count} 件のメッセージを圧縮しました',
                 deleteTitle: '要約を削除',
-                autoTriggered: '自動トリガー'
+                autoTriggered: '自動トリガー',
+                compressionTokens: '置換された履歴 → 新しい要約（推定 {saved} トークン削減。実際のコンテキストは次の応答後に更新）',
+                legacyRequestTokens: '旧形式：要約モデルの入力 → 出力。メインコンテキストの前後サイズではありません',
+                historyTokenLabel: '履歴',
+                requestTokenLabel: 'リクエスト'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',

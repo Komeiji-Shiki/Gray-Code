@@ -421,12 +421,19 @@ const en: LanguageMessages = {
                 workspaceConfirmCancel: 'Cancel'
             },
             branchTree: {
-                open: 'Branch tree',
+                open: 'View branch history',
                 close: 'Close',
-                title: 'Branch tree',
+                title: 'Branch history',
                 empty: 'No branches yet',
+                nodeCount: '{count} nodes',
+                navigationMode: 'Branch navigation',
+                fullMode: 'All messages',
+                navigationHint: 'Collapse linear messages and focus on branch points',
+                fullHint: 'Show every message; horizontal lanes change only at branches',
+                collapsedMessages: '{count} linear messages collapsed',
                 candidateCount: '{count} candidates',
                 deleted: 'Deleted',
+                system: 'System',
                 restore: 'Restore',
                 rename: 'Rename',
                 renamePlaceholder: 'Enter a branch label…',
@@ -537,7 +544,11 @@ const en: LanguageMessages = {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
-                autoTriggered: 'Auto Triggered'
+                autoTriggered: 'Auto Triggered',
+                compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
+                legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',
+                historyTokenLabel: 'History',
+                requestTokenLabel: 'Request'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',

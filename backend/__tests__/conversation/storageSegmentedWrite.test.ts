@@ -70,3 +70,41 @@ describe('FileSystemStorageAdapter 分段历史写入 - tmp 路径必须是 Uri 
         expect(typeof tmpIndexWrite[0].fsPath).toBe('string');
     });
 });
+
+
+describe('FileSystemStorageAdapter 子代理 transcript 独立文件', () => {
+    const fs = workspace.fs as any;
+
+    beforeEach(() => {
+        fs.rename = jest.fn(async () => {});
+        fs.createDirectory.mockClear();
+        fs.delete.mockClear();
+        fs.writeFile.mockClear();
+        (fs.rename as jest.Mock).mockClear();
+    });
+
+    it('按 run 写入紧凑 JSON 到 conversation/subagents，并使用原子 rename', async () => {
+        const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
+        const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
+        const ref = await adapter.saveSubAgentTranscript('conv_1', 'run/a', {
+            contents: [{ role: 'user', parts: [{ text: 'hello' }] }] as any
+        });
+
+        expect(ref).toBe('subagents/run%2Fa.json');
+        const write = fs.writeFile.mock.calls.find((call: any[]) => call[0]?.fsPath?.includes('subagents'));
+        expect(write).toBeTruthy();
+        expect(write[0].fsPath).toContain('run%2Fa.json.tmp');
+        expect(Buffer.from(write[1]).toString('utf8')).toBe('{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}');
+        expect(fs.rename).toHaveBeenCalledTimes(1);
+    });
+
+    it('删除整个会话时 transcript 目录随 conversation 目录递归删除', async () => {
+        const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
+        const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
+        await adapter.deleteHistory('conv_delete');
+
+        expect(fs.delete.mock.calls.some((call: any[]) =>
+            call[0]?.fsPath?.endsWith('conv_delete') && call[1]?.recursive === true
+        )).toBe(true);
+    });
+});

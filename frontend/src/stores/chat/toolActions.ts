@@ -470,6 +470,9 @@ export async function rejectPendingToolsWithAnnotation(
 
   const trimmedAnnotation = annotation.trim()
 
+  // BR-01：批注窗口消息的稳定节点 id（随 toolConfirmation 传给后端原样落库）
+  let annotationMessageId: string | undefined
+
   if (state.streamingMessageId.value) {
     const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
     if (messageIndex !== -1) {
@@ -502,8 +505,14 @@ export async function rejectPendingToolsWithAnnotation(
       content: trimmedAnnotation,
       timestamp: Date.now(),
       backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
+      // BR-01：本地窗口近似父链（首条为 null）——编辑时根节点判断用；后端落库时生成准确 parentId
+      parentId: state.allMessages.value.length > 0
+        ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
+        : null,
       parts: [{ text: trimmedAnnotation }]
     }
+    // BR-01：批注消息 id 随 toolConfirmation 传给后端原样落库（窗口 id 与后端 id 对齐）
+    annotationMessageId = userMessage.id
     state.allMessages.value.push(userMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -519,6 +528,7 @@ export async function rejectPendingToolsWithAnnotation(
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation,
+      annotationMessageId,
       streamId,
       promptModeId: state.currentPromptModeId.value
     })

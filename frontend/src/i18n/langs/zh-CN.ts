@@ -422,12 +422,19 @@ const zhCN = {
                 workspaceConfirmCancel: '取消'
             },
             branchTree: {
-                open: '查看分支树',
+                open: '查看分支历史',
                 close: '关闭',
-                title: '分支树',
+                title: '分支历史',
                 empty: '暂无分支',
+                nodeCount: '{count} 个节点',
+                navigationMode: '分支导航',
+                fullMode: '完整消息',
+                navigationHint: '折叠连续消息，只显示分支点与候选',
+                fullHint: '显示所有消息，横向位置只随分支变化',
+                collapsedMessages: '已折叠 {count} 条连续消息',
                 candidateCount: '{count} 个候选',
                 deleted: '已删除',
+                system: '系统',
                 restore: '恢复',
                 rename: '重命名',
                 renamePlaceholder: '输入分支标签…',
@@ -538,7 +545,11 @@ const zhCN = {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
-                autoTriggered: '自动触发'
+                autoTriggered: '自动触发',
+                compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
+                legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
+                historyTokenLabel: '历史',
+                requestTokenLabel: '请求'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',

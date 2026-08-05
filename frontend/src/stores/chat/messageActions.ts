@@ -342,9 +342,12 @@ export async function sendMessage(
   attachments?: Attachment[],
   options?: SendMessageOptions
 ): Promise<boolean> {
-  const hiddenFunctionResponse = options?.hidden?.functionResponse
+    const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
   if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return false
+
+  // BR-01：本次发送窗口 user 消息的稳定节点 id（随 chatStream 传给后端原样落库）
+  let pendingUserMessageId: string | undefined
 
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
@@ -407,9 +410,17 @@ export async function sendMessage(
         content: messageText,
         timestamp: Date.now(),
         backendIndex: getNextBackendIndex(state),
+        // BR-01：本地窗口近似父链（首条为 null）——用于编辑时根节点判断（parentId==null 降级 keep）；
+        // 后端落库时 ensureNodeId 会生成准确 parentId，加载历史后以后端为准
+        parentId: state.allMessages.value.length > 0
+          ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
+          : null,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
         source: options?.source
       }
+      // BR-01：记录窗口消息 id 并随 chatStream 传给后端原样落库，
+      // 保证主历史 Content.id 与窗口消息 id 一致（编辑/重试/分支操作按 id 定位）
+      pendingUserMessageId = userMessage.id
       state.allMessages.value.push(userMessage)
     }
 
@@ -482,6 +493,8 @@ export async function sendMessage(
       conversationId: targetConvId,
       configId: state.configId.value,
       message: messageText,
+      // BR-01：窗口 user 消息的稳定节点 id（后端原样落库，编辑/重试才能按 id 定位）
+      messageId: pendingUserMessageId,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
@@ -885,6 +898,7 @@ async function replayBranchStreamAfterError(
     if (targetIndex === -1) return
 
     const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+    const isKeepReplay = context.kind === 'editBranch' && context.mode === 'keep'
     if (context.kind === 'reroll') {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       rebuildMessageIndexById(state)
@@ -894,13 +908,18 @@ async function replayBranchStreamAfterError(
       const targetMessage = state.allMessages.value[targetIndex]
       targetMessage.content = context.newText
       targetMessage.parts = [{ text: context.newText }]
-      state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
-      rebuildMessageIndexById(state)
-      // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
-      state.toolResponseCache.value = new Map()
+      // keep 模式（真·原地保存）：只改写目标消息，后续消息全部保留，不截断
+      if (!isKeepReplay) {
+        state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+        rebuildMessageIndexById(state)
+        // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+        state.toolResponseCache.value = new Map()
+      }
     }
-    clearCheckpointsFromIndex(state, backendIndex)
-    setTotalMessagesFromWindow(state)
+    if (!isKeepReplay) {
+      clearCheckpointsFromIndex(state, backendIndex)
+      setTotalMessagesFromWindow(state)
+    }
   }
 
   state.error.value = null
@@ -908,24 +927,28 @@ async function replayBranchStreamAfterError(
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
 
-  const assistantMessageId = generateId()
-  appendMessage(state, {
-    id: assistantMessageId,
-    role: 'assistant',
-    content: '',
-    timestamp: Date.now(),
-    backendIndex: getNextBackendIndex(state),
-    streaming: true,
-    localOnly: true,
-    metadata: {
-      modelVersion: computed.currentModelName.value
-    }
-  })
-  state.streamingMessageId.value = assistantMessageId
-  syncTotalMessagesFromWindow(state)
-  trimWindowFromTop(state)
+  // keep 模式（真·原地保存）重放：不创建占位（后端不重新生成，complete 仅复位状态）
+  const isKeepReplay = context.kind === 'editBranch' && context.mode === 'keep'
+  if (!isKeepReplay) {
+    const assistantMessageId = generateId()
+    appendMessage(state, {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
+      streaming: true,
+      localOnly: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
+    })
+    state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
+  }
 
-  state._pendingBranchRefreshAfterStream.value = originConvId
+  state._pendingBranchRefreshAfterStream.value = isKeepReplay ? null : originConvId
   state._pendingBranchReplayContext.value = context
 
   try {
@@ -1122,38 +1145,50 @@ export async function editAndRetry(
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   const targetMessage = state.allMessages.value[messageIndex]
+  // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
+  // branch 模式自动降级为 keep（真·原地保存）
+  const effectiveMode = mode === 'branch' && targetMessage.parentId == null ? 'keep' : mode
   targetMessage.content = newMessage
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
-  
-  state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
-  rebuildMessageIndexById(state)
-  // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
-  state.toolResponseCache.value = new Map()
-  clearCheckpointsFromIndex(state, backendMessageIndex)
-  setTotalMessagesFromWindow(state)
 
-  const assistantMessageId = generateId()
-  const assistantMessage: Message = {
-    id: assistantMessageId,
-    role: 'assistant',
-    content: '',
-    timestamp: Date.now(),
-    backendIndex: getNextBackendIndex(state),
-    streaming: true,
-    localOnly: true,
-    metadata: {
-      modelVersion: computed.currentModelName.value
+  if (effectiveMode === 'keep') {
+    // 真·原地保存：只改写本条消息，后续消息 / 检查点 / 分支全部保留，
+    // 不截断窗口、不创建占位（后端不重新生成，流结束仅复位状态）
+  } else {
+    // branch 模式：截断窗口到目标消息 + 创建流式占位
+    state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+    rebuildMessageIndexById(state)
+    // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+    state.toolResponseCache.value = new Map()
+    clearCheckpointsFromIndex(state, backendMessageIndex)
+    setTotalMessagesFromWindow(state)
+
+    const assistantMessageId = generateId()
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
+      streaming: true,
+      localOnly: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
     }
+    state.allMessages.value.push(assistantMessage)
+    state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
   }
-  state.allMessages.value.push(assistantMessage)
-  state.streamingMessageId.value = assistantMessageId
-  syncTotalMessagesFromWindow(state)
-  trimWindowFromTop(state)
 
   // 置位：流结束（complete/error/cancelled）后刷新分支图，
   // 让 BranchSwitcherBar 显示新编辑候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
-  state._pendingBranchRefreshAfterStream.value = originConvId
+  // keep 模式（真·原地保存）不产生候选，无需刷新分支图。
+  if (effectiveMode !== 'keep') {
+    state._pendingBranchRefreshAfterStream.value = originConvId
+  }
 
   let replayContext: BranchStreamReplayContext | null = null
   try {
@@ -1166,7 +1201,7 @@ export async function editAndRetry(
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      mode: effectiveMode
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -1187,7 +1222,8 @@ export async function editAndRetry(
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      mode: effectiveMode
     })
   } catch (err: any) {
     const branchReplayContext = replayContext

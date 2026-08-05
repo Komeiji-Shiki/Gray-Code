@@ -102,6 +102,14 @@ export interface UsageMetadata {
   candidatesTokensDetails?: TokenDetailsEntry[]
 }
 
+export interface SummaryTokenStats {
+  sourceTokenCount: number
+  summaryTokenCount: number
+  estimatedTokensSaved: number
+  contextTokenCountBefore?: number
+  estimatedContextTokenCountAfter?: number
+}
+
 /**
  * Content - Gemini API 消息格式
  */
@@ -122,6 +130,7 @@ export interface Content {
   modelVersion?: string
   /** Token 使用统计（仅 model 消息有值） */
   usageMetadata?: UsageMetadata
+  summaryTokenStats?: SummaryTokenStats
   /** 系统内部消息来源；background_task 用于恢复后台任务卡片并排除新回合语义。 */
   source?: 'user' | 'background_task'
   /** 是否为函数响应消息 */
@@ -197,6 +206,11 @@ export interface Message {
   content: string
   timestamp: number
   /**
+   * 主历史中的父消息节点 ID（BR-01：首条消息为 null）。
+   * 前端据此识别根节点——编辑根节点时无父节点可挂编辑候选，自动降级为「原地保存」。
+   */
+  parentId?: string | null
+  /**
    * 消息来源：'user' 为正常用户输入，'background_task' 为后台任务回流
    */
   source?: 'user' | 'background_task'
@@ -239,6 +253,8 @@ export interface Message {
    * 总结消息覆盖的消息数量
    */
   summarizedMessageCount?: number
+  /** 主上下文压缩统计；与总结模型请求 usage 分离。 */
+  summaryTokenStats?: SummaryTokenStats
   /** 是否为自动触发的总结消息 */
   isAutoSummary?: boolean
 }

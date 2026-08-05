@@ -4,7 +4,7 @@
  * 定义对话相关的请求和响应类型
  */
 
-import type { Content } from '../../conversation/types';
+import type { Content, SummaryTokenStats } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
 import type { DynamicContextStrategy } from '../../settings/types';
@@ -74,6 +74,13 @@ export interface ChatRequestData {
     
     /** 用户消息（文本） */
     message: string;
+
+    /**
+     * 用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）。
+     * 前端发送时携带自身生成的 id，后端原样落库，保证窗口消息 id 与主历史/分支图一致；
+     * 省略时由后端生成（兼容旧客户端与后端内部调用）。
+     */
+    messageId?: string;
     
     /** 附件列表（可选） */
     attachments?: AttachmentData[];
@@ -497,6 +504,12 @@ export interface ToolConfirmationResponseData {
     /** 用户批注（可选，会作为用户消息发送给 AI） */
     annotation?: string;
 
+    /**
+     * 批注用户消息的稳定节点 ID（BR-01 对齐，语义同 ChatRequestData.messageId）。
+     * 前端窗口中的批注消息 id 需与后端落库 id 一致，编辑/重试才能定位。
+     */
+    annotationMessageId?: string;
+
     /** 取消信号 */
     abortSignal?: AbortSignal;
 
@@ -542,10 +555,12 @@ export interface SummarizeContextSuccessData {
     summaryContent: Content;
     /** 被总结的消息数量 */
     summarizedMessageCount: number;
-    /** 总结前的上下文 token 数（promptTokenCount） */
+    /** @deprecated 总结模型请求的 promptTokenCount；不是主上下文大小。 */
     beforeTokenCount?: number;
-    /** 总结后的内容 token 数（candidatesTokenCount） */
+    /** @deprecated 总结模型请求的 candidatesTokenCount；不是主上下文大小。 */
     afterTokenCount?: number;
+    /** 主上下文压缩统计。 */
+    summaryTokenStats?: SummaryTokenStats;
     /** 总结消息插入位置（完整历史中的绝对索引） */
     insertIndex?: number;
 }

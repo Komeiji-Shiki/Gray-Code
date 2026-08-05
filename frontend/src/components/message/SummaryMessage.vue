@@ -53,8 +53,25 @@ const previewText = computed(() => {
 
 // Token 信息
 const usageMetadata = computed(() => props.message.metadata?.usageMetadata)
+const summaryTokenStats = computed(() => props.message.summaryTokenStats)
 const hasTokenInfo = computed(() =>
-  usageMetadata.value?.promptTokenCount || usageMetadata.value?.candidatesTokenCount
+  summaryTokenStats.value || usageMetadata.value?.promptTokenCount || usageMetadata.value?.candidatesTokenCount
+)
+const tokenBefore = computed(() =>
+  summaryTokenStats.value?.sourceTokenCount ?? usageMetadata.value?.promptTokenCount ?? 0
+)
+const tokenAfter = computed(() =>
+  summaryTokenStats.value?.summaryTokenCount ?? usageMetadata.value?.candidatesTokenCount ?? 0
+)
+const tokenTitle = computed(() => summaryTokenStats.value
+  ? t('components.message.summary.compressionTokens', {
+      saved: summaryTokenStats.value.estimatedTokensSaved
+    })
+  : t('components.message.summary.legacyRequestTokens')
+)
+const tokenModeLabel = computed(() => summaryTokenStats.value
+  ? t('components.message.summary.historyTokenLabel')
+  : t('components.message.summary.requestTokenLabel')
 )
 
 // 删除总结消息
@@ -90,10 +107,12 @@ async function handleDelete() {
       
       <!-- 右侧：删除按钮 + 时间和 Token 信息 -->
       <div class="summary-right">
-        <span v-if="hasTokenInfo" class="summary-tokens">
-          <span class="token-before">{{ usageMetadata?.promptTokenCount || 0 }}</span>
+        <span v-if="hasTokenInfo" class="summary-tokens" :title="tokenTitle">
+          <span class="token-mode">{{ tokenModeLabel }}</span>
+          <span class="token-before">{{ tokenBefore }}</span>
           <span class="token-arrow">→</span>
-          <span class="token-after">{{ usageMetadata?.candidatesTokenCount || 0 }}</span>
+          <span class="token-after">{{ tokenAfter }}</span>
+          <span v-if="summaryTokenStats" class="token-saved">−{{ summaryTokenStats.estimatedTokensSaved }}</span>
         </span>
         <span class="summary-time">{{ formattedTime }}</span>
         <button
@@ -207,6 +226,12 @@ async function handleDelete() {
   font-weight: 500;
   color: var(--vscode-foreground);
   opacity: 0.7;
+}
+
+.token-mode,
+.token-saved {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
 }
 
 .token-after {
