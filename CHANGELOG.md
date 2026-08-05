@@ -17,6 +17,11 @@
 ### Changed
   - **仓库改名同步**：GitHub 仓库已由 `czocelot/Gray-Code-ocelot` 改名为 `czocelot/Gray-Code-Desktop`，全部文档与链接同步更新——`README.md` / `README_EN.md`（徽标、下载、clone、issues 链接与 clone 目录名）、根与 electron-app 的 `package.json`（repository.url / homepage / author.url）、设置页「应用信息 → 仓库」链接（frontend/src/components/settings/SettingsPanel.vue）
 
+### Fixed
+  - **多对话并发编辑多工作区的 checkpoint 全局根锁（并发编辑可用性的最大阻碍）**：存档创建此前对**全部工作区根**做快照并持有全局文件根锁 `''`（与所有路径互斥），对话 A 每次写工具前后（默认配置对 write_file/apply_diff/execute_command 等全部写工具在 before+after 建存档）的存档期间，绑定其他工作区的对话 B 的写工具全部 `lockConflict` 失败。现 `createCheckpoint` 按对话绑定的工作区（`conversationManager.getMetadata().workspaceUri`）裁剪快照范围与锁范围（`CheckpointOperationLock` 新增 `fileLockPaths` 选项，按工作区根绝对路径加锁；未绑定/绑定工作区已关闭时回退全部根，旧行为不变）——绑定不同工作区的对话在彼此存档期间可无冲突地并发写文件，真正实现多 AI 多工作区并行编辑
+  - **文件写锁 key 不按对话工作区解析（跨工作区误冲突/漏锁）**：`ToolExecutionService` 加锁前把写目标路径按对话绑定的工作区解析为绝对路径（与工具执行同一口径 `resolveFileToolPathWithInfo`）再 `tryAcquire`；此前多工作区下同名相对路径（如 `src/a.ts`）解析失败回退进程 cwd 相对路径，不同工作区的同相对路径会映射到同一锁 key 造成误冲突，或映射到不同 key 造成漏锁。diff 预览延迟写盘路径（`PendingDiff.absolutePath`）本就用绝对路径，无此问题
+  - 回归测试（CheckpointManagerWorkspace）：绑定工作区对话的存档只快照该工作区根、未绑定对话仍快照全部根、绑定对话存档期间其他工作区的写锁持有者不受阻塞
+
 ## [1.6.5] - 2026-08-05
 
 ### Merged

@@ -23,7 +23,7 @@ import { isMcpToolName, decodeMcpToolName } from '../../../mcp/mcpToolNameCodec'
 import type { ContentPart } from '../../../conversation/types';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
-import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
+import { getAllWorkspaces, getMultimodalCapability, resolveFileToolPathWithInfo, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
 import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
 import {
@@ -34,6 +34,35 @@ import { fileWriteLockManager, getWritePathsForCall, type LockHolder } from '../
 import { agentMailbox } from '../../../../tools/subagents/agentMailbox';
 import { Logger } from '../../../../core/logger';
 import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
+
+/**
+ * 多工作区并发支持：把写锁目标路径解析为绝对规范路径（与工具执行同一口径）。
+ *
+ * 旧实现直接把模型提供的原始路径交给 fileWriteLockManager，其内部解析不携带
+ * 对话绑定工作区（preferredWorkspaceUri）——多工作区下同名相对路径（如 src/a.ts）
+ * 解析失败后回退 path.resolve（相对进程 cwd），不同工作区的同相对路径会映射到
+ * 同一锁 key 造成误冲突，或映射到不同 key 造成漏锁。
+ *
+ * 这里按对话绑定的工作区解析为绝对 fsPath 后再加锁；解析失败（无工作区/无法解析）
+ * 时回退原始路径，由 fileWriteLockManager 保留旧的兜底行为。
+ */
+function resolveWriteLockPaths(rawPaths: string[], preferredWorkspaceUri?: string): string[] {
+    return rawPaths.map(rawPath => {
+        const trimmed = String(rawPath || '').trim();
+        if (trimmed === '') {
+            return '';
+        }
+        try {
+            const info = resolveFileToolPathWithInfo(trimmed, preferredWorkspaceUri);
+            if (info.uri?.fsPath) {
+                return info.uri.fsPath;
+            }
+        } catch {
+            // 解析异常时回退原始路径（fileWriteLockManager 内部仍有兜底）
+        }
+        return trimmed;
+    });
+}
 
 /**
  * 工具执行完整结果
@@ -1127,7 +1156,10 @@ export class ToolExecutionService {
                 // 写盘锁由 diffManager 在写盘前获取（PendingDiff.lockHolder，同 holder 身份），
                 // 写盘后立即释放；审阅期间本文件对并行写入者不可见，写盘瞬间才成为持有者。
             } else {
-                const lockResult = fileWriteLockManager.tryAcquire(writePaths, lockHolder);
+                // 多工作区并发支持：锁 key 用与工具执行同一口径的绝对路径（按对话绑定工作区解析），
+                // 避免多工作区下同名相对路径（如 src/a.ts）回退到进程 cwd 导致误冲突/漏锁。
+                const resolvedWritePaths = resolveWriteLockPaths(writePaths, activeWorkspaceUri);
+                const lockResult = fileWriteLockManager.tryAcquire(resolvedWritePaths, lockHolder);
                 if (!lockResult.acquired) {
                     // 修改原因（P4）：旧文案“Do NOT wait or retry this file immediately”易被 LLM 误解为放弃该文件，
                     // 且未告知冲突持有者身份之外的协作方式。
@@ -1150,7 +1182,7 @@ export class ToolExecutionService {
                         lockConflict: true
                     };
                 }
-                lockedPaths = writePaths;
+                lockedPaths = resolvedWritePaths;
             }
         }
 

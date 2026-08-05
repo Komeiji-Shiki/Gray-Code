@@ -22,6 +22,7 @@ jest.mock('../../tools/file/diffManager', () => ({
 }));
 
 import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 async function createTempDirectory(prefix: string): Promise<string> {
     return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -42,6 +43,8 @@ interface CreateManagerOptions {
     storageRoot: string;
     checkpoints?: CheckpointRecord[];
     customIgnorePatterns?: string[];
+    /** 多工作区并发支持：对话绑定的工作区 URI（测试只对指定对话返回该元数据） */
+    boundWorkspaceUri?: string;
 }
 
 async function createCheckpointManager(options: CreateManagerOptions): Promise<CheckpointManager> {
@@ -71,7 +74,13 @@ async function createCheckpointManager(options: CreateManagerOptions): Promise<C
     };
     let metadataWriteChain: Promise<unknown> = Promise.resolve();
     const conversationManager = {
-        getMetadata: jest.fn().mockImplementation(async (conversationId: string) => sharedMetadata),
+        getMetadata: jest.fn().mockImplementation(async (conversationId: string) => {
+            // 多工作区并发支持：绑定工作区的对话返回其 workspaceUri，否则返回共享元数据（未绑定）
+            if (options.boundWorkspaceUri) {
+                return { workspaceUri: options.boundWorkspaceUri };
+            }
+            return sharedMetadata;
+        }),
         getCustomMetadata: jest.fn().mockImplementation(async (conversationId: string, key: string) => {
             return (sharedMetadata.custom as Record<string, unknown>)[key];
         }),
@@ -464,6 +473,107 @@ describe('CheckpointManager workspace boundaries (CP-01/CP-02/CP-07)', () => {
             expect(result.error!.length).toBeGreaterThan(0);
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('scopes snapshot to the conversation bound workspace (multi-conversation concurrency)', async () => {
+        const rootA = await createTempDirectory('limcode-cp-bound-a-');
+        const rootB = await createTempDirectory('limcode-cp-bound-b-');
+        const storageRoot = await createTempDirectory('limcode-cp-storage-');
+        const conversationId = 'conv-bound-workspace';
+
+        try {
+            await writeFile(rootA, 'a.txt', 'a1\n');
+            await writeFile(rootB, 'b.txt', 'b1\n');
+
+            // 绑定 URI 与生产链路同构：folder.uri.toString() 的 file:// 形式
+            const boundWorkspaceUri = 'file://' + rootA.replace(/\\/g, '/');
+
+            const manager = await createCheckpointManager({
+                workspaceRoots: [rootA, rootB],
+                storageRoot,
+                boundWorkspaceUri
+            });
+            const cp = await manager.createCheckpoint(conversationId, 0, 'write_file', 'after');
+
+            expect(cp).not.toBeNull();
+            // 清单只声明绑定的工作区根（rootA），rootB 不进入快照
+            expect(cp!.workspaceRoots).toHaveLength(1);
+            expect(cp!.workspaceRoots![0].uri.toLowerCase()).toBe(rootA.replace(/\\/g, '/').toLowerCase());
+
+            const hashKeys = Object.keys(cp!.fileHashes ?? {});
+            // scoped 键形如 ws_xxx/a.txt：绑定 rootA 时只含 rootA 的文件
+            expect(hashKeys.some(k => k.replace(/\\/g, '/').endsWith('/a.txt'))).toBe(true);
+            expect(hashKeys.some(k => k.replace(/\\/g, '/').endsWith('/b.txt'))).toBe(false);
+        } finally {
+            await fs.rm(rootA, { recursive: true, force: true });
+            await fs.rm(rootB, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('unbound conversation still snapshots all workspace roots', async () => {
+        const rootA = await createTempDirectory('limcode-cp-unbound-a-');
+        const rootB = await createTempDirectory('limcode-cp-unbound-b-');
+        const storageRoot = await createTempDirectory('limcode-cp-storage-');
+        const conversationId = 'conv-unbound-workspace';
+
+        try {
+            await writeFile(rootA, 'a.txt', 'a1\n');
+            await writeFile(rootB, 'b.txt', 'b1\n');
+
+            const manager = await createCheckpointManager({
+                workspaceRoots: [rootA, rootB],
+                storageRoot
+            });
+            const cp = await manager.createCheckpoint(conversationId, 0, 'write_file', 'after');
+
+            expect(cp).not.toBeNull();
+            expect(cp!.workspaceRoots).toHaveLength(2);
+
+            const hashKeys = Object.keys(cp!.fileHashes ?? {}).map(k => k.replace(/\\/g, '/'));
+            expect(hashKeys.some(k => k.endsWith('/a.txt'))).toBe(true);
+            expect(hashKeys.some(k => k.endsWith('/b.txt'))).toBe(true);
+        } finally {
+            await fs.rm(rootA, { recursive: true, force: true });
+            await fs.rm(rootB, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('checkpoint file lock is scoped to the bound workspace root (no cross-workspace contention)', async () => {
+        const rootA = await createTempDirectory('limcode-cp-lock-a-');
+        const rootB = await createTempDirectory('limcode-cp-lock-b-');
+        const storageRoot = await createTempDirectory('limcode-cp-storage-');
+        const conversationId = 'conv-bound-lock';
+
+        try {
+            await writeFile(rootA, 'a.txt', 'a1\n');
+            await writeFile(rootB, 'b.txt', 'b1\n');
+
+            const boundWorkspaceUri = 'file://' + rootA.replace(/\\/g, '/');
+            const manager = await createCheckpointManager({
+                workspaceRoots: [rootA, rootB],
+                storageRoot,
+                boundWorkspaceUri
+            });
+
+            // 其他对话（绑定 rootB）正持有 rootB 内文件的写锁：
+            // 若 checkpoint 文件锁仍是全局根锁，创建会轮询 60s 后超时；
+            // 按工作区根加锁则立即成功，互不阻塞。
+            const otherHolder = { kind: 'main' as const, id: 'conversation-other', label: 'other session' };
+            fileWriteLockManager.tryAcquire([path.join(rootB, 'b.txt')], otherHolder);
+            try {
+                const cp = await manager.createCheckpoint(conversationId, 0, 'write_file', 'after');
+                expect(cp).not.toBeNull();
+            } finally {
+                fileWriteLockManager.release([path.join(rootB, 'b.txt')], otherHolder);
+            }
+            expect(fileWriteLockManager.getLockCount()).toBe(0);
+        } finally {
+            await fs.rm(rootA, { recursive: true, force: true });
+            await fs.rm(rootB, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });
         }
     });

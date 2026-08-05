@@ -117,6 +117,15 @@ export function computeForcedKeepIds(
 }
 
 /**
+ * 多工作区并发支持：归一化文件系统路径用于对比（反斜杠统一为斜杠、去尾部分隔符）。
+ * 不做大小写折叠——VS Code 与 shim 的 Uri.fsPath 驱动盘符大小写一致，且不匹配时
+ * 回退全根快照（安全降级）。
+ */
+function normalizeRootFsPath(fsPath: string): string {
+    return String(fsPath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
  * 检查点管理器
  */
 export class CheckpointManager {
@@ -323,7 +332,10 @@ export class CheckpointManager {
         reportProgress({ phase: 'scanning', processed: 0, total: 0 });
         
         // CP-02: 使用全部工作区根，不再只备份第一个根目录
-        const roots = this.getRuntimeWorkspaceRoots();
+        // 多工作区并发支持：对话绑定了工作区时只快照该工作区（文件锁也按该根获取），
+        // 绑定不同工作区的其他对话在存档期间可无冲突地继续写文件；
+        // 未绑定 / 绑定工作区已关闭时回退全部根（旧行为）。
+        let roots = this.getRuntimeWorkspaceRoots();
         if (roots.length === 0) {
             // M-1: 早退前把操作推进到终态并结束。否则操作以 phase:'scanning' 永久留在
             // operations map（容量清理只淘汰终态条目），getOperationProgress()（不带
@@ -339,11 +351,36 @@ export class CheckpointManager {
             this.endOperation(operationId);
             return null;
         }
+        if (roots.length > 1) {
+            try {
+                const boundWorkspaceUri = await this.conversationManager.getMetadata(conversationId)
+                    .then((meta: any) => meta?.workspaceUri as string | undefined)
+                    .catch(() => undefined);
+                if (boundWorkspaceUri) {
+                    let boundFsPath = '';
+                    try {
+                        boundFsPath = vscode.Uri.parse(boundWorkspaceUri).fsPath;
+                    } catch {
+                        boundFsPath = '';
+                    }
+                    if (boundFsPath) {
+                        const matched = roots.filter(r => normalizeRootFsPath(r.fsPath) === normalizeRootFsPath(boundFsPath));
+                        if (matched.length === 1) {
+                            roots = matched;
+                        }
+                    }
+                }
+            } catch {
+                // 元数据读取失败回退全部根（旧行为）
+            }
+        }
         
         const checkpointId = this.generateCheckpointId();
         const backupDir = path.join(this.checkpointsDir, checkpointId);
 
         // CP-03: 存档创建进入工作区级互斥（与恢复、删除、写工具互斥，保证快照一致性）
+        // 多工作区并发支持：文件锁范围 = 本次快照的工作区根，不再取全局根锁，
+        // 避免绑定其他工作区的对话写工具在存档期间无谓失败。
         try {
             return await checkpointOperationLockManager.runExclusive(
             roots.map(root => root.id),
@@ -644,7 +681,8 @@ export class CheckpointManager {
                     return null;
                 }
             },
-            signal
+            signal,
+            { fileLockPaths: roots.map(root => root.fsPath) }
             );
         } catch (err) {
             // M4: 等待文件写锁期间被取消时 fileWriteLockManager.acquire 抛普通 Error，

@@ -16,6 +16,9 @@ are tracked in the root `CHANGELOG.md`.
 ### Changed
   - **仓库改名同步**：`czocelot/Gray-Code-ocelot` → `czocelot/Gray-Code-Desktop`（electron-app/package.json 的 author.url / homepage；其余 README/设置页链接同步，详见根 `CHANGELOG.md` [1.6.6]）；桌面版构建产物版本同步为 v1.6.6
 
+### Fixed
+  - **多对话并发编辑多工作区**（backend 公共部分，详见根 `CHANGELOG.md` [1.6.6]）：checkpoint 存档按对话绑定工作区裁剪快照与文件锁范围（不再持有全局根锁阻塞其他工作区的写工具）；写锁 key 按对话工作区解析为绝对路径（消除跨工作区同名相对路径的误冲突/漏锁）——桌面版多 tab 并发流式 + 多工作区并行编辑由此端到端可用
+
 ## [1.6.4] - 2026-08-05
 
 ### Merged

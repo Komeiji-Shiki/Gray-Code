@@ -12,6 +12,13 @@ export interface CheckpointRunExclusiveOptions {
      * 预览/只读计算类操作传 false：只取工作区级互斥，不阻塞主会话与 SubAgent 的写工具。
      */
     needFileLock?: boolean;
+    /**
+     * 文件写锁范围（多工作区并发支持）：本次存档操作实际覆盖的工作区根绝对路径。
+     * 缺省（或空数组）时退化为全局根锁 ''（与所有路径互斥）。
+     * 提供工作区根路径后只与这些根目录内的写工具互斥——绑定其他工作区的对话
+     * 可无冲突地继续写文件，实现多对话并发编辑多工作区。
+     */
+    fileLockPaths?: string[];
 }
 
 /** CP-LOCK-1: 排队等待工作区锁期间被取消时 reject 的错误消息（与文件写锁取消同语义） */
@@ -78,7 +85,7 @@ export class CheckpointOperationLockManager {
             record.depth += 1;
             try {
                 return needFileLock
-                    ? await this.runWithFileLock(operation, ownerId, task, abortSignal)
+                    ? await this.runWithFileLock(operation, ownerId, task, abortSignal, options?.fileLockPaths)
                     : await task();
             } finally {
                 record.depth -= 1;
@@ -95,7 +102,7 @@ export class CheckpointOperationLockManager {
         this.activeOwners.set(ownerId, { workspaceIds: normalizedIds, depth: 1 });
         try {
             return needFileLock
-                ? await this.runWithFileLock(operation, ownerId, task, abortSignal)
+                ? await this.runWithFileLock(operation, ownerId, task, abortSignal, options?.fileLockPaths)
                 : await task();
         } finally {
             this.activeOwners.delete(ownerId);
@@ -108,18 +115,22 @@ export class CheckpointOperationLockManager {
         operation: CheckpointOperation,
         ownerId: string,
         task: () => Promise<T>,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        fileLockPaths?: string[]
     ): Promise<T> {
         const holder: LockHolder = {
             kind: 'checkpoint',
             id: ownerId,
             label: `checkpoint ${operation}`
         };
-        await fileWriteLockManager.acquire([''], holder, abortSignal);
+        // 多工作区并发支持：有明确范围时按工作区根路径加锁（只与该根内写工具互斥）；
+        // 缺省退化为全局根锁 ''（与所有路径互斥，旧行为）。
+        const lockPaths = fileLockPaths && fileLockPaths.length > 0 ? fileLockPaths : [''];
+        await fileWriteLockManager.acquire(lockPaths, holder, abortSignal);
         try {
             return await task();
         } finally {
-            fileWriteLockManager.release([''], holder);
+            fileWriteLockManager.release(lockPaths, holder);
         }
     }
 
