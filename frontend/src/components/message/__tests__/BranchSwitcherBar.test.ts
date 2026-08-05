@@ -47,6 +47,14 @@ function makeThreeCandidateGraph(activeTailNodeId: string): BranchGraphData {
 }
 
 function mountBar(): ReturnType<typeof mount> {
+  return mount(BranchSwitcherBar, {
+    props: { parentNodeId: 'u1' },
+    // 交互测试关注候选行为；定位回归测试单独使用真实 Teleport。
+    global: { stubs: { teleport: true } }
+  })
+}
+
+function mountTeleportedBar(): ReturnType<typeof mount> {
   return mount(BranchSwitcherBar, { props: { parentNodeId: 'u1' } })
 }
 
@@ -167,6 +175,41 @@ describe('BranchSwitcherBar 切换交互', () => {
     expect(rows[2].find('.branch-candidate-delete').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('候选列表挂载到 body，并在靠近视口右侧时向左回退', async () => {
+    chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
+    const originalWidth = window.innerWidth
+    const originalHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+
+    const wrapper = mountTeleportedBar()
+    const anchor = wrapper.find('.branch-switcher-center').element as HTMLElement
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      x: 350,
+      y: 40,
+      left: 350,
+      right: 390,
+      top: 40,
+      bottom: 64,
+      width: 40,
+      height: 24,
+      toJSON: () => ({})
+    } as DOMRect)
+
+    await wrapper.find('.branch-switcher-position').trigger('click')
+
+    const list = document.body.querySelector('.branch-candidate-list') as HTMLElement | null
+    expect(list).not.toBeNull()
+    expect(list?.parentElement).toBe(document.body)
+    expect(list?.style.width).toBe('260px')
+    expect(list?.style.left).toBe('132px')
+    expect(list?.style.top).toBe('68px')
+
+    wrapper.unmount()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight })
+  })
 })
 
 describe('BranchSwitcherBar 删除交互（两步确认）', () => {
@@ -186,13 +229,11 @@ describe('BranchSwitcherBar 删除交互（两步确认）', () => {
 
     const deleteButtons = wrapper.findAll('.branch-candidate-delete')
     // 非活跃候选 a3 的删除按钮（第 2 个）
-    const deleteBtn = deleteButtons[1]
-
-    await deleteBtn.trigger('click')
+    await deleteButtons[1].trigger('click')
     expect(chatStoreMock.deleteBranchCandidate).not.toHaveBeenCalled()
-    expect(deleteBtn.classes()).toContain('confirming')
+    expect(wrapper.findAll('.branch-candidate-delete')[1].classes()).toContain('confirming')
 
-    await deleteBtn.trigger('click')
+    await wrapper.findAll('.branch-candidate-delete')[1].trigger('click')
     expect(chatStoreMock.deleteBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.deleteBranchCandidate).toHaveBeenCalledWith('a3')
     wrapper.unmount()
@@ -204,12 +245,14 @@ describe('BranchSwitcherBar 删除交互（两步确认）', () => {
 
     await wrapper.find('.branch-switcher-position').trigger('click')
 
-    const deleteButtons = wrapper.findAll('.branch-candidate-delete')
+    let deleteButtons = wrapper.findAll('.branch-candidate-delete')
     await deleteButtons[0].trigger('click')
+    deleteButtons = wrapper.findAll('.branch-candidate-delete')
     expect(deleteButtons[0].classes()).toContain('confirming')
 
     // 点击另一个候选的删除：确认目标转移，第一个恢复
     await deleteButtons[1].trigger('click')
+    deleteButtons = wrapper.findAll('.branch-candidate-delete')
     expect(deleteButtons[1].classes()).toContain('confirming')
     expect(deleteButtons[0].classes()).not.toContain('confirming')
     expect(chatStoreMock.deleteBranchCandidate).not.toHaveBeenCalled()
@@ -240,8 +283,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     await rows[2].find('.branch-candidate-main').trigger('click')
 
     expect(chatStoreMock.switchBranchCandidate).not.toHaveBeenCalled()
-    // 确认框（Teleport 到 body）出现
-    expect(document.body.querySelector('.dialog')).not.toBeNull()
+    expect(wrapper.find('.dialog').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -254,9 +296,9 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     const rows = wrapper.findAll('.branch-candidate-row')
     await rows[2].find('.branch-candidate-main').trigger('click')
 
-    const secondary = document.body.querySelector('.workspace-confirm-secondary') as HTMLElement
-    expect(secondary).not.toBeNull()
-    secondary.click()
+    const secondary = wrapper.find('.workspace-confirm-secondary')
+    expect(secondary.exists()).toBe(true)
+    await secondary.trigger('click')
 
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('a3', { mode: 'chat-and-workspace' })
@@ -272,8 +314,9 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     const rows = wrapper.findAll('.branch-candidate-row')
     await rows[2].find('.branch-candidate-main').trigger('click')
 
-    const confirmBtn = document.body.querySelector('.dialog-btn.confirm') as HTMLElement
-    confirmBtn.click()
+    const confirmBtn = wrapper.find('.dialog-btn.confirm')
+    expect(confirmBtn.exists()).toBe(true)
+    await confirmBtn.trigger('click')
 
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('a3', { mode: 'chat-only' })
@@ -290,7 +333,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
 
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('a3')
-    expect(document.body.querySelector('.dialog')).toBeNull()
+    expect(wrapper.find('.dialog').exists()).toBe(false)
     wrapper.unmount()
   })
 })

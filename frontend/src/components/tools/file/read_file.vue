@@ -38,7 +38,7 @@ interface FileRequest {
 // 获取文件请求列表（兼容单文件 path 与批量 files）
 const fileRequests = computed((): FileRequest[] => {
   if (Array.isArray(props.args.files)) {
-    return props.args.files.flatMap(item => {
+    const batchRequests = props.args.files.flatMap(item => {
       if (typeof item !== 'object' || item === null || Array.isArray(item)) return []
       const request = item as Record<string, unknown>
       if (typeof request.path !== 'string') return []
@@ -48,8 +48,10 @@ const fileRequests = computed((): FileRequest[] => {
         endLine: typeof request.endLine === 'number' ? request.endLine : undefined
       }]
     })
+    if (batchRequests.length > 0) return batchRequests
   }
 
+  // 单文件调用可能同时带有规范化产生的 files: []，此时仍应展示 path 对应的结果。
   const path = typeof props.args.path === 'string' ? props.args.path : null
   if (!path) return []
   return [{

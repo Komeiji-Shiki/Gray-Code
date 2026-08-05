@@ -20,4 +20,13 @@ describe('formatReadFileDescription', () => {
     expect(formatReadFileDescription({ path: 'src/one.ts', endLine: 8 }))
       .toBe('src/one.ts [L1-8]')
   })
+
+  it('空批量参数不会遮蔽同一次调用中的单文件路径', () => {
+    expect(formatReadFileDescription({
+      files: [],
+      path: 'frontend/src/App.vue',
+      startLine: 10,
+      endLine: 20
+    })).toBe('frontend/src/App.vue [L10-20]')
+  })
 })

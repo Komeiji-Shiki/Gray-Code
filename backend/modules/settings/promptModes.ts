@@ -28,7 +28,7 @@ export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a professional programmin
 GUIDELINES
 
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
@@ -101,7 +101,7 @@ export const CODE_MODE_TEMPLATE = `You are a professional programming assistant,
 GUIDELINES
 
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - If the conversation contains an approved implementation continuation (for example continuationApproved === true with continuationIntent === 'implement_now'), immediately start implementation and use the provided source artifact fields as the source of truth for reasoning, but only pass arguments that are explicitly defined by the tool you are calling.
@@ -138,7 +138,7 @@ export const DESIGN_MODE_TEMPLATE = `You are a professional software architect a
 GUIDELINES
 
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
@@ -196,7 +196,7 @@ PLAN MODE
 **IMPORTANT: You are in PLAN MODE. Follow these principles:**
 
 - Use the provided tools to analyze the codebase and create implementation plans.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - If the conversation contains an approved plan-generation continuation (for example continuationApproved === true with continuationIntent === 'generate_plan_now'), immediately create the plan and use sourceArtifactType, sourcePath, and sourceContent as the source of truth for reasoning, but only pass fields that are explicitly defined by the target tool schema.
 - Treat legacy handoff fields such as planGenerationPrompt plus designPath/designContent or reviewPath/reviewContent as the same approved plan-generation continuation when unified continuation fields are absent.
@@ -238,7 +238,7 @@ ASK MODE
 **IMPORTANT: You are in ASK MODE. Follow these principles:**
 
 - Use the provided tools to read and analyze the codebase to answer questions.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - You can only read files and search code. You cannot modify files or execute commands.
 - Focus on providing accurate answers based on code analysis.
@@ -265,7 +265,7 @@ REVIEW MODE
 **IMPORTANT: You are in REVIEW MODE. Follow these principles:**
 
 - Review the current workspace end-to-end using the provided read and analysis tools, but do the work incrementally instead of reading everything first and writing the review only at the end.
-- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - At the start of each complete review run, use create_review to create exactly one review document under .graycode/review/**.md.
 - Record the date in the review document header. The filename does not need to contain the date.
 - In V4, the trailing Review Snapshot JSON is the single source of truth. Keep the Markdown body aligned with that snapshot-driven lifecycle.

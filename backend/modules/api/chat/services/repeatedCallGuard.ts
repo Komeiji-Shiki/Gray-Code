@@ -5,13 +5,12 @@
  * 同一个工具"的失败循环，每次都得到相同的错误，直到烧完 maxIterations。
  * 以前系统对此没有任何运行时护栏，只靠提示词自觉。
  *
- * 策略（刻意保守，避免误伤合法场景）：
- * - 只统计"连续失败"：相同 name+args 的调用返回 success:false 才计数，
- *   一旦成功立即清零。
- * - 重复的成功调用完全不干预（重跑测试、文件修改后重读等都是合法工作流）。
+ * 策略（只拦截真正原地重复的失败循环）：
+ * - 只统计全局执行序列中“连续、同签名的失败”；任意其他真实调用介入后，旧失败序列结束。
+ * - 任意成功调用都会结束失败序列。修改文件、读取新信息后重跑测试等工作流可正常继续。
+ * - 重复的成功调用完全不干预。
  * - 被策略拒绝的调用（rejected:true，如 subagent 并发超限、模式策略过滤）
- *   不计入失败：拒绝不代表参数有问题，稍后同参重试可能完全合理，
- *   而且护栏的"换个思路"文案对拒绝场景是误导。
+ *   视为没有真正执行：既不累计，也不打断当前失败序列。
  * - 参数签名使用键排序的稳定序列化，键顺序不同的语义等价参数命中同一签名。
  * - 连续失败达到阈值（默认 2 次）后，第 3 次相同调用不再真正执行，
  *   而是通过合成错误参数短路，把"换个思路"的提示作为工具结果回传给模型。
@@ -35,8 +34,9 @@ interface RecordableToolResult {
 }
 
 export class RepeatedCallGuard {
-    /** signature -> 连续失败次数 */
-    private readonly failureCounts = new Map<string, number>();
+    /** 当前全局工具执行序列中，最后一个真实失败调用的签名与连续次数。 */
+    private lastFailureSignature: string | null = null;
+    private consecutiveFailureCount = 0;
 
     constructor(private readonly maxConsecutiveFailures: number = 2) {}
 
@@ -49,7 +49,9 @@ export class RepeatedCallGuard {
         }
 
         const signature = signatureOf(call.name, call.args);
-        const failures = this.failureCounts.get(signature) ?? 0;
+        const failures = signature === this.lastFailureSignature
+            ? this.consecutiveFailureCount
+            : 0;
         if (failures < this.maxConsecutiveFailures) {
             return call;
         }
@@ -58,9 +60,9 @@ export class RepeatedCallGuard {
             ...call,
             args: {
                 [REPEATED_CALL_GUARD_ARG_KEY]:
-                    `Blocked: you have already called \`${call.name}\` with these exact arguments ${failures} times in this turn ` +
-                    'and it failed every time. Repeating the identical call will not produce a different result. ' +
-                    'Change the arguments or try a different approach.'
+                    `Blocked: \`${call.name}\` failed ${failures} consecutive times with the same arguments ` +
+                    'and no other executed tool call made progress in between. ' +
+                    'Change the inputs or execute a meaningful diagnostic or modification before retrying.'
             }
         };
     }
@@ -70,8 +72,8 @@ export class RepeatedCallGuard {
     }
 
     /**
-     * 根据执行结果更新连续失败计数。
-     * 成功的调用清零计数；被护栏拦截的合成调用与被策略拒绝的调用不参与统计。
+     * 按真实执行顺序更新连续失败序列。
+     * 任意成功或不同签名的真实调用都会结束旧序列；策略拒绝与护栏合成结果不算真实执行。
      */
     recordResults(results: RecordableToolResult[]): void {
         for (const r of results) {
@@ -84,16 +86,22 @@ export class RepeatedCallGuard {
                 : undefined;
 
             // rejected:true 表示调用没有真正执行（策略/并发限制/确认拒绝），
-            // 既不计失败也不清零：不影响该签名已有的连续失败判断
+            // 既不计失败也不结束当前连续失败序列。
             if (resultRecord?.rejected === true) {
                 continue;
             }
 
             const signature = signatureOf(r.name, r.args);
             if (resultRecord?.success === false) {
-                this.failureCounts.set(signature, (this.failureCounts.get(signature) ?? 0) + 1);
+                if (signature === this.lastFailureSignature) {
+                    this.consecutiveFailureCount += 1;
+                } else {
+                    this.lastFailureSignature = signature;
+                    this.consecutiveFailureCount = 1;
+                }
             } else {
-                this.failureCounts.delete(signature);
+                this.lastFailureSignature = null;
+                this.consecutiveFailureCount = 0;
             }
         }
     }
