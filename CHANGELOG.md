@@ -8,9 +8,36 @@
 
 ## [Unreleased]
 
+### Added
+  - 新增长期使用时间统计（`backend/modules/activity`）：ActivityTracker 以「60 秒心跳 + 用户活动事件」采集 IDE 活跃时间（监听编辑/光标/滚动/切换编辑器/终端/窗口聚焦，连续 5 分钟无活动或失焦即暂停，过滤挂机），采样按天落盘至 `<dataPath>/activity/YYYY-MM-DD.json`（串行队列防并发覆盖，原子写入防损坏）；统计层提供每日使用时长与活跃会话、24 小时作息热力、当前连续工作时长（间隔 ≤15 分钟视为同一会话，跨天拼接不腰斩）。
+  - AI 工作期间同样记为活跃：模型流式生成（`StreamChunkProcessor` chunk 打点）、工具执行（`ToolExecutionService.runSingleToolCall` begin/end 引用计数）、子代理生成（`SubAgentExecutor` 流式循环打点）与后台任务事件（`TaskManager` 事件兜底）都会刷新活跃状态——主人在看 AI 输出时长时间不操作编辑器不会被误判为离开，AI 工作中窗口失焦（后台跑任务）也不暂停统计。
+  - 新增 AI 工具 `get_activity_stats`：AI 可查询用户每日使用时长、最近作息（可选 24h 热力）与连续工作时长，返回本地时间字符串；数据仅含时间戳不含用户内容。
+  - 用量统计页新增「使用时间」区块（`UsageTimeSection.vue`）：今日已用/当前连续工作/近 7 天合计总览卡片 + 每日使用时长条形图 + 近 7 天 × 24 小时作息热力网格（悬停查看详情）；新消息处理器 `activity.getStats`（30 秒结果缓存，force 绕过）。
+  - `StoragePathManager` 存储目录列表新增 `activity`（随迁移/清理/统计联动）；工具分类新增「使用时间」（codicon-watch）并补齐三语 i18n。
+  - 消息操作按钮布局修整（用户消息编辑/复制/分支/删除四按钮）：编辑与重试按钮补齐悬停 tooltip（此前缺失，与复制/分支/删除不一致）；`MessageActions` 与 `BranchSwitcherBar` compact 模式补 `flex-shrink: 0`，窄侧边栏下按钮组不再被压缩变形导致高低不一；候选切换器间距改用 margin 均衡（`padding 0 2px` → `margin 0 2px`）；`IconButton` 补 `box-sizing: border-box`；新增 `MessageActions.test.ts` 渲染测试（按钮组合与 tooltip 断言，4 用例）。
+  - 修复编辑消息对话框（EditDialog）底部按钮换行：`.dialog-footer` 的 `flex-wrap: wrap` 在窗口略窄时会把最后一个「保存」按钮单独挤到第二行（取消/回档到用户消息前/原地保存在第一行）；现改为强制单行（nowrap），长文案按钮（回档/原地保存）文字走单行省略（`btn-label` 包 span + `max-width` 截断），「保存」主按钮 `flex-shrink: 0` 恒在同行最右。
+  - 使用时间统计支持长期历史浏览（`backend/modules/activity`）：查询范围扩展 `365d` / `all`（`ActivityStore.loadAllDays` 全量读取），新增按月聚合 `aggregateMonthly`（月总分钟/活跃天数/会话数，`includeMonthly` 控制）；AI 工具 `get_activity_stats` 同步扩展 range 枚举与 `includeMonthly` 参数；用量页「使用时间」区块新增范围切换（近 7 天 / 30 天 / 90 天 / 1 年 / 全部）——7/30 天显示每日条形图，90 天及以上显示月度条形图（点击月份展开该月每日明细，数据来自已拉取的 daily 无需二次请求），总览卡片「范围内合计」随范围联动，作息热力保持最近 7 天。
+  - 设置面板新增「用量统计」页签（`SettingsPanel.vue` + `settingsStore`）：内嵌使用时间区块（`UsageTimeSection`）与 Token 用量摘要卡片（总 Token/输入/输出/思考/缓存写入/缓存命中/对话数/回复数，范围筛选 全部/今天/近 7 天/近 30 天），底部「查看完整统计」按钮接通原 `showUsage()` 整页入口（此前该入口在 UI 中无任何调用方）；三语 i18n 同步（`components.settings.tabs.usage` / `sections.usage`）。
+
 ### Changed
   - 欢迎页「欢迎使用 GrayCode」图标从 codicon 对话气泡改为开屏动画同款的手绘 Gray logo：内联 SVG 静态完稿态（灰阶色块 + 细描边线稿，颜色变量与 Splash.vue 同源，亮/暗主题自适应）。
   - 修复欢迎页 Gray logo 图标右侧头发色块缺失：复制 Splash 色块层时遗漏第二个 `fill-hair` path（`M 587.0 408.0...`），后半头发只有线稿描边、色块透明；现补齐与 Splash.vue 一致的 7 个色块 path（body×2 / hair×2 / face×1 / cap×2）。
+
+### Fixed
+  - 修复自动总结在工具循环内触发后模型「失忆」（一次工具调用后历史与用户输入从请求中整体消失）：`SummarizeService` 自动总结从「只插入不删除」改为物理替换（同一写锁事务内删除被总结区间 `[historyStartIndex, insertIndex)` 并插入总结，`replaceSummarizedRangeAtomically`），存储与请求组装口径一致，token 估算随历史缩短自然回落、不再每轮反复触发；写入前基于最新历史重新校验范围（`STALE_RANGE`，总结永不越过当前回合用户消息，杜绝并发写入下连用户输入一起吞掉）；总结文本过短（< 50 字符）视为低质量拒绝替换（`LOW_QUALITY_SUMMARY`）；`ToolIterationLoopService` 流式 autoSummary chunk 透传 `removedCount`，非流式循环补 abort 检查。
+  - 前端 `handleAutoSummary` 同步「物理替换」语义：收到 `removedCount > 0` 时删除本地窗口中被替换区间、幸存消息 `backendIndex` 平移、插入总结（去重优先用后端消息 id）；`StreamChunkProcessor` 转发 `removedCount` 字段。
+  - 修复底部 TPS 统计在代码编辑/写入时虚高：工具调用参数（JSON 结构化输出，OpenAI Responses 的 `finalArgs` 整块到达且与 delta 重复计数）不再计入实时 TPS；thought token 不参与统计；`record` 透传 `chunk.createdAt` 真实到达时间（后台标签页回放/隐藏 webview 积压的整段数据按原时间入窗并被窗口立即修剪，不再产生天量尖峰）；`tpsMeter` 突发摊薄（单事件 > 250 token 按最近 1s 均匀铺开、总量守恒）与速率硬上限（1200 tok/s）。
+  - 修复子代理设置面板 MCP 工具名显示为「Mcp Mcp 1785407697930 5wldv41 Search」：`getToolDisplayName` 增加 MCP 分支（`decodeMcpToolName` 解码后只对原始工具名做 Title Case），`SubAgentsSettings` 保留 `serverName` 并以徽标展示（与自动执行页一致），原始编码名降级为悬浮提示；`useCheckpointConfig` 重复实现改为复用 `toolLocalization`，`AutoExecSettings` 的 `split('__')` 改用 codec。
+  - 修复 checkpoint 增量快照静默过期：`CheckpointSnapshotBuilder` stat 复用哈希的 `mtimeNs` 分支补 `size` 校验（FAT32/SMB/容器挂载卷上同一时间刻度内重写且字节数不变时不再错误复用旧哈希）。
+  - 修复 MCP stdio 客户端内存无界增长：`StdioClient` buffer 设 16MB 硬上限（超限终止连接），单条消息 > 4MB 拒绝发送（背压保护）。
+  - 修复 `McpManager.handleServerNotification` 竞态：per-server 刷新链串行化，写入 capabilities 前重查代际（disconnect/重连不再用旧 client 空列表覆盖新缓存），rejection 兜底。
+  - 修复工具并行只读组无 abort-race（组内工具永不结束时停止按钮失效）：`ToolExecutionService` 并行组套用 abort 竞速 + 2s 收尾窗口，超时按取消结算。
+  - 修复 `fileWriteLockManager` 25ms 轮询空转：release 时 generation 通知等待者 + 50ms 兜底轮询。
+  - 修复会话删除后 `mailboxDrainEpochs` 条目残留（`deleteConversation` 接线清理）；`ToolIterationLoopService` 两个会话级 Map 加容量上限；`MemoryManager.cover()` 二分迭代 60→32 次（提前退出）；`CheckpointManager` 持久化前过滤复制失败的 changes 条目；`repeatedCallGuard` 大字符串改采样哈希；`ToolRegistry.getFilteredDeclarations` 别名归一化；`SettingsCore.reset` 深拷贝默认配置；`taskManager.cleanup` 真正清扫终态任务。
+  - 修复前端流式期间 CustomScrollbar 每帧强制布局：`characterData` 变更不再触发 marker 重扫（仅结构变更触发，500ms 节流 + 尾沿补偿），贴底跟随行为不变。
+  - 修复 `chatStore.initialize()` 监听器非幂等（HMR/重挂载重复订阅导致流式消息被处理 N 次）：重复调用先注销旧监听再注册。
+  - 修复终端输出无上限（长驻终端 O(n²) 拼接 + 整段重渲染）：`terminalStore` 输出截断保留最近 200KB。
+  - 修复 `MessageRouter` NON_BLOCKING 分支 handler 未回复时 `requestClients` 条目泄漏；`SubAgentMonitor` run 终态清理 `renderMessageCacheByRun`；`MarkdownRenderer` imageCache 增加 32MB 字节预算（单图 > 1MB 不缓存）；`smoothStreamManager` 反查索引 O(1)；`agentStopNotificationController` 日志收敛为 debug；`MessageList` 删除 scrollTop 死代码。
 
 ## [1.4.2] - 2026-08-06
 
