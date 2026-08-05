@@ -2604,6 +2604,10 @@ const en: LanguageMessages = {
                     balanced: 'Balanced',
                     silky: 'Silky'
                 },
+                tpsBar: {
+                    title: 'TPS Live Visualization',
+                    description: 'Show a live tokens-per-second chart at the bottom of the input area. Sampling stops while hidden and restarts with the current stream when re-enabled.'
+                },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },
