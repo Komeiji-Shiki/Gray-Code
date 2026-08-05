@@ -1400,6 +1400,22 @@ export const commands = {
             // originalUri 是虚拟文档，newUri 是真实 file: URI——diffManager 已通过 WorkspaceEdit
             // 把 newContent 写入磁盘。previewId 是 diff session id（path 第一段）。
             originalContent = provider?.provideTextDocumentContent(originalUri) ?? '';
+            // previewId / filePath 必须在 resolveOriginalContent 之前计算：
+            // 旧实现把它们放在 else 分支末尾，auto-open 路径下 resolveOriginalContent
+            // 拿到的 previewId 恒为 ''，只能靠宿主的 filePath 兜底匹配。
+            if (originalUri?.path) {
+              const slashIdx = originalUri.path.indexOf('/');
+              if (slashIdx > 0) {
+                previewId = originalUri.path.slice(0, slashIdx);
+              } else if (originalUri.path) {
+                previewId = originalUri.path;
+              }
+            }
+            if (!previewId && newUri?.query) {
+              const m = /(?:^|&)id=([^&]*)/.exec(newUri.query);
+              if (m) previewId = decodeURIComponent(m[1]);
+            }
+            filePath = newUri?.scheme === 'file' ? newUri.fsPath : decodeURIComponent((originalUri?.path || '').replace(/^\/?original\//, ''));
             if (!originalContent && h?.resolveOriginalContent) {
               // 桌面版没有为 gemini-diff-original 注册内容提供者，原始内容需要
               // 从宿主侧 diffManager 的 pending diff 获取，否则 diff 预览左栏恒为空。
@@ -1419,19 +1435,6 @@ export const commands = {
             } else {
               newContent = provider?.provideTextDocumentContent(newUri) ?? '';
             }
-            if (originalUri?.path) {
-              const slashIdx = originalUri.path.indexOf('/');
-              if (slashIdx > 0) {
-                previewId = originalUri.path.slice(0, slashIdx);
-              } else if (originalUri.path) {
-                previewId = originalUri.path;
-              }
-            }
-            if (!previewId && newUri?.query) {
-              const m = /(?:^|&)id=([^&]*)/.exec(newUri.query);
-              if (m) previewId = decodeURIComponent(m[1]);
-            }
-            filePath = newUri?.scheme === 'file' ? newUri.fsPath : decodeURIComponent((originalUri?.path || '').replace(/^\/?original\//, ''));
           }
 
           const sessionId = await h.resolveDiffSessionId?.(previewId, filePath);

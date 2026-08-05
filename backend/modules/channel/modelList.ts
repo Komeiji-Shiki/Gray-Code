@@ -80,9 +80,13 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
   try {
     const proxyFetch = createProxyFetch(proxyUrl);
     const allModels: any[] = [];
+    const seenTokens = new Set<string>();
+    const MAX_PAGES = 500;
     let pageToken: string | undefined;
 
-    // 循环获取所有分页数据
+    // 循环拉取全部分页（与 OpenAI/Claude 分支同款守卫：页数上限 + cursor 去重，
+    // 防止上游/中转站异常重复返回 nextPageToken 时无限拉取）
+    let pageCount = 0;
     do {
       const params = new URLSearchParams({ pageSize: '1000' });
       if (pageToken) {
@@ -90,15 +94,15 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       }
 
       const headers: Record<string, string> = {};
-      // 启用 useAuthorizationHeader 时，使用 Authorization Bearer 格式
+      // 使用 useAuthorizationHeader 时，使用 Authorization Bearer 方式
       if ((config as any).useAuthorizationHeader) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       } else {
-        // 始终通过 header 传递密钥（x-goog-api-key），避免 apiKey 出现在 URL query 中
-        // 被代理/网关访问日志记录
+        // 始终通过 header 传递密钥（x-goog-api-key），不允许 apiKey 在 URL query 中出现，
+        // 避免在代理/网关/服务端日志中泄露
         headers['x-goog-api-key'] = apiKey;
       }
-      // 应用自定义标头
+      // 应用自定义请求头
       applyCustomHeadersFromConfig(headers, config);
 
       const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
@@ -110,8 +114,25 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       const data = await response.json() as any;
       const models = data.models || [];
       allModels.push(...models);
+      if (allModels.length === 0) {
+        break; // 空页：继续翻页没有意义
+      }
 
-      pageToken = data.nextPageToken;
+      pageCount++;
+      if (pageCount >= MAX_PAGES) {
+        console.warn('[modelList] Gemini models pagination stopped: reached max pages', MAX_PAGES);
+        break;
+      }
+      const nextToken = data.nextPageToken;
+      if (!nextToken) {
+        break;
+      }
+      if (seenTokens.has(nextToken)) {
+        console.warn('[modelList] Gemini models pagination stopped: repeated page token', nextToken);
+        break;
+      }
+      seenTokens.add(nextToken);
+      pageToken = nextToken;
     } while (pageToken);
 
     // 过滤出支持 generateContent 的模型（兼容第三方中转站未返回 supportedGenerationMethods 的情况）

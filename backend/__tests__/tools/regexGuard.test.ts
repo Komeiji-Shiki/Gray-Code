@@ -45,15 +45,43 @@ describe('regexGuard 危险模式检测（ReDoS）', () => {
         expect(validateRegexPattern('(ab*c)*').ok).toBe(false);
     });
 
+    it('拒绝嵌套分组绕过的 ((a+)+)', () => {
+        expect(validateRegexPattern('((a+)+)').ok).toBe(false);
+    });
+
+    it('拒绝嵌套分组绕过的 ((a|a)+) 与 ((a{2,})*)', () => {
+        expect(validateRegexPattern('((a|a)+)').ok).toBe(false);
+        expect(validateRegexPattern('((a{2,})*)').ok).toBe(false);
+    });
+
+    it('拒绝 lookaround 绕过的 (?=(a+))+', () => {
+        expect(validateRegexPattern('(?=(a+))+').ok).toBe(false);
+    });
+
+    it('拒绝可选组 (a?)+', () => {
+        expect(validateRegexPattern('(a?)+').ok).toBe(false);
+    });
+
     it('不误伤单组字面量 (abc)+', () => {
         const result = validateRegexPattern('(abc)+');
         expect(result.ok).toBe(true);
+    });
+
+    it('不误伤非捕获组 (?:abc)+ 与无外层量词的嵌套 (a(b)+)', () => {
+        expect(validateRegexPattern('(?:abc)+').ok).toBe(true);
+        expect(validateRegexPattern('(a(b)+)').ok).toBe(true);
+        expect(validateRegexPattern('(a+)(b)').ok).toBe(true);
     });
 
     it('不误伤非嵌套 (a+)(b) 与 a+b', () => {
         expect(validateRegexPattern('(a+)(b)').ok).toBe(true);
         expect(validateRegexPattern('a+b').ok).toBe(true);
         expect(validateRegexPattern('(foo)*').ok).toBe(true);
+    });
+
+    it('字符类内的括号/量词不参与分组判定', () => {
+        expect(validateRegexPattern('([(])+').ok).toBe(true);   // 类内含 (，类被外层组包裹
+        expect(validateRegexPattern('(a[)]+)').ok).toBe(true);  // 类内含 ) 并被量词修饰
     });
 });
 

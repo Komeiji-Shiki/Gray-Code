@@ -109,7 +109,7 @@ describe('remove_background mask 缩放', () => {
 });
 
 describe('remove_background mask_path 写策略', () => {
-    it('read=allow / write=deny 时禁止把遮罩写入工作区外路径', async () => {
+    it('read=allow / write=deny 时禁止把遮罩写入工作区外路径，并显式失败', async () => {
         const settingsManager = new SettingsManager(new MemorySettingsStorage());
         await settingsManager.initialize();
         // 读策略放行（用户常为浏览外部文件开启），写策略保持默认 deny：
@@ -129,8 +129,10 @@ describe('remove_background mask_path 写策略', () => {
             { config: { apiKey: 'test-key' }, toolId: 't-rmbg-mask' } as any
         );
 
-        expect(result.success).toBe(true);
-        // 工作区内的输出仍正常写入；工作区外遮罩写入必须被写策略拒绝
+        // 遮罩写目标被策略拒绝时任务必须显式失败（不能静默报成功但文件未写）
+        expect(result.success).toBe(false);
+        expect((result as any).error || '').toContain('Cannot save mask');
+        // 工作区外遮罩写入必须被写策略拒绝
         const maskWrites = (vscode.workspace.fs.writeFile as jest.Mock).mock.calls.filter(
             (call: any[]) => typeof call[0]?.fsPath === 'string' && call[0].fsPath.toLowerCase().includes('secret')
         );

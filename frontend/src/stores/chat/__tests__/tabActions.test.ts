@@ -52,6 +52,7 @@ function mockState(): ChatStoreState {
     messageQueue: ref([]),
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),
+    _failedStreamMessageId: ref<string | null>(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
     _pendingBranchReplayContext: ref(null),
     openTabs: ref([]),

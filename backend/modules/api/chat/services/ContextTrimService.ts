@@ -643,7 +643,10 @@ export class ContextTrimService {
         const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
         return messages.map(({ index }) => {
             const msg = updatedHistory[index];
-            return msg?.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
+            // 并发结构性删除可能使 index 越界（getHistoryRef 与 preCount 之间发生截断）：
+            // 此时按 0 token 处理，避免 estimateMessageTokens(undefined) 崩溃中断整个回合
+            if (!msg) return 0;
+            return msg.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
         });
     }
 

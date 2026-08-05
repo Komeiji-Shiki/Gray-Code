@@ -630,6 +630,9 @@ export async function retryFromMessage(
 
     const backendFrom = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    rebuildMessageIndexById(state)
+    // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+    state.toolResponseCache.value = new Map()
     clearCheckpointsFromIndex(state, backendFrom)
     setTotalMessagesFromWindow(state)
 
@@ -691,6 +694,9 @@ export async function retryFromMessage(
   // TREE-01：reroll 语义——本地截断窗口（旧回答从活跃路径移除，后端 startReroll 会将其
   // 保留进分支图 sidecar 并截断主历史），不再调用 deleteMessage（破坏性删除已废弃）。
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+  rebuildMessageIndexById(state)
+  // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+  state.toolResponseCache.value = new Map()
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
 
@@ -785,6 +791,9 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
 
   const backendIndex = calculateBackendIndex(state.allMessages.value, failedIndex, state.windowStartIndex.value)
   state.allMessages.value = state.allMessages.value.slice(0, failedIndex)
+  rebuildMessageIndexById(state)
+  // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+  state.toolResponseCache.value = new Map()
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
   return backendIndex
@@ -878,11 +887,17 @@ async function replayBranchStreamAfterError(
     const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     if (context.kind === 'reroll') {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+      rebuildMessageIndexById(state)
+      // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+      state.toolResponseCache.value = new Map()
     } else {
       const targetMessage = state.allMessages.value[targetIndex]
       targetMessage.content = context.newText
       targetMessage.parts = [{ text: context.newText }]
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+      rebuildMessageIndexById(state)
+      // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+      state.toolResponseCache.value = new Map()
     }
     clearCheckpointsFromIndex(state, backendIndex)
     setTotalMessagesFromWindow(state)
@@ -1112,6 +1127,9 @@ export async function editAndRetry(
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
   
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+  rebuildMessageIndexById(state)
+  // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+  state.toolResponseCache.value = new Map()
   clearCheckpointsFromIndex(state, backendMessageIndex)
   setTotalMessagesFromWindow(state)
 
@@ -1237,6 +1255,9 @@ export async function deleteMessage(
     // 重新计算（可能因为 cancel 导致窗口变化）
     const currentBackendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+    rebuildMessageIndexById(state)
+    // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+    state.toolResponseCache.value = new Map()
     clearCheckpointsFromIndex(state, currentBackendFrom)
     setTotalMessagesFromWindow(state)
     if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
@@ -1264,6 +1285,9 @@ export async function deleteMessage(
 
     if (response?.success) {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+      rebuildMessageIndexById(state)
+      // 截断后旧消息的工具响应缓存失效：清空，防止 id 复用读到已删除轮的响应
+      state.toolResponseCache.value = new Map()
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
       await refreshCurrentConversationBuildSession(state)

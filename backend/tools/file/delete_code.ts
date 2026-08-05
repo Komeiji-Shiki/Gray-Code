@@ -164,7 +164,9 @@ async function deleteSingleFile(
         const blocks = [{
             index: 0,
             startLine: Math.max(1, startLine - 1),
-            endLine: Math.min(startLine, totalLines - deletedCount)
+            // 整文件删除（startLine=1 且全部删光）时 totalLines - deletedCount = 0，
+            // 下限钳到 1 避免产生 endLine < startLine 的非法块
+            endLine: Math.max(1, Math.min(startLine, totalLines - deletedCount))
         }];
 
         // 创建 pending diff 等待用户确认
