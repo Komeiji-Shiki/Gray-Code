@@ -14,6 +14,7 @@
   - 修复 shell 可用性检测的命令拼接注入面：`checkShellAvailability` 的 wsl / where / which 检测从 `cp.exec` 字符串拼接改为 `cp.execFile` argv 数组传递（customPath 属用户可控配置，不再拼进 shell 命令）。
   - Webview CSP 加固：ChatViewProvider 与 SubAgentMonitorPanel 的内联脚本从 `'unsafe-inline'` 改为 nonce 机制（每面板随机 nonce，脚本标签显式携带），不再依赖内联执行豁免。
   - 前端正则高亮 ReDoS 护栏：新增 `regexGuard`（源长度 500 上限 + 危险分组量词检测 + 构造失败回退），history_search 高亮不再因畸形正则阻塞 Webview 渲染线程（与后端搜索护栏同一限制）。
+  - 修复手动总结请求丢失当前对话模型：`summarizeContext` 处理器此前只转发 `conversationId` / `configId` / `abortSignal`，前端载荷中的 `modelOverride` 在 webview 层被丢弃，频道配置 `model` 为空时总结请求仍发送空模型名（HTTP 404: No available providers at the moment）。处理器现原样透传 `modelOverride`，与后端 `SummarizeService` 的模型透传修复（含独立总结渠道隔离与默认模型回落）闭环；新增处理器层透传回归测试。
 
 ### Changed
   - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
