@@ -8,6 +8,18 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.3] - 2026-08-05
+
+### Merged
+  - 同步合入上游 49a37f2（PR #10：子代理续跑同 run 身份与 transcript、分支树面板重构为轨道式泳道「完整消息图」+ 工具分类分组、总结模型透传（手动/自动/独立总结渠道）、上下文管理关闭时手动总结边界生效、MCP server ID 可读化）：详见根 `CHANGELOG.md` [1.6.3]；桌面版构建产物版本同步为 v1.6.3
+
+### Changed
+  - 默认对话标题自动附加工作区名（格式 `标题 [工作区名]`，无工作区时不加）：多项目同时编辑时对话列表 / 标签页 / 历史页可按项目区分（前端公共部分，详见根 `CHANGELOG.md` [1.6.3]）
+
+### Fixed
+  - 多工作区一致性修复（前端公共部分）：切换绑定工作区的对话时同步激活工作区、历史页「当前工作区」筛选纳入未绑定对话、工作区重绑定失败回滚、分支对话创建不再错误兜底激活工作区（详见根 `CHANGELOG.md` [1.6.3]）
+  - 性能优化（backend 公共部分）：`getMetadataLight` 走 metaCache 免磁盘 IO（对话列表 / 用量统计 / 检查点查询受益）、`usedTokens` 单趟逆序扫描、消息占位定位 Map 索引化（详见根 `CHANGELOG.md` [1.6.3]）
+
 ## [1.6.2] - 2026-08-05
 
 ### Fixed
