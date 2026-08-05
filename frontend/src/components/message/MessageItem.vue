@@ -888,6 +888,10 @@ function handleRestoreAndRetry(checkpointId: string) {
   transition: background-color var(--transition-fast, 0.1s);
   /* 性能优化：布局隔离 */
   contain: layout;
+  /* 长对话性能：视口外消息跳过渲染/样式计算（原生 content-visibility；
+     兼容性回退 = 无样式类特性，仅失去优化）。流式消息在视口内不受影响。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
 }
 
 .message-item:last-child {

@@ -1,5 +1,6 @@
 import type { Message, ToolUsage } from '../types'
 import { getPlanExecutionPrompt, getPlanUpdateMode } from './toolContinuations'
+import { mergeToolResult } from './toolResult'
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -107,22 +108,7 @@ function getMergedToolResult(
   tool: ToolUsage,
   resolveToolResponseById?: (toolCallId: string) => unknown
 ): Record<string, unknown> | undefined {
-  const fromTool = tool.result && typeof tool.result === 'object'
-    ? tool.result as Record<string, unknown>
-    : undefined
-
-  const fromResponseRaw = tool.id && resolveToolResponseById
-    ? resolveToolResponseById(tool.id)
-    : undefined
-  const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
-    ? fromResponseRaw as Record<string, unknown>
-    : undefined
-
-  if (fromTool && fromResponse) {
-    return { ...fromTool, ...fromResponse }
-  }
-
-  return fromResponse || fromTool
+  return mergeToolResult(tool, resolveToolResponseById)
 }
 
 function isToolFailed(tool: ToolUsage, mergedResult?: Record<string, unknown>): boolean {

@@ -32,6 +32,7 @@ import {
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
+import { mergeToolResult } from '../../utils/toolResult'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
 import { clearLineDiffCache } from '../../utils/lineDiff'
@@ -81,15 +82,7 @@ const isTodoExpanded = ref(false)
 
 
 function getMergedToolResult(tool: any): Record<string, unknown> {
-  const fromTool = tool?.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : {}
-  const fromResponseRaw = typeof tool?.id === 'string' && tool.id
-    ? chatStore.getToolResponseById(tool.id)
-    : undefined
-  const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
-    ? fromResponseRaw as Record<string, unknown>
-    : {}
-
-  return { ...fromTool, ...fromResponse }
+  return mergeToolResult(tool as any, id => chatStore.getToolResponseById(id)) ?? {}
 }
 
 function hasConfirmedPlanExecution(tool: any): boolean {

@@ -7,6 +7,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { sendToExtension, loadState, saveState, showNotification } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
+import { mergeToolResult } from '../../utils/toolResult'
 import ReviewTaskCard from './ReviewTaskCard.vue'
 import ProgressTaskCard from './ProgressTaskCard.vue'
 import { MarkdownRenderer, CustomScrollbar } from '../common'
@@ -763,22 +764,7 @@ watch(
 
 // ============ 工具状态映射 ============
 function getToolResult(tool: ToolUsage): any {
-  const fromTool = tool.result && typeof tool.result === 'object'
-    ? tool.result as any
-    : undefined
-
-  const fromResponse = tool.id
-    ? chatStore.getToolResponseById(tool.id) as any
-    : undefined
-
-  // 优先融合 functionResponse（包含 reload 后的真实结果、以及后续确认字段）
-  if (fromTool && fromResponse && typeof fromResponse === 'object') {
-    return { ...fromTool, ...fromResponse }
-  }
-  if (fromResponse && typeof fromResponse === 'object') {
-    return fromResponse
-  }
-  return fromTool
+  return mergeToolResult(tool, id => chatStore.getToolResponseById(id))
 }
 
 function mapToolStatus(tool: ToolUsage): CardStatus {

@@ -12,6 +12,10 @@ import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
+import {
+  getToolDisplayName as getToolDisplayNameLocalized,
+  getToolDescription as getToolDescriptionLocalized
+} from '@/utils/toolLocalization'
 
 // 工具信息接口
 interface ToolInfo {
@@ -171,27 +175,20 @@ async function disableAllAutoExec() {
   }
 }
 
-// 获取工具显示名称（优先 i18n，fallback 机械转换）
+// 获取工具显示名称（MCP 工具提取原始工具名；其余走公共 toolLocalization）
 function getToolDisplayName(tool: ToolInfo): string {
-  // 如果是 MCP 工具，提取原始工具名
   if (tool.category === 'mcp' && tool.name.startsWith('mcp__')) {
     const parts = tool.name.split('__')
     const originalName = parts[2] || tool.name
     return originalName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
-  const i18nKey = `components.settings.toolsSettings.toolDisplayNames.${tool.name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return tool.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  return getToolDisplayNameLocalized(tool.name)
 }
 
-// 获取工具描述（优先 i18n，fallback 后端原文）
+// 获取工具描述（MCP 直接返回后端原文；其余走公共 toolLocalization）
 function getToolDescription(tool: ToolInfo): string {
   if (tool.category === 'mcp') return tool.description
-  const i18nKey = `components.settings.toolsSettings.toolDescriptions.${tool.name}`
-  const translated = t(i18nKey)
-  if (translated !== i18nKey) return translated
-  return tool.description
+  return getToolDescriptionLocalized(tool.name, tool.description)
 }
 
 // 获取分类图标

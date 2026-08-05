@@ -308,10 +308,7 @@ async function handleRetry(messageId: string) {
 
 // 处理复制
 async function handleCopy(content: string) {
-  const success = await copyToClipboard(content)
-  if (success) {
-    console.log('已复制到剪贴板')
-  }
+  await copyToClipboard(content)
 }
 
 // 处理附件上传
@@ -515,7 +512,6 @@ async function loadLanguageSettings() {
 // 组件挂载
 onMounted(async () => {
   if (isSubAgentMonitor) {
-    console.log('GrayCode SubAgent Monitor 已加载')
     // 修改原因：Monitor 复用同一前端入口但过去直接 return，从不加载语言设置；
     //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，
     //          英文和日文用户看到的子代理详情是混合语言。
@@ -525,8 +521,6 @@ onMounted(async () => {
     return
   }
 
-  console.log('GrayCode Chat 已加载')
-  
   // Notify the extension that the webview is ready to receive command messages.
   sendToExtension('webviewReady', {}).catch(() => {})
   

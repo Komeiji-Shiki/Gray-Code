@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onBeforeUnmount } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import type { EditorNode } from '../../types/editorNode'
 import type { PromptContextItem } from '../../types/promptContext'
@@ -19,6 +19,15 @@ const nodes = computed<EditorNode[]>(() => parsed.value.nodes)
 const hoveredContextId = ref<string | null>(null)
 const previewContext = ref<PromptContextItem | null>(null)
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
+let hideDelayTimer: ReturnType<typeof setTimeout> | null = null
+
+// 卸载时清理悬停定时器：避免卸载后回调继续持有组件状态
+onBeforeUnmount(() => {
+  if (hoverTimer) clearTimeout(hoverTimer)
+  if (hideDelayTimer) clearTimeout(hideDelayTimer)
+  hoverTimer = null
+  hideDelayTimer = null
+})
 
 function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: boolean } {
   if (ctx.type === 'file' && ctx.filePath) {
@@ -56,7 +65,8 @@ function handleContextMouseLeave() {
     clearTimeout(hoverTimer)
     hoverTimer = null
   }
-  setTimeout(() => {
+  if (hideDelayTimer) clearTimeout(hideDelayTimer)
+  hideDelayTimer = setTimeout(() => {
     if (!hoveredContextId.value) {
       previewContext.value = null
     }

@@ -4,7 +4,7 @@
  * 用于在用户消息中显示解析出的 context 块为小标签
  */
 
-import { ref } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
 import type { PromptContextItem } from '../../types/promptContext'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
@@ -21,8 +21,18 @@ defineProps<{
 const hoveredId = ref<string | null>(null)
 // 悬浮延迟定时器
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
+// 延迟隐藏预览定时器
+let hideDelayTimer: ReturnType<typeof setTimeout> | null = null
 // 当前显示预览的上下文项
 const previewItem = ref<PromptContextItem | null>(null)
+
+// 卸载时清理悬浮定时器
+onBeforeUnmount(() => {
+  if (hoverTimer) clearTimeout(hoverTimer)
+  if (hideDelayTimer) clearTimeout(hideDelayTimer)
+  hoverTimer = null
+  hideDelayTimer = null
+})
 
 // 获取上下文徽章图标配置
 function getTypeIcon(ctx: PromptContextItem): { class: string; isFileIcon: boolean } {
@@ -75,7 +85,8 @@ function handleMouseLeave() {
   }
   
   // 延迟隐藏预览，让用户可以移动到预览框
-  setTimeout(() => {
+  if (hideDelayTimer) clearTimeout(hideDelayTimer)
+  hideDelayTimer = setTimeout(() => {
     if (!hoveredId.value) {
       previewItem.value = null
     }

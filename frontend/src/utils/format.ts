@@ -61,19 +61,6 @@ export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): s
     .replace('ss', seconds)
 }
 
-// 格式化完整时间
-export function formatFullTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
 // 截断文本
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text
@@ -83,24 +70,6 @@ export function truncateText(text: string, maxLength: number): string {
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-// 计算文本哈希
-export function hashText(text: string): string {
-  let hash = 0
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash
-  }
-  return Math.abs(hash).toString(36)
-}
-
-// 生成随机颜色
-export function generateColor(seed: string): string {
-  const hash = hashText(seed)
-  const hue = parseInt(hash, 36) % 360
-  return `hsl(${hue}, 70%, 60%)`
 }
 
 // 复制到剪贴板
@@ -157,32 +126,6 @@ export function sleep(ms: number): Promise<void> {
 // 生成唯一ID
 export function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-}
-
-// 判断是否为空值
-export function isEmpty(value: any): boolean {
-  if (value === null || value === undefined) return true
-  if (typeof value === 'string') return value.trim() === ''
-  if (Array.isArray(value)) return value.length === 0
-  if (typeof value === 'object') return Object.keys(value).length === 0
-  return false
-}
-
-// 深度克隆
-export function deepClone<T>(obj: T): T {
-  if (obj === null || typeof obj !== 'object') return obj
-  
-  if (obj instanceof Date) return new Date(obj.getTime()) as any
-  if (obj instanceof Array) return obj.map(item => deepClone(item)) as any
-  
-  const clonedObj = {} as T
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      clonedObj[key] = deepClone(obj[key])
-    }
-  }
-  
-  return clonedObj
 }
 
 // 格式化数字（添加千分位分隔符，始终保留一位小数）

@@ -102,6 +102,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { sendToExtension } from '../../utils/vscode';
 import { TOOL_DEPENDENCIES } from '../../composables/useDependency';
 import { useI18n } from '@/i18n';
+import { getToolDisplayName as getToolDisplayNameLocalized } from '../../utils/toolLocalization';
 
 const { t } = useI18n();
 
@@ -180,11 +181,9 @@ const toolPanels = computed<ToolPanel[]>(() => {
   return panels;
 });
 
-// 获取工具显示名称
+// 获取工具显示名称（走公共 toolLocalization：i18n 优先，fallback 机械转换）
 function getToolDisplayName(name: string): string {
-  // 可以在这里添加工具名称的国际化映射
-  // 目前使用默认格式化：将下划线转为空格并首字母大写
-  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return getToolDisplayNameLocalized(name)
 }
 
 // 检查依赖是否已安装

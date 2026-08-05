@@ -693,6 +693,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleMouseUp)
   disposeRestoreFocusListener?.()
   disposeRestoreFocusListener = null
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = null
 })
 
 defineExpose({
