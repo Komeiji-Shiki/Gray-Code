@@ -316,7 +316,8 @@ export class ChannelManager {
         // retryCount 钳制到 [0, 20]：负数会跳过所有尝试，超大值会让请求挂着数小时
         const rawRetryCount = (config as any).retryCount ?? 3;
         const maxRetries = Number.isFinite(rawRetryCount) ? Math.min(Math.max(Math.floor(rawRetryCount), 0), 20) : 3;
-        const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        // 与流式路径一致：非法/负数 retryInterval 钳制为 0，避免 NaN 进入 delay
+        const retryInterval = Math.max(0, Number((config as any).retryInterval ?? 3000) || 0);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
 
         // 重试状态回调：优先使用请求级回调（SubAgent 等需要把状态路由到 Monitor 的调用方），
@@ -1135,6 +1136,11 @@ export class ChannelManager {
         } finally {
             if (timeoutId) {
                 clearTimeout(timeoutId);
+            }
+            // 生成器终止后把手柄复位为 no-op：在途保活请求成功后若仍回调 reset()，
+            // 会重建一个永不清理的空闲超时定时器（挂起引用 + 120s 后 abort 已废弃的 controller）。
+            if (idleTimeoutHandle) {
+                idleTimeoutHandle.reset = () => {};
             }
             // 移除外部信号监听
             if (externalSignal) {

@@ -534,11 +534,13 @@ async function executeRemoveTask(
         }
 
         // 3. 保存遮罩图（如果指定了路径）
-        // 语义特殊：按读路径处理（resolveFileToolPathWithInfo + read 策略审批）
+        // mask_path 是写入目标，必须按写策略审批（与 output_path 一致）：
+        // 旧实现按读策略（read_file）审批，读策略 allow 时会绕过写策略 deny，
+        // 导致工作区外遮罩文件被静默写入。
         if (mask_path) {
             const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path);
             const maskAccessError = maskOutside
-                ? ensureOutsideWorkspaceAccessApproved('read_file', { path: mask_path }, context)
+                ? ensureOutsideWorkspaceAccessApproved('write_file', { path: mask_path }, context)
                 : null;
             if (maskUri && !maskAccessError) {
                 const maskDirUri = vscode.Uri.joinPath(maskUri, '..');

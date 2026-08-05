@@ -66,7 +66,8 @@ export async function runNative<T = any>(
       return { ok: true } as T;
     case 'dialog:open': {
       const options = payload || {};
-      const result = await dialog.showOpenDialog(win!, {
+      // 窗口可能已销毁（竞态）：无窗口时退化为无父窗口对话框，避免 win! 传 null 抛 TypeError
+      const dialogOptions: Electron.OpenDialogOptions = {
         title: options.title,
         buttonLabel: options.openLabel,
         filters: options.filters,
@@ -75,16 +76,22 @@ export async function runNative<T = any>(
           ...(options.canSelectFolders ? (['openDirectory'] as const) : []),
           ...(options.canSelectMany ? (['multiSelections'] as const) : [])
         ]
-      });
+      };
+      const result = win
+        ? await dialog.showOpenDialog(win, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
       return { filePaths: result.filePaths, canceled: result.canceled } as T;
     }
     case 'dialog:save': {
       const options = payload || {};
-      const result = await dialog.showSaveDialog(win!, {
+      const dialogOptions: Electron.SaveDialogOptions = {
         title: options.title,
         defaultPath: options.defaultUri?.fsPath,
         filters: options.filters
-      });
+      };
+      const result = win
+        ? await dialog.showSaveDialog(win, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions);
       return { filePath: result.filePath, canceled: result.canceled } as T;
     }
     case 'shell:openPath': {
