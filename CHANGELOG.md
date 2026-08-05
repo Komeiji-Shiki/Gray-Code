@@ -27,6 +27,11 @@
   - 修复流式输出中长代码块无法滚动：`MarkdownRenderer` 通过 `v-html` 渲染，内容每次更新都会整体重建 DOM，代码块内部滚动容器（`pre.code-block-wrapper`，`max-height: 400px` + `overflow-y: auto`）因此被销毁重建、`scrollTop` 归零——流式期间长代码块一旦出现滚动条就无法滚动（滚动位置被重置、滚动条滚不动）。现流式期间（`is-streaming`）在根节点挂 `is-streaming` 类，CSS 据此放开 `pre` 的 `max-height`（自然展开，用户跟随输出阅读），流式结束后移除类、恢复 `max-height` 限制与内部滚动；思考块（thought）内的 `MarkdownRenderer` 同步透传 `is-streaming`（此前缺失），使思考过程里的长代码块同样生效。新增 `MarkdownRenderer.test.ts`（is-streaming 类切换、代码块结构完整性、流式内容追加渲染）与 `MessageRenderBlock.test.ts`（思考块 is-streaming 透传）。
 
 ### Changed
+  - 移植 fork 的全仓性能优化（保留插件形态，不涉及桌面版 electron 层）：
+    - `getMetadataLight` 接入会话元数据 LRU 缓存（256 条）：对话列表分页（每页 30 条）、用量统计与检查点查询的逐对话读取从「每次 fs 读 + JSON parse」降为纯内存命中；所有写路径统一失效/回填——`saveMetadata` 落盘点收敛为 `persistMetadata`（写后回填缓存），`saveHistory`/`appendHistory`/历史迁移/分支全量重写等刷新 `updatedAt` 的路径失效缓存，删除会话同步失效（含负缓存）；读侧返回深拷贝防调用方污染
+    - `usedTokens` 两趟循环（正序找最新总结估算 + 逆序找最后一条助手 usage）合并为单趟逆序扫描：流式期间每个 chunk 都会使该 computed 失效，数组访问量减半；语义等价（新增 6 例回归测试覆盖 usage/总结估算 timestamp 优先级）
+    - 占位消息定位 Map 索引化：`isLateTerminalChunkWithoutStreamId` 与 `handleError` 的 O(n) `find` 改为 `getMessageIndexById`（与其它热路径一致）
+    - `handleStreamChunkBatch` 诊断日志不再 `slice + filter` 分配临时数组，改为循环计数（终结 batch 每次都会走到）
   - Diff 工具卡顿优化（前端行级差分与渲染热路径，覆盖 apply_diff / write_file / search_in_files 面板与 VirtualDiffLines）：
     - `lineDiff` 新增带缓存的 `computeLineDiffCached`：按内容 + 起始行 + 编辑预算键控、上限 32 条的 FIFO 缓存。流式结果更新 / 组件重渲染期间同一 hunk 直接复用上一次结果对象，不再重复 Myers 计算；同一结果对象引用同时让下游虚拟列表的 props 保持稳定，不再整树重渲染
     - Myers 快速失败：新旧核心区域无公共行且 n+m 超出编辑距离预算时直接输出退化结果（语义与预算耗尽时完全一致），大文件整体重写场景从跑满 768 层迭代降为一次行 ID 集合探测
@@ -47,6 +52,7 @@
   - 流式平滑输出：新增 `frontend/src/utils/smoothStream.ts`（`SmoothStreamer` 自适应速率蓄水池——chunk 进池后按「每秒放字数 = clamp(积压÷前瞻窗口, 下限, 上限)」匀速放字，积压多自动加速、供应商卡顿时打字渐缓而非冻结）与 `frontend/src/stores/chat/smoothStreamManager.ts`（每条流式消息一个实例，`Map<messageId, SmoothStreamer>`，多标签页/subagent 并发流互不干扰，段落切换 thought↔正文/新 part 时先放完上一段积压再重置）；真实内容（message.parts/content）照旧在 delta 到达时立即累加，另设显示层 `store.smoothTexts`（messageId → 当前正在流出段落的平滑文本），`MessageItem` 流式期间用平滑文本替换最后一个 text/thought 块渲染、终结/中止（complete/cancelled/error/toolIteration/awaitingConfirmation）时先 `flush()` 放完积压再销毁并切回真实 content，不丢尾巴；commit 按 ~32ms 批量合并 markdown 重渲染；rAF 隐藏时 dt 钳 100ms + 速率自适应 + panic 快进三层兜底；TPS 图与 token 统计仍吃真实 chunk 不经显示层；外观设置新增「流式平滑输出」档位（off=直通 / smooth=灵敏 220ms / balanced=标准 320ms / silky=丝滑 450ms），三语文案同步。
 
 ### Added
+  - 新增回归测试：`getMetadataLight` 元数据缓存（写路径回填免读盘 / 深拷贝防污染 / 负缓存 / append 与删除后失效重读，5 例）、`usedTokens` 单趟逆序语义等价（6 例）。
   - 新增回归测试：行级差分快速失败（无公共行且超预算直接退化 / 预算内不退化且输出与预算耗尽一致）、动态 trace 分配下的预算内精确匹配与回退、`computeLineDiffCached` 缓存命中（同值复用同一结果对象）/ 键区分（起始行、编辑预算）/ 内容变化重新计算（lineDiff 套件扩展到 14 例）。
   - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
   - 前端启动「开始动画」：新增 `frontend/src/components/Splash.vue`——灰码少女线稿（取自 resources/icon.svg）按「帽子先落笔 → 身体/发丝 → 标题字距收拢浮现 → 横线脉冲等待 ready」节奏以 stroke-dashoffset 描线动画呈现，最短展示约 1100ms、ready 后约 0.45s 淡出并通知父组件，支持 prefers-reduced-motion；App.vue 原 loading-container 加载界面替换为 Splash（ready 沿用 `languageLoaded`，主界面以 v-show 在下方就位避免 pop-in），并清理原 `.loading-container` 死样式（`.spin` 旋转动画保留，供自动总结/重试等其它组件使用）。
