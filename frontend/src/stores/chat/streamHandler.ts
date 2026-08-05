@@ -174,6 +174,11 @@ export function handleStreamChunk(
       
     case 'awaitingConfirmation':
       handleAwaitingConfirmation(chunk, state, addCheckpoint)
+      // 编辑分支 / reroll 流停在工具确认（awaitingConfirmation 终结）时同样消费刷新标记：
+      // 后端候选已创建并落盘（editCandidate 在流开始时就 save），此时刷新分支图可让
+      // BranchSwitcherBar 立即显示新候选（此前遗漏导致标记残留：编辑分支流停在工具确认时
+      // 分支切换器不显示，切换对话触发 loadBranchGraph 后才恢复）。
+      finishBranchStreamTracking(state)
       break
       
     case 'toolIteration':
