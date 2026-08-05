@@ -50,7 +50,6 @@ const LIST_MIN_WIDTH = 260
 const LIST_MAX_WIDTH = 420
 const LIST_MAX_HEIGHT = 320
 const LIST_MIN_VISIBLE_HEIGHT = 80
-let positionListenersAttached = false
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
@@ -147,6 +146,11 @@ function detachPositionListeners(): void {
   window.removeEventListener('scroll', updateListPosition, true)
   positionListenersAttached = false
 }
+
+/** 监听器挂载标记：必须放在组件实例作用域（每条消息各有一个 BranchSwitcherBar 实例），
+ *  模块级标记会被所有实例共享——任一实例卸载时 detach 会误移除其它实例正在使用的监听器，
+ *  导致候选列表在滚动/缩放时不再跟随视口。 */
+let positionListenersAttached = false
 
 function closeList(): void {
   listOpen.value = false

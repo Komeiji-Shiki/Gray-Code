@@ -2965,7 +2965,9 @@ export class ConversationManager {
             // 注释语义：updatedAt 由历史提交路径（saveHistory/appendHistory 的 refreshUpdatedAt）
             // 统一维护，不在此重复写——避免 appendHistory 失败但前端仍乐观调用 updateSummary 时，
             // updatedAt 被无意义前移导致对话列表排序抖动。
-            await this.storage.saveMetadata(meta);
+            // 走 persistMetadata 而非直写 storage：写后同步内存缓存，否则 getMetadata /
+            // getCustomMetadata 会命中 metaCache 里的陈旧 messageCount/preview。
+            await this.persistMetadata(meta);
         });
     }
 
@@ -2999,7 +3001,9 @@ export class ConversationManager {
                     return; // 无变化，跳过写回
                 }
                 meta.custom.messageCount = count;
-                await this.storage.saveMetadata(meta);
+                // 与 updateSummary 同源问题：直写 storage 会漏掉 metaCache 同步，
+                // 后续 getMetadata 读到陈旧 messageCount（对话列表计数漂移）。
+                await this.persistMetadata(meta);
             });
         } catch (error) {
             log.warn('conversation.messageCountSyncFailed', {

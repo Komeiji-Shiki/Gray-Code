@@ -295,7 +295,8 @@ export class TokenCountService {
             countUrl = url
                 .replace('{model}', model)
                 .replace('{key}', '');
-            countUrl = countUrl.replace(/\?+$/, '');
+            // 模板形如 `...?key={key}` 时替换后会残留空 `key=` 参数，统一交给 stripKeyQuery 清理
+            countUrl = stripKeyQuery(countUrl);
         } else if (url.includes(':generateContent')) {
             // 替换 generateContent 为 countTokens
             countUrl = url.replace(':generateContent', ':countTokens');

@@ -9,6 +9,8 @@ import * as vscode from 'vscode';
 import { createRemoveBackgroundTool } from '../../../tools/media/remove_background';
 import { createProxyFetch } from '../../../modules/channel/proxyFetch';
 import { getSharp } from '../../../modules/dependencies';
+import { setGlobalSettingsManager } from '../../../core/settingsContext';
+import { SettingsManager, MemorySettingsStorage } from '../../../modules/settings';
 
 jest.mock('../../../modules/channel/proxyFetch', () => ({
     createProxyFetch: jest.fn()
@@ -103,5 +105,35 @@ describe('remove_background mask 缩放', () => {
         const maskResize = resizeCalls.find(args => args[0] === 10 && args[1] === 20);
         expect(maskResize).toBeDefined();
         expect(maskResize![2]).toEqual({ fit: 'fill' });
+    });
+});
+
+describe('remove_background mask_path 写策略', () => {
+    it('read=allow / write=deny 时禁止把遮罩写入工作区外路径', async () => {
+        const settingsManager = new SettingsManager(new MemorySettingsStorage());
+        await settingsManager.initialize();
+        // 读策略放行（用户常为浏览外部文件开启），写策略保持默认 deny：
+        // mask_path 是写入目标，必须受写策略管控，不能被读策略放行绕过。
+        await settingsManager.updateToolConfig('read_file', { outsideWorkspaceAccess: 'allow' });
+        await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'deny' });
+        setGlobalSettingsManager(settingsManager);
+
+        const { factory } = createSharpMock();
+        mockGetSharp.mockResolvedValue(factory);
+        mockMaskApiResponse();
+
+        const tool = createRemoveBackgroundTool();
+        const outsideMask = 'C:/secret/mask.png';
+        const result = await tool.handler(
+            { image_path: 'in/cat.png', output_path: 'out/cat.png', mask_path: outsideMask },
+            { config: { apiKey: 'test-key' }, toolId: 't-rmbg-mask' } as any
+        );
+
+        expect(result.success).toBe(true);
+        // 工作区内的输出仍正常写入；工作区外遮罩写入必须被写策略拒绝
+        const maskWrites = (vscode.workspace.fs.writeFile as jest.Mock).mock.calls.filter(
+            (call: any[]) => typeof call[0]?.fsPath === 'string' && call[0].fsPath.toLowerCase().includes('secret')
+        );
+        expect(maskWrites.length).toBe(0);
     });
 });

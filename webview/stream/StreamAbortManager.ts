@@ -345,6 +345,19 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       // 不动新流控制器；「停止后立即重发」的等待方（abortAndWaitForCompletion /
       // waitForOldStreamCompletion）据此继续。
       this.releaseRetiredExit(conversationId, controller);
+      // 但退休路径不经过下面的 waiters 唤醒：纯停止（cancel 且未启动新流）时，
+      // 旧流 finally 是会话真正空闲的唯一时间点，必须在此唤醒 waitForIdle 等待者，
+      // 否则 chat.awaitConversationIdle（后台任务回执补发）会一直挂到前端超时，
+      // 回执被静默丢弃。有新流接管时不唤醒（等新流自身 delete 再释放）。
+      if (!this.controllers.has(conversationId)) {
+        const waiters = this.idleWaiters.get(conversationId);
+        if (waiters) {
+          this.idleWaiters.delete(conversationId);
+          for (const resolve of waiters) {
+            resolve();
+          }
+        }
+      }
       return;
     }
     this.controllers.delete(conversationId);

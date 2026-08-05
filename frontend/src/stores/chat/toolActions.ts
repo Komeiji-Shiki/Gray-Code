@@ -10,6 +10,7 @@ import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
+import { rebuildMessageIndexById } from './state'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
 /**
@@ -172,6 +173,8 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
       ...all.slice(0, targetIndex),
       ...all.slice(targetIndex + 1)
     ]
+    // 删除中间元素会使后续消息下标前移，messageIndexById / toolResponseIndex 失效，必须重建
+    rebuildMessageIndexById(state)
   }
 }
 
@@ -304,6 +307,11 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
     responseMessage,
     ...all.slice(info.messageIndex + 1)
   ]
+
+  // 中间位置插入新消息会使后续消息下标整体后移，messageIndexById / toolResponseIndex
+  // 全部失效（toolResponseIndex 无自愈逻辑，getToolResponseById 会持续 miss 返回 null）——
+  // 必须立即重建索引，否则取消后工具卡片读不到自己的响应。
+  rebuildMessageIndexById(state)
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)

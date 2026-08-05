@@ -1443,7 +1443,9 @@ export const commands = {
             filePath,
             originalContent,
             newContent,
-            preview: options?.preview !== true
+            // 语义与 VS Code 一致：仅当显式传 preview:true 才标记预览模式；
+            // 旧实现 options?.preview !== true 会把「显式传 false」和「不传」都算成预览，语义相反。
+            preview: options?.preview === true
           });
         }
         return undefined as T;
