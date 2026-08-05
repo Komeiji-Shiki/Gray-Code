@@ -29,6 +29,7 @@ jest.mock('../../tools/file/unifiedDiff', () => ({
 }));
 
 import { DiffManager, getDiffManager, type PendingDiff } from '../../tools/file/diffManager';
+import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 type MockTextDocument = {
     uri: { fsPath: string; scheme: string; path: string };
@@ -111,11 +112,20 @@ function createPendingDiff(manager: DiffManager, overrides?: Partial<PendingDiff
         userEditedContent: overrides?.userEditedContent,
         diffGuardWarning: overrides?.diffGuardWarning,
         diffGuardDeletePercent: overrides?.diffGuardDeletePercent,
-        conversationId: overrides?.conversationId
+        conversationId: overrides?.conversationId,
+        structuredHunkPlan: overrides?.structuredHunkPlan,
+        checkpointReady: overrides?.checkpointReady
     };
 
     ((manager as any).pendingDiffs as Map<string, PendingDiff>).set(diff.id, diff);
     return diff;
+}
+
+/** 冲刷若干轮微任务，让异步动作走到 checkpoint await 或完成收敛 */
+async function flushMicrotasks(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+    }
 }
 
 function attachListenerDisposables(manager: DiffManager, id: string) {
@@ -186,6 +196,39 @@ describe('DiffManager lifecycle closure', () => {
     afterEach(() => {
         jest.useRealTimers();
         resetDiffManagerSingleton();
+    });
+
+    it('opens native tool diff in the main chat column even when Monitor owns another group', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        (vscode.window.tabGroups as any).all = [
+            {
+                viewColumn: vscode.ViewColumn.One,
+                tabs: [{ input: { viewType: 'graycode.subAgentMonitor' } }]
+            },
+            {
+                viewColumn: vscode.ViewColumn.Three,
+                tabs: [{ input: { viewType: 'graycode.chatView' } }]
+            }
+        ];
+
+        const pending = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'changed'
+        );
+
+        const diffCall = (vscode.commands.executeCommand as jest.Mock).mock.calls
+            .find(call => call[0] === 'vscode.diff');
+        expect(diffCall).toBeDefined();
+        expect(diffCall[4]).toMatchObject({
+            preview: false,
+            preserveFocus: true,
+            viewColumn: vscode.ViewColumn.Three
+        });
+
+        await manager.rejectDiff(pending.id);
     });
 
     it('acceptDiff finalizes accepted state and disposes listeners only after persistence succeeds', async () => {
@@ -487,6 +530,206 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).saveListeners.has(diff.id)).toBe(true);
         expect((manager as any).willSaveListeners.has(diff.id)).toBe(true);
     });
+
+    it('acceptDiff waits for checkpointReady before writing, then writes after resolve', async () => {
+        (fs.writeFileSync as jest.Mock).mockClear();
+        (fs.readFileSync as jest.Mock).mockClear();
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted',
+            checkpointReady
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        const acceptPromise = manager.acceptDiff(diff.id, false, false);
+        await flushMicrotasks();
+
+        // checkpoint 未 resolve：不读盘、不写盘、不保存，diff 保持 pending
+        expect(diff.status).toBe('pending');
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+        expect(fs.readFileSync).not.toHaveBeenCalled();
+        expect(manager.isDiffActionInProgress(diff.id)).toBe(true);
+
+        resolveCheckpoint();
+        const accepted = await acceptPromise;
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        expect(fs.readFileSync).toHaveBeenCalled();
+        expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
+    });
+
+    it('rejecting checkpointReady blocks the write and converges the diff to rejected', async () => {
+        (fs.writeFileSync as jest.Mock).mockClear();
+        (fs.readFileSync as jest.Mock).mockClear();
+        jest.useFakeTimers();
+
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: false });
+        const checkpointReady = Promise.reject(new Error('checkpoint failed'));
+        // 预挂 catch 避免 Jest 把未处理拒绝计为测试失败；await 原 promise 仍会 reject
+        checkpointReady.catch(() => undefined);
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted',
+            checkpointReady
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        manager.updateSettings({ autoSave: true, autoSaveDelay: 5 });
+        (manager as any).scheduleAutoSave(diff.id);
+
+        await jest.advanceTimersByTimeAsync(10);
+        await flushMicrotasks();
+
+        expect(diff.status).toBe('rejected');
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+        expect(fs.readFileSync).not.toHaveBeenCalled();
+        expect(diff.autoSaveError).toContain('Auto-save failed while accepting diff');
+        expect((manager as any).autoSaveTimers.has(diff.id)).toBe(false);
+        expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
+    });
+
+    it('rejectDiff waits for checkpointReady before restoring the original content', async () => {
+        (fs.writeFileSync as jest.Mock).mockClear();
+        (fs.readFileSync as jest.Mock).mockClear();
+        const manager = getManager();
+        const doc = createDocument({ initialContent: 'accepted', saveReturns: true });
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted',
+            checkpointReady
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        const rejectPromise = manager.rejectDiff(diff.id);
+        await flushMicrotasks();
+
+        // checkpoint 未 resolve：不恢复原文、不写盘，diff 保持 pending
+        expect(doc.getText()).toBe('accepted');
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+        expect(diff.status).toBe('pending');
+
+        resolveCheckpoint();
+        const rejected = await rejectPromise;
+
+        expect(rejected).toBe(true);
+        expect(doc.getText()).toBe('original');
+        expect(diff.status).toBe('rejected');
+    });
+
+    it('directApplyAndSave waits for checkpointReady before writing to disk', async () => {
+        (fs.writeFileSync as jest.Mock).mockClear();
+        (fs.readFileSync as jest.Mock).mockClear();
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+
+        const pendingPromise = manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'accepted',
+            undefined,
+            undefined,
+            'tool-1',
+            { confirmedByToolConfirmation: true, checkpointReady }
+        );
+        await flushMicrotasks();
+
+        // checkpoint 未 resolve：createPendingDiff 内部停在写盘前，不写盘
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+
+        resolveCheckpoint();
+        const pendingDiff = await pendingPromise;
+
+        expect(pendingDiff.status).toBe('accepted');
+        expect(fs.writeFileSync).toHaveBeenCalledWith('C:/tmp/file.ts', 'accepted', 'utf8');
+    });
+
+    it('willSaveListener waits for checkpointReady via event.waitUntil on manual and non-manual saves', async () => {
+        const manager = getManager();
+        const doc = createDocument({ initialContent: 'original', saveReturns: true });
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted',
+            checkpointReady
+        });
+
+        let willSaveHandler: ((event: any) => void) | undefined;
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn((listener: (event: any) => void) => {
+            willSaveHandler = listener;
+            return { dispose: jest.fn() };
+        });
+
+        await (manager as any).showDiffView(diff);
+
+        const waitUntilArgs: unknown[] = [];
+        const fireWillSave = (reason: number): void => {
+            willSaveHandler?.({
+                document: doc,
+                reason,
+                waitUntil: (thenable: unknown) => {
+                    waitUntilArgs.push(thenable);
+                }
+            });
+        };
+
+        // 手动保存路径：waitUntil 必须被调用
+        fireWillSave((vscode as any).TextDocumentSaveReason.Manual);
+        // 非手动保存路径：waitUntil 必须被调用，且仍记录 flushed 标记
+        fireWillSave((vscode as any).TextDocumentSaveReason.FocusOut);
+
+        expect(waitUntilArgs).toEqual([checkpointReady, checkpointReady]);
+        expect((manager as any).nonManualSaveFlushed.has(diff.id)).toBe(true);
+
+        resolveCheckpoint();
+    });
+
+    it('createPendingDiff stores structuredHunkPlan and checkpointReady from options', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const plan = {
+            normalizedOriginal: 'original',
+            entries: [
+                { index: 0, startIndex: 0, endIndex: 3, originalStartLine: 1, oldContent: 'abc', newContent: 'def' }
+            ]
+        };
+        const checkpointReady = Promise.resolve(undefined);
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'changed',
+            undefined,
+            undefined,
+            undefined,
+            { structuredHunkPlan: plan, checkpointReady }
+        );
+
+        expect(pendingDiff.structuredHunkPlan).toBe(plan);
+        expect(pendingDiff.checkpointReady).toBe(checkpointReady);
+
+        await manager.rejectDiff(pendingDiff.id);
+    });
 });
 
 describe('DiffManager conversationId scoping (#48)', () => {
@@ -708,5 +951,83 @@ describe('DiffManager newFile through CreatePendingDiffOptions (#14)', () => {
         // Cancel: should try to delete the new file
         await manager.rejectDiff(pendingDiff.id);
         expect(fs.unlinkSync).toHaveBeenCalledWith('C:/tmp/newfile.ts');
+    });
+});
+
+
+describe('DiffManager PERF-CP deferred write lock', () => {
+    const OTHER_HOLDER = { kind: 'main' as const, id: 'other', label: 'other writer' };
+
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(async () => ({})),
+            setStatusBarMessage: jest.fn(),
+            showErrorMessage: jest.fn(),
+            tabGroups: { all: [], close: jest.fn(async () => undefined) }
+        };
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        // 清理可能残留的锁（真实单例，跨用例不共享状态）
+        fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
+        resetDiffManagerSingleton();
+    });
+
+    it('预览显示后获取写盘锁并持有到 diff 终结（终结后其他写入者可获取）', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+
+        const pending = await manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            { lockHolder: { kind: 'main', id: 'conv-x', label: 'main session' } }
+        );
+
+        // 审阅期间写盘锁已持有：其他写入者 tryAcquire 失败
+        expect(pending.lockAcquired).toBe(true);
+        const conflict = fileWriteLockManager.tryAcquire(['C:/tmp/file.ts'], OTHER_HOLDER);
+        expect(conflict.acquired).toBe(false);
+
+        // 终结（拒绝）后锁释放：其他写入者可获取
+        await manager.rejectDiff(pending.id);
+        const after = fileWriteLockManager.tryAcquire(['C:/tmp/file.ts'], OTHER_HOLDER);
+        expect(after.acquired).toBe(true);
+        fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
+    });
+
+    it('写盘锁冲突：createPendingDiff 收敛 rejected 并抛出冲突错误', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        // 其他写入者先占锁
+        const occupied = fileWriteLockManager.tryAcquire(['C:/tmp/file.ts'], OTHER_HOLDER);
+        expect(occupied.acquired).toBe(true);
+
+        await expect(manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            { lockHolder: { kind: 'main', id: 'conv-x', label: 'main session' } }
+        )).rejects.toThrow(/File write conflict/);
+
+        // diff 已收敛为 rejected（不悬挂 pending）
+        const diffs = Array.from((manager as any).pendingDiffs.values()) as PendingDiff[];
+        expect(diffs.length).toBe(1);
+        expect(diffs[0].status).toBe('rejected');
+        expect(diffs[0].lockAcquired).not.toBe(true);
+
+        // 释放占锁，避免影响后续用例
+        fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
     });
 });

@@ -66,6 +66,12 @@ import {
   isFunctionResponseMessage,
 } from '../../../conversation/branch';
 import type { ConversationBranchGraph } from '../../../conversation/branch';
+// H1：读取 webview 层注册的全局 abort manager，在写入用户消息/截断历史前等待旧流退出。
+// StreamAbortManager 仅依赖 backend/core 与 tools/subagents，不构成与 api/chat 的循环依赖。
+import {
+  StreamAbortManager,
+  OLD_STREAM_EXIT_WAIT_TIMEOUT_MS,
+} from '../../../../../webview/stream/StreamAbortManager';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -130,6 +136,12 @@ export interface EditBranchRequestData {
   summarizeAbortSignal?: AbortSignal;
   /** Prompt 模式 ID（可选） */
   promptModeId?: string;
+  /**
+   * 编辑模式（可选，默认 'branch'）：
+   * - 'branch'：创建编辑候选（新 user 节点）并切换分支，旧节点及其子树保留进 sidecar；
+   * - 'keep'：直接改写活跃路径上的原用户消息并截断其后内容（保持当前分支，不产生新候选）。
+   */
+  mode?: 'branch' | 'keep';
 }
 
 /** TREE-03：编辑目标解析结果 */
@@ -237,12 +249,14 @@ function findLinearParentId(history: ReadonlyArray<Content>, index: number): str
 }
 
 /**
- * M1（R6a-FIX）：解析 reroll 主历史截断起始索引（startReroll 保留到父用户节点，截断从其后开始）。
+ * 解析 reroll 主历史截断起始索引。
  *
- * 与 BranchService.resolveRerollTarget 同规则：显式 assistantNodeId 或活跃路径最后一条 model 消息；
- * 父节点 = 目标之前最后一个非 functionResponse 的 user 消息（决策 8：FR 不参与节点链接）。
- * 返回截断起始索引（= 父用户节点 index + 1）；无法定位目标时返回 -1（startReroll 会抛校验错误，
- * 此处仅用于提前清理旧检查点，无需重复报错）。
+ * reroll 是“单条助手消息重新生成”：显式 assistantNodeId 或最后一条 model 消息就是截断点。
+ * 目标之前的所有历史均保留，包括工具调用模型消息与其后的 functionResponse；因此工具续接回答
+ * 重新生成时不会退回最近的用户消息，也不会重复执行已经完成的工具。
+ *
+ * 无法定位目标或目标位于首条消息时返回 -1（startReroll 会负责正式的关系校验；
+ * 此函数只用于流启动前清理目标消息及其后续检查点）。
  */
 export function resolveRerollTruncateIndex(
   history: ReadonlyArray<Content>,
@@ -259,16 +273,7 @@ export function resolveRerollTruncateIndex(
       }
     }
   }
-  if (targetIndex <= 0) {
-    return -1;
-  }
-  for (let i = targetIndex - 1; i >= 0; i -= 1) {
-    const message = history[i];
-    if (message.role === 'user' && !isFunctionResponseMessage(message)) {
-      return i + 1;
-    }
-  }
-  return -1;
+  return targetIndex > 0 ? targetIndex : -1;
 }
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
@@ -290,6 +295,53 @@ export class ChatFlowService {
     private toolExecutionService: ToolExecutionService,
     private toolCallParserService: ToolCallParserService,
   ) {}
+
+  /**
+   * H1：等待旧流完全退出后再写用户消息/截断历史。
+   *
+   * 竞态：用户「停止后立即重发」时，旧流取消路径还要等工具结算窗口（约 3s）落盘、finally
+   * 注销控制器；若新流不等旧流退出就写入，旧流的结算 addContent 会落在新用户消息之后
+   * （半截旧回答/错位结算）。webview 层（StreamRequestHandler）已在 create() 前等待过一遍，
+   * 这里对 reroll / editBranch 等不经 StreamRequestHandler 的入口兜底：
+   * 只等「已退休旧流」的退出信号（新流控制器此时已登记，不能 abort），带超时兜底。
+   * 未注册全局 abort manager（测试/独立调用）时退化为 no-op。
+   */
+  private async waitForOldStreamExit(conversationId: string): Promise<void> {
+    const abortManager = StreamAbortManager.getGlobalInstance();
+    if (!abortManager) return;
+    try {
+      await abortManager.waitForOldStreamCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+    } catch (error) {
+      // 等待失败不应阻断请求主流程（等待内部已有超时兜底，此处仅防御性兜底）
+      this.log.warn('old_stream_exit_wait_failed', {
+        conversationId,
+        error: (error as Error)?.message ?? String(error),
+      });
+    }
+  }
+
+  /**
+   * M1：可选的消息 id 防索引漂移校验。
+   *
+   * 请求携带 messageId 时，校验索引处消息 id 与之一致；不一致说明索引已漂移（并发
+   * 插入/删除/上下文压缩等），返回 MESSAGE_CHANGED 错误。不带 messageId 时返回 null，
+   * 保持旧行为（兼容旧前端）。
+   */
+  private validateMessageIdForEdit(
+    message: Content | undefined,
+    messageId?: string,
+  ): { code: string; message: string } | null {
+    if (typeof messageId !== 'string' || messageId.trim() === '') {
+      return null;
+    }
+    if (!message || message.id !== messageId.trim()) {
+      return {
+        code: 'MESSAGE_CHANGED',
+        message: t('modules.api.chat.errors.messageChanged'),
+      };
+    }
+    return null;
+  }
 
   /**
    * 获取单回合最大工具调用次数
@@ -831,6 +883,8 @@ export class ChatFlowService {
 
     // 2.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
     //（与流式 handleChatStream 对齐，避免悬空 functionCall/pending diff 跨回合残留）
+    // H1：先等旧流完全退出，再执行清理与写入用户消息（避免旧流结算落在新用户消息之后）
+    await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
     // 3. 添加输入到历史
@@ -855,6 +909,9 @@ export class ChatFlowService {
       promptModeSnapshot,
       dynamicContextStrategy,
       !hiddenFunctionResponse,
+      // H5：透传取消信号（自动总结调用使用 merged signal）
+      request.abortSignal,
+      request.summarizeAbortSignal,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -911,6 +968,8 @@ export class ChatFlowService {
 
     // 2.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
     //（与流式 handleRetryStream 对齐，避免悬空 functionCall/pending diff 跨回合残留）
+    // H1：先等旧流完全退出，再执行清理与截断（避免旧流结算落在重试截断之后）
+    await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
@@ -924,6 +983,9 @@ export class ChatFlowService {
       promptModeSnapshot,
       dynamicContextStrategy,
       false,
+      // H5：透传取消信号（自动总结调用使用 merged signal）
+      request.abortSignal,
+      request.summarizeAbortSignal,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -997,6 +1059,15 @@ export class ChatFlowService {
       };
     }
 
+    // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移导致编辑错消息
+    const messageIdError = this.validateMessageIdForEdit(message, request.messageId);
+    if (messageIdError) {
+      return {
+        success: false,
+        error: messageIdError,
+      };
+    }
+
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
@@ -1004,6 +1075,8 @@ export class ChatFlowService {
 
     // 3.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
     //（与 handleChat/handleRetry 一致，避免悬空 functionCall/pending diff 跨回合残留）
+    // H1：先等旧流完全退出，再执行清理与截断（避免旧流结算落在编辑截断之后）
+    await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
     // 4. 更新消息内容，并标记为动态提示词插入点
@@ -1038,6 +1111,11 @@ export class ChatFlowService {
       modelOverride,
       promptModeSnapshot,
       dynamicContextStrategy,
+      // 编辑后的用户消息内容变化 → 新回合语义（与流式 editAndRetryStream 一致）
+      true,
+      // H5：透传取消信号（自动总结调用使用 merged signal）
+      request.abortSignal,
+      request.summarizeAbortSignal,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -1111,6 +1189,9 @@ export class ChatFlowService {
     // 3. 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器、
     //    拒绝所有未响应的工具调用（在添加用户消息之前，确保 functionResponse
     //    会被插入到工具调用消息之后、用户消息之前）
+    // H1：先等旧流完全退出（webview 层已等待过一遍，这里对直接调用入口兜底），
+    // 避免旧流取消结算落在新用户消息之后（半截旧回答/错位结算）
+    await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
     try {
@@ -1230,6 +1311,8 @@ export class ChatFlowService {
     // 3. 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器、
     //    拒绝所有未响应的工具调用（悬空 functionCall 会被标记 rejected 并补 functionResponse，
     //    历史里不会残留带 functionCall 但没有 functionResponse 的消息）
+    // H1：先等旧流完全退出（webview 层已等待过一遍，这里对直接调用入口兜底）
+    await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
     // 6. 判断是否需要刷新动态系统提示词
@@ -1312,6 +1395,11 @@ export class ChatFlowService {
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'reroll_stream');
 
+    // H1：先等旧流完全退出，再截断主历史并创建新候选——旧流取消结算若落在截断之后，
+    // 半截旧回答会残留进新候选路径（reroll/editBranch 不经 StreamRequestHandler 的 create
+    // 前置等待，此处在后端兜底）。
+    await this.waitForOldStreamExit(conversationId);
+
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
     let rerollStarted: { candidateNodeId: string } | undefined;
@@ -1335,9 +1423,8 @@ export class ChatFlowService {
         return;
       }
 
-      // M1（R6a-FIX）：startReroll 内部会把主历史截断到父用户节点之后；截断前清理截断点之后的
-      // 旧检查点（与 handleEditAndRetryStream 的 deleteCheckpointsFromIndex 对齐）。否则旧回合
-      // 检查点原样保留在相同索引，新候选消息会命中旧检查点（索引错位，回档/恢复可能恢复到错误状态）。
+      // startReroll 会从目标助手消息自身开始截断；截断前先清理同一起点及之后的旧检查点。
+      // 对工具续接回答，目标前的模型工具调用与 functionResponse 都会保留。
       const historyBeforeTruncate = await this.conversationManager.getMessagesRaw(conversationId);
       const truncateIndex = resolveRerollTruncateIndex(historyBeforeTruncate, request.assistantNodeId);
       if (truncateIndex > 0) {
@@ -1410,7 +1497,8 @@ export class ChatFlowService {
   }
 
   /**
-   * 流式编辑用户消息分支（TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息）。
+   * 流式编辑用户消息（TREE-03：编辑用户消息时默认创建新的用户消息分支，不覆盖原消息；
+   * request.mode === 'keep' 时改为原地改写原消息，保持当前分支）。
    *
    * 与 handleEditAndRetryStream（破坏性覆盖 + 截断）并存（决策 5 精神）：旧路径保留为内部兼容，
    * 主流程切编辑分支；本方法不覆盖原消息——旧用户节点及其子树由分支图 sidecar 保留。
@@ -1419,14 +1507,17 @@ export class ChatFlowService {
    * 1. 确保对话 / 验证配置（与 reroll 一致）；
    * 2. 中断未完成的 diff 等待 + 拒绝所有未响应工具调用（与 reroll 一致）；
    * 3. 解析并校验编辑目标（活跃路径 + role==='user' + 非根节点）；
-   * 4. BranchService.editCandidate：在旧用户节点父节点下创建编辑候选（新 user 节点 kind='edit'，
-   *    文本=编辑后内容）并激活（旧子树保留进 sidecar）；
-   * 5. BranchService.createRerollCandidate：在新用户节点下创建模型候选占位（流式结果写入此节点；
-   *    缺少 startEditBranch 公共方法，见设计说明）；
-   * 6. 主历史截断到旧用户节点之前（父节点保留），并追加编辑后的用户消息（id 对齐新用户节点，BR-01）；
+   * 4. mode='branch'（默认）：BranchService.editCandidate——在旧用户节点父节点下创建编辑候选
+   *    （新 user 节点 kind='edit'，文本=编辑后内容）并激活（旧子树保留进 sidecar）；
+   *    mode='keep'：直接改写活跃路径上的原用户消息（updateMessage + 截断其后内容），
+   *    BranchService.updateActiveNodeParts 同步分支图节点内容（保持当前分支，不产生新候选）；
+   * 5. mode='branch'：BranchService.createRerollCandidate——在新用户节点下创建模型候选占位
+   *    （流式结果写入此节点；缺少 startEditBranch 公共方法，见设计说明）；
+   * 6. 主历史截断（branch：截断到旧用户节点之前并追加编辑后的用户消息，id 对齐新用户节点 BR-01；
+   *    keep：截断到目标消息之后）
    * 7. 复用现有工具循环生成内容（编辑后用户消息内容变化 → 新回合语义，与 editAndRetryStream 一致）；
-   * 8. finally 中 BranchService.finishReroll：把流式结果回填进模型候选节点（含续接节点）+ 更新摘要；
-   *    失败也回填（决策 10 精神：保留旧候选，新候选保留部分内容可切回查看）。
+   * 8. finally 中（仅 branch）BranchService.finishReroll：把流式结果回填进模型候选节点（含续接节点）
+   *    + 更新摘要；失败也回填（决策 10 精神：保留旧候选，新候选保留部分内容可切回查看）。
    */
   async *handleEditBranchStream(
     request: EditBranchRequestData,
@@ -1477,6 +1568,9 @@ export class ChatFlowService {
 
     await this.clearPendingApprovalGateIfPresent(conversationId, 'edit_branch_stream');
 
+    // H1：先等旧流完全退出，再截断主历史并创建编辑候选（与 reroll 同理，此处后端兜底）
+    await this.waitForOldStreamExit(conversationId);
+
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
     let editStarted: { modelCandidateNodeId: string; parentNodeId: string } | undefined;
@@ -1511,46 +1605,118 @@ export class ChatFlowService {
       const historyBefore = await this.conversationManager.getMessagesRaw(conversationId);
       const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId);
 
-      // 3.8 创建编辑候选：新 user 节点（kind='edit'，文本=编辑后内容）+ 激活 + 摘要
-      //     （旧用户节点及其子树完整保留进 sidecar——先建图后截断，线性模式首次建图不丢旧消息）
-      const created = await branchService.editCandidate(conversationId, target.parentNodeId, {
-        role: 'user',
-        parts: [{ text: request.newText }],
-      });
-      const newUserNodeId = created.nodeId;
+      // 3.8 按编辑模式分流：
+      // - 'keep'：原地改写活跃路径上的原消息（保持当前分支，不产生新候选）；
+      // - 'branch'（默认）：创建编辑候选（新 user 节点 kind='edit'，文本=编辑后内容）+ 激活 + 摘要
+      //   （旧用户节点及其子树完整保留进 sidecar——先建图后截断，线性模式首次建图不丢旧消息）
+      if (request.mode === 'keep') {
+        // —— keep 模式：直接改写原消息，保持当前分支 ——
+        const targetIndex = historyBefore.findIndex(message => message.id === target.nodeId);
+        if (targetIndex === -1) {
+          yield {
+            conversationId,
+            error: {
+              code: 'NODE_NOT_FOUND',
+              message: `target user node ${target.nodeId} not found in main history`,
+            },
+          };
+          return;
+        }
 
-      // 3.9 创建模型候选占位（流式结果将写入此节点；createRerollCandidate 是当前唯一可用的
-      //     模型节点创建入口，kind 固定为 'reroll'——缺少 startEditBranch 公共方法，见设计说明）
-      const modelCreated = await branchService.createRerollCandidate(conversationId, newUserNodeId, {
-        parts: [],
-      });
-      const modelCandidateNodeId = modelCreated.nodeId;
+        // 3.8.1 先建图后截断：把完整旧历史并入分支图（无图时建线性基线图），
+        //     截断后再软删被移除的子树——保证旧版本可回看（与 branch 模式 editCandidate 时机对齐）
+        await branchService.ensureBranchGraph(conversationId);
 
-      // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
-      const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
-      const parentIndex = historyAfterGraph.findIndex(message => message.id === target.parentNodeId);
-      // M1（R6a-FIX）：截断前清理截断点之后的旧检查点（与 handleEditAndRetryStream 对齐）——
-      // 旧回合检查点原样保留在相同索引会让新候选消息命中旧检查点（索引错位，回档/恢复错状态）
-      if (parentIndex >= 0) {
+        // 3.8.2 截断前清理目标消息之后的所有旧检查点（索引错位会让新内容命中旧检查点）
+        await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex);
+
+        // 3.8.3 改写目标消息（清除 token 计数，强制在裁剪评估中重新计算）
+        await this.conversationManager.updateMessage(conversationId, targetIndex, {
+          parts: [{ text: request.newText }],
+          isUserInput: true,
+          tokenCountByChannel: {},
+        });
+
+        // 3.8.4 截断目标消息之后的内容（旧子树整体移出主历史；图侧同步软删为候选，可切回查看）
+        const historyAfterEdit = await this.conversationManager.getHistoryRef(conversationId);
+        if (targetIndex + 1 < historyAfterEdit.length) {
+          // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树
+          const deletedFromMessageId = historyAfterEdit[targetIndex + 1]?.id ?? null;
+          const lastKeptMessageId = historyAfterEdit[targetIndex]?.id ?? null;
+          await this.conversationManager.deleteMessagesInRange(
+            conversationId,
+            targetIndex + 1,
+            historyAfterEdit.length - 1,
+          );
+          await this.rebuildTodoListMetadataFromHistory(conversationId);
+          try {
+            await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
+              lastKeptMessageId,
+            });
+          } catch (error) {
+            // 失败仅告警不阻断：主历史为唯一真源，图侧由下次读图/写图自校验兜底
+            this.log.warn('edit_keep_branch_delete_sync_failed', {
+              conversationId,
+              targetIndex,
+              error: (error as Error)?.message ?? String(error),
+            });
+          }
+        }
+
+        // 3.8.5 同步分支图：改写活跃节点内容 + 更新候选摘要（BR-01 同源：节点 id == Content.id）
+        await branchService.updateActiveNodeParts(conversationId, target.nodeId, [{ text: request.newText }]);
+
+        // 3.8.6 清除裁剪状态（编辑后应重新计算裁剪起点）
+        await this.toolIterationLoopService.clearTrimState(conversationId);
+        // editStarted 保持 undefined：无候选节点，流结束后无需 finishReroll
+      } else {
+        // —— branch 模式：创建编辑候选并切换分支 ——
+        const created = await branchService.editCandidate(conversationId, target.parentNodeId, {
+          role: 'user',
+          parts: [{ text: request.newText }],
+        });
+        const newUserNodeId = created.nodeId;
+
+        // 3.9 创建模型候选占位（流式结果将写入此节点；createRerollCandidate 是当前唯一可用的
+        //     模型节点创建入口，kind 固定为 'reroll'——缺少 startEditBranch 公共方法，见设计说明）
+        const modelCreated = await branchService.createRerollCandidate(conversationId, newUserNodeId, {
+          parts: [],
+        });
+        const modelCandidateNodeId = modelCreated.nodeId;
+
+        // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
+        const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
+        const parentIndex = historyAfterGraph.findIndex(message => message.id === target.parentNodeId);
+        // H3：父节点不在主历史时快速失败——继续追加消息会让主历史与分支图分叉（静默降级
+        // 产生"幽灵"编辑候选：图侧激活了它，主历史却停在无关节点上）。父节点缺失通常意味着
+        // 它已被上下文压缩移除，给出可读错误让用户刷新。
+        if (parentIndex < 0) {
+          throw new BranchError(
+            'INVALID_BRANCH_RELATION',
+            t('modules.api.chat.errors.editTargetNotInHistory'),
+          );
+        }
+        // M1（R6a-FIX）：截断前清理截断点之后的旧检查点（与 handleEditAndRetryStream 对齐）——
+        // 旧回合检查点原样保留在相同索引会让新候选消息命中旧检查点（索引错位，回档/恢复错状态）
         await this.checkpointService.deleteCheckpointsFromIndex(conversationId, parentIndex + 1);
-      }
-      if (parentIndex >= 0 && parentIndex < historyAfterGraph.length - 1) {
-        await this.conversationManager.deleteMessagesInRange(
-          conversationId,
-          parentIndex + 1,
-          historyAfterGraph.length - 1,
-        );
-      }
+        if (parentIndex < historyAfterGraph.length - 1) {
+          await this.conversationManager.deleteMessagesInRange(
+            conversationId,
+            parentIndex + 1,
+            historyAfterGraph.length - 1,
+          );
+        }
 
-      // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
-      await this.conversationManager.addContent(conversationId, {
-        role: 'user',
-        parts: [{ text: request.newText }],
-        id: newUserNodeId,
-        isUserInput: true,
-      });
+        // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
+        await this.conversationManager.addContent(conversationId, {
+          role: 'user',
+          parts: [{ text: request.newText }],
+          id: newUserNodeId,
+          isUserInput: true,
+        });
 
-      editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId };
+        editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId };
+      }
     } finally {
       // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRerollStream 的 finally 用法一致）
       this.diffInterruptService.resetUserInterrupt(conversationId);
@@ -1671,6 +1837,19 @@ export class ChatFlowService {
       };
       return;
     }
+
+    // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移导致编辑错消息
+    const messageIdError = this.validateMessageIdForEdit(message, request.messageId);
+    if (messageIdError) {
+      yield {
+        conversationId,
+        error: messageIdError,
+      };
+      return;
+    }
+
+    // H1：先等旧流完全退出，再执行截断与更新（避免旧流结算落在编辑截断之后）
+    await this.waitForOldStreamExit(conversationId);
 
     // 4. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
@@ -2293,10 +2472,33 @@ export class ChatFlowService {
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
 
+    // H1：先等旧流完全退出，再执行删除（旧流取消结算若落在删除之后会把已删内容追加回来）
+    await this.waitForOldStreamExit(conversationId);
+
     // 2. 中断之前未完成的 diff 等待
     this.diffInterruptService.markUserInterrupt(conversationId);
 
     try {
+      // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移误删其他消息。
+      // 注意：DeleteToMessageRequestData 未声明该字段（types.ts 仅允许为
+      // EditAndRetryRequestData 增加 messageId），这里按可选读取，旧前端不传时保持旧行为。
+      const requestMessageId = (request as { messageId?: string }).messageId;
+      // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
+      // 必须同时用于 M1 校验：在校验与删除之间不得有其他写入（rejectAllPendingToolCalls 只追加）。
+      const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
+      if (typeof requestMessageId === 'string' && requestMessageId.trim() !== '') {
+        const targetMessage = historyBeforeDelete[targetIndex];
+        if (!targetMessage || targetMessage.id !== requestMessageId.trim()) {
+          return {
+            success: false,
+            error: {
+              code: 'MESSAGE_CHANGED',
+              message: t('modules.api.chat.errors.messageChanged'),
+            },
+          };
+        }
+      }
+
       // 3. 取消所有待处理的 diff（关闭编辑器并恢复文件）
       await this.diffInterruptService.cancelAllPending(conversationId);
       
@@ -2309,9 +2511,6 @@ export class ChatFlowService {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex, preserveCheckpointId);
 
       // 6. 删除消息
-      // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
-      // 注意：必须在 deleteToMessage 之前读取（删除后这些消息已不在主历史中）。
-      const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
       const deletedFromMessageId = historyBeforeDelete[targetIndex]?.id ?? null;
       const lastKeptMessageId = targetIndex > 0 ? (historyBeforeDelete[targetIndex - 1]?.id ?? null) : null;
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);

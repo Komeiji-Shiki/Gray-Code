@@ -292,7 +292,9 @@ const zhCN = {
                     summarizeAborted: '总结请求已取消',
                     emptySummary: 'AI 生成的总结为空',
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
-                    canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}'
+                    canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
+                    messageChanged: '消息已变化，请刷新后重试',
+                    editTargetNotInHistory: '所选消息不在当前对话历史中，可能已被上下文压缩移除'
                 },
                 prompts: {
                     defaultSummarizePrompt: `请将以上对话内容进行简洁总结，直接输出总结内容，不需要任何格式标记。

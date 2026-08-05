@@ -4,6 +4,7 @@
  * 覆盖：server ID 校验、connect 失败清理、eager registration、cleanSchema 默认值
  */
 import { McpManager } from '../../modules/mcp/McpManager';
+import { StdioMcpClient } from '../../modules/mcp/StdioClient';
 import { InMemoryMcpStorageAdapter } from '../../modules/mcp/storage';
 
 function makeTestInput(overrides: Record<string, any> = {}) {
@@ -223,6 +224,80 @@ describe('McpManager', () => {
 
             const info = await manager.getServerInfo('en_srv');
             expect(info!.config.enabled).toBe(false);
+        });
+    });
+
+    // ==================== signal 透传 ====================
+
+    describe('callTool signal passthrough', () => {
+        it('should pass the request signal to the underlying client callTool/readResource', async () => {
+            const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
+            const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
+            const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool').mockResolvedValue({
+                content: [{ type: 'text', text: 'ok' }],
+            });
+            const readResourceSpy = jest.spyOn(StdioMcpClient.prototype, 'readResource').mockResolvedValue({
+                contents: [{ uri: 'u', text: 'data' }],
+            });
+
+            try {
+                await manager.initialize();
+                const id = await manager.createServer(makeTestInput(), 'sig_srv');
+                await manager.connect('sig_srv');
+
+                const controller = new AbortController();
+                const result = await manager.callTool({
+                    serverId: id,
+                    toolName: 't',
+                    arguments: { a: 1 },
+                    signal: controller.signal,
+                });
+
+                expect(result.success).toBe(true);
+                expect(callToolSpy).toHaveBeenCalledWith('t', { a: 1 }, controller.signal);
+
+                const content = await manager.readResource({
+                    serverId: id,
+                    uri: 'u',
+                    signal: controller.signal,
+                });
+                expect(content?.text).toBe('data');
+                expect(readResourceSpy).toHaveBeenCalledWith('u', controller.signal);
+            } finally {
+                connectSpy.mockRestore();
+                disconnectSpy.mockRestore();
+                callToolSpy.mockRestore();
+                readResourceSpy.mockRestore();
+            }
+        });
+
+        it('should surface an aborted client rejection as an MCP failure result', async () => {
+            const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
+            const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
+            const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool')
+                .mockRejectedValue(new Error('MCP tool call aborted'));
+
+            try {
+                await manager.initialize();
+                const id = await manager.createServer(makeTestInput(), 'sig_srv2');
+                await manager.connect('sig_srv2');
+
+                const controller = new AbortController();
+                controller.abort();
+                const result = await manager.callTool({
+                    serverId: id,
+                    toolName: 't',
+                    arguments: {},
+                    signal: controller.signal,
+                });
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('aborted');
+            } finally {
+                connectSpy.mockRestore();
+                disconnectSpy.mockRestore();
+                callToolSpy.mockRestore();
+            }
         });
     });
 });

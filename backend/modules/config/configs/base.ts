@@ -337,15 +337,16 @@ export interface BaseChannelConfig {
     /**
      * 上下文管理模式。
      *
-     * trim 表示超过阈值时静默裁剪；summarize 表示超过阈值时先自动总结。
-     * 仅当 contextManagementEnabled 为 true 时生效。
+     * 历史值 trim / summarize 均会迁移为“模型总结优先、失败时细粒度临时裁剪”。
+     * 字段继续保留以兼容旧配置导入。
      */
     contextManagementMode?: 'trim' | 'summarize';
 
     /**
      * 是否启用上下文阈值检测
      *
-     * 启用后，当总 token 数超过阈值时，自动舍弃最旧的对话回合
+     * 启用后，当总 token 数超过阈值时优先自动总结；总结失败时仅对本次请求执行
+     * functionCall/functionResponse 配对安全的细粒度裁剪，不永久删除 transcript。
      *
      * 默认值：false
      * @deprecated 推荐使用 contextManagementEnabled + contextManagementMode；该字段保留用于旧配置兼容。
@@ -359,7 +360,7 @@ export interface BaseChannelConfig {
      * - 数值：直接指定 token 数量，如 100000
      * - 字符串百分比：如 "80%" 表示上下文窗口的 80%
      *
-     * 当 totalTokenCount 超过此阈值时，自动舍弃最旧的对话回合
+     * 当 totalTokenCount 超过此阈值时，触发模型总结与必要的请求级安全裁剪
      *
      * 注意：此值应小于 maxContextTokens，否则无意义
      *
@@ -368,7 +369,7 @@ export interface BaseChannelConfig {
     contextThreshold?: number | string;
     
     /**
-     * 裁剪时额外裁剪的 token 数量或比例
+     * 旧整轮裁剪模式的额外裁剪配置。新上下文管理流程不再使用该字段，保留用于配置兼容。
      *
      * 当触发上下文裁剪时，实际保留的上下文 = 阈值 - 额外裁剪值
      * 支持两种格式：
@@ -384,7 +385,7 @@ export interface BaseChannelConfig {
     contextTrimExtraCut?: number | string;
     
     /**
-     * 是否启用自动总结（占位功能，暂未实现）
+     * 旧版自动总结开关
      *
      * 启用后，在舍弃旧回合前先进行总结
      *

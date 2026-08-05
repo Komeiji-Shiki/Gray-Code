@@ -38,7 +38,8 @@ import type { Content } from '../../modules/conversation/types';
 import type { HistorySearchToolConfig } from '../../modules/settings/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
-import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp, isRegexPotentiallyCatastrophic } from '../utils';
+import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp } from '../utils';
+import { validateRegexPattern } from '../search/regexGuard';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───
 
@@ -229,15 +230,15 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
     let matchLineIndices: number[] = [];
     try {
         if (isRegex) {
-            // ReDoS 防线：嵌套量词等危险结构在编译前拒绝，
-            // 避免对历史文档长行做指数级回溯卡死扩展宿主
-            if (isRegexPotentiallyCatastrophic(query)) {
+            // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
+            const guarded = validateRegexPattern(query, 'gi');
+            if (!guarded.ok) {
                 return {
                     success: false,
-                    error: t('tools.history.invalidRegex', { error: 'The pattern can cause catastrophic backtracking (e.g. nested quantifiers like (a+)+). Use literal search or simplify the pattern.' })
+                    error: t('tools.history.invalidRegex', { error: guarded.error })
                 };
             }
-            const pattern = new RegExp(query, 'gi');
+            const pattern = guarded.regex;
             matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
                 pattern.lastIndex = 0;
                 return pattern.test(line);

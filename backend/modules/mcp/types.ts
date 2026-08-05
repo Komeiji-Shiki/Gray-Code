@@ -192,6 +192,8 @@ export interface McpToolCallRequest {
     toolName: string;
     /** 工具参数 */
     arguments: Record<string, unknown>;
+    /** 外部取消信号（可选，透传给底层 client 的请求） */
+    signal?: AbortSignal;
 }
 
 /**
@@ -222,6 +224,8 @@ export interface McpResourceReadRequest {
     serverId: string;
     /** 资源 URI */
     uri: string;
+    /** 外部取消信号（可选，透传给底层 client 的请求） */
+    signal?: AbortSignal;
 }
 
 /**
@@ -248,6 +252,8 @@ export interface McpPromptGetRequest {
     promptName: string;
     /** 参数 */
     arguments?: Record<string, string>;
+    /** 外部取消信号（可选，透传给底层 client 的请求） */
+    signal?: AbortSignal;
 }
 
 /**

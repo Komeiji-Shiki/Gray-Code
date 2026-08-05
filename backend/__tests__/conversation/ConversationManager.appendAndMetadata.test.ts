@@ -22,6 +22,31 @@ function makeContent(role: 'user' | 'model', text: string, extra: Record<string,
     return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
 }
 
+describe('ConversationManager 会话创建并发', () => {
+    test('同一 ID 的并发首次创建合并执行，不误报“对话已存在”', async () => {
+        const storage = new MemoryStorageAdapter();
+        const saveSpy = jest.spyOn(storage, 'saveHistory');
+        const manager = new ConversationManager(storage);
+
+        await expect(Promise.all([
+            manager.createConversation('conv-create-race', 'First'),
+            manager.createConversation('conv-create-race', 'Second'),
+            manager.getHistory('conv-create-race'),
+        ])).resolves.toBeDefined();
+
+        expect(saveSpy).toHaveBeenCalledTimes(1);
+        expect(await manager.getHistory('conv-create-race')).toEqual([]);
+    });
+
+    test('创建完成后的显式重复创建仍然报错', async () => {
+        const manager = new ConversationManager(new MemoryStorageAdapter());
+        await manager.createConversation('conv-existing', 'First');
+
+        await expect(manager.createConversation('conv-existing', 'Second'))
+            .rejects.toThrow(/已存在|already exists/i);
+    });
+});
+
 describe('ConversationManager 追加路径（HIS-01/HIS-02）', () => {
     test('addContent 纯追加走 appendHistory，不再全量 saveHistory', async () => {
         const storage = new MemoryStorageAdapter();
@@ -32,12 +57,20 @@ describe('ConversationManager 追加路径（HIS-01/HIS-02）', () => {
         appendSpy.mockClear();
         saveSpy.mockClear();
 
-        await manager.addContent('conv-append', makeContent('user', 'hello'));
+        const persisted = await manager.addContent('conv-append', makeContent('user', 'hello'));
 
         expect(appendSpy).toHaveBeenCalledTimes(1);
         expect(saveSpy).not.toHaveBeenCalled();
+        expect(persisted).toMatchObject({
+            role: 'user',
+            parentId: null,
+            parts: [{ text: 'hello' }]
+        });
+        expect(typeof persisted?.id).toBe('string');
+        expect(persisted?.id).not.toHaveLength(0);
         const history = await manager.getHistory('conv-append');
         expect(history).toHaveLength(1);
+        expect(history[0].id).toBe(persisted?.id);
         expect(history[0].parts[0]).toEqual({ text: 'hello' });
     });
 

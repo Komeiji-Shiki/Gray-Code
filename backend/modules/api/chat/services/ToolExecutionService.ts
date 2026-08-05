@@ -405,26 +405,30 @@ export class ToolExecutionService {
         //   get_symbols + find_references 等）不创建全工作区存档。
         //   判断基于真实工具名集合（toolNames.some(name => configuredTools.includes(name))），
         //   而不是笼统的「批次存在写工具」或「配置列表非空」。
+        const checkpointConfig = this.settingsManager?.getCheckpointConfig();
+        const configuredCheckpointTools = checkpointConfig
+            ? new Set([...(checkpointConfig.beforeTools ?? []), ...(checkpointConfig.afterTools ?? [])])
+            : undefined;
         const toolNameForCheckpoint: string | null = (() => {
             if (calls.length === 1) {
                 const single = calls[0];
                 if (single.name === 'search_in_files' && single.args?.mode !== 'replace') {
                     return null;
                 }
-                return single.name;
+                // 已有设置上下文时，未配置存档的单工具调用应直接跳过。旧实现仍会先反查
+                // conversation message node，导致 find_files 等只读工具在会话首次创建窗口里
+                // 意外触发 loadHistory 自动建会话，并与显式创建竞争。
+                return configuredCheckpointTools && !configuredCheckpointTools.has(single.name)
+                    ? null
+                    : single.name;
             }
-            const checkpointConfig = this.settingsManager?.getCheckpointConfig();
-            if (!checkpointConfig) {
+            if (!checkpointConfig || !configuredCheckpointTools) {
                 return null;
             }
-            const configuredTools = new Set([
-                ...(checkpointConfig.beforeTools ?? []),
-                ...(checkpointConfig.afterTools ?? [])
-            ]);
             const batchHasConfiguredTool = calls.some(call =>
                 call.name === 'search_in_files'
-                    ? (call.args?.mode === 'replace' && configuredTools.has('search_in_files'))
-                    : configuredTools.has(call.name)
+                    ? (call.args?.mode === 'replace' && configuredCheckpointTools.has('search_in_files'))
+                    : configuredCheckpointTools.has(call.name)
             );
             return batchHasConfiguredTool ? 'tool_batch' : null;
         })();
@@ -434,24 +438,49 @@ export class ToolExecutionService {
         // PERF：before/after 两个存档点使用同一 (conversationId, messageIndex)，合并为一次反查。
         // 每次 getMessageNodeIdAt 都会全量重读 transcript 文件，工具循环一轮最多 200 次迭代时
         // 该重复查询会放大为数百次全量文件读。
+        // PERF-CP：批内全部调用都是 diff-review 工具时，before-checkpoint 与工具前置阶段
+        // （读文件 + hunk 规划 + 预览渲染）并发启动；写盘前由 diffManager 强制 await
+        // checkpointReady，保证「写入前存档已完成」。该模式下工具入口不持有目标路径锁
+        // （checkpoint 根锁与路径锁互斥，入口取锁会死锁/冲突），写盘锁推迟到 diffManager
+        // 写盘时获取。混合批（含 search_in_files replace 或其他写工具）保持同步语义，零变化。
+        const isDiffReviewOnlyBatch = calls.length > 0 && calls.every(call => isDiffReviewToolCall(call.name));
+        let beforeCheckpointPromise: Promise<CheckpointRecord | null> | null = null;
         let resolvedMessageNodeId: string | undefined;
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
             resolvedMessageNodeId = this.conversationManager
                 ? await this.conversationManager.getMessageNodeIdAt(conversationId, messageIndex)
                 : undefined;
-            const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
-                conversationId,
-                messageIndex,
-                toolNameForCheckpoint,
-                'before',
-                resolvedMessageNodeId
-            );
-            if (beforeCheckpoint) {
-                checkpoints.push(beforeCheckpoint);
-                // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
-                void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, beforeCheckpoint.id);
+            if (isDiffReviewOnlyBatch) {
+                beforeCheckpointPromise = this.checkpointService.createToolExecutionCheckpoint(
+                    conversationId,
+                    messageIndex,
+                    toolNameForCheckpoint,
+                    'before',
+                    resolvedMessageNodeId
+                ).catch((error) => {
+                    // 保留 reject 语义：写盘点 await 时收敛为失败，与「checkpoint 失败整批失败」对齐
+                    this.log.warn('checkpoint.before_deferred_failed', {
+                        conversationId,
+                        error: (error as Error)?.message ?? String(error)
+                    });
+                    throw error;
+                });
+            } else {
+                const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+                    conversationId,
+                    messageIndex,
+                    toolNameForCheckpoint,
+                    'before',
+                    resolvedMessageNodeId
+                );
+                if (beforeCheckpoint) {
+                    checkpoints.push(beforeCheckpoint);
+                    // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
+                    void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, beforeCheckpoint.id);
+                }
             }
         }
+        const deferWriteLock = isDiffReviewOnlyBatch && !!beforeCheckpointPromise;
 
         // 执行工具。
         // 相邻的纯只读工具（declaration.readOnly === true）会被并行执行，
@@ -582,7 +611,9 @@ export class ToolExecutionService {
                         attribution,
                         mailboxConversationId,
                         mailboxRunId,
-                        nestingDepth
+                        nestingDepth,
+                        beforeCheckpointPromise,
+                        deferWriteLock
                     )
                 ));
 
@@ -621,7 +652,9 @@ export class ToolExecutionService {
                 attribution,
                 mailboxConversationId,
                 mailboxRunId,
-                nestingDepth
+                nestingDepth,
+                beforeCheckpointPromise,
+                deferWriteLock
             );
 
             const toolResult = this.finalizeToolResponse(
@@ -643,6 +676,18 @@ export class ToolExecutionService {
             index++;
         }
 
+
+        // PERF-CP：deferred 模式下统一收集 before-checkpoint 结果（工具已并行启动，
+        // 写盘点由 diffManager await checkpointReady 保证「写入前存档已完成」）。
+        // 返回顺序保持 before → after 与同步模式一致。
+        if (beforeCheckpointPromise) {
+            const beforeCheckpoint = await beforeCheckpointPromise;
+            if (beforeCheckpoint) {
+                checkpoints.push(beforeCheckpoint);
+                // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
+                void this.bindWorkspaceCheckpointBestEffort(conversationId!, resolvedMessageNodeId, beforeCheckpoint.id);
+            }
+        }
 
         // 在所有工具执行后创建一个检查点
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
@@ -675,8 +720,10 @@ export class ToolExecutionService {
 
     /**
      * 执行 MCP 工具
+     *
+     * @param abortSignal 外部取消信号（可选），透传给 mcpManager.callTool 的请求对象
      */
-    private async executeMcpTool(call: FunctionCallInfo): Promise<Record<string, unknown>> {
+    private async executeMcpTool(call: FunctionCallInfo, abortSignal?: AbortSignal): Promise<Record<string, unknown>> {
         const decoded = decodeMcpToolName(call.name);
         if (decoded) {
             const { serverId, toolName } = decoded;
@@ -684,7 +731,8 @@ export class ToolExecutionService {
             const result = await this.mcpManager!.callTool({
                 serverId,
                 toolName,
-                arguments: call.args
+                arguments: call.args,
+                signal: abortSignal
             });
 
             // 统一转换 MCP 结果（支持 text / image / resource）
@@ -794,11 +842,13 @@ export class ToolExecutionService {
         attribution?: LockHolder,
         mailboxConversationId?: string,
         mailboxRunId?: string,
-        nestingDepth?: number
+        nestingDepth?: number,
+        checkpointReady?: Promise<CheckpointRecord | null> | null,
+        deferWriteLock?: boolean
     ): Promise<Record<string, unknown>> {
         try {
             if (isMcpToolName(executionCall.name) && this.mcpManager) {
-                return await this.executeMcpTool(executionCall);
+                return await this.executeMcpTool(executionCall, abortSignal);
             }
             return await this.executeBuiltinTool(
                 executionCall,
@@ -811,7 +861,9 @@ export class ToolExecutionService {
                 attribution,
                 mailboxConversationId,
                 mailboxRunId,
-                nestingDepth
+                nestingDepth,
+                checkpointReady,
+                deferWriteLock
             );
         } catch (error) {
             const err = error as Error;
@@ -1027,7 +1079,9 @@ export class ToolExecutionService {
         attribution?: LockHolder,
         mailboxConversationId?: string,
         mailboxRunId?: string,
-        nestingDepth?: number
+        nestingDepth?: number,
+        checkpointReady?: Promise<CheckpointRecord | null> | null,
+        deferWriteLock?: boolean
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -1049,30 +1103,36 @@ export class ToolExecutionService {
         };
         let lockedPaths: string[] | null = null;
         if (writePaths && writePaths.length > 0) {
-            const lockResult = fileWriteLockManager.tryAcquire(writePaths, lockHolder);
-            if (!lockResult.acquired) {
-                // 修改原因（P4）：旧文案“Do NOT wait or retry this file immediately”易被 LLM 误解为放弃该文件，
-                // 且未告知冲突持有者身份之外的协作方式。
-                // 修改方式：明确持有者（子代理 run / 主会话 / 存档操作）、建议先做其他工作后重试、
-                //          持续冲突时在最终回复中上报主会话协调；lockConflict 标志保留供预设 prompt 识别。
-                const conflictText = lockResult.conflicts
-                    .map(c => {
-                        const holderName = c.holder.kind === 'subagent'
-                            ? `agent "${c.holder.label}"`
-                            : (c.holder.kind === 'checkpoint' ? 'a checkpoint operation' : c.holder.label);
-                        return `'${c.path}' is currently being modified by ${holderName}`;
-                    })
-                    .join('; ');
-                return {
-                    success: false,
-                    error: `File write conflict: ${conflictText}. `
-                        + `Do not loop on this file. Work on other parts of your task first, `
-                        + `then retry after the current holder finishes (the lock is released automatically). `
-                        + `If it is still locked on retry, mention it in your final response so the main session can coordinate.`,
-                    lockConflict: true
-                };
+            if (deferWriteLock) {
+                // PERF-CP：checkpoint 并发模式下入口不取路径锁（checkpoint 根锁与路径锁互斥），
+                // 写盘锁由 diffManager 在写盘前获取（PendingDiff.lockHolder，同 holder 身份），
+                // 写盘后立即释放；审阅期间本文件对并行写入者不可见，写盘瞬间才成为持有者。
+            } else {
+                const lockResult = fileWriteLockManager.tryAcquire(writePaths, lockHolder);
+                if (!lockResult.acquired) {
+                    // 修改原因（P4）：旧文案“Do NOT wait or retry this file immediately”易被 LLM 误解为放弃该文件，
+                    // 且未告知冲突持有者身份之外的协作方式。
+                    // 修改方式：明确持有者（子代理 run / 主会话 / 存档操作）、建议先做其他工作后重试、
+                    //          持续冲突时在最终回复中上报主会话协调；lockConflict 标志保留供预设 prompt 识别。
+                    const conflictText = lockResult.conflicts
+                        .map(c => {
+                            const holderName = c.holder.kind === 'subagent'
+                                ? `agent "${c.holder.label}"`
+                                : (c.holder.kind === 'checkpoint' ? 'a checkpoint operation' : c.holder.label);
+                            return `'${c.path}' is currently being modified by ${holderName}`;
+                        })
+                        .join('; ');
+                    return {
+                        success: false,
+                        error: `File write conflict: ${conflictText}. `
+                            + `Do not loop on this file. Work on other parts of your task first, `
+                            + `then retry after the current holder finishes (the lock is released automatically). `
+                            + `If it is still locked on retry, mention it in your final response so the main session can coordinate.`,
+                        lockConflict: true
+                    };
+                }
+                lockedPaths = writePaths;
             }
-            lockedPaths = writePaths;
         }
 
         // 获取渠道多模态能力
@@ -1090,6 +1150,8 @@ export class ToolExecutionService {
             toolId: call.id,  // 使用函数调用 ID 作为工具 ID，用于追踪和取消
             toolOptions: config?.toolOptions,  // 传递工具配置
             approvedByToolConfirmation: approvedByToolConfirmation === true,
+            // PERF-CP：diff-review 工具在写盘前 await checkpointReady（写入前存档屏障）
+            checkpointReady,
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
             conversationStore: this.conversationStore,
@@ -1117,6 +1179,10 @@ export class ToolExecutionService {
         }
         if (mailboxRunId) {
             toolContext.mailboxRunId = mailboxRunId;
+        }
+        // PERF-CP：deferred 模式下把写盘锁持有者身份交给 diffManager（写盘前 acquire 用）
+        if (deferWriteLock) {
+            toolContext.lockHolder = lockHolder;
         }
 
         // F2：注入嵌套深度（子代理 run 上下文的一部分），供 subagents 工具在派生子子 agent 时

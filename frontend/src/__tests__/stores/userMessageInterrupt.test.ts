@@ -46,6 +46,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),

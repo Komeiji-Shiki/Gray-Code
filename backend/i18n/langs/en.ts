@@ -291,7 +291,9 @@ const en: BackendLanguageMessages = {
                     summarizeAborted: 'Summarize request aborted',
                     emptySummary: 'AI generated summary is empty',
                     messageNotFound: 'Message not found: index {messageIndex}',
-                    canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}'
+                    canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}',
+                    messageChanged: 'Message has changed, please refresh and try again',
+                    editTargetNotInHistory: 'The selected message is no longer in the current conversation history; it may have been removed by context compaction'
                 },
                 prompts: {
                     defaultSummarizePrompt: `Please summarize the above conversation content concisely, output the summary directly without any format markers.

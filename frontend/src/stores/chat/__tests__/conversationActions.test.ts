@@ -69,6 +69,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     openTabs: ref([]),
     activeTabId: ref(null),
     sessionSnapshots: ref(new Map()),

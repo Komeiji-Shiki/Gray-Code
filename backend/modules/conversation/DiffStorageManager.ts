@@ -23,6 +23,8 @@ import { isSafeId, isSafeRelativePath } from '../../core/idValidation';
 import { Logger } from '../../core/logger';
 
 const log = Logger.get('DiffStorageManager');
+const MAX_GLOBAL_DIFF_CACHE_ENTRIES = 16;
+const MAX_GLOBAL_DIFF_CACHE_BYTES = 32 * 1024 * 1024;
 
 /**
  * Diff 内容记录
@@ -58,6 +60,9 @@ export class DiffStorageManager {
     
     /** 数据存储基础路径 */
     private basePath: string;
+    /** apply_diff 最近内容的有界内存缓存：预览无需等待 JSON 落盘后再读回。 */
+    private readonly globalDiffCache = new Map<string, { content: DiffContent; bytes: number }>();
+    private globalDiffCacheBytes = 0;
     
     private constructor(basePath: string) {
         this.basePath = basePath;
@@ -190,27 +195,82 @@ export class DiffStorageManager {
         diffId?: string
     ): Promise<DiffReference> {
         const id = diffId || this.generateDiffId();
-        const diffsDir = path.join(this.basePath, 'diffs', '__global__');
-        
-        await this.ensureDir(diffsDir);
-        
-        const diffContent: DiffContent = {
+        const diffContent = this.buildGlobalDiffContent(content);
+        this.cacheGlobalDiff(id, diffContent);
+        await this.persistGlobalDiff(id, diffContent);
+        return this.buildGlobalDiffReference(id, content.filePath);
+    }
+
+    /**
+     * 立即返回轻量引用，并在后台持久化全文。
+     * 当前进程内 loadGlobalDiff 会优先命中内存；落盘完成后扩展重启仍可读取。
+     */
+    public saveGlobalDiffDeferred(
+        content: {
+            originalContent: string;
+            newContent: string;
+            filePath: string;
+        },
+        diffId?: string
+    ): DiffReference {
+        const id = diffId || this.generateDiffId();
+        const diffContent = this.buildGlobalDiffContent(content);
+        this.cacheGlobalDiff(id, diffContent);
+        void this.persistGlobalDiff(id, diffContent).catch(error => {
+            log.warn('global_diff_background_save_failed', {
+                diffId: id,
+                error: error instanceof Error ? error.message : String(error)
+            });
+        });
+        return this.buildGlobalDiffReference(id, content.filePath);
+    }
+
+    private buildGlobalDiffContent(content: {
+        originalContent: string;
+        newContent: string;
+        filePath: string;
+    }): DiffContent {
+        return {
             originalContent: content.originalContent,
             newContent: content.newContent,
             filePath: content.filePath,
             createdAt: Date.now()
         };
-        
-        const filePath = path.join(diffsDir, `${id}.json`);
-        await fs.promises.writeFile(filePath, JSON.stringify(diffContent, null, 2), 'utf8');
-        
+    }
+
+    private buildGlobalDiffReference(id: string, filePath: string): DiffReference {
+        return { diffId: id, filePath, hasDiffContent: true };
+    }
+
+    private async persistGlobalDiff(id: string, content: DiffContent): Promise<void> {
+        const diffsDir = path.join(this.basePath, 'diffs', '__global__');
+        await this.ensureDir(diffsDir);
+        await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content), 'utf8');
         log.debug('global_diff_saved', { diffId: id });
-        
-        return {
-            diffId: id,
-            filePath: content.filePath,
-            hasDiffContent: true
-        };
+    }
+
+    private cacheGlobalDiff(id: string, content: DiffContent): void {
+        const bytes = Buffer.byteLength(content.originalContent, 'utf8')
+            + Buffer.byteLength(content.newContent, 'utf8');
+        const previous = this.globalDiffCache.get(id);
+        if (previous) {
+            this.globalDiffCacheBytes -= previous.bytes;
+            this.globalDiffCache.delete(id);
+        }
+        if (bytes > MAX_GLOBAL_DIFF_CACHE_BYTES) return;
+
+        this.globalDiffCache.set(id, { content, bytes });
+        this.globalDiffCacheBytes += bytes;
+        while (
+            this.globalDiffCache.size > MAX_GLOBAL_DIFF_CACHE_ENTRIES
+            || this.globalDiffCacheBytes > MAX_GLOBAL_DIFF_CACHE_BYTES
+        ) {
+            const oldestId = this.globalDiffCache.keys().next().value as string | undefined;
+            if (!oldestId) break;
+            const oldest = this.globalDiffCache.get(oldestId);
+            if (oldest) this.globalDiffCacheBytes -= oldest.bytes;
+            this.globalDiffCache.delete(oldestId);
+        }
     }
     
     /**
@@ -225,6 +285,14 @@ export class DiffStorageManager {
             console.warn(`[DiffStorageManager] Rejected unsafe diff id: ${diffId}`);
             return null;
         }
+        const cached = this.globalDiffCache.get(diffId);
+        if (cached) {
+            // Map 重新插入保持最近访问项在尾部，容量淘汰按 LRU 近似执行。
+            this.globalDiffCache.delete(diffId);
+            this.globalDiffCache.set(diffId, cached);
+            return cached.content;
+        }
+
         const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);
         
         try {

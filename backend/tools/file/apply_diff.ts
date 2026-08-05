@@ -12,6 +12,7 @@ import { getDiffManager } from './diffManager';
 import { resolveUriWithInfo, getAllWorkspaces, detectNonUtf8Encoding, formatFileSize } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
+import type { LockHolder } from '../../core/fileWriteLockManager';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
@@ -44,6 +45,40 @@ export interface StructuredDiffHunk {
     newContent: string;
     /** 可选。仅当 oldContent 在文件中重复出现时用于定位，1-based，基于原文件行号。 */
     startLine?: number;
+}
+
+/**
+ * 结构化 hunk 应用计划的单条记录：某个 hunk 在规范化原始内容中的精确匹配位置与替换内容。
+ *
+ * 为什么要新增：fast path（独立精确匹配）已经算好每个 hunk 的匹配区间，块级拒绝/最终内容重放
+ * 如果每次都重新扫描会重复付出相同的 indexOf/行号计算成本。
+ * 怎么改：把已算好的匹配结果固化为计划条目，重放任意子集时直接按 startIndex/endIndex 拼接。
+ * 目的：让 tryApplyIndependentExactStructuredHunks 的产物可被 diffManager 缓存并在任意子集重放时复用。
+ */
+export interface StructuredHunkPlanEntry {
+    /** hunk 在原数组中的下标（0-based） */
+    index: number;
+    /** 匹配起点（基于 normalizedOriginal 的字符偏移，含） */
+    startIndex: number;
+    /** 匹配终点（基于 normalizedOriginal 的字符偏移，不含） */
+    endIndex: number;
+    /** 原文件中的起始行号（1-based） */
+    originalStartLine: number;
+    /** 规范化后的 oldContent */
+    oldContent: string;
+    /** 规范化后的 newContent */
+    newContent: string;
+}
+
+/**
+ * 结构化 hunk 应用计划：一组按原数组顺序排列的独立精确匹配记录 + 产生该计划的规范化原始内容。
+ *
+ * normalizedOriginal 用于重放前的起始内容校验：只有当前起始内容与产生计划时的内容一致时
+ * 才能安全复用计划（行号/偏移都是相对这份内容算出来的）。
+ */
+export interface StructuredHunkPlan {
+    entries: StructuredHunkPlanEntry[];
+    normalizedOriginal: string;
 }
 
 /**
@@ -766,6 +801,69 @@ function resolveStructuredHunkMatch(
 }
 
 
+/**
+ * 按计划条目拼接输出（fast path 与 plan 复用共享的拼接逻辑）。
+ *
+ * 为什么要抽成共享函数：首次应用与后续任意子集重放必须产出逐字节一致的输出、行号与块范围，
+ * 用同一段拼接代码从结构上保证等价性，避免两份实现各自漂移。
+ */
+function splicePlannedEntries(
+    normalizedOriginal: string,
+    entries: StructuredHunkPlanEntry[]
+): {
+    newContent: string;
+    results: Array<{
+        index: number;
+        success: boolean;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        matchKind?: StructuredMatchKind;
+    }>;
+    blocks: Array<{ index: number; startLine: number; endLine: number }>;
+    appliedCount: number;
+    failedCount: number;
+} {
+    const output: string[] = [];
+    const results: Array<{
+        index: number;
+        success: boolean;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        matchKind?: StructuredMatchKind;
+    }> = [];
+    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
+    let cursor = 0;
+    let lineDelta = 0;
+
+    for (const item of entries) {
+        output.push(normalizedOriginal.slice(cursor, item.startIndex), item.newContent);
+        const startLine = item.originalStartLine + lineDelta;
+        const endLine = startLine + Math.max(countTextLines(item.newContent), 1) - 1;
+        results.push({
+            index: item.index,
+            success: true,
+            startLine,
+            endLine,
+            matchCount: 1,
+            matchKind: 'exact'
+        });
+        blocks.push({ index: item.index, startLine, endLine });
+        lineDelta += countLineBreaks(item.newContent) - countLineBreaks(item.oldContent);
+        cursor = item.endIndex;
+    }
+    output.push(normalizedOriginal.slice(cursor));
+
+    return {
+        newContent: output.join(''),
+        results,
+        blocks,
+        appliedCount: results.length,
+        failedCount: 0
+    };
+}
+
 function tryApplyIndependentExactStructuredHunks(
     originalContent: string,
     hunks: StructuredDiffHunk[],
@@ -783,16 +881,11 @@ function tryApplyIndependentExactStructuredHunks(
     blocks: Array<{ index: number; startLine: number; endLine: number }>;
     appliedCount: number;
     failedCount: number;
+    /** 本次应用的独立精确匹配计划：供后续任意子集重放复用，跳过重复扫描 */
+    plan: StructuredHunkPlan;
 } | undefined {
     const normalizedOriginal = normalizeLineEndings(originalContent);
-    const planned: Array<{
-        index: number;
-        startIndex: number;
-        endIndex: number;
-        originalStartLine: number;
-        oldContent: string;
-        newContent: string;
-    }> = [];
+    const planned: StructuredHunkPlanEntry[] = [];
 
     for (let index = 0; index < hunks.length; index++) {
         if (applyIndices && !applyIndices.has(index)) continue;
@@ -820,43 +913,10 @@ function tryApplyIndependentExactStructuredHunks(
 
     if (planned.length === 0) return undefined;
 
-    const output: string[] = [];
-    const results: Array<{
-        index: number;
-        success: boolean;
-        startLine?: number;
-        endLine?: number;
-        matchCount?: number;
-        matchKind?: StructuredMatchKind;
-    }> = [];
-    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
-    let cursor = 0;
-    let lineDelta = 0;
-
-    for (const item of planned) {
-        output.push(normalizedOriginal.slice(cursor, item.startIndex), item.newContent);
-        const startLine = item.originalStartLine + lineDelta;
-        const endLine = startLine + Math.max(countTextLines(item.newContent), 1) - 1;
-        results.push({
-            index: item.index,
-            success: true,
-            startLine,
-            endLine,
-            matchCount: 1,
-            matchKind: 'exact'
-        });
-        blocks.push({ index: item.index, startLine, endLine });
-        lineDelta += countLineBreaks(item.newContent) - countLineBreaks(item.oldContent);
-        cursor = item.endIndex;
-    }
-    output.push(normalizedOriginal.slice(cursor));
-
+    const spliced = splicePlannedEntries(normalizedOriginal, planned);
     return {
-        newContent: output.join(''),
-        results,
-        blocks,
-        appliedCount: results.length,
-        failedCount: 0
+        ...spliced,
+        plan: { entries: planned, normalizedOriginal }
     };
 }
 
@@ -866,6 +926,12 @@ export function applyStructuredDiffHunksBestEffort(
     options?: {
         /** 只应用这些 hunk index（0-based，按原 hunks 顺序） */
         applyIndices?: Set<number>;
+        /**
+         * 复用先前 fast path 产出的计划：仅当计划覆盖本次所需 applyIndices（缺省=全部）
+         * 且当前起始内容与产生计划时的内容一致时，直接按计划拼接输出（等价于 fast path），
+         * 跳过重新扫描；不满足时行为与不传 plan 完全一致（重新扫描）。
+         */
+        plan?: StructuredHunkPlan;
     }
 ): {
     newContent: string;
@@ -882,7 +948,31 @@ export function applyStructuredDiffHunksBestEffort(
     blocks: Array<{ index: number; startLine: number; endLine: number }>;
     appliedCount: number;
     failedCount: number;
+    /** fast path / plan 复用成功时附带计划，供调用方缓存并用于后续块级重放 */
+    plan?: StructuredHunkPlan;
 } {
+    const normalizedOriginal = normalizeLineEndings(originalContent);
+
+    // plan 复用：跳过重新扫描，直接按计划拼接。
+    // 约束：当前内容必须仍是产生计划时的内容；计划必须覆盖本次需要应用的全部下标。
+    // 缺 plan / 计划不覆盖 / 起始内容不一致时一律回退到下方重新扫描，行为与旧实现完全一致。
+    if (options?.plan && options.plan.entries.length > 0) {
+        const requiredIndices = options.applyIndices ?? new Set(hunks.map((_, index) => index));
+        const planIndexes = new Set(options.plan.entries.map(entry => entry.index));
+        let coversAll = true;
+        for (const index of requiredIndices) {
+            if (!planIndexes.has(index)) {
+                coversAll = false;
+                break;
+            }
+        }
+        if (coversAll && options.plan.normalizedOriginal === normalizedOriginal) {
+            const selected = options.plan.entries.filter(entry => requiredIndices.has(entry.index));
+            const spliced = splicePlannedEntries(normalizedOriginal, selected);
+            return { ...spliced, plan: options.plan };
+        }
+    }
+
     const fastResult = tryApplyIndependentExactStructuredHunks(originalContent, hunks, options?.applyIndices);
     if (fastResult) return fastResult;
 
@@ -1600,13 +1690,10 @@ ${descriptionSuffix}`,
             }
 
             const absolutePath = uri.fsPath;
-            if (!fs.existsSync(absolutePath)) {
-                return { success: false, error: `File not found: ${filePath}` };
-            }
 
-            // 文件大小护栏：超大文件（如打包产物）全量 readFileSync 会阻塞 extension host，先 stat 拦截。
+            // 文件大小护栏：使用异步 stat/readFile，避免大文件 I/O 阻塞 Extension Host 与停止消息处理。
             try {
-                const stat = fs.statSync(absolutePath);
+                const stat = await fs.promises.stat(absolutePath);
                 if (stat.size > MAX_EDIT_FILE_BYTES) {
                     return {
                         success: false,
@@ -1614,13 +1701,16 @@ ${descriptionSuffix}`,
                     };
                 }
             } catch (e) {
+                if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                    return { success: false, error: `File not found: ${filePath}` };
+                }
                 return { success: false, error: `Failed to stat file: ${e instanceof Error ? e.message : String(e)}` };
             }
 
             const format = getApplyDiffFormat();
 
             try {
-                const rawBuffer = fs.readFileSync(absolutePath);
+                const rawBuffer = await fs.promises.readFile(absolutePath);
                 // 编码防护：UTF-16/GBK 等非 UTF-8 文件按 UTF-8 读-改-写会永久损坏，
                 // 明确拒绝而不是静默写坏
                 const encodingIssue = detectNonUtf8Encoding(rawBuffer);
@@ -1646,6 +1736,8 @@ ${descriptionSuffix}`,
                     let newContent = originalContent;
                     let rawDiffs: any[] = [];
                     let fallbackMode: 'none' | 'structured_hunks' | 'loose_hunk_search_replace' | 'unified_hunks_search_replace' = 'none';
+                    // fast path 产出的结构化 hunk 计划：随 createPendingDiff 缓存，供块级拒绝/最终内容重放复用
+                    let structuredHunkPlan: StructuredHunkPlan | undefined;
 
                     // 为什么优先处理 hunks：新格式把 newContent 当最终内容字段，避免旧 patch 字符串里的反斜杠/双引号被模型误写。
                     // 怎么改：当 hunks 存在时不再解析 patch；按结构化规则应用，并把原始 hunks 存入 DiffManager 以支持块级接受/拒绝重放。
@@ -1661,6 +1753,8 @@ ${descriptionSuffix}`,
                         newContent = applied.newContent;
                         rawDiffs = structuredHunks as any[];
                         fallbackMode = 'structured_hunks';
+                        // 顺序路径（含缩进容错）不产出计划；fast path 成功时缓存计划供重放复用
+                        structuredHunkPlan = applied.plan;
                     } else {
                         try {
                             if (!patch || typeof patch !== 'string') {
@@ -1768,7 +1862,17 @@ ${descriptionSuffix}`,
                         blocks,
                         rawDiffs,
                         context?.toolId,
-                        { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true, conversationId: context?.conversationId }
+                        {
+                            confirmedByToolConfirmation: context?.approvedByToolConfirmation === true,
+                            conversationId: context?.conversationId,
+                            // fast path 产出的计划：块级拒绝/最终内容重放时复用，避免重复扫描；
+                            // 顺序路径（含缩进容错）不产出计划，此处为 undefined，重放走重新扫描。
+                            structuredHunkPlan,
+                            // checkpoint 写盘屏障由 ToolExecutionService 注入（ToolContext 索引签名透传）
+                            checkpointReady: context?.checkpointReady as Promise<unknown> | undefined,
+                            // PERF-CP：deferred 模式写盘锁持有者身份（DiffManager 审阅期间持有）
+                            lockHolder: context?.lockHolder as LockHolder | undefined
+                        }
                     );
 
                     // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
@@ -1791,7 +1895,7 @@ ${descriptionSuffix}`,
 
                     if (diffStorageManager) {
                         try {
-                            const diffRef = await diffStorageManager.saveGlobalDiff({
+                            const diffRef = diffStorageManager.saveGlobalDiffDeferred({
                                 originalContent,
                                 newContent,
                                 filePath
@@ -1950,7 +2054,14 @@ ${descriptionSuffix}`,
                     blocks,
                     diffs as any[],
                     context?.toolId,
-                    { confirmedByToolConfirmation: context?.approvedByToolConfirmation === true, conversationId: context?.conversationId }
+                    {
+                        confirmedByToolConfirmation: context?.approvedByToolConfirmation === true,
+                        conversationId: context?.conversationId,
+                        // legacy search/replace 路径无结构化计划；checkpoint 屏障与结构化路径一致
+                        checkpointReady: context?.checkpointReady as Promise<unknown> | undefined,
+                        // PERF-CP：deferred 模式写盘锁持有者身份（DiffManager 审阅期间持有）
+                        lockHolder: context?.lockHolder as LockHolder | undefined
+                    }
                 );
 
                 // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
@@ -1969,7 +2080,7 @@ ${descriptionSuffix}`,
 
                 if (diffStorageManager) {
                     try {
-                        const diffRef = await diffStorageManager.saveGlobalDiff({
+                        const diffRef = diffStorageManager.saveGlobalDiffDeferred({
                             originalContent,
                             newContent: currentContent,
                             filePath

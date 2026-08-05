@@ -47,6 +47,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
@@ -199,6 +200,12 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
   it('complete 终结 chunk：消费 _pendingBranchRefreshAfterStream 并拉取分支图', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
+      _pendingBranchReplayContext: ref({
+        kind: 'reroll',
+        conversationId: 'conv_1',
+        assistantNodeId: 'msg_old',
+        configId: 'cfg_1'
+      }),
       activeStreamId: ref('stream_1')
     })
     const ctx = createCtx(state)
@@ -214,11 +221,19 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(graphCall).toBeDefined()
     expect(graphCall![1]).toMatchObject({ conversationId: 'conv_1' })
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    expect(state._pendingBranchReplayContext.value).toBeNull()
   })
 
-  it('error 终结 chunk 同样消费标记（失败候选保留，可切回查看）', async () => {
+  it('REROLL_ERROR 终结 chunk：把重放上下文写入错误对象后清理暂存状态', async () => {
+    const replayContext = {
+      kind: 'reroll' as const,
+      conversationId: 'conv_1',
+      assistantNodeId: 'msg_old',
+      configId: 'cfg_1'
+    }
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
+      _pendingBranchReplayContext: ref(replayContext),
       activeStreamId: ref('stream_1')
     })
     const ctx = createCtx(state)
@@ -228,7 +243,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
         type: 'error',
         conversationId: 'conv_1',
         streamId: 'stream_1',
-        error: { code: 'STREAM_ERROR', message: 'boom' }
+        error: { code: 'REROLL_ERROR', message: 'boom', type: 'API_ERROR' }
       } as any,
       ctx
     )
@@ -236,6 +251,8 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
 
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeDefined()
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    expect(state._pendingBranchReplayContext.value).toBeNull()
+    expect(state.error.value?.branchReplayContext).toEqual(replayContext)
   })
 
   it('cancelled 终结 chunk 消费标记（取消后新候选已建，刷新以便切回）', async () => {

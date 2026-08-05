@@ -49,6 +49,7 @@ import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
+import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -73,6 +74,19 @@ export const STREAM_CANCEL_TOOL_SETTLE_GRACE_MS = 3000;
 export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
 
 /**
+ * 收尾窗口超时后给 gen.return() 的回收窗口（毫秒）。
+ *
+ * M2：工具不响应 abort 且永不结束时，drain 超时返回前必须显式调用 gen.return()，
+ * 让 executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放等）有机会执行。
+ * 但生成器若挂在某个不可中断的 await 上，return() 也只能排队等待——窗口结束即放弃并记录
+ * 日志（JS 无法强制中断挂起的 promise），避免请求进一步被拖长。
+ */
+export const GEN_RETURN_RECOVERY_GRACE_MS = 500;
+
+/** drain 收尾日志（模块级，供 drainToolExecutionGeneratorAfterAbort 使用） */
+const drainLog = Logger.get('ToolLoopDrain');
+
+/**
  * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
  *
  * 必须先等 initialNext（即主循环里那次正在恢复生成器的 next() 请求）：
@@ -83,17 +97,20 @@ export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
  *
  * 窗口（graceMs）内拿到最终值则返回；超时（工具不响应 abort 且永不结束）返回 undefined，
  * 调用方走既有取消路径，保证请求不永久挂起。
+ *
+ * M2：超时路径会显式调用 gen.return() 回收生成器（带独立短窗口），确保
+ * executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放）尽量执行，
+ * 避免生成器被放弃后资源泄漏。
  */
 export async function drainToolExecutionGeneratorAfterAbort(
     gen: AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void>,
     initialNext: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>,
     graceMs: number
 ): Promise<ToolExecutionFullResult | undefined> {
-    const drainDeadline = Date.now() + graceMs;
-    const raceWithDeadline = <T>(promise: Promise<T>): Promise<T | undefined> => {
+    const raceWithTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), Math.max(0, drainDeadline - Date.now()));
+            timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
         });
         // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
         promise.then(
@@ -103,13 +120,39 @@ export async function drainToolExecutionGeneratorAfterAbort(
         return Promise.race([promise, timeoutPromise]);
     };
 
-    let drained = await raceWithDeadline(initialNext);
+    const drainDeadline = Date.now() + graceMs;
+    let drained = await raceWithTimeout(initialNext, drainDeadline - Date.now());
     while (drained !== undefined && !drained.done && Date.now() < drainDeadline) {
-        drained = await raceWithDeadline(gen.next());
+        drained = await raceWithTimeout(gen.next(), drainDeadline - Date.now());
     }
 
     if (drained !== undefined && drained.done) {
         return drained.value as ToolExecutionFullResult;
+    }
+
+    // M2：窗口超时（工具不响应 abort 且永不结束）——回收生成器，让 try/finally 执行。
+    // return 给独立短窗口：生成器若挂在不可中断的 await 上，return() 只能排队，窗口结束
+    // 即放弃（finally 无法强制执行），记录日志便于排查泄漏。
+    try {
+        // TReturn 为 ToolExecutionFullResult，undefined 需经类型断言传入
+        const returnResult = gen.return(undefined as unknown as ToolExecutionFullResult);
+        // 伪生成器（测试 mock 等）的 return() 可能不返回 promise：此时没有 finally 可回收，
+        // 直接放弃，不做竞速（raceWithTimeout 需要 promise）。
+        if (!returnResult || typeof (returnResult as Promise<unknown>)?.then !== 'function') {
+            return undefined;
+        }
+        const returned = await raceWithTimeout(returnResult as Promise<unknown>, GEN_RETURN_RECOVERY_GRACE_MS);
+        if (returned === undefined) {
+            drainLog.warn('drain_return_timeout', {
+                graceMs,
+                note: 'generator did not respond to return() within grace window; its finally may not have run',
+            });
+        }
+    } catch (error) {
+        drainLog.warn('drain_return_failed', {
+            graceMs,
+            error: (error as Error)?.message ?? String(error),
+        });
     }
     return undefined;
 }
@@ -198,6 +241,15 @@ export class ToolIterationLoopService {
     private promptManager: PromptManager;
     private summarizeService?: SummarizeService;
     private readonly log = Logger.get('ToolLoop');
+
+    /**
+     * 各会话「当前真实用户回合」已确定的 fallback 细粒度裁剪起点（绝对索引）。
+     *
+     * 自动总结失败后 fallback 不写 trimState，但同一回合内的多次工具迭代（含工具确认后的续跑
+     * runToolLoop）必须复用同一起点：工具结果增长时若每轮重新规划切点，retainedHistory 开头会
+     * 持续后移，provider 前缀缓存无法命中；新回合（isNewTurn）与总结成功后重新评估时清除。
+     */
+    private readonly granularFallbackStartByConversation = new Map<string, number>();
 
     constructor(
         private channelManager: ChannelManager,
@@ -324,6 +376,52 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * 会话级自动总结已用次数：conversationId → { turnStartMessageId, attempts }。
+     *
+     * M3：autoSummarizeAttempts 原为每次 runToolLoop / runNonStreamLoop 的局部变量，
+     * 工具确认后 isNewTurn=false 的续跑会重新从 0 计数，maxAutoSummarizeAttemptsPerTurn
+     * 形同虚设。这里以「回合起始用户消息 id」作为真实用户回合标识：新回合清零，续跑读取并
+     * 累加。同一会话在 H1 写序竞态修复后不会并发两个流式循环（webview 层等待旧流退出），
+     * 单写者假设成立；新回合 set 覆盖旧条目即完成清理，Map 不随回合数增长。
+     */
+    private readonly turnAutoSummarizeAttempts = new Map<string, { turnStartMessageId: string; attempts: number }>();
+
+    /**
+     * M3：解析本回合已用的自动总结尝试次数。
+     *
+     * - 新真实用户回合（isNewTurn=true）或回合锚点变化（总结等结构变化导致起始消息漂移）：
+     *   清零并记录新锚点；
+     * - 回合续跑（retry / 工具确认后的继续，isNewTurn=false 且锚点未变）：复用已用次数。
+     */
+    private resolveTurnAutoSummarizeAttempts(
+        conversationId: string,
+        turnStartMessageId: string | undefined,
+        isNewTurn: boolean,
+    ): number {
+        const anchor = typeof turnStartMessageId === 'string' && turnStartMessageId.trim()
+            ? turnStartMessageId.trim()
+            : '';
+        const current = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (isNewTurn || anchor !== current?.turnStartMessageId) {
+            this.turnAutoSummarizeAttempts.set(conversationId, { turnStartMessageId: anchor, attempts: 0 });
+            return 0;
+        }
+        return current.attempts;
+    }
+
+    /**
+     * M3：累加并持久化一次自动总结尝试（供总结分支在 autoSummarizeAttempts++ 处调用）。
+     */
+    private consumeTurnAutoSummarizeAttempt(conversationId: string, currentAttempts: number): number {
+        const nextAttempts = currentAttempts + 1;
+        const entry = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (entry) {
+            entry.attempts = nextAttempts;
+        }
+        return nextAttempts;
+    }
+
+    /**
      * preserve 策略启用时，把当前回合之前所有已缓存动态上下文的用户回合锚定为 preserve。
      *
      * 这里必须同步更新传入的 history：不同存储适配器对 loadHistory 的引用语义不一致，
@@ -369,6 +467,8 @@ export class ToolIterationLoopService {
      */
     async clearTrimState(conversationId: string): Promise<void> {
         await this.contextTrimService.clearTrimState(conversationId);
+        // 编辑/删除/回档等历史结构变更后，旧 fallback 切点可能错位，一并清除。
+        this.granularFallbackStartByConversation.delete(conversationId);
     }
 
     /**
@@ -497,6 +597,16 @@ export class ToolIterationLoopService {
         let dynamicContextStrategy: DynamicContextStrategy = loopConfig.dynamicContextStrategy ?? 'single';
 
         let iteration = startIteration;
+        // 上下文裁剪/自动总结只允许在真实用户回合边界推进一次。工具确认后的继续属于同一回合，
+        // 只能复用已有起点；否则前台 SubAgent 的大 functionResponse 会在回合中途挤掉整段旧历史。
+        let contextManagementEvaluatedForTurn = !isNewTurn;
+        // 新回合（含总结成功后重新评估）不继承上一回合的 fallback 切点，重新规划。
+        if (isNewTurn) {
+            this.granularFallbackStartByConversation.delete(conversationId);
+        }
+        // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
+        const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
+            ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
 
         // 同参数重复失败调用护栏（turn 级别，跨工具迭代存活）
         const repeatedCallGuard = new RepeatedCallGuard();
@@ -513,6 +623,13 @@ export class ToolIterationLoopService {
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // M3：自动总结已用次数提升到「真实用户回合」级——新回合清零，续跑（isNewTurn=false）
+        // 从会话级记录读取已用次数，避免续跑重新从 0 计数导致 maxAutoSummarizeAttemptsPerTurn 失效。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -578,14 +695,15 @@ export class ToolIterationLoopService {
 
             // 3. 获取对话历史（应用上下文裁剪）
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
-            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
+            let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
                 modelOverride,
-                dynamicContextStrategy
+                dynamicContextStrategy,
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('stream.trim_result', {
@@ -598,8 +716,14 @@ export class ToolIterationLoopService {
             });
 
             // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
-            if (trimResult.needsAutoSummarize && this.summarizeService) {
-                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
+            if (
+                trimResult.needsAutoSummarize &&
+                this.summarizeService &&
+                autoSummarizeAttempts < maxAutoSummarizeAttempts
+            ) {
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
                 // 先通知前端显示“自动总结中”提示
                 yield {
@@ -653,7 +777,8 @@ export class ToolIterationLoopService {
                         });
                     }
 
-                    // 重新获取历史后再发起本轮 API 请求
+                    // 总结调用不占用主模型工具迭代额度；重新获取历史后再发起本轮 API 请求。
+                    iteration--;
                     continue;
                 }
 
@@ -684,9 +809,35 @@ export class ToolIterationLoopService {
 
                     // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
                     this.log.warn('stream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
+                    if (!isSummaryOnlyAborted && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                        iteration--;
+                        continue;
+                    }
                 }
             }
 
+            if (trimResult.needsAutoSummarize) {
+                // 总结失败、总结服务不可用或本回合尝试次数耗尽：使用不持久化的细粒度安全裁剪，
+                // 不再把超阈值全量历史直接交给 provider，也不永久修改 trimState。
+                // 回合内首次评估（含总结成功后重新评估）重新规划切点；后续工具迭代复用已确定起点，
+                // 保持 retainedHistory 前缀稳定（provider 前缀缓存命中）。
+                if (!contextManagementEvaluatedForTurn) {
+                    this.granularFallbackStartByConversation.delete(conversationId);
+                }
+                trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
+                    conversationId,
+                    config,
+                    historyOptions,
+                    modelOverride,
+                    dynamicContextStrategy,
+                    this.granularFallbackStartByConversation.get(conversationId)
+                );
+                this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+            }
+
+            // 一旦本回合即将真正请求主模型，后续工具迭代固定复用当前裁剪起点。
+            // 自动总结成功会在上方 continue，仍允许重新评估总结后的历史。
+            contextManagementEvaluatedForTurn = true;
             const { history } = trimResult;
 
             // 4. 获取静态系统提示词（可被 API provider 缓存）
@@ -812,7 +963,7 @@ export class ToolIterationLoopService {
 
                 // 检查是否被取消
                 if (processor.isCancelled()) {
-                    const partialContent = processor.getContent();
+                    let partialContent = processor.getContent();
 
                     // 流式取消收尾窗口（对齐 843-871 行 early-abort 路径的 abort-race 模式）：
                     // 早启动工具已产生真实副作用，取消时先等它们落定，用真实结果结算，而不是
@@ -855,7 +1006,10 @@ export class ToolIterationLoopService {
                         // 标记半截 usage：流被取消时 usageMetadata 只覆盖已收到的 chunk，
                         // 统计端（usageStats/getStats）据此回退到文本长度估算。
                         partialContent.usageMetadataPartial = true;
-                        await this.conversationManager.addContent(conversationId, partialContent);
+                        const persistedPartialContent = await this.conversationManager.addContent(conversationId, partialContent);
+                        if (persistedPartialContent) {
+                            partialContent = persistedPartialContent;
+                        }
                         await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
 
                         // 与 stream_early_abort 路径（878-902 行）对齐：结算 stop state，
@@ -880,8 +1034,13 @@ export class ToolIterationLoopService {
                             }
                         );
                     }
-                    // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理
-                    yield processor.getCancelledData() as any;
+                    // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理。
+                    // 若半截内容已落盘，必须回传 addContent 返回的稳定节点 ID，而不是累加器的无 ID 副本。
+                    yield {
+                        conversationId,
+                        cancelled: true as const,
+                        ...(partialContent.parts.length > 0 ? { content: partialContent } : {})
+                    } as any;
                     return;
                 }
 
@@ -913,7 +1072,10 @@ export class ToolIterationLoopService {
 
             // 10. 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
-                await this.conversationManager.addContent(conversationId, finalContent);
+                const persistedContent = await this.conversationManager.addContent(conversationId, finalContent);
+                if (persistedContent) {
+                    finalContent = persistedContent;
+                }
             }
 
             // 11. 检查是否有工具调用
@@ -1383,9 +1545,20 @@ export class ToolIterationLoopService {
         modelOverride?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        isNewTurn: boolean = true
+        isNewTurn: boolean = true,
+        abortSignal?: AbortSignal,
+        summarizeAbortSignal?: AbortSignal
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
+        // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
+        let contextManagementEvaluatedForTurn = !isNewTurn;
+        // 新回合不继承上一回合的 fallback 切点，重新规划。
+        if (isNewTurn) {
+            this.granularFallbackStartByConversation.delete(conversationId);
+        }
+        // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
+        const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
+            ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
         const repeatedCallGuard = new RepeatedCallGuard();
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
@@ -1394,6 +1567,12 @@ export class ToolIterationLoopService {
         // 不能重新生成并让动态上下文跟随历史尾部漂移。
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // M3：与流式路径一致——自动总结已用次数按「真实用户回合」记录，续跑读取并累加。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -1440,14 +1619,15 @@ export class ToolIterationLoopService {
             iteration++;
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
-            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
+            let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
                 modelOverride,
-                dynamicContextStrategy
+                dynamicContextStrategy,
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('nonstream.trim_result', {
@@ -1460,13 +1640,28 @@ export class ToolIterationLoopService {
             });
 
             // 自动总结检测
-            if (trimResult.needsAutoSummarize && this.summarizeService) {
-                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration });
+            if (
+                trimResult.needsAutoSummarize &&
+                this.summarizeService &&
+                autoSummarizeAttempts < maxAutoSummarizeAttempts
+            ) {
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
-                const summarizeResult = await this.summarizeService.handleAutoSummarize(
-                    conversationId,
-                    configId
-                );
+                // H5：非流式路径透传 abort 信号——主请求取消（abortSignal）或仅取消总结
+                // （summarizeAbortSignal）任一触发都中止总结调用，与流式路径对齐。
+                const merged = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
+                let summarizeResult: Awaited<ReturnType<SummarizeService['handleAutoSummarize']>>;
+                try {
+                    summarizeResult = await this.summarizeService.handleAutoSummarize(
+                        conversationId,
+                        configId,
+                        merged.signal
+                    );
+                } finally {
+                    merged.dispose();
+                }
 
                 if (summarizeResult.success) {
                     // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
@@ -1481,7 +1676,8 @@ export class ToolIterationLoopService {
                         });
                     }
 
-                    // 总结成功，重新获取历史
+                    // 总结调用不占用主模型工具迭代额度。
+                    iteration--;
                     continue;
                 }
 
@@ -1490,9 +1686,30 @@ export class ToolIterationLoopService {
 
                     // 总结失败：不阻塞当前请求，继续使用现有历史
                     this.log.warn('nonstream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
+                    if (summarizeError.code !== 'ABORTED' && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                        iteration--;
+                        continue;
+                    }
                 }
             }
 
+            if (trimResult.needsAutoSummarize) {
+                // 与流式路径一致：回合内首次评估重新规划切点，后续迭代复用已确定起点（前缀缓存稳定）。
+                if (!contextManagementEvaluatedForTurn) {
+                    this.granularFallbackStartByConversation.delete(conversationId);
+                }
+                trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
+                    conversationId,
+                    config,
+                    historyOptions,
+                    modelOverride,
+                    dynamicContextStrategy,
+                    this.granularFallbackStartByConversation.get(conversationId)
+                );
+                this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+            }
+
+            contextManagementEvaluatedForTurn = true;
             const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
@@ -1516,7 +1733,7 @@ export class ToolIterationLoopService {
             }
 
             const generateResponse = response as GenerateResponse;
-            const finalContent = generateResponse.content;
+            let finalContent = generateResponse.content;
 
             // 转换 XML 工具调用为 functionCall 格式（如果有）
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
@@ -1531,7 +1748,10 @@ export class ToolIterationLoopService {
 
             // 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
-                await this.conversationManager.addContent(conversationId, finalContent);
+                const persistedContent = await this.conversationManager.addContent(conversationId, finalContent);
+                if (persistedContent) {
+                    finalContent = persistedContent;
+                }
             }
 
             // 检查是否有工具调用

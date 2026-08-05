@@ -191,4 +191,130 @@ describe('HttpMcpClient', () => {
 
         await expect(pending).rejects.toThrow(/(请求超时|timeout)/i);
     });
+
+    // ==================== 外部 abort 中止 ====================
+
+    it('should abort the fetch when the external signal aborts', async () => {
+        let fetchSignal: AbortSignal | undefined;
+        fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
+            fetchSignal = init.signal;
+            init.signal.addEventListener('abort', () =>
+                reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            );
+        }));
+        const client = makeClient(30000);
+        const controller = new AbortController();
+        const pending = client.callTool('t', {}, controller.signal);
+        await Promise.resolve();
+
+        controller.abort();
+
+        // fetch 收到的 signal 已中止（外部 abort 联动内部 controller）
+        expect(fetchSignal?.aborted).toBe(true);
+        // 以「外部中止」文案拒绝（区别于超时文案）
+        await expect(pending).rejects.toThrow(/aborted/i);
+    });
+
+    it('should reject immediately (without fetch) when the signal is already aborted', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const client = makeClient(30000);
+
+        await expect(client.callTool('t', {}, controller.signal)).rejects.toThrow(/aborted/i);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('should reject with the external abort text when aborting during JSON body read', async () => {
+        // body 永不产生数据；外部 abort 经内部 controller 传播时按「外部中止」处理
+        fetchMock.mockImplementation((_url: string, init: any) => {
+            const stream = new ReadableStream<Uint8Array>({
+                pull() {
+                    return new Promise((_resolve, reject) => {
+                        init.signal.addEventListener('abort', () =>
+                            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+                        );
+                    });
+                },
+            });
+            return Promise.resolve(new Response(stream, {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }));
+        });
+        const client = makeClient(30000);
+        const controller = new AbortController();
+        const pending = client.callTool('t', {}, controller.signal);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        controller.abort();
+
+        await expect(pending).rejects.toThrow(/aborted/i);
+    });
+
+    it('should remove the external abort listener after the request settles', async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
+        const signal = new AbortController().signal;
+        const addSpy = jest.spyOn(signal, 'addEventListener');
+        const removeSpy = jest.spyOn(signal, 'removeEventListener');
+
+        const client = makeClient(30000);
+        await client.callTool('t', {}, signal);
+
+        const added = addSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        const removed = removeSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        expect(added).toBe(1);
+        expect(removed).toBe(added);
+    });
+
+    it('should not accumulate abort listeners after an external abort', async () => {
+        fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
+            init.signal.addEventListener('abort', () =>
+                reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            );
+        }));
+        const controller = new AbortController();
+        const signal = controller.signal;
+        const addSpy = jest.spyOn(signal, 'addEventListener');
+        const removeSpy = jest.spyOn(signal, 'removeEventListener');
+
+        const client = makeClient(30000);
+        const pending = client.callTool('t', {}, signal);
+        await Promise.resolve();
+
+        controller.abort();
+        await expect(pending).rejects.toThrow(/aborted/i);
+
+        // 所有添加的 abort 监听都已摘除
+        const added = addSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        const removed = removeSpy.mock.calls.filter(c => c[0] === 'abort').length;
+        expect(added).toBeGreaterThanOrEqual(1);
+        expect(added).toBe(removed);
+    });
+
+    it('should cancel the SSE reader and reject on external abort', async () => {
+        const cancelSpy = jest.fn();
+        const stream = new ReadableStream<Uint8Array>({
+            // 永不产生数据、永不关闭，模拟长任务 SSE 流
+            cancel(reason) {
+                cancelSpy(reason);
+            },
+        });
+        fetchMock.mockResolvedValue(new Response(stream, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+        }));
+
+        const client = makeClient(30000);
+        const controller = new AbortController();
+        const pending = client.callTool('t', {}, controller.signal);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        controller.abort();
+
+        // 读流被取消（reader.cancel()），并按「外部中止」拒绝
+        await expect(pending).rejects.toThrow(/aborted/i);
+        expect(cancelSpy).toHaveBeenCalled();
+    });
 });

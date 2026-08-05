@@ -12,6 +12,7 @@ import MessageQueue from './MessageQueue.vue'
 import InputAttachments from './InputAttachments.vue'
 import PinnedFilesWidget from './PinnedFilesWidget.vue'
 import SkillsWidget from './SkillsWidget.vue'
+import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
 import type { ChannelOption, PromptMode } from './types'
 
@@ -607,6 +608,7 @@ watch(() => settingsStore.promptModesVersion, () => {
 
         <PinnedFilesWidget />
         <SkillsWidget />
+        <BranchTreePanel />
       </div>
 
       <div class="toolbar-right">

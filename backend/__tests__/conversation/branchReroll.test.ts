@@ -4,7 +4,8 @@
  * 覆盖：
  * - TREE-01 startReroll：验证目标在活跃路径 → 旧助手节点及子树保留进 sidecar（线性模式
  *   首次建图不丢旧回答）→ 新候选激活 → 主历史截断到父节点之后（切换到新候选路径）；
- * - TREE-01 入参校验：节点缺失 / 不在活跃路径 / 非 model / 父非 user → 明确错误码；
+ * - TREE-01 入参校验：节点缺失 / 不在活跃路径 / 非 model / 无有效父节点 → 明确错误码；
+ * - 工具调用后的续接 model 支持单条 reroll：保留前序 model + functionResponse，只替换目标回答；
  * - TREE-02 多候选：多次 reroll 形成兄弟候选；每父节点上限 10（决策 4）超限拒绝；
  * - TREE-01 finishReroll：流式结果写入新节点（重命名对齐主历史消息 id + 内容 + 摘要 +
  *   续接节点 + functionResponse 合并，决策 8）；失败保留旧候选（决策 10）；
@@ -155,27 +156,61 @@ describe('TREE-01/02 BranchService reroll', () => {
             });
         });
 
-        test('入参校验：非 model 节点 / 父节点非 user 均拒绝', async () => {
+        test('非 model 目标拒绝；工具续接 model 只重生成目标回答并保留前序工具结果', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
             // reroll 用户节点本身 → 非 model
             await expect(service.startReroll('c1', userNodeId)).rejects.toMatchObject({
                 code: 'INVALID_BRANCH_RELATION'
             });
 
-            // 构造「model 父节点为 model」的场景：reroll 后工具循环产生续接节点（kind='continue'），
-            // 续接节点父节点是模型节点 → reroll 它被拒绝
+            // 先生成「model 工具调用 + functionResponse + model 续接回答」的活跃路径。
             const started = await service.startReroll('c1', modelNodeId);
             const historyIds = await simulateToolLoopOutput(manager, 'c1');
             const finished = await service.finishReroll('c1', started.candidateNodeId);
-            const continuationId = historyIds[historyIds.length - 1];
-            expect(finished.activePathIds).toContain(continuationId);
-            const continuation = (await service.getBranchGraph('c1')).graph!.nodes[continuationId]!;
-            expect(continuation.role).toBe('model');
-            expect(continuation.parentId).toBe(finished.candidateNodeId);
+            const toolModelId = historyIds[1];
+            const functionResponseId = historyIds[2];
+            const continuationId = historyIds[3];
+            expect(finished.candidateNodeId).toBe(toolModelId);
 
-            await expect(service.startReroll('c1', continuationId)).rejects.toMatchObject({
-                code: 'INVALID_BRANCH_RELATION'
-            });
+            const before = (await service.getBranchGraph('c1')).graph!;
+            expect(before.nodes[continuationId]!.role).toBe('model');
+            expect(before.nodes[continuationId]!.parentId).toBe(toolModelId);
+
+            // 单条 reroll 续接回答：新候选与旧续接回答同父（model），而不是退回 user 重跑整轮。
+            const continuationReroll = await service.startReroll('c1', continuationId);
+            expect(continuationReroll.previousNodeId).toBe(continuationId);
+            expect(continuationReroll.parentNodeId).toBe(toolModelId);
+            expect(continuationReroll.historyLengthAfterTruncate).toBe(3);
+
+            // 主历史保留 user + 工具调用 model + functionResponse，只移除被点中的续接回答。
+            const retainedHistory = await manager.getMessagesRaw('c1');
+            expect(retainedHistory.map(message => message.id)).toEqual([
+                userNodeId,
+                toolModelId,
+                functionResponseId,
+            ]);
+            expect(retainedHistory[2]!.isFunctionResponse).toBe(true);
+
+            // 新回答落盘并回填后，旧/新回答是 model 父节点下的同级候选，旧回答仍可切回。
+            const replacement = await manager.addContent('c1', {
+                role: 'model',
+                parts: [{ text: 'replacement after tool' }],
+                modelVersion: 'gemini-x',
+            } as any);
+            const rerollFinished = await service.finishReroll('c1', continuationReroll.candidateNodeId);
+            expect(rerollFinished.candidateNodeId).toBe(replacement!.id);
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(graph.nodes[continuationId]!.parentId).toBe(toolModelId);
+            expect(graph.nodes[replacement!.id!]!.parentId).toBe(toolModelId);
+            expect(graph.nodes[toolModelId]!.activeChildId).toBe(replacement!.id);
+            expect(activePath(graph)).toEqual([userNodeId, toolModelId, replacement!.id]);
+            expect((await manager.getMessagesRaw('c1')).map(message => message.id)).toEqual([
+                userNodeId,
+                toolModelId,
+                functionResponseId,
+                replacement!.id,
+            ]);
         });
 
         test('sidecar 损坏时 reroll 拒绝覆盖（BRANCH_STORAGE_CORRUPT）', async () => {

@@ -1,29 +1,16 @@
-<script setup lang="ts">
+<script lang="ts">
 /**
- * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
+ * 模块级单例（跨消息块共享）
  *
- * 使用 markdown-it 作为渲染引擎，支持：
- * - 完整 GFM 语法
- * - 脚注
- * - 定义列表
- * - 任务列表
- * - 代码高亮
- * - LaTeX 数学公式
+ * 文件存在性缓存 / 图片缓存 / 代码高亮缓存 / Mermaid 渲染队列 / markdown-it 实例
+ * 必须是真正的模块级状态：消息列表会同时挂载多个 MarkdownRenderer 实例，若这些状态
+ * 声明在 <script setup> 顶层，会随每个组件实例重新执行一遍（缓存失效、Mermaid 并发
+ * 渲染、重复创建 markdown-it 实例）。
+ *
+ * 因此这里用普通 <script> 块承载（每模块只执行一次），<script setup> 内仅引用。
  */
-
-import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Options } from 'markdown-it'
-import type Token from 'markdown-it/lib/token.mjs'
-import type Renderer from 'markdown-it/lib/renderer.mjs'
-import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import { hljs } from '@/utils/highlightSetup'
-import katex from 'katex'
-import { sendToExtension, showNotification } from '@/utils/vscode'
-import { useI18n } from '@/i18n'
-import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
-
-// ===================== 模块级单例（跨消息块共享） =====================
 
 /** 工作区文件存在性缓存：路径 → 是否存在 */
 const fileExistenceCache = new Map<string, boolean>()
@@ -66,6 +53,30 @@ function loadMermaid() {
   }
   return mermaidPromise
 }
+</script>
+
+<script setup lang="ts">
+/**
+ * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
+ *
+ * 使用 markdown-it 作为渲染引擎，支持：
+ * - 完整 GFM 语法
+ * - 脚注
+ * - 定义列表
+ * - 任务列表
+ * - 代码高亮
+ * - LaTeX 数学公式
+ */
+
+import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import type Token from 'markdown-it/lib/token.mjs'
+import type Renderer from 'markdown-it/lib/renderer.mjs'
+import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
+import { hljs } from '@/utils/highlightSetup'
+import katex from 'katex'
+import { sendToExtension, showNotification } from '@/utils/vscode'
+import { useI18n } from '@/i18n'
+import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
 
 // 插件导入
 import footnote from 'markdown-it-footnote'

@@ -8,7 +8,7 @@
  * - 确认「丢弃更改并继续」→ 按 kind 分发续作（带 confirmedDiscardDirty=true 重试）；
  * - 取消 → 清空待确认动作（后端未执行任何写入，零副作用）。
  *
- * 挂载位置：BranchSwitcherBar.vue（消息区常驻组件，无分支图时本组件仍渲染）。
+ * 挂载位置：MessageList.vue 常驻组件，无分支图时仍渲染。
  */
 import { computed } from 'vue'
 import { useChatStore } from '../../stores/chatStore'

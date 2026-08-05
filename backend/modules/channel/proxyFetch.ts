@@ -10,6 +10,27 @@ import * as http from 'http';
 import * as tls from 'tls';
 import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
+import { getGlobalSettingsManager } from '../../core/settingsContext';
+
+/**
+ * 解析是否跳过 TLS 证书校验。
+ *
+ * - 显式传入的参数优先（测试或调用方可直接指定）；
+ * - 否则读取全局设置 graycode.proxy.insecureSkipVerify（默认 false = 校验证书）；
+ * - 兼容 fork 的环境变量开关 GRAYCODE_ALLOW_INSECURE_TLS=1（抓包/自建自签名代理场景）。
+ *
+ * 仅用于自签名证书调试，生产环境应保持校验开启。
+ */
+export function resolveProxyInsecureSkipVerify(explicit?: boolean): boolean {
+    if (explicit !== undefined) {
+        return explicit;
+    }
+    if (getGlobalSettingsManager()?.getProxyInsecureSkipVerify()) {
+        return true;
+    }
+    const raw = process.env.GRAYCODE_ALLOW_INSECURE_TLS;
+    return raw === '1' || raw === 'true' || raw === 'TRUE';
+}
 
 /**
  * 从上游 API 的非 2xx 响应体中提取人类可读错误消息。
@@ -35,18 +56,6 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
 
 // User-Agent 标识
 const USER_AGENT = 'GrayCode';
-
-/**
- * TLS 证书校验开关。
- *
- * 安全加固：默认拒绝自签名/无效证书（防止代理链路 MITM 窃取 API Key 与对话内容）；
- * 仅当显式设置环境变量 GRAYCODE_ALLOW_INSECURE_TLS=1 时才放行（抓包/自建自签名代理场景）。
- * 该开关读取一次，进程生命周期内保持。
- */
-export const ALLOW_INSECURE_TLS = (() => {
-    const raw = process.env.GRAYCODE_ALLOW_INSECURE_TLS;
-    return raw === '1' || raw === 'true' || raw === 'TRUE';
-})();
 
 /**
  * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。
@@ -181,12 +190,16 @@ function createAbortError(message = 'Request cancelled'): Error {
 async function fetchWithProxy(
     targetUrl: URL,
     init: FetchOptions,
-    proxyUrl: string
+    proxyUrl: string,
+    insecureSkipVerify?: boolean
 ): Promise<FetchResponse> {
     const proxyLeg = parseProxyLeg(proxyUrl);
     const targetHost = targetUrl.hostname;
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
+
+    // 仅当用户显式开启（设置或参数）时才跳过证书校验；默认校验证书
+    const skipVerify = resolveProxyInsecureSkipVerify(insecureSkipVerify);
 
     // 检查是否已取消
     if (init.signal?.aborted) {
@@ -210,7 +223,8 @@ async function fetchWithProxy(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: !ALLOW_INSECURE_TLS } : {}),
+            // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
+            ...(proxyLeg.request === https.request && skipVerify ? { rejectUnauthorized: false } : {}),
             headers: reqHeaders
         });
 
@@ -253,10 +267,11 @@ async function fetchWithProxy(
 
             if (isHttps) {
                 // 在隧道上建立 TLS 连接
+                // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: !ALLOW_INSECURE_TLS
+                    ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
                     sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
                 });
@@ -580,11 +595,15 @@ export function decodeChunkedBuffer(data: Buffer): string {
  * 创建支持代理的流式 fetch
  *
  * 返回一个异步生成器，产出原始响应行
+ *
+ * @param insecureSkipVerify 是否跳过 TLS 证书校验（可选，仅用于自签名证书调试；
+ *        缺省时读取全局设置 graycode.proxy.insecureSkipVerify，默认 false = 校验证书）
  */
 export async function* proxyStreamFetch(
     url: string,
     init: FetchOptions,
-    proxyUrl?: string
+    proxyUrl?: string,
+    insecureSkipVerify?: boolean
 ): AsyncGenerator<string> {
     if (!proxyUrl) {
         // 无代理，使用原生 fetch
@@ -644,6 +663,9 @@ export async function* proxyStreamFetch(
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
 
+    // 仅当用户显式开启（设置或参数）时才跳过证书校验；默认校验证书
+    const skipVerify = resolveProxyInsecureSkipVerify(insecureSkipVerify);
+
     // 检查是否已取消
     if (init.signal?.aborted) {
         throw createAbortError();
@@ -700,7 +722,8 @@ export async function* proxyStreamFetch(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: !ALLOW_INSECURE_TLS } : {}),
+            // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
+            ...(proxyLeg.request === https.request && skipVerify ? { rejectUnauthorized: false } : {}),
             headers: reqHeaders
         });
         
@@ -721,10 +744,11 @@ export async function* proxyStreamFetch(
             }
 
             if (isHttps) {
+                // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: !ALLOW_INSECURE_TLS
+                    ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
                     finishResolve(tlsSocket);
                 });

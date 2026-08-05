@@ -14,6 +14,8 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         subAgentRunController.unregister('detach_fg');
         subAgentRunController.unregister('detach_bg');
         subAgentRunController.unregister('detach_other');
+        subAgentRunController.unregister('detach_replace');
+        subAgentRunController.unregister('detach_stop');
     });
 
     it('create 新流时把该会话活跃前台 SubAgent detach：旧流被 abort 但 run 继续活跃', () => {
@@ -54,6 +56,37 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         const manager = new StreamAbortManager();
         const controller = manager.create('conv_c');
         expect(controller.signal.aborted).toBe(false);
+    });
+
+    it('立即发送新回合的取消先 detach 前台 SubAgent，再 abort 旧流', () => {
+        const manager = new StreamAbortManager();
+        const oldStream = manager.create('conv_replace');
+        subAgentRunEventBus.createRun('detach_replace', 'Agent', undefined, { conversationId: 'conv_replace' });
+        subAgentRunController.register('detach_replace', 'Agent', 0, true);
+
+        let oldStreamWasAbortedWhenDetached: boolean | undefined;
+        subAgentRunController.registerDetachListener('detach_replace', () => {
+            oldStreamWasAbortedWhenDetached = oldStream.signal.aborted;
+        });
+
+        manager.cancelForNewTurn('conv_replace');
+
+        expect(oldStreamWasAbortedWhenDetached).toBe(false);
+        expect(oldStream.signal.aborted).toBe(true);
+        expect(subAgentRunController.isDetached('detach_replace')).toBe(true);
+        expect(subAgentRunController.isActive('detach_replace')).toBe(true);
+    });
+
+    it('普通 cancel 保持显式停止语义，不会把前台 SubAgent 转后台', () => {
+        const manager = new StreamAbortManager();
+        const oldStream = manager.create('conv_stop');
+        subAgentRunEventBus.createRun('detach_stop', 'Agent', undefined, { conversationId: 'conv_stop' });
+        subAgentRunController.register('detach_stop', 'Agent', 0, true);
+
+        manager.cancel('conv_stop');
+
+        expect(oldStream.signal.aborted).toBe(true);
+        expect(subAgentRunController.isDetached('detach_stop')).toBe(false);
     });
 
     it('waitForIdle 只在匹配控制器被 delete 后释放', async () => {

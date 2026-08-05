@@ -439,6 +439,77 @@ export class BranchService {
     }
 
     /**
+     * 确保分支图 sidecar 存在（TREE-03 keep 模式前置）：无图时以主历史建线性基线图。
+     *
+     * 用于「先建图后截断」——让截断前的完整旧历史先进图，截断后再软删被移除的子树，
+     * 保证旧版本可回看（与 branch 模式 editCandidate 的惰性建图时机对齐，MIG-01）。
+     * 已有图 / sidecar 损坏（抛 BRANCH_STORAGE_CORRUPT，不覆盖）→ 幂等。
+     *
+     * @returns true 表示本次新建了图；false 表示图已存在或无需建图
+     */
+    async ensureBranchGraph(conversationId: string): Promise<boolean> {
+        await this.conversationManager.ensureHistoryNodeIds(conversationId);
+        return await this.conversationManager.runExclusive(conversationId, async () => {
+            await this.assertConversationWritable(conversationId);
+            const loaded = await this.repository.load(conversationId);
+            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
+                throw new BranchError(
+                    'BRANCH_STORAGE_CORRUPT',
+                    `branches.json is corrupt for ${conversationId}; refusing to ensure branch graph (${loaded.errorMessage ?? 'unknown error'})`
+                );
+            }
+            if (loaded.graph) {
+                return false; // 已有图：无需重建
+            }
+            const history = await this.conversationManager.getMessagesRaw(conversationId);
+            const graph = importLinearHistory(history);
+            await this.validateAndSave(conversationId, graph);
+            return true;
+        });
+    }
+
+    /**
+     * 原地更新活跃路径上指定节点的 parts（保持分支的编辑，TREE-03 keep 模式底座）。
+     *
+     * 与 editCandidate 的区别：不创建新候选、不切换分支——直接改写节点内容并同步候选摘要，
+     * 保证分支图与主历史一致（BR-01：节点 id == Content.id；之后切回该分支时展示编辑后的文本）。
+     *
+     * @param nodeId 目标节点（须在当前活跃路径上）
+     * @param parts 新的消息内容
+     */
+    async updateActiveNodeParts(
+        conversationId: string,
+        nodeId: string,
+        parts: ContentPart[]
+    ): Promise<{ nodeId: string }> {
+        return await this.mutateGraph(conversationId, graph => {
+            const node = graph.nodes[nodeId];
+            if (!node) {
+                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
+            }
+            if (!activePath(graph).includes(nodeId)) {
+                throw new BranchError(
+                    'INVALID_BRANCH_RELATION',
+                    `node ${nodeId} is not on the active path`
+                );
+            }
+            const next = updateNodeContent(graph, nodeId, { parts });
+            const summary = buildCandidateSummary({ ...node, parts });
+            const withSummary = upsertCandidateSummary(next, {
+                nodeId,
+                parentId: node.parentId,
+                kind: node.kind,
+                createdAt: node.createdAt,
+                timestamp: node.timestamp,
+                modelVersion: node.modelVersion,
+                label: node.label,
+                preview: summary.preview,
+            });
+            return { next: withSummary, result: { nodeId } };
+        });
+    }
+
+    /**
      * 创建编辑分支候选（TREE-03 底座）：在旧用户节点的父节点下新增 edit 候选并切换 activeChildId，
      * 旧子树完整保留。无分支图时同样先建线性基线图。
      */
@@ -479,9 +550,13 @@ export class BranchService {
     }
 
     /**
-     * 开始 reroll（TREE-01）：验证目标助手节点在活跃路径 → 找到父用户节点 →
-     * 保留旧助手节点及其子树（进 sidecar）→ 创建新候选并设为父节点 activeChildId →
-     * 主历史截断到父节点之后（切换到新候选路径）。
+     * 开始 reroll（TREE-01）：验证目标助手节点在活跃路径 → 找到其直接父节点 →
+     * 保留目标助手节点及其子树（进 sidecar）→ 在同一父节点下创建新候选并激活 →
+     * 主历史从目标助手消息开始截断。
+     *
+     * 父节点既可以是 user，也可以是 model：工具调用后的续接回答在分支图中直接挂在
+     * 前一个 model 节点下（functionResponse 合并进该父节点），重生成续接回答时必须保留
+     * 前面的模型工具调用与工具结果，只替换被点中的单条回答。
      *
      * 顺序说明：先建图后截断主历史。线性模式首次建图时，旧助手节点必须先进入 sidecar，
      * 否则截断主历史会把它永久删除（丢失旧回答）。
@@ -512,10 +587,10 @@ export class BranchService {
                 );
             }
             const parent = graph.nodes[parentNodeId];
-            if (!parent || parent.role !== 'user') {
+            if (!parent || (parent.role !== 'user' && parent.role !== 'model')) {
                 throw new BranchError(
                     'INVALID_BRANCH_RELATION',
-                    `reroll target ${targetId} must have a user parent node`
+                    `reroll target ${targetId} must have a user or model parent node`
                 );
             }
             // TREE-02（决策 4）：每父节点候选上限
@@ -541,13 +616,14 @@ export class BranchService {
                 },
             };
         });
-        // 2. 主历史截断到父节点之后（父节点保留，旧助手节点及其子树消息从主历史移除）
+        // 2. 主历史从目标助手消息开始截断。直接回复场景等价于“父 user 后截断”；
+        // 工具续接场景则保留目标前的 model + functionResponse，只移除被点回答及其后续消息。
         const history = await this.conversationManager.getMessagesRaw(conversationId);
-        const parentIndex = history.findIndex(message => message.id === created.parentNodeId);
-        if (parentIndex >= 0 && parentIndex < history.length - 1) {
-            await this.conversationManager.deleteMessagesInRange(conversationId, parentIndex + 1, history.length - 1);
+        const targetIndex = history.findIndex(message => message.id === created.previousNodeId);
+        if (targetIndex >= 0 && targetIndex < history.length) {
+            await this.conversationManager.deleteMessagesInRange(conversationId, targetIndex, history.length - 1);
         }
-        return { ...created, historyLengthAfterTruncate: parentIndex + 1 };
+        return { ...created, historyLengthAfterTruncate: targetIndex };
     }
 
     /**

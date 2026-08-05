@@ -295,6 +295,28 @@ export class AnthropicFormatter extends BaseFormatter {
     }
     
     /**
+     * 追加一条转换后的消息，相邻同角色消息自动合并
+     *
+     * 修改原因（H1-3 防御）：总结功能（SummarizeService）会把总结消息以 role:'user'
+     * 插入历史，可能紧随 functionResponse（tool_result）之后，或与真实 user 消息相邻，
+     * 形成连续两条 user 消息；Anthropic Messages API 对同角色相邻消息敏感（部分端点
+     * 要求严格交替）。这里把连续同角色输出合并为一条消息（content block 数组拼接）——
+     * tool_result 与 text 允许共存于同一条 user 消息，语义不变。
+     *
+     * 注意：只合并真正同角色的连续条目。assistant(tool_use) 与 user(tool_result) 角色
+     * 不同，天然交替，不会跨 tool_use 边界错误合并。assistant 连续消息同样合并
+     * （防御，很少发生）。
+     */
+    private pushMergedMessage(messages: any[], role: string, contentArray: any[]): void {
+        const last = messages[messages.length - 1];
+        if (last && last.role === role) {
+            last.content.push(...contentArray);
+        } else {
+            messages.push({ role, content: contentArray });
+        }
+    }
+    
+    /**
      * Function Call 模式转换
      *
      * - functionCall 使用 type: "tool_use"
@@ -343,10 +365,7 @@ export class AnthropicFormatter extends BaseFormatter {
                     });
                 }
                 
-                messages.push({
-                    role: 'assistant',
-                    content: contentArray
-                });
+                this.pushMergedMessage(messages, 'assistant', contentArray);
             } else if (functionResponseParts.length > 0) {
                 // user 消息包含 tool_result
                 const contentArray: any[] = [];
@@ -360,10 +379,7 @@ export class AnthropicFormatter extends BaseFormatter {
                     });
                 }
                 
-                messages.push({
-                    role: 'user',
-                    content: contentArray
-                });
+                this.pushMergedMessage(messages, 'user', contentArray);
             } else if (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];
@@ -374,10 +390,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 // 添加普通内容
                 contentArray.push(...this.buildMessageContent(textParts, mediaParts));
                 
-                messages.push({
-                    role,
-                    content: contentArray
-                });
+                this.pushMergedMessage(messages, role, contentArray);
             }
         }
     }
@@ -524,10 +537,7 @@ export class AnthropicFormatter extends BaseFormatter {
                     });
                 }
                 
-                messages.push({
-                    role: 'user',
-                    content: contentArray
-                });
+                this.pushMergedMessage(messages, 'user', contentArray);
             } else {
                 // 将 functionCall 转回文本，与 text 合并
                 const textParts: ContentPart[] = [];
@@ -553,10 +563,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 
                 if (textParts.length > 0 || mediaParts.length > 0) {
                     const contentArray = this.buildMessageContent(textParts, mediaParts);
-                    messages.push({
-                        role,
-                        content: contentArray
-                    });
+                    this.pushMergedMessage(messages, role, contentArray);
                 }
             }
         }

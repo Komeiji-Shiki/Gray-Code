@@ -121,6 +121,18 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
     });
 
+    it('find_files 单调用未配置存档时不反查会话节点，也不创建存档', async () => {
+        const conversationManager = {
+            getMessageNodeIdAt: jest.fn().mockRejectedValue(new Error('read-only tool must not touch conversation history'))
+        };
+        const env = await createEnv(['write_file', 'apply_diff'], conversationManager);
+
+        await run(env.service, [makeCall('find_files', { patterns: ['*.vsix'] })]);
+
+        expect(conversationManager.getMessageNodeIdAt).not.toHaveBeenCalled();
+        expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
+    });
+
     it('search_in_files(replace) 单调用（已配置）：创建存档', async () => {
         const env = await createEnv(['search_in_files']);
         await run(env.service, [makeCall('search_in_files', { query: 'old', mode: 'replace', replace: 'new' })]);
@@ -339,5 +351,120 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
         const node = (await branchService.getBranchGraph('conv-bcp2')).graph!.nodes[userNodeId]!;
         expect(node.workspaceCheckpointId).toBeUndefined();
+    });
+});
+
+
+// ==================== PERF-CP：before-checkpoint 并发启动（deferred 模式） ====================
+
+describe('PERF-CP deferred before-checkpoint', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    /** 构造可控 checkpoint 门闩：第一次 before 调用挂起，直到 resolveCheckpoint() 放行 */
+    async function createDeferredEnv(beforeTools: string[], afterTools: string[]) {
+        const settingsManager = new SettingsManager(new MemorySettingsStorage());
+        await settingsManager.initialize();
+        setGlobalSettingsManager(settingsManager);
+        await settingsManager.updateCheckpointConfig({
+            enabled: true,
+            beforeTools,
+            afterTools,
+            messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+            maxCheckpoints: -1,
+            customIgnorePatterns: []
+        });
+
+        let resolveCheckpoint!: () => void;
+        const checkpointGate = new Promise<null>((resolve) => {
+            resolveCheckpoint = () => resolve(null);
+        });
+        const checkpointService = {
+            createToolExecutionCheckpoint: jest.fn()
+                .mockImplementationOnce(() => checkpointGate)
+                .mockResolvedValue(null)
+        } as unknown as CheckpointService;
+        const service = new ToolExecutionService(
+            undefined,
+            undefined,
+            settingsManager as any,
+            checkpointService,
+            undefined
+        );
+        return {
+            service,
+            checkpointService: checkpointService as unknown as { createToolExecutionCheckpoint: jest.Mock },
+            resolveCheckpoint: resolveCheckpoint!
+        };
+    }
+
+    it('apply_diff 单调用批次：before-checkpoint 与工具并行启动，批末收集（PERF-CP）', async () => {
+        const env = await createDeferredEnv(['apply_diff'], ['apply_diff']);
+        const generator = env.service.executeFunctionCallsWithProgress(
+            [makeCall('apply_diff', { path: 'a.ts', hunks: [] })],
+            'conv-defer',
+            0,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined
+        );
+
+        // 第一步：checkpoint 已启动（未 resolve），工具 start 已发出 → 两者并行
+        const first = await generator.next();
+        expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(1);
+        expect(first.value).toMatchObject({ type: 'start', call: expect.objectContaining({ name: 'apply_diff' }) });
+
+        // 第二步：工具无 registry 立即失败（end），不等待 checkpoint
+        const second = await generator.next();
+        expect(second.value).toMatchObject({ type: 'end' });
+
+        // 第三步：批末 await 挂起的 before-checkpoint → 批次不结束
+        let settled = false;
+        const pending = generator.next().then((r) => { settled = true; return r; });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        // 放行 checkpoint：批次完成，before/after 均被创建（顺序 before → after）
+        env.resolveCheckpoint();
+        const final = await pending;
+        expect(final.done).toBe(true);
+        expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
+    });
+
+    it('混合批（apply_diff + delete_file）保持同步：checkpoint 完成前工具不执行', async () => {
+        const env = await createDeferredEnv(['apply_diff'], []);
+        const generator = env.service.executeFunctionCallsWithProgress(
+            [makeCall('apply_diff', { path: 'a.ts', hunks: [] }), makeCall('delete_file', { path: 'b.ts' })],
+            'conv-mixed',
+            0,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined
+        );
+
+        // 同步模式：before-checkpoint 挂起时第一步（工具 start）不返回
+        let settled = false;
+        const pending = generator.next().then((r) => { settled = true; return r; });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(1);
+
+        // 放行 checkpoint 后工具正常执行到结束
+        env.resolveCheckpoint();
+        const first = await pending;
+        expect(first.value).toMatchObject({ type: 'start' });
+        let next = await generator.next();
+        while (!next.done) {
+            next = await generator.next();
+        }
+        // 同步模式下 before + after 各一次（批内有已配置的 apply_diff）
+        expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
     });
 });

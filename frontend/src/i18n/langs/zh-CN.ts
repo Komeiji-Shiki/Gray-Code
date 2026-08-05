@@ -138,6 +138,7 @@ const zhCN = {
                 checkpointHint: '检测到此消息前有工具执行的备份，您可以选择回档到工具执行前再编辑，以恢复文件变更。',
                 cancel: '取消',
                 save: '保存',
+                saveInPlace: '原地保存（保持当前分支）',
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',
@@ -425,6 +426,7 @@ const zhCN = {
                 close: '关闭',
                 title: '分支树',
                 empty: '暂无分支',
+                candidateCount: '{count} 个候选',
                 deleted: '已删除',
                 restore: '恢复',
                 rename: '重命名',
@@ -1037,7 +1039,7 @@ const zhCN = {
                         threshold: {
                             label: '上下文阈值',
                             placeholder: '80% 或 100000',
-                            hint: '当总 token 数超过此阈值时，自动舍弃最旧的对话回合。支持两种格式：百分比（如 80%）或绝对数值（如 100000）'
+                            hint: '当总 token 数超过阈值时，优先由模型总结旧内容，并原文保留历史用户输入；总结失败时仅对本次请求执行工具调用配对安全的细粒度裁剪'
                         },
                         extraCut: {
                             label: '额外裁剪量',
@@ -1051,9 +1053,9 @@ const zhCN = {
                         },
                         mode: {
                             label: '管理方式',
-                            hint: '裁剪：直接丢弃旧回合。自动总结：先总结旧回合再丢弃，AI 可基于总结继续工作',
-                            trim: '上下文裁剪',
-                            summarize: '自动总结'
+                            hint: '模型总结优先；长工具回合可在安全消息边界内切分。总结失败时使用不持久化的细粒度裁剪，不直接丢弃整轮用户对话',
+                            trim: '旧版上下文裁剪',
+                            summarize: '智能总结与安全裁剪'
                         }
                     },
                     toolOptions: {
@@ -1961,22 +1963,19 @@ const zhCN = {
                     title: '手动总结',
                     description: '点击输入框右侧的压缩按钮，可以手动触发上下文总结。总结后的内容会替换原有的历史对话。'
                 },
-                autoSection: {
-                    title: '自动总结（已迁移）',
-                    comingSoon: '即将推出',
-                    enable: '启用自动总结',
-                    enableHint: '当 Token 使用量超过阈值时自动触发总结',
-                    threshold: '触发阈值',
-                    thresholdUnit: '%',
-                    thresholdHint: '当 Token 使用量达到此百分比时触发自动总结'
-                },
                 optionsSection: {
                     title: '总结选项',
                     keepRounds: '最少保留轮数',
                     keepRoundsUnit: '轮',
                     keepRoundsHint: '作为保留预算的下限保护，至少保留最近 N 轮对话不参与总结',
+                    keepRoundsMinNote: '下限为 1 轮（后端强制至少保留 1 轮）',
                     keepTokens: '保留内容预算',
                     keepTokensHint: '总结时保留最近约多少上下文不被压缩：填 token 数（如 30000）或相对模型最大上下文的百分比（如 25%），实际范围按此预算对齐到轮边界',
+                    maxAttempts: '自动总结最大尝试次数',
+                    maxAttemptsUnit: '次/回合',
+                    maxAttemptsHint: '同一真实用户回合内自动总结最多尝试次数（1-5，默认 2）。次数耗尽后若仍超阈值，本次请求改用不持久化的安全裁剪',
+                    maxInputRatio: '总结模型输入占比',
+                    maxInputRatioHint: '自动总结单次请求输入占总结模型上下文窗口的比例（5%-95%，默认 50%）。超出时自动缩小总结范围，保留最近一轮工具交互',
                     manualPrompt: '手动总结提示词',
                     manualPromptPlaceholder: '输入手动总结时使用的提示词...',
                     manualPromptHint: '点击“总结上下文”按钮时使用此提示词',
@@ -3511,7 +3510,8 @@ const zhCN = {
                 restoreDeleteFailed: '回档并删除失败',
                 noConfigSelected: '未选择配置',
                 summarizeFailed: '总结失败',
-                restoreEditFailed: '回档并编辑失败'
+                restoreEditFailed: '回档并编辑失败',
+                messageChanged: '消息已发生变化，请刷新历史后重试'
             },
             relativeTime: {
                 justNow: '刚刚',

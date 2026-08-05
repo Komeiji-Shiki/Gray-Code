@@ -286,37 +286,21 @@ const contextThreshold = computed(() => {
   return currentConfig.value?.contextThreshold ?? '80%'
 })
 
-// 上下文管理模式：'trim' 或 'summarize'。显式字段缺失时兼容旧 autoSummarizeEnabled。
-const contextManagementMode = computed(() => {
-  if (currentConfig.value?.contextManagementMode === 'summarize') return 'summarize'
-  if (currentConfig.value?.contextManagementMode === 'trim') return 'trim'
+// 上下文管理统一为“模型总结优先 + 失败时细粒度临时裁剪”。旧 trim 值只作为后端迁移输入。
+const contextManagementMode = computed(() => 'summarize')
 
-  if (currentConfig.value?.autoSummarizeEnabled) return 'summarize'
-  return 'trim'
-})
-
-// 上下文管理模式下拉选项
-const contextManagementModeOptions = computed<SelectOption[]>(() => {
-  return [
-    { value: 'trim', label: t('components.settings.channelSettings.form.contextManagement.mode.trim') },
-    { value: 'summarize', label: t('components.settings.channelSettings.form.contextManagement.mode.summarize') }
-  ]
-})
-
-// 裁剪时额外裁剪量
-const contextTrimExtraCut = computed(() => {
-  return currentConfig.value?.contextTrimExtraCut ?? 0
-})
+const contextManagementModeOptions = computed<SelectOption[]>(() => [
+  { value: 'summarize', label: t('components.settings.channelSettings.form.contextManagement.mode.summarize') }
+])
 
 // 更新上下文管理总开关
 async function updateContextManagementEnabled(enabled: boolean) {
   if (enabled) {
-    const mode = contextManagementMode.value
     await updateConfigFields({
       contextManagementEnabled: true,
-      contextManagementMode: mode,
-      contextThresholdEnabled: mode === 'trim',
-      autoSummarizeEnabled: mode === 'summarize'
+      contextManagementMode: 'summarize',
+      contextThresholdEnabled: false,
+      autoSummarizeEnabled: true
     })
   } else {
     await updateConfigFields({
@@ -342,36 +326,13 @@ async function updateContextThreshold(value: string) {
 }
 
 // 更新上下文管理模式
-async function updateContextManagementMode(mode: string) {
-  const nextMode = mode === 'summarize' ? 'summarize' : 'trim'
+async function updateContextManagementMode(_mode: string) {
   await updateConfigFields({
     contextManagementEnabled: true,
-    contextManagementMode: nextMode,
-    contextThresholdEnabled: nextMode === 'trim',
-    autoSummarizeEnabled: nextMode === 'summarize'
+    contextManagementMode: 'summarize',
+    contextThresholdEnabled: false,
+    autoSummarizeEnabled: true
   })
-}
-
-// 更新裁剪时额外裁剪量
-async function updateContextTrimExtraCut(value: string | number) {
-  // 验证格式：数值 或 百分比
-  if (typeof value === 'string') {
-    if (value === '' || value === '0') {
-      await updateConfigField('contextTrimExtraCut', 0)
-    } else if (value.endsWith('%')) {
-      const percent = parseFloat(value.replace('%', ''))
-      if (!isNaN(percent) && percent >= 0 && percent <= 100) {
-        await updateConfigField('contextTrimExtraCut', value)
-      }
-    } else {
-      const numValue = parseFloat(value)
-      if (!isNaN(numValue) && numValue >= 0) {
-        await updateConfigField('contextTrimExtraCut', numValue)
-      }
-    }
-  } else if (typeof value === 'number' && value >= 0) {
-    await updateConfigField('contextTrimExtraCut', value)
-  }
 }
 
 
@@ -1063,23 +1024,7 @@ onMounted(async () => {
               </span>
             </div>
             
-            <!-- 额外裁剪量（仅裁剪模式） -->
-            <div v-if="contextManagementMode === 'trim'" class="option-item option-with-toggle">
-              <div class="option-header">
-                <label>{{ t('components.settings.channelSettings.form.contextManagement.extraCut.label') }}</label>
-              </div>
-              <input
-                type="text"
-                :value="contextTrimExtraCut"
-                :placeholder="t('components.settings.channelSettings.form.contextManagement.extraCut.placeholder')"
-                :disabled="!contextManagementEnabled"
-                :class="{ disabled: !contextManagementEnabled }"
-                @input="(e: any) => updateContextTrimExtraCut(e.target.value)"
-              />
-              <span class="option-hint">
-                {{ t('components.settings.channelSettings.form.contextManagement.extraCut.hint') }}
-              </span>
-            </div>
+            <!-- 旧的整轮额外裁剪设置已停用：总结失败时使用不持久化的工具对安全细粒度裁剪。 -->
           </div>
         </div>
       </div>

@@ -90,6 +90,60 @@ export function isFunctionResponseMessage(message: Pick<Content, 'role' | 'isFun
 }
 
 /**
+ * R8a-M2：沿主历史追踪「最近非 FR 消息 id」作为 owner，校验 functionResponse 内容是否已并入图。
+ *
+ * 决策 8：functionResponse 消息不独立成节点，其 parts 并入所属节点（owner）。切换重写
+ * （rewriteHistoryFromBranchGraph）只取图节点内容重建主历史——若 FR 的 functionResponse parts
+ * 未同步进 owner 节点 parts（appendHistoryToGraph 为锁外 fire-and-forget，失败仅告警；且
+ * addContent(FR) 走 mutateContents 不触发图同步），切换会静默丢弃 FR 内容。本函数在 R8a-M2
+ * 非 FR 检查（主历史非 FR 消息 id ∈ 图节点集合）基础上补齐 FR 内容校验：
+ *
+ * 规则：
+ * - 沿主历史顺序追踪最近非 FR 消息 id 作为当前 owner；遇到 functionResponse 消息时，其
+ *   parts 中非空 functionResponse.id 集合必须是 graph.nodes[ownerId].parts 中
+ *   functionResponse.id 集合的【子集】——多条 FR 消息对同一 owner 各自做子集匹配而非全等
+ *   （owner 同步了更多 FR 不影响单条判定），不满足则把该 FR 消息 id（缺失用空串）加入结果；
+ * - owner 为 null（首条即 FR）跳过（无可依附节点，由导入/追加路径显式丢弃，不重复计数）；
+ * - owner 节点不在图中跳过（未入图由现有非 FR 检查兜底，避免重复计数）；
+ * - 无 id 的 FR part 跳过（无法关联到图节点 parts 中的 FR id）。
+ */
+export function findUnsyncedFunctionResponses(
+    history: ReadonlyArray<Content>,
+    graph: ConversationBranchGraph
+): string[] {
+    const unsynced: string[] = [];
+    let ownerId: string | null = null;
+    for (const message of history) {
+        if (!isFunctionResponseMessage(message)) {
+            ownerId = message.id ?? null;
+            continue;
+        }
+        if (ownerId === null) {
+            continue; // 首条即 FR：无可依附 owner
+        }
+        const ownerNode = graph.nodes[ownerId];
+        if (!ownerNode) {
+            continue; // owner 未入图：由非 FR 检查兜底，避免重复计数
+        }
+        const frIds = (message.parts ?? [])
+            .map(part => part.functionResponse?.id)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        if (frIds.length === 0) {
+            continue; // 无 id 的 FR part 跳过
+        }
+        const ownerFrIds = new Set(
+            (ownerNode.parts ?? [])
+                .map(part => part.functionResponse?.id)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        );
+        if (frIds.some(id => !ownerFrIds.has(id))) {
+            unsynced.push(message.id ?? '');
+        }
+    }
+    return unsynced;
+}
+
+/**
  * 把线性主历史（Content[]）导入为 BranchGraph（MIG-01 / BR-09：节点 kind='imported'）。
  *
  * 规则（与「主历史 = 活跃路径」不变量对齐）：
