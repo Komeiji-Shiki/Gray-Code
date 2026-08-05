@@ -323,12 +323,34 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
 }
 
 /**
+ * 按 URI 查找工作区文件夹
+ * @param workspaceUri 工作区 URI
+ * @returns 匹配的 WorkspaceFolder，未找到或未提供返回 undefined
+ */
+export function getWorkspaceFolderByUri(workspaceUri: string): vscode.WorkspaceFolder | undefined {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || !workspaceUri) return undefined;
+    return folders.find(f => f.uri.toString() === workspaceUri);
+}
+
+/**
  * 获取工作区文件目录结构（支持多工作区）
  * @param maxDepth 最大深度
  * @param customIgnorePatterns 自定义忽略模式
+ * @param nodeBudget 节点预算
+ * @param workspaceUri 绑定的工作区 URI（提供时只返回该工作区的文件树，不泄漏其他工作区）
  * @returns 文件列表字符串，一行一个
  */
-export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES): string {
+export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES, workspaceUri?: string): string {
+    // 绑定工作区模式：只显示该工作区，文件夹已关闭时返回空（不泄漏其他项目）
+    if (workspaceUri) {
+        const targetFolder = getWorkspaceFolderByUri(workspaceUri);
+        if (targetFolder) {
+            return getSingleWorkspaceFileTree(targetFolder.uri.fsPath, maxDepth, customIgnorePatterns, nodeBudget);
+        }
+        return '';
+    }
+
     const workspaceFolders = vscode.workspace.workspaceFolders
     if (!workspaceFolders || workspaceFolders.length === 0) {
         return ''

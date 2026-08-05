@@ -57,6 +57,32 @@ export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
   return false;
 }
 
+// ========== 目标工作区文件夹解析（多工作区支持） ==========
+
+/**
+ * 解析目标工作区文件夹。
+ *
+ * 优先级：显式传入的 workspaceUri > 当前激活工作区（ctx.getCurrentWorkspaceUri）> 第一个文件夹。
+ * 旧实现固定取第一个文件夹，多工作区下激活工作区不是首个文件夹时会把文件解析到错误项目。
+ */
+export function resolveTargetWorkspaceFolder(
+  ctx: HandlerContext,
+  workspaceUri?: string
+): vscode.WorkspaceFolder | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+  const uri = workspaceUri || ctx.getCurrentWorkspaceUri?.() || undefined;
+  if (uri) {
+    const byUri = folders.find(f => f.uri.toString() === uri);
+    if (byUri) {
+      return byUri;
+    }
+  }
+  return folders[0];
+}
+
 // ========== 工作区信息 ==========
 
 export const getWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
@@ -87,9 +113,10 @@ export const listWorkspaceDirectory: MessageHandler = async (data, requestId, ct
     const relDir = typeof data?.path === 'string' ? data.path : '';
     const safeRelDir = relDir.replace(/\\/g, '/').replace(/^\/+/, '');
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.find(
-      (f) => f.uri.toString() === workspaceUri
-    ) || vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(
+      ctx,
+      typeof data?.workspaceUri === 'string' ? data.workspaceUri : undefined
+    );
     if (!workspaceFolder) {
       ctx.sendResponse(requestId, {
         success: false,
@@ -569,7 +596,7 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
       return;
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     if (!workspaceFolder) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.noWorkspaceOpen') });
       return;
@@ -617,7 +644,7 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
       return;
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     if (!workspaceFolder) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.noWorkspaceOpen') });
       return;
@@ -775,7 +802,7 @@ export const readWorkspaceImage: MessageHandler = async (data, requestId, ctx) =
   try {
     const { path: imgPath } = data;
     
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     if (!workspaceFolder) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.noWorkspaceOpen') });
       return;
@@ -823,7 +850,7 @@ export const openWorkspaceFile: MessageHandler = async (data, requestId, ctx) =>
   try {
     const { path: filePath } = data;
     
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     if (!workspaceFolder) {
       throw new Error(t('webview.errors.noWorkspaceOpen'));
     }
@@ -954,8 +981,7 @@ export const openWorkspaceFileAt: MessageHandler = async (data, requestId, ctx) 
       return;
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.find(f => f.uri.toString() === validation.workspaceUri) ||
-      vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx, validation.workspaceUri as string | undefined);
     if (!workspaceFolder) {
       ctx.sendError(requestId, 'OPEN_WORKSPACE_FILE_AT_ERROR', t('webview.errors.noWorkspaceOpen'));
       return;
@@ -1019,7 +1045,7 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { data: base64Data, path: imgPath } = data;
     
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     if (!workspaceFolder) {
       throw new Error(t('webview.errors.noWorkspaceOpen'));
     }
@@ -1205,7 +1231,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
 
     // 过滤 glob 元字符并 trim，避免 query 破坏 findFiles 模式
     const query = sanitizeGlobQuery(rawQuery).trim();
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
     
     if (!workspaceFolder) {
       ctx.sendResponse(requestId, { files: [], activeFilePath: null });

@@ -4,7 +4,7 @@
  * 包含配置的加载和切换
  */
 
-import type { ChatStoreState } from './types'
+import type { ChatStoreState, WorkspaceFolderInfo } from './types'
 import { sendToExtension } from '../../utils/vscode'
 
 const CONVERSATION_MODEL_CONFIG_KEY = 'inputModelConfig'
@@ -232,6 +232,58 @@ export function setMergeUnchangedCheckpoints(state: ChatStoreState, value: boole
  */
 export function setCurrentWorkspaceUri(state: ChatStoreState, uri: string | null): void {
   state.currentWorkspaceUri.value = uri
+}
+
+/**
+ * 设置打开的工作区文件夹列表
+ */
+export function setWorkspaceList(state: ChatStoreState, list: WorkspaceFolderInfo[]): void {
+  state.workspaceList.value = list
+}
+
+/**
+ * 设置活动工作区（null = 取消固定，跟随活动编辑器）
+ *
+ * 多工作区支持：
+ * - 固定到具体工作区时，同时把当前对话重新绑定到该工作区；
+ * - 选择 Auto（null）时，若当前对话已绑定工作区则解绑，使其恢复跟随活动编辑器。
+ */
+export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: string | null): Promise<any> {
+  // 提前捕获目标对话：await 期间用户可能切换对话，防止把工作区绑定到错误的对话上
+  const conversationId = state.currentConversationId.value
+  let resp: any
+  try {
+    resp = await sendToExtension<any>('workspace.setActive', { workspaceUri })
+  } catch (error) {
+    console.warn('[configActions] Failed to set active workspace:', error)
+    return null
+  }
+
+  if (resp?.activeWorkspaceUri !== undefined) {
+    setCurrentWorkspaceUri(state, resp.activeWorkspaceUri)
+  }
+
+  if (conversationId && state.currentConversationId.value === conversationId) {
+    const conv = state.conversations.value.find(c => c.id === conversationId)
+    const isBound = !!conv?.workspaceUri
+    // 固定：绑定到所选工作区；Auto 且已绑定：解绑跟随活动编辑器
+    if (workspaceUri || isBound) {
+      const nextUri = workspaceUri || undefined
+      try {
+        await sendToExtension('conversation.setWorkspaceUri', {
+          conversationId,
+          workspaceUri: nextUri
+        })
+        if (conv) {
+          conv.workspaceUri = nextUri
+        }
+      } catch (error) {
+        console.warn('[configActions] Failed to rebind conversation workspace URI:', error)
+      }
+    }
+  }
+
+  return resp
 }
 
 /**

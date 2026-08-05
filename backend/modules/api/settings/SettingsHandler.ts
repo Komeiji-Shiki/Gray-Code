@@ -811,14 +811,18 @@ export class SettingsHandler {
             );
             
             // 尝试获取会话级的运行时数据
+            // 多工作区支持：即使没有 custom 元数据也要带上 workspaceUri，
+            // 否则已绑定工作区的对话在 token 预估时按"全工作区"生成环境段，
+            // 与实际发送的提示词不一致。
             let runtime: any = undefined;
             if (conversationId && this.conversationManager) {
                 const meta = await this.conversationManager.getMetadata(conversationId);
-                if (meta?.custom) {
+                if (meta) {
                     runtime = {
-                        todoList: meta.custom.todoList,
-                        pinnedFiles: meta.custom.inputPinnedFiles,
-                        skills: meta.custom.inputSkills
+                        todoList: meta.custom?.todoList,
+                        pinnedFiles: meta.custom?.inputPinnedFiles,
+                        skills: meta.custom?.inputSkills,
+                        workspaceUri: meta.workspaceUri
                     };
                 }
             }

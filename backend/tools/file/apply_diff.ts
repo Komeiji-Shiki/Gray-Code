@@ -1684,7 +1684,7 @@ ${descriptionSuffix}`,
                 return { success: false, error: 'Path is required' };
             }
 
-            const { uri } = resolveUriWithInfo(filePath);
+            const { uri } = resolveUriWithInfo(filePath, context?.activeWorkspaceUri);
             if (!uri) {
                 return { success: false, error: 'No workspace folder open' };
             }

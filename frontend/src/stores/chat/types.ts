@@ -34,6 +34,20 @@ export interface Conversation {
 export type WorkspaceFilter = 'current' | 'all'
 
 /**
+ * 打开的工作区文件夹信息（对应扩展端 WorkspaceFolderInfo）
+ */
+export interface WorkspaceFolderInfo {
+  /** 文件夹名称 */
+  name: string
+  /** 文件夹 URI */
+  uri: string
+  /** 文件夹本地文件系统路径 */
+  fsPath: string
+  /** 文件夹在 workspace.workspaceFolders 中的下标 */
+  index: number
+}
+
+/**
  * 附件数据类型（用于发送到后端）
  */
 export interface AttachmentData {
@@ -243,6 +257,8 @@ export interface ChatStoreState {
   deletingConversationIds: Ref<Set<string>>
   /** 当前工作区 URI */
   currentWorkspaceUri: Ref<string | null>
+  /** 打开的工作区文件夹列表 */
+  workspaceList: Ref<WorkspaceFolderInfo[]>
   /** 输入框内容 */
   inputValue: Ref<string>
   /** 工作区筛选模式 */
@@ -367,6 +383,8 @@ export interface ChatStoreComputed {
 export interface ConversationSessionSnapshot {
   /** 对话 ID */
   conversationId: string | null
+  /** 当前工作区 URI（per-tab 工作区绑定） */
+  workspaceUri: string | null
   /** 消息列表 */
   allMessages: Message[]
   /** 窗口起始索引 */

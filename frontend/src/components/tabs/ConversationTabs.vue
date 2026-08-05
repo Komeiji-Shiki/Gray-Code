@@ -14,6 +14,7 @@ import { useI18n, setLanguage } from '../../i18n'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { sendToExtension } from '../../utils/vscode'
 import { CustomScrollbar } from '../common'
+import WorkspaceSelector from './WorkspaceSelector.vue'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -269,6 +270,7 @@ watch(() => props.tabs.length, () => {
 
     <!-- 右侧：全局操作区（常驻） -->
     <div class="tabs-actions">
+      <WorkspaceSelector />
       <button
         class="tab-action-btn"
         :class="{ 'action-active': settingsStore.subAgentMonitorOpen }"

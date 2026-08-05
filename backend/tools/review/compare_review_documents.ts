@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { createHash } from 'crypto';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import type {
@@ -234,7 +234,7 @@ export function createCompareReviewDocumentsToolDeclaration(): ToolDeclaration {
 export function createCompareReviewDocumentsTool(): Tool {
   return {
     declaration: createCompareReviewDocumentsToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as CompareReviewDocumentsArgs;
       const basePath = typeof args.basePath === 'string' ? args.basePath.trim() : '';
       const targetPath = typeof args.targetPath === 'string' ? args.targetPath.trim() : '';
@@ -251,8 +251,8 @@ export function createCompareReviewDocumentsTool(): Tool {
         };
       }
 
-      const baseResolved = resolveUriWithInfo(basePath);
-      const targetResolved = resolveUriWithInfo(targetPath);
+      const baseResolved = resolveUriWithInfo(basePath, context?.activeWorkspaceUri);
+      const targetResolved = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
       if (!baseResolved.uri || !targetResolved.uri) {
         return {
           success: false,

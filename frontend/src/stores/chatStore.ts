@@ -61,6 +61,8 @@ import {
   setSelectedModelId as setSelectedModelIdAction,
   setMergeUnchangedCheckpoints,
   setCurrentWorkspaceUri,
+  setWorkspaceList,
+  setActiveWorkspace as setActiveWorkspaceAction,
   setWorkspaceFilter as setWorkspaceFilterAction,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
@@ -105,7 +107,7 @@ import {
 
 import type { CancelStreamOptions } from './chat/toolActions'
 import type { SendMessageOptions } from './chat/messageActions'
-import type { BuildSession, QueuedMessage } from './chat/types'
+import type { BuildSession, QueuedMessage, WorkspaceFolderInfo } from './chat/types'
 
 import {
   loadBranchGraph as loadBranchGraphAction,
@@ -626,15 +628,25 @@ export const useChatStore = defineStore('chat', () => {
         // 整个批量在同一同步上下文完成，Vue 自动合并响应式更新。
         handleStreamChunkBatch(message.data as StreamChunk[], streamHandlerCtx)
       } else if (message.type === 'workspaceUri') {
-        setCurrentWorkspaceUri(state, message.data)
+        // 活动工作区变化广播：仅当当前对话未绑定工作区（或没有当前对话）时跟随。
+        // 对话对象缺失（列表可能滞后）时保守处理——不覆盖，避免把已绑定对话的
+        // 显示工作区改成别的项目。
+        const conv = state.conversations.value.find(c => c.id === state.currentConversationId.value)
+        const isBound = conv ? !!conv.workspaceUri : true
+        if (!state.currentConversationId.value || !isBound) {
+          setCurrentWorkspaceUri(state, message.data)
+        }
+      } else if (message.type === 'workspaceList') {
+        setWorkspaceList(state, message.data)
       } else if (message.type === 'retryStatus') {
         handleRetryStatus(state, message.data)
       }
     })
     
     try {
-      const uri = await sendToExtension<string | null>('getWorkspaceUri', {})
-      setCurrentWorkspaceUri(state, uri)
+      const wsData = await sendToExtension<any>('getWorkspaceList', {})
+      setCurrentWorkspaceUri(state, wsData?.activeWorkspaceUri ?? null)
+      setWorkspaceList(state, wsData?.workspaces ?? [])
     } catch {
       // 忽略错误
     }
@@ -768,8 +780,11 @@ export const useChatStore = defineStore('chat', () => {
     
     // 工作区
     currentWorkspaceUri: state.currentWorkspaceUri,
+    workspaceList: state.workspaceList,
     workspaceFilter: state.workspaceFilter,
     setCurrentWorkspaceUri: (uri: string | null) => setCurrentWorkspaceUri(state, uri),
+    setWorkspaceList: (list: WorkspaceFolderInfo[]) => setWorkspaceList(state, list),
+    setActiveWorkspace: (workspaceUri: string | null) => setActiveWorkspaceAction(state, workspaceUri),
     setWorkspaceFilter,
     
     // 输入框

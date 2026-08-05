@@ -2775,8 +2775,11 @@ export class ConversationManager {
 
     /**
      * 设置工作区 URI
+     *
+     * 多工作区支持：workspaceUri 传 undefined 表示解绑对话（恢复"跟随活动编辑器"），
+     * 持久化时该字段从元数据中移除。
      */
-    async setWorkspaceUri(conversationId: string, workspaceUri: string): Promise<void> {
+    async setWorkspaceUri(conversationId: string, workspaceUri?: string): Promise<void> {
         // 同 setTitle：整对象读改写必须与 setCustomMetadata 共用同一条元数据写链。
         await withMetadataWriteSerialized(conversationId, async () => {
             let meta = await this.loadMetadataForWrite(conversationId);

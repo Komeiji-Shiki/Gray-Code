@@ -57,7 +57,7 @@ describe('create_design tool', () => {
       fsPath: 'D:/workspace/.graycode/design'
     })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/api-design.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/api-design.md', undefined)
     expect(mockSyncProgressFromDesignArtifact).toHaveBeenCalledWith({
       designPath: '.graycode/design/api-design.md',
       title: 'API Design'

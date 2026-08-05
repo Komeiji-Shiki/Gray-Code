@@ -6,8 +6,8 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, toRelativePath, countTextFileLines, mapWithConcurrency } from '../utils';
+import type { Tool, ToolResult, ToolContext } from '../types';
+import { getWorkspaceRoot, getAllWorkspaces, getWorkspaceByUri, toRelativePath, countTextFileLines, mapWithConcurrency } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
 /**
@@ -119,7 +119,8 @@ async function findInWorkspace(
 async function findWithPattern(
     pattern: string,
     exclude: string,
-    maxResults: number
+    maxResults: number,
+    activeWorkspaceUri?: string
 ): Promise<FindResult> {
     const workspaces = getAllWorkspaces();
     if (workspaces.length === 0) {
@@ -135,12 +136,21 @@ async function findWithPattern(
         return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false);
     }
     
+    // 多工作区模式：会话绑定工作区时只搜索该工作区，否则在所有工作区中查找
+    let searchWorkspaces = workspaces;
+    if (activeWorkspaceUri) {
+        const preferred = getWorkspaceByUri(activeWorkspaceUri);
+        if (preferred) {
+            searchWorkspaces = [preferred];
+        }
+    }
+    
     // 多工作区模式：在所有工作区中查找
     const allFiles: string[] = [];
     const allFileDetails: FoundFileDetail[] = [];
     let truncated = false;
     
-    for (const ws of workspaces) {
+    for (const ws of searchWorkspaces) {
         if (allFiles.length >= maxResults) {
             truncated = true;
             break;
@@ -218,7 +228,7 @@ export function createFindFilesTool(): Tool {
                 required: ['patterns']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             // 支持 patterns 数组或单个 pattern（向后兼容）
             let patternList: string[] = [];
             
@@ -244,7 +254,7 @@ export function createFindFilesTool(): Tool {
             let totalFiles = 0;
 
             for (const pattern of patternList) {
-                const result = await findWithPattern(pattern, exclude, maxResults);
+                const result = await findWithPattern(pattern, exclude, maxResults, context?.activeWorkspaceUri);
                 results.push(result);
                 
                 if (result.success) {

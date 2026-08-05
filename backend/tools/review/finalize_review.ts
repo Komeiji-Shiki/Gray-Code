@@ -80,7 +80,7 @@ export function createFinalizeReviewTool(): Tool {
         return { success: false, error: sessionCheck.error };
       }
 
-      const { uri, error } = resolveUriWithInfo(path);
+      const { uri, error } = resolveUriWithInfo(path, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

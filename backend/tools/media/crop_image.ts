@@ -124,7 +124,7 @@ interface TaskResult {
  * 读取图片文件
  */
 async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath, context?.activeWorkspaceUri);
     if (!uri) {
         return null;
     }
@@ -204,7 +204,7 @@ async function executeCropTask(
         return { index, success: false, error: `Task ${index + 1}: x1 must be less than x2, y1 must be less than y2` };
     }
 
-    const inputPathError = ensureMediaPathsSafe(image_path);
+    const inputPathError = ensureMediaPathsSafe(image_path, undefined, undefined, context?.activeWorkspaceUri);
     if (inputPathError) {
         return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
     }
@@ -293,7 +293,7 @@ async function executeCropTask(
         }
 
         // 保存结果
-        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path);
+        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path, context?.activeWorkspaceUri);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
         }

@@ -218,7 +218,11 @@ const en: LanguageMessages = {
             settings: 'Settings',
             monitor: 'SubAgent Monitor',
             monitorOpen: 'Open SubAgent Monitor panel',
-            monitorClose: 'Close SubAgent Monitor panel'
+            monitorClose: 'Close SubAgent Monitor panel',
+            workspaceSelector: {
+                auto: 'Follow Active Editor',
+                noWorkspace: 'No Workspace'
+            }
         },
 
         usage: {

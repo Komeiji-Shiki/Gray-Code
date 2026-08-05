@@ -122,7 +122,7 @@ Returns references grouped by file, with line numbers and code content.`;
                 return { success: false, error: 'line must be a positive number' };
             }
             
-            const uri = resolveUri(filePath);
+            const uri = resolveUri(filePath, context?.activeWorkspaceUri);
             if (!uri) {
                 return { success: false, error: 'Could not resolve file path. Make sure a workspace is open.' };
             }

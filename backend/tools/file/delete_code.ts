@@ -79,7 +79,8 @@ async function deleteSingleFile(
     approvedByToolConfirmation?: boolean,
     conversationId?: string,
     checkpointReady?: Promise<unknown>,
-    lockHolder?: LockHolder
+    lockHolder?: LockHolder,
+    activeWorkspaceUri?: string
 ): Promise<DeleteResult> {
     const { path: filePath, start_line: startLine, end_line: endLine } = entry;
 
@@ -97,7 +98,7 @@ async function deleteSingleFile(
         return { path: filePath, success: false, error: `start_line (${startLine}) must be <= end_line (${endLine})` };
     }
 
-    const { uri } = resolveUriWithInfo(filePath);
+    const { uri } = resolveUriWithInfo(filePath, activeWorkspaceUri);
     if (!uri) {
         return { path: filePath, success: false, error: 'No workspace folder open' };
     }
@@ -318,7 +319,8 @@ export function createDeleteCodeTool(): Tool {
                     // checkpointReady 由 ToolExecutionService 注入（ToolContext 索引签名透传）
                     context?.checkpointReady as Promise<unknown> | undefined,
                     // PERF-CP：deferred 模式写盘锁持有者身份（ToolContext 索引签名透传）
-                    context?.lockHolder as LockHolder | undefined
+                    context?.lockHolder as LockHolder | undefined,
+                    context?.activeWorkspaceUri
                 );
                results.push(result);
                 if (result.success) {

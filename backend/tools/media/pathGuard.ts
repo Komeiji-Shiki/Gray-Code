@@ -17,12 +17,17 @@ export const MEDIA_MAX_INPUT_BYTES = 50 * 1024 * 1024;
 /**
  * 校验媒体工具的输入/输出路径必须位于任一工作区内。
  *
+ * @param inputPath 输入路径
+ * @param outputPath 输出路径（可选）
+ * @param maskPath 掩码路径（可选）
+ * @param activeWorkspaceUri 首选工作区 URI（可选，多工作区无前缀时的兜底）
  * @returns 错误信息；安全时返回 null
  */
 export function ensureMediaPathsSafe(
     inputPath: string,
     outputPath?: string,
-    maskPath?: string
+    maskPath?: string,
+    activeWorkspaceUri?: string
 ): string | null {
     const workspaces = getAllWorkspaces();
     if (workspaces.length === 0) {
@@ -33,7 +38,7 @@ export function ensureMediaPathsSafe(
         return workspaces.some(w => isPathInsideOrEqualReal(uri.fsPath, w.uri.fsPath));
     };
 
-    const inputUri = resolveUri(inputPath);
+    const inputUri = resolveUri(inputPath, activeWorkspaceUri);
     if (!inputUri) {
         return `Cannot resolve input path: ${inputPath}`;
     }
@@ -42,7 +47,7 @@ export function ensureMediaPathsSafe(
     }
 
     if (outputPath) {
-        const outputUri = resolveUri(outputPath);
+        const outputUri = resolveUri(outputPath, activeWorkspaceUri);
         if (!outputUri) {
             return `Cannot resolve output path: ${outputPath}`;
         }
@@ -52,7 +57,7 @@ export function ensureMediaPathsSafe(
     }
 
     if (maskPath) {
-        const maskUri = resolveUri(maskPath);
+        const maskUri = resolveUri(maskPath, activeWorkspaceUri);
         if (!maskUri) {
             return `Cannot resolve mask path: ${maskPath}`;
         }

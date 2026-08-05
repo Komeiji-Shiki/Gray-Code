@@ -95,7 +95,7 @@ export function createCreatePlanTool(): Tool {
         return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(outPath);
+      const { uri, error } = resolveUriWithInfo(outPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }
@@ -105,7 +105,7 @@ export function createCreatePlanTool(): Tool {
 
         const normalizedPlan = normalizeLineEndingsToLF(plan);
         const trackedSourceArtifact = args.sourceArtifact
-          ? await buildTrackedPlanSourceArtifact(args.sourceArtifact)
+          ? await buildTrackedPlanSourceArtifact(args.sourceArtifact, context?.activeWorkspaceUri)
           : undefined;
         const sourceSection = trackedSourceArtifact
           ? renderPlanSourceArtifactSection(trackedSourceArtifact)

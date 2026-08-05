@@ -79,7 +79,7 @@ describe('create_review tool', () => {
     expect(mockCreateDirectory).toHaveBeenCalledWith({
       fsPath: 'D:/workspace/.graycode/review'
     })
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/review/workspace-review.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/review/workspace-review.md', undefined)
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromReviewArtifact).toHaveBeenCalledWith({
       reviewPath: '.graycode/review/workspace-review.md',

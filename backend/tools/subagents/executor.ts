@@ -439,7 +439,9 @@ async function executeToolCall(
                 actualRunId,
                 // F2：把本 run 的嵌套深度随工具上下文透传（ToolExecutionService 注入 toolContext.subagentDepth），
                 // 子代理内部的 subagents 工具调用据此得知父 run 深度（见 subagents.ts executeSubAgent）。
-                nestingDepth
+                nestingDepth,
+                // 多工作区支持：子代理继承主会话绑定的工作区，路径解析/终端 cwd 与主会话保持一致
+                context.activeWorkspaceUri
             );
             const executionOutcome = await waitForAbortableOperation(
                 toolExecution,

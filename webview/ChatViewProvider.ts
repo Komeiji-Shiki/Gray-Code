@@ -54,6 +54,7 @@ import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
+import { WorkspaceManager, setWorkspaceManager, type WorkspaceFolderInfo } from './utils/WorkspaceManager';
 
 const log = Logger.get('ChatViewProvider');
 
@@ -132,8 +133,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private mainChatClientDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
     
-    // 消息路由器
+    // 消息处理器注册表
     private messageRouter!: MessageRouter;
+    
+    // 多工作区支持：激活工作区跟踪（跟随活动编辑器 / 用户固定）
+    private workspaceManager!: WorkspaceManager;
     
     // 事件取消订阅函数
     private terminalOutputUnsubscribe?: () => void;
@@ -177,6 +181,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.diffPreviewProvider
         );
         context.subscriptions.push(this.diffPreviewProviderDisposable);
+        
+        // 多工作区支持：初始化工作区管理器（激活工作区跟随活动编辑器，可被用户固定），
+        // 变化时广播 workspaceList / workspaceUri 到前端。
+        this.workspaceManager = new WorkspaceManager({
+            onActiveWorkspaceChanged: (uri) => {
+                this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
+                    type: 'workspaceUri',
+                    data: uri
+                }, this._view?.webview);
+            },
+            onWorkspaceListChanged: (list: WorkspaceFolderInfo[]) => {
+                this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
+                    type: 'workspaceList',
+                    data: list
+                }, this._view?.webview);
+            }
+        });
+        setWorkspaceManager(this.workspaceManager);
+        context.subscriptions.push({
+            dispose: () => {
+                this.workspaceManager.dispose();
+                setWorkspaceManager(null);
+            }
+        });
+        
+        // 多工作区支持：窗口内新增工作区文件夹时，扫描其项目级 skills
+        // （激活工作区/列表的广播由 WorkspaceManager 负责）
+        context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+            for (const folder of event.added) {
+                getSkillsManager()?.addWorkspacePath(folder.uri.fsPath);
+            }
+        }));
         
         // 初始时拒绝所有之前的 diff（例如重载窗口）
         getDiffManager().rejectAll().catch(() => {});
@@ -279,8 +315,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         
         // 11. 初始化 Skills 管理器（必须在注册工具之前，因为 skills 工具需要它）
+        // 多工作区支持：扫描全部已打开文件夹的项目级 skills（旧实现只扫第一个文件夹）
+        const workspacePaths = (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
         await createSkillsManager({
-            workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            workspacePaths,
             globalStoragePath: this.storagePathManager.getEffectiveDataPath(),
         });
         
@@ -907,11 +945,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     
     /**
-     * 获取当前工作区 URI
+     * 获取当前激活工作区 URI
+     *
+     * 多工作区支持：返回 WorkspaceManager 的激活工作区
+     * （跟随活动编辑器，或用户通过 workspace.setActive 固定的工作区），
+     * 而非旧的"恒取第一个文件夹"。
      */
     private getCurrentWorkspaceUri(): string | null {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        return workspaceFolder ? workspaceFolder.uri.toString() : null;
+        return this.workspaceManager ? this.workspaceManager.getActiveWorkspaceUri() : null;
     }
     
     /**

@@ -282,7 +282,8 @@ export class ToolExecutionService {
         attribution?: LockHolder,
         mailboxConversationId?: string,
         mailboxRunId?: string,
-        nestingDepth?: number
+        nestingDepth?: number,
+        activeWorkspaceUri?: string
     ): Promise<ToolExecutionFullResult> {
         const generator = this.executeFunctionCallsWithProgress(
             calls,
@@ -296,7 +297,8 @@ export class ToolExecutionService {
             attribution,
             mailboxConversationId,
             mailboxRunId,
-            nestingDepth
+            nestingDepth,
+            activeWorkspaceUri
         );
 
         let next = await generator.next();
@@ -332,7 +334,8 @@ export class ToolExecutionService {
         attribution?: LockHolder,
         mailboxConversationId?: string,
         mailboxRunId?: string,
-        nestingDepth?: number
+        nestingDepth?: number,
+        activeWorkspaceUri?: string
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         // MED-1：领取 drain epoch——最新启动的执行循环持有 (conversationId, runId) 的 drain 权
         const mailboxDrain = this.claimMailboxDrainEpoch(mailboxConversationId, mailboxRunId);
@@ -350,7 +353,8 @@ export class ToolExecutionService {
                 mailboxConversationId,
                 mailboxRunId,
                 nestingDepth,
-                mailboxDrain
+                mailboxDrain,
+                activeWorkspaceUri
             );
         } finally {
             // E-2：生成器异常/被提前 return() 时兜底释放（正常完成路径由核心 return 后同样
@@ -380,7 +384,8 @@ export class ToolExecutionService {
         mailboxConversationId?: string,
         mailboxRunId?: string,
         nestingDepth?: number,
-        mailboxDrain?: { key: string; epoch: number }
+        mailboxDrain?: { key: string; epoch: number },
+        activeWorkspaceUri?: string
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
         const resolvedProgressEmitter = typeof executionOptions === 'function'
@@ -388,6 +393,15 @@ export class ToolExecutionService {
             : progressEmitter;
 
         // MED-1/E-2：drain epoch 由公共入口领取并经参数传入，核心不再自行 claim（释放统一在入口 finally）
+
+        // 多工作区支持：优先用调用方传入的工作区；未传入且会话绑定了工作区时按会话元数据解析
+        // （getMetadata 防御性探测：测试替身可能未实现，缺失时视为未绑定工作区）
+        let resolvedWorkspaceUri: string | undefined = activeWorkspaceUri;
+        if (!resolvedWorkspaceUri && conversationId && this.conversationManager && typeof this.conversationManager.getMetadata === 'function') {
+            resolvedWorkspaceUri = await this.conversationManager.getMetadata(conversationId)
+                .then(meta => meta?.workspaceUri || undefined)
+                .catch(() => undefined);
+        }
 
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -613,7 +627,8 @@ export class ToolExecutionService {
                         mailboxRunId,
                         nestingDepth,
                         beforeCheckpointPromise,
-                        deferWriteLock
+                        deferWriteLock,
+                        resolvedWorkspaceUri
                     )
                 ));
 
@@ -654,7 +669,8 @@ export class ToolExecutionService {
                 mailboxRunId,
                 nestingDepth,
                 beforeCheckpointPromise,
-                deferWriteLock
+                deferWriteLock,
+                resolvedWorkspaceUri
             );
 
             const toolResult = this.finalizeToolResponse(
@@ -844,7 +860,8 @@ export class ToolExecutionService {
         mailboxRunId?: string,
         nestingDepth?: number,
         checkpointReady?: Promise<CheckpointRecord | null> | null,
-        deferWriteLock?: boolean
+        deferWriteLock?: boolean,
+        activeWorkspaceUri?: string
     ): Promise<Record<string, unknown>> {
         try {
             if (isMcpToolName(executionCall.name) && this.mcpManager) {
@@ -863,7 +880,8 @@ export class ToolExecutionService {
                 mailboxRunId,
                 nestingDepth,
                 checkpointReady,
-                deferWriteLock
+                deferWriteLock,
+                activeWorkspaceUri
             );
         } catch (error) {
             const err = error as Error;
@@ -1081,7 +1099,8 @@ export class ToolExecutionService {
         mailboxRunId?: string,
         nestingDepth?: number,
         checkpointReady?: Promise<CheckpointRecord | null> | null,
-        deferWriteLock?: boolean
+        deferWriteLock?: boolean,
+        activeWorkspaceUri?: string
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -1155,6 +1174,8 @@ export class ToolExecutionService {
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
             conversationStore: this.conversationStore,
+            // 当前对话绑定的工作区 URI（多工作区路径解析的优先工作区）
+            activeWorkspaceUri,
             // 修改原因：General Worker 虚拟子代理需要继承主会话当前渠道，而渠道 id 只在这一层可见。
             // 修改方式：把当前请求渠道配置 id 注入 toolContext，供 subagents handler 构造动态 worker 配置。
             // 修改目的：用户零配置即可让主模型派发与自己同渠道同权限的 worker。

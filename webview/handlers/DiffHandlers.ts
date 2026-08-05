@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
 import type { HandlerContext, MessageHandler } from '../types';
+import { resolveTargetWorkspaceFolder } from './FileHandlers';
 
 /**
  * diffContentId 白名单：全局 diff ID 由 DiffStorageManager.generateDiffId() 生成
@@ -78,7 +79,8 @@ async function handleOpenDiffPreview(
 ): Promise<void> {
   const { toolId, toolName, args, result } = data;
   
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  // 多工作区支持：用当前激活工作区（跟随活动编辑器/用户固定）替代旧的"恒取第一个文件夹"
+  const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
   if (!workspaceFolder) {
     throw new Error(t('webview.errors.noWorkspaceOpen'));
   }

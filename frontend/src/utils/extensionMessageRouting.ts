@@ -32,6 +32,7 @@ const BROADCAST_MESSAGE_TYPES = new Set([
   'streamChunk',
   'streamChunkBatch',
   'workspaceUri',
+  'workspaceList',
   'retryStatus',
   'taskEvent',
   'terminalOutput',

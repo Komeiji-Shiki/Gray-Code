@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isProgressModePathAllowedWithMultiRoot } from './pathUtils';
 import { buildProgressValidationSummary } from './documentLayout';
@@ -38,7 +38,7 @@ export function createValidateProgressDocumentToolDeclaration(): ToolDeclaration
 export function createValidateProgressDocumentTool(): Tool {
   return {
     declaration: createValidateProgressDocumentToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as ValidateProgressDocumentArgs;
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
 
@@ -49,7 +49,7 @@ export function createValidateProgressDocumentTool(): Tool {
         return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(targetPath);
+      const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

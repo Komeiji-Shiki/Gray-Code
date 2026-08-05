@@ -28,6 +28,7 @@ function generateTabId(): string {
 export function snapshotCurrentSession(state: ChatStoreState): ConversationSessionSnapshot {
   return {
     conversationId: state.currentConversationId.value,
+    workspaceUri: state.currentWorkspaceUri.value,
     allMessages: [...state.allMessages.value],
     windowStartIndex: state.windowStartIndex.value,
     totalMessages: state.totalMessages.value,
@@ -75,6 +76,12 @@ export function restoreSessionFromSnapshot(
   snapshot: ConversationSessionSnapshot
 ): void {
   state.currentConversationId.value = snapshot.conversationId
+  // 恢复 per-tab 工作区绑定；旧快照无 workspaceUri 字段时回退到对话绑定或当前值
+  const conv = state.conversations.value.find(c => c.id === snapshot.conversationId)
+  const targetWorkspaceUri = snapshot.workspaceUri ?? conv?.workspaceUri ?? state.currentWorkspaceUri.value
+  if (targetWorkspaceUri) {
+    state.currentWorkspaceUri.value = targetWorkspaceUri
+  }
   state.allMessages.value = [...snapshot.allMessages]
   rebuildMessageIndexById(state)
   state.windowStartIndex.value = snapshot.windowStartIndex

@@ -269,12 +269,13 @@ async function readSingleFile(
     multimodalEnabled: boolean,
     isMultiRoot: boolean,
     lineRange?: LineRange,
-    debug?: ReadFileDebugInfo
+    debug?: ReadFileDebugInfo,
+    activeWorkspaceUri?: string
 ): Promise<{
     result: ReadResult;
     multimodal?: MultimodalData[];
 }> {
-    const { uri, workspace, error } = resolveUriWithInfo(filePath);
+    const { uri, workspace, error } = resolveUriWithInfo(filePath, activeWorkspaceUri);
     if (!uri) {
         return {
             result: {
@@ -649,7 +650,7 @@ export function createReadFileTool(
             let totalBatchBytes = 0;
             for (const fileReq of fileRequests) {
                 try {
-                    const { uri: statUri } = resolveUriWithInfo(fileReq.path);
+                    const { uri: statUri } = resolveUriWithInfo(fileReq.path, context?.activeWorkspaceUri);
                     if (statUri) {
                         totalBatchBytes += (await vscode.workspace.fs.stat(statUri)).size;
                     }
@@ -679,7 +680,8 @@ export function createReadFileTool(
                     multimodalEnabled,
                     isMultiRoot,
                     lineRange,
-                    debug
+                    debug,
+                    context?.activeWorkspaceUri
                 );
                 results.push(result);
 

@@ -290,7 +290,7 @@ export function createListFilesTool(): Tool {
 
             for (const dirPath of pathList) {
                 try {
-                    const { uri: dirUri, workspace, relativePath, isExplicit } = resolveUriWithInfo(dirPath);
+                    const { uri: dirUri, workspace, relativePath, isExplicit } = resolveUriWithInfo(dirPath, context?.activeWorkspaceUri);
                     if (!dirUri) {
                         results.push({
                             path: dirPath,

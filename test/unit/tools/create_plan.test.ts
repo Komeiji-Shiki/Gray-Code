@@ -71,7 +71,7 @@ describe('create_plan tool', () => {
     expect(mockCreateDirectory).toHaveBeenCalledWith({
       fsPath: 'D:/workspace/.graycode/plans'
     })
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/plans/api-plan.plan.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/plans/api-plan.plan.md', undefined)
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({
       planPath: '.graycode/plans/api-plan.plan.md',
@@ -107,7 +107,7 @@ describe('create_plan tool', () => {
     expect((result.data as any).content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
     expect((result.data as any).content).toContain('"type":"design"')
     expect((result.data as any).content).toContain('"path":".graycode/design/tracked.md"')
-    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/tracked.md')
+    expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/tracked.md', undefined)
   })
 
   it('rejects paths outside .graycode/plans', async () => {

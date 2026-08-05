@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import {
@@ -37,7 +37,7 @@ export function createValidateReviewDocumentToolDeclaration(): ToolDeclaration {
 export function createValidateReviewDocumentTool(): Tool {
   return {
     declaration: createValidateReviewDocumentToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as ValidateReviewDocumentArgs;
       const path = typeof args.path === 'string' ? args.path.trim() : '';
 
@@ -49,7 +49,7 @@ export function createValidateReviewDocumentTool(): Tool {
         return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(path);
+      const { uri, error } = resolveUriWithInfo(path, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

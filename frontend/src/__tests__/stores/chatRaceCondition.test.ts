@@ -286,6 +286,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
       messageQueue: [],
       currentPromptModeId: 'code',
       toolResponseCache: [],
+      workspaceUri: null,
       branchGraph: null
     }
 

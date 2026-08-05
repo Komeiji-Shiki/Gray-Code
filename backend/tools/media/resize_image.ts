@@ -99,7 +99,7 @@ interface TaskResult {
  * 读取图片文件
  */
 async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath, context?.activeWorkspaceUri);
     if (!uri) {
         return null;
     }
@@ -174,7 +174,7 @@ async function executeResizeTask(
         return { index, success: false, error: `Task ${index + 1}: Target dimensions cannot exceed ${MAX_DIMENSION}x${MAX_DIMENSION}` };
     }
 
-    const inputPathError = ensureMediaPathsSafe(image_path);
+    const inputPathError = ensureMediaPathsSafe(image_path, undefined, undefined, context?.activeWorkspaceUri);
     if (inputPathError) {
         return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
     }
@@ -237,7 +237,7 @@ async function executeResizeTask(
         }
 
         // 保存结果
-        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path);
+        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path, context?.activeWorkspaceUri);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
         }

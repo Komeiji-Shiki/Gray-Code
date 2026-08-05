@@ -3,8 +3,8 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
+import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
+import { getAllWorkspaces, getWorkspaceByUri, resolveUriWithInfo } from '../utils';
 import {
   buildProgressDocument,
   isProgressPhase,
@@ -43,8 +43,12 @@ function slugify(input: string): string {
   return slug || 'project';
 }
 
-function getDefaultProjectName(): string | undefined {
-  const workspace = getAllWorkspaces()[0];
+function getDefaultProjectName(activeWorkspaceUri?: string): string | undefined {
+  // 会话绑定工作区优先，未绑定/未命中时回退到第一个工作区
+  let workspace = activeWorkspaceUri ? getWorkspaceByUri(activeWorkspaceUri) : undefined;
+  if (!workspace) {
+    workspace = getAllWorkspaces()[0];
+  }
   return typeof workspace?.name === 'string' && workspace.name.trim()
     ? workspace.name.trim()
     : undefined;
@@ -113,7 +117,7 @@ export function createCreateProgressToolDeclaration(): ToolDeclaration {
 export function createCreateProgressTool(): Tool {
   return {
     declaration: createCreateProgressToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as CreateProgressArgs;
       const outPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
@@ -145,7 +149,7 @@ export function createCreateProgressTool(): Tool {
         return { success: false, error: artifactsError };
       }
 
-      const { uri, error } = resolveUriWithInfo(outPath);
+      const { uri, error } = resolveUriWithInfo(outPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }
@@ -193,10 +197,10 @@ export function createCreateProgressTool(): Tool {
         const now = new Date().toISOString();
         const projectName = typeof args.projectName === 'string' && args.projectName.trim()
           ? args.projectName.trim()
-          : getDefaultProjectName();
+          : getDefaultProjectName(context?.activeWorkspaceUri);
         const projectId = typeof args.projectId === 'string' && args.projectId.trim()
           ? args.projectId.trim()
-          : slugify(projectName || getDefaultProjectName() || 'project');
+          : slugify(projectName || getDefaultProjectName(context?.activeWorkspaceUri) || 'project');
 
         try {
           await ensureParentDir(uri.fsPath);

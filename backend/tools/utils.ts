@@ -84,6 +84,14 @@ export function getAllWorkspaces(): WorkspaceInfo[] {
 }
 
 /**
+ * 按 URI 查找工作区
+ */
+export function getWorkspaceByUri(workspaceUri: string): WorkspaceInfo | undefined {
+    const workspaces = getAllWorkspaces();
+    return workspaces.find(w => w.uri.toString() === workspaceUri);
+}
+
+/**
  * 获取工作区根目录（默认返回第一个工作区，保持向后兼容）
  */
 export function getWorkspaceRoot(): vscode.Uri | undefined {
@@ -120,9 +128,11 @@ export function getWorkspaceByIdentifier(identifier: string | number): Workspace
  * 多工作区时：必须显式指定工作区前缀
  *
  * @param pathStr 路径字符串
+ * @param preferredWorkspaceUri 首选工作区 URI（可选）。仅在多工作区且未显式指定前缀时
+ *        作为兜底使用；显式前缀始终优先。
  * @returns 解析结果，包含工作区信息和相对路径
  */
-export function parseWorkspacePath(pathStr: string): {
+export function parseWorkspacePath(pathStr: string, preferredWorkspaceUri?: string): {
     workspace: WorkspaceInfo | undefined;
     relativePath: string;
     isExplicit: boolean;  // 是否显式指定了工作区
@@ -198,6 +208,14 @@ export function parseWorkspacePath(pathStr: string): {
         }
     }
     
+    // 多工作区时未指定前缀：优先使用首选工作区（按 URI 匹配）兜底，找不到才返回错误
+    if (preferredWorkspaceUri) {
+        const preferred = getWorkspaceByUri(preferredWorkspaceUri);
+        if (preferred) {
+            return { workspace: preferred, relativePath: pathStr, isExplicit: false };
+        }
+    }
+
     // 多工作区时未指定前缀，返回错误
     return {
         workspace: undefined,
@@ -452,8 +470,11 @@ export function isAbsolutePathInWorkspace(absolutePath: string): boolean {
  *
  * - 相对路径：沿用原有工作区解析逻辑
  * - 绝对路径 / file:// URI：返回对应本地文件 URI，并标记是否位于工作区内
+ *
+ * @param pathStr 路径字符串
+ * @param preferredWorkspaceUri 首选工作区 URI（可选，多工作区无前缀时的兜底）
  */
-export function resolveFileToolPathWithInfo(pathStr: string): {
+export function resolveFileToolPathWithInfo(pathStr: string, preferredWorkspaceUri?: string): {
     uri: vscode.Uri | undefined;
     workspace: WorkspaceInfo | undefined;
     relativePath: string;
@@ -498,7 +519,7 @@ export function resolveFileToolPathWithInfo(pathStr: string): {
         }
     }
 
-    const resolved = resolveUriWithInfo(pathStr);
+    const resolved = resolveUriWithInfo(pathStr, preferredWorkspaceUri);
     const isOutsideWorkspace = !!(
         resolved.uri &&
         resolved.workspace &&
@@ -519,9 +540,10 @@ export function resolveFileToolPathWithInfo(pathStr: string): {
  * 解析相对路径为绝对 URI（支持多工作区）
  *
  * @param relativePath 相对路径（可带工作区前缀）
+ * @param preferredWorkspaceUri 首选工作区 URI（可选，多工作区无前缀时的兜底）
  * @returns URI，如果无法解析则返回 undefined
  */
-export function resolveUri(relativePath: string): vscode.Uri | undefined {
+export function resolveUri(relativePath: string, preferredWorkspaceUri?: string): vscode.Uri | undefined {
     // 绝对路径直接创建 URI，避免和 workspace 路径错误拼接
     if (isAbsoluteFilePathLike(relativePath)) {
         try {
@@ -531,7 +553,7 @@ export function resolveUri(relativePath: string): vscode.Uri | undefined {
         }
     }
 
-    const { workspace, relativePath: actualPath } = parseWorkspacePath(relativePath);
+    const { workspace, relativePath: actualPath } = parseWorkspacePath(relativePath, preferredWorkspaceUri);
     if (!workspace) {
         return undefined;
     }
@@ -542,9 +564,10 @@ export function resolveUri(relativePath: string): vscode.Uri | undefined {
  * 解析相对路径为绝对 URI，并返回详细信息
  *
  * @param relativePath 相对路径（可带工作区前缀）
+ * @param preferredWorkspaceUri 首选工作区 URI（可选，多工作区无前缀时的兜底）
  * @returns 解析结果
  */
-export function resolveUriWithInfo(relativePath: string): {
+export function resolveUriWithInfo(relativePath: string, preferredWorkspaceUri?: string): {
     uri: vscode.Uri | undefined;
     workspace: WorkspaceInfo | undefined;
     relativePath: string;
@@ -580,7 +603,7 @@ export function resolveUriWithInfo(relativePath: string): {
         }
     }
 
-    const { workspace, relativePath: actualPath, isExplicit, error } = parseWorkspacePath(relativePath);
+    const { workspace, relativePath: actualPath, isExplicit, error } = parseWorkspacePath(relativePath, preferredWorkspaceUri);
     if (!workspace) {
         return { uri: undefined, workspace: undefined, relativePath: actualPath, isExplicit, error };
     }
