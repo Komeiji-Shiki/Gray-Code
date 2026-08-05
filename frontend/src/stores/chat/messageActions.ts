@@ -10,6 +10,7 @@ import { triggerRef, shallowRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import {
+  buildConversationTitle,
   createAndPersistConversation,
   MESSAGES_PAGE_SIZE,
   loadCheckpoints,
@@ -428,8 +429,7 @@ export async function sendMessage(
       // 更新当前标签页的 conversationId 和标题
       if (state.activeTabId.value) {
         updateTabConversationId(state, state.activeTabId.value, newId)
-        const title = messageText.slice(0, 30) + (messageText.length > 30 ? '...' : '')
-        updateTabTitle(state, state.activeTabId.value, title)
+        updateTabTitle(state, state.activeTabId.value, buildConversationTitle(state, messageText))
       }
 
       await persistConversationModelConfig(state)

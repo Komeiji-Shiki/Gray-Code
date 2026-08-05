@@ -322,6 +322,17 @@ export async function createNewConversation(
 }
 
 /**
+ * 构建默认对话标题：第一句话前 30 字符，末尾附加工作区名以便区分多项目。
+ */
+export function buildConversationTitle(state: ChatStoreState, firstMessage: string): string {
+  const base = firstMessage.slice(0, 30) + (firstMessage.length > 30 ? '...' : '')
+  const workspaceName = state.workspaceList.value.find(
+    w => w.uri === state.currentWorkspaceUri.value
+  )?.name
+  return workspaceName ? `${base} [${workspaceName}]` : base
+}
+
+/**
  * 创建并持久化新对话到后端
  */
 export async function createAndPersistConversation(
@@ -330,8 +341,8 @@ export async function createAndPersistConversation(
 ): Promise<string | null> {
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   
-  // 使用第一句话的前30个字符作为标题
-  const title = firstMessage.slice(0, 30) + (firstMessage.length > 30 ? '...' : '')
+  // 使用第一句话的前30个字符作为标题（默认附加工作区名）
+  const title = buildConversationTitle(state, firstMessage)
   
   try {
     // 创建对话时传递工作区 URI
@@ -751,6 +762,12 @@ export async function switchConversation(
       // 切换到绑定了工作区的对话时，恢复该工作区到 UI
       if (typeof view?.metadata?.workspaceUri === 'string' && view.metadata.workspaceUri) {
         state.currentWorkspaceUri.value = view.metadata.workspaceUri
+        // 同步扩展端激活工作区：否则聊天顶部选择器与文件操作（文件树/搜索/固定文件）指向不一致
+        void sendToExtension('workspace.setActive', {
+          workspaceUri: view.metadata.workspaceUri
+        }).catch((err) => {
+          console.warn('[conversationActions] Failed to sync active workspace on switch:', err)
+        })
       }
 
       // 更新对话的消息数量（在加载后才有准确数据）
@@ -863,12 +880,13 @@ export async function updateConversationAfterMessage(state: ChatStoreState): Pro
     state.windowStartIndex.value + state.allMessages.value.length
   )
 
-  // 最近一条非 functionResponse 用户消息作为预览
+  // 最近一条非 functionResponse 用户消息作为预览（逆序查找，避免全量 filter）
   let preview: string | undefined
-  if (state.allMessages.value.length > 0) {
-    const lastUserMsg = state.allMessages.value.filter(m => m.role === 'user' && !m.isFunctionResponse).pop()
-    if (lastUserMsg) {
-      preview = lastUserMsg.content.slice(0, 50)
+  for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
+    const m = state.allMessages.value[i]
+    if (m.role === 'user' && !m.isFunctionResponse) {
+      preview = m.content.slice(0, 50)
+      break
     }
   }
 
