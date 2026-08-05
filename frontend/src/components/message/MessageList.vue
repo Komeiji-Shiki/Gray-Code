@@ -529,7 +529,6 @@ const messageRenderRows = computed<RenderRow[]>(() => {
 
 // 是否正在加载更多（用于节流）
 const viewportHeight = ref(0)
-const scrollTop = ref(0)
 
 const isLoadingMore = ref(false)
 
@@ -597,7 +596,6 @@ async function loadMore() {
 function handleScroll(e: Event) {
   const container = e.target as HTMLElement
   if (!container) return
-  scrollTop.value = container.scrollTop
   if (viewportHeight.value !== container.clientHeight) {
     viewportHeight.value = container.clientHeight
   }
@@ -673,7 +671,6 @@ function restoreUiState(tabId?: string) {
       const container = scrollbarRef.value?.getContainer()
       if (container) {
         container.scrollTop = saved.scrollTop
-        scrollTop.value = saved.scrollTop
       }
       suppressConversationReset.value = false
     })
@@ -751,7 +748,6 @@ onMounted(() => {
     
     // 添加滚动事件监听以支持自动加载
     viewportHeight.value = container.clientHeight
-    scrollTop.value = container.scrollTop
     container.addEventListener('scroll', handleScroll, { passive: true })
     
     resizeObserver = new ResizeObserver((entries) => {
