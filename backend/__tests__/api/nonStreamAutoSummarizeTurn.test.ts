@@ -189,4 +189,21 @@ describe('M3/H5：非流式循环自动总结的回合级计数与 abort 信号'
         }
         expect(mainController.signal.aborted).toBe(false);
     });
+
+    it('自动总结透传当前对话选择的模型', async () => {
+        const summarizeService = createSummarizeServiceMock(1);
+        const { service } = createHarness(summarizeService);
+
+        await service.runNonStreamLoop(
+            'c1', 'cfg-1', config, 10,
+            'deepseek-v4-flash', undefined, 'single', true,
+        );
+
+        expect(summarizeService.handleAutoSummarize).toHaveBeenCalledWith(
+            'c1',
+            'cfg-1',
+            undefined,
+            'deepseek-v4-flash',
+        );
+    });
 });

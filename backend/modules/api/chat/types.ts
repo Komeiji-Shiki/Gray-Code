@@ -535,6 +535,9 @@ export interface SummarizeContextRequestData {
     
     /** 配置 ID */
     configId: string;
+
+    /** 当前对话实际选中的模型（频道默认模型为空或被临时切换时使用） */
+    modelOverride?: string;
     
     /** 保留最近 N 轮不参与总结（默认 2） */
     keepRecentRounds?: number;
