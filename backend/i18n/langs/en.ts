@@ -776,7 +776,8 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
         },
         dialogs: {
             selectStorageFolder: 'Select Storage Folder',
-            selectFolder: 'Select Folder'
+            selectFolder: 'Select Folder',
+            openWorkspaceFolder: 'Open Workspace Folder'
         }
     },
 
@@ -786,7 +787,8 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
         cancelled: 'Operation cancelled',
         networkError: 'Network error',
         invalidRequest: 'Invalid request',
-        internalError: 'Internal error'
+        internalError: 'Internal error',
+        workspaceFolderNotFound: 'The folder does not exist or has been moved'
     }
 };
 

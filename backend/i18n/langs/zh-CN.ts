@@ -777,7 +777,8 @@ description: "简要描述该技能的功能及使用场景"
         },
         dialogs: {
             selectStorageFolder: '选择存储文件夹',
-            selectFolder: '选择文件夹'
+            selectFolder: '选择文件夹',
+            openWorkspaceFolder: '打开工作区文件夹'
         }
     },
 
@@ -787,7 +788,8 @@ description: "简要描述该技能的功能及使用场景"
         cancelled: '操作已取消',
         networkError: '网络错误',
         invalidRequest: '无效的请求',
-        internalError: '内部错误'
+        internalError: '内部错误',
+        workspaceFolderNotFound: '文件夹不存在或已被移动'
     }
 };
 

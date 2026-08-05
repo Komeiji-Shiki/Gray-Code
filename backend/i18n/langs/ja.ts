@@ -776,7 +776,8 @@ description: "このスキルの機能と使用場面の簡単な説明"
         },
         dialogs: {
             selectStorageFolder: 'ストレージフォルダを選択',
-            selectFolder: 'フォルダを選択'
+            selectFolder: 'フォルダを選択',
+            openWorkspaceFolder: 'ワークスペースフォルダを開く'
         }
     },
 
@@ -786,7 +787,8 @@ description: "このスキルの機能と使用場面の簡単な説明"
         cancelled: '操作がキャンセルされました',
         networkError: 'ネットワークエラー',
         invalidRequest: '無効なリクエスト',
-        internalError: '内部エラー'
+        internalError: '内部エラー',
+        workspaceFolderNotFound: 'フォルダが存在しないか、移動されました'
     }
 };
 

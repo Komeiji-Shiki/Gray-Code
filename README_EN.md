@@ -18,16 +18,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-Desktop/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-Desktop?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-Desktop/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-Desktop?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-Desktop?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
 > 🚀 **GrayCode Desktop (standalone)** — no VS Code installation needed, works out of the box (Windows / macOS / Linux).
 >
-> Latest downloads ([Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)):
-> [Installer](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [Portable](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [Zip](https://github.com/czocelot/Gray-Code-ocelot/releases/latest)
+> Latest downloads ([Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)):
+> [Installer](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [Portable](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [Zip](https://github.com/czocelot/Gray-Code-Desktop/releases/latest)
 >
 > This repository also maintains the VS Code extension forked from [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code). The desktop app and the extension share the same backend / frontend / webview code.
 
@@ -202,20 +202,20 @@ No VS Code installation needed — ships with a built-in `vscode-shim` compat la
 - **Installer**: download and run the new installer — settings and conversation data are kept
 - **Portable**: download the new exe / zip and replace the old program files; the `data/` folder is preserved
 - Before upgrading, you can back up the `data/` folder or use Settings → General → Export Settings
-- Downloads: [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)
+- Downloads: [GitHub Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)
 
 ### VS Code extension
 
 VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is not published to the VS Code Marketplace; install it from a VSIX package or from source.
 
-**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
+**Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/czocelot/Gray-Code-Desktop/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
 
 **Build and install from source** — This repository uses npm and commits `package-lock.json`:
 
 ```bash
 # Clone the repository
-git clone https://github.com/czocelot/Gray-Code-ocelot.git
-cd Gray-Code-ocelot
+git clone https://github.com/czocelot/Gray-Code-Desktop.git
+cd Gray-Code-Desktop
 
 # Install root dependencies
 npm ci
@@ -294,7 +294,7 @@ Gray-Code/
 
 ## Contributing
 
-Issues and pull requests are welcome through [GitHub Issues](https://github.com/czocelot/Gray-Code-ocelot/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
+Issues and pull requests are welcome through [GitHub Issues](https://github.com/czocelot/Gray-Code-Desktop/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
 
 ## License
 

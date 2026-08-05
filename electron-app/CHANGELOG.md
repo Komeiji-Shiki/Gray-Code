@@ -8,6 +8,14 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.6] - 2026-08-06
+
+### Added
+  - **工作区选择器收藏（多工作区收藏列表）**：顶部栏文件夹图标下拉重写为自定义菜单，支持收藏多个工作区文件夹（globalState 持久化，跨窗口/重启保留）、条目 × 一键移除、底部「打开工作区文件夹…」加号入口；新增 webview 处理器 `workspace.getSaved` / `workspace.removeSaved` / `workspace.openFolder`，Electron 主进程新增原生操作 `workspace:openFolder`，vscode-shim 支持 `vscode.openFolder` 命令——收藏工作区点击即打开（替换当前工作区并持久化到 workspace state、窗口标题同步更新），三语文案补齐（公共部分详见根 `CHANGELOG.md` [1.6.6]）
+
+### Changed
+  - **仓库改名同步**：`czocelot/Gray-Code-ocelot` → `czocelot/Gray-Code-Desktop`（electron-app/package.json 的 author.url / homepage；其余 README/设置页链接同步，详见根 `CHANGELOG.md` [1.6.6]）；桌面版构建产物版本同步为 v1.6.6
+
 ## [1.6.4] - 2026-08-05
 
 ### Merged

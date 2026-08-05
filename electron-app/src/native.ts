@@ -11,10 +11,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 let pickWorkspaceHandler: (() => void) | null = null;
+let openWorkspaceHandler: ((fsPath: string) => void) | null = null;
 
 /** Set by main.ts: opens the "Open Workspace Folder" dialog. */
 export function setPickWorkspaceHandler(handler: (() => void) | null): void {
   pickWorkspaceHandler = handler;
+}
+
+/** Set by main.ts: opens the given folder as the current workspace (saved workspace open). */
+export function setOpenWorkspaceHandler(handler: ((fsPath: string) => void) | null): void {
+  openWorkspaceHandler = handler;
 }
 
 /** 可执行/脚本类扩展名：openPath/showInFolder 一律拒绝，防止渲染层被攻破后直接启动本机程序 */
@@ -70,6 +76,11 @@ export async function runNative<T = any>(
     case 'workspace:pickFolder':
       pickWorkspaceHandler?.();
       return { ok: true } as T;
+    case 'workspace:openFolder': {
+      const target = typeof payload?.fsPath === 'string' ? payload.fsPath : '';
+      if (target) openWorkspaceHandler?.(target);
+      return { ok: true } as T;
+    }
     case 'dialog:open': {
       const options = payload || {};
       // 窗口可能已销毁（竞态）：无窗口时退化为无父窗口对话框，避免 win! 传 null 抛 TypeError

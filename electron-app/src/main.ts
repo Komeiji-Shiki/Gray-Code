@@ -10,7 +10,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme } from
 import * as path from 'path';
 import * as fs from 'fs';
 import { BackendHost } from './host/BackendHost';
-import { runNative, setPickWorkspaceHandler } from './native';
+import { runNative, setPickWorkspaceHandler, setOpenWorkspaceHandler } from './native';
 import { Logger, LogLevel } from '../../backend/core/logger';
 // esbuild 把 vscode-shim 内联进主进程 bundle；此处的具名导入会被静态解析，
 // 不能使用 require('./vscode-shim')（打包产物中不存在该独立文件，运行时会抛 MODULE_NOT_FOUND）。
@@ -164,6 +164,17 @@ async function pickWorkspaceFolder(): Promise<void> {
   if (!result.canceled && result.filePaths.length > 0) {
     await setWorkspaceFolders(result.filePaths);
   }
+}
+
+/** 打开指定文件夹作为当前工作区（替换现有工作区，供收藏工作区快速打开） */
+async function openWorkspaceFolder(fsPath: string): Promise<void> {
+  if (!fsPath) return;
+  try {
+    if (!fs.statSync(fsPath).isDirectory()) return;
+  } catch {
+    return;
+  }
+  await setWorkspaceFolders([fsPath]);
 }
 
 // ============================================================================
@@ -389,6 +400,7 @@ function registerNativeOps(): void {
     return runNative(op, payload, mainWindow);
   });
   setPickWorkspaceHandler(() => void pickWorkspaceFolder());
+  setOpenWorkspaceHandler((fsPath) => void openWorkspaceFolder(fsPath));
 }
 
 /** IPC 发送方校验：必须是主窗口自身的主框架 */

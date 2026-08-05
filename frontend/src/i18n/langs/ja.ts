@@ -221,7 +221,12 @@ const ja: LanguageMessages = {
             monitorClose: 'SubAgent モニターパネルを閉じる',
             workspaceSelector: {
                 auto: 'アクティブエディタに従う',
-                noWorkspace: 'ワークスペースなし'
+                noWorkspace: 'ワークスペースなし',
+                openWorkspaces: '開いているワークスペース',
+                savedWorkspaces: '保存済みワークスペース',
+                openWorkspaceFolder: 'ワークスペースフォルダを開く…',
+                removeWorkspace: '保存済みから削除',
+                noSavedWorkspaces: '保存済みワークスペースはありません'
             }
         },
 

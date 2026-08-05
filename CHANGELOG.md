@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-08-06
+
+### Added
+  - **工作区选择器收藏（多工作区收藏列表）**：顶部栏工作区选择器（文件夹图标下拉）由原生 `<select>` 重写为自定义下拉菜单——「跟随活动编辑器」、已打开的工作区列表、收藏工作区列表三区展示；收藏列表持久化在宿主侧（VS Code 扩展 `globalState` / 桌面版 `global-state.json`，跨窗口与重启保留），点击收藏条目快速打开（已在当前窗口打开时直接固定为活动工作区，未打开时经宿主打开），条目右侧小 × 一键移除收藏；菜单底部新增「打开工作区文件夹…」入口（加号图标），弹窗选择后自动加入收藏并打开。新增后端处理器 `workspace.getSaved` / `workspace.removeSaved` / `workspace.openFolder`（webview/handlers/WorkspaceHandlers.ts），前端新增 `savedWorkspaces` 状态与 `loadSavedWorkspaces` / `removeSavedWorkspace` / `openWorkspaceFolder` / `openSavedWorkspace` actions（frontend/stores/chat），三语（zh-CN / en / ja）文案同步补齐
+  - **Electron 桌面版 `vscode.openFolder` 支持**：vscode-shim 的 `executeCommand('vscode.openFolder')` 经主进程新增原生操作 `workspace:openFolder` 打开指定文件夹并替换当前工作区（持久化到 workspace state，窗口标题同步更新）；收藏工作区快速打开由此端到端打通
+
+### Changed
+  - **仓库改名同步**：GitHub 仓库已由 `czocelot/Gray-Code-ocelot` 改名为 `czocelot/Gray-Code-Desktop`，全部文档与链接同步更新——`README.md` / `README_EN.md`（徽标、下载、clone、issues 链接与 clone 目录名）、根与 electron-app 的 `package.json`（repository.url / homepage / author.url）、设置页「应用信息 → 仓库」链接（frontend/src/components/settings/SettingsPanel.vue）
+
 ## [1.6.5] - 2026-08-05
 
 ### Merged

@@ -338,6 +338,9 @@ export function createChatState(): ChatStoreState {
 
   /** 打开的工作区文件夹列表 */
   const workspaceList = ref<WorkspaceFolderInfo[]>([])
+
+  /** 收藏的工作区文件夹列表（持久化，可跨窗口/重启保留） */
+  const savedWorkspaces = ref<WorkspaceFolderInfo[]>([])
   
   /** 输入框内容（跨视图保持） */
   const inputValue = ref('')
@@ -447,6 +450,7 @@ export function createChatState(): ChatStoreState {
     deletingConversationIds,
     currentWorkspaceUri,
     workspaceList,
+    savedWorkspaces,
     inputValue,
     workspaceFilter,
     activeBuild,

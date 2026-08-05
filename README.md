@@ -18,16 +18,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="GitHub Stars" /></a>
-  <a href="https://github.com/czocelot/Gray-Code-ocelot/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-ocelot?style=flat-square&logo=github" alt="Latest Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-ocelot?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-Desktop/stargazers"><img src="https://img.shields.io/github/stars/czocelot/Gray-Code-Desktop?style=flat-square&logo=github" alt="GitHub Stars" /></a>
+  <a href="https://github.com/czocelot/Gray-Code-Desktop/releases"><img src="https://img.shields.io/github/v/release/czocelot/Gray-Code-Desktop?style=flat-square&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/czocelot/Gray-Code-Desktop?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.84.0-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code ^1.84.0" />
 </p>
 
 > 🚀 **GrayCode Desktop（独立桌面版）** —— 无需安装 VS Code，开箱即用（Windows / macOS / Linux）。
 >
-> 最新版下载（[Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)）：
-> [安装版](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [免安装便携版](https://github.com/czocelot/Gray-Code-ocelot/releases/latest) · [免安装 zip](https://github.com/czocelot/Gray-Code-ocelot/releases/latest)
+> 最新版下载（[Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)）：
+> [安装版](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [免安装便携版](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [免安装 zip](https://github.com/czocelot/Gray-Code-Desktop/releases/latest)
 >
 > 本仓库同时维护基于上游 [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code) 的 VS Code 扩展，桌面版与扩展共享同一套 backend / frontend / webview 代码。
 
@@ -197,20 +197,20 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 - **安装版**：下载并运行新版安装程序覆盖安装即可，设置与对话数据自动保留
 - **便携版**：下载新版 exe / zip 替换旧程序文件即可，`data/` 数据目录保留
 - 升级前如担心数据，可先备份 `data/` 目录，或在设置 → 通用中「导出设置」
-- 下载地址：[GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases)
+- 下载地址：[GitHub Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)
 
 ### VS Code 扩展版
 
 要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
 
-**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/czocelot/Gray-Code-ocelot/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
+**从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/czocelot/Gray-Code-Desktop/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
 
 **从源码构建并安装** —— 当前仓库使用并提交 `package-lock.json`，统一使用 npm：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/czocelot/Gray-Code-ocelot.git
-cd Gray-Code-ocelot
+git clone https://github.com/czocelot/Gray-Code-Desktop.git
+cd Gray-Code-Desktop
 
 # 安装根目录依赖
 npm ci
@@ -289,7 +289,7 @@ Gray-Code/
 
 ## 贡献
 
-欢迎通过 [Issues](https://github.com/czocelot/Gray-Code-ocelot/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
+欢迎通过 [Issues](https://github.com/czocelot/Gray-Code-Desktop/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
 
 ## 许可证
 

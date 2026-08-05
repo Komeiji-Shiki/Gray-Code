@@ -47,6 +47,7 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'dependencies.uninstall',
   'storagePath.migrate',
   'storagePath.selectFolder',
+  'workspace.openFolder',
   // 后端视为分钟级长任务（NON_BLOCKING），180s 兜底超时会先触发，
   // 后端稍后返回的响应因无匹配请求被当作广播推送误分发（M6）
   'summarizeContext',

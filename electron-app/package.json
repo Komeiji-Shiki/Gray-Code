@@ -1,13 +1,13 @@
 {
   "name": "graycode-desktop",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "description": "GrayCode desktop app (Electron) - AI coding assistant, no VS Code installation needed (runs on a built-in vscode-shim compat layer)",
   "author": {
     "name": "czocelot",
     "email": "264626877+czocelot@users.noreply.github.com",
-    "url": "https://github.com/czocelot/Gray-Code-ocelot"
+    "url": "https://github.com/czocelot/Gray-Code-Desktop"
   },
-  "homepage": "https://github.com/czocelot/Gray-Code-ocelot",
+  "homepage": "https://github.com/czocelot/Gray-Code-Desktop",
   "license": "MIT",
   "private": true,
   "main": "dist/main.js",

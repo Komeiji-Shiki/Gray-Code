@@ -222,7 +222,12 @@ const zhCN = {
             monitorClose: '关闭 SubAgent 监视面板',
             workspaceSelector: {
                 auto: '跟随活动编辑器',
-                noWorkspace: '未打开工作区'
+                noWorkspace: '未打开工作区',
+                openWorkspaces: '已打开的工作区',
+                savedWorkspaces: '已保存的工作区',
+                openWorkspaceFolder: '打开工作区文件夹…',
+                removeWorkspace: '从收藏中移除',
+                noSavedWorkspaces: '暂无已保存的工作区'
             }
         },
 

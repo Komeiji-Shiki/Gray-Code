@@ -302,6 +302,77 @@ export function setWorkspaceFilter(state: ChatStoreState, filter: 'current' | 'a
 }
 
 /**
+ * 设置收藏工作区列表（持久化在宿主侧，前端只做展示缓存）
+ */
+export function setSavedWorkspaces(state: ChatStoreState, list: WorkspaceFolderInfo[]): void {
+  state.savedWorkspaces.value = list
+}
+
+/**
+ * 加载收藏工作区列表（初始化时调用）
+ */
+export async function loadSavedWorkspaces(state: ChatStoreState): Promise<void> {
+  try {
+    const resp = await sendToExtension<any>('workspace.getSaved', {})
+    if (Array.isArray(resp?.saved)) {
+      setSavedWorkspaces(state, resp.saved)
+    }
+  } catch (error) {
+    console.warn('[configActions] Failed to load saved workspaces:', error)
+  }
+}
+
+/**
+ * 从收藏列表移除工作区（仅移除收藏，不影响已打开的工作区）
+ */
+export async function removeSavedWorkspace(state: ChatStoreState, fsPath: string): Promise<void> {
+  try {
+    const resp = await sendToExtension<any>('workspace.removeSaved', { fsPath })
+    if (Array.isArray(resp?.saved)) {
+      setSavedWorkspaces(state, resp.saved)
+    }
+  } catch (error) {
+    console.warn('[configActions] Failed to remove saved workspace:', error)
+  }
+}
+
+/**
+ * 打开工作区文件夹（不传 fsPath 时由宿主弹出文件夹选择对话框），
+ * 打开后自动加入收藏并同步工作区状态
+ */
+export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: string): Promise<any> {
+  try {
+    const resp = await sendToExtension<any>('workspace.openFolder', { fsPath: fsPath ?? null })
+    if (resp?.activeWorkspaceUri !== undefined) {
+      setCurrentWorkspaceUri(state, resp.activeWorkspaceUri)
+    }
+    if (Array.isArray(resp?.workspaces)) {
+      setWorkspaceList(state, resp.workspaces)
+    }
+    if (Array.isArray(resp?.saved)) {
+      setSavedWorkspaces(state, resp.saved)
+    }
+    return resp
+  } catch (error) {
+    console.warn('[configActions] Failed to open workspace folder:', error)
+    return null
+  }
+}
+
+/**
+ * 打开收藏的工作区：
+ * - 已在当前窗口打开：直接固定（复用 setActiveWorkspace 的对话重绑定逻辑）
+ * - 未打开：走 workspace.openFolder 由宿主打开
+ */
+export async function openSavedWorkspace(state: ChatStoreState, entry: WorkspaceFolderInfo): Promise<any> {
+  const isOpen = state.workspaceList.value.some(ws => ws.uri === entry.uri)
+  if (isOpen) {
+    return setActiveWorkspace(state, entry.uri)
+  }
+  return openWorkspaceFolderAction(state, entry.fsPath)
+}
+
+/**
  * 设置输入框内容
  */
 export function setInputValue(state: ChatStoreState, value: string): void {

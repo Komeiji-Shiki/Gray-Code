@@ -221,7 +221,12 @@ const en: LanguageMessages = {
             monitorClose: 'Close SubAgent Monitor panel',
             workspaceSelector: {
                 auto: 'Follow Active Editor',
-                noWorkspace: 'No Workspace'
+                noWorkspace: 'No Workspace',
+                openWorkspaces: 'Open Workspaces',
+                savedWorkspaces: 'Saved Workspaces',
+                openWorkspaceFolder: 'Open Workspace Folder…',
+                removeWorkspace: 'Remove from saved',
+                noSavedWorkspaces: 'No saved workspaces'
             }
         },
 

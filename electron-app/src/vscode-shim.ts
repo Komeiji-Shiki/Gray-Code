@@ -1508,6 +1508,26 @@ export const commands = {
         }
         return undefined as T;
       }
+      case 'vscode.openFolder': {
+        // 多工作区收藏：把指定文件夹作为当前工作区打开（替换现有工作区）。
+        // 持久化与标题更新由主进程 workspace:openFolder 原生操作完成。
+        const h = host();
+        const arg: any = args[0];
+        const fsPath =
+          arg && typeof arg === 'object' && typeof arg.fsPath === 'string'
+            ? arg.fsPath
+            : typeof arg === 'string'
+              ? arg
+              : '';
+        if (h && fsPath) {
+          try {
+            await h.native('workspace:openFolder', { fsPath });
+          } catch (err) {
+            console.error('[vscode-shim] vscode.openFolder failed:', err);
+          }
+        }
+        return undefined as T;
+      }
       case 'revealFileInOS': {
         const h = host();
         const uri: Uri = args[0];

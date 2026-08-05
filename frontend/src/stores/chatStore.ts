@@ -64,6 +64,10 @@ import {
   setWorkspaceList,
   setActiveWorkspace as setActiveWorkspaceAction,
   setWorkspaceFilter as setWorkspaceFilterAction,
+  loadSavedWorkspaces,
+  removeSavedWorkspace,
+  openWorkspaceFolderAction,
+  openSavedWorkspace,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
   handleRetryStatus,
@@ -659,6 +663,8 @@ export const useChatStore = defineStore('chat', () => {
       // 忽略错误
     }
     
+    await loadSavedWorkspaces(state)
+    
     await loadSavedConfigId(state)
     await loadCurrentConfig(state)
     await loadCheckpointConfig(state)
@@ -790,11 +796,16 @@ export const useChatStore = defineStore('chat', () => {
     // 工作区
     currentWorkspaceUri: state.currentWorkspaceUri,
     workspaceList: state.workspaceList,
+    savedWorkspaces: state.savedWorkspaces,
     workspaceFilter: state.workspaceFilter,
     setCurrentWorkspaceUri: (uri: string | null) => setCurrentWorkspaceUri(state, uri),
     setWorkspaceList: (list: WorkspaceFolderInfo[]) => setWorkspaceList(state, list),
     setActiveWorkspace: (workspaceUri: string | null) => setActiveWorkspaceAction(state, workspaceUri),
     setWorkspaceFilter,
+    loadSavedWorkspaces: () => loadSavedWorkspaces(state),
+    removeSavedWorkspace: (fsPath: string) => removeSavedWorkspace(state, fsPath),
+    openWorkspaceFolder: (fsPath?: string) => openWorkspaceFolderAction(state, fsPath),
+    openSavedWorkspace: (entry: WorkspaceFolderInfo) => openSavedWorkspace(state, entry),
     
     // 输入框
     inputValue: state.inputValue,

@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "publisher": "czocelot",
   "icon": "resources/icon.png",
   "engines": {
@@ -320,6 +320,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/czocelot/Gray-Code-ocelot"
+    "url": "https://github.com/czocelot/Gray-Code-Desktop"
   }
 }

@@ -282,6 +282,8 @@ export interface ChatStoreState {
   currentWorkspaceUri: Ref<string | null>
   /** 打开的工作区文件夹列表 */
   workspaceList: Ref<WorkspaceFolderInfo[]>
+  /** 收藏的工作区文件夹列表（持久化，可跨窗口/重启保留） */
+  savedWorkspaces: Ref<WorkspaceFolderInfo[]>
   /** 输入框内容 */
   inputValue: Ref<string>
   /** 工作区筛选模式 */
