@@ -14,7 +14,11 @@
  * （checkpoint、保存、复制、reroll 全用它），本类只驱动"显示层"文本的节奏，
  * 任何业务逻辑都不受污染。TPS 图等指标必须吃真实 chunk，不要接本显示层。
  *
- * 三层兜底（webview 隐藏时 rAF 被浏览器节流）：
+ * commit 回调：每帧把放出的字素数组交给下游（CharFlow 等显示目标），
+ * frameDurMs 用于批内亚帧错峰，instant=true 表示直通提交（panic 快进 /
+ * flush，跳过淡入动画直接定型）。
+ *
+ * 兜底（webview 隐藏时 rAF 被浏览器节流）：
  * - dt 钳在 100ms：恢复后不会把整段停顿算进单帧
  * - 速率随积压自适应：积压越大放得越快
  * - panic 快进：积压超过阈值直接跳过部分，切回最多 ~lookahead 内追平
@@ -38,17 +42,22 @@ export interface SmoothStreamerOptions {
   maxCps?: number
   /** 积压超过该长度直接快进（panic），防止长时间挂起后狂喷 */
   panic?: number
-  /** commit 最小间隔（ms）：批量合并 markdown 重渲染（视觉无差、成本减半） */
-  commitIntervalMs?: number
 }
 
 const DEFAULT_OPTIONS: Required<SmoothStreamerOptions> = {
   lookahead: 320,
   minCps: 25,
   maxCps: 1200,
-  panic: 6000,
-  commitIntervalMs: 32
+  panic: 6000
 }
+
+/**
+ * commit 回调：
+ * @param graphemes  本帧放出的字素（显示目标按批错峰淡入）
+ * @param frameDurMs 本帧时长（ms），批内错峰间隔的基准
+ * @param instant    直通提交：panic 快进 / flush，跳过淡入直接定型
+ */
+export type SmoothCommit = (graphemes: string[], frameDurMs: number, instant: boolean) => void
 
 // Intl.Segmenter 在部分运行时/TS lib 中缺失，这里做运行时探测 + 安全类型断言
 interface SegmenterLike {
@@ -67,11 +76,9 @@ export class SmoothStreamer {
   private raf = 0
   private last = 0
   private carry = 0
-  private lastCommitAt = 0
-  private pendingCommit = ''
 
   constructor(
-    private readonly commit: (delta: string) => void,
+    private readonly commit: SmoothCommit,
     options?: SmoothStreamerOptions
   ) {
     this.opts = { ...DEFAULT_OPTIONS, ...options }
@@ -82,8 +89,8 @@ export class SmoothStreamer {
   /** 收到一段流式增量文本（真实内容已由调用方累加，这里只进显示池） */
   push(chunk: string): void {
     if (!chunk) return
-    // M2：超长 chunk 预判——按 panic 阈值先把超出部分快进提交，再对剩余部分做字素分割，
-    // 避免"先全量分割成数组、再截断"的峰值内存浪费（显示层仅 cosmetic，语义与旧 drain 快进一致）。
+    // M2：超长 chunk 预判——按 panic 阈值先把超出部分直通提交，再对剩余部分做字素分割，
+    // 避免"先全量分割成数组、再截断"的峰值内存浪费。
     const backlogAfterPush = this.queue.length + chunk.length
     if (backlogAfterPush > this.opts.panic) {
       const overflow = backlogAfterPush - this.opts.panic
@@ -92,8 +99,7 @@ export class SmoothStreamer {
         // 避免在 UTF-16 代理对中间截断（低位代理在前即处于半截状态）
         const low = chunk.charCodeAt(cut)
         if (low >= 0xDC00 && low <= 0xDFFF) cut -= 1
-        this.pendingCommit += chunk.slice(0, cut)
-        this.maybeCommit(true)
+        this.emitDirect(chunk.slice(0, cut))
         chunk = chunk.slice(cut)
       }
     }
@@ -102,17 +108,18 @@ export class SmoothStreamer {
     } else {
       this.queue.push(...Array.from(chunk))
     }
-    // 常规兜底：已有积压超限（chunk 快进后 queue 仍超）时按旧逻辑截断
+    // 常规兜底：chunk 快进后 queue 仍超限（如多次连续大 push）时按旧逻辑截断
     if (this.queue.length > this.opts.panic) {
-      this.drain(this.queue.length - this.opts.panic)
+      this.emitDirect(this.queue.splice(0, this.queue.length - this.opts.panic).join(''))
     }
     this.loop()
   }
 
   /** 立即把积压全部输出（中止/切分支/终结用，不丢尾巴） */
   flush(): void {
-    this.drain(this.queue.length)
-    this.maybeCommit(true)
+    if (this.queue.length) {
+      this.emitDirect(this.queue.splice(0).join(''))
+    }
     this.stop()
   }
 
@@ -122,32 +129,18 @@ export class SmoothStreamer {
     this.stop()
     this.queue = []
     this.carry = 0
-    this.lastCommitAt = 0
-    this.pendingCommit = ''
   }
 
   /** 销毁（不再使用后调用） */
   dispose(): void {
     this.stop()
     this.queue = []
-    this.pendingCommit = ''
   }
 
-  private drain(n: number): void {
-    if (n <= 0) return
-    const text = this.queue.splice(0, n).join('')
-    this.pendingCommit += text
-    this.maybeCommit()
-  }
-
-  private maybeCommit(force = false): void {
-    if (!this.pendingCommit) return
-    const now = performance.now()
-    if (!force && now - this.lastCommitAt < this.opts.commitIntervalMs) return
-    this.lastCommitAt = now
-    const text = this.pendingCommit
-    this.pendingCommit = ''
-    this.commit(text)
+  /** 直通提交：整个增量一次给出，不做字素错峰（panic / flush） */
+  private emitDirect(text: string): void {
+    if (!text) return
+    this.commit(Array.from(text), 0, true)
   }
 
   private stop(): void {
@@ -172,16 +165,13 @@ export class SmoothStreamer {
     )
     this.carry += (cps * dt) / 1000
     const n = Math.floor(this.carry)
-    if (n) {
+    if (n > 0 && this.queue.length) {
       this.carry -= n
-      this.drain(n)
+      const graphemes = this.queue.splice(0, n)
+      if (graphemes.length) this.commit(graphemes, dt, false)
     }
-    this.maybeCommit()
     if (this.queue.length) {
       this.raf = requestAnimationFrame(this.tick)
-    } else if (this.pendingCommit) {
-      // 积压放完但还有未提交尾巴：立即强制提交，避免尾巴一直挂到下一次 push/flush
-      this.maybeCommit(true)
     }
   }
 }

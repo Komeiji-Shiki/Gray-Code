@@ -247,16 +247,20 @@ function pushSmoothTextForMessage(message: Message, deltaText: string, state: Ch
   // H3 off→on / 段落切换：显示基线 = 当前 part 已累计真实文本（不含本次 delta），
   // 首次 commit 时 displayText = baseText + delta，与已渲染真实内容连续、不跳变。
   const partText = lastPart.text
-  const deltaLen = deltaText.length
-  const baseText = deltaLen > 0 && deltaLen <= partText.length
-    ? partText.slice(0, partText.length - deltaLen)
-    : ''
-  pushSmoothText(message.id, partKey, deltaText, mode, baseText, (partKeyAtCommit, displayText) => {
-    // M3：commit 前比较旧值（partKey + text），未变化时跳过 set，避免每次 commit
-    // 都触发整条消息 renderBlocks 全量重算。
-    const prev = state.smoothTexts.get(message.id)
-    if (!prev || prev.partKey !== partKeyAtCommit || prev.text !== displayText) {
-      state.smoothTexts.set(message.id, { partKey: partKeyAtCommit, text: displayText })
+  if (!partText.endsWith(deltaText)) {
+    // 权威快照或异常合并使“本次 delta 位于尾部”的前提失效时，不能继续拼接错误基线。
+    // 立即结束旧显示层并回到真实 parts；下一次可验证的 delta 会从当前真实文本重建。
+    finishSmoothStreamForState(state, message.id)
+    return
+  }
+  const baseText = partText.slice(0, partText.length - deltaText.length)
+  pushSmoothText(message.id, partKey, deltaText, mode, baseText, (messageIdAtSnapshot, partKeyAtSnapshot, displayText) => {
+    // M3+：快照由 manager 低频节流（~120ms），这里只在值变化时写 store.smoothTexts；
+    // 高频动画路径走 manager → CharFlow 直连（手动 DOM），不经 Vue 响应式链。
+    // messageIdAtSnapshot 来自 manager 当前 entry，持久化 id 迁移后不会把旧占位键重新写回来。
+    const prev = state.smoothTexts.get(messageIdAtSnapshot)
+    if (!prev || prev.partKey !== partKeyAtSnapshot || prev.text !== displayText) {
+      state.smoothTexts.set(messageIdAtSnapshot, { partKey: partKeyAtSnapshot, text: displayText })
     }
   })
 }
@@ -312,6 +316,10 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 
   const snapshotContent = chunk.chunk.contentSnapshot
   if (snapshotContent) {
+    // contentSnapshot 表示后端发生了纯文本 delta 无法表达的权威变更（如工具结构变化）。
+    // 旧 entry 的 baseText/partKey 已不再可靠，先终结显示层并切回真实快照；下一条普通
+    // 文本 delta 会以快照内容为新基线重新创建 CharFlow。
+    finishSmoothStreamForState(state, state.streamingMessageId.value)
     const updatedMessage = buildMessageFromContentSnapshot(state.allMessages.value[messageIndex], snapshotContent)
     replaceMessageAt(state, messageIndex, updatedMessage)
   }
@@ -398,6 +406,10 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
  * 处理 toolsExecuting 类型
  */
 export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState): void {
+  // 工具开始执行时模型输出段已经结束；先保存迁移前占位 id，确保持久化 id 替换后
+  // 旧、新两个键都能被 finishSmoothStreamForState 清理。
+  const streamMessageIdAtStart = state.streamingMessageId.value
+
   // 工具即将开始执行（不需要确认的工具，或用户已确认的工具）
   // 在工具执行前先更新消息的计时信息，让前端立即显示
 
@@ -469,6 +481,10 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
     replaceMessageAt(state, messageIndex, updatedMessage)
   }
+
+  // toolsExecuting 是当前模型文本段的终点。放完积压并删除 smoothTexts，消息正文切回
+  // 后端持久化的真实 parts；全局 isStreaming 仍保持 true，以便工具执行期间可以取消。
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   // 注意：不改变 streaming 状态，工具还在执行中
 }
 

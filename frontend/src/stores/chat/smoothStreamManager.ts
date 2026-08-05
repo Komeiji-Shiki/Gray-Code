@@ -9,8 +9,16 @@
  * 真实内容（message.parts / content）由 streamChunkHandlers 照旧累加；
  * 本模块只负责驱动"显示层"文本的节奏。TPS 等指标吃真实 chunk，不经此层。
  *
+ * 显示层（CharFlow）：
+ * - MessageItem 挂载活动尾块 host 时通过 registerSmoothDisplay 注册；
+ *   SmoothStreamer 每帧 commit 的字素由 manager 高频直连 CharFlow.append
+ *   （手动 DOM，完全绕过 Vue 响应式——每秒几十上百次的 DOM 增量不值得走
+ *   vnode diff）。
+ * - smoothTexts 快照降级为低频（~120ms 一次，段落切换/终结强制），仅用于
+ *   组件重建恢复（切标签页/虚拟列表卸载后 restore 累计文本）与 UI 判定。
+ *
  * 显示基线（H3）：entry 记录 baseText（创建/段落切换时该 part 已累计的真实文本，
- * 不含后续 delta）。commit 回调输出 baseText + committed（已提交 delta 累计），
+ * 不含后续 delta）。restore/快照文本 = baseText + committed（已提交 delta 累计），
  * 保证平滑显示与已渲染真实内容连续——档位 off→on 或切标签页回来重建实例时
  * 不会出现"已渲染内容消失重打"的跳变。
  */
@@ -21,8 +29,11 @@ import {
   type SmoothMode,
   type SmoothStreamerOptions
 } from '../../utils/smoothStream'
+import { CharFlow } from '../../utils/charFlow'
 
 interface SmoothEntry {
+  /** 消息 id（随 migrate 更新，commit 回调据此查显示目标） */
+  messageId: string
   streamer: SmoothStreamer
   partKey: string
   mode: SmoothMode
@@ -30,13 +41,148 @@ interface SmoothEntry {
   baseText: string
   /** 已提交（显示层可见）的 delta 累计，displayText = baseText + committed */
   committed: string
+  /** 已提升（promote）给渐进 markdown 层的文本：CharFlow 当前显示 = baseText + committed - promotedText */
+  promotedText: string
+  /** 上次快照时间（performance.now）；null 表示尚未生成首帧快照 */
+  lastSnapshotAt: number | null
+  /** 上次快照的显示文本；null 允许首帧显式发布空基线 */
+  lastSnapshotText: string | null
+  /** 上次快照对应的 partKey；文本相同但段落变化时仍须发布 */
+  lastSnapshotPartKey: string | null
+  /** 快照回调：写入 store.smoothTexts（低频节流，由本模块控制频率） */
+  onSnapshot: (messageId: string, partKey: string, displayText: string) => void
+}
+
+interface SmoothDisplay {
+  host: HTMLElement
+  flow: CharFlow
+  followEnd: boolean
+  noFade: boolean
+  /** 渐进 markdown：已定型文本到达安全段落边界时回调提升的文本 */
+  onPromote?: (text: string) => void
+}
+
+export interface SmoothDisplayOptions {
+  /** 单行预览宿主是否应始终滚动到最新字符 */
+  followEnd?: boolean
+  /** 禁用错峰淡入（直接文本追加）。折叠预览等不适合逐字动画的场景用——
+   * 动画 delay 期间的透明占位字符会把 followEnd 滚动目标挤成空白 */
+  noFade?: boolean
+  /** 渐进 markdown：已定型文本到达安全段落边界（\n\n + fence 配对）时回调提升的文本。
+   * 仅正文尾块启用；thought 折叠/展开预览不启用 */
+  onPromote?: (text: string) => void
 }
 
 const entries = new Map<string, SmoothEntry>()
+/** 显示目标注册表：messageId → 当前挂载的 CharFlow 宿主 */
+const displays = new Map<string, SmoothDisplay>()
+
+/** smoothTexts 快照的最小间隔（ms）：组件判定/恢复用，不需要跟随每帧动画 */
+const SNAPSHOT_INTERVAL_MS = 120
+
+/**
+ * 找最后一个安全的渐进渲染边界：以 \n\n 结尾、且该点之前行首 fence（```/~~~）配对。
+ * fence 未配对时向前回退到更早的空行边界；找不到则返回 0（不提升，等段落完成）。
+ */
+function findPromoteCut(text: string): number {
+  if (text.length < 4) return 0
+  let idx = text.lastIndexOf('\n\n')
+  while (idx > 0) {
+    const cut = idx + 2
+    if (!hasUnclosedFence(text.slice(0, cut))) return cut
+    idx = text.lastIndexOf('\n\n', idx - 1)
+  }
+  return 0
+}
+
+/** 行首 fence（``` / ~~~）是否未配对：未配对时不能提升（半截代码块渲染会崩坏） */
+function hasUnclosedFence(text: string): boolean {
+  let count = 0
+  for (const line of text.split('\n')) {
+    const t = line.trimStart()
+    if (t.startsWith('```') || t.startsWith('~~~')) count++
+  }
+  return count % 2 === 1
+}
+
+/**
+ * 渐进 markdown 提升：已定型文本到达安全段落边界时，把该前缀从 CharFlow 剥离并回调给宿主
+ * （MessageItem 累加进渐进 MarkdownRenderer 即时渲染）。每帧 commit 后调用一次；
+ * settled 通常只有「未完成段落 + 已定型字符」，无 \n\n 时 lastIndexOf 立即返回，扫描成本可控。
+ */
+function maybePromote(entry: SmoothEntry): void {
+  const display = displays.get(entry.messageId)
+  if (!display || typeof display.onPromote !== 'function') return
+  const cut = findPromoteCut(display.flow.settledText)
+  if (cut <= 0) return
+  const promoted = display.flow.promote(cut)
+  if (!promoted) return
+  entry.promotedText += promoted
+  display.onPromote(promoted)
+}
 
 function buildOptions(mode: SmoothMode): SmoothStreamerOptions {
   const preset = mode === 'off' ? undefined : SMOOTH_PRESETS[mode]
   return preset ? { lookahead: preset.lookahead } : {}
+}
+
+/**
+ * 注册某消息的显示目标。相同宿主重复注册是幂等操作，低频 smoothTexts 快照
+ * 不会反复销毁并重建 CharFlow。
+ */
+export function registerSmoothDisplay(
+  messageId: string,
+  host: HTMLElement,
+  options: SmoothDisplayOptions = {}
+): void {
+  const followEnd = options.followEnd === true
+  const noFade = options.noFade === true
+  const onPromote = options.onPromote
+  const existing = displays.get(messageId)
+  if (
+    existing?.host === host &&
+    existing.followEnd === followEnd &&
+    existing.noFade === noFade &&
+    existing.onPromote === onPromote
+  ) {
+    return
+  }
+  if (existing) {
+    existing.flow.dispose()
+    displays.delete(messageId)
+  }
+
+  const flow = new CharFlow(host, 110, noFade || undefined, followEnd)
+  const entry = entries.get(messageId)
+  if (entry) {
+    // 渐进渲染：已提升部分不重复显示（由 onPromote 重放交给 markdown 层），
+    // CharFlow 只恢复未提升的尾巴，保证组件重建（切标签页/虚拟列表）后显示连续。
+    flow.restore((entry.baseText + entry.committed).slice(entry.promotedText.length))
+    if (entry.promotedText && onPromote) {
+      onPromote(entry.promotedText)
+    }
+  }
+  displays.set(messageId, { host, flow, followEnd, noFade, onPromote })
+}
+
+/**
+ * 注销显示目标。传入宿主时只注销该宿主拥有的注册，避免 thought → text
+ * 切换期间旧组件的卸载回调误删刚挂载的新宿主。消息 id 迁移后会按宿主定位新键。
+ */
+export function unregisterSmoothDisplay(messageId: string, host?: HTMLElement | null): void {
+  let key = messageId
+  let existing = displays.get(key)
+
+  if (host && existing?.host !== host) {
+    const relocated = Array.from(displays.entries()).find(([, display]) => display.host === host)
+    if (!relocated) return
+    key = relocated[0]
+    existing = relocated[1]
+  }
+
+  if (!existing || (host && existing.host !== host)) return
+  existing.flow.dispose()
+  displays.delete(key)
 }
 
 /**
@@ -47,7 +193,7 @@ function buildOptions(mode: SmoothMode): SmoothStreamerOptions {
  * @param text      本次 chunk 的增量文本（非累计值）
  * @param mode      平滑档位（'off' 时调用方不应进入本函数）
  * @param baseText  当前 part 已累计的真实文本（不含本次 delta），作为显示基线
- * @param onCommit  显示层文本更新回调（partKey, 累计显示文本），由调用方写入 store.smoothTexts
+ * @param onSnapshot 低频快照回调（partKey, 累计显示文本），写入 store.smoothTexts
  */
 export function pushSmoothText(
   messageId: string,
@@ -55,67 +201,129 @@ export function pushSmoothText(
   text: string,
   mode: SmoothMode,
   baseText: string,
-  onCommit: (partKey: string, displayText: string) => void
+  onSnapshot: (messageId: string, partKey: string, displayText: string) => void
 ): void {
   let entry = entries.get(messageId)
   if (!entry || entry.mode !== mode) {
+    // 档位重建：旧实例先放完积压；promote 边界（promotedText）继承给新实例，
+    // 使 CharFlow 尾巴与宿主渐进 markdown（tailRendered）保持连续，不重复不丢失。
+    let inheritedPromoted = ''
     if (entry) {
       entry.streamer.flush()
+      maybeSnapshot(entry, true)
+      inheritedPromoted = entry.promotedText
       entry.streamer.dispose()
       entries.delete(messageId)
     }
+    // 档位重建：显示目标切到新基线（真实文本），不丢已显示内容
+    const display = displays.get(messageId)
+    if (display) {
+      display.flow.restore(baseText.slice(inheritedPromoted.length))
+    }
     // 先建 entry 再建 streamer：commit 回调需要引用 entry（按引用读取，切换/迁移后仍取当前值）
     const created: SmoothEntry = {
+      messageId,
       streamer: undefined as unknown as SmoothStreamer,
       partKey,
       mode,
       baseText,
-      committed: ''
+      committed: '',
+      promotedText: inheritedPromoted,
+      lastSnapshotAt: null,
+      lastSnapshotText: null,
+      lastSnapshotPartKey: null,
+      onSnapshot
     }
     created.streamer = new SmoothStreamer(
-      (delta) => {
-        created.committed += delta
-        onCommit(created.partKey, created.baseText + created.committed)
+      (graphemes, frameDurMs, instant) => {
+        created.committed += graphemes.join('')
+        const target = displays.get(created.messageId)
+        if (target) {
+          target.flow.append(graphemes, frameDurMs, instant)
+          maybePromote(created)
+        }
+        maybeSnapshot(created)
       },
       buildOptions(mode)
     )
     entries.set(messageId, created)
     entry = created
+    // 首个 delta 入队前先发布当前基线（即使为空），让 Vue 在首个 rAF commit 前挂载 host。
+    maybeSnapshot(created, true)
   }
 
   if (entry.partKey !== partKey) {
     // 段落切换：switchPart 内部先 flush 上一段积压（此时 entry 仍是旧 partKey/baseText，
-    // flush 提交按旧基线计算）；返回后再把基线切到新段落（新 part 的累计真实文本或 ''）。
+    // flush 提交按旧基线计算）；随后注销旧显示目标（旧段落由 renderBlocks 接管为稳定块），
+    // 并把基线切到新段落（新 part 的累计真实文本或 ''）。MessageItem 感知 partKey 变化后
+    // 会重新注册显示目标并 restore 新基线。
     entry.streamer.switchPart()
+    // switchPart 的 flush 可能落在 120ms 节流窗口内；重置 part 身份前强制保存旧段最终快照。
+    maybeSnapshot(entry, true)
+    const oldDisplay = displays.get(messageId)
+    if (oldDisplay) {
+      oldDisplay.flow.finish()
+      oldDisplay.flow.dispose()
+      displays.delete(messageId)
+    }
     entry.baseText = baseText
     entry.committed = ''
+    entry.promotedText = ''
     entry.partKey = partKey
+    maybeSnapshot(entry, true)
   }
   entry.streamer.push(text)
 }
 
-/**
- * 终结清理：先放完积压（不丢尾巴），再销毁实例。
- * 调用方随后应从 store.smoothTexts 删除该消息的显示文本（切回真实 content）。
- */
-export function finishSmoothStream(messageId: string): void {
-  const entry = entries.get(messageId)
-  if (!entry) return
-  entry.streamer.flush()
-  entry.streamer.dispose()
-  entries.delete(messageId)
+/** 低频快照：内容未变化不重复写；节流写 smoothTexts；段落切换/终结时 force 强制立即写。 */
+function maybeSnapshot(entry: SmoothEntry, force = false): void {
+  const now = performance.now()
+  const text = entry.baseText + entry.committed
+  if (entry.lastSnapshotText === text && entry.lastSnapshotPartKey === entry.partKey) return
+  if (!force && entry.lastSnapshotAt !== null && now - entry.lastSnapshotAt < SNAPSHOT_INTERVAL_MS) return
+  entry.lastSnapshotAt = now
+  entry.lastSnapshotText = text
+  entry.lastSnapshotPartKey = entry.partKey
+  entry.onSnapshot(entry.messageId, entry.partKey, text)
 }
 
 /**
- * 消息 id 迁移（占位 id → 后端持久化 id）：同步重命名 manager entry 键，
- * 避免后续按新 id 终结清理时旧条目残留（H1）。
+ * 终结清理：先放完积压（不丢尾巴）、定型显示层并强制快照，再销毁实例。
+ * 显示目标只 finish（内容保留到 UI 切回真实 content），随后由宿主组件调用
+ * unregisterSmoothDisplay 释放。调用方还应从 store.smoothTexts 删除该消息的显示文本。
+ */
+export function finishSmoothStream(messageId: string): void {
+  const entry = entries.get(messageId)
+  if (entry) {
+    entry.streamer.flush()
+    // 终结强制快照：flush 尾巴必须落进 smoothTexts（UI 切回真实 content 前的最后显示）
+    maybeSnapshot(entry, true)
+    entry.streamer.dispose()
+    entries.delete(messageId)
+  }
+  const display = displays.get(messageId)
+  if (display) {
+    display.flow.finish()
+  }
+}
+
+/**
+ * 消息 id 迁移（占位 id → 后端持久化 id）：同步重命名 manager entry 与
+ * 显示目标键，避免后续按新 id 终结清理时旧条目残留（H1）。
  */
 export function migrateSmoothStream(fromId: string, toId: string): void {
   if (fromId === toId) return
   const entry = entries.get(fromId)
-  if (!entry) return
-  entries.delete(fromId)
-  entries.set(toId, entry)
+  if (entry) {
+    entry.messageId = toId
+    entries.delete(fromId)
+    entries.set(toId, entry)
+  }
+  const display = displays.get(fromId)
+  if (display !== undefined) {
+    displays.delete(fromId)
+    displays.set(toId, display)
+  }
 }
 
 /** 全量清理（会话切换/应用销毁等兜底） */
@@ -124,6 +332,10 @@ export function disposeAllSmoothStreams(): void {
     entry.streamer.dispose()
   }
   entries.clear()
+  for (const display of displays.values()) {
+    display.flow.dispose()
+  }
+  displays.clear()
 }
 
 /** 当前是否有该消息的活跃平滑实例（供测试/诊断） */
