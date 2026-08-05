@@ -9,16 +9,26 @@
  */
 import { ref, nextTick } from 'vue'
 import type { Ref } from 'vue'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
 import { handleStreamChunk, type StreamHandlerContext } from '../../stores/chat/streamHandler'
+import { handleToolsExecuting, handleChunkType } from '../../stores/chat/streamChunkHandlers'
+import {
+  disposeAllSmoothStreams,
+  hasSmoothStream,
+  pushSmoothText
+} from '../../stores/chat/smoothStreamManager'
 
 vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn().mockResolvedValue({ success: true })
 }))
 
 import { sendToExtension } from '../../utils/vscode'
+
+afterEach(() => {
+  disposeAllSmoothStreams()
+})
 
 function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
   return {
@@ -163,6 +173,97 @@ describe('streamHandler 终结事件状态复位', () => {
 
     await nextTick()
     expect(processQueue).toHaveBeenCalled()
+  })
+
+  it('toolsExecuting finishes the model text CharFlow and clears migrated smooth state', () => {
+    const smoothTexts = new Map<string, { partKey: string; text: string }>()
+    const state = createState({
+      allMessages: ref<Message[]>([{
+        id: 'placeholder-message',
+        role: 'assistant',
+        content: 'partial answer',
+        timestamp: Date.now(),
+        streaming: true,
+        localOnly: true,
+        parts: [{ text: 'partial answer' }]
+      }] as Message[]),
+      streamingMessageId: ref('placeholder-message'),
+      isStreaming: ref(true),
+      smoothMode: ref('balanced'),
+      smoothTexts: smoothTexts as ChatStoreState['smoothTexts']
+    })
+
+    pushSmoothText(
+      'placeholder-message',
+      'text:0',
+      ' answer',
+      'balanced',
+      'partial',
+      (messageId, partKey, text) => smoothTexts.set(messageId, { partKey, text })
+    )
+    expect(hasSmoothStream('placeholder-message')).toBe(true)
+
+    handleToolsExecuting({
+      type: 'toolsExecuting',
+      content: {
+        id: 'persisted-message',
+        role: 'model',
+        timestamp: Date.now(),
+        parts: [
+          { text: 'partial answer' },
+          { functionCall: { id: 'tool-1', name: 'search', args: {} } }
+        ]
+      },
+      pendingToolCalls: [{ id: 'tool-1' }]
+    } as any, state)
+
+    expect(hasSmoothStream('placeholder-message')).toBe(false)
+    expect(hasSmoothStream('persisted-message')).toBe(false)
+    expect(smoothTexts.size).toBe(0)
+    expect(state.allMessages.value[0].id).toBe('persisted-message')
+    expect(state.allMessages.value[0].streaming).toBe(false)
+    expect(state.isStreaming.value).toBe(true)
+  })
+
+  it('contentSnapshot terminates the stale CharFlow baseline before applying authority', () => {
+    const smoothTexts = new Map<string, { partKey: string; text: string }>()
+    const state = createState({
+      allMessages: ref<Message[]>([{
+        id: 'snapshot-message',
+        role: 'assistant',
+        content: 'local text',
+        timestamp: Date.now(),
+        streaming: true,
+        parts: [{ text: 'local text' }]
+      }] as Message[]),
+      streamingMessageId: ref('snapshot-message'),
+      smoothMode: ref('balanced'),
+      smoothTexts: smoothTexts as ChatStoreState['smoothTexts']
+    })
+
+    pushSmoothText(
+      'snapshot-message',
+      'text:0',
+      ' text',
+      'balanced',
+      'local',
+      (messageId, partKey, text) => smoothTexts.set(messageId, { partKey, text })
+    )
+
+    handleChunkType({
+      type: 'chunk',
+      chunk: {
+        contentSnapshot: {
+          role: 'model',
+          parts: [{ text: 'authoritative text' }]
+        }
+      }
+    } as any, state)
+
+    expect(hasSmoothStream('snapshot-message')).toBe(false)
+    expect(smoothTexts.size).toBe(0)
+    expect(state.allMessages.value[0].content).toBe('authoritative text')
+    expect(state.allMessages.value[0].parts).toEqual([{ text: 'authoritative text' }])
   })
 
   it('非当前会话/迟到流的 content-less complete 不触碰当前会话状态', () => {

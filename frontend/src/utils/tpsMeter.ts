@@ -7,8 +7,9 @@
  * - 定长 ring（30 点 ≈ 6s 历史）随采样滚动；
  * - UI（components/input/TpsBar.vue）通过 subscribe 订阅 { ema, ring, live } 绘制柱状图。
  *
- * live 判定：最近 2s 内有过真实 record 调用。无真实流（开始动画/空闲等待）时
- * UI 自行用随机模拟波动，让启动与空闲阶段的图表保持活性。
+ * live 判定：最近 2s 内有过真实 record 调用。流结束/空闲后 EMA 自然指数衰减，
+ * 衰减到不可见阈值（SETTLE_EPS）以下即精确归零，由 UI 展示为 0 与空画布；
+ * 不注入任何模拟数据。
  *
  * 内存有界：record 事件缓冲有容量上限（MAX_EVENTS），即使无订阅（webview 隐藏/
  * 后台流）导致停表不采样，缓冲也不会无界增长；stop() 清空全部状态，避免重挂载
@@ -31,6 +32,9 @@ const LIVE_WINDOW_MS = 2000
 const RING_SIZE = 30
 /** record 事件缓冲容量上限：超限丢最旧，保证任意场景下 events 有界 */
 const MAX_EVENTS = 1000
+/** 自然归零阈值（tok/s）：无事件到达且 EMA 衰减到该值以下时精确归零，
+ * 让 UI 能稳定判定"已归零"（浮点指数衰减永远不会精确到 0）。 */
+const SETTLE_EPS = 0.05
 
 class TpsMeter {
   private events: { t: number; n: number }[] = []
@@ -100,7 +104,10 @@ class TpsMeter {
     }
     const total = this.events.reduce((sum, e) => sum + e.n, 0)
     const rate = total / (WINDOW_MS / 1000)
-    this.ema = this.ema === 0 ? rate : this.ema * (1 - EMA_ALPHA) + rate * EMA_ALPHA
+    let ema = this.ema === 0 ? rate : this.ema * (1 - EMA_ALPHA) + rate * EMA_ALPHA
+    // 自然归零：无 token 到达时 EMA 指数衰减，衰减到不可见阈值以下即精确归零
+    if (rate === 0 && ema < SETTLE_EPS) ema = 0
+    this.ema = ema
     this.ring.push(this.ema)
     if (this.ring.length > RING_SIZE) this.ring.shift()
     this.lastSample = {

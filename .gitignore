@@ -58,6 +58,7 @@ diff_analyzer.py
 graycode-settings.json
 graycode-settings*.json
 limcode-settings*.json
+splash-preview.html
 
 # local review notes
 report.md

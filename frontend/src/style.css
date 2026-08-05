@@ -112,3 +112,34 @@ textarea {
   font-size: inherit;
   line-height: 1;
 }
+
+/* ---------- CharFlow 流式字符流水线（批内错峰淡入） ----------
+ * CharFlow 手动创建 DOM（不经 Vue），scoped 样式对其不生效，因此放全局。
+ * host 由 CharFlow 构造时添加 .char-flow；chips 为 .cf-chip。
+ * 动画只用 opacity/transform（合成器友好），不给 will-change（避免每个 chip
+ * 独立合成层导致内存自爆）。 */
+.char-flow {
+  white-space: pre-wrap;
+}
+
+.cf-chip {
+  animation: cf-in ease-out both;
+  /* both（含 backwards）：delay 期间保持透明，错峰才不穿帮 */
+}
+
+@keyframes cf-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-chip {
+    animation: none;
+  }
+}

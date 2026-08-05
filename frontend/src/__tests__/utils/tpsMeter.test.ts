@@ -128,6 +128,25 @@ describe('events 容量上限', () => {
   })
 })
 
+describe('自然归零', () => {
+  it('无事件时 EMA 指数衰减到阈值以下 → 精确归零（UI 可稳定判定）', () => {
+    const samples: TpsSample[] = []
+    subscribe((s) => samples.push(s))
+
+    tpsMeter.record(100) // t=0
+    vi.advanceTimersByTime(200) // @200: 首次采样 ema=100
+    expect(samples[0].ema).toBe(100)
+
+    // 事件过期后不再有 token 到达：EMA 每 200ms ×0.7 指数衰减
+    for (let i = 0; i < 40; i++) vi.advanceTimersByTime(200) // 再推 8s
+    const last = samples[samples.length - 1]
+    expect(last.ema).toBe(0)
+    expect(last.ring[last.ring.length - 1]).toBe(0)
+    // 衰减过程可见：并非一停流就瞬间归零
+    expect(samples.some((s) => s.ema > 0 && s.ema < 100)).toBe(true)
+  })
+})
+
 describe('退订与状态清理', () => {
   it('最后一个订阅者取消后停表：不再采样', () => {
     const samples: TpsSample[] = []

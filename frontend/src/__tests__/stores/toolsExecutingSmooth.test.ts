@@ -1,14 +1,16 @@
 /**
- * H1 回归测试：handleToolsExecuting 终结平滑显示层
+ * 回归测试：handleToolsExecuting 终结平滑显示层
  *
  * 问题背景：toolsExecuting 阶段消息置 streaming=false、正文输出结束（后续为工具执行），
  * 但此前未清理平滑显示层条目（smoothTexts + manager entry）。若流在 toolsExecuting 后
  * 异常终止（无 toolIteration/complete/cancelled 终结事件且未走 cancelStream），
  * 平滑条目残留；消息已切回真实 content，残留显示层不再被消费，占位/显示错乱。
  *
- * 修复：handleToolsExecuting 收到 content（消息置非流式）时调用 finishSmoothStreamForState
- * ——放完积压、销毁实例、删除显示文本；工具返回后模型若续写正文，pushSmoothText 以当前
- * part 真实文本为基线重建实例（与段落切换语义一致）。
+ * 修复（合入上游 67d7fb6 后统一）：handleToolsExecuting 在函数末尾无条件调用
+ * finishSmoothStreamForState —— toolsExecuting 即当前模型文本段的终点，即使无 content
+ * 增量同样终结当前流消息的平滑条目；放完积压、销毁实例、删除显示文本，消息正文切回
+ * 后端持久化的真实 parts。工具返回后模型若续写正文，pushSmoothText 以当前 part 真实
+ * 文本为基线重建实例（与段落切换语义一致）。
  */
 import { ref } from 'vue'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -68,7 +70,7 @@ function indexMap(messages: Message[]): Map<string, number> {
   return m
 }
 
-describe('handleToolsExecuting 平滑条目清理（H1）', () => {
+describe('handleToolsExecuting 平滑条目清理', () => {
   beforeEach(() => {
     disposeAllSmoothStreams()
   })
@@ -115,7 +117,7 @@ describe('handleToolsExecuting 平滑条目清理（H1）', () => {
     expect(state.smoothTexts.has('msg_placeholder')).toBe(false)
   })
 
-  it('toolsExecuting 无 content 时不触碰平滑条目（流仍在进行）', () => {
+  it('toolsExecuting 无 content（无正文增量）时同样终结当前流消息的平滑条目（模型文本段终点）', () => {
     const streaming = {
       id: 'msg_keep',
       role: 'assistant',
@@ -136,6 +138,9 @@ describe('handleToolsExecuting 平滑条目清理（H1）', () => {
 
     handleToolsExecuting({ type: 'toolsExecuting' } as unknown as StreamChunk, state)
 
-    expect(hasSmoothStream('msg_keep')).toBe(true)
+    // toolsExecuting 即当前模型文本段终点：无 content 增量也放完积压并删除显示文本，
+    // 消息正文切回后端持久化的真实 parts，不再残留平滑条目（防异常终止泄漏）
+    expect(hasSmoothStream('msg_keep')).toBe(false)
+    expect(state.smoothTexts.has('msg_keep')).toBe(false)
   })
 })

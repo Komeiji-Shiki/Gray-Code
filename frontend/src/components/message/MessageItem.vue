@@ -61,6 +61,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
 import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
 import type { SmoothDisplayText } from '../../stores/chat/types'
+import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
 const { t } = useI18n()
 
@@ -130,7 +131,78 @@ const isStreaming = computed(() => props.message.streaming === true)
 
 // 平滑流式显示层：当前消息正在流出的段落（最后一个 text/thought part）的平滑文本。
 // 流式期间存在（含空字符串占位，表示新段落从 0 开始打字），终结后由 store 删除。
-const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoothTexts.get(props.message.id))
+// 测试 mock 状态可能不含 smoothTexts，缺失时按 undefined 处理（无可选链兜底语义不变）
+const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoothTexts?.get(props.message.id))
+
+// 活动尾块信息：流式期间最后一个 text/thought part（与 smoothText.partKey 匹配）
+// 由 CharFlow 显示层托管。text 尾块在本组件挂载独立 host；thought 尾块保留思维卡片，
+// 由 MessageRenderBlock 在折叠预览或展开内容中挂载 host。
+const tailInfo = computed<{ type: 'text' | 'thought'; partKey: string } | null>(() => {
+  const smooth = smoothText.value
+  if (!smooth || !isStreaming.value) return null
+  const parts = props.message.parts
+  if (!parts || parts.length === 0) return null
+  const lastPart = parts[parts.length - 1]
+  if (typeof lastPart.text !== 'string' || !lastPart.text.trim()) return null
+
+  const type = lastPart.thought === true ? 'thought' : 'text'
+  const prevPart = parts[parts.length - 2]
+  const prevType = prevPart?.thought === true ? 'thought' : 'text'
+  if (prevPart && typeof prevPart.text === 'string' && prevType === type) return null
+
+  const key = `${type}:${parts.length - 1}`
+  if (key !== smooth.partKey) return null
+  return { type, partKey: key }
+})
+
+function isSmoothThoughtBlock(block: RenderBlock): boolean {
+  const tail = tailInfo.value
+  return block.type === 'thought' && tail?.type === 'thought' && block.partKey === tail.partKey
+}
+
+// text 活动尾块 host 生命周期。监听 primitive partKey 而不是整个 smoothText，避免每次
+// 低频快照都注销并重建同一个 CharFlow。
+const tailHostRef = ref<HTMLElement | null>(null)
+let registeredTextHost: HTMLElement | null = null
+let registeredTextMessageId: string | null = null
+
+// 渐进 markdown：流式期间已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 即时渲染格式；未完成尾巴仍在 tailHost 逐字流出。段落切换/终结时清空（稳定块完整接管）。
+const tailRendered = ref('')
+function handleTailPromote(text: string): void {
+  tailRendered.value += text
+}
+
+function releaseTextDisplay(): void {
+  if (!registeredTextHost || !registeredTextMessageId) return
+  unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  registeredTextHost = null
+  registeredTextMessageId = null
+  // 渐进渲染内容随显示层释放：旧段落由稳定块（renderBlocks）完整接管，避免重复显示
+  if (tailRendered.value) tailRendered.value = ''
+}
+
+watch(
+  [
+    () => props.message.id,
+    () => tailInfo.value?.type === 'text' ? tailInfo.value.partKey : null,
+    tailHostRef
+  ],
+  ([messageId, partKey, host]) => {
+    if (
+      registeredTextHost &&
+      (!partKey || registeredTextHost !== host || registeredTextMessageId !== messageId)
+    ) {
+      releaseTextDisplay()
+    }
+    if (partKey && host && !registeredTextHost) {
+      registerSmoothDisplay(messageId, host, { onPromote: handleTailPromote })
+      registeredTextHost = host
+      registeredTextMessageId = messageId
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
 
 
 // 总结消息展开状态
@@ -194,6 +266,8 @@ function stopThinkingTimer() {
 // 组件卸载时清理定时器
 onUnmounted(() => {
   stopThinkingTimer()
+  // 注销当前组件持有的正文 CharFlow 宿主；按 host 校验，不影响刚切换出的 thought host。
+  releaseTextDisplay()
 })
 
 /**
@@ -358,23 +432,23 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushText()
   flushTools()
 
-  // 平滑流式显示：流式期间用显示层文本替换 partKey 匹配的文本/思考块（当前正在流出的段落）。
-  // smoothText 为 undefined（未开启/已终结）时保持真实 parts 文本；
-  // 为空字符串表示新段落刚开始打字，首帧从空开始避免跳变。
-  // H2-B：只替换 partKey 匹配且单 part 的块——
+  // 平滑流式显示：活动 text 尾块摘出，活动 thought 尾块保留卡片外壳但正文由
+  // MessageRenderBlock 内的 CharFlow host 托管。两条高频路径都绕过 Vue/Markdown。
+  // 条件（与 tailInfo 严格对齐）：partKey 匹配 + 单 part 块（partCount===1）。
   // ① 新段落前导空白不推入显示层（H2-A），不会覆盖上一段已完成块；
-  // ② partKey 切换瞬间（switchPart flush 尾巴提交旧段落文本）命中的是旧段落块（文本相同，无视觉变化），
-  //    不会把上一段尾巴替换到新段落块上；
-  // ③ 合并块（多个同类型 part 合入一块）无法按段落粒度替换，跳过（回退真实文本，安全）。
+  // ② partKey 切换瞬间（switchPart flush 尾巴提交旧段落文本）命中的是旧段落块（文本相同，无视觉变化）；
+  // ③ 合并块（多个同类型 part 合入一块）无法按段落粒度摘出，跳过（回退真实文本，安全）。
   const smooth = smoothText.value
-  if (smooth !== undefined && isStreaming.value) {
+  const tail = tailInfo.value
+  if (tail && smooth !== undefined && isStreaming.value) {
     for (let i = blocks.length - 1; i >= 0; i--) {
       const b = blocks[i]
-      if (
-        (b.type === 'text' || b.type === 'thought') &&
-        b.partKey === smooth.partKey &&
-        b.partCount === 1
-      ) {
+      if (tail.type === 'text' && b.type === 'text' && b.partKey === tail.partKey && b.partCount === 1) {
+        blocks.splice(i, 1) // 摘出：该段落显示由 CharFlow 托管
+        break
+      }
+      if (tail.type === 'thought' && b.type === 'thought' && b.partKey === tail.partKey && b.partCount === 1) {
+        // block.text 仅保留低频恢复快照；活动态视觉文本由 CharFlow 逐帧写入。
         blocks[i] = { ...b, text: smooth.text }
         break
       }
@@ -415,6 +489,7 @@ const contentRenderBlocks = computed<RenderBlock[]>(() => {
 // 注意：必须在 renderBlocks 定义之后才能使用
 const isThinking = computed(() => {
   if (!isStreaming.value) return false
+  if (tailInfo.value?.type === 'text') return false
   
   // 如果已经有后端计算的思考时间，说明思考已完成
   if (props.message.metadata?.thinkingDuration) return false
@@ -774,36 +849,52 @@ function handleRestoreAndRetry(checkpointId: string) {
             v-for="block in contentRenderBlocks"
             :key="getRenderBlockKey(block)"
             :block="block"
+            :message-id="message.id"
             :message-role="isUser ? 'user' : 'assistant'"
             :message-backend-index="message.backendIndex"
             :is-streaming="isStreaming"
             :is-thought-expanded="isThoughtExpanded"
             :is-thinking="isThinking"
             :thinking-time-display="thinkingTimeDisplay"
+            :smooth-display-active="isSmoothThoughtBlock(block)"
             :toggle-thought="toggleThought"
-            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay)"
+            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))"
           />
         </template>
-        
-        <!-- 无 parts 但有 content 时：直接渲染 content -->
-        <!-- 用户消息仅渲染 LaTeX，如果有上下文块则使用解析后的内容 -->
-        <InlineContextMessage
-          v-else-if="isUser && message.content && hasContextBlocks(message.content)"
-          :content="message.content"
-        />
 
-        <MarkdownRenderer
-          v-else-if="message.content"
-          :content="message.content"
-          :latex-only="isUser"
-          :is-streaming="isStreaming"
-          class="content-text"
-        />
-
-        <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
-        <div v-else-if="!isStreaming" class="empty-response">
-          {{ t('components.message.emptyResponse') }}
+        <!-- 活动正文尾块：已完成段落渐进 markdown + 活动尾巴 CharFlow 托管（批内错峰淡入流水） -->
+        <div v-if="tailInfo?.type === 'text'" class="tail-stream">
+          <MarkdownRenderer
+            v-if="tailRendered"
+            :content="tailRendered"
+            :latex-only="false"
+            :is-streaming="true"
+            class="content-text"
+          />
+          <div ref="tailHostRef" class="char-flow-host"></div>
         </div>
+
+        <!-- 仅在没有 parts 渲染块和活动尾块时使用 content 兜底。显式互斥，避免新增兄弟节点拆断 v-else-if 链。 -->
+        <template v-if="renderBlocks.length === 0 && !tailInfo">
+          <!-- 用户消息仅渲染 LaTeX；有上下文块时使用内联上下文渲染。 -->
+          <InlineContextMessage
+            v-if="isUser && message.content && hasContextBlocks(message.content)"
+            :content="message.content"
+          />
+
+          <MarkdownRenderer
+            v-else-if="message.content"
+            :content="message.content"
+            :latex-only="isUser"
+            :is-streaming="isStreaming"
+            class="content-text"
+          />
+
+          <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
+          <div v-else-if="!isStreaming" class="empty-response">
+            {{ t('components.message.emptyResponse') }}
+          </div>
+        </template>
         
         <!-- 流式指示器 - Loading 逐字波动 -->
         <span
