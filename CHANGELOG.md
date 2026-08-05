@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Changed
+  - 系统提示词设置页保存按钮加大加宽：模式选择栏右上角保存按钮从 24×24 纯图标改为带「保存配置」文字、最小宽度 88px 的实底主色按钮（图标 + 文字 + hover 变色），与旁边的小图标操作按钮区分开，不再不显眼。
+  - 修复流式平滑尾巴与渐进 markdown 衔接处字号跳变：思考块展开态下 CharFlow 流式尾巴此前继承全局 `--vscode-font-size`（大字号、正常色、直体），与已提升段落的 md 渲染（`--lim-md-font-size: 12px` 灰斜体小字）前后相接时字号/颜色/字重同时跳变。现 `.thought-flow-content` 与 `.tail-stream` 显式对齐同容器 MarkdownRenderer 的 `--lim-md-*` 字体规格（思考块 12px/1.5 灰斜体，正文 13px/1.6 正常色），流式尾巴与已定型段落视觉连续；正文 tail-stream 同步固定规格，用户调大 VSCode 字号后正文也不会再出现跳变。
+  - 开屏动画改为可选：外观设置新增「开屏动画」开关（`ui.appearance.splashEnabled`，默认开启），关闭后启动不再渲染 Splash 直接进入主界面；启动时随外观设置全局加载，保存/重置与其余外观项一致（后端 `generalTypes` 同步补字段类型与默认值）。
+  - 措辞统一：Splash 相关代码注释、i18n 文案与 CHANGELOG 中「灰码少女」的称呼统一改为「Gray logo」（图形线稿取自 resources/icon.svg）。
+
 ## [1.4.2] - 2026-08-06
 
 ### Fixed
@@ -41,7 +47,7 @@
 ### Changed
   - TPS 实时可视化条改为可选：外观设置新增「TPS 实时可视化条」开关（`ui.appearance.tpsBarEnabled`，默认开启），关闭后输入区底部不再渲染曲线（tpsMeter 随之停表，重新开启后从当前流重新统计）；启动时随外观设置全局加载，保存/重置与其余外观项一致。
   - 流式输出期间已完成段落即时渲染 markdown（渐进式提升）：`CharFlow` 新增 `settledText`/`promote`——已定型文本到达安全段落边界（以空行 `\n\n` 结尾、且行首代码围栏 ```/~~~ 配对，未闭合代码块整块保留到围栏闭合）时，把该前缀从字符流水线剥离并交给 `MessageItem` 新增的渐进 `MarkdownRenderer` 即时渲染，未完成尾巴继续逐字淡入；长回答不再等到输出结束才出现格式。段落切换/终结时渐进内容随显示层释放（稳定块完整接管，无重复显示）；档位切换与组件重建（切标签页）时 promote 边界（`promotedText`）随 entry 继承/重放，CharFlow 只恢复未提升尾巴，显示连续不跳变。
-  - 初次载入「开始动画」升级为完整叙事（Splash.vue）：蓝图点阵背景 + 晕影聚焦；笔尖光点沿描线路径执笔画出少女（SMIL `animateMotion` + `mpath` 直接引用线稿 path，先帽后身，与描线 `stroke-dashoffset` 同曲线同节奏）；完稿瞬间线条定影提亮、此后呼吸待机；标题改为「Gray 粗 / Code 细」+ 蓝色终端光标 `▍` 闪烁 + 副标题「AI CODING ASSISTANT」；原横线脉冲替换为 3-bit 格雷码等待线（000→001→011→010→110→111→101→100 循环，每步恰好只变一位，ready 后归一为蓝色实线）；淡出升级为 blur+scale 消散，`.chat-view` 加 0.3s 淡入承接；`DRAW_TOTAL_MS` 1400→1700、`minDisplayMs` 默认 1100→1700，描线/定影/格雷码时间轴严格对齐；prefers-reduced-motion 分支同步更新（SMIL 光点直接隐藏）；测试常量同步。
+  - 初次载入「开始动画」升级为完整叙事（Splash.vue）：蓝图点阵背景 + 晕影聚焦；笔尖光点沿描线路径执笔画出 Gray logo（SMIL `animateMotion` + `mpath` 直接引用线稿 path，先帽后身，与描线 `stroke-dashoffset` 同曲线同节奏）；完稿瞬间线条定影提亮、此后呼吸待机；标题改为「Gray 粗 / Code 细」+ 蓝色终端光标 `▍` 闪烁 + 副标题「AI CODING ASSISTANT」；原横线脉冲替换为 3-bit 格雷码等待线（000→001→011→010→110→111→101→100 循环，每步恰好只变一位，ready 后归一为蓝色实线）；淡出升级为 blur+scale 消散，`.chat-view` 加 0.3s 淡入承接；`DRAW_TOTAL_MS` 1400→1700、`minDisplayMs` 默认 1100→1700，描线/定影/格雷码时间轴严格对齐；prefers-reduced-motion 分支同步更新（SMIL 光点直接隐藏）；测试常量同步。
   - 开始动画「草稿→上色」叙事升级 + 格雷码线可见性修复（Splash.vue）：SVG 改双层结构——色块层（body 按 M…Z 拆块：身体/头发/脸镂空/帽檐/帽身，后画的覆盖重叠区）在描线完成后 1.6s 起 `ink-in` 错峰渗入（身体 1.6s / 帽子 1.75s），线稿同刻退位为细描边（`line-retire` 动画，delay 自元素插入起算，与 settled 类时机解耦）；灰阶色块用 `color-mix` 从 currentColor 派生，亮/暗主题自适应；定影闪光挪到 2.0s 当「定稿章」。格雷码等待线修复「开场即全灭 + 归一不可见」：起跳提前到 1.15s、周期 2.4s→2s、相位旋转到 001 起始、对比度 0.15/0.9→0.12/1、容器与副标题同款 fade-up 入场；ready 退场改两拍——先归一（`merging` 类，0.42s：蓝线合并 + 光标定格实心 + 一次性 `line-flash` 闪光）再淡出（0.45s），归一不再被淡出淹没；`DRAW_TOTAL_MS` 1700→2300、`minDisplayMs` 默认 1700→2300；光标闪烁改 `steps(1, end)` 惯用写法；splash 根加 `role="status"`；prefers-reduced-motion 分支同步（色块直接可见、线稿静态细描边）；测试常量与两拍退场断言同步。
   - 移植 fork 的全仓性能优化（保留插件形态，不涉及桌面版 electron 层）：
     - `getMetadataLight` 接入会话元数据 LRU 缓存（256 条）：对话列表分页（每页 30 条）、用量统计与检查点查询的逐对话读取从「每次 fs 读 + JSON parse」降为纯内存命中；所有写路径统一失效/回填——`saveMetadata` 落盘点收敛为 `persistMetadata`（写后回填缓存），`saveHistory`/`appendHistory`/历史迁移/分支全量重写等刷新 `updatedAt` 的路径失效缓存，删除会话同步失效（含负缓存）；读侧返回深拷贝防调用方污染
@@ -79,7 +85,7 @@
   - 新增回归测试：`getMetadataLight` 元数据缓存（写路径回填免读盘 / 深拷贝防污染 / 负缓存 / append 与删除后失效重读，5 例）、`usedTokens` 单趟逆序语义等价（6 例）。
   - 新增回归测试：行级差分快速失败（无公共行且超预算直接退化 / 预算内不退化且输出与预算耗尽一致）、动态 trace 分配下的预算内精确匹配与回退、`computeLineDiffCached` 缓存命中（同值复用同一结果对象）/ 键区分（起始行、编辑预算）/ 内容变化重新计算（lineDiff 套件扩展到 14 例）。
   - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
-  - 前端启动「开始动画」：新增 `frontend/src/components/Splash.vue`——灰码少女线稿（取自 resources/icon.svg）按「帽子先落笔 → 身体/发丝 → 标题字距收拢浮现 → 横线脉冲等待 ready」节奏以 stroke-dashoffset 描线动画呈现，最短展示约 1100ms、ready 后约 0.45s 淡出并通知父组件，支持 prefers-reduced-motion；App.vue 原 loading-container 加载界面替换为 Splash（ready 沿用 `languageLoaded`，主界面以 v-show 在下方就位避免 pop-in），并清理原 `.loading-container` 死样式（`.spin` 旋转动画保留，供自动总结/重试等其它组件使用）。
+  - 前端启动「开始动画」：新增 `frontend/src/components/Splash.vue`——Gray logo 线稿（取自 resources/icon.svg）按「帽子先落笔 → 身体/发丝 → 标题字距收拢浮现 → 横线脉冲等待 ready」节奏以 stroke-dashoffset 描线动画呈现，最短展示约 1100ms、ready 后约 0.45s 淡出并通知父组件，支持 prefers-reduced-motion；App.vue 原 loading-container 加载界面替换为 Splash（ready 沿用 `languageLoaded`，主界面以 v-show 在下方就位避免 pop-in），并清理原 `.loading-container` 死样式（`.spin` 旋转动画保留，供自动总结/重试等其它组件使用）。
   - TPS 实时可视化条：新增 `frontend/src/components/input/TpsBar.vue` 与前端采样器 `frontend/src/utils/tpsMeter.ts`（模块级单例）——TPS 条位于聊天 Webview 面板最底部一行（InputArea.bottom-toolbar）、总结上下文按钮左侧，flex 布局为「左侧 TPS 标签 + 中间 240×24 canvas 柱状图 + 右侧实时数值」；流式 chunk 到达时 `streamChunkHandlers` 按文本长度粗估 token 数调用 `tpsMeter.record`，采样器 200ms 采样、1s 滑动窗口求瞬时速率、EMA(α≈0.3) 平滑、定长 ring 随采样滚动，柱高按窗口内峰值归一化、颜色跟随 `--vscode-charts-blue` 主题变量；无真实流（开始动画/空闲等待）时 TPS 条自行随机模拟波动（常态低流量 + 偶发突发 + 均值回归），收到真实流数据后自动切换为真实曲线，让启动与空闲阶段的图表保持活性。
   - 新增测试：`SmoothStreamer` 单测（flush 同步输出不丢尾巴 / switchPart 段落切换先放上一段 / panic 快进 / dispose 不输出 / 档位 lookahead 有序）与 `smoothStreamManager` 单测（每消息独立实例 / partKey 切换 flush / 消息间隔离 / 模式变化重建实例）；`lineDiff` 缓存套件扩展（预算 0 与负数退化语义、32 条 FIFO 淘汰、`clearLineDiffCache` 强制重算）；前端全量 403 例通过。
   - 新增修复回归测试：`SmoothStreamer` tick 路径（fake timers + mock rAF：速率累积 / commitIntervalMs 批量 / dt 钳 100ms / panic 快进 / 积压放完尾巴强制提交）与 manager 基线/模式切换（5+ 例）；`tpsMeter`（fake timers：窗口累计 / 1s 修剪 / EMA 递推 / ring 上限 / live 2s 边界 / events 容量上限 / 退订停表 / 停表状态清理，8 例）与 `Splash` 状态机（ready 最短展示 / drawDone 门控 / done 单次 / 定时器清理 / reduced-motion 同步完成 / aria，8 例）；`lineDiff` 边界（`n+m === limit` 不快速失败 / 只读契约守卫 / 预算钳制生效，+3 例）；`MarkdownRenderer` CSS 规则静态断言（流式 `max-height: none` + `overflow: visible` / `keep-expanded` / 规则顺序）。前端全量 439 例通过。
