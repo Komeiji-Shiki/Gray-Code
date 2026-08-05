@@ -10,6 +10,7 @@
  * - done 只触发一次
  * - 卸载清理定时器：不再触发 done
  * - ready 未到时保持展示，ready 到达后才淡出
+ * - ready 后两拍退场：先归一（merged，420ms）再淡出（leaving，450ms）
  * - reduced-motion：无 50ms 静态等待；ready 后按最短时长直接 done（跳过 450ms 淡出）
  * - SVG 装饰性图：保留 aria-hidden、无 role（避免与 aria-hidden 矛盾）
  */
@@ -19,7 +20,9 @@ import { nextTick } from 'vue'
 import Splash from '../../components/Splash.vue'
 
 /** drawDone 完成时刻（与 Splash.vue DRAW_TOTAL_MS 一致） */
-const DRAW_TOTAL_MS = 1400
+const DRAW_TOTAL_MS = 2300
+/** 归一演出时长（与 Splash.vue MERGE_MS 一致） */
+const MERGE_MS = 420
 /** 淡出时长（与 Splash.vue FADE_MS 一致） */
 const FADE_MS = 450
 
@@ -54,14 +57,20 @@ describe('Splash 状态机', () => {
   it('ready 早到也需等最短展示时长', async () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 5000 } })
 
-    // drawDone 在 1400ms 才完成，此前不淡出
+    // drawDone 在 2300ms 才完成，此前不淡出
     vi.advanceTimersByTime(2000)
     await nextTick()
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
-    // drawDone(1400) 后仍需等 minDisplayMs：5000ms 处开始淡出
+    // drawDone(2300) 后仍需等 minDisplayMs：5000ms 处进入归一（两拍退场第一拍）
     vi.advanceTimersByTime(3000) // t = 5000ms（相对挂载）
+    await nextTick()
+    expect(wrapper.classes()).toContain('merged')
+    expect(wrapper.classes()).not.toContain('leaving')
+    expect(wrapper.emitted('done')).toBeUndefined() // 归一中，未淡出
+
+    vi.advanceTimersByTime(MERGE_MS) // 归一结束 → 开始淡出
     await nextTick()
     expect(wrapper.classes()).toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined() // 淡出中，450ms 后才 done
@@ -78,7 +87,12 @@ describe('Splash 状态机', () => {
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS - 1000) // drawDone → 开始淡出
+    vi.advanceTimersByTime(DRAW_TOTAL_MS - 1000) // drawDone → 进入归一（第一拍）
+    await nextTick()
+    expect(wrapper.classes()).toContain('merged')
+    expect(wrapper.classes()).not.toContain('leaving')
+
+    vi.advanceTimersByTime(MERGE_MS) // 归一结束 → 开始淡出（第二拍）
     await nextTick()
     expect(wrapper.classes()).toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
@@ -90,7 +104,7 @@ describe('Splash 状态机', () => {
   it('done 只触发一次', () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS + FADE_MS)
+    vi.advanceTimersByTime(DRAW_TOTAL_MS + MERGE_MS + FADE_MS)
     expect(wrapper.emitted('done')).toHaveLength(1)
 
     vi.advanceTimersByTime(5000)
@@ -108,12 +122,17 @@ describe('Splash 状态机', () => {
   it('ready 未到时保持展示，ready 到达后才淡出', async () => {
     const wrapper = mount(Splash, { props: { ready: false, minDisplayMs: 100 } })
 
-    vi.advanceTimersByTime(2000) // 已过 drawDone 与最短时长
+    vi.advanceTimersByTime(DRAW_TOTAL_MS + 100) // 已过 drawDone 与最短时长
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
     await wrapper.setProps({ ready: true })
-    // 已过最短时长 → 直接进入淡出
+    // 已过最短时长 → 直接进入归一（第一拍）
+    expect(wrapper.classes()).toContain('merged')
+    expect(wrapper.classes()).not.toContain('leaving')
+
+    vi.advanceTimersByTime(MERGE_MS) // 归一结束 → 开始淡出
+    await nextTick()
     expect(wrapper.classes()).toContain('leaving')
 
     vi.advanceTimersByTime(FADE_MS)
