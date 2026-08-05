@@ -121,7 +121,11 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
 
     expect(result).toBe(true)
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
-    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeDefined()
+    const chatStreamCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')
+    expect(chatStreamCall).toBeDefined()
+    // BR-01：chatStream 请求携带窗口 user 消息的稳定节点 id（后端原样落库，
+    // 编辑/重试/分支操作才能按 id 定位——窗口 id 与后端 Content.id 必须一致）
+    expect(chatStreamCall![1].messageId).toBe(state.allMessages.value[0].id)
     // 空闲路径会创建 user 消息 + assistant 占位
     expect(state.allMessages.value).toHaveLength(2)
     expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])

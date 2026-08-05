@@ -197,6 +197,11 @@ export interface Message {
   content: string
   timestamp: number
   /**
+   * 主历史中的父消息节点 ID（BR-01：首条消息为 null）。
+   * 前端据此识别根节点——编辑根节点时无父节点可挂编辑候选，自动降级为「原地保存」。
+   */
+  parentId?: string | null
+  /**
    * 消息来源：'user' 为正常用户输入，'background_task' 为后台任务回流
    */
   source?: 'user' | 'background_task'

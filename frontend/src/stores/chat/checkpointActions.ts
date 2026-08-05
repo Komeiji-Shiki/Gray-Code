@@ -638,6 +638,9 @@ export async function restoreAndEdit(
 
     // 2. 更新本地消息内容和附件
     const targetMessage = state.allMessages.value[targetIndex]
+    // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
+    // 自动降级为 keep（原地改写并截断，语义与编辑对话框「原地保存」一致）
+    const effectiveMode = targetMessage.parentId == null ? 'keep' : 'branch'
     targetMessage.content = newContent
     targetMessage.parts = [{ text: newContent }]
     targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
@@ -684,7 +687,9 @@ export async function restoreAndEdit(
       newText: newContent,
       configId: state.configId.value,
       modelOverride,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 根节点自动降级 keep（错误条重放时保持同一语义）
+      mode: effectiveMode
     }
     state._pendingBranchReplayContext.value = branchReplayContext
     const streamId = generateId()
@@ -698,7 +703,9 @@ export async function restoreAndEdit(
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      mode: effectiveMode
     })
 
   } catch (err: any) {

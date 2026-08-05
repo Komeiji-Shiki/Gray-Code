@@ -4,6 +4,7 @@
  * 覆盖：
  * - loadBranchGraph：成功写入 / 无图 / 损坏降级 / 无会话短路
  * - buildCandidateGroupAt：按父节点推导候选组（≥2 候选；过滤已删除、按 createdAt 排序、活跃下标）
+ * - buildCandidateGroupForNode：按消息节点推导所属候选组（切换器跟随活跃候选，而非父节点）
  * - switchBranchCandidate 成功：调用 IPC → 清理流式/错误残留 → TODO/Build 重置 →
  *   重载历史（重建 messageIndexById/toolResponseIndex）→ 检查点刷新 → 分支图刷新
  * - switchBranchCandidate 失败：回滚 UI 快照 + 错误条写入
@@ -17,6 +18,7 @@ import {
   loadBranchGraph,
   refreshBranchGraph,
   buildCandidateGroupAt,
+  buildCandidateGroupForNode,
   buildActivePathIds,
   buildChildrenIndex,
   switchBranchCandidate,
@@ -246,6 +248,108 @@ describe('buildCandidateGroupAt（按父节点推导候选组）', () => {
     expect(buildCandidateGroupAt(graph, 'u1')).toBeNull()
   })
 })
+
+describe('buildCandidateGroupForNode（按消息节点推导所属候选组，TREE-10 切换器挂载语义）', () => {
+  it('null 图 → null', () => {
+    expect(buildCandidateGroupForNode(null, 'a2')).toBeNull()
+  })
+
+  it('未知节点 → null', () => {
+    expect(buildCandidateGroupForNode(makeGraph({}, 'missing'), 'a2')).toBeNull()
+  })
+
+  it('根节点（自身无父节点）→ null', () => {
+    const graph = makeThreeNodeGraph('a2')
+    expect(buildCandidateGroupForNode(graph, 'u1')).toBeNull()
+  })
+
+  it('活跃候选 → 返回所属候选组（挂在被重试的消息上）', () => {
+    // 模拟 user:1 → ai:2 → ai:3，重试 3 后候选组 {3, 3'} 挂在父节点 2 下；
+    // 切换器应显示在活跃候选（3' 的位置）上，即 nodeId 为候选本身。
+    const graph = makeGraph(
+      {
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a2' }),
+        a2: makeNode('a2', 'u1', { role: 'model', activeChildId: 'b2' }),
+        b1: makeNode('b1', 'a2', { role: 'model', createdAt: 100, parts: [{ text: '旧回答' }] }),
+        b2: makeNode('b2', 'a2', { role: 'model', createdAt: 200, parts: [{ text: '新回答' }] })
+      },
+      'b2'
+    )
+
+    // 活跃候选 b2（重试后生成的新回答）：切换器跟随它
+    const group = buildCandidateGroupForNode(graph, 'b2')
+    expect(group).not.toBeNull()
+    expect(group!.candidates.map(c => c.id)).toEqual(['b1', 'b2'])
+    expect(group!.activeIndex).toBe(1)
+    expect(group!.parentNodeId).toBe('a2')
+
+    // 父节点 a2（候选组的父，自己不是成员）：不显示切换器
+    expect(buildCandidateGroupForNode(graph, 'a2')).toBeNull()
+  })
+
+  it('非活跃候选 → null（旧候选不在主历史 UI）', () => {
+    const graph = makeThreeNodeGraph('a2')
+    // 活跃是 a2，a1 非活跃
+    expect(buildCandidateGroupForNode(graph, 'a1')).toBeNull()
+  })
+
+  it('单候选（无分支点）→ null', () => {
+    const graph = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+    expect(buildCandidateGroupForNode(graph, 'a1')).toBeNull()
+  })
+
+  it('软删候选 → null', () => {
+    const graph = makeGraph(
+      {
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a2' }),
+        a1: makeNode('a1', 'u1', { deleted: true }),
+        a2: makeNode('a2', 'u1')
+      },
+      'a2'
+    )
+    expect(buildCandidateGroupForNode(graph, 'a1')).toBeNull()
+  })
+
+  it('深层活跃路径：切换器跟随末尾活跃候选', () => {
+    const graph = makeGraph(
+      {
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }),
+        a1: makeNode('a1', 'u1', { role: 'model', activeChildId: 'u2' }),
+        a2: makeNode('a2', 'u1', { role: 'model' }),
+        u2: makeNode('u2', 'a1', { role: 'user', activeChildId: 'c2' }),
+        c1: makeNode('c1', 'u2', { role: 'model' }),
+        c2: makeNode('c2', 'u2', { role: 'model' })
+      },
+      'c2'
+    )
+
+    // u2 下的候选组 {c1, c2}：活跃成员 c2 上显示切换器
+    const group = buildCandidateGroupForNode(graph, 'c2')
+    expect(group!.candidates.map(c => c.id)).toEqual(['c1', 'c2'])
+    expect(group!.activeIndex).toBe(1)
+    // 非活跃 c1 不显示
+    expect(buildCandidateGroupForNode(graph, 'c1')).toBeNull()
+    // 更上层 u1 下的候选组 {a1, a2}：活跃成员 a1 上显示切换器（另一处分支点）
+    const groupU1 = buildCandidateGroupForNode(graph, 'a1')
+    expect(groupU1!.candidates.map(c => c.id)).toEqual(['a1', 'a2'])
+    expect(groupU1!.activeIndex).toBe(0)
+  })
+})
+
+function makeThreeNodeGraph(activeTailNodeId: string): BranchGraphData {
+  return makeGraph(
+    {
+      u1: makeNode('u1', null, { role: 'user', activeChildId: activeTailNodeId }),
+      a1: makeNode('a1', 'u1', { createdAt: 100, parts: [{ text: '回答一' }] }),
+      a2: makeNode('a2', 'u1', { createdAt: 200, parts: [{ text: '回答二' }] }),
+      a3: makeNode('a3', 'u1', { createdAt: 300, parts: [{ text: '回答三' }] })
+    },
+    activeTailNodeId
+  )
+}
 
 describe('switchBranchCandidate（TREE-07 切换后重建）', () => {
   beforeEach(() => {

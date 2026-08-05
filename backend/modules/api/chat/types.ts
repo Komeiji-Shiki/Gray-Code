@@ -74,6 +74,13 @@ export interface ChatRequestData {
     
     /** 用户消息（文本） */
     message: string;
+
+    /**
+     * 用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）。
+     * 前端发送时携带自身生成的 id，后端原样落库，保证窗口消息 id 与主历史/分支图一致；
+     * 省略时由后端生成（兼容旧客户端与后端内部调用）。
+     */
+    messageId?: string;
     
     /** 附件列表（可选） */
     attachments?: AttachmentData[];
@@ -496,6 +503,12 @@ export interface ToolConfirmationResponseData {
 
     /** 用户批注（可选，会作为用户消息发送给 AI） */
     annotation?: string;
+
+    /**
+     * 批注用户消息的稳定节点 ID（BR-01 对齐，语义同 ChatRequestData.messageId）。
+     * 前端窗口中的批注消息 id 需与后端落库 id 一致，编辑/重试才能定位。
+     */
+    annotationMessageId?: string;
 
     /** 取消信号 */
     abortSignal?: AbortSignal;

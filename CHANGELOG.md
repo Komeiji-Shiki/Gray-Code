@@ -8,13 +8,6 @@
 
 ## [Unreleased]
 
-### Fixed
-  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
-  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
-
-### Added
-  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
-
 ## [1.4.1] - 2026-08-05
 
 ### Added
@@ -22,8 +15,14 @@
   - 编辑用户消息前端主流程接入 `chat.editBranchStream`（此前仅后端完成）：消息「编辑」与「回档并编辑」从破坏性 `editAndRetryStream`（覆盖原消息）切换为分支编辑——后端创建编辑候选（新 user 节点）并截断主历史，原消息及其子树保留进分支图 sidecar（决策 7：旧分支保留，失败可切回）；本地窗口改写目标消息 + 截断 + 流式占位，置位分支图刷新标记（流结束后 BranchSwitcherBar 显示候选切换器）；流启动失败时重载最后一页 + 检查点恢复前后端一致；`chat.editBranchStream` 加入无超时请求白名单与 VSCodeRequest 类型联合；附件仅更新本地窗口（编辑分支接口无附件字段）
   - 子代理设置页工具白名单/黑名单列表工具名称与悬停描述接入三语 i18n：新增公共模块 `frontend/src/utils/toolLocalization.ts`（工具显示名/描述本地化，缺失时机械转换/回退原文），工具设置页与子代理设置页共用同一套 `toolDisplayNames` / `toolDescriptions` 条目，MCP 外部工具自动回退英文原名
   - 删除消息同步软删分支图子树（后端）：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删消息对应节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar，过期清理仍走保留期机制），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或无分支服务注册时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
+  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
 
 ### Fixed
+  - 修复编辑第一条消息（根节点）报 `INVALID_BRANCH_RELATION: cannot edit the root node`：BranchGraph 为单根模型，根节点没有父节点可挂编辑候选（TREE-03 遗留「根节点编辑暂拒」）。现在编辑根节点时前端自动降级为「原地保存」语义（keep 模式——直接改写根消息并截断其后内容，与编辑对话框「保持当前分支」按钮一致）：`resolveEditTargetNode` 新增 `mode` 参数、keep 模式放行根节点（图模式与线性模式都支持），`editAndRetry` / `restoreAndEdit` 检测目标消息 `parentId == null` 时自动以 `mode='keep'` 发起 `chat.editBranchStream`（错误条重放上下文同步携带 keep 模式）；`contentToMessage` / `contentToMessageEnhanced` 透传 `content.parentId`（Message 类型新增 `parentId` 字段），前端据此识别根节点
+  - 修复编辑用户消息报 `NODE_NOT_FOUND: node not found: <id>`（新对话首条消息即必现）：前端发送用户消息时窗口消息 id 用 `generateId()` 生成，但 `chatStream` 请求只传文本、不传 id，后端落库时由 `ensureNodeId` 另行生成 `randomUUID()`——窗口 id 与主历史/分支图 Content.id 永远不一致，编辑/重试按 id 定位必失败（assistant 消息经流式 `contentToPersistedMessage` 有 id 对齐机制，user 消息没有）。现在 `chatStream` 请求新增 `messageId` 字段（`ChatRequestData.messageId`），前端 `sendMessage` 携带窗口 user 消息 id，后端 `addMessage` 原样落库（省略时仍由后端生成，兼容旧客户端）；工具确认批注同款修复（`annotationMessageId` 经 `toolConfirmation` → `handleToolConfirmation` → `addContent` 透传）。已打开会话中的历史遗留不一致消息，重新加载历史（切走再切回）后窗口 id 与后端对齐
+  - 修复候选切换器（BranchSwitcherBar）挂载位置：切换器改为跟随「当前活跃的候选消息」（用户重 roll / 编辑过的消息本身），而非候选组的父节点——此前 `user:1 → ai:2 → ai:3` 重试 3 后切换器显示在 2 上（候选组挂在父节点 2 下），现在显示在 3'（3 的位置）上；新增 `buildCandidateGroupForNode`（按消息节点推导所属候选组，仅活跃成员返回），`BranchSwitcherBar` prop 从 `parentNodeId` 改为 `nodeId`
+  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
+  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
   - reroll/编辑分支流前端修复：
     - `_pendingBranchRefreshAfterStream` 标记改为按会话隔离（记录发起流的会话 ID）：会话切换后其他会话的终结 chunk 不再误消费并误刷分支图；切回原会话后由该会话的终结 chunk（或后台缓冲 flush）正确消费
     - `retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点，与 editAndRetry 同款身份校验）

@@ -342,9 +342,12 @@ export async function sendMessage(
   attachments?: Attachment[],
   options?: SendMessageOptions
 ): Promise<boolean> {
-  const hiddenFunctionResponse = options?.hidden?.functionResponse
+    const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
   if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return false
+
+  // BR-01：本次发送窗口 user 消息的稳定节点 id（随 chatStream 传给后端原样落库）
+  let pendingUserMessageId: string | undefined
 
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
@@ -407,6 +410,9 @@ export async function sendMessage(
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
         source: options?.source
       }
+      // BR-01：记录窗口消息 id 并随 chatStream 传给后端原样落库，
+      // 保证主历史 Content.id 与窗口消息 id 一致（编辑/重试/分支操作按 id 定位）
+      pendingUserMessageId = userMessage.id
       state.allMessages.value.push(userMessage)
     }
 
@@ -478,6 +484,8 @@ export async function sendMessage(
       conversationId: targetConvId,
       configId: state.configId.value,
       message: messageText,
+      // BR-01：窗口 user 消息的稳定节点 id（后端原样落库，编辑/重试才能按 id 定位）
+      messageId: pendingUserMessageId,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
@@ -1099,6 +1107,9 @@ export async function editAndRetry(
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   const targetMessage = state.allMessages.value[messageIndex]
+  // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
+  // branch 模式自动降级为 keep（原地改写并截断，语义与「原地保存」按钮一致）
+  const effectiveMode = mode === 'branch' && targetMessage.parentId == null ? 'keep' : mode
   targetMessage.content = newMessage
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
@@ -1141,7 +1152,7 @@ export async function editAndRetry(
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      mode: effectiveMode
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -1162,7 +1173,8 @@ export async function editAndRetry(
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      mode: effectiveMode
     })
   } catch (err: any) {
     const branchReplayContext = replayContext
