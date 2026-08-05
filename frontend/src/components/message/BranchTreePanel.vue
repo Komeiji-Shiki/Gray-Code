@@ -8,8 +8,8 @@ import type { BranchNodeData } from '../../stores/chat/types'
 import type { SwitchBranchWorkspaceMode } from '../../stores/chat/branchActions'
 import { formatTime } from '../../utils/format'
 import {
-  buildBranchTreeRows,
-  type BranchTreeNodeRow,
+  buildNavigationBranchRows,
+  buildTrackGraphRows,
   type BranchTreeViewMode
 } from './branchTreeLayout'
 
@@ -18,6 +18,8 @@ const chatStore = useChatStore()
 
 const panelOpen = ref(false)
 const viewMode = ref<BranchTreeViewMode>('navigation')
+/** 完整消息图是否展开全部节点（默认折叠连续线性段） */
+const expandAll = ref(false)
 const pendingDeleteNodeId = ref<string | null>(null)
 const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
@@ -36,7 +38,10 @@ const triggerVisible = computed(() => {
   return Array.from(childCountByParent.values()).some(count => count >= 2)
 })
 
-const rows = computed(() => buildBranchTreeRows(chatStore.branchGraph, viewMode.value))
+/** 分支导航（缩略版）：折叠连续线性消息，只保留分支管理相关节点 */
+const navRows = computed(() => buildNavigationBranchRows(chatStore.branchGraph))
+/** 完整消息图（高级模式）：轨道式泳道布局，轨道数由同时存在的候选分支决定 */
+const trackGraph = computed(() => buildTrackGraphRows(chatStore.branchGraph, expandAll.value))
 const nodeCount = computed(() => Object.keys(chatStore.branchGraph?.nodes ?? {}).length)
 
 function preview(node: BranchNodeData): string {
@@ -69,7 +74,7 @@ function nodeTime(node: BranchNodeData): string {
     : ''
 }
 
-function nodeIcon(row: BranchTreeNodeRow): string {
+function nodeIcon(row: { candidateCount: number; node: BranchNodeData }): string {
   if (row.candidateCount >= 2) return 'codicon-git-branch'
   if (row.node.role === 'user') return 'codicon-account'
   if (row.node.role === 'system') return 'codicon-settings-gear'
@@ -94,10 +99,11 @@ function resetTransient(): void {
 
 function setViewMode(mode: BranchTreeViewMode): void {
   viewMode.value = mode
+  expandAll.value = false
   resetTransient()
 }
 
-function switchTo(row: BranchTreeNodeRow): void {
+function switchTo(row: { id: string; node: BranchNodeData; active: boolean }): void {
   const node = row.node
   if (row.active || node.deleted) return
   pendingDeleteNodeId.value = null
@@ -199,112 +205,257 @@ function cancelRename(): void {
           <span class="branch-tree-view-hint">
             {{ t(`components.message.branchTree.${viewMode === 'navigation' ? 'navigationHint' : 'fullHint'}`) }}
           </span>
+          <button
+            v-if="viewMode === 'full'"
+            class="branch-tree-expand-toggle"
+            :title="t(expandAll ? 'components.message.branchTree.collapseLinearMessages' : 'components.message.branchTree.expandAllMessages')"
+            @click="expandAll = !expandAll"
+          >
+            <i class="codicon" :class="expandAll ? 'codicon-collapse-all' : 'codicon-expand-all'"></i>
+            {{ t(expandAll ? 'components.message.branchTree.collapseLinearMessages' : 'components.message.branchTree.expandAllMessages') }}
+          </button>
         </div>
 
-        <div v-if="!chatStore.branchGraph || rows.length === 0" class="branch-tree-empty">
+        <div
+          v-if="!chatStore.branchGraph || (viewMode === 'navigation' ? navRows.length === 0 : trackGraph.rows.length === 0)"
+          class="branch-tree-empty"
+        >
           {{ t('components.message.branchTree.empty') }}
         </div>
 
         <div v-else class="branch-tree-body" :class="`mode-${viewMode}`">
-          <template v-for="row in rows" :key="row.id">
-            <div
-              v-if="row.type === 'collapsed'"
-              class="branch-tree-collapsed-row"
-              :class="{ active: row.active }"
-              :style="{ '--lane': row.lane }"
-            >
-              <span class="branch-tree-rail"></span>
-              <span class="branch-tree-collapsed-dot">•••</span>
-              <span>{{ t('components.message.branchTree.collapsedMessages', { count: row.count }) }}</span>
-            </div>
+          <template v-if="viewMode === 'navigation'">
+            <template v-for="row in navRows" :key="row.id">
+              <div
+                v-if="row.type === 'collapsed'"
+                class="branch-tree-collapsed-row"
+                :class="{ active: row.active }"
+                :style="{ '--lane': row.lane }"
+              >
+                <span class="branch-tree-rail"></span>
+                <span class="branch-tree-collapsed-dot">•••</span>
+                <span>{{ t('components.message.branchTree.collapsedMessages', { count: row.count }) }}</span>
+              </div>
 
-            <div
-              v-else
-              class="branch-tree-row"
-              :class="{
-                active: row.active,
-                current: row.current,
-                branchPoint: row.candidateCount >= 2,
-                candidateRoot: row.isCandidateRoot,
-                deleted: row.node.deleted,
-                renaming: renamingNodeId === row.node.id
-              }"
-              :style="{ '--lane': row.lane }"
-            >
-              <span class="branch-tree-rail" aria-hidden="true"></span>
-              <span class="branch-tree-node-marker" aria-hidden="true">
-                <i class="codicon" :class="nodeIcon(row)"></i>
-              </span>
+              <div
+                v-else
+                class="branch-tree-row"
+                :class="{
+                  active: row.active,
+                  current: row.current,
+                  branchPoint: row.candidateCount >= 2,
+                  candidateRoot: row.isCandidateRoot,
+                  deleted: row.node.deleted,
+                  renaming: renamingNodeId === row.node.id
+                }"
+                :style="{ '--lane': row.lane }"
+              >
+                <span class="branch-tree-rail" aria-hidden="true"></span>
+                <span class="branch-tree-node-marker" aria-hidden="true">
+                  <i class="codicon" :class="nodeIcon(row)"></i>
+                </span>
 
-              <div class="branch-tree-row-content">
-                <div
-                  class="branch-tree-row-main"
-                  :title="metaTitle(row.node)"
-                  @click="switchTo(row)"
-                >
-                  <span class="branch-tree-role">{{ roleLabel(row.node) }}</span>
-                  <span class="branch-tree-preview">{{ preview(row.node) }}</span>
-                  <span v-if="nodeTime(row.node)" class="branch-tree-time">{{ nodeTime(row.node) }}</span>
-                  <span v-if="row.current" class="branch-tree-badge branch-tree-badge-active">
-                    {{ t('components.message.branch.active') }}
-                  </span>
-                  <span v-else-if="row.candidateCount >= 2" class="branch-tree-badge branch-tree-badge-candidates">
-                    {{ t('components.message.branchTree.candidateCount', { count: row.candidateCount }) }}
-                  </span>
-                  <span v-if="row.node.deleted" class="branch-tree-badge branch-tree-badge-deleted">
-                    {{ t('components.message.branchTree.deleted') }}
-                  </span>
-                </div>
+                <div class="branch-tree-row-content">
+                  <div
+                    class="branch-tree-row-main"
+                    :title="metaTitle(row.node)"
+                    @click="switchTo(row)"
+                  >
+                    <span class="branch-tree-role">{{ roleLabel(row.node) }}</span>
+                    <span class="branch-tree-preview">{{ preview(row.node) }}</span>
+                    <span v-if="nodeTime(row.node)" class="branch-tree-time">{{ nodeTime(row.node) }}</span>
+                    <span v-if="row.current" class="branch-tree-badge branch-tree-badge-active">
+                      {{ t('components.message.branch.active') }}
+                    </span>
+                    <span v-else-if="row.candidateCount >= 2" class="branch-tree-badge branch-tree-badge-candidates">
+                      {{ t('components.message.branchTree.candidateCount', { count: row.candidateCount }) }}
+                    </span>
+                    <span v-if="row.node.deleted" class="branch-tree-badge branch-tree-badge-deleted">
+                      {{ t('components.message.branchTree.deleted') }}
+                    </span>
+                  </div>
 
-                <div class="branch-tree-actions">
-                  <template v-if="renamingNodeId === row.node.id">
-                    <input
-                      v-model="renameInput"
-                      class="branch-tree-rename-input"
-                      :placeholder="t('components.message.branchTree.renamePlaceholder')"
-                      @keydown.enter.prevent="commitRename"
-                      @keydown.esc="cancelRename"
-                    />
-                    <button class="branch-tree-action" :title="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
-                      <i class="codicon codicon-check"></i>
-                    </button>
-                    <button class="branch-tree-action" :title="t('components.message.branchTree.cancel')" @click="cancelRename">
-                      <i class="codicon codicon-close"></i>
-                    </button>
-                  </template>
-                  <template v-else>
-                    <button
-                      v-if="row.node.deleted"
-                      class="branch-tree-action"
-                      :title="t('components.message.branchTree.restore')"
-                      :disabled="chatStore.isSwitchingBranch"
-                      @click="restore(row.node.id)"
-                    >
-                      <i class="codicon codicon-undo"></i>
-                    </button>
-                    <button
-                      v-if="!row.node.deleted"
-                      class="branch-tree-action"
-                      :title="t('components.message.branchTree.rename')"
-                      :disabled="chatStore.isSwitchingBranch"
-                      @click="startRename(row.node)"
-                    >
-                      <i class="codicon codicon-edit"></i>
-                    </button>
-                    <button
-                      v-if="!row.active && !row.node.deleted"
-                      class="branch-tree-action"
-                      :class="{ confirming: pendingDeleteNodeId === row.node.id }"
-                      :title="pendingDeleteNodeId === row.node.id ? t('components.message.branch.deleteConfirm') : t('components.message.branch.delete')"
-                      :disabled="chatStore.isSwitchingBranch"
-                      @click="toggleDelete(row.node.id)"
-                    >
-                      <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'"></i>
-                    </button>
-                  </template>
+                  <div class="branch-tree-actions">
+                    <template v-if="renamingNodeId === row.node.id">
+                      <input
+                        v-model="renameInput"
+                        class="branch-tree-rename-input"
+                        :placeholder="t('components.message.branchTree.renamePlaceholder')"
+                        @keydown.enter.prevent="commitRename"
+                        @keydown.esc="cancelRename"
+                      />
+                      <button class="branch-tree-action" :title="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
+                        <i class="codicon codicon-check"></i>
+                      </button>
+                      <button class="branch-tree-action" :title="t('components.message.branchTree.cancel')" @click="cancelRename">
+                        <i class="codicon codicon-close"></i>
+                      </button>
+                    </template>
+                    <template v-else>
+                      <button
+                        v-if="row.node.deleted"
+                        class="branch-tree-action"
+                        :title="t('components.message.branchTree.restore')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="restore(row.node.id)"
+                      >
+                        <i class="codicon codicon-undo"></i>
+                      </button>
+                      <button
+                        v-if="!row.node.deleted"
+                        class="branch-tree-action"
+                        :title="t('components.message.branchTree.rename')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="startRename(row.node)"
+                      >
+                        <i class="codicon codicon-edit"></i>
+                      </button>
+                      <button
+                        v-if="!row.active && !row.node.deleted"
+                        class="branch-tree-action"
+                        :class="{ confirming: pendingDeleteNodeId === row.node.id }"
+                        :title="pendingDeleteNodeId === row.node.id ? t('components.message.branch.deleteConfirm') : t('components.message.branch.delete')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="toggleDelete(row.node.id)"
+                      >
+                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'"></i>
+                      </button>
+                    </template>
+                  </div>
                 </div>
               </div>
-            </div>
+            </template>
+          </template>
+
+          <template v-else>
+            <template v-for="row in trackGraph.rows" :key="row.id">
+              <div
+                v-if="row.kind === 'collapsed'"
+                class="branch-track-row branch-track-row-collapsed"
+                :class="{ active: row.active }"
+              >
+                <div class="branch-track-graph" :style="{ '--track-count': trackGraph.laneCount }">
+                  <div class="branch-track-cell" :style="{ '--lane': row.lane }">
+                    <span class="branch-track-collapsed-dot">•••</span>
+                  </div>
+                  <div
+                    v-for="line in row.lines"
+                    :key="`line-${line.lane}`"
+                    class="branch-track-cell"
+                    :style="{ '--lane': line.lane }"
+                  >
+                    <span class="branch-track-line" :class="{ active: line.active }">
+                      <i v-if="line.vline" class="branch-track-line-v"></i>
+                      <i v-if="line.left" class="branch-track-line-h left"></i>
+                      <i v-if="line.right" class="branch-track-line-h right"></i>
+                    </span>
+                  </div>
+                </div>
+                <div class="branch-track-info">
+                  {{ t('components.message.branchTree.collapsedMessages', { count: row.count }) }}
+                </div>
+              </div>
+
+              <div
+                v-else
+                class="branch-track-row"
+                :class="{
+                  active: row.active,
+                  current: row.current,
+                  deleted: row.node.deleted,
+                  renaming: renamingNodeId === row.node.id
+                }"
+              >
+                <div class="branch-track-graph" :style="{ '--track-count': trackGraph.laneCount }">
+                  <div class="branch-track-cell" :style="{ '--lane': row.lane }">
+                    <span class="branch-tree-node-marker" :class="{ branchPoint: row.candidateCount >= 2 }">
+                      <i class="codicon" :class="nodeIcon(row)"></i>
+                    </span>
+                  </div>
+                  <div
+                    v-for="line in row.lines"
+                    :key="`line-${line.lane}`"
+                    class="branch-track-cell"
+                    :style="{ '--lane': line.lane }"
+                  >
+                    <span class="branch-track-line" :class="{ active: line.active }">
+                      <i v-if="line.vline" class="branch-track-line-v"></i>
+                      <i v-if="line.left" class="branch-track-line-h left"></i>
+                      <i v-if="line.right" class="branch-track-line-h right"></i>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="branch-tree-row-content">
+                  <div
+                    class="branch-tree-row-main"
+                    :title="metaTitle(row.node)"
+                    @click="switchTo(row)"
+                  >
+                    <span class="branch-tree-role">{{ roleLabel(row.node) }}</span>
+                    <span class="branch-tree-preview">{{ preview(row.node) }}</span>
+                    <span v-if="nodeTime(row.node)" class="branch-tree-time">{{ nodeTime(row.node) }}</span>
+                    <span v-if="row.current" class="branch-tree-badge branch-tree-badge-active">
+                      {{ t('components.message.branch.active') }}
+                    </span>
+                    <span v-else-if="row.candidateCount >= 2" class="branch-tree-badge branch-tree-badge-candidates">
+                      {{ t('components.message.branchTree.candidateCount', { count: row.candidateCount }) }}
+                    </span>
+                    <span v-if="row.node.deleted" class="branch-tree-badge branch-tree-badge-deleted">
+                      {{ t('components.message.branchTree.deleted') }}
+                    </span>
+                  </div>
+
+                  <div class="branch-tree-actions">
+                    <template v-if="renamingNodeId === row.node.id">
+                      <input
+                        v-model="renameInput"
+                        class="branch-tree-rename-input"
+                        :placeholder="t('components.message.branchTree.renamePlaceholder')"
+                        @keydown.enter.prevent="commitRename"
+                        @keydown.esc="cancelRename"
+                      />
+                      <button class="branch-tree-action" :title="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
+                        <i class="codicon codicon-check"></i>
+                      </button>
+                      <button class="branch-tree-action" :title="t('components.message.branchTree.cancel')" @click="cancelRename">
+                        <i class="codicon codicon-close"></i>
+                      </button>
+                    </template>
+                    <template v-else>
+                      <button
+                        v-if="row.node.deleted"
+                        class="branch-tree-action"
+                        :title="t('components.message.branchTree.restore')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="restore(row.node.id)"
+                      >
+                        <i class="codicon codicon-undo"></i>
+                      </button>
+                      <button
+                        v-if="!row.node.deleted"
+                        class="branch-tree-action"
+                        :title="t('components.message.branchTree.rename')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="startRename(row.node)"
+                      >
+                        <i class="codicon codicon-edit"></i>
+                      </button>
+                      <button
+                        v-if="!row.active && !row.node.deleted"
+                        class="branch-tree-action"
+                        :class="{ confirming: pendingDeleteNodeId === row.node.id }"
+                        :title="pendingDeleteNodeId === row.node.id ? t('components.message.branch.deleteConfirm') : t('components.message.branch.delete')"
+                        :disabled="chatStore.isSwitchingBranch"
+                        @click="toggleDelete(row.node.id)"
+                      >
+                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'"></i>
+                      </button>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </template>
           </template>
         </div>
       </section>
@@ -464,6 +615,73 @@ function cancelRename(): void {
 .branch-tree-collapsed-dot { position: relative; z-index: 1; margin-left: -3px; padding: 0 3px; letter-spacing: 1px; background: var(--vscode-editor-background); }
 .branch-tree-collapsed-row.active .branch-tree-rail { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 45%, var(--vscode-panel-border)); }
 .mode-navigation .branch-tree-row { min-height: 40px; }
+.branch-tree-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 9px;
+  margin-left: auto;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+.branch-tree-expand-toggle:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+/* ===== 轨道式完整消息图（高级模式） ===== */
+.branch-track-row { min-height: 36px; display: flex; align-items: stretch; }
+.branch-track-row-collapsed { min-height: 27px; align-items: center; }
+.branch-track-graph {
+  --track-size: 22px;
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--track-count), var(--track-size));
+}
+.branch-track-cell { position: relative; grid-column: calc(var(--lane) + 1); }
+.branch-track-line { position: absolute; inset: 0; pointer-events: none; }
+.branch-track-line-v,
+.branch-track-line-h { position: absolute; border-color: var(--vscode-panel-border); }
+.branch-track-line-v { left: 50%; top: 0; bottom: 0; border-left: 1px solid; }
+.branch-track-line-h { top: 50%; height: 0; border-top: 1px solid; }
+.branch-track-line-h.left { left: 0; right: 50%; }
+.branch-track-line-h.right { left: 50%; right: 0; }
+.branch-track-line.active .branch-track-line-v,
+.branch-track-line.active .branch-track-line-h {
+  border-color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 55%, var(--vscode-panel-border));
+}
+.branch-track-collapsed-dot {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 2px;
+  letter-spacing: 1px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  font-size: 10px;
+}
+.branch-track-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 62%, transparent);
+}
+.branch-track-row.current .branch-tree-row-content { background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 9%, transparent); }
+.branch-track-row.deleted { opacity: 0.55; }
+.branch-track-row:not(.active):not(.deleted) .branch-tree-row-main { cursor: pointer; }
+.branch-track-row:not(.active):not(.deleted) .branch-tree-row-main:hover { background: var(--vscode-list-hoverBackground); }
+.branch-track-row:hover .branch-tree-actions,
+.branch-track-row.renaming .branch-tree-actions,
+.branch-tree-action.confirming { opacity: 1; }
 .workspace-confirm-secondary { width: 100%; margin-top: 10px; padding: 6px 14px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.15)); cursor: pointer; }
 .workspace-confirm-secondary:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.25)); }
 @media (max-width: 520px) {
@@ -471,6 +689,7 @@ function cancelRename(): void {
   .branch-tree-view-hint { display: none; }
   .branch-tree-row,
   .branch-tree-collapsed-row { --lane-size: 16px; }
+  .branch-track-graph { --track-size: 16px; }
   .branch-tree-role { display: none; }
 }
 </style>

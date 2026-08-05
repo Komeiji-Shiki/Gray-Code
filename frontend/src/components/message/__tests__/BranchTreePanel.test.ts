@@ -81,20 +81,35 @@ describe('BranchTreePanel 入口与双模式', () => {
     expect(wrapper.find('.branch-tree-panel-box').exists()).toBe(false)
   })
 
-  it('切换完整消息模式后显示所有节点，线性后代保持同一轨道', async () => {
+  it('完整消息图默认折叠线性段，轨道列数由同时存在的候选分支决定', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
     await wrapper.findAll('.branch-tree-view-tab')[1].trigger('click')
 
-    expect(wrapper.find('.branch-tree-view-tab.selected').text()).toContain('完整消息')
-    expect(wrapper.findAll('.branch-tree-collapsed-row')).toHaveLength(0)
-    const rows = wrapper.findAll('.branch-tree-row')
-    expect(rows).toHaveLength(6)
-    expect(rows[0].attributes('style')).toContain('--lane: 0')
-    expect(rows[1].attributes('style')).toContain('--lane: 0')
-    expect(rows[2].attributes('style')).toContain('--lane: 0')
-    expect(rows[3].attributes('style')).toContain('--lane: 0')
-    expect(rows[4].attributes('style')).toContain('--lane: 1')
+    expect(wrapper.find('.branch-tree-view-tab.selected').text()).toContain('完整消息图')
+    // 轨道列数：u1 轨 0、a2 轨 1、aDel 轨 2 → 3 列
+    expect(wrapper.find('.branch-track-graph').attributes('style')).toContain('--track-count: 3')
+    // 默认折叠 middle 线性段：5 个节点行 + 1 个折叠行
+    expect(wrapper.findAll('.branch-track-row')).toHaveLength(6)
+    expect(wrapper.findAll('.branch-track-row-collapsed')).toHaveLength(1)
+    expect(wrapper.findAll('.branch-tree-row')).toHaveLength(0)
+    expect(wrapper.find('.branch-track-row-collapsed').text()).toContain('已折叠 1 条连续消息')
+    // 根节点保持轨道 0
+    expect(wrapper.find('.branch-track-row .branch-track-cell').attributes('style')).toContain('--lane: 0')
+  })
+
+  it('展开完整消息后显示全部节点，开关文案切换', async () => {
+    chatStoreMock.branchGraph = makeFixtureGraph()
+    const wrapper = await mountOpen()
+    await wrapper.findAll('.branch-tree-view-tab')[1].trigger('click')
+
+    await wrapper.find('.branch-tree-expand-toggle').trigger('click')
+    expect(wrapper.findAll('.branch-track-row')).toHaveLength(6)
+    expect(wrapper.findAll('.branch-track-row-collapsed')).toHaveLength(0)
+    // middle 线性段恢复为节点行
+    const previews = wrapper.findAll('.branch-track-row .branch-tree-preview').map(el => el.text())
+    expect(previews).toContain('线性中段')
+    expect(wrapper.find('.branch-tree-expand-toggle').text()).toContain('收起线性段')
   })
 })
 
