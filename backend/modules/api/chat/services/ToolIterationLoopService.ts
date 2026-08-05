@@ -74,6 +74,19 @@ export const STREAM_CANCEL_TOOL_SETTLE_GRACE_MS = 3000;
 export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
 
 /**
+ * 收尾窗口超时后给 gen.return() 的回收窗口（毫秒）。
+ *
+ * M2：工具不响应 abort 且永不结束时，drain 超时返回前必须显式调用 gen.return()，
+ * 让 executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放等）有机会执行。
+ * 但生成器若挂在某个不可中断的 await 上，return() 也只能排队等待——窗口结束即放弃并记录
+ * 日志（JS 无法强制中断挂起的 promise），避免请求进一步被拖长。
+ */
+export const GEN_RETURN_RECOVERY_GRACE_MS = 500;
+
+/** drain 收尾日志（模块级，供 drainToolExecutionGeneratorAfterAbort 使用） */
+const drainLog = Logger.get('ToolLoopDrain');
+
+/**
  * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
  *
  * 必须先等 initialNext（即主循环里那次正在恢复生成器的 next() 请求）：
@@ -84,17 +97,20 @@ export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
  *
  * 窗口（graceMs）内拿到最终值则返回；超时（工具不响应 abort 且永不结束）返回 undefined，
  * 调用方走既有取消路径，保证请求不永久挂起。
+ *
+ * M2：超时路径会显式调用 gen.return() 回收生成器（带独立短窗口），确保
+ * executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放）尽量执行，
+ * 避免生成器被放弃后资源泄漏。
  */
 export async function drainToolExecutionGeneratorAfterAbort(
     gen: AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void>,
     initialNext: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>,
     graceMs: number
 ): Promise<ToolExecutionFullResult | undefined> {
-    const drainDeadline = Date.now() + graceMs;
-    const raceWithDeadline = <T>(promise: Promise<T>): Promise<T | undefined> => {
+    const raceWithTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), Math.max(0, drainDeadline - Date.now()));
+            timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
         });
         // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
         promise.then(
@@ -104,13 +120,39 @@ export async function drainToolExecutionGeneratorAfterAbort(
         return Promise.race([promise, timeoutPromise]);
     };
 
-    let drained = await raceWithDeadline(initialNext);
+    const drainDeadline = Date.now() + graceMs;
+    let drained = await raceWithTimeout(initialNext, drainDeadline - Date.now());
     while (drained !== undefined && !drained.done && Date.now() < drainDeadline) {
-        drained = await raceWithDeadline(gen.next());
+        drained = await raceWithTimeout(gen.next(), drainDeadline - Date.now());
     }
 
     if (drained !== undefined && drained.done) {
         return drained.value as ToolExecutionFullResult;
+    }
+
+    // M2：窗口超时（工具不响应 abort 且永不结束）——回收生成器，让 try/finally 执行。
+    // return 给独立短窗口：生成器若挂在不可中断的 await 上，return() 只能排队，窗口结束
+    // 即放弃（finally 无法强制执行），记录日志便于排查泄漏。
+    try {
+        // TReturn 为 ToolExecutionFullResult，undefined 需经类型断言传入
+        const returnResult = gen.return(undefined as unknown as ToolExecutionFullResult);
+        // 伪生成器（测试 mock 等）的 return() 可能不返回 promise：此时没有 finally 可回收，
+        // 直接放弃，不做竞速（raceWithTimeout 需要 promise）。
+        if (!returnResult || typeof (returnResult as Promise<unknown>)?.then !== 'function') {
+            return undefined;
+        }
+        const returned = await raceWithTimeout(returnResult as Promise<unknown>, GEN_RETURN_RECOVERY_GRACE_MS);
+        if (returned === undefined) {
+            drainLog.warn('drain_return_timeout', {
+                graceMs,
+                note: 'generator did not respond to return() within grace window; its finally may not have run',
+            });
+        }
+    } catch (error) {
+        drainLog.warn('drain_return_failed', {
+            graceMs,
+            error: (error as Error)?.message ?? String(error),
+        });
     }
     return undefined;
 }
@@ -334,6 +376,52 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * 会话级自动总结已用次数：conversationId → { turnStartMessageId, attempts }。
+     *
+     * M3：autoSummarizeAttempts 原为每次 runToolLoop / runNonStreamLoop 的局部变量，
+     * 工具确认后 isNewTurn=false 的续跑会重新从 0 计数，maxAutoSummarizeAttemptsPerTurn
+     * 形同虚设。这里以「回合起始用户消息 id」作为真实用户回合标识：新回合清零，续跑读取并
+     * 累加。同一会话在 H1 写序竞态修复后不会并发两个流式循环（webview 层等待旧流退出），
+     * 单写者假设成立；新回合 set 覆盖旧条目即完成清理，Map 不随回合数增长。
+     */
+    private readonly turnAutoSummarizeAttempts = new Map<string, { turnStartMessageId: string; attempts: number }>();
+
+    /**
+     * M3：解析本回合已用的自动总结尝试次数。
+     *
+     * - 新真实用户回合（isNewTurn=true）或回合锚点变化（总结等结构变化导致起始消息漂移）：
+     *   清零并记录新锚点；
+     * - 回合续跑（retry / 工具确认后的继续，isNewTurn=false 且锚点未变）：复用已用次数。
+     */
+    private resolveTurnAutoSummarizeAttempts(
+        conversationId: string,
+        turnStartMessageId: string | undefined,
+        isNewTurn: boolean,
+    ): number {
+        const anchor = typeof turnStartMessageId === 'string' && turnStartMessageId.trim()
+            ? turnStartMessageId.trim()
+            : '';
+        const current = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (isNewTurn || anchor !== current?.turnStartMessageId) {
+            this.turnAutoSummarizeAttempts.set(conversationId, { turnStartMessageId: anchor, attempts: 0 });
+            return 0;
+        }
+        return current.attempts;
+    }
+
+    /**
+     * M3：累加并持久化一次自动总结尝试（供总结分支在 autoSummarizeAttempts++ 处调用）。
+     */
+    private consumeTurnAutoSummarizeAttempt(conversationId: string, currentAttempts: number): number {
+        const nextAttempts = currentAttempts + 1;
+        const entry = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (entry) {
+            entry.attempts = nextAttempts;
+        }
+        return nextAttempts;
+    }
+
+    /**
      * preserve 策略启用时，把当前回合之前所有已缓存动态上下文的用户回合锚定为 preserve。
      *
      * 这里必须同步更新传入的 history：不同存储适配器对 loadHistory 的引用语义不一致，
@@ -512,7 +600,6 @@ export class ToolIterationLoopService {
         // 上下文裁剪/自动总结只允许在真实用户回合边界推进一次。工具确认后的继续属于同一回合，
         // 只能复用已有起点；否则前台 SubAgent 的大 functionResponse 会在回合中途挤掉整段旧历史。
         let contextManagementEvaluatedForTurn = !isNewTurn;
-        let autoSummarizeAttempts = 0;
         // 新回合（含总结成功后重新评估）不继承上一回合的 fallback 切点，重新规划。
         if (isNewTurn) {
             this.granularFallbackStartByConversation.delete(conversationId);
@@ -536,6 +623,13 @@ export class ToolIterationLoopService {
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // M3：自动总结已用次数提升到「真实用户回合」级——新回合清零，续跑（isNewTurn=false）
+        // 从会话级记录读取已用次数，避免续跑重新从 0 计数导致 maxAutoSummarizeAttemptsPerTurn 失效。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -627,8 +721,9 @@ export class ToolIterationLoopService {
                 this.summarizeService &&
                 autoSummarizeAttempts < maxAutoSummarizeAttempts
             ) {
-                autoSummarizeAttempts++;
-                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
                 // 先通知前端显示“自动总结中”提示
                 yield {
@@ -1450,12 +1545,13 @@ export class ToolIterationLoopService {
         modelOverride?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        isNewTurn: boolean = true
+        isNewTurn: boolean = true,
+        abortSignal?: AbortSignal,
+        summarizeAbortSignal?: AbortSignal
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
         let contextManagementEvaluatedForTurn = !isNewTurn;
-        let autoSummarizeAttempts = 0;
         // 新回合不继承上一回合的 fallback 切点，重新规划。
         if (isNewTurn) {
             this.granularFallbackStartByConversation.delete(conversationId);
@@ -1471,6 +1567,12 @@ export class ToolIterationLoopService {
         // 不能重新生成并让动态上下文跟随历史尾部漂移。
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // M3：与流式路径一致——自动总结已用次数按「真实用户回合」记录，续跑读取并累加。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -1543,13 +1645,23 @@ export class ToolIterationLoopService {
                 this.summarizeService &&
                 autoSummarizeAttempts < maxAutoSummarizeAttempts
             ) {
-                autoSummarizeAttempts++;
-                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration });
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
-                const summarizeResult = await this.summarizeService.handleAutoSummarize(
-                    conversationId,
-                    configId
-                );
+                // H5：非流式路径透传 abort 信号——主请求取消（abortSignal）或仅取消总结
+                // （summarizeAbortSignal）任一触发都中止总结调用，与流式路径对齐。
+                const merged = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
+                let summarizeResult: Awaited<ReturnType<SummarizeService['handleAutoSummarize']>>;
+                try {
+                    summarizeResult = await this.summarizeService.handleAutoSummarize(
+                        conversationId,
+                        configId,
+                        merged.signal
+                    );
+                } finally {
+                    merged.dispose();
+                }
 
                 if (summarizeResult.success) {
                     // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，

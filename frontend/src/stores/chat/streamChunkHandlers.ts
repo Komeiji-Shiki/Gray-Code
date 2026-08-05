@@ -24,6 +24,29 @@ function getNextBackendIndex(state: ChatStoreState): number {
 }
 
 /**
+ * H4：无 streamId 的 error/cancelled chunk 降级归属判定。
+ *
+ * 后端部分终结事件（error/cancelled）不携带 streamId，此时 handleStreamChunk 的
+ * streamId 过滤无法拦截它们。当“当前流存在活跃 streamId”（说明有更新的请求在跑）
+ * 时，这类 chunk 无法证明属于当前流——它可能是旧请求的迟到回调。
+ *
+ * 判定规则（核心：旧流的迟到终结 chunk 不能删除/改写新请求创建的占位消息）：
+ * - chunk 无 conversationId：无法归属 → 视为“未确认”迟到（调用方只记错误，不删消息）；
+ * - chunk.conversationId 与当前会话不一致：迟到；
+ * - 目标占位消息创建时间晚于 chunk.createdAt：chunk 属于更早的请求 → 迟到。
+ *
+ * 返回 true 表示该 chunk 应被当作迟到处理：不得触碰占位消息，也不得复位当前流状态。
+ */
+function isLateTerminalChunkWithoutStreamId(chunk: StreamChunk, state: ChatStoreState): boolean {
+  if (chunk.streamId || !state.activeStreamId.value) return false
+  if (!chunk.conversationId) return true
+  if (chunk.conversationId !== state.currentConversationId.value) return true
+  const targetMessage = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
+  if (!targetMessage) return false
+  return typeof chunk.createdAt === 'number' && chunk.createdAt < targetMessage.timestamp
+}
+
+/**
  * 把后端已持久化的 Content 投影为消息，并用稳定节点 ID 替换前端流式占位 ID。
  *
  * 旧后端没有回传 content.id 时保留占位 ID；新后端回传稳定 ID 时同步
@@ -986,6 +1009,13 @@ export function handleAutoSummary(
     return
   }
 
+  const summaryContent = chunk.summaryContent
+  // M1：与 parsers 对齐——summaryContent 缺 parts 字段时按空数组容错，
+  // 避免 contentToMessageEnhanced 抛 TypeError 中断流式处理
+  const normalizedSummaryContent: Content = {
+    ...summaryContent,
+    parts: Array.isArray(summaryContent.parts) ? summaryContent.parts : []
+  }
   const insertIndex = chunk.insertIndex
 
   // 去重：避免重复插入同一个 summary
@@ -1015,9 +1045,9 @@ export function handleAutoSummary(
     }
   }
 
-  const summaryMessage = contentToMessageEnhanced(chunk.summaryContent)
+  const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
   summaryMessage.backendIndex = insertIndex
-  summaryMessage.timestamp = chunk.summaryContent.timestamp || Date.now()
+  summaryMessage.timestamp = summaryContent.timestamp || Date.now()
   summaryMessage.localOnly = false
   summaryMessage.streaming = false
 
@@ -1037,6 +1067,17 @@ export function handleAutoSummary(
  * 处理 cancelled 类型
  */
 export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void {
+  // H4：无 streamId 的迟到 cancelled chunk：不删除/改写新请求的占位消息，也不复位当前流状态
+  if (isLateTerminalChunkWithoutStreamId(chunk, state)) {
+    console.warn('[streamChunkHandlers] Late cancelled chunk without streamId ignored (new stream active)', {
+      conversationId: chunk.conversationId,
+      createdAt: chunk.createdAt,
+      streamingMessageId: state.streamingMessageId.value,
+      activeStreamId: state.activeStreamId.value
+    })
+    return
+  }
+
   // 竞态检测：判断这个 cancelled chunk 是否属于已被 cancelStream() 清理过的旧请求。
   // 如果 cancelStream() 已经清理了状态并且新请求已经开始（streamingMessageId 已变为新 ID），
   // 此时迟到的 cancelled chunk 不应该重置新请求的全局状态。
@@ -1160,6 +1201,24 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
  * 处理 error 类型
  */
 export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
+  // H4：无 streamId 的迟到 error chunk：不删除新请求的占位消息，也不复位当前流状态。
+  // 无 conversationId 时无法归属，保守只记错误不删消息；可归属的迟到 chunk 直接忽略。
+  if (isLateTerminalChunkWithoutStreamId(chunk, state)) {
+    if (!chunk.conversationId) {
+      state.error.value = chunk.error || {
+        code: 'STREAM_ERROR',
+        message: 'Stream error'
+      }
+    }
+    console.warn('[streamChunkHandlers] Late error chunk without streamId ignored (new stream active)', {
+      conversationId: chunk.conversationId,
+      createdAt: chunk.createdAt,
+      streamingMessageId: state.streamingMessageId.value,
+      activeStreamId: state.activeStreamId.value
+    })
+    return
+  }
+
   // 竞态检测：与 handleCancelled 相同的逻辑
   const lastCancelledId = state._lastCancelledStreamId.value
   const isStaleCallback = !chunk.streamId && !!(
