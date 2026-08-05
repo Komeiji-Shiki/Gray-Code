@@ -15,7 +15,7 @@ import {
   flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
-import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, trimWindowFromTop } from './windowUtils'
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 
@@ -875,6 +875,19 @@ export function handleComplete(
   addCheckpoint: (checkpoint: CheckpointRecord) => void,
   updateConversationAfterMessage: () => Promise<void>
 ): void {
+  // H4 同款守卫：无 streamId 的迟到 complete（审批门闸重启/后台缓冲等场景，旧流已退、
+  // 新流已开始）会覆盖新流刚创建的占位消息并复位 activeStreamId，之后新流所有 chunk
+  // 被 streamId 过滤丢弃——新回答永久丢失、界面显示旧内容。与 cancelled/error 同一防御层级。
+  if (isLateTerminalChunkWithoutStreamId(chunk, state)) {
+    console.warn('[streamChunkHandlers] Late complete chunk without streamId ignored (new stream active)', {
+      conversationId: chunk.conversationId,
+      createdAt: chunk.createdAt,
+      streamingMessageId: state.streamingMessageId.value,
+      activeStreamId: state.activeStreamId.value
+    })
+    return
+  }
+
   // 竞态检测：如果 cancelStream 已清理旧请求，而新请求已开始，
   // 迟到的旧请求 complete chunk 不应该影响新请求的消息和状态
   const lastCancelledId = state._lastCancelledStreamId.value
@@ -1035,6 +1048,8 @@ export function handleAutoSummary(
       }
     }
     syncTotalMessagesFromWindow(state)
+    // 窗口前插入会顶掉一条可见消息：同步折叠提示，否则 foldedMessageCount 虚高
+    syncFoldedHistoryHint(state)
     return
   }
 

@@ -261,12 +261,19 @@ export class StdioMcpClient extends EventEmitter {
     async disconnect(): Promise<void> {
         if (this.process && this.process.pid) {
             const pid = this.process.pid;
+            let timeoutHandle: NodeJS.Timeout | undefined;
             const exitOrTimeout = Promise.race([
                 new Promise<void>((resolve) => {
-                    this.process!.once('exit', () => resolve());
+                    this.process!.once('exit', () => {
+                        // 进程先退出时清除 10s 兜底定时器，避免 MCP 频繁重启时悬空 handle 累积
+                        if (timeoutHandle) {
+                            clearTimeout(timeoutHandle);
+                        }
+                        resolve();
+                    });
                 }),
                 new Promise<void>((resolve) => {
-                    setTimeout(resolve, 10000);
+                    timeoutHandle = setTimeout(resolve, 10000);
                 })
             ]);
             treeKill(pid, 'SIGTERM', (err?: Error) => {

@@ -16,6 +16,27 @@ import { Logger, LogLevel } from '../../backend/core/logger';
 // 不能使用 require('./vscode-shim')（打包产物中不存在该独立文件，运行时会抛 MODULE_NOT_FOUND）。
 import { __setWindowFocused } from './vscode-shim';
 
+// ============================================================================
+// stdout/stderr EPIPE 防护（必须在任何日志输出之前安装）
+//
+// 输出被重定向到管道（`... | xxx`、CI、终端工具）时，读取端可能提前关闭；
+// Node 默认把后续 console.log / process.stdout.write 抛出的 EPIPE 当作
+// 未捕获异常，Electron 主进程会直接弹「A JavaScript error occurred in the
+// main process」并崩溃（e2e 测试大量 console.log 时极易复现）。
+// 日志对桌面应用是尽力而为，管道断裂应吞掉而非让进程崩溃。
+// ============================================================================
+function installStdioEpipeGuard(): void {
+  const guard = (stream: NodeJS.WriteStream): void => {
+    stream.on('error', (err: NodeJS.ErrnoException) => {
+      if (err && err.code === 'EPIPE') return;
+      throw err;
+    });
+  };
+  guard(process.stdout);
+  guard(process.stderr);
+}
+installStdioEpipeGuard();
+
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 

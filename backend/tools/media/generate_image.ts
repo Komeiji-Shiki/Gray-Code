@@ -646,6 +646,15 @@ async function executeImageTask(
         for (let i = 0; i < limitedImages.length; i++) {
             const img = limitedImages[i];
             const buffer = Buffer.from(img.data, 'base64');
+            // API 返回图片的字节护栏（与输入侧 MEDIA_MAX_INPUT_BYTES 对齐）：
+            // 中转站异常返回超大 base64 时，防止解码后的巨图无界占内存/进多模态上下文
+            if (buffer.length > MEDIA_MAX_INPUT_BYTES) {
+                return {
+                    index,
+                    success: false,
+                    error: `Task ${index + 1}: Generated image ${i + 1} exceeds ${MEDIA_MAX_INPUT_BYTES} bytes (${buffer.length}). The upstream returned an abnormally large image.`
+                };
+            }
             const ext = detectExtension(buffer, img.mimeType);
             
             // 确定输出路径

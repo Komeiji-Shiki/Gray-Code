@@ -473,7 +473,10 @@ async function executeSubAgent(
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
 
-        runtimeExecutor({
+        // 把同步抛错也纳入 Promise 链（runtimeExecutor 若同步 throw，then/catch 无法捕获，
+        // registerTask 已登记的任务会永远残留 running）；Promise.resolve().then 保证
+        // 同步与异步失败都走同一个 catch 清理路径
+        Promise.resolve().then(() => runtimeExecutor({
             agentType: config.type,
             prompt,
             context: additionalContext,
@@ -482,14 +485,14 @@ async function executeSubAgent(
             conversationId,
             conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot,
-            // F2：嵌套深度与父 runId 随请求传给 executor（级联清理 + run 元数据）
+            // F2：嵌套子代理需要把父 runId 向下传给 executor（关联 run + run 元数据）
             depth,
             parentRunId,
-            // 转后台（detach）：标记后台模式，executor 据此不注册 detach 监听（后台 run 本就独立于父轮 abort）
+            // 转后台（detach）后即为后台模式，executor 据此不再注册 detach 处理器（后台 run 的取消由父级 abort 驱动）
             background: true,
-            // H-1：父 run 的工具限制随请求传给 executor（子 run 工具 = 子配置 ∩ 父限制）
+            // H-1：把 run 的工具白名单向下传给 executor（父 run 白名单 = 白名单 ∩ 白名单）
             inheritedToolFilter: inheritedToolFilterList
-        }, backgroundAbortController.signal).then(result => {
+        }, backgroundAbortController.signal)).then(result => {
             const status = result.cancelled ? 'cancelled' : (result.success ? 'completed' : 'error');
             TaskManager.unregisterTask(taskId, status, {
                 runId: result.runId,

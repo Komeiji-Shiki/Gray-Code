@@ -95,8 +95,16 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     try {
       // 前端 complete chunk 会先清理 isStreaming，但后端流此时可能还没走到 finally。
       // 必须等待后端运行控制器确认空闲，避免新回执流中止仍在收尾的旧流。
+      // 等待必须有超时兜底（后端 waitForIdle 在极端挂死场景可能不返回，回执会永久滞留）：
+      // 超时后放弃本次 flush，任务保持 unreported，由下一次 flush 重试——
+      // 绝不能提前写入，否则回执会被旧流结算覆盖。
       if (currentId) {
-        await sendToExtension('chat.awaitConversationIdle', { conversationId: currentId })
+        try {
+          await sendToExtension('chat.awaitConversationIdle', { conversationId: currentId }, { timeoutMs: 20000 })
+        } catch (error) {
+          console.warn('[backgroundTaskStore] awaitConversationIdle timed out, will retry on next flush:', error)
+          return
+        }
       }
 
       // 等待期间可能切换了会话或启动了新流；重新判定，不能把旧会话报告发进新会话。

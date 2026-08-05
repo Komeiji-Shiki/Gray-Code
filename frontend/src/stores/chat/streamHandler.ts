@@ -255,6 +255,15 @@ export function handleStreamChunkBatch(
     return chunk.streamId === activeStreamId
   }
 
+  // 终结事件参与「跳过前序增量」决策的前提：必须携带 streamId 且与当前活跃流一致。
+  // 无 streamId 的终结事件（旧流迟到/后台缓冲重放）无法证明归属——若被当作当前流的
+  // 终结事件，会跳过当前活跃流的真实增量（回答丢失）；其处理层已由 H1/H4 守卫拒绝迟到
+  // 终结，不参与跳过优化没有正确性损失。
+  const isTerminalCandidateForSkip = (chunk: StreamChunk): boolean =>
+    chunk.conversationId === activeConversationId &&
+    !!chunk.streamId &&
+    chunk.streamId === activeStreamId
+
   // 查找 batch 中最后一个终结事件的位置
   // 终结事件会用后端权威数据完整覆盖前端流式状态，
   // 所以终结事件之前的 chunk 类型消息可以全部跳过
@@ -278,7 +287,7 @@ export function handleStreamChunkBatch(
     }
     // stale stream / 非当前会话的终结事件不应触发“跳过前序 chunk”优化，
     // 否则可能误跳过当前活跃请求的有效增量。
-    if (isChunkForCurrentActiveStream(candidate)) {
+    if (isTerminalCandidateForSkip(candidate)) {
       lastTerminalIndex = k
       break
     }

@@ -128,6 +128,20 @@ export class BackendHost {
   /** toolId -> pending diffs [{ diffId, filePath }] (from diff.statusChanged) */
   private toolDiffIds = new Map<string, Array<{ diffId: string; filePath: string }>>();
 
+  /** previewToSessionId 容量上限：键为每次 diff 的唯一 toolId/diffContentId，只增不删，
+   *  长会话会无界增长；超出后淘汰最旧条目（旧预览早已不会再来 accept/reject） */
+  private static readonly PREVIEW_SESSION_ID_MAX = 500;
+
+  private setPreviewSessionMapping(key: string, value: string): void {
+    if (this.previewToSessionId.size >= BackendHost.PREVIEW_SESSION_ID_MAX) {
+      const oldest = this.previewToSessionId.keys().next().value;
+      if (oldest !== undefined) {
+        this.previewToSessionId.delete(oldest);
+      }
+    }
+    this.previewToSessionId.set(key, value);
+  }
+
   constructor(private options: BackendHostOptions) {
     this.context = new ElectronContext({
       userDataPath: options.userDataPath,
@@ -670,17 +684,17 @@ export class BackendHost {
       try {
         const toolId = typeof data?.toolId === 'string' ? data.toolId : '';
         if (toolId) {
-          this.previewToSessionId.set(toolId, toolId);
+          this.setPreviewSessionMapping(toolId, toolId);
           const resultData = data?.result?.data as Record<string, any> | undefined;
           const diffContentId = typeof resultData?.diffContentId === 'string' ? resultData.diffContentId : '';
           if (diffContentId) {
-            this.previewToSessionId.set(diffContentId, toolId);
+            this.setPreviewSessionMapping(diffContentId, toolId);
           }
           const results = resultData?.results;
           if (Array.isArray(results)) {
             for (const r of results) {
               if (typeof r?.diffContentId === 'string') {
-                this.previewToSessionId.set(r.diffContentId, toolId);
+                this.setPreviewSessionMapping(r.diffContentId, toolId);
               }
             }
           }

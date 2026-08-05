@@ -490,8 +490,18 @@ export class ChannelManager {
                     request.promptModeSnapshot
                 ));
         
-        // 5. 构建请求
-        const httpRequest = formatter.buildRequest(request, config, tools);
+        // 5. 构建请求（与非流式路径一致：buildRequest 失败统一包成 VALIDATION_ERROR，
+        // 否则原始错误会被前端归类为 UNKNOWN_ERROR，错误分类不一致）
+        let httpRequest: HttpRequestOptions;
+        try {
+            httpRequest = formatter.buildRequest(request, config, tools);
+        } catch (error) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                t('modules.channel.errors.buildRequestFailed', { error: error instanceof Error ? error.message : String(error) }),
+                error
+            );
+        }
         
         // 5.5 缓存保活：当 promptCachingKeepAlive 启用时，若流式请求在 4 分 30 秒内未完成则自动发送保活请求
         const keepAliveEnabled = config.type === 'anthropic'
@@ -828,8 +838,32 @@ export class ChannelManager {
                 signal: controller.signal
             });
             
-            // 解析响应体
-            const responseBody = await response.json();
+            // 先判状态再读体：代理网关常回 HTML/纯文本错误体（429/5xx），
+            // 直接 response.json() 会抛 SyntaxError，真实状态码与上游错误信息全部丢失。
+            if (!response.ok) {
+                let errorBody: any;
+                try {
+                    errorBody = await response.json();
+                } catch {
+                    errorBody = await response.text();
+                }
+                const upstreamMessage = extractUpstreamErrorMessage(errorBody);
+                throw new ChannelError(
+                    ErrorType.API_ERROR,
+                    upstreamMessage
+                        ? `HTTP ${response.status}: ${upstreamMessage}`
+                        : t('modules.channel.errors.apiError', { status: response.status }),
+                    errorBody
+                );
+            }
+            
+            // 正常响应：优先按 JSON 解析，非 JSON（text/plain 等）降级为文本
+            let responseBody: any;
+            try {
+                responseBody = await response.json();
+            } catch {
+                responseBody = await response.text();
+            }
             const responseHeaders: Record<string, string> = {};
             response.headers.forEach((value, key) => {
                 responseHeaders[key] = value;

@@ -113,6 +113,8 @@ export function restoreSessionFromSnapshot(
 export function resetConversationState(state: ChatStoreState): void {
   state.currentConversationId.value = null
   state.allMessages.value = []
+  rebuildMessageIndexById(state)  // 索引与消息窗口同步清空，避免残留旧会话条目
+  state._failedStreamMessageId.value = null
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false

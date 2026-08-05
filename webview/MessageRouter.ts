@@ -55,7 +55,11 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   // 用户看到按钮可点却迟迟没有任何效果。
   'subagents.pauseRun',
   'subagents.resumeRun',
-  'subagents.exitRun'
+  'subagents.exitRun',
+  // awaitConversationIdle 可能等待数秒到数十秒（等旧流真正退出），期间不应阻塞
+  // 同一 webview 的其他 IPC（设置/删消息/切页面/cancelStream 都排在 messageHandlingQueue）：
+  // fire-and-forget 后响应仍按 requestId 路由回发起方，语义不变。
+  'chat.awaitConversationIdle'
 ]);
 
 /**

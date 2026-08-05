@@ -329,13 +329,15 @@ export async function createNewConversation(
   
   state.currentConversationId.value = null
   state.allMessages.value = []  // 清空消息
+  rebuildMessageIndexById(state)  // 索引与消息窗口同步清空，避免残留旧会话条目
+  state._failedStreamMessageId.value = null
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
-  state.checkpoints.value = []  // 清空检查点
-  state.toolResponseCache.value = new Map()  // 清空工具响应缓存
+  state.checkpoints.value = []  // 清空存档
+  state.toolResponseCache.value = new Map()  // 清空扩展工具响应缓存
   state.error.value = null
   state.activeBuild.value = null
   
@@ -717,6 +719,8 @@ export async function switchConversation(
   state.activeBuild.value = null
   state.currentConversationId.value = id
   state.allMessages.value = []
+  rebuildMessageIndexById(state)  // 索引与消息窗口同步清空，避免残留旧会话条目
+  state._failedStreamMessageId.value = null
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false

@@ -63,9 +63,21 @@ interface TerminalProcess {
  */
 const MAX_RETAINED_OUTPUT_LINES = 50000;
 
+/** 单行输出上限：长流式输出（无换行的巨块，如 `print('x'*2e9)`）会在单行内无限累积，
+ *  内存与最终响应体均无界；超限时截断保留尾部并计入 omittedOutputLines。 */
+const MAX_SINGLE_LINE_CHARS = 1_000_000;
+
 function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
     if (lines.length === 0) return;
-    tp.output.push(...lines);
+    for (const line of lines) {
+        if (line.length > MAX_SINGLE_LINE_CHARS) {
+            // 超长单行：保留尾部（模型更关心末尾的最新输出），头部截断并计数
+            tp.output.push(line.slice(line.length - MAX_SINGLE_LINE_CHARS));
+            tp.omittedOutputLines = (tp.omittedOutputLines ?? 0) + 1;
+        } else {
+            tp.output.push(line);
+        }
+    }
     if (tp.output.length > MAX_RETAINED_OUTPUT_LINES) {
         const dropped = tp.output.length - MAX_RETAINED_OUTPUT_LINES;
         tp.output.splice(0, dropped);
@@ -1264,8 +1276,14 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     // 收集输出并实时推送
                     proc.stdout?.on('data', (data: Buffer) => {
                         const text = decodeWithMode(data, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder, stdoutGbkPreviewDecoder);
-                        const content = stdoutRemaining + text;
-                        const lines = content.split(/\r?\n/);
+                        stdoutRemaining += text;
+                        // 无换行的巨块输出会在 stdoutRemaining 内无限累积：超限截断头部并计数，
+                        // 防止内存与最终响应体无界（与 pushOutputLines 的单行上限同一防线）
+                        if (stdoutRemaining.length > MAX_SINGLE_LINE_CHARS) {
+                            stdoutRemaining = stdoutRemaining.slice(stdoutRemaining.length - MAX_SINGLE_LINE_CHARS);
+                            terminalProcess.omittedOutputLines = (terminalProcess.omittedOutputLines ?? 0) + 1;
+                        }
+                        const lines = stdoutRemaining.split(/\r?\n/);
                         stdoutRemaining = lines.pop() || '';
                         
                         if (lines.length > 0) {
@@ -1282,8 +1300,12 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
 
                     proc.stderr?.on('data', (data: Buffer) => {
                         const text = decodeWithMode(data, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder, stderrGbkPreviewDecoder);
-                        const content = stderrRemaining + text;
-                        const lines = content.split(/\r?\n/);
+                        stderrRemaining += text;
+                        if (stderrRemaining.length > MAX_SINGLE_LINE_CHARS) {
+                            stderrRemaining = stderrRemaining.slice(stderrRemaining.length - MAX_SINGLE_LINE_CHARS);
+                            terminalProcess.omittedOutputLines = (terminalProcess.omittedOutputLines ?? 0) + 1;
+                        }
+                        const lines = stderrRemaining.split(/\r?\n/);
                         stderrRemaining = lines.pop() || '';
 
                         if (lines.length > 0) {

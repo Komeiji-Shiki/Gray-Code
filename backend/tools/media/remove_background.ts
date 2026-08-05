@@ -542,16 +542,23 @@ async function executeRemoveTask(
             const maskAccessError = maskOutside
                 ? ensureOutsideWorkspaceAccessApproved('write_file', { path: mask_path }, context)
                 : null;
-            if (maskUri && !maskAccessError) {
-                const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
-                try {
-                    await vscode.workspace.fs.createDirectory(maskDirUri);
-                } catch {
-                    // 目录可能已存在
-                }
-                const maskBuffer = Buffer.from(maskImage.data, 'base64');
-                await vscode.workspace.fs.writeFile(maskUri, maskBuffer);
+            if (!maskUri || maskAccessError) {
+                // 与 output_path 同语义：写目标无法解析/策略拒绝时显式失败，
+                // 不能静默跳过——否则结果仍报 maskPath 已保存而文件实际未写，误导模型与用户。
+                return {
+                    index,
+                    success: false,
+                    error: `Task ${index + 1}: Cannot save mask to ${mask_path}: ${maskAccessError || 'path cannot be resolved'}`
+                };
             }
+            const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
+            try {
+                await vscode.workspace.fs.createDirectory(maskDirUri);
+            } catch {
+                // 目录可能已存在
+            }
+            const maskBuffer = Buffer.from(maskImage.data, 'base64');
+            await vscode.workspace.fs.writeFile(maskUri, maskBuffer);
         }
 
         // 4. 使用 sharp 应用遮罩
