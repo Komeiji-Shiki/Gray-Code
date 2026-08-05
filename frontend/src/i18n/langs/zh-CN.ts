@@ -2609,6 +2609,10 @@ const zhCN = {
                     title: 'TPS 实时可视化条',
                     description: '在输入区底部显示实时 tokens/秒 曲线。隐藏后停止采样，重新开启后从当前流重新统计。'
                 },
+                splash: {
+                    title: '开屏动画',
+                    description: '启动时播放 Gray logo 描线开场动画。关闭后直接进入主界面。'
+                },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },
