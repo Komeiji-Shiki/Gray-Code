@@ -17,10 +17,9 @@ import {
   flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
-import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
+import { syncFoldedHistoryHint, syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceAllMessages, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
-import type { StreamFunctionCall } from '../../utils/functionCallMerge'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -335,8 +334,15 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     if (!snapshotContent) {
       for (const part of chunk.chunk.delta) {
         if (part.text) {
-          // TPS 实时可视化：按文本长度粗估 token 到达（供应商无逐 chunk usage 时）
-          tpsMeter.record(Math.ceil(part.text.length / 3))
+          // TPS 实时可视化：按文本长度粗估 token 到达（供应商无逐 chunk usage 时）。
+          // thought token 不参与统计（思考段整块/突发到达会虚高）；时间戳用 chunk.createdAt，
+          // 后台积压回放的 chunk 按原始发生时间入窗并被窗口立即修剪，不产生回放尖峰。
+          if (!part.thought) {
+            tpsMeter.record(
+              Math.ceil(part.text.length / 3),
+              typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
+            )
+          }
           if (part.thought) {
             addTextToMessage(message, part.text, true)
           } else {
@@ -347,16 +353,9 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
         }
 
         // 处理工具调用（原生 function call format）
+        // 注意：工具参数是结构化输出——OpenAI Responses 的 finalArgs 整块到达且与 delta 重复计数，
+        // 整块/突发计入实时 TPS 会造成虚高尖峰，因此工具参数不参与 TPS 统计。
         if (part.functionCall) {
-          // TPS 实时可视化：工具调用（函数名 + 参数 JSON）也是模型输出，按文本长度粗估计入。
-          // partialArgs 为流式增量（args 是其已解析子集），优先计增量；
-          // 无 partialArgs 时（非流式/最终态）按完整 args JSON 计。
-          const fc = part.functionCall as StreamFunctionCall
-          const fcNameLen = typeof fc.name === 'string' ? fc.name.length : 0
-          const fcBodyLen = typeof fc.partialArgs === 'string'
-            ? fc.partialArgs.length
-            : (fc.args && typeof fc.args === 'object' ? JSON.stringify(fc.args).length : 0)
-          tpsMeter.record(Math.ceil((fcNameLen + fcBodyLen) / 3))
           handleFunctionCallPart(part, message)
         }
       }
@@ -1133,8 +1132,9 @@ export function handleAutoSummaryStatus(
 /**
  * 处理 autoSummary 类型
  *
- * 自动总结是在后端历史中直接 insertContent 的，
- * 前端需要同步插入一条总结消息，避免必须重载历史才能看到。
+ * 自动总结在后端历史中是"物理替换"：后端已删除 backendIndex ∈ [insertIndex, insertIndex + removedCount)
+ * 的消息，并把总结消息插入到 insertIndex（后端新下标）。removedCount 缺省为 0 = 旧"纯插入"语义。
+ * 前端需要同步窗口状态，避免必须重载历史才能看到。
  */
 export function handleAutoSummary(
   chunk: StreamChunk,
@@ -1152,47 +1152,146 @@ export function handleAutoSummary(
     parts: Array.isArray(summaryContent.parts) ? summaryContent.parts : []
   }
   const insertIndex = chunk.insertIndex
+  // 物理替换语义：后端已删除 [insertIndex, insertIndex + removedCount) 区间消息并插入总结
+  const removedCount = typeof chunk.removedCount === 'number' && chunk.removedCount > 0
+    ? chunk.removedCount
+    : 0
 
-  // 去重：避免重复插入同一个 summary
-  const exists = state.allMessages.value.some(
-    m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
-  )
+  // 去重：优先用后端稳定消息 id（Content.id）；无 id（旧后端）时回退到
+  // "窗口内是否已有 backendIndex === insertIndex 的 isSummary 消息"。
+  // 替换语义下被删的旧消息已不在窗口，直接用该判定即可。
+  const summaryContentId = typeof summaryContent.id === 'string' && summaryContent.id.length > 0
+    ? summaryContent.id
+    : undefined
+  const exists = summaryContentId
+    ? state.allMessages.value.some(m => m.id === summaryContentId)
+    : state.allMessages.value.some(
+        m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
+      )
   if (exists) {
     return
   }
 
-  // 如果插入位置在当前窗口之前，仅维护索引偏移即可
-  if (insertIndex < state.windowStartIndex.value) {
-    state.windowStartIndex.value += 1
+  // ===== removedCount === 0：旧"纯插入"语义，行为保持不变 =====
+  if (removedCount === 0) {
+    // 如果插入位置在当前窗口之前，仅维护索引偏移即可
+    if (insertIndex < state.windowStartIndex.value) {
+      state.windowStartIndex.value += 1
+      for (const msg of state.allMessages.value) {
+        if (typeof msg.backendIndex === 'number') {
+          msg.backendIndex += 1
+        }
+      }
+      syncTotalMessagesFromWindow(state)
+      return
+    }
+
+    // 先将当前窗口中插入点及之后的 backendIndex 后移 1
     for (const msg of state.allMessages.value) {
-      if (typeof msg.backendIndex === 'number') {
+      if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
         msg.backendIndex += 1
       }
     }
+
+    const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
+    summaryMessage.backendIndex = insertIndex
+    summaryMessage.timestamp = summaryContent.timestamp || Date.now()
+    summaryMessage.localOnly = false
+    summaryMessage.streaming = false
+
+    const localInsertIndex = Math.min(
+      Math.max(insertIndex - state.windowStartIndex.value, 0),
+      state.allMessages.value.length
+    )
+
+    insertMessageAt(state, localInsertIndex, summaryMessage)
+
     syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
+    state.autoSummaryStatus.value = null
     return
   }
 
-  // 先将当前窗口中插入点及之后的 backendIndex 后移 1
+  // ===== removedCount > 0：物理替换语义 =====
+  // 净效果：删除 removedCount 条 + 插入 1 条总结 → 窗口内已加载消息整体前移
+  // shift = removedCount - 1（总结本身占一个新位置）
+  const rangeEnd = insertIndex + removedCount
+  const shift = removedCount - 1
+
+  // 情况1：被删区间完全在窗口之前（rangeEnd <= windowStartIndex）→
+  // 所有已加载消息与窗口起点整体前移 shift，totalMessages 同步减少；总结在窗口外不插入
+  if (rangeEnd <= state.windowStartIndex.value) {
+    state.windowStartIndex.value = Math.max(0, state.windowStartIndex.value - shift)
+    for (const msg of state.allMessages.value) {
+      if (typeof msg.backendIndex === 'number') {
+        msg.backendIndex = Math.max(0, msg.backendIndex - shift)
+      }
+    }
+    state.totalMessages.value = Math.max(0, state.totalMessages.value - shift)
+    syncFoldedHistoryHint(state)
+    return
+  }
+
+  // 情况2/3：区间与窗口重叠，或完全在窗口内/后 →
+  // 删除已加载消息中 backendIndex ∈ [insertIndex, rangeEnd) 的（即被后端替换掉的消息），
+  // 幸存者（backendIndex >= rangeEnd）整体前移 shift
+  const streamingId = state.streamingMessageId.value
+  let removedAny = false
+  const kept: Message[] = []
   for (const msg of state.allMessages.value) {
-    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
-      msg.backendIndex += 1
+    const b = msg.backendIndex
+    const inReplacedRange = typeof b === 'number' && b >= insertIndex && b < rangeEnd
+    if (inReplacedRange) {
+      // 防御：后端保证不会把当前流式消息纳入替换区间（总结在工具循环中触发，
+      // 不越过当前用户消息）。若发生则跳过并告警，避免破坏正在进行的流。
+      if (msg.id === streamingId) {
+        console.warn('[handleAutoSummary] replaced range contains streaming message, skipped', {
+          insertIndex,
+          removedCount,
+          messageId: msg.id
+        })
+        kept.push(msg)
+      } else {
+        removedAny = true
+      }
+      continue
+    }
+    kept.push(msg)
+  }
+  if (removedAny) {
+    replaceAllMessages(state, kept)
+  }
+  for (const msg of state.allMessages.value) {
+    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= rangeEnd) {
+      msg.backendIndex -= shift
     }
   }
 
-  const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
-  summaryMessage.backendIndex = insertIndex
-  summaryMessage.timestamp = summaryContent.timestamp || Date.now()
-  summaryMessage.localOnly = false
-  summaryMessage.streaming = false
+  if (insertIndex >= state.windowStartIndex.value) {
+    // 情况2：总结在窗口内/后 → 插入总结消息（backendIndex = insertIndex）
+    const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
+    summaryMessage.backendIndex = insertIndex
+    summaryMessage.timestamp = summaryContent.timestamp || Date.now()
+    summaryMessage.localOnly = false
+    summaryMessage.streaming = false
 
-  const localInsertIndex = Math.min(
-    Math.max(insertIndex - state.windowStartIndex.value, 0),
-    state.allMessages.value.length
-  )
+    const localInsertIndex = Math.min(
+      Math.max(insertIndex - state.windowStartIndex.value, 0),
+      state.allMessages.value.length
+    )
 
-  insertMessageAt(state, localInsertIndex, summaryMessage)
+    insertMessageAt(state, localInsertIndex, summaryMessage)
+  } else {
+    // 情况3：总结在窗口之前（insertIndex < windowStartIndex < rangeEnd）→ 不插入，
+    // 窗口起点前移到第一个幸存消息的新下标（整窗被删完时落在总结之后）
+    const first = state.allMessages.value[0]
+    state.windowStartIndex.value = first && typeof first.backendIndex === 'number'
+      ? first.backendIndex
+      : insertIndex + 1
+    syncFoldedHistoryHint(state)
+  }
 
+  state.totalMessages.value = Math.max(0, state.totalMessages.value - shift)
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
   state.autoSummaryStatus.value = null
