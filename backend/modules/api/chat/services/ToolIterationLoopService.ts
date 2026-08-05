@@ -817,7 +817,7 @@ export class ToolIterationLoopService {
                 }
             }
 
-            if (trimResult.needsAutoSummarize) {
+            if (trimResult.needsAutoSummarize || trimResult.needsContextFallback) {
                 // 总结失败、总结服务不可用或本回合尝试次数耗尽：使用不持久化的细粒度安全裁剪，
                 // 不再把超阈值全量历史直接交给 provider，也不永久修改 trimState。
                 // 回合内首次评估（含总结成功后重新评估）重新规划切点；后续工具迭代复用已确定起点，
@@ -831,7 +831,8 @@ export class ToolIterationLoopService {
                     historyOptions,
                     modelOverride,
                     dynamicContextStrategy,
-                    this.granularFallbackStartByConversation.get(conversationId)
+                    this.granularFallbackStartByConversation.get(conversationId),
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }
@@ -1695,7 +1696,7 @@ export class ToolIterationLoopService {
                 }
             }
 
-            if (trimResult.needsAutoSummarize) {
+            if (trimResult.needsAutoSummarize || trimResult.needsContextFallback) {
                 // 与流式路径一致：回合内首次评估重新规划切点，后续迭代复用已确定起点（前缀缓存稳定）。
                 if (!contextManagementEvaluatedForTurn) {
                     this.granularFallbackStartByConversation.delete(conversationId);
@@ -1706,7 +1707,8 @@ export class ToolIterationLoopService {
                     historyOptions,
                     modelOverride,
                     dynamicContextStrategy,
-                    this.granularFallbackStartByConversation.get(conversationId)
+                    this.granularFallbackStartByConversation.get(conversationId),
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
             }

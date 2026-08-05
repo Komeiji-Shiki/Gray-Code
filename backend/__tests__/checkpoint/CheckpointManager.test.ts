@@ -758,6 +758,39 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
         }
     });
 
+    test('checkpoint deletion APIs still clear global-storage data with no open workspace', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-delete-all-no-workspace';
+        const cps = [0, 1, 2].map(index => makeRecord({
+            id: `cp-no-workspace-${index}`,
+            conversationId,
+            messageIndex: index,
+            timestamp: 1000 + index
+        }));
+
+        try {
+            for (const cp of cps) {
+                await writeFile(path.join(storageRoot, 'checkpoints', cp.backupDir), 'x.txt', 'x\n');
+            }
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, cps, []);
+            (vscode.workspace as any).workspaceFolders = undefined;
+
+            await expect(manager.deleteCheckpoint(conversationId, cps[2].id)).resolves.toBe(true);
+            await expect(manager.deleteCheckpointsFromIndex(conversationId, 1)).resolves.toBe(1);
+            const result = await manager.deleteAllCheckpoints(conversationId);
+
+            expect(result).toEqual({ success: true, deletedCount: 1 });
+            expect(await manager.getCheckpoints(conversationId)).toEqual([]);
+            for (const cp of cps) {
+                await expect(pathExists(path.join(storageRoot, 'checkpoints', cp.backupDir))).resolves.toBe(false);
+            }
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('pruneMissingBackupCheckpointRecords filters records without backup dir', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');

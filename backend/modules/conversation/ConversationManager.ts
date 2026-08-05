@@ -25,7 +25,7 @@ import {
     ConversationStats,
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
-import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter } from './storage';
+import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter, SubAgentTranscriptData } from './storage';
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
@@ -2936,14 +2936,14 @@ export class ConversationManager {
         return this.storage.getConversationsDirFsPath?.();
     }
 
-    async saveSubAgentTranscript(conversationId: string, runId: string, data: { contents: Content[]; lastSentHistory?: Content[] }): Promise<string> {
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string> {
         if (!this.storage.saveSubAgentTranscript) {
             throw new Error('SubAgent transcript storage is unavailable');
         }
         return await this.storage.saveSubAgentTranscript(conversationId, runId, data);
     }
 
-    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<{ contents: Content[]; lastSentHistory?: Content[] } | null> {
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null> {
         return this.storage.loadSubAgentTranscript
             ? await this.storage.loadSubAgentTranscript(conversationId, runId)
             : null;

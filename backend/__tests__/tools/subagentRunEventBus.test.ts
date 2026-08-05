@@ -8,6 +8,7 @@
 import { SubAgentRunEventBus, SUBAGENT_RUNS_METADATA_KEY } from '../../tools/subagents/runEventBus';
 import type { SubAgentRunConversationStore } from '../../tools/subagents/runEventBus';
 import type { Content } from '../../modules/conversation/types';
+import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
 
 /** 让持久化队列（微任务链）排空 */
 const flushPersistQueue = () => new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -484,7 +485,8 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
 describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
     function createExternalStore(initialMetadata?: unknown) {
         let metadata = initialMetadata;
-        const transcripts = new Map<string, { contents: Content[]; lastSentHistory?: Content[] }>();
+        let transcriptLoadCount = 0;
+        const transcripts = new Map<string, SubAgentTranscriptData>();
         const store: SubAgentRunConversationStore = {
             async getCustomMetadata() { return metadata; },
             async setCustomMetadata(_conversationId, _key, value) { metadata = value; },
@@ -493,10 +495,16 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
                 return `subagents/${runId}.json`;
             },
             async loadSubAgentTranscript(conversationId, runId) {
+                transcriptLoadCount++;
                 return transcripts.get(`${conversationId}:${runId}`) ?? null;
             }
         };
-        return { store, transcripts, readMetadata: () => metadata as Record<string, any> };
+        return {
+            store,
+            transcripts,
+            readMetadata: () => metadata as Record<string, any>,
+            getTranscriptLoadCount: () => transcriptLoadCount
+        };
     }
 
     it('正式新路径只在元数据保存轻量索引，完整内容写入独立 transcript', async () => {
@@ -570,6 +578,96 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
 
         expect(loaded.status).toBe('running');
         expect(external.readMetadata().active_run.status).toBe('running');
+    });
+
+    it('恢复会话时只加载轻量 metadata，聚焦单个 run 后才读取它的 transcript', async () => {
+        const external = createExternalStore({
+            lazy_run: {
+                runId: 'lazy_run', agentName: 'Agent', status: 'completed', createdAt: 1, updatedAt: 2,
+                transcriptRef: 'subagents/lazy_run.json', contentCount: 2,
+                preview: 'final answer', lastMessageRole: 'model'
+            }
+        });
+        external.transcripts.set('conv_lazy:lazy_run', {
+            contents: [textContent('user', 'prompt'), textContent('model', 'final answer')]
+        });
+        const bus = new SubAgentRunEventBus();
+
+        const [metadataOnly] = await bus.loadConversationSnapshots('conv_lazy', external.store);
+
+        expect(external.getTranscriptLoadCount()).toBe(0);
+        expect(metadataOnly.transcriptLoaded).toBe(false);
+        expect(metadataOnly.contents).toEqual([]);
+        expect(bus.getManifest('lazy_run')).toMatchObject({
+            contentCount: 2,
+            preview: 'final answer',
+            lastMessageRole: 'model'
+        });
+
+        const loaded = await bus.loadRunTranscript('lazy_run');
+        expect(external.getTranscriptLoadCount()).toBe(1);
+        expect(loaded?.contents).toHaveLength(2);
+        expect(bus.getContentWindow('lazy_run')?.contents).toHaveLength(2);
+    });
+
+    it('终态 transcript 用 contents 索引去重 provider history，并可在惰性加载时还原', async () => {
+        const external = createExternalStore();
+        const bus = new SubAgentRunEventBus();
+        const largeToolResult = textContent('model', `image:${'x'.repeat(20_000)}`);
+        bus.createRun('projected_run', 'Agent', undefined, {
+            conversationId: 'conv_projected',
+            conversationStore: external.store,
+            initialContents: [textContent('user', '# SubAgent Invocation'), largeToolResult]
+        });
+        bus.updateLastSentHistory('projected_run', [
+            textContent('user', 'actual provider prompt'),
+            largeToolResult
+        ]);
+        bus.emit({ runId: 'projected_run', type: 'run_completed' } as any);
+        await bus.flushRun('projected_run');
+
+        const persisted = external.transcripts.get('conv_projected:projected_run')!;
+        expect(persisted.lastSentHistory).toBeUndefined();
+        expect(persisted.lastSentHistoryProjection?.entries).toEqual([
+            { content: textContent('user', 'actual provider prompt') },
+            { contentIndex: 1 }
+        ]);
+
+        const reloadedBus = new SubAgentRunEventBus();
+        await reloadedBus.loadConversationSnapshots('conv_projected', external.store);
+        const restored = await reloadedBus.loadRunTranscript('projected_run');
+        expect(restored?.lastSentHistory).toEqual([
+            textContent('user', 'actual provider prompt'),
+            largeToolResult
+        ]);
+    });
+
+    it('flushRun 会等待终态 metadata 写入完成', async () => {
+        let metadata: unknown;
+        let releaseWrite: () => void = () => undefined;
+        const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata() { return metadata; },
+            async setCustomMetadata(_conversationId, _key, value) {
+                await writeGate;
+                metadata = value;
+            },
+            async saveSubAgentTranscript(_conversationId, runId) { return `subagents/${runId}.json`; }
+        };
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('terminal_run', 'Agent', undefined, {
+            conversationId: 'conv_terminal', conversationStore: store, initialContents: []
+        });
+        bus.emit({ runId: 'terminal_run', type: 'run_completed' } as any);
+
+        let settled = false;
+        const flush = bus.flushRun('terminal_run').then(() => { settled = true; });
+        await flushPersistQueue();
+        expect(settled).toBe(false);
+        releaseWrite();
+        await flush;
+
+        expect((metadata as Record<string, any>).terminal_run.status).toBe('completed');
     });
 });
 describe('SubAgentRunEventBus - runId 分配', () => {

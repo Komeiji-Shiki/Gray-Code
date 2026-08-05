@@ -371,6 +371,7 @@ export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => 
     if (conversationId) {
       await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
     }
+    await subAgentRunEventBus.loadRunTranscript(runId);
 
     const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
     if (!snapshot) {
@@ -403,6 +404,7 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
     if (conversationId) {
       await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
     }
+    await subAgentRunEventBus.loadRunTranscript(runId);
 
     const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
     if (!snapshot) {

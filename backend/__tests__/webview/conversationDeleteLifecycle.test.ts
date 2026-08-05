@@ -24,7 +24,10 @@ function createContext(): any {
             abortAndWaitForCompletion: jest.fn(async () => { lifecycle.push('stop-main-stream'); })
         },
         checkpointManager: {
-            deleteAllCheckpoints: jest.fn(async () => { lifecycle.push('delete-checkpoints'); })
+            deleteAllCheckpoints: jest.fn(async () => {
+                lifecycle.push('delete-checkpoints');
+                return { success: true, deletedCount: 0 };
+            })
         },
         conversationManager: {
             deleteConversation: jest.fn(async () => { lifecycle.push('delete-conversation'); })
@@ -60,5 +63,24 @@ describe('conversation.deleteConversation 生命周期', () => {
 
         expect(ctx.sendError).toHaveBeenCalledWith('req-2', 'DELETE_CONVERSATION_INVALID_ID', 'Invalid conversation ID');
         expect(lifecycle).toEqual([]);
+    });
+
+    it('检查点清理失败时明确报错且不删除会话或遗忘 SubAgent 记录', async () => {
+        const ctx = createContext();
+        ctx.checkpointManager.deleteAllCheckpoints.mockImplementationOnce(async () => {
+            lifecycle.push('delete-checkpoints');
+            return { success: false, deletedCount: 0 };
+        });
+
+        await deleteConversation({ conversationId: 'conv-1' }, 'req-3', ctx);
+
+        expect(ctx.sendError).toHaveBeenCalledWith(
+            'req-3',
+            'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
+            expect.any(String)
+        );
+        expect(ctx.conversationManager.deleteConversation).not.toHaveBeenCalled();
+        expect(lifecycle).not.toContain('forget-subagents');
+        expect(lifecycle).not.toContain('respond');
     });
 });

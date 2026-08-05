@@ -50,6 +50,25 @@ const PRESERVED_USER_INPUT_OMISSION_MARKER =
     '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n';
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
+const FALLBACK_PROVIDER_RESERVE_RATIO = 0.1;
+const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
+const MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 256;
+const MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 8_192;
+
+/** fallback 已无法构造不超过主模型输入预算的合法历史。 */
+export class ContextBudgetExceededError extends Error {
+    readonly code = 'CONTEXT_OVERFLOW';
+
+    constructor(
+        readonly estimatedInputTokens: number,
+        readonly inputTokenLimit: number
+    ) {
+        super(
+            `Unable to build a legal request within the context window: the smallest candidate uses about ${estimatedInputTokens} input tokens, above the ${inputTokenLimit}-token window`
+        );
+        this.name = 'ContextBudgetExceededError';
+    }
+}
 
 /**
  * 回合 Token 信息（内部使用）
@@ -107,12 +126,74 @@ export interface ContextTrimEvaluationOptions {
     allowStateAdvance?: boolean;
 }
 
-interface MaxContextResolution {
+export interface MaxContextResolution {
     maxContextTokens: number;
     source: 'config.maxContextTokens' | 'model.contextWindow' | 'default';
     configMaxContextTokens?: unknown;
     modelId?: string;
     modelContextWindow?: unknown;
+}
+
+function normalizePositiveTokenValue(value: unknown): number | undefined {
+    const numericValue = typeof value === 'number'
+        ? value
+        : (typeof value === 'string' ? Number(value) : NaN);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return undefined;
+    return Math.floor(numericValue);
+}
+
+function resolveCandidateModelId(config: BaseChannelConfig, modelOverride?: string): string {
+    if (typeof modelOverride === 'string' && modelOverride.trim()) return modelOverride.trim();
+    const configModel = (config as { model?: unknown }).model;
+    return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
+}
+
+/** 返回当前实际选择模型声明的窗口；未能识别模型时不把渠道显示上限伪装成模型硬边界。 */
+export function resolveModelContextWindowForConfig(
+    config: BaseChannelConfig,
+    modelOverride?: string
+): MaxContextResolution | undefined {
+    const candidateModelId = resolveCandidateModelId(config, modelOverride);
+    if (!candidateModelId) return undefined;
+    const modelList = Array.isArray((config as { models?: unknown }).models)
+        ? ((config as { models?: ModelInfo[] }).models as ModelInfo[])
+        : [];
+    const matchedModel = modelList.find(model => model?.id === candidateModelId);
+    const modelContextWindow = normalizePositiveTokenValue(matchedModel?.contextWindow);
+    if (modelContextWindow === undefined) return undefined;
+    return {
+        maxContextTokens: modelContextWindow,
+        source: 'model.contextWindow',
+        configMaxContextTokens: config.maxContextTokens,
+        modelId: candidateModelId,
+        modelContextWindow: matchedModel?.contextWindow
+    };
+}
+
+/** 解析上下文管理的预算基准：显式渠道上限优先，模型窗口和默认值依次回退。 */
+export function resolveMaxContextTokensForConfig(
+    config: BaseChannelConfig,
+    modelOverride?: string
+): MaxContextResolution {
+    const configuredMax = normalizePositiveTokenValue(config.maxContextTokens);
+    if (configuredMax !== undefined) {
+        return {
+            maxContextTokens: configuredMax,
+            source: 'config.maxContextTokens',
+            configMaxContextTokens: config.maxContextTokens
+        };
+    }
+
+    const candidateModelId = resolveCandidateModelId(config, modelOverride);
+    const modelWindow = resolveModelContextWindowForConfig(config, modelOverride);
+    if (modelWindow) return modelWindow;
+
+    return {
+        maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+        source: 'default',
+        configMaxContextTokens: config.maxContextTokens,
+        modelId: candidateModelId || undefined
+    };
 }
 
 interface NormalizedTrimStartResult {
@@ -205,20 +286,6 @@ export class ContextTrimService {
     private logDebug(message: string, details?: Record<string, unknown>): void {
         if (!CONTEXT_TRIM_DEBUG_ENABLED) return;
         this.log.debug(message, details);
-    }
-
-    /**
-     * 归一化 token 数值：仅接受有限正数
-     */
-    private normalizePositiveTokenValue(value: unknown): number | undefined {
-        const numericValue = typeof value === 'number'
-            ? value
-            : (typeof value === 'string' ? Number(value) : NaN);
-
-        if (!Number.isFinite(numericValue) || numericValue <= 0) {
-            return undefined;
-        }
-        return Math.floor(numericValue);
     }
 
     /**
@@ -411,47 +478,10 @@ export class ContextTrimService {
      * 优先级：
      * 1. 配置显式 maxContextTokens
      * 2. 当前模型（modelOverride 或 config.model）在 models 列表中的 contextWindow
-     * 3. 默认值 128000
+     * 3. 默认值 256000
      */
-    private resolveMaxContextTokens(config: BaseChannelConfig, modelOverride?: string): MaxContextResolution {
-        const configuredMax = this.normalizePositiveTokenValue(config.maxContextTokens);
-        if (configuredMax !== undefined) {
-            return {
-                maxContextTokens: configuredMax,
-                source: 'config.maxContextTokens',
-                configMaxContextTokens: config.maxContextTokens
-            };
-        }
-
-        const candidateModelId = (() => {
-            if (typeof modelOverride === 'string' && modelOverride.trim()) {
-                return modelOverride.trim();
-            }
-            const configModel = (config as { model?: unknown }).model;
-            return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
-        })();
-
-        if (candidateModelId) {
-            const modelList = Array.isArray((config as { models?: unknown }).models) ? ((config as { models?: ModelInfo[] }).models as ModelInfo[]) : [];
-            const matchedModel = modelList.find(model => model?.id === candidateModelId);
-            const modelContextWindow = this.normalizePositiveTokenValue(matchedModel?.contextWindow);
-            if (modelContextWindow !== undefined) {
-                return {
-                    maxContextTokens: modelContextWindow,
-                    source: 'model.contextWindow',
-                    configMaxContextTokens: config.maxContextTokens,
-                    modelId: candidateModelId,
-                    modelContextWindow: matchedModel?.contextWindow
-                };
-            }
-        }
-
-        return {
-            maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
-            source: 'default',
-            configMaxContextTokens: config.maxContextTokens,
-            modelId: candidateModelId || undefined
-        };
+    resolveMaxContextTokens(config: BaseChannelConfig, modelOverride?: string): MaxContextResolution {
+        return resolveMaxContextTokensForConfig(config, modelOverride);
     }
 
     /**
@@ -681,7 +711,9 @@ export class ContextTrimService {
      *
      * @param stableStartIndex 同一真实用户回合内已确定的切点（绝对索引）。工具结果增长时复用该起点，
      * 保持每轮请求 retainedHistory 前缀一致，让 provider 前缀缓存可以命中；仅当完整性校验失败或
-     * 估算 token 超过硬上限（maxContextTokens 的 95%）时才重新规划切点。新回合/总结成功后传 undefined。
+     * 估算总输入超过安全上限时才重新规划切点。新回合/总结成功后传 undefined。
+     * @param fixedPromptTokens 系统提示词和本轮 prompt context 的 token 数；这些内容不在 history 中，
+     * 但会随请求一起发送，因此必须从总输入预算中扣除。
      */
     async getHistoryWithGranularFallback(
         conversationId: string,
@@ -689,7 +721,8 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        stableStartIndex?: number
+        stableStartIndex?: number,
+        fixedPromptTokens = 0
     ): Promise<ContextTrimInfo> {
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
         if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
@@ -699,14 +732,64 @@ export class ContextTrimService {
         const messages = fullHistory.slice(historyStartIndex);
         const channelType = config.type || 'custom';
         const maxContextTokens = this.resolveMaxContextTokens(config, modelOverride).maxContextTokens;
+        const actualModelWindow = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
         const threshold = this.calculateThreshold(config.contextThreshold ?? '80%', maxContextTokens);
-        // 为系统提示词、动态上下文和 provider 包装预留 10%，避免 fallback 刚好贴住硬上限。
-        const historyBudgetTokens = Math.max(1, Math.floor(threshold * 0.9));
+        // contextThreshold 只是触发自动总结和“优先压缩到此处”的软阈值，绝不能当成主 Agent 的硬上限。
+        // 95% 只作为优先裁剪目标，给 provider 包装/输出留出余量；真正拒绝请求的边界仍是完整模型窗口。
+        const preferredInputTokenLimit = Math.max(
+            1,
+            Math.floor((actualModelWindow ?? maxContextTokens) * 0.95)
+        );
+        // 只有模型条目明确声明的 contextWindow 才能成为拒绝边界。渠道 maxContextTokens 是
+        // 显示/上下文管理基准；模型元数据缺失时最多做 best-effort 裁剪，绝不据此阻止主请求。
+        const hardInputTokenLimit = actualModelWindow;
+        const fallbackEnvelopeInputTokenLimit = actualModelWindow ?? maxContextTokens;
+        const softInputTokenLimit = Math.max(1, Math.min(threshold, preferredInputTokenLimit));
+        const providerReserveTokens = Math.max(1, Math.floor(softInputTokenLimit * FALLBACK_PROVIDER_RESERVE_RATIO));
+        const normalizedFixedPromptTokens = Number.isFinite(fixedPromptTokens)
+            ? Math.max(0, Math.floor(fixedPromptTokens))
+            : 0;
+        const softHistoryBudgetTokens = Math.max(
+            0,
+            softInputTokenLimit - normalizedFixedPromptTokens - providerReserveTokens
+        );
+        const fallbackEnvelopeHistoryBudgetTokens = Math.max(
+            0,
+            fallbackEnvelopeInputTokenLimit - normalizedFixedPromptTokens
+        );
+
+        const estimateFinalHistoryTokens = (history: Content[]): number => history.reduce(
+            (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
+            0
+        );
+
+        const throwContextOverflow = (minimumLegalHistoryTokens = 0): never => {
+            if (hardInputTokenLimit === undefined) {
+                throw new Error('Context overflow rejection requires a known model context window');
+            }
+            const estimatedMinimumInputTokens = normalizedFixedPromptTokens + minimumLegalHistoryTokens;
+            this.log.error('trim.fallback_context_overflow', {
+                conversationId,
+                maxContextTokens,
+                threshold,
+                softInputTokenLimit,
+                preferredInputTokenLimit,
+                hardInputTokenLimit,
+                fallbackEnvelopeInputTokenLimit,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                providerReserveTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                minimumLegalHistoryTokens,
+                estimatedMinimumInputTokens,
+                originalHistoryLength: fullHistory.length
+            });
+            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, hardInputTokenLimit);
+        };
 
         // 回合内稳定起点优先：工具结果增长不再把切点往后推（否则每轮 retainedHistory 开头漂移，
-        // provider 前缀缓存只能命中 history 之前的固定系统/工具段）。
-        // 硬上限取 maxContextTokens 的 95%：软预算可以略超（fallback 是最后防线），
-        // 但绝不能顶到 provider 的硬上限——系统提示词、动态上下文与工具定义还要占一部分。
+        // provider 前缀缓存只能命中 history 之前的固定系统/工具段）。稳定起点允许超过总结软阈值，
+        // 只要完整请求仍装得进模型硬窗口；总结阈值不能让正在运行的 Agent 提前中止。
         if (typeof stableStartIndex === 'number' && stableStartIndex >= historyStartIndex && stableStartIndex < fullHistory.length) {
             const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
@@ -719,18 +802,21 @@ export class ContextTrimService {
                     fullHistory,
                     stableStartIndex
                 );
-                const estimatedStableTokens = historyWithUserInputs.reduce(
-                    (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
-                    0
-                );
-                const stableHardLimit = Math.floor(maxContextTokens * 0.95);
-                if (estimatedStableTokens <= stableHardLimit) {
-                    const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                const estimatedStableTokens = estimateFinalHistoryTokens(history);
+                if (estimatedStableTokens <= fallbackEnvelopeHistoryBudgetTokens) {
                     this.log.warn('trim.fallback_stable_start_reused', {
                         conversationId,
                         stableStartIndex,
                         estimatedStableTokens,
-                        stableHardLimit,
+                        fixedPromptTokens: normalizedFixedPromptTokens,
+                        providerReserveTokens,
+                        softInputTokenLimit,
+                        preferredInputTokenLimit,
+                        hardInputTokenLimit,
+                        fallbackEnvelopeInputTokenLimit,
+                        softHistoryBudgetTokens,
+                        fallbackEnvelopeHistoryBudgetTokens,
                         originalHistoryLength: fullHistory.length,
                         fallbackHistoryLength: history.length
                     });
@@ -758,57 +844,67 @@ export class ContextTrimService {
         const plan = planSummarizeMessages({
             messages,
             messageTokens,
-            keepBudgetTokens: historyBudgetTokens,
+            keepBudgetTokens: Math.max(1, softHistoryBudgetTokens),
             minKeepRounds: 1,
             mode: 'auto'
         });
-        if (!plan) {
-            const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
-                ...historyOptions,
-                startIndex: historyStartIndex,
-                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
-            });
-            const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
-            return { history, trimStartIndex: historyStartIndex };
-        }
 
-        const candidateIndices: number[] = [plan.cutIndex];
-        for (let i = plan.cutIndex + 1; i < messages.length; i++) {
+        // planner 返回 null 既可能代表完整历史已经在预算内，也可能代表单个巨大回合无法按轮规划。
+        // 两种情况都从最早合法起点开始逐个验证，绝不能因此直接返回未经预算检查的完整历史。
+        const firstCandidateIndex = plan?.cutIndex ?? 0;
+        const candidateIndices: number[] = [firstCandidateIndex];
+        for (let i = firstCandidateIndex + 1; i < messages.length; i++) {
             if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) candidateIndices.push(i);
         }
 
-        for (const relativeStartIndex of candidateIndices) {
+        const evaluateCandidate = (relativeStartIndex: number): {
+            relativeStartIndex: number;
+            absoluteStartIndex: number;
+            history: Content[];
+            estimatedTokens: number;
+        } | undefined => {
             const absoluteStartIndex = historyStartIndex + relativeStartIndex;
             const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
                 startIndex: absoluteStartIndex,
                 includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
             });
-            if (!validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) continue;
+            if (!validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) return undefined;
 
             const historyWithUserInputs = this.prependPreservedUserInputs(
                 suffix,
                 fullHistory,
                 absoluteStartIndex
             );
-            const estimatedFallbackTokens = historyWithUserInputs.reduce(
-                (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
-                0
-            );
-            if (estimatedFallbackTokens > historyBudgetTokens) continue;
             const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+            const estimatedFallbackTokens = estimateFinalHistoryTokens(history);
+            return { relativeStartIndex, absoluteStartIndex, history, estimatedTokens: estimatedFallbackTokens };
+        };
+
+        const softCandidate = candidateIndices
+            .map(evaluateCandidate)
+            .find((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => (
+                !!candidate && candidate.estimatedTokens <= softHistoryBudgetTokens
+            ));
+        if (softCandidate) {
             this.log.warn('trim.fallback_granular_applied', {
                 conversationId,
-                absoluteStartIndex,
-                relativeStartIndex,
-                boundary: plan.boundary,
-                historyBudgetTokens,
+                absoluteStartIndex: softCandidate.absoluteStartIndex,
+                relativeStartIndex: softCandidate.relativeStartIndex,
+                boundary: plan?.boundary ?? 'unplanned',
+                historyBudgetTokens: softHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                providerReserveTokens,
+                softInputTokenLimit,
+                preferredInputTokenLimit,
+                hardInputTokenLimit,
+                fallbackEnvelopeInputTokenLimit,
                 originalHistoryLength: fullHistory.length,
-                fallbackHistoryLength: history.length
+                fallbackHistoryLength: softCandidate.history.length
             });
             return {
-                history,
-                trimStartIndex: absoluteStartIndex,
+                history: softCandidate.history,
+                trimStartIndex: softCandidate.absoluteStartIndex,
                 contextManagementDecision: {
                     enabled: true,
                     mode: 'summarize',
@@ -818,13 +914,77 @@ export class ContextTrimService {
             };
         }
 
-        const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
-            ...historyOptions,
-            startIndex: historyStartIndex,
-            includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
-        });
-        const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
-        return { history, trimStartIndex: historyStartIndex };
+        // 无法达到自动总结软阈值时，从完整历史开始寻找仍低于模型硬窗口的最早合法起点。
+        // 这条路径宁可多带上下文，也不能把“总结触发阈值”升级成主 Agent 的请求禁令。
+        const hardCandidateIndices: number[] = [0];
+        for (let i = 1; i < messages.length; i++) {
+            if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) hardCandidateIndices.push(i);
+        }
+        const hardCandidates = hardCandidateIndices
+            .map(evaluateCandidate)
+            .filter((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => !!candidate);
+        const hardCandidate = actualModelWindow === undefined
+            ? undefined
+            : hardCandidates.find(candidate => candidate.estimatedTokens <= fallbackEnvelopeHistoryBudgetTokens);
+        if (hardCandidate) {
+            this.log.warn('trim.fallback_hard_limit_applied', {
+                conversationId,
+                absoluteStartIndex: hardCandidate.absoluteStartIndex,
+                relativeStartIndex: hardCandidate.relativeStartIndex,
+                estimatedHistoryTokens: hardCandidate.estimatedTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                hardInputTokenLimit,
+                originalHistoryLength: fullHistory.length,
+                fallbackHistoryLength: hardCandidate.history.length
+            });
+            return {
+                history: hardCandidate.history,
+                trimStartIndex: hardCandidate.absoluteStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: this.resolveContextManagementPolicy(config).source,
+                    action: 'fallback_hard_limit_applied'
+                }
+            };
+        }
+
+        if (actualModelWindow === undefined && hardCandidates.length > 0) {
+            // 不知道 provider 的真实窗口时，选择 token 最少的合法候选尽力降低失败概率，
+            // 但绝不把渠道显示/总结基准升级成 CONTEXT_OVERFLOW 拒绝。
+            const bestEffortCandidate = hardCandidates.reduce((best, candidate) => (
+                candidate.estimatedTokens < best.estimatedTokens ? candidate : best
+            ));
+            this.log.warn('trim.fallback_best_effort_applied', {
+                conversationId,
+                absoluteStartIndex: bestEffortCandidate.absoluteStartIndex,
+                relativeStartIndex: bestEffortCandidate.relativeStartIndex,
+                estimatedHistoryTokens: bestEffortCandidate.estimatedTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                originalHistoryLength: fullHistory.length,
+                fallbackHistoryLength: bestEffortCandidate.history.length
+            });
+            return {
+                history: bestEffortCandidate.history,
+                trimStartIndex: bestEffortCandidate.absoluteStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: this.resolveContextManagementPolicy(config).source,
+                    action: 'fallback_best_effort_applied'
+                }
+            };
+        }
+
+        const minimumLegalHistoryTokens = hardCandidates.reduce(
+            (minimum, candidate) => Math.min(minimum, candidate.estimatedTokens),
+            Number.POSITIVE_INFINITY
+        );
+        return throwContextOverflow(Number.isFinite(minimumLegalHistoryTokens) ? minimumLegalHistoryTokens : 0);
     }
 
     /**
@@ -1210,13 +1370,41 @@ export class ContextTrimService {
             // - 用户消息优先使用 estimatedTokenCount（由 TokenCount API 或本地估算预写入）
             // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
             // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
-            const needsAutoSummarize = fullTokenResult.estimatedTotalTokens > threshold;
+            const exceedsSoftThreshold = fullTokenResult.estimatedTotalTokens > threshold;
+            const hardInputTokenLimit = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
+            const compressibleHistoryTokens = Math.max(0, fullTokenResult.estimatedTotalTokens - promptTokens);
+            const minimumUsefulHistoryTokens = Math.max(
+                MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
+                Math.min(
+                    MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
+                    Math.floor(maxContextTokens * AUTO_SUMMARY_USEFUL_HISTORY_RATIO)
+                )
+            );
+            // 固定 prompt 自身已经越过总结软阈值时，总结无法把总量压回阈值以下。若此时只有很少的
+            // 新历史可压缩，反复总结只会每轮省几百到一两千 token；跳过这次低收益总结并继续主请求。
+            const lowSavingsBecauseFixedPromptExceedsThreshold =
+                exceedsSoftThreshold &&
+                promptTokens >= threshold &&
+                compressibleHistoryTokens < minimumUsefulHistoryTokens;
+            const needsAutoSummarize = exceedsSoftThreshold && !lowSavingsBecauseFixedPromptExceedsThreshold;
+            // 跳过低收益总结不等于忽略真正的模型窗口。只有已经逼近硬窗口时才直接进入请求级 fallback；
+            // 位于软阈值与硬窗口之间时原样继续，避免把总结阈值升级成 Agent 请求禁令。
+            const needsContextFallback =
+                !needsAutoSummarize &&
+                hardInputTokenLimit !== undefined &&
+                fullTokenResult.estimatedTotalTokens > hardInputTokenLimit;
 
             this.logDebug('trim.auto_summarize_check', {
                 conversationId,
                 estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
                 threshold,
-                needsAutoSummarize
+                hardInputTokenLimit,
+                promptTokens,
+                compressibleHistoryTokens,
+                minimumUsefulHistoryTokens,
+                lowSavingsBecauseFixedPromptExceedsThreshold,
+                needsAutoSummarize,
+                needsContextFallback
             });
 
             if (needsAutoSummarize) {
@@ -1227,11 +1415,19 @@ export class ContextTrimService {
                 history: normalizedHistory.history,
                 trimStartIndex: normalizedHistory.trimStartIndex,
                 needsAutoSummarize,
+                needsContextFallback,
+                fixedPromptTokens: systemPromptTokens + dynamicContextTokens,
                 contextManagementDecision: {
                     enabled: true,
                     mode: 'summarize',
                     source: policy.source,
-                    action: needsAutoSummarize ? 'auto_summarize_needed' : 'not_needed'
+                    action: needsAutoSummarize
+                        ? 'auto_summarize_needed'
+                        : (needsContextFallback
+                            ? 'hard_fallback_needed'
+                            : (lowSavingsBecauseFixedPromptExceedsThreshold
+                                ? 'auto_summarize_skipped_low_savings'
+                                : 'not_needed'))
                 }
             };
         }
