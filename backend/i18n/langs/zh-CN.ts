@@ -290,6 +290,8 @@ const zhCN = {
                     noMessagesToSummarize: '没有需要总结的消息',
                     summarizeAborted: '总结请求已取消',
                     emptySummary: 'AI 生成的总结为空',
+                    lowQualitySummary: 'AI 生成的总结过短，可能丢失重要信息，已放弃替换对话历史',
+                    summarizeRangeStale: '对话历史在总结期间发生变化，本次总结的范围已失效，已放弃写入',
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
                     canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
                     messageChanged: '消息已变化，请刷新后重试',
