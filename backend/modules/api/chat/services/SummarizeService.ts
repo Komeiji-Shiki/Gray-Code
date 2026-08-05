@@ -365,7 +365,7 @@ export class SummarizeService {
                     success: false,
                     error: {
                         code: 'CONTEXT_OVERFLOW',
-                        message: '待总结内容和总结提示词超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
+                        message: t('modules.api.chat.errors.summarizeContextOverflow')
                     }
                 };
             }
@@ -906,7 +906,7 @@ export class SummarizeService {
                     success: false,
                     error: {
                         code: 'CONTEXT_OVERFLOW',
-                        message: '待总结内容和总结提示词超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
+                        message: t('modules.api.chat.errors.summarizeContextOverflow')
                     }
                 };
             }

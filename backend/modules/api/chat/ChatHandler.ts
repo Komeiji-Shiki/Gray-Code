@@ -57,6 +57,7 @@ import {
     type FunctionCallInfo
 } from './utils';
 import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
+import { ContextBudgetExceededError } from './services/ContextTrimService';
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
 
@@ -270,6 +271,17 @@ export class ChatHandler {
      * 如果有详细错误信息（如 API 返回的响应体），直接追加显示
      */
     private formatError(error: unknown): { code: string; message: string } {
+        if (error instanceof ContextBudgetExceededError) {
+            // 上下文窗口内无法构造合法请求：这是可解释的确定性错误，走 i18n 消息并透出 CONTEXT_OVERFLOW 码，
+            // 而不是把异常英文原文（含估算数字）直接展示给用户。
+            return {
+                code: error.code,
+                message: t('modules.api.chat.errors.contextOverflow', {
+                    estimatedInputTokens: error.estimatedInputTokens,
+                    inputTokenLimit: error.inputTokenLimit
+                })
+            };
+        }
         if (error instanceof ChannelError) {
             let message = error.message;
             

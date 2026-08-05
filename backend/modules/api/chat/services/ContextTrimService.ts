@@ -55,7 +55,12 @@ const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
 const MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 256;
 const MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 8_192;
 
-/** fallback 已无法构造不超过主模型输入预算的合法历史。 */
+/**
+ * fallback 已无法构造不超过主模型输入预算的合法历史。
+ *
+ * 注意：message 仅作开发/日志兜底（英文），对外展示的消息由上层（ChatHandler.formatError）
+ * 按 code = CONTEXT_OVERFLOW 走 i18n，并携带 estimatedInputTokens / inputTokenLimit 两个参数。
+ */
 export class ContextBudgetExceededError extends Error {
     readonly code = 'CONTEXT_OVERFLOW';
 
@@ -1416,6 +1421,10 @@ export class ContextTrimService {
                 trimStartIndex: normalizedHistory.trimStartIndex,
                 needsAutoSummarize,
                 needsContextFallback,
+                // 口径说明：fixedPromptTokens 只含系统提示词 + 动态上下文（不会随裁剪变化、且不在 history 中），
+                // 不含 preservedUserInputTokens——被裁剪区域的逐字用户输入档案由 fallback 的 prependPreservedUserInputs
+                // 在裁剪后的 history 内重新计算，若在此扣除会造成重复预算；而 accumulateTokens 的 promptTokens
+                // （用于软阈值/硬窗口判定）是另一口径，包含该档案。
                 fixedPromptTokens: systemPromptTokens + dynamicContextTokens,
                 contextManagementDecision: {
                     enabled: true,
