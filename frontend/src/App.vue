@@ -677,6 +677,19 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* 承接 Splash 消散：主界面淡入（v-show 每次显示时播放） */
+  animation: view-reveal 0.3s ease-out both;
+}
+
+@keyframes view-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .chat-area {
