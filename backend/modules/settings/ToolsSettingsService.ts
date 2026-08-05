@@ -147,7 +147,11 @@ export class ToolsSettingsService {
             throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
         }
         const oldValue = { ...this.core.settings.toolsEnabled };
-        this.core.settings.toolsEnabled[toolName] = enabled;
+        // 整体替换对象（与 setToolsEnabled 一致）：任何存储实现都不会因对象引用复用而漏写
+        this.core.settings.toolsEnabled = {
+            ...this.core.settings.toolsEnabled,
+            [toolName]: enabled
+        };
         this.core.settings.lastUpdated = Date.now();
         
         await this.core.storage.save(this.core.settings);
@@ -239,7 +243,11 @@ export class ToolsSettingsService {
         if (!this.core.settings.toolAutoExec) {
             this.core.settings.toolAutoExec = { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG };
         }
-        this.core.settings.toolAutoExec[toolName] = autoExec;
+        // 整体替换对象：任何存储实现都不会因对象引用复用而漏写（同 setToolEnabled）
+        this.core.settings.toolAutoExec = {
+            ...this.core.settings.toolAutoExec,
+            [toolName]: autoExec
+        };
         this.core.settings.lastUpdated = Date.now();
         
         await this.core.storage.save(this.core.settings);
