@@ -26,6 +26,14 @@
   - 上下文溢出错误消息本地化与投影性能优化：`SummarizeService` 的 `CONTEXT_OVERFLOW` 与 `ContextBudgetExceededError` 对外消息改走 i18n（zh-CN/en/ja），`ChatHandler.formatError` 统一按 code 透出并携带估算参数（流式/非流式同一出口）；终态 `lastSentHistory` 索引投影改为「粗桶 + 惰性精确索引」两级匹配（大型 parts 不再全量 stringify 作 Map key），`flushRun` 落盘重试次数提取为 `MAX_FLUSH_RETRY_ATTEMPTS` 常量
 
 ### Changed
+  - Diff 工具卡顿优化（前端行级差分与渲染热路径，覆盖 apply_diff / write_file / search_in_files 面板与 VirtualDiffLines）：
+    - `lineDiff` 新增带缓存的 `computeLineDiffCached`：按内容 + 起始行 + 编辑预算键控、上限 32 条的 FIFO 缓存。流式结果更新 / 组件重渲染期间同一 hunk 直接复用上一次结果对象，不再重复 Myers 计算；同一结果对象引用同时让下游虚拟列表的 props 保持稳定，不再整树重渲染
+    - Myers 快速失败：新旧核心区域无公共行且 n+m 超出编辑距离预算时直接输出退化结果（语义与预算耗尽时完全一致），大文件整体重写场景从跑满 768 层迭代降为一次行 ID 集合探测
+    - Myers trace 改为按层动态分配（第 d 层仅覆盖 [-d, d] 对角线，offset 随层递增），总内存约为原来的 1/4，长距离 diff 的分配压力显著下降
+    - `apply_diff` / `write_file` / `search_in_files` 的行级差分改为增量式：只对新加载/变更的文件或块计算并缓存结果（此前任一文件加载完成都会触发全部文件全量重算）；展示行从「模板内每次渲染 slice」改为「按展开状态缓存的稳定引用」，父组件重渲染不再生成新数组导致 `VirtualDiffLines` 反复整体重渲染
+    - `search_in_files` / `write_file` 批量 diff 内容加载改为并行（此前逐个 `await` 串行等待，N 个文件需 N 次往返）；`search_in_files` 匹配列表按文件预分组，模板内不再对全量结果重复 filter
+    - `VirtualDiffLines` 滚动事件按 rAF 节流：连续滚动时每帧至多同步一次视口，不再高频触发窗口行计算与重渲染
+    - `ToolMessage` 对 `diff.statusChanged` 相同载荷去重：后端重复广播同一 pending diff 状态（定时器刷新 / 多面板路由）时跳过全部响应式更新，不再让所有消息组件无谓重渲染
   - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
   - 子代理工具白名单/黑名单改为按分类分组展示：新增公共工具分类模块 `frontend/src/utils/toolCategory.ts`（工具设置页与子代理设置页共用同一套分类名/图标映射），子代理面板工具列表从「内置工具 / MCP 工具」两个平铺大列表改为按后端 category 分组的分类卡片（文件、搜索、终端、媒体等，MCP 独立成组，缺省分类归入「其他」）；每个工具项显示本地化名称 + 等宽工具 ID + 描述，MCP 分类文案接入三语 i18n；工具设置页同步改用公共分类模块（展示行为不变）。
   - 分支树面板「完整消息」升级为「完整消息图」（高级模式）：由目录树缩进改为轨道式泳道布局——每条消息一行，轨道列数由同时存在的候选分支决定（候选分支走完即释放轨道、后续新候选复用，不再随消息数量无限向右扩展）；分叉以水平连接线表达，活跃路径轨道线高亮；默认折叠连续线性段，新增「展开完整消息」开关可查看全部节点；「分支导航」缩略版保持不变，三语文案同步。
@@ -36,6 +44,7 @@
   - 子代理续跑（`continueFromRunId`）改为「同一条 run 接着跑」：runId 复用旧 run（Monitor 记录唯一、transcript 一条线连续，不再出现第二条不同身份的记录），身份强制沿用旧 run 的 agent（系统提示/工具集不变，本次调用传入的 agentName 被忽略，旧 agent 已被删除时拒绝续跑），provider 前缀缓存命中条件不变（仍以 `lastSentHistory` 为请求前缀、`conversationId` 沿用旧 runId）；续跑经 `run_resumed` 事件标记，前端工具卡 pending 阶段直接沿用 `continueFromRunId` 关联 Monitor。
 
 ### Added
+  - 新增回归测试：行级差分快速失败（无公共行且超预算直接退化 / 预算内不退化且输出与预算耗尽一致）、动态 trace 分配下的预算内精确匹配与回退、`computeLineDiffCached` 缓存命中（同值复用同一结果对象）/ 键区分（起始行、编辑预算）/ 内容变化重新计算（lineDiff 套件扩展到 14 例）。
   - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
 
 ## [1.4.1] - 2026-08-05

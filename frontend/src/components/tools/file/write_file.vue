@@ -20,7 +20,7 @@ import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { generateId } from '@/utils/format'
-import { computeLineDiff, type LineDiffResult } from '@/utils/lineDiff'
+import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
 import { useChatStore } from '@/stores'
 import * as configService from '@/services/config'
 
@@ -289,13 +289,14 @@ function getPlanCardStatus(file: MergedFile): 'pending' | 'running' | 'success' 
   return 'success'
 }
 
-// 监听结果变化，自动加载 diff 内容
+// 监听结果变化，自动加载 diff 内容（并行加载：批量文件不再逐个串行等待）
 watch(writeResults, async (results) => {
-  for (const result of results) {
-    if (result.diffContentId && !diffContents.value.has(result.path) && !loadingDiffs.value.has(result.path)) {
-      await loadDiffContent(result.path, result.diffContentId)
-    }
-  }
+  const pending = results.filter(
+    result => result.diffContentId
+      && !diffContents.value.has(result.path)
+      && !loadingDiffs.value.has(result.path)
+  )
+  await Promise.all(pending.map(result => loadDiffContent(result.path, result.diffContentId!)))
 }, { immediate: true })
 
 // 加载 diff 内容
@@ -492,16 +493,26 @@ interface RenderedFileDiff {
   lineDiff: LineDiffResult
 }
 
-const renderedFileDiffs = computed(() => {
-  const rendered = new Map<string, RenderedFileDiff>()
-  for (const [path, content] of diffContents.value) {
-    rendered.set(path, {
-      content,
-      lineDiff: computeLineDiff(content.originalContent, content.newContent)
-    })
+// 增量式 diff 结果缓存：只有新加载/变更的文件才重新计算行级差分，
+// 已计算的文件保持原结果对象引用，避免单个文件加载完成触发全部文件重复计算。
+const renderedFileDiffs = ref<Map<string, RenderedFileDiff>>(new Map())
+
+watch(diffContents, (contents) => {
+  const next = new Map(renderedFileDiffs.value)
+  for (const [path, content] of contents) {
+    const existing = next.get(path)
+    if (!existing || existing.content !== content) {
+      next.set(path, {
+        content,
+        lineDiff: computeLineDiffCached(content.originalContent, content.newContent)
+      })
+    }
   }
-  return rendered
-})
+  for (const path of Array.from(next.keys())) {
+    if (!contents.has(path)) next.delete(path)
+  }
+  renderedFileDiffs.value = next
+}, { immediate: true })
 
 function getRenderedFileDiff(path: string): RenderedFileDiff | undefined {
   return renderedFileDiffs.value.get(path)
@@ -510,11 +521,19 @@ function getRenderedFileDiff(path: string): RenderedFileDiff | undefined {
 // 预览 diff 行数
 const previewDiffLineCount = 20
 
-function getDisplayDiffLines(diff: RenderedFileDiff, path: string) {
-  return isDiffExpanded(path)
-    ? diff.lineDiff.lines
-    : diff.lineDiff.lines.slice(0, previewDiffLineCount)
-}
+// 展开/折叠展示行的稳定引用缓存（同 apply_diff 面板）
+const displayDiffLinesByPath = computed(() => {
+  const map = new Map<string, LineDiffEntry[]>()
+  for (const [path, diff] of renderedFileDiffs.value) {
+    map.set(
+      path,
+      isDiffExpanded(path)
+        ? diff.lineDiff.lines
+        : diff.lineDiff.lines.slice(0, previewDiffLineCount)
+    )
+  }
+  return map
+})
 
 function needsDiffExpand(diff: RenderedFileDiff): boolean {
   return diff.lineDiff.lines.length > previewDiffLineCount
@@ -724,7 +743,7 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <VirtualDiffLines
-            :lines="getDisplayDiffLines(getRenderedFileDiff(file.path)!, file.path)"
+            :lines="displayDiffLinesByPath.get(file.path) || []"
             :line-number-width="getRenderedFileDiff(file.path)!.lineDiff.lineNumberWidth"
             :max-height="300"
           />

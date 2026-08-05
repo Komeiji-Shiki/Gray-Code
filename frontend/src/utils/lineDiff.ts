@@ -17,12 +17,37 @@ export interface LineDiffResult {
   degraded: boolean
 }
 
+export interface LineDiffOptions {
+  oldStartLine?: number
+  newStartLine?: number
+  editDistanceLimit?: number
+}
+
 interface Match {
   oldIndex: number
   newIndex: number
 }
 
 const DEFAULT_EDIT_DISTANCE_LIMIT = 768
+
+/**
+ * 按 (oldContent, newContent, 起始行, 预算) 缓存最近一次行级差分结果。
+ * 字符串以值相等比较（JS 字符串不可区分引用，值相等即视为同一输入），
+ * 返回同一结果对象引用：组件流式更新/重渲染时不再重复 Myers 计算，
+ * 下游虚拟列表收到的 props 引用也保持稳定。
+ */
+const MAX_CACHE_ENTRIES = 32
+
+interface CachedLineDiff {
+  oldContent: string
+  newContent: string
+  oldStartLine: number
+  newStartLine: number
+  editDistanceLimit: number
+  result: LineDiffResult
+}
+
+const diffResultCache: CachedLineDiff[] = []
 
 function trimCommonEdges(oldLines: string[], newLines: string[]): { prefix: number; suffix: number } {
   const minLength = Math.min(oldLines.length, newLines.length)
@@ -56,6 +81,21 @@ function toLineIds(oldLines: string[], newLines: string[]): { oldIds: Int32Array
   }
 }
 
+/**
+ * 快速失败：新旧核心区域完全没有公共行时（大文件整体重写场景），
+ * 编辑距离必然超过任意预算，直接判定退化，跳过 Myers 主循环。
+ * 结果与预算耗尽时的退化输出完全一致（matches 为空、整段核心标记为删除+新增）。
+ */
+function sharesAnyLine(oldIds: Int32Array, newIds: Int32Array): boolean {
+  const [small, large] = oldIds.length <= newIds.length ? [oldIds, newIds] : [newIds, oldIds]
+  const seen = new Set<number>()
+  for (let i = 0; i < small.length; i++) seen.add(small[i])
+  for (let i = 0; i < large.length; i++) {
+    if (seen.has(large[i])) return true
+  }
+  return false
+}
+
 function findMyersMatches(
   oldLines: string[],
   newLines: string[],
@@ -67,24 +107,34 @@ function findMyersMatches(
 
   const { oldIds, newIds } = toLineIds(oldLines, newLines)
   const limit = Math.min(n + m, editDistanceLimit)
-  const offset = limit + 1
-  let frontier = new Int32Array(2 * limit + 3)
+  // 快速失败：新旧核心区域完全没有公共行时，最小编辑距离即 n+m（全部删除+全部插入）。
+  // 若 n+m 已超出预算，再跑 Myers 也必然耗尽预算（且结果与退化一致），直接跳过主循环；
+  // 预算充足（n+m <= limit）时仍需走 Myers 以得到 degraded=false 的精确结果。
+  if (!sharesAnyLine(oldIds, newIds) && n + m > limit) {
+    return { matches: [], degraded: true }
+  }
+  // 第 d 层的 frontier 只覆盖对角线 [-d, d]，按层动态分配大小 2d+3：
+  // 相比每层固定 2*limit+3，trace 总内存约为原来的 1/4。
   const trace: Int32Array[] = []
+  let frontier = new Int32Array(3)
   let foundDistance = -1
 
   for (let distance = 0; distance <= limit; distance++) {
     trace.push(frontier)
-    const next = frontier.slice()
+    const next = new Int32Array(2 * distance + 3)
+    const offset = distance + 1
     for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
       const index = offset + diagonal
       let x: number
+      // 动态大小数组的 offset 随层变化：上一层的对角线上移一格，
+      // 插入（k+1）的前驱位于 frontier[index]，删除（k-1）的前驱位于 frontier[index-2]。
       if (
         diagonal === -distance ||
-        (diagonal !== distance && frontier[index - 1] < frontier[index + 1])
+        (diagonal !== distance && frontier[index - 2] < frontier[index])
       ) {
-        x = frontier[index + 1]
+        x = frontier[index]
       } else {
-        x = frontier[index - 1] + 1
+        x = frontier[index - 2] + 1
       }
       let y = x - diagonal
       while (x < n && y < m && oldIds[x] === newIds[y]) {
@@ -108,7 +158,10 @@ function findMyersMatches(
   let x = n
   let y = m
   for (let distance = foundDistance; distance > 0; distance--) {
+    // trace[distance] 是第 distance-1 层的 frontier：对角线范围 [-(distance-1), distance-1]，
+    // 数组大小 2*distance+1，offset 即 distance。
     const previous = trace[distance]
+    const offset = distance
     const diagonal = x - y
     const index = offset + diagonal
     const previousDiagonal =
@@ -139,11 +192,7 @@ function findMyersMatches(
 export function computeLineDiff(
   oldContent: string,
   newContent: string,
-  options?: {
-    oldStartLine?: number
-    newStartLine?: number
-    editDistanceLimit?: number
-  }
+  options?: LineDiffOptions
 ): LineDiffResult {
   const oldLines = oldContent.split('\n')
   const newLines = newContent.split('\n')
@@ -218,6 +267,55 @@ export function computeLineDiff(
     lineNumberWidth: String(largestLineNumber).length,
     degraded: core.degraded
   }
+}
+
+/**
+ * 带缓存的 computeLineDiff：同一对内容重复计算时直接返回上一次的结果对象引用。
+ * 适用于组件在流式结果更新/重渲染期间反复求值的场景（hunk 内容字符串引用不变即可命中）。
+ */
+export function computeLineDiffCached(
+  oldContent: string,
+  newContent: string,
+  options?: LineDiffOptions
+): LineDiffResult {
+  const oldStartLine = options?.oldStartLine ?? 1
+  const newStartLine = options?.newStartLine ?? oldStartLine
+  const editDistanceLimit = options?.editDistanceLimit ?? DEFAULT_EDIT_DISTANCE_LIMIT
+
+  for (let i = 0; i < diffResultCache.length; i++) {
+    const entry = diffResultCache[i]
+    if (
+      entry.oldContent === oldContent &&
+      entry.newContent === newContent &&
+      entry.oldStartLine === oldStartLine &&
+      entry.newStartLine === newStartLine &&
+      entry.editDistanceLimit === editDistanceLimit
+    ) {
+      if (i > 0) {
+        const [hit] = diffResultCache.splice(i, 1)
+        diffResultCache.unshift(hit)
+      }
+      return entry.result
+    }
+  }
+
+  const result = computeLineDiff(oldContent, newContent, {
+    oldStartLine,
+    newStartLine,
+    editDistanceLimit
+  })
+  diffResultCache.unshift({
+    oldContent,
+    newContent,
+    oldStartLine,
+    newStartLine,
+    editDistanceLimit,
+    result
+  })
+  if (diffResultCache.length > MAX_CACHE_ENTRIES) {
+    diffResultCache.length = MAX_CACHE_ENTRIES
+  }
+  return result
 }
 
 export function formatDiffLineNumber(value: number | undefined, width: number): string {
