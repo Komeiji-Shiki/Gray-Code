@@ -40,7 +40,15 @@ function resolveUserDataDir(): string {
     return path.resolve(explicit);
   }
   if (app.isPackaged) {
-    // 打包版：数据目录与可执行文件同级（win-unpacked/GrayCode.exe → win-unpacked/data）
+    // 便携版（portable target）：NSIS 启动器把程序解压到 %TEMP% 运行，进程退出后临时目录
+    // 会被整目录删除；app.getPath('exe') 返回的是临时目录里的 exe，用它推导数据目录会把
+    // 全部数据写进临时目录并随退出丢失（每次启动都是“全新应用”，更新后也无法保留数据）。
+    // 必须改用启动器注入的 PORTABLE_EXECUTABLE_DIR（便携 exe 实际所在目录）。
+    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (portableDir) {
+      return path.join(path.resolve(portableDir), 'data');
+    }
+    // 安装版 / zip 免安装版：数据目录与可执行文件同级（win-unpacked/GrayCode.exe → win-unpacked/data）
     return path.join(path.dirname(app.getPath('exe')), 'data');
   }
   // 开发版（electron .）：数据目录在 electron-app/data（已加入 .gitignore）

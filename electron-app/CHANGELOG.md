@@ -1,12 +1,21 @@
 # Change Log (GrayCode Desktop)
 
 本文件记录 GrayCode Desktop（Electron 独立桌面版）的变更。
-桌面版基于 GrayCode VS Code 插件 v1.3.1 的 backend/webview 代码复用构建；
+桌面版基于 GrayCode VS Code 插件（backend/webview 代码）复用构建；
 插件本体（backend / frontend 公共部分 / webview）的变更见根目录 `CHANGELOG.md`。
 
 This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
+
+## [1.6.0] - 2026-08-05
+
+### Merged
+  - 同步合入上游 c7d2e16（PR #8：分支 UI/流式竞态/上下文裁剪 fallback 稳定/总结请求去图/编辑保持当前分支/工具安全）：详见根 `CHANGELOG.md` [Unreleased]；桌面版公告/版本信息（扩展 stub）同步为 v1.6.0
+
+### Fixed
+  - 修复打包版（安装版/便携版/zip）通用界面版本号恒为 0.0.0：打包产物只包含 `dist/`，根 `package.json`（运行时版本唯一来源）与 `CHANGELOG.md` 未被打入，所有版本读取（设置页应用信息、About 对话框、版本更新公告）都落到兜底 `0.0.0`，公告逻辑因版本恒等而永不弹新版本更新内容；现在 electron-builder `extraResources` 追加根 `package.json` 与 `CHANGELOG.md`（`resources/package.json`、`resources/CHANGELOG.md`），运行时读取路径不变即可拿到真实版本号与变更日志
+  - 修复便携版（GrayCode-Portable-*.exe）数据目录解析错误：portable 启动器把程序解压到 `%TEMP%` 运行并在退出后整目录删除，`app.getPath('exe')` 指向的是临时目录——按旧逻辑数据目录落在临时目录里，每次退出全部数据（设置/会话/记忆/用量）丢失、更新替换 exe 后也表现为「全新应用」且无法核对版本；现在检测到 `PORTABLE_EXECUTABLE_DIR`（启动器注入的便携 exe 实际所在目录）时数据写入该目录旁 `data/`，与安装版/zip 语义一致（复制应用目录即得独立实例），替换 exe 升级后数据保留
 
 ## [1.5.2] - 2026-08-04
 
