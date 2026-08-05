@@ -15,6 +15,8 @@
   - Webview CSP 加固：ChatViewProvider 与 SubAgentMonitorPanel 的内联脚本从 `'unsafe-inline'` 改为 nonce 机制（每面板随机 nonce，脚本标签显式携带），不再依赖内联执行豁免。
   - 前端正则高亮 ReDoS 护栏：新增 `regexGuard`（源长度 500 上限 + 危险分组量词检测 + 构造失败回退），history_search 高亮不再因畸形正则阻塞 Webview 渲染线程（与后端搜索护栏同一限制）。
   - 修复手动总结请求丢失当前对话模型：`summarizeContext` 处理器此前只转发 `conversationId` / `configId` / `abortSignal`，前端载荷中的 `modelOverride` 在 webview 层被丢弃，频道配置 `model` 为空时总结请求仍发送空模型名（HTTP 404: No available providers at the moment）。处理器现原样透传 `modelOverride`，与后端 `SummarizeService` 的模型透传修复（含独立总结渠道隔离与默认模型回落）闭环；新增处理器层透传回归测试。
+  - 修复总结请求不携带当前对话实际选中的模型：频道配置 `model` 为空、用户在界面临时选择模型时，手动总结（`SummarizeService.handleSummarizeContext` 读取请求 `modelOverride`）与流式/非流式自动总结（`ToolIterationLoopService` 两处调用透传当前回合 `modelOverride`）此前均向 OpenAI 兼容接口发送空模型名（HTTP 404: No available providers at the moment）；使用独立总结渠道时主动隔离主对话模型，未显式指定总结模型则回落到独立渠道自身默认模型，不再错误继承主对话的 `modelOverride`。
+  - 修复手动总结假成功：上下文管理关闭时发送路径直接从索引 0 读取历史，忽略已存在的手动 summary 边界（总结消息只插入历史而不物理删除旧消息），界面显示总结成功、下一次请求却仍携带全部旧上下文。现 `ContextTrimService` 在策略禁用时也查找并应用最后一条总结边界作为发送历史起点（decision.action = `manual_summary_applied`）。
 
 ### Changed
   - 存档点排除配置的默认类别行布局修正：「N 条规则」计数与「编辑」按钮组合为右侧操作列整体右对齐（计数紧贴按钮左侧），不再因各勾选框标签宽度不同而在行间漂移居中；补上此前缺失的编辑按钮 hover/禁用样式。
@@ -27,7 +29,7 @@
   - 子代理续跑（`continueFromRunId`）改为「同一条 run 接着跑」：runId 复用旧 run（Monitor 记录唯一、transcript 一条线连续，不再出现第二条不同身份的记录），身份强制沿用旧 run 的 agent（系统提示/工具集不变，本次调用传入的 agentName 被忽略，旧 agent 已被删除时拒绝续跑），provider 前缀缓存命中条件不变（仍以 `lastSentHistory` 为请求前缀、`conversationId` 沿用旧 runId）；续跑经 `run_resumed` 事件标记，前端工具卡 pending 阶段直接沿用 `continueFromRunId` 关联 Monitor。
 
 ### Added
-  - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）。
+  - 新增回归测试：删除生命周期（deleteLifecycle）、总结 Token 统计（summarizeTokenStats）、存储路径安全（storagePathSafety）、被裁剪用户输入预算（preservedUserInputsBudget）、子代理 run 事件总线（subagentRunEventBus）、前端正则护栏（regexGuard）、轨道式完整消息图布局（branchTreeLayout.buildTrackGraphRows：线性单轨道、候选轨道分配与释放复用、分叉线单元、折叠/展开行为）、工具分类分组（toolCategory：分组/归一化/分类名与图标映射）、总结模型透传（summarizeModelOverride：手动总结当前模型 / 独立模型优先 / 独立渠道无模型时不继承主对话模型）、自动总结当前模型透传（nonStreamAutoSummarizeTurn）、上下文管理关闭时手动总结边界（contextTrimBackgroundReceipt）、summarizeContext 处理器模型透传（summarizeContextModelOverride）。
 
 ## [1.4.1] - 2026-08-05
 
