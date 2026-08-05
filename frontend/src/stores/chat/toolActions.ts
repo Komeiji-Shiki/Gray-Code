@@ -11,6 +11,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { finishSmoothStreamForState } from './streamChunkHandlers'
 
 /**
  * 根据工具调用 ID 获取工具响应。
@@ -331,6 +332,9 @@ export async function cancelStreamAndRejectTools(
   stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
+  // H1：本地取消路径立即清理平滑显示层（真实内容半截已保留，UI 切回真实文本）；
+  // 必须在 streamingMessageId 置 null 之前调用（置空后 ids 为空会 no-op）。
+  finishSmoothStreamForState(state, currentStreamingId)
   // 新建/切换会话同样立即结束本地等待；后端拒绝工具与取消流仍按下方顺序完成。
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
@@ -421,6 +425,9 @@ export async function cancelStream(
   stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免残留空消息导致索引越界
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
+  // H1：本地取消路径立即清理平滑显示层（真实内容半截已保留，UI 切回真实文本）；
+  // 必须在 streamingMessageId 置 null 之前调用（置空后 ids 为空会 no-op）。
+  finishSmoothStreamForState(state, currentStreamingId)
   
   // 点击后立即收敛本地状态，不等待后端关闭 diff、拒绝悬空工具和持久化 functionResponse。
   // 调用方仍会 await 下方请求，因此删除/切会话等依赖后端清理的操作顺序保持不变。

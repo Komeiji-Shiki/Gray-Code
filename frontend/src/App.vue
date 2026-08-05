@@ -26,6 +26,7 @@ import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
+import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 
 // i18n
 const { t } = useI18n()
@@ -535,6 +536,9 @@ onBeforeUnmount(() => {
 
   agentStopNotificationController?.dispose()
   agentStopNotificationController = null
+
+  // H1：webview 卸载兜底——销毁所有平滑流式实例（防泄漏；显示文本随 webview 一起销毁）
+  disposeAllSmoothStreams()
 })
 </script>
 

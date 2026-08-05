@@ -293,6 +293,7 @@ const ja: LanguageMessages = {
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
+            tpsTooltip: 'TPS（トークン毎秒）',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',

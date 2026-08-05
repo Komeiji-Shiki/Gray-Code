@@ -67,7 +67,6 @@ export class SmoothStreamer {
   private raf = 0
   private last = 0
   private carry = 0
-  private ended = false
   private lastCommitAt = 0
   private pendingCommit = ''
 
@@ -83,21 +82,30 @@ export class SmoothStreamer {
   /** 收到一段流式增量文本（真实内容已由调用方累加，这里只进显示池） */
   push(chunk: string): void {
     if (!chunk) return
+    // M2：超长 chunk 预判——按 panic 阈值先把超出部分快进提交，再对剩余部分做字素分割，
+    // 避免"先全量分割成数组、再截断"的峰值内存浪费（显示层仅 cosmetic，语义与旧 drain 快进一致）。
+    const backlogAfterPush = this.queue.length + chunk.length
+    if (backlogAfterPush > this.opts.panic) {
+      const overflow = backlogAfterPush - this.opts.panic
+      if (overflow > 0 && overflow <= chunk.length) {
+        let cut = overflow
+        // 避免在 UTF-16 代理对中间截断（低位代理在前即处于半截状态）
+        const low = chunk.charCodeAt(cut)
+        if (low >= 0xDC00 && low <= 0xDFFF) cut -= 1
+        this.pendingCommit += chunk.slice(0, cut)
+        this.maybeCommit(true)
+        chunk = chunk.slice(cut)
+      }
+    }
     if (seg) {
       for (const s of seg.segment(chunk)) this.queue.push(s.segment)
     } else {
       this.queue.push(...Array.from(chunk))
     }
-    // 积压过大直接快进：跳过部分字符，避免长时间挂起后"狂喷"
+    // 常规兜底：已有积压超限（chunk 快进后 queue 仍超）时按旧逻辑截断
     if (this.queue.length > this.opts.panic) {
       this.drain(this.queue.length - this.opts.panic)
     }
-    this.loop()
-  }
-
-  /** 流结束：收尾加速放完 */
-  end(): void {
-    this.ended = true
     this.loop()
   }
 
@@ -114,7 +122,6 @@ export class SmoothStreamer {
     this.stop()
     this.queue = []
     this.carry = 0
-    this.ended = false
     this.lastCommitAt = 0
     this.pendingCommit = ''
   }
@@ -159,10 +166,9 @@ export class SmoothStreamer {
     // dt 钳在 100ms：webview 隐藏时 rAF 节流，恢复后不会把停顿算进单帧
     const dt = Math.min(t - this.last, 100)
     this.last = t
-    const look = this.ended ? 100 : this.opts.lookahead
     const cps = Math.min(
       this.opts.maxCps,
-      Math.max(this.opts.minCps, this.queue.length / (look / 1000))
+      Math.max(this.opts.minCps, this.queue.length / (this.opts.lookahead / 1000))
     )
     this.carry += (cps * dt) / 1000
     const n = Math.floor(this.carry)
@@ -173,7 +179,8 @@ export class SmoothStreamer {
     this.maybeCommit()
     if (this.queue.length) {
       this.raf = requestAnimationFrame(this.tick)
-    } else if (this.ended && this.pendingCommit) {
+    } else if (this.pendingCommit) {
+      // 积压放完但还有未提交尾巴：立即强制提交，避免尾巴一直挂到下一次 push/flush
       this.maybeCommit(true)
     }
   }

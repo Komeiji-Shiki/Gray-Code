@@ -97,7 +97,12 @@ watch(
 )
 
 onMounted(() => {
-  drawTimer = window.setTimeout(markDrawDone, reducedMotion ? 50 : DRAW_TOTAL_MS)
+  if (reducedMotion) {
+    // reduced-motion：动画即时完成（CSS 静态最终态），去掉无意义的 50ms 等待
+    markDrawDone()
+  } else {
+    drawTimer = window.setTimeout(markDrawDone, DRAW_TOTAL_MS)
+  }
   // 极端情况：挂载时 ready 已为 true
   if (props.ready) tryFadeOut()
 })
@@ -115,7 +120,6 @@ onBeforeUnmount(() => {
         class="girl"
         viewBox="220 170 580 630"
         width="150"
-        role="img"
         aria-hidden="true"
       >
         <!-- 帽子（先画） -->

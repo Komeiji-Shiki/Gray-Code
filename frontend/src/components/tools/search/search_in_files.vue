@@ -372,9 +372,13 @@ const displayDiffLinesByPath = computed(() => {
     displayLinesCache.set(path, { expanded: isExpandedFlag, source, lines })
     map.set(path, lines)
   }
-  // 清理已消失的 path（renderedSearchDiffs 缩短时）
+  // 清理已消失的 path（renderedSearchDiffs 缩短时）；同步修剪展开集合，
+  // 避免文件消失后残留的展开标记在新列表中被误用（A-L4）
   for (const key of Array.from(displayLinesCache.keys())) {
-    if (!renderedSearchDiffs.value.has(key)) displayLinesCache.delete(key)
+    if (!renderedSearchDiffs.value.has(key)) {
+      displayLinesCache.delete(key)
+      expandedDiffs.value.delete(key)
+    }
   }
   return map
 })

@@ -360,10 +360,13 @@ watchEffect(() => {
 let lastPendingDiffsKey = ''
 const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: any) => {
   const pendingDiffs: any[] = Array.isArray(data?.pendingDiffs) ? data.pendingDiffs : []
-  // 轻量去重键：字段值拼接（\u0000 分隔字段、| 分隔条目），避免 JSON.stringify 序列化开销；
-  // 业务字段（id/toolId/filePath/warning/percent）不含这两个分隔符，语义与 JSON 键等价。
+  // 轻量去重键：定长长度前缀编码（`${len}:${value}`，字段间 \u0000 分隔、条目间 | 分隔），
+  // 避免裸拼接与 JSON.stringify 语义不等价：长度前缀使字段边界明确，
+  // 任意字段值（含 \u0000 与 | 字符）都不会与其他组合碰撞，去重语义与 JSON 键等价。
   const payloadKey = pendingDiffs
-    .map((d: any) => [d.id, d.toolId, d.filePath, d.diffGuardWarning, d.diffGuardDeletePercent].join('\u0000'))
+    .map((d: any) => [d.id, d.toolId, d.filePath, d.diffGuardWarning, d.diffGuardDeletePercent]
+      .map(v => `${String(v ?? '').length}:${v ?? ''}`)
+      .join('\u0000'))
     .join('|')
   if (payloadKey === lastPendingDiffsKey) {
     return

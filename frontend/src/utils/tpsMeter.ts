@@ -9,6 +9,10 @@
  *
  * live 判定：最近 2s 内有过真实 record 调用。无真实流（开始动画/空闲等待）时
  * UI 自行用随机模拟波动，让启动与空闲阶段的图表保持活性。
+ *
+ * 内存有界：record 事件缓冲有容量上限（MAX_EVENTS），即使无订阅（webview 隐藏/
+ * 后台流）导致停表不采样，缓冲也不会无界增长；stop() 清空全部状态，避免重挂载
+ * 读到过期的 live/曲线数据。
  */
 
 export interface TpsSample {
@@ -25,6 +29,8 @@ const WINDOW_MS = 1000
 const EMA_ALPHA = 0.3
 const LIVE_WINDOW_MS = 2000
 const RING_SIZE = 30
+/** record 事件缓冲容量上限：超限丢最旧，保证任意场景下 events 有界 */
+const MAX_EVENTS = 1000
 
 class TpsMeter {
   private events: { t: number; n: number }[] = []
@@ -44,6 +50,8 @@ class TpsMeter {
     const now = Date.now()
     this.lastRecordAt = now
     this.events.push({ t: now, n: tokenCount })
+    // 容量上限：超限丢最旧（O(1) 均摊），保证 events 始终有界
+    if (this.events.length > MAX_EVENTS) this.events.shift()
   }
 
   start(): void {
@@ -56,11 +64,22 @@ class TpsMeter {
       window.clearInterval(this.timer)
       this.timer = null
     }
+    // 停表后清空状态：避免重挂载时读到过期的 live/曲线数据（最后一次采样可能仍在
+    // 2s live 窗口内）。EMA/ring 一并清零，让下一次会话从干净状态起步。
+    this.events = []
+    this.lastRecordAt = 0
+    this.ema = 0
+    this.ring = []
+    this.lastSample = { ema: 0, ring: [], live: false }
   }
 
   /** 订阅采样；返回取消订阅函数（最后一个订阅者取消后自动停止定时器） */
   subscribe(cb: (sample: TpsSample) => void): () => void {
     this.listeners.add(cb)
+    // 订阅时事件缓冲为空 → 强制 live=false，兜底避免显示过期 live 快照
+    if (this.events.length === 0) {
+      this.lastSample = { ...this.lastSample, live: false }
+    }
     this.start()
     return () => {
       this.listeners.delete(cb)

@@ -293,6 +293,7 @@ const en: LanguageMessages = {
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
             summarizeContext: 'Summarize context',
+            tpsTooltip: 'TPS (tokens per second)',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',

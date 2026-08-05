@@ -262,6 +262,10 @@ export function trimWindowFromTop(state: ChatStoreState, maxCount = MAX_WINDOW_M
 
   if (removeCount <= 0) return 0
 
+  // M6 说明：窗口折叠只从顶部丢弃更早消息，而平滑条目（SmoothStreamer entry / smoothTexts）
+  // 只存在于“当前正在流出的消息”——它总是窗口最后一条（占位消息最后追加、delta 只写它），
+  // 不会被 trimWindowFromTop 丢弃，因此这里无需清理平滑层。
+  // 若未来出现“流式消息被从顶部裁剪”的场景，需在此对移除 id 调 finishSmoothStream + smoothTexts.delete。
   replaceAllMessages(state, all.slice(removeCount))
   state.windowStartIndex.value = nextWindowStartIndex
 

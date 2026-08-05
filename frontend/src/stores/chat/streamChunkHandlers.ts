@@ -7,9 +7,7 @@
 import type { Content, Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
 import { tpsMeter } from '../../utils/tpsMeter'
-import { pushSmoothText, finishSmoothStream } from './smoothStreamManager'
-import { useSettingsStore } from '../settingsStore'
-import type { SmoothMode } from '../../utils/smoothStream'
+import { pushSmoothText, finishSmoothStream, migrateSmoothStream } from './smoothStreamManager'
 import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
 import { contentToMessage, contentToMessageEnhanced } from './parsers'
@@ -65,6 +63,8 @@ function contentToPersistedMessage(content: Content, currentMessage: Message, st
 
   if (persistedId !== currentMessage.id && state.streamingMessageId.value === currentMessage.id) {
     state.streamingMessageId.value = persistedId
+    // H1：平滑显示层键随占位 id → 持久化 id 迁移，避免按新 id 终结清理时残留旧条目
+    migrateSmoothStreamForState(state, currentMessage.id, persistedId)
   }
   return persistedMessage
 }
@@ -224,21 +224,53 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
  * 段落身份（thought/text + part 索引）变化时由 manager 自动重置蓄水池。
  */
 function pushSmoothTextForMessage(message: Message, deltaText: string, state: ChatStoreState): void {
-  let mode: SmoothMode
-  try {
-    mode = useSettingsStore().smoothStreaming
-  } catch {
-    mode = 'off'
+  // M1：档位经 state.smoothMode 传递（chatStore watch settingsStore 同步），
+  // 不再每 chunk 内联 useSettingsStore()；测试 mock 状态缺字段时兜底 'off'。
+  const mode = state.smoothMode?.value ?? 'off'
+  if (!deltaText) return
+  if (mode === 'off') {
+    // H3 on→off：档位切回直通时立即放完积压并销毁实例，UI 切回真实 content
+    finishSmoothStreamForState(state, message.id)
+    return
   }
-  if (mode === 'off' || !deltaText) return
+  // M5：非 streaming 消息不写平滑层（与 MessageItem 的 isStreaming 门控对齐）
+  if (message.streaming !== true) return
   const parts = message.parts
   if (!parts || parts.length === 0) return
   const lastPart = parts[parts.length - 1]
   if (typeof lastPart.text !== 'string') return
+  // H2-A：新段落前导空白（该 part 尚无可见文本）不推入显示层——flushText 因 trim 为空
+  // 不会为其生成块，推入会让平滑文本覆盖上一段已完成块（消失→重现闪烁）。
+  if (!lastPart.text.trim()) return
   const partKey = `${lastPart.thought === true ? 'thought' : 'text'}:${parts.length - 1}`
-  pushSmoothText(message.id, partKey, deltaText, mode, (displayText) => {
-    state.smoothTexts.set(message.id, displayText)
+  // H3 off→on / 段落切换：显示基线 = 当前 part 已累计真实文本（不含本次 delta），
+  // 首次 commit 时 displayText = baseText + delta，与已渲染真实内容连续、不跳变。
+  const partText = lastPart.text
+  const deltaLen = deltaText.length
+  const baseText = deltaLen > 0 && deltaLen <= partText.length
+    ? partText.slice(0, partText.length - deltaLen)
+    : ''
+  pushSmoothText(message.id, partKey, deltaText, mode, baseText, (partKeyAtCommit, displayText) => {
+    // M3：commit 前比较旧值（partKey + text），未变化时跳过 set，避免每次 commit
+    // 都触发整条消息 renderBlocks 全量重算。
+    const prev = state.smoothTexts.get(message.id)
+    if (!prev || prev.partKey !== partKeyAtCommit || prev.text !== displayText) {
+      state.smoothTexts.set(message.id, { partKey: partKeyAtCommit, text: displayText })
+    }
   })
+}
+
+/**
+ * H1：平滑显示层条目随消息 id 迁移（占位 id → 后端持久化 id）。
+ * manager entry 与 smoothTexts 键同步改名，终结清理按新 id 即可命中，不残留旧条目。
+ */
+function migrateSmoothStreamForState(state: ChatStoreState, fromId: string, toId: string): void {
+  migrateSmoothStream(fromId, toId)
+  const text = state.smoothTexts?.get(fromId)
+  if (text !== undefined) {
+    state.smoothTexts.delete(fromId)
+    state.smoothTexts.set(toId, text)
+  }
 }
 
 /**
@@ -252,6 +284,18 @@ export function finishSmoothStreamForState(state: ChatStoreState, messageId?: st
   for (const id of ids) {
     finishSmoothStream(id)
     // smoothTexts 为本模块新增的显示层字段；测试 mock 状态可能不含它，缺失时跳过清理
+    state.smoothTexts?.delete(id)
+  }
+}
+
+/**
+ * 清空状态中所有平滑条目（清空会话/重置/关闭标签页等本地重置路径用）：
+ * 先放完当前流积压并销毁实例，再清空 smoothTexts，UI 立即切回真实 content。
+ */
+export function clearAllSmoothForState(state: ChatStoreState): void {
+  finishSmoothStreamForState(state)
+  for (const id of Array.from(state.smoothTexts?.keys() ?? [])) {
+    finishSmoothStream(id)
     state.smoothTexts?.delete(id)
   }
 }
@@ -706,6 +750,9 @@ export function handleToolIteration(
 ): void {
   // 工具迭代完成：当前消息包含工具调用
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
+  // H1：终结清理所需的占位 id——contentToPersistedMessage 可能迁移 streamingMessageId；
+  // manager entry / smoothTexts 键按占位 id（迁移前）清理，避免残留。
+  const placeholderId = state.streamingMessageId.value
   
   // 检查是否有工具被取消或拒绝
   const cancelledToolIds = new Set<string>()
@@ -876,6 +923,9 @@ export function handleToolIteration(
   // requiresUserConfirmation: 工具执行后的门闸（如 create_plan）
   // hasApprovalStop: 覆盖 review -> plan 这类不依赖 requiresUserConfirmation 的宿主审批停止
   if (hasCancelledTools || hasUserConfirmation || hasApprovalStop) {
+    // H1：终结性 toolIteration（工具被取消/审批门闸，后端不再发 complete）：
+    // 必须在 streamingMessageId 置 null 之前清理平滑显示层（置空后 ids 为空会 no-op）
+    finishSmoothStreamForState(state, placeholderId)
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
     state.isStreaming.value = false
@@ -887,6 +937,10 @@ export function handleToolIteration(
   }
 
   state._lastApprovalGatedStreamId.value = null
+
+  // H1：流继续（下一轮工具循环）——上一段工具调用消息已终结：放完其积压并清理显示文本；
+  // 新占位消息的后续 delta 会创建新条目。
+  finishSmoothStreamForState(state, placeholderId)
   
   // 创建新的占位消息用于接收后续 AI 响应
   const newAssistantMessageId = generateId()
@@ -935,6 +989,10 @@ export function handleComplete(
     state._lastCancelledStreamId.value = null
     return
   }
+
+  // H1：终结清理所需的占位 id——contentToPersistedMessage 可能把它迁移为后端持久化 id，
+  // manager entry / smoothTexts 键须按占位 id（迁移前）清理，否则按新 id 清理会残留。
+  const streamMessageIdAtStart = state.streamingMessageId.value
 
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1) {
@@ -990,7 +1048,8 @@ export function handleComplete(
   }
   
   // 平滑流式：放完积压并清理显示文本（真实 content 已由 complete 替换）
-  finishSmoothStreamForState(state)
+  // 传占位 id：即使 streamingMessageId 已被迁移为持久化 id，也能命中迁移前的 manager entry
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
@@ -1151,6 +1210,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     return
   }
 
+  // H1：终结清理所需的占位 id——下方 persistedId 分支可能把 streamingMessageId 迁移为
+  // 后端持久化 id；manager entry / smoothTexts 键按占位 id（迁移前）清理，避免残留。
+  const streamMessageIdAtStart = state.streamingMessageId.value
+
   // 正常的 cancelled 处理
   let messageIndex = -1
   if (state.streamingMessageId.value) {
@@ -1218,6 +1281,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
         : message.id
       if (persistedId !== message.id && state.streamingMessageId.value === message.id) {
         state.streamingMessageId.value = persistedId
+        // H1：平滑显示层键随占位 id → 持久化 id 迁移，避免按新 id 清理时残留旧条目
+        migrateSmoothStreamForState(state, message.id, persistedId)
       }
 
       // 创建更新后的消息对象
@@ -1238,7 +1303,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     }
   }
   // 平滑流式：放完积压并清理显示文本（半截内容已由 cancelled 替换/保留）
-  finishSmoothStreamForState(state)
+  // 传占位 id：即使 streamingMessageId 已被迁移为持久化 id，也能命中迁移前的 manager entry
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isStreaming.value = false
@@ -1291,6 +1357,11 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     message: 'Stream error'
   }
   
+  // 平滑流式：放完积压并清理显示文本（半截消息已保留/删除）。
+  // 必须在 streamingMessageId 置 null 之前调用：finishSmoothStreamForState 依赖
+  // streamingMessageId 定位 manager entry，置空后 ids 为空会 no-op 导致条目泄漏（H1）。
+  finishSmoothStreamForState(state)
+
   if (state.streamingMessageId.value) {
     const errorMessageIndex = getMessageIndexById(state, state.streamingMessageId.value)
     const messageToRemove = errorMessageIndex >= 0 ? state.allMessages.value[errorMessageIndex] : undefined
@@ -1313,9 +1384,6 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   } else {
     state._failedStreamMessageId.value = null
   }
-  
-  // 平滑流式：放完积压并清理显示文本（半截消息已保留/删除）
-  finishSmoothStreamForState(state)
   
   state.activeStreamId.value = null
   state.isStreaming.value = false

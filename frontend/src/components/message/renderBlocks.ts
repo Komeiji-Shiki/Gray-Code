@@ -13,6 +13,13 @@ export interface RenderBlock {
   text?: string
   tools?: ToolUsage[]
   key?: string
+  /**
+   * 段落身份（text/thought + 最后一个贡献 part 的索引）：
+   * 与平滑显示层（smoothTexts）的 partKey 对齐，MessageItem 据此只替换匹配块。
+   */
+  partKey?: string
+  /** 合并进本块的同类型 part 数量（合并块无法按段落粒度替换，平滑层跳过） */
+  partCount?: number
 }
 
 /**
@@ -43,6 +50,8 @@ export function getRenderBlockMemoDeps(
   isThinking: boolean,
   thinkingTimeDisplay: string | null,
 ): unknown[] {
+  // 平滑流式说明：流式期间 MessageItem 会把匹配 partKey 的 text/thought 块 text 替换为
+  // 平滑显示文本，因此 text 已是渲染输出的完整输入，v-memo 无需额外依赖 partKey/partCount。
   if (block.type === 'tool') {
     return [block.type, block.tools, isStreaming, isUser]
   }

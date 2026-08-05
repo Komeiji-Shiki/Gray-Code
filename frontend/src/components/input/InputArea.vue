@@ -720,6 +720,17 @@ watch(() => settingsStore.promptModesVersion, () => {
   padding: 0 8px;
 }
 
+/* 窄面板：压缩底部行间距与中间弹性区，避免右侧按钮被挤出（TpsBar 在窄屏隐藏 canvas） */
+@media (max-width: 520px) {
+  .bottom-toolbar {
+    gap: 4px;
+  }
+
+  .tps-slot {
+    padding: 0 4px;
+  }
+}
+
 .attach-button :deep(i.codicon) {
   font-size: 17px !important;
 }
