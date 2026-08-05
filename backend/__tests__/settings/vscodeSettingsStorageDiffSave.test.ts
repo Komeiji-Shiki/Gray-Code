@@ -115,4 +115,116 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         expect(config.update).toHaveBeenCalledTimes(1);
         expect(config.update).toHaveBeenCalledWith('activeChannelId', undefined, vscode.ConfigurationTarget.Global);
     });
+
+    // ===== 回归：快照引用缺陷（自动执行 / 工具策略 / 预设条目开关重启丢失） =====
+    // 旧实现把活对象引用存入 lastSavedSnapshot，保存成功后同一对象的原地变更会被
+    // deepEqual 的 a===b 短路误判为「无变化」而跳过写盘。以下用例必须先 load（拿到
+    // 基线），再对同一 settings 引用做两次原地变更，断言每次都触发写盘。
+
+    it('回归：load 后原地改 toolAutoExec 两次，每次都写盘（自动执行开关持久化）', async () => {
+        const loadedConfig = makeConfig({
+            toolAutoExec: { delete_file: false },
+            toolsEnabled: {},
+            toolsConfig: {},
+        });
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+        await storage.load();
+
+        const settings = {
+            toolsEnabled: {},
+            toolAutoExec: { delete_file: false },
+            toolsConfig: {},
+        } as any;
+
+        // 第一次原地变更（首次写盘成功，快照必须与活对象解耦）
+        settings.toolAutoExec['execute_command'] = true;
+        await storage.save(settings);
+        expect(loadedConfig.update).toHaveBeenCalledTimes(1);
+        expect(loadedConfig.update).toHaveBeenCalledWith(
+            'toolAutoExec',
+            { delete_file: false, execute_command: true },
+            vscode.ConfigurationTarget.Global
+        );
+
+        // 第二次原地变更（快照若存引用，此处会被跳过 → 丢失）
+        loadedConfig.update.mockClear();
+        settings.toolAutoExec['write_file'] = true;
+        await storage.save(settings);
+        expect(loadedConfig.update).toHaveBeenCalledTimes(1);
+        expect(loadedConfig.update).toHaveBeenCalledWith(
+            'toolAutoExec',
+            { delete_file: false, execute_command: true, write_file: true },
+            vscode.ConfigurationTarget.Global
+        );
+    });
+
+    it('回归：load 后原地改 toolsConfig 嵌套（toolPolicy / promptEntries.enabled），每次写盘', async () => {
+        const initialToolsConfig = {
+            system_prompt: {
+                modes: {
+                    code: { id: 'code', toolPolicy: ['read_file'] },
+                },
+            },
+        };
+        const loadedConfig = makeConfig({ toolsConfig: initialToolsConfig, toolsEnabled: {} });
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+        await storage.load();
+
+        const settings = {
+            toolsEnabled: {},
+            toolsConfig: {
+                system_prompt: {
+                    modes: {
+                        code: { id: 'code', toolPolicy: ['read_file'] },
+                    },
+                },
+            },
+        } as any;
+
+        // 原地改工具策略
+        settings.toolsConfig.system_prompt.modes.code.toolPolicy = ['read_file', 'write_file'];
+        await storage.save(settings);
+        expect(loadedConfig.update).toHaveBeenCalledTimes(1);
+
+        // 原地改预设条目开关（同一引用再改一次）
+        loadedConfig.update.mockClear();
+        settings.toolsConfig.system_prompt.modes.code.promptEntries = [
+            { id: 'e1', name: 'P1', type: 'prompt', enabled: false, role: 'system', content: 'x', order: 0 },
+        ];
+        await storage.save(settings);
+        expect(loadedConfig.update).toHaveBeenCalledTimes(1);
+        expect(loadedConfig.update).toHaveBeenCalledWith(
+            'toolsConfig',
+            settings.toolsConfig,
+            vscode.ConfigurationTarget.Global
+        );
+    });
+
+    it('回归：重启模拟——新实例 load 读回原地变更后的最新值', async () => {
+        const loadedConfig = makeConfig({
+            toolAutoExec: { delete_file: false, execute_command: true },
+            toolsEnabled: {},
+            toolsConfig: {},
+        });
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+        await storage.load();
+
+        const settings = { toolsEnabled: {}, toolAutoExec: { delete_file: false, execute_command: true }, toolsConfig: {} } as any;
+        settings.toolAutoExec['write_file'] = true;
+        await storage.save(settings);
+
+        // 模拟重启：新 storage 实例 + 同一持久化配置源（fake config 的存储已被 update 更新），
+        // 必须读回 write_file: true
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const restarted = new VSCodeSettingsStorage();
+        const loaded = await restarted.load();
+        expect((loaded as any).toolAutoExec).toEqual({
+            delete_file: false,
+            execute_command: true,
+            write_file: true,
+        });
+    });
 });
