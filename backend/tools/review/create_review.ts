@@ -81,7 +81,7 @@ export function createCreateReviewTool(): Tool {
         return { success: false, error: sessionCheck.error };
       }
 
-      const { uri, error } = resolveUriWithInfo(outPath);
+      const { uri, error } = resolveUriWithInfo(outPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

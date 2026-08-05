@@ -1,0 +1,155 @@
+/**
+ * 工作区管理器（多工作区支持核心）
+ *
+ * 职责：
+ * 1. 维护当前打开的全部工作区文件夹列表
+ * 2. 维护"当前激活工作区"：
+ *    - 默认跟随活动编辑器所在工作区（无活动编辑器时回退最近记录/第一个文件夹）
+ *    - 用户可通过 workspace.setActive 显式固定（pinned），固定后不再跟随编辑器
+ *    - 被固定的工作区被移除时自动解除固定，回退自动跟随
+ * 3. 工作区列表或激活工作区变化时通知监听者（由宿主广播给前端）
+ *
+ * 同时被 VS Code 扩展与 Electron 桌面版使用（Electron shim 的 activeTextEditor 恒为
+ * undefined，自动跟随退化为"最近编辑器不可用 → 第一个文件夹"，行为等价于旧实现）。
+ */
+
+import * as vscode from 'vscode';
+
+export interface WorkspaceFolderInfo {
+    /** 文件夹名称 */
+    name: string;
+    /** URI（string 形式，如 file:///...） */
+    uri: string;
+    /** 文件系统路径 */
+    fsPath: string;
+    /** 在 workspaceFolders 中的索引 */
+    index: number;
+}
+
+export interface WorkspaceManagerOptions {
+    /** 激活工作区变化（含变化为 null） */
+    onActiveWorkspaceChanged?: (uri: string | null) => void;
+    /** 工作区列表变化（新增/移除文件夹） */
+    onWorkspaceListChanged?: (list: WorkspaceFolderInfo[]) => void;
+}
+
+export class WorkspaceManager {
+    private pinnedWorkspaceUri: string | null = null;
+    private lastEditorWorkspaceUri: string | null = null;
+    private lastActiveWorkspaceUri: string | null = null;
+    private lastWorkspaceListKey: string | null = null;
+    private disposables: vscode.Disposable[] = [];
+    private options: WorkspaceManagerOptions;
+
+    constructor(options: WorkspaceManagerOptions = {}) {
+        this.options = options;
+        this.disposables.push(
+            vscode.workspace.onDidChangeWorkspaceFolders(() => this.handleChange()),
+            vscode.window.onDidChangeActiveTextEditor((editor) => {
+                // 记录最近一次活动编辑器的工作区：编辑器失焦（例如聚焦聊天面板）时
+                // activeTextEditor 会变为 undefined，若直接回退 folder[0] 会造成
+                // 多工作区下"当前工作区"在两个项目间反复横跳。
+                const folder = editor?.document.uri
+                    ? vscode.workspace.getWorkspaceFolder(editor.document.uri)
+                    : undefined;
+                if (folder) {
+                    this.lastEditorWorkspaceUri = folder.uri.toString();
+                }
+                this.handleChange();
+            })
+        );
+    }
+
+    /** 获取全部工作区文件夹 */
+    getWorkspaceList(): WorkspaceFolderInfo[] {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            return [];
+        }
+        return folders.map((folder, index) => ({
+            name: folder.name,
+            uri: folder.uri.toString(),
+            fsPath: folder.uri.fsPath,
+            index
+        }));
+    }
+
+    /**
+     * 获取当前激活工作区 URI
+     *
+     * 优先级：已固定（用户选择）> 最近活动编辑器所在工作区 > 第一个文件夹 > null
+     */
+    getActiveWorkspaceUri(): string | null {
+        return this.computeActiveWorkspaceUri(this.getWorkspaceList());
+    }
+
+    private computeActiveWorkspaceUri(list: WorkspaceFolderInfo[]): string | null {
+        if (this.pinnedWorkspaceUri) {
+            if (list.some((w) => w.uri === this.pinnedWorkspaceUri)) {
+                return this.pinnedWorkspaceUri;
+            }
+            // 被固定的工作区已关闭：解除固定，回退自动跟随
+            this.pinnedWorkspaceUri = null;
+        }
+        // 最近活动编辑器所在的工作区也可能已从窗口中移除：失效则回退
+        if (this.lastEditorWorkspaceUri && !list.some((w) => w.uri === this.lastEditorWorkspaceUri)) {
+            this.lastEditorWorkspaceUri = null;
+        }
+        return this.lastEditorWorkspaceUri ?? list[0]?.uri ?? null;
+    }
+
+    /**
+     * 设置/解除激活工作区固定
+     *
+     * @param uri 工作区 URI；传 null 解除固定并恢复"跟随活动编辑器"
+     */
+    setActiveWorkspaceUri(uri: string | null): void {
+        const next = uri && this.getWorkspaceList().some((w) => w.uri === uri) ? uri : null;
+        if (next === this.pinnedWorkspaceUri) {
+            return;
+        }
+        this.pinnedWorkspaceUri = next;
+        this.handleChange();
+    }
+
+    /** 是否处于"跟随活动编辑器"模式（未固定） */
+    isAutoFollow(): boolean {
+        return this.pinnedWorkspaceUri === null;
+    }
+
+    private handleChange(): void {
+        const list = this.getWorkspaceList();
+        const listKey = list.map((w) => w.uri).join('\u0000');
+        if (listKey !== this.lastWorkspaceListKey) {
+            this.lastWorkspaceListKey = listKey;
+            this.options.onWorkspaceListChanged?.(list);
+        }
+
+        const active = this.computeActiveWorkspaceUri(list);
+        if (active !== this.lastActiveWorkspaceUri) {
+            this.lastActiveWorkspaceUri = active;
+            this.options.onActiveWorkspaceChanged?.(active);
+        }
+    }
+
+    dispose(): void {
+        for (const d of this.disposables) {
+            d.dispose();
+        }
+        this.disposables = [];
+    }
+}
+
+// ========== 全局注册（与 settingsContext / getDiffManager 相同的单例模式） ==========
+
+let globalWorkspaceManager: WorkspaceManager | null = null;
+
+/** 注册全局工作区管理器（ChatViewProvider / BackendHost 构造时调用） */
+export function setWorkspaceManager(manager: WorkspaceManager | null): void {
+    globalWorkspaceManager = manager;
+}
+
+/** 获取全局工作区管理器（处理器内使用；未初始化时返回 null 由调用方兜底） */
+export function getWorkspaceManager(): WorkspaceManager | null {
+    return globalWorkspaceManager;
+}

@@ -309,6 +309,14 @@ export interface SubAgentExecutorContext {
     /** 对话 ID，用于把 SubAgent 内部记录保存到 conversation 子记录 */
     conversationId?: string;
 
+    /**
+     * 多工作区支持：主会话绑定的工作区 URI。
+     *
+     * 由 subagents 工具从父 ToolContext.activeWorkspaceUri 继承，
+     * 使子代理的文件工具/终端默认 cwd 与主会话限定在同一工作区。
+     */
+    activeWorkspaceUri?: string;
+
     /** 对话元数据存储，用于保存 subAgentRuns 子记录 */
     conversationStore?: {
         getCustomMetadata(conversationId: string, key: string): Promise<unknown>;

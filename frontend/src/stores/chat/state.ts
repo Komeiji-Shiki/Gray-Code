@@ -11,6 +11,7 @@ import type { EditorNode } from '../../types/editorNode'
 import type {
   Conversation,
   WorkspaceFilter,
+  WorkspaceFolderInfo,
   RetryStatus,
   AutoSummaryStatus,
   ConfigInfo,
@@ -116,6 +117,13 @@ export function rebuildMessageIndexById(state: MessageIndexLookupState): void {
 export function replaceAllMessages(state: MessageIndexLookupState, messages: Message[]): void {
   state.allMessages.value = messages
   rebuildMessageIndexById(state)
+}
+
+/**
+ * 设置打开的工作区文件夹列表
+ */
+export function setWorkspaceList(state: ChatStoreState, list: WorkspaceFolderInfo[]): void {
+  state.workspaceList.value = list
 }
 
 export function appendMessage(state: MessageIndexLookupState, message: Message): void {
@@ -314,6 +322,9 @@ export function createChatState(): ChatStoreState {
   
   /** 当前工作区 URI */
   const currentWorkspaceUri = ref<string | null>(null)
+
+  /** 打开的工作区文件夹列表 */
+  const workspaceList = ref<WorkspaceFolderInfo[]>([])
   
   /** 输入框内容（跨视图保持） */
   const inputValue = ref('')
@@ -420,6 +431,7 @@ export function createChatState(): ChatStoreState {
     isRestorePreviewing,
     deletingConversationIds,
     currentWorkspaceUri,
+    workspaceList,
     inputValue,
     workspaceFilter,
     activeBuild,

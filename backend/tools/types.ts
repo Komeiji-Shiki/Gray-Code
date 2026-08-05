@@ -262,6 +262,9 @@ export interface ToolContext {
         getCustomMetadata: (conversationId: string, key: string) => Promise<unknown>;
         setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
     };
+
+    /** 当前对话绑定的工作区 URI（多工作区支持：tools/utils.ts 路径解析的优先工作区） */
+    activeWorkspaceUri?: string;
     
     /** 其他上下文信息 */
     [key: string]: unknown;

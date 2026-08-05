@@ -23,7 +23,7 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDefaultExecuteCommandConfig } from '../../modules/settings';
 import type { ShellConfig } from '../../modules/settings';
 import { TaskManager, type TaskEvent } from '../taskManager';
-import { getAllWorkspaces, parseWorkspacePath } from '../utils';
+import { getAllWorkspaces, getWorkspaceByUri, parseWorkspacePath } from '../utils';
 import { t } from '../../i18n';
 
 /** 终端任务类型常量 */
@@ -451,9 +451,15 @@ export async function checkAllShellsAvailability(shells: Array<{ type: string; p
 }
 
 /**
- * 获取工作区根目录路径（默认返回第一个）
+ * 获取工作区根目录路径（默认返回第一个；可指定优先工作区 URI）
  */
-function getWorkspaceRootPath(): string | undefined {
+function getWorkspaceRootPath(preferredWorkspaceUri?: string): string | undefined {
+    if (preferredWorkspaceUri) {
+        const preferred = getWorkspaceByUri(preferredWorkspaceUri);
+        if (preferred) {
+            return preferred.fsPath;
+        }
+    }
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
@@ -1070,6 +1076,8 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             }
 
             // 计算工作目录（支持多工作区）
+            // 会话绑定工作区时（未显式指定前缀），相对 cwd 与默认 cwd 都优先解析到该工作区
+            const preferredWorkspace = context?.activeWorkspaceUri ? getWorkspaceByUri(context.activeWorkspaceUri) : undefined;
             let workingDir: string;
             let workspaceName: string | undefined;
             
@@ -1079,18 +1087,19 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     workingDir = cwd;
                 } else {
                     // 解析带工作区前缀的路径
-                    const { workspace, relativePath } = parseWorkspacePath(cwd);
+                    const { workspace, relativePath } = parseWorkspacePath(cwd, context?.activeWorkspaceUri);
                     if (workspace) {
                         workingDir = path.join(workspace.fsPath, relativePath);
                         workspaceName = workspaces.length > 1 ? workspace.name : undefined;
                     } else {
-                        // 使用默认工作区
-                        workingDir = path.join(workspaces[0].fsPath, cwd);
+                        // 使用默认工作区（会话绑定工作区优先）
+                        const base = preferredWorkspace?.fsPath || workspaces[0].fsPath;
+                        workingDir = path.join(base, cwd);
                     }
                 }
             } else {
-                // 默认使用第一个工作区
-                workingDir = workspaces[0].fsPath;
+                // 默认使用第一个工作区（会话绑定工作区优先）
+                workingDir = (preferredWorkspace?.fsPath || workspaces[0].fsPath);
             }
 
             // 验证工作目录是否存在。Windows 上 CreateProcessW 的 lpCurrentDirectory

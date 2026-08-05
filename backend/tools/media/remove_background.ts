@@ -138,7 +138,7 @@ interface GeminiImageResponse {
  * 读取图片文件
  */
 async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath, context?.activeWorkspaceUri);
     if (!uri) {
         return null;
     }
@@ -455,7 +455,7 @@ async function executeRemoveTask(
         return { index, success: false, error: `Task ${index + 1}: output_path is required` };
     }
 
-    const inputPathError = ensureMediaPathsSafe(image_path);
+    const inputPathError = ensureMediaPathsSafe(image_path, undefined, undefined, context?.activeWorkspaceUri);
     if (inputPathError) {
         return { index, success: false, error: `Task ${index + 1}: ${inputPathError}` };
     }
@@ -538,7 +538,7 @@ async function executeRemoveTask(
         // 旧实现按读策略（read_file）审批，读策略 allow 时会绕过写策略 deny，
         // 导致工作区外遮罩文件被静默写入。
         if (mask_path) {
-            const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path);
+            const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path, context?.activeWorkspaceUri);
             const maskAccessError = maskOutside
                 ? ensureOutsideWorkspaceAccessApproved('write_file', { path: mask_path }, context)
                 : null;
@@ -620,7 +620,7 @@ async function executeRemoveTask(
             .toBuffer();
 
         // 保存结果
-        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path);
+        const { uri: outputUri, isOutsideWorkspace: outputOutside } = resolveFileToolPathWithInfo(output_path, context?.activeWorkspaceUri);
         if (!outputUri) {
             return { index, success: false, error: `Task ${index + 1}: Cannot resolve output path` };
         }

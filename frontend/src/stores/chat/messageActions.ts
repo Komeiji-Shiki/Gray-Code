@@ -13,8 +13,7 @@ import {
   createAndPersistConversation,
   MESSAGES_PAGE_SIZE,
   loadCheckpoints,
-  refreshCurrentConversationBuildSession,
-  syncConversationWorkspaceUri
+  refreshCurrentConversationBuildSession
 } from './conversationActions'
 import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
@@ -497,8 +496,6 @@ export async function sendMessage(
         conv.preview = messageText.slice(0, 50)
       }
     }
-
-    await syncConversationWorkspaceUri(state, targetConvId)
 
     // 写入全局状态前校验会话归属，防止跨会话投递
     if (!validateSessionIdentity(state, targetConvId)) {

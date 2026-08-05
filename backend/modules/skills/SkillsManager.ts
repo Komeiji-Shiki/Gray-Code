@@ -42,7 +42,7 @@ export class SkillsManager {
     /** 是否已初始化 */
     private initialized: boolean = false;
     
-    constructor(options: { workspacePath?: string; globalStoragePath: string }) {
+    constructor(options: { workspacePath?: string; workspacePaths?: string[]; globalStoragePath: string }) {
         this.legacySkillsDir = path.join(options.globalStoragePath, 'skills');
         this.buildScanDirs(options);
     }
@@ -51,20 +51,25 @@ export class SkillsManager {
      * 构建待扫描的目录列表
      * 按优先级排序（先扫到的优先）
      */
-    private buildScanDirs(options: { workspacePath?: string; globalStoragePath: string }) {
+    private buildScanDirs(options: { workspacePath?: string; workspacePaths?: string[]; globalStoragePath: string }) {
         // 1. 项目级目录 (优先级最高)
-        if (options.workspacePath) {
+        // 多工作区支持：收集全部已打开文件夹的项目级 skills 目录
+        // （workspacePaths 为数组形式；workspacePath 为兼容旧调用方的单路径形式）
+        const workspacePaths = options.workspacePaths && options.workspacePaths.length > 0
+            ? options.workspacePaths
+            : (options.workspacePath ? [options.workspacePath] : []);
+        for (const workspacePath of workspacePaths) {
             this.scanDirs.push({ 
-                path: path.join(options.workspacePath, '.graycode', 'skills'), 
+                path: path.join(workspacePath, '.graycode', 'skills'), 
                 source: 'project-graycode' 
             });
             // fallback: 兼容旧 LimCode 项目技能目录
             this.scanDirs.push({ 
-                path: path.join(options.workspacePath, '.limcode', 'skills'), 
+                path: path.join(workspacePath, '.limcode', 'skills'), 
                 source: 'project-graycode' 
             });
             this.scanDirs.push({ 
-                path: path.join(options.workspacePath, '.agents', 'skills'), 
+                path: path.join(workspacePath, '.agents', 'skills'), 
                 source: 'project-agents' 
             });
         }
@@ -162,6 +167,33 @@ ${content}
         }
     }
     
+    /**
+     * 多工作区支持：运行时追加一个工作区路径的项目级扫描目录并刷新。
+     *
+     * 用于 VS Code 窗口内新增工作区文件夹的场景（onDidChangeWorkspaceFolders 新增分支）：
+     * 不重建管理器（重建会丢失启用状态），只补扫描目录后重新扫描。
+     */
+    addWorkspacePath(workspacePath: string): void {
+        if (!workspacePath) return;
+        const candidates = [
+            { path: path.join(workspacePath, '.graycode', 'skills'), source: 'project-graycode' as SkillSource },
+            { path: path.join(workspacePath, '.limcode', 'skills'), source: 'project-graycode' as SkillSource },
+            { path: path.join(workspacePath, '.agents', 'skills'), source: 'project-agents' as SkillSource }
+        ];
+        let added = false;
+        for (const dirInfo of candidates) {
+            if (!this.scanDirs.some((d) => d.path === dirInfo.path)) {
+                this.scanDirs.push(dirInfo);
+                added = true;
+            }
+        }
+        if (added && this.initialized) {
+            void this.refresh().catch((error) => {
+                console.warn('[SkillsManager] Failed to refresh after adding workspace path:', error);
+            });
+        }
+    }
+
     /**
      * 获取第一个用户级目录路径（用于打开目录功能）
      */
@@ -598,6 +630,7 @@ export function setSkillsManager(manager: SkillsManager): void {
  */
 export async function createSkillsManager(options: {
     workspacePath?: string;
+    workspacePaths?: string[];
     globalStoragePath: string;
 }): Promise<SkillsManager> {
     const manager = new SkillsManager(options);

@@ -63,11 +63,12 @@ async function writeSingleFile(
     approvedByToolConfirmation?: boolean,
     conversationId?: string,
     checkpointReady?: Promise<unknown>,
-    lockHolder?: LockHolder
+    lockHolder?: LockHolder,
+    activeWorkspaceUri?: string
 ): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
-    const { uri, workspace, error } = resolveFileToolPathWithInfo(filePath);
+    const { uri, workspace, error } = resolveFileToolPathWithInfo(filePath, activeWorkspaceUri);
     if (!uri) {
         return {
             path: filePath,
@@ -339,7 +340,8 @@ export function createWriteFileTool(): Tool {
                 // checkpointReady 由 ToolExecutionService 注入（ToolContext 索引签名透传）
                 context?.checkpointReady as Promise<unknown> | undefined,
                 // PERF-CP：deferred 模式写盘锁持有者身份（ToolContext 索引签名透传）
-                context?.lockHolder as LockHolder | undefined
+                context?.lockHolder as LockHolder | undefined,
+                context?.activeWorkspaceUri
             );
             results.push(result);
 

@@ -147,8 +147,8 @@ function convertSymbolInformation(symbol: vscode.SymbolInformation): SymbolInfo 
 /**
  * 获取单个文件的符号
  */
-async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): Promise<FileSymbolResult> {
-    const uri = resolveUri(filePath);
+async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal, activeWorkspaceUri?: string): Promise<FileSymbolResult> {
+    const uri = resolveUri(filePath, activeWorkspaceUri);
     if (!uri) {
         return {
             path: filePath,
@@ -282,7 +282,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             let totalSymbolCount = 0;
             
             for (const filePath of pathList) {
-                const result = await getSymbolsForFile(filePath, context?.abortSignal);
+                const result = await getSymbolsForFile(filePath, context?.abortSignal, context?.activeWorkspaceUri);
                 results.push(result);
                 
                 if (result.success) {

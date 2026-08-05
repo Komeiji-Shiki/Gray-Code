@@ -233,11 +233,12 @@ function isDiffReviewCoveredForCall(
 export function getOutsideWorkspaceAccessCheck(
     toolName: OutsideWorkspaceAwareToolName,
     args: Record<string, unknown> | undefined,
-    settingsManager?: SettingsManager
+    settingsManager?: SettingsManager,
+    activeWorkspaceUri?: string
 ): OutsideWorkspaceAccessCheck {
     const candidatePaths = extractCandidatePaths(toolName, args);
     const outsidePaths = candidatePaths
-        .map(filePath => resolveFileToolPathWithInfo(filePath))
+        .map(filePath => resolveFileToolPathWithInfo(filePath, activeWorkspaceUri))
         .filter(resolved => resolved.isOutsideWorkspace)
         .map(resolved => resolved.displayPath);
 
@@ -322,7 +323,7 @@ export function ensureOutsideWorkspaceAccessApproved(
     args: Record<string, unknown> | undefined,
     context?: ToolContext
 ): string | null {
-    const check = getOutsideWorkspaceAccessCheck(toolName, args);
+    const check = getOutsideWorkspaceAccessCheck(toolName, args, undefined, context?.activeWorkspaceUri);
     if (check.denied) {
         return check.error || getDeniedBySettingsMessage(toolName, check.paths);
     }

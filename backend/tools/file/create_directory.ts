@@ -6,7 +6,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 
 /**
@@ -21,8 +21,8 @@ interface CreateResult {
 /**
  * 创建单个目录
  */
-async function createSingleDirectory(dirPath: string): Promise<CreateResult> {
-    const uri = resolveUri(dirPath);
+async function createSingleDirectory(dirPath: string, activeWorkspaceUri?: string): Promise<CreateResult> {
+    const uri = resolveUri(dirPath, activeWorkspaceUri);
     if (!uri) {
         return {
             path: dirPath,
@@ -85,7 +85,7 @@ export function createCreateDirectoryTool(): Tool {
                 required: ['paths']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const pathList = args.paths as string[];
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required' };
@@ -96,7 +96,7 @@ export function createCreateDirectoryTool(): Tool {
             let failCount = 0;
 
             for (const dirPath of pathList) {
-                const result = await createSingleDirectory(dirPath);
+                const result = await createSingleDirectory(dirPath, context?.activeWorkspaceUri);
                 results.push(result);
                 
                 if (result.success) {

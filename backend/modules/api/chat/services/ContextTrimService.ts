@@ -973,16 +973,21 @@ export class ContextTrimService {
         }
         
         // 加载 runtime 元数据以便正确生成系统提示词和动态上下文
-        const [todoList, pinnedFiles, skills] = await Promise.all([
+        // （getMetadata 防御性探测：测试替身可能未实现，缺失时视为未绑定工作区）
+        const [todoList, pinnedFiles, skills, meta] = await Promise.all([
             this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
             this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
-            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined),
+            (typeof this.conversationManager.getMetadata === 'function'
+                ? this.conversationManager.getMetadata(conversationId).catch(() => null)
+                : Promise.resolve(null))
         ]);
 
         const runtime = {
             todoList,
             pinnedFiles,
-            skills
+            skills,
+            workspaceUri: meta?.workspaceUri
         };
 
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息

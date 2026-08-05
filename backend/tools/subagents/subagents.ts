@@ -450,7 +450,9 @@ async function executeSubAgent(
                 ...baseExecutorContext,
                 conversationId,
                 conversationStore: context?.conversationStore as any,
-                promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
+                promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot,
+                // 多工作区支持：子代理继承主会话绑定的工作区
+                activeWorkspaceUri: context?.activeWorkspaceUri as string | undefined
             })
             : undefined;
 

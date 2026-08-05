@@ -219,7 +219,11 @@ const zhCN = {
             settings: '设置',
             monitor: 'SubAgent 监视',
             monitorOpen: '打开 SubAgent 监视面板',
-            monitorClose: '关闭 SubAgent 监视面板'
+            monitorClose: '关闭 SubAgent 监视面板',
+            workspaceSelector: {
+                auto: '跟随活动编辑器',
+                noWorkspace: '未打开工作区'
+            }
         },
 
         usage: {

@@ -282,17 +282,23 @@ export class ToolIterationLoopService {
         todoList?: unknown;
         pinnedFiles?: unknown;
         skills?: unknown;
+        workspaceUri?: string;
     }> {
-        const [todoList, pinnedFiles, skills] = await Promise.all([
+        const [todoList, pinnedFiles, skills, meta] = await Promise.all([
             this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
             this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
-            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined),
+            // 测试替身可能未实现 getMetadata：防御性探测，缺失时视为未绑定工作区
+            (typeof this.conversationManager.getMetadata === 'function'
+                ? this.conversationManager.getMetadata(conversationId).catch(() => null)
+                : Promise.resolve(null))
         ]);
 
         return {
             todoList,
             pinnedFiles,
-            skills
+            skills,
+            workspaceUri: meta?.workspaceUri
         };
     }
 
@@ -932,7 +938,11 @@ export class ToolIterationLoopService {
                                     // 或调用 id 不在 partialContent 中不结算），消息已从 inbox 移除、未持久化 =
                                     // 丢失。改为统一由主循环 drain；无主循环时在 autoPrefix 为空分支显式 drain 一次。
                                     undefined,
-                                    undefined
+                                    undefined,
+                                    // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
+                                    undefined,
+                                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                                    runtimeContext?.workspaceUri
                                 ).catch(err => {
                                     // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
                                     // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
@@ -1309,7 +1319,11 @@ export class ToolIterationLoopService {
                     undefined,
                     // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
                     conversationId,
-                    MAIN_SESSION_RUN_ID
+                    MAIN_SESSION_RUN_ID,
+                    // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
+                    undefined,
+                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                    runtimeContext?.workspaceUri
                 );
 
                 while (true) {
@@ -1782,7 +1796,11 @@ export class ToolIterationLoopService {
                 undefined,
                 // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
                 conversationId,
-                MAIN_SESSION_RUN_ID
+                MAIN_SESSION_RUN_ID,
+                // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
+                undefined,
+                // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                runtimeContext?.workspaceUri
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);
 

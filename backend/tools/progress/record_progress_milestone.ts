@@ -3,7 +3,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo } from '../utils';
 import {
   buildProgressDocument,
@@ -122,7 +122,7 @@ export function createRecordProgressMilestoneToolDeclaration(): ToolDeclaration 
 export function createRecordProgressMilestoneTool(): Tool {
   return {
     declaration: createRecordProgressMilestoneToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as RecordProgressMilestoneArgs;
       const targetPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
@@ -158,7 +158,7 @@ export function createRecordProgressMilestoneTool(): Tool {
         return { success: false, error: artifactsError };
       }
 
-      const { uri, error } = resolveUriWithInfo(targetPath);
+      const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

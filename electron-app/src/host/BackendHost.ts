@@ -47,6 +47,7 @@ import {
 import { MessageRouter } from '../../../webview/MessageRouter';
 import { WebviewClientRegistry, WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegistry';
 import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAgentsHandlers';
+import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
 import type { HandlerContext } from '../../../webview/types';
 import { getDiffManager } from '../../../backend/tools/file/diffManager';
 import { ElectronContext } from './ElectronContext';
@@ -96,6 +97,7 @@ export class BackendHost {
   private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
 
   private messageRouter!: MessageRouter;
+  private workspaceManager!: WorkspaceManager;
   private clientRegistry = new WebviewClientRegistry();
   /** 子代理 Monitor 内嵌面板桥（事件推送 + monitor 协议消息处理） */
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
@@ -307,6 +309,8 @@ export class BackendHost {
         // ignore
       }
     }
+    setWorkspaceManager(null);
+    this.workspaceManager?.dispose();
     try {
       this.mcpManager?.dispose();
     } catch {
@@ -375,9 +379,24 @@ export class BackendHost {
     setGlobalConfigManager(this.configManager);
     setGlobalToolRegistry(toolRegistry);
 
+    // 多工作区支持：激活工作区/列表变化广播到渲染进程
+    this.workspaceManager = new WorkspaceManager({
+        onActiveWorkspaceChanged: (uri) => this.postToRenderer('message', 'workspaceUri', uri),
+        onWorkspaceListChanged: (list) => this.postToRenderer('message', 'workspaceList', list)
+    });
+    setWorkspaceManager(this.workspaceManager);
+    // 新增的工作区文件夹：项目技能立即重新扫描
+    this.unsubscribers.push(
+        vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+            for (const folder of event.added) {
+                getSkillsManager()?.addWorkspacePath(folder.uri.fsPath);
+            }
+        })
+    );
+
     await createSkillsManager({
-      workspacePath: this.getWorkspacePath(),
-      globalStoragePath: this.storagePathManager.getEffectiveDataPath()
+        workspacePaths: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
+        globalStoragePath: this.storagePathManager.getEffectiveDataPath()
     });
     await this.syncSkillsState();
 
@@ -620,8 +639,7 @@ export class BackendHost {
       sendError: (id, code, message) => this.postToRenderer('error', id, code, message),
       postMessage: (message: any) => this.postToRenderer('raw', message),
       getCurrentWorkspaceUri: () => {
-        const folders = vscode.workspace.workspaceFolders;
-        return folders?.[0] ? folders[0].uri.toString() : null;
+        return this.workspaceManager ? this.workspaceManager.getActiveWorkspaceUri() : null;
       },
       openSubAgentMonitor: (runId?: string, conversationId?: string) => {
         // 内嵌面板方案：更新桥的焦点并通知前端打开面板（不再打开独立窗口）

@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
 import { syncProgressFromDesignArtifact } from '../progress/autoSync';
@@ -47,7 +47,7 @@ export function createUpdateDesignToolDeclaration(): ToolDeclaration {
 export function createUpdateDesignTool(): Tool {
   return {
     declaration: createUpdateDesignToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as UpdateDesignArgs;
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       const design = typeof args.design === 'string' ? args.design : '';
@@ -65,7 +65,7 @@ export function createUpdateDesignTool(): Tool {
         return { success: false, error: `Invalid design path. Only ".graycode/design/**.md" is allowed. Rejected path: ${targetPath}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(targetPath);
+      const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

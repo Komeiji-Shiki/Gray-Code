@@ -12,6 +12,7 @@ import type { Tool, ToolResult } from '../types';
 import {
     getWorkspaceRoot,
     getAllWorkspaces,
+    getWorkspaceByUri,
     parseWorkspacePath,
     toRelativePath,
     normalizeLineEndingsToLF,
@@ -835,7 +836,7 @@ function getSearchRootAccessError(
     args: Record<string, unknown>,
     context?: import('../types').ToolContext
 ): string | null {
-    const info = resolveFileToolPathWithInfo(searchRoot.fsPath);
+    const info = resolveFileToolPathWithInfo(searchRoot.fsPath, context?.activeWorkspaceUri);
     if (!info.isOutsideWorkspace) {
         return null;
     }
@@ -994,6 +995,15 @@ export function createSearchInFilesTool(): Tool {
                 return { success: false, error: 'No workspace folder open' };
             }
 
+            // 多工作区支持：会话绑定工作区时（未显式指定前缀的搜索），搜索范围收敛到该工作区
+            let searchWorkspaces = workspaces;
+            if (context?.activeWorkspaceUri && workspaces.length > 1) {
+                const preferred = getWorkspaceByUri(context.activeWorkspaceUri);
+                if (preferred) {
+                    searchWorkspaces = [preferred];
+                }
+            }
+
             try {
                 // 创建搜索正则表达式（均为全局匹配）
                 // search 模式额外启用多行标志 m；大小写由 caseSensitive 控制
@@ -1015,7 +1025,7 @@ export function createSearchInFilesTool(): Tool {
                 const excludePattern = getExcludePattern(searchConfig);
                 
                 // 解析路径，确定搜索范围
-                const parsedPath = parseWorkspacePath(searchPath);
+                const parsedPath = parseWorkspacePath(searchPath, context?.activeWorkspaceUri);
                 const { workspace: targetWorkspace, relativePath, isExplicit } = parsedPath;
                 const pathWarning = createPossibleMultiplePathsWarning(searchPath);
 
@@ -1067,9 +1077,9 @@ export function createSearchInFilesTool(): Tool {
                         anyCancelled = result.cancelled;
                         anyTruncated = result.truncated;
                     } else if (searchPath === '.' && workspaces.length > 1) {
-                        // 搜索所有工作区
+                        // 搜索所有工作区（会话绑定工作区时仅搜索该工作区）
                         let remainingFiles = maxFiles;
-                        for (const ws of workspaces) {
+                        for (const ws of searchWorkspaces) {
                             if (remainingFiles <= 0) break;
                             
                             const result = await searchAndReplaceInDirectory(
@@ -1210,8 +1220,8 @@ export function createSearchInFilesTool(): Tool {
                                 budget
                             ));
                         } else if (searchPath === '.' && workspaces.length > 1) {
-                            // 搜索所有工作区
-                            for (const ws of workspaces) {
+                            // 搜索所有工作区（会话绑定工作区时仅搜索该工作区）
+                            for (const ws of searchWorkspaces) {
                                 if (results.length >= maxResults) break;
                                 if (budget && budget.remainingChars <= 0) break;
 

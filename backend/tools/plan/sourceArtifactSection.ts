@@ -136,7 +136,7 @@ export function extractPlanSourceArtifact(content: string): PlanSourceArtifact |
   }
 }
 
-export async function buildTrackedPlanSourceArtifact(input: unknown): Promise<PlanSourceArtifact> {
+export async function buildTrackedPlanSourceArtifact(input: unknown, activeWorkspaceUri?: string): Promise<PlanSourceArtifact> {
   const type = (input as any)?.type;
   const path = typeof (input as any)?.path === 'string' ? (input as any).path.trim() : '';
 
@@ -148,7 +148,7 @@ export async function buildTrackedPlanSourceArtifact(input: unknown): Promise<Pl
     throw new Error(`Invalid sourceArtifact path for type "${type}": ${path}`);
   }
 
-  const { uri, error } = resolveUriWithInfo(path);
+  const { uri, error } = resolveUriWithInfo(path, activeWorkspaceUri);
   if (!uri) {
     throw new Error(error || `Unable to resolve sourceArtifact path: ${path}`);
   }

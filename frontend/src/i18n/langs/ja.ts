@@ -218,7 +218,11 @@ const ja: LanguageMessages = {
             settings: '設定',
             monitor: 'SubAgent モニター',
             monitorOpen: 'SubAgent モニターパネルを開く',
-            monitorClose: 'SubAgent モニターパネルを閉じる'
+            monitorClose: 'SubAgent モニターパネルを閉じる',
+            workspaceSelector: {
+                auto: 'アクティブエディタに従う',
+                noWorkspace: 'ワークスペースなし'
+            }
         },
 
         usage: {

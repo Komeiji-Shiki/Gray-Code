@@ -16,7 +16,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { PromptConfig, PromptContext } from './types'
 import type { Content } from '../conversation/types'
-import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
+import { getWorkspaceFileTree, getWorkspaceFolderByUri, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 import type { PinnedFileItem, PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings/types'
 import { promptContextMessagesToText } from './promptContextCache'
@@ -34,6 +34,9 @@ export type DynamicRuntimeContext = {
 
     /** ConversationMetadata.custom['inputSkills'] */
     skills?: unknown
+
+    /** 当前对话绑定的工作区 URI（ConversationMetadata.workspaceUri）；未绑定则不限定 */
+    workspaceUri?: string
 }
 
 export interface PromptContextBundle {
@@ -310,7 +313,7 @@ export class PromptManager {
         return settingsManager?.resolvePromptMode()
     }
 
-    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot): string {
+    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
@@ -323,7 +326,10 @@ export class PromptManager {
         const memoryConfig = settingsManager?.getMemoryConfig?.()
         const memoryEnabled = memoryConfig?.enabled !== false
         const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}`
+        // 工作区路径烘焙在 ENVIRONMENT 静态段落中：未纳入缓存键会导致会话 A 的
+        // 工作区泄漏进会话 B 的缓存提示词，这里按对话绑定的工作区 URI 区分缓存。
+        const workspacePart = runtime?.workspaceUri ?? ''
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspacePart}`
     }
     
     /**
@@ -337,7 +343,7 @@ export class PromptManager {
         }
 
         const now = Date.now()
-        const cacheKey = this.buildPromptCacheKey(modeSnapshot)
+        const cacheKey = this.buildPromptCacheKey(modeSnapshot, runtime)
         
         // 检查缓存是否有效
         if (!forceRefresh && 
@@ -407,7 +413,7 @@ export class PromptManager {
     private generateFromTemplate(template: string, customPrefix: string, customSuffix: string, runtime?: DynamicRuntimeContext): string {
         // 静态模块（不会频繁变化）
         const modules: Record<string, string> = {
-            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
+            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection(runtime)),
             'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
             // 动态内容占位符 - 这些将被移到动态上下文消息中
             // 为了向后兼容，如果模板中包含 these placeholders，替换为空字符串
@@ -485,7 +491,8 @@ export class PromptManager {
         if (shouldBuild('WORKSPACE_FILES') && (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles)) {
             const fileTreeContent = this.generateFileTreeSection(
                 contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
-                contextConfig?.ignorePatterns ?? []
+                contextConfig?.ignorePatterns ?? [],
+                runtime
             )
             if (fileTreeContent) {
                 modules['WORKSPACE_FILES'] = this.wrapSection('WORKSPACE FILES', fileTreeContent)
@@ -496,7 +503,8 @@ export class PromptManager {
         if (shouldBuild('OPEN_TABS') && contextConfig?.includeOpenTabs) {
             const openTabsContent = this.generateOpenTabsSection(
                 contextConfig.maxOpenTabs,
-                contextConfig.ignorePatterns || []
+                contextConfig.ignorePatterns || [],
+                runtime?.workspaceUri
             )
             if (openTabsContent) {
                 modules['OPEN_TABS'] = this.wrapSection('OPEN TABS', openTabsContent)
@@ -506,7 +514,8 @@ export class PromptManager {
         // 当前活动编辑器
         if (shouldBuild('ACTIVE_EDITOR') && contextConfig?.includeActiveEditor) {
             const activeEditorContent = this.generateActiveEditorSection(
-                contextConfig.ignorePatterns || []
+                contextConfig.ignorePatterns || [],
+                runtime?.workspaceUri
             )
             if (activeEditorContent) {
                 modules['ACTIVE_EDITOR'] = this.wrapSection('ACTIVE EDITOR', activeEditorContent)
@@ -515,7 +524,7 @@ export class PromptManager {
         
         // 诊断信息
         if (shouldBuild('DIAGNOSTICS')) {
-            const diagnosticsContent = this.generateDiagnosticsSection()
+            const diagnosticsContent = this.generateDiagnosticsSection(runtime?.workspaceUri)
             if (diagnosticsContent) {
                 modules['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
             }
@@ -523,7 +532,7 @@ export class PromptManager {
         
         // 固定文件内容
         if (shouldBuild('PINNED_FILES')) {
-            const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
+            const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles, runtime?.workspaceUri)
             if (pinnedFilesContent) {
                 const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
                 modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
@@ -566,23 +575,33 @@ export class PromptManager {
      * - 时区
      * - 用户语言
      */
-    private generateStaticEnvironmentSection(): string {
+    private generateStaticEnvironmentSection(runtime?: DynamicRuntimeContext): string {
         const context = this.getContext()
         const lines: string[] = []
         
         // 工作区信息（支持多工作区）
-        const workspaces = getAllWorkspaces()
-        if (workspaces.length === 0) {
-            lines.push('No workspace open')
-        } else if (workspaces.length === 1) {
-            lines.push(`Current Workspace: ${workspaces[0].fsPath}`)
-        } else {
-            lines.push('Multi-root Workspace:')
-            for (const ws of workspaces) {
-                lines.push(`  - ${ws.name}: ${ws.fsPath}`)
+        const targetFolder = runtime?.workspaceUri ? getWorkspaceFolderByUri(runtime.workspaceUri) : undefined
+        if (runtime?.workspaceUri) {
+            // 对话绑定工作区：只显示该工作区；文件夹已关闭时不泄漏其他工作区
+            if (targetFolder) {
+                lines.push(`Current Workspace: ${targetFolder.uri.fsPath}`)
+            } else {
+                lines.push('No workspace open')
             }
-            lines.push('')
-            lines.push('Use "workspace_name/path" format to access files in specific workspace.')
+        } else {
+            const workspaces = getAllWorkspaces()
+            if (workspaces.length === 0) {
+                lines.push('No workspace open')
+            } else if (workspaces.length === 1) {
+                lines.push(`Current Workspace: ${workspaces[0].fsPath}`)
+            } else {
+                lines.push('Multi-root Workspace:')
+                for (const ws of workspaces) {
+                    lines.push(`  - ${ws.name}: ${ws.fsPath}`)
+                }
+                lines.push('')
+                lines.push('Use "workspace_name/path" format to access files in specific workspace.')
+            }
         }
         
         if (context.os) {
@@ -759,7 +778,7 @@ export class PromptManager {
             'MCP_TOOLS': '{{$MCP_TOOLS}}'
         }
         if (referencedKeys.has('ENVIRONMENT')) {
-            modules['ENVIRONMENT'] = this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection())
+            modules['ENVIRONMENT'] = this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection(runtime))
         }
         if (referencedKeys.has('CONTEXT_BADGE_FORMAT')) {
             modules['CONTEXT_BADGE_FORMAT'] = this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection())
@@ -928,7 +947,8 @@ export class PromptManager {
         if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
             const fileTreeContent = this.generateFileTreeSection(
                 contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
-                contextConfig?.ignorePatterns ?? []
+                contextConfig?.ignorePatterns ?? [],
+                runtime
             )
             if (fileTreeContent) {
                 sections.push(this.wrapSection('WORKSPACE FILES', fileTreeContent))
@@ -939,7 +959,8 @@ export class PromptManager {
         if (contextConfig?.includeOpenTabs) {
             const openTabsContent = this.generateOpenTabsSection(
                 contextConfig.maxOpenTabs,
-                contextConfig.ignorePatterns || []
+                contextConfig.ignorePatterns || [],
+                runtime?.workspaceUri
             )
             if (openTabsContent) {
                 sections.push(this.wrapSection('OPEN TABS', openTabsContent))
@@ -949,7 +970,8 @@ export class PromptManager {
         // 当前活动编辑器
         if (contextConfig?.includeActiveEditor) {
             const activeEditorContent = this.generateActiveEditorSection(
-                contextConfig.ignorePatterns || []
+                contextConfig.ignorePatterns || [],
+                runtime?.workspaceUri
             )
             if (activeEditorContent) {
                 sections.push(this.wrapSection('ACTIVE EDITOR', activeEditorContent))
@@ -957,13 +979,13 @@ export class PromptManager {
         }
         
         // 诊断信息
-        const diagnosticsContent = this.generateDiagnosticsSection()
+        const diagnosticsContent = this.generateDiagnosticsSection(runtime?.workspaceUri)
         if (diagnosticsContent) {
             sections.push(this.wrapSection('DIAGNOSTICS', diagnosticsContent))
         }
         
         // 固定文件内容
-        const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
+        const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles, runtime?.workspaceUri)
         if (pinnedFilesContent) {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
@@ -1020,9 +1042,9 @@ export class PromptManager {
     /**
      * 生成文件树段落
      */
-    private generateFileTreeSection(maxDepth: number, ignorePatterns: string[]): string {
+    private generateFileTreeSection(maxDepth: number, ignorePatterns: string[], runtime?: DynamicRuntimeContext): string {
         const effectiveMaxDepth = maxDepth === -1 ? 100 : maxDepth  // -1 表示无限制，使用大值代替
-        const fileTree = getWorkspaceFileTree(effectiveMaxDepth, ignorePatterns)
+        const fileTree = getWorkspaceFileTree(effectiveMaxDepth, ignorePatterns, undefined, runtime?.workspaceUri)
         
         if (!fileTree) {
             return ''
@@ -1034,7 +1056,7 @@ export class PromptManager {
     /**
      * 生成打开的标签页段落
      */
-    private generateOpenTabsSection(maxTabs: number, ignorePatterns: string[]): string {
+    private generateOpenTabsSection(maxTabs: number, ignorePatterns: string[], workspaceUri?: string): string {
         const workspaceFolders = vscode.workspace.workspaceFolders
         if (!workspaceFolders || workspaceFolders.length === 0) {
             return ''
@@ -1051,6 +1073,10 @@ export class PromptManager {
                     
                     // 检查是否在工作区内
                     const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
+                    // 绑定工作区时：不在任何工作区内的标签页跳过，非绑定工作区的标签页跳过
+                    if (workspaceUri && (!workspaceFolder || workspaceFolder.uri.toString() !== workspaceUri)) {
+                        continue
+                    }
                     if (workspaceFolder) {
                         // 获取相对路径
                         const relativePath = vscode.workspace.asRelativePath(uri, false)
@@ -1090,7 +1116,7 @@ export class PromptManager {
     /**
      * 生成当前活动编辑器段落
      */
-    private generateActiveEditorSection(ignorePatterns: string[]): string {
+    private generateActiveEditorSection(ignorePatterns: string[], workspaceUri?: string): string {
         const activeEditor = vscode.window.activeTextEditor
         if (!activeEditor) {
             return ''
@@ -1100,6 +1126,11 @@ export class PromptManager {
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
         
         if (!workspaceFolder) {
+            return ''
+        }
+        
+        // 绑定工作区时只显示该工作区的活动编辑器
+        if (workspaceUri && workspaceFolder.uri.toString() !== workspaceUri) {
             return ''
         }
         
@@ -1118,7 +1149,7 @@ export class PromptManager {
      * 从 VSCode 获取工作区的诊断信息（错误、警告等）
      * 根据配置过滤严重程度和文件范围
      */
-    private generateDiagnosticsSection(): string {
+    private generateDiagnosticsSection(workspaceUri?: string): string {
         const settingsManager = getGlobalSettingsManager()
         if (!settingsManager) {
             return ''
@@ -1184,6 +1215,14 @@ export class PromptManager {
                 }
             }
             
+            // 绑定工作区时只显示该工作区的诊断
+            if (workspaceUri) {
+                const wsFolder = vscode.workspace.getWorkspaceFolder(uri)
+                if (!wsFolder || wsFolder.uri.toString() !== workspaceUri) {
+                    continue
+                }
+            }
+            
             // 如果只显示打开文件的诊断
             if (diagnosticsConfig.openFilesOnly && !openFileUris.has(uri.toString())) {
                 continue
@@ -1239,7 +1278,7 @@ export class PromptManager {
      * 按工作区过滤固定文件，支持多工作区场景
      * 支持会话级覆盖（runtimePinnedFiles）
      */
-    private generatePinnedFilesSection(runtimePinnedFiles?: unknown): string {
+    private generatePinnedFilesSection(runtimePinnedFiles?: unknown, workspaceUri?: string): string {
         const settingsManager = getGlobalSettingsManager()
         if (!settingsManager) {
             return ''
@@ -1253,15 +1292,25 @@ export class PromptManager {
         const hasRuntimeOverride = runtimePinnedFiles !== undefined
         const runtimeFiles = hasRuntimeOverride ? normalizePinnedFiles(runtimePinnedFiles) : []
         const workspaceUriToFolder = new Map(workspaceFolders.map(folder => [folder.uri.toString(), folder]))
-        const allPinnedFiles = hasRuntimeOverride
-  ? runtimeFiles.filter(file => file.enabled)
-            : settingsManager.getEnabledPinnedFiles()
+        const allPinnedFiles = (hasRuntimeOverride
+            ? runtimeFiles.filter(file => file.enabled)
+            : settingsManager.getEnabledPinnedFiles())
+            // 绑定工作区时只显示该工作区的固定文件；旧数据无 workspaceUri 的固定文件视为任意工作区有效
+            .filter(file => !workspaceUri || !file.workspaceUri || file.workspaceUri === workspaceUri)
         
         const results: string[] = []
         let totalBytes = 0
         
         for (const pinnedFile of allPinnedFiles) {
-            const workspaceFolder = workspaceUriToFolder.get(pinnedFile.workspaceUri)
+            let workspaceFolder = pinnedFile.workspaceUri
+                ? workspaceUriToFolder.get(pinnedFile.workspaceUri)
+                : undefined;
+            if (!workspaceFolder) {
+                // 旧数据没有 workspaceUri（或目标文件夹已关闭）：回退绑定工作区 / 第一个文件夹
+                workspaceFolder = workspaceUri
+                    ? (getWorkspaceFolderByUri(workspaceUri) ?? undefined)
+                    : workspaceFolders[0];
+            }
             if (!workspaceFolder) {
                 continue
             }

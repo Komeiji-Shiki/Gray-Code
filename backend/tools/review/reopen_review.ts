@@ -59,7 +59,7 @@ export function createReopenReviewTool(): Tool {
         return { success: false, error: `Another active review session already exists for this conversation: ${session.reviewPath}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(path);
+      const { uri, error } = resolveUriWithInfo(path, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }

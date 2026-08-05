@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
+import { getWorkspaceManager } from './WorkspaceManager';
 
 /**
  * 检查路径是否应该被忽略
@@ -36,9 +37,16 @@ export function matchGlobPattern(filePath: string, pattern: string): boolean {
 }
 
 /**
- * 获取当前工作区 URI
+ * 获取当前激活工作区 URI
+ *
+ * 多工作区支持：优先使用 WorkspaceManager 的激活工作区（跟随活动编辑器/用户固定），
+ * 管理器未初始化时回退第一个文件夹（旧行为）。
  */
 export function getCurrentWorkspaceUri(): string | null {
+  const manager = getWorkspaceManager();
+  if (manager) {
+    return manager.getActiveWorkspaceUri();
+  }
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   return workspaceFolder ? workspaceFolder.uri.toString() : null;
 }
@@ -46,10 +54,13 @@ export function getCurrentWorkspaceUri(): string | null {
 /**
  * 将绝对路径或 URI 转换为相对路径
  * 支持 file://, vscode-remote:// URI 格式以及 Windows 绝对路径格式
+ *
+ * 多工作区支持：在全部已打开工作区中查找包含该路径的文件夹并以其为基准计算相对路径
+ * （旧实现固定用第一个文件夹，多工作区下浏览非首个项目的文件会误报"不在工作区内"）。
  */
 export function getRelativePathFromAbsolute(absolutePath: string): string {
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
     throw new Error(t('webview.errors.noWorkspaceOpen'));
   }
   
@@ -76,39 +87,43 @@ export function getRelativePathFromAbsolute(absolutePath: string): string {
     }
   }
   
-  // 对于远程工作区，使用 uri.path 进行比较
-  if (isRemote) {
-    const workspaceRoot = workspaceFolder.uri.path;
-    if (filePath.startsWith(workspaceRoot + '/')) {
-      return filePath.substring(workspaceRoot.length + 1);
-    } else if (filePath === workspaceRoot) {
-      return '';
+  // 在全部工作区中查找包含该路径的文件夹（先 API 后前缀匹配，兼容远程 scheme 差异）
+  const findBelongingFolder = (): { folder: vscode.WorkspaceFolder; comparePath: string } | undefined => {
+    let best: { folder: vscode.WorkspaceFolder; comparePath: string } | undefined;
+    let bestLength = -1;
+    for (const folder of workspaceFolders) {
+      const rootPath = isRemote ? folder.uri.path : folder.uri.fsPath;
+      const normalizedFilePath = filePath.replace(/\\/g, '/').toLowerCase();
+      const normalizedRootPath = rootPath.replace(/\\/g, '/').toLowerCase();
+      if (normalizedFilePath.startsWith(normalizedRootPath + '/') || normalizedFilePath === normalizedRootPath) {
+        // 多个工作区嵌套时取最长匹配（最具体的文件夹）
+        if (normalizedRootPath.length > bestLength) {
+          bestLength = normalizedRootPath.length;
+          best = { folder, comparePath: rootPath };
+        }
+      }
     }
+    return best;
+  };
+  
+  const belonging = findBelongingFolder();
+  if (!belonging) {
+    // 回退到 node 的 path.relative（仅适用于本地路径）
+    const relativePath = path.relative(workspaceFolders[0].uri.fsPath, filePath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      // 文件不在任何工作区内，抛出错误防止调用方误用
+      throw new Error(t('webview.errors.fileNotInAnyWorkspace'));
+    }
+    return relativePath.replace(/\\/g, '/');
   }
   
-  // 对于本地工作区，使用 fsPath 进行比较
-  const workspaceFsPath = workspaceFolder.uri.fsPath;
-  
-  // 规范化路径以便比较（Windows 不区分大小写）
-  const normalizedFilePath = filePath.replace(/\\/g, '/').toLowerCase();
-  const normalizedWorkspacePath = workspaceFsPath.replace(/\\/g, '/').toLowerCase();
-  
-  // 计算相对路径
-  if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')) {
-    return filePath.substring(workspaceFsPath.length + 1).replace(/\\/g, '/');
-  } else if (normalizedFilePath === normalizedWorkspacePath) {
+  const rootPath = belonging.comparePath;
+  if (filePath.startsWith(rootPath + '/')) {
+    return filePath.substring(rootPath.length + 1).replace(/\\/g, '/');
+  } else if (filePath === rootPath) {
     return '';
   }
-  
-  // 回退到 node 的 path.relative（仅适用于本地路径）
-  const relativePath = path.relative(workspaceFsPath, filePath);
-  
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    // 文件不在工作区内，抛出错误防止调用方误用
-    throw new Error(t('webview.errors.fileNotInAnyWorkspace'));
-  }
-  
-  return relativePath.replace(/\\/g, '/');
+  return path.relative(rootPath, filePath).replace(/\\/g, '/');
 }
 
 /**

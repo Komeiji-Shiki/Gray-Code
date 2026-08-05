@@ -208,7 +208,7 @@ interface GeminiImageResponse {
  * 读取参考图片
  */
 async function readReferenceImage(imgPath: string, context?: ToolContext): Promise<{ data: string; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imgPath);
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imgPath, context?.activeWorkspaceUri);
     if (!uri) {
         return null;
     }
@@ -445,7 +445,7 @@ function extractFromResponse(response: GeminiImageResponse): {
  * 保存图片到文件
  */
 async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath);
+    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath, context?.activeWorkspaceUri);
     if (!uri) {
         throw new Error('No workspace folder open');
     }
@@ -554,7 +554,7 @@ async function executeImageTask(
         };
     }
 
-    const outputPathError = ensureMediaPathsSafe(output_path);
+    const outputPathError = ensureMediaPathsSafe(output_path, undefined, undefined, context?.activeWorkspaceUri);
     if (outputPathError) {
         return {
             index,

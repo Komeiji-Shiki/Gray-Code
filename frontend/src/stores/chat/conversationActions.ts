@@ -282,37 +282,6 @@ export async function refreshCurrentConversationBuildSession(state: ChatStoreSta
   state.activeBuild.value = await loadConversationBuildSession(conversationId)
 }
 
-export async function syncConversationWorkspaceUri(
-  state: ChatStoreState,
-  conversationId: string
-): Promise<void> {
-  let workspaceUri = state.currentWorkspaceUri.value
-  try {
-    const latestWorkspaceUri = await sendToExtension<string | null>('getWorkspaceUri', {})
-    if (latestWorkspaceUri) {
-      workspaceUri = latestWorkspaceUri
-      state.currentWorkspaceUri.value = latestWorkspaceUri
-    }
-  } catch {
-    // ignore and fallback to store value
-  }
-  if (!workspaceUri) return
-
-  const conv = state.conversations.value.find(c => c.id === conversationId)
-  if (!conv || !conv.isPersisted) return
-  if (conv.workspaceUri === workspaceUri) return
-
-  try {
-    await sendToExtension('conversation.setWorkspaceUri', {
-      conversationId,
-      workspaceUri
-    })
-    conv.workspaceUri = workspaceUri
-  } catch (error) {
-    console.warn('[conversationActions] Failed to sync conversation workspace URI:', error)
-  }
-}
-
 /**
  * 创建新对话（仅清空消息，不创建对话记录）
  *
@@ -779,11 +748,13 @@ export async function switchConversation(
         conv.workspaceUri = view.metadata.workspaceUri
       }
 
+      // 切换到绑定了工作区的对话时，恢复该工作区到 UI
+      if (typeof view?.metadata?.workspaceUri === 'string' && view.metadata.workspaceUri) {
+        state.currentWorkspaceUri.value = view.metadata.workspaceUri
+      }
+
       // 更新对话的消息数量（在加载后才有准确数据）
       conv.messageCount = state.totalMessages.value || state.allMessages.value.length
-
-      // 工作区同步不阻塞切换主链路
-      void syncConversationWorkspaceUri(state, requestedId)
     } else {
       state.activeBuild.value = null
     }

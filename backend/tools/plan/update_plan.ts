@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { buildPlanDocument, extractPlanBodyContent } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
@@ -94,7 +94,7 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
 export function createUpdatePlanTool(): Tool {
   return {
     declaration: createUpdatePlanToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as UpdatePlanArgs;
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       const plan = typeof args.plan === 'string' ? args.plan : '';
@@ -117,7 +117,7 @@ export function createUpdatePlanTool(): Tool {
         return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${targetPath}` };
       }
 
-      const { uri, error } = resolveUriWithInfo(targetPath);
+      const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
       }
@@ -135,7 +135,7 @@ export function createUpdatePlanTool(): Tool {
 
         const existingSourceSection = extractPlanSourceArtifactSection(existingContent);
         const sourceSection = nextSourceArtifact
-          ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(nextSourceArtifact))
+          ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(nextSourceArtifact, context?.activeWorkspaceUri))
           : existingSourceSection;
 
         const bodyContent = updateMode === 'progress_sync'
