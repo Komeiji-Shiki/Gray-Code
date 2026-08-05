@@ -355,10 +355,26 @@ watchEffect(() => {
 })
 
 // 监听 diff 状态变化同步
+// 相同载荷去重：后端可能对同一状态重复广播（定时器刷新/多面板路由），
+// 内容未变化时跳过全部响应式更新，避免所有 ToolMessage 实例无谓重渲染。
+let lastPendingDiffsKey = ''
 const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: any) => {
+  const pendingDiffs: any[] = Array.isArray(data?.pendingDiffs) ? data.pendingDiffs : []
+  const payloadKey = JSON.stringify(pendingDiffs.map((d: any) => [
+    d.id,
+    d.toolId,
+    d.filePath,
+    d.diffGuardWarning,
+    d.diffGuardDeletePercent
+  ]))
+  if (payloadKey === lastPendingDiffsKey) {
+    return
+  }
+  lastPendingDiffsKey = payloadKey
+
   // 更新工具 ID 映射
   const newMapping = new Map<string, PendingDiffSession[]>()
-  for (const d of data.pendingDiffs) {
+  for (const d of pendingDiffs) {
     if (d.toolId) {
       const existing = newMapping.get(d.toolId) || []
       existing.push({
@@ -375,7 +391,7 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
 
   // 更新 diff 警戒值警告映射
   const newWarnings = new Map<string, { warning: string; deletePercent: number }>()
-  for (const d of data.pendingDiffs) {
+  for (const d of pendingDiffs) {
     if (d.toolId && d.diffGuardWarning) {
       const nextWarning = {
         warning: d.diffGuardWarning,
@@ -407,7 +423,7 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
   }
   seenDiffToolIds.value = nextSeen
 
-  const activeSessionIds = new Set<string>(data.pendingDiffs.map((d: any) => d.id))
+  const activeSessionIds = new Set<string>(pendingDiffs.map((d: any) => d.id))
 
   const nextProcessingDiffs = new Set(processingDiffSessionIds.value)
   let processingChanged = false

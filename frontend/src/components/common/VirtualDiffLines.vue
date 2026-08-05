@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatDiffLineNumber, type LineDiffEntry } from '@/utils/lineDiff'
 
 type DisplayLine = LineDiffEntry | {
@@ -42,7 +42,22 @@ function updateViewport() {
   viewportHeight.value = container.value.clientHeight
 }
 
+// 滚动事件按 rAF 节流：连续滚动时每个渲染帧至多同步一次滚动位置，
+// 避免高频 scroll 事件触发大量无谓的窗口行计算与重渲染。
+let scrollFrame = 0
+function onScroll() {
+  if (scrollFrame) return
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0
+    updateViewport()
+  })
+}
+
 onMounted(updateViewport)
+onBeforeUnmount(() => {
+  if (scrollFrame) cancelAnimationFrame(scrollFrame)
+  scrollFrame = 0
+})
 </script>
 
 <template>
@@ -50,7 +65,7 @@ onMounted(updateViewport)
     ref="container"
     class="virtual-diff-scroll"
     :style="{ maxHeight: `${maxHeight}px` }"
-    @scroll="updateViewport"
+    @scroll="onScroll"
   >
     <div class="virtual-diff-spacer" :style="{ height: totalHeight ? `${totalHeight}px` : undefined }">
       <div class="virtual-diff-window" :style="{ transform: `translateY(${offsetY}px)` }">
