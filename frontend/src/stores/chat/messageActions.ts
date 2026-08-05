@@ -23,6 +23,7 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById, appendMessage, getMessageIndexById, removeMessageAt } from './state'
+import { finishSmoothStreamForState, clearAllSmoothForState } from './streamChunkHandlers'
 import { translate } from '../../composables/useI18n'
 import { useSettingsStore } from '../settingsStore'
 
@@ -1332,6 +1333,8 @@ export async function deleteMessage(
   // 如果删除目标是”本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
   if (isLocalPlaceholder) {
     const msgId = state.allMessages.value[targetIndex]?.id
+    // H1/M6：删除前清理该消息的平滑条目（如流式占位残留），避免 smoothTexts 泄漏
+    finishSmoothStreamForState(state, msgId)
     // 重新计算（可能因为 cancel 导致窗口变化）
     const currentBackendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
@@ -1370,6 +1373,8 @@ export async function deleteMessage(
       state.toolResponseCache.value = new Map()
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
+      // H1/M6：删除消息后清理其平滑条目（如流式期间删除半截回答），避免 smoothTexts 泄漏
+      finishSmoothStreamForState(state, targetMessageId)
       await refreshCurrentConversationBuildSession(state)
     } else {
       const err = response?.error
@@ -1409,6 +1414,9 @@ export async function deleteSingleMessage(
   const backendIndex = targetIndex
   if (backendIndex < 0) return
 
+  // H1/M6：记录将被删除消息的本地 id（按 backendIndex 定位），成功后清理其平滑条目
+  const removedMessageId = state.allMessages.value.find(m => m.backendIndex === backendIndex)?.id
+
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
@@ -1445,6 +1453,11 @@ export async function deleteSingleMessage(
       state.historyFolded.value = false
       state.foldedMessageCount.value = 0
 
+      // H1/M6：删除成功后清理被删消息的平滑条目（如流式期间删除半截回答）
+      if (removedMessageId) {
+        finishSmoothStreamForState(state, removedMessageId)
+      }
+
       await loadCheckpoints(state)
       await refreshCurrentConversationBuildSession(state)
     }
@@ -1460,6 +1473,8 @@ export async function deleteSingleMessage(
  * 清空当前对话的消息
  */
 export function clearMessages(state: ChatStoreState): void {
+  // H1/M6：清空前清理所有平滑条目（销毁实例 + 删除显示文本），UI 立即切回真实 content
+  clearAllSmoothForState(state)
   state.allMessages.value = []
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0

@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
@@ -24,6 +24,7 @@ import type {
   BranchStreamReplayContext
 } from './types'
 import { clearVisibleChatMessagesCache } from './windowUtils'
+import type { SmoothMode } from '../../utils/smoothStream'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
 export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById' | 'toolResponseIndex'>>
@@ -296,6 +297,18 @@ export function createChatState(): ChatStoreState {
   /** 当前流式消息ID */
   const streamingMessageId = ref<string | null>(null)
 
+  /**
+   * 平滑流式显示层：messageId -> 当前正在输出的段落（最后一个 text/thought part）的平滑文本。
+   * reactive Map：高频 commit（约 32ms 一次）直接 .set/.delete，无需整体替换。
+   */
+  const smoothTexts = reactive(new Map<string, import('./types').SmoothDisplayText>())
+
+  /**
+   * 平滑档位（M1）：默认 'balanced'，由 chatStore watch settingsStore.smoothStreaming 同步。
+   * streamChunkHandlers 每 chunk 只读本 ref，不再内联 useSettingsStore()（高频调用 + try/catch 吞错）。
+   */
+  const smoothMode = ref<SmoothMode>('balanced')
+
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   const activeStreamId = ref<string | null>(null)
   
@@ -423,6 +436,8 @@ export function createChatState(): ChatStoreState {
     error,
     streamingMessageId,
     activeStreamId,
+    smoothTexts,
+    smoothMode,
     isWaitingForResponse,
     retryStatus,
     autoSummaryStatus,

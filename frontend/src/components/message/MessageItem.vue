@@ -60,6 +60,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
 import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import type { SmoothDisplayText } from '../../stores/chat/types'
 
 const { t } = useI18n()
 
@@ -126,6 +127,10 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
 
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
+
+// 平滑流式显示层：当前消息正在流出的段落（最后一个 text/thought part）的平滑文本。
+// 流式期间存在（含空字符串占位，表示新段落从 0 开始打字），终结后由 store 删除。
+const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoothTexts.get(props.message.id))
 
 
 // 总结消息展开状态
@@ -214,7 +219,13 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   let currentTextBlock: string[] = []
   let currentToolBlock: ToolUsage[] = []
   let currentThoughtBlock: string[] = []
-  
+  // 块级段落身份（H2-B）：记录合并进当前块的最后一个 part 索引与 part 数量，
+  // 与平滑显示层的 partKey 对齐，供流式期间按段落精确替换。
+  let currentTextPartIndex = -1
+  let currentTextPartCount = 0
+  let currentThoughtPartIndex = -1
+  let currentThoughtPartCount = 0
+
   const messageTools = props.message.tools || []
   let functionCallOrdinal = 0
 
@@ -226,9 +237,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         // 修改原因：流式正文每个 delta 都会改变 text.length；把长度/正文片段写进 key 会让 Vue 销毁重建 MarkdownRenderer，触发闪烁。
         // 修改方式：key 只表达结构身份（第几个 block + 类型），内容增长只通过 props 更新。
         // 修改目的：让主聊天与 Monitor 的流式文本块都复用同一组件实例，保留旧 HTML 直到新 HTML 渲染完成。
-        blocks.push({ type: 'text', text, key: `${blocks.length}:text` })
+        blocks.push({ type: 'text', text, key: `${blocks.length}:text`, partKey: `text:${currentTextPartIndex}`, partCount: currentTextPartCount })
       }
       currentTextBlock = []
+      currentTextPartIndex = -1
+      currentTextPartCount = 0
     }
   }
   
@@ -252,9 +265,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         // 修改原因：thought 与正文共享同一 RenderBlock 身份契约；思考内容增长也不应改变组件身份。
         // 修改方式：移除 text.length/text.slice 这类内容派生 key，只保留结构位置和类型。
         // 修改目的：避免展开思考块接入流式渲染后重现正文闪烁问题。
-        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought` })
+        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought`, partKey: `thought:${currentThoughtPartIndex}`, partCount: currentThoughtPartCount })
       }
       currentThoughtBlock = []
+      currentThoughtPartIndex = -1
+      currentThoughtPartCount = 0
     }
   }
 
@@ -280,13 +295,16 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     upsertToolRenderEntry(currentToolBlock, entry)
   }
   
-  for (const part of parts) {
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    const part = parts[partIndex]
     // 处理思考内容
     if (part.thought && part.text) {
       // 思考内容：先刷新其他块
       flushText()
       flushTools()
       currentThoughtBlock.push(part.text)
+      currentThoughtPartIndex = partIndex
+      currentThoughtPartCount += 1
       continue
     }
     
@@ -296,6 +314,8 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       flushThought()
       flushTools()
       currentTextBlock.push(part.text)
+      currentTextPartIndex = partIndex
+      currentTextPartCount += 1
     }
     
     // 处理工具调用（即使同一个 part 有 thoughtSignature）
@@ -337,6 +357,29 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushThought()
   flushText()
   flushTools()
+
+  // 平滑流式显示：流式期间用显示层文本替换 partKey 匹配的文本/思考块（当前正在流出的段落）。
+  // smoothText 为 undefined（未开启/已终结）时保持真实 parts 文本；
+  // 为空字符串表示新段落刚开始打字，首帧从空开始避免跳变。
+  // H2-B：只替换 partKey 匹配且单 part 的块——
+  // ① 新段落前导空白不推入显示层（H2-A），不会覆盖上一段已完成块；
+  // ② partKey 切换瞬间（switchPart flush 尾巴提交旧段落文本）命中的是旧段落块（文本相同，无视觉变化），
+  //    不会把上一段尾巴替换到新段落块上；
+  // ③ 合并块（多个同类型 part 合入一块）无法按段落粒度替换，跳过（回退真实文本，安全）。
+  const smooth = smoothText.value
+  if (smooth !== undefined && isStreaming.value) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i]
+      if (
+        (b.type === 'text' || b.type === 'thought') &&
+        b.partKey === smooth.partKey &&
+        b.partCount === 1
+      ) {
+        blocks[i] = { ...b, text: smooth.text }
+        break
+      }
+    }
+  }
 
   // 引用稳定化：复用上一次内容相同的 text/thought block 的对象引用，
   // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染

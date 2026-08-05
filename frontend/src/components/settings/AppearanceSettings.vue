@@ -3,9 +3,16 @@ import { ref, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore } from '@/stores'
+import type { SmoothMode } from '@/utils/smoothStream'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+
+const SMOOTH_STREAMING_MODES: SmoothMode[] = ['off', 'smooth', 'balanced', 'silky']
+
+function isSmoothMode(value: unknown): value is SmoothMode {
+  return SMOOTH_STREAMING_MODES.includes(value as SmoothMode)
+}
 
 const isLoading = ref(true)
 const isSaving = ref(false)
@@ -15,6 +22,7 @@ const saveMessageType = ref<'success' | 'error'>('success')
 // 为空表示使用默认值（通常来自 i18n）
 const loadingText = ref<string>('')
 const selectionContextEnabled = ref(true)
+const smoothStreamingMode = ref<SmoothMode>('balanced')
 
 const defaultLoadingText = computed(() => t('common.loading'))
 
@@ -44,8 +52,11 @@ async function loadConfig() {
 
     loadingText.value = saved
     selectionContextEnabled.value = savedSelectionContextEnabled
+    const savedSmoothStreaming = isSmoothMode(appearance?.smoothStreaming) ? appearance.smoothStreaming : 'balanced'
+    smoothStreamingMode.value = savedSmoothStreaming
     settingsStore.setAppearanceLoadingText(saved)
     settingsStore.setSelectionContextEnabled(savedSelectionContextEnabled)
+    settingsStore.setSmoothStreaming(savedSmoothStreaming)
   } catch (error) {
     console.error('Failed to load appearance settings:', error)
   } finally {
@@ -65,7 +76,8 @@ async function saveConfig() {
         appearance: {
           // 空字符串表示使用默认值
           loadingText: normalized,
-          selectionContextEnabled: selectionContextEnabled.value
+          selectionContextEnabled: selectionContextEnabled.value,
+          smoothStreaming: smoothStreamingMode.value
         }
       }
     })
@@ -73,6 +85,7 @@ async function saveConfig() {
     // 同步到前端状态，确保立即生效
     settingsStore.setAppearanceLoadingText(normalized)
     settingsStore.setSelectionContextEnabled(selectionContextEnabled.value)
+    settingsStore.setSmoothStreaming(smoothStreamingMode.value)
 
     saveMessage.value = t('components.settings.appearanceSettings.saveSuccess')
     saveMessageType.value = 'success'
@@ -92,6 +105,7 @@ async function saveConfig() {
 async function resetToDefault() {
   loadingText.value = ''
   selectionContextEnabled.value = true
+  smoothStreamingMode.value = 'balanced'
   await saveConfig()
 }
 
@@ -122,6 +136,21 @@ onMounted(() => {
           :placeholder="t('components.settings.appearanceSettings.loadingText.placeholder')"
         />
         <p class="field-hint">{{ t('components.settings.appearanceSettings.loadingText.defaultHint', { text: defaultLoadingText }) }}</p>
+      </div>
+
+      <div class="form-group">
+        <label class="group-label">
+          <i class="codicon codicon-type"></i>
+          {{ t('components.settings.appearanceSettings.smoothStreaming.title') }}
+        </label>
+        <p class="field-description">{{ t('components.settings.appearanceSettings.smoothStreaming.description') }}</p>
+
+        <select v-model="smoothStreamingMode" class="text-input select-input" :disabled="isSaving">
+          <option value="off">{{ t('components.settings.appearanceSettings.smoothStreaming.off') }}</option>
+          <option value="smooth">{{ t('components.settings.appearanceSettings.smoothStreaming.smooth') }}</option>
+          <option value="balanced">{{ t('components.settings.appearanceSettings.smoothStreaming.balanced') }}</option>
+          <option value="silky">{{ t('components.settings.appearanceSettings.smoothStreaming.silky') }}</option>
+        </select>
       </div>
 
       <div class="form-group">
@@ -237,6 +266,16 @@ onMounted(() => {
 
 .text-input:focus {
   border-color: var(--vscode-focusBorder);
+}
+
+.select-input {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--vscode-foreground) 50%),
+    linear-gradient(135deg, var(--vscode-foreground) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 .field-hint {

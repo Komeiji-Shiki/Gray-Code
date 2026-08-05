@@ -304,6 +304,7 @@ const zhCN = {
             pinnedFiles: '固定文件',
             skills: 'Skills',
             summarizeContext: '总结上下文',
+            tpsTooltip: 'TPS（tokens per second）',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',
@@ -2604,6 +2605,14 @@ const zhCN = {
                 selectionContext: {
                     title: '选中内容入口',
                     description: '统一控制“添加选中内容到输入框”是否显示在选中文本悬浮和长按 Ctrl / 代码操作中。'
+                },
+                smoothStreaming: {
+                    title: '流式平滑输出',
+                    description: '把突发的流式输出抹成匀速打字效果（关闭 = 原始逐块输出；档位越靠后延迟越高、越丝滑）。',
+                    off: '关闭',
+                    smooth: '灵敏',
+                    balanced: '标准',
+                    silky: '丝滑'
                 },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'

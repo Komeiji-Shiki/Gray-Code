@@ -5,6 +5,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { SmoothMode } from '../utils/smoothStream'
 
 export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'general' | 'memory'
 
@@ -26,6 +27,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 外观设置：流式 Loading 文本（为空表示使用默认值）
   const appearanceLoadingText = ref<string>('')
+
+  // 外观设置：流式平滑输出档位（off=直通 / smooth=灵敏 / balanced=标准 / silky=丝滑）
+  const smoothStreaming = ref<SmoothMode>('balanced')
 
   // 外观设置：选中内容入口开关
   const selectionContextEnabled = ref(true)
@@ -85,6 +89,11 @@ export const useSettingsStore = defineStore('settings', () => {
     appearanceLoadingText.value = text
   }
 
+  // 设置外观：流式平滑输出档位
+  function setSmoothStreaming(mode: SmoothMode) {
+    smoothStreaming.value = mode
+  }
+
   function setSelectionContextEnabled(enabled: boolean) {
     selectionContextEnabled.value = enabled
   }
@@ -124,6 +133,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeTab,
     language,
     appearanceLoadingText,
+    smoothStreaming,
     selectionContextEnabled,
     subAgentMonitorOpen,
     monitorFocusRunId,
@@ -138,6 +148,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setActiveTab,
     setLanguage,
     setAppearanceLoadingText,
+    setSmoothStreaming,
     setSelectionContextEnabled,
     openSubAgentMonitor,
     closeSubAgentMonitor,

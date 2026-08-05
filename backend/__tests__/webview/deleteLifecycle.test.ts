@@ -11,7 +11,7 @@ function createContext(order: string[]): any {
             }
         },
         checkpointManager: {
-            async deleteAllCheckpoints() { order.push('checkpoints'); }
+            async deleteAllCheckpoints() { order.push('checkpoints'); return { success: true, deletedCount: 0 }; }
         },
         conversationManager: {
             async deleteConversation() { order.push('conversation'); },

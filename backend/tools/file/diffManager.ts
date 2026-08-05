@@ -216,7 +216,7 @@ function isStructuredDiffHunk(d: any): d is StructuredDiffHunk {
 }
 
 function splitLines(text: string): string[] {
-    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const normalized = text.replace(/\r\n?/g, '\n');
     const lines = normalized.split('\n');
     // 如果文本以换行结尾，split 会产生最后一个空行，这里去掉，避免行号计算偏差
     if (lines.length > 0 && lines[lines.length - 1] === '') {

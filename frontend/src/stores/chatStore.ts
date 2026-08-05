@@ -26,7 +26,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { computed as vueComputed } from 'vue'
+import { computed as vueComputed, watch } from 'vue'
 import type { Attachment, CheckpointRecord, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
@@ -129,6 +129,7 @@ import {
 } from './chat/tabActions'
 
 import type { StreamHandlerContext } from './chat/streamHandler'
+import { useSettingsStore } from './settingsStore'
 
 // 重新导出类型
 export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
@@ -136,6 +137,13 @@ export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './ch
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
+
+  // M1：平滑档位经 state 传递——streamChunkHandlers 每 chunk 只读 state.smoothMode，
+  // 不内联 useSettingsStore()（高频调用 + try/catch 吞错）。
+  const settingsStore = useSettingsStore()
+  watch(() => settingsStore.smoothStreaming, (v) => {
+    state.smoothMode.value = v
+  }, { immediate: true })
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
@@ -697,6 +705,7 @@ export const useChatStore = defineStore('chat', () => {
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
+    smoothTexts: state.smoothTexts,
     error: state.error,
     
     // 计算属性

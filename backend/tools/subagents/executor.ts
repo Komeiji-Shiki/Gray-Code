@@ -654,6 +654,9 @@ export function createDefaultExecutor(
                 await subAgentRunEventBus.loadConversationSnapshots(currentConversationId, currentConversationStore);
                 oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
             }
+            if (oldSnapshot?.transcriptLoaded === false) {
+                oldSnapshot = await subAgentRunEventBus.loadRunTranscript(request.continueFromRunId);
+            }
             if (!oldSnapshot) {
                 return {
                     success: false,
@@ -857,11 +860,13 @@ export function createDefaultExecutor(
             const message = queueError instanceof SubAgentQueueCancelledError
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
                 : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
-            return finalizeRun({
+            const finalized = finalizeRun({
                 success: false,
                 error: message,
                 cancelled: true
             });
+            await subAgentRunEventBus.flushRun(runId);
+            return finalized;
         } finally {
             releaseAcquireSignal?.();
             releaseAcquireSignal = undefined;
@@ -1535,6 +1540,8 @@ export function createDefaultExecutor(
             // 修改方式：按 runId 兜底清理该 run 持有的全部锁。
             // 修改目的：避免锁泄漏导致其他 agent 永久无法修改相关文件。
             fileWriteLockManager.releaseAllByHolder(runId);
+            // 终态事件必须在工具 Promise 返回主流程前落盘；否则扩展重载会把已完成 run 误判为 interrupted。
+            await subAgentRunEventBus.flushRun(runId);
         }
     };
 }

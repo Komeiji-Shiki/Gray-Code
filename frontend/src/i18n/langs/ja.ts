@@ -303,6 +303,7 @@ const ja: LanguageMessages = {
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
+            tpsTooltip: 'TPS（トークン毎秒）',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
@@ -2603,6 +2604,14 @@ const ja: LanguageMessages = {
                 selectionContext: {
                     title: '選択内容の入口',
                     description: '「選択内容を入力欄に追加」を、選択ホバーと Ctrl / コードアクションの両方で表示するかをまとめて制御します。'
+                },
+                smoothStreaming: {
+                    title: 'ストリーミング平滑表示',
+                    description: '突発的なストリーミング出力を均一なタイピング風表示に整えます（オフ = チャンク毎のそのまま表示。後ろの段階ほど遅延が増え滑らかになります）。',
+                    off: 'オフ',
+                    smooth: 'レスポンシブ',
+                    balanced: '標準',
+                    silky: 'なめらか'
                 },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'

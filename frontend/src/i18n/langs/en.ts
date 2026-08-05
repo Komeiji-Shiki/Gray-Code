@@ -303,6 +303,7 @@ const en: LanguageMessages = {
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
             summarizeContext: 'Summarize context',
+            tpsTooltip: 'TPS (tokens per second)',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
@@ -2603,6 +2604,14 @@ const en: LanguageMessages = {
                 selectionContext: {
                     title: 'Selection Entry',
                     description: 'Controls whether "Add selection to input" appears in both the selection hover and Ctrl / code action entry points.'
+                },
+                smoothStreaming: {
+                    title: 'Smooth Streaming',
+                    description: 'Smooth out bursty streaming output into a steady typing effect (off = raw per-chunk output; higher tiers add more latency for a silkier feel).',
+                    off: 'Off',
+                    smooth: 'Responsive',
+                    balanced: 'Balanced',
+                    silky: 'Silky'
                 },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
