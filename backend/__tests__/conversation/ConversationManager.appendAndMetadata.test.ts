@@ -390,6 +390,58 @@ describe('getConversationMetadataBatch（HIS-10）', () => {
     });
 });
 
+describe('getMetadataLight 元数据缓存（PERF）', () => {
+    test('缓存命中时不读盘（对话列表分页/统计热路径）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-light', 'Light');
+        await manager.addBatch('conv-light', [makeContent('user', 'a'), makeContent('model', 'b')]);
+        await manager.updateSummary('conv-light', { messageCount: 5, preview: 'p' });
+
+        fake.readCalls.length = 0;
+        const meta = await manager.getMetadataLight('conv-light');
+        expect(meta).not.toBeNull();
+        expect(meta!.title).toBe('Light');
+        // M3 钳制：messageCount 不超过实际历史数（2 条）
+        expect(meta!.custom!.messageCount).toBe(2);
+        // 写路径已回填 metaCache：全程无磁盘读取
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('返回深拷贝，调用方修改不污染缓存', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-copy', 'Copy');
+
+        const first = await manager.getMetadataLight('conv-copy');
+        first!.custom = { polluted: true };
+
+        fake.readCalls.length = 0;
+        const second = await manager.getMetadataLight('conv-copy');
+        expect(second!.custom).not.toHaveProperty('polluted');
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('not_found 负缓存命中不读盘；创建对话后由写路径覆盖', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+
+        fake.readCalls.length = 0;
+        expect(await manager.getMetadataLight('conv-nc')).toBeNull();
+        expect(fake.readCalls.length).toBeGreaterThan(0); // 首次仍读盘
+        const readsAfterMiss = fake.readCalls.length;
+
+        expect(await manager.getMetadataLight('conv-nc')).toBeNull();
+        expect(fake.readCalls.length).toBe(readsAfterMiss); // 负缓存命中，不再读盘
+
+        await manager.createConversation('conv-nc', 'NC');
+        fake.readCalls.length = 0;
+        const meta = await manager.getMetadataLight('conv-nc');
+        expect(meta?.title).toBe('NC'); // 写路径覆盖负缓存
+        expect(fake.readCalls).toHaveLength(0);
+    });
+});
+
 describe('getMetadata 完整性检查只读 index（HIS-11）', () => {
     test('不解析末段历史消息（不读 .ndjson）', async () => {
         const { adapter, fake } = createAdapter();
