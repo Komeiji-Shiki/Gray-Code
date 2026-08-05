@@ -15,7 +15,7 @@
  *
  * 竞态：isSwitchingBranch 期间禁用全部按钮（store 侧同时拒绝并发操作）。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
 import { buildCandidateGroupAt, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
@@ -34,13 +34,23 @@ const { t } = useI18n()
 const chatStore = useChatStore()
 
 const listOpen = ref(false)
-/** 候选列表 fixed 定位锚点（消息内 absolute 会被滚动容器裁剪） */
+/** 候选列表使用视口坐标定位，并通过 Teleport 脱离消息节点的 contain 定位上下文。 */
 const positionRef = ref<HTMLElement | null>(null)
-const listStyle = ref<{ left: string; top: string; maxHeight: number }>({
-  left: '0px',
-  top: '0px',
-  maxHeight: 320
+const candidateListRef = ref<HTMLElement | null>(null)
+const listStyle = ref({
+  left: '8px',
+  top: '8px',
+  width: '260px',
+  maxHeight: '320px'
 })
+
+const VIEWPORT_MARGIN = 8
+const LIST_GAP = 4
+const LIST_MIN_WIDTH = 260
+const LIST_MAX_WIDTH = 420
+const LIST_MAX_HEIGHT = 320
+const LIST_MIN_VISIBLE_HEIGHT = 80
+let positionListenersAttached = false
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
@@ -81,25 +91,90 @@ function candidateTitle(node: BranchNodeData): string {
   return meta.join(' · ')
 }
 
-/** 展开 / 收起候选列表（展开时按锚点实时定位，fixed 浮层不受滚动容器裁剪） */
-function toggleList(): void {
-  if (listOpen.value) {
-    listOpen.value = false
-    return
-  }
+/**
+ * 根据当前视口计算列表位置。
+ * 消息项使用 contain: layout，会成为 fixed 元素的定位上下文，因此列表本身必须 Teleport 到 body。
+ */
+function updateListPosition(): void {
+  if (!listOpen.value) return
   const anchor = positionRef.value
   if (!anchor) return
+
   const rect = anchor.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const availableWidth = Math.max(1, viewportWidth - VIEWPORT_MARGIN * 2)
+  const responsiveWidth = Math.min(
+    LIST_MAX_WIDTH,
+    Math.max(LIST_MIN_WIDTH, viewportWidth * 0.6)
+  )
+  const width = Math.floor(Math.min(responsiveWidth, availableWidth))
+  const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - width)
+  const left = Math.min(Math.max(VIEWPORT_MARGIN, rect.left), maxLeft)
+
+  const measuredHeight = candidateListRef.value?.scrollHeight ?? LIST_MAX_HEIGHT
+  const desiredHeight = Math.min(
+    LIST_MAX_HEIGHT,
+    Math.max(LIST_MIN_VISIBLE_HEIGHT, measuredHeight || LIST_MAX_HEIGHT)
+  )
+  const availableBelow = Math.max(0, viewportHeight - rect.bottom - LIST_GAP - VIEWPORT_MARGIN)
+  const availableAbove = Math.max(0, rect.top - LIST_GAP - VIEWPORT_MARGIN)
+  const placeAbove = availableBelow < desiredHeight && availableAbove > availableBelow
+  const availableHeight = placeAbove ? availableAbove : availableBelow
+  const maxHeight = Math.min(LIST_MAX_HEIGHT, availableHeight)
+  const top = placeAbove
+    ? Math.max(VIEWPORT_MARGIN, rect.top - LIST_GAP - Math.min(desiredHeight, maxHeight))
+    : Math.min(rect.bottom + LIST_GAP, viewportHeight - VIEWPORT_MARGIN)
+
   listStyle.value = {
-    left: `${Math.max(8, rect.left)}px`,
-    top: `${rect.bottom + 4}px`,
-    maxHeight: Math.max(160, Math.min(320, window.innerHeight - rect.bottom - 16))
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    width: `${width}px`,
+    maxHeight: `${Math.max(0, Math.floor(maxHeight))}px`
   }
-  listOpen.value = true
 }
 
-function switchTo(nodeId: string): void {
+function attachPositionListeners(): void {
+  if (positionListenersAttached) return
+  window.addEventListener('resize', updateListPosition)
+  window.addEventListener('scroll', updateListPosition, true)
+  positionListenersAttached = true
+}
+
+function detachPositionListeners(): void {
+  if (!positionListenersAttached) return
+  window.removeEventListener('resize', updateListPosition)
+  window.removeEventListener('scroll', updateListPosition, true)
+  positionListenersAttached = false
+}
+
+function closeList(): void {
   listOpen.value = false
+  detachPositionListeners()
+}
+
+/** 展开 / 收起候选列表，并在渲染后按实际高度校正位置。 */
+function toggleList(): void {
+  if (listOpen.value) {
+    closeList()
+    return
+  }
+  if (!positionRef.value) return
+
+  listOpen.value = true
+  updateListPosition()
+  attachPositionListeners()
+  void nextTick(updateListPosition)
+}
+
+watch(visible, value => {
+  if (!value) closeList()
+})
+
+onBeforeUnmount(detachPositionListeners)
+
+function switchTo(nodeId: string): void {
+  closeList()
   pendingDeleteNodeId.value = null
   const target = chatStore.branchGraph?.nodes[nodeId]
   // BCP-04（决策 1）：目标分支执行过写工具 / 有工作区存档 → 先弹「仅切聊天 or 连工作区一起恢复」确认框
@@ -175,8 +250,15 @@ function toggleDelete(nodeId: string): void {
     <span v-if="chatStore.isSwitchingBranch" class="branch-switcher-loading">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
     </span>
+  </div>
 
-    <div v-if="listOpen" class="branch-candidate-list" :style="listStyle">
+  <Teleport to="body">
+    <div
+      v-if="listOpen && visible"
+      ref="candidateListRef"
+      class="branch-candidate-list"
+      :style="listStyle"
+    >
       <div
         v-for="candidate in group?.candidates ?? []"
         :key="candidate.id"
@@ -208,7 +290,7 @@ function toggleDelete(nodeId: string): void {
         </button>
       </div>
     </div>
-  </div>
+  </Teleport>
 
   <!-- BCP-04：目标分支执行过写工具 / 有工作区存档时的模式确认框（决策 1：默认仅切聊天） -->
   <ConfirmDialog
@@ -324,12 +406,12 @@ function toggleDelete(nodeId: string): void {
   text-align: center;
 }
 
-/* fixed 浮层：消息内 absolute 会被滚动容器裁剪，展开时按锚点实时定位 */
+/* fixed 浮层通过 Teleport 挂到 body，避免消息项 contain: layout 改写定位参照。 */
 .branch-candidate-list {
   position: fixed;
   z-index: 1000;
-  min-width: 260px;
-  max-width: min(420px, 60vw);
+  box-sizing: border-box;
+  min-width: 0;
   overflow: auto;
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);

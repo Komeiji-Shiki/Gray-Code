@@ -18,12 +18,15 @@ export function formatReadFileDescription(args: Record<string, unknown>): string
 
   if (Array.isArray(args.files)) {
     const requests = args.files.filter((item): item is Record<string, unknown> => (
-      typeof item === 'object' && item !== null && !Array.isArray(item)
+      typeof item === 'object'
+      && item !== null
+      && !Array.isArray(item)
+      && typeof (item as Record<string, unknown>).path === 'string'
     ))
-    if (requests.length === 0) return '?'
-    return requests.map(formatRequest).join('\n')
+    if (requests.length > 0) return requests.map(formatRequest).join('\n')
   }
 
+  // 单文件调用可能由工具参数规范化补出 files: []；空批量不能遮蔽真实的 path。
   return formatRequest(args)
 }
 
