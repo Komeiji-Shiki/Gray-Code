@@ -258,6 +258,9 @@ export function contentToMessage(content: Content, id?: string): Message {
     // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
     // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
     id: id || getContentNodeId(content) || generateId(),
+    // BR-01：透传父节点 id（首条消息为 null）——前端据此判断根节点，
+    // 编辑根节点时自动降级为「原地保存」（根节点无父节点可挂编辑候选）
+    parentId: content.parentId,
     role,
     content: text,
     timestamp: Date.now(),
@@ -362,6 +365,9 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
     // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
     // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
     id: id || getContentNodeId(content) || generateId(),
+    // BR-01：透传父节点 id（首条消息为 null）——前端据此判断根节点，
+    // 编辑根节点时自动降级为「原地保存」（根节点无父节点可挂编辑候选）
+    parentId: content.parentId,
     role,
     content: text,
     // 使用后端存储的时间戳，如果没有则为 0（前端会判断不显示）

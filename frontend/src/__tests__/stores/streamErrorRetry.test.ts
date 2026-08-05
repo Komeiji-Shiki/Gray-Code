@@ -873,6 +873,33 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
     expect(state.allMessages.value[2].streaming).toBe(true)
   })
 
+  it('编辑根节点（parentId=null）自动降级为 keep 模式（原地保存）', async () => {
+    const root = createMessage({ id: 'msg_root', role: 'user', content: '第一条消息', localOnly: false, backendIndex: 0, parentId: null })
+    const answer = createMessage({ id: 'msg_answer', role: 'assistant', content: '回答', localOnly: false, backendIndex: 1 })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([root, answer]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    await editAndRetry(state, createComputed(), 0, '改过的第一条', undefined, async () => {})
+
+    // 根节点无父节点可挂编辑候选（BranchGraph 单根模型）：自动降级 keep（原地改写）
+    const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({
+      conversationId: 'conv_1',
+      userNodeId: 'msg_root',
+      newText: '改过的第一条',
+      mode: 'keep'
+    })
+    // 本地窗口同样改写根消息并截断
+    expect(state.allMessages.value[0].content).toBe('改过的第一条')
+    expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])
+    // 错误重放上下文携带 keep 模式（错误条重试保持同一语义）
+    expect(state._pendingBranchReplayContext.value).toMatchObject({ kind: 'editBranch', mode: 'keep' })
+  })
+
   it('编辑分支成功发起：不 deleteMessage/retryStream/editAndRetryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 userNodeId/newText', async () => {
     const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
     const target = createMessage({ id: 'msg_target', role: 'user', content: '追问', localOnly: false, backendIndex: 1 })

@@ -148,8 +148,11 @@ export interface EditBranchRequestData {
 export interface EditTargetResolution {
   /** 被编辑的旧用户节点 id */
   nodeId: string;
-  /** 新编辑候选的父节点 id（旧用户节点的父节点；null 即根节点，不可编辑） */
-  parentNodeId: string;
+  /**
+   * 新编辑候选的父节点 id（旧用户节点的父节点；null 即根节点，不可编辑）。
+   * keep 模式（原地改写）编辑根节点时为 null（该模式不创建候选，不使用父节点）。
+   */
+  parentNodeId: string | null;
 }
 
 /**
@@ -158,13 +161,16 @@ export interface EditTargetResolution {
  * - 显式 userNodeId：图模式校验「存在 + 在活跃路径 + role==='user' + 非根节点」；
  *   线性模式（graph 为 null）以主历史为活跃路径，父节点取前一个非 functionResponse 消息
  *   （与 importLinearHistory 的线性链接规则一致，决策 8）；
+ * - keep 模式（mode='keep'，原地改写）放行根节点：不创建候选、不需要父节点；
+ *   branch 模式（默认）仍拒绝根节点（BranchGraph 单根模型，根节点无父节点可挂编辑候选）。
  * - 省略 userNodeId：取活跃路径上最后一条可编辑用户消息；
- * - 错误码：节点缺失 NODE_NOT_FOUND；非 user / 不在活跃路径 / 根节点 → INVALID_BRANCH_RELATION。
+ * - 错误码：节点缺失 NODE_NOT_FOUND；非 user / 不在活跃路径 / branch 模式编辑根节点 → INVALID_BRANCH_RELATION。
  */
 export function resolveEditTargetNode(
   graph: ConversationBranchGraph | null,
   history: ReadonlyArray<Content>,
   userNodeId?: string,
+  mode: 'branch' | 'keep' = 'branch',
 ): EditTargetResolution {
   if (userNodeId !== undefined && userNodeId.trim() !== '') {
     if (graph) {
@@ -186,6 +192,10 @@ export function resolveEditTargetNode(
         );
       }
       if (node.parentId === null) {
+        if (mode === 'keep') {
+          // keep 模式（原地改写）：根节点无父节点可挂候选，但可以直接改写根节点内容并截断
+          return { nodeId: userNodeId, parentNodeId: null };
+        }
         throw new BranchError(
           'INVALID_BRANCH_RELATION',
           `cannot edit the root node ${userNodeId} (no parent to branch under)`
@@ -206,6 +216,10 @@ export function resolveEditTargetNode(
     }
     const parentId = findLinearParentId(history, idx);
     if (parentId === null) {
+      if (mode === 'keep') {
+        // keep 模式（原地改写）：线性模式根节点（首条消息）同样放行
+        return { nodeId: userNodeId, parentNodeId: null };
+      }
       throw new BranchError(
         'INVALID_BRANCH_RELATION',
         `cannot edit the root node ${userNodeId} (no parent to branch under)`
@@ -1140,7 +1154,7 @@ export class ChatFlowService {
   async *handleChatStream(
     request: ChatRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, configId, message, modelOverride, hiddenFunctionResponse } = request;
+    const { conversationId, configId, message, messageId, modelOverride, hiddenFunctionResponse } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -1213,12 +1227,12 @@ export class ChatFlowService {
           } satisfies ChatStreamCheckpointsData;
         }
 
-        // 5. 添加用户消息到历史（包含附件）
+        // 5. 添加用户消息到历史（包含附件）；携带前端稳定节点 id（BR-01 对齐）
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
           isUserInput: request.source !== 'background_task',
           source: request.source
-        });
+        }, messageId);
 
         // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
         // 与系统提示词、动态上下文一起并行计算，节省时间
@@ -1603,7 +1617,8 @@ export class ChatFlowService {
         );
       }
       const historyBefore = await this.conversationManager.getMessagesRaw(conversationId);
-      const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId);
+      // mode：keep 模式放行根节点（原地改写）；branch 模式根节点拒绝（无父节点可挂候选）
+      const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId, request.mode);
 
       // 3.8 按编辑模式分流：
       // - 'keep'：原地改写活跃路径上的原消息（保持当前分支，不产生新候选）；
@@ -1671,7 +1686,8 @@ export class ChatFlowService {
         // editStarted 保持 undefined：无候选节点，流结束后无需 finishReroll
       } else {
         // —— branch 模式：创建编辑候选并切换分支 ——
-        const created = await branchService.editCandidate(conversationId, target.parentNodeId, {
+        // 根节点已在 resolveEditTargetNode 拒绝（branch 模式），此处 parentNodeId 必非 null
+        const created = await branchService.editCandidate(conversationId, target.parentNodeId!, {
           role: 'user',
           parts: [{ text: request.newText }],
         });
@@ -1715,7 +1731,8 @@ export class ChatFlowService {
           isUserInput: true,
         });
 
-        editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId };
+        // branch 模式：parentNodeId 必非 null（根节点已在 resolveEditTargetNode 拒绝）
+        editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId! };
       }
     } finally {
       // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRerollStream 的 finally 用法一致）
@@ -2358,6 +2375,9 @@ export class ChatFlowService {
     // 5.5 如果有用户批注，添加为新的用户消息
     if (request.annotation && request.annotation.trim()) {
       await this.conversationManager.addContent(conversationId, {
+        ...(typeof request.annotationMessageId === 'string' && request.annotationMessageId.length > 0
+          ? { id: request.annotationMessageId }
+          : {}),
         role: 'user',
         parts: [{ text: request.annotation.trim() }],
       });

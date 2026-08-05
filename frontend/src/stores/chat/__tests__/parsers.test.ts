@@ -60,4 +60,16 @@ describe('parsers - BR-01 content.id 透传', () => {
     expect(msg.id).toBeTruthy()
     expect(msg.id).not.toBe('')
   })
+
+  it('透传 content.parentId（首条消息为 null，前端据此识别根节点）', () => {
+    const root = contentToMessage(content({ role: 'user', parentId: null }))
+    expect(root.parentId).toBeNull()
+
+    const child = contentToMessageEnhanced(content({ role: 'user', parentId: 'parent-1' }))
+    expect(child.parentId).toBe('parent-1')
+
+    // 后端未下发 parentId（旧数据）时保持 undefined（前端视为根节点兜底）
+    const missing = contentToMessage(content({ role: 'user' }))
+    expect(missing.parentId).toBeUndefined()
+  })
 })
