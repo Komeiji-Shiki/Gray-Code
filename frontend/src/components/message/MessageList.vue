@@ -34,6 +34,7 @@ import {
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import { clearLineDiffCache } from '../../utils/lineDiff'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 
 const { t } = useI18n()
@@ -788,6 +789,9 @@ onBeforeUnmount(() => {
     resizeObserver = null
   }
   saveCurrentUiState(props.tabId)
+
+  // A-M2：消息列表卸载后不再有 diff 面板消费方，主动释放模块级行级差分缓存
+  clearLineDiffCache()
 })
 
 const emit = defineEmits<{

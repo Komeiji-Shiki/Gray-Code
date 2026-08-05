@@ -448,8 +448,7 @@ describe('getMetadata 完整性检查只读 index（HIS-11）', () => {
         const manager = new ConversationManager(adapter);
 
         await manager.createConversation('conv-meta', 'Meta');
-        await manager.addBatch('conv-meta', [
-            makeContent('user', 'a'), makeContent('model', 'b'), makeContent('user', 'c')
+        await manager.addBatch('conv-meta', [            makeContent('user', 'a'), makeContent('model', 'b'), makeContent('user', 'c')
         ]);
 
         fake.readCalls.length = 0;
@@ -479,5 +478,104 @@ describe('getMetadata 完整性检查只读 index（HIS-11）', () => {
         expect(meta).not.toBeNull();
         expect(meta!.integrityStatus).toBe('history_missing');
         expect(fake.readCalls.filter(p => p.includes('.ndjson'))).toHaveLength(0);
+    });
+});
+
+describe('getMetadataLight 元数据缓存（PERF）', () => {
+    test('缓存命中时不读盘（对话列表分页/统计热路径）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-light', 'Light');
+        await manager.addBatch('conv-light', [makeContent('user', 'a'), makeContent('model', 'b')]);
+        await manager.updateSummary('conv-light', { messageCount: 5, preview: 'p' });
+
+        fake.readCalls.length = 0;
+        const meta = await manager.getMetadataLight('conv-light');
+        expect(meta).not.toBeNull();
+        expect(meta!.title).toBe('Light');
+        // M3 钳制：messageCount 不超过实际历史数量（2 条）
+        expect(meta!.custom!.messageCount).toBe(2);
+        // 写路径已回填 metaCache：全程无磁盘读取
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('返回深拷贝，调用方修改不污染缓存', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-copy', 'Copy');
+
+        const first = await manager.getMetadataLight('conv-copy');
+        first!.custom = { polluted: true };
+
+        fake.readCalls.length = 0;
+        const second = await manager.getMetadataLight('conv-copy');
+        expect(second!.custom).not.toHaveProperty('polluted');
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('not_found 负缓存命中不读盘；创建对话后由写路径覆盖', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+
+        fake.readCalls.length = 0;
+        expect(await manager.getMetadataLight('conv-nc')).toBeNull();
+        expect(fake.readCalls.length).toBeGreaterThan(0); // 首次仍读盘
+        const readsAfterMiss = fake.readCalls.length;
+
+        expect(await manager.getMetadataLight('conv-nc')).toBeNull();
+        expect(fake.readCalls.length).toBe(readsAfterMiss); // 负缓存命中，不再读盘
+
+        await manager.createConversation('conv-nc', 'NC');
+        fake.readCalls.length = 0;
+        const meta = await manager.getMetadataLight('conv-nc');
+        expect(meta?.title).toBe('NC'); // 写路径覆盖负缓存
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('标题/自定义元数据写路径回填缓存，无需重新读盘', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-write', 'W');
+
+        await manager.setTitle('conv-write', 'Renamed');
+        await manager.setCustomMetadata('conv-write', 'key', 42);
+        fake.readCalls.length = 0;
+
+        const meta = await manager.getMetadataLight('conv-write');
+        expect(meta!.title).toBe('Renamed');
+        expect(meta!.custom!.key).toBe(42);
+        expect(fake.readCalls).toHaveLength(0);
+    });
+
+    test('历史追加（appendHistory 刷新 updatedAt）后缓存失效，重新读盘', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-append', 'Append');
+
+        fake.readCalls.length = 0;
+        await manager.getMetadataLight('conv-append'); // 缓存回填
+
+        await manager.addContent('conv-append', makeContent('user', 'x'));
+        const readsAfterAppend = fake.readCalls.length;
+
+        const meta = await manager.getMetadataLight('conv-append');
+        expect(meta).not.toBeNull();
+        // append 路径已失效缓存：本次读取必须重新走磁盘
+        expect(fake.readCalls.length).toBeGreaterThan(readsAfterAppend);
+    });
+
+    test('删除会话后缓存失效，不再返回已删除会话的快照', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-del', 'Del');
+
+        fake.readCalls.length = 0;
+        expect(await manager.getMetadataLight('conv-del')).not.toBeNull(); // 缓存回填
+
+        await manager.deleteConversation('conv-del');
+        fake.readCalls.length = 0;
+        expect(await manager.getMetadataLight('conv-del')).toBeNull();
+        // 删除路径已失效缓存：本次读取重新走磁盘并得到 not_found
+        expect(fake.readCalls.length).toBeGreaterThan(0);
     });
 });

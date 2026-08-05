@@ -191,6 +191,14 @@ export interface ConversationStorageLocation {
 export interface SubAgentTranscriptData {
     contents: Content[];
     lastSentHistory?: Content[];
+    /**
+     * 新格式把 provider history 中可由 contents 重建的消息保存为索引，只内嵌无法匹配的消息。
+     * 这样大型工具结果/图片不会在 contents 与 lastSentHistory 中重复保存两份。
+     */
+    lastSentHistoryProjection?: {
+        version: 1;
+        entries: Array<{ contentIndex: number } | { content: Content }>;
+    };
 }
 
 export interface IStorageAdapter {

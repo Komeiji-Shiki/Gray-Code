@@ -369,6 +369,7 @@ export class SubAgentMonitorPanel {
             await this.loadConversationSnapshotsIfPossible(
                 typeof message.data?.conversationId === 'string' ? message.data.conversationId : this.focusConversationId
             );
+            await subAgentRunEventBus.loadRunTranscript(runId);
             const contentWindow = subAgentRunEventBus.getContentWindow(runId, message.data?.options || {});
             if (!contentWindow) {
                 this.postRoutedMessage({

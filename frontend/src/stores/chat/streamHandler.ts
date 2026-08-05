@@ -23,7 +23,8 @@ import {
   handleAutoSummaryStatus,
   handleAutoSummary,
   handleCancelled,
-  handleError
+  handleError,
+  finishSmoothStreamForState
 } from './streamChunkHandlers'
 import { loadBranchGraph } from './branchActions'
 
@@ -174,6 +175,12 @@ export function handleStreamChunk(
       
     case 'awaitingConfirmation':
       handleAwaitingConfirmation(chunk, state, addCheckpoint)
+      // 编辑分支 / reroll 流停在工具确认（awaitingConfirmation 终结）时同样消费刷新标记：
+      // 后端候选已创建并落盘（editCandidate 在流开始时就 save），此时刷新分支图可让
+      // BranchSwitcherBar 立即显示新候选（此前遗漏导致标记残留：编辑分支流停在工具确认时
+      // 分支切换器不显示，切换对话触发 loadBranchGraph 后才恢复）。
+      finishSmoothStreamForState(state)
+      finishBranchStreamTracking(state)
       break
       
     case 'toolIteration':
@@ -183,6 +190,7 @@ export function handleStreamChunk(
         // handleToolIteration 终结路径会把 activeStreamId 置空，据此消费分支图刷新标记；
         // 非终结路径（继续下一轮工具循环）activeStreamId 保持原值，不提前消费。
         if (state.activeStreamId.value === null) {
+          finishSmoothStreamForState(state)
           finishBranchStreamTracking(state)
           // 终结路径与 complete/cancelled/error 一致：调度 processQueue，
           // 否则审批门闸终止的回合后排队队列永不触发（卡死）
@@ -190,6 +198,7 @@ export function handleStreamChunk(
         }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        finishSmoothStreamForState(state)
         resetTerminalStreamState(state)
         finishBranchStreamTracking(state)
         nextTick(() => processQueue())
@@ -201,6 +210,7 @@ export function handleStreamChunk(
         handleComplete(chunk, state, addCheckpoint, updateConversationAfterMessage)
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        finishSmoothStreamForState(state)
         resetTerminalStreamState(state)
       }
       finishBranchStreamTracking(state)

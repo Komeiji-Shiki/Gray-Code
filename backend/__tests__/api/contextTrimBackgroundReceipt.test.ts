@@ -65,7 +65,11 @@ describe('ContextTrimService.identifyRounds - background task receipt', () => {
 });
 
 describe('ContextTrimService - turn-scoped trim state', () => {
-    function createTurnScopedHarness(history: Content[], trimState?: Record<string, unknown>) {
+    function createTurnScopedHarness(
+        history: Content[],
+        trimState?: Record<string, unknown>,
+        fixedPromptTokens = 0
+    ) {
         const conversationManager = {
             getHistoryRef: jest.fn().mockResolvedValue(history),
             getCustomMetadata: jest.fn().mockImplementation(async (_conversationId: string, key: string) => (
@@ -82,15 +86,19 @@ describe('ContextTrimService - turn-scoped trim state', () => {
             getDynamicContextText: jest.fn(() => '')
         };
         const tokenEstimationService = {
-            countTextTokensBatch: jest.fn().mockResolvedValue([0, 0]),
+            countTextTokensBatch: jest.fn().mockResolvedValue([fixedPromptTokens, 0]),
             preCountUserMessageTokensBatch: jest.fn().mockResolvedValue(undefined),
             estimateMessageTokens: jest.fn(() => 100)
+        };
+        const messageBuilderService = {
+            hasThoughtContent: jest.fn(() => false),
+            hasThoughtSignatures: jest.fn(() => false)
         };
         const service = new ContextTrimService(
             conversationManager as any,
             promptManager as any,
             tokenEstimationService as any,
-            {} as any
+            messageBuilderService as any
         );
         return { service, conversationManager, promptManager, tokenEstimationService };
     }
@@ -192,6 +200,35 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         });
     });
 
+    it.each([
+        ['显式总开关', { contextManagementEnabled: false }],
+        ['旧版双开关', { contextThresholdEnabled: false, autoSummarizeEnabled: false }]
+    ])('自动上下文管理关闭（%s）时不因总结阈值或配置窗口阻止主请求', async (_label, disabledConfig) => {
+        const oversizedHistory: Content[] = [
+            { role: 'user', parts: [{ text: 'x'.repeat(10_000) }], isUserInput: true },
+            { role: 'model', parts: [{ text: 'y'.repeat(10_000) }] }
+        ];
+        const { service } = createTurnScopedHarness(oversizedHistory);
+
+        const result = await service.getHistoryWithContextTrimInfo(
+            'conv-context-management-off',
+            {
+                ...disabledConfig,
+                maxContextTokens: 100,
+                contextThreshold: '1%'
+            } as any,
+            {}
+        );
+
+        expect(result.history).toEqual(oversizedHistory);
+        expect(result.needsAutoSummarize).not.toBe(true);
+        expect(result.contextManagementDecision).toMatchObject({
+            enabled: false,
+            mode: 'off',
+            action: 'disabled'
+        });
+    });
+
     it('升级后清除可能在工具回合中途写入的旧裁剪状态', async () => {
         const { service, conversationManager } = createTurnScopedHarness(largeSubAgentHistory, {
             trimStartIndex: 2
@@ -259,5 +296,66 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(result.history[1].parts[0].functionCall?.id).toBe('a');
         expect(result.history[2].parts[0].functionResponse?.id).toBe('a');
         expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
+    });
+
+    it('固定 prompt 已超软阈值且新增历史很少时跳过低收益自动总结并继续主请求', async () => {
+        const smallDelta: Content[] = [
+            { role: 'user', parts: [{ text: 'small delta' }], isUserInput: true, tokenCountByChannel: { custom: 20 } },
+            {
+                role: 'model',
+                parts: [{ text: 'small answer' }],
+                usageMetadata: { candidatesTokenCount: 20 }
+            }
+        ];
+        const { service } = createTurnScopedHarness(smallDelta, undefined, 330);
+
+        const result = await service.getHistoryWithContextTrimInfo(
+            'conv-low-value-auto-summary',
+            {
+                type: 'custom',
+                model: 'tiny-model',
+                models: [{ id: 'tiny-model', contextWindow: 400 }],
+                contextManagementEnabled: true,
+                contextManagementMode: 'summarize',
+                maxContextTokens: 400,
+                contextThreshold: '80%'
+            } as any,
+            {}
+        );
+
+        expect(result.needsAutoSummarize).toBe(false);
+        expect(result.needsContextFallback).toBe(false);
+        expect(result.history).toEqual(smallDelta);
+        expect(result.contextManagementDecision?.action).toBe('auto_summarize_skipped_low_savings');
+    });
+
+    it('低收益总结被跳过但总输入已越过硬窗口时仍进入请求级 fallback', async () => {
+        const smallDelta: Content[] = [
+            { role: 'user', parts: [{ text: 'small delta' }], isUserInput: true, tokenCountByChannel: { custom: 60 } },
+            {
+                role: 'model',
+                parts: [{ text: 'small answer' }],
+                usageMetadata: { candidatesTokenCount: 60 }
+            }
+        ];
+        const { service } = createTurnScopedHarness(smallDelta, undefined, 330);
+
+        const result = await service.getHistoryWithContextTrimInfo(
+            'conv-hard-fallback',
+            {
+                type: 'custom',
+                model: 'tiny-model',
+                models: [{ id: 'tiny-model', contextWindow: 400 }],
+                contextManagementEnabled: true,
+                contextManagementMode: 'summarize',
+                maxContextTokens: 400,
+                contextThreshold: '80%'
+            } as any,
+            {}
+        );
+
+        expect(result.needsAutoSummarize).toBe(false);
+        expect(result.needsContextFallback).toBe(true);
+        expect(result.contextManagementDecision?.action).toBe('hard_fallback_needed');
     });
 });

@@ -293,7 +293,9 @@ const ja: BackendLanguageMessages = {
                     messageNotFound: 'メッセージが見つかりません: インデックス {messageIndex}',
                     canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}',
                     messageChanged: 'メッセージが変更されました。更新後に再試行してください',
-                    editTargetNotInHistory: '選択したメッセージは現在の会話履歴にありません。コンテキスト圧縮で削除された可能性があります'
+                    editTargetNotInHistory: '選択したメッセージは現在の会話履歴にありません。コンテキスト圧縮で削除された可能性があります',
+                    contextOverflow: 'モデルのコンテキストウィンドウ内で有効なリクエストを構築できません: 最小候補は約 {estimatedInputTokens} 入力トークン必要で、{inputTokenLimit} トークンのウィンドウを超えています。モデルのコンテキストウィンドウを増やすか、履歴/保持予算を調整してください',
+                    summarizeContextOverflow: '要約対象の内容と要約プロンプトが要約モデルのコンテキスト上限を超えています。要約モデルのコンテキストウィンドウを増やすか、保持予算を調整してください'
                 },
                 prompts: {
                     defaultSummarizePrompt: `上記の会話内容を簡潔に要約してください。書式マーカーなしで直接要約を出力してください。

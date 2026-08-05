@@ -139,7 +139,15 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
   await subAgentRunEventBus.flushConversation(conversationId);
 
   // 先删除该对话的所有检查点（包括备份目录）
-  await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+  const checkpointDeleteResult = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+  if (!checkpointDeleteResult?.success) {
+    ctx.sendError(
+      requestId,
+      'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
+      t('webview.errors.deleteAllCheckpointsFailed')
+    );
+    return;
+  }
   await ctx.conversationManager.deleteConversation(conversationId);
   subAgentRunEventBus.forgetConversation(conversationId);
   ctx.sendResponse(requestId, { success: true });

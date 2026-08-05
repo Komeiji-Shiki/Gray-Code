@@ -25,7 +25,7 @@ import {
     ConversationStats,
     CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
-import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter } from './storage';
+import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter, SubAgentTranscriptData } from './storage';
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
@@ -1342,6 +1342,8 @@ export class ConversationManager {
                 // MED-2：对话删除即清理 A-COMM 信箱（内存同步操作，与删除同一锁内原子执行；
                 // 删除失败不会走到这里，信箱状态与对话生命周期保持一致，防 ID 复用时限流/误注入）
                 agentMailbox.clearConversation(conversationId);
+                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读
+                this.metaCache.delete(conversationId);
             });
             // 删除成功后统一失效内存缓存：已删除会话的历史/元数据快照不得再泄漏给下一次读取
             this.invalidateCaches(conversationId);
@@ -3115,14 +3117,14 @@ export class ConversationManager {
         return this.storage.getConversationsDirFsPath?.();
     }
 
-    async saveSubAgentTranscript(conversationId: string, runId: string, data: { contents: Content[]; lastSentHistory?: Content[] }): Promise<string> {
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string> {
         if (!this.storage.saveSubAgentTranscript) {
             throw new Error('SubAgent transcript storage is unavailable');
         }
         return await this.storage.saveSubAgentTranscript(conversationId, runId, data);
     }
 
-    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<{ contents: Content[]; lastSentHistory?: Content[] } | null> {
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null> {
         return this.storage.loadSubAgentTranscript
             ? await this.storage.loadSubAgentTranscript(conversationId, runId)
             : null;

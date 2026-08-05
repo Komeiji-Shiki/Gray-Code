@@ -18,7 +18,11 @@ import type { GenerateResponse, StreamChunk } from '../../../channel/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import type { ContextTrimService } from './ContextTrimService';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from './ContextTrimService';
+import {
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    resolveModelContextWindowForConfig,
+    resolveMaxContextTokensForConfig
+} from './ContextTrimService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import {
     planSummarizeMessages,
@@ -54,6 +58,11 @@ Follow this exact structure:
 6. Open Questions / Risks
 Use concise bullet points under each section.
 Preserve exact technical details (file paths, function names, config keys, IDs, and numbers).`;
+const SUMMARY_PROVIDER_RESERVE_RATIO = 0.02;
+const MIN_SUMMARY_PROVIDER_RESERVE_TOKENS = 32;
+// summarizeMaxInputRatio 是“自动总结缩小范围”的软预算设置；手动总结不应被默认 50% 提前拒绝。
+// 手动请求只在接近总结模型真实窗口时预检失败，并给 provider 包装留出少量余量。
+const MANUAL_SUMMARY_MAX_INPUT_RATIO = 0.95;
 
 
 /**
@@ -141,6 +150,45 @@ export class SummarizeService {
     getMaxAutoSummarizeAttemptsPerTurn(): number {
         const config = this.settingsManager?.getSummarizeConfig?.();
         return clampMaxAutoSummarizeAttempts(config?.maxAutoSummarizeAttemptsPerTurn);
+    }
+
+    private resolveSummaryInputBudget(
+        config: BaseChannelConfig,
+        modelOverride: string | undefined,
+        inputRatio: number,
+        prompt: string
+    ): {
+        modelMaxContextTokens: number;
+        maxInputTokens: number;
+        fixedRequestTokens: number;
+        maxHistoryTokens: number;
+    } {
+        // 总结请求真正发给当前/独立总结模型，优先使用该模型自己的 contextWindow；
+        // 渠道 maxContextTokens 只是上下文管理与显示基准，仅在模型元数据缺失时作为回退。
+        const modelMaxContextTokens = (
+            resolveModelContextWindowForConfig(config, modelOverride)
+            ?? resolveMaxContextTokensForConfig(config, modelOverride)
+        ).maxContextTokens;
+        const maxInputTokens = Math.max(1, Math.floor(modelMaxContextTokens * inputRatio));
+        const systemPromptTokens = this.estimateSingleMessageTokensLocally({
+            role: 'user',
+            parts: [{ text: BUILTIN_SUMMARIZE_SYSTEM_PROMPT }]
+        });
+        const userPromptTokens = this.estimateSingleMessageTokensLocally({
+            role: 'user',
+            parts: [{ text: prompt }]
+        });
+        const providerReserveTokens = Math.max(
+            MIN_SUMMARY_PROVIDER_RESERVE_TOKENS,
+            Math.floor(maxInputTokens * SUMMARY_PROVIDER_RESERVE_RATIO)
+        );
+        const fixedRequestTokens = systemPromptTokens + userPromptTokens + providerReserveTokens;
+        return {
+            modelMaxContextTokens,
+            maxInputTokens,
+            fixedRequestTokens,
+            maxHistoryTokens: Math.max(0, maxInputTokens - fixedRequestTokens)
+        };
     }
 
     /**
@@ -249,6 +297,7 @@ export class SummarizeService {
                 mainConfigId: configId,
                 keepRecentRounds,
                 keepRecentTokens: configKeepRecentTokens,
+                mainModelOverride: currentModelOverride,
                 mode: 'manual'
             });
 
@@ -297,6 +346,29 @@ export class SummarizeService {
 
             // 清理历史中不应发送给 API 的内部字段
             const cleanedMessages = this.cleanMessagesForSummarize(messagesToSummarize, config);
+
+            const summaryBudget = this.resolveSummaryInputBudget(
+                config,
+                actualModelId,
+                MANUAL_SUMMARY_MAX_INPUT_RATIO,
+                prompt
+            );
+            const estimatedHistoryTokens = this.estimateMessagesTokens(cleanedMessages, config.type);
+            if (estimatedHistoryTokens > summaryBudget.maxHistoryTokens) {
+                this.log.warn('manual.context_overflow_unresolvable', {
+                    conversationId,
+                    estimatedHistoryTokens,
+                    ...summaryBudget,
+                    summarizeEndIndex
+                });
+                return {
+                    success: false,
+                    error: {
+                        code: 'CONTEXT_OVERFLOW',
+                        message: t('modules.api.chat.errors.summarizeContextOverflow')
+                    }
+                };
+            }
 
             this.log.info('manual.cleaned', {
                 conversationId,
@@ -700,6 +772,7 @@ export class SummarizeService {
                 mainConfigId: configId,
                 keepRecentRounds,
                 keepRecentTokens: configKeepRecentTokens,
+                mainModelOverride: currentModelOverride,
                 mode: 'auto'
             });
 
@@ -733,10 +806,18 @@ export class SummarizeService {
                 };
             }
 
-            // 6. 检查待总结内容是否超出总结模型的上下文
-            // 获取总结模型的最大上下文（输入占比由设置控制，默认预留 50% 给输出）
-            const summarizeModelMaxContext = config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
-            const maxInputTokens = Math.floor(summarizeModelMaxContext * configSummarizeMaxInputRatio);
+            // 6. 检查待总结内容是否超出总结模型的上下文。
+            // 模型窗口必须按 actualModelId 解析，同时为内置 system prompt、用户总结提示词和
+            // provider 消息包装预留输入预算，不能只统计被总结的历史消息。
+            const defaultAutoPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
+            const configuredAutoPrompt = configAutoSummarizePrompt.trim();
+            const prompt = configuredAutoPrompt || defaultAutoPrompt;
+            const summaryBudget = this.resolveSummaryInputBudget(
+                config,
+                actualModelId,
+                configSummarizeMaxInputRatio,
+                prompt
+            );
 
             // 估算待总结消息的 token 量（口径与 resolveSummarizeRange 的预算估算一致：
             // 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，避免两套口径不一致
@@ -749,7 +830,7 @@ export class SummarizeService {
             // 每次重新扫描当前 messagesToSummarize 中最后一对 functionCall + functionResponse；
             // 若该轮起点（真实用户消息）在总结范围内则整轮一起排除（保持语义完整，
             // 避免把同一轮的工具交互拆散在总结消息两侧），轮首在范围之外时仅排除该工具交互
-            while (estimatedTokens > maxInputTokens) {
+            while (estimatedTokens > summaryBudget.maxHistoryTokens) {
                 // 找到当前范围内最后一对 functionCall + functionResponse
                 let lastToolInteractionStart = -1;
                 for (let i = messagesToSummarize.length - 1; i >= 0; i--) {
@@ -791,7 +872,11 @@ export class SummarizeService {
                 messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
                 insertIndex = newEndIndex;
                 this.log.warn('auto.context_overflow_trimmed', {
-                    conversationId, estimatedTokens, maxInputTokens,
+                    conversationId,
+                    estimatedTokens,
+                    maxHistoryTokens: summaryBudget.maxHistoryTokens,
+                    maxInputTokens: summaryBudget.maxInputTokens,
+                    fixedRequestTokens: summaryBudget.fixedRequestTokens,
                     originalRange: `${summarizeInputStartIndex}-${prevEndIndex}`,
                     newRange: `${summarizeInputStartIndex}-${newEndIndex}`
                 });
@@ -810,15 +895,18 @@ export class SummarizeService {
             }
 
             // 全部可排除的工具交互轮都排除后仍超限：返回显式错误，不把必败的超限请求发给 API
-            if (estimatedTokens > maxInputTokens) {
+            if (estimatedTokens > summaryBudget.maxHistoryTokens) {
                 this.log.warn('auto.context_overflow_unresolvable', {
-                    conversationId, estimatedTokens, maxInputTokens, insertIndex
+                    conversationId,
+                    estimatedTokens,
+                    ...summaryBudget,
+                    insertIndex
                 });
                 return {
                     success: false,
                     error: {
                         code: 'CONTEXT_OVERFLOW',
-                        message: '待总结内容超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
+                        message: t('modules.api.chat.errors.summarizeContextOverflow')
                     }
                 };
             }
@@ -829,10 +917,6 @@ export class SummarizeService {
             const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
 
             // 8. 构建总结请求（用户提示词可在设置中配置）
-            const defaultAutoPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
-            const configuredAutoPrompt = configAutoSummarizePrompt.trim();
-            const prompt = configuredAutoPrompt || defaultAutoPrompt;
-
             // 清理历史中不应发送给 API 的内部字段
             const cleanedMessages = this.cleanMessagesForSummarize(messagesToSummarize, config);
 
@@ -1024,6 +1108,7 @@ export class SummarizeService {
         mainConfigId: string;
         keepRecentRounds: number;
         keepRecentTokens?: number | string;
+        mainModelOverride?: string;
         mode: 'manual' | 'auto';
     }): Promise<
         | { ok: true; summarizeEndIndex: number; intraRoundSplit: boolean; currentRounds: number }
@@ -1036,8 +1121,8 @@ export class SummarizeService {
 
         // 保留预算以主对话模型的最大上下文为基数解析
         const mainConfig = await this.configManager.getConfig(options.mainConfigId);
-        const maxContextTokens = typeof mainConfig?.maxContextTokens === 'number' && mainConfig.maxContextTokens > 0
-            ? mainConfig.maxContextTokens
+        const maxContextTokens = mainConfig
+            ? resolveMaxContextTokensForConfig(mainConfig, options.mainModelOverride).maxContextTokens
             : DEFAULT_MAX_CONTEXT_TOKENS;
         const channelType = mainConfig?.type || 'custom';
         const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, maxContextTokens);

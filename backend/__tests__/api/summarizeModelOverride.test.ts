@@ -10,21 +10,31 @@ const history: Content[] = [
     { role: 'model', parts: [{ text: 'answer 3' }] }
 ];
 
-function createHarness(useSeparateModel = false, summarizeModelId = 'summary-model') {
+function createHarness(
+    useSeparateModel = false,
+    summarizeModelId = 'summary-model',
+    options: {
+        mainConfig?: Record<string, unknown>;
+        dedicatedConfig?: Record<string, unknown>;
+        summarizePrompt?: string;
+    } = {}
+) {
     const configs: Record<string, any> = {
         main: {
             id: 'main',
             type: 'openai',
             enabled: true,
             model: '',
-            maxContextTokens: 100_000
+            maxContextTokens: 100_000,
+            ...options.mainConfig
         },
         dedicated: {
             id: 'dedicated',
             type: 'openai',
             enabled: true,
             model: '',
-            maxContextTokens: 100_000
+            maxContextTokens: 100_000,
+            ...options.dedicatedConfig
         }
     };
     const generate = jest.fn().mockResolvedValue({
@@ -54,7 +64,8 @@ function createHarness(useSeparateModel = false, summarizeModelId = 'summary-mod
             useSeparateModel,
             summarizeChannelId: useSeparateModel ? 'dedicated' : '',
             summarizeModelId: useSeparateModel ? summarizeModelId : '',
-            summarizePrompt: ''
+            summarizePrompt: options.summarizePrompt ?? '',
+            summarizeMaxInputRatio: 0.5
         })
     };
     const service = new SummarizeService(
@@ -114,5 +125,49 @@ describe('SummarizeService current conversation model override', () => {
         const generateOptions = generate.mock.calls[0][0] as { configId: string; modelOverride?: string };
         expect(generateOptions.configId).toBe('dedicated');
         expect(generateOptions.modelOverride).toBeUndefined();
+    });
+
+    it('未配置渠道级窗口时按当前对话 modelOverride 的 contextWindow 做总结预检', async () => {
+        const configOverride = {
+            models: [
+                { id: 'tiny-model', contextWindow: 200 },
+                { id: 'large-model', contextWindow: 100_000 }
+            ]
+        };
+        const tiny = createHarness(false, 'summary-model', { mainConfig: configOverride });
+
+        const rejected = await tiny.service.handleSummarizeContext({
+            conversationId: 'conv-1',
+            configId: 'main',
+            modelOverride: 'tiny-model'
+        });
+
+        expect(rejected).toMatchObject({ success: false, error: { code: 'CONTEXT_OVERFLOW' } });
+        expect(tiny.generate).not.toHaveBeenCalled();
+
+        const large = createHarness(false, 'summary-model', { mainConfig: configOverride });
+        const accepted = await large.service.handleSummarizeContext({
+            conversationId: 'conv-1',
+            configId: 'main',
+            modelOverride: 'large-model'
+        });
+
+        expect(accepted.success).toBe(true);
+        expect(large.generate).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'large-model' }));
+    });
+
+    it('手动总结预检计入总结提示词开销，超限时不发送必败 API 请求', async () => {
+        const { service, generate } = createHarness(false, 'summary-model', {
+            mainConfig: { maxContextTokens: 1_000 },
+            summarizePrompt: 'very-long-summary-instruction '.repeat(200)
+        });
+
+        const result = await service.handleSummarizeContext({
+            conversationId: 'conv-1',
+            configId: 'main'
+        });
+
+        expect(result).toMatchObject({ success: false, error: { code: 'CONTEXT_OVERFLOW' } });
+        expect(generate).not.toHaveBeenCalled();
     });
 });

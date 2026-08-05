@@ -18,6 +18,7 @@ import { CustomScrollbar } from './components/common'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import DiffViewerPanel from './components/diff/DiffViewerPanel.vue'
 import CodeViewPanel from './components/codeView/CodeViewPanel.vue'
+import Splash from './components/Splash.vue'
 import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore, useCodeViewStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage, setDetectedLanguage } from './i18n'
@@ -27,6 +28,7 @@ import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
+import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 
 // i18n
 const { t } = useI18n()
@@ -36,6 +38,8 @@ const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMoni
 
 // 语言是否已加载
 const languageLoaded = ref(false)
+// 开始动画是否已完成（Splash 淡出后置 true，移除组件）
+const splashDone = ref(false)
 
 // 使用 Pinia Store
 const chatStore = useChatStore()
@@ -642,18 +646,21 @@ onBeforeUnmount(() => {
 
   agentStopNotificationController?.dispose()
   agentStopNotificationController = null
+
+  // H1：webview 卸载兜底——销毁所有平滑流式实例（防泄漏；显示文本随 webview 一起销毁）
+  disposeAllSmoothStreams()
 })
 </script>
 
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 等待语言加载完成 -->
-    <template v-if="!languageLoaded">
-      <div class="loading-container">
-        <i class="codicon codicon-loading spin"></i>
-      </div>
-    </template>
+    <!-- 开始动画：灰码少女一笔画（ready 沿用 languageLoaded，淡出后移除）；TPS 实时可视化条位于聊天面板底部 TpsBar -->
+    <Splash
+      v-if="!splashDone"
+      :ready="languageLoaded"
+      @done="splashDone = true"
+    />
     
     <!-- 聊天视图 - 使用 v-show 避免销毁组件，保持滚动位置 -->
     <div v-show="languageLoaded && settingsStore.currentView === 'chat'" class="chat-view">

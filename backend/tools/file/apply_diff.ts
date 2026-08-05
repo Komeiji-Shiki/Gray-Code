@@ -85,7 +85,7 @@ export interface StructuredHunkPlan {
  * 规范化换行符为 LF
  */
 export function normalizeLineEndings(text: string): string {
-    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return text.replace(/\r\n?/g, '\n');
 }
 
 function findAllExactMatchLineNumbers(
@@ -154,6 +154,29 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
     }
 
     return result;
+}
+
+/**
+ * 非重叠匹配计数（带上限保护）。
+ * 用途：applyDiffToContent 统计匹配次数时替代 split(search)，
+ * split 会生成整个分割数组——大文件 + 短 search 时产生大量中间字符串；
+ * indexOf 循环只扫描不分配，内存 O(1)，超短 search 也受 MAX_MATCH_COUNT 限制。
+ */
+const MAX_MATCH_COUNT = 100_000;
+
+function countMatches(normalizedContent: string, normalizedSearch: string): number {
+    if (!normalizedSearch) return 0;
+
+    let count = 0;
+    let fromIndex = 0;
+    while (fromIndex <= normalizedContent.length) {
+        const pos = normalizedContent.indexOf(normalizedSearch, fromIndex);
+        if (pos === -1) break;
+        count++;
+        if (count >= MAX_MATCH_COUNT) return count;
+        fromIndex = pos + Math.max(1, normalizedSearch.length);
+    }
+    return count;
 }
 
 function getCharOffsetForLine(normalizedContent: string, line: number): number | undefined {
@@ -1298,27 +1321,19 @@ export function applyDiffToContent(
 
     // 如果提供了起始行号，从该行开始搜索
     if (startLine !== undefined && startLine > 0) {
-        const lines = normalizedContent.split('\n');
-        const startIndex = startLine - 1;
-
-        if (startIndex >= lines.length) {
+        // 用单次扫描定位起始行字符偏移，避免全量 split 行数组 + substring 拷贝
+        const charOffset = getCharOffsetForLine(normalizedContent, startLine);
+        if (charOffset === undefined) {
             return {
                 success: false,
                 result: normalizedContent,
-                error: `Start line ${startLine} is out of range. File has ${lines.length} lines.`,
+                error: `Start line ${startLine} is out of range. File has ${countLineBreaks(normalizedContent) + 1} lines.`,
                 matchCount: 0
             };
         }
 
-        // 计算从起始行开始的字符位置
-        let charOffset = 0;
-        for (let i = 0; i < startIndex; i++) {
-            charOffset += lines[i].length + 1;
-        }
-
         // 从起始位置开始查找
-        const contentFromStart = normalizedContent.substring(charOffset);
-        const matchIndex = contentFromStart.indexOf(normalizedSearch);
+        const matchIndex = normalizedContent.indexOf(normalizedSearch, charOffset);
 
         if (matchIndex === -1) {
             const diagnosis = buildClosestBlockDiagnosis(normalizedContent, normalizedSearch);
@@ -1330,15 +1345,14 @@ export function applyDiffToContent(
             };
         }
 
-        // 计算实际匹配的行号
-        const textBeforeMatch = normalizedContent.substring(0, charOffset + matchIndex);
-        const actualMatchedLine = textBeforeMatch.split('\n').length;
+        // 计算实际匹配的行号（单次扫描，避免 substring 拷贝 + split；matchIndex 已是完整内容中的绝对偏移）
+        const actualMatchedLine = getLineNumberAtIndex(normalizedContent, matchIndex);
 
         // 执行替换
         const result =
-            normalizedContent.substring(0, charOffset + matchIndex) +
+            normalizedContent.substring(0, matchIndex) +
             normalizedReplace +
-            normalizedContent.substring(charOffset + matchIndex + normalizedSearch.length);
+            normalizedContent.substring(matchIndex + normalizedSearch.length);
 
         return {
             success: true,
@@ -1348,8 +1362,8 @@ export function applyDiffToContent(
         };
     }
 
-    // 没有提供起始行号，计算匹配次数
-    const matches = normalizedContent.split(normalizedSearch).length - 1;
+    // 没有提供起始行号，计算匹配次数（indexOf 循环替代 split，避免生成整个分割数组）
+    const matches = countMatches(normalizedContent, normalizedSearch);
 
     if (matches === 0) {
         const diagnosis = buildClosestBlockDiagnosis(normalizedContent, normalizedSearch);
@@ -1376,8 +1390,7 @@ export function applyDiffToContent(
 
     // 计算实际匹配的行号
     const matchIndex = normalizedContent.indexOf(normalizedSearch);
-    const textBeforeMatch = normalizedContent.substring(0, matchIndex);
-    const actualMatchedLine = textBeforeMatch.split('\n').length;
+    const actualMatchedLine = getLineNumberAtIndex(normalizedContent, matchIndex);
 
     // 精确替换（不能用 String.replace：replacement 字符串里的 $& / $` / $' / $$ 会被当作替换模式展开，
     // 模型输出的代码里恰好含有这些字符时会静默写坏文件。用切片拼接彻底绕开 replacement 模式语义）
