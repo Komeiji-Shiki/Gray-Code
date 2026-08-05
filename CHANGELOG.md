@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-06
+
 ### Fixed
   - 修复流式平滑输出折叠思考预览变空/出现省略号（透明占位字符与换行占位“挤空”预览）：折叠预览是单行滚动容器（`nowrap` + `followEnd` 滚到最右），此前只禁用了淡入（`noFade` 经 `reducedMotion` 参数“碰巧生效”），但换行符在 `nowrap` 下渲染成占位空格、`text-overflow: ellipsis` 在滚动失效时把后续内容全部变成“...”，高 tps 长思考时预览区仍会被挤成空白。现在 `CharFlow` 构造改为显式 options：`noFade` 正式实现（直接文本追加）；新增 `squashLineBreaks`（换行折叠为零宽空格 `\u200B`，append/restore 两条路径都处理）与 `tailWindow`（折叠预览只保留最近 64 字符，长思考内容有界）；折叠预览 CSS 改 `text-overflow: clip`（流式期间不再出现省略号）；展开态保留逐字淡入。
   - 思考块展开态接入渐进分段 markdown 渲染（思维链分段渲染）：`MessageRenderBlock` 展开态注册显示层时启用 `onPromote`，已定型完整段落（空行分隔 + 代码围栏配对）即时由 `MarkdownRenderer` 渲染格式（列表/代码块不再等整段结束），未完成尾巴继续在 CharFlow 逐字淡入；`registerSmoothDisplay` 注册后立即尝试提升已定型段落（重建/展开后不用等下一个字符才出格式），折叠态（单行预览不适合分段格式）保持纯文本流并用 `restoreFull` 显示完整累计文本。
