@@ -30,6 +30,13 @@ export interface ConversationUsage extends UsageBucket {
   updatedAt: number
 }
 
+/** 读取失败被跳过的对话信息（title 尽力读取；读取失败时回退 conversationId） */
+export interface SkippedConversationInfo {
+  conversationId: string
+  /** 对话标题（尽力读取，失败时回退 conversationId） */
+  title: string
+}
+
 export interface ModelUsage extends UsageBucket {
   /** 模型标识（modelVersion），未记录时为 'unknown' */
   modelVersion: string
@@ -46,6 +53,8 @@ export interface UsageStatsResult {
     conversations: number
     /** 读取失败被跳过的对话数 */
     skippedConversations: number
+    /** 读取失败被跳过的对话明细（无跳过时省略） */
+    skippedConversationDetails?: SkippedConversationInfo[]
   }
   byConversation: ConversationUsage[]
   byModel: ModelUsage[]
