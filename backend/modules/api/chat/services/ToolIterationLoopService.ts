@@ -49,6 +49,7 @@ import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
+import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -497,6 +498,13 @@ export class ToolIterationLoopService {
         let dynamicContextStrategy: DynamicContextStrategy = loopConfig.dynamicContextStrategy ?? 'single';
 
         let iteration = startIteration;
+        // 上下文裁剪/自动总结只允许在真实用户回合边界推进一次。工具确认后的继续属于同一回合，
+        // 只能复用已有起点；否则前台 SubAgent 的大 functionResponse 会在回合中途挤掉整段旧历史。
+        let contextManagementEvaluatedForTurn = !isNewTurn;
+        let autoSummarizeAttempts = 0;
+        // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
+        const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
+            ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
 
         // 同参数重复失败调用护栏（turn 级别，跨工具迭代存活）
         const repeatedCallGuard = new RepeatedCallGuard();
@@ -578,14 +586,15 @@ export class ToolIterationLoopService {
 
             // 3. 获取对话历史（应用上下文裁剪）
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
-            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
+            let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
                 modelOverride,
-                dynamicContextStrategy
+                dynamicContextStrategy,
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('stream.trim_result', {
@@ -598,7 +607,12 @@ export class ToolIterationLoopService {
             });
 
             // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
-            if (trimResult.needsAutoSummarize && this.summarizeService) {
+            if (
+                trimResult.needsAutoSummarize &&
+                this.summarizeService &&
+                autoSummarizeAttempts < maxAutoSummarizeAttempts
+            ) {
+                autoSummarizeAttempts++;
                 this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
 
                 // 先通知前端显示“自动总结中”提示
@@ -653,7 +667,8 @@ export class ToolIterationLoopService {
                         });
                     }
 
-                    // 重新获取历史后再发起本轮 API 请求
+                    // 总结调用不占用主模型工具迭代额度；重新获取历史后再发起本轮 API 请求。
+                    iteration--;
                     continue;
                 }
 
@@ -684,9 +699,28 @@ export class ToolIterationLoopService {
 
                     // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
                     this.log.warn('stream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
+                    if (!isSummaryOnlyAborted && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                        iteration--;
+                        continue;
+                    }
                 }
             }
 
+            if (trimResult.needsAutoSummarize) {
+                // 总结失败、总结服务不可用或本回合尝试次数耗尽：使用不持久化的细粒度安全裁剪，
+                // 不再把超阈值全量历史直接交给 provider，也不永久修改 trimState。
+                trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
+                    conversationId,
+                    config,
+                    historyOptions,
+                    modelOverride,
+                    dynamicContextStrategy
+                );
+            }
+
+            // 一旦本回合即将真正请求主模型，后续工具迭代固定复用当前裁剪起点。
+            // 自动总结成功会在上方 continue，仍允许重新评估总结后的历史。
+            contextManagementEvaluatedForTurn = true;
             const { history } = trimResult;
 
             // 4. 获取静态系统提示词（可被 API provider 缓存）
@@ -812,7 +846,7 @@ export class ToolIterationLoopService {
 
                 // 检查是否被取消
                 if (processor.isCancelled()) {
-                    const partialContent = processor.getContent();
+                    let partialContent = processor.getContent();
 
                     // 流式取消收尾窗口（对齐 843-871 行 early-abort 路径的 abort-race 模式）：
                     // 早启动工具已产生真实副作用，取消时先等它们落定，用真实结果结算，而不是
@@ -855,7 +889,10 @@ export class ToolIterationLoopService {
                         // 标记半截 usage：流被取消时 usageMetadata 只覆盖已收到的 chunk，
                         // 统计端（usageStats/getStats）据此回退到文本长度估算。
                         partialContent.usageMetadataPartial = true;
-                        await this.conversationManager.addContent(conversationId, partialContent);
+                        const persistedPartialContent = await this.conversationManager.addContent(conversationId, partialContent);
+                        if (persistedPartialContent) {
+                            partialContent = persistedPartialContent;
+                        }
                         await this.settleCancelledToolCalls(conversationId, partialContent, streamingToolResults);
 
                         // 与 stream_early_abort 路径（878-902 行）对齐：结算 stop state，
@@ -880,8 +917,13 @@ export class ToolIterationLoopService {
                             }
                         );
                     }
-                    // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理
-                    yield processor.getCancelledData() as any;
+                    // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理。
+                    // 若半截内容已落盘，必须回传 addContent 返回的稳定节点 ID，而不是累加器的无 ID 副本。
+                    yield {
+                        conversationId,
+                        cancelled: true as const,
+                        ...(partialContent.parts.length > 0 ? { content: partialContent } : {})
+                    } as any;
                     return;
                 }
 
@@ -913,7 +955,10 @@ export class ToolIterationLoopService {
 
             // 10. 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
-                await this.conversationManager.addContent(conversationId, finalContent);
+                const persistedContent = await this.conversationManager.addContent(conversationId, finalContent);
+                if (persistedContent) {
+                    finalContent = persistedContent;
+                }
             }
 
             // 11. 检查是否有工具调用
@@ -1386,6 +1431,12 @@ export class ToolIterationLoopService {
         isNewTurn: boolean = true
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
+        // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
+        let contextManagementEvaluatedForTurn = !isNewTurn;
+        let autoSummarizeAttempts = 0;
+        // 单个真实用户回合内自动总结的最大尝试次数（配置化，默认 2；尝试耗尽后走细粒度安全裁剪）
+        const maxAutoSummarizeAttempts = this.summarizeService?.getMaxAutoSummarizeAttemptsPerTurn()
+            ?? DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN;
         const repeatedCallGuard = new RepeatedCallGuard();
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
@@ -1440,14 +1491,15 @@ export class ToolIterationLoopService {
             iteration++;
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
-            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
+            let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
                 historyOptions,
                 dynamicContextText,
                 promptModeSnapshot,
                 modelOverride,
-                dynamicContextStrategy
+                dynamicContextStrategy,
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('nonstream.trim_result', {
@@ -1460,7 +1512,12 @@ export class ToolIterationLoopService {
             });
 
             // 自动总结检测
-            if (trimResult.needsAutoSummarize && this.summarizeService) {
+            if (
+                trimResult.needsAutoSummarize &&
+                this.summarizeService &&
+                autoSummarizeAttempts < maxAutoSummarizeAttempts
+            ) {
+                autoSummarizeAttempts++;
                 this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration });
 
                 const summarizeResult = await this.summarizeService.handleAutoSummarize(
@@ -1481,7 +1538,8 @@ export class ToolIterationLoopService {
                         });
                     }
 
-                    // 总结成功，重新获取历史
+                    // 总结调用不占用主模型工具迭代额度。
+                    iteration--;
                     continue;
                 }
 
@@ -1490,9 +1548,24 @@ export class ToolIterationLoopService {
 
                     // 总结失败：不阻塞当前请求，继续使用现有历史
                     this.log.warn('nonstream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
+                    if (summarizeError.code !== 'ABORTED' && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                        iteration--;
+                        continue;
+                    }
                 }
             }
 
+            if (trimResult.needsAutoSummarize) {
+                trimResult = await this.contextTrimService.getHistoryWithGranularFallback(
+                    conversationId,
+                    config,
+                    historyOptions,
+                    modelOverride,
+                    dynamicContextStrategy
+                );
+            }
+
+            contextManagementEvaluatedForTurn = true;
             const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
@@ -1516,7 +1589,7 @@ export class ToolIterationLoopService {
             }
 
             const generateResponse = response as GenerateResponse;
-            const finalContent = generateResponse.content;
+            let finalContent = generateResponse.content;
 
             // 转换 XML 工具调用为 functionCall 格式（如果有）
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
@@ -1531,7 +1604,10 @@ export class ToolIterationLoopService {
 
             // 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
-                await this.conversationManager.addContent(conversationId, finalContent);
+                const persistedContent = await this.conversationManager.addContent(conversationId, finalContent);
+                if (persistedContent) {
+                    finalContent = persistedContent;
+                }
             }
 
             // 检查是否有工具调用

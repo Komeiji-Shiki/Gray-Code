@@ -109,7 +109,7 @@ function createHarness(channelManager: unknown, toolRegistry: unknown) {
     );
     const promptManager = createPromptManagerMock();
     service.setPromptManager(promptManager as never);
-    return { service, conversationManager, toolExecutionService, checkpointService, promptManager };
+    return { service, conversationManager, contextTrimService, toolExecutionService, checkpointService, promptManager };
 }
 
 const config = { type: 'custom', toolMode: 'function_call', model: 'test-model' } as never;
@@ -245,7 +245,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager } = createHarness(channelManager, {
+        const { service, conversationManager, contextTrimService } = createHarness(channelManager, {
             getTool: (name?: string) => (name === 'gated_tool' ? gated.tool : stubTool)
         });
 
@@ -279,5 +279,11 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
         const frPart = frCall[1].parts.find((p: { functionResponse?: unknown }) => !!p.functionResponse);
         expect(frPart.functionResponse.response.agentInbox).toHaveLength(1);
         expect(frPart.functionResponse.response.agentInbox[0].text).toBe('main-takes-over');
+
+        // 同一真实用户回合只有第一次主模型请求允许推进裁剪状态；工具结果返回后的第二次请求只复用起点。
+        const trimCalls = contextTrimService.getHistoryWithContextTrimInfo.mock.calls;
+        expect(trimCalls).toHaveLength(2);
+        expect(trimCalls[0][7]).toEqual({ allowStateAdvance: true });
+        expect(trimCalls[1][7]).toEqual({ allowStateAdvance: false });
     });
 });

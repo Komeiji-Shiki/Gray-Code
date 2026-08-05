@@ -433,6 +433,82 @@ describe('TREE-04/06 候选切换全链（handler 编排）', () => {
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
     });
 
+    test('owner 节点已入图但 FR 内容未同步：拒绝切换、主历史不变；补齐 FR 后重试成功、重写幂等（R8a-M2 FR 校验）', async () => {
+        const [userNodeId, modelNodeId] = await seedConversation('c1');
+        const r1 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
+        const r2 = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
+        // 当前活跃 = r2，主历史 = [U, M]
+
+        // 模拟「图同步只完成了非 FR 批次」：分支服务未注册期间追加非 FR 模型消息（appendContents
+        // 的 appendHistoryToGraph 锁外同步被跳过），随后显式 appendHistoryToGraph 只同步该非 FR
+        // 批次——owner 节点入图（含 functionCall），FR 内容尚未并入。
+        setGlobalBranchService(undefined);
+        await manager.addContent('c1', {
+            role: 'model',
+            parts: [
+                { text: 'tool answer' },
+                { functionCall: { id: 'call-1', name: 'read_file', args: {} } },
+            ],
+            modelVersion: 'gemini-x',
+            timestamp: 300,
+        } as any);
+        setGlobalBranchService(service);
+        const newAMessage = (await manager.getMessagesRaw('c1'))[2]!;
+        const newAId = newAMessage.id!;
+        await service.appendHistoryToGraph('c1', [newAMessage]);
+
+        // 追加仅 FR 消息：addBatch 契约显式拒绝 functionResponse（L4，无去重安全网），FR 必须走
+        // addContent——其 mutateContents 路径不触发 appendHistoryToGraph 图同步 → FR 内容留在
+        // 主历史、图未更新（这正是「FR 同步缺口」的生产复现路径）。
+        await manager.addContent('c1', {
+            role: 'user',
+            parts: [{ functionResponse: { id: 'call-1', name: 'read_file', response: { success: true } } }],
+            isFunctionResponse: true,
+            timestamp: 400,
+        } as any);
+        const frId = (await manager.getMessagesRaw('c1'))[3]!.id!;
+        expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, newAId, frId]);
+
+        // owner 节点已入图但 FR parts 未并入（只同步了非 FR 批次）
+        let graph = (await service.getBranchGraph('c1')).graph!;
+        expect(graph.nodes[newAId]).toBeDefined();
+        expect(graph.nodes[newAId]!.parts.some(p => p.functionCall?.id === 'call-1')).toBe(true);
+        expect(graph.nodes[newAId]!.parts.some(p => !!p.functionResponse)).toBe(false);
+        expect(graph.activeTailNodeId).toBe(newAId);
+
+        // 切换被拒绝：R8a-M2 FR 校验报出未同步 FR（明确错误码 + not yet synced + FR 数量），
+        // 主历史保持原样（FR 内容不丢），图回滚到切换前活跃尾 newA
+        await switchBranchCandidate({ conversationId: 'c1', nodeId: r1.nodeId }, 'req-m2-fr', makeCtx());
+        expect(responses).toHaveLength(0);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ requestId: 'req-m2-fr', code: 'BRANCH_OPERATION_CONFLICT' });
+        expect(errors[0].message).toContain('not yet synced');
+        expect(errors[0].message).toContain('functionResponse');
+        expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, newAId, frId]);
+        graph = (await service.getBranchGraph('c1')).graph!;
+        expect(graph.activeTailNodeId).toBe(newAId);
+        expect(graph.nodes[newAId]!.parts.some(p => !!p.functionResponse)).toBe(false);
+
+        // 补齐 FR（模拟 appendHistoryToGraph 完成 FR 合并）后重试切换成功：FR 内容并入 owner 节点
+        await service.appendHistoryToGraph('c1', [(await manager.getMessagesRaw('c1'))[3]!]);
+        graph = (await service.getBranchGraph('c1')).graph!;
+        expect(graph.nodes[newAId]!.parts.some(p => p.functionResponse?.id === 'call-1')).toBe(true);
+
+        errors.length = 0;
+        const data = await doSwitch('c1', r1.nodeId);
+        expect(data.rewritten).toBe(true);
+        expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId, r1.nodeId]);
+        // FR 内容保留在 r2 分支下（未因切换静默丢弃）
+        graph = (await service.getBranchGraph('c1')).graph!;
+        expect(graph.nodes[newAId]!.parts.some(p => p.functionResponse?.id === 'call-1')).toBe(true);
+        expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
+
+        // 补齐后再次重写：主历史 = 活跃路径 → 幂等 rewritten=false
+        const second = await manager.rewriteHistoryFromBranchGraph('c1');
+        expect(second.rewritten).toBe(false);
+        expect(second.divergenceIndex).toBeNull();
+    });
+
     test('metadata 写失败：重写前失效 trim 状态 → saveHistory 未执行、图回滚，图/历史一致（R8a-M1）', async () => {
         const failingStorage = new FailingMetadataStorage();
         const mgr = new ConversationManager(failingStorage);

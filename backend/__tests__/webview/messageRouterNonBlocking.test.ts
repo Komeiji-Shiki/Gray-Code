@@ -36,9 +36,12 @@ describe('MessageRouter non-blocking message types', () => {
             'summarizeContext',
             'dependencies.install',
             'dependencies.uninstall',
-            'storagePath.migrate'
+            'storagePath.migrate',
+            'subagents.pauseRun',
+            'subagents.resumeRun',
+            'subagents.exitRun'
         ];
-        expect(EXPECTED_NON_BLOCKING).toHaveLength(4);
+        expect(EXPECTED_NON_BLOCKING).toHaveLength(7);
         // 生产导出的非阻塞类型必须包含本地预期的全部关键条目
         for (const t of EXPECTED_NON_BLOCKING) {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);

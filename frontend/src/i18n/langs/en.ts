@@ -418,6 +418,7 @@ const en: LanguageMessages = {
                 close: 'Close',
                 title: 'Branch tree',
                 empty: 'No branches yet',
+                candidateCount: '{count} candidates',
                 deleted: 'Deleted',
                 restore: 'Restore',
                 rename: 'Rename',
@@ -1030,7 +1031,7 @@ const en: LanguageMessages = {
                         threshold: {
                             label: 'Context Threshold',
                             placeholder: '80% or 100000',
-                            hint: 'When total tokens exceed this threshold, automatically discard oldest conversation turns. Supports two formats: percentage (e.g. 80%) or absolute value (e.g. 100000)'
+                            hint: 'When total tokens exceed this threshold, summarize older content first and preserve historical user inputs verbatim. If summarization fails, apply tool-pair-safe granular trimming to this request only.'
                         },
                         extraCut: {
                             label: 'Extra Cut',
@@ -1044,9 +1045,9 @@ const en: LanguageMessages = {
                         },
                         mode: {
                             label: 'Management Mode',
-                            hint: 'Trim: directly discard old turns. Auto Summarize: summarize old turns before discarding, AI can continue based on summary',
-                            trim: 'Context Trimming',
-                            summarize: 'Auto Summarize'
+                            hint: 'Model summarization comes first, with safe boundaries inside long tool turns. On failure, use non-persistent granular trimming instead of discarding entire user turns.',
+                            trim: 'Legacy Context Trimming',
+                            summarize: 'Smart Summary & Safe Trimming'
                         }
                     },
                     toolOptions: {
@@ -1955,15 +1956,6 @@ const en: LanguageMessages = {
                     title: 'Manual Summarization',
                     description: 'Click the compress button on the right side of the input box to manually trigger context summarization. The summarized content will replace the original conversation history.'
                 },
-                autoSection: {
-                    title: 'Auto Summarization (Moved)',
-                    comingSoon: 'Coming Soon',
-                    enable: 'Enable Auto Summarization',
-                    enableHint: 'Automatically trigger summarization when Token usage exceeds the threshold',
-                    threshold: 'Trigger Threshold',
-                    thresholdUnit: '%',
-                    thresholdHint: 'Trigger auto summarization when Token usage reaches this percentage'
-                },
                 optionsSection: {
                     title: 'Summarization Options',
                     keepRounds: 'Minimum Rounds to Keep',
@@ -1971,6 +1963,11 @@ const en: LanguageMessages = {
                     keepRoundsHint: 'Lower-bound protection for the keep budget: at least the most recent N rounds are never summarized',
                     keepTokens: 'Keep Recent Budget',
                     keepTokensHint: 'How much recent context to keep unsummarized: a token count (e.g. 30000) or a percentage of the model context window (e.g. 25%). The actual range aligns to round boundaries within this budget',
+                    maxAttempts: 'Max Auto-Summarize Attempts',
+                    maxAttemptsUnit: 'attempts/turn',
+                    maxAttemptsHint: 'Maximum auto-summarize attempts within one real user turn (1-5, default 2). When exhausted and still over threshold, this request falls back to non-persistent safe trimming',
+                    maxInputRatio: 'Summarize Model Input Ratio',
+                    maxInputRatioHint: 'Max input ratio of a single auto-summarize request to the summarize model context window (5%-95%, default 50%). When exceeded, the summarize range shrinks to keep the latest tool interaction',
                     manualPrompt: 'Manual Summarization Prompt',
                     manualPromptPlaceholder: 'Enter the prompt used for manual summarization...',
                     manualPromptHint: 'Used when you click the "Summarize context" button',

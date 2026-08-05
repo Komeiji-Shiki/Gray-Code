@@ -11,6 +11,7 @@ import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
+import type { LockHolder } from '../../core/fileWriteLockManager';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
 // 超大文件全量 readFileSync 会阻塞 extension host 并全量读入内存。
@@ -80,7 +81,9 @@ async function insertSingleFile(
     toolId?: string,
     abortSignal?: AbortSignal,
     approvedByToolConfirmation?: boolean,
-    conversationId?: string
+    conversationId?: string,
+    checkpointReady?: Promise<unknown>,
+    lockHolder?: LockHolder
 ): Promise<InsertResult> {
     const { path: filePath, line, content } = entry;
 
@@ -159,7 +162,7 @@ async function insertSingleFile(
             blocks,
             undefined,
             toolId,
-            { confirmedByToolConfirmation: approvedByToolConfirmation === true, conversationId }
+            { confirmedByToolConfirmation: approvedByToolConfirmation === true, conversationId, checkpointReady, lockHolder }
         );
 
         // 等待用户处理
@@ -287,7 +290,17 @@ export function createInsertCodeTool(): Tool {
             let failCount = 0;
 
             for (const entry of fileList) {
-                const result = await insertSingleFile(entry, context?.toolId, context?.abortSignal, context?.approvedByToolConfirmation, context?.conversationId);
+                const result = await insertSingleFile(
+                    entry,
+                    context?.toolId,
+                    context?.abortSignal,
+                    context?.approvedByToolConfirmation,
+                    context?.conversationId,
+                    // checkpointReady 由 ToolExecutionService 注入（ToolContext 索引签名透传）
+                    context?.checkpointReady as Promise<unknown> | undefined,
+                    // PERF-CP：deferred 模式写盘锁持有者身份（ToolContext 索引签名透传）
+                    context?.lockHolder as LockHolder | undefined
+                );
                 results.push(result);
                 if (result.success) {
                     successCount++;

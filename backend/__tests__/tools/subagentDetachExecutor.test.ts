@@ -104,10 +104,12 @@ describe('SubAgent executor - 转后台（detach）', () => {
         subAgentRunController.unregister('run_detach_ctrl');
         subAgentRunController.unregister('run_detach_tool');
         subAgentRunController.unregister('run_detach_queue');
+        subAgentRunController.unregister('run_abort_hanging_tool');
         subAgentConcurrencyLimiter.release('run_detach_exec');
         subAgentConcurrencyLimiter.release('run_detach_ctrl');
         subAgentConcurrencyLimiter.release('run_detach_tool');
         subAgentConcurrencyLimiter.release('run_detach_queue');
+        subAgentConcurrencyLimiter.release('run_abort_hanging_tool');
         subAgentConcurrencyLimiter.release('holder');
     });
 
@@ -209,6 +211,53 @@ describe('SubAgent executor - 转后台（detach）', () => {
         const result = await runPromise;
         expect(result.cancelled).not.toBe(true);
         expect(result.success).toBe(true);
+    });
+
+    it('exit 可终止卡在不响应 AbortSignal 的工具，并在有界时间内释放 run', async () => {
+        const { context, generateMock, release } = createGatedChannel();
+        const executeToolMock = jest.fn(() => new Promise(() => undefined));
+        (context as any).toolRegistry = {
+            getAllDeclarations: () => [{
+                name: 'read_file',
+                description: 'read a file',
+                parameters: { type: 'object', properties: {} }
+            }]
+        };
+        (context as any).toolExecutionService = {
+            executeFunctionCallsWithResults: executeToolMock
+        };
+        const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
+        const runPromise = executor({
+            agentType: 'tester',
+            prompt: 'run a hanging tool',
+            runId: 'run_abort_hanging_tool'
+        });
+
+        await waitForActive('run_abort_hanging_tool');
+        await waitForCall(generateMock);
+        release({
+            content: {
+                type: 'text',
+                parts: [
+                    { type: 'text', text: '' },
+                    { type: 'functionCall', functionCall: { id: 'hang-1', name: 'read_file', args: { path: 'a.txt' } } }
+                ]
+            }
+        });
+        await waitForCall(executeToolMock);
+
+        const startedAt = Date.now();
+        expect(subAgentRunController.exit('run_abort_hanging_tool', 'stop now')).toBe(true);
+        const result = await Promise.race([
+            runPromise,
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('SubAgent did not stop')), 2000))
+        ]);
+
+        expect(result.success).toBe(false);
+        expect(result.cancelled).toBe(true);
+        expect(result.error).toContain('stop now');
+        expect(Date.now() - startedAt).toBeLessThan(1500);
+        expect(subAgentRunController.isActive('run_abort_hanging_tool')).toBe(false);
     });
 
     it('E2 回归：排队期间 detach 后 run 继续执行（席位释放后不因父 abort 而死）', async () => {

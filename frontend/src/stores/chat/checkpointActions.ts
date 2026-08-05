@@ -5,7 +5,7 @@
  */
 
 import type { Message, Attachment, CheckpointRecord, CheckpointManifest } from '../../types'
-import type { ChatStoreState } from './types'
+import type { ChatStoreState, BranchStreamReplayContext } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
@@ -271,6 +271,7 @@ export async function restoreAndRetry(
   // await cancelStream() 之前固化 originConvId 与 targetMessageId
   const originConvId = state.currentConversationId.value
   const targetMessageId = state.allMessages.value[messageIndex]?.id
+  if (!targetMessageId) return
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -285,8 +286,10 @@ export async function restoreAndRetry(
   if (targetIndex === -1) return
 
   state.error.value = null
+  state._pendingBranchReplayContext.value = null
   state.isLoading.value = true
 
+  let branchReplayContext: BranchStreamReplayContext | null = null
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
     const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
@@ -356,6 +359,15 @@ export async function restoreAndRetry(
 
     // 5. 调用后端 reroll（决策 7：旧分支保留，可切换回）
     const modelOverride = resolveConversationModelOverride(state)
+    branchReplayContext = {
+      kind: 'reroll',
+      conversationId: originConvId,
+      assistantNodeId: targetMessageId,
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
+    }
+    state._pendingBranchReplayContext.value = branchReplayContext
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
@@ -370,12 +382,16 @@ export async function restoreAndRetry(
     })
 
   } catch (err: any) {
-    // 本次 reroll 已中止：无论会话是否切换，先复位分支图刷新标记，避免残留误消费
+    if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
+      state._pendingBranchReplayContext.value = null
+    }
+    // 本次 reroll 已中止：无论会话是否切换，先复位分支图标记，避免残留误消费
     state._pendingBranchRefreshAfterStream.value = null
     if (validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_RETRY_ERROR',
-        message: err.message || '回档并重试失败'
+        message: err.message || '回档并重试失败',
+        branchReplayContext: branchReplayContext ?? undefined
       }
       // reroll 流启动失败：本地窗口已截断而后端主历史可能未截断——
       // 重载最后一页 + 检查点恢复前后端一致，并复位流式状态与分支图刷新标记
@@ -556,6 +572,7 @@ export async function restoreAndEdit(
   // await cancelStream() 之前固化 originConvId 与 targetMessageId
   const originConvId = state.currentConversationId.value
   const targetMessageId = state.allMessages.value[messageIndex]?.id
+  if (!targetMessageId) return
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -567,8 +584,10 @@ export async function restoreAndEdit(
   if (state.allMessages.value[messageIndex]?.id !== targetMessageId) return
 
   state.error.value = null
+  state._pendingBranchReplayContext.value = null
   state.isLoading.value = true
 
+  let branchReplayContext: BranchStreamReplayContext | null = null
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
     const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
@@ -653,6 +672,16 @@ export async function restoreAndEdit(
     //    注意：chat.editBranchStream 无附件字段（后端 EditBranchRequestData 仅文本 parts），
     //    附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
     const modelOverride = resolveConversationModelOverride(state)
+    branchReplayContext = {
+      kind: 'editBranch',
+      conversationId: originConvId,
+      userNodeId: targetMessageId,
+      newText: newContent,
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
+    }
+    state._pendingBranchReplayContext.value = branchReplayContext
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
@@ -668,12 +697,16 @@ export async function restoreAndEdit(
     })
 
   } catch (err: any) {
-    // 本次编辑分支流已中止：无论会话是否切换，先复位分支图刷新标记，避免残留误消费
+    if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
+      state._pendingBranchReplayContext.value = null
+    }
+    // 本次编辑分支流已中止：无论会话是否切换，先复位分支图标记，避免残留误消费
     state._pendingBranchRefreshAfterStream.value = null
     if (validateSessionIdentity(state, originConvId)) {
       state.error.value = {
         code: err.code || 'RESTORE_EDIT_ERROR',
-        message: err.message || '回档并编辑失败'
+        message: err.message || '回档并编辑失败',
+        branchReplayContext: branchReplayContext ?? undefined
       }
       // 编辑分支流启动失败：本地窗口已截断改写而后端主历史可能未截断——
       // 重载历史 + 检查点恢复前后端一致，并复位流式状态与分支图刷新标记

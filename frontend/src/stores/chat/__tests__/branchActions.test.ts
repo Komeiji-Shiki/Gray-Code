@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - loadBranchGraph：成功写入 / 无图 / 损坏降级 / 无会话短路
- * - buildCandidateGroup：候选组推导（过滤已删除、按 createdAt 排序、活跃下标）
+ * - buildCandidateGroupAt：按父节点推导候选组（≥2 候选；过滤已删除、按 createdAt 排序、活跃下标）
  * - switchBranchCandidate 成功：调用 IPC → 清理流式/错误残留 → TODO/Build 重置 →
  *   重载历史（重建 messageIndexById/toolResponseIndex）→ 检查点刷新 → 分支图刷新
  * - switchBranchCandidate 失败：回滚 UI 快照 + 错误条写入
@@ -16,7 +16,7 @@ import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 import {
   loadBranchGraph,
   refreshBranchGraph,
-  buildCandidateGroup,
+  buildCandidateGroupAt,
   buildActivePathIds,
   buildChildrenIndex,
   switchBranchCandidate,
@@ -80,6 +80,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _lastApprovalGatedStreamId: ref(null),
     _failedStreamMessageId: ref(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     openTabs: ref([]),
     activeTabId: ref(null),
     sessionSnapshots: ref(new Map()),
@@ -171,44 +172,78 @@ describe('loadBranchGraph / refreshBranchGraph（TREE-10 数据源）', () => {
   })
 })
 
-describe('buildCandidateGroup（候选组推导）', () => {
+describe('buildCandidateGroupAt（按父节点推导候选组）', () => {
   it('null 图 → null', () => {
-    expect(buildCandidateGroup(null)).toBeNull()
+    expect(buildCandidateGroupAt(null, 'u1')).toBeNull()
   })
 
-  it('活跃尾缺失 → null', () => {
-    expect(buildCandidateGroup(makeGraph({}, 'missing'))).toBeNull()
+  it('未知父节点 → null', () => {
+    expect(buildCandidateGroupAt(makeGraph({}, 'missing'), 'u1')).toBeNull()
   })
 
-  it('活跃尾的兄弟候选：过滤已删除、按 createdAt 升序、定位活跃下标', () => {
+  it('单候选 → null（无分支点，切换器不显示）', () => {
+    const graph = makeGraph(
+      { u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }), a1: makeNode('a1', 'u1') },
+      'a1'
+    )
+    expect(buildCandidateGroupAt(graph, 'u1')).toBeNull()
+  })
+
+  it('多候选：过滤已删除、按 createdAt 升序、活跃下标取活跃路径子候选', () => {
     const graph = makeGraph(
       {
-        u1: makeNode('u1', null, { role: 'user' }),
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a2' }),
         a1: makeNode('a1', 'u1', { createdAt: 100, parts: [{ text: 'first' }] }),
         a2: makeNode('a2', 'u1', { createdAt: 300, parts: [{ text: 'second' }] }),
         a3: makeNode('a3', 'u1', { createdAt: 200, parts: [{ text: 'third' }] }),
         aDeleted: makeNode('aDeleted', 'u1', { createdAt: 400, deleted: true }),
         other: makeNode('other', 'a1', { createdAt: 50 })
       },
-      'a3'
+      'a2'
     )
 
-    const group = buildCandidateGroup(graph)
+    const group = buildCandidateGroupAt(graph, 'u1')
 
     expect(group).not.toBeNull()
     expect(group!.candidates.map(c => c.id)).toEqual(['a1', 'a3', 'a2'])
-    expect(group!.activeIndex).toBe(1)
+    expect(group!.activeIndex).toBe(2)
     expect(group!.parentNodeId).toBe('u1')
   })
 
-  it('单候选组仍返回（组件按 candidates.length >= 2 决定显隐）', () => {
+  it('多个分支点各自独立推导（非活跃分支点也能出组）', () => {
     const graph = makeGraph(
-      { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
-      'a1'
+      {
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }),
+        a1: makeNode('a1', 'u1', { role: 'model', activeChildId: 'u2' }),
+        a2: makeNode('a2', 'u1', { role: 'model' }),
+        u2: makeNode('u2', 'a1', { role: 'user', activeChildId: 'c1' }),
+        c1: makeNode('c1', 'u2', { role: 'model' }),
+        c2: makeNode('c2', 'u2', { role: 'model' })
+      },
+      'c1'
     )
-    const group = buildCandidateGroup(graph)
-    expect(group!.candidates).toHaveLength(1)
-    expect(group!.activeIndex).toBe(0)
+
+    // u1 下候选 a1/a2，活跃路径走 a1
+    const groupU1 = buildCandidateGroupAt(graph, 'u1')
+    expect(groupU1!.candidates.map(c => c.id)).toEqual(['a1', 'a2'])
+    expect(groupU1!.activeIndex).toBe(0)
+
+    // u2 下候选 c1/c2，活跃路径走 c1
+    const groupU2 = buildCandidateGroupAt(graph, 'u2')
+    expect(groupU2!.candidates.map(c => c.id)).toEqual(['c1', 'c2'])
+    expect(groupU2!.activeIndex).toBe(0)
+  })
+
+  it('活跃候选不在组内（数据不一致）→ null（防御性隐藏）', () => {
+    const graph = makeGraph(
+      {
+        u1: makeNode('u1', null, { role: 'user', activeChildId: 'x' }),
+        a1: makeNode('a1', 'u1', { createdAt: 100 }),
+        a2: makeNode('a2', 'u1', { createdAt: 200 })
+      },
+      'a2'
+    )
+    expect(buildCandidateGroupAt(graph, 'u1')).toBeNull()
   })
 })
 

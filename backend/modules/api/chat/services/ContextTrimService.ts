@@ -34,8 +34,11 @@ import type { MessageBuilderService } from './MessageBuilderService';
 import { Logger } from '../../../../core/logger';
 import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/promptContextCache';
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
+import { planSummarizeMessages } from './summarizeRangePlanner';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
+/** 最多约 40k token；正常用户输入远小于此值，只有异常大粘贴才会触发有界截断。 */
+const PRESERVED_USER_INPUT_MAX_CHARS = 160_000;
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
 
@@ -70,9 +73,13 @@ interface AccumulateUsageStats {
  * 存储在会话的 custom metadata 中，key 为 'trimState'
  */
 interface PersistedTrimState {
+    /** 裁剪状态格式版本；旧版本缺少回合边界语义，读取时必须失效并重新评估。 */
+    schemaVersion: number;
     /** 裁剪起始索引 */
     trimStartIndex: number;
 }
+
+const CURRENT_TRIM_STATE_SCHEMA_VERSION = 1;
 
 /** 裁剪状态在 custom metadata 中的 key */
 const TRIM_STATE_KEY = CONVERSATION_CONTEXT_TRIM_STATE_KEY;
@@ -81,6 +88,14 @@ interface ContextManagementPolicy {
     enabled: boolean;
     mode: 'trim' | 'summarize';
     source: 'explicit' | 'legacy';
+}
+
+export interface ContextTrimEvaluationOptions {
+    /**
+     * 是否允许本次评估推进持久化裁剪点或触发新的自动总结。
+     * 同一真实用户回合的后续工具迭代必须设为 false，只复用回合开始时已有的上下文起点。
+     */
+    allowStateAdvance?: boolean;
 }
 
 interface MaxContextResolution {
@@ -113,17 +128,15 @@ export class ContextTrimService {
         if (typeof config.contextManagementEnabled === 'boolean') {
             return {
                 enabled: config.contextManagementEnabled,
-                mode: config.contextManagementMode === 'summarize' ? 'summarize' : 'trim',
+                // 直接按用户回合裁剪会无损失提示地抹掉大段历史。统一改为模型总结优先；
+                // 原 trim 配置保留为兼容输入，只有总结失败时才走临时细粒度裁剪。
+                mode: 'summarize',
                 source: 'explicit'
             };
         }
 
-        if (config.autoSummarizeEnabled) {
+        if (config.autoSummarizeEnabled || config.contextThresholdEnabled) {
             return { enabled: true, mode: 'summarize', source: 'legacy' };
-        }
-
-        if (config.contextThresholdEnabled) {
-            return { enabled: true, mode: 'trim', source: 'legacy' };
         }
 
         return { enabled: false, mode: 'trim', source: 'legacy' };
@@ -133,15 +146,37 @@ export class ContextTrimService {
      * 获取持久化的裁剪状态
      */
     private async getTrimState(conversationId: string): Promise<PersistedTrimState | null> {
-        const state = await this.conversationManager.getCustomMetadata(conversationId, TRIM_STATE_KEY);
-        return state as PersistedTrimState | null;
+        const rawState = await this.conversationManager.getCustomMetadata(conversationId, TRIM_STATE_KEY);
+        if (!rawState || typeof rawState !== 'object') {
+            return null;
+        }
+
+        const state = rawState as Partial<PersistedTrimState>;
+        if (state.schemaVersion !== CURRENT_TRIM_STATE_SCHEMA_VERSION || !Number.isInteger(state.trimStartIndex)) {
+            // 旧状态可能是在工具回合中途推进的，无法判断其合法边界。一次性清除后重新评估，
+            // 让升级前被错误遮蔽的历史重新回到候选上下文。
+            await this.conversationManager.invalidateContextManagementState(
+                conversationId,
+                'trim_state_schema_upgrade'
+            );
+            this.log.info('trim_state_cleared_schema_upgrade', {
+                conversationId,
+                savedSchemaVersion: state.schemaVersion ?? null,
+                currentSchemaVersion: CURRENT_TRIM_STATE_SCHEMA_VERSION
+            });
+            return null;
+        }
+        return state as PersistedTrimState;
     }
     
     /**
      * 保存裁剪状态到持久化存储
      */
-    private async saveTrimState(conversationId: string, state: PersistedTrimState): Promise<void> {
-     await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
+    private async saveTrimState(conversationId: string, state: Omit<PersistedTrimState, 'schemaVersion'>): Promise<void> {
+        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, {
+            ...state,
+            schemaVersion: CURRENT_TRIM_STATE_SCHEMA_VERSION
+        });
     }
     
     /**
@@ -178,11 +213,12 @@ export class ContextTrimService {
     }
 
     /**
-     * trim 起点只允许落在非 functionResponse 的 user 消息上。
+     * 上下文起点允许落在真实用户消息或总结消息上；functionResponse 不能作为起点。
+     * 总结消息本身是 user 角色，若排除它，归一化会错误跳到总结后的下一条用户消息并把总结也丢掉。
      */
     private isLegalTrimStart(history: Content[], index: number): boolean {
         const message = history[index];
-        return !!message && isRealUserMessage(message);
+        return !!message && (message.isSummary === true || isRealUserMessage(message));
     }
 
     private collectLegalTrimStartIndices(history: Content[], minimumStartIndex: number): number[] {
@@ -270,6 +306,64 @@ export class ContextTrimService {
         };
     }
 
+    private createPreservedUserInputsMessage(
+        fullHistory: Content[],
+        beforeIndex: number
+    ): Content | undefined {
+        if (beforeIndex <= 0) return undefined;
+
+        const entries = fullHistory
+            .slice(0, beforeIndex)
+            .filter(isRealUserMessage)
+            .map((message, index) => {
+                const parts = message.parts.flatMap(part => {
+                    if (part.text && !part.thought) return [part.text];
+                    if (part.inlineData) {
+                        return [`[Attachment: ${part.inlineData.displayName || part.inlineData.mimeType}]`];
+                    }
+                    if (part.fileData) {
+                        return [`[File: ${part.fileData.displayName || part.fileData.fileUri}]`];
+                    }
+                    return [];
+                });
+                return parts.length > 0 ? `### User input ${index + 1}\n${parts.join('\n')}` : '';
+            })
+            .filter(Boolean);
+        if (entries.length === 0) return undefined;
+
+        const header = [
+            '## Preserved user inputs (verbatim)',
+            'These are historical user messages retained independently from summaries and trimming.',
+            'Treat the latest user message in the active history as authoritative when instructions conflict.'
+        ].join('\n');
+        const fullText = `${header}\n\n${entries.join('\n\n')}`;
+        let preservedText = fullText;
+        if (fullText.length > PRESERVED_USER_INPUT_MAX_CHARS) {
+            const headBudget = Math.floor(PRESERVED_USER_INPUT_MAX_CHARS * 0.35);
+            const tailBudget = PRESERVED_USER_INPUT_MAX_CHARS - headBudget;
+            preservedText = [
+                fullText.slice(0, headBudget),
+                '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n',
+                fullText.slice(-tailBudget)
+            ].join('');
+        }
+
+        return {
+            role: 'user',
+            parts: [{ text: preservedText }],
+            isSummary: true
+        };
+    }
+
+    private prependPreservedUserInputs(
+        history: Content[],
+        fullHistory: Content[],
+        beforeIndex: number
+    ): Content[] {
+        const preserved = this.createPreservedUserInputsMessage(fullHistory, beforeIndex);
+        return preserved ? [preserved, ...history] : history;
+    }
+
     private async getNormalizedHistoryForStartIndex(
         conversationId: string,
         fullHistory: Content[],
@@ -280,11 +374,16 @@ export class ContextTrimService {
     ): Promise<ContextTrimInfo & { normalization: NormalizedTrimStartResult }> {
         const normalization = this.normalizeTrimStartIndex(fullHistory, minimumStartIndex, candidateStartIndex);
         // HIS-03/04：调用方已加载 fullHistory，直接复用格式化，避免同一迭代内第二次 loadHistory
-        const history = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
+        const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
             ...historyOptions,
             startIndex: normalization.startIndex,
             includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
         });
+        const history = this.prependPreservedUserInputs(
+            formattedHistory,
+            fullHistory,
+            normalization.startIndex
+        );
 
         return {
             history,
@@ -549,6 +648,115 @@ export class ContextTrimService {
     }
 
     /**
+     * 自动总结不可用或失败时的请求级细粒度裁剪。
+     *
+     * 该路径不写 trimState，不永久遮蔽 transcript；它按消息 token 预算选择安全切点，允许在长工具回合
+     * 内部从 model 边界开始，并用临时 user 标记保证 provider 的角色顺序合法。
+     */
+    async getHistoryWithGranularFallback(
+        conversationId: string,
+        config: BaseChannelConfig,
+        historyOptions: GetHistoryOptions,
+        modelOverride?: string,
+        dynamicContextStrategy: DynamicContextStrategy = 'single'
+    ): Promise<ContextTrimInfo> {
+        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
+        if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
+
+        const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
+        const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
+        const messages = fullHistory.slice(historyStartIndex);
+        const channelType = config.type || 'custom';
+        const maxContextTokens = this.resolveMaxContextTokens(config, modelOverride).maxContextTokens;
+        const threshold = this.calculateThreshold(config.contextThreshold ?? '80%', maxContextTokens);
+        // 为系统提示词、动态上下文和 provider 包装预留 10%，避免 fallback 刚好贴住硬上限。
+        const historyBudgetTokens = Math.max(1, Math.floor(threshold * 0.9));
+        const messageTokens = messages.map(message => {
+            const byChannel = message.tokenCountByChannel?.[channelType];
+            if (typeof byChannel === 'number') return byChannel;
+            if (typeof message.estimatedTokenCount === 'number') return message.estimatedTokenCount;
+            return this.tokenEstimationService.estimateMessageTokens(message);
+        });
+
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens,
+            keepBudgetTokens: historyBudgetTokens,
+            minKeepRounds: 1,
+            mode: 'auto'
+        });
+        if (!plan) {
+            const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
+                ...historyOptions,
+                startIndex: historyStartIndex,
+                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
+            });
+            const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
+            return { history, trimStartIndex: historyStartIndex };
+        }
+
+        const candidateIndices: number[] = [plan.cutIndex];
+        for (let i = plan.cutIndex + 1; i < messages.length; i++) {
+            if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) candidateIndices.push(i);
+        }
+
+        for (const relativeStartIndex of candidateIndices) {
+            const absoluteStartIndex = historyStartIndex + relativeStartIndex;
+            const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
+                ...historyOptions,
+                startIndex: absoluteStartIndex,
+                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
+            });
+            if (!validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) continue;
+
+            const historyWithUserInputs = this.prependPreservedUserInputs(
+                suffix,
+                fullHistory,
+                absoluteStartIndex
+            );
+            const estimatedFallbackTokens = historyWithUserInputs.reduce(
+                (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
+                0
+            );
+            if (estimatedFallbackTokens > historyBudgetTokens) continue;
+            const history = historyWithUserInputs[0]?.role === 'model'
+                ? [{
+                    role: 'user' as const,
+                    parts: [{ text: '[Earlier context was temporarily omitted after summarization failed.]' }],
+                    isSummary: true
+                }, ...historyWithUserInputs]
+                : historyWithUserInputs;
+            this.log.warn('trim.fallback_granular_applied', {
+                conversationId,
+                absoluteStartIndex,
+                relativeStartIndex,
+                boundary: plan.boundary,
+                historyBudgetTokens,
+                originalHistoryLength: fullHistory.length,
+                fallbackHistoryLength: history.length
+            });
+            return {
+                history,
+                trimStartIndex: absoluteStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: this.resolveContextManagementPolicy(config).source,
+                    action: 'fallback_trim_applied'
+                }
+            };
+        }
+
+        const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
+            ...historyOptions,
+            startIndex: historyStartIndex,
+            includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
+        });
+        const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
+        return { history, trimStartIndex: historyStartIndex };
+    }
+
+    /**
      * 获取用于 API 调用的历史，应用总结过滤和上下文阈值裁剪
      *
      * 策略：
@@ -571,7 +779,8 @@ export class ContextTrimService {
         precomputedDynamicContextText?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         modelOverride?: string,
-        dynamicContextStrategy: DynamicContextStrategy = 'single'
+        dynamicContextStrategy: DynamicContextStrategy = 'single',
+        evaluationOptions: ContextTrimEvaluationOptions = {}
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
@@ -646,7 +855,10 @@ export class ContextTrimService {
                         reason: normalizedSavedState.reason
                     });
                     if (normalizedSavedState.startIndex > summaryStartIndex) {
-                        savedState = { trimStartIndex: normalizedSavedState.startIndex };
+                        savedState = {
+                            schemaVersion: CURRENT_TRIM_STATE_SCHEMA_VERSION,
+                            trimStartIndex: normalizedSavedState.startIndex
+                        };
                         await this.saveTrimState(conversationId, savedState);
                     } else {
                         await this.clearTrimState(conversationId);
@@ -654,6 +866,36 @@ export class ContextTrimService {
                     }
                 }
             }
+        }
+
+        // 旧 trim 模式的回合内调用只能复用既有裁剪点，禁止大 functionResponse 临时推进持久状态。
+        // summarize 模式不能在这里短路：长时间工具循环仍需每轮检查 token，并在接近上限时触发模型总结。
+        if (evaluationOptions.allowStateAdvance === false && policy.mode === 'trim') {
+            const turnStartIndex = savedState?.trimStartIndex ?? summaryStartIndex;
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                summaryStartIndex,
+                turnStartIndex,
+                dynamicContextStrategy
+            );
+            this.logDebug('trim.turn_state_reused', {
+                conversationId,
+                requestedStartIndex: turnStartIndex,
+                finalTrimStartIndex: normalizedHistory.trimStartIndex,
+                fullHistoryLength: fullHistory.length
+            });
+            return {
+                history: normalizedHistory.history,
+                trimStartIndex: normalizedHistory.trimStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: policy.mode,
+                    source: policy.source,
+                    action: 'turn_state_reused'
+                }
+            };
         }
         
         // 加载 runtime 元数据以便正确生成系统提示词和动态上下文
@@ -720,8 +962,13 @@ export class ContextTrimService {
             }
         }
         
-        // 系统提示词和动态上下文的总 token 数
-        const promptTokens = systemPromptTokens + dynamicContextTokens;
+        // 系统提示词、动态上下文，以及最后总结之前按原文保留的真实用户输入。
+        // 用户输入档案会实际注入请求，必须纳入阈值预算，不能因“通常较小”而漏算。
+        const preservedUserInputsForBudget = this.createPreservedUserInputsMessage(fullHistory, summaryStartIndex);
+        const preservedUserInputTokens = preservedUserInputsForBudget
+            ? this.tokenEstimationService.estimateMessageTokens(preservedUserInputsForBudget)
+            : 0;
+        const promptTokens = systemPromptTokens + dynamicContextTokens + preservedUserInputTokens;
         
         // 从 historyOptions 获取用户配置
         const sendHistoryThoughts = historyOptions.sendHistoryThoughts ?? false;
@@ -816,6 +1063,7 @@ export class ContextTrimService {
             conversationId,
             systemPromptTokens,
             dynamicContextTokens,
+            preservedUserInputTokens,
             promptTokens,
             missingTokenMessages: missingTokenMessages.length,
             historyThinkingRounds,

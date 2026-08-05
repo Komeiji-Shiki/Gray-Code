@@ -18,10 +18,15 @@ import type { ContextTrimService } from './ContextTrimService';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from './ContextTrimService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import {
-    planIntraRoundSplit,
-    planSummarizeRounds,
+    planSummarizeMessages,
     resolveKeepRecentTokenBudget
 } from './summarizeRangePlanner';
+import {
+    DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN,
+    DEFAULT_SUMMARIZE_MAX_INPUT_RATIO,
+    clampMaxAutoSummarizeAttempts,
+    clampSummarizeMaxInputRatio
+} from '../../../settings/summarizeTypes';
 import type {
     SummarizeContextRequestData,
     SummarizeContextSuccessData,
@@ -82,6 +87,16 @@ export class SummarizeService {
      */
     setSettingsManager(settingsManager: SettingsManager): void {
         this.settingsManager = settingsManager;
+    }
+
+    /**
+     * 单个真实用户回合内自动总结的最大尝试次数。
+     *
+     * 供 ToolIterationLoopService 在回合开始时读取；配置缺失/非法时回落内置默认值 2。
+     */
+    getMaxAutoSummarizeAttemptsPerTurn(): number {
+        const config = this.settingsManager?.getSummarizeConfig?.();
+        return clampMaxAutoSummarizeAttempts(config?.maxAutoSummarizeAttemptsPerTurn);
     }
 
     /**
@@ -519,6 +534,8 @@ export class SummarizeService {
             let summarizeChannelId = '';
             let configAutoSummarizePrompt = '';
             let summarizeModelId = '';
+            // 自动总结单次请求输入占总结模型上下文窗口的比例（0~1，默认 0.5）
+            let configSummarizeMaxInputRatio = DEFAULT_SUMMARIZE_MAX_INPUT_RATIO;
 
             if (this.settingsManager) {
                 const summarizeConfig = this.settingsManager.getSummarizeConfig();
@@ -532,6 +549,7 @@ export class SummarizeService {
                     useSeparateModel = !!summarizeConfig.useSeparateModel;
                     summarizeChannelId = summarizeConfig.summarizeChannelId || '';
                     summarizeModelId = summarizeConfig.summarizeModelId || '';
+                    configSummarizeMaxInputRatio = clampSummarizeMaxInputRatio(summarizeConfig.summarizeMaxInputRatio);
                     if (typeof summarizeConfig.autoSummarizePrompt === 'string') {
                         configAutoSummarizePrompt = summarizeConfig.autoSummarizePrompt;
                     }
@@ -628,9 +646,9 @@ export class SummarizeService {
             }
 
             // 6. 检查待总结内容是否超出总结模型的上下文
-            // 获取总结模型的最大上下文（预留 50% 给输出）
+            // 获取总结模型的最大上下文（输入占比由设置控制，默认预留 50% 给输出）
             const summarizeModelMaxContext = config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
-            const maxInputTokens = Math.floor(summarizeModelMaxContext * 0.5);
+            const maxInputTokens = Math.floor(summarizeModelMaxContext * configSummarizeMaxInputRatio);
 
             // 估算待总结消息的 token 量
             const estimatedTokens = this.estimateMessagesTokens(messagesToSummarize);
@@ -875,17 +893,13 @@ export class SummarizeService {
         const channelType = mainConfig?.type || 'custom';
         const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, maxContextTokens);
 
-        // 逐轮估算 token
-        const roundTokens = rounds.map(round => {
-            let total = 0;
-            for (let i = round.startIndex; i < round.endIndex; i++) {
-                total += this.estimateMessageTokensForBudget(historyAfterSummary[i], channelType);
-            }
-            return total;
-        });
-
-        const plan = planSummarizeRounds({
-            roundTokens,
+        // 逐消息估算 token，再由规划器先建立轮级保护边界、随后在肥轮内部寻找安全 model 切点。
+        const messageTokens = historyAfterSummary.map(message => (
+            this.estimateMessageTokensForBudget(message, channelType)
+        ));
+        const plan = planSummarizeMessages({
+            messages: historyAfterSummary,
+            messageTokens,
             keepBudgetTokens,
             minKeepRounds: options.keepRecentRounds,
             mode
@@ -894,40 +908,35 @@ export class SummarizeService {
         this.log.info(`${mode}.range_plan`, {
             conversationId,
             rounds: rounds.length,
-            roundTokens,
             keepBudgetTokens,
             minKeepRounds: options.keepRecentRounds,
-            planType: plan.type,
-            keepFromRound: plan.type === 'rounds' ? plan.keepFromRound : null
+            planType: plan?.boundary ?? 'none',
+            cutIndex: plan?.cutIndex ?? null
         });
 
-        if (plan.type === 'rounds') {
-            const summarizeEndIndex = historyStartIndex + rounds[plan.keepFromRound].startIndex;
-            return { ok: true, summarizeEndIndex, intraRoundSplit: false, currentRounds: rounds.length };
-        }
-
-        if (plan.type === 'intra_round') {
-            // 单个超大轮：在轮内选择不拆散工具交互配对的切点，把前半段纳入总结
-            const roundStartAbs = historyStartIndex + rounds[0].startIndex;
-            const roundMessages = fullHistory.slice(roundStartAbs);
-            const messageTokens = roundMessages.map(message => this.estimateMessageTokensForBudget(message, channelType));
-            const split = planIntraRoundSplit({ messages: roundMessages, messageTokens, keepBudgetTokens });
-
-            if (split) {
-                const summarizeEndIndex = roundStartAbs + split.cutIndex;
+        if (plan) {
+            const summarizeEndIndex = historyStartIndex + plan.cutIndex;
+            if (plan.boundary === 'intra_round') {
                 this.log.info(`${mode}.intra_round_split`, {
                     conversationId,
-                    roundStartIndex: roundStartAbs,
-                    cutIndex: split.cutIndex,
+                    cutIndex: plan.cutIndex,
                     summarizeEndIndex,
                     keepBudgetTokens
                 });
-                return { ok: true, summarizeEndIndex, intraRoundSplit: true, currentRounds: rounds.length };
             }
-            return { ok: false, code: 'NOT_ENOUGH_CONTENT', currentRounds: rounds.length };
+            return {
+                ok: true,
+                summarizeEndIndex,
+                intraRoundSplit: plan.boundary === 'intra_round',
+                currentRounds: rounds.length
+            };
         }
 
-        return { ok: false, code: 'NOT_ENOUGH_ROUNDS', currentRounds: rounds.length };
+        return {
+            ok: false,
+            code: rounds.length === 0 ? 'NOT_ENOUGH_CONTENT' : 'NOT_ENOUGH_ROUNDS',
+            currentRounds: rounds.length
+        };
     }
 
     /**

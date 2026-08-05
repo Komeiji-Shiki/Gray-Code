@@ -34,8 +34,7 @@ import {
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
-import BranchSwitcherBar from './BranchSwitcherBar.vue'
-import BranchTreePanel from './BranchTreePanel.vue'
+import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 
 const { t } = useI18n()
 
@@ -1211,12 +1210,6 @@ function formatCheckpointTime(timestamp: number): string {
     <div class="message-scroll-area">
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message" :width="10" :marker-height="10">
       <div class="messages-container">
-        <!-- TREE-10：候选切换器（分支状态 UI；无分支图/单候选时内部隐藏） -->
-        <BranchSwitcherBar />
-
-        <!-- TREE-11：完整分支树查看面板（独立浮层；有分支图即显示入口按钮） -->
-        <BranchTreePanel />
-
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -1324,6 +1317,8 @@ function formatCheckpointTime(timestamp: number): string {
               @restore-and-retry="handleRestoreAndRetry"
               @restore-and-edit="handleRestoreAndEdit"
             />
+
+            <!-- 消息操作栏内已包含候选切换器（与复制 / 重试同一行） -->
             
             <!-- 消息后的检查点（仅当该工具的内容有变化时显示） -->
             <template v-if="row.item.afterCheckpoints.length > 0">
@@ -1491,6 +1486,9 @@ function formatCheckpointTime(timestamp: number): string {
       @restore-and-delete="handleRestoreAndDelete"
       @cancel="cancelDelete"
     />
+
+    <!-- BCP-05（决策 11）：恢复 / 切换恢复的未保存文件确认框（常驻挂载，不随分支切换器显隐） -->
+    <DirtyFilesConfirm />
     
     <!-- 恢复检查点确认对话框（CP-09: 展示待删除文件清单，确认后才执行恢复） -->
     <ConfirmDialog

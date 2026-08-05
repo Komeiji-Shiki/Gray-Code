@@ -8,6 +8,17 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
+import {
+    LSP_TIMEOUT_MS,
+    LSP_RETRY_DELAY_MS,
+    openDocumentWithGuard,
+    executeLspCommandWithRetry
+} from './lspLifecycle';
+
+// 兼容别名：既有调用方与测试从 get_symbols 导入这两个常量
+// （超时/中止/瞬时重试的具体实现已上移到共享模块 lspLifecycle）
+export const GET_SYMBOLS_TIMEOUT_MS = LSP_TIMEOUT_MS;
+export const GET_SYMBOLS_RETRY_DELAY_MS = LSP_RETRY_DELAY_MS;
 
 /**
  * 符号类型映射
@@ -101,7 +112,7 @@ function convertSymbolInformation(symbol: vscode.SymbolInformation): SymbolInfo 
 /**
  * 获取单个文件的符号
  */
-async function getSymbolsForFile(filePath: string): Promise<FileSymbolResult> {
+async function getSymbolsForFile(filePath: string, abortSignal?: AbortSignal): Promise<FileSymbolResult> {
     const uri = resolveUri(filePath);
     if (!uri) {
         return {
@@ -112,12 +123,16 @@ async function getSymbolsForFile(filePath: string): Promise<FileSymbolResult> {
     }
     
     try {
-        // 使用 VSCode 的 executeDocumentSymbolProvider 命令
-        const symbols = await vscode.commands.executeCommand<(vscode.DocumentSymbol | vscode.SymbolInformation)[]>(
+        // 主动打开文档以激活对应语言服务。未在编辑器中打开的大型 TypeScript 文件尤其需要这一步。
+        await openDocumentWithGuard(uri, abortSignal);
+
+        // 超时/中止不重试，仅瞬时拒绝重试一次（共享模块 lspLifecycle 默认配置）
+        const symbols = await executeLspCommandWithRetry<(vscode.DocumentSymbol | vscode.SymbolInformation)[]>(
             'vscode.executeDocumentSymbolProvider',
-            uri
+            [uri],
+            { abortSignal }
         );
-        
+
         if (!symbols || symbols.length === 0) {
             return {
                 path: filePath,
@@ -214,7 +229,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             let totalSymbolCount = 0;
             
             for (const filePath of pathList) {
-                const result = await getSymbolsForFile(filePath);
+                const result = await getSymbolsForFile(filePath, context?.abortSignal);
                 results.push(result);
                 
                 if (result.success) {
@@ -226,6 +241,10 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             }
             
             const allSuccess = failCount === 0;
+            const failedDetails = results
+                .filter(result => !result.success)
+                .map(result => `${result.path}: ${result.error || 'Unknown symbol provider error'}`)
+                .join('; ');
             return {
                 success: allSuccess,
                 data: {
@@ -235,7 +254,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
                     totalCount: pathList.length,
                     totalSymbolCount
                 },
-                error: allSuccess ? undefined : `${failCount} file(s) failed to get symbols`
+                error: allSuccess ? undefined : `${failCount} file(s) failed to get symbols: ${failedDetails}`
             };
         }
     };

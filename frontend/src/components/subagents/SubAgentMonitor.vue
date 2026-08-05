@@ -839,7 +839,7 @@ async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
   // 修改原因：控制请求失败时前端过去完全无反馈——按钮还在，点了却什么都不发生（run 刚好结束时必然如此）。
   // 修改方式：后端回传该 run 当前是否仍被运行控制器持有；不再活跃就本地摘掉控制按钮，并提示操作未生效。
   // 修改目的：按钮的可见性与可用性始终反映后端真实控制权。
-  if (response?.active === false) {
+  if (response?.active === false || (action === 'exit' && response?.success === true)) {
     const next = new Set(activeRunIds.value)
     next.delete(run.runId)
     activeRunIds.value = next
@@ -1093,7 +1093,7 @@ onBeforeUnmount(() => {
 
       <div v-else class="message-shell">
         <div class="run-title-row">
-          <div>
+          <div class="run-title-info">
             <div class="run-title">{{ focusedRun.agentName || t('components.subagents.monitor.defaultAgentName') }}</div>
             <div class="run-subtitle">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ runElapsed(focusedRun) }}</div>
             <div v-if="focusedWindow?.hasMoreBefore" class="run-window-note">
@@ -1191,6 +1191,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .monitor-root {
   height: 100vh;
+  min-width: 0;
+  overflow-x: hidden;
   box-sizing: border-box;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
@@ -1202,9 +1204,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 14px 16px 8px;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.monitor-header > div {
+  min-width: 0;
+  flex: 1 1 180px;
 }
 
 .monitor-header h1 {
@@ -1230,6 +1238,8 @@ onBeforeUnmount(() => {
 
 .run-tabs {
   display: flex;
+  min-width: 0;
+  overflow-x: hidden;
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 16px;
@@ -1248,6 +1258,10 @@ onBeforeUnmount(() => {
   /* 修改原因：多行换行后若保持定宽，最后一行会留出难看的缺口。
      修改方式：允许 tab 在行内伸展铺满，但每行至少 170px，避免单个 tab 过窄。 */
   flex: 1 1 170px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
   padding: 6px 10px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 7px;
@@ -1259,6 +1273,14 @@ onBeforeUnmount(() => {
 .run-tab.active {
   border-color: var(--vscode-focusBorder);
   background: var(--vscode-list-activeSelectionBackground);
+}
+
+.run-name,
+.run-meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-name {
@@ -1343,12 +1365,25 @@ onBeforeUnmount(() => {
 
 .run-title-row {
   display: flex;
-  align-items: center;
+  min-width: 0;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background);
+}
+
+.run-title-info {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.run-subtitle {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .run-control-buttons {
@@ -1390,6 +1425,9 @@ onBeforeUnmount(() => {
 
 .run-title-actions {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;

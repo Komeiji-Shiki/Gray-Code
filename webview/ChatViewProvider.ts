@@ -41,6 +41,7 @@ import {
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
+import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
 import { setChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
@@ -522,27 +523,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return this._view ? { webview: this._view.webview } : undefined;
     }
 
-    /**
-     * 主聊天视图在编辑器区时的列号；主聊天在侧边栏时返回 undefined（调用方回退主区域第一列）。
-     *
-     * 修改原因：WebviewView 类型没有 viewColumn API（它通常驻留侧边栏），但用户可能把它拖进编辑器区；
-     *          而 vscode.diff 默认在活动组打开，焦点在 Monitor 面板时 diff 会落在 Monitor 列。
-     * 修改方式：遍历 tabGroups，按 viewType 匹配主聊天 tab 所在组，取其列号。
-     * 修改目的：diff 预览尽量跟随主聊天实际所在列，找不到时由调用方回退主区域第一列。
-     */
-    private resolveMainChatDiffViewColumn(): vscode.ViewColumn | undefined {
-        for (const group of vscode.window.tabGroups.all) {
-            const hit = group.tabs.some(tab => {
-                const input = tab.input as { viewType?: unknown } | undefined;
-                return !!input && typeof input === 'object' && input.viewType === 'graycode.chatView';
-            });
-            if (hit) {
-                return group.viewColumn;
-            }
-        }
-        return undefined;
-    }
-
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
         await this.initPromise;
 
@@ -581,7 +561,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // 修改原因：Monitor 发起的 diff 预览请求沿用同一 DiffHandlers，但 vscode.diff 默认在活动组打开。
             // 修改方式：把主聊天所在列下发为 diff 目标列；主聊天在侧边栏（无列）时回退主区域第一列。
             // 修改目的：焦点在 Monitor 面板时，diff 仍显示在主聊天侧而不是被面板“抢走”。
-            diffViewColumn: this.resolveMainChatDiffViewColumn() ?? vscode.ViewColumn.One,
+            diffViewColumn: resolveMainChatDiffViewColumn() ?? vscode.ViewColumn.One,
             sendResponse,
             sendError,
             postMessage: (outgoing: any) => {
@@ -844,7 +824,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             diffPreviewProvider: this.diffPreviewProvider,
             // 主聊天自身发起的 diff 也跟随主聊天所在列（与 Monitor 路由同语义）：
             // 主聊天在侧边栏（无列）时 undefined，openDiffView 回退主区域第一列。
-            diffViewColumn: this.resolveMainChatDiffViewColumn(),
+            diffViewColumn: resolveMainChatDiffViewColumn(),
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),

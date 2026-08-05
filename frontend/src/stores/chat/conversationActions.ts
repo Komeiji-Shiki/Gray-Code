@@ -345,6 +345,8 @@ export async function createNewConversation(
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
+  state._pendingBranchRefreshAfterStream.value = null
+  state._pendingBranchReplayContext.value = null
   state.isWaitingForResponse.value = false
 }
 
@@ -728,6 +730,8 @@ export async function switchConversation(
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
+  state._pendingBranchRefreshAfterStream.value = null
+  state._pendingBranchReplayContext.value = null
   state.isWaitingForResponse.value = false
   state.attachments.value = []
   state.editorNodes.value = []

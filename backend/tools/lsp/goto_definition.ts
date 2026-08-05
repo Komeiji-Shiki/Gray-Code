@@ -7,6 +7,12 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
+import {
+    LSP_TIMEOUT_MS,
+    openDocumentWithGuard,
+    executeLspCommandWithRetry,
+    withTimeoutAndAbort
+} from './lspLifecycle';
 
 /**
  * 定义位置信息
@@ -91,12 +97,14 @@ Returns the complete definition code with line numbers.`;
             try {
                 // 创建位置（转换为 0-based）
                 const position = new vscode.Position(line - 1, column - 1);
-                
-                // 使用 VSCode 的 executeDefinitionProvider 命令
-                const definitions = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
+                // 主动打开文档以激活对应语言服务（带超时/中止保护）
+                await openDocumentWithGuard(uri, context?.abortSignal);
+
+                // 使用 VSCode 的 executeDefinitionProvider 命令（超时/中止保护 + 瞬时重试）
+                const definitions = await executeLspCommandWithRetry<(vscode.Location | vscode.LocationLink)[]>(
                     'vscode.executeDefinitionProvider',
-                    uri,
-                    position
+                    [uri, position],
+                    { abortSignal: context?.abortSignal }
                 );
                 
                 if (!definitions || definitions.length === 0) {
@@ -139,9 +147,13 @@ Returns the complete definition code with line numbers.`;
                         relativePath = targetUri.fsPath;
                     }
                     
-                    // 读取完整定义代码
+                    // 读取完整定义代码（带超时/中止保护）
                     try {
-                        const doc = await vscode.workspace.openTextDocument(targetUri);
+                        const doc = await withTimeoutAndAbort(
+                            vscode.workspace.openTextDocument(targetUri),
+                            LSP_TIMEOUT_MS,
+                            context?.abortSignal
+                        );
                         
                         // 使用 LSP 返回的定义范围
                         let startLine = targetRange.start.line;  // 0-based

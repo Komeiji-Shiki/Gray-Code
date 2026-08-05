@@ -41,14 +41,20 @@ const summarizeConfig = reactive({
   // 总结用的渠道 ID
   summarizeChannelId: '',
   // 总结用的模型 ID
-  summarizeModelId: ''
+  summarizeModelId: '',
+  // 单个真实用户回合内自动总结的最大尝试次数（1-5，默认 2）
+  maxAutoSummarizeAttemptsPerTurn: 2,
+  // 自动总结单次请求输入占总结模型上下文窗口的比例（0-1，默认 0.5）
+  summarizeMaxInputRatio: 0.5
 })
 
 // 内置默认总结配置（用于“恢复内置默认”与空值回落，由后端 DEFAULT_SUMMARIZE_CONFIG 下发）
 const defaultSummarizeConfig = ref({
   summarizePrompt: summarizeConfig.summarizePrompt,
   autoSummarizePrompt: summarizeConfig.autoSummarizePrompt,
-  keepRecentTokens: '' as string | number
+  keepRecentTokens: '' as string | number,
+  maxAutoSummarizeAttemptsPerTurn: 2,
+  summarizeMaxInputRatio: 0.5
 })
 
 const hasManualDefaultPrompt = computed(() =>
@@ -154,7 +160,15 @@ async function loadDefaultConfig() {
         keepRecentTokens:
           typeof response.keepRecentTokens === 'string' || typeof response.keepRecentTokens === 'number'
             ? response.keepRecentTokens
-            : defaultSummarizeConfig.value.keepRecentTokens
+            : defaultSummarizeConfig.value.keepRecentTokens,
+        maxAutoSummarizeAttemptsPerTurn:
+          typeof response.maxAutoSummarizeAttemptsPerTurn === 'number'
+            ? response.maxAutoSummarizeAttemptsPerTurn
+            : defaultSummarizeConfig.value.maxAutoSummarizeAttemptsPerTurn,
+        summarizeMaxInputRatio:
+          typeof response.summarizeMaxInputRatio === 'number'
+            ? response.summarizeMaxInputRatio
+            : defaultSummarizeConfig.value.summarizeMaxInputRatio
       }
     }
   } catch (error) {
@@ -186,6 +200,18 @@ async function updateKeepRecentTokens(raw: string) {
   }
   const value = /^\d+$/.test(text) ? Number(text) : text
   await updateConfigField('keepRecentTokens', value)
+}
+
+// 保存自动总结最大尝试次数（钳制 1-5，非法回落默认 2）
+async function updateMaxAutoSummarizeAttempts(raw: string) {
+  const value = Math.min(5, Math.max(1, Math.floor(Number(raw) || 2)))
+  await updateConfigField('maxAutoSummarizeAttemptsPerTurn', value)
+}
+
+// 保存总结输入占比（百分比输入，存储 0-1 比例，钳制 5%-95%）
+async function updateSummarizeMaxInputRatio(raw: string) {
+  const percent = Math.min(95, Math.max(5, Number(raw) || 50))
+  await updateConfigField('summarizeMaxInputRatio', percent / 100)
 }
 
 // 更新渠道选择
@@ -288,6 +314,36 @@ onMounted(async () => {
           />
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepTokensHint') }}</p>
+      </div>
+
+      <div class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.optionsSection.maxAttempts') }}</label>
+        <div class="rounds-input">
+          <input
+            type="number"
+            :value="summarizeConfig.maxAutoSummarizeAttemptsPerTurn"
+            min="1"
+            max="5"
+            @change="(e: any) => updateMaxAutoSummarizeAttempts(e.target.value)"
+          />
+          <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsUnit') }}</span>
+        </div>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsHint') }}</p>
+      </div>
+
+      <div class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.optionsSection.maxInputRatio') }}</label>
+        <div class="rounds-input">
+          <input
+            type="number"
+            :value="Math.round((summarizeConfig.summarizeMaxInputRatio ?? 0.5) * 100)"
+            min="5"
+            max="95"
+            @change="(e: any) => updateSummarizeMaxInputRatio(e.target.value)"
+          />
+          <span class="unit">%</span>
+        </div>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.maxInputRatioHint') }}</p>
       </div>
 
       <div class="form-group">

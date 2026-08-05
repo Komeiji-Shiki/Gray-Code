@@ -906,7 +906,7 @@ export class McpManager {
         }
         
         try {
-            const result = await client.callTool(request.toolName, request.arguments);
+            const result = await client.callTool(request.toolName, request.arguments, request.signal);
             return {
                 success: !result.isError,
                 content: result.content.map(c => ({
@@ -937,7 +937,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.clientNotConnected'));
         }
         
-        const result = await client.readResource(request.uri);
+        const result = await client.readResource(request.uri, request.signal);
         const content = result.contents[0];
         if (!content) {
             return null;
@@ -963,7 +963,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.clientNotConnected'));
         }
         
-        const result = await client.getPrompt(request.promptName, request.arguments);
+        const result = await client.getPrompt(request.promptName, request.arguments, request.signal);
         return result.messages.map(m => ({
             role: m.role as 'user' | 'assistant',
             content: {

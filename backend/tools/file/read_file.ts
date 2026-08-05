@@ -592,10 +592,16 @@ export function createReadFileTool(
             const isMultiRoot = workspaces.length > 1;
             
             const hasSinglePath = typeof args.path === 'string' && args.path.trim() !== '';
-            const hasBatchFiles = Array.isArray(args.files);
+            const batchFiles = Array.isArray(args.files) ? args.files : undefined;
+            // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
+            // 空 files 应视为“未提供批量参数”，不能误判成单双模式冲突。
+            const hasBatchFiles = !!batchFiles && batchFiles.length > 0;
 
             if (hasSinglePath && hasBatchFiles) {
                 return { success: false, error: 'Provide either path or files, not both.' };
+            }
+            if (!hasSinglePath && batchFiles?.length === 0) {
+                return { success: false, error: 'files must contain at least one file request.' };
             }
             if (!hasSinglePath && !hasBatchFiles) {
                 return { success: false, error: 'Either path or files is required.' };
@@ -603,10 +609,7 @@ export function createReadFileTool(
 
             let fileRequests: FileReadRequest[];
             if (hasBatchFiles) {
-                if (args.files.length === 0) {
-                    return { success: false, error: 'files must contain at least one file request.' };
-                }
-                fileRequests = (args.files as Array<Record<string, unknown>>).map(file => ({
+                fileRequests = (batchFiles as Array<Record<string, unknown>>).map(file => ({
                     path: typeof file.path === 'string' ? file.path : '',
                     ...resolveLineRangeArgs(file)
                 }));
