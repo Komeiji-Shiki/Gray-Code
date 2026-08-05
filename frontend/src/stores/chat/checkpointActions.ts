@@ -39,6 +39,11 @@ export function hasCheckpoint(state: ChatStoreState, messageIndex: number): bool
  * 添加检查点
  */
 export function addCheckpoint(state: ChatStoreState, checkpoint: CheckpointRecord): void {
+  // M2：按 cp.id 去重（先 find 再 push，保留顺序语义）——
+  // 同一 checkpoint 可能随多个流式事件重复下发，避免重复展示
+  if (state.checkpoints.value.some(cp => cp.id === checkpoint.id)) {
+    return
+  }
   state.checkpoints.value.push(checkpoint)
 }
 

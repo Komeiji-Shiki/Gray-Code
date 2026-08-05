@@ -85,6 +85,13 @@ export class SubAgentConcurrencyLimiter {
         }
 
         return new Promise<void>((resolve, reject) => {
+            // push 之前再次检查：信号可能在进入 acquire 后、到达此处前已中止，
+            // 此时直接拒绝，避免把条目加入队列
+            if (abortSignal?.aborted) {
+                reject(new SubAgentQueueCancelledError(runId));
+                return;
+            }
+
             const entry: QueueEntry = {
                 runId,
                 resolve,
@@ -107,6 +114,18 @@ export class SubAgentConcurrencyLimiter {
                 abortSignal.addEventListener('abort', onAbort, { once: true });
             }
             this.queue.push(entry);
+
+            // push 之后再次检查：监听器挂载与 push 之间信号可能已中止，
+            // 若不处理，条目会永久残留在队列中（直到 release 才被意外唤醒）
+            if (abortSignal?.aborted) {
+                const index = this.queue.indexOf(entry);
+                if (index >= 0) {
+                    this.queue.splice(index, 1);
+                }
+                entry.cleanup();
+                reject(new SubAgentQueueCancelledError(runId));
+                return;
+            }
         });
     }
 

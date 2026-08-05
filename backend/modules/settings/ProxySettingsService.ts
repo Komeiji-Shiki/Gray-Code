@@ -42,6 +42,15 @@ export class ProxySettingsService {
     }
 
     /**
+     * 是否跳过 TLS 证书校验（仅用于自签名证书调试）
+     *
+     * 默认 false：校验证书；只有用户显式开启时才跳过。
+     */
+    getProxyInsecureSkipVerify(): boolean {
+        return this.core.settings.proxy?.insecureSkipVerify === true;
+    }
+
+    /**
      * 更新代理设置
      */
     async updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
