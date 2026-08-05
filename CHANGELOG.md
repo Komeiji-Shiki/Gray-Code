@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-05
+
 ### Changed
   - 分支树面板改造成双模式“分支历史”：默认“分支导航”会折叠连续线性消息，只保留根节点、分支点、候选入口、命名/删除节点与当前尾部；“完整消息”显示所有节点，但普通父子消息沿用同一纵向轨道，只有真正的兄弟候选才横向展开，不再随对话长度形成一路向右的阶梯。面板同时增加节点计数、角色标签、精简时间、悬停操作按钮和窄窗口适配，保留候选切换、工作区恢复确认、软删除、恢复与重命名能力，三语文案同步。
   - 子代理完整 transcript 从 conversation `.meta.json` 迁移到 `conversations/<conversationId>/subagents/<runId>.json` 独立原子文件；元数据仅保留状态、计数、修订号和 `transcriptRef`，不再重复内嵌 `contents` 与 `lastSentHistory`（包括图片 Base64）。旧内嵌记录首次加载时自动迁移并清除大字段，Monitor 历史与续跑 provider 前缀保持完整。
@@ -19,8 +21,6 @@
 ### Tests
   - 新增分支历史纯布局测试，覆盖 20 条线性消息不增加横向轨道、兄弟候选独立轨道、导航模式连续消息折叠及特殊节点保留；更新组件测试覆盖双模式切换与既有管理交互。
   - 新增子代理独立 transcript 新格式/旧数据迁移、文件系统原子写与会话级清理、停止前后空闲等待、运行中会话删除生命周期顺序测试。
-
-## [1.4.1] - 2026-08-05
 
 ### Added
   - 树状分支重 roll 前端主流程接线（此前仅后端完成）：消息「重试」与「回档并重试」从破坏性删除（deleteMessage + retryStream）切换为 `chat.rerollStream`（旧回答保留进分支图 sidecar，新候选生成后可经 BranchSwitcherBar 的「‹ 2/2 ›」切换回）；reroll 流结束（complete/error/cancelled）后自动刷新分支图；重试确认框三语文案同步为「保留当前回答、生成新版本」语义；`chat.rerollStream` 加入无超时请求白名单与 VSCodeRequest 类型联合
