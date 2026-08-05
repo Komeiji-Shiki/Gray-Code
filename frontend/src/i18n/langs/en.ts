@@ -2608,6 +2608,10 @@ const en: LanguageMessages = {
                     title: 'TPS Live Visualization',
                     description: 'Show a live tokens-per-second chart at the bottom of the input area. Sampling stops while hidden and restarts with the current stream when re-enabled.'
                 },
+                splash: {
+                    title: 'Splash Animation',
+                    description: 'Play the Gray Code logo drawing animation on startup. Disable to go straight to the main view.'
+                },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },

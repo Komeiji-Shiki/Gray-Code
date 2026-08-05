@@ -36,6 +36,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 外观设置：TPS 实时可视化条开关（隐藏后仍继续采样，重新开启立即恢复）
   const tpsBarEnabled = ref(true)
+
+  // 外观设置：开屏动画开关（关闭后启动直接进入主界面）
+  const splashEnabled = ref(true)
   
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
@@ -98,6 +101,10 @@ export const useSettingsStore = defineStore('settings', () => {
   function setTpsBarEnabled(enabled: boolean) {
     tpsBarEnabled.value = enabled
   }
+
+  function setSplashEnabled(enabled: boolean) {
+    splashEnabled.value = enabled
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -114,6 +121,7 @@ export const useSettingsStore = defineStore('settings', () => {
     smoothStreaming,
     selectionContextEnabled,
     tpsBarEnabled,
+    splashEnabled,
     promptModesVersion,
 
     // 方法
@@ -128,6 +136,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setSmoothStreaming,
     setSelectionContextEnabled,
     setTpsBarEnabled,
+    setSplashEnabled,
     refreshPromptModes
   }
 })

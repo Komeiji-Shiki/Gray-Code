@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Splash.vue - 开始动画组件
- * - 蓝图点阵浮现 → 笔尖光点执笔画出灰码少女（线稿取自 resources/icon.svg）：
+ * - 蓝图点阵浮现 → 笔尖光点执笔画出 Gray logo（线稿取自 resources/icon.svg）：
  *   帽子先落笔 → 身体/发丝 → 完稿定影提亮 → 呼吸待机
  * - 标题分层浮现（Gray 粗 / Code 细 + 蓝色终端光标）→ 副标题
  * - 格雷码等待线（3-bit 循环 000→001→011→010→110→111→101→100，每步恰好只变一位）
@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-label="Gray Code 正在启动">
     <div class="splash-inner" :class="{ settled: drawDone }">
-      <!-- 灰码少女：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
+      <!-- Gray logo：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
       <svg
         class="girl"
         viewBox="220 170 580 630"
