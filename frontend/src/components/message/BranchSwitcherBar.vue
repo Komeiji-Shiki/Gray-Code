@@ -327,11 +327,13 @@ function toggleDelete(nodeId: string): void {
 /* 消息操作栏内的紧凑按钮组：与复制 / 重试 IconButton 共用同一行和高度 */
 .branch-switcher-bar.compact {
   height: 24px;
-  margin: 0;
-  padding: 0 2px;
+  margin: 0 2px;
+  padding: 0;
   gap: 0;
   border: none;
   background: transparent;
+  /* 与 IconButton 一致：窄侧边栏下不被压缩变形，保持等宽等高 */
+  flex-shrink: 0;
 }
 
 .branch-switcher-bar.compact .branch-switcher-btn {

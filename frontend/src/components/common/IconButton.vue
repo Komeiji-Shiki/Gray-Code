@@ -78,6 +78,7 @@ function handleClick(event: MouseEvent) {
   font-family: inherit;
   flex-shrink: 0;
   background: transparent;
+  box-sizing: border-box;
 }
 
 /* 尺寸 */

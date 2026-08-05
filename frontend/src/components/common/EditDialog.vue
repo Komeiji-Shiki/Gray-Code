@@ -516,7 +516,7 @@ function handleRemoveAttachment(id: string) {
 
           <div class="dialog-footer">
             <button class="dialog-btn cancel" @click="handleCancel">
-              {{ t('components.common.editDialog.cancel') }}
+              <span class="btn-label">{{ t('components.common.editDialog.cancel') }}</span>
             </button>
 
             <button
@@ -526,7 +526,7 @@ function handleRemoveAttachment(id: string) {
               @click="handleRestoreAndEdit"
             >
               <i class="codicon codicon-discard"></i>
-              {{ formatCheckpointDesc(latestCheckpoint) }}
+              <span class="btn-label">{{ formatCheckpointDesc(latestCheckpoint) }}</span>
             </button>
 
             <button
@@ -535,7 +535,7 @@ function handleRemoveAttachment(id: string) {
               @click="handleEdit('keep')"
             >
               <i class="codicon codicon-source-control"></i>
-              {{ t('components.common.editDialog.saveInPlace') }}
+              <span class="btn-label">{{ t('components.common.editDialog.saveInPlace') }}</span>
             </button>
 
             <button
@@ -543,7 +543,7 @@ function handleRemoveAttachment(id: string) {
               :disabled="!canSubmit"
               @click="handleEdit('branch')"
             >
-              {{ t('components.common.editDialog.save') }}
+              <span class="btn-label">{{ t('components.common.editDialog.save') }}</span>
             </button>
           </div>
         </div>
@@ -675,14 +675,16 @@ function handleRemoveAttachment(id: string) {
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   padding: 12px 16px;
   border-top: 1px solid var(--vscode-panel-border);
-  flex-wrap: wrap;
+  /* 修复：四个按钮强制单行——flex-wrap 会把最后一个「保存」挤到第二行 */
+  flex-wrap: nowrap;
 }
 
 .dialog-btn {
-  padding: 6px 14px;
+  padding: 6px 10px;
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
@@ -691,6 +693,29 @@ function handleRemoveAttachment(id: string) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* 允许在窄窗口下收缩，文字走省略号而非换行 */
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+/* 按钮文字：单行省略，配合 min-width: 0 保证窄窗口下不换行不溢出 */
+.dialog-btn .btn-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 长文案按钮（回档/就地保存）在窄窗口下优先截断，保住「保存」留在同一行 */
+.dialog-btn.restore {
+  max-width: 200px;
+}
+
+.dialog-btn.keep-branch {
+  max-width: 190px;
+}
+
+.dialog-btn.confirm {
+  flex-shrink: 0;
 }
 
 .dialog-btn:disabled {
