@@ -103,6 +103,7 @@ import {
   clearMessages as clearMessagesFn
 } from './chat/messageActions'
 
+import type { CancelStreamOptions } from './chat/toolActions'
 import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession, QueuedMessage } from './chat/types'
 
@@ -188,7 +189,7 @@ export const useChatStore = defineStore('chat', () => {
   const getActualIndex = (displayIndex: number) => getActualIndexFn(state, computed, displayIndex)
   
   const cancelStreamAndRejectTools = () => cancelStreamAndRejectToolsFn(state, computed)
-  const cancelStream = () => cancelStreamFn(state, computed)
+  const cancelStream = (options?: CancelStreamOptions) => cancelStreamFn(state, computed, options)
   const rejectPendingToolsWithAnnotation = (annotation: string) => 
     rejectPendingToolsWithAnnotationFn(state, computed, annotation)
 
@@ -203,8 +204,8 @@ export const useChatStore = defineStore('chat', () => {
   const retryAfterError = () => retryAfterErrorFn(state, computed)
   const dismissError = () => dismissErrorFn(state)
   
-  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[]) =>
-    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream)
+  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[], mode?: 'branch' | 'keep') =>
+    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream, mode)
   
   const deleteMessage = (targetIndex: number) => deleteMessageFn(state, targetIndex, cancelStream)
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)
@@ -416,7 +417,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 立即发送队列中指定消息（若 AI 正在响应则先中断）
+   * 立即发送队列中指定消息。
+   * 正在响应时先把前台 SubAgent 转为后台，再取消旧回合并发送新消息。
    */
   async function sendQueuedMessageNow(id: string): Promise<void> {
     const item = state.messageQueue.value.find(m => m.id === id)
@@ -425,9 +427,10 @@ export const useChatStore = defineStore('chat', () => {
     // 从队列中移除
     removeQueuedMessage(id)
 
-    // 如果 AI 正在响应，先取消
+    // “立即发送”会替换当前回合；先要求后端同步解除前台 SubAgent 的父信号绑定，
+    // 再取消旧流，避免子 Agent 在新流创建前已经被父级 abort 终止。
     if (state.isWaitingForResponse.value) {
-      await cancelStream()
+      await cancelStream({ preserveSubAgents: true })
     }
 
     // 发送消息

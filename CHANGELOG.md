@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 上下文裁剪 fallback 切点回合内稳定（保留 provider 前缀缓存）：`getHistoryWithGranularFallback` 支持 `stableStartIndex`——自动总结失败后同一真实用户回合的多次工具迭代（含工具确认后的续跑）复用第一次确定的裁剪起点，工具结果增长不再每轮把 `absoluteStartIndex` 向后推（此前每轮 retainedHistory 开头漂移，缓存只能命中 history 之前的固定系统/工具段）；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）才重新规划；新回合/总结成功后自动清点重新评估，`clearTrimState` 同步清理
+  - 上下文总结请求不再携带图片/文件载荷：`cleanMessagesForSummarize` 把用户消息中的 `inlineData` / `fileData` 替换为 `[Image: …]` / `[File: …]` 文本占位符（总结模型无需加载图片字节，省输入 token，也避免不支持多模态的总结渠道报错）
+
+### Added
+  - 编辑用户消息新增「保持当前分支」模式（`chat.editBranchStream` 请求新增 `mode` 字段，默认 `'branch'` 行为不变）：`mode='keep'` 时后端直接改写活跃路径上的原用户消息并截断其后内容，不创建编辑候选；先 `ensureBranchGraph` 把完整旧历史并入分支图（无图时建线性基线），截断后 `syncGraphAfterHistoryDelete` 软删被移除的子树（旧版本保留可恢复查看）、`updateActiveNodeParts` 同步改写节点内容与候选摘要（BR-01/BR-05 保持）；前端编辑对话框新增「原地保存（保持当前分支）」按钮（三语文案），编辑链路（EditDialog → MessageItem → MessageList → App → editAndRetry → webview）透传 `mode`，分支流错误重放上下文同步携带 `mode`
+
 ## [1.5.2] - 2026-08-04
 
 ### Merged
@@ -25,6 +32,30 @@
     - 删除消息同步软删分支图子树：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或未注册分支服务时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
     - 修复：`_pendingBranchRefreshAfterStream` 标记改为按会话隔离（会话切换后其他会话的终结 chunk 不再误消费并误刷分支图，切回原会话后由该会话的终结 chunk 正确消费）；`retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点）；分支流失败错误条可重试（后端把底层 `ChannelError.type`（API/NETWORK/TIMEOUT/PARSE 等）透传到错误 chunk，`isRetryableError` 按底层 type 判定，`REROLL_FINISH_SYNC_FAILED` 等 reroll 特有错误或 CONFIG/VALIDATION/CANCELLED 不显示重试）；主聊天发起的 diff 预览同样跟随主聊天所在列（`diffViewColumn` + `openDiffView` 后 `moveActiveEditor` 校正）
     - 后台回执上下文骤降修复（约 35k token → 2k token）：新增后端 `chat.awaitConversationIdle`（`StreamAbortManager.waitForIdle()`），回执发送前以运行控制器为生命周期唯一事实来源、等待旧流真正退出（不再依靠延时或前端瞬时 `isStreaming` 状态猜测），等待期间切换会话或启动新流则重新判定；后台回执以 `source: 'background_task'` 从前端请求贯通到后端历史、`isUserInput: false` 保存，合法裁剪起点、回合识别、当前回合定位、思考范围与 token 累加统一复用 `isRealUserMessage()`，`source` 在渠道 formatter 发请求前剥离、历史重载时透传回前端保持后台任务卡片样式
+
+## [1.4.1] - 2026-08-05
+
+### Added
+  - 树状分支重 roll 前端主流程接线（此前仅后端完成）：消息「重试」与「回档并重试」从破坏性删除（deleteMessage + retryStream）切换为 `chat.rerollStream`（旧回答保留进分支图 sidecar，新候选生成后可经 BranchSwitcherBar 的「‹ 2/2 ›」切换回）；reroll 流结束（complete/error/cancelled）后自动刷新分支图；重试确认框三语文案同步为「保留当前回答、生成新版本」语义；`chat.rerollStream` 加入无超时请求白名单与 VSCodeRequest 类型联合
+  - 编辑用户消息前端主流程接入 `chat.editBranchStream`（此前仅后端完成）：消息「编辑」与「回档并编辑」从破坏性 `editAndRetryStream`（覆盖原消息）切换为分支编辑——后端创建编辑候选（新 user 节点）并截断主历史，原消息及其子树保留进分支图 sidecar（决策 7：旧分支保留，失败可切回）；本地窗口改写目标消息 + 截断 + 流式占位，置位分支图刷新标记（流结束后 BranchSwitcherBar 显示候选切换器）；流启动失败时重载最后一页 + 检查点恢复前后端一致；`chat.editBranchStream` 加入无超时请求白名单与 VSCodeRequest 类型联合；附件仅更新本地窗口（编辑分支接口无附件字段）
+  - 子代理设置页工具白名单/黑名单列表工具名称与悬停描述接入三语 i18n：新增公共模块 `frontend/src/utils/toolLocalization.ts`（工具显示名/描述本地化，缺失时机械转换/回退原文），工具设置页与子代理设置页共用同一套 `toolDisplayNames` / `toolDescriptions` 条目，MCP 外部工具自动回退英文原名
+  - 删除消息同步软删分支图子树（后端）：`deleteToMessage`（删除到某条消息）与单条删除在硬删除主历史后同步更新分支图——被删消息对应节点及其后续整棵子树（含非活跃候选）标记为已删除（保留可恢复语义、不物理清理 sidecar，过期清理仍走保留期机制），活跃尾自动回退到最后保留消息对应节点，指向被删节点的活跃指针一并清空；无分支图（线性对话）或无分支服务注册时保持原有删除行为不变，图同步失败仅告警不阻断硬删除（主历史为唯一真源）
+
+### Fixed
+  - reroll/编辑分支流前端修复：
+    - `_pendingBranchRefreshAfterStream` 标记改为按会话隔离（记录发起流的会话 ID）：会话切换后其他会话的终结 chunk 不再误消费并误刷分支图；切回原会话后由该会话的终结 chunk（或后台缓冲 flush）正确消费
+    - `retryFromMessage` reroll 流启动失败且会话已切换时不再重载原会话历史（避免污染当前会话窗口与检查点，与 editAndRetry 同款身份校验）
+    - 内容型 `toolIteration` 因「需用户确认 / 审批门闸 / 工具被取消」终结流时同样消费分支图刷新标记（此前标记残留，可能被后续无关终结事件消费）
+    - `restoreAndEdit` 补 R3-#13 同款按 id 重定位（await 恢复期间数组变化不再错改错删），恢复失败错误写入加会话归属校验
+    - `restoreAndRetry` / `restoreAndEdit` 的 `chat.rerollStream` / `chat.editBranchStream` 载荷补齐 `promptModeId`（与 messageActions 入口一致）
+    - i18n 新增 `hasMessage()` 静默 key 存在性检查；工具本地化（toolLocalization）缺失条目不再触发 `[i18n] Missing translation` console.warn 刷屏
+    - reroll/编辑分支流失败时错误条可重试（方案 B）：后端在流式失败时把底层 `ChannelError.type`（`API_ERROR` / `NETWORK_ERROR` / `TIMEOUT_ERROR` / `PARSE_ERROR` 等）透传到错误 chunk（`{ code, type?, message }`），前端 `isRetryableError` 对 `REROLL_ERROR` / `EDIT_BRANCH_ERROR` 改为按底层 type 判定可重试——携带可重试 type 时错误条显示「重试」；无 type（如 `REROLL_FINISH_SYNC_FAILED` 等 reroll 特有错误）或 type 不可重试（`CONFIG_ERROR` / `VALIDATION_ERROR` / `CANCELLED_ERROR`）时不显示；`ErrorInfo` 类型补可选 `type` 字段，`retryAfterError` 入口守卫改用 `isRetryableError` 保持与错误条判定一致
+    - 主聊天发起的 diff 预览同样跟随主聊天所在列：`vscode.diff` 的 `viewColumn` 参数在部分布局/版本下不生效（仍在当前活动编辑器组打开，焦点在 Monitor 面板时 diff 会落到 Monitor 列），现在主聊天上下文同样下发 `diffViewColumn`（与 Monitor 路由同语义，主聊天在侧边栏时回退主区域第一列），且 `openDiffView` 打开后用 `vscode.moveActiveEditor` 把 diff tab 校正到目标列（目标列即当前列时移动幂等）
+  - 修复后台子 Agent 完成回执插入尚未结束的主模型调用，并导致上下文从约 35 万 token 骤降至约 2 万 token（用户实测）：
+    - 根因一是前端收到 `complete` chunk 后会先清除 `isStreaming` / `isWaitingForResponse`，但后端流此时可能尚未执行 `StreamRequestHandler.finally`；后台任务回流仅依据前端状态判断空闲，随即创建同会话新流，触发 `StreamAbortManager.create()` 中止并替换仍在收尾的旧流。现在新增后端 `chat.awaitConversationIdle` 与 `StreamAbortManager.waitForIdle()`，回执发送前以运行控制器为生命周期唯一事实来源，等待旧流真正退出；等待期间若切换会话或启动新流则重新判定，不再依靠延时或前端瞬时状态猜测
+    - 根因二是后台回执经普通 `chatStream` 落盘时被标记为真实 user 消息，裁剪器将其识别为新回合；当前一个工具回合本身约 35 万 token 时，回合完整性约束会迫使裁剪器丢弃整个旧回合，只保留约 2 万 token 的回执回合。现在 `source: 'background_task'` 从前端请求贯通到后端历史，回执以 `isUserInput: false` 保存；合法裁剪起点、回合识别、当前回合定位、思考范围与 token 累加统一复用 `isRealUserMessage()`，后台回执视为原任务的异步延续，旧历史中缺少 `isUserInput` 的真实用户消息仍兼容；`source` 在渠道 formatter 发请求前剥离，历史重载时透传回前端以保持后台任务卡片样式
+    - 补充后端运行生命周期、回合边界、旧历史兼容和前端来源透传回归测试；根 TypeScript 检查、前端生产构建及目标测试通过
+    - `REROLL_ERROR` / `EDIT_BRANCH_ERROR` 错误条重试改为重放原分支流（方案 B 一致性收口）：此前错误条「重试」会回退到 `retryStream` 直接追加生成——流式失败后主历史已有半截候选、请求级失败后旧回答仍留在主历史，追加生成分别造成「半截候选 + 新回答」重复与「旧回答 + 新回答」重复，并让分支图与主历史失配（后续删除/编辑报索引越界）。现在 `retryFromMessage` / `editAndRetry` / `restoreAndRetry` / `restoreAndEdit` 在发起分支流时记录原请求快照（目标节点、编辑文本、配置、模型覆盖与 Prompt 模式），流失败时随错误对象保存；错误条重试按错误码重放 `chat.rerollStream` / `chat.editBranchStream`——流式失败（`REROLL_ERROR` / `EDIT_BRANCH_ERROR`）复用失败候选（省略旧节点 ID，由后端按当前活跃路径选择，前端仅回滚半截展示、绝不调用 `deleteMessage`），请求级失败（`RETRY_ERROR` / `EDIT_RETRY_ERROR`）按原目标节点重建本地窗口后重放；重放上下文随标签页快照保存/恢复（切标签页后仍可重试），成功/取消/关闭错误时清理；普通流错误（`STREAM_ERROR` / `API_ERROR` 等）重试行为不变
 
 ## [1.4.1] - 2026-08-04
 
@@ -64,6 +95,29 @@
     - 前端：sanitizeHtml 补齐（xlink:href/use href/data:/srcdoc/style 剥离、控制字符混淆防护）；删除 useChat/useMessages/useConversations 三个死 composable（含从不释放的监听器）；sendToExtension 条件 JSON 往返 + 失败回退（纯 JSON 大载荷不再双份序列化）；settingsStore Language 补 'ja' + useI18n 接入 ja 语言包（ja 用户 store 级文案不再回退中文）
     - fast-tavern：无 id 正则回退 id 改确定性 FNV-1a 哈希（TS/Python 输出一致，可复现）；死代码三元收敛；py README 示例命名与代码块修正；根 package.json 新增 benchmark script 与 engines.node（>=20）；BranchGraphRepository 原子写 rename 重试（Windows EPERM 偶发 flaky 根治）
   - 代码组织与文档收尾：ChannelManager.getFilteredTools 与 ToolDeclarationResolver 合并（删约 235 行重复实现，主会话工具列表获得 denylist/excludeToolNames 能力，"主会话与 SubAgent 共用同一入口"兑现）；review 6 个工具路径策略副本收敛到 progress/pathUtils 共享实现；handleEditAndRetry（非流式）补齐前置清理（与其它入口一致）；前端三语语言包删除 useChat/useConversations 孤儿键；sanitizeHtml 补 srcset 候选级协议校验；CHANGELOG 历史条目清除全部内部代号（CP-/BR-/MIG-/TREE-/BCP-/EX-/HIS-/CPF-/MED-/审查/复查/决策/PR # 等 165 处）
+  - 修复刚完成的助手消息点击「重试」时报 `NODE_NOT_FOUND`：模型回复落盘后，后端现在把真实的稳定消息节点 ID 随流式终结内容回传；前端在 `toolsExecuting`、`awaitingConfirmation`、`toolIteration`、`complete` 与取消收尾阶段用该 ID 替换本地流式占位 ID，并同步消息索引与当前流引用。`retryFromMessage` 因此不再把形如 `1785860200670_2ojp0foff` 的前端临时 ID 传给分支图，普通回答、工具调用回答及已落盘的取消回答均使用后端节点 ID。
+  - 修复工具调用后续接回答重生成时报 `INVALID_BRANCH_RELATION`，并明确 reroll 为“单条助手消息重新生成”：分支服务现在允许被点模型消息的直接父节点是模型节点，新旧回答在该父节点下形成同级候选；主历史与检查点从被点回答自身开始截断，目标之前的模型工具调用和 `functionResponse` 完整保留，因此只重新生成选中的回答，不会退回用户消息重跑整轮工具。
+  - 修复 `read_file` 单文件调用被空批量参数误判为冲突：部分 function-calling 客户端会为未提供的可选数组自动补上 `files: []`，此前与有效 `path` 同时出现会报 `Provide either path or files, not both.`；现在空数组在存在 `path` 时按“未提供批量参数”处理，同时仍拒绝无 `path` 的空批次及 `path` + 非空 `files` 的真正混合调用。
+  - 修复排队消息「立即发送」仍会掐断前台子 Agent（用户实测）：前台 SubAgent 转后台（detach）此前只挂在 `StreamAbortManager.create()`（新流启动）上，而队列箭头的 `sendQueuedMessageNow` 是先显式 `cancelStream()` 再发送新消息——旧流 abort 发生在 `create` 之前，父取消信号已传播到子 Agent，等新流创建时 detach 已来不及。现在 `cancelStream` 支持 `preserveSubAgents` 标记：前端「立即发送」路径携带该标记，后端 `StreamAbortManager.cancelForNewTurn()` 在 abort 旧流**之前**先把该会话活跃前台 SubAgent 转为后台（与 create 路径同款 detach 语义），普通「停止」按钮仍走原 `cancel` 保持真正终止；新增回归测试（管理器 detach 顺序矩阵、路由标记透传、前端请求顺序）。
+  - 修复 `find_files` 等未配置存档的单个只读工具偶发显示“对话已存在”：单工具存档判定现在与批量工具一致，未配置存档时不再提前反查会话节点；`ConversationManager` 同时按会话 ID 合并仍在进行的首次创建，消除显式创建与读路径按需创建的并发竞争，创建完成后的真正重复调用仍保持报错。
+  - 改善主模型与 SubAgent 的停止响应：主聊天点击停止后立即清除前端流式、加载和等待状态，后端关闭 diff、拒绝悬空工具与持久化清理仍按原顺序完成；Monitor 的暂停、继续、退出请求改为非阻塞路由；SubAgent 工具执行增加 500ms 有界中止收尾，即使工具完全不响应 `AbortSignal`，run 也会进入 cancelled 并释放控制器、并发席位与文件锁，退出成功后 Monitor 立即隐藏控制按钮。
+  - 降低 `apply_diff` 接受修改后的等待与界面冻结：目标文件 stat/read 改为异步 I/O；完整 diff 内容先写入 16 条/32MiB 双上限的内存缓存，工具结果立即获得预览引用，JSON 持久化转后台并改为紧凑格式，当前会话预览优先读内存、扩展重启后仍可从落盘文件读取；写前/写后工作区存档和 diff 确认流程保持不变。
+  - 修复前台 SubAgent 返回后主模型输入从约 30 万 token 突然减少约 5 万的真实上下文丢失：上下文管理不再静默按完整用户回合推进持久 `trimState`，统一改为模型总结优先；总结范围按 token 预算选择，并可在多轮历史的超长工具回合内部以完整 `functionCall/functionResponse` 组为边界切分。工具循环同一用户回合持续工作时仍会逐轮检测上限、最多尝试两次自动总结，失败后仅对当前请求执行不持久化的细粒度安全裁剪；旧版 trim 状态首次读取自动失效，升级前被遮蔽的历史可重新参与评估。
+  - 上下文总结与裁剪现在独立保留历史真实用户输入：被压缩区间中的用户原话和附件名称按时间顺序注入请求，排除 functionResponse、后台回执与旧总结；首次目标和最近补充在异常大输入触发安全预算时仍优先保留，档案不写回 transcript，避免重复膨胀。functionResponse token 估算同步按实际 API 可见字段计算，diff 与 SubAgent UI 元数据不再虚增裁剪预算；同时修复总结消息被起点归一化误跳过的问题。
+  - 总结设置新增两个可调项：①「自动总结最大尝试次数」——单个真实用户回合内最多尝试 1-5 次（默认 2），尝试耗尽后仍超阈值时本次请求改用不持久化的细粒度安全裁剪；②「总结模型输入占比」——自动总结单次请求输入占总结模型上下文窗口的 5%-95%（默认 50%），超出时自动缩小总结范围、保留最近一轮工具交互。同时清理总结设置页已迁移的过时「自动总结」区块文案，三语同步。
+  - 修复分支图异步同步未完成时 functionResponse 可在切换重写中丢失：`rewriteHistoryFromBranchGraph` 的一致性检查此前只验证非 functionResponse 消息已入图，FR 内容（决策 8 并入所属节点 parts）未校验——FR 图同步未完成/失败时切换会静默丢 FR 内容并误清检查点。现在新增 `findUnsyncedFunctionResponses` 纯函数（按所属节点做 FR id 子集匹配、防误报），任一 FR 未同步即拒绝切换并返回 `BRANCH_OPERATION_CONFLICT`，主历史保持不变；补 8 个纯函数用例与集成回归（含补同步后重试幂等）。
+  - MCP 工具调用全链透传外部 `AbortSignal`：用户取消回合后 MCP 请求立即中止，不再挂到超时。HTTP 客户端外部信号与内部超时 controller 联动（区分中止/超时文案），SSE 读流外部中止时同步取消 reader；Stdio 客户端外部中止清理 pending、超时与进程退出监听并拒绝；`ToolExecutionService` → `McpManager` → 客户端逐层透传。新增 11 个用例，MCP 6 套件 86 测试全绿。
+  - LSP 生命周期保护抽成共享模块并接入全部 LSP 工具：`get_symbols` 的打开文档激活语言服务、超时、取消、瞬时失败重试逻辑提取为 `lspLifecycle.ts`（`withTimeoutAndAbort` / `executeLspCommandWithRetry` / `openDocumentWithGuard`），`goto_definition` 与 `find_references` 补齐同等保护——provider 挂起不再无限等待，回合取消立即中止；`get_symbols` 保留原导出常量与行为，新增 21 个测试。
+  - 修复 SubAgent `continueFromRunId` 续跑丢失 provider 前缀缓存的真正根因：此前的修复只解决了缓存域（user_id 沿用旧 runId），但续跑请求历史取自 Monitor 展示 transcript——首条 `# SubAgent Invocation` 卡片从未发送给 provider，与旧 run 的任何一次已缓存请求从第 0 条就不共享前缀，缓存必然全 miss。现在事件总线持久化「最后一次实际发送给 provider 的 history」（`lastSentHistory`，发送前已完成 agentInbox 剥离、深拷贝、不污染 Monitor 内容与修订号），续跑严格以它为前缀再追加新用户消息；旧记录缺字段时降级过滤 invocation 卡片。新增前缀不变量测试（续跑首请求 = 旧最后请求 + 新消息、不含 Invocation 卡片、持久化恢复后仍成立）。
+  - 优化 apply_diff 的固定延迟：写前工作区存档不再阻塞工具启动——批内全部为 diff 审阅类工具（apply_diff / write_file / insert_code / delete_code）时，before 存档与工具前置阶段（读文件 + hunk 规划 + 预览渲染）并发启动，预览先行显示；写盘前由 DiffManager 强制等待存档完成并获取目标文件写盘锁（审阅期间持有、diff 终结释放，与入口持锁语义一致，冲突按既有 lockConflict 语义收敛为拒绝），混合批保持同步语义。结构化 hunk 首次精确匹配计划（fast path 产物）缓存到 pending diff，块级拒绝与最终内容重算直接按计划重放、不再重复全文件扫描（起始内容不一致时自动回退重扫）；write_file 新建文件预写空文件同样在 checkpoint 就绪后带临时写锁执行。新增并发时序、锁持有/释放与计划重放等价性测试。
+  - 修复 `get_symbols` 在大型、尚未打开的 TypeScript 文件上偶发 `1 file(s) failed to get symbols` 或无限等待：查询前主动打开文档激活语言服务，瞬时未就绪时重试一次，provider 挂起与用户取消均有界退出；聚合错误现在携带具体文件和 tsserver 原因，并补齐 DocumentSymbol 层级、重试与超时回归测试。
+  - 修复主聊天或 SubAgent Monitor 获得焦点时原生文件 diff 打开到 Monitor 列：所有写工具共用的 diffManager 在打开瞬间定位主聊天列，`vscode.diff` 后再按实际 tab 校正目标组，主聊天位于侧边栏时回退第一编辑器列。
+  - 改进批量 `read_file` 工具卡片摘要：不再把后续文件折叠为 `+N`，而是逐行显示真实文件路径、范围与批次状态；SubAgent Monitor 在窄列下允许运行元信息收缩换行，标题与控制区不再横向溢出。
+  - 修复分支候选下拉框在消息项 `contain: layout` 定位上下文中横纵坐标重复偏移、窄侧栏右侧溢出的问题：候选浮层改为 Teleport 到 `body`，根据视口宽高选择向上或向下展开并约束左右边界，滚动和窗口缩放时持续重算位置。
+  - 修复 `read_file` 成功执行但工具卡片摘要显示 `?`、展开后丢失文件的问题：单文件调用同时携带规范化生成的空 `files: []` 时不再误入批量分支，摘要和内容面板都会回退使用有效 `path`；新增空批量与单文件路径并存的回归测试。
+  - 放宽同参数重复失败调用护栏：失败次数改为只统计没有其他真实工具调用介入的连续同签名失败，执行诊断、修改文件或其它成功调用后允许原参数重跑测试；真正连续原样失败仍会被短路，默认系统提示同步允许相关状态变化后的重新验证。
+  - 完善分支候选切换数据源与状态同步：新增 `buildCandidateGroupAt` 按父节点推导候选组（取代原先只取「活跃尾兄弟组」的 `buildCandidateGroup`），`BranchSwitcherBar` 接收 `parentNodeId`，多个分支点可各自计算「‹ N/M ›」候选状态；候选列表使用 fixed 定位浮层防止被消息滚动容器裁剪；`DirtyFilesConfirm` 由 `MessageList` 常驻挂载，分支切换遇到未保存文件时确认框不受组件显隐影响。
+  - 按消息操作栏重新整理分支交互：候选切换器不再作为消息下方独立一列，改为嵌入 `MessageActions`，与复制 / 重试按钮保持同一行和高度；分支树面板改为论坛评论树式连接线布局，用竖向树干与横向分叉线表达父子关系，活跃路径只高亮导线，只有活跃尾节点显示「当前」，分支点显示未删除候选数量，并补齐中英日三语文案。
 
 ## [1.4.0] - 2026-08-04
 

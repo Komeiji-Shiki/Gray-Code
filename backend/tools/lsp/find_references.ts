@@ -7,9 +7,21 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
+import {
+    LSP_TIMEOUT_MS,
+    openDocumentWithGuard,
+    executeLspCommandWithRetry,
+    withTimeoutAndAbort
+} from './lspLifecycle';
 
 /** context 参数允许的最大上下文行数（防止引用多时响应体暴涨） */
 const MAX_CONTEXT_LINES = 10;
+
+/**
+ * 引用结果数量上限：LSP 对高频符号（如 Object/console）可能返回海量引用，
+ * 超出后截断收集并在返回 JSON 中置 truncated 标记，防止响应体与内存暴涨。
+ */
+const MAX_REFERENCES = 500;
 
 /**
  * 引用位置信息
@@ -90,7 +102,7 @@ Returns references grouped by file, with line numbers and code content.`;
                 required: ['path', 'line']
             }
         },
-        handler: async (args, _context): Promise<ToolResult> => {
+        handler: async (args, context): Promise<ToolResult> => {
             const filePath = args.path as string;
             const line = args.line as number;
             const column = (args.column as number) || 1;
@@ -118,12 +130,14 @@ Returns references grouped by file, with line numbers and code content.`;
             try {
                 // 创建位置（转换为 0-based）
                 const position = new vscode.Position(line - 1, column - 1);
-                
-                // 使用 VSCode 的 executeReferenceProvider 命令
-                const references = await vscode.commands.executeCommand<vscode.Location[]>(
+                // 主动打开文档以激活对应语言服务（带超时/中止保护）
+                await openDocumentWithGuard(uri, context?.abortSignal);
+
+                // 使用 VSCode 的 executeReferenceProvider 命令（超时/中止保护 + 瞬时重试）
+                const references = await executeLspCommandWithRetry<vscode.Location[]>(
                     'vscode.executeReferenceProvider',
-                    uri,
-                    position
+                    [uri, position],
+                    { abortSignal: context?.abortSignal }
                 );
                 
                 if (!references || references.length === 0) {
@@ -137,6 +151,7 @@ Returns references grouped by file, with line numbers and code content.`;
                             totalCount: 0,
                             fileCount: 0,
                             references: [],
+                            truncated: false,
                             message: 'No references found. The symbol may not be used, or no language server is available.'
                         }
                     };
@@ -146,8 +161,15 @@ Returns references grouped by file, with line numbers and code content.`;
                 const groupedMap = new Map<string, ReferenceLocation[]>();
                 // 缓存已打开的文档
                 const docCache = new Map<string, vscode.TextDocument>();
-                
+                let collectedCount = 0;
+
                 for (const ref of references) {
+                    // 结果上限：超出后停止读取内容与分组，避免海量引用撑爆响应体
+                    if (collectedCount >= MAX_REFERENCES) {
+                        break;
+                    }
+                    collectedCount++;
+
                     // 获取相对路径
                     const workspaceFolder = vscode.workspace.getWorkspaceFolder(ref.uri);
                     let relativePath: string;
@@ -162,10 +184,14 @@ Returns references grouped by file, with line numbers and code content.`;
                     // 获取代码内容
                     let content = '';
                     try {
-                        // 使用缓存
+                        // 使用缓存（文档读取带超时/中止保护）
                         let doc = docCache.get(ref.uri.toString());
                         if (!doc) {
-                            doc = await vscode.workspace.openTextDocument(ref.uri);
+                            doc = await withTimeoutAndAbort(
+                                vscode.workspace.openTextDocument(ref.uri),
+                                LSP_TIMEOUT_MS,
+                                context?.abortSignal
+                            );
                             docCache.set(ref.uri.toString(), doc);
                         }
                         
@@ -228,7 +254,8 @@ Returns references grouped by file, with line numbers and code content.`;
                         symbol: symbolName,
                         totalCount: references.length,
                         fileCount: groupedReferences.length,
-                        references: groupedReferences
+                        references: groupedReferences,
+                        truncated: references.length > MAX_REFERENCES
                     }
                 };
             } catch (error) {

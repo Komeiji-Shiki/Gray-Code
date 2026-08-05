@@ -763,6 +763,16 @@ export class McpManager {
                     info.serverVersion = serverInfo.version;
                     info.serverDescription = serverInfo.name;
                 }
+
+                // 订阅服务器推送通知（notifications/tools|resources|prompts/list_changed），
+                // 收到后刷新缓存列表，避免工具列表缓存永不刷新
+                client.on('notification', (method: string, params?: any) => {
+                    // 旧代际 client 的通知不得触发新连接的刷新
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    this.handleServerNotification(info, client, method, params);
+                });
                 break;
             }
 
@@ -891,6 +901,63 @@ export class McpManager {
     }
 
     /**
+     * 处理服务器推送的通知
+     *
+     * 收到列表变更通知（notifications/tools|resources|prompts/list_changed）时，
+     * 重新拉取列表并刷新 info.capabilities 缓存，供 ToolDeclarationResolver 等
+     * 消费方在下一次工具声明重建时使用新数据。
+     * - 刷新失败仅记日志，不重连（避免服务器临时故障时无谓重连）
+     * - 刷新成功广播 server:capabilities_updated 事件，供前端等订阅方感知
+     */
+    private async handleServerNotification(
+        info: McpServerInfo,
+        client: StdioMcpClient,
+        method: string,
+        params?: any
+    ): Promise<void> {
+        if (method !== 'notifications/tools/list_changed'
+            && method !== 'notifications/resources/list_changed'
+            && method !== 'notifications/prompts/list_changed') {
+            return;
+        }
+
+        try {
+            await client.refreshLists();
+        } catch (error) {
+            // 刷新失败仅记日志，不重连
+            console.error(`[MCP] Failed to refresh lists for ${info.config.id} after ${method}:`, error);
+            return;
+        }
+
+        // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
+        info.capabilities = {
+            tools: client.getTools().map(t => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: t.inputSchema
+            })),
+            resources: client.getResources().map(r => ({
+                uri: r.uri,
+                name: r.name,
+                description: r.description,
+                mimeType: r.mimeType
+            })),
+            prompts: client.getPrompts().map(p => ({
+                name: p.name,
+                description: p.description,
+                arguments: p.arguments
+            }))
+        };
+
+        this.emitEvent({
+            type: 'server:capabilities_updated',
+            serverId: info.config.id,
+            data: { method },
+            timestamp: Date.now()
+        });
+    }
+
+    /**
      * 执行工具调用
      */
     private async performToolCall(
@@ -906,7 +973,7 @@ export class McpManager {
         }
         
         try {
-            const result = await client.callTool(request.toolName, request.arguments);
+            const result = await client.callTool(request.toolName, request.arguments, request.signal);
             return {
                 success: !result.isError,
                 content: result.content.map(c => ({
@@ -937,7 +1004,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.clientNotConnected'));
         }
         
-        const result = await client.readResource(request.uri);
+        const result = await client.readResource(request.uri, request.signal);
         const content = result.contents[0];
         if (!content) {
             return null;
@@ -963,7 +1030,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.clientNotConnected'));
         }
         
-        const result = await client.getPrompt(request.promptName, request.arguments);
+        const result = await client.getPrompt(request.promptName, request.arguments, request.signal);
         return result.messages.map(m => ({
             role: m.role as 'user' | 'assistant',
             content: {

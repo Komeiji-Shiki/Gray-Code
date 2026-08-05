@@ -54,6 +54,7 @@ function mockState(): ChatStoreState {
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     openTabs: ref<TabInfo[]>([]),
     activeTabId: ref(null),
     sessionSnapshots: ref(new Map<string, ConversationSessionSnapshot>()),

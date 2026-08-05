@@ -588,6 +588,15 @@ export class SettingsManager {
     }
 
     /**
+     * 是否跳过代理 TLS 证书校验（仅用于自签名证书调试）
+     *
+     * 默认 false：校验证书；只有用户显式开启时才跳过。
+     */
+    getProxyInsecureSkipVerify(): boolean {
+        return this.proxy.getProxyInsecureSkipVerify();
+    }
+
+    /**
      * 更新代理设置
      */
     updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {

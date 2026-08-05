@@ -19,7 +19,8 @@ import type {
   TabInfo,
   ConversationSessionSnapshot,
   QueuedMessage,
-  BranchGraphData
+  BranchGraphData,
+  BranchStreamReplayContext
 } from './types'
 import { clearVisibleChatMessagesCache } from './windowUtils'
 
@@ -345,6 +346,9 @@ export function createChatState(): ChatStoreState {
    */
   const _pendingBranchRefreshAfterStream = ref<string | null>(null)
 
+  /** 当前分支流的重放请求快照；终结时由 streamHandler 清理或转存到错误对象 */
+  const _pendingBranchReplayContext = ref<BranchStreamReplayContext | null>(null)
+
   /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
   const editorNodes = ref<EditorNode[]>([])
 
@@ -428,6 +432,7 @@ export function createChatState(): ChatStoreState {
     _lastApprovalGatedStreamId,
     _failedStreamMessageId,
     _pendingBranchRefreshAfterStream,
+    _pendingBranchReplayContext,
     openTabs,
     activeTabId,
     sessionSnapshots,

@@ -108,6 +108,10 @@ export interface UsageMetadata {
 export interface Content {
   role: 'user' | 'model'
   parts: ContentPart[]
+  /** 后端持久化的稳定消息节点 ID；分支操作必须使用该值，不能使用前端流式占位 ID。 */
+  id?: string
+  /** 主历史中的父消息节点 ID（首条为 null）。 */
+  parentId?: string | null
   /**
    * 消息在后端历史记录中的索引
    *
@@ -586,11 +590,40 @@ export interface StreamChunk {
 
 // ============ 错误类型 ============
 
+/**
+ * 分支流失败后的重放参数。
+ *
+ * 不包含 streamId：每次重放都必须生成新的流 ID；其余字段固定为原请求快照，
+ * 避免失败后切换配置或 Prompt 模式导致重试语义漂移。
+ */
+export type BranchStreamReplayContext =
+  | {
+      kind: 'reroll'
+      conversationId: string
+      assistantNodeId: string
+      configId: string
+      modelOverride?: string
+      promptModeId?: string
+    }
+  | {
+      kind: 'editBranch'
+      conversationId: string
+      userNodeId: string
+      newText: string
+      configId: string
+      modelOverride?: string
+      promptModeId?: string
+      /** 编辑模式：'branch' 新建分支（默认）；'keep' 原地改写原消息，保持当前分支 */
+      mode?: 'branch' | 'keep'
+    }
+
 export interface ErrorInfo {
   code: string
   message: string
   /** 底层错误类型（后端 ChannelError.type，如 API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/PARSE_ERROR） */
   type?: string
+  /** reroll / 编辑分支流失败时保存的原请求快照，供错误条执行同类分支流重放 */
+  branchReplayContext?: BranchStreamReplayContext
   details?: any
 }
 

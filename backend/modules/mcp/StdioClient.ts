@@ -303,6 +303,49 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /**
+     * 刷新工具/资源/提示列表缓存
+     *
+     * 服务器通过 notifications/tools|resources|prompts/list_changed 通知列表变化时调用，
+     * 重新请求列表并覆盖本地缓存。逐项独立 try/catch：单项失败不影响其他列表，
+     * 失败项保留旧缓存。
+     */
+    async refreshLists(): Promise<void> {
+        if (!this.process || !this.process.stdin) {
+            throw new Error('Process not started');
+        }
+        
+        // 刷新工具列表（如果支持）
+        if (this.capabilities?.tools) {
+            try {
+                const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
+                this.tools = toolsResult.tools || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh tools list:', error);
+            }
+        }
+        
+        // 刷新资源列表（如果支持）
+        if (this.capabilities?.resources) {
+            try {
+                const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
+                this.resources = resourcesResult.resources || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh resources list:', error);
+            }
+        }
+        
+        // 刷新提示列表（如果支持）
+        if (this.capabilities?.prompts) {
+            try {
+                const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
+                this.prompts = promptsResult.prompts || [];
+            } catch (error) {
+                console.error('[MCP] Failed to refresh prompts list:', error);
+            }
+        }
+    }
+    
+    /**
      * 获取服务器信息
      */
     getServerInfo(): { name: string; version: string } | undefined {
@@ -318,43 +361,60 @@ export class StdioMcpClient extends EventEmitter {
     
     /**
      * 调用工具
+     *
+     * @param signal 外部取消信号（可选）；中止时拒绝 pending 并清理监听
      */
-    async callTool(name: string, args: Record<string, unknown>): Promise<{
+    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
         content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
         isError?: boolean;
     }> {
         return await this.sendRequest('tools/call', {
             name,
             arguments: args
-        });
+        }, undefined, signal);
     }
     
     /**
      * 读取资源
+     *
+     * @param signal 外部取消信号（可选）
      */
-    async readResource(uri: string): Promise<{
+    async readResource(uri: string, signal?: AbortSignal): Promise<{
         contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>;
     }> {
-        return await this.sendRequest('resources/read', { uri });
+        return await this.sendRequest('resources/read', { uri }, undefined, signal);
     }
     
     /**
      * 获取提示
+     *
+     * @param signal 外部取消信号（可选）
      */
-    async getPrompt(name: string, args?: Record<string, string>): Promise<{
+    async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<{
         messages: Array<{ role: string; content: { type: string; text?: string } }>;
     }> {
-        return await this.sendRequest('prompts/get', { name, arguments: args });
+        return await this.sendRequest('prompts/get', { name, arguments: args }, undefined, signal);
     }
     
     /**
-     * 发送 JSON-RPC 请求（带超时和进程退出检测）
+     * 发送 JSON-RPC 请求（带超时、进程退出检测与外部取消）
+     *
+     * 外部取消信号：
+     * - 已中止的信号在进入时立即拒绝（不写 stdin）
+     * - 请求期间外部 abort：清 timeout、摘 exit 监听、删 pendingRequests，以明确文案拒绝
+     * - resolve/reject 闭包摘除 abort listener；resolved 守卫防止重复 settle
      */
-    private sendRequest<T>(method: string, params?: any, timeout?: number): Promise<T> {
+    private sendRequest<T>(method: string, params?: any, timeout?: number, signal?: AbortSignal): Promise<T> {
         const effectiveTimeout = timeout ?? this.timeout;
         return new Promise((resolve, reject) => {
             if (!this.process || !this.process.stdin || this.process.exitCode !== null || this.process.signalCode !== null) {
                 reject(new Error(`Process not started${this.getStderrInfo()}`));
+                return;
+            }
+
+            // 外部信号已中止：不写 stdin，立即拒绝
+            if (signal?.aborted) {
+                reject(new Error('MCP tool call aborted'));
                 return;
             }
             
@@ -367,11 +427,20 @@ export class StdioMcpClient extends EventEmitter {
             };
             
             let resolved = false;
+
+            // 统一清理：清超时、摘 exit 监听、摘外部 abort 监听
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const cleanup = () => {
+                if (timeoutId) clearTimeout(timeoutId);
+                this.process?.removeListener('exit', onExit);
+                signal?.removeEventListener('abort', onAbort);
+            };
             
             // 超时处理
-            const timeoutId = setTimeout(() => {
+            timeoutId = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
+                    cleanup();
                     this.pendingRequests.delete(id);
                     reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${this.getStderrInfo()}`));
                 }
@@ -381,28 +450,37 @@ export class StdioMcpClient extends EventEmitter {
             const onExit = () => {
                 if (!resolved) {
                     resolved = true;
-                    clearTimeout(timeoutId);
+                    cleanup();
                     this.pendingRequests.delete(id);
                     reject(new Error(`Process exited while waiting for "${method}" response${this.getStderrInfo()}`));
                 }
             };
             
+            // 外部中止：拒绝 pending（清 timeout、exit 监听、删 pendingRequests）
+            const onAbort = () => {
+                if (!resolved) {
+                    resolved = true;
+                    cleanup();
+                    this.pendingRequests.delete(id);
+                    reject(new Error('MCP tool call aborted'));
+                }
+            };
+
             this.process.once('exit', onExit);
+            signal?.addEventListener('abort', onAbort);
             
             this.pendingRequests.set(id, {
                 resolve: (result) => {
                     if (!resolved) {
                         resolved = true;
-                        clearTimeout(timeoutId);
-                        this.process?.removeListener('exit', onExit);
+                        cleanup();
                         resolve(result);
                     }
                 },
                 reject: (error) => {
                     if (!resolved) {
                         resolved = true;
-                        clearTimeout(timeoutId);
-                        this.process?.removeListener('exit', onExit);
+                        cleanup();
                         reject(error);
                     }
                 }
@@ -426,8 +504,7 @@ export class StdioMcpClient extends EventEmitter {
                 // 流已销毁/关闭导致同步抛错（例如进程刚退出），立即拒绝请求
                 if (!resolved) {
                     resolved = true;
-                    clearTimeout(timeoutId);
-                    this.process?.removeListener('exit', onExit);
+                    cleanup();
                     this.pendingRequests.delete(id);
                     reject(error instanceof Error ? error : new Error(String(error)));
                 }

@@ -245,33 +245,39 @@ export class HttpMcpClient extends EventEmitter {
     
     /**
      * 调用工具
+     *
+     * @param signal 外部取消信号（可选）；中止时立即拒绝，无需等待内部超时
      */
-    async callTool(name: string, args: Record<string, unknown>): Promise<{
+    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
         content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
         isError?: boolean;
     }> {
         return await this.sendRequest('tools/call', {
             name,
             arguments: args
-        });
+        }, signal);
     }
     
     /**
      * 读取资源
+     *
+     * @param signal 外部取消信号（可选）
      */
-    async readResource(uri: string): Promise<{
+    async readResource(uri: string, signal?: AbortSignal): Promise<{
         contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>;
     }> {
-        return await this.sendRequest('resources/read', { uri });
+        return await this.sendRequest('resources/read', { uri }, signal);
     }
     
     /**
      * 获取提示
+     *
+     * @param signal 外部取消信号（可选）
      */
-    async getPrompt(name: string, args?: Record<string, string>): Promise<{
+    async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<{
         messages: Array<{ role: string; content: { type: string; text?: string } }>;
     }> {
-        return await this.sendRequest('prompts/get', { name, arguments: args });
+        return await this.sendRequest('prompts/get', { name, arguments: args }, signal);
     }
     
     /**
@@ -280,8 +286,19 @@ export class HttpMcpClient extends EventEmitter {
      * 超时通过 AbortController 覆盖整个请求生命周期（含 body 读取）：
      * - JSON 响应：controller 保持到 response.json() 完成
      * - SSE 响应：拿到响应头后由空闲超时接管（每次收到数据重置计时器）
+     *
+     * 外部取消信号与内部超时 controller 联动：
+     * - 外部 abort 时手动调用 controller.abort()，fetch/body 读取立即被中止
+     * - 已中止的信号在进入时立即拒绝（不发起 fetch）
+     * - 请求结束（成功/失败/超时/中止）时摘除外部 listener 与 activeControllers
+     * - 错误文案区分外部中止（'MCP tool call aborted'）与内部超时（requestTimeout）
      */
-    private async sendRequest<T>(method: string, params?: any): Promise<T> {
+    private async sendRequest<T>(method: string, params?: any, signal?: AbortSignal): Promise<T> {
+        // 外部信号已中止：立即拒绝，不发起请求
+        if (signal?.aborted) {
+            throw new Error('MCP tool call aborted');
+        }
+
         const id = ++this.requestId;
         const request: JsonRpcRequest = {
             jsonrpc: '2.0',
@@ -305,7 +322,16 @@ export class HttpMcpClient extends EventEmitter {
         const controller = new AbortController();
         this.activeControllers.add(controller);
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        
+
+        // 外部中止标记：由外部 signal 的 abort listener 置位，
+        // 用于区分「外部中止」与「内部超时」（两者都会触发 controller.abort()）
+        let externalAborted = false;
+        const onExternalAbort = () => {
+            externalAborted = true;
+            controller.abort();
+        };
+        signal?.addEventListener('abort', onExternalAbort);
+
         try {
             timeoutId = setTimeout(() => {
                 controller.abort();
@@ -320,6 +346,9 @@ export class HttpMcpClient extends EventEmitter {
                     signal: controller.signal
                 });
             } catch (error: any) {
+                if (externalAborted) {
+                    throw new Error('MCP tool call aborted');
+                }
                 if (error?.name === 'AbortError') {
                     throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
                 }
@@ -342,7 +371,7 @@ export class HttpMcpClient extends EventEmitter {
             if (contentType.includes('text/event-stream')) {
                 if (timeoutId) clearTimeout(timeoutId);
                 timeoutId = null;
-                return await this.handleSseResponse<T>(response, id);
+                return await this.handleSseResponse<T>(response, id, signal, () => externalAborted);
             }
             
             // JSON 响应（controller 保持到 json() 完成，body 读取同样受超时保护）
@@ -355,6 +384,9 @@ export class HttpMcpClient extends EventEmitter {
                 
                 return jsonResponse.result as T;
             } catch (error: any) {
+                if (externalAborted) {
+                    throw new Error('MCP tool call aborted');
+                }
                 if (error?.name === 'AbortError') {
                     throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
                 }
@@ -362,6 +394,7 @@ export class HttpMcpClient extends EventEmitter {
             }
         } finally {
             if (timeoutId) clearTimeout(timeoutId);
+            signal?.removeEventListener('abort', onExternalAbort);
             this.activeControllers.delete(controller);
         }
     }
@@ -372,8 +405,15 @@ export class HttpMcpClient extends EventEmitter {
      * - 只消费与请求 id 匹配的事件，服务器下发的通知（id: null/缺失）不会被误当结果
      * - 按 SSE 规范合并多行 data:（以 \n 连接，空行结束事件）
      * - 空闲超时：每次收到数据重置计时器，避免误杀合法长任务；收到结果后提前关闭读流
+     * - 外部中止：abort 时 reader.cancel() 快速结束读流，按外部中止（'MCP tool call aborted'）处理；
+     *   reader 从 activeReaders 移除，abort listener 摘除
      */
-    private async handleSseResponse<T>(response: Response, expectedId: number | string): Promise<T> {
+    private async handleSseResponse<T>(
+        response: Response,
+        expectedId: number | string,
+        signal?: AbortSignal,
+        isExternalAbort?: () => boolean
+    ): Promise<T> {
         const reader = response.body?.getReader();
         if (!reader) {
             throw new Error('No response body');
@@ -394,6 +434,18 @@ export class HttpMcpClient extends EventEmitter {
             }, this.timeout);
         };
 
+        // 外部中止：取消读流，让 read() 快速结束（中止标记由 sendRequest 的 listener 置位）
+        const onExternalAbort = () => {
+            reader.cancel().catch(() => {});
+        };
+        if (signal) {
+            if (signal.aborted) {
+                reader.cancel().catch(() => {});
+            } else {
+                signal.addEventListener('abort', onExternalAbort);
+            }
+        }
+
         resetIdleTimer();
 
         try {
@@ -402,7 +454,7 @@ export class HttpMcpClient extends EventEmitter {
                 try {
                     chunk = await reader.read();
                 } catch {
-                    // 读流被取消/中止（超时或 disconnect）
+                    // 读流被取消/中止（外部中止、超时或 disconnect）
                     break;
                 }
                 const { done, value } = chunk;
@@ -477,6 +529,7 @@ export class HttpMcpClient extends EventEmitter {
             }
         } finally {
             if (idleTimer) clearTimeout(idleTimer);
+            signal?.removeEventListener('abort', onExternalAbort);
             try {
                 reader.releaseLock();
             } catch {
@@ -486,6 +539,10 @@ export class HttpMcpClient extends EventEmitter {
         }
 
         if (!matched) {
+            // 外部中止与超时/断开区分文案
+            if (isExternalAbort?.()) {
+                throw new Error('MCP tool call aborted');
+            }
             throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
         }
 

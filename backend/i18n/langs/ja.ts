@@ -291,7 +291,9 @@ const ja: BackendLanguageMessages = {
                     summarizeAborted: '要約リクエストが中止されました',
                     emptySummary: 'AI が生成した要約が空です',
                     messageNotFound: 'メッセージが見つかりません: インデックス {messageIndex}',
-                    canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}'
+                    canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}',
+                    messageChanged: 'メッセージが変更されました。更新後に再試行してください',
+                    editTargetNotInHistory: '選択したメッセージは現在の会話履歴にありません。コンテキスト圧縮で削除された可能性があります'
                 },
                 prompts: {
                     defaultSummarizePrompt: `上記の会話内容を簡潔に要約してください。書式マーカーなしで直接要約を出力してください。

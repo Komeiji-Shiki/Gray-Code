@@ -18,6 +18,7 @@
  */
 
 import type { Content } from '../../../conversation/types';
+import { isRealUserMessage } from '../../../conversation/helpers';
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 import { DEFAULT_KEEP_RECENT_TOKENS } from '../../../settings/types';
 
@@ -232,6 +233,89 @@ export function planIntraRoundSplit(options: {
         }
         if (validateHistoryIntegrity(messages.slice(cut)).valid) {
             return { cutIndex: cut };
+        }
+    }
+    return null;
+}
+
+export interface MessageGranularSummarizePlan {
+    /** 切点：总结 [0, cutIndex)，保留 [cutIndex, ...] */
+    cutIndex: number;
+    /** round 表示真实用户回合边界；intra_round 表示长回合内部的安全 model 边界。 */
+    boundary: 'round' | 'intra_round';
+}
+
+/**
+ * 在轮级规划结果基础上向前寻找更细的安全切点。
+ *
+ * 轮级规划先保证 keepRecentRounds 的语义；随后允许在“原本会被整轮总结掉”的最后一个肥轮
+ * 内部选择 model 消息边界，从而尽量把保留后缀填满 keepBudgetTokens，而不是直接丢掉整轮。
+ * 切点后的历史必须没有孤儿 functionResponse，确保 functionCall/functionResponse 原子性。
+ */
+export function planSummarizeMessages(options: {
+    messages: Content[];
+    messageTokens: number[];
+    keepBudgetTokens: number;
+    minKeepRounds: number;
+    mode: 'manual' | 'auto';
+}): MessageGranularSummarizePlan | null {
+    const { messages, messageTokens, keepBudgetTokens, minKeepRounds, mode } = options;
+    if (messages.length < 2 || messages.length !== messageTokens.length) {
+        return null;
+    }
+
+    const roundStarts: number[] = [];
+    for (let i = 0; i < messages.length; i++) {
+        if (isRealUserMessage(messages[i])) roundStarts.push(i);
+    }
+    if (roundStarts.length === 0) return null;
+
+    const roundTokens = roundStarts.map((startIndex, roundIndex) => {
+        const endIndex = roundStarts[roundIndex + 1] ?? messages.length;
+        let total = 0;
+        for (let i = startIndex; i < endIndex; i++) total += messageTokens[i] ?? 0;
+        return total;
+    });
+    const roundPlan = planSummarizeRounds({ roundTokens, keepBudgetTokens, minKeepRounds, mode });
+    if (roundPlan.type === 'none') return null;
+
+    let maximumCutIndex = roundPlan.type === 'rounds'
+        ? roundStarts[roundPlan.keepFromRound]
+        : messages.length - 1;
+
+    const suffixTokens = new Array<number>(messages.length + 1).fill(0);
+    for (let i = messages.length - 1; i >= 0; i--) {
+        suffixTokens[i] = suffixTokens[i + 1] + (messageTokens[i] ?? 0);
+    }
+    // 即使已有多轮，只要轮级边界后的最后一轮自身仍超预算，就继续开放当前长轮内部的切点。
+    if (suffixTokens[maximumCutIndex] > keepBudgetTokens) {
+        maximumCutIndex = messages.length - 1;
+    }
+
+    const candidates: number[] = [];
+    for (let i = 1; i <= maximumCutIndex; i++) {
+        if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) {
+            candidates.push(i);
+        }
+    }
+
+    const isSafeCut = (cutIndex: number) => validateHistoryIntegrity(messages.slice(cutIndex)).valid;
+    for (const cutIndex of candidates) {
+        if (suffixTokens[cutIndex] <= keepBudgetTokens && isSafeCut(cutIndex)) {
+            return {
+                cutIndex,
+                boundary: isRealUserMessage(messages[cutIndex]) ? 'round' : 'intra_round'
+            };
+        }
+    }
+
+    // 预算小到任何候选后缀都装不下时，沿用轮级规划的防死锁结果；若该边界异常则向后找安全点。
+    for (const cutIndex of candidates.filter(index => index >= maximumCutIndex)) {
+        if (isSafeCut(cutIndex)) {
+            return {
+                cutIndex,
+                boundary: isRealUserMessage(messages[cutIndex]) ? 'round' : 'intra_round'
+            };
         }
     }
     return null;

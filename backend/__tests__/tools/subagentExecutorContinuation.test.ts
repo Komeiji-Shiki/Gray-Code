@@ -137,9 +137,78 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
     });
 });
 
+describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () => {
+    afterEach(() => {
+        subAgentConcurrencyLimiter.release('new_lsh');
+    });
+
+    it('updateLastSentHistory 深拷贝存入快照，不污染 Monitor contents 与 contentRevision，不发 content_snapshot', () => {
+        subAgentRunEventBus.createRun('hist_only', 'Tester', undefined, { conversationId: 'conv_1' });
+        const snapshot = subAgentRunEventBus.getSnapshot('hist_only')!;
+        const revisionBefore = snapshot.contentRevision;
+        const eventsBefore = snapshot.events.length;
+        const sent: Content[] = [
+            { role: 'user', parts: [{ text: 'sent-1' }] },
+            { role: 'model', parts: [{ text: 'sent-2' }] }
+        ];
+
+        subAgentRunEventBus.updateLastSentHistory('hist_only', sent);
+
+        // 深拷贝存入，且修改原数组不影响已存快照
+        expect(snapshot.lastSentHistory).toEqual(sent);
+        expect(snapshot.lastSentHistory).not.toBe(sent);
+        (sent[0].parts as any)[0].text = 'mutated';
+        expect((snapshot.lastSentHistory![0].parts![0] as any).text).toBe('sent-1');
+        // 不污染 Monitor contents 与 contentRevision
+        expect(snapshot.contents).toEqual([]);
+        expect(snapshot.contentRevision).toBe(revisionBefore);
+        // 不发 content_snapshot 事件（事件 journal 长度不变）
+        expect(snapshot.events).toHaveLength(eventsBefore);
+        expect(snapshot.events.some(e => e.type === 'content_snapshot')).toBe(false);
+
+        subAgentRunEventBus.emit({ runId: 'hist_only', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+    });
+
+    it('续跑 baseContents 优先取 lastSentHistory（而不是 contents 卡片），历史逐条一致', async () => {
+        // 模拟旧 run：contents 首条是 # SubAgent Invocation 卡片，lastSentHistory 是实际发送的 history
+        subAgentRunEventBus.createRun('cont_lsh_old', 'Tester', { agentType: 'tester', prompt: 'old' }, {
+            conversationId: 'conv_1',
+            initialContents: [
+                { role: 'user', parts: [{ text: '# SubAgent Invocation\nold task' }], isUserInput: true },
+                { role: 'model', parts: [{ text: 'old reply' }] }
+            ] as Content[]
+        });
+        subAgentRunEventBus.updateLastSentHistory('cont_lsh_old', [
+            { role: 'user', parts: [{ text: 'old task' }] },
+            { role: 'model', parts: [{ text: 'old reply' }] }
+        ]);
+        subAgentRunEventBus.emit({ runId: 'cont_lsh_old', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+
+        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'continue',
+            runId: 'new_lsh',
+            continueFromRunId: 'cont_lsh_old',
+            conversationId: 'conv_1'
+        });
+
+        expect(result.error).toContain('Exceeded maximum iterations');
+        const snapshot = subAgentRunEventBus.getSnapshot('new_lsh')!;
+        // 新 run transcript 前缀 = lastSentHistory（逐条一致），不含卡片
+        expect(snapshot.contents[0]).toEqual({ role: 'user', parts: [{ text: 'old task' }] });
+        expect(snapshot.contents[1]).toEqual({ role: 'model', parts: [{ text: 'old reply' }] });
+        expect(JSON.stringify(snapshot.contents.slice(0, 2))).not.toContain('SubAgent Invocation');
+        // 新 run 自己的卡片仍在（Monitor 展示语义不变）
+        expect(JSON.stringify(snapshot.contents[2])).toContain('SubAgent Invocation');
+    });
+});
+
 describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
     afterEach(() => {
         subAgentConcurrencyLimiter.release('new_restored');
+        subAgentConcurrencyLimiter.release('new_restored_lsh');
+        subAgentConcurrencyLimiter.release('new_legacy');
     });
 
     it('内存无快照时，从当前对话持久化记录恢复并接续', async () => {
@@ -179,6 +248,104 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         // 新 run 继承了恢复出的 transcript
         const snapshot = subAgentRunEventBus.getSnapshot('new_restored')!;
         expect(snapshot.contents.some(c => c.parts.some(p => (p as any).text === 'OLD TRANSCRIPT MARKER'))).toBe(true);
+    });
+
+    it('持久化记录带 lastSentHistory 时，恢复后接续以它为前缀（而非卡片 contents）', async () => {
+        const persisted: Record<string, unknown> = {
+            cont_restored_lsh: {
+                runId: 'cont_restored_lsh',
+                agentName: 'Tester',
+                status: 'completed',
+                createdAt: 1,
+                updatedAt: 2,
+                contents: [
+                    { role: 'user', parts: [{ text: '# SubAgent Invocation\nold task' }], isUserInput: true },
+                    { role: 'model', parts: [{ text: 'old reply' }] }
+                ],
+                contentRevision: 2,
+                eventSequence: 2,
+                lastSentHistory: [
+                    { role: 'user', parts: [{ text: 'old task' }] },
+                    { role: 'model', parts: [{ text: 'old reply' }] }
+                ]
+            }
+        };
+        const store = {
+            getCustomMetadata: jest.fn(async () => persisted),
+            setCustomMetadata: jest.fn(async () => {})
+        };
+
+        const executor = createDefaultExecutor(createConfig(), createContext({
+            conversationId: 'conv_1',
+            conversationStore: store as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'x',
+            runId: 'new_restored_lsh',
+            continueFromRunId: 'cont_restored_lsh',
+            conversationId: 'conv_1'
+        });
+
+        expect(result.error).toContain('Exceeded maximum iterations');
+        // 恢复出的旧快照带 lastSentHistory（深拷贝，与持久化对象不共享引用）
+        const restoredOld = subAgentRunEventBus.getSnapshot('cont_restored_lsh')!;
+        expect(restoredOld.lastSentHistory).toEqual([
+            { role: 'user', parts: [{ text: 'old task' }] },
+            { role: 'model', parts: [{ text: 'old reply' }] }
+        ]);
+        expect(restoredOld.lastSentHistory).not.toBe((persisted.cont_restored_lsh as any).lastSentHistory);
+        // 新 run transcript 以 lastSentHistory 为前缀，卡片被排除在模型前缀之外
+        const snapshot = subAgentRunEventBus.getSnapshot('new_restored_lsh')!;
+        expect(snapshot.contents[0]).toEqual({ role: 'user', parts: [{ text: 'old task' }] });
+        expect(snapshot.contents[1]).toEqual({ role: 'model', parts: [{ text: 'old reply' }] });
+        expect(JSON.stringify(snapshot.contents.slice(0, 2))).not.toContain('SubAgent Invocation');
+    });
+
+    it('旧记录缺 lastSentHistory 时降级：过滤掉 # SubAgent Invocation 卡片，其余保留', async () => {
+        const persisted: Record<string, unknown> = {
+            cont_legacy: {
+                runId: 'cont_legacy',
+                agentName: 'Tester',
+                status: 'completed',
+                createdAt: 1,
+                updatedAt: 2,
+                contents: [
+                    { role: 'user', parts: [{ text: '# SubAgent Invocation\n\n## Agent System Prompt\nlegacy prompt' }], isUserInput: true },
+                    { role: 'model', parts: [{ text: 'legacy reply' }] },
+                    { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { name: 't', response: { success: true } } }] }
+                ],
+                contentRevision: 0,
+                eventSequence: 0
+                // 无 lastSentHistory：模拟旧格式数据
+            }
+        };
+        const store = {
+            getCustomMetadata: jest.fn(async () => persisted),
+            setCustomMetadata: jest.fn(async () => {})
+        };
+
+        const executor = createDefaultExecutor(createConfig(), createContext({
+            conversationId: 'conv_1',
+            conversationStore: store as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'x',
+            runId: 'new_legacy',
+            continueFromRunId: 'cont_legacy',
+            conversationId: 'conv_1'
+        });
+
+        expect(result.error).toContain('Exceeded maximum iterations');
+        const snapshot = subAgentRunEventBus.getSnapshot('new_legacy')!;
+        // 卡片被过滤，其余 transcript 保留为前缀（2 条剩余 + 新 run 自己的卡片）
+        expect(snapshot.contents).toHaveLength(3);
+        expect(JSON.stringify(snapshot.contents[0])).not.toContain('SubAgent Invocation');
+        expect(snapshot.contents[0]).toEqual({ role: 'model', parts: [{ text: 'legacy reply' }] });
+        expect((snapshot.contents[1].parts![0] as any).functionResponse?.name).toBe('t');
     });
 
     it('恢复出的快照仍执行会话归属校验（归属不同时拒绝）', async () => {

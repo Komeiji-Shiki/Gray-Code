@@ -8,6 +8,7 @@ import { ref, onUnmounted } from 'vue'
 import { IconButton } from '../common'
 import type { Message } from '../../types'
 import { t } from '../../i18n'
+import BranchSwitcherBar from './BranchSwitcherBar.vue'
 
 defineProps<{
   message: Message
@@ -100,6 +101,13 @@ function handleCopy() {
       icon="codicon-refresh"
       size="small"
       @click="emit('retry')"
+    />
+
+    <!-- 候选切换器：与复制 / 重试共用消息操作栏，不再单独占一行 -->
+    <BranchSwitcherBar
+      v-if="canBranch"
+      :parent-node-id="message.id"
+      compact
     />
 
     <!-- 删除按钮 -->

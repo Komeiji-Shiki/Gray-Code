@@ -53,6 +53,7 @@ function mockState(): ChatStoreState {
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),
     _pendingBranchRefreshAfterStream: ref<string | null>(null),
+    _pendingBranchReplayContext: ref(null),
     openTabs: ref([]),
     activeTabId: ref(null),
     sessionSnapshots: ref(new Map()),
@@ -159,6 +160,33 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(snapshot.branchGraph).toEqual(graph)
   })
 
+  it('snapshotCurrentSession 保存分支流刷新标记与重放上下文', () => {
+    const state = mockState()
+    state.currentConversationId.value = 'conv-1'
+    state._pendingBranchRefreshAfterStream.value = 'conv-1'
+    state._pendingBranchReplayContext.value = {
+      kind: 'editBranch',
+      conversationId: 'conv-1',
+      userNodeId: 'user-1',
+      newText: 'edited',
+      configId: 'cfg-1'
+    }
+
+    const snapshot = snapshotCurrentSession(state)
+    state._pendingBranchRefreshAfterStream.value = null
+    state._pendingBranchReplayContext.value = null
+    restoreSessionFromSnapshot(state, snapshot)
+
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv-1')
+    expect(state._pendingBranchReplayContext.value).toEqual({
+      kind: 'editBranch',
+      conversationId: 'conv-1',
+      userNodeId: 'user-1',
+      newText: 'edited',
+      configId: 'cfg-1'
+    })
+  })
+
   it('switchTab 快照当前标签页分支图，切回后恢复分支视图状态', () => {
     const state = mockState()
     const graphA = makeGraph(
@@ -195,26 +223,46 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     const snapshot = snapshotCurrentSession(state)
     const legacy = { ...snapshot } as any
     delete legacy.branchGraph
+    delete legacy.pendingBranchRefreshAfterStream
+    delete legacy.pendingBranchReplayContext
 
     state.branchGraph.value = makeGraph(
       { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
       'a1'
     )
+    state._pendingBranchRefreshAfterStream.value = 'conv-1'
+    state._pendingBranchReplayContext.value = {
+      kind: 'reroll',
+      conversationId: 'conv-1',
+      assistantNodeId: 'a1',
+      configId: 'cfg-1'
+    }
 
     restoreSessionFromSnapshot(state, legacy)
 
     expect(state.branchGraph.value).toBeNull()
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    expect(state._pendingBranchReplayContext.value).toBeNull()
   })
 
-  it('resetConversationState 清空 branchGraph（新空白标签页无分支图）', () => {
+  it('resetConversationState 清空 branchGraph 与分支流暂存状态（新空白标签页无分支状态）', () => {
     const state = mockState()
     state.branchGraph.value = makeGraph(
       { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
       'a1'
     )
+    state._pendingBranchRefreshAfterStream.value = 'conv-1'
+    state._pendingBranchReplayContext.value = {
+      kind: 'reroll',
+      conversationId: 'conv-1',
+      assistantNodeId: 'a1',
+      configId: 'cfg-1'
+    }
 
     resetConversationState(state)
 
     expect(state.branchGraph.value).toBeNull()
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    expect(state._pendingBranchReplayContext.value).toBeNull()
   })
 })

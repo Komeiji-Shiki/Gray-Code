@@ -14,6 +14,7 @@ import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLim
 import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
 import type { GenerateResponse } from '../../modules/channel/types';
 import type { UsageIndexMessage } from '../../modules/conversation/usageStats';
+import type { Content } from '../../modules/conversation/types';
 
 function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
     return {
@@ -81,6 +82,8 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
     afterEach(() => {
         subAgentConcurrencyLimiter.release('cache_new_run');
         subAgentConcurrencyLimiter.release('cache_plain_run');
+        subAgentConcurrencyLimiter.release('cache_old_multi');
+        subAgentConcurrencyLimiter.release('cache_new_multi');
     });
 
     it('continueFromRunId 续跑时 conversationId 沿用旧 runId（缓存域天然一致）', async () => {
@@ -123,6 +126,96 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
         expect(result.success).toBe(true);
         const request = generateMock.mock.calls[0][0];
         expect(request.conversationId).toBe('cache_plain_run');
+    });
+
+    it('续跑请求 history 严格等于旧 run 最后一次实际发送的 history + 新 user 消息（深比较），且不含 Invocation 卡片', async () => {
+        // 旧 run：第 1 轮 generate 返回工具调用，第 2 轮返回纯文本（正常完成）
+        const oldRunId = 'cache_old_multi';
+        // 发送时立即深拷贝记录（executor 之后会原地 push 后续消息，不能持有引用）
+        const oldHistories: Content[][] = [];
+        const generateMock = jest.fn()
+            .mockImplementationOnce(async (req: any) => {
+                oldHistories.push(JSON.parse(JSON.stringify(req.history)));
+                return {
+                    content: {
+                        role: 'model',
+                        parts: [{ functionCall: { id: 'call_1', name: 'stub_tool', args: {} } }]
+                    } as any,
+                    model: 'model-x'
+                };
+            })
+            .mockImplementationOnce(async (req: any) => {
+                oldHistories.push(JSON.parse(JSON.stringify(req.history)));
+                return textResponse();
+            });
+        const store = {
+            getCustomMetadata: jest.fn(async () => ({})),
+            setCustomMetadata: jest.fn(async (_conversationId: string, _key: string, _value: unknown) => {})
+        };
+        const executor = createDefaultExecutor(createConfig(), createContext({
+            conversationId: 'conv_1',
+            conversationStore: store as any,
+            channelManager: { generate: generateMock } as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'do something',
+            runId: oldRunId,
+            conversationId: 'conv_1'
+        });
+
+        expect(result.success).toBe(true);
+        expect(generateMock).toHaveBeenCalledTimes(2);
+        // 旧 run 的请求历史从不包含 # SubAgent Invocation 卡片（卡片只进 Monitor contents）
+        for (const sent of oldHistories) {
+            expect(JSON.stringify(sent)).not.toContain('SubAgent Invocation');
+        }
+        // lastSentHistory == 旧 run 最后一次实际发送的 history（深拷贝，非同一引用）
+        const oldSnapshot = subAgentRunEventBus.getSnapshot(oldRunId)!;
+        expect(oldSnapshot.lastSentHistory).toEqual(oldHistories[1]);
+        expect(oldSnapshot.lastSentHistory).not.toBe(oldHistories[1]);
+        // 卡片仍保留在 Monitor contents（展示语义不变），lastSentHistory 不含它
+        expect(JSON.stringify(oldSnapshot.contents[0])).toContain('SubAgent Invocation');
+        // lastSentHistory 随 conversation metadata 持久化
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const writes = store.setCustomMetadata.mock.calls.map(c => c[2] as Record<string, any>);
+        const writtenRecord = writes[writes.length - 1][oldRunId];
+        expect(writtenRecord.lastSentHistory).toEqual(oldHistories[1]);
+        expect(writtenRecord.lastSentHistory).not.toBe(oldHistories[1]);
+
+        // 续跑：baseContents 优先取 lastSentHistory
+        let run2SentHistory: Content[] = [];
+        let run2Request: any;
+        const continueGenerateMock = jest.fn().mockImplementationOnce(async (req: any) => {
+            run2Request = req;
+            run2SentHistory = JSON.parse(JSON.stringify(req.history));
+            return textResponse();
+        });
+        const executor2 = createDefaultExecutor(createConfig(), createContext({
+            conversationId: 'conv_1',
+            channelManager: { generate: continueGenerateMock } as any
+        }));
+        const result2 = await executor2({
+            agentType: 'tester',
+            prompt: 'continue again',
+            runId: 'cache_new_multi',
+            continueFromRunId: oldRunId,
+            conversationId: 'conv_1'
+        });
+
+        expect(result2.success).toBe(true);
+        expect(continueGenerateMock).toHaveBeenCalledTimes(1);
+        // 深比较：续跑实际发送的 history == 旧 run 最后一次实际发送的 history + 新 user 消息
+        expect(run2SentHistory).toEqual([
+            ...oldHistories[1],
+            { role: 'user', parts: [{ text: 'continue again' }] }
+        ]);
+        // history[0] 不含 # SubAgent Invocation 卡片（续跑前缀与旧 run 实际发送逐条一致）
+        expect(JSON.stringify(run2SentHistory[0])).not.toContain('SubAgent Invocation');
+        expect(run2SentHistory[0]).toEqual({ role: 'user', parts: [{ text: 'do something' }] });
+        // conversationId 沿用旧 runId（缓存域不变）
+        expect(run2Request.conversationId).toBe(oldRunId);
     });
 });
 

@@ -306,9 +306,10 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 编辑用户消息分支流（TREE-03：编辑用户消息时创建新的用户消息分支，不覆盖原消息）。
  *
- * 入参：{ conversationId, userNodeId?, newText, configId, modelOverride?, promptModeId?, streamId? }
- * - 后端创建编辑候选（新 user 节点 kind='edit' + 模型候选），主历史切换到编辑后路径并复用工具循环生成；
- * - 旧用户节点及其子树保留在分支图 sidecar 中（失败可切回，决策 10 精神）；
+ * 入参：{ conversationId, userNodeId?, newText, configId, modelOverride?, promptModeId?, streamId?, mode? }
+ * - mode='branch'（默认）：后端创建编辑候选（新 user 节点 kind='edit' + 模型候选），主历史切换到编辑后路径并复用工具循环生成；
+ * - mode='keep'：后端原地改写原用户消息并截断其后内容（保持当前分支）；
+ * - 旧用户节点及其子树保留在分支图 sidecar 中（branch 模式，失败可切回，决策 10 精神）；
  * - chunk 通过 streamChunk / streamChunkBatch 协议转发给前端（TREE-10 前端接入）。
  *
  * 本 handler 已按 StreamRequestHandler 模式接线（R6a-FIX）：
@@ -317,13 +318,14 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
  * 由 MessageRouter 以 fire-and-forget 方式调用（STREAM_MESSAGE_TYPES 含 chat.editBranchStream，H2）。
  */
 export const editBranchStream: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, userNodeId, newText, configId, modelOverride, promptModeId, streamId } = data || {};
+  const { conversationId, userNodeId, newText, configId, modelOverride, promptModeId, streamId, mode } = data || {};
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()
       || typeof newText !== 'string' || !newText.trim()) {
     ctx.sendError(requestId, 'EDIT_BRANCH_INVALID_ARGS', 'conversationId, configId and newText are required');
     return;
   }
+  const resolvedMode = mode === 'keep' ? 'keep' : 'branch';
 
   // 确保分支服务已注册（懒初始化，与 BranchHandlers 同模式）
   try {
@@ -371,6 +373,7 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
       configId,
       modelOverride,
       promptModeId,
+      mode: resolvedMode,
       abortSignal: controller?.signal,
       summarizeAbortSignal: summarizeController?.signal,
     });

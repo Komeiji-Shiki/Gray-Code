@@ -137,6 +137,7 @@ const ja: LanguageMessages = {
                 checkpointHint: 'このメッセージの前にツール実行のバックアップが検出されました。ツール実行前に復元してから編集することで、ファイルの変更を回復できます。',
                 cancel: 'キャンセル',
                 save: '保存',
+                saveInPlace: 'その場で保存（ブランチを維持）',
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',
@@ -424,6 +425,7 @@ const ja: LanguageMessages = {
                 close: '閉じる',
                 title: '分岐ツリー',
                 empty: '分岐はまだありません',
+                candidateCount: '{count} 件の候補',
                 deleted: '削除済み',
                 restore: '復元',
                 rename: '名前を変更',
@@ -1036,7 +1038,7 @@ const ja: LanguageMessages = {
                         threshold: {
                             label: 'コンテキストしきい値',
                             placeholder: '80% または 100000',
-                            hint: '合計トークン数がこのしきい値を超えると、古い会話ラウンドを自動的に破棄します。パーセンテージ（例：80%）または絶対値（例：100000）の 2 つの形式をサポートしています'
+                            hint: '合計トークン数がしきい値を超えると、まずモデルが古い内容を要約し、過去のユーザー入力を原文で保持します。要約に失敗した場合のみ、ツール呼び出しの対応関係を保つ細粒度トリミングを現在のリクエストに適用します。'
                         },
                         extraCut: {
                             label: '追加カット量',
@@ -1050,9 +1052,9 @@ const ja: LanguageMessages = {
                         },
                         mode: {
                             label: '管理方式',
-                            hint: 'トリミング：古いラウンドを直接破棄。自動要約：破棄前に古いラウンドを要約し、AIが要約に基づいて作業を継続可能',
-                            trim: 'コンテキストトリミング',
-                            summarize: '自動要約'
+                            hint: 'モデル要約を優先し、長いツールラウンド内でも安全なメッセージ境界を選択します。失敗時は会話ラウンド全体を破棄せず、永続化しない細粒度トリミングを使用します。',
+                            trim: '旧コンテキストトリミング',
+                            summarize: 'スマート要約と安全なトリミング'
                         }
                     },
                     toolOptions: {
@@ -1960,22 +1962,19 @@ const ja: LanguageMessages = {
                     title: '手動要約',
                     description: '入力ボックスの右側にある圧縮ボタンをクリックすると、手動でコンテキスト要約をトリガーできます。要約された内容は元の会話履歴を置き換えます。'
                 },
-                autoSection: {
-                    title: '自動要約（移行済み）',
-                    comingSoon: '近日公開',
-                    enable: '自動要約を有効化',
-                    enableHint: 'トークン使用量がしきい値を超えたときに自動的に要約をトリガー',
-                    threshold: 'トリガーしきい値',
-                    thresholdUnit: '%',
-                    thresholdHint: 'トークン使用量がこのパーセンテージに達したときに自動要約をトリガー'
-                },
                 optionsSection: {
                     title: '要約オプション',
                     keepRounds: '最少保持ラウンド数',
                     keepRoundsUnit: 'ラウンド',
                     keepRoundsHint: '保持バジェットの下限保護として、少なくとも最近の N ラウンドは要約されません',
+                    keepRoundsMinNote: '下限は 1 ラウンドです（バックエンドが最低 1 ラウンドを強制します）',
                     keepTokens: '直近保持バジェット',
                     keepTokensHint: '要約時に圧縮せず保持する直近コンテキストの量：トークン数（例 30000）またはモデル最大コンテキストに対する割合（例 25%）。実際の範囲はこのバジェット内でラウンド境界に揃えられます',
+                    maxAttempts: '自動要約の最大試行回数',
+                    maxAttemptsUnit: '回/ターン',
+                    maxAttemptsHint: '1 つの実ユーザーターン内で自動要約を試行する最大回数（1〜5、デフォルト 2）。回数を使い切ってもしきい値を超えている場合、このリクエストは永続化しない安全なトリミングにフォールバックします',
+                    maxInputRatio: '要約モデルの入力比率',
+                    maxInputRatioHint: '自動要約の 1 リクエスト入力を要約モデルのコンテキストウィンドウに占める比率（5%〜95%、デフォルト 50%）。超えた場合は要約範囲を縮小し、最新のツールやり取りを保持します',
                     manualPrompt: '手動要約プロンプト',
                     manualPromptPlaceholder: '手動要約で使用するプロンプトを入力...',
                     manualPromptHint: '「コンテキストを要約」ボタンを押したときに使用されます',
@@ -3510,7 +3509,8 @@ const ja: LanguageMessages = {
                 restoreDeleteFailed: '復元して削除に失敗しました',
                 noConfigSelected: '設定が選択されていません',
                 summarizeFailed: '要約に失敗しました',
-                restoreEditFailed: '復元して編集に失敗しました'
+                restoreEditFailed: '復元して編集に失敗しました',
+                messageChanged: 'メッセージが変更されました。履歴を更新して再試行してください'
             },
             relativeTime: {
                 justNow: 'たった今',

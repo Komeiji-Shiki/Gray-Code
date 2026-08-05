@@ -320,6 +320,7 @@ export async function cancelStreamAndRejectTools(
   if (!state.currentConversationId.value) return
 
   const currentStreamingId = state.streamingMessageId.value
+  const hadActiveRequest = state.isStreaming.value || state.isWaitingForResponse.value || !!state.activeStreamId.value
 
   // 仅在“真实流式生成中”才记录取消标记。
   // awaitingConfirmation 等非流式等待阶段不会再收到该请求的 complete/cancelled，
@@ -330,6 +331,12 @@ export async function cancelStreamAndRejectTools(
   stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
+  // 新建/切换会话同样立即结束本地等待；后端拒绝工具与取消流仍按下方顺序完成。
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isLoading.value = false
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -366,7 +373,7 @@ export async function cancelStreamAndRejectTools(
     }
   }
   
-  if (state.isStreaming.value) {
+  if (hadActiveRequest) {
     try {
       await sendToExtension('cancelStream', {
         conversationId: state.currentConversationId.value
@@ -375,11 +382,11 @@ export async function cancelStreamAndRejectTools(
       console.error('Failed to cancel stream:', err)
     }
   }
-  
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state.isStreaming.value = false
-  state.isWaitingForResponse.value = false
+}
+
+export interface CancelStreamOptions {
+  /** 替换当前回合前先将前台 SubAgent 与父取消信号解绑，使其转入后台继续运行。 */
+  preserveSubAgents?: boolean
 }
 
 /**
@@ -387,7 +394,8 @@ export async function cancelStreamAndRejectTools(
  */
 export async function cancelStream(
   state: ChatStoreState,
-  _computed: ChatStoreComputed
+  _computed: ChatStoreComputed,
+  options: CancelStreamOptions = {}
 ): Promise<void> {
   const currentStreamingId = state.streamingMessageId.value
 
@@ -399,8 +407,14 @@ export async function cancelStream(
     state.retryStatus.value = null
   }
 
-  if (!state.isWaitingForResponse.value || !state.currentConversationId.value) {
+  const conversationId = state.currentConversationId.value
+  const hadActiveRequest = state.isWaitingForResponse.value || state.isStreaming.value || !!state.activeStreamId.value
+  if (!conversationId || !hadActiveRequest) {
     return
+  }
+  const cancelRequest = {
+    conversationId,
+    ...(options.preserveSubAgents === true ? { preserveSubAgents: true } : {})
   }
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
@@ -408,55 +422,21 @@ export async function cancelStream(
   // 如果是“完全空”的占位消息，立即删除，避免残留空消息导致索引越界
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
   
-  // 等待工具确认状态（包括 diff 工具等待用户操作）
-  if (!state.isStreaming.value) {
-    // 先调用后端 cancelStream 来关闭 diff 编辑器并拒绝工具
-    try {
-      await sendToExtension('cancelStream', {
-        conversationId: state.currentConversationId.value
-      })
-    } catch (err) {
-      console.error('Failed to cancel stream:', err)
-    }
+  // 点击后立即收敛本地状态，不等待后端关闭 diff、拒绝悬空工具和持久化 functionResponse。
+  // 调用方仍会 await 下方请求，因此删除/切会话等依赖后端清理的操作顺序保持不变。
+  const info = markIncompleteToolsAsError(state, currentStreamingId)
+  ensureFunctionResponseMessageForRejectedTools(state, info)
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isLoading.value = false
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
 
-    // 更新前端工具状态（更健壮：即使 streamingMessageId 丢失也能 fallback）
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    // 插入 functionResponse，保持前后端索索引一致
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isWaitingForResponse.value = false
-    return
-  }
-  
-  // 正在流式响应
   try {
-    await sendToExtension('cancelStream', {
-      conversationId: state.currentConversationId.value
-    })
-
-    // 使用保存的 ID 来查找和更新消息（更健壮：即使找不到，也 fallback）
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    // 插入 functionResponse，保持前后端索引一致
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isStreaming.value = false
-    state.isWaitingForResponse.value = false
+    await sendToExtension('cancelStream', cancelRequest)
   } catch (err) {
+    // 本地状态已经完成取消，后端错误只记录，不把 UI 恢复成永久等待。
     console.error('取消请求失败:', err)
-    // 即使出错也要尝试更新本地状态
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isStreaming.value = false
-    state.isWaitingForResponse.value = false
   }
 }
 

@@ -5,7 +5,7 @@
  */
 
 import type { Message, Attachment, Content } from '../../types'
-import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from './types'
+import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo, BranchStreamReplayContext } from './types'
 import { triggerRef, shallowRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
@@ -23,6 +23,23 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById, appendMessage } from './state'
+import { translate } from '../../composables/useI18n'
+import { useSettingsStore } from '../settingsStore'
+
+/**
+ * H5：复位“本次 sendMessage 遗留的流式/待发送状态”。
+ *
+ * sendMessage 在 await 间隙提前终止（如会话已切换导致 validateSessionIdentity 失败）
+ * 时必须复位本次发送设置的标志，否则 isStreaming/isWaitingForResponse/streamingMessageId
+ * 会永久残留，界面一直卡在“等待响应”。
+ */
+function resetPendingSendState(state: ChatStoreState): void {
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state._lastCancelledStreamId.value = null
+}
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -338,6 +355,7 @@ export async function sendMessage(
   }
 
   state.error.value = null
+  state._pendingBranchReplayContext.value = null
   if (state.isWaitingForResponse.value) return false
 
   // 发送新消息 = 放弃上次失败的回答：回滚失败流保留的半截消息，
@@ -430,7 +448,15 @@ export async function sendMessage(
     await syncConversationWorkspaceUri(state, targetConvId)
 
     // 写入全局状态前校验会话归属，防止跨会话投递
-    if (!validateSessionIdentity(state, targetConvId)) return false
+    if (!validateSessionIdentity(state, targetConvId)) {
+      // H5(a)：会话已切换：复位本次发送设置的流式状态，避免 isStreaming 等永久残留。
+      // 仅当当前 streamingMessageId 仍是本次发送的占位时才复位，
+      // 避免误清新会话自己正在进行的流。
+      if (state.streamingMessageId.value === assistantMessageId) {
+        resetPendingSendState(state)
+      }
+      return false
+    }
 
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
@@ -465,6 +491,16 @@ export async function sendMessage(
       streamId
     })
 
+    // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
+    // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
+    if (!validateSessionIdentity(state, targetConvId)) {
+      console.warn('[messageActions] sendMessage: conversation switched while chatStream in flight; stream continues in background', {
+        targetConvId,
+        currentConversationId: state.currentConversationId.value
+      })
+      return false
+    }
+
   } catch (err: any) {
     // 发送失败的错误展示不依赖 isStreaming 判断：
     // 用户在 await 期间调用了 cancelStream 时 isStreaming 已被置 false，
@@ -475,10 +511,7 @@ export async function sendMessage(
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
+      resetPendingSendState(state)
     }
     return false
   } finally {
@@ -521,6 +554,7 @@ async function recoverAfterStreamStartFailure(
   originConvId: string
 ): Promise<void> {
   state._pendingBranchRefreshAfterStream.value = null
+  state._pendingBranchReplayContext.value = null
   // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
   try {
     const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
@@ -572,6 +606,7 @@ export async function retryFromMessage(
   // await cancelStream() 之前固化 key 参数
   const originConvId = state.currentConversationId.value
   const targetMessageId = state.allMessages.value[messageIndex]?.id
+  if (!targetMessageId) return
   const isLocalPlaceholder = isLocalOnlyAssistant(state.allMessages.value[messageIndex]) || isEmptyAssistantPlaceholder(state.allMessages.value[messageIndex])
 
   // 如果正在流式响应或等待工具确认，先取消
@@ -588,6 +623,7 @@ export async function retryFromMessage(
   // 否则会触发 messageIndexOutOfBounds。这里直接本地清理并走 retryStream。
   if (isLocalPlaceholder) {
     state.error.value = null
+    state._pendingBranchReplayContext.value = null
     state.isLoading.value = true
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
@@ -680,8 +716,18 @@ export async function retryFromMessage(
   // 让 BranchSwitcherBar 显示新候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
   state._pendingBranchRefreshAfterStream.value = originConvId
 
+  let replayContext: BranchStreamReplayContext | null = null
   try {
     const modelOverride = resolveConversationModelOverride(state)
+    replayContext = {
+      kind: 'reroll',
+      conversationId: originConvId,
+      assistantNodeId: targetMessageId,
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
+    }
+    state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
@@ -695,12 +741,17 @@ export async function retryFromMessage(
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
+    const branchReplayContext = replayContext
+    if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
+      state._pendingBranchReplayContext.value = null
+    }
     // 本次 reroll 已中止：无论会话是否切换，先复位分支图刷新标记，避免后续终结事件误消费
     state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
         code: err.code || 'RETRY_ERROR',
-        message: err.message || 'Retry failed'
+        message: err.message || 'Retry failed',
+        branchReplayContext: branchReplayContext ?? undefined
       })
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，重载原会话历史会污染当前窗口（与 editAndRetry 同款）
@@ -744,14 +795,15 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
  */
 export function dismissError(state: ChatStoreState): void {
   rollbackFailedStreamMessage(state)
+  state._pendingBranchReplayContext.value = null
   state.error.value = null
 }
 
 /**
  * 可重试错误码集合（H-3 + FIX-C-1）。
  *
- * 错误条“重试”按钮仅在这些错误码时显示/启用：它们都代表 LLM 流式生成失败，
- * 重试语义是 retryAfterError → retryStream 重新生成最后一条助手消息。
+ * 错误条“重试”按钮仅在这些错误码时显示/启用：普通流错误继续走 retryStream；
+ * reroll / 编辑分支错误由 ErrorInfo.branchReplayContext 重放原分支流。
  *
  * FIX-C-1：后端流式错误 chunk 的 code 来自 backend/modules/channel/types.ts 的
  * ChannelError.type（CONFIG_ERROR/NETWORK_ERROR/API_ERROR/PARSE_ERROR/VALIDATION_ERROR/
@@ -790,6 +842,126 @@ export function isRetryableError(error: ErrorInfo | null | undefined): boolean {
   return RETRYABLE_ERROR_CODES.has(error.code)
 }
 
+function isMatchingBranchReplayError(error: ErrorInfo, context: BranchStreamReplayContext): boolean {
+  if (context.kind === 'reroll') {
+    return error.code === 'REROLL_ERROR' || error.code === 'RETRY_ERROR'
+  }
+  return error.code === 'EDIT_BRANCH_ERROR' || error.code === 'EDIT_RETRY_ERROR'
+}
+
+/**
+ * 失败后重放 reroll / 编辑分支流。
+ *
+ * 流式失败时后端已经把新候选切成活跃路径，原始目标已经进入 sidecar：此时不再发送旧节点 ID，
+ * 由后端按当前活跃路径解析最新 model/user 节点。请求级失败尚未改动后端状态，则继续使用原始目标 ID。
+ */
+async function replayBranchStreamAfterError(
+  state: ChatStoreState,
+  computed: ChatStoreComputed,
+  error: ErrorInfo,
+  context: BranchStreamReplayContext
+): Promise<void> {
+  const originConvId = state.currentConversationId.value
+  if (!originConvId || context.conversationId !== originConvId) return
+
+  const isStreamLevelFailure = error.code === 'REROLL_ERROR' || error.code === 'EDIT_BRANCH_ERROR'
+
+  if (isStreamLevelFailure) {
+    // 分支流失败候选由后端保留；这里只移除前端半截展示，绝不能调用 deleteMessage 破坏分支图。
+    rollbackFailedStreamMessage(state)
+  } else {
+    // 请求级失败尚未启动后端分支操作：按原请求重新构造本地活跃窗口。
+    const targetId = context.kind === 'reroll' ? context.assistantNodeId : context.userNodeId
+    const targetIndex = state.allMessages.value.findIndex(message => message.id === targetId)
+    if (targetIndex === -1) return
+
+    const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+    if (context.kind === 'reroll') {
+      state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+    } else {
+      const targetMessage = state.allMessages.value[targetIndex]
+      targetMessage.content = context.newText
+      targetMessage.parts = [{ text: context.newText }]
+      state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+    }
+    clearCheckpointsFromIndex(state, backendIndex)
+    setTotalMessagesFromWindow(state)
+  }
+
+  state.error.value = null
+  state.isLoading.value = true
+  state.isStreaming.value = true
+  state.isWaitingForResponse.value = true
+
+  const assistantMessageId = generateId()
+  appendMessage(state, {
+    id: assistantMessageId,
+    role: 'assistant',
+    content: '',
+    timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
+    streaming: true,
+    localOnly: true,
+    metadata: {
+      modelVersion: computed.currentModelName.value
+    }
+  })
+  state.streamingMessageId.value = assistantMessageId
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
+
+  state._pendingBranchRefreshAfterStream.value = originConvId
+  state._pendingBranchReplayContext.value = context
+
+  try {
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
+
+    if (context.kind === 'reroll') {
+      await sendToExtension('chat.rerollStream', {
+        conversationId: originConvId,
+        // 流式失败后原目标已离开活跃路径；省略 ID 让后端选择当前活跃 model 尾节点。
+        ...(isStreamLevelFailure ? {} : { assistantNodeId: context.assistantNodeId }),
+        configId: context.configId,
+        modelOverride: context.modelOverride,
+        streamId,
+        promptModeId: context.promptModeId
+      })
+    } else {
+      await sendToExtension('chat.editBranchStream', {
+        conversationId: originConvId,
+        // 流式失败后编辑候选仍在活跃路径；省略 ID 让后端选择当前活跃 user 尾节点。
+        ...(isStreamLevelFailure ? {} : { userNodeId: context.userNodeId }),
+        newText: context.newText,
+        configId: context.configId,
+        modelOverride: context.modelOverride,
+        streamId,
+        promptModeId: context.promptModeId,
+        mode: context.mode ?? 'branch'
+      })
+    }
+  } catch (err: any) {
+    const branchReplayContext = context
+    if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
+      state._pendingBranchReplayContext.value = null
+    }
+    state._pendingBranchRefreshAfterStream.value = null
+    if (state.isStreaming.value) {
+      safeSetError(state, originConvId, {
+        code: err.code || (context.kind === 'reroll' ? 'RETRY_ERROR' : 'EDIT_RETRY_ERROR'),
+        message: err.message || (context.kind === 'reroll' ? 'Retry failed' : 'Edit and retry failed'),
+        branchReplayContext
+      })
+    }
+    if (validateSessionIdentity(state, originConvId)) {
+      await recoverAfterStreamStartFailure(state, originConvId)
+    }
+  } finally {
+    state.isLoading.value = false
+  }
+}
+
 /**
  * 错误后重试
  */
@@ -810,6 +982,16 @@ export async function retryAfterError(
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   const originConvId = state.currentConversationId.value
+
+  const branchReplayContext = currentError?.branchReplayContext
+  if (currentError && branchReplayContext && isMatchingBranchReplayError(currentError, branchReplayContext)) {
+    await replayBranchStreamAfterError(state, computed, currentError, branchReplayContext)
+    return
+  }
+  // 分支流错误如果丢失了重放上下文，宁可保留错误也不能退回 retryStream 污染分支图。
+  if (currentError?.code === 'REROLL_ERROR' || currentError?.code === 'EDIT_BRANCH_ERROR') {
+    return
+  }
 
   // 失败流回滚：清理上次流式失败保留的半截 assistant 消息，
   // 避免重试后窗口/历史出现半截回答残留。
@@ -833,6 +1015,7 @@ export async function retryAfterError(
   }
 
   state.error.value = null
+  state._pendingBranchReplayContext.value = null
   state.isLoading.value = true
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
@@ -885,7 +1068,8 @@ export async function retryAfterError(
 }
 
 /**
- * 编辑并重发消息（TREE-03：主流程走 chat.editBranchStream——创建编辑候选，不覆盖原消息）。
+ * 编辑并重发消息（TREE-03：主流程走 chat.editBranchStream——创建编辑候选，不覆盖原消息；
+ * mode='keep' 时原地改写原消息，保持当前分支）。
  */
 export async function editAndRetry(
   state: ChatStoreState,
@@ -893,7 +1077,8 @@ export async function editAndRetry(
   messageIndex: number,
   newMessage: string,
   attachments: Attachment[] | undefined,
-  cancelStream: CancelStreamCallback
+  cancelStream: CancelStreamCallback,
+  mode: 'branch' | 'keep' = 'branch'
 ): Promise<void> {
   if ((!newMessage.trim() && (!attachments || attachments.length === 0)) || !state.currentConversationId.value) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
@@ -901,6 +1086,7 @@ export async function editAndRetry(
   // await cancelStream() 之前固化 key 参数
   const originConvId = state.currentConversationId.value
   const targetMessageId = state.allMessages.value[messageIndex]?.id
+  if (!targetMessageId) return
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -951,8 +1137,20 @@ export async function editAndRetry(
   // 让 BranchSwitcherBar 显示新编辑候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
   state._pendingBranchRefreshAfterStream.value = originConvId
 
+  let replayContext: BranchStreamReplayContext | null = null
   try {
     const modelOverride = resolveConversationModelOverride(state)
+    replayContext = {
+      kind: 'editBranch',
+      conversationId: originConvId,
+      userNodeId: targetMessageId,
+      newText: newMessage,
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value,
+      mode
+    }
+    state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
@@ -964,13 +1162,20 @@ export async function editAndRetry(
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId,
       newText: newMessage,
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      mode
     })
   } catch (err: any) {
+    const branchReplayContext = replayContext
+    if (state._pendingBranchReplayContext.value?.conversationId === originConvId) {
+      state._pendingBranchReplayContext.value = null
+    }
     // 编辑分支流启动失败（IPC 抛异常）：后端可能未创建编辑候选/未截断主历史，
     // 而本地窗口已截断并改写——重载最后一页 + 检查点恢复前后端一致，
     // 并复位流式状态与分支图刷新标记（与 reroll 的 recoverAfterStreamStartFailure 同模式）。
@@ -978,9 +1183,15 @@ export async function editAndRetry(
     // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
     state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
+      // MESSAGE_CHANGED：目标消息已被其他操作改动（索引漂移校验失败），提示用户刷新历史，
+      // 不附带 branchReplayContext（重放已无意义）
+      const isMessageChanged = err?.code === 'MESSAGE_CHANGED'
       safeSetError(state, originConvId, {
-        code: err.code || 'EDIT_RETRY_ERROR',
-        message: err.message || 'Edit and retry failed'
+        code: isMessageChanged ? 'MESSAGE_CHANGED' : (err.code || 'EDIT_RETRY_ERROR'),
+        message: isMessageChanged
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err.message || 'Edit and retry failed'),
+        branchReplayContext: isMessageChanged ? undefined : (branchReplayContext ?? undefined)
       })
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，避免跨会话污染
@@ -1043,7 +1254,9 @@ export async function deleteMessage(
   try {
     const response = await sendToExtension<any>('deleteMessage', {
       conversationId: originConvId,
-      targetIndex: backendIndex
+      targetIndex: backendIndex,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId
     })
 
     // 再次校验归属
@@ -1058,14 +1271,18 @@ export async function deleteMessage(
       const err = response?.error
       safeSetError(state, originConvId, {
         code: err?.code || 'DELETE_ERROR',
-        message: err?.message || 'Delete failed'
+        message: err?.code === 'MESSAGE_CHANGED'
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err?.message || 'Delete failed')
       })
       console.error('[messageActions] deleteMessage failed:', response)
     }
   } catch (err: any) {
     safeSetError(state, originConvId, {
       code: err.code || 'DELETE_ERROR',
-      message: err.message || 'Delete failed'
+      message: err.code === 'MESSAGE_CHANGED'
+        ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+        : (err.message || 'Delete failed')
     })
   }
 }

@@ -3,12 +3,12 @@
  */
 
 import type { Ref, ComputedRef } from 'vue'
-import type { Message, ErrorInfo, CheckpointSummary, Attachment } from '../../types'
+import type { Message, ErrorInfo, CheckpointSummary, Attachment, BranchStreamReplayContext } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
 
 // 重新导出类型以供其他模块使用
 // CPF-03: 新代码使用 CheckpointSummary；CheckpointRecord 保留导出（结构同构，兼容旧消费方）
-export type { CheckpointSummary, CheckpointRecord, ErrorInfo } from '../../types'
+export type { CheckpointSummary, CheckpointRecord, ErrorInfo, BranchStreamReplayContext } from '../../types'
 
 /**
  * 对话摘要
@@ -288,6 +288,12 @@ export interface ChatStoreState {
    */
   _pendingBranchRefreshAfterStream: Ref<string | null>
 
+  /**
+   * 当前 reroll / 编辑分支流的原请求快照。
+   * 仅在流进行期间存在；成功/取消时丢弃，失败时转存到 ErrorInfo.branchReplayContext 后清空。
+   */
+  _pendingBranchReplayContext: Ref<BranchStreamReplayContext | null>
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表（有序） */
@@ -411,6 +417,10 @@ export interface ConversationSessionSnapshot {
   currentPromptModeId: string
   /** 工具响应缓存快照（toolCallId -> response 条目数组，用于新 Map 重建） */
   toolResponseCache: Array<[string, Record<string, unknown>]>
+  /** reroll / 编辑分支流完成后待刷新的会话 ID（标签页切换期间保持） */
+  pendingBranchRefreshAfterStream?: string | null
+  /** 当前分支流的原请求快照（标签页切换期间保持） */
+  pendingBranchReplayContext?: BranchStreamReplayContext | null
   /** 分支图快照（TREE-12：切标签页回来恢复分支视图状态；null = 无图/线性模式） */
   branchGraph: BranchGraphData | null
 }

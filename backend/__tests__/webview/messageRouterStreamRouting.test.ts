@@ -20,6 +20,8 @@ jest.mock('../../../backend/tools/file/diffManager', () => ({
 
 import { MessageRouter } from '../../../webview/MessageRouter';
 import { WebviewClientRegistry } from '../../../webview/runtime/WebviewClientRegistry';
+import { subAgentRunEventBus } from '../../../backend/tools/subagents/runEventBus';
+import { subAgentRunController } from '../../../backend/tools/subagents/runController';
 
 function flushAsync(ms = 20): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -73,6 +75,7 @@ function createHarness() {
 
 describe('MessageRouter 流式请求路由生命周期', () => {
   afterEach(() => {
+    subAgentRunController.unregister('router_detach_fg');
     jest.restoreAllMocks();
   });
 
@@ -116,6 +119,34 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect(h.rawSendResponse).not.toHaveBeenCalled();
     expect(h.rawSendError).not.toHaveBeenCalled();
     expect((h.router as any).requestClients.size).toBe(0);
+  });
+
+  it('cancelStream 保留子 Agent 时先转后台再取消旧流', async () => {
+    const h = createHarness();
+    const abortManager = h.router.getAbortManager();
+    const oldStream = abortManager.create('conv_replace');
+    subAgentRunEventBus.createRun('router_detach_fg', 'Agent', undefined, { conversationId: 'conv_replace' });
+    subAgentRunController.register('router_detach_fg', 'Agent', 0, true);
+
+    let oldStreamWasAbortedWhenDetached: boolean | undefined;
+    subAgentRunController.registerDetachListener('router_detach_fg', () => {
+      oldStreamWasAbortedWhenDetached = oldStream.signal.aborted;
+    });
+
+    const handled = await h.router.route(
+      'cancelStream',
+      { conversationId: 'conv_replace', preserveSubAgents: true },
+      'req_cancel_preserve',
+      h.ctx,
+      'subagent-monitor'
+    );
+    expect(handled).toBe(true);
+    await flushAsync();
+
+    expect(oldStreamWasAbortedWhenDetached).toBe(false);
+    expect(oldStream.signal.aborted).toBe(true);
+    expect(subAgentRunController.isDetached('router_detach_fg')).toBe(true);
+    expect(subAgentRunController.isActive('router_detach_fg')).toBe(true);
   });
 
   it('chatStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {

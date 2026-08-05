@@ -2,15 +2,16 @@
 /**
  * BranchTreePanel - 完整分支树查看面板（TREE-11）
  *
- * 独立浮层（position: fixed + 透明背板），入口按钮常驻消息区顶部（有分支图即显示，
- * 不受 BranchSwitcherBar「≥2 候选才显示」限制——单候选 / 深层分支同样可查看整棵树）。
+ * 独立浮层（position: fixed + 透明背板），入口按钮挂在输入区底部工具栏、与 Skills 并排；
+ * 仅在确实存在额外候选分支时显示，线性对话 / 只有单子节点的分支图不显示入口。
  *
  * 数据源：chatStore.branchGraph（TREE-10 已接线的 conversation.getBranchGraph）。
  * 树形组装（本地，不依赖后端新 API）：
  * - buildChildrenIndex 按 parentId 建索引（镜像后端 childrenIndex 排序），
  *   从 root 沿 childrenIndex DFS 展平成带深度的行；
  * - buildActivePathIds 沿 activeChildId 推导当前活跃路径（镜像后端 activePath），
- *   活跃路径节点高亮「当前」。
+ *   活跃路径用蓝色导线和节点图标表达；只有 activeTailNodeId 显示「当前」，避免每行重复标记。
+ * - 每个节点根据子候选数量标记分支点，候选从对应父节点横向连接出来；
  *
  * 交互（复用 chatStore 既有动作）：
  * - 点击非活跃、非软删节点 = switchBranchCandidate（活跃节点禁用）；
@@ -42,8 +43,19 @@ const showWorkspaceConfirm = ref(false)
 const renamingNodeId = ref<string | null>(null)
 const renameInput = ref('')
 
-/** 入口显示条件：当前对话存在分支图（null = 无图 / 线性模式 / 损坏降级） */
-const triggerVisible = computed(() => !!chatStore.currentConversationId && !!chatStore.branchGraph)
+/** 入口显示条件：只有确实存在额外候选分支时才显示（线性图不显示入口） */
+const triggerVisible = computed(() => {
+  const graph = chatStore.branchGraph
+  if (!chatStore.currentConversationId || !graph?.nodes) return false
+
+  const childCountByParent = new Map<string, number>()
+  for (const node of Object.values(graph.nodes)) {
+    if (!node || node.parentId === null) continue
+    const count = childCountByParent.get(node.parentId) ?? 0
+    childCountByParent.set(node.parentId, count + 1)
+  }
+  return Array.from(childCountByParent.values()).some(count => count >= 2)
+})
 
 const activePathIds = computed(() => buildActivePathIds(chatStore.branchGraph))
 const childrenIndex = computed(() => buildChildrenIndex(chatStore.branchGraph))
@@ -51,22 +63,42 @@ const childrenIndex = computed(() => buildChildrenIndex(chatStore.branchGraph))
 interface TreeRow {
   node: BranchNodeData
   depth: number
+  /** 当前节点是否是父节点的最后一个子节点，决定连接线是否在本行中止 */
+  isLastChild: boolean
+  /** 更高层祖先是否还有后续兄弟，用于绘制连续的竖向导线 */
+  ancestorHasNext: boolean[]
+  /** 当前节点的非删除子候选数量；≥2 时是可切换分支点 */
+  candidateCount: number
 }
 
-/** 从 root 沿 childrenIndex DFS 展平为带深度的行（本地组装，不依赖后端新 API） */
+/** 从 root 沿 childrenIndex DFS 展平为带树形导线元数据的行 */
 const rows = computed<TreeRow[]>(() => {
   const graph = chatStore.branchGraph
   const out: TreeRow[] = []
   if (!graph?.nodes || graph.rootNodeId === null) return out
 
-  const walk = (nodeId: string, depth: number): void => {
+  const walk = (
+    nodeId: string,
+    depth: number,
+    ancestorHasNext: boolean[],
+    isLastChild: boolean
+  ): void => {
     const node = graph.nodes[nodeId]
     if (!node) return
-    out.push({ node, depth })
     const children = childrenIndex.value.get(nodeId) ?? []
-    for (const child of children) walk(child.id, depth + 1)
+    const candidateCount = children.filter(child => !child.deleted).length
+    out.push({ node, depth, isLastChild, ancestorHasNext, candidateCount })
+
+    children.forEach((child, index) => {
+      // 当前节点自身若不是父节点的最后子节点，子树之后仍需延续这一层导线。
+      const childAncestorHasNext = depth === 0
+        ? []
+        : [...ancestorHasNext, !isLastChild]
+      walk(child.id, depth + 1, childAncestorHasNext, index === children.length - 1)
+    })
   }
-  walk(graph.rootNodeId, 0)
+
+  walk(graph.rootNodeId, 0, [], true)
   return out
 })
 
@@ -74,8 +106,16 @@ function isActive(nodeId: string): boolean {
   return activePathIds.value.includes(nodeId)
 }
 
+function isCurrentTail(nodeId: string): boolean {
+  return chatStore.branchGraph?.activeTailNodeId === nodeId
+}
+
 function isDeleted(node: BranchNodeData): boolean {
   return node.deleted === true
+}
+
+function isBranchPoint(row: TreeRow): boolean {
+  return row.candidateCount >= 2
 }
 
 function preview(node: BranchNodeData): string {
@@ -173,7 +213,7 @@ function cancelRename(): void {
 
 <template>
   <div class="branch-tree-panel">
-    <!-- 入口按钮：有分支图即显示（消息区顶部，与 BranchSwitcherBar 并排） -->
+    <!-- 入口按钮：有分支图即显示（消息区顶部的全局分支树入口） -->
     <button
       v-if="triggerVisible"
       class="branch-tree-trigger"
@@ -215,11 +255,28 @@ function cancelRename(): void {
             class="branch-tree-row"
             :class="{
               active: isActive(row.node.id),
+              current: isCurrentTail(row.node.id),
+              branchPoint: isBranchPoint(row),
               deleted: isDeleted(row.node),
               renaming: renamingNodeId === row.node.id
             }"
-            :style="{ paddingLeft: `${8 + row.depth * 16}px` }"
+            :style="{ '--depth': row.depth }"
           >
+            <!-- 树形导线：祖先层竖线 + 当前节点横向连接线，不再只靠 padding-left 伪装层级 -->
+            <div class="branch-tree-guides" aria-hidden="true">
+              <span
+                v-for="(hasNext, index) in row.ancestorHasNext"
+                :key="`ancestor-${index}`"
+                class="branch-tree-guide"
+                :class="{ continued: hasNext }"
+              ></span>
+              <span
+                v-if="row.depth > 0"
+                class="branch-tree-connector"
+                :class="{ last: row.isLastChild }"
+              ></span>
+            </div>
+
             <!-- 行主区：点击切换（活跃 / 软删节点不响应） -->
             <div
               class="branch-tree-row-main"
@@ -229,17 +286,22 @@ function cancelRename(): void {
               <i
                 class="codicon branch-tree-node-icon"
                 :class="
-                  row.node.role === 'user'
-                    ? 'codicon-account'
-                    : row.node.role === 'system'
-                      ? 'codicon-settings-gear'
-                      : 'codicon-comment'
+                  isBranchPoint(row)
+                    ? 'codicon-git-branch'
+                    : row.node.role === 'user'
+                      ? 'codicon-account'
+                      : row.node.role === 'system'
+                        ? 'codicon-settings-gear'
+                        : 'codicon-comment'
                 "
               ></i>
               <span class="branch-tree-preview">{{ preview(row.node) }}</span>
               <span v-if="nodeTime(row.node)" class="branch-tree-time">{{ nodeTime(row.node) }}</span>
-              <span v-if="isActive(row.node.id)" class="branch-tree-badge branch-tree-badge-active">
+              <span v-if="isCurrentTail(row.node.id)" class="branch-tree-badge branch-tree-badge-active">
                 {{ t('components.message.branch.active') }}
+              </span>
+              <span v-else-if="isBranchPoint(row)" class="branch-tree-badge branch-tree-badge-candidates">
+                {{ t('components.message.branchTree.candidateCount', { count: row.candidateCount }) }}
               </span>
               <span v-if="isDeleted(row.node)" class="branch-tree-badge branch-tree-badge-deleted">
                 {{ t('components.message.branchTree.deleted') }}
@@ -370,8 +432,8 @@ function cancelRename(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);
   background: transparent;
@@ -399,9 +461,11 @@ function cancelRename(): void {
 
 .branch-tree-panel-box {
   position: absolute;
-  top: 44px;
-  right: 12px;
-  width: min(460px, 80vw);
+  top: auto;
+  right: auto;
+  bottom: 72px;
+  left: 12px;
+  width: min(560px, calc(100vw - 24px));
   max-height: min(70vh, 560px);
   display: flex;
   flex-direction: column;
@@ -471,21 +535,77 @@ function cancelRename(): void {
 }
 
 .branch-tree-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding-top: 2px;
-  padding-bottom: 2px;
-  padding-right: 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-height: 34px;
+  padding: 0 8px 0 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
 }
 
 .branch-tree-row:last-child {
   border-bottom: none;
 }
 
-.branch-tree-row.active {
-  background: var(--vscode-editor-inactiveSelectionBackground);
+/* 祖先层导线：每一格代表一层，只有仍有后续兄弟时才延续竖线 */
+.branch-tree-guides {
+  display: flex;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.branch-tree-guides:empty {
+  width: 4px;
+}
+
+.branch-tree-guide,
+.branch-tree-connector {
+  position: relative;
+  display: block;
+  width: 18px;
+  min-width: 18px;
+}
+
+.branch-tree-guide.continued::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+.branch-tree-connector::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+.branch-tree-connector.last::before {
+  bottom: 50%;
+}
+
+.branch-tree-connector::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.branch-tree-row.active .branch-tree-guide.continued::before,
+.branch-tree-row.active .branch-tree-connector::before,
+.branch-tree-row.active .branch-tree-connector::after {
+  border-color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 72%, var(--vscode-panel-border));
+}
+
+.branch-tree-row.current {
+  background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--vscode-charts-blue, #3794ff);
 }
 
 .branch-tree-row.deleted {
@@ -493,12 +613,11 @@ function cancelRename(): void {
 }
 
 .branch-tree-row-main {
-  flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 4px;
+  padding: 5px 4px;
   border-radius: var(--radius-sm, 2px);
   cursor: default;
 }
@@ -513,11 +632,12 @@ function cancelRename(): void {
 
 .branch-tree-node-icon {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--vscode-descriptionForeground);
 }
 
-.branch-tree-row.active .branch-tree-node-icon {
+.branch-tree-row.active .branch-tree-node-icon,
+.branch-tree-row.branchPoint .branch-tree-node-icon {
   color: var(--vscode-charts-blue, #3794ff);
 }
 
@@ -547,6 +667,11 @@ function cancelRename(): void {
 .branch-tree-badge-active {
   color: var(--vscode-charts-blue, #3794ff);
   border: 1px solid var(--vscode-charts-blue, #3794ff);
+}
+
+.branch-tree-badge-candidates {
+  color: var(--vscode-charts-orange, #e69500);
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-orange, #e69500) 70%, transparent);
 }
 
 .branch-tree-badge-deleted {

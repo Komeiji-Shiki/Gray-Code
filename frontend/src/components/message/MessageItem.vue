@@ -69,7 +69,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  edit: [messageId: string, newContent: string, attachments: Attachment[]]
+  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
   restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string]
   delete: [messageId: string]
   retry: [messageId: string]
@@ -536,8 +536,8 @@ function startEdit() {
 }
 
 // 处理编辑保存
-function handleEdit(newContent: string, attachments: Attachment[]) {
-  emit('edit', props.message.id, newContent, attachments)
+function handleEdit(newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
+  emit('edit', props.message.id, newContent, attachments, mode)
 }
 
 // 处理回档并编辑

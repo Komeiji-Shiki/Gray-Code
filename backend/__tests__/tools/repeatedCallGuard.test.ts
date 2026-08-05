@@ -37,7 +37,8 @@ describe('RepeatedCallGuard', () => {
         const guarded = guard.guardCall(call('t3', 'read_file', args));
 
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toContain('read_file');
-        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toContain('different approach');
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toContain('consecutive times');
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toContain('meaningful diagnostic');
         // 原参数已被替换
         expect(guarded.args.paths).toBeUndefined();
     });
@@ -64,6 +65,32 @@ describe('RepeatedCallGuard', () => {
 
         const guarded = guard.guardCall(call('t9', 'execute_command', args));
         expect(guarded.args).toBe(args);
+    });
+
+    it('中间成功修改文件后允许重跑相同命令', () => {
+        const guard = new RepeatedCallGuard();
+        const commandArgs = { command: 'npm test' };
+
+        guard.recordResults([failedResult('execute_command', commandArgs)]);
+        guard.recordResults([failedResult('execute_command', commandArgs)]);
+        expect(guard.guardCall(call('blocked', 'execute_command', commandArgs)).args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
+
+        guard.recordResults([successResult('apply_diff', { path: 'src/fix.ts' })]);
+
+        const retry = guard.guardCall(call('retry', 'execute_command', commandArgs));
+        expect(retry.args).toBe(commandArgs);
+    });
+
+    it('不同的真实调用会结束原调用的连续失败序列', () => {
+        const guard = new RepeatedCallGuard();
+        const commandArgs = { command: 'npm test' };
+
+        guard.recordResults([failedResult('execute_command', commandArgs)]);
+        guard.recordResults([failedResult('read_file', { path: 'test.log' })]);
+        guard.recordResults([failedResult('execute_command', commandArgs)]);
+
+        const retry = guard.guardCall(call('retry', 'execute_command', commandArgs));
+        expect(retry.args).toBe(commandArgs);
     });
 
     it('不同参数的调用互不影响计数', () => {

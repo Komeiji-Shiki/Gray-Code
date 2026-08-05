@@ -13,6 +13,7 @@ import { resolveFileToolPathWithInfo, getAllWorkspaces, normalizeLineEndingsToLF
 import { getDiffManager } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
+import { fileWriteLockManager, type LockHolder } from '../../core/fileWriteLockManager';
 
 /**
  * 单个文件写入配置
@@ -60,7 +61,9 @@ async function writeSingleFile(
     toolId?: string,
     abortSignal?: AbortSignal,
     approvedByToolConfirmation?: boolean,
-    conversationId?: string
+    conversationId?: string,
+    checkpointReady?: Promise<unknown>,
+    lockHolder?: LockHolder
 ): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
@@ -104,11 +107,48 @@ async function writeSingleFile(
         // 如果文件不存在，需要先创建目录
         // 异步 IO：避免在 extension host 主线程上做同步磁盘操作；
         // mkdir recursive 幂等，无需先 existsSync 探测
-        if (!fileExists) {
+            if (!fileExists) {
             const dirPath = path.dirname(absolutePath);
             await fs.promises.mkdir(dirPath, { recursive: true });
-            // 创建空文件以便 DiffManager 可以操作
-            await fs.promises.writeFile(absolutePath, '', 'utf8');
+            // checkpoint 写盘屏障：预写空文件也是落盘，必须在 checkpoint 就绪后执行，
+            // 否则批量工具并行写盘可能先于盘点落盘（并发化后 checkpoint 记录会丢失）。
+            if (checkpointReady) {
+                await checkpointReady;
+            }
+            // PERF-CP：deferred 模式入口不持锁，预写空文件前临时获取目标路径锁，
+            // 防止并行 agent 同时创建同一新文件；写盘锁由 DiffManager 在审阅期间持有。
+            let prewriteLocked = false;
+            if (lockHolder) {
+                const lockResult = fileWriteLockManager.tryAcquire([absolutePath], lockHolder);
+                if (!lockResult.acquired) {
+                    return {
+                        path: filePath,
+                        success: false,
+                        error: 'File write conflict: the target file is currently being created by another writer. Work on other parts first, then retry.'
+                    };
+                }
+                prewriteLocked = true;
+            }
+            try {
+                // 创建空文件以便 DiffManager 可以操作
+                await fs.promises.writeFile(absolutePath, '', 'utf8');
+            } catch (error) {
+                // H2：预创建空文件失败时清理可能残留的空文件（仅当确认是本次创建的空文件，
+                // 避免误删其它并发写入者刚写入的真实内容）。
+                try {
+                    const stat = await fs.promises.stat(absolutePath);
+                    if (stat.size === 0) {
+                        await fs.promises.unlink(absolutePath);
+                    }
+                } catch {
+                    // 文件不存在或删除失败：无需/无法清理
+                }
+                throw error;
+            } finally {
+                if (prewriteLocked) {
+                    fileWriteLockManager.release([absolutePath], lockHolder!);
+                }
+            }
         }
 
         // 使用 DiffManager 创建待审阅的 diff
@@ -134,6 +174,9 @@ async function writeSingleFile(
                 confirmedByToolConfirmation: approvedByToolConfirmation === true,
                 newFile: !fileExists,
                 conversationId,
+                checkpointReady,
+                // PERF-CP：deferred 模式写盘锁持有者身份（DiffManager 审阅期间持有）
+                lockHolder
             }
         );
 
@@ -292,7 +335,11 @@ export function createWriteFileTool(): Tool {
                 context?.toolId,
                 context?.abortSignal,
                 context?.approvedByToolConfirmation === true,
-                context?.conversationId
+                context?.conversationId,
+                // checkpointReady 由 ToolExecutionService 注入（ToolContext 索引签名透传）
+                context?.checkpointReady as Promise<unknown> | undefined,
+                // PERF-CP：deferred 模式写盘锁持有者身份（ToolContext 索引签名透传）
+                context?.lockHolder as LockHolder | undefined
             );
             results.push(result);
 

@@ -1,46 +1,69 @@
 <script setup lang="ts">
 /**
- * BranchSwitcherBar - 候选切换器 + 分支状态 UI（TREE-10）
+ * BranchSwitcherBar - 消息内联候选切换器（DeepSeek 风格，TREE-10）
  *
- * 展示位置：消息区顶部（MessageList.vue 挂载）。
- * 展示条件：当前对话存在分支图，且当前活跃尾节点的父节点下有 ≥2 个候选；
- * 无分支图 / 单候选 / 无当前对话时整个组件隐藏。
+ * 展示位置：由 MessageActions.vue 挂载在对应消息的操作栏内，和复制 / 重试按钮同一行；
+ * 也支持普通模式单独挂载（用于组件测试与独立复用）。
+ * 在哪条消息处重 roll / 编辑过分支，就在那条消息的操作栏显示切换器，而非消息区顶部。
  *
- * 数据源：chatStore.branchGraph（loadBranchGraph / refreshBranchGraph 拉取 conversation.getBranchGraph）。
+ * 数据源：chatStore.branchGraph + parentNodeId（buildCandidateGroupAt 推导该父节点的候选组）。
  * 交互：
  * - ‹ / ›：切换到上一个 / 下一个候选（conversation.switchBranchCandidate，TREE-07 重建链路）；
- * - 中间「2 / 3」：展开候选列表，点击候选切换；hover 展示模型版本 / 节点类型；
+ * - 中间「2 / 3」：展开候选列表（fixed 定位浮层，防滚动容器裁剪），点击候选切换；
+ *   hover 展示模型版本 / 节点类型；
  * - 列表项删除按钮：软删除非活跃候选（conversation.deleteBranchCandidate，两步确认防误删）。
  *
  * 竞态：isSwitchingBranch 期间禁用全部按钮（store 侧同时拒绝并发操作）。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
-import { buildCandidateGroup, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
+import { buildCandidateGroupAt, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
 import { ConfirmDialog } from '../common'
-import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 import type { BranchNodeData } from '../../stores/chat/types'
 import type { SwitchBranchWorkspaceMode } from '../../stores/chat/branchActions'
+
+const props = defineProps<{
+  /** 候选组的父节点（消息）ID；该消息有 ≥2 个子候选时显示切换器 */
+  parentNodeId: string
+  /** 是否作为消息操作栏内的紧凑按钮组渲染 */
+  compact?: boolean
+}>()
 
 const { t } = useI18n()
 const chatStore = useChatStore()
 
 const listOpen = ref(false)
+/** 候选列表使用视口坐标定位，并通过 Teleport 脱离消息节点的 contain 定位上下文。 */
+const positionRef = ref<HTMLElement | null>(null)
+const candidateListRef = ref<HTMLElement | null>(null)
+const listStyle = ref({
+  left: '8px',
+  top: '8px',
+  width: '260px',
+  maxHeight: '320px'
+})
+
+const VIEWPORT_MARGIN = 8
+const LIST_GAP = 4
+const LIST_MIN_WIDTH = 260
+const LIST_MAX_WIDTH = 420
+const LIST_MAX_HEIGHT = 320
+const LIST_MIN_VISIBLE_HEIGHT = 80
+let positionListenersAttached = false
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
 const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
 
-/** 当前活跃尾节点的兄弟候选组（null = 无图 / 无候选） */
-const group = computed(() => buildCandidateGroup(chatStore.branchGraph))
+/** 该父节点下的候选组（null = 无图 / 无候选 / 单候选） */
+const group = computed(() => buildCandidateGroupAt(chatStore.branchGraph, props.parentNodeId))
 
-/** 无分支图 / 单候选 / 无当前对话时隐藏 */
+/** 无当前对话 / 无候选组时隐藏 */
 const visible = computed(() => {
   if (!chatStore.currentConversationId) return false
-  const g = group.value
-  return g !== null && g.candidates.length >= 2
+  return group.value !== null
 })
 
 const total = computed(() => group.value?.candidates.length ?? 0)
@@ -68,8 +91,90 @@ function candidateTitle(node: BranchNodeData): string {
   return meta.join(' · ')
 }
 
-function switchTo(nodeId: string): void {
+/**
+ * 根据当前视口计算列表位置。
+ * 消息项使用 contain: layout，会成为 fixed 元素的定位上下文，因此列表本身必须 Teleport 到 body。
+ */
+function updateListPosition(): void {
+  if (!listOpen.value) return
+  const anchor = positionRef.value
+  if (!anchor) return
+
+  const rect = anchor.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const availableWidth = Math.max(1, viewportWidth - VIEWPORT_MARGIN * 2)
+  const responsiveWidth = Math.min(
+    LIST_MAX_WIDTH,
+    Math.max(LIST_MIN_WIDTH, viewportWidth * 0.6)
+  )
+  const width = Math.floor(Math.min(responsiveWidth, availableWidth))
+  const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - width)
+  const left = Math.min(Math.max(VIEWPORT_MARGIN, rect.left), maxLeft)
+
+  const measuredHeight = candidateListRef.value?.scrollHeight ?? LIST_MAX_HEIGHT
+  const desiredHeight = Math.min(
+    LIST_MAX_HEIGHT,
+    Math.max(LIST_MIN_VISIBLE_HEIGHT, measuredHeight || LIST_MAX_HEIGHT)
+  )
+  const availableBelow = Math.max(0, viewportHeight - rect.bottom - LIST_GAP - VIEWPORT_MARGIN)
+  const availableAbove = Math.max(0, rect.top - LIST_GAP - VIEWPORT_MARGIN)
+  const placeAbove = availableBelow < desiredHeight && availableAbove > availableBelow
+  const availableHeight = placeAbove ? availableAbove : availableBelow
+  const maxHeight = Math.min(LIST_MAX_HEIGHT, availableHeight)
+  const top = placeAbove
+    ? Math.max(VIEWPORT_MARGIN, rect.top - LIST_GAP - Math.min(desiredHeight, maxHeight))
+    : Math.min(rect.bottom + LIST_GAP, viewportHeight - VIEWPORT_MARGIN)
+
+  listStyle.value = {
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    width: `${width}px`,
+    maxHeight: `${Math.max(0, Math.floor(maxHeight))}px`
+  }
+}
+
+function attachPositionListeners(): void {
+  if (positionListenersAttached) return
+  window.addEventListener('resize', updateListPosition)
+  window.addEventListener('scroll', updateListPosition, true)
+  positionListenersAttached = true
+}
+
+function detachPositionListeners(): void {
+  if (!positionListenersAttached) return
+  window.removeEventListener('resize', updateListPosition)
+  window.removeEventListener('scroll', updateListPosition, true)
+  positionListenersAttached = false
+}
+
+function closeList(): void {
   listOpen.value = false
+  detachPositionListeners()
+}
+
+/** 展开 / 收起候选列表，并在渲染后按实际高度校正位置。 */
+function toggleList(): void {
+  if (listOpen.value) {
+    closeList()
+    return
+  }
+  if (!positionRef.value) return
+
+  listOpen.value = true
+  updateListPosition()
+  attachPositionListeners()
+  void nextTick(updateListPosition)
+}
+
+watch(visible, value => {
+  if (!value) closeList()
+})
+
+onBeforeUnmount(detachPositionListeners)
+
+function switchTo(nodeId: string): void {
+  closeList()
   pendingDeleteNodeId.value = null
   const target = chatStore.branchGraph?.nodes[nodeId]
   // BCP-04（决策 1）：目标分支执行过写工具 / 有工作区存档 → 先弹「仅切聊天 or 连工作区一起恢复」确认框
@@ -111,7 +216,7 @@ function toggleDelete(nodeId: string): void {
 </script>
 
 <template>
-  <div v-if="visible" class="branch-switcher-bar">
+  <div v-if="visible" class="branch-switcher-bar" :class="{ compact: props.compact }">
     <button
       class="branch-switcher-btn"
       :disabled="chatStore.isSwitchingBranch"
@@ -121,49 +226,16 @@ function toggleDelete(nodeId: string): void {
       <i class="codicon codicon-chevron-left"></i>
     </button>
 
-    <div class="branch-switcher-center">
+    <div ref="positionRef" class="branch-switcher-center">
       <button
         class="branch-switcher-position"
         :disabled="chatStore.isSwitchingBranch"
         :title="t('components.message.branch.candidateList')"
-        @click="listOpen = !listOpen"
+        @click="toggleList"
       >
         <span class="branch-switcher-position-text">{{ activeIndex + 1 }} / {{ total }}</span>
         <i class="codicon" :class="listOpen ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
       </button>
-
-      <div v-if="listOpen" class="branch-candidate-list">
-        <div
-          v-for="candidate in group?.candidates ?? []"
-          :key="candidate.id"
-          class="branch-candidate-row"
-          :class="{ active: candidate.id === activeCandidate?.id }"
-        >
-          <button
-            class="branch-candidate-main"
-            :title="candidateTitle(candidate) || t('components.message.branch.switchTo')"
-            @click="switchTo(candidate.id)"
-          >
-            <span class="branch-candidate-preview">{{ candidatePreview(candidate) }}</span>
-            <span v-if="candidate.id === activeCandidate?.id" class="branch-candidate-active">
-              {{ t('components.message.branch.active') }}
-            </span>
-          </button>
-          <button
-            v-if="candidate.id !== activeCandidate?.id"
-            class="branch-candidate-delete"
-            :class="{ confirming: pendingDeleteNodeId === candidate.id }"
-            :title="
-              pendingDeleteNodeId === candidate.id
-                ? t('components.message.branch.deleteConfirm')
-                : t('components.message.branch.delete')
-            "
-            @click="toggleDelete(candidate.id)"
-          >
-            <i class="codicon" :class="pendingDeleteNodeId === candidate.id ? 'codicon-check' : 'codicon-trash'"></i>
-          </button>
-        </div>
-      </div>
     </div>
 
     <button
@@ -180,6 +252,46 @@ function toggleDelete(nodeId: string): void {
     </span>
   </div>
 
+  <Teleport to="body">
+    <div
+      v-if="listOpen && visible"
+      ref="candidateListRef"
+      class="branch-candidate-list"
+      :style="listStyle"
+    >
+      <div
+        v-for="candidate in group?.candidates ?? []"
+        :key="candidate.id"
+        class="branch-candidate-row"
+        :class="{ active: candidate.id === activeCandidate?.id }"
+      >
+        <button
+          class="branch-candidate-main"
+          :title="candidateTitle(candidate) || t('components.message.branch.switchTo')"
+          @click="switchTo(candidate.id)"
+        >
+          <span class="branch-candidate-preview">{{ candidatePreview(candidate) }}</span>
+          <span v-if="candidate.id === activeCandidate?.id" class="branch-candidate-active">
+            {{ t('components.message.branch.active') }}
+          </span>
+        </button>
+        <button
+          v-if="candidate.id !== activeCandidate?.id"
+          class="branch-candidate-delete"
+          :class="{ confirming: pendingDeleteNodeId === candidate.id }"
+          :title="
+            pendingDeleteNodeId === candidate.id
+              ? t('components.message.branch.deleteConfirm')
+              : t('components.message.branch.delete')
+          "
+          @click="toggleDelete(candidate.id)"
+        >
+          <i class="codicon" :class="pendingDeleteNodeId === candidate.id ? 'codicon-check' : 'codicon-trash'"></i>
+        </button>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- BCP-04：目标分支执行过写工具 / 有工作区存档时的模式确认框（决策 1：默认仅切聊天） -->
   <ConfirmDialog
     v-model="showWorkspaceConfirm"
@@ -195,31 +307,65 @@ function toggleDelete(nodeId: string): void {
       {{ t('components.message.branch.workspaceConfirmChatAndWorkspace') }}
     </button>
   </ConfirmDialog>
-
-  <!-- BCP-05（决策 11）：恢复 / 切换恢复的未保存文件确认框（常驻挂载） -->
-  <DirtyFilesConfirm />
 </template>
 
 <style scoped>
-/* 样式沿用 MessageList build-bar / 检查点条的 VS Code 主题 token（GrayCode 面板风格） */
+/* 普通模式：保留为独立消息内联条（兼容单独挂载与组件测试） */
 .branch-switcher-bar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm, 8px);
-  padding: 6px var(--spacing-md, 16px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  gap: 4px;
+  width: fit-content;
+  margin: 2px 0 6px var(--spacing-md, 16px);
+  padding: 2px 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
   background: var(--vscode-editor-background);
-  flex-shrink: 0;
   user-select: none;
 }
+
+/* 消息操作栏内的紧凑按钮组：与复制 / 重试 IconButton 共用同一行和高度 */
+.branch-switcher-bar.compact {
+  height: 24px;
+  margin: 0;
+  padding: 0 2px;
+  gap: 0;
+  border: none;
+  background: transparent;
+}
+
+.branch-switcher-bar.compact .branch-switcher-btn {
+  width: 18px;
+  height: 22px;
+  padding: 0;
+}
+
+.branch-switcher-bar.compact .branch-switcher-position {
+  height: 22px;
+  padding: 1px 3px;
+  background: transparent;
+}
+
+.branch-switcher-bar.compact .branch-switcher-position:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.branch-switcher-bar.compact .branch-switcher-position-text {
+  min-width: 28px;
+}
+
+.branch-switcher-bar.compact .branch-switcher-loading {
+  padding: 0 2px;
+}
+
 
 .branch-switcher-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--vscode-panel-border);
+  width: 20px;
+  height: 20px;
+  border: none;
   border-radius: var(--radius-sm, 2px);
   background: transparent;
   color: var(--vscode-descriptionForeground);
@@ -233,7 +379,6 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-center {
-  position: relative;
   min-width: 0;
 }
 
@@ -241,8 +386,8 @@ function toggleDelete(nodeId: string): void {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
+  padding: 1px 6px;
+  border: none;
   border-radius: var(--radius-sm, 2px);
   background: var(--vscode-editor-inactiveSelectionBackground);
   color: var(--vscode-foreground);
@@ -257,18 +402,16 @@ function toggleDelete(nodeId: string): void {
 }
 
 .branch-switcher-position-text {
-  min-width: 34px;
+  min-width: 30px;
   text-align: center;
 }
 
+/* fixed 浮层通过 Teleport 挂到 body，避免消息项 contain: layout 改写定位参照。 */
 .branch-candidate-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  min-width: 260px;
-  max-width: min(420px, 60vw);
-  max-height: min(40vh, 320px);
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  min-width: 0;
   overflow: auto;
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);

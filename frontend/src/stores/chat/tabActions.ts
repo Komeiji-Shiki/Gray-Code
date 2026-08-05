@@ -53,6 +53,10 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     messageQueue: [...state.messageQueue.value],
     currentPromptModeId: state.currentPromptModeId.value,
     toolResponseCache: Array.from(state.toolResponseCache.value.entries()),
+    pendingBranchRefreshAfterStream: state._pendingBranchRefreshAfterStream.value,
+    pendingBranchReplayContext: state._pendingBranchReplayContext.value
+      ? { ...state._pendingBranchReplayContext.value }
+      : null,
     // TREE-12：分支图快照（null = 无图 / 线性模式）；图按整体替换维护（无原地修改），共享引用安全
     branchGraph: state.branchGraph.value
   }
@@ -95,6 +99,10 @@ export function restoreSessionFromSnapshot(
   state.toolResponseCache.value = Array.isArray(snapshot.toolResponseCache)
     ? new Map(snapshot.toolResponseCache)
     : new Map()
+  state._pendingBranchRefreshAfterStream.value = snapshot.pendingBranchRefreshAfterStream ?? null
+  state._pendingBranchReplayContext.value = snapshot.pendingBranchReplayContext
+    ? { ...snapshot.pendingBranchReplayContext }
+    : null
   // TREE-12：恢复分支图快照（切标签页回来恢复分支视图状态）；旧快照无此字段时回退 null
   state.branchGraph.value = snapshot.branchGraph ?? null
 }
@@ -114,6 +122,8 @@ export function resetConversationState(state: ChatStoreState): void {
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state._lastCancelledStreamId.value = null
+  state._pendingBranchRefreshAfterStream.value = null
+  state._pendingBranchReplayContext.value = null
   state.isWaitingForResponse.value = false
   state.checkpoints.value = []
   state.activeBuild.value = null

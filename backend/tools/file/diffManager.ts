@@ -22,10 +22,13 @@ import {
     applyStructuredDiffHunksBestEffort,
     normalizeLineEndings,
     countLineBreaks,
-    type StructuredDiffHunk
+    type StructuredDiffHunk,
+    type StructuredHunkPlan
 } from './apply_diff';
 import { DiffReviewSession } from './DiffReviewSession';
 import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
+import { resolveDiffTargetViewColumn } from './diffViewColumn';
+import { fileWriteLockManager, type LockHolder } from '../../core/fileWriteLockManager';
 
 /**
  * 待处理的 Diff 修改
@@ -52,6 +55,17 @@ export interface PendingDiff {
      * - 删除：`- | baseLine | 内容` （baseLine 为系统建议保存内容中的1-based 行号）
      */
     userEditedContent?: string;
+    /**
+     * 预览前文档中的用户未保存内容（仅当打开文档时 doc.isDirty 才设置）。
+     *
+     * 为什么要新增：预览会把 buffer 覆盖为 AI 版本，若目标文档原本就有未保存修改，
+     * 拒绝/取消/中断恢复时回写磁盘 originalContent 会丢失用户的未保存内容（H1 数据丢失）。
+     * 怎么改：预览前发现 dirty 时记录用户版本，并拒绝本次预览（不覆盖 buffer、不显示 diff 视图），
+     * 工具链据此返回可读错误提示用户先保存；拒绝/取消路径检测到该字段时跳过 buffer 恢复，
+     * 避免把用户未保存内容回滚成磁盘原文。
+     * 目的：在任何失败路径下都不丢失用户未保存内容。
+     */
+    userUnsavedContentBeforePreview?: string;
     /** 创建时间 */
     timestamp: number;
     /** 状态*/
@@ -79,6 +93,27 @@ export interface PendingDiff {
      * 目的：避免自动确认模式下出现必须用户中止的悬挂状态。
      */
     autoSaveError?: string;
+    /**
+     * 结构化 hunk 独立精确匹配计划（apply_diff fast path 产出）。
+     *
+     * 为什么要新增：块级拒绝（rejectBlockUnlocked）与最终内容重算（computeFinalSuggestedContent）
+     * 每次都全量重扫 hunks，而首次应用时 fast path 已经算好了全部匹配位置。
+     * 怎么改：把 fast path 的产物缓存在 pending diff 上，重放任意子集时直接按计划拼接。
+     * 目的：块级接受/拒绝路径不再重复付出相同的扫描成本，且重放结果与首次应用逐字节一致。
+     */
+    structuredHunkPlan?: StructuredHunkPlan;
+    /**
+     * checkpoint 写盘屏障：写盘前必须等待其完成（resolve 后写盘；reject 时写盘被阻止并收敛）。
+     * 由工具执行层注入，缺省 undefined 时行为与旧实现完全一致。
+     */
+    checkpointReady?: Promise<unknown>;
+    /**
+     * PERF-CP：deferred checkpoint 并发模式的写盘锁持有者身份（由 ToolExecutionService 注入）。
+     * 该模式下工具入口不持锁；预览显示后由本管理器获取并持有到 diff 终结，与入口持锁语义对齐。
+     */
+    lockHolder?: LockHolder;
+    /** 写盘锁是否已获取（diff 终结时释放的依据） */
+    lockAcquired?: boolean;
 }
 
 /**
@@ -132,6 +167,12 @@ export interface CreatePendingDiffOptions {
     newFile?: boolean;
     /** 会话 ID：用于中断判定的会话隔离，避免全局中断标记泄漏误伤 */
     conversationId?: string;
+    /** 结构化 hunk 计划（apply_diff 结构化路径产出），块级拒绝/最终内容重放时复用 */
+    structuredHunkPlan?: StructuredHunkPlan;
+    /** checkpoint 写盘屏障：写盘前必须等待其完成 */
+    checkpointReady?: Promise<unknown>;
+    /** PERF-CP：deferred 模式的写盘锁持有者身份（缺省 undefined 时保持入口持锁语义不变） */
+    lockHolder?: LockHolder;
 }
 
 function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
@@ -739,6 +780,27 @@ export class DiffManager {
         this.notifySaveComplete(diff);
     }
 
+    /**
+     * 删除"本次会话预创建且未成功应用"的新文件残留（H2）。
+     *
+     * 为什么下沉到公共终结路径：write_file 预创建空文件后，acquireWriteLockForDiff 冲突、
+     * autoSave 失败、用户取消等所有失败路径都会走到 finalizeRejectedDiff/finalizeCancelledDiff，
+     * 只在个别路径清理会漏掉残留空文件。
+     * 为什么只在拒绝/取消路径调用：newFile 语义是"目标文件之前不存在、AI 要新建"，
+     * 确认接受后该文件应保留（finalizeAcceptedDiff 不调用本方法）。
+     * 已删除/不存在的文件 unlink 会抛错，统一吞掉。
+     */
+    private removeNewFileResidue(diff: PendingDiff): void {
+        if (!diff.newFile) {
+            return;
+        }
+        try {
+            fs.unlinkSync(diff.absolutePath);
+        } catch (e) {
+            console.warn(`[DiffManager] Failed to remove new file ${diff.filePath}:`, e);
+        }
+    }
+
     private finalizeRejectedDiff(diff: PendingDiff): void {
         if (diff.status !== 'pending') {
             return;
@@ -752,6 +814,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
         this.notifyStatusChange();
     }
@@ -769,6 +832,7 @@ export class DiffManager {
         }
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
+        this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
     }
 
@@ -913,6 +977,21 @@ export class DiffManager {
             pendingDiff.conversationId = options.conversationId;
         }
 
+        // 缓存结构化 hunk 计划：块级拒绝/最终内容重放时跳过重复扫描
+        if (options?.structuredHunkPlan) {
+            pendingDiff.structuredHunkPlan = options.structuredHunkPlan;
+        }
+
+        // checkpoint 写盘屏障：写盘前必须等待其完成（缺省 undefined 行为不变）
+        if (options?.checkpointReady) {
+            pendingDiff.checkpointReady = options.checkpointReady;
+        }
+
+        // PERF-CP：deferred 模式的写盘锁持有者身份（缺省 undefined 时入口持锁语义不变）
+        if (options?.lockHolder) {
+            pendingDiff.lockHolder = options.lockHolder;
+        }
+
         // 检查diff 警戒值
         const guardResult = this.checkDiffGuard(originalContent, newContent);
         if (guardResult.warning) {
@@ -967,7 +1046,8 @@ export class DiffManager {
 
         // 根据配置决定是否显示 diff 视图
         if (shouldSkipDiffView) {
-            // 跳过 diff 视图：直接写入文件并保存
+            // 跳过 diff 视图：先取写盘锁（含等待 checkpoint 完成），再直接写入并保存
+            await this.acquireWriteLockForDiff(pendingDiff);
             await this.directApplyAndSave(pendingDiff);
         } else {
             // 显示 diff 视图
@@ -979,6 +1059,9 @@ export class DiffManager {
                     error
                 );
             }
+            // PERF-CP：预览先行——视图出现后再等待 checkpoint 完成并获取写盘锁，
+            // 审阅期间持有（与入口持锁语义一致），diff 终结时释放。
+            await this.acquireWriteLockForDiff(pendingDiff);
         }
 
         // 如果开启自动保存且 diff 仍处于pending 状态，设置定时器
@@ -996,11 +1079,59 @@ export class DiffManager {
     }
 
     /**
+     * checkpoint 写盘屏障：存在 checkpointReady 时先等待其完成再写盘。
+     * reject 时向上抛，由调用方走现有失败收敛（转 rejected / 回退 diff 视图 / 失败返回），
+     * 避免在 checkpoint 未落盘时把内容写到磁盘。
+     */
+    private async awaitCheckpointBeforeWrite(diff: PendingDiff): Promise<void> {
+        if (diff.checkpointReady) {
+            await diff.checkpointReady;
+        }
+    }
+
+    /**
+     * PERF-CP：deferred 模式下获取写盘锁（入口未持锁）。
+     *
+     * 先等待 checkpoint 完成（写入前存档屏障），再尝试获取目标路径锁；
+     * 冲突时把 diff 收敛为 rejected 并抛错（工具结果呈现失败，不悬挂）；
+     * 缺省无 lockHolder（非 deferred 模式）时为零开销 no-op。
+     * 锁由调用方持有到 diff 终结（cleanup 释放），与旧入口持锁语义对齐。
+     */
+    private async acquireWriteLockForDiff(diff: PendingDiff): Promise<void> {
+        if (!diff.lockHolder) {
+            return;
+        }
+        await this.awaitCheckpointBeforeWrite(diff);
+        const result = fileWriteLockManager.tryAcquire([diff.absolutePath], diff.lockHolder);
+        if (!result.acquired) {
+            const conflictText = result.conflicts
+                .map(c => {
+                    const holderName = c.holder.kind === 'subagent'
+                        ? `agent "${c.holder.label}"`
+                        : (c.holder.kind === 'checkpoint' ? 'a checkpoint operation' : c.holder.label);
+                    return `'${c.path}' is currently being modified by ${holderName}`;
+                })
+                .join('; ');
+            this.finalizeRejectedDiff(diff);
+            throw new Error(
+                `File write conflict: ${conflictText}. `
+                + `Do not loop on this file. Work on other parts of your task first, `
+                + `then retry after the current holder finishes (the lock is released automatically). `
+                + `If it is still locked on retry, mention it in your final response so the main session can coordinate.`
+            );
+        }
+        diff.lockAcquired = true;
+    }
+
+    /**
      * 直接应用修改并保存（不打开 diff 视图）
      * 用于 autoApplyWithoutDiffView 模式
      */
     private async directApplyAndSave(diff: PendingDiff): Promise<void> {
         try {
+            // checkpoint 写盘屏障：checkpoint 未就绪（或失败）前不落盘
+            await this.awaitCheckpointBeforeWrite(diff);
+
             // 直接写入文件到磁盘
             fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
 
@@ -1104,11 +1235,12 @@ export class DiffManager {
 
                 if (isStructuredDiffHunk(first)) {
                     // 为什么结构化 hunk 要优先处理：它和 legacy search/replace 字段名不同，但同样需要支持块级拒绝后的内容重算。
-                    // 怎么改：复用 apply_diff 导出的结构化应用函数，并传入未拒绝块索引集合。
-                    // 目的：避免拒绝某个hunk 后用旧start_line 逻辑误算后续重复内容。
+                    // 怎么改：复用 apply_diff 导出的结构化应用函数，并传入未拒绝块索引集合；
+                    // 同时传入首次应用时缓存的计划，起始内容一致且计划覆盖时直接按计划拼接，跳过重复扫描。
+                    // 目的：避免拒绝某个hunk 后用旧start_line 逻辑误算后续重复内容，并复用已算好的匹配结果。
                     try {
                         const hunks = diff.rawDiffs as StructuredDiffHunk[];
-                        const r = applyStructuredDiffHunksBestEffort(tempContent, hunks, { applyIndices });
+                        const r = applyStructuredDiffHunksBestEffort(tempContent, hunks, { applyIndices, plan: diff.structuredHunkPlan });
                         tempContent = r.newContent;
 
                         for (const h of r.blocks) {
@@ -1241,11 +1373,12 @@ export class DiffManager {
 
         if (isStructuredDiffHunk(first)) {
             // 为什么finalContent 也要支持结构化hunk：保存前会根据用户拒绝的块重新计算最终建议内容。
-            // 怎么改：复用同一个结构化应用函数，只应用未拒绝的 hunk 索引。
-            // 目的：确保编辑器实时内容和最终落盘内容使用完全一致的重放规则。
+            // 怎么改：复用同一个结构化应用函数，只应用未拒绝的 hunk 索引；
+            // 同时传入首次应用时缓存的计划，起始内容一致且计划覆盖时直接按计划拼接，跳过重复扫描。
+            // 目的：确保编辑器实时内容和最终落盘内容使用完全一致的重放规则，且不重复付出扫描成本。
             try {
                 const hunks = diff.rawDiffs as StructuredDiffHunk[];
-                const r = applyStructuredDiffHunksBestEffort(finalContent, hunks, { applyIndices });
+                const r = applyStructuredDiffHunksBestEffort(finalContent, hunks, { applyIndices, plan: diff.structuredHunkPlan });
                 finalContent = r.newContent;
             } catch (e) {
                 console.warn('[DiffManager] Failed to recompute final suggested content for structured diff:', e);
@@ -1303,7 +1436,10 @@ export class DiffManager {
                     targetDoc.positionAt(0),
                     targetDoc.positionAt(targetDoc.getText().length)
                 );
-                edit.replace(fileUri, fullRange, diff.originalContent);
+                // H1：预览前若已捕获用户未保存内容（dirty 拒绝预览场景），
+                // 恢复时优先回写用户版本而非磁盘 originalContent，避免丢失未保存编辑。
+                const restoreContent = diff.userUnsavedContentBeforePreview ?? diff.originalContent;
+                edit.replace(fileUri, fullRange, restoreContent);
                 await vscode.workspace.applyEdit(edit);
             } catch {
                 // ignore
@@ -1331,6 +1467,30 @@ export class DiffManager {
         //   避免多开一个 tab 并把焦点从聊天输入框抢走（用户可能正在打字）
         const document = await vscode.workspace.openTextDocument(fileUri);
         if (!isPending()) {
+            return;
+        }
+
+        // H1 数据丢失防护：目标文档存在未保存修改时拒绝本次预览。
+        //
+        // 为什么拒绝而不是"记录用户版本 + 预览后恢复"：
+        // - 预览覆盖 buffer 显示 AI 版本后，拒绝/取消恢复时若回写磁盘 originalContent，
+        //   用户的未保存内容会永久丢失（本 bug 的根因）；
+        // - diff 对象仅存在于内存，若会话在预览期间被 reload（扩展重启/工作区重载），
+        //   用户 buffer 无法从任何持久化源恢复；
+        // - "接受"路径同样有风险：缓冲区的用户未保存内容可能被 AI 内容静默覆盖。
+        // 取舍：dirty 时直接不覆盖 buffer、不显示 diff 视图，记录用户版本并向用户提示先保存，
+        // 工具结果返回可读错误（autoSaveError），用户保存后重试即可。简单可靠，零数据丢失。
+        if (document && document.isDirty) {
+            diff.userUnsavedContentBeforePreview = document.getText();
+            diff.autoSaveError = 'The file has unsaved changes in the editor. Save the file first, then retry the tool call. The change was not applied to avoid overwriting your unsaved edits.';
+            try {
+                vscode.window.showWarningMessage?.(
+                    `"${diff.filePath}" 存在未保存的修改。为避免丢失您的内容，本次修改未应用。请先保存文件（Ctrl+S）后再重试。`
+                );
+            } catch {
+                // ignore
+            }
+            this.finalizeRejectedDiff(diff);
             return;
         }
 
@@ -1362,9 +1522,13 @@ export class DiffManager {
             await restoreToOriginalBestEffort();
             return;
         }
+        const targetViewColumn = resolveDiffTargetViewColumn();
         await vscode.commands.executeCommand('vscode.diff', originalUri, fileUri, title, {
             preview: false,
-            preserveFocus: true
+            preserveFocus: true,
+            // 原生工具审阅不经过 Webview DiffHandlers，必须在统一 DiffManager 入口显式指定列。
+            // 否则焦点位于 SubAgent Monitor 时，VS Code 会把 diff 打开到 Monitor 所在编辑器组。
+            viewColumn: targetViewColumn
         });
 
         // 若在打开 diff 视图期间被取消拒绝，关闭diff 并恢复原始内容，避免 UI 残留
@@ -1389,7 +1553,16 @@ export class DiffManager {
             }
 
             const currentSettings = this.getSettings();
-            if (currentSettings.autoSave || event.reason === vscode.TextDocumentSaveReason.Manual) {
+            const isManualOrAutoSave = currentSettings.autoSave || event.reason === vscode.TextDocumentSaveReason.Manual;
+
+            // checkpoint 写盘屏障：手动与非手动两条路径都必须等待 checkpoint 完成后再保存。
+            // 非手动分支原本直接放行（只记标记），这里统一补上 event.waitUntil，
+            // 保证任何路径都不会在 checkpoint 未落盘时把内容写进文件。
+            if (diff.checkpointReady) {
+                event.waitUntil(diff.checkpointReady);
+            }
+
+            if (isManualOrAutoSave) {
                 return;
             }
 
@@ -1570,6 +1743,14 @@ export class DiffManager {
         this.acceptingDiffIds.add(id);
 
         try {
+            // checkpoint 写盘屏障：单点覆盖下方全部保存分支（staging + 三分支写盘），
+            // checkpoint 未完成（或失败）前不触碰编辑器与磁盘，避免与盘点并发竞态。
+            await this.awaitCheckpointBeforeWrite(diff);
+
+            if (diff.status !== 'pending') {
+                return false;
+            }
+
             const finalContent = this.computeFinalSuggestedContent(id, diff);
 
             const uri = vscode.Uri.file(diff.absolutePath);
@@ -1835,39 +2016,51 @@ export class DiffManager {
         this.rejectingDiffIds.add(id);
 
         try {
+            // checkpoint 写盘屏障：恢复原文也是写盘，checkpoint 未完成（或失败）前不得恢复，
+            // 避免把文件回滚到盘点未覆盖的状态；失败时由调用方走现有收敛（转 rejected）。
+            await this.awaitCheckpointBeforeWrite(diff);
+
+            if (diff.status !== 'pending') {
+                return false;
+            }
+
             // 1. 恢复文件内容
-            const uri = vscode.Uri.file(diff.absolutePath);
-            const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+            // H1：预览因目标文档 dirty 被拒绝时，buffer 从未被覆盖过，仍是用户未保存版本；
+            // 这里任何恢复动作都会把用户未保存内容回滚成磁盘原文，必须整体跳过。
+            if (diff.userUnsavedContentBeforePreview === undefined) {
+                const uri = vscode.Uri.file(diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
 
-            if (doc) {
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    doc.positionAt(0),
-                    doc.positionAt(doc.getText().length)
-                );
-                edit.replace(uri, fullRange, diff.originalContent);
-                const applied = await vscode.workspace.applyEdit(edit);
-                if (!applied) {
-                    throw new Error(`Failed to restore original content for ${diff.filePath}`);
-                }
-
-                // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
-                // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
-                // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
-                // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
-                try {
-                    await doc.save();
-                } catch {
-                    // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
-                    try {
-                        await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
-                    } catch {
-                        // ignore
+                if (doc) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(doc.getText().length)
+                    );
+                    edit.replace(uri, fullRange, diff.originalContent);
+                    const applied = await vscode.workspace.applyEdit(edit);
+                    if (!applied) {
+                        throw new Error(`Failed to restore original content for ${diff.filePath}`);
                     }
+
+                    // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
+                    // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
+                    // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
+                    // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
+                    try {
+                        await doc.save();
+                    } catch {
+                        // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
+                        try {
+                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                        } catch {
+                            // ignore
+                        }
+                    }
+                } else {
+                    // 如果文档没打开，直接写回原始文件内容确保万无一失
+                    fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
                 }
-            } else {
-                // 如果文档没打开，直接写回原始文件内容确保万无一失
-                fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
             }
 
             // write_file 新建文件被拒绝：关 tab 并删除残留空文件
@@ -1950,6 +2143,11 @@ export class DiffManager {
         const tempDir = path.join(require('os').tmpdir(), 'gemini-diff');
         const diff = this.pendingDiffs.get(id);
         if (diff) {
+            // PERF-CP：终结时释放写盘锁（deferred 模式审阅期间持有）
+            if (diff.lockAcquired && diff.lockHolder) {
+                fileWriteLockManager.release([diff.absolutePath], diff.lockHolder);
+                diff.lockAcquired = false;
+            }
             const tempFilePath = path.join(tempDir, `${id}-${path.basename(diff.filePath)}`);
             if (fs.existsSync(tempFilePath)) {
                 fs.unlinkSync(tempFilePath);
@@ -2201,32 +2399,36 @@ export class DiffManager {
             await this.closeDiffTabAndCleanNewFile(id, diff);
 
             // 3. 尝试恢复文件到原始状态
-            try {
-                const uri = vscode.Uri.file(diff.absolutePath);
-                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
-                if (doc && doc.isDirty) {
-                    // 恢复到原始内容
-                    const edit = new vscode.WorkspaceEdit();
-                    const fullRange = new vscode.Range(
-                        doc.positionAt(0),
-                        doc.positionAt(doc.getText().length)
-                    );
-                    edit.replace(uri, fullRange, diff.originalContent);
-                    await vscode.workspace.applyEdit(edit);
-                    // 必须 save() 清理 dirty——否则 VSCode 弹出"是否保存更改？"对话框
-                    try {
-                        await doc.save();
-                    } catch {
-                        // doc.save 失败时回退到 revert
+            // H1：预览因目标文档 dirty 被拒绝的 diff，buffer 仍是用户未保存版本，
+            // 恢复动作会覆盖用户未保存内容，必须跳过（关闭 diff 标签页不影响用户内容）。
+            if (diff.userUnsavedContentBeforePreview === undefined) {
+                try {
+                    const uri = vscode.Uri.file(diff.absolutePath);
+                    const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+                    if (doc && doc.isDirty) {
+                        // 恢复到原始内容
+                        const edit = new vscode.WorkspaceEdit();
+                        const fullRange = new vscode.Range(
+                            doc.positionAt(0),
+                            doc.positionAt(doc.getText().length)
+                        );
+                        edit.replace(uri, fullRange, diff.originalContent);
+                        await vscode.workspace.applyEdit(edit);
+                        // 必须 save() 清理 dirty——否则 VSCode 弹出"是否保存更改？"对话框
                         try {
-                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                            await doc.save();
                         } catch {
-                            // ignore
+                            // doc.save 失败时回退到 revert
+                            try {
+                                await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                            } catch {
+                                // ignore
+                            }
                         }
                     }
+                } catch (err) {
+                    console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
                 }
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
             }
         }
 
