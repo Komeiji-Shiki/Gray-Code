@@ -34,7 +34,7 @@
 import type { Content } from './types';
 import type { UsageIndex, UsageIndexFreshness, UsageIndexMessage, UsageIndexStore } from './usageStats';
 import { extractMessageTokens } from './usageStats';
-import { withHangTimeout } from './storage';
+import { assertSafeStorageId, withHangTimeout } from './storage';
 import type { ConversationBranchGraph } from './branch/types';
 import { isBranchGraphShape } from './branch/types';
 
@@ -71,6 +71,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     ) {}
 
     private usagePath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -79,6 +80,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     }
 
     private usageTmpPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -87,6 +89,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     }
 
     private legacyHistoryPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -95,6 +98,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
     }
 
     private segmentedIndexPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -105,6 +109,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
 
     /** 分支图 sidecar 路径（TREE-08 读取侧合并用；与 BranchGraphRepository 同布局） */
     private branchesPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',

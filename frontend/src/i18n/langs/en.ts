@@ -538,7 +538,11 @@ const en: LanguageMessages = {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
-                autoTriggered: 'Auto Triggered'
+                autoTriggered: 'Auto Triggered',
+                compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
+                legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',
+                historyTokenLabel: 'History',
+                requestTokenLabel: 'Request'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',
