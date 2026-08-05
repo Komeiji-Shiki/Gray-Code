@@ -109,19 +109,29 @@ export class StreamRequestHandler {
     return requestId
   }
 
-  private async cleanupAbortedConversations(conversationIds: string[]): Promise<void> {
-    try {
-      const diffManager = getDiffManager();
-      await diffManager.cancelAllPending();
-    } catch (err) {
-      console.error('Failed to cancel pending diffs:', err);
-    }
-
-    if (conversationIds.length === 0) {
-      return;
+  private async cleanupAbortedConversations(
+    conversationIds: string[],
+    options: { cancelAllPendingDiffs?: boolean } = {}
+  ): Promise<void> {
+    if (options.cancelAllPendingDiffs) {
+      // 扩展整体关闭/停止全部必须清理所有未决 diff，包括已没有活跃主流但仍在等确认的会话。
+      try {
+        await getDiffManager().cancelAllPending();
+      } catch (err) {
+        console.error('Failed to cancel pending diffs:', err);
+      }
     }
 
     await Promise.all(conversationIds.map(async (conversationId) => {
+      // 普通停止只清理当前会话。旧实现漏传 conversationId，会把其他标签页仍在等待确认的
+      // diff 一并取消，表现为“停止 A 会话，B 会话也莫名停止/拒绝工具”。
+      if (!options.cancelAllPendingDiffs) {
+        try {
+          await getDiffManager().cancelAllPending(conversationId);
+        } catch (err) {
+          console.error(`Failed to cancel pending diffs for conversation ${conversationId}:`, err);
+        }
+      }
       try {
         await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
       } catch (err) {
@@ -133,7 +143,7 @@ export class StreamRequestHandler {
   async cancelAllStreams(): Promise<void> {
     const conversationIds = this.deps.abortManager.listConversationIds();
     this.deps.abortManager.cancelAll(this.deps.getClientView());
-    await this.cleanupAbortedConversations(conversationIds);
+    await this.cleanupAbortedConversations(conversationIds, { cancelAllPendingDiffs: true });
   }
 
   /**

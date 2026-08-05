@@ -109,7 +109,15 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
   await subAgentRunController.waitForInactive(runIds, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
   await subAgentRunEventBus.flushConversation(conversationId);
 
-  await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+  const checkpointDeleteResult = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+  if (!checkpointDeleteResult?.success) {
+    ctx.sendError(
+      requestId,
+      'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
+      t('webview.errors.deleteAllCheckpointsFailed')
+    );
+    return;
+  }
   await ctx.conversationManager.deleteConversation(conversationId);
   subAgentRunEventBus.forgetConversation(conversationId);
   ctx.sendResponse(requestId, { success: true });

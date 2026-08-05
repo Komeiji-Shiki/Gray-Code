@@ -91,7 +91,12 @@ function createHarness(summarizeService: unknown) {
     if (summarizeService) {
         service.setSummarizeService(summarizeService as never);
     }
-    return { service, summarizeService: summarizeService as { handleAutoSummarize: jest.Mock }, contextTrimService };
+    return {
+        service,
+        summarizeService: summarizeService as { handleAutoSummarize: jest.Mock },
+        contextTrimService,
+        channelManager
+    };
 }
 
 function createSummarizeServiceMock(maxAttempts: number) {
@@ -205,5 +210,31 @@ describe('M3/H5：非流式循环自动总结的回合级计数与 abort 信号'
             undefined,
             'deepseek-v4-flash',
         );
+    });
+
+    it('低收益总结被跳过但需要硬窗口兜底时不调用总结，直接裁剪后继续主请求', async () => {
+        const summarizeService = createSummarizeServiceMock(2);
+        const { service, contextTrimService, channelManager } = createHarness(summarizeService);
+        contextTrimService.getHistoryWithContextTrimInfo.mockResolvedValue({
+            history: [{ role: 'user', parts: [{ text: 'question' }], isUserInput: true }],
+            trimStartIndex: 0,
+            needsAutoSummarize: false,
+            needsContextFallback: true,
+            fixedPromptTokens: 321
+        });
+
+        await service.runNonStreamLoop('c1', 'cfg-1', config, 10);
+
+        expect(summarizeService.handleAutoSummarize).not.toHaveBeenCalled();
+        expect(contextTrimService.getHistoryWithGranularFallback).toHaveBeenCalledWith(
+            'c1',
+            config,
+            {},
+            undefined,
+            'single',
+            undefined,
+            321
+        );
+        expect(channelManager.generate).toHaveBeenCalledTimes(1);
     });
 });

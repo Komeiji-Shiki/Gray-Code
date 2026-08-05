@@ -67,6 +67,7 @@ interface HarnessOptions {
     maxContextTokens?: number;
     keepRecentTokens?: number | string;
     keepRecentRounds?: number;
+    summarizeMaxInputRatio?: number;
     generateContent?: Content;
     generateError?: Error;
 }
@@ -85,6 +86,7 @@ function createHarness(options: HarnessOptions): Harness {
         maxContextTokens = 1000,
         keepRecentTokens = '10%',
         keepRecentRounds = 1,
+        summarizeMaxInputRatio = 0.5,
         generateContent = SUCCESS_SUMMARY,
         generateError
     } = options;
@@ -120,7 +122,7 @@ function createHarness(options: HarnessOptions): Harness {
             useSeparateModel: false,
             summarizeChannelId: '',
             summarizeModelId: '',
-            summarizeMaxInputRatio: 0.5,
+            summarizeMaxInputRatio,
             autoSummarizePrompt: ''
         }))
     };
@@ -165,7 +167,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
                 userMsg('r2', 100), fcMsg('fc2', 200), frMsg('fc2', 200),
                 userMsg('r3', 100), fcMsg('fc3', 100), frMsg('fc3', 100),
                 modelMsg('done', 100)
-            ]
+            ],
+            summarizeMaxInputRatio: 0.9
         });
 
         const result = await service.handleAutoSummarize('conv1', 'cfg1');
@@ -195,7 +198,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
                 fcMsg('fc2b', 100), frMsg('fc2b', 100),
                 userMsg('r3', 100), fcMsg('fc3', 100), frMsg('fc3', 100),
                 modelMsg('done', 100)
-            ]
+            ],
+            summarizeMaxInputRatio: 0.9
         });
 
         const result = await service.handleAutoSummarize('conv1', 'cfg1');

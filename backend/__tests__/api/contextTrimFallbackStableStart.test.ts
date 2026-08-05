@@ -5,7 +5,7 @@
  * 每轮发出去的 retainedHistory 开头都不一样，provider 前缀缓存只能命中 history 之前的固定系统/工具段。
  *
  * 修复：ToolIterationLoopService 在同一真实用户回合内记录第一次 fallback 的 trimStartIndex，
- * 后续迭代通过 stableStartIndex 传入复用；仅当完整性校验失败或估算超过硬上限（maxContextTokens 的 95%）
+ * 后续迭代通过 stableStartIndex 传入复用；仅当完整性校验失败或估算超过模型完整窗口
  * 时才重新规划。
  */
 
@@ -57,8 +57,14 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         ];
     }
 
-    const config = { type: 'custom', maxContextTokens: 1_300, contextThreshold: '80%' } as any;
-    // threshold = 1040；historyBudgetTokens = 936；stableHardLimit = 1235；总历史 1050（超预算触发裁剪）
+    const config = {
+        type: 'custom',
+        model: 'test-model',
+        models: [{ id: 'test-model', contextWindow: 1_300 }],
+        maxContextTokens: 1_300,
+        contextThreshold: '80%'
+    } as any;
+    // threshold/input limit = 1040；provider reserve = 104；history budget = 936；总历史 1050（超预算触发裁剪）
 
     it('工具结果增长时复用 stableStartIndex，retainedHistory 前缀保持稳定', async () => {
         let history = buildToolLoopHistory();
@@ -72,11 +78,11 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(first.history[0]).toMatchObject({ role: 'user', isSummary: true });
         expect(first.history[1].parts[0].functionCall?.id).toBe('a');
 
-        // 工具结果增长 300 tokens（成对追加 fc-c + fr-c）：若不复用起点，重新规划会移到 index 5
+        // 工具结果小幅增长 100 tokens（成对追加 fc-c + fr-c），总输入仍在安全预算内。
         history = [
             ...history,
-            { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 150 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 150 } }
+            { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 50 } },
+            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 50 } }
         ];
 
         const second = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
@@ -88,25 +94,24 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(second.history[second.history.length - 1].parts[0].functionResponse?.id).toBe('c');
     });
 
-    it('稳定起点超过硬上限（maxContextTokens 的 95%）时回退重新规划', async () => {
+    it('稳定起点超过优先预算但最小合法请求恰好等于完整窗口时仍继续', async () => {
         let history = buildToolLoopHistory();
         const { service } = createHarness(() => history);
 
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
         expect(first.trimStartIndex).toBe(3);
 
-        // 工具结果暴涨 1200 tokens（成对追加 fc-c + fr-c）：3..end = 1900 > 1235（硬上限）→ 重新规划
+        // 工具结果暴涨 1200 tokens：加上 preserved 输入后恰好等于 1300 的完整窗口。
+        // 95% 预留不能把它提前升级成硬拒绝，应退到完整窗口边界继续。
         history = [
             ...history,
             { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 600 } },
             { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 600 } }
         ];
 
-        const second = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
-        expect(second.trimStartIndex).not.toBe(3);
-        // 所有候选都超软预算 → 兜底返回完整历史
-        expect(second.trimStartIndex).toBe(0);
-        expect(second.history).toHaveLength(history.length);
+        const result = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
+        expect(result.contextManagementDecision?.action).toBe('fallback_hard_limit_applied');
+        expect(result.trimStartIndex).toBe(8);
     });
 
     it('稳定起点越界或早于总结起点时忽略并重新规划', async () => {
@@ -152,5 +157,89 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(second.history[0]).toMatchObject({ role: 'user', isSummary: true });
         expect(second.history[1].parts[0].functionCall?.id).toBe('a');
         expect(second.trimStartIndex).toBe(3);
+    });
+
+    it('固定系统提示词和动态上下文会从 fallback 历史预算中扣除', async () => {
+        const history = buildToolLoopHistory();
+        const { service } = createHarness(() => history);
+
+        // input limit 1040 - provider reserve 104 - fixed prompt 400 = history budget 536。
+        // 起点 3 的最终历史约 800，必须继续推进到起点 5（约 500）。
+        const result = await service.getHistoryWithGranularFallback(
+            'c1',
+            config,
+            {},
+            undefined,
+            'single',
+            undefined,
+            400
+        );
+
+        expect(result.trimStartIndex).toBe(5);
+        expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
+    });
+
+    it('超过总结软阈值但仍低于模型硬窗口时继续请求，不把总结阈值当硬上限', async () => {
+        const history = buildToolLoopHistory();
+        const { service } = createHarness(() => history);
+
+        // 软预算只剩 36 tokens，任何候选都无法达到；模型硬窗口仍给 history 留有 335 tokens。
+        // 应选择硬窗口内最早的合法候选继续请求，而不是报 CONTEXT_OVERFLOW。
+        const result = await service.getHistoryWithGranularFallback(
+            'c1',
+            config,
+            {},
+            undefined,
+            'single',
+            undefined,
+            900
+        );
+
+        expect(result.contextManagementDecision?.action).toBe('fallback_hard_limit_applied');
+        expect(result.history.length).toBeGreaterThan(0);
+    });
+
+    it('只有连最小合法请求也装不进模型硬窗口时才报 CONTEXT_OVERFLOW', async () => {
+        const history = buildToolLoopHistory();
+        const { service } = createHarness(() => history);
+
+        await expect(
+            service.getHistoryWithGranularFallback(
+                'c1',
+                config,
+                {},
+                undefined,
+                'single',
+                undefined,
+                1_101
+            )
+        ).rejects.toMatchObject({
+            code: 'CONTEXT_OVERFLOW',
+            estimatedInputTokens: 1_301,
+            inputTokenLimit: 1_300
+        });
+    });
+
+    it('模型未声明 contextWindow 时不把渠道 maxContextTokens 当硬拒绝边界', async () => {
+        const history = buildToolLoopHistory();
+        const { service } = createHarness(() => history);
+        const configWithoutKnownWindow = {
+            type: 'custom',
+            maxContextTokens: 1_300,
+            contextThreshold: '80%'
+        } as any;
+
+        const result = await service.getHistoryWithGranularFallback(
+            'c1',
+            configWithoutKnownWindow,
+            {},
+            undefined,
+            'single',
+            undefined,
+            1_101
+        );
+
+        expect(result.contextManagementDecision?.action).toBe('fallback_best_effort_applied');
+        expect(result.history.length).toBeGreaterThan(0);
     });
 });
