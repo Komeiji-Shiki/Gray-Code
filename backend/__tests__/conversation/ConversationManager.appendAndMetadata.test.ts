@@ -92,6 +92,29 @@ describe('ConversationManager 追加路径（HIS-01/HIS-02）', () => {
         expect(history).toHaveLength(3);
     });
 
+    test('addMessage 携带 messageId 时原样落库（BR-01：窗口 id 与后端 id 对齐）', async () => {
+        const manager = new ConversationManager(new MemoryStorageAdapter());
+        await manager.createConversation('conv-mid', 'MID');
+
+        // 前端发送时携带窗口 user 消息 id → 后端原样保存，编辑/重试才能按 id 定位
+        await manager.addMessage('conv-mid', 'user', [{ text: 'm1' }], undefined, 'window_id_123');
+
+        let history = await manager.getHistory('conv-mid');
+        expect(history).toHaveLength(1);
+        expect(history[0].id).toBe('window_id_123');
+        expect(history[0].parentId).toBeNull();
+
+        // 不传 messageId 时由后端生成稳定 id（兼容旧客户端 / 后端内部调用）
+        await manager.addMessage('conv-mid', 'user', [{ text: 'm2' }]);
+        history = await manager.getHistory('conv-mid');
+        expect(history).toHaveLength(2);
+        expect(typeof history[1].id).toBe('string');
+        expect(history[1].id).not.toHaveLength(0);
+        expect(history[1].id).not.toBe('window_id_123');
+        // 线性 parentId 链保持正确
+        expect(history[1].parentId).toBe('window_id_123');
+    });
+
     test('addContent functionResponse 保留配对去重语义（mutate 全量写回，重复响应被去重）', async () => {
         const storage = new MemoryStorageAdapter();
         const appendSpy = jest.spyOn(storage, 'appendHistory');

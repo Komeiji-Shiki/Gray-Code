@@ -638,40 +638,47 @@ export async function restoreAndEdit(
 
     // 2. 更新本地消息内容和附件
     const targetMessage = state.allMessages.value[targetIndex]
+    // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
+    // 自动降级为 keep（真·原地保存——只改本条消息，后续全部保留）
+    const effectiveMode = targetMessage.parentId == null ? 'keep' : 'branch'
     targetMessage.content = newContent
     targetMessage.parts = [{ text: newContent }]
     targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
-    
-    // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
-    state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
-    rebuildMessageIndexById(state)
-    clearCheckpointsFromIndex(state, backendMessageIndex, checkpointId)
-    setTotalMessagesFromWindow(state)
 
-    // 5. 开始流式编辑重试
-    state.isStreaming.value = true
-    state.isWaitingForResponse.value = true
-    
-    const assistantMessageId = generateId()
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
-      streaming: true,
-      localOnly: true,
-      metadata: {
-        modelVersion: currentModelName
+    if (effectiveMode === 'keep') {
+      // 真·原地保存：不截断窗口、不删检查点、不创建占位（后端不重新生成，流结束仅复位状态）
+    } else {
+      // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
+      state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+      rebuildMessageIndexById(state)
+      clearCheckpointsFromIndex(state, backendMessageIndex, checkpointId)
+      setTotalMessagesFromWindow(state)
+
+      // 5. 开始流式编辑重试
+      state.isStreaming.value = true
+      state.isWaitingForResponse.value = true
+
+      const assistantMessageId = generateId()
+      const assistantMessage: Message = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
+        streaming: true,
+        localOnly: true,
+        metadata: {
+          modelVersion: currentModelName
+        }
       }
-    }
-    state.allMessages.value.push(assistantMessage)
-    syncTotalMessagesFromWindow(state)
-    trimWindowFromTop(state)
-    state.streamingMessageId.value = assistantMessageId
+      state.allMessages.value.push(assistantMessage)
+      syncTotalMessagesFromWindow(state)
+      trimWindowFromTop(state)
+      state.streamingMessageId.value = assistantMessageId
 
-    // 置位：流结束（complete/error/cancelled）后刷新分支图，BranchSwitcherBar 显示候选切换器
-    state._pendingBranchRefreshAfterStream.value = originConvId
+      // 置位：流结束（complete/error/cancelled）后刷新分支图，BranchSwitcherBar 显示候选切换器
+      state._pendingBranchRefreshAfterStream.value = originConvId
+    }
 
     // 6. 调用后端编辑分支（TREE-03/决策 7：创建编辑候选，旧分支保留，不覆盖原消息）。
     //    注意：chat.editBranchStream 无附件字段（后端 EditBranchRequestData 仅文本 parts），
@@ -684,7 +691,9 @@ export async function restoreAndEdit(
       newText: newContent,
       configId: state.configId.value,
       modelOverride,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 根节点自动降级 keep（错误条重放时保持同一语义）
+      mode: effectiveMode
     }
     state._pendingBranchReplayContext.value = branchReplayContext
     const streamId = generateId()
@@ -698,7 +707,9 @@ export async function restoreAndEdit(
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      mode: effectiveMode
     })
 
   } catch (err: any) {

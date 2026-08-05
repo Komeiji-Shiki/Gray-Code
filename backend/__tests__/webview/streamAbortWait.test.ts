@@ -119,4 +119,35 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         expect(manager.get('conv-mismatch')).toBe(fresh);
         expect(fresh.signal.aborted).toBe(false);
     });
+
+
+    it('waitForIdle 先注册后 cancel：等待退休旧流 finally，不永久挂起也不假空闲', async () => {
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-wait-cancel');
+        const waiting = manager.waitForIdle('conv-wait-cancel');
+
+        manager.cancel('conv-wait-cancel');
+        let settled = false;
+        void waiting.then(() => { settled = true; });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        manager.delete('conv-wait-cancel', controller);
+        await expect(waiting).resolves.toBeUndefined();
+    });
+
+    it('cancel 后再 waitForIdle 仍等待退休旧流完成', async () => {
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-post-cancel');
+        manager.cancel('conv-post-cancel');
+
+        const waiting = manager.waitForIdle('conv-post-cancel');
+        let settled = false;
+        void waiting.then(() => { settled = true; });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        manager.delete('conv-post-cancel', controller);
+        await expect(waiting).resolves.toBeUndefined();
+    });
 });

@@ -113,10 +113,14 @@ export class DiffStorageManager {
      * 获取 diff 文件路径
      */
     private getDiffFilePath(conversationId: string, diffId: string): string {
-        if (!isSafeId(diffId)) {
-            throw new Error('Invalid diffId');
-        }
+        this.assertSafeDiffId(diffId);
         return path.join(this.getDiffsDir(conversationId), `${diffId}.json`);
+    }
+
+    private assertSafeDiffId(diffId: unknown): asserts diffId is string {
+        if (typeof diffId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(diffId)) {
+            throw new Error(`Unsafe diff id: ${String(diffId)}`);
+        }
     }
     
     /**
@@ -195,6 +199,7 @@ export class DiffStorageManager {
         diffId?: string
     ): Promise<DiffReference> {
         const id = diffId || this.generateDiffId();
+        this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
         await this.persistGlobalDiff(id, diffContent);
@@ -214,6 +219,7 @@ export class DiffStorageManager {
         diffId?: string
     ): DiffReference {
         const id = diffId || this.generateDiffId();
+        this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
         void this.persistGlobalDiff(id, diffContent).catch(error => {
@@ -243,6 +249,7 @@ export class DiffStorageManager {
     }
 
     private async persistGlobalDiff(id: string, content: DiffContent): Promise<void> {
+        this.assertSafeDiffId(id);
         const diffsDir = path.join(this.basePath, 'diffs', '__global__');
         await this.ensureDir(diffsDir);
         await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content), 'utf8');

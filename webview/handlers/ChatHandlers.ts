@@ -44,8 +44,13 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
   try {
     // streamAbortControllers 实际上是 StreamAbortManager，但类型定义为 Map
     const abortManager = ctx.streamAbortControllers as any;
-    if (abortManager.cancel) {
+    if (typeof abortManager.abortAndWaitForCompletion === 'function') {
+      await abortManager.abortAndWaitForCompletion(conversationId);
+    } else if (abortManager.cancel) {
       abortManager.cancel(conversationId);
+      if (typeof abortManager.waitForIdle === 'function') {
+        await abortManager.waitForIdle(conversationId);
+      }
     } else if (abortManager.get) {
       // 如果是纯 Map，手动取消
       const controller = abortManager.get(conversationId);
@@ -78,6 +83,15 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
   const { conversationId, targetIndex } = data;
   try {
     const safeConversationId = assertSafeId(conversationId, 'conversationId');
+    const abortManager = ctx.streamAbortControllers as any;
+    if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
+      await abortManager.abortAndWaitForCompletion(safeConversationId);
+    } else {
+      abortManager?.cancel?.(safeConversationId);
+      if (typeof abortManager?.waitForIdle === 'function') {
+        await abortManager.waitForIdle(safeConversationId);
+      }
+    }
     await ctx.conversationManager.deleteMessage(safeConversationId, targetIndex);
 
     // 删除单条消息后刷新派生元数据（todoList / activeBuild），

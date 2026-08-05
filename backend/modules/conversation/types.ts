@@ -309,6 +309,20 @@ export interface UsageMetadata {
     candidatesTokensDetails?: TokenDetailsEntry[];
 }
 
+/** 上下文总结的压缩统计；与总结模型自身的 usageMetadata 分开，避免把两种口径混为一谈。 */
+export interface SummaryTokenStats {
+    /** 被新摘要替换的历史消息估算 token。 */
+    sourceTokenCount: number;
+    /** 新摘要正文 token（优先使用 provider 输出计数，否则本地估算）。 */
+    summaryTokenCount: number;
+    /** max(0, sourceTokenCount - summaryTokenCount)。 */
+    estimatedTokensSaved: number;
+    /** 总结发生前最近一次主模型请求的 prompt token；可能缺失。 */
+    contextTokenCountBefore?: number;
+    /** 基于历史替换量计算的主上下文估算值；下一次主回复后应以真实 usage 为准。 */
+    estimatedContextTokenCountAfter?: number;
+}
+
 /**
  * Gemini Content（消息内容）
  *
@@ -365,6 +379,9 @@ export interface Content {
      * - promptTokensDetails: prompt token 详情
      */
     usageMetadata?: UsageMetadata;
+
+    /** 仅总结消息存在；描述主上下文压缩效果，不是总结模型请求用量。 */
+    summaryTokenStats?: SummaryTokenStats;
 
     /**
      * usageMetadata 是否来自未终结的流（被用户取消/网络中断时截断的半截数据）。

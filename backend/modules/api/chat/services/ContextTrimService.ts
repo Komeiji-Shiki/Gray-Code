@@ -38,7 +38,16 @@ import { planSummarizeMessages } from './summarizeRangePlanner';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 /** 最多约 40k token；正常用户输入远小于此值，只有异常大粘贴才会触发有界截断。 */
-const PRESERVED_USER_INPUT_MAX_CHARS = 160_000;
+/**
+ * 被裁剪历史的逐字用户输入档案上限。
+ *
+ * 旧值 160k 字符在常见英文口径下约 40k token，单是这个“保险副本”就会吃掉默认
+ * 256k 上下文保留预算（25%=64k token）的多数空间，使总结后上下文几乎不下降。
+ * 64k 字符约 16k token，仍足以保留长任务约束，同时让摘要/裁剪真正释放空间。
+ */
+export const PRESERVED_USER_INPUT_MAX_CHARS = 64_000;
+const PRESERVED_USER_INPUT_OMISSION_MARKER =
+    '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n';
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
 
@@ -339,11 +348,15 @@ export class ContextTrimService {
         const fullText = `${header}\n\n${entries.join('\n\n')}`;
         let preservedText = fullText;
         if (fullText.length > PRESERVED_USER_INPUT_MAX_CHARS) {
-            const headBudget = Math.floor(PRESERVED_USER_INPUT_MAX_CHARS * 0.35);
-            const tailBudget = PRESERVED_USER_INPUT_MAX_CHARS - headBudget;
+            const contentBudget = Math.max(
+                0,
+                PRESERVED_USER_INPUT_MAX_CHARS - PRESERVED_USER_INPUT_OMISSION_MARKER.length
+            );
+            const headBudget = Math.floor(contentBudget * 0.35);
+            const tailBudget = contentBudget - headBudget;
             preservedText = [
                 fullText.slice(0, headBudget),
-                '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n',
+                PRESERVED_USER_INPUT_OMISSION_MARKER,
                 fullText.slice(-tailBudget)
             ].join('');
         }
