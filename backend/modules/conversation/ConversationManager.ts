@@ -2620,10 +2620,17 @@ export class ConversationManager {
         
         // 首先收集所有被拒绝的工具调用 ID
         const rejectedToolCallIds = new Set<string>();
+        // 已收到响应的 call id：区分「用户显式拒绝（有占位响应，成对发送）」与
+        // 「中断/取消残留（真孤儿，无响应）」。后者若只剥离 rejected 字段再发送，
+        // 会变成普通 tool_calls 无对应 tool 消息 → OpenAI/Anthropic 400。
+        const respondedCallIds = new Set<string>();
         for (const message of history) {
             for (const part of message.parts) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedToolCallIds.add(part.functionCall.id);
+                }
+                if (part.functionResponse?.id) {
+                    respondedCallIds.add(part.functionResponse.id);
                 }
             }
         }
@@ -2639,10 +2646,20 @@ export class ConversationManager {
          *
          * rejected 字段是内部使用的，用于标记用户拒绝执行的工具
          * 不应该发送给 AI API，因为 API 不识别此字段
+         *
+         * rejected 且无配对响应的调用（中断/取消残留的真孤儿）：整体丢弃该 part。
+         * 否则剥离 rejected 后变成普通 tool_calls 但无 tool 消息 → 400。
+         * 有配对响应（用户显式拒绝，占位响应已写入）的调用：保留，仅剥字段，
+         * 由 processFunctionResponse 把响应改写为拒绝态，成对发送让 AI 感知拒绝。
          */
-        const cleanFunctionCall = (part: ContentPart): ContentPart => {
+        const cleanFunctionCall = (part: ContentPart): ContentPart | null => {
             if (!part.functionCall) {
                 return part;
+            }
+            
+            if (part.functionCall.rejected && part.functionCall.id
+                && !respondedCallIds.has(part.functionCall.id)) {
+                return null;
             }
             
             // 移除 rejected 字段
