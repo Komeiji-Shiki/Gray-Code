@@ -114,8 +114,8 @@ export class StreamChunkProcessor {
         autoSummary: true,
         summaryContent: chunk.summaryContent,
         insertIndex: chunk.insertIndex,
-        // H1：物理替换语义——后端已删除 [insertIndex, insertIndex + removedCount) 区间消息
-        // 并插入总结；透传给前端同步删除本地窗口中的被替换消息。缺省/0 = 旧纯插入语义。
+        // 逻辑截断语义——后端不删除消息，只给 [insertIndex - removedCount, insertIndex) 打
+        // isSummarized 标记并插入总结；透传给前端同步标记本地消息。缺省/0 = 无消息被标记。
         removedCount: chunk.removedCount
       });
     } else if ('content' in chunk && chunk.content && !('cancelled' in chunk)) {

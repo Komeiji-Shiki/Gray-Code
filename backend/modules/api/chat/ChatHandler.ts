@@ -421,6 +421,20 @@ export class ChatHandler {
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         return this.summarizeService.handleSummarizeContext(request);
     }
+
+    /**
+     * 恢复指定总结消息覆盖的原文（逻辑截断的反向操作）
+     *
+     * 取消覆盖区间的 isSummarized 标记并删除总结消息，原文重新参与发送与统计。
+     *
+     * @returns 恢复的消息数与被删除的总结消息 id
+     */
+    async handleRestoreSummarizedMessages(
+        conversationId: string,
+        summaryMessageId: string
+    ): Promise<{ success: true; restoredCount: number; removedSummaryId?: string }> {
+        return this.summarizeService.restoreSummarizedMessages(conversationId, summaryMessageId);
+    }
     
 /**
      * 处理重试请求（非流式）

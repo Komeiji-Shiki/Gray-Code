@@ -1012,6 +1012,21 @@ export const revealConversationInExplorer: MessageHandler = async (data, request
 
 // ========== 上下文总结 ==========
 
+/**
+ * 恢复指定总结消息覆盖的原文（逻辑截断的反向操作）
+ */
+export const restoreSummarizedMessages: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const result = await ctx.chatHandler.handleRestoreSummarizedMessages(
+      data.conversationId,
+      data.summaryMessageId
+    );
+    ctx.sendResponse(requestId, result);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'RESTORE_SUMMARY_ERROR', error?.message || String(error));
+  }
+};
+
 export const summarizeContext: MessageHandler = async (data, requestId, ctx) => {
   const abortManager = ctx.streamAbortControllers as any;
   const controller = abortManager?.createSummary
@@ -1704,6 +1719,8 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   
   // 上下文总结
   registry.set('summarizeContext', summarizeContext);
+  // 恢复总结覆盖的原文（逻辑截断反向操作）
+  registry.set('restoreSummarizedMessages', restoreSummarizedMessages);
   
   // 工作区文件搜索
   registry.set('searchWorkspaceFiles', searchWorkspaceFiles);

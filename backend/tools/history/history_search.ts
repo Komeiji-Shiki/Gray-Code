@@ -30,7 +30,8 @@
  * ```
  *
  * 数据来源：ConversationManager.getHistory() 获取完整历史，
- * 然后只处理 isSummary 标记之前（被压缩）的消息。
+ * 然后只处理带 isSummarized 标记（已被总结覆盖）的消息。
+ * 逻辑截断语义下被总结的原文完整保留，因此可以检索到完整原始内容。
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
@@ -64,24 +65,13 @@ interface RuntimeConfig {
 // ─── 格式化引擎 ─────────────────────────────────────────
 
 /**
- * 查找历史中最后一个总结消息的索引
- */
-function findLastSummaryIndex(history: Content[]): number {
-    for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].isSummary) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/**
- * 从历史消息中提取被总结覆盖的消息（总结之前的消息）
+ * 从历史消息中提取被总结覆盖的消息（isSummarized 标记）
+ *
+ * 逻辑截断语义下被总结的原始消息完整保留在历史中并打 isSummarized 标记；
+ * 直接按标记过滤（不依赖总结消息位置），手动总结同样生效。
  */
 function getSummarizedMessages(history: Content[]): Content[] {
-    const summaryIndex = findLastSummaryIndex(history);
-    if (summaryIndex < 0) return [];
-    return history.slice(0, summaryIndex);
+    return history.filter(message => message.isSummarized === true);
 }
 
 /**
