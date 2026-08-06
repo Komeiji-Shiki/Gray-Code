@@ -763,7 +763,7 @@ onMounted(async () => {
         <label class="custom-checkbox">
           <input
             type="checkbox"
-            :checked="currentConfig.options?.stream ?? false"
+            :checked="currentConfig.options?.stream ?? true"
             @change="(e: any) => updateOption('stream', e.target.checked)"
           />
           <span class="checkmark"></span>
