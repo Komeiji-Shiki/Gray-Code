@@ -14,7 +14,7 @@
  *   （EMA 指数衰减到 0），柱子逐渐变矮滚出屏幕后保持 0.0 与空画布，直到下一轮真实流。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { tpsMeter, type TpsSample } from '../../utils/tpsMeter'
+import { tpsMeter, type TpsSample, type TpsSource } from '../../utils/tpsMeter'
 import { useChatStore } from '../../stores'
 import { useI18n } from '../../i18n'
 
@@ -29,6 +29,10 @@ const TOK_UNIT = 'tok/s'
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const live = ref(false)
 const valueText = ref(`0.0 ${TOK_UNIT}`)
+/** 最近一次计数的来源（真实 tokenizer / 字符估算），用于状态标识 */
+const source = ref<TpsSource | null>(null)
+/** 画布/数值是否还有内容（非空曲线）：完全归零后整条 bar 淡出 */
+const barActive = ref(false)
 
 /** 流是否活跃：正在接收流式响应或等待响应（agent 思考/工具执行也视为活跃） */
 const streamActive = computed(() => chatStore.isStreaming || chatStore.isWaitingForResponse)
@@ -63,7 +67,8 @@ function drawChart(bars: number[]): void {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
-  if (bars.length === 0) return
+  // 全零（自然衰减终点）：不绘制任何柱子，让画布保持干净
+  if (bars.length === 0 || bars.every((b) => b <= 0)) return
 
   // 每次绘制实时解析主题色：主题切换后颜色跟随更新（200ms 一次 getComputedStyle 开销可忽略）
   const color = resolveChartColor()
@@ -90,6 +95,7 @@ function drawChart(bars: number[]): void {
 /** 流活跃但无实时数据：冻结最近真实曲线（不清空 bars，避免曲线闪烁） */
 function showFrozenReal(): void {
   live.value = lastRealRing.length > 0
+  barActive.value = lastRealRing.some((b) => b > 0)
   if (lastRealRing.length === 0) {
     // 从未有过真实曲线：显示 0 与空画布，不给假数据
     valueText.value = `0.0 ${TOK_UNIT}`
@@ -98,9 +104,11 @@ function showFrozenReal(): void {
 }
 
 function onSample(sample: TpsSample): void {
+  source.value = sample.source
   if (sample.live) {
     live.value = true
     lastRealRing = sample.ring
+    barActive.value = true
     valueText.value = `${sample.ema.toFixed(1)} ${TOK_UNIT}`
     drawChart(sample.ring)
     return
@@ -110,15 +118,13 @@ function onSample(sample: TpsSample): void {
     showFrozenReal()
     return
   }
-  // 流结束/空闲：不模拟假数据——绘制自然衰减中的曲线，归零后保持 0
+  // 流结束/空闲：不模拟假数据——绘制自然衰减中的曲线。
+  // 即使 EMA 已归零也继续画 ring（旧柱子随采样滚动自然滚出），
+  // 不再强制清空画布，避免"还有波动就消失"。
   live.value = false
-  if (sample.ema > 0) {
-    valueText.value = `${sample.ema.toFixed(1)} ${TOK_UNIT}`
-    drawChart(sample.ring)
-  } else {
-    valueText.value = `0.0 ${TOK_UNIT}`
-    drawChart([])
-  }
+  barActive.value = sample.ema > 0 || sample.ring.some((b) => b > 0)
+  valueText.value = sample.ema > 0 ? `${sample.ema.toFixed(1)} ${TOK_UNIT}` : `0.0 ${TOK_UNIT}`
+  drawChart(sample.ring)
 }
 
 // 流一旦开始（即使尚无 token）立即切到冻结态，无需等下一次采样（≤200ms）
@@ -152,12 +158,20 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="tps-bar"
-    :class="{ 'is-live': live }"
+    :class="{ 'is-live': live, 'is-idle': !barActive }"
     :title="t('components.input.tpsTooltip')"
   >
     <span class="tps-label">TPS</span>
     <canvas ref="canvasRef" aria-hidden="true"></canvas>
     <span class="tps-value">{{ valueText }}</span>
+    <span
+      v-if="source && barActive"
+      class="tps-source"
+      :class="`is-${source}`"
+      :title="source === 'tokenizer' ? t('components.input.tpsTokenizerReal') : t('components.input.tpsTokenizerEstimate')"
+    >
+      <i class="codicon" :class="source === 'tokenizer' ? 'codicon-check' : 'codicon-warning'"></i>
+    </span>
   </div>
 </template>
 
@@ -171,6 +185,12 @@ onBeforeUnmount(() => {
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
   line-height: 1;
+  /* 完全空闲后整条自然淡出（保留占位不跳动），重新活跃时恢复 */
+  transition: opacity 0.6s ease;
+}
+
+.tps-bar.is-idle {
+  opacity: 0.4;
 }
 
 .tps-label {
@@ -201,6 +221,24 @@ onBeforeUnmount(() => {
 
 .tps-bar.is-live .tps-label {
   opacity: 1;
+}
+
+.tps-source {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.tps-source .codicon {
+  font-size: 11px;
+}
+
+.tps-source.is-tokenizer .codicon {
+  color: var(--vscode-charts-green, var(--vscode-foreground));
+}
+
+.tps-source.is-estimate .codicon {
+  color: var(--vscode-charts-yellow, var(--vscode-foreground));
 }
 
 /* 窄面板：隐藏 canvas 只留数值，避免把右侧按钮挤出 */

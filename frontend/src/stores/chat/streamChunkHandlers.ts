@@ -21,7 +21,7 @@ import { syncFoldedHistoryHint, syncTotalMessagesFromWindow, trimWindowFromTop }
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceAllMessages, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 import type { StreamFunctionCall } from '../../utils/functionCallMerge'
-import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor } from '../../utils/tokenCounter'
+import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor, isTokenizerReady } from '../../utils/tokenCounter'
 
 /**
  * 工具调用参数的 TPS 已计文本跟踪（per-tool call id）。
@@ -56,11 +56,16 @@ function syncModelContext(state: ChatStoreState): void {
   ensureTokenCounterLoaded(modelKey)
 }
 
-/** record：base 估算 × 校准因子；同时累计 base 供流结束校准 */
+/** record：base 估算 × 校准因子；同时累计 base 供流结束校准。
+ * source 标记当前计数方式：模型 tokenizer 就绪 → 真实计数，否则 → 字符加权估算。 */
 function recordTpsTokens(base: number, ts?: number): void {
   if (base <= 0) return
   turnBaseTokens += base
-  tpsMeter.record(Math.max(1, Math.round(base * activeFactor)), ts)
+  tpsMeter.record(
+    Math.max(1, Math.round(base * activeFactor)),
+    ts,
+    isTokenizerReady(activeModelKey) ? 'tokenizer' : 'estimate'
+  )
 }
 
 function getNextBackendIndex(state: ChatStoreState): number {
