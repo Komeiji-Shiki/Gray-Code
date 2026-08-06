@@ -2216,7 +2216,15 @@ const zhCN = {
                     rawEntries: {
                         title: '原始记忆条目',
                         description: '查看和编辑原始记忆条目。编辑会清除相关摘要（下次压缩时重新构建）。',
-                        empty: '暂无记忆条目。'
+                        empty: '暂无记忆条目。',
+                        addPlaceholder: '输入要记住的内容，点击「添加记忆」手动写入长期记忆（与 AI 的 memory_note 等效）。支持 Ctrl+Enter / Cmd+Enter 快捷提交。',
+                        add: '添加记忆',
+                        added: '已添加记忆 #{id}',
+                        addEmpty: '内容为空，无法添加记忆。',
+                        addTooLong: '内容超过单条记忆上限（{limit} 字节）。',
+                        truncatedNotice: '记忆超过 {limit} 条，列表仅展示前 {limit} 条（其余可在对话中通过 memory_recall 检索）。',
+                        deleteConfirmTitle: '删除记忆条目',
+                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
                     }
                 },
 

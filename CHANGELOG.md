@@ -10,6 +10,9 @@
 
 ### Added
   - 设置页新增设置项搜索：标题栏搜索框实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），键盘上下选择/回车跳转，点击结果自动切换页签并滚动定位（节标题或精确锚点 + 1.6s 闪烁高亮）；内置中/英/日三语关键词索引（SEARCH_INDEX），17 个设置组件 93 个设置块加 `data-search-anchor` 精确锚点，具体设置项全部可搜可直达；空结果提示，三语 i18n 同步。
+  - 原始记忆条目管理补齐「手动添加」与「单条删除」（移植自下游桌面版）：设置页记忆条目区新增手动新增输入框（等价 AI 的 `memory_note`，支持 Ctrl+Enter / Cmd+Enter 快捷提交，实时 UTF-8 字节计数对齐后端 `entryChars` 校验，成功提示返回分配的 ID 并自动刷新列表）；条目行新增删除按钮（三语确认框，删除后其后条目 id 前移重编号、覆盖块的树摘要一并清空，下次 compress 重建）；`getMemoryEntries` 支持 `limit` 截断（默认 5000，超限响应 `truncated` 标志并在列表顶部提示，海量记忆不再冻结设置页）。
+  - 记忆引擎健壮性增强（移植自下游桌面版）：`MemoryManager.deleteEntry` 单条删除（读全量 → 过滤 → 重编号 → tmp+rename 原子写回，崩溃安全，不连坐 `truncateLog` 的截断语义）；`note`/`updateEntry` 按整条固定宽度记录精确校验容量（含 `#<id> <date> ` 头部开销，`entryChars` 配置上限同步收窄到 `LOG_REC - 1 - 23`，不再在 `pad()` 处抛晦涩的 Too long）；`records()` 只解析完整记录（崩溃撕裂的尾部半条不再被当作垃圾条目，下次追加时 repair 修复）；`count`/`logScan` 只吞 ENOENT（其余 IO 错误上抛，不再谎报「没有记忆」）；`wake` 连续原始块合并为一次 `logSlice` 批量读取（消除逐块 open/read/close 的文件句柄风暴）；新增 `totalEntries`（O(1) 计数）。
+  - 新增回归测试：`addMemory.test.ts`（note/updateEntry 记录容量校验、`listEntries(limit)` 截断语义、撕裂尾部容错、wake 批量读取一致性）、`deleteEntry.test.ts`（中间/尾部/唯一条删除、非法 id、树摘要清理与重编号连续性）。
 
 ### Changed
   - 思维链（思考块）视图从两态升级为三段式（对齐后台任务回流消息）：**折叠**（只保留头部标题行）/ **中展开**（默认，固定约 10 行滚动查看）/ **完全展开**；头部单击三档循环切换，头部右侧新增三个精确模式按钮（chevron-up / list-flat / chevron-down，`@click.stop` 防冒泡）；`ThoughtViewMode` 类型与 `getRenderBlockMemoDeps` 签名同步更新（`isThoughtExpanded` → `thoughtViewMode`），清理 MessageItem 中遗留的 thought 样式死代码；三语 i18n 同步；MessageRenderBlock 测试重写为三态覆盖。
