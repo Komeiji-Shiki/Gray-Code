@@ -94,6 +94,8 @@ Memory data is stored locally as append-only logs and fixed-width records, witho
 
 **Conversation and experience** — GrayCode supports multiple conversation tabs, automatic history persistence, history viewing and migration, message queuing while the assistant is busy, visible tool states, token usage, thinking content, response timing, automatic checkpoints, sound alerts, Windows notifications, Chinese / English / Japanese interfaces, usage statistics, cost estimation, and Mermaid rendering.
 
+**Usage time statistics** — GrayCode automatically tracks your IDE active time: a 60-second heartbeat plus user activity events (editing, cursor movement, scrolling, editor switching, terminal, and window focus) mark active periods, pausing after 5 minutes of inactivity; AI working sessions (streaming generation, tool execution, sub-agent generation, background tasks) also count as active. The Usage Time section in the usage statistics page and Settings → Usage shows today's usage, the current continuous working session, and the total within the selected range, a daily bar chart for the last 7/30 days, monthly aggregation for 90 days and beyond (click a month to expand daily details), and a 7-day × 24-hour activity heatmap (hover to see active minutes per hour), with range switching among 7 days / 30 days / 90 days / 1 year / all. The assistant can also query your usage statistics via the `get_activity_stats` tool to understand your work-rest rhythm. The data contains timestamps only, is stored fully locally, and never includes conversation content.
+
 ## Model Channel Configuration
 
 All channels support API URL / API key, model lists, tool mode, streaming, timeout, retries, custom headers, custom request bodies, context thresholds, and token counting. Tool modes include `function_call`, `xml`, and `json`, allowing you to choose between native tool calling and prompt-based protocols depending on model compatibility.
@@ -134,11 +136,12 @@ Tool availability depends on settings, dependencies, channel capabilities, and w
 | Tasks and documents | todo_write, todo_update, create_design / update_design, create_plan / update_plan, create_progress / update_progress, record_progress_milestone, validate_progress_document, create_review, record_review_milestone, finalize_review, validate_review_document, reopen_review, compare_review_documents | Manage TODO lists and Design / Plan / Progress / Review documents |
 | Sub-Agents | subagents | Delegate work to specialized agents in the foreground or background, continue from `continueFromRunId`, and inspect runs in SubAgent Monitor |
 | History, skills, notifications | history_search, read_skill, show_windows_notification | Search conversation history, load Skill content, and show Windows notifications |
+| Usage time | get_activity_stats | Query IDE usage time statistics (daily usage minutes, recent schedule heatmap, continuous working duration); timestamps only |
 | Memory | memory_wake, memory_note, memory_recall, memory_compress, memory_zoom, memory_forget, memory_config | OptMem permanent memory: wake, record, search, compress, expand, discard, and configure |
 
 ## Settings Pages
 
-The settings page includes Channels, Tools, Auto Execution, MCP, Checkpoints, Summarization, Image Generation, Dependencies, Context, Prompts, Token Counting, Sub-Agents, Sound, Appearance, Memory, and General settings.
+The settings page includes Channels, Tools, Auto Execution, MCP, Checkpoints, Summarization, Image Generation, Dependencies, Context, Prompts, Token Counting, Sub-Agents, Sound, Appearance, Usage, Memory, and General settings.
 
 Channels manage model providers and API parameters. Tools control whether individual tools are enabled and how they behave. Auto Execution decides which tools require confirmation. MCP manages external servers. Checkpoints configure recovery points. Summarization controls automatic context summaries. Context controls which workspace information can be injected. Prompts manage modes, templates, prompt entries, dynamic context policies, template variables, and mode-level tool policies. Memory configures OptMem and custom memory instructions. General settings include proxy, storage path migration, and settings import / export.
 
