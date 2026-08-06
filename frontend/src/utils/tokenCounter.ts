@@ -1,26 +1,26 @@
 /**
- * 模型 token 计数管线（tokenizer + 自校准叠加）。
+ * 模型 token 计数管线（运行时词表 + 自校准叠加）。
+ *
+ * 词表不打包进 vsix：cl100k（~1.6MB）与 DeepSeek V3（~2.3MB）由扩展端
+ * TokenizerResourceManager 运行时联网下载到数据目录（首次需要时触发，下载一次
+ * 本地缓存），前端通过 tokenizer.getResource 消息通道获取，用 js-tiktoken/lite
+ * （BPE 引擎，~9KB）加载。下载失败/离线时回退字符类别加权估算，不阻塞业务。
  *
  * 精度阶梯（多提供商场景下 tokenizer 不是终点，需叠加校准）：
- * 1. 模型专属 tokenizer（最高精度基线）：
- *    - DeepSeek：官方 deepseek_v3_tokenizer 转换词表（js-tiktoken/lite 加载，
- *      frontend/src/vendor/deepseek-tokenizer/，已与官方 Python 基准逐位一致）；
- *    - 其余模型：gpt-tokenizer（cl100k_base）——对 OpenAI 系近精确，对其他模型有
- *      系统性偏差（5~20%），由下面的校准因子修正。
+ * 1. 模型专属 tokenizer：DeepSeek 用官方 deepseek_v3_tokenizer 转换词表（与官方
+ *    Python 基准逐位一致）；其余模型用 cl100k（OpenAI 系近精确，对其他模型有
+ *    系统性偏差 5~20%，由校准因子修正）。
  * 2. 自校准因子（按 modelKey 持久化到 localStorage）：每轮流结束拿最终 usage 真值
- *    （candidatesTokenCount，含思考 token，与估算端计入 thought 的口径一致）对比本轮
- *    base 估算，EMA 学习乘法因子；离群剔除（0.4~2.5）挡 usage 异常样本（字段缺失/
- *    多轮混合/截断等）。同一模型的系统性偏差稳定，因子收敛后误差压到 ~3~5%，且对
- *    词表不匹配的模型自动修正。
- * 3. 回退：tokenizer 未加载/加载失败时字符类别加权估算（ASCII/CJK/其他分系数），
- *    同样乘校准因子。
+ *    （candidatesTokenCount，含思考 token，与估算端计入 thought 的口径一致）对比
+ *    本轮 base 估算，EMA 学习乘法因子；离群剔除（0.4~2.5）挡 usage 异常样本。
+ *    同一模型的系统性偏差稳定，因子收敛后误差压到 ~3~5%。
+ * 3. 回退：词表未就绪/加载失败时字符类别加权估算（ASCII/CJK/其他分系数），同样乘因子。
  *
- * 性能与体积：
- * - 词表均懒加载（dynamic import 独立 chunk）：gpt ~1MB、deepseek ~2.3MB，首次
- *   遇到对应模型才拉取；加载完成前走回退估算，不阻塞业务。
- * - 同步编码：常规 chunk <1ms；超长文本分批（BATCH_SIZE 字符/片）规避大输入时
- *   合并缓存的非线性退化（实测 300k 字符分批 ~380ms、误差 <0.2%）。
+ * 性能：同步 BPE 编码常规 chunk <1ms；超长文本分批（BATCH_SIZE 字符/片）规避
+ * 大输入时合并缓存的非线性退化。
  */
+
+import { sendToExtension } from './vscode'
 
 /** 分批阈值：超过后按片计数，规避 tokenizer 合并缓存的非线性退化 */
 const BATCH_SIZE = 2000
@@ -43,16 +43,25 @@ const CALIBRATION_KEY_PREFIX = 'graycode:tpsCal:'
 
 type TokenizerKind = 'gpt' | 'deepseek'
 
-let gptCount: ((text: string) => number) | null = null
-let deepseekCount: ((text: string) => number) | null = null
-const loadPromises: Partial<Record<TokenizerKind, Promise<void>>> = {}
+/** 扩展端下发的词表资源（与 backend/modules/tokenizer 的 TokenizerResource 对应） */
+interface TokenizerResource {
+  name: string
+  bpeRanks: string
+  patStr: string
+  specialTokens: Record<string, number>
+}
 
-/** 按模型名选择专属 tokenizer：DeepSeek 用官方词表，其余用 gpt（校准因子修正偏差） */
+/** 已就绪的计数函数（词表加载完成后设置） */
+const tokenizerCounters = new Map<TokenizerKind, (text: string) => number>()
+/** 加载中 Promise（并发去重） */
+const tokenizerLoadPromises = new Map<TokenizerKind, Promise<void>>()
+
+/** 按模型名选择专属 tokenizer：DeepSeek 用官方词表，其余用 cl100k（校准因子修正偏差） */
 function pickTokenizerKind(modelKey: string): TokenizerKind {
   return modelKey.toLowerCase().includes('deepseek') ? 'deepseek' : 'gpt'
 }
 
-/** 字符类别加权基线估算（tokenizer 不可用时的回退；CJK 范围参考 tiktoken 常见口径） */
+/** 字符类别加权基线估算（词表不可用时的回退；CJK 范围参考 tiktoken 常见口径） */
 function baseEstimateByCharClass(text: string): number {
   let ascii = 0
   let cjk = 0
@@ -74,37 +83,34 @@ function baseEstimateByCharClass(text: string): number {
   return ascii / FALLBACK_ASCII + cjk / FALLBACK_CJK + other / FALLBACK_OTHER
 }
 
-function ensureLoaded(kind: TokenizerKind): void {
-  if ((kind === 'gpt' && gptCount) || (kind === 'deepseek' && deepseekCount)) return
-  if (loadPromises[kind]) return
-  loadPromises[kind] = (async () => {
-    try {
-      if (kind === 'gpt') {
-        const mod = await import('gpt-tokenizer')
-        gptCount = (text: string) => mod.countTokens(text)
-      } else {
-        const [{ Tiktoken }, metaRaw, ranksRaw] = await Promise.all([
-          import('js-tiktoken/lite'),
-          import('../vendor/deepseek-tokenizer/meta.json?raw'),
-          import('../vendor/deepseek-tokenizer/deepseek.tiktoken?raw')
-        ])
-        const meta = JSON.parse(metaRaw.default) as {
-          pat_str: string
-          special_tokens: Record<string, number>
-        }
-        const enc = new Tiktoken({
-          bpe_ranks: ranksRaw.default,
-          pat_str: meta.pat_str,
-          special_tokens: meta.special_tokens
-        })
-        deepseekCount = (text: string) => enc.encode(text).length
-      }
-    } catch {
-      // 加载失败（离线/构建异常）：保持回退估算，不阻塞业务
-    }
-  })().finally(() => {
-    loadPromises[kind] = undefined
+/** 从扩展端拉取词表并构造计数函数（下载可能耗时，允许长超时） */
+async function loadTokenizer(kind: TokenizerKind): Promise<void> {
+  const name = kind === 'deepseek' ? 'deepseek-v3' : 'cl100k'
+  const resource = await sendToExtension<TokenizerResource>(
+    'tokenizer.getResource',
+    { name },
+    { timeoutMs: 120_000 }
+  )
+  const { Tiktoken } = await import('js-tiktoken/lite')
+  const enc = new Tiktoken({
+    bpe_ranks: resource.bpeRanks,
+    pat_str: resource.patStr,
+    special_tokens: resource.specialTokens
   })
+  tokenizerCounters.set(kind, (text: string) => enc.encode(text).length)
+}
+
+function ensureLoaded(kind: TokenizerKind): void {
+  if (tokenizerCounters.has(kind)) return
+  if (tokenizerLoadPromises.has(kind)) return
+  const task = loadTokenizer(kind)
+    .catch(() => {
+      // 下载/加载失败（离线、源不可达）：保持回退估算；下次会话再试
+    })
+    .finally(() => {
+      tokenizerLoadPromises.delete(kind)
+    })
+  tokenizerLoadPromises.set(kind, task)
 }
 
 function countWith(fn: ((text: string) => number) | null, text: string): number | null {
@@ -119,19 +125,18 @@ function countWith(fn: ((text: string) => number) | null, text: string): number 
 
 /**
  * 统计文本的 base token 数（同步，未经校准因子修正）。
- * 按 modelKey 选择专属 tokenizer；未加载/失败时回退字符类别加权估算。
+ * 按 modelKey 选择专属 tokenizer；未就绪/失败时回退字符类别加权估算。
  */
 export function countBaseTokens(text: string, modelKey: string): number {
   if (!text) return 0
   const kind = pickTokenizerKind(modelKey)
-  const counted = kind === 'deepseek'
-    ? countWith(deepseekCount, text)
-    : countWith(gptCount, text)
+  const fn = tokenizerCounters.get(kind) ?? null
+  const counted = countWith(fn, text)
   if (counted !== null && counted > 0) return counted
   return Math.max(1, Math.ceil(baseEstimateByCharClass(text)))
 }
 
-/** 触发 modelKey 对应 tokenizer 的懒加载（幂等） */
+/** 触发 modelKey 对应 tokenizer 的加载（幂等，通过消息通道向扩展端获取词表） */
 export function ensureTokenCounterLoaded(modelKey: string): void {
   ensureLoaded(pickTokenizerKind(modelKey))
 }
@@ -148,8 +153,8 @@ export function getCalibrationFactor(modelKey: string): number {
 }
 
 /**
- * 流结束校准：用最终 usage 真值（剔除 reasoning tokens）更新 modelKey 的乘法因子。
- * EMA + 离群剔除，防止推理模型 usage 污染因子。
+ * 流结束校准：用最终 usage 真值（含思考 token，与估算口径一致）更新 modelKey 的乘法因子。
+ * EMA + 离群剔除，防止 usage 异常样本污染因子。
  */
 export function calibrate(modelKey: string, baseTokens: number, realTokens: number): void {
   if (baseTokens < CALIBRATION_MIN_BASE || realTokens < CALIBRATION_MIN_REAL) return
