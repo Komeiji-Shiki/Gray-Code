@@ -2456,6 +2456,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Toggle Skills',
                     subagents: 'Subagents',
                     agent_send_message: 'Send Agent Message',
+                    get_activity_stats: 'Get Activity Stats',
                 },
                 toolDescriptions: {
                     read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
@@ -2506,6 +2507,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Enable or disable skills for subsequent requests.',
                     subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
                     agent_send_message: 'Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: the recipient sees it appended to its most recent tool result. Address by targetRunId (an active sub-agent run in this conversation) or targetAgentName ("main" reaches the main session). Replies in the same thread increment hopDepth; after 5 hops delivery is rejected (loop protection). You are identified automatically; you cannot impersonate another agent.',
+                    get_activity_stats: 'Get the user\'s IDE usage time statistics: daily usage minutes, recent schedule (hourly heatmap of when the user is active), and how long the user has been continuously working. Use this to understand the user\'s work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Data contains timestamps only, no user content. Returned times are in local time (HH:mm, YYYY-MM-DD).',
                 },
             },
             tokenCountSettings: {

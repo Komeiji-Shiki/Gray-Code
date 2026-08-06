@@ -13,6 +13,7 @@ describe('getToolDisplayName', () => {
   it('有 i18n 条目的内置工具返回本地化名称', () => {
     expect(getToolDisplayName('read_file')).toBe('读取文件')
     expect(getToolDisplayName('apply_diff')).toBe('应用差异')
+    expect(getToolDisplayName('get_activity_stats')).toBe('获取活动统计')
   })
 
   it('无 i18n 条目的工具回退为机械转换（snake_case → Title Case）', () => {
@@ -38,6 +39,7 @@ describe('getToolDisplayName', () => {
 describe('getToolDescription', () => {
   it('有 i18n 条目的内置工具返回本地化描述', () => {
     expect(getToolDescription('read_file', 'en fallback')).toContain('读取工作区文件')
+    expect(getToolDescription('get_activity_stats', 'en fallback')).toContain('使用时间统计')
   })
 
   it('无 i18n 条目的工具回退后端原文', () => {

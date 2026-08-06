@@ -2457,6 +2457,7 @@ const zhCN = {
                     toggle_skills: '切换技能',
                     subagents: '子代理',
                     agent_send_message: '发送代理消息',
+                    get_activity_stats: '获取活动统计',
                 },
                 toolDescriptions: {
                     read_file: '读取工作区文件，支持文本和二进制文件，可指定行范围。',
@@ -2507,6 +2508,7 @@ const zhCN = {
                     toggle_skills: '启用或禁用技能，控制后续请求使用的知识模块。',
                     subagents: '派生子代理执行任务，支持传入提示词和上下文。',
                     agent_send_message: '向当前对话中的另一个代理（子代理）或主会话（主模型）异步发送消息。寻址方式二选一：targetRunId（当前对话中活跃的子代理运行 ID）或 targetAgentName（"main" 表示主会话）。同一线程回复超过 5 跳后投递被拒绝（防循环）；发送方身份自动识别，无法冒充。',
+                    get_activity_stats: '查询用户的 IDE 使用时间统计：每日使用时长、最近作息（24 小时热力）与连续工作时长。用于了解用户的工作休息节奏、检测长时间连续工作会话，或查看用户当前是否活跃。数据仅含时间戳，不含用户内容；返回时间为本地时间。',
                 },
             },
             tokenCountSettings: {
