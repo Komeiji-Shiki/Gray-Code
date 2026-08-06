@@ -275,6 +275,13 @@ export class BranchGraphRepository {
     }
 
     /**
+     * 每次修复备份后最多保留的历史备份份数（超出按 mtime 清理最旧）：
+     * 频繁 divergence 修复（每次 ensureMainHistoryRepresentedInGraph 都可能备份）会让
+     * 数据目录无限堆积 branches.backup-*.json；备份是修复前的保险，保留最近几份足够。
+     */
+    private static readonly BACKUP_RETENTION_COUNT = 10;
+
+    /**
      * 在修复/重建 sidecar 前保存原文件的逐字节备份。
      *
      * - 与 save/delete 共用会话写队列，避免复制过程与单次写入本身交错；上层仍须在同一会话锁内
@@ -291,6 +298,8 @@ export class BranchGraphRepository {
                 const backupPath = path.join(path.dirname(filePath), `branches.backup-${safeReason}-${suffix}.json`);
                 try {
                     await fsp.copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL);
+                    // best-effort 清理：不阻塞备份成功路径
+                    void this.pruneOldBackups(filePath).catch(() => undefined);
                     return backupPath;
                 } catch (error) {
                     const code = (error as NodeJS.ErrnoException)?.code;
@@ -304,6 +313,40 @@ export class BranchGraphRepository {
             }
             return null;
         });
+    }
+
+    /** 清理该会话过旧的修复备份（仅限 branches.backup-*.json，不动主 sidecar 与 tmp） */
+    private async pruneOldBackups(filePath: string): Promise<void> {
+        try {
+            const dir = path.dirname(filePath);
+            const entries = await fsp.readdir(dir, { withFileTypes: true });
+            const candidates = entries
+                .filter(entry => entry.isFile() && /^branches\.backup-.+\.json$/.test(entry.name))
+                .map(entry => path.join(dir, entry.name));
+            if (candidates.length <= BranchGraphRepository.BACKUP_RETENTION_COUNT) {
+                return;
+            }
+            const withMtime = await Promise.all(
+                candidates.map(async name => {
+                    try {
+                        const stat = await fsp.stat(name);
+                        return { name, mtime: stat.mtimeMs };
+                    } catch {
+                        return { name, mtime: 0 };
+                    }
+                })
+            );
+            withMtime.sort((a, b) => b.mtime - a.mtime);
+            for (const old of withMtime.slice(BranchGraphRepository.BACKUP_RETENTION_COUNT)) {
+                try {
+                    await fsp.unlink(old.name);
+                } catch {
+                    // 删除失败忽略（best-effort）
+                }
+            }
+        } catch {
+            // 目录不可读等：best-effort 忽略
+        }
     }
 
     /**

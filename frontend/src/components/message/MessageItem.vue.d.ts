@@ -22,3 +22,7 @@ export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
 export declare const backgroundTaskViewModeByMessageId: Map<string, BackgroundTaskViewMode>
 export declare const BACKGROUND_TASK_VIEW_MODE_CAP: number
 export declare function pruneBackgroundTaskViewModes(activeIds: Set<string>): void
+
+export type ThoughtViewMode = 'collapsed' | 'medium' | 'expanded'
+export declare const thoughtViewModeByMessageId: Map<string, ThoughtViewMode>
+export declare const THOUGHT_VIEW_MODE_CAP: number

@@ -146,4 +146,20 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[1].content).toBe('tail-edited')
     expect(second[0]).toBe(first[0])
   })
+
+  it('中间位置插入（insertMessageAt splice）：清除缓存后全量重建，不重复、不漏插（回归）', () => {
+    // 场景：handleAutoSummary 把总结消息插到窗口中间。若不清除缓存，指纹（首尾元素不变）
+    // 命中「纯尾部追加」增量路径——被插入的总结消息不可见，且旧尾元素被重复 concat 一次。
+    const state = makeState([makeMessage('m1'), makeMessage('fr', { isFunctionResponse: true }), makeMessage('m2')])
+    const first = getVisibleChatMessagesCached(state)
+    expect(first.map(m => m.id)).toEqual(['m1', 'm2'])
+
+    const summary = makeMessage('sum-1', { isSummary: true, isFunctionResponse: false })
+    state.allMessages.value.splice(1, 0, summary)
+    const second = getVisibleChatMessagesCached(state)
+
+    expect(second.map(m => m.id)).toEqual(['m1', 'sum-1', 'm2'])
+    // 不出现重复的 m2
+    expect(second.filter(m => m.id === 'm2')).toHaveLength(1)
+  })
 })

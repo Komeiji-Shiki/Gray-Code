@@ -449,8 +449,10 @@ describe('TREE-01/02 BranchService reroll', () => {
             const historyIds = (await manager.getMessagesRaw('c1')).map(message => message.id!);
             let graph = (await service.getBranchGraph('c1')).graph!;
             // appendHistoryToGraph 是锁外 fire-and-forget；等待其异步读图与入队完成，而不是只抢一次锁。
-            for (let attempt = 0; attempt < 20 && activePath(graph).length !== historyIds.length; attempt += 1) {
-                await new Promise<void>(resolve => setImmediate(resolve));
+            // 用真实时间预算轮询（此前 20 个 setImmediate 在并行 worker 负载下偶发不足，测试偶发失败）
+            const waitDeadline = Date.now() + 3000;
+            while (Date.now() < waitDeadline && activePath(graph).length !== historyIds.length) {
+                await new Promise<void>(resolve => setTimeout(resolve, 10));
                 graph = (await service.getBranchGraph('c1')).graph!;
             }
             expect(historyIds[0]).toBe(userNodeId);

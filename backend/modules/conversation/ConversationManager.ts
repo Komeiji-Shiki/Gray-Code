@@ -33,7 +33,7 @@ import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repai
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
-import { activePath, findUnsyncedFunctionResponses, isFunctionResponseMessage } from './branch/BranchGraph';
+import { activePath, findUnsyncedFunctionResponses, isActiveEmptyPlaceholder, isFunctionResponseMessage } from './branch/BranchGraph';
 import { BranchError } from './branch/types';
 import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import { Logger } from '../../core/logger';
@@ -217,6 +217,22 @@ export class ConversationManager {
      *   写链一致；TTL 仅在无写变更但外部直写存储的极端场景兜底。
      */
     private readonly nodeIdCache = new Map<string, { history: ConversationHistory; storedAt: number }>();
+    /**
+     * BCP-01 PERF 补充：节点 ID 反查缓存的写链代际计数。
+     *
+     * getMessageNodeIdAt 读盘不持会话写锁：读盘开始 → 写提交并失效缓存 → 读盘完成
+     * 用旧盘面回填缓存，会在 300ms TTL 窗口内返回陈旧节点 id。每次 invalidateCaches
+     * 递增对应会话计数，读盘前后计数一致才允许回填，消除该窗口。
+     */
+    private readonly nodeIdCacheEpochs = new Map<string, number>();
+
+    private bumpNodeIdCacheEpoch(conversationId: string): void {
+        this.nodeIdCacheEpochs.set(conversationId, (this.nodeIdCacheEpochs.get(conversationId) ?? 0) + 1);
+        if (this.nodeIdCacheEpochs.size > 200) {
+            // 会话数量极多时的防御性清理：epoch 清零只损失一次缓存回填，无正确性影响
+            this.nodeIdCacheEpochs.clear();
+        }
+    }
 
     private touchMetaCache(conversationId: string): void {
         const value = this.metaCache.get(conversationId);
@@ -251,6 +267,7 @@ export class ConversationManager {
     private invalidateCaches(conversationId: string): void {
         this.metaCache.delete(conversationId);
         this.nodeIdCache.delete(conversationId);
+        this.bumpNodeIdCacheEpoch(conversationId);
     }
 
     private cacheMetadata(conversationId: string, metadata: ConversationMetadata | null): void {
@@ -422,9 +439,18 @@ export class ConversationManager {
                                     return; // 线性对话未建图：不强制建
                                 }
                                 const tail = graph.activeTailNodeId ? graph.nodes[graph.activeTailNodeId] : undefined;
+                                if (isActiveEmptyPlaceholder(tail)) {
+                                    return; // 流式占位候选：跳过，由 finishReroll 回填
+                                }
                                 if (tail && (tail.parts?.length ?? 0) === 0
                                     && (tail.kind === 'reroll' || tail.kind === 'edit')) {
-                                    return; // 流式占位候选：跳过，由 finishReroll 回填
+                                    // 超龄空占位（进程崩溃/被杀遗留，isActiveEmptyPlaceholder 判定为已死亡）：
+                                    // 先以主历史收敛图（占位移出活跃路径），再增量并入新消息。
+                                    // 不收敛直接 append 会把新消息挂到死占位下，冻结依旧。
+                                    await branchService.syncMainHistoryAfterStructuralMutation(
+                                        conversationId,
+                                        'branch_finished'
+                                    );
                                 }
                                 await branchService.appendHistoryToGraph(conversationId, withNodeIds);
                             } catch (error) {
@@ -1637,6 +1663,7 @@ export class ConversationManager {
         }
         // 直读磁盘（不经内存缓存）：调用方可能刚写入历史（含外部直写存储的迁移场景），
         // 缓存可能滞后；反查是低频操作，直接读最保守。
+        const epochBeforeRead = this.nodeIdCacheEpochs.get(conversationId) ?? 0;
         const result = await this.storage.loadHistoryWithStatus(conversationId);
         let history = result.value ?? [];
         if (ConversationManager.needsNodeIdMigration(history)) {
@@ -1644,8 +1671,12 @@ export class ConversationManager {
             await this.ensureHistoryNodeIds(conversationId);
             history = await this.loadHistory(conversationId);
         }
-        this.nodeIdCache.set(conversationId, { history, storedAt: Date.now() });
-        this.touchNodeIdCache(conversationId);
+        // 读盘期间若有写提交并失效缓存（epoch 变化），本次读到的可能是旧盘面，不得回填——
+        // 否则 300ms TTL 窗口内反查命中陈旧节点 id（如存档绑定到已删除的节点）。
+        if ((this.nodeIdCacheEpochs.get(conversationId) ?? 0) === epochBeforeRead) {
+            this.nodeIdCache.set(conversationId, { history, storedAt: Date.now() });
+            this.touchNodeIdCache(conversationId);
+        }
         const message = history[index];
         return typeof message?.id === 'string' && message.id.length > 0 ? message.id : undefined;
     }

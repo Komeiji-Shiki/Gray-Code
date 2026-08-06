@@ -48,6 +48,15 @@ let activeFactor = 1
 /** 本轮（当前 API 调用流）累计的 base token 估算，流结束用于校准 */
 let turnBaseTokens = 0
 
+/**
+ * 清空本轮 base 估算（本地取消路径使用）：后端此后可能不发任何终结 chunk（挂死/断网），
+ * 残留估算会混入下一轮流（realTokens 是新流真值、base 混入旧流字符）拉偏校准因子。
+ * handleCancelled/handleError 的终结路径已内联清空，无需调用本函数。
+ */
+export function resetTurnBaseTokenEstimate(): void {
+  turnBaseTokens = 0
+}
+
 /** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
 function resolveModelKey(state: ChatStoreState): string {
   const selected = state.selectedModelId?.value?.trim() ?? ''
@@ -1476,6 +1485,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
+  turnBaseTokens = 0
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastApprovalGatedStreamId.value = null
@@ -1543,6 +1554,11 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     } else if (messageToRemove) {
       // 有内容的半截消息：保留展示，但记录其 ID，
       // 供 retryAfterError 在重试前回滚（后端从未持久化该消息）。
+      // 与 handleCancelled 的保留路径一致，结束其流式渲染标志——
+      // 否则 loading 指示器/光标永久闪烁（无后续 chunk 会再置它）。
+      if (messageToRemove.streaming) {
+        replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
+      }
       state._failedStreamMessageId.value = messageToRemove.id
     } else {
       state._failedStreamMessageId.value = null
@@ -1557,6 +1573,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
+  turnBaseTokens = 0
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

@@ -1200,22 +1200,26 @@ export class ToolIterationLoopService {
                     if (abortSignal?.aborted) {
                         break;
                     }
-                    // waitForNextSettlement 本身无 abort 监听：若某工具不响应
-                    // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
-                    // 与 abort 事件做 race，取消时立即退出等待循环。
-                    let onAbort: (() => void) | undefined;
-                    const abortPromise = abortSignal
-                        ? new Promise<void>((resolve) => {
+                    if (abortSignal) {
+                        // waitForNextSettlement 本身无 abort 监听：若某工具不响应
+                        // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
+                        // 与 abort 事件做 race，取消时立即退出等待循环。
+                        let onAbort: (() => void) | undefined;
+                        const abortPromise = new Promise<void>((resolve) => {
                             onAbort = () => resolve();
                             abortSignal.addEventListener('abort', onAbort, { once: true });
-                        })
-                        : Promise.resolve();
-                    try {
-                        await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
-                    } finally {
-                        if (onAbort && abortSignal) {
-                            abortSignal.removeEventListener('abort', onAbort);
+                        });
+                        try {
+                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
+                        } finally {
+                            if (onAbort) {
+                                abortSignal.removeEventListener('abort', onAbort);
+                            }
                         }
+                    } else {
+                        // 无 abort 信号时直接等下一次落定——若用已 resolve 的 Promise 做 race，
+                        // 循环会退化为纯忙等（100% CPU）直到工具落定。
+                        await earlyToolProgressQueue.waitForNextSettlement();
                     }
                 }
                 for (const statusChunk of drainSettledEarlyToolStatuses()) {

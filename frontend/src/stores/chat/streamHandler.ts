@@ -145,12 +145,17 @@ export function handleStreamChunk(
   // 同一对话可能并发/串行触发多次流式请求，
   // 通过 streamId 只接收“当前活跃请求”的 chunk，避免迟到 chunk 污染新请求状态。
   const activeStreamId = state.activeStreamId.value
-  if (chunk.streamId && !activeStreamId) {
+  // 总结类 chunk 例外：总结请求使用独立 abort 信号（summarizeAbortSignal），用户停止主流后
+  // 在途总结仍会完成并携带自身 streamId 送达——此时 activeStreamId 已清空或被新请求占用，
+  // 按 streamId 过滤会把它静默丢弃，前端漏掉总结消息与 isSummarized 标记直到重载。
+  // 总结 chunk 自带 conversationId（已在上方校验为当前对话）+ 内容 id 去重，可安全放行。
+  const isSummaryType = chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus'
+  if (!isSummaryType && chunk.streamId && !activeStreamId) {
     warnLateApprovalGatedChunk(chunk, state)
     return
   }
 
-  if (activeStreamId && chunk.streamId !== activeStreamId) {
+  if (!isSummaryType && activeStreamId && chunk.streamId !== activeStreamId) {
     warnLateApprovalGatedChunk(chunk, state)
     return
   }
@@ -260,6 +265,9 @@ export function handleStreamChunkBatch(
 
   const isChunkForCurrentActiveStream = (chunk: StreamChunk): boolean => {
     if (chunk.conversationId !== activeConversationId) return false
+    // 总结类 chunk 例外（与 handleStreamChunk 门禁一致）：总结请求用独立 abort 信号，
+    // 主流结束后在途总结的完成事件仍会到达，按 streamId 过滤会漏掉总结消息与标记。
+    if (chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus') return true
     if (chunk.streamId && !activeStreamId) return false
     if (!activeStreamId || !chunk.streamId) return true
     return chunk.streamId === activeStreamId
