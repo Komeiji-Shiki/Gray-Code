@@ -143,8 +143,17 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
         break
       }
     }
-    if (lastModelIndex >= 0) {
+    if (lastModelIndex >= 0 && lastModelIndex === next.length - 1) {
+      // 快照描述的就是当前末尾的 model 消息（如 Anthropic content_block_stop 对正在
+      // 累积的消息做结构校准）：原位替换。
       next[lastModelIndex] = replacement
+    } else if (lastModelIndex >= 0) {
+      // 末尾已被非 model 消息（工具结果 functionResponse 等）占用：快照描述的是
+      // **下一轮**的 model 消息，必须追加为新楼层——原位替换会把上一轮的模型消息
+      // （工具调用卡/中间输出）覆盖掉，结束后权威 transcript 加载回来时视觉上
+      // 表现为“运行中的内容突然换掉了”。
+      replacement.index = baseIndex + next.length
+      next.push(replacement)
     } else {
       replacement.index = baseIndex + next.length
       next.push(replacement)

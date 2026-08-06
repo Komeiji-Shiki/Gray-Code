@@ -149,8 +149,17 @@ export function appendMessage(state: MessageIndexLookupState, message: Message):
 
 export function insertMessageAt(state: MessageIndexLookupState, index: number, message: Message): void {
   const boundedIndex = Math.max(0, Math.min(index, state.allMessages.value.length))
+  const isPureAppend = boundedIndex >= state.allMessages.value.length
   state.allMessages.value.splice(boundedIndex, 0, message)
   rebuildMessageIndexById(state)
+
+  // L1：中间位置插入（splice 原地改数组、首尾元素不变）会命中 windowUtils 的
+  // 可见消息增量缓存——指纹只校验首尾元素，会把被插入的消息漏掉并把旧尾元素
+  // 重复 concat 一次。与 replaceMessageAt 的中间替换处理对齐：非纯尾部追加一律
+  // 清除缓存。典型场景：handleAutoSummary 在流式过程中把总结消息插到窗口中间。
+  if (!isPureAppend) {
+    clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+  }
 }
 
 export function replaceMessageAt(state: MessageIndexLookupState, index: number, nextMessage: Message): void {

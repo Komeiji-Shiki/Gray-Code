@@ -116,6 +116,8 @@ export interface InterruptDeliveryNotice {
   errorCode?: string
   errorMessage?: string
   createdAt: number
+  /** 单调递增序号：TTL 到期按序号精确移除，避免同 tick（createdAt 相同）的其它会话提示被误删 */
+  seq?: number
 }
 
 /** 提示保留时长：超过后自动从列表中移除 */
@@ -125,15 +127,19 @@ export const INTERRUPT_NOTICE_MAX = 3
 
 export const recentInterruptDeliveries = shallowRef<InterruptDeliveryNotice[]>([])
 
+let interruptNoticeSeq = 0
+
 /** 记录一条投递提示：同一会话同类型只保留最新一条；超出上限丢弃最旧；TTL 后自动移除 */
 export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'createdAt'>): void {
-  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now() }
+  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now(), seq: interruptNoticeSeq++ }
   const filtered = recentInterruptDeliveries.value.filter(
     n => !(n.conversationId === full.conversationId && n.kind === full.kind)
   )
   recentInterruptDeliveries.value = [full, ...filtered].slice(0, INTERRUPT_NOTICE_MAX)
   setTimeout(() => {
-    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.createdAt !== full.createdAt)
+    // 按 seq 精确移除：多条提示 createdAt 可能相同（同一 tick 的并发投递），
+    // 按 createdAt 过滤会误删仍在 TTL 内的其它会话提示
+    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.seq !== full.seq)
   }, INTERRUPT_NOTICE_TTL_MS)
 }
 

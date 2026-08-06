@@ -353,6 +353,10 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
 
     // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
     // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
+    // 注：此前「冻结会话 + 总结后切分支被永久阻塞」的根因是超龄空占位让 deferred 图同步
+    // 永不收敛——该问题已由空占位超龄判定（isActiveEmptyPlaceholder）在源头修复（占位超龄
+    // 后 syncMainHistoryAfterStructuralMutation 直接收敛、append 前先收敛），此处保持
+    // 严格拒绝契约（未入图消息不丢，由调用方按错误提示重试/等待同步完成）。
     await service.assertMainHistoryRepresentedInGraph(conversationId);
 
     // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支

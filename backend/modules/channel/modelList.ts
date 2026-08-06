@@ -79,7 +79,9 @@ function getModelListCached(key: string): ModelInfo[] | null {
 }
 
 function cacheModelList(key: string, models: ModelInfo[]): void {
-  modelListCache.set(key, { models, expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
+  // 存副本：miss 路径会把调用方传入的列表按引用缓存，若首个调用方随后就地修改
+  // （排序/过滤/元素改写）会污染缓存条目——命中路径返回的是深拷贝，语义不一致。
+  modelListCache.set(key, { models: JSON.parse(JSON.stringify(models)), expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
   touchModelListCache(key);
 }
 

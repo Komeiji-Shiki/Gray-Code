@@ -523,7 +523,13 @@ export class StdioMcpClient extends EventEmitter {
             return;
         }
         // 背压说明：write 返回 false 仅表示管道缓冲已满，不抛错也不阻塞；通知无响应，不等待 drain
-        this.process.stdin.write(message);
+        try {
+            this.process.stdin.write(message);
+        } catch (error) {
+            // 进程刚死（EPIPE/closed stdin）时 write 会同步抛错；通知路径无响应可吞，
+            // 但必须吞住——否则会冒泡进 connect() 流程，让初始化在成功后失败。
+            console.warn(`[MCP] failed to send notification "${method}":`, error instanceof Error ? error.message : String(error));
+        }
     }
     
     /**

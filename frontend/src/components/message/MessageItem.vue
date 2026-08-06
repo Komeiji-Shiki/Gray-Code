@@ -8,6 +8,8 @@
  * 使用 reactive(Map) 以便 computed getter 追踪 key 访问、setter 触发更新。
  */
 import { reactive } from 'vue'
+import type { ThoughtViewMode } from './renderBlocks'
+
 export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
 export const backgroundTaskViewModeByMessageId = reactive(new Map<string, BackgroundTaskViewMode>())
 
@@ -31,6 +33,26 @@ export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
     }
   }
 }
+
+/**
+ * 思考块视图模式记录的同口径清理（与 pruneBackgroundTaskViewModes 一起由 MessageList
+ * 在对话/标签页切换时调用）：消息删除/窗口裁剪/重试截断/对话关闭后移除不再渲染的 id。
+ */
+export function pruneThoughtViewModes(activeIds: Set<string>): void {
+  for (const messageId of Array.from(thoughtViewModeByMessageId.keys())) {
+    if (!activeIds.has(messageId)) {
+      thoughtViewModeByMessageId.delete(messageId)
+    }
+  }
+}
+
+/**
+ * 思考块三段式视图模式的模块级持久化（与 backgroundTaskViewModeByMessageId 同模式）：
+ * 虚拟列表滚动回收 MessageItem 后，用户选择的折叠/完全展开不应复位为默认中展开。
+ * 带容量上限（消息删除/窗口裁剪会留下不再渲染的 messageId 记录）。
+ */
+export const thoughtViewModeByMessageId = reactive(new Map<string, ThoughtViewMode>())
+export const THOUGHT_VIEW_MODE_CAP = 500
 </script>
 
 <script setup lang="ts">
@@ -59,7 +81,7 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../u
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
-import { type RenderBlock, type ThoughtViewMode, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
 import type { SmoothDisplayText } from '../../stores/chat/types'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
@@ -208,8 +230,24 @@ watch(
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
 
-// 思考内容三段式视图模式（对齐后台任务）：折叠 / 中展开 / 完全展开，默认中展开
-const thoughtViewMode = ref<ThoughtViewMode>('medium')
+// 思考内容三段式视图模式（对齐后台任务）：折叠 / 中展开 / 完全展开，默认中展开。
+// 模块级 Map 按 messageId 持久化（与 backgroundTaskViewModeByMessageId 同模式）：
+// 虚拟列表滚动回收 MessageItem 后恢复用户选择，而不是复位为 medium。
+const thoughtViewMode = computed<ThoughtViewMode>({
+  get: () => thoughtViewModeByMessageId.get(props.message.id) ?? 'medium',
+  set: (mode: ThoughtViewMode) => {
+    if (
+      !thoughtViewModeByMessageId.has(props.message.id) &&
+      thoughtViewModeByMessageId.size >= THOUGHT_VIEW_MODE_CAP
+    ) {
+      const oldestKey = thoughtViewModeByMessageId.keys().next().value
+      if (oldestKey !== undefined) {
+        thoughtViewModeByMessageId.delete(oldestKey)
+      }
+    }
+    thoughtViewModeByMessageId.set(props.message.id, mode)
+  }
+})
 
 
 const todoDebugPrinted = new Set<string>()

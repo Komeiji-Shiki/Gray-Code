@@ -129,9 +129,19 @@ export class ChannelManager {
      * 设置 MCP 管理器（用于获取 MCP 工具声明）
      *
      * 重建内部 ToolDeclarationResolver 以持有 MCP 管理器（resolver 的 MCP 依赖经构造函数注入）。
+     * 替换前必须 dispose 旧实例：resolver 在 McpManager 单例上注册了工具列表变更监听器，
+     * 不释放会在重初始化/热重载时逐轮泄漏监听器（0c53117 的防泄漏修复漏掉了此替换路径）。
      */
     setMcpManager(mcpManager: McpManager): void {
+        const previous = this.toolResolver;
         this.toolResolver = new ToolDeclarationResolver(this.toolRegistry, this.settingsManager, mcpManager);
+        try {
+            previous?.dispose();
+        } catch (error) {
+            this.log.warn('tool_resolver_dispose_failed', {
+                error: (error as Error)?.message ?? String(error),
+            });
+        }
     }
     
     /**
@@ -898,9 +908,12 @@ export class ChannelManager {
             // 使用代理流式请求
             if (proxyUrl) {
                 let buffer = '';
-                // PERF：offset 游标——已解析前缀不参与后续拼接与解析，
-                // 每包只复制「未解析尾部 + 新块」，避免对整段累积缓冲重复复制（O(n²)）
-                let bufferOffset = 0;
+                // PERF：只保留未解析尾部——每包只拼接「未解析尾部 + 新块」，避免对整段
+                // 累积缓冲重复复制（O(n²)）。baseline 直接取 parseStreamBuffer 返回的
+                // remaining（对 SSE 是重建的 `data: ` 前缀行、对 JSONL 是未完成的末行），
+                // 而不是按偏移从头部切——偏移切法在 SSE 事件跨 chunk 且尾随空行时会把
+                // `data: ` 前缀切坏，在 JSONL 逐行格式下会直接丢块。
+                let lastRemaining = '';
                 // 未知格式整段残留标记：parseStreamBuffer 无法识别流格式时把整段缓冲原样
                 // 作为 remaining 返回（同一引用），需要完整累积后才能识别格式——此时不清空、
                 // 不压缩，保持「完整累积后识别格式」的既有语义。
@@ -924,26 +937,14 @@ export class ChannelManager {
                     resetTimeout();
                     
                     // 压缩已解析前缀后再追加新块
-                    if (pendingWholeBuffer) {
-                        // 未知格式：保持完整累积
-                    } else if (bufferOffset > 0) {
-                        buffer = buffer.slice(bufferOffset);
-                        bufferOffset = 0;
-                    } else {
-                        buffer = '';
-                    }
+                    buffer = pendingWholeBuffer ? buffer : lastRemaining;
                     buffer += chunk;
                     
                     // 处理流式响应（解析窗口只含未解析尾部 + 新块）
                     const result = parseStreamBuffer(buffer);
                     parsedChunkCount += result.chunks.length;
-                    if (result.remaining === buffer) {
-                        pendingWholeBuffer = true;
-                        bufferOffset = 0;
-                    } else {
-                        pendingWholeBuffer = false;
-                        bufferOffset = result.remaining.length;
-                    }
+                    pendingWholeBuffer = result.remaining === buffer;
+                    lastRemaining = result.remaining;
 
                     
                     for (const parsed of result.chunks) {
@@ -953,9 +954,7 @@ export class ChannelManager {
                 
                 // 处理剩余的 buffer（用户已取消时不产出半截残留：原生 fetch 分支在 abort 时
                 // reader.read() 直接抛错，根本走不到这里，两条路径保持一致）
-                const finalTail = pendingWholeBuffer
-                    ? buffer
-                    : (bufferOffset > 0 ? buffer.slice(bufferOffset) : '');
+                const finalTail = lastRemaining;
                 if (!externalSignal?.aborted && finalTail.trim()) {
                     const result = parseStreamBuffer(finalTail, true);
                     parsedChunkCount += result.chunks.length;
