@@ -366,7 +366,17 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 this.pushMergedMessage(messages, 'assistant', contentArray);
-            } else if (functionResponseParts.length > 0) {
+            }
+
+            // 工具结果独立生成（与 functionCall 解耦）：同一历史消息同时携带
+            // functionCall + functionResponse（如中断残留/修复数据的混合形态）时，
+            // 原来的 else-if 会吞掉 functionResponse，导致 assistant tool_use
+            // 后没有对应 tool_result → Anthropic 400。
+            // 注意：普通消息分支必须加 functionCallParts.length === 0 守卫——
+            // 否则「文本 + 工具调用」同消息的日常形态会把文本重复推送为第二条
+            // assistant 消息，并使后续 tool_result 不再紧跟 tool_use（上游 80e9de7
+            // 因此引入的回归；此处为修正版）。
+            if (functionResponseParts.length > 0) {
                 // user 消息包含 tool_result
                 const contentArray: any[] = [];
                 
@@ -380,7 +390,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 this.pushMergedMessage(messages, 'user', contentArray);
-            } else if (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0) {
+            } else if (functionCallParts.length === 0 && (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0)) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];
                 

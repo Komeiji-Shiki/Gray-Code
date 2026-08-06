@@ -326,7 +326,17 @@ export class OpenAIFormatter extends BaseFormatter {
                     : '';
                 
                 messages.push(message);
-            } else if (functionResponseParts.length > 0) {
+            }
+
+            // 工具响应独立生成（与 functionCall 解耦）：同一历史消息同时携带
+            // functionCall + functionResponse（如中断残留/修复数据的混合形态）时，
+            // 原来的 else-if 会吞掉 functionResponse，导致 assistant tool_calls
+            // 后没有对应 tool 消息 → OpenAI 400 "insufficient tool messages"。
+            // 注意：普通消息分支必须加 functionCallParts.length === 0 守卫——
+            // 否则「文本 + 工具调用」同消息的日常形态会把文本重复推送为第二条
+            // assistant 消息，并使后续 tool 消息不再紧跟 tool_calls（上游 80e9de7
+            // 因此引入的回归；此处为修正版）。
+            if (functionResponseParts.length > 0) {
                 // 工具响应用 role: tool 发送
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
@@ -337,7 +347,7 @@ export class OpenAIFormatter extends BaseFormatter {
                         content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
-            } else if (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0) {
+            } else if (functionCallParts.length === 0 && (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0)) {
                 // 普通消息（可能包含文本、思考内容和/或多媒体内容）
                 const messageContent = this.buildMessageContent(textParts, mediaParts, pdfAttachmentEnabled);
                 
