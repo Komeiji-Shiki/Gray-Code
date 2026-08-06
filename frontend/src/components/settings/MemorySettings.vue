@@ -4,7 +4,7 @@
  *
  * 包含两部分：
  * 1. 提示词 & 运行时参数配置
- * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
+ * 2. 原始记忆条目管理（查看 / 编辑 / 删除，支持全局记忆 / 工作区记忆双作用域）
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
@@ -95,12 +95,42 @@ const workspaceScopes = ref<WorkspaceMemoryScope[]>([])
 const selectedWorkspaceUri = ref('')
 const scopesLoading = ref(false)
 
-/** 批量删除选中项（上限与后端 MAX_BATCH_DELETE_IDS 一致） */
-const selectedIds = ref<Set<number>>(new Set())
-const showBatchDeleteConfirm = ref(false)
-const batchDeleteSaving = ref(false)
-const batchDeleteCount = computed(() => selectedIds.value.size)
-const isAllSelected = computed(() => entries.value.length > 0 && selectedIds.value.size === entries.value.length)
+// ─── 作用域数据缓存 ───
+// 每个作用域最近一次成功加载的数据。切换作用域时立即渲染目标作用域的缓存
+// （无中间空态/加载占位帧），随后后台静默刷新——消除列表高度塌陷造成的一帧
+// 空白闪烁（工作区→全局切换时工作区列表很高、全局实例已预热响应很快，
+// 旧实现中间态只持续 1-2 帧，肉眼可见闪烁而低帧率录屏捕捉不到）。
+interface ScopeCache {
+  entries: LogEntry[]
+  total: number
+  truncated: boolean
+  config?: {
+    enabled: boolean
+    systemPrompt: string
+    wakeLines: number
+    entryChars: number
+    partChars: number
+    partLines: number
+  }
+  entriesLoaded: boolean
+  configLoaded: boolean
+}
+const scopeCache = new Map<string, ScopeCache>()
+
+/** 当前作用域的缓存键：全局为 'global'；工作区为 'ws:<uri>'；未选工作区返回 null */
+function scopeKey(): string | null {
+  if (memoryScope.value === 'global') return 'global'
+  return selectedWorkspaceUri.value ? `ws:${selectedWorkspaceUri.value}` : null
+}
+
+function getOrCreateScopeCache(key: string): ScopeCache {
+  let cached = scopeCache.get(key)
+  if (!cached) {
+    cached = { entries: [], total: 0, truncated: false, entriesLoaded: false, configLoaded: false }
+    scopeCache.set(key, cached)
+  }
+  return cached
+}
 
 /** 当前作用域的 workspaceUri 参数（全局为空对象，工作区带上 uri） */
 function scopeParams(): { workspaceUri?: string } {
@@ -109,21 +139,86 @@ function scopeParams(): { workspaceUri?: string } {
     : {}
 }
 
+/**
+ * 切换作用域瞬间：立即应用目标作用域的缓存数据（或清空进入加载态），
+ * 再配合 loadConfig(true)/loadEntries(false) 后台静默刷新。
+ * 未选择工作区（工作区 tab 刚打开、列表未加载完）时不发请求，直接显示空态——
+ * 避免 scopeParams 为空时误把全局数据渲染在工作区 tab 下。
+ */
+function applyCachedScope(): void {
+  const key = scopeKey()
+  if (!key) {
+    entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
+    entriesLoading.value = false
+    return
+  }
+  const cached = scopeCache.get(key)
+  if (cached?.entriesLoaded) {
+    entries.value = cached.entries
+    entriesTotal.value = cached.total
+    entriesTruncated.value = cached.truncated
+    entriesLoading.value = false
+  } else {
+    entries.value = []
+    entriesLoading.value = true
+  }
+  if (cached?.configLoaded && cached.config) {
+    // 立即应用目标作用域的运行时参数，避免表单短暂显示上一作用域的值再跳变
+    enabled.value = cached.config.enabled
+    systemPrompt.value = cached.config.systemPrompt
+    wakeLines.value = cached.config.wakeLines
+    entryChars.value = cached.config.entryChars
+    partChars.value = cached.config.partChars
+    partLines.value = cached.config.partLines
+    configLoadedOnce.value = true
+  }
+}
+
+/** 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目 */
+function refreshCurrentScope(): void {
+  statusMessage.value = ''
+  statusError.value = false
+  // 目标作用域条目的 id 空间独立：清空选中与编辑态，防旧 id 错位静默删错/改错
+  selectedIds.value = new Set()
+  editingId.value = null
+  editingText.value = ''
+  applyCachedScope()
+  loadConfig(true)
+  loadEntries(false)
+}
+
+/** 批量删除选中项（上限与后端 MAX_BATCH_DELETE_IDS 一致） */
+const selectedIds = ref<Set<number>>(new Set())
+const showBatchDeleteConfirm = ref(false)
+const batchDeleteSaving = ref(false)
+const batchDeleteCount = computed(() => selectedIds.value.size)
+const isAllSelected = computed(() => entries.value.length > 0 && selectedIds.value.size === entries.value.length)
+
 // ─── 手动新增记忆 ───
 const newEntryText = ref('')
 const addingEntry = ref(false)
 
-// UTF-8 字节数（后端按字节校验 entryChars；String.length 计的是 UTF-16 码元，
+// UTF-8 字节数（后端按 trim 后的字节校验 entryChars；String.length 计的是 UTF-16 码元，
 // 中文等字符会低估，导致前端放行、后端报 Too long）
-const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
+const utf8Bytes = (s: string) => new TextEncoder().encode(s.trim()).length
 const newEntryBytes = computed(() => utf8Bytes(newEntryText.value))
 const editingBytes = computed(() => utf8Bytes(editingText.value))
+
+// 是否含换行符（后端 note/updateEntry 对多行文本直接报错，前端提前拦截并提示）
+const hasNewline = (s: string) => /\r|\n/.test(s.trim())
 
 // 手动新增一条记忆（等价于 AI 的 memory_note）
 async function addEntry() {
   const text = newEntryText.value
   if (!text.trim()) {
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (hasNewline(text)) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.newlineNotAllowed')
     statusError.value = true
     return
   }
@@ -247,6 +342,13 @@ async function loadWorkspaceScopes() {
 // silent=true（作用域/工作区切换）时只刷新配置值：不触整页 loading、不清空/覆盖
 // statusMessage；失败时若已有配置则仅 console.warn，保留现有表单值
 async function loadConfig(silent = false) {
+  // 工作区 tab 未选择工作区：不发请求（scopeParams 为空会误拉全局配置），
+  // 同时递增序号使在途的全局配置响应过期，避免旧作用域配置覆盖表单
+  if (!scopeKey()) {
+    ++configLoadSeq
+    if (!silent) isLoading.value = false
+    return
+  }
   const seq = ++configLoadSeq
   if (!silent) {
     isLoading.value = true
@@ -266,6 +368,20 @@ async function loadConfig(silent = false) {
       if (typeof config.partChars === 'number') partChars.value = config.partChars
       if (typeof config.partLines === 'number') partLines.value = config.partLines
       configLoadedOnce.value = true
+      // 写回缓存：切换回来时可立即渲染，无需重新等待
+      const key = scopeKey()
+      if (key) {
+        const cached = getOrCreateScopeCache(key)
+        cached.config = {
+          enabled: enabled.value,
+          systemPrompt: systemPrompt.value,
+          wakeLines: wakeLines.value,
+          entryChars: entryChars.value,
+          partChars: partChars.value,
+          partLines: partLines.value,
+        }
+        cached.configLoaded = true
+      }
     }
   } catch (e: any) {
     if (seq !== configLoadSeq) return
@@ -282,9 +398,24 @@ async function loadConfig(silent = false) {
 }
 
 // 加载记忆条目
-async function loadEntries() {
+// showLoading=false（作用域切换触发的刷新）且已有缓存时：不置加载占位，
+// 直接展示缓存数据、响应到达后原位更新——防止列表高度塌陷造成一帧空白闪烁
+async function loadEntries(showLoading = true) {
+  const key = scopeKey()
+  if (!key) {
+    // 工作区 tab 未选择工作区：不发请求（scopeParams 为空会误拉全局数据）
+    // 同时递增请求序号，使在途的全局条目请求（如 mount 时发出的）过期——
+    // 否则其响应仍会通过 seq 校验，把全局条目渲染到工作区 tab 下（竞态）
+    ++entryLoadSeq
+    entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
+    entriesLoading.value = false
+    return
+  }
   const seq = ++entryLoadSeq
-  entriesLoading.value = true
+  const hasCache = scopeCache.get(key)?.entriesLoaded === true
+  if (showLoading || !hasCache) entriesLoading.value = true
   try {
     const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT, ...scopeParams() })
     // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域条目闪现/覆盖
@@ -298,6 +429,12 @@ async function loadEntries() {
       entriesTotal.value = 0
       entriesTruncated.value = false
     }
+    // 写回缓存：切换回来时可立即渲染
+    const cached = getOrCreateScopeCache(key)
+    cached.entries = entries.value
+    cached.total = entriesTotal.value
+    cached.truncated = entriesTruncated.value
+    cached.entriesLoaded = true
     // 作用域/数据变化后清理残留选中与编辑态（防旧 id 错位静默删错）
     selectedIds.value = new Set()
     editingId.value = null
@@ -329,6 +466,11 @@ async function saveEdit() {
   if (editingId.value === null) return
   if (!editingText.value.trim()) {
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (hasNewline(editingText.value)) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.newlineNotAllowed')
     statusError.value = true
     return
   }
@@ -404,22 +546,13 @@ onMounted(() => {
   loadWorkspaceScopes()
 })
 
-// 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目。
-// 切换瞬间清空条目列表：配合加载占位展示，避免旧作用域条目在新数据到达前闪现造成闪烁
+// 作用域或工作区切换：静默刷新配置并重新加载条目（含缓存即时渲染，避免闪烁）
 watch(memoryScope, () => {
-  entries.value = []
-  statusMessage.value = ''
-  statusError.value = false
-  loadConfig(true)
-  loadEntries()
+  refreshCurrentScope()
 })
 watch(selectedWorkspaceUri, (next, prev) => {
   if (next !== prev && memoryScope.value === 'workspace') {
-    entries.value = []
-    statusMessage.value = ''
-    statusError.value = false
-    loadConfig(true)
-    loadEntries()
+    refreshCurrentScope()
   }
 })
 </script>
@@ -535,7 +668,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
           <i class="codicon codicon-discard"></i>
           {{ t('components.settings.settingsPanel.memory.reset') }}
         </button>
-        <button class="btn btn-secondary" @click="loadEntries" :disabled="entriesLoading">
+        <button class="btn btn-secondary" @click="() => loadEntries()" :disabled="entriesLoading">
           <i :class="entriesLoading ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-refresh'"></i>
           {{ t('common.refresh') }}
         </button>
@@ -579,7 +712,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
           </button>
         </div>
 
-        <!-- 工作区记忆分区：选择已打开的工作区 -->
+        <!-- 工作区记忆分区：选择工作区（当前打开的 + 已有记忆数据的） -->
         <div v-if="memoryScope === 'workspace'" class="scope-workspace-picker">
           <label class="param-label">
             {{ t('components.settings.settingsPanel.memory.rawEntries.selectScopeWorkspace') }}
@@ -595,7 +728,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
             <option v-for="ws in workspaceScopes" :key="ws.uri" :value="ws.uri">{{ ws.name }}</option>
           </select>
           <p v-if="!scopesLoading && workspaceScopes.length === 0" class="field-description">
-            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceMemoryEmpty') }}
+            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceNone') }}
           </p>
         </div>
 
@@ -677,11 +810,12 @@ watch(selectedWorkspaceUri, (next, prev) => {
             <div class="entry-text-wrap">
               <pre v-if="editingId !== entry.id" class="entry-text">{{ entry.text }}</pre>
               <div v-else class="entry-edit-row">
+                <!-- 不设 maxlength：后端按 trim 后 UTF-8 字节数校验（entryChars），
+                     maxlength 按 UTF-16 码元计数会与字节校验不一致；保存时仍做字节拦截 -->
                 <textarea
                   v-model="editingText"
                   class="entry-textarea"
                   rows="3"
-                  :maxlength="entryChars"
                 ></textarea>
                 <div class="entry-edit-actions">
                   <button class="btn btn-sm btn-primary" @click="saveEdit" :disabled="editSaving">

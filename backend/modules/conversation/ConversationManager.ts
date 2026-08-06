@@ -224,6 +224,34 @@ export class ConversationManager {
      *   写链一致；TTL 仅在无写变更但外部直写存储的极端场景兜底。
      */
     private readonly nodeIdCache = new Map<string, { history: ConversationHistory; storedAt: number }>();
+    /**
+     * BCP-01 PERF 补充：节点 ID 反查缓存的写链代际计数（采纳上游 PR #20 审查修复）。
+     *
+     * getMessageNodeIdAt 读盘不持会话写锁：读盘开始后、写提交并失效缓存前，读盘完成
+     * 用旧盘面回填缓存，会在 TTL 窗口内返回陈旧节点 id。每次 invalidateCaches
+     * 递增对应会话计数，读盘前后计数一致才允许回填，消除该窗口。
+     */
+    private readonly nodeIdCacheEpochs = new Map<string, number>();
+    /**
+     * 全局单调 epoch 计数器：每个会话的 epoch 取全局递增值，清理 Map 时不会归零。
+     * 与 per-conversation 自增 + 整体清空相比：清空后所有会话回落为 0，恰好与
+     * 「读盘前捕获 0」的在途反查碰撞（0 === 0 误放行回填），竞态窗口回归。
+     */
+    private nodeIdCacheEpochCounter = 0;
+
+    private bumpNodeIdCacheEpoch(conversationId: string): void {
+        this.nodeIdCacheEpochs.set(conversationId, ++this.nodeIdCacheEpochCounter);
+        if (this.nodeIdCacheEpochs.size > 200) {
+            // LRU 淘汰最旧而非整体 clear()：整体清空会把「刚 bump 的条目」也删掉，
+            // 让「清空后 get 回落为 undefined ?? 0」与首次读捕获的 0 碰撞（0 === 0 误放行）。
+            // 删最旧则刚写入的条目必然幸存，且被淘汰会话的在途读（捕获旧值 N，期望 N+1）
+            // 与回落为 0 不相等，守卫保持完整。
+            const oldest = this.nodeIdCacheEpochs.keys().next().value;
+            if (oldest !== undefined) {
+                this.nodeIdCacheEpochs.delete(oldest);
+            }
+        }
+    }
 
     private touchCache<T>(map: Map<string, T>, key: string, capacity: number): void {
         const value = map.get(key);
@@ -239,11 +267,27 @@ export class ConversationManager {
         }
     }
 
+    /** LRU 触碰 + 容量淘汰（节点 ID 反查缓存专用） */
+    private touchNodeIdCache(conversationId: string): void {
+        const value = this.nodeIdCache.get(conversationId);
+        if (value !== undefined) {
+            this.nodeIdCache.delete(conversationId);
+            this.nodeIdCache.set(conversationId, value);
+        }
+        if (this.nodeIdCache.size > ConversationManager.NODE_ID_CACHE_CAPACITY) {
+            const oldest = this.nodeIdCache.keys().next().value;
+            if (oldest !== undefined) {
+                this.nodeIdCache.delete(oldest);
+            }
+        }
+    }
+
     /** 会话所有缓存统一失效（历史/元数据/节点 ID 反查）；结构性变更后必须调用 */
     private invalidateCaches(conversationId: string): void {
         this.historyCache.delete(conversationId);
         this.metaCache.delete(conversationId);
         this.nodeIdCache.delete(conversationId);
+        this.bumpNodeIdCacheEpoch(conversationId);
     }
 
     /**
@@ -367,12 +411,14 @@ export class ConversationManager {
             || Object.prototype.hasOwnProperty.call(updates, 'isFunctionResponse');
     }
 
-    getTranscriptRepository(conversationId: string): ITranscriptRepository {
+    getTranscriptRepository(conversationId: string, workspaceUri?: string): ITranscriptRepository {
         // 修改原因：主聊天 transcript 需要一个统一的仓储入口，供当前适配和后续协作者复用。
         // 修改方式：把 ConversationManager 既有的“缺失历史时自动建会话”读取语义，与底层 saveHistory 持久化语义一起绑定到仓储委托。
         // 修改目的：外部协作者不再直接接触 storage.loadHistory/saveHistory，也不会复制主聊天特有的初始化规则。
+        // workspaceUri（H4 记忆隔离）：读取触发按需自动建会话时，把当前工作区 URI 一并写入新会话元数据，
+        // 避免自动创建的会话未绑定工作区导致记忆工具回退全局作用域（跨工作区污染）。
         return new ConversationTranscriptRepository({
-            loadContents: async () => await this.loadHistory(conversationId),
+            loadContents: async () => await this.loadHistory(conversationId, workspaceUri),
             saveContents: async contents => {
                 this.assertNotDeleted(conversationId);
                 // 落盘后同步缓存：避免下一次读重新走磁盘；同时元数据（存储层 saveHistory 会刷新 updatedAt）

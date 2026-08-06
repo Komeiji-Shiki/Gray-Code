@@ -41,12 +41,15 @@ export {
     isMemoryToolName,
 } from './types';
 
+/** 记忆作用域：全局（跨工作区共享）或当前工作区 */
+export type MemoryScope = 'global' | 'workspace';
+
 // ─── 单例访问器 ──────────────────────────────────
 
 let _instance: import('./MemoryManager').MemoryManager | null = null;
 
 /** 设置全局 MemoryManager 实例 */
-export function setGlobalMemoryManager(manager: import('./MemoryManager').MemoryManager): void {
+export function setGlobalMemoryManager(manager: import('./MemoryManager').MemoryManager | null): void {
     _instance = manager;
 }
 
@@ -58,9 +61,8 @@ export function getGlobalMemoryManager(): import('./MemoryManager').MemoryManage
 /**
  * 初始化全局 MemoryManager（永久记忆系统）。
  *
- * VS Code 扩展（ChatViewProvider）与 Electron 桌面版（BackendHost）共用同一套
- * 初始化流程：在 <dataPath>/memory 下创建 LOG/TREE 存储、加载运行时配置并注册
- * 全局单例。提取为共享助手避免两宿主复制粘贴漂移。
+ * 在 <dataPath>/memory 下创建 LOG/TREE 存储、加载运行时配置并注册全局单例，
+ * 同时设置工作区记忆存储根目录（<dataPath>/memory-workspaces）。
  */
 export async function initMemoryManager(dataPath: string): Promise<import('./MemoryManager').MemoryManager> {
     const memoryPath = path.join(dataPath, 'memory');
@@ -84,7 +86,7 @@ const _workspaceInstances = new Map<string, import('./MemoryManager').MemoryMana
 const _workspaceInitPromises = new Map<string, Promise<import('./MemoryManager').MemoryManager | null>>();
 
 /** 设置工作区记忆存储根目录（由 initMemoryManager 调用） */
-export function setWorkspaceMemoryBaseDir(dir: string): void {
+export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceBaseDir = dir;
 }
 
@@ -127,11 +129,22 @@ function workspaceMemoryDir(scopeKey: string): string | null {
     return path.join(_workspaceBaseDir, scopeKeyToDirName(scopeKey));
 }
 
+/** 由 scope key 反解展示用 fsPath（仅用于元信息，大小写不保证与原始输入一致） */
+function uriToFsPathForMeta(scopeKey: string): string {
+    return scopeKey.replace(/\//g, path.sep);
+}
+
 /**
  * 获取指定工作区的 MemoryManager 实例（惰性创建并持久化 scope 元信息）。
+ *
+ * createIfMissing 为 false 时（只读工具 wake/recall/zoom 使用）：工作区目录不存在
+ * 则直接返回 null，不创建目录、不写 scope.json，避免只读访问产生磁盘副作用。
  * 工作区 URI 缺失/不可解析时返回 null，由调用方回退全局记忆。
  */
-export async function getMemoryManagerForWorkspace(workspaceUri: string): Promise<import('./MemoryManager').MemoryManager | null> {
+export async function getMemoryManagerForWorkspace(
+    workspaceUri: string,
+    createIfMissing = true
+): Promise<import('./MemoryManager').MemoryManager | null> {
     const scopeKey = workspaceUriToScopeKey(workspaceUri);
     if (!scopeKey) return null;
     const existing = _workspaceInstances.get(scopeKey);
@@ -139,20 +152,32 @@ export async function getMemoryManagerForWorkspace(workspaceUri: string): Promis
     const pending = _workspaceInitPromises.get(scopeKey);
     if (pending) return pending;
 
+    if (!createIfMissing) {
+        // 只读访问：目录不存在时不创建、不写 scope.json
+        const dir = workspaceMemoryDir(scopeKey);
+        if (!dir) return null;
+        try {
+            await fs.promises.stat(dir);
+        } catch {
+            return null;
+        }
+    }
+
     const initPromise = (async () => {
         const dir = workspaceMemoryDir(scopeKey);
         if (!dir) return null;
         await fs.promises.mkdir(dir, { recursive: true });
         // 持久化 scope 元信息：供设置页枚举工作区记忆时展示名称
         const metaPath = path.join(dir, 'scope.json');
+        const meta = { fsPath: uriToFsPathForMeta(scopeKey), name: path.basename(uriToFsPathForMeta(scopeKey)) };
         try {
             const raw = await fs.promises.readFile(metaPath, 'utf-8');
-            const meta = JSON.parse(raw);
-            if (meta.fsPath !== uriToFsPathForMeta(scopeKey)) {
-                await fs.promises.writeFile(metaPath, JSON.stringify({ fsPath: uriToFsPathForMeta(scopeKey), name: path.basename(uriToFsPathForMeta(scopeKey)) }, null, 2), 'utf-8');
+            const existingMeta = JSON.parse(raw);
+            if (existingMeta.fsPath !== meta.fsPath) {
+                await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
             }
         } catch {
-            await fs.promises.writeFile(metaPath, JSON.stringify({ fsPath: uriToFsPathForMeta(scopeKey), name: path.basename(uriToFsPathForMeta(scopeKey)) }, null, 2), 'utf-8');
+            await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
         }
         const manager = new MemoryManager(dir);
         await manager.init();
@@ -169,11 +194,6 @@ export async function getMemoryManagerForWorkspace(workspaceUri: string): Promis
     }
 }
 
-/** 由 scope key 反解展示用 fsPath（仅用于元信息，大小写不保证与原始输入一致） */
-function uriToFsPathForMeta(scopeKey: string): string {
-    return scopeKey.replace(/\//g, path.sep);
-}
-
 /**
  * 获取工作区文件夹名（basename，供工具输出标注用，如 wake 的工作区段头）。
  * 工作区 URI 缺失/不可解析时返回 null，由调用方回退为不带名字的标注。
@@ -185,13 +205,34 @@ export function getWorkspaceFolderName(workspaceUri: string): string | null {
 }
 
 /**
- * 工具层取实例入口：按工具上下文注入的工作区路由到对应记忆实例，
- * 无工作区（或解析失败）时回退全局记忆（旧行为）。
+ * 工具层取实例入口：按工具上下文注入的工作区路由到对应记忆实例。
+ *
+ * scope 规则：
+ * - 'global'：直接返回全局实例，不依赖 workspaceUri。
+ * - 'workspace'：必须能解析出工作区实例（有 workspaceUri 且目录可访问），否则返回 null（由调用方报错）。
+ * - 未传：有 workspaceUri 用工作区，否则全局（向后兼容）。
+ *
+ * 注意：调用方传了 workspaceUri 说明意图是工作区——即使未显式传 scope，工作区解析失败
+ * 也返回 null（不再静默回退全局）；只有 workspaceUri 为 null/undefined 时才回退全局。
  */
-export async function getMemoryManagerForTool(workspaceUri?: string | null): Promise<import('./MemoryManager').MemoryManager | null> {
+export async function getMemoryManagerForTool(
+    workspaceUri?: string | null,
+    scope?: MemoryScope,
+    createIfMissing = true
+): Promise<import('./MemoryManager').MemoryManager | null> {
+    // 显式要求全局作用域：不依赖 workspaceUri
+    if (scope === 'global') {
+        return getGlobalMemoryManager();
+    }
     if (workspaceUri) {
-        const scoped = await getMemoryManagerForWorkspace(workspaceUri);
+        const scoped = await getMemoryManagerForWorkspace(workspaceUri, createIfMissing);
         if (scoped) return scoped;
+        // 传了 workspaceUri 说明意图是工作区：解析失败不再静默回退全局，由调用方报错
+        return null;
+    }
+    if (scope === 'workspace') {
+        // 显式要求工作区作用域但缺少工作区上下文
+        return null;
     }
     return getGlobalMemoryManager();
 }

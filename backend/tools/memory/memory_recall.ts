@@ -11,6 +11,7 @@ import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import {
     getGlobalMemoryManager,
     getMemoryManagerForWorkspace,
+    getWorkspaceFolderName,
     type RecallResult,
 } from '../../modules/memory';
 
@@ -38,8 +39,9 @@ export function createMemoryRecallDeclaration(): ToolDeclaration {
 }
 
 /** 把单个作用域的 recall 命中拼进输出行（含来源标注与命中统计） */
-function appendRecallSection(lines: string[], result: RecallResult, label: string): void {
-    lines.push(`--- ${label} memory ---`);
+function appendRecallSection(lines: string[], result: RecallResult, label: string, name?: string | null): void {
+    // 与 wake 一致：工作区段头带文件夹名（如 --- Workspace memory (name) ---）
+    lines.push(name ? `--- ${label} memory (${name}) ---` : `--- ${label} memory ---`);
     lines.push(...result.lines);
     if (result.truncated) {
         lines.push(`Newest ${result.lines.length} of ${result.totalHits} matches. Narrow the regex.`);
@@ -61,7 +63,8 @@ async function memoryRecallHandler(args: Record<string, unknown>, context?: Tool
         // 工作区记忆也执行同一次搜索（id 各自独立，无需去重）
         let wsResult: RecallResult | null = null;
         if (context?.activeWorkspaceUri) {
-            const wsMgr = await getMemoryManagerForWorkspace(context.activeWorkspaceUri);
+            // 只读工具：工作区目录不存在时不创建（createIfMissing=false），避免只读访问产生磁盘副作用
+            const wsMgr = await getMemoryManagerForWorkspace(context.activeWorkspaceUri, false);
             if (wsMgr) {
                 wsResult = await wsMgr.recall(regex);
             }
@@ -72,7 +75,8 @@ async function memoryRecallHandler(args: Record<string, unknown>, context?: Tool
             appendRecallSection(lines, globalResult, 'Global');
         }
         if (wsResult && wsResult.totalHits > 0) {
-            appendRecallSection(lines, wsResult, 'Workspace');
+            const wsName = context?.activeWorkspaceUri ? getWorkspaceFolderName(context.activeWorkspaceUri) : null;
+            appendRecallSection(lines, wsResult, 'Workspace', wsName);
         }
         if (lines.length === 0) {
             lines.push('No match.');

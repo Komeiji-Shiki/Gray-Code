@@ -2252,7 +2252,9 @@ const ja: LanguageMessages = {
                         scopeWorkspace: 'ワークスペース記憶',
                         scopeWorkspaceHint: 'ワークスペースごとに独立して保存される記憶です。他のワークスペースやグローバル記憶には影響しません。',
                         selectScopeWorkspace: 'ワークスペースを選択…',
-                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶はこのワークスペースでのみ表示されます。'
+                        workspaceNone: '現在利用可能なワークスペースがありません。ワークスペースを開くか追加してから再試行してください。',
+                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶はこのワークスペースでのみ表示されます。',
+                        newlineNotAllowed: '記憶は 1 行で記述する必要があります。改行を削除して再試行してください。'
                     }
                 },
 

@@ -2252,7 +2252,9 @@ const en: LanguageMessages = {
                         scopeWorkspace: 'Workspace Memory',
                         scopeWorkspaceHint: 'Memory stored independently per workspace; it does not affect other workspaces or global memory.',
                         selectScopeWorkspace: 'Select a workspace…',
-                        workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible in this workspace.'
+                        workspaceNone: 'No workspace is currently available. Open or add a workspace and try again.',
+                        workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible in this workspace.',
+                        newlineNotAllowed: 'A memory must be a single line. Remove line breaks and try again.'
                     }
                 },
 

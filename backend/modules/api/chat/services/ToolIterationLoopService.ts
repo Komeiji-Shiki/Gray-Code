@@ -322,6 +322,7 @@ export class ToolIterationLoopService {
             this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
             this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
             this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined),
+            // 会话绑定的工作区 URI（记忆隔离：工具执行按工作区路由记忆存储）。
             // 测试替身可能未实现 getMetadata：防御性探测，缺失时视为未绑定工作区
             (typeof this.conversationManager.getMetadata === 'function'
                 ? this.conversationManager.getMetadata(conversationId).catch(() => null)
@@ -1007,7 +1008,7 @@ export class ToolIterationLoopService {
                                     undefined,
                                     // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                                     undefined,
-                                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                                     runtimeContext?.workspaceUri
                                 ).catch(err => {
                                     // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
@@ -1392,7 +1393,7 @@ export class ToolIterationLoopService {
                     MAIN_SESSION_RUN_ID,
                     // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                     undefined,
-                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                     runtimeContext?.workspaceUri
                 );
 
@@ -1881,7 +1882,7 @@ export class ToolIterationLoopService {
                 MAIN_SESSION_RUN_ID,
                 // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                 undefined,
-                // 当前对话绑定的工作区 URI（用于工具执行的工作区限定）
+                // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                 runtimeContext?.workspaceUri
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);

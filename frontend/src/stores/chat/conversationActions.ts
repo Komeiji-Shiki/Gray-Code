@@ -282,6 +282,40 @@ export async function refreshCurrentConversationBuildSession(state: ChatStoreSta
   state.activeBuild.value = await loadConversationBuildSession(conversationId)
 }
 
+export async function syncConversationWorkspaceUri(
+  state: ChatStoreState,
+  conversationId: string
+): Promise<void> {
+  let workspaceUri = state.currentWorkspaceUri.value
+  try {
+    const latestWorkspaceUri = await sendToExtension<string | null>('getWorkspaceUri', {})
+    if (latestWorkspaceUri) {
+      workspaceUri = latestWorkspaceUri
+      state.currentWorkspaceUri.value = latestWorkspaceUri
+    }
+  } catch {
+    // ignore and fallback to store value
+  }
+  if (!workspaceUri) return
+
+  const conv = state.conversations.value.find(c => c.id === conversationId)
+  if (!conv || !conv.isPersisted) return
+  // 记忆隔离（PR #20 审查 M5）：目标会话已有非空 workspaceUri（如分支继承自源对话）时不覆盖，
+  // 仅当未绑定/为空时才用当前活动工作区补齐——既保留“新会话自动绑定”，
+  // 又不破坏后端 createBranchConversation 的工作区继承。
+  if (conv.workspaceUri) return
+
+  try {
+    await sendToExtension('conversation.setWorkspaceUri', {
+      conversationId,
+      workspaceUri
+    })
+    conv.workspaceUri = workspaceUri
+  } catch (error) {
+    console.warn('[conversationActions] Failed to sync conversation workspace URI:', error)
+  }
+}
+
 /**
  * 创建新对话（仅清空消息，不创建对话记录）
  *
@@ -772,6 +806,10 @@ export async function switchConversation(
 
       // 更新对话的消息数量（在加载后才有准确数据）
       conv.messageCount = state.totalMessages.value || state.allMessages.value.length
+
+      // 记忆隔离（PR #20 审查 M5）：仅对未绑定工作区的对话用当前活动工作区补绑
+      // （已有绑定由上方恢复逻辑接管，不覆盖；分支继承自源对话的绑定同样不覆盖）
+      void syncConversationWorkspaceUri(state, requestedId)
     } else {
       state.activeBuild.value = null
     }
