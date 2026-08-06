@@ -65,7 +65,7 @@ import {
   getGlobalBranchService,
   isFunctionResponseMessage,
 } from '../../../conversation/branch';
-import type { ConversationBranchGraph } from '../../../conversation/branch';
+import type { BranchService, ConversationBranchGraph } from '../../../conversation/branch';
 // H1：读取 webview 层注册的全局 abort manager，在写入用户消息/截断历史前等待旧流退出。
 // StreamAbortManager 仅依赖 backend/core 与 tools/subagents，不构成与 api/chat 的循环依赖。
 import {
@@ -88,7 +88,8 @@ export type ChatStreamOutput =
 /**
  * reroll（重新生成并保留旧回答）请求数据（TREE-01）。
  * 与 RetryRequestData 的区别：不删除旧回答——后端在 BranchGraph 中把旧助手节点及其子树
- * 保留为候选（进 sidecar），新建候选并切换主历史到新候选路径；失败保留旧候选（决策 10）。
+ * 保留为候选（进 sidecar），新建候选并切换主历史到新候选路径；失败时旧候选始终保留，
+ * 新候选已有部分输出则保留，完全无输出则移除空占位。
  */
 export interface RerollRequestData {
   /** 对话 ID */
@@ -114,7 +115,7 @@ export interface RerollRequestData {
  * 编辑用户消息分支（TREE-03）请求数据。
  * 与 EditAndRetryRequestData 的区别：不覆盖原消息——后端在 BranchGraph 中把旧用户节点及其子树
  * 保留为候选（进 sidecar），创建编辑候选（新 user 节点，kind='edit'）并切换主历史到编辑后路径；
- * 失败保留旧候选（决策 10 精神）。
+ * 失败时旧候选始终保留；新模型候选完全无输出时移除空占位。
  */
 export interface EditBranchRequestData {
   /** 对话 ID */
@@ -1381,7 +1382,7 @@ export class ChatFlowService {
    *    创建新候选并激活 → 主历史截断到父用户节点之后（切换到新候选路径）；
    * 4. 复用现有工具循环生成内容（写入主历史尾部，functionResponse 走主历史正常路径，决策 8）；
    * 5. finally 中 BranchService.finishReroll：把流式结果回填进新候选节点（含续接节点）+ 更新摘要；
-   *    失败也回填（决策 10：保留旧候选，新候选保留部分内容可切回查看）。
+   *    失败也回填：保留旧候选；新候选有部分内容则保留，无输出则移除空占位。
    */
   async *handleRerollStream(
     request: RerollRequestData,
@@ -1462,14 +1463,15 @@ export class ChatFlowService {
       this.diffInterruptService.resetUserInterrupt(conversationId);
     }
 
-    // 5. 判断是否需要刷新动态系统提示词（截断后主历史可能只剩首条用户消息，与 retry 语义一致）
-    const rerollHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
-    const isRerollFirstMessage = isFirstMessageHistory(rerollHistoryCheck);
-
-    // 6. 工具调用循环（复用现有循环；functionResponse 走主历史正常路径，决策 8）
-    const maxToolIterations = this.getMaxToolIterations();
     let finishError: { code: string; message: string } | undefined;
     try {
+      // 5. 判断是否需要刷新动态系统提示词。放进最终回填保护区：即使读取历史或解析
+      // 迭代上限意外失败，也不能把刚创建的空 reroll 占位永久留在活跃尾。
+      const rerollHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
+      const isRerollFirstMessage = isFirstMessageHistory(rerollHistoryCheck);
+
+      // 6. 工具调用循环（复用现有循环；functionResponse 走主历史正常路径，决策 8）
+      const maxToolIterations = this.getMaxToolIterations();
       for await (const output of this.toolIterationLoopService.runToolLoop({
         conversationId,
         configId,
@@ -1488,7 +1490,7 @@ export class ChatFlowService {
         yield output as ChatStreamOutput;
       }
     } finally {
-      // 7. 流式结果写入新节点 + 更新摘要；失败也回填（决策 10：失败保留旧候选，可切回）
+      // 7. 流式结果写入新节点 + 更新摘要；失败也回填（部分输出保留，无输出移除空占位）
       if (rerollStarted) {
         try {
           const branchService = getGlobalBranchService();
@@ -1510,7 +1512,7 @@ export class ChatFlowService {
       }
     }
     // 7.5 M2：主历史已显示新内容但图回填失败 → 透出结构化 error chunk（前端错误条可见），
-    // 候选保留占位（决策 10：失败候选保留，可切回查看）。
+    // 新候选可能已保留部分输出，也可能已移除空占位；旧候选始终可切回查看。
     // 注：工具循环自身抛错时此处不可达（异常直接传播，由 ChatHandler 转 error chunk）。
     if (finishError) {
       yield {
@@ -1541,7 +1543,7 @@ export class ChatFlowService {
    *    keep：截断到目标消息之后）
    * 7. 复用现有工具循环生成内容（编辑后用户消息内容变化 → 新回合语义，与 editAndRetryStream 一致）；
    * 8. finally 中（仅 branch）BranchService.finishReroll：把流式结果回填进模型候选节点（含续接节点）
-   *    + 更新摘要；失败也回填（决策 10 精神：保留旧候选，新候选保留部分内容可切回查看）。
+   *    + 更新摘要；失败也回填：保留旧候选，新候选有部分内容则保留，无输出则移除空占位。
    */
   async *handleEditBranchStream(
     request: EditBranchRequestData,
@@ -1598,6 +1600,13 @@ export class ChatFlowService {
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
     let editStarted: { modelCandidateNodeId: string; parentNodeId: string } | undefined;
+    let editSetup: {
+      branchService: BranchService;
+      oldUserNodeId: string;
+      newUserNodeId: string;
+      modelCandidateNodeId: string;
+      parentNodeId: string;
+    } | undefined;
     try {
       await this.diffInterruptService.cancelAllPending(conversationId);
 
@@ -1605,7 +1614,7 @@ export class ChatFlowService {
       // functionResponse，随后由主历史截断一并移除——它们属于被编辑的旧子树）
       await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-      // 3.6 编辑分支底座需要全局 BranchService（懒初始化在 webview handler 完成）
+      // 3.6 编辑分支底座需要启动期注册的全局 BranchService
       const branchService = getGlobalBranchService();
       if (!branchService) {
         yield {
@@ -1619,6 +1628,9 @@ export class ChatFlowService {
       }
 
       // 3.7 解析并校验编辑目标（活跃路径 + user 角色 + 非根节点）；sidecar 损坏时快速失败
+      // 旧版本可能把已结束的空 reroll/edit 占位留在活跃尾，导致主历史继续增长而
+      // branches.json 停更。编辑会截断/改写历史，必须先把当前路径安全归档；修复前先备份旧图。
+      await branchService.ensureMainHistoryRepresentedInGraph(conversationId);
       const graphResult = await branchService.getBranchGraph(conversationId);
       if (graphResult.errorCode === 'BRANCH_STORAGE_CORRUPT') {
         throw new BranchError(
@@ -1681,6 +1693,13 @@ export class ChatFlowService {
           parts: [],
         });
         const modelCandidateNodeId = modelCreated.nodeId;
+        editSetup = {
+          branchService,
+          oldUserNodeId: target.nodeId,
+          newUserNodeId,
+          modelCandidateNodeId,
+          parentNodeId: target.parentNodeId!,
+        };
 
         // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
         const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
@@ -1716,6 +1735,35 @@ export class ChatFlowService {
         // branch 模式：parentNodeId 必非 null（根节点已在 resolveEditTargetNode 拒绝）
         editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId! };
       }
+    } catch (error) {
+      if (editSetup && !editStarted) {
+        try {
+          const currentHistory = await this.conversationManager.getMessagesRaw(conversationId);
+          if (currentHistory.some(message => message.id === editSetup!.newUserNodeId)) {
+            // addContent 可能已提交后才抛错；此时保留已落盘的编辑用户节点，只移除空模型占位。
+            await editSetup.branchService.finishReroll(conversationId, editSetup.modelCandidateNodeId);
+          } else {
+            // 截断前失败则恢复旧用户路径；截断已落盘则回退其父节点。两种情况都只允许
+            // 删除本次 edit + 空 reroll 的精确临时子树。
+            const fallbackNodeId = currentHistory.some(message => message.id === editSetup!.oldUserNodeId)
+              ? editSetup.oldUserNodeId
+              : editSetup.parentNodeId;
+            await editSetup.branchService.abortEmptyCandidateSetup(conversationId, {
+              setupRootNodeId: editSetup.newUserNodeId,
+              emptyCandidateNodeId: editSetup.modelCandidateNodeId,
+              fallbackNodeId,
+            });
+          }
+        } catch (rollbackError) {
+          this.log.error('edit_branch_setup_rollback_failed', {
+            conversationId,
+            newUserNodeId: editSetup.newUserNodeId,
+            modelCandidateNodeId: editSetup.modelCandidateNodeId,
+            error: (rollbackError as Error)?.message ?? String(rollbackError),
+          });
+        }
+      }
+      throw error;
     } finally {
       // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRerollStream 的 finally 用法一致）
       this.diffInterruptService.resetUserInterrupt(conversationId);
@@ -1724,9 +1772,10 @@ export class ChatFlowService {
     // 5. 工具调用循环（branch 模式：编辑后用户消息内容变化 → 新回合语义；
     //    keep 模式为真·原地保存：不重新生成，流直接完成）
     if (request.mode !== 'keep') {
-      const maxToolIterations = this.getMaxToolIterations();
       let finishError: { code: string; message: string } | undefined;
       try {
+        // 迭代上限解析同样必须位于最终回填保护区，避免异常时遗留空模型占位。
+        const maxToolIterations = this.getMaxToolIterations();
         for await (const output of this.toolIterationLoopService.runToolLoop({
         conversationId,
         configId,
@@ -1744,7 +1793,7 @@ export class ChatFlowService {
         yield output as ChatStreamOutput;
       }
     } finally {
-      // 6. 流式结果写入模型候选节点 + 更新摘要；失败也回填（决策 10 精神：保留旧候选，可切回）
+      // 6. 流式结果写入模型候选节点 + 更新摘要；失败也回填（部分输出保留，无输出移除空占位）
       if (editStarted) {
         try {
           const branchService = getGlobalBranchService();

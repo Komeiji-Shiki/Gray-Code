@@ -536,6 +536,188 @@ describe('BranchService', () => {
         });
     });
 
+    describe('旧 sidecar 与主历史对账修复', () => {
+        test('遗留空占位导致漏同步：先备份，再追平当前路径，旧候选仍保留', async () => {
+            const [userNodeId, modelNodeId] = await seedConversation('c1');
+            const oldCandidate = await service.createRerollCandidate('c1', userNodeId, { parts: [] });
+
+            // 模拟旧缺陷：已结束的空 reroll 仍在活跃尾，主历史追加成功但 sidecar 静默停更。
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q2' }], timestamp: 300 },
+                { role: 'model', parts: [{ text: 'a2' }], timestamp: 400 },
+            ]);
+            const historyIds = (await manager.getMessagesRaw('c1')).map(message => message.id!);
+
+            const result = await service.ensureMainHistoryRepresentedInGraph('c1');
+            expect(result).toMatchObject({
+                created: false,
+                reconciled: true,
+                missingMessageCount: 2,
+            });
+            expect(result.backupPath).toBeTruthy();
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(activePath(graph)).toEqual(historyIds);
+            expect(graph.nodes[oldCandidate.nodeId]).toBeDefined();
+            expect(graph.nodes[modelNodeId]!.activeChildId).toBe(historyIds[2]);
+            expect(validate(graph).valid).toBe(true);
+
+            const backup = JSON.parse(await fsp.readFile(result.backupPath!, 'utf8'));
+            expect(backup.nodes[oldCandidate.nodeId]).toBeDefined();
+            expect(backup.activeTailNodeId).toBe(oldCandidate.nodeId);
+
+            // 第二次对账幂等：不重写、不再制造备份。
+            await expect(service.ensureMainHistoryRepresentedInGraph('c1')).resolves.toEqual({
+                created: false,
+                reconciled: false,
+                missingMessageCount: 0,
+                unsyncedFunctionResponseCount: 0,
+            });
+            expect(userNodeId).toBe(historyIds[0]);
+        });
+
+        test('切换前发现漏同步即拒绝，activeTail 不发生变化', async () => {
+            const [, modelNodeId] = await seedConversation('c1');
+            const first = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a2' }] });
+            const second = await service.createRerollCandidate('c1', modelNodeId, { parts: [{ text: 'a3' }] });
+            setGlobalBranchService(undefined);
+            await manager.addBatch('c1', [{ role: 'user', parts: [{ text: 'unsynced' }], timestamp: 500 }]);
+            setGlobalBranchService(service);
+
+            await expect(service.switchBranchCandidate('c1', first.nodeId)).rejects.toMatchObject({
+                code: 'BRANCH_OPERATION_CONFLICT',
+            });
+            expect((await service.getBranchGraph('c1')).graph!.activeTailNodeId).toBe(second.nodeId);
+        });
+    });
+
+    describe('逻辑总结结构同步', () => {
+        test('已有分支图立即同步总结节点与标记，切出再切回不会丢总结语义', async () => {
+            await manager.createConversation('c1', 'T');
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q1' }], timestamp: 100, isUserInput: true },
+                { role: 'model', parts: [{ text: 'a1' }], timestamp: 200 },
+                { role: 'user', parts: [{ text: 'q2' }], timestamp: 300, isUserInput: true },
+                { role: 'model', parts: [{ text: 'a2' }], timestamp: 400 },
+            ]);
+            await service.ensureBranchGraph('c1');
+            const before = await manager.getMessagesRaw('c1');
+            const [u1, m1, u2, m2] = before.map(message => message.id!);
+
+            await manager.getTranscriptRepository('c1').mutateContents(history => {
+                history[1] = { ...history[1], isSummarized: true };
+                history.splice(2, 0, {
+                    role: 'user',
+                    parts: [{ text: 'summary' }],
+                    id: 'sum-1',
+                    parentId: m1,
+                    isSummary: true,
+                    isAutoSummary: true,
+                    summarizedMessageCount: 1,
+                    summaryTokenStats: {
+                        sourceTokenCount: 100,
+                        summaryTokenCount: 20,
+                        estimatedTokensSaved: 80,
+                    },
+                });
+                history[3] = { ...history[3], parentId: 'sum-1' };
+                return history.slice();
+            });
+
+            await expect(service.syncMainHistoryAfterStructuralMutation('c1', 'summary_inserted'))
+                .resolves.toEqual({ synced: true, deferred: false });
+            const syncedGraph = (await service.getBranchGraph('c1')).graph!;
+            expect(activePath(syncedGraph)).toEqual([u1, m1, 'sum-1', u2, m2]);
+            expect(syncedGraph.nodes[m1]!.contentMetadata?.isSummarized).toBe(true);
+            expect(syncedGraph.nodes['sum-1']!.contentMetadata).toMatchObject({
+                isSummary: true,
+                isAutoSummary: true,
+                summarizedMessageCount: 1,
+                summaryTokenStats: { estimatedTokensSaved: 80 },
+            });
+
+            // 先切到同父的另一回答并重写主历史，再切回总结路径，验证图→历史往返字段。
+            const alternative = await service.createRerollCandidate('c1', u2, { parts: [{ text: 'alt' }] });
+            await manager.rewriteHistoryFromBranchGraph('c1');
+            const alternativeHistory = await manager.getMessagesRaw('c1');
+            expect(alternativeHistory[alternativeHistory.length - 1]?.id).toBe(alternative.nodeId);
+            await service.switchBranchCandidate('c1', m2);
+            await manager.rewriteHistoryFromBranchGraph('c1');
+
+            const restored = await manager.getMessagesRaw('c1');
+            expect(restored.map(message => message.id)).toEqual([u1, m1, 'sum-1', u2, m2]);
+            expect(restored.find(message => message.id === m1)?.isSummarized).toBe(true);
+            expect(restored.find(message => message.id === 'sum-1')).toMatchObject({
+                isSummary: true,
+                isAutoSummary: true,
+                summarizedMessageCount: 1,
+                summaryTokenStats: { estimatedTokensSaved: 80 },
+            });
+        });
+
+        test('线性会话不因总结强制创建 sidecar；活动空候选期间延迟同步', async () => {
+            const [, modelNodeId] = await seedConversation('linear');
+            await expect(service.syncMainHistoryAfterStructuralMutation('linear', 'summary_inserted'))
+                .resolves.toEqual({ synced: false, deferred: false });
+            expect((await service.getBranchGraph('linear')).graph).toBeNull();
+
+            const started = await service.startReroll('linear', modelNodeId);
+            await expect(service.syncMainHistoryAfterStructuralMutation('linear', 'summary_inserted'))
+                .resolves.toEqual({ synced: false, deferred: true });
+            // 清理测试中的进行中占位，验证空结果终态仍可正常收敛。
+            await expect(service.finishReroll('linear', started.candidateNodeId))
+                .resolves.toMatchObject({ discardedEmptyCandidate: true });
+        });
+
+        test('活动候选期间延迟的总结在 finishReroll 后完整收敛', async () => {
+            await manager.createConversation('c1', 'T');
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q1' }], timestamp: 100, isUserInput: true },
+                { role: 'model', parts: [{ text: 'a1' }], timestamp: 200 },
+                { role: 'user', parts: [{ text: 'q2' }], timestamp: 300, isUserInput: true },
+                { role: 'model', parts: [{ text: 'a2' }], timestamp: 400 },
+            ]);
+            const original = await manager.getMessagesRaw('c1');
+            const [u1, m1, u2, m2] = original.map(message => message.id!);
+            const started = await service.startReroll('c1', m2);
+
+            // 模拟模型请求前自动总结：总结插在最后真实 user（u2）之前，因此不属于候选输出尾。
+            await manager.getTranscriptRepository('c1').mutateContents(history => {
+                history[1] = { ...history[1], isSummarized: true };
+                history.splice(2, 0, {
+                    role: 'user',
+                    parts: [{ text: 'summary during reroll' }],
+                    id: 'sum-during-reroll',
+                    parentId: m1,
+                    isSummary: true,
+                    isAutoSummary: true,
+                });
+                history[3] = { ...history[3], parentId: 'sum-during-reroll' };
+                return history.slice();
+            });
+            await expect(service.syncMainHistoryAfterStructuralMutation('c1', 'summary_inserted'))
+                .resolves.toEqual({ synced: false, deferred: true });
+
+            const persisted = await manager.addContent('c1', {
+                role: 'model',
+                parts: [{ text: 'new a2' }],
+                timestamp: 500,
+            });
+            const finished = await service.finishReroll('c1', started.candidateNodeId);
+            expect(finished.discardedEmptyCandidate).toBe(false);
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(activePath(graph)).toEqual([u1, m1, 'sum-during-reroll', u2, persisted!.id!]);
+            expect(graph.nodes[m1]!.contentMetadata?.isSummarized).toBe(true);
+            expect(graph.nodes['sum-during-reroll']!.contentMetadata).toMatchObject({
+                isSummary: true,
+                isAutoSummary: true,
+            });
+            expect(graph.nodes[m2]).toBeDefined(); // 旧回答仍是可切回候选
+            expect(validate(graph).valid).toBe(true);
+        });
+    });
+
     describe('TREE-09 软删 / 恢复 / 重命名 / 修剪 / 保留期', () => {
         /** 建会话 + 两个 reroll 候选，返回 [user, model, r1, r2] */
         async function seedCandidates(conversationId: string): Promise<string[]> {

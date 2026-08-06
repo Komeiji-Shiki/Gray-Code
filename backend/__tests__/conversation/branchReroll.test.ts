@@ -8,7 +8,7 @@
  * - 工具调用后的续接 model 支持单条 reroll：保留前序 model + functionResponse，只替换目标回答；
  * - TREE-02 多候选：多次 reroll 形成兄弟候选；每父节点上限 10（决策 4）超限拒绝；
  * - TREE-01 finishReroll：流式结果写入新节点（重命名对齐主历史消息 id + 内容 + 摘要 +
- *   续接节点 + functionResponse 合并，决策 8）；失败保留旧候选（决策 10）；
+ *   续接节点 + functionResponse 合并，决策 8）；部分失败输出保留，完全无输出移除空占位；
  * - 与 retryStream 并存：reroll 后旧破坏性 retry 路径（deleteMessage）仍可用，图侧不受影响；
  * - BR-05：finish 后主历史消息 id 链（不含 functionResponse）== 图活跃路径。
  *
@@ -133,6 +133,46 @@ describe('TREE-01/02 BranchService reroll', () => {
             expect(graph.nodes[modelNodeId]!.parts).toEqual([{ text: 'a1' }]);
             expect(validate(graph).valid).toBe(true);
             expect(userNodeId).toBeTruthy();
+        });
+
+        test('主历史截断失败时回滚刚创建的空候选，恢复旧回答活跃路径', async () => {
+            const [userNodeId, modelNodeId] = await seedConversation('c1');
+            jest.spyOn(manager, 'deleteMessagesInRange').mockRejectedValueOnce(new Error('truncate failed'));
+
+            await expect(service.startReroll('c1', modelNodeId)).rejects.toThrow('truncate failed');
+
+            const history = await manager.getMessagesRaw('c1');
+            expect(history.map(message => message.id)).toEqual([userNodeId, modelNodeId]);
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            expect(Object.values(graph.nodes).filter(node => node.kind === 'reroll')).toHaveLength(0);
+            expect(graph.nodes[userNodeId]!.activeChildId).toBe(modelNodeId);
+            expect(graph.activeTailNodeId).toBe(modelNodeId);
+            expect(activePath(graph)).toEqual([userNodeId, modelNodeId]);
+        });
+
+        test('编辑启动回滚只移除本次 edit + 空模型子树，旧回答完整恢复', async () => {
+            const [userNodeId, modelNodeId] = await seedConversation('c1');
+            await service.ensureBranchGraph('c1');
+            const edited = await service.editCandidate('c1', userNodeId, {
+                role: 'user',
+                parts: [{ text: 'edited question' }],
+            });
+            const emptyModel = await service.createRerollCandidate('c1', edited.nodeId, { parts: [] });
+
+            const result = await service.abortEmptyCandidateSetup('c1', {
+                setupRootNodeId: edited.nodeId,
+                emptyCandidateNodeId: emptyModel.nodeId,
+                fallbackNodeId: modelNodeId,
+            });
+
+            expect(new Set(result.removedNodeIds)).toEqual(new Set([edited.nodeId, emptyModel.nodeId]));
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            expect(graph.nodes[edited.nodeId]).toBeUndefined();
+            expect(graph.nodes[emptyModel.nodeId]).toBeUndefined();
+            expect(graph.nodes[modelNodeId]!.parts).toEqual([{ text: 'a1' }]);
+            expect(activePath(graph)).toEqual([userNodeId, modelNodeId]);
         });
 
         test('assistantNodeId 缺省：取活跃路径上最后一条助手消息', async () => {
@@ -273,7 +313,7 @@ describe('TREE-01/02 BranchService reroll', () => {
             expect(consistency.activePathIds).toEqual([userNodeId, modelAId, modelBId]);
         });
 
-        test('失败保留旧候选（决策 10）：流式未产生内容时新候选保留为空、旧候选可切回', async () => {
+        test('流式未产生内容时移除空占位并回退活跃尾，旧候选仍保留', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
             const started = await service.startReroll('c1', modelNodeId);
 
@@ -281,18 +321,101 @@ describe('TREE-01/02 BranchService reroll', () => {
             const finished = await service.finishReroll('c1', started.candidateNodeId);
             expect(finished.syncedMessageCount).toBe(0);
             expect(finished.candidateNodeId).toBe(started.candidateNodeId);
+            expect(finished.discardedEmptyCandidate).toBe(true);
+            expect(finished.activeTailNodeId).toBe(userNodeId);
 
             const graph = (await service.getBranchGraph('c1')).graph!;
             expect(validate(graph).valid).toBe(true);
-            // 新候选保留为空（失败候选，可切回查看）
-            expect(graph.nodes[started.candidateNodeId]!.parts).toEqual([]);
-            expect(graph.candidateSummaries!.find(s => s.nodeId === started.candidateNodeId)!.preview).toBe('');
+            // 空占位没有可恢复内容，必须移除，不能继续冻结普通追加同步。
+            expect(graph.nodes[started.candidateNodeId]).toBeUndefined();
+            expect(graph.candidateSummaries!.find(s => s.nodeId === started.candidateNodeId)).toBeUndefined();
+            expect(activePath(graph)).toEqual([userNodeId]);
             // 旧候选完整保留
             expect(graph.nodes[modelNodeId]!.parts).toEqual([{ text: 'a1' }]);
 
             // 旧候选可切回（switchBranchCandidate 图状态切换）
             const switched = await service.switchBranchCandidate('c1', modelNodeId);
             expect(switched.activePathIds).toEqual([userNodeId, modelNodeId]);
+        });
+
+        test('SubAgent 后台回执先于模型输出追加时，不冒充模型候选并按真实顺序入图', async () => {
+            const [userNodeId, oldModelNodeId] = await seedConversation('c1');
+            const started = await service.startReroll('c1', oldModelNodeId);
+            const receipt = await manager.addContent('c1', {
+                role: 'user',
+                parts: [{ text: 'background task completed' }],
+                source: 'background_task',
+            } as any);
+            const answer = await manager.addContent('c1', {
+                role: 'model',
+                parts: [{ text: 'new model answer' }],
+                modelVersion: 'gemini-x',
+            } as any);
+
+            const finished = await service.finishReroll('c1', started.candidateNodeId);
+            expect(finished.candidateNodeId).toBe(answer!.id);
+            expect(finished.syncedMessageCount).toBe(1);
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            expect(activePath(graph)).toEqual([userNodeId, receipt!.id!, answer!.id!]);
+            expect(graph.nodes[receipt!.id!]).toMatchObject({
+                role: 'user',
+                contentMetadata: { source: 'background_task' },
+            });
+            expect(graph.nodes[answer!.id!]).toMatchObject({
+                role: 'model',
+                parentId: receipt!.id,
+                parts: [{ text: 'new model answer' }],
+            });
+            expect(graph.nodes[oldModelNodeId]!.parts).toEqual([{ text: 'a1' }]);
+        });
+
+        test('只有 SubAgent 回执、模型无输出时，移除空占位并保留回执为活跃尾', async () => {
+            const [userNodeId, oldModelNodeId] = await seedConversation('c1');
+            const started = await service.startReroll('c1', oldModelNodeId);
+            const receipt = await manager.addContent('c1', {
+                role: 'user',
+                parts: [{ text: 'background task completed' }],
+                source: 'background_task',
+            } as any);
+
+            const finished = await service.finishReroll('c1', started.candidateNodeId);
+            expect(finished.syncedMessageCount).toBe(0);
+            expect(finished.discardedEmptyCandidate).toBe(true);
+            expect(finished.activeTailNodeId).toBe(receipt!.id);
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            expect(graph.nodes[started.candidateNodeId]).toBeUndefined();
+            expect(activePath(graph)).toEqual([userNodeId, receipt!.id!]);
+            expect(graph.nodes[receipt!.id!]).toMatchObject({
+                role: 'user',
+                contentMetadata: { source: 'background_task' },
+            });
+            expect(graph.nodes[oldModelNodeId]!.parts).toEqual([{ text: 'a1' }]);
+        });
+
+        test('回归：空 reroll 结束后的正常消息仍会进入分支图', async () => {
+            const [userNodeId, modelNodeId] = await seedConversation('c1');
+            const started = await service.startReroll('c1', modelNodeId);
+            await service.finishReroll('c1', started.candidateNodeId);
+
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q2' }], timestamp: 300 },
+                { role: 'model', parts: [{ text: 'a2' }], timestamp: 400 },
+            ]);
+            const historyIds = (await manager.getMessagesRaw('c1')).map(message => message.id!);
+            let graph = (await service.getBranchGraph('c1')).graph!;
+            // appendHistoryToGraph 是锁外 fire-and-forget；等待其异步读图与入队完成，而不是只抢一次锁。
+            for (let attempt = 0; attempt < 20 && activePath(graph).length !== historyIds.length; attempt += 1) {
+                await new Promise<void>(resolve => setImmediate(resolve));
+                graph = (await service.getBranchGraph('c1')).graph!;
+            }
+            expect(historyIds[0]).toBe(userNodeId);
+            expect(activePath(graph)).toEqual(historyIds);
+            expect(graph.nodes[modelNodeId]).toBeDefined();
+            expect(validate(graph).valid).toBe(true);
         });
 
         test('失败保留旧候选（决策 10）：半截消息也回填，可切回查看错误', async () => {
