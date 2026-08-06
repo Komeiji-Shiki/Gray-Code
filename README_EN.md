@@ -83,7 +83,7 @@ Invalid argument types sent by a model are corrected when possible, such as the 
 
 **Permanent memory (OptMem)** — GrayCode includes the OptMem permanent memory system. The default prompt asks the assistant to call `memory_wake` at the beginning of a new session to restore conventions, decisions, and knowledge, and to use `memory_note` for information worth retaining long term. Older memories are compressed into one-line summaries through a binary-tree structure to reduce token usage while preserving important details. `memory_recall` supports regular-expression search across all memories, and `memory_zoom` expands tree nodes layer by layer.
 
-Memory data is stored locally as append-only logs and fixed-width records, without any external service. Settings → Memory allows you to customize the memory prompt, use the `{{$MEMORY}}` template variable, view and edit raw memory entries, and adjust runtime parameters such as `wakeLines`, `entryChars`, `partChars`, and `partLines`. Memory tools are disabled for Sub-Agents to prevent duplicate or incorrect memory writes.
+Memory data is stored locally as append-only logs and fixed-width records, without any external service. Settings → Memory allows you to customize the memory prompt, use the `{{$MEMORY}}` template variable, view and edit raw memory entries (add new ones manually as with `memory_note`, or delete a single entry — following entries are renumbered and related summaries are cleared), and adjust runtime parameters such as `wakeLines`, `entryChars`, `partChars`, and `partLines`. Memory tools are disabled for Sub-Agents to prevent duplicate or incorrect memory writes.
 
 **Conversation and experience** — GrayCode supports multiple conversation tabs, automatic history persistence, history viewing and migration, message queuing while the assistant is busy, visible tool states, token usage, thinking content, response timing, automatic checkpoints, sound alerts, Windows notifications, Chinese / English / Japanese interfaces, usage statistics, cost estimation, and Mermaid rendering. Usage statistics aggregate token usage by conversation, model, and day, with bar charts, cache-write / cache-hit dimensions, and cost estimation; the token usage covers all branches, including inactive candidates.
 
@@ -145,7 +145,7 @@ Tool availability depends on settings, dependencies, channel capabilities, and w
 | Sub-Agents | subagents | Delegate work to specialized agents in the foreground or background, continue from `continueFromRunId`, and inspect runs in SubAgent Monitor |
 | History, skills, notifications | history_search, read_skill, show_windows_notification | Search conversation history, load Skill content, and show Windows notifications |
 | Usage time | get_activity_stats | Query IDE usage time statistics (daily usage minutes, recent schedule heatmap, continuous working duration); timestamps only |
-| Memory | memory_wake, memory_note, memory_recall, memory_compress, memory_zoom, memory_forget, memory_config | OptMem permanent memory: wake, record, search, compress, expand, discard, and configure |
+| Memory | memory_wake, memory_note, memory_recall, memory_compress, memory_zoom, memory_forget, memory_config | OptMem permanent memory: wake, record, search, compress, expand, discard summaries or delete single/closed-range entries, and configure |
 
 ## Settings Pages
 
