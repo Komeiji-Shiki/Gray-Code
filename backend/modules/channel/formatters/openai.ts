@@ -351,7 +351,18 @@ export class OpenAIFormatter extends BaseFormatter {
                         content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
-            } else if (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0) {
+            }
+
+            // 普通消息独立生成：必须同时排除 functionCall 与 functionResponse。
+            // 若挂成 else-if（仅排除 functionResponse），"text + functionCall"
+            // 同消息的最普通形态会把文本输出两次——一次并入 assistant(tool_calls)
+            // 的 content，一次作为独立 assistant 文本消息，导致 tool_calls 消息后
+            // 紧跟普通 assistant 消息、tool 消息与 tool_calls 分离 → 400。
+            if (
+                functionCallParts.length === 0 &&
+                functionResponseParts.length === 0 &&
+                (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0)
+            ) {
                 // 普通消息（可能包含文本、思考内容和/或多媒体内容）
                 const messageContent = this.buildMessageContent(textParts, mediaParts, pdfAttachmentEnabled);
                 

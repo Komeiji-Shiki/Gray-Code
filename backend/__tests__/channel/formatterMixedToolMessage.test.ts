@@ -84,10 +84,75 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
         const tools = messages.filter((m: any) => m.role === 'tool');
         expect(tools).toHaveLength(2);
         expect(tools.map((t: any) => t.tool_call_id).sort()).toEqual(['call_1', 'call_2']);
-        // tool 消息必须紧跟 assistant 之后（OpenAI 协议：tool 消息紧跟 tool_calls 消息）
+                // tool 消息必须紧跟 assistant 之后（OpenAI 协议：tool 消息紧跟 tool_calls 消息）
         const assistantIdx = messages.indexOf(assistant);
         expect(messages[assistantIdx + 1]?.role).toBe('tool');
         expect(messages[assistantIdx + 2]?.role).toBe('tool');
+    });
+
+    it('回归：text + functionCall 同消息（无 response，最普通形态）不得重复输出文本', () => {
+        const formatter = new OpenAIFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [
+                    { text: '我来处理这个任务' },
+                    { functionCall: { id: 'call_t1', name: 'read_file', args: { path: 'a.txt' } } }
+                ]
+            },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [
+                    { functionResponse: { id: 'call_t1', name: 'read_file', response: { success: true, data: '内容' } } }
+                ]
+            }
+        ];
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            dynamicSystemPrompt: 'system prompt',
+            history,
+            promptContext: {
+                beforeHistoryMessages: [],
+                afterHistoryMessages: [],
+                historyPlacement: 'legacy'
+            },
+            dynamicContextStrategy: 'single'
+        }, createOpenAIConfig());
+
+        const messages = request.body.messages as any[];
+        // 关键断言：assistant(tool_calls) 之后必须紧跟 tool 消息，中间不得再出现 assistant 文本消息
+        const assistantIdx = messages.findIndex((m: any) => m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0);
+        expect(assistantIdx).toBeGreaterThanOrEqual(0);
+        expect(messages[assistantIdx].content).toBe('我来处理这个任务');
+        expect(messages[assistantIdx + 1]?.role).toBe('tool');
+        expect(messages[assistantIdx + 1]?.tool_call_id).toBe('call_t1');
+        // 全文只有一条 assistant 含 tool_calls 的消息，没有把文本重复输出成独立消息
+        const assistantTextMsgs = messages.filter((m: any) => m.role === 'assistant' && !m.tool_calls && typeof m.content === 'string' && m.content.includes('我来处理'));
+        expect(assistantTextMsgs).toHaveLength(0);
+    });
+
+    it('回归：纯文本消息不受影响', () => {
+        const formatter = new OpenAIFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '你好' }] },
+            { role: 'model', parts: [{ text: '你好！' }] }
+        ];
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            dynamicSystemPrompt: 'system prompt',
+            history,
+            promptContext: {
+                beforeHistoryMessages: [],
+                afterHistoryMessages: [],
+                historyPlacement: 'legacy'
+            },
+            dynamicContextStrategy: 'single'
+        }, createOpenAIConfig());
+
+        const messages = request.body.messages as any[];
+        expect(messages.filter((m: any) => m.role === 'user')).toHaveLength(1);
+        expect(messages.filter((m: any) => m.role === 'assistant')).toHaveLength(1);
     });
 
     it('回归：独立消息形态（model: CALL / user isFR: RESP）行为不变', () => {
@@ -155,5 +220,46 @@ describe('AnthropicFormatter: 混合形态消息（call + response 同消息）'
         const toolResults = user.content.filter((c: any) => c.type === 'tool_result');
         expect(toolResults).toHaveLength(2);
         expect(toolResults.map((t: any) => t.tool_use_id).sort()).toEqual(['call_1', 'call_2']);
+    });
+
+    it('回归：text + functionCall 同消息（无 response）不重复输出文本、tool_result 紧跟 tool_use', () => {
+        const formatter = new AnthropicFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [
+                    { text: '我来处理这个任务' },
+                    { functionCall: { id: 'call_t1', name: 'read_file', args: { path: 'a.txt' } } }
+                ]
+            },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [
+                    { functionResponse: { id: 'call_t1', name: 'read_file', response: { success: true, data: '内容' } } }
+                ]
+            }
+        ];
+        const request = formatter.buildRequest({
+            configId: 'anthropic-test',
+            dynamicSystemPrompt: 'system prompt',
+            history,
+            promptContext: {
+                beforeHistoryMessages: [],
+                afterHistoryMessages: [],
+                historyPlacement: 'legacy'
+            },
+            dynamicContextStrategy: 'single'
+        }, createAnthropicConfig());
+
+        const messages = request.body.messages as any[];
+        const assistant = messages.find((m: any) => m.role === 'assistant');
+        expect(assistant).toBeDefined();
+        // 文本只并入 assistant 消息，不重复输出
+        const textBlocks = assistant.content.filter((c: any) => c.type === 'text');
+        expect(textBlocks.filter((c: any) => c.text === '我来处理这个任务')).toHaveLength(1);
+        const user = messages.find((m: any) => m.role === 'user');
+        const toolResults = user.content.filter((c: any) => c.type === 'tool_result');
+        expect(toolResults.map((t: any) => t.tool_use_id)).toEqual(['call_t1']);
     });
 });
