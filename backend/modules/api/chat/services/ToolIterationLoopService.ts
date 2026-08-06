@@ -48,6 +48,7 @@ import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './s
 import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
+import type { DynamicRuntimeContext } from '../../../prompt/PromptManager';
 import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
@@ -254,6 +255,17 @@ export class ToolIterationLoopService {
     private readonly granularFallbackStartByConversation = new Map<string, number>();
 
     /**
+     * 回合内动态运行时上下文缓存（todoList / pinnedFiles / skills / workspaceUri）。
+     *
+     * 现状：同一回合内 runToolLoop 可能被多次调用（新回合生成 → 工具确认 / 隐藏
+     * functionResponse 续跑），每次调用都重新 getCustomMetadata 读取元数据并 structuredClone
+     * 整份 meta。这里按「会话 + 回合起始消息 id」缓存一次加载结果：同一回合续跑直接复用；
+     * 新回合（起始消息 id 变化）自动重新加载；自动总结删除锚点消息导致 id 变化时同样重新加载。
+     * 与 granularFallbackStartByConversation 同模式保持有界（M5）。
+     */
+    private readonly runtimeContextByTurn = new Map<string, { context: DynamicRuntimeContext; turnStartId: string | null }>();
+
+    /**
      * 会话级 Map 最大条目数（M5）。
      *
      * 会话删除路径（webview 层 deleteConversation → ConversationManager.deleteConversation）
@@ -316,6 +328,28 @@ export class ToolIterationLoopService {
             pinnedFiles,
             skills
         };
+    }
+
+    /**
+     * 回合内动态运行时上下文复用：同一回合（同一起始用户消息 id）内只加载一次。
+     * turnStartId 为 null（无起始用户消息可锚定）时不缓存，保持原有每次加载语义。
+     */
+    private async getOrLoadRuntimeContext(
+        conversationId: string,
+        turnStartId: string | null
+    ): Promise<DynamicRuntimeContext> {
+        if (turnStartId !== null) {
+            const cached = this.runtimeContextByTurn.get(conversationId);
+            if (cached && cached.turnStartId === turnStartId) {
+                return cached.context;
+            }
+        }
+        const context = await this.loadDynamicRuntimeContext(conversationId);
+        if (turnStartId !== null) {
+            this.runtimeContextByTurn.set(conversationId, { context, turnStartId });
+            this.evictOldestIfOversized(this.runtimeContextByTurn);
+        }
+        return context;
     }
 
     private orderToolResultsByCallSequence(
@@ -647,6 +681,8 @@ export class ToolIterationLoopService {
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // 回合锚点：起始用户消息 id（缓存命中分支与新回合分支共用，用于回合内运行时上下文复用）
+        const turnStartId = turnStartIndex >= 0 ? (historyRef[turnStartIndex]?.id ?? null) : null;
         // M3：自动总结已用次数提升到「真实用户回合」级——新回合清零，续跑（isNewTurn=false）
         // 从会话级记录读取已用次数，避免续跑重新从 0 计数导致 maxAutoSummarizeAttemptsPerTurn 失效。
         let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
@@ -661,7 +697,7 @@ export class ToolIterationLoopService {
 
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
                 beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
@@ -689,8 +725,8 @@ export class ToolIterationLoopService {
                 afterHistoryMessages: cached.afterHistoryMessages,
                 historyPlacement: cached.historyPlacement
             };
-            // 加载 runtime 以便解析系统提示词
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            // 加载 runtime 以便解析系统提示词（回合内复用同一份，避免重复读元数据）
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
         // -1 表示无限制
@@ -1597,6 +1633,8 @@ export class ToolIterationLoopService {
         // 不能重新生成并让动态上下文跟随历史尾部漂移。
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // 回合锚点：起始用户消息 id（缓存命中分支与新回合分支共用，用于回合内运行时上下文复用）
+        const turnStartId = turnStartIndex >= 0 ? (historyRef[turnStartIndex]?.id ?? null) : null;
         // M3：与流式路径一致——自动总结已用次数按「真实用户回合」记录，续跑读取并累加。
         let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
             conversationId,
@@ -1614,7 +1652,7 @@ export class ToolIterationLoopService {
         let runtimeContext: any = undefined;
 
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
                 beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
@@ -1641,7 +1679,7 @@ export class ToolIterationLoopService {
                 historyPlacement: cached.historyPlacement
             };
 
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
         // -1 表示无限制
