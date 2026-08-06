@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-08-06
+
+### Fixed
+  - **打开/保存工作区（多工作区收藏）在桌面版完全失效的根因**：`vscode-shim` 的 `showOpenDialog` / `showSaveDialog` 把 native 层的 Electron 形状结果（`{ filePaths, canceled }` / `{ filePath, canceled }`）原样返回给按 VS Code 契约消费的调用方（`result.length` / `result[i].fsPath` / `result.fsPath`）——打开工作区文件夹弹窗、收藏工作区打开、存储路径选择、设置导入/导出全部静默退化为「取消」。现 shim 统一转换为 VS Code 契约（`Uri[] | undefined` / `Uri | undefined`），工作区收藏「保存 + 打开 + 重启保留」链路在桌面版端到端打通；存储路径选择与设置导入/导出同步修复
+  - **设置导入/导出的对话框 filters 形状不匹配（与上述同族）**：VS Code 契约的 `filters` 是 `{ 'JSON Files': ['json'] }` 对象，native.ts 原样透传给 Electron（要求 `[{ name, extensions }]` 数组）导致过滤被忽略/对话框异常；新增 `normalizeDialogFilters` 统一转换
+  - **桌面版 `env.openExternal` 拒绝 `file:` URI（「打开 Skills 目录」等按钮静默无效）**：`file:` URI 走不了 `shell:openExternal` 的 http/https/mailto 白名单；现 shim 对 `file:` 方案的 Uri 改走 `shell:openPath`（含目录/可执行扩展名校验），与 VS Code 中打开系统资源管理器的语义一致
+  - 修复说明：vscode-shim 全链路扫描（子智能体审查）未发现其他同等级 P0 形状不匹配；已知的 P1 降级项（文件写盘与文档事件脱节、未注册命令桩等）另行跟踪
+
+### Added
+  - **设置页设置项搜索**：设置面板标题栏新增搜索框——输入关键词实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），支持键盘上下键选择与回车跳转；点击结果自动切换到对应页签并滚动定位到设置项（节标题或精确锚点，附带 1.6s 闪烁高亮），搜索「存储路径/代理/语言/导入导出/应用信息」可精确直达对应设置块；内置中/英/日三语关键词索引（`SettingsPanel.vue` 静态 `SEARCH_INDEX`），空结果有提示文案，三语 i18n 同步
+
 ## [1.6.7] - 2026-08-06
 
 ### Merged

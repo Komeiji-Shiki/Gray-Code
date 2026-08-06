@@ -8,6 +8,17 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.8] - 2026-08-06
+
+### Fixed
+  - **打开/保存工作区（多工作区收藏）桌面版失效的根因修复**：`vscode-shim` 的 `showOpenDialog` / `showSaveDialog` 此前把 native 层 Electron 形状（`{ filePaths, canceled }` / `{ filePath, canceled }`）原样返回，而调用方按 VS Code 契约消费（`result.length` / `result[0].fsPath` / `result.fsPath`）——工作区选择器「打开工作区文件夹」弹窗选完目录后永远被判为取消，收藏列表既存不进也打不开，存储路径选择与设置导入/导出同受其害。现 shim 统一转换为 VS Code 契约（`Uri[] | undefined` / `Uri | undefined`），桌面版工作区收藏「保存 + 打开 + 重启保留」链路端到端打通
+  - **设置导入/导出对话框 filters 形状不匹配（同族）**：`native.ts` 新增 `normalizeDialogFilters`，把 VS Code 对象形状的 `filters` 转换为 Electron `[{ name, extensions }]` 数组，导入/导出对话框的 JSON 过滤恢复生效
+  - **桌面版 `env.openExternal` 拒绝 `file:` URI**：shim 对 `file:` 方案的 Uri 改走 `shell:openPath`（「打开 Skills 目录」等按钮恢复可用）
+  - 版本号 1.6.8，electron-app/package.json 同步（详见根 `CHANGELOG.md` [1.6.8]）
+
+### Added
+  - 设置页设置项搜索（frontend 公共部分，详见根 `CHANGELOG.md` [1.6.8]）：桌面版同样生效——搜索框 + 结果下拉 + 侧边栏命中高亮 + 跳转定位闪烁
+
 ## [1.6.6] - 2026-08-06
 
 ### Added
