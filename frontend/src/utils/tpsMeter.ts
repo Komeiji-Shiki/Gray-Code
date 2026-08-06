@@ -26,6 +26,8 @@
  * stop() 清空全部状态，避免重挂载读到过期的 live/曲线数据。
  */
 
+export type TpsSource = 'tokenizer' | 'estimate'
+
 export interface TpsSample {
   /** EMA 平滑后的当前瞬时速率（tok/s） */
   ema: number
@@ -33,6 +35,8 @@ export interface TpsSample {
   ring: number[]
   /** 最近 2s 内是否收到过真实 token 到达 */
   live: boolean
+  /** 最近一次 record 的 token 计数来源；无来源信息（旧调用/从未记录）时为 null */
+  source: TpsSource | null
 }
 
 const SAMPLE_MS = 200
@@ -59,21 +63,24 @@ class TpsMeter {
   private timer: number | null = null
   private listeners = new Set<(sample: TpsSample) => void>()
   private lastRecordAt = 0
-  private lastSample: TpsSample = { ema: 0, ring: [], live: false }
+  private lastSource: TpsSource | null = null
+  private lastSample: TpsSample = { ema: 0, ring: [], live: false, source: null }
 
   /**
    * 流式回调每收到一个 chunk 调用一次。
    * tokenCount 为该 chunk 携带的 token 数（供应商无逐 chunk usage 时按文本长度估算）。
    * timestamp 为事件真实发生时间（如 chunk.createdAt），缺省用接收时刻。
+   * source 为 token 计数来源（真实 tokenizer / 字符估算），供 UI 区分显示；缺省不更新。
    *
    * 注意：传入"过去的时间戳"（回放/积压场景）时，事件会立刻被窗口修剪掉——
    * 这正是期望行为，积压数据不参与实时 TPS。
    */
-  record(tokenCount: number, timestamp?: number): void {
+  record(tokenCount: number, timestamp?: number, source?: TpsSource): void {
     if (typeof tokenCount !== 'number' || !Number.isFinite(tokenCount) || tokenCount <= 0) return
     const now = Date.now()
     // live 判定用真实接收时刻（调用时刻），与事件时间戳无关
     this.lastRecordAt = now
+    if (source === 'tokenizer' || source === 'estimate') this.lastSource = source
     const t = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : now
 
     // 突发摊薄：单事件 > MAX_SINGLE_EVENT_TOKENS 时拆成 k = ceil(n/250) 个小事件，
@@ -110,12 +117,13 @@ class TpsMeter {
       this.timer = null
     }
     // 停表后清空状态：避免重挂载时读到过期的 live/曲线数据（最后一次采样可能仍在
-    // 2s live 窗口内）。EMA/ring 一并清零，让下一次会话从干净状态起步。
+    // 2s live 窗口内）。EMA/ring/source 一并清零，让下一次会话从干净状态起步。
     this.events = []
     this.lastRecordAt = 0
+    this.lastSource = null
     this.ema = 0
     this.ring = []
-    this.lastSample = { ema: 0, ring: [], live: false }
+    this.lastSample = { ema: 0, ring: [], live: false, source: null }
   }
 
   /** 订阅采样；返回取消订阅函数（最后一个订阅者取消后自动停止定时器） */
@@ -155,7 +163,8 @@ class TpsMeter {
     this.lastSample = {
       ema: this.ema,
       ring: this.ring.slice(),
-      live: now - this.lastRecordAt <= LIVE_WINDOW_MS
+      live: now - this.lastRecordAt <= LIVE_WINDOW_MS,
+      source: this.lastSource
     }
     for (const cb of this.listeners) cb(this.lastSample)
   }
