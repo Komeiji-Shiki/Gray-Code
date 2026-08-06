@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+### Added
+  - 设置页新增设置项搜索：标题栏搜索框实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），键盘上下选择/回车跳转，点击结果自动切换页签并滚动定位（节标题或精确锚点 + 1.6s 闪烁高亮）；内置中/英/日三语关键词索引（SEARCH_INDEX），17 个设置组件 93 个设置块加 `data-search-anchor` 精确锚点，具体设置项全部可搜可直达；空结果提示，三语 i18n 同步。
+
+### Changed
+  - 全链路性能与资源占用优化（移植自下游桌面版，仅含前后端可移植部分）：
+    - 后端读路径缓存：checkpoint 节点反查（`getMessageNodeIdAt`）300ms 短 TTL + LRU 缓存，一轮对话免十几次全量读盘；分支图读路径只读引用缓存（60s TTL + 200 会话 LRU + mtime/size 外部改写校验），大图不再每次迭代全量 structuredClone；模型列表 5 分钟 TTL；工具声明指纹缓存（tools JSON Schema 构建结果按声明/模式/工具逻辑/MCP 版本缓存）；会话元数据读路径与分支图读路径解耦。
+    - 热路径算法：上下文裁剪起点由 O(候选历史) 改为前缀扫描 O(n) 预计算；运行时上下文回合内复用，同一回合不再重复生成；流式响应 chunk 用 offset 游标解析，消除每个数据包 Buffer.concat / 字符串拼接的 O(n²)。
+    - 前端流式渲染：hljs 已知语言高亮缓存（流式期间同一语言块不再反复全量高亮）；`usedTokens` 增量指纹（每 chunk 免全量历史扫描）；todo 快照尾部增量重放（每 chunk 免全量重放，前缀引用与响应表校验不一致时自动回退）；MessageList 构建/todo sticky 列表短路（无 build / 无 todo 时免扫描）。
+    - 前端高频路径：i18n `t()` 翻译缓存（无参键免 split + 查找）；CustomScrollbar 值相等检查（无变化不写响应式 ref）+ rAF 节流 + 贴底阈值；平滑流式增量基线（每 chunk 免累计文本 slice）。
+    - webview：分支图富化响应前浅拷贝（配合只读引用缓存契约）；`requiresJsonRoundTrip` 小 payload 短路（高频小消息免分配 visited Set 深遍历）；广播直接迭代订阅者 Set（免每 50ms 复制订阅者集合）；`getExtensionVersion` memo。
+
 ## [1.4.3] - 2026-08-06
 
 ### Added

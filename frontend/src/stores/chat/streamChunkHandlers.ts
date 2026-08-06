@@ -33,6 +33,15 @@ import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFac
 const fcSeenBodies = new Map<string, string>()
 const MAX_FC_SEEN_TRACKED = 200
 
+/**
+ * 平滑基线缓存：messageId → 上次计算的 slice 基线文本。
+ * 流式期间 partText 只增不减（增量追加），partText 仍以缓存基线开头时，
+ * 新基线 = 缓存基线 + 中间增量切片，避免每 chunk 对全串 slice（O(n) 展开）。
+ * 段落切换/权威快照/流终结时由 finishSmoothStreamForState 清理；容量超限整体清空兜底。
+ */
+const smoothBaseCache = new Map<string, string>()
+const MAX_SMOOTH_BASE_TRACKED = 200
+
 /** 当前流使用的模型与校准因子（模型切换时重新读取） */
 let activeModelKey = ''
 let activeFactor = 1
@@ -296,10 +305,21 @@ function pushSmoothTextForMessage(message: Message, deltaText: string, state: Ch
   if (!partText.endsWith(deltaText)) {
     // 权威快照或异常合并使“本次 delta 位于尾部”的前提失效时，不能继续拼接错误基线。
     // 立即结束旧显示层并回到真实 parts；下一次可验证的 delta 会从当前真实文本重建。
+    smoothBaseCache.delete(message.id)
     finishSmoothStreamForState(state, message.id)
     return
   }
-  const baseText = partText.slice(0, partText.length - deltaText.length)
+  // 增量基线：partText 仍以缓存基线开头时（流式期间几乎总是成立），
+  // 新基线 = 缓存基线 + 中间增量片段，跳过对全串的 slice 展开
+  const baseTextLen = partText.length - deltaText.length
+  const cachedBase = smoothBaseCache.get(message.id)
+  const baseText = cachedBase !== undefined && partText.startsWith(cachedBase)
+    ? cachedBase + partText.slice(cachedBase.length, baseTextLen)
+    : partText.slice(0, baseTextLen)
+  smoothBaseCache.set(message.id, baseText)
+  if (smoothBaseCache.size > MAX_SMOOTH_BASE_TRACKED) {
+    smoothBaseCache.clear()
+  }
   pushSmoothText(message.id, partKey, deltaText, mode, baseText, (messageIdAtSnapshot, partKeyAtSnapshot, displayText) => {
     // M3+：快照由 manager 低频节流（~120ms），这里只在值变化时写 store.smoothTexts；
     // 高频动画路径走 manager → CharFlow 直连（手动 DOM），不经 Vue 响应式链。
@@ -334,6 +354,7 @@ export function finishSmoothStreamForState(state: ChatStoreState, messageId?: st
   if (state.streamingMessageId.value) ids.add(state.streamingMessageId.value)
   for (const id of ids) {
     finishSmoothStream(id)
+    smoothBaseCache.delete(id)
     // smoothTexts 为本模块新增的显示层字段；测试 mock 状态可能不含它，缺失时跳过清理
     state.smoothTexts?.delete(id)
   }
@@ -345,6 +366,7 @@ export function finishSmoothStreamForState(state: ChatStoreState, messageId?: st
  */
 export function clearAllSmoothForState(state: ChatStoreState): void {
   finishSmoothStreamForState(state)
+  smoothBaseCache.clear()
   for (const id of Array.from(state.smoothTexts?.keys() ?? [])) {
     finishSmoothStream(id)
     state.smoothTexts?.delete(id)

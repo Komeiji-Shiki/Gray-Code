@@ -194,8 +194,29 @@ export class ConversationManager {
 
     /** 会话元数据 LRU（容量上限：对话列表分页 + 打开标签页通常远小于此） */
     private static readonly META_CACHE_CAPACITY = 256;
+    /**
+     * BCP-01 PERF：getMessageNodeIdAt 短 TTL 缓存时长。
+     * 该缓存只在「缓存条目的权威数据」上生效（见 nodeIdCache 注释），TTL 仅用于
+     * 兜底会话外部的直写存储场景（进程内写链全部走失效，不受 TTL 影响）。
+     */
+    private static readonly NODE_ID_CACHE_TTL_MS = 300;
+    /** BCP-01 PERF：节点 ID 反查缓存容量（与历史 LRU 同量级） */
+    private static readonly NODE_ID_CACHE_CAPACITY = 24;
 
     private readonly metaCache = new Map<string, ConversationMetadata | null>();
+    /**
+     * BCP-01 PERF：getMessageNodeIdAt 的轻量读缓存（history 引用 + 填充时刻）。
+     *
+     * 现状：CheckpointService 在每个消息前/后、工具执行前后频繁反查节点 ID，每次
+     * 反查都全量重读 transcript 文件，一轮对话产生十几次全量磁盘 IO。
+     * 缓存契约（与 metaCache 一致）：
+     * - 只在「权威条目」上生效——由 loadHistory/saveContents/ensureHistoryNodeIds 等
+     *   读盘或写盘路径填充的条目（createConversation 的「空历史种子」不填充本缓存，
+     *   避免种子状态被外部直写存储更新后反查命中陈旧快照）；
+     * - 所有写路径（invalidateCaches / append-only 失效）同步删除条目，保证读缓存与
+     *   写链一致；TTL 仅在无写变更但外部直写存储的极端场景兜底。
+     */
+    private readonly nodeIdCache = new Map<string, { history: ConversationHistory; storedAt: number }>();
 
     private touchMetaCache(conversationId: string): void {
         const value = this.metaCache.get(conversationId);
@@ -211,6 +232,27 @@ export class ConversationManager {
         }
     }
 
+    /** LRU 触碰 + 容量淘汰（节点 ID 反查缓存专用） */
+    private touchNodeIdCache(conversationId: string): void {
+        const value = this.nodeIdCache.get(conversationId);
+        if (value !== undefined) {
+            this.nodeIdCache.delete(conversationId);
+            this.nodeIdCache.set(conversationId, value);
+        }
+        if (this.nodeIdCache.size > ConversationManager.NODE_ID_CACHE_CAPACITY) {
+            const oldest = this.nodeIdCache.keys().next().value;
+            if (oldest !== undefined) {
+                this.nodeIdCache.delete(oldest);
+            }
+        }
+    }
+
+    /** 会话所有缓存统一失效（元数据/节点 ID 反查）；结构性变更后必须调用 */
+    private invalidateCaches(conversationId: string): void {
+        this.metaCache.delete(conversationId);
+        this.nodeIdCache.delete(conversationId);
+    }
+
     private cacheMetadata(conversationId: string, metadata: ConversationMetadata | null): void {
         this.metaCache.set(conversationId, metadata);
         this.touchMetaCache(conversationId);
@@ -219,6 +261,7 @@ export class ConversationManager {
     /** 供测试/诊断清理元数据缓存 */
     clearMetadataCache(): void {
         this.metaCache.clear();
+        this.nodeIdCache.clear();
     }
 
     /**
@@ -355,6 +398,7 @@ export class ConversationManager {
                 }
                 // append-only/回退都会刷新 updatedAt：失效元数据缓存，避免对话列表排序读到陈旧时间戳
                 this.metaCache.delete(conversationId);
+                this.nodeIdCache.delete(conversationId);
                 await this.updateUsageIndexAppend(conversationId, withNodeIds);
 
                 // TREE-05：主历史追加成功后，把新消息增量并入分支图。
@@ -1574,12 +1618,27 @@ export class ConversationManager {
         if (!Number.isInteger(index) || index < 0) {
             return undefined;
         }
-        let history = await this.loadHistory(conversationId);
+        // BCP-01 PERF：短 TTL 读缓存——CheckpointService 每个消息前/后、工具执行前后
+        // 频繁反查，同一条写链内多次全量读盘是纯浪费（写路径已统一失效本缓存，进程内
+        // 写链上的反查永远命中权威快照；TTL 仅兜底会话外部直写存储的极端场景）。
+        const cached = this.nodeIdCache.get(conversationId);
+        if (cached && Date.now() - cached.storedAt < ConversationManager.NODE_ID_CACHE_TTL_MS) {
+            const cachedMessage = cached.history[index];
+            return typeof cachedMessage?.id === 'string' && cachedMessage.id.length > 0
+                ? cachedMessage.id
+                : undefined;
+        }
+        // 直读磁盘（不经内存缓存）：调用方可能刚写入历史（含外部直写存储的迁移场景），
+        // 缓存可能滞后；反查是低频操作，直接读最保守。
+        const result = await this.storage.loadHistoryWithStatus(conversationId);
+        let history = result.value ?? [];
         if (ConversationManager.needsNodeIdMigration(history)) {
             // BR-02：写锁内幂等补 ID（迁移自判定），迁移后重新读取
             await this.ensureHistoryNodeIds(conversationId);
             history = await this.loadHistory(conversationId);
         }
+        this.nodeIdCache.set(conversationId, { history, storedAt: Date.now() });
+        this.touchNodeIdCache(conversationId);
         const message = history[index];
         return typeof message?.id === 'string' && message.id.length > 0 ? message.id : undefined;
     }
