@@ -295,6 +295,17 @@ type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
 
 const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig';
 
+/**
+ * 判断主历史是否仍处于「首条消息」状态（仅含首条真实用户消息，无其它活跃消息）。
+ *
+ * 逻辑截断语义下，被总结消息（isSummarized）会永远保留在历史中，不能计入活跃消息数，
+ * 否则总结后的对话永远无法满足 length === 1，导致首条消息的动态系统提示词刷新逻辑失效。
+ */
+function isFirstMessageHistory(history: Content[]): boolean {
+  const active = history.filter(message => !message.isSummarized);
+  return active.length === 1 && active[0].role === 'user';
+}
+
 export class ChatFlowService {
   private readonly log = Logger.get('ChatFlow');
   constructor(
@@ -1260,7 +1271,8 @@ export class ChatFlowService {
 
     // 8. 判断是否是首条消息（需要刷新动态系统提示词）
     const currentHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
-    const isFirstMessage = currentHistoryCheck.length === 1; // 只有刚添加的用户消息
+    // 只有首条真实用户消息（逻辑截断下排除 isSummarized 残留）
+    const isFirstMessage = isFirstMessageHistory(currentHistoryCheck);
 
     // 9. 工具调用循环（委托给 ToolIterationLoopService）
     const maxToolIterations = this.getMaxToolIterations();
@@ -1331,8 +1343,7 @@ export class ChatFlowService {
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
-    const isRetryFirstMessage =
-      retryHistoryCheck.length === 1 && retryHistoryCheck[0].role === 'user';
+    const isRetryFirstMessage = isFirstMessageHistory(retryHistoryCheck);
 
     // 7. 工具调用循环（委托给 ToolIterationLoopService）
     const maxToolIterations = this.getMaxToolIterations();
@@ -1453,8 +1464,7 @@ export class ChatFlowService {
 
     // 5. 判断是否需要刷新动态系统提示词（截断后主历史可能只剩首条用户消息，与 retry 语义一致）
     const rerollHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
-    const isRerollFirstMessage =
-      rerollHistoryCheck.length === 1 && rerollHistoryCheck[0].role === 'user';
+    const isRerollFirstMessage = isFirstMessageHistory(rerollHistoryCheck);
 
     // 6. 工具调用循环（复用现有循环；functionResponse 走主历史正常路径，决策 8）
     const maxToolIterations = this.getMaxToolIterations();

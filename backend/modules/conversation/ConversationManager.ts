@@ -29,7 +29,7 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, History
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
@@ -1838,7 +1838,16 @@ export class ConversationManager {
         }
         // 决策 6：删除前捕获被删消息 id（删除后主历史不再包含它），供分支图同步锚定
         const deletedMessageId = history[messageIndex]?.id ?? null;
-        const nextHistory = await repository.mutateContents(contents => deleteLogicalMessage(contents, messageIndex));
+        const nextHistory = await repository.mutateContents(contents => {
+            let next = contents;
+            // 逻辑截断：删除总结消息时先恢复其覆盖的原文（取消 isSummarized 标记），
+            // 避免「既无总结文本也无原文」的上下文真空（原文保留在存储中但不再发送）。
+            if (next[messageIndex]?.isSummary) {
+                const restored = restoreSummarizedRange(next, messageIndex);
+                next = restored.contents;
+            }
+            return deleteLogicalMessage(next, messageIndex);
+        });
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'message_deleted');
@@ -1934,12 +1943,26 @@ export class ConversationManager {
         const nextHistory = await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const start = Math.max(0, startIndex);
             const end = Math.min(history.length, endIndex + 1);
-            const deleted = history.slice(start, end);
-            history.splice(start, end - start);
+            let next = history;
+            // 逻辑截断：删除区间内的总结消息前，先恢复其覆盖的原文（取消 isSummarized 标记）。
+            // 从晚到早逐个恢复：每个总结的覆盖区间以历史中它之前的最近总结为界，互不重叠；
+            // 覆盖区间可能延伸到删除区间之外（幸存部分同样恢复，避免上下文真空）。
+            const summaryIndices: number[] = [];
+            for (let i = start; i < end; i++) {
+                if (history[i]?.isSummary) {
+                    summaryIndices.push(i);
+                }
+            }
+            for (let i = summaryIndices.length - 1; i >= 0; i--) {
+                const restored = restoreSummarizedRange(next, summaryIndices[i]);
+                next = restored.contents;
+            }
+            const deleted = next.slice(start, end);
+            next.splice(start, end - start);
             // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继
             // parentId===被删id 的消息重链到被删消息的 parent；分支跨链不受影响）
-            repairParentChainAfterDelete(history, deleted);
-            return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
+            repairParentChainAfterDelete(next, deleted);
+            return next.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);

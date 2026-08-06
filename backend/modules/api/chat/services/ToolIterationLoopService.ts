@@ -816,7 +816,7 @@ export class ToolIterationLoopService {
                             autoSummary: true as const,
                             summaryContent: summarizeResult.summaryContent,
                             insertIndex: summarizeResult.insertIndex,
-                            // H1：本次总结物理删除的消息数；缺省/0 时前端保持纯插入旧行为
+                            // 逻辑截断：本次总结标记（被覆盖）的消息数；前端据此标记本地消息并插入总结
                             removedCount: summarizeResult.removedCount ?? 0
                         } satisfies ChatStreamAutoSummaryData;
                     }

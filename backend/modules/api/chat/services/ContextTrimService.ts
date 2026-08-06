@@ -551,9 +551,13 @@ export class ContextTrimService {
             startIndex: normalization.startIndex,
             includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
         });
-        const history = this.prependPreservedUserInputs(
-            formattedHistory,
+        const history = this.prependFirstUserMessage(
             fullHistory,
+            this.prependPreservedUserInputs(
+                formattedHistory,
+                fullHistory,
+                normalization.startIndex
+            ),
             normalization.startIndex
         );
 
@@ -562,6 +566,39 @@ export class ContextTrimService {
             trimStartIndex: normalization.startIndex,
             normalization
         };
+    }
+
+    /**
+     * 首条用户消息永远发送（任务锚点）。
+     *
+     * 逻辑截断语义下，发送历史从最后一个总结消息 / 裁剪点开始，首条用户消息通常不在其中；
+     * 主人的原始任务指令是长期锚点，总结文本永远不如原话清楚，必须原样拼到请求历史最前
+     * （与保留用户输入档案并存，轻微冗余换取原话完整）。
+     *
+     * @param fullHistory 过滤 isSummarized 后的完整历史
+     * @param history 已构建的发送历史
+     * @param startIndex 发送切片起点（过滤后历史索引）；<= 0 时首条用户消息必然已在切片内
+     * @returns 含首条用户消息的发送历史（已在其中则原样返回，避免重复前置）
+     */
+    private prependFirstUserMessage(fullHistory: Content[], history: Content[], startIndex: number): Content[] {
+        // 从 0 开始发送：首条用户消息必然已在切片内，无需处理
+        if (startIndex <= 0) {
+            return history;
+        }
+        const firstUserIndex = fullHistory.findIndex(message => isRealUserMessage(message));
+        if (firstUserIndex < 0) {
+            return history;
+        }
+        const firstUser = fullHistory[firstUserIndex];
+        // 首条用户消息已在切片内（异常数据：历史以 system 等开头且首条下标 >= startIndex）→ 不重复前置
+        if (firstUserIndex >= startIndex) {
+            return history;
+        }
+        // 防御：有稳定 id 时按 id 判重（历史以 system 开头时上述下标判断已覆盖，此处仅兜底）
+        if (firstUser.id !== undefined && history.some(message => message.id === firstUser.id)) {
+            return history;
+        }
+        return [firstUser, ...history];
     }
 
     /**
@@ -816,8 +853,11 @@ export class ContextTrimService {
         stableStartIndex?: number,
         fixedPromptTokens = 0
     ): Promise<ContextTrimInfo> {
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
-        if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
+        if (rawHistory.length === 0) return { history: [], trimStartIndex: 0 };
+
+        // 逻辑截断：被总结消息（isSummarized）不参与发送与统计（与 getHistoryWithContextTrimInfo 一致）
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
 
         const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
         const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
@@ -894,7 +934,10 @@ export class ContextTrimService {
                     fullHistory,
                     stableStartIndex
                 );
-                const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                // 首条用户消息永远发送（任务锚点）
+                const history = this.normalizeFallbackHistoryStart(
+                    this.prependFirstUserMessage(fullHistory, historyWithUserInputs, stableStartIndex)
+                );
                 const estimatedStableTokens = estimateFinalHistoryTokens(history);
                 if (estimatedStableTokens <= fallbackEnvelopeHistoryBudgetTokens) {
                     this.log.warn('trim.fallback_stable_start_reused', {
@@ -968,7 +1011,10 @@ export class ContextTrimService {
                 fullHistory,
                 absoluteStartIndex
             );
-            const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+            // 首条用户消息永远发送（任务锚点）
+            const history = this.normalizeFallbackHistoryStart(
+                this.prependFirstUserMessage(fullHistory, historyWithUserInputs, absoluteStartIndex)
+            );
             const estimatedFallbackTokens = estimateFinalHistoryTokens(history);
             return { relativeStartIndex, absoluteStartIndex, history, estimatedTokens: estimatedFallbackTokens };
         };
@@ -1105,21 +1151,25 @@ export class ContextTrimService {
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         evaluationOptions: ContextTrimEvaluationOptions = {}
     ): Promise<ContextTrimInfo> {
-        // 先获取完整的原始历史
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
+        // 先获取完整的原始历史（含已被总结覆盖的 isSummarized 消息）
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
         
         // 如果历史为空，直接返回
-        if (fullHistory.length === 0) {
+        if (rawHistory.length === 0) {
             return { history: [], trimStartIndex: 0 };
         }
+
+        // 逻辑截断：被总结覆盖的消息（isSummarized）不参与发送与统计，但原文完整保留在存储中
+        // （可显示、可搜索）。过滤后的历史与「物理删除后」的历史语义完全等价，
+        // 下游所有索引 / token / 回合计算无需感知标记消息，也不会因残留历史死循环触发总结。
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
-            // 手动总结是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
-            // 手动总结仍为纯插入语义（历史只增长）；自动总结（handleAutoSummarize）已改为
-            // “删除被总结区间 + 插入总结”的原子替换，不会再有被总结原始消息残留。
-            // 无论哪种语义，这里都从最后一个总结消息开始发送，避免把总结边界之前的内容
-            // 重新携带进请求（插入不删除时若仍从 0 发送，会等同于完全没有压缩）。
+            // 总结（手动/自动）是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
+            // 总结采用逻辑截断语义：被覆盖消息打 isSummarized 标记保留在历史中（上面已过滤），
+            // 发送时从最后一个总结消息开始，避免把总结边界之前的内容重新携带进请求
+            // （否则等同于完全没有压缩）。
             const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
             if (lastSummaryIndex >= 0) {
                 const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
@@ -1433,20 +1483,12 @@ export class ContextTrimService {
         
         // ========== 自动总结模式 ==========
         // 自动总结模式下不做裁剪，而是返回「最后一个总结消息及其之后」的历史 + needsAutoSummarize
-        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。自动总结成功后历史已被物理
-        // 替换（总结消息代替被总结区间），token 估算口径与模型视角一致，不会每轮反复触发。
+        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。逻辑截断语义下被总结消息已在上方
+        // 过滤（isSummarized 不参与统计），token 估算口径与模型视角一致，不会每轮反复触发。
         if (policy.mode === 'summarize') {
-            // 首条用户消息保护：用户的原始任务指令是长期上下文锚点，总结文本永远不如原话
-            // 清楚，必须原样出现在请求里（不能只依赖 Preserved user inputs 档案——首次总结
-            // 物理替换后首条用户消息可能早于最后总结，且档案可能超长截断）。若首条用户消息
-            // 早于最后总结，把它原样拼到请求历史最前（与档案并存，轻微冗余换取原话完整）。
-            let firstUserIndex = -1;
-            for (let i = 0; i < fullHistory.length; i++) {
-                if (isRealUserMessage(fullHistory[i])) {
-                    firstUserIndex = i;
-                    break;
-                }
-            }
+            // 首条用户消息永远发送（任务锚点）：getNormalizedHistoryForStartIndex 返回前统一调用
+            // prependFirstUserMessage 原样前置（与 Preserved user inputs 档案并存，轻微冗余换取原话完整），
+            // 这里不再手动拼接，避免重复。
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
                 fullHistory,
@@ -1455,9 +1497,7 @@ export class ContextTrimService {
                 summaryStartIndex,
                 dynamicContextStrategy
             );
-            const summarizeHistory = (firstUserIndex >= 0 && firstUserIndex < summaryStartIndex)
-                ? [fullHistory[firstUserIndex], ...normalizedHistory.history]
-                : normalizedHistory.history;
+            const summarizeHistory = normalizedHistory.history;
             
             // 估算当前 token 总量来判断是否需要总结
             const fullTokenResult = this.accumulateTokens(

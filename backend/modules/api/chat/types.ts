@@ -221,16 +221,17 @@ export interface ChatStreamAutoSummaryData {
     autoSummary: true;
     /** 自动总结内容 */
     summaryContent: Content;
-    /** 总结消息插入位置（完整历史中的绝对索引）
+    /** 总结消息插入位置（完整历史中的绝对索引）。
      *
-     * 后端执行「删除被总结区间 + 插入总结」的原子替换后，该值 = 被删除区间的起点
-     * （即总结消息在替换完成后的新下标）。 */
+     * 逻辑截断语义下不删除任何消息：该值 = summarizeEndIndex（被总结区间终点），
+     * 总结消息直接插入此位置；被总结区间的原始消息打 isSummarized 标记保留在历史中。 */
     insertIndex: number;
     /**
-     * 本次总结物理删除的原始消息数。
+     * 本次总结标记（被总结覆盖）的原始消息数。
      *
-     * H1 协议：> 0 时前端应删除本地 [insertIndex, insertIndex + removedCount) 区间的消息
-     * 并把后续消息索引前移 removedCount；缺省/0 表示旧版纯插入语义（前端保持旧行为）。
+     * 逻辑截断协议：前端应给本地 [insertIndex - removedCount, insertIndex) 区间的消息
+     * 打 isSummarized 标记（不删除），并把总结消息插入到 insertIndex；缺省/0 表示本次
+     * 没有消息被标记（如首条用户消息保护导致空区间）。
      */
     removedCount?: number;
 }
@@ -576,14 +577,15 @@ export interface SummarizeContextSuccessData {
     summaryTokenStats?: SummaryTokenStats;
     /** 总结消息插入位置（完整历史中的绝对索引）。
      *
-     * 自动总结执行「删除被总结区间 + 插入总结」的原子替换后，该值 = 被删除区间的起点
-     * （替换完成后总结消息在历史数组中的新下标）。 */
+     * 逻辑截断语义下不删除任何消息：该值 = summarizeEndIndex（被总结区间终点），
+     * 总结消息直接插入此位置；被总结区间的原始消息打 isSummarized 标记保留在历史中。 */
     insertIndex?: number;
     /**
-     * 本次总结物理删除的原始消息数。
+     * 本次总结标记（被总结覆盖）的原始消息数。
      *
-     * 自动总结（handleAutoSummarize）执行替换语义时为 [historyStartIndex, insertIndex) 的长度；
-     * 手动总结仍为纯插入语义，恒为 0。前端据此把本地消息列表同步为替换后的形态。
+     * 逻辑截断语义下恒不删除消息：自动总结（handleAutoSummarize）与手动总结（handleSummarizeContext）
+     * 都把 [markStart, insertIndex) 区间的消息标记为 isSummarized（首条用户消息受保护不标记），
+     * 值 = insertIndex - markStart。前端据此标记本地消息并插入总结消息，无需删除任何消息。
      */
     removedCount: number;
 }
