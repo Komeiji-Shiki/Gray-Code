@@ -196,7 +196,9 @@ const ja: BackendLanguageMessages = {
                 requestTimeoutNoResponse: 'リクエストがタイムアウトしました ({timeout}ms 内に応答なし)',
                 requestCancelled: 'リクエストがキャンセルされました',
                 requestAborted: 'リクエストが中止されました',
-                noResponseBody: 'レスポンスボディがありません'
+                noResponseBody: 'レスポンスボディがありません',
+                emptyResponse: 'モデルが空の応答を返しました',
+                streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります'
             },
             modelList: {
                 errors: {
