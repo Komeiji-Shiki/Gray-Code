@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-06
+
 ### Added
   - 新增长期使用时间统计（`backend/modules/activity`）：ActivityTracker 以「60 秒心跳 + 用户活动事件」采集 IDE 活跃时间（监听编辑/光标/滚动/切换编辑器/终端/窗口聚焦，连续 5 分钟无活动或失焦即暂停，过滤挂机），采样按天落盘至 `<dataPath>/activity/YYYY-MM-DD.json`（串行队列防并发覆盖，原子写入防损坏）；统计层提供每日使用时长与活跃会话、24 小时作息热力、当前连续工作时长（间隔 ≤15 分钟视为同一会话，跨天拼接不腰斩）。
   - AI 工作期间同样记为活跃：模型流式生成（`StreamChunkProcessor` chunk 打点）、工具执行（`ToolExecutionService.runSingleToolCall` begin/end 引用计数）、子代理生成（`SubAgentExecutor` 流式循环打点）与后台任务事件（`TaskManager` 事件兜底）都会刷新活跃状态——主人在看 AI 输出时长时间不操作编辑器不会被误判为离开，AI 工作中窗口失焦（后台跑任务）也不暂停统计。
@@ -20,10 +22,13 @@
   - 设置面板新增「用量统计」页签（`SettingsPanel.vue` + `settingsStore`）：内嵌使用时间区块（`UsageTimeSection`）与 Token 用量摘要卡片（总 Token/输入/输出/思考/缓存写入/缓存命中/对话数/回复数，范围筛选 全部/今天/近 7 天/近 30 天），底部「查看完整统计」按钮接通原 `showUsage()` 整页入口（此前该入口在 UI 中无任何调用方）；三语 i18n 同步（`components.settings.tabs.usage` / `sections.usage`）。
 
 ### Changed
+  - 使用时间统计区块（`UsageTimeSection`）默认范围从近 30 天改为近 7 天（`activeRange` 初始值 `'30d'` → `'7d'`，范围切换仍保留 7/30/90 天/1 年/全部）。
   - 欢迎页「欢迎使用 GrayCode」图标从 codicon 对话气泡改为开屏动画同款的手绘 Gray logo：内联 SVG 静态完稿态（灰阶色块 + 细描边线稿，颜色变量与 Splash.vue 同源，亮/暗主题自适应）。
   - 修复欢迎页 Gray logo 图标右侧头发色块缺失：复制 Splash 色块层时遗漏第二个 `fill-hair` path（`M 587.0 408.0...`），后半头发只有线稿描边、色块透明；现补齐与 Splash.vue 一致的 7 个色块 path（body×2 / hair×2 / face×1 / cap×2）。
 
 ### Fixed
+  - 清除纯 `tsc --noEmit` 下 `.vue` 相关类型噪音（vue-tsc 标准检查本就全绿）：① `vite-env.d.ts` 的 `*.vue` shim 从 `DefineComponent<object, object, unknown>` 宽松为 `Record<string, any>` 版本——纯 tsc 无法解析 `.vue` 内部结构，原 shim 导致测试中 `mount`/`setProps` 的字面量 props 触发 excess property check（TS2353，MessageItemStreaming / MessageRenderBlock / Splash / MarkdownRenderer 共 10 处）；② 新增 `MessageItem.vue.d.ts` 旁路声明补齐普通 `<script>` 块具名导出（`backgroundTaskViewModeByMessageId` / `BACKGROUND_TASK_VIEW_MODE_CAP` / `pruneBackgroundTaskViewModes` / `BackgroundTaskViewMode`）——全局 shim 只有默认导出，测试文件具名导入报 TS2614 共 3 处；vue-tsc 优先解析真实 `.vue` 文件，行为与类型均不受影响。
+  - 设置页工具列表 `get_activity_stats` 工具补齐三语 i18n（此前缺失词条，显示名回退为英文 "Get Activity Stats"、描述回退后端英文原文）：`toolDisplayNames` / `toolDescriptions` 新增词条（zh-CN 显示名「获取活动统计」、en "Get Activity Stats"、ja「アクティビティ統計を取得」），`toolLocalization.test.ts` 同步补断言。
   - 修复自动总结在工具循环内触发后模型「失忆」（一次工具调用后历史与用户输入从请求中整体消失）：`SummarizeService` 自动总结从「只插入不删除」改为物理替换（同一写锁事务内删除被总结区间 `[historyStartIndex, insertIndex)` 并插入总结，`replaceSummarizedRangeAtomically`），存储与请求组装口径一致，token 估算随历史缩短自然回落、不再每轮反复触发；写入前基于最新历史重新校验范围（`STALE_RANGE`，总结永不越过当前回合用户消息，杜绝并发写入下连用户输入一起吞掉）；总结文本过短（< 50 字符）视为低质量拒绝替换（`LOW_QUALITY_SUMMARY`）；`ToolIterationLoopService` 流式 autoSummary chunk 透传 `removedCount`，非流式循环补 abort 检查。
   - 前端 `handleAutoSummary` 同步「物理替换」语义：收到 `removedCount > 0` 时删除本地窗口中被替换区间、幸存消息 `backendIndex` 平移、插入总结（去重优先用后端消息 id）；`StreamChunkProcessor` 转发 `removedCount` 字段。
   - 修复自动总结后模型丢失原始任务指令：物理替换被总结区间时删除起点不越过第一条真实用户消息（用户首条消息承载任务目标，总结文本永远不如原话清楚，必须原样保留）；请求组装时若首条用户消息早于最后总结，把它原样拼到请求历史最前（不能只依赖 Preserved user inputs 档案——首次总结后档案读不到已被删除的首条消息）；实际删除数回填 `summarizedMessageCount` 与返回协议（`insertIndex` 为替换完成后总结新下标）。
