@@ -41,6 +41,8 @@
   - 修复终端输出无上限（长驻终端 O(n²) 拼接 + 整段重渲染）：`terminalStore` 输出截断保留最近 200KB。
   - 修复 `MessageRouter` NON_BLOCKING 分支 handler 未回复时 `requestClients` 条目泄漏；`SubAgentMonitor` run 终态清理 `renderMessageCacheByRun`；`MarkdownRenderer` imageCache 增加 32MB 字节预算（单图 > 1MB 不缓存）；`smoothStreamManager` 反查索引 O(1)；`agentStopNotificationController` 日志收敛为 debug；`MessageList` 删除 scrollTop 死代码。
   - 后台命令不再吃满 CPU：`execute_command` 后台（background）启动的 shell 进程降为低优先级（Windows: `BelowNormal` 优先级类，spawn 后 PowerShell 设置，子进程树创建时继承——cmd/powershell 后续启动的 node/jest 等同样让路；POSIX: nice +5），跑测试/长任务时让出 CPU 给前台交互、空闲时仍全速；前台命令保持 normal 不拖慢同步等待。注：Node spawn 的 `priority` 选项在 Windows 上实测不生效，故采用 spawn 后外部设置（尽力而为，失败静默）。
+  - 渠道默认改为流式输出：新渠道 `options.stream` 默认 `true`（实时可见输出、支持流式工具边执行）；设置界面流式开关显示与后端默认一致（`?? true`）；显式保存过 `options.stream` 的已有渠道不受影响（显式值优先）。
+  - 渠道自动重试覆盖空响应与流截断：HTTP 成功但模型返回空内容（无文本/思考/工具调用/附件，非流式解析后检测）或流式从未产出内容（未收到 done 标记）→ `EMPTY_RESPONSE_ERROR` 自动重试（此前静默当成功）；已产出内容但流未收到 done 标记（上游/代理中途掐断连接，for-await 静默结束）→ 显式抛「流式输出被截断」错误不再假装成功（已产出内容不自动重试：重播会与已显示内容重复、流式早启动的工具副作用无法撤回，错误透传前端可手动重试）；`generateStream`/`generateNonStream` 的 ChannelError 均原样透传不再误包 PARSE_ERROR。
 
 ## [1.4.2] - 2026-08-06
 
