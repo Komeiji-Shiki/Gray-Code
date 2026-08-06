@@ -370,6 +370,47 @@ describe('TREE-01/02 BranchService reroll', () => {
             });
             expect(graph.nodes[oldModelNodeId]!.parts).toEqual([{ text: 'a1' }]);
         });
+        test('SubAgent 回执夹在两条模型输出之间时，续接不悬挂且按真实顺序入图', async () => {
+            const [userNodeId, oldModelNodeId] = await seedConversation('c1');
+            const started = await service.startReroll('c1', oldModelNodeId);
+            const first = await manager.addContent('c1', {
+                role: 'model',
+                parts: [{ text: 'first answer' }],
+                modelVersion: 'gemini-x',
+            } as any);
+            const receipt = await manager.addContent('c1', {
+                role: 'user',
+                parts: [{ text: 'background task completed' }],
+                source: 'background_task',
+            } as any);
+            const second = await manager.addContent('c1', {
+                role: 'model',
+                parts: [{ text: 'second answer' }],
+                modelVersion: 'gemini-x',
+            } as any);
+
+            const finished = await service.finishReroll('c1', started.candidateNodeId);
+            expect(finished.candidateNodeId).toBe(first!.id);
+            expect(finished.syncedMessageCount).toBe(1);
+
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            expect(activePath(graph)).toEqual([userNodeId, first!.id!, receipt!.id!, second!.id!]);
+            expect(graph.nodes[first!.id!]).toMatchObject({
+                role: 'model',
+                parts: [{ text: 'first answer' }],
+            });
+            expect(graph.nodes[receipt!.id!]).toMatchObject({
+                role: 'user',
+                contentMetadata: { source: 'background_task' },
+            });
+            expect(graph.nodes[second!.id!]).toMatchObject({
+                role: 'model',
+                parentId: receipt!.id,
+                parts: [{ text: 'second answer' }],
+            });
+            expect(graph.nodes[oldModelNodeId]!.parts).toEqual([{ text: 'a1' }]);
+        });
 
         test('只有 SubAgent 回执、模型无输出时，移除空占位并保留回执为活跃尾', async () => {
             const [userNodeId, oldModelNodeId] = await seedConversation('c1');

@@ -1089,6 +1089,12 @@ export class BranchService {
                     synced += 1;
                 } else {
                     // 后续模型消息 → 续接节点（kind='continue'，激活并更新尾指针）
+                    if (cursorNodeId === null) {
+                        // 链已被 SubAgent 回执/总结等非 model 消息打断（requiresStructuralSync 已置位）：
+                        // 此时续接父节点未知，若用 null 挂载会让 insertNode 误判为新根。跳过本次候选回填，
+                        // 候选收敛后按完整主历史 rebase，回执与后续模型消息按真实顺序重建进活跃路径。
+                        continue;
+                    }
                     const id = typeof message.id === 'string' && message.id.length > 0
                         ? message.id
                         : `continue-${synced}`;
