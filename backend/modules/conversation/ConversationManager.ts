@@ -944,9 +944,7 @@ export class ConversationManager {
                 const functionResponseParts = parts.filter(part => !!part.functionResponse);
                 const restParts = parts.filter(part => !part.functionResponse);
                 nextContents.push({
-                    ...(node.contentMetadata
-                        ? JSON.parse(JSON.stringify(node.contentMetadata))
-                        : {}),
+                    ...(node.contentMetadata ? structuredClone(node.contentMetadata) : {}),
                     role: node.role,
                     parts: JSON.parse(JSON.stringify(restParts)),
                     id: node.id,

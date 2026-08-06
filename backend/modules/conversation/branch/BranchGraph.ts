@@ -42,6 +42,13 @@ export function extractBranchContentMetadata(message: Content): BranchContentMet
     ]) {
         delete metadata[key];
     }
+    // 显式 undefined 字段（如流式完成时被移除的 thinkingStartTime）不参与往返，
+    // 否则 sidecar 会序列化出空对象/无效键，且后续每次对账都产生无意义的元数据差异。
+    for (const key of Object.keys(metadata)) {
+        if (metadata[key] === undefined) {
+            delete metadata[key];
+        }
+    }
     if (Object.keys(metadata).length === 0) {
         return undefined;
     }
