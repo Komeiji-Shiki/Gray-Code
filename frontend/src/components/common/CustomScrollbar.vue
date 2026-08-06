@@ -138,6 +138,14 @@ const pendingLayoutUpdateOptions = {
   updateMarkers: false
 }
 
+// marker 重扫节流：流式期间内容结构变更每帧都会触发调度，但 marker 位置只随
+// 结构/尺寸变化才有意义。用 ≥500ms 间隔 + 尾沿补偿限制全量重扫频率，
+// 避免流式期间每帧对 '.user-message' 等元素逐个 getBoundingClientRect()
+// （强制同步布局）并重建 markerPositions 响应式数组。
+const MARKER_SCAN_THROTTLE_MS = 500
+let lastMarkerScanAt = 0
+let pendingMarkerScanTimer: ReturnType<typeof setTimeout> | null = null
+
 // ==================== Tooltip 状态 ====================
 const tooltipVisible = ref(false)
 const tooltipContent = ref('')
@@ -359,6 +367,27 @@ function handleTooltipWheel(e: WheelEvent) {
   })
 }
 
+/**
+ * 节流版 marker 重扫：距上次扫描 ≥MARKER_SCAN_THROTTLE_MS 时立即执行；
+ * 否则安排一次尾沿补偿扫描，保证流式结束后 marker 位置最终与 DOM 一致
+ * （期间只合并请求，不逐帧全量重扫）。
+ */
+function requestMarkerScan() {
+  if (!props.markerSelector || pendingMarkerScanTimer) return
+  const now = Date.now()
+  const elapsed = now - lastMarkerScanAt
+  if (elapsed >= MARKER_SCAN_THROTTLE_MS) {
+    lastMarkerScanAt = now
+    updateMarkers()
+  } else {
+    pendingMarkerScanTimer = setTimeout(() => {
+      pendingMarkerScanTimer = null
+      lastMarkerScanAt = Date.now()
+      updateMarkers()
+    }, MARKER_SCAN_THROTTLE_MS - elapsed)
+  }
+}
+
 function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
   if (!scrollContainer.value) return
 
@@ -370,7 +399,7 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
   updateScrollbar()
 
   if (options.updateMarkers && props.markerSelector) {
-    updateMarkers()
+    requestMarkerScan()
   }
 
   wasAtBottom = isAtBottom()
@@ -585,9 +614,10 @@ onMounted(() => {
   nextTick(() => {
     setTimeout(() => {
       updateScrollbar()
-      // 初始化 marker
+      // 初始化 marker（同步更新节流基准，避免紧随其后的首次变更触发重复扫描）
       if (props.markerSelector) {
         updateMarkers()
+        lastMarkerScanAt = Date.now()
       }
     }, 100)
     
@@ -607,8 +637,13 @@ onMounted(() => {
     
     // 使用 MutationObserver 监听内容变化
     if (scrollContainer.value) {
-      mutationObserver = new MutationObserver(() => {
-        scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: true })
+      mutationObserver = new MutationObserver((mutations) => {
+        // 字符级变更（CharFlow 直写 text node、v-html 内容替换）只改变文字/内容尺寸，
+        // 不改变 marker 元素集合（marker 位置只依赖内容结构）；仍调度布局更新
+        // （滚动条尺寸 + 贴底跟随），但不触发 marker 重扫，避免流式期间每帧
+        // 对 marker 元素逐个 getBoundingClientRect() 强制同步布局。
+        const hasStructuralChange = mutations.some(mutation => mutation.type === 'childList')
+        scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: hasStructuralChange })
       })
       mutationObserver.observe(scrollContainer.value, {
         childList: true,
@@ -647,6 +682,10 @@ onBeforeUnmount(() => {
   if (tooltipRafId) {
     cancelAnimationFrame(tooltipRafId)
     tooltipRafId = null
+  }
+  if (pendingMarkerScanTimer) {
+    clearTimeout(pendingMarkerScanTimer)
+    pendingMarkerScanTimer = null
   }
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)

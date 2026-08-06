@@ -165,9 +165,13 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         );
 
         expect(result.trimStartIndex).toBe(2);
-        expect(result.history[0]).toMatchObject({ role: 'user', isSummary: true });
-        expect(result.history[0].parts[0].text).toContain('最初目标必须保留');
-        expect(result.history.slice(1)).toEqual(summarizedHistory.slice(2));
+        // 首条用户消息原样保留在请求头部（原始任务锚点，isRealUserMessage 保护）
+        expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: '最初目标必须保留' }] });
+        expect(result.history[0]).not.toHaveProperty('isSummary');
+        // Preserved user inputs 档案仍注入（含首条用户消息的原文），紧随其后
+        expect(result.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[1].parts[0].text).toContain('最初目标必须保留');
+        expect(result.history.slice(2)).toEqual(summarizedHistory.slice(2));
     });
 
     it('自动上下文管理关闭时仍应用用户显式创建的手动总结边界', async () => {

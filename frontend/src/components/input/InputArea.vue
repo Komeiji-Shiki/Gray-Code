@@ -612,8 +612,8 @@ watch(() => settingsStore.promptModesVersion, () => {
         <BranchTreePanel />
       </div>
 
-      <!-- TPS 实时可视化：总结上下文按钮左侧（最底部一行） -->
-      <TpsBar class="tps-slot" />
+      <!-- TPS 实时可视化：总结上下文按钮左侧（最底部一行）；可在外观设置中关闭 -->
+      <TpsBar v-if="settingsStore.tpsBarEnabled" class="tps-slot" />
 
       <div class="toolbar-right">
         <Tooltip :content="t('components.input.summarizeContext')" placement="top">

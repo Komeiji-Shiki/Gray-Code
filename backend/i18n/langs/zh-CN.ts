@@ -198,7 +198,9 @@ const zhCN = {
                 streamBufferTooLarge: '流式响应缓冲超过上限 ({limit} 字符)，已中止请求',
                 requestCancelled: '请求已取消',
                 requestAborted: '请求已中止',
-                noResponseBody: '没有响应体'
+                noResponseBody: '没有响应体',
+                emptyResponse: '模型返回了空内容',
+                streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致'
             },
             modelList: {
                 errors: {
@@ -291,6 +293,8 @@ const zhCN = {
                     noMessagesToSummarize: '没有需要总结的消息',
                     summarizeAborted: '总结请求已取消',
                     emptySummary: 'AI 生成的总结为空',
+                    lowQualitySummary: 'AI 生成的总结过短，可能丢失重要信息，已放弃替换对话历史',
+                    summarizeRangeStale: '对话历史在总结期间发生变化，本次总结的范围已失效，已放弃写入',
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
                     canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
                     messageChanged: '消息已变化，请刷新后重试',

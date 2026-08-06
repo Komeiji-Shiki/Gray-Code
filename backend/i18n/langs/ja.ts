@@ -197,7 +197,9 @@ const ja: BackendLanguageMessages = {
                 streamBufferTooLarge: 'ストリーム応答バッファが上限 ({limit} 文字) を超えたため、リクエストを中止しました',
                 requestCancelled: 'リクエストがキャンセルされました',
                 requestAborted: 'リクエストが中止されました',
-                noResponseBody: 'レスポンスボディがありません'
+                noResponseBody: 'レスポンスボディがありません',
+                emptyResponse: 'モデルが空の応答を返しました',
+                streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります'
             },
             modelList: {
                 errors: {
@@ -290,6 +292,8 @@ const ja: BackendLanguageMessages = {
                     noMessagesToSummarize: '要約するメッセージがありません',
                     summarizeAborted: '要約リクエストが中止されました',
                     emptySummary: 'AI が生成した要約が空です',
+                    lowQualitySummary: 'AI が生成した要約が短すぎて重要な情報が失われる可能性があるため、履歴の置き換えは行いませんでした',
+                    summarizeRangeStale: '要約中に会話履歴が変更されたため、要約範囲が無効になり、書き込みを中止しました',
                     messageNotFound: 'メッセージが見つかりません: インデックス {messageIndex}',
                     canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}',
                     messageChanged: 'メッセージが変更されました。更新後に再試行してください',

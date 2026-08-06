@@ -494,6 +494,8 @@ async function loadLanguageSettings() {
       const appearance = response.settings.ui.appearance
       settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
       settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
+      settingsStore.setTpsBarEnabled(appearance.tpsBarEnabled !== false)
+      settingsStore.setSplashEnabled(appearance.splashEnabled !== false)
     }
 
     // 应用桌面版主题（light / dark / auto）
@@ -622,7 +624,8 @@ onMounted(async () => {
   })
   
   // 异步初始化 chatStore（加载历史对话等）
-  chatStore.initialize()
+  // onMounted 回调本身是 async，这里 await 并 catch：初始化失败不产生未处理 rejection，且有错误日志
+  await chatStore.initialize().catch(err => console.error('[App] chatStore.initialize failed', err))
 })
 
 onBeforeUnmount(() => {
@@ -649,9 +652,9 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 开始动画：灰码少女一笔画（ready 沿用 languageLoaded，淡出后移除）；TPS 实时可视化条位于聊天面板底部 TpsBar -->
+    <!-- 开始动画：Gray logo 描线（ready 沿用 languageLoaded，淡出后移除）；TPS 实时可视化条位于聊天面板底部 TpsBar -->
     <Splash
-      v-if="!splashDone"
+      v-if="!splashDone && settingsStore.splashEnabled"
       :ready="languageLoaded"
       @done="splashDone = true"
     />

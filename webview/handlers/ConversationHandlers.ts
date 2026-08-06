@@ -152,6 +152,9 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
     return;
   }
   await ctx.conversationManager.deleteConversation(conversationId);
+  // E-2：删除会话时同步清理 ToolExecutionService 的 mailbox drain epoch 条目，
+  // 防止会话 ID 复用后残留 epoch 影响新会话的 drain 权收敛（尽力而为，失败不影响删除结果）。
+  ctx.chatHandler?.getToolExecutionService?.().clearMailboxDrainEpochsForConversation(conversationId);
   subAgentRunEventBus.forgetConversation(conversationId);
   // 清理回合内 fallback 切点缓存与持久化 trimState（不阻断删除，失败仅告警）
   try {

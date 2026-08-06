@@ -164,9 +164,22 @@ export class ToolRegistry {
      * @returns 过滤后的工具声明数组
      */
     getFilteredDeclarations(enabledTools: string[]): ToolDeclaration[] {
-        const enabledSet = new Set(enabledTools);
+        // enabledTools 可能同时含主名与别名：主名直接命中，别名经 aliasIndex 归一化到主名
+        // 再判断，避免启用了别名时工具被静默过滤（aliasIndex 语义：alias -> 主名；
+        // 先注册的工具优先占用别名，主名优先于别名判断）。
+        const primaryNames = new Set<string>();
+        for (const name of enabledTools) {
+            if (this.tools.has(name)) {
+                primaryNames.add(name);
+            } else {
+                const primary = this.aliasIndex.get(name);
+                if (primary) {
+                    primaryNames.add(primary);
+                }
+            }
+        }
         return Array.from(this.tools.values())
-            .filter(tool => enabledSet.has(tool.declaration.name) && this.areDependenciesInstalled(tool))
+            .filter(tool => primaryNames.has(tool.declaration.name) && this.areDependenciesInstalled(tool))
             .map(tool => tool.declaration);
     }
     

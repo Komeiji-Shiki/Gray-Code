@@ -622,6 +622,28 @@ interface RenderMessageCacheEntry {
 const renderMessageCacheByRun = new Map<string, Map<number, RenderMessageCacheEntry>>()
 const MAX_RENDER_MESSAGE_CACHE_ENTRIES_PER_RUN = 200
 
+// 修改原因：renderMessageCacheByRun 只在单 run 超限（>200 条）时整表删除，run 结束后缓存一直保留，
+//          长期会话内存随 run 数线性增长。
+// 修改方式：run 进入终态（completed/failed/cancelled）且不再被后端持有（不在 activeRunIds）时，
+//          显式删除该 run 的缓存；仍保留单 run 超限的全局容量上限逻辑。
+// 修改目的：终态 run 的 Message 引用不再参与渲染（重新查看时按需重建），及时释放内存。
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['completed', 'failed', 'cancelled'])
+const terminalInactiveRunIds = computed(() => {
+  const runIds: string[] = []
+  for (const manifest of manifests.value) {
+    if (TERMINAL_RUN_STATUSES.has(manifest.status) && !activeRunIds.value.has(manifest.runId)) {
+      runIds.push(manifest.runId)
+    }
+  }
+  return runIds
+})
+
+watch(terminalInactiveRunIds, runIds => {
+  for (const runId of runIds) {
+    renderMessageCacheByRun.delete(runId)
+  }
+}, { immediate: true })
+
 function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   if (!run) return []
   const responseMap = getFunctionResponseMap(run.contents || [])

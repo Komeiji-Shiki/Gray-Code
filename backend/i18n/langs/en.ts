@@ -197,7 +197,9 @@ const en: BackendLanguageMessages = {
                 streamBufferTooLarge: 'Stream response buffer exceeded the limit ({limit} characters), request aborted',
                 requestCancelled: 'Request cancelled',
                 requestAborted: 'Request aborted',
-                noResponseBody: 'No response body'
+                noResponseBody: 'No response body',
+                emptyResponse: 'The model returned an empty response',
+                streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption'
             },
             modelList: {
                 errors: {
@@ -290,6 +292,8 @@ const en: BackendLanguageMessages = {
                     noMessagesToSummarize: 'No messages to summarize',
                     summarizeAborted: 'Summarize request aborted',
                     emptySummary: 'AI generated summary is empty',
+                    lowQualitySummary: 'AI generated summary is too short and may lose important information; history was not replaced',
+                    summarizeRangeStale: 'Conversation history changed while summarizing; the summary range is stale and was not written',
                     messageNotFound: 'Message not found: index {messageIndex}',
                     canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}',
                     messageChanged: 'Message has changed, please refresh and try again',

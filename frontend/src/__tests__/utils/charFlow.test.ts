@@ -43,7 +43,7 @@ describe('CharFlow', () => {
 
   it('append creates one span per grapheme with staggered animation delays', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b', 'c'], 30, false)
     const spans = chips(host)
     expect(spans.length).toBe(3)
@@ -57,7 +57,7 @@ describe('CharFlow', () => {
 
   it('step is clamped to fadeMs for huge single-frame durations', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 100, false)
+    const flow = new CharFlow(host, { fadeMs: 100, reducedMotion: false })
     flow.append(['a', 'b'], 500, false)
     const spans = chips(host)
     expect(parseFloat(spans[1].style.animationDelay)).toBe(100) // min(250, 100)
@@ -66,16 +66,66 @@ describe('CharFlow', () => {
 
   it('instant append goes straight into the settled text node (no spans)', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['h', 'i'], 16, true)
     expect(chips(host).length).toBe(0)
     expect(host.textContent).toBe('hi')
     flow.dispose()
   })
 
+  it('noFade appends directly without spans (collapsed preview mode)', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true })
+    flow.append(['a', 'b', 'c'], 30, false)
+    expect(chips(host).length).toBe(0)
+    expect(host.textContent).toBe('abc')
+    flow.dispose()
+  })
+
+  it('squashLineBreaks converts line breaks to zero-width spaces', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, squashLineBreaks: true })
+    flow.append(['前', '段', '\n', '\n', '后', '段'], 30, false)
+    expect(host.textContent).toBe('前段\u200B\u200B后段')
+    flow.dispose()
+  })
+
+  it('squashLineBreaks also applies to the staggered chip path', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, squashLineBreaks: true })
+    flow.append(['a', '\n', 'b'], 30, false)
+    const spans = chips(host)
+    expect(spans.length).toBe(3)
+    expect(spans[1].textContent).toBe('\u200B')
+    flow.dispose()
+  })
+
+  it('tailWindow keeps only the latest characters on append', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
+    flow.append(['1', '2', '3'], 30, false)
+    expect(host.textContent).toBe('123')
+    flow.append(['4', '5'], 30, false)
+    expect(host.textContent).toBe('2345') // 头部 1 被裁剪
+    flow.dispose()
+  })
+
+  it('tailWindow trims restore and finish too', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
+    flow.restore('abcdefgh')
+    expect(host.textContent).toBe('efgh')
+    flow.append(['ij'], 30, false)
+    // append 超窗立即裁剪头部（保留最新字符）
+    expect(host.textContent).toBe('ghij')
+    flow.finish()
+    expect(host.textContent).toBe('ghij')
+    flow.dispose()
+  })
+
   it('collapse merges finished chips back into the settled text node', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b', 'c'], 30, false)
     // births: now+110 / now+120 / now+130
     vi.advanceTimersByTime(125) // 前两个 chip 播完
@@ -91,7 +141,7 @@ describe('CharFlow', () => {
 
   it('finish settles everything and leaves no spans', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b'], 30, false)
     flow.append(['c'], 30, false)
     flow.finish()
@@ -102,7 +152,7 @@ describe('CharFlow', () => {
 
   it('idle reflects pending animation state', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     expect(flow.idle()).toBe(true)
     flow.append(['a'], 30, false)
     expect(flow.idle()).toBe(false)
@@ -114,7 +164,7 @@ describe('CharFlow', () => {
 
   it('restore clears existing content and writes settled text directly', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a'], 30, false)
     flow.restore('XYZ')
     expect(chips(host).length).toBe(0)
@@ -124,7 +174,7 @@ describe('CharFlow', () => {
 
   it('reduced-motion appends directly without spans', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, true)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: true })
     flow.append(['a', 'b'], 30, false)
     expect(chips(host).length).toBe(0)
     expect(host.textContent).toBe('ab')
@@ -143,7 +193,7 @@ describe('CharFlow', () => {
 
   it('dispose clears the host entirely', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a'], 30, false)
     flow.append(['b'], 30, false)
     flow.dispose()
@@ -157,7 +207,7 @@ describe('CharFlow', () => {
   it('followEnd keeps a single-line preview scrolled to the latest character', () => {
     const host = makeHost()
     Object.defineProperty(host, 'scrollWidth', { configurable: true, value: 240 })
-    const flow = new CharFlow(host, 110, true, true)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: true, followEnd: true })
 
     flow.append(['a', 'b'], 30, false)
     expect(host.scrollLeft).toBe(240)
@@ -170,14 +220,14 @@ describe('CharFlow', () => {
 
   it('host gets the char-flow class (white-space: pre-wrap)', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     expect(host.classList.contains('char-flow')).toBe(true)
     flow.dispose()
   })
 
   it('settledText returns the settled prefix (animated chips excluded)', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b'], 30, false) // 全在动画中
     expect(flow.settledText).toBe('')
     // births = [now+110, now+125]：130ms 后全部播完
@@ -189,7 +239,7 @@ describe('CharFlow', () => {
 
   it('promote strips a prefix from settled text and returns it', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.restore('para one\n\npara two\n\npara three')
     expect(flow.promote(20)).toBe('para one\n\npara two\n\n')
     expect(flow.settledText).toBe('para three')
@@ -201,7 +251,7 @@ describe('CharFlow', () => {
 
   it('promote after dispose and non-positive n are no-ops', () => {
     const host = makeHost()
-    const flow = new CharFlow(host, 110, false)
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.restore('abc')
     expect(flow.promote(0)).toBe('')
     expect(flow.promote(-1)).toBe('')

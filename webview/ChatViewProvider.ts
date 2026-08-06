@@ -31,6 +31,8 @@ import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, Tas
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import { MemoryManager, setGlobalMemoryManager } from '../backend/modules/memory';
+import { ActivityTracker, setGlobalActivityTracker } from '../backend/modules/activity';
+import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../backend/modules/tokenizer';
 import type { SettingsExportData } from '../backend/modules/settings';
 import {
     setGlobalSettingsManager,
@@ -53,6 +55,7 @@ import { WindowsAgentStopNotificationService } from '../backend/modules/notifica
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
+import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
 import { WorkspaceManager, setWorkspaceManager, type WorkspaceFolderInfo } from './utils/WorkspaceManager';
 
@@ -130,6 +133,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private conversationStorageAdapter?: FileSystemStorageAdapter;
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
+    private activityTracker?: ActivityTracker;
     private mainChatClientDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
     
@@ -409,6 +413,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await memoryManager.loadConfig();
         setGlobalMemoryManager(memoryManager);
         
+        // 25.65. 初始化使用时间统计追踪器（活跃采样：心跳 + 用户活动事件，按天落盘）
+        const activityTracker = new ActivityTracker(
+            path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
+        );
+        activityTracker.start();
+        this.activityTracker = activityTracker;
+        setGlobalActivityTracker(activityTracker);
+
+        // 25.66. 初始化 tokenizer 词表资源管理器（运行时下载 cl100k / DeepSeek 词表到数据目录）
+        const tokenizerManager = new TokenizerResourceManager(this.storagePathManager.getTokenizerPath());
+        setGlobalTokenizerResourceManager(tokenizerManager);
+        
         // 25.7. 设置 SubAgent 执行器上下文
         setSubAgentExecutorContext({
             channelManager: this.channelManager,
@@ -497,6 +513,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理统一任务事件，推送到前端
      */
     private handleTaskEvent(event: TaskEvent): void {
+        // AI 任务（终端/图像生成/后台子代理等）运行中视为用户在场：
+        // 主人在等待任务结果时可能不操作编辑器，不能被空闲判定误判为离开
+        this.activityTracker?.markAiActive();
+
         if (!this._view) return;
         
         this._view.webview.postMessage({
@@ -1012,6 +1032,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 释放用量统计的目录监听与内存缓存
         disposeUsageCache();
+
+        // 释放使用时间统计：停止采样并落盘，清理全局引用与结果缓存
+        this.activityTracker?.dispose();
+        this.activityTracker = undefined;
+        setGlobalActivityTracker(null);
+        disposeActivityStatsCache();
 
         log.info('disposed');
     }

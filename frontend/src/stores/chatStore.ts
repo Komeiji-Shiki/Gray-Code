@@ -138,6 +138,12 @@ import { useSettingsStore } from './settingsStore'
 // 重新导出类型
 export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
 
+// 模块级初始化保护（HIGH）：App.vue onMounted / HMR 重挂载会重复调用 initialize()。
+// 若不幂等，会重复注册 onMessageFromExtension 订阅——每条 streamChunk 被重复处理 N 次
+// （文本重复追加、checkpoint 重复写入、tps 计数翻倍）。取消函数保留在模块级，
+// 重复调用时先注销旧监听再注册，保证任意时刻只有一份活跃订阅。
+let disposeChatStreamListener: (() => void) | null = null
+
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
@@ -632,7 +638,11 @@ export const useChatStore = defineStore('chat', () => {
   // ============ 初始化 ============
   
   async function initialize(): Promise<void> {
-    onMessageFromExtension((message) => {
+    // 幂等保护：重复调用（HMR/App 重挂载）时先注销旧订阅再重新注册，
+    // 避免每条 streamChunk 被重复处理（文本重复追加、checkpoint 重复写入、tps 计数翻倍）。
+    disposeChatStreamListener?.()
+
+    disposeChatStreamListener = onMessageFromExtension((message) => {
       if (message.type === 'streamChunk') {
         handleStreamChunkWrapper(message.data)
       } else if (message.type === 'streamChunkBatch') {

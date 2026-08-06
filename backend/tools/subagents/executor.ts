@@ -31,6 +31,7 @@ import { subAgentRunController } from './runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from './concurrencyLimiter';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 import { agentMailbox } from './agentMailbox';
+import { markAiActive } from '../../modules/activity';
 
 /**
  * 子代理内部工具执行结果。
@@ -1234,6 +1235,8 @@ export function createDefaultExecutor(
                         // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
                         // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
                         for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
+                            // 子代理正在生成：视为用户在场（主人在 Monitor/主窗口查看）
+                            markAiActive();
                             if (operationSignal?.aborted || checkTimeout().exceeded) {
                                 break;
                             }

@@ -5,9 +5,14 @@
  */
 
 import { t } from '../../../../i18n';
+import { randomUUID } from 'node:crypto';
 import { Logger } from '../../../../core/logger';
 import { ErrorType } from '../../../channel/types';
 import { isRealUserMessage } from '../../../conversation/helpers';
+import {
+    repairParentChainAfterDelete,
+    repairParentChainAfterInsert
+} from '../../../conversation/TranscriptMutation';
 import type { ConfigManager } from '../../../config/ConfigManager';
 import type {ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
@@ -64,6 +69,14 @@ const MIN_SUMMARY_PROVIDER_RESERVE_TOKENS = 32;
 // 手动请求只在接近总结模型真实窗口时预检失败，并给 provider 包装留出少量余量。
 const MANUAL_SUMMARY_MAX_INPUT_RATIO = 0.95;
 
+/**
+ * 自动总结文本最低长度（字符数）。
+ *
+ * H1：物理替换语义下，低于该长度的总结会被直接拒绝（LOW_QUALITY_SUMMARY）而不替换历史——
+ * 防止模型返回“已总结”“OK”等无信息量占位文本时，把真实对话历史物理删除。
+ */
+const MIN_SUMMARY_LENGTH = 50;
+
 
 /**
  * 上下文总结服务
@@ -119,8 +132,11 @@ export class SummarizeService {
         summaryText: string;
         channelType: string;
         providerSummaryTokens?: number;
+        /** 调用方已按同一口径算好的被总结消息 token 数（避免同批消息二次估算） */
+        precomputedSourceTokenCount?: number;
     }): SummaryTokenStats {
-        const sourceTokenCount = this.estimateMessagesTokens(options.messagesToSummarize, options.channelType);
+        const sourceTokenCount = options.precomputedSourceTokenCount
+            ?? this.estimateMessagesTokens(options.messagesToSummarize, options.channelType);
         const summaryTokenCount = typeof options.providerSummaryTokens === 'number'
             ? Math.max(0, options.providerSummaryTokens)
             : this.estimateSingleMessageTokensLocally({ role: 'user', parts: [{ text: options.summaryText }] });
@@ -236,8 +252,8 @@ export class SummarizeService {
             }
             const keepRecentRounds = configKeepRecentRounds;
 
-            // 1. 确保对话存在
-            await this.conversationManager.getHistoryRef(conversationId);
+            // 1. 确保对话存在并获取历史（结果复用，避免同一请求内第二次完整加载）
+            const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
             // 2. 确定使用的渠道配置
             let actualConfigId = configId;
@@ -278,8 +294,7 @@ export class SummarizeService {
                 };
             }
 
-            // 4. 获取对话历史
-            const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
+            // 4. 获取对话历史（已在上方加载，直接复用）
 
             this.log.info('manual.history_loaded', { conversationId, fullHistoryLength: fullHistory.length });
 
@@ -513,7 +528,9 @@ export class SummarizeService {
                 beforeTokenCount,
                 afterTokenCount,
                 summaryTokenStats,
-                insertIndex
+                insertIndex,
+                // 手动总结保持纯插入语义：不物理删除任何历史消息
+                removedCount: 0
             };
 
         } catch (error) {
@@ -823,7 +840,11 @@ export class SummarizeService {
             // 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，避免两套口径不一致
             // 导致规划出的范围必然超出总结模型上下文）
             const channelType = config.type;
-            let estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
+            // 逐消息 token 一次性估算，循环收缩范围时按段扣减，避免每轮整段重估
+            const tokenCounts = messagesToSummarize.map(message => (
+                this.estimateMessageTokensForBudget(message, channelType)
+            ));
+            let estimatedTokens = tokenCounts.reduce((sum, t) => sum + t, 0);
             let insertIndex = summarizeEndIndex;
 
             // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下
@@ -868,7 +889,11 @@ export class SummarizeService {
                     break;
                 }
 
-                // 把该轮（或该工具交互）排除在总结范围外，重新估算剩余内容
+                // 把该轮（或该工具交互）排除在总结范围外，同步扣减被排除消息的 token 累积
+                for (let i = cutIndex; i < tokenCounts.length; i++) {
+                    estimatedTokens -= tokenCounts[i];
+                }
+                tokenCounts.length = cutIndex;
                 messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
                 insertIndex = newEndIndex;
                 this.log.warn('auto.context_overflow_trimmed', {
@@ -880,7 +905,6 @@ export class SummarizeService {
                     originalRange: `${summarizeInputStartIndex}-${prevEndIndex}`,
                     newRange: `${summarizeInputStartIndex}-${newEndIndex}`
                 });
-                estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
             }
 
             if (messagesToSummarize.length === 0) {
@@ -1024,20 +1048,44 @@ export class SummarizeService {
                 };
             }
 
+            // C：总结质量校验——长度低于阈值视为低质量总结（可能丢失关键信息），
+            // 不替换历史（H1 物理替换语义下删除不可逆，低质量总结不能覆盖真实对话）。
+            if (summaryText.length < MIN_SUMMARY_LENGTH) {
+                this.log.warn('auto.low_quality_summary', {
+                    conversationId,
+                    summaryLength: summaryText.length,
+                    promptTokens: beforeTokenCount,
+                    completionTokens: afterTokenCount
+                });
+                return {
+                    success: false,
+                    error: {
+                        code: 'LOW_QUALITY_SUMMARY',
+                        message: t('modules.api.chat.errors.lowQualitySummary')
+                    }
+                };
+            }
+
             const mainConfig = await this.configManager.getConfig(configId) || config;
             const summaryTokenStats = this.buildSummaryTokenStats({
                 fullHistory,
                 messagesToSummarize,
                 summaryText,
                 channelType: mainConfig.type,
-                providerSummaryTokens: afterTokenCount
+                providerSummaryTokens: afterTokenCount,
+                // 溢出裁剪循环已按同一口径估算过当前范围，直接复用
+                precomputedSourceTokenCount: estimatedTokens
             });
 
-            // 12. 创建总结消息并插入到历史
+            // 12. 创建总结消息并原子替换历史（H1）。
+            // 旧实现「只插入不删除」导致历史无限增长：被总结的原始消息永远留在历史中，
+            // 模型视角被截断到最后一个总结、token 永远超阈值、每轮反复触发总结。
+            // 现在删除 [historyStartIndex, insertIndex) 并插入总结：替换完成后总结消息的
+            // 新下标 = historyStartIndex（即返回值 insertIndex，前端按此协议同步本地列表）。
             const summaryContent: Content = {
                 role: 'user',
                 parts: [{ text: `${t('modules.api.chat.prompts.summaryPrefix')}\n\n${summaryText}` }],
-                index: insertIndex,
+                index: historyStartIndex,
                 isSummary: true,
                 isAutoSummary: true,
                 summarizedMessageCount: totalSummarizedCount,
@@ -1048,11 +1096,44 @@ export class SummarizeService {
                 }
             };
 
-            await this.conversationManager.insertContent(conversationId, insertIndex, summaryContent);
+            const replaceResult = await this.replaceSummarizedRangeAtomically(
+                conversationId,
+                historyStartIndex,
+                insertIndex,
+                summaryContent,
+                previousSummarizedCount
+            );
+
+            if (!replaceResult.ok) {
+                this.log.warn('auto.replace_rejected', {
+                    conversationId,
+                    code: replaceResult.code,
+                    historyStartIndex,
+                    insertIndex,
+                    freshHistoryLength: replaceResult.freshHistoryLength
+                });
+                // H2：并发写入导致总结范围失效（起点越界 / 会吞掉当前回合用户消息）时不落盘，
+                // 调用方（ToolIterationLoopService）走既有失败路径（granular fallback 兜底）。
+                return {
+                    success: false,
+                    error: {
+                        code: replaceResult.code,
+                        message: t('modules.api.chat.errors.summarizeRangeStale')
+                    }
+                };
+            }
+
+            const removedCount = replaceResult.removedCount;
+            // 首条用户消息保护（始终保留原始任务指令，见 replaceSummarizedRangeAtomically）
+            // 可能使实际删除数小于规划值：以实际删除数为准回填总结消息的累计覆盖数
+            // （插入的历史消息已在锁内修正，这里同步返回值，保证前端收到的 summaryContent 与落盘一致）。
+            summaryContent.summarizedMessageCount = previousSummarizedCount + removedCount;
+            summaryContent.index = replaceResult.insertIndex;
 
             this.log.info('auto.completed', {
                 conversationId,
-                insertIndex,
+                insertIndex: replaceResult.insertIndex,
+                removedCount,
                 totalSummarizedCount,
                 promptTokens: beforeTokenCount,
                 completionTokens: afterTokenCount,
@@ -1062,11 +1143,12 @@ export class SummarizeService {
             return {
                 success: true,
                 summaryContent,
-                summarizedMessageCount: totalSummarizedCount,
+                summarizedMessageCount: summaryContent.summarizedMessageCount,
                 beforeTokenCount,
                 afterTokenCount,
                 summaryTokenStats,
-                insertIndex
+                insertIndex: replaceResult.insertIndex,
+                removedCount
             };
 
         } catch (error) {
@@ -1090,6 +1172,122 @@ export class SummarizeService {
                 }
             };
         }
+    }
+
+    /**
+     * H1 + H2 + 首条用户消息保护：在会话写锁内原子地「删除被总结区间 + 插入总结消息」。
+     *
+     * 为什么必须原子：ConversationManager.insertContent / deleteMessagesInRange 各自独立
+     * 获取会话写锁（仓储互斥执行器不可重入），分两次调用之间其它并发写可能插入，导致总结
+     * 位置越过当前用户消息或把并发新消息误删。因此删除与插入必须在同一次
+     * mutateContents（写锁内）完成；同时在该回调里基于最新历史重新校验区间，防止
+     * 基于旧快照计算的 insertIndex 在并发写入后失效。
+     *
+     * 首条用户消息保护：删除区间起点不早于「第一条真实用户消息之后」——用户的原始任务
+     * 指令是长期上下文锚点，总结文本永远不如原话清楚，必须原样保留（自动总结物理删除
+     * 不再吞掉它）。若第一条用户消息不在被总结区间内，删除起点保持规划值不变。
+     *
+     * 语义与既有单操作保持一致：
+     * - 删除复用 deleteMessagesInRange 的 repairParentChainAfterDelete（被删消息的直系
+     *   后继重链到最近未删祖先）；
+     * - 插入复用 insertContent 的 ensureNodeId（缺 id 补随机 UUID）+ parentId 线性链接
+     *   + repairParentChainAfterInsert（插入点之后 parentId===旧父 id 的消息重链到新消息）。
+     *
+     * @param historyStartIndex 被删除区间起点（= lastSummaryIndex+1 或 0）
+     * @param insertIndex 被删除区间终点（开区间，基于旧快照计算）
+     * @param baseSummarizedCount 旧总结累计覆盖数（previousSummarizedCount），用于在锁内
+     *                            以实际删除数为准回填插入消息的 summarizedMessageCount
+     * @returns ok=true 时 removedCount = 实际删除的消息数，insertIndex = 替换完成后总结的
+     *          新下标（可能因首条用户消息保护而大于 historyStartIndex）；
+     *          ok=false 时 code='STALE_RANGE'（历史已变化，本次总结放弃，不落盘）
+     */
+    private async replaceSummarizedRangeAtomically(
+        conversationId: string,
+        historyStartIndex: number,
+        insertIndex: number,
+        summaryContent: Content,
+        baseSummarizedCount: number
+    ): Promise<
+        | { ok: true; removedCount: number; insertIndex: number }
+        | { ok: false; code: 'STALE_RANGE'; freshHistoryLength: number }
+    > {
+        const repository = this.conversationManager.getTranscriptRepository(conversationId);
+        let stale = false;
+        let freshHistoryLength = 0;
+        let replacedInsertIndex = historyStartIndex;
+        let removedCount = 0;
+
+        await repository.mutateContents(history => {
+            freshHistoryLength = history.length;
+
+            // H2：写锁内基于最新历史重新校验（并发删除/插入可能让旧快照区间失效）。
+            if (
+                historyStartIndex < 0
+                || historyStartIndex > history.length
+                || insertIndex < historyStartIndex
+                || insertIndex > history.length
+            ) {
+                stale = true;
+                return history; // 无变更：返回原引用，仓储跳过写回
+            }
+
+            // 校验总结范围不吞掉当前回合的真实用户消息（isRealUserMessage：排除
+            // functionResponse / 总结消息 / 后台任务回执）。insertIndex 必须 <= 该消息下标，
+            // 否则范围 [historyStartIndex, insertIndex) 会物理删除用户刚输入的消息。
+            let lastRealUserMessageIndex = -1;
+            for (let i = history.length - 1; i >= 0; i--) {
+                if (isRealUserMessage(history[i])) {
+                    lastRealUserMessageIndex = i;
+                    break;
+                }
+            }
+            if (lastRealUserMessageIndex < 0 || insertIndex > lastRealUserMessageIndex) {
+                stale = true;
+                return history;
+            }
+
+            // 首条用户消息保护：删除区间起点不早于它之后（i + 1），且不越过 insertIndex。
+            // 只有首条用户消息位于被总结区间内才需要收窄起点；它已在保留区时保持规划值。
+            let delStart = historyStartIndex;
+            for (let i = 0; i < history.length; i++) {
+                if (isRealUserMessage(history[i])) {
+                    if (i < insertIndex) {
+                        delStart = Math.max(historyStartIndex, i + 1);
+                    }
+                    break;
+                }
+            }
+
+            // 物理删除被总结区间
+            const removedMessages = history.splice(delStart, insertIndex - delStart);
+            if (removedMessages.length > 0) {
+                repairParentChainAfterDelete(history, removedMessages);
+            }
+
+            // 插入总结消息：补齐稳定节点 id + 线性 parentId 链（与 insertContent 语义一致）
+            const inserted: Content = { ...summaryContent };
+            if (typeof inserted.id !== 'string' || inserted.id.length === 0) {
+                inserted.id = randomUUID();
+            }
+            if (inserted.parentId === undefined) {
+                const oldParent = delStart > 0 ? history[delStart - 1] : null;
+                inserted.parentId = oldParent?.id ?? null;
+            }
+            // 以实际删除数为准修正累计覆盖数（首条用户消息受保护时小于规划值）
+            inserted.summarizedMessageCount = baseSummarizedCount + (insertIndex - delStart);
+            inserted.index = delStart;
+            history.splice(delStart, 0, inserted);
+            repairParentChainAfterInsert(history, delStart, inserted.parentId ?? null, inserted.id);
+
+            replacedInsertIndex = delStart;
+            removedCount = insertIndex - delStart;
+            return history.slice(); // 有变更：返回新引用触发写回
+        });
+
+        if (stale) {
+            return { ok: false, code: 'STALE_RANGE', freshHistoryLength };
+        }
+        return { ok: true, removedCount, insertIndex: replacedInsertIndex };
     }
 
     /**

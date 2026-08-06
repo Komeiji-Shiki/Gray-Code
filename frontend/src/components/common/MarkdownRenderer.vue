@@ -33,6 +33,60 @@ function setCached<V>(map: Map<string, V>, key: string, value: V): void {
   }
 }
 
+/**
+ * 图片缓存字节预算（估算驻留内存）：base64 data URL 单条可达数 MB，
+ * 仅按条数限界会让叠加缓存膨胀到数百 MB；超限时按 FIFO 淘汰最旧条目。
+ * 字节数按 UTF-16 字符串驻留内存估算（length * 2）。
+ */
+const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
+/** 单张图片文件大小上限：超过则直接显示不缓存，避免单条击穿预算并连带淘汰整批小图 */
+const IMAGE_CACHE_MAX_SINGLE_BYTES = 1024 * 1024
+
+/** 估算 data URL 的驻留字节数（UTF-16，每字符 2 字节） */
+function estimateDataUrlBytes(dataUrl: string): number {
+  return dataUrl.length * 2
+}
+
+/** 估算 data URL 编码前的原始图片文件字节数（base64 载荷 ≈ 原始字节 * 4/3） */
+function estimateImageFileBytes(dataUrl: string): number {
+  const commaIndex = dataUrl.indexOf(',')
+  const base64Len = commaIndex >= 0 ? dataUrl.length - commaIndex - 1 : dataUrl.length
+  return Math.ceil(base64Len * 0.75)
+}
+
+/** 图片缓存写入：带总字节预算 + 单张大小上限 + 条数上限 */
+let imageCacheBytes = 0
+function setCachedImage(path: string, dataUrl: string): void {
+  // 单张超大图片直接显示不缓存（调用方仍会设置 src，仅跳过缓存写入）
+  if (estimateImageFileBytes(dataUrl) > IMAGE_CACHE_MAX_SINGLE_BYTES) {
+    return
+  }
+  const bytes = estimateDataUrlBytes(dataUrl)
+  const existing = imageCache.get(path)
+  if (existing !== undefined) {
+    imageCacheBytes -= estimateDataUrlBytes(existing)
+  }
+  imageCache.set(path, dataUrl)
+  imageCacheBytes += bytes
+  // 字节预算超限：按 FIFO 淘汰最旧条目，直到回到预算内（单张 ≤1MB 上限保证不会全部被清空）
+  while (imageCacheBytes > IMAGE_CACHE_MAX_BYTES && imageCache.size > 1) {
+    const oldestKey = imageCache.keys().next().value
+    if (oldestKey === undefined) break
+    const oldest = imageCache.get(oldestKey)!
+    imageCache.delete(oldestKey)
+    imageCacheBytes -= estimateDataUrlBytes(oldest)
+  }
+  // 条数上限兜底（与其它缓存一致）
+  if (imageCache.size > CACHE_MAX_SIZE) {
+    const oldestKey = imageCache.keys().next().value
+    if (oldestKey !== undefined) {
+      const oldest = imageCache.get(oldestKey)!
+      imageCache.delete(oldestKey)
+      imageCacheBytes -= estimateDataUrlBytes(oldest)
+    }
+  }
+}
+
 /** Mermaid 渲染串行队列（替代布尔锁 isMermaidRendering，防止并发竞争） */
 let mermaidQueue: Promise<void> = Promise.resolve()
 
@@ -1502,7 +1556,8 @@ async function loadWorkspaceImages() {
       
       if (response?.success && response.data) {
         const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
-        setCached(imageCache, imgPath, dataUrl)
+        // 带字节预算写入缓存；超大图片跳过缓存但下方仍直接设置 src 显示
+        setCachedImage(imgPath, dataUrl)
         img.setAttribute('src', dataUrl)
         img.classList.remove('workspace-image')
         img.classList.add('loaded-image')

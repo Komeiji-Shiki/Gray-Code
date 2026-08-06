@@ -8,6 +8,23 @@
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-08-06
+
+### Merged
+  - 增量合入上游 67d7fb6..f204689（40 提交，对应上游 1.4.2/1.4.3 发布）：
+    - **长期使用时间统计**（`backend/modules/activity`）：ActivityTracker 以「60 秒心跳 + 用户活动事件」采集 IDE 活跃时间（监听编辑/光标/滚动/切换编辑器/终端/窗口聚焦，连续 5 分钟无活动或失焦即暂停，过滤挂机），AI 工作期间同样记活跃（模型流式生成/工具执行/子代理/后台任务打点），按天原子落盘；统计层提供每日使用时长、24 小时作息热力、当前连续工作时长（间隔 ≤15 分钟视为同一会话）；新增 AI 工具 `get_activity_stats`；用量统计页新增「使用时间」区块（今日/连续工作/近 7 天总览 + 每日条形图 + 作息热力网格 + 7/30/90 天/1 年/全部范围切换与月度聚合）；设置面板新增「用量统计」页签（内嵌使用时间区块 + Token 用量摘要 + 完整统计入口）；`StoragePathManager` 存储目录新增 `activity`，工具分类新增「使用时间」
+    - **tokenizer 词表改为运行时联网下载**：后端新增 `TokenizerResourceManager`（cl100k 来自 OpenAI CDN、DeepSeek V3 来自官方 api-docs zip，下载/解压/转换/本地缓存到数据目录，启动复用不再联网，`adm-zip` 解压）；前端经 `tokenizer.getResource` 消息通道获取、`js-tiktoken/lite` 加载；移除 `gpt-tokenizer` 依赖与内置词表（vsix 瘦身 ~4MB），下载失败/离线回退字符类别加权估算
+    - **TPS 统计接入模型专属 tokenizer + 自校准**：DeepSeek 用官方 `deepseek_v3_tokenizer` 转换词表（与官方 Python 基准逐位一致）、其余模型用 cl100k；流结束用 usage 真值按模型 EMA 学习校准因子（离群剔除 + localStorage 持久化，系统偏差收敛到 ~3~5%）；工具参数与思考 token 均计入生成速度；超长文本分批计数
+    - **自动总结历史丢失修复（物理替换语义）**：自动总结从「只插入不删除」改为物理替换（同一写锁事务内删除被总结区间，`STALE_RANGE` 并发校验防吞当前用户输入、`LOW_QUALITY_SUMMARY` 质量校验）；流式 chunk 透传 `removedCount`、非流式循环补 abort 检查；自动总结始终保留第一条用户消息（删除起点不越过首条真实用户消息，请求组装时首条用户消息早于最后总结则拼到头部）
+    - **渠道默认流式输出与自动重试覆盖**：新渠道 `options.stream` 默认 `true`；HTTP 成功但空内容或流式零产出 → `EMPTY_RESPONSE_ERROR` 自动重试；已产出内容但缺 done 标记（上游/代理掐断）→ 显式抛「流式输出被截断」不再假装成功（已产出内容不重试）；ChannelError 原样透传不再误包 PARSE_ERROR
+    - **后台命令降 CPU 优先级**：`execute_command` 后台启动的 shell 进程降为低优先级（Windows BelowNormal 优先级类 / POSIX nice +5），跑测试/长任务时让出 CPU 给前台交互
+    - 后端修复批次：MCP stdio 缓冲 16MB 硬上限 + 单条消息 4MB 拒发；`McpManager.handleServerNotification` per-server 刷新串行化 + 代际重查；工具并行只读组 abort-race + 2s 收尾窗口；`fileWriteLockManager` release 时 generation 通知等待者 + 50ms 兜底轮询（消除 25ms 固定轮询空转）；checkpoint 快照 stat 复用补 size 校验；`mailboxDrainEpochs` 会话删除清理；`repeatedCallGuard` 大字符串改采样哈希；`ToolRegistry.getFilteredDeclarations` 别名归一化；`SettingsCore.reset` 深拷贝；`taskManager.cleanup` 真正清扫终态任务
+    - 前端修复批次：CustomScrollbar marker 扫描节流（字符变更不再每帧强制布局）；`chatStore.initialize()` 监听器幂等防重复订阅；终端输出 200KB 截断；MessageRouter 条目兜底清理；SubAgentMonitor run 终态缓存清理；MarkdownRenderer imageCache 32MB 字节预算；平滑流式反查索引 O(1)；agentStopNotificationController 日志收敛为 debug；删除 scrollTop 死代码
+    - UI：系统提示词设置页「保存配置」按钮加大加宽（24×24 图标 → 带文字实底按钮）并修复窄窗口文字折行；消息操作按钮补 tooltip 与 compact 布局 `flex-shrink: 0`；EditDialog 底部按钮强制单行；欢迎页图标改为开屏动画同款手绘 Gray logo（补齐右侧头发色块）；开屏动画与 TPS 条改为外观设置可开关（`splashEnabled` / `tpsBarEnabled`）；使用时间统计默认近 7 天；`get_activity_stats` 工具补齐三语 i18n；纯 tsc 下 `.vue` 类型噪音清理（`vite-env.d.ts` shim 宽松 + `MessageItem.vue.d.ts` 旁路声明）
+    - 上游 PR #14 设置持久化修复与 fork 独立实现（bdf9b36）同源，双端语义已一致
+    - 保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏 / 多工作区 / 独立版本号增量
+
+
 ## [1.6.6] - 2026-08-06
 
 ### Added

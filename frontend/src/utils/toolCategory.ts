@@ -31,6 +31,7 @@ const CATEGORY_NAME_KEYS: Record<string, string> = {
   design: `${CATEGORY_NAME_PREFIX}design`,
   notification: `${CATEGORY_NAME_PREFIX}notification`,
   agents: `${CATEGORY_NAME_PREFIX}agents`,
+  activity: `${CATEGORY_NAME_PREFIX}activity`,
   mcp: `${CATEGORY_NAME_PREFIX}mcp`,
   other: `${CATEGORY_NAME_PREFIX}other`
 }
@@ -52,6 +53,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   design: 'codicon-paintcan',
   notification: 'codicon-bell',
   agents: 'codicon-account',
+  activity: 'codicon-watch',
   mcp: 'codicon-plug',
   other: 'codicon-extensions'
 }

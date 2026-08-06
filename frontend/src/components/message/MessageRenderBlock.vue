@@ -41,11 +41,21 @@ const thoughtFlowHostRef = ref<HTMLElement | null>(null)
 let registeredThoughtHost: HTMLElement | null = null
 let registeredThoughtMessageId: string | null = null
 
+// 渐进 markdown：展开态下已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 即时渲染格式（思维链分段渲染）；未完成尾巴仍在 CharFlow host 逐字淡出。
+// 折叠预览不启用（单行滚动预览不适合分段格式）。
+const thoughtRendered = ref('')
+function handleThoughtPromote(text: string): void {
+  thoughtRendered.value += text
+}
+
 function releaseThoughtDisplay(): void {
   if (!registeredThoughtHost || !registeredThoughtMessageId) return
   unregisterSmoothDisplay(registeredThoughtMessageId, registeredThoughtHost)
   registeredThoughtHost = null
   registeredThoughtMessageId = null
+  // 渐进渲染内容随显示层释放：稳定块（renderBlocks）完整接管，避免重复显示
+  if (thoughtRendered.value) thoughtRendered.value = ''
 }
 
 watch(
@@ -63,10 +73,22 @@ watch(
       releaseThoughtDisplay()
     }
     if (active && messageId && host && !registeredThoughtHost) {
-      // 折叠预览：noFade 禁用错峰淡入——动画 delay 期间字符透明但占位，
-      // followEnd 滚动到最右会看到整片透明占位（预览“被空格挤出变空”）；
-      // 展开态保留逐字淡入。
-      registerSmoothDisplay(messageId, host, { followEnd: !expanded, noFade: !expanded })
+      if (expanded) {
+        // 展开态：保留逐字淡入 + 渐进 markdown（已定型完整段落即时渲染格式）
+        registerSmoothDisplay(messageId, host, { onPromote: handleThoughtPromote })
+      } else {
+        // 折叠预览：单行滚动容器。noFade 禁用错峰淡入（动画 delay 期间字符透明但占位，
+        // 会把 followEnd 滚动目标挤成空白）；squashLineBreaks 把换行折叠为零宽
+        // （nowrap 下换行渲染成占位空格，长思考会“被空格挤出变空”）；
+        // tailWindow 内容有界（不撑爆单行容器）；restoreFull 折叠态显示完整累计文本。
+        registerSmoothDisplay(messageId, host, {
+          followEnd: true,
+          noFade: true,
+          squashLineBreaks: true,
+          tailWindow: 64,
+          restoreFull: true
+        })
+      }
       registeredThoughtHost = host
       registeredThoughtMessageId = messageId
     }
@@ -111,11 +133,17 @@ onUnmounted(releaseThoughtDisplay)
       </span>
     </div>
     <div v-if="isThoughtExpanded" class="thought-content">
-      <div
-        v-if="smoothDisplayActive"
-        ref="thoughtFlowHostRef"
-        class="thought-text thought-flow-content"
-      ></div>
+      <template v-if="smoothDisplayActive">
+        <!-- 展开态流式：已定型完整段落渐进 markdown 即时渲染 + 未完成尾巴 CharFlow 逐字淡出 -->
+        <MarkdownRenderer
+          v-if="thoughtRendered"
+          :content="thoughtRendered"
+          :latex-only="false"
+          :is-streaming="true"
+          class="thought-text"
+        />
+        <div ref="thoughtFlowHostRef" class="thought-text thought-flow-content"></div>
+      </template>
       <MarkdownRenderer
         v-else
         :content="block.text || ''"
@@ -247,6 +275,9 @@ onUnmounted(releaseThoughtDisplay)
   display: block;
   min-width: 0;
   scroll-behavior: auto;
+  /* 流式预览不显示省略号：text-overflow: ellipsis 会把后续内容全部变成“...”，
+   * 流式输出期间不应出现省略号（tailWindow 已保证内容有界，clip 直接裁剪） */
+  text-overflow: clip;
 }
 
 .thought-content {
@@ -256,6 +287,14 @@ onUnmounted(releaseThoughtDisplay)
 
 .thought-flow-content {
   min-height: 1lh;
+  /* 与 .thought-block 内 MarkdownRenderer 的字体规格保持一致（12px 灰斜体）：
+   * CharFlow 手动 DOM 不经过 Vue，但字体属性可继承，host 上对齐后
+   * 已提升的 md 段落与正在流式的尾巴不再有字号/颜色/字重跳变 */
+  font-size: var(--lim-md-font-size, 12px);
+  line-height: var(--lim-md-line-height, 1.5);
+  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  font-style: var(--lim-md-font-style, italic);
+  word-break: break-word;
 }
 
 .thought-block :deep(.thought-text p) {

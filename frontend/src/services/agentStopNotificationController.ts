@@ -16,7 +16,7 @@ function dbg(...args: unknown[]): void {
     return
   }
   // eslint-disable-next-line no-console
-  dbg( ...args)
+  console.debug(...args)
 }
 
 export type AgentStopNotificationReason = 'error' | 'awaiting_user_action' | 'continue_required'

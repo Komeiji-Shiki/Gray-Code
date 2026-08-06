@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
  * Splash.vue - 开始动画组件
- * - 蓝图点阵浮现 → 笔尖光点执笔画出灰码少女（线稿取自 resources/icon.svg）：
+ * - 蓝图点阵浮现 → 笔尖光点执笔画出 Gray logo（线稿取自 resources/icon.svg）：
  *   帽子先落笔 → 身体/发丝 → 完稿定影提亮 → 呼吸待机
  * - 标题分层浮现（Gray 粗 / Code 细 + 蓝色终端光标）→ 副标题
  * - 格雷码等待线（3-bit 循环 000→001→011→010→110→111→101→100，每步恰好只变一位）
- *   等待 ready；ready 后三位归一为蓝色实线
+ *   等待 ready；ready 后三位归一为蓝色实线（保证至少完整播完一轮 8 步才归一）
  * - 最短展示 minDisplayMs，ready 后淡出（FADE_MS，blur+scale 消散）并 emit('done')
  * - 支持 prefers-reduced-motion（动画即时完成/静止，淡出无过渡）
  *
@@ -18,6 +18,8 @@
  *   2.30s  DRAW_TOTAL_MS → drawDone → 呼吸待机
  *
  * 退场（ready 后两拍）：先归一（MERGE_MS，蓝线合并 + 光标定格）再淡出（FADE_MS）
+ * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 1.15s+2s=3.15s）再归一，
+ * 保证每次启动都能看到完整 8 步循环
  *
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
@@ -43,6 +45,10 @@ const FADE_MS = 450
 const MERGE_MS = 420
 /** 全部绘制动画完成（描线 0.05~1.6s + 上色 1.6~2.25s + 定影 2.0s 起） */
 const DRAW_TOTAL_MS = 2300
+/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 1.15s 对齐） */
+const GRAY_LINE_DELAY = 1150
+/** 格雷码等待线：单周期 2s（8 步 × 250ms，与 CSS 2s linear 对齐） */
+const GRAY_LINE_PERIOD = 2000
 
 function prefersReducedMotion(): boolean {
   return (
@@ -69,11 +75,21 @@ let disposeTimer: number | null = null
 function tryFadeOut(): void {
   if (merging.value || done.value) return
   if (!props.ready || !drawDone.value) return
-  const elapsed = Date.now() - startedAt
+  const now = Date.now()
+  const elapsed = now - startedAt
   if (elapsed < props.minDisplayMs) {
     if (fadeTimer !== null) window.clearTimeout(fadeTimer)
     fadeTimer = window.setTimeout(tryFadeOut, props.minDisplayMs - elapsed)
     return
+  }
+  // 加载再快也要让格雷码线完整播完一轮（8 步），否则看不到完整循环就淡出了
+  if (!reducedMotion) {
+    const remain = startedAt + GRAY_LINE_DELAY + GRAY_LINE_PERIOD - now
+    if (remain > 0) {
+      if (fadeTimer !== null) window.clearTimeout(fadeTimer)
+      fadeTimer = window.setTimeout(tryFadeOut, remain)
+      return
+    }
   }
   beginFadeOut()
 }
@@ -137,7 +153,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-label="Gray Code 正在启动">
     <div class="splash-inner" :class="{ settled: drawDone }">
-      <!-- 灰码少女：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
+      <!-- Gray logo：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
       <svg
         class="girl"
         viewBox="220 170 580 630"
@@ -504,8 +520,8 @@ onBeforeUnmount(() => {
 
 @keyframes g0 {
   0%, 24.9% { opacity: 1; }
-  25%, 62.4% { opacity: 0.12; }
-  62.5%, 74.9% { opacity: 1; }
+  25%, 49.9% { opacity: 0.12; }
+  50%, 74.9% { opacity: 1; }
   75%, 100% { opacity: 0.12; }
 }
 

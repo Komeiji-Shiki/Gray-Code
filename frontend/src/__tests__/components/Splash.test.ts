@@ -21,6 +21,8 @@ import Splash from '../../components/Splash.vue'
 
 /** drawDone 完成时刻（与 Splash.vue DRAW_TOTAL_MS 一致） */
 const DRAW_TOTAL_MS = 2300
+/** 格雷码线完整播完一轮的时刻（与 Splash.vue GRAY_LINE_DELAY + GRAY_LINE_PERIOD 一致） */
+const GRAY_LINE_END_MS = 3150
 /** 归一演出时长（与 Splash.vue MERGE_MS 一致） */
 const MERGE_MS = 420
 /** 淡出时长（与 Splash.vue FADE_MS 一致） */
@@ -87,7 +89,12 @@ describe('Splash 状态机', () => {
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS - 1000) // drawDone → 进入归一（第一拍）
+    vi.advanceTimersByTime(DRAW_TOTAL_MS - 1000) // drawDone 完成，但格雷码线需播完一轮才归一
+    await nextTick()
+    expect(wrapper.classes()).not.toContain('merged')
+    expect(wrapper.classes()).not.toContain('leaving')
+
+    vi.advanceTimersByTime(GRAY_LINE_END_MS - DRAW_TOTAL_MS) // 格雷码线完整一轮 → 进入归一（第一拍）
     await nextTick()
     expect(wrapper.classes()).toContain('merged')
     expect(wrapper.classes()).not.toContain('leaving')
@@ -104,7 +111,7 @@ describe('Splash 状态机', () => {
   it('done 只触发一次', () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS + MERGE_MS + FADE_MS)
+    vi.advanceTimersByTime(GRAY_LINE_END_MS + MERGE_MS + FADE_MS)
     expect(wrapper.emitted('done')).toHaveLength(1)
 
     vi.advanceTimersByTime(5000)
@@ -122,12 +129,12 @@ describe('Splash 状态机', () => {
   it('ready 未到时保持展示，ready 到达后才淡出', async () => {
     const wrapper = mount(Splash, { props: { ready: false, minDisplayMs: 100 } })
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS + 100) // 已过 drawDone 与最短时长
+    vi.advanceTimersByTime(GRAY_LINE_END_MS + 100) // 已过 drawDone、最短时长与格雷码一轮
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
     await wrapper.setProps({ ready: true })
-    // 已过最短时长 → 直接进入归一（第一拍）
+    // 已过全部门槛 → 直接进入归一（第一拍）
     expect(wrapper.classes()).toContain('merged')
     expect(wrapper.classes()).not.toContain('leaving')
 

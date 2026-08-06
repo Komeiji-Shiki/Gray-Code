@@ -160,7 +160,9 @@ export class ConfigManager {
             sendCurrentThoughts: true,
             maxContextTokens: 256000,
             options: {
-                stream: false
+                // 默认流式：实时可见输出、支持流式工具边执行；
+                // 显式保存过 options.stream 的已有渠道不受影响（显式值优先）
+                stream: true
             }
         };
         

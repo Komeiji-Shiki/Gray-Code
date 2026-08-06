@@ -23,6 +23,8 @@ const saveMessageType = ref<'success' | 'error'>('success')
 const loadingText = ref<string>('')
 const selectionContextEnabled = ref(true)
 const smoothStreamingMode = ref<SmoothMode>('balanced')
+const tpsBarEnabled = ref(true)
+const splashEnabled = ref(true)
 
 const defaultLoadingText = computed(() => t('common.loading'))
 
@@ -54,9 +56,13 @@ async function loadConfig() {
     selectionContextEnabled.value = savedSelectionContextEnabled
     const savedSmoothStreaming = isSmoothMode(appearance?.smoothStreaming) ? appearance.smoothStreaming : 'balanced'
     smoothStreamingMode.value = savedSmoothStreaming
+    tpsBarEnabled.value = appearance?.tpsBarEnabled !== false
+    splashEnabled.value = appearance?.splashEnabled !== false
     settingsStore.setAppearanceLoadingText(saved)
     settingsStore.setSelectionContextEnabled(savedSelectionContextEnabled)
     settingsStore.setSmoothStreaming(savedSmoothStreaming)
+    settingsStore.setTpsBarEnabled(tpsBarEnabled.value)
+    settingsStore.setSplashEnabled(splashEnabled.value)
   } catch (error) {
     console.error('Failed to load appearance settings:', error)
   } finally {
@@ -77,7 +83,9 @@ async function saveConfig() {
           // 空字符串表示使用默认值
           loadingText: normalized,
           selectionContextEnabled: selectionContextEnabled.value,
-          smoothStreaming: smoothStreamingMode.value
+          smoothStreaming: smoothStreamingMode.value,
+          tpsBarEnabled: tpsBarEnabled.value,
+          splashEnabled: splashEnabled.value
         }
       }
     })
@@ -86,6 +94,8 @@ async function saveConfig() {
     settingsStore.setAppearanceLoadingText(normalized)
     settingsStore.setSelectionContextEnabled(selectionContextEnabled.value)
     settingsStore.setSmoothStreaming(smoothStreamingMode.value)
+    settingsStore.setTpsBarEnabled(tpsBarEnabled.value)
+    settingsStore.setSplashEnabled(splashEnabled.value)
 
     saveMessage.value = t('components.settings.appearanceSettings.saveSuccess')
     saveMessageType.value = 'success'
@@ -106,6 +116,8 @@ async function resetToDefault() {
   loadingText.value = ''
   selectionContextEnabled.value = true
   smoothStreamingMode.value = 'balanced'
+  tpsBarEnabled.value = true
+  splashEnabled.value = true
   await saveConfig()
 }
 
@@ -168,6 +180,52 @@ onMounted(() => {
           <label class="toggle-switch">
             <input
               v-model="selectionContextEnabled"
+              type="checkbox"
+              :disabled="isSaving"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <div class="toggle-content">
+            <label class="group-label">
+              <i class="codicon codicon-pulse"></i>
+              {{ t('components.settings.appearanceSettings.tpsBar.title') }}
+            </label>
+            <p class="field-description">
+              {{ t('components.settings.appearanceSettings.tpsBar.description') }}
+            </p>
+          </div>
+
+          <label class="toggle-switch">
+            <input
+              v-model="tpsBarEnabled"
+              type="checkbox"
+              :disabled="isSaving"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <div class="toggle-content">
+            <label class="group-label">
+              <i class="codicon codicon-play"></i>
+              {{ t('components.settings.appearanceSettings.splash.title') }}
+            </label>
+            <p class="field-description">
+              {{ t('components.settings.appearanceSettings.splash.description') }}
+            </p>
+          </div>
+
+          <label class="toggle-switch">
+            <input
+              v-model="splashEnabled"
               type="checkbox"
               :disabled="isSaving"
             />

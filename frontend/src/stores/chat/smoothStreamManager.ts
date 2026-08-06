@@ -58,6 +58,9 @@ interface SmoothDisplay {
   flow: CharFlow
   followEnd: boolean
   noFade: boolean
+  squashLineBreaks: boolean
+  tailWindow?: number
+  restoreFull: boolean
   /** 渐进 markdown：已定型文本到达安全段落边界时回调提升的文本 */
   onPromote?: (text: string) => void
 }
@@ -68,14 +71,25 @@ export interface SmoothDisplayOptions {
   /** 禁用错峰淡入（直接文本追加）。折叠预览等不适合逐字动画的场景用——
    * 动画 delay 期间的透明占位字符会把 followEnd 滚动目标挤成空白 */
   noFade?: boolean
+  /** 把换行符折叠为零宽空格（\u200B）：nowrap 单行预览中换行渲染成占位空格，
+   * 会把最新字符挤成空白；零宽后滚动目标始终是真实可见字符 */
+  squashLineBreaks?: boolean
+  /** 尾部窗口：只保留最近 N 个字符（折叠预览内容有界，防长思考撑爆单行容器） */
+  tailWindow?: number
+  /** 注册时恢复完整累计文本（不裁剪已提升部分）。折叠预览无渐进渲染层，
+   * 需要显示完整内容流；展开态（有 onPromote）恢复未提升尾巴 + 重放提升文本 */
+  restoreFull?: boolean
   /** 渐进 markdown：已定型文本到达安全段落边界（\n\n + fence 配对）时回调提升的文本。
-   * 仅正文尾块启用；thought 折叠/展开预览不启用 */
+   * 正文尾块与展开的思考块启用；折叠预览不启用 */
   onPromote?: (text: string) => void
 }
 
 const entries = new Map<string, SmoothEntry>()
 /** 显示目标注册表：messageId → 当前挂载的 CharFlow 宿主 */
 const displays = new Map<string, SmoothDisplay>()
+/** 反向索引：CharFlow 宿主 → messageId。消息 id 迁移后 unregister 按宿主定位新键时
+ *  无需 O(n) 全表扫描（原实现 Array.from(displays.entries()).find(...)） */
+const hostToMessageId = new Map<HTMLElement, string>()
 
 /** smoothTexts 快照的最小间隔（ms）：组件判定/恢复用，不需要跟随每帧动画 */
 const SNAPSHOT_INTERVAL_MS = 120
@@ -89,18 +103,26 @@ function findPromoteCut(text: string): number {
   let idx = text.lastIndexOf('\n\n')
   while (idx > 0) {
     const cut = idx + 2
-    if (!hasUnclosedFence(text.slice(0, cut))) return cut
+    if (!hasUnclosedFence(text, cut)) return cut
     idx = text.lastIndexOf('\n\n', idx - 1)
   }
   return 0
 }
 
-/** 行首 fence（``` / ~~~）是否未配对：未配对时不能提升（半截代码块渲染会崩坏） */
-function hasUnclosedFence(text: string): boolean {
+/** 行首 fence 匹配：fence 标记必须位于行首（允许前导空白），全扫描不逐行分配 */
+const FENCE_LINE_RE = /(?:^|\n|\r)[^\S\n\r]*(?:```|~~~)/g
+
+/**
+ * 行首 fence（``` / ~~~）是否未配对：未配对时不能提升（半截代码块渲染会崩坏）。
+ * 只统计 [0, limit) 前缀内的 fence（limit 缺省为全文）；避免每帧 text.slice 分配。
+ */
+function hasUnclosedFence(text: string, limit = text.length): boolean {
+  FENCE_LINE_RE.lastIndex = 0
   let count = 0
-  for (const line of text.split('\n')) {
-    const t = line.trimStart()
-    if (t.startsWith('```') || t.startsWith('~~~')) count++
+  let m: RegExpExecArray | null
+  while ((m = FENCE_LINE_RE.exec(text)) !== null) {
+    if (m.index >= limit) break
+    if (m.index + m[0].length <= limit) count++
   }
   return count % 2 === 1
 }
@@ -137,32 +159,52 @@ export function registerSmoothDisplay(
 ): void {
   const followEnd = options.followEnd === true
   const noFade = options.noFade === true
+  const squashLineBreaks = options.squashLineBreaks === true
+  const tailWindow = options.tailWindow !== undefined && options.tailWindow > 0 ? options.tailWindow : undefined
+  const restoreFull = options.restoreFull === true
   const onPromote = options.onPromote
   const existing = displays.get(messageId)
   if (
     existing?.host === host &&
     existing.followEnd === followEnd &&
     existing.noFade === noFade &&
+    existing.squashLineBreaks === squashLineBreaks &&
+    existing.tailWindow === tailWindow &&
+    existing.restoreFull === restoreFull &&
     existing.onPromote === onPromote
   ) {
     return
   }
   if (existing) {
     existing.flow.dispose()
+    hostToMessageId.delete(existing.host)
     displays.delete(messageId)
   }
 
-  const flow = new CharFlow(host, 110, noFade || undefined, followEnd)
+  const flow = new CharFlow(host, {
+    fadeMs: 110,
+    noFade,
+    followEnd,
+    squashLineBreaks,
+    tailWindow
+  })
   const entry = entries.get(messageId)
   if (entry) {
     // 渐进渲染：已提升部分不重复显示（由 onPromote 重放交给 markdown 层），
     // CharFlow 只恢复未提升的尾巴，保证组件重建（切标签页/虚拟列表）后显示连续。
-    flow.restore((entry.baseText + entry.committed).slice(entry.promotedText.length))
+    // 折叠预览（restoreFull）没有渐进渲染层，恢复完整累计文本供单行滚动预览。
+    const fullText = entry.baseText + entry.committed
+    flow.restore(restoreFull ? fullText : fullText.slice(entry.promotedText.length))
     if (entry.promotedText && onPromote) {
       onPromote(entry.promotedText)
     }
   }
-  displays.set(messageId, { host, flow, followEnd, noFade, onPromote })
+  displays.set(messageId, { host, flow, followEnd, noFade, squashLineBreaks, tailWindow, restoreFull, onPromote })
+  hostToMessageId.set(host, messageId)
+  if (entry && onPromote) {
+    // 注册后立即尝试提升已定型完整段落：展开/重建后不用等下一个字符才出格式
+    maybePromote(entry)
+  }
 }
 
 /**
@@ -174,15 +216,17 @@ export function unregisterSmoothDisplay(messageId: string, host?: HTMLElement | 
   let existing = displays.get(key)
 
   if (host && existing?.host !== host) {
-    const relocated = Array.from(displays.entries()).find(([, display]) => display.host === host)
-    if (!relocated) return
-    key = relocated[0]
-    existing = relocated[1]
+    // 消息 id 迁移后按宿主定位新键（hostToMessageId 反向索引，O(1)）
+    const relocatedKey = hostToMessageId.get(host)
+    if (relocatedKey === undefined) return
+    key = relocatedKey
+    existing = displays.get(key)
   }
 
   if (!existing || (host && existing.host !== host)) return
   existing.flow.dispose()
   displays.delete(key)
+  hostToMessageId.delete(existing.host)
 }
 
 /**
@@ -264,6 +308,7 @@ export function pushSmoothText(
     if (oldDisplay) {
       oldDisplay.flow.finish()
       oldDisplay.flow.dispose()
+      hostToMessageId.delete(oldDisplay.host)
       displays.delete(messageId)
     }
     entry.baseText = baseText
@@ -278,6 +323,16 @@ export function pushSmoothText(
 /** 低频快照：内容未变化不重复写；节流写 smoothTexts；段落切换/终结时 force 强制立即写。 */
 function maybeSnapshot(entry: SmoothEntry, force = false): void {
   const now = performance.now()
+  // 同一段落内显示文本只增不减（append-only）：长度相等 ⟹ 内容相等，
+  // 免去每帧 baseText + committed 的字符串拼接
+  if (
+    !force &&
+    entry.lastSnapshotText !== null &&
+    entry.lastSnapshotPartKey === entry.partKey &&
+    entry.lastSnapshotText.length === entry.baseText.length + entry.committed.length
+  ) {
+    return
+  }
   const text = entry.baseText + entry.committed
   if (entry.lastSnapshotText === text && entry.lastSnapshotPartKey === entry.partKey) return
   if (!force && entry.lastSnapshotAt !== null && now - entry.lastSnapshotAt < SNAPSHOT_INTERVAL_MS) return
@@ -323,6 +378,7 @@ export function migrateSmoothStream(fromId: string, toId: string): void {
   if (display !== undefined) {
     displays.delete(fromId)
     displays.set(toId, display)
+    hostToMessageId.set(display.host, toId)
   }
 }
 
@@ -336,6 +392,7 @@ export function disposeAllSmoothStreams(): void {
     display.flow.dispose()
   }
   displays.clear()
+  hostToMessageId.clear()
 }
 
 /** 当前是否有该消息的活跃平滑实例（供测试/诊断） */

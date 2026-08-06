@@ -241,6 +241,14 @@ export interface GlobalSettings {
              * @deprecated 请改用 selectionContextEnabled
              */
             selectionContextCodeActionEnabled?: boolean;
+
+            /**
+             * 开屏动画开关
+             *
+             * - true: 启动时播放开场动画（Splash）
+             * - false: 直接进入主界面
+             */
+            splashEnabled?: boolean;
         };
 
         /**
@@ -346,7 +354,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: '',
             selectionContextEnabled: true,
-            smoothStreaming: 'balanced'
+            smoothStreaming: 'balanced',
+            splashEnabled: true
         },
         sound: {
             enabled: false,

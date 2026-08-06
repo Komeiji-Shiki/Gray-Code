@@ -16,6 +16,8 @@ import SubAgentsSettings from './SubAgentsSettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
+import UsageTimeSection from '../usage/UsageTimeSection.vue'
+import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
 import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
@@ -57,6 +59,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
+  { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
 ])
 
 // 代理设置
@@ -461,10 +464,63 @@ async function handleImportSettings() {
   }
 }
 
+// ========== 用量统计（Token 用量摘要，内嵌于设置面板） ==========
+const usageStats = ref<UsageStatsResult | null>(null)
+const usageRange = ref<UsageTimeRange>('all')
+const usageLoading = ref(false)
+const usageLoadError = ref('')
+
+const usageRangeOptions = computed(() => ([
+  { id: 'all' as UsageTimeRange, label: t('components.usage.rangeAll') },
+  { id: 'today' as UsageTimeRange, label: t('components.usage.rangeToday') },
+  { id: '7d' as UsageTimeRange, label: t('components.usage.range7d') },
+  { id: '30d' as UsageTimeRange, label: t('components.usage.range30d') }
+]))
+
+/** 快捷范围 → 起始时间（本地 00:00 对齐；'all' 不限制） */
+function usageRangeToStartTime(range: UsageTimeRange): number | undefined {
+  if (range === 'all') return undefined
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  if (range === 'today') return startOfToday.getTime()
+  const days = range === '7d' ? 6 : 29
+  return startOfToday.getTime() - days * 24 * 60 * 60 * 1000
+}
+
+async function loadUsageStats() {
+  usageLoading.value = true
+  usageLoadError.value = ''
+  try {
+    const startTime = usageRangeToStartTime(usageRange.value)
+    const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
+    usageStats.value = await sendToExtension<UsageStatsResult>('usage.getStats', query)
+  } catch (error) {
+    usageLoadError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    usageLoading.value = false
+  }
+}
+
+// 切换时间范围时重新聚合
+watch(usageRange, () => loadUsageStats())
+
+// 进入“用量统计”页签时刷新数据
+watch(() => settingsStore.activeTab, (tab) => {
+  if (tab === 'usage') loadUsageStats()
+})
+
+/** 格式化 token 数量（1.5K / 1.5M） */
+function formatUsageTokens(count: number): string {
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return String(count)
+}
+
 // 初始化
 onMounted(() => {
   loadSettings()
   loadAppInfo()
+  loadUsageStats()
 })
 </script>
 
@@ -849,6 +905,112 @@ onMounted(() => {
                     </a>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 用量统计 -->
+          <div v-if="settingsStore.activeTab === 'usage'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.usage.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.usage.description') }}</p>
+
+            <!-- 使用时间（活动统计，独立于 token 用量） -->
+            <UsageTimeSection />
+
+            <!-- Token 用量摘要 -->
+            <div class="usage-summary-card">
+              <div class="usage-summary-header">
+                <span class="usage-summary-title">
+                  <i class="codicon codicon-graph"></i>
+                  {{ t('components.usage.title') }}
+                </span>
+                <button class="usage-summary-refresh" :title="t('components.usage.refresh')" :disabled="usageLoading" @click="loadUsageStats()">
+                  <i class="codicon codicon-refresh"></i>
+                </button>
+              </div>
+
+              <!-- 时间范围筛选 -->
+              <div class="usage-summary-range">
+                <button
+                  v-for="option in usageRangeOptions"
+                  :key="option.id"
+                  :class="['usage-range-btn', { active: usageRange === option.id }]"
+                  :disabled="usageLoading"
+                  @click="usageRange = option.id"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+
+              <!-- 加载中 -->
+              <div v-if="usageLoading" class="usage-summary-state">
+                <i class="codicon codicon-loading codicon-modifier-spin"></i>
+                <span>{{ t('components.usage.loading') }}</span>
+              </div>
+
+              <!-- 加载失败 -->
+              <div v-else-if="usageLoadError" class="usage-summary-state is-error">
+                <i class="codicon codicon-error"></i>
+                <span>{{ t('components.usage.loadFailed') }}</span>
+                <button class="usage-retry-btn" @click="loadUsageStats()">{{ t('components.usage.retry') }}</button>
+              </div>
+
+              <!-- 空数据 -->
+              <div v-else-if="!usageStats || usageStats.totals.modelMessages === 0" class="usage-summary-state">
+                <i class="codicon codicon-graph"></i>
+                <span>{{ t('components.usage.empty') }}</span>
+              </div>
+
+              <template v-else>
+                <!-- 总览卡片 -->
+                <div class="usage-summary-totals">
+                  <div class="usage-summary-total-item is-main">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.totalTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.totalTokens') }}</span>
+                  </div>
+                  <div class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.promptTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.promptTokens') }}</span>
+                  </div>
+                  <div class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.candidatesTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.candidatesTokens') }}</span>
+                  </div>
+                  <div class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.thoughtsTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.thoughtsTokens') }}</span>
+                  </div>
+                  <div v-if="usageStats.totals.cacheCreationTokens > 0" class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.cacheCreationTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.cacheCreationTokens') }}</span>
+                  </div>
+                  <div v-if="usageStats.totals.cacheReadTokens > 0" class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.cacheReadTokens) }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.cacheReadTokens') }}</span>
+                  </div>
+                  <div class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ usageStats.totals.conversations }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.conversations') }}</span>
+                  </div>
+                  <div class="usage-summary-total-item">
+                    <span class="usage-summary-value">{{ usageStats.totals.modelMessages }}</span>
+                    <span class="usage-summary-label">{{ t('components.usage.modelMessages') }}</span>
+                  </div>
+                </div>
+
+                <!-- 读取失败提示 -->
+                <div v-if="usageStats.totals.skippedConversations > 0" class="usage-skipped-hint">
+                  <i class="codicon codicon-warning"></i>
+                  <span>{{ t('components.usage.skippedHint', { count: usageStats.totals.skippedConversations }) }}</span>
+                </div>
+              </template>
+
+              <!-- 打开完整用量统计页面 -->
+              <div class="usage-summary-footer">
+                <button class="usage-open-full-btn" @click="settingsStore.showUsage">
+                  <i class="codicon codicon-arrow-right"></i>
+                  {{ t('components.settings.settingsPanel.sections.usage.openFullPage') }}
+                </button>
               </div>
             </div>
           </div>
@@ -1506,5 +1668,190 @@ onMounted(() => {
 
 .dialog-btn.primary:hover {
   background: var(--vscode-button-hoverBackground);
+}
+
+/* 用量统计（设置内嵌摘要） */
+.usage-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, transparent);
+}
+
+.usage-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.usage-summary-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.usage-summary-title .codicon {
+  font-size: 14px;
+}
+
+.usage-summary-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.usage-summary-refresh:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.usage-summary-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.usage-summary-range {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.usage-range-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.usage-range-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.usage-range-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}
+
+.usage-range-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.usage-summary-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.usage-summary-state .codicon {
+  font-size: 18px;
+}
+
+.usage-summary-state.is-error {
+  color: var(--vscode-errorForeground);
+}
+
+.usage-retry-btn {
+  margin-top: 2px;
+  padding: 3px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.usage-retry-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.usage-summary-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.usage-summary-total-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-summary-value {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.usage-summary-total-item.is-main .usage-summary-value {
+  font-size: 18px;
+}
+
+.usage-summary-label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.usage-skipped-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.usage-skipped-hint .codicon {
+  flex-shrink: 0;
+}
+
+.usage-summary-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--vscode-panel-border);
+  padding-top: 10px;
+}
+
+.usage-open-full-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.usage-open-full-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.usage-open-full-btn .codicon {
+  font-size: 12px;
 }
 </style>

@@ -170,8 +170,11 @@ describe('executeStreamRequest（代理模式）取消行为', () => {
 });
 
 describe('generateStream（代理模式）取消行为（端到端）', () => {
+    // 真实 OpenAI SSE 的最后一个 chunk 带 finish_reason（否则视为流被截断）
     const openaiChunk = (content: string) =>
-        `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+        `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\n\n`;
+    const openaiDone = () =>
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`;
 
     it('流中途 abort → 生成器抛 CANCELLED_ERROR（不会把半截流当正常结束）', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
@@ -209,7 +212,8 @@ describe('generateStream（代理模式）取消行为（端到端）', () => {
     it('正常完成：生成器正常结束、所有 chunk 被解析产出', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             openaiChunk('Hello'),
-            openaiChunk(' world')
+            openaiChunk(' world'),
+            openaiDone()
         ], { waitForAbort: false }));
 
         const manager = createManager();
@@ -222,7 +226,8 @@ describe('generateStream（代理模式）取消行为（端到端）', () => {
         const gen = manager.generateStream(request);
         const texts: string[] = [];
         for await (const chunk of gen) {
-            texts.push((chunk as StreamChunk).delta.map(part => (part as any).text).join(''));
+            const text = (chunk as StreamChunk).delta.map(part => (part as any).text).join('');
+            if (text) texts.push(text);
         }
 
         expect(texts).toEqual(['Hello', ' world']);

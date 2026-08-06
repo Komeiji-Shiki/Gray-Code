@@ -66,6 +66,7 @@ function handleCopy() {
       v-if="canEdit"
       icon="codicon-edit"
       size="small"
+      :tooltip="t('components.message.actions.edit')"
       @click="emit('edit')"
     />
 
@@ -73,7 +74,7 @@ function handleCopy() {
     <IconButton
       :icon="isCopied ? 'codicon-check' : 'codicon-copy'"
       size="small"
-      :tooltip="isCopied ? t('components.common.tooltip.copied') : t('common.copy')"
+      :tooltip="isCopied ? t('components.common.tooltip.copied') : t('components.message.actions.copy')"
       @click="handleCopy"
     />
 
@@ -100,6 +101,7 @@ function handleCopy() {
       v-if="canRetry"
       icon="codicon-refresh"
       size="small"
+      :tooltip="t('components.message.actions.retry')"
       @click="emit('retry')"
     />
 
@@ -116,6 +118,7 @@ function handleCopy() {
       icon="codicon-trash"
       size="small"
       variant="danger"
+      :tooltip="t('components.message.actions.delete')"
       @click="emit('delete')"
     />
   </div>
@@ -127,5 +130,7 @@ function handleCopy() {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  /* 窄侧边栏下禁止压缩：与 IconButton 的 flex-shrink: 0 一致，保持按钮等宽等高 */
+  flex-shrink: 0;
 }
 </style>

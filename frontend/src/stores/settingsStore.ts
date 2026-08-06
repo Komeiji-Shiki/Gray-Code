@@ -7,7 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { SmoothMode } from '../utils/smoothStream'
 
-export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'general' | 'memory'
+export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'memory' | 'general' | 'usage'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'
@@ -40,6 +40,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // 子代理 Monitor 面板打开时携带的导航目标（runId）
   const monitorFocusRunId = ref<string | undefined>(undefined)
 
+  // 外观设置：TPS 实时可视化条开关（隐藏后仍继续采样，重新开启立即恢复）
+  const tpsBarEnabled = ref(true)
+
+  // 外观设置：开屏动画开关（关闭后启动直接进入主界面）
+  const splashEnabled = ref(true)
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
 
@@ -120,6 +125,14 @@ export const useSettingsStore = defineStore('settings', () => {
       openSubAgentMonitor()
     }
   }
+
+  function setTpsBarEnabled(enabled: boolean) {
+    tpsBarEnabled.value = enabled
+  }
+
+  function setSplashEnabled(enabled: boolean) {
+    splashEnabled.value = enabled
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -137,6 +150,8 @@ export const useSettingsStore = defineStore('settings', () => {
     selectionContextEnabled,
     subAgentMonitorOpen,
     monitorFocusRunId,
+    tpsBarEnabled,
+    splashEnabled,
     promptModesVersion,
 
     // 方法
@@ -153,6 +168,8 @@ export const useSettingsStore = defineStore('settings', () => {
     openSubAgentMonitor,
     closeSubAgentMonitor,
     toggleSubAgentMonitor,
+    setTpsBarEnabled,
+    setSplashEnabled,
     refreshPromptModes
   }
 })

@@ -265,6 +265,32 @@ const en: LanguageMessages = {
             openConversation: 'Click to open this conversation'
         },
 
+        usageTime: {
+            title: 'Usage Time',
+            refresh: 'Refresh',
+            loading: 'Loading…',
+            loadFailed: 'Failed to load',
+            empty: 'No usage time data yet (activity in the editor starts recording)',
+            today: 'Today',
+            currentSession: 'Current session',
+            totalInRange: 'Total in range',
+            range7d: '7 days',
+            range30d: '30 days',
+            range90d: '90 days',
+            range1y: '1 year',
+            rangeAll: 'All',
+            hours: 'h',
+            minutes: 'm',
+            durationHM: '{hours}h {minutes}m',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: 'Daily usage',
+            monthlyTitle: 'Monthly usage (click a month for daily details)',
+            monthActiveDays: '{days} active days',
+            expandMonth: 'Expand daily details for this month',
+            heatmapTitle: 'Activity heatmap (last 7 days, hover for details)'
+        },
+
         history: {
             title: 'Chat History',
             empty: 'No conversations yet',
@@ -412,8 +438,12 @@ const en: LanguageMessages = {
                 assistant: 'Assistant'
             },
             actions: {
+                edit: 'Edit message',
+                copy: 'Copy',
+                retry: 'Regenerate',
                 viewResponse: 'View response',
-                branchFromHere: 'Branch from here'
+                branchFromHere: 'Branch from here',
+                delete: 'Delete message'
             },
             branch: {
                 previous: 'Previous candidate',
@@ -924,7 +954,8 @@ const en: LanguageMessages = {
                 sound: 'Notification System',
                 appearance: 'Appearance',
                 memory: 'Memory',
-                general: 'General'
+                general: 'General',
+                usage: 'Usage Statistics'
             },
             channelSettings: {
                 selector: {
@@ -1154,6 +1185,7 @@ const en: LanguageMessages = {
                     design: 'Design',
                     notification: 'Notifications',
                     agents: 'Agents',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 badges: {
@@ -2083,6 +2115,11 @@ const en: LanguageMessages = {
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
+                    },
+                    usage: {
+                        title: 'Usage Time & Statistics',
+                        description: 'View your usage time and token statistics',
+                        openFullPage: 'View Full Statistics'
                     }
                 },
                 proxy: {
@@ -2375,6 +2412,7 @@ const en: LanguageMessages = {
                     notification: 'Notifications',
                     agents: 'Agents',
                     mcp: 'MCP Tools',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 dependency: {
@@ -2434,6 +2472,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Toggle Skills',
                     subagents: 'Subagents',
                     agent_send_message: 'Send Agent Message',
+                    get_activity_stats: 'Get Activity Stats',
                 },
                 toolDescriptions: {
                     read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
@@ -2484,6 +2523,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Enable or disable skills for subsequent requests.',
                     subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
                     agent_send_message: 'Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: the recipient sees it appended to its most recent tool result. Address by targetRunId (an active sub-agent run in this conversation) or targetAgentName ("main" reaches the main session). Replies in the same thread increment hopDepth; after 5 hops delivery is rejected (loop protection). You are identified automatically; you cannot impersonate another agent.',
+                    get_activity_stats: 'Get the user\'s IDE usage time statistics: daily usage minutes, recent schedule (hourly heatmap of when the user is active), and how long the user has been continuously working. Use this to understand the user\'s work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Data contains timestamps only, no user content. Returned times are in local time (HH:mm, YYYY-MM-DD).',
                 },
             },
             tokenCountSettings: {
@@ -2619,6 +2659,14 @@ const en: LanguageMessages = {
                     smooth: 'Responsive',
                     balanced: 'Balanced',
                     silky: 'Silky'
+                },
+                tpsBar: {
+                    title: 'TPS Live Visualization',
+                    description: 'Show a live tokens-per-second chart at the bottom of the input area. Sampling stops while hidden and restarts with the current stream when re-enabled.'
+                },
+                splash: {
+                    title: 'Splash Animation',
+                    description: 'Play the Gray Code logo drawing animation on startup. Disable to go straight to the main view.'
                 },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'

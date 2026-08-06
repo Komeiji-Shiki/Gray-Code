@@ -602,6 +602,11 @@ export interface StreamChunk {
   summaryContent?: Content
   /** 总结消息插入位置（完整历史绝对索引） */
   insertIndex?: number
+  /**
+   * 物理替换语义：后端已删除历史中 backendIndex ∈ [insertIndex, insertIndex + removedCount)
+   * 的消息，并把总结消息插入到 insertIndex（后端新下标）。缺省 0 = 旧"纯插入"语义。
+   */
+  removedCount?: number
 }
 
 // ============ 错误类型 ============

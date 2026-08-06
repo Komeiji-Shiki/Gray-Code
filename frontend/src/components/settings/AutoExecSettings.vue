@@ -16,6 +16,7 @@ import {
   getToolDisplayName as getToolDisplayNameLocalized,
   getToolDescription as getToolDescriptionLocalized
 } from '@/utils/toolLocalization'
+import { decodeMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
 
 // 工具信息接口
 interface ToolInfo {
@@ -177,10 +178,12 @@ async function disableAllAutoExec() {
 
 // 获取工具显示名称（MCP 工具提取原始工具名；其余走公共 toolLocalization）
 function getToolDisplayName(tool: ToolInfo): string {
-  if (tool.category === 'mcp' && tool.name.startsWith('mcp__')) {
-    const parts = tool.name.split('__')
-    const originalName = parts[2] || tool.name
-    return originalName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  // 如果是 MCP 工具，提取原始工具名（codec 解码，serverId/toolName 含下划线也能正确解析）
+  if (isMcpTool(tool)) {
+    const decoded = decodeMcpToolName(tool.name)
+    if (decoded) {
+      return decoded.toolName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    }
   }
   return getToolDisplayNameLocalized(tool.name)
 }

@@ -54,8 +54,10 @@ export type UpdateCheckpointConfigField = (
   value: any
 ) => Promise<boolean>
 
-// 工具显示名/描述：收敛到公共 toolLocalization 实现（hasMessage 预检避免 t() warn 刷屏）
-export { getToolDisplayName, getToolDescription } from '../utils/toolLocalization'
+// 工具显示名/描述 i18n 辅助：统一复用 utils/toolLocalization 的实现（含 MCP 工具名解码），
+// 避免重复实现导致行为分叉（如 MCP 编码名被机械转换成 "Mcp Mcp ... Search"）。
+// 独立导出，供 CheckpointSettings / useCheckpointCleanup 复用。
+export { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 
 export function useCheckpointConfig() {
   const chatStore = useChatStore()

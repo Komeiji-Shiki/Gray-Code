@@ -118,6 +118,13 @@ export class StdioMcpClient extends EventEmitter {
     private static readonly MAX_STDERR = 64 * 1024;
     private stderrTruncated: boolean = false;
 
+    // stdout 缓冲硬上限（16MB）：服务器不输出换行或单条消息超大时，缓冲无上限增长会 OOM；
+    // 超过后记录错误并关闭/重置连接（见 handleData）
+    private static readonly MAX_BUFFER = 16 * 1024 * 1024;
+
+    // 单条出站消息上限（4MB）：超过则拒绝发送，避免超大负载写入 stdin 造成背压/内存压力
+    private static readonly MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
+
     // 请求超时（毫秒）
     private timeout: number;
 
@@ -188,8 +195,8 @@ export class StdioMcpClient extends EventEmitter {
             this.cleanup();
         });
 
-        // 为 stdin/stdout/stderr 流补 'error' 监听，避免对已死进程写入/读取时产生未处理的 'error' 事件
-        this.process.stdin?.on('error', () => {});
+        // 为 stdout/stderr 流补 'error' 监听，避免对已死进程读取时产生未处理的 'error' 事件
+        // （stdin 的 'error' 监听已在上面注册：进程存活时上报、退出竞态窗口内静默吞掉）
         this.process.stdout?.on('error', () => {});
         this.process.stderr?.on('error', () => {});
 
@@ -451,6 +458,13 @@ export class StdioMcpClient extends EventEmitter {
                 method,
                 params
             };
+
+            const message = JSON.stringify(request) + '\n';
+            // 单条消息过大时拒绝发送（背压保护）：避免超大负载写入 stdin 造成背压/内存压力
+            if (message.length > StdioMcpClient.MAX_MESSAGE_SIZE) {
+                reject(new Error(`MCP request "${method}" exceeds max message size (${StdioMcpClient.MAX_MESSAGE_SIZE} bytes)`));
+                return;
+            }
             
             let resolved = false;
 
@@ -512,14 +526,15 @@ export class StdioMcpClient extends EventEmitter {
                 }
             });
             
-            const message = JSON.stringify(request) + '\n';
+            // 背压说明：write 返回 false 仅表示管道缓冲已满，不抛错也不阻塞；
+            // 这里不等待 drain（保持请求语义简单），由超时与进程退出检测兜底；
+            // 如需严格背压可改为 await 一次 drain 事件后再 resolve
             try {
                 if (this.processExited || this.process.stdin.destroyed) {
                     const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
                     if (!resolved) {
                         resolved = true;
-                        clearTimeout(timeoutId);
-                        this.process?.removeListener('exit', onExit);
+                        cleanup();
                         this.pendingRequests.delete(id);
                         reject(new Error(`Process not running${errorInfo}`));
                     }
@@ -557,6 +572,12 @@ export class StdioMcpClient extends EventEmitter {
             if (this.processExited || this.process.stdin.destroyed) {
                 return;
             }
+            // 单条消息过大时拒绝发送（与 sendRequest 同口径的背压保护），并记录错误
+            if (message.length > StdioMcpClient.MAX_MESSAGE_SIZE) {
+                console.error(`[MCP] notification "${method}" exceeds max message size (${StdioMcpClient.MAX_MESSAGE_SIZE} bytes), dropped`);
+                return;
+            }
+            // 背压说明：write 返回 false 仅表示管道缓冲已满，不抛错也不阻塞；通知无响应，不等待 drain
             this.process.stdin.write(message);
         } catch {
             // 进程退出竞态窗口内的写入失败静默忽略
@@ -568,13 +589,17 @@ export class StdioMcpClient extends EventEmitter {
      */
     private handleData(data: string): void {
         this.buffer += data;
-        
-        // 缓冲区大小上限，防止服务器发送无界数据导致内存 DoS
-        const MAX_BUFFER_SIZE = 16 * 1024 * 1024;
-        if (this.buffer.length > MAX_BUFFER_SIZE) {
-            this.buffer = '';
-            this.emit('error', new Error(`MCP server output exceeded buffer limit (${MAX_BUFFER_SIZE} bytes), disconnecting`));
-            this.disconnect().catch(() => {});
+
+        // 缓冲硬上限：服务器不输出换行或单条消息超大时，防止缓冲无上限增长（OOM）
+        if (this.buffer.length > StdioMcpClient.MAX_BUFFER) {
+            console.error(`[MCP] stdout buffer exceeded ${StdioMcpClient.MAX_BUFFER} bytes; killing process and closing connection`);
+            // 与 disconnect() 相同的进程树终止路径；handleData 是同步事件回调无法 await，
+            // 直接 kill + 同步清理（cleanup 会拒绝全部 pending 请求并清空缓冲），
+            // 随后的 exit 事件会再次调用 cleanup，幂等无害
+            if (this.process && this.process.pid) {
+                try { treeKill(this.process.pid, 'SIGTERM'); } catch { /* ignore */ }
+            }
+            this.cleanup('Stdout buffer exceeded limit');
             return;
         }
         
@@ -652,6 +677,7 @@ export class StdioMcpClient extends EventEmitter {
     private cleanup(errorMessage?: string): void {
         this.process = null;
         this.processExited = true;
+        this.buffer = '';
         
         // 拒绝所有等待中的请求（包含 stderr 信息）
         const errorInfo = this.getStderrInfo();

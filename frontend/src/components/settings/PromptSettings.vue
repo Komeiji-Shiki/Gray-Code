@@ -1457,6 +1457,16 @@ watch(selectedChannel, () => {
           />
         </div>
         <div class="mode-actions">
+          <button
+            class="mode-action-btn save-action-btn"
+            @click="saveConfig"
+            :disabled="isSaving"
+            :title="t('components.settings.promptSettings.saveButton')"
+          >
+            <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
+            <span class="save-action-text">{{ t('components.settings.promptSettings.saveButton') }}</span>
+          </button>
+          <span class="mode-actions-divider"></span>
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
             <i class="codicon codicon-add"></i>
           </button>
@@ -2212,6 +2222,85 @@ watch(selectedChannel, () => {
 
 .mode-action-btn .codicon {
   font-size: 14px;
+}
+
+.mode-action-btn .mode-action-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.save-action-btn {
+  width: auto; /* 覆盖 .mode-action-btn 的 width: 24px（保存按钮按内容撑开） */
+  min-width: 88px;
+  flex-shrink: 0; /* 不被 flex 压缩，避免「保存配置」文字被挤成两行 */
+  height: 28px;
+  padding: 0 12px;
+  gap: 6px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.save-action-text {
+  white-space: nowrap; /* 文字强制单行，窄窗口下不再按字符断行 */
+}
+
+.save-action-btn .codicon {
+  font-size: 15px;
+}
+
+.save-action-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.save-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-actions-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: var(--vscode-panel-border);
+}
+
+/* 保存浮窗提示 */
+.save-toast {
+  position: fixed;
+  top: 48px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.save-toast.success .codicon {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-toast:not(.success) .codicon {
+  color: var(--vscode-errorForeground);
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 @media (max-width: 520px) {

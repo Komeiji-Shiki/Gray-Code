@@ -82,12 +82,21 @@ export interface DailyUsage extends UsageBucket {
     date: string;
 }
 
+/** 读取失败被跳过的对话信息（title 尽力读取；meta 读取失败/无标题时回退 conversationId） */
+export interface SkippedConversationInfo {
+    conversationId: string;
+    /** 对话标题（尽力读取，失败时回退 conversationId） */
+    title: string;
+}
+
 export interface UsageStatsResult {
     totals: UsageBucket & {
         /** 参与统计的对话数 */
         conversations: number;
         /** 读取失败被跳过的对话数 */
         skippedConversations: number;
+        /** 读取失败被跳过的对话明细（无跳过时省略） */
+        skippedConversationDetails?: SkippedConversationInfo[];
         /** 非活跃分支候选节点 token 消耗合计（TREE-08；已包含在 totals 各计数中，仅作细分展示） */
         inactiveBranchTokens?: number;
     };
@@ -293,6 +302,17 @@ function readMetadataLight(source: UsageStatsSource, conversationId: string): Pr
     return typeof source.getMetadataLight === 'function'
         ? source.getMetadataLight(conversationId)
         : source.getMetadata(conversationId);
+}
+
+/** 尽力读取对话标题（统计读取失败后仍尝试提供可定位信息；meta 读取失败/无标题时回退 conversationId） */
+async function tryReadConversationTitle(source: UsageStatsSource, conversationId: string): Promise<string> {
+    try {
+        const metadata = await readMetadataLight(source, conversationId);
+        const title = (metadata?.title || '').trim();
+        return title || conversationId;
+    } catch {
+        return conversationId;
+    }
 }
 
 async function loadOne(source: UsageStatsSource, conversationId: string, indexStore?: UsageIndexStore): Promise<LoadedConversation | null> {
@@ -674,6 +694,7 @@ function accumulateRecord(
 export async function aggregateUsageStats(source: UsageStatsSource, options?: UsageStatsOptions): Promise<UsageStatsResult> {
     const totals = createBucket();
     let skippedConversations = 0;
+    const skippedConversationDetails: SkippedConversationInfo[] = [];
     let conversationsWithUsage = 0;
     // 非活跃分支候选消耗合计（TREE-08；source='branch' 条目，已计入 totals 各计数）
     let totalBranchTokens = 0;
@@ -757,6 +778,10 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
         const loaded = loadedMap.get(conversationId) ?? null;
         if (loaded === null) {
             skippedConversations++;
+            skippedConversationDetails.push({
+                conversationId,
+                title: await tryReadConversationTitle(source, conversationId)
+            });
             continue;
         }
 
@@ -835,6 +860,7 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
             ...totals,
             conversations: conversationsWithUsage,
             skippedConversations,
+            ...(skippedConversationDetails.length > 0 ? { skippedConversationDetails } : {}),
             ...(totalBranchTokens > 0 ? { inactiveBranchTokens: totalBranchTokens } : {})
         },
         byConversation,
