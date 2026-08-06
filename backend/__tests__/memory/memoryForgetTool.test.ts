@@ -112,4 +112,39 @@ describe('memory_forget 工具', () => {
             fs.rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it('非法区间 lo > hi：返回明确失败结果而非误导性错误', async () => {
+        const { mm, dir } = setup();
+        try {
+            await mm.init();
+            await mm.note('a');
+            await mm.note('b');
+            setGlobalMemoryManager(mm);
+
+            const result = await runTool('3,1');
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('lo(3) > hi(1)');
+
+            // 数据未变
+            expect(await mm.listEntries()).toHaveLength(2);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('删除成功消息提示后续 id 可能重编号', async () => {
+        const { mm, dir } = setup();
+        try {
+            await mm.init();
+            await mm.note('a');
+            await mm.note('b');
+            setGlobalMemoryManager(mm);
+
+            const result = await runTool('1');
+            expect(result.success).toBe(true);
+            expect(result.data.message).toContain('renumbered');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

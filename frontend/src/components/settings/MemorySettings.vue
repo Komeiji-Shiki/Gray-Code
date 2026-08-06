@@ -578,7 +578,7 @@ onMounted(() => {
               <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
-              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving" @click="requestDeleteEntry(entry)">
+              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving || entriesLoading" @click="requestDeleteEntry(entry)">
                 <i class="codicon codicon-trash"></i>
               </button>
             </div>

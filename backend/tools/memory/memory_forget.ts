@@ -60,7 +60,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, _context?: Too
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed memory #${id}. Remaining ids were renumbered; run memory_wake to refresh before further deletes.`,
+                    message: `Removed memory #${id}. Later ids may have been renumbered; run memory_wake to refresh before further deletes.`,
                 },
             };
         }
@@ -78,7 +78,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, _context?: Too
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}. Remaining ids were renumbered; run memory_wake to refresh before further deletes.`,
+                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}. Later ids may have been renumbered; run memory_wake to refresh before further deletes.`,
                 },
             };
         }
