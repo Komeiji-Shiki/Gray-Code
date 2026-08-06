@@ -197,7 +197,9 @@ const zhCN = {
                 requestTimeoutNoResponse: '请求超时 ({timeout}ms 内无响应)',
                 requestCancelled: '请求已取消',
                 requestAborted: '请求已中止',
-                noResponseBody: '没有响应体'
+                noResponseBody: '没有响应体',
+                emptyResponse: '模型返回了空内容',
+                streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致'
             },
             modelList: {
                 errors: {

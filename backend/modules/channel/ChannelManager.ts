@@ -20,6 +20,7 @@ import type {
     HttpRequestOptions,
     HttpResponse
 } from './types';
+import type { Content } from '../conversation/types';
 import { ChannelError, ErrorType } from './types';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
@@ -54,6 +55,29 @@ function extractUpstreamErrorMessage(body: unknown): string | undefined {
         return obj.message.trim();
     }
     return undefined;
+}
+
+/**
+ * 判断模型响应内容是否为空（无文本/思考/工具调用/附件）。
+ * HTTP 成功但内容全空 = 上游/代理抽风返回的无效响应，应触发自动重试。
+ */
+function isResponseContentEmpty(content: Content | undefined): boolean {
+    if (!content || !Array.isArray(content.parts) || content.parts.length === 0) return true;
+    return content.parts.every(part =>
+        !(part.text && part.text.length > 0)
+        && !part.functionCall
+        && !part.inlineData
+        && !part.fileData
+    );
+}
+
+/**
+ * 判断流式 chunk 的增量是否携带内容（文本/思考/工具调用）。
+ */
+function streamChunkHasContent(chunk: StreamChunk): boolean {
+    return chunk.delta.some(part =>
+        (part.text && part.text.length > 0) || !!part.functionCall
+    );
 }
 
 /**
@@ -202,6 +226,10 @@ export class ChannelManager {
             // 用户取消错误不应重试
             if (error.type === ErrorType.CANCELLED_ERROR) {
                 return false;
+            }
+            // 空响应（模型返回空内容）：可重试（无副作用、无已显示内容）
+            if (error.type === ErrorType.EMPTY_RESPONSE_ERROR) {
+                return true;
             }
             return error.type === ErrorType.API_ERROR ||
                    error.type === ErrorType.NETWORK_ERROR ||
@@ -356,8 +384,22 @@ export class ChannelManager {
                 
                 // 解析响应
                 try {
-                    return formatter.parseResponse(httpResponse.body);
+                    const response = formatter.parseResponse(httpResponse.body);
+                    // 空内容检测：HTTP 成功但模型返回空（无文本/思考/工具调用/附件）——
+                    // 上游/代理抽风时常见，属于可重试的无效响应（此前会静默当成功返回）。
+                    if (isResponseContentEmpty(response.content)) {
+                        throw new ChannelError(
+                            ErrorType.EMPTY_RESPONSE_ERROR,
+                            t('modules.channel.errors.emptyResponse')
+                        );
+                    }
+                    return response;
                 } catch (error) {
+                    // ChannelError（含空响应检测抛出的）原样透传：再包一层 PARSE_ERROR
+                    // 会丢失错误类型与重试判定（EMPTY_RESPONSE_ERROR 会被误判为不可重试）。
+                    if (error instanceof ChannelError) {
+                        throw error;
+                    }
                     throw new ChannelError(
                         ErrorType.PARSE_ERROR,
                         t('modules.channel.errors.parseResponseFailed', { error: error instanceof Error ? error.message : t('errors.unknown') }),
@@ -544,6 +586,8 @@ export class ChannelManager {
                 }
                 
                 // 逐块解析和产出
+                let sawDone = false;
+                let yieldedContent = false;
                 for await (const rawChunk of stream) {
                     try {
                         const chunk = formatter.parseStreamChunk(rawChunk);
@@ -551,6 +595,8 @@ export class ChannelManager {
                         if (!hasToolUse && chunk.delta.some(p => p.functionCall)) {
                             hasToolUse = true;
                         }
+                        if (chunk.done) sawDone = true;
+                        if (streamChunkHasContent(chunk)) yieldedContent = true;
                         yieldedAny = true;
                         yield chunk;
                     } catch (error) {
@@ -566,6 +612,32 @@ export class ChannelManager {
                             { chunk: rawChunk, error }
                         );
                     }
+                }
+
+                // 完整性检测：HTTP 200 但流式响应不完整（上游/代理中途掐断连接时
+                // for-await 会静默正常结束而不抛错，此前会被当成「正常完成」）。
+                // - 从未收到 done 标记且从未产出内容（无文本/思考/工具调用）：空响应，
+                //   可安全重试（前端无显示、无已启动的工具副作用）；
+                // - 已产出内容但未收到 done 标记：流被截断，显式抛错（不再把半截内容
+                //   当完整成功）；已产出内容无法安全自动重试（重播会与已显示内容重复，
+                //   且流式早启动的工具副作用无法撤回），错误透传给调用方/前端。
+                if (!sawDone) {
+                    if (!yieldedContent) {
+                        // 空响应：未产出任何内容（前端无显示、无已启动的工具副作用），
+                        // 用专门的错误类型标记为可重试（不受 yieldedAny 阻止）。
+                        throw new ChannelError(
+                            ErrorType.EMPTY_RESPONSE_ERROR,
+                            t('modules.channel.errors.emptyResponse')
+                        );
+                    }
+                    this.log.warn('stream_truncated_detected', {
+                        conversationId: request.conversationId,
+                        configId: request.configId
+                    });
+                    throw new ChannelError(
+                        ErrorType.API_ERROR,
+                        t('modules.channel.errors.streamTruncated')
+                    );
                 }
                 
                 // 流正常结束：如果无工具调用且保活未触发过且已过 4 分钟，额外保活一次
@@ -592,7 +664,10 @@ export class ChannelManager {
                 // 已产出内容后不再重试：流中途出错（网络闪断等）时重试会从头重播，
                 // 已 yield 的内容无法撤回（累加器跨重试不重置），导致内容重复、
                 // 历史写入重复内容。请求建立阶段（尚未产出任何 chunk）仍可重试。
-                if (yieldedAny) {
+                // 例外：EMPTY_RESPONSE_ERROR（从未产出内容）可安全重试。
+                const isRetryableEmpty = error instanceof ChannelError
+                    && error.type === ErrorType.EMPTY_RESPONSE_ERROR;
+                if (yieldedAny && !isRetryableEmpty) {
                     break;
                 }
                 

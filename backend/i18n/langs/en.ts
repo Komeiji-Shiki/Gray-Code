@@ -196,7 +196,9 @@ const en: BackendLanguageMessages = {
                 requestTimeoutNoResponse: 'Request timeout (no response in {timeout}ms)',
                 requestCancelled: 'Request cancelled',
                 requestAborted: 'Request aborted',
-                noResponseBody: 'No response body'
+                noResponseBody: 'No response body',
+                emptyResponse: 'The model returned an empty response',
+                streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption'
             },
             modelList: {
                 errors: {
