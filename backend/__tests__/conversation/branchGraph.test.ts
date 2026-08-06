@@ -630,6 +630,33 @@ describe('importLinearHistory（MIG-01 / BR-09 线性导入）', () => {
         });
     });
 
+    test('显式 undefined 的元数据字段被过滤，全部为空时不产生 contentMetadata', () => {
+        const g = importLinearHistory([
+            {
+                role: 'user',
+                parts: [{ text: 'q1' }],
+                id: 'u1',
+                parentId: null,
+                timestamp: 1,
+                isSummarized: undefined,
+                thinkingStartTime: undefined,
+                isUserInput: true,
+            },
+            {
+                role: 'model',
+                parts: [{ text: 'a1' }],
+                id: 'm1',
+                parentId: 'u1',
+                timestamp: 2,
+                isSummarized: undefined,
+            },
+        ] as any);
+
+        expect(g.nodes['u1']!.contentMetadata).toEqual({ isUserInput: true });
+        expect(g.nodes['u1']!.contentMetadata).not.toHaveProperty('isSummarized');
+        expect(g.nodes['m1']!.contentMetadata).toBeUndefined();
+    });
+
     test('functionResponse 不独立成节点（决策 8）：parts 合并进前一个模型节点，后续 parentId 不悬空', () => {
         const history = [
             { role: 'user', parts: [{ text: 'q1' }], id: 'u1', parentId: null, timestamp: 100 },
