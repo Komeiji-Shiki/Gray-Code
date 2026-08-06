@@ -8,9 +8,6 @@
 
 ## [Unreleased]
 
-### Fixed
-  - 修复系统提示词设置页「保存配置」按钮文字折行成「保存配/置」：`.save-action-btn` 同时挂 `.mode-action-btn` 类，继承了其 `width: 24px`（仅覆盖 `min-width: 88px`），窄窗口下按钮被 flex 压缩到 88px 时内容（图标 + 「保存配置」需 ~97px）放不下，中文按字符断行；现按钮 `width: auto` 按内容撑开 + `flex-shrink: 0` 禁止压缩 + `.save-action-text` 强制 `white-space: nowrap`，窄窗口下文字保持单行。
-
 ## [1.4.3] - 2026-08-06
 
 ### Added
@@ -30,6 +27,7 @@
   - 修复欢迎页 Gray logo 图标右侧头发色块缺失：复制 Splash 色块层时遗漏第二个 `fill-hair` path（`M 587.0 408.0...`），后半头发只有线稿描边、色块透明；现补齐与 Splash.vue 一致的 7 个色块 path（body×2 / hair×2 / face×1 / cap×2）。
 
 ### Fixed
+  - 修复系统提示词设置页「保存配置」按钮文字折行成「保存配/置」：`.save-action-btn` 同时挂 `.mode-action-btn` 类，继承了其 `width: 24px`（仅覆盖 `min-width: 88px`），窄窗口下按钮被 flex 压缩到 88px 时内容（图标 + 「保存配置」需 ~97px）放不下，中文按字符断行；现按钮 `width: auto` 按内容撑开 + `flex-shrink: 0` 禁止压缩 + `.save-action-text` 强制 `white-space: nowrap`，窄窗口下文字保持单行。
   - 清除纯 `tsc --noEmit` 下 `.vue` 相关类型噪音（vue-tsc 标准检查本就全绿）：① `vite-env.d.ts` 的 `*.vue` shim 从 `DefineComponent<object, object, unknown>` 宽松为 `Record<string, any>` 版本——纯 tsc 无法解析 `.vue` 内部结构，原 shim 导致测试中 `mount`/`setProps` 的字面量 props 触发 excess property check（TS2353，MessageItemStreaming / MessageRenderBlock / Splash / MarkdownRenderer 共 10 处）；② 新增 `MessageItem.vue.d.ts` 旁路声明补齐普通 `<script>` 块具名导出（`backgroundTaskViewModeByMessageId` / `BACKGROUND_TASK_VIEW_MODE_CAP` / `pruneBackgroundTaskViewModes` / `BackgroundTaskViewMode`）——全局 shim 只有默认导出，测试文件具名导入报 TS2614 共 3 处；vue-tsc 优先解析真实 `.vue` 文件，行为与类型均不受影响。
   - 设置页工具列表 `get_activity_stats` 工具补齐三语 i18n（此前缺失词条，显示名回退为英文 "Get Activity Stats"、描述回退后端英文原文）：`toolDisplayNames` / `toolDescriptions` 新增词条（zh-CN 显示名「获取活动统计」、en "Get Activity Stats"、ja「アクティビティ統計を取得」），`toolLocalization.test.ts` 同步补断言。
   - 修复自动总结在工具循环内触发后模型「失忆」（一次工具调用后历史与用户输入从请求中整体消失）：`SummarizeService` 自动总结从「只插入不删除」改为物理替换（同一写锁事务内删除被总结区间 `[historyStartIndex, insertIndex)` 并插入总结，`replaceSummarizedRangeAtomically`），存储与请求组装口径一致，token 估算随历史缩短自然回落、不再每轮反复触发；写入前基于最新历史重新校验范围（`STALE_RANGE`，总结永不越过当前回合用户消息，杜绝并发写入下连用户输入一起吞掉）；总结文本过短（< 50 字符）视为低质量拒绝替换（`LOW_QUALITY_SUMMARY`）；`ToolIterationLoopService` 流式 autoSummary chunk 透传 `removedCount`，非流式循环补 abort 检查。
