@@ -178,18 +178,49 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
 
 /**
  * 获取所有原始记忆条目列表（用于设置页面管理）
+ * @param data.limit 可选：最多返回的条目数（默认 5000）。
+ * 超限时响应带 truncated=true，前端提示「仅展示前 N 条」——避免海量记忆
+ * （如 10 万条以上）时 postMessage 传输与 v-for 渲染冻结设置页。
  */
-export const getMemoryEntries: MessageHandler = async (_data, requestId, ctx) => {
+export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
   try {
     const mgr = getGlobalMemoryManager();
     if (!mgr) {
-      return ctx.sendResponse(requestId, { entries: [], initialized: false });
+      return ctx.sendResponse(requestId, { entries: [], total: 0, initialized: false });
     }
-    const entries = await mgr.listEntries();
-    const total = entries.length;
-    ctx.sendResponse(requestId, { entries, total, initialized: true });
+    const limit = data?.limit;
+    const effectiveLimit =
+      typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? limit : 5000;
+    const total = await mgr.totalEntries();
+    const entries = await mgr.listEntries(effectiveLimit);
+    ctx.sendResponse(requestId, {
+      entries,
+      total,
+      truncated: entries.length < total,
+      initialized: true,
+    });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_MEMORY_ENTRIES_ERROR', error.message || 'Failed to get memory entries');
+  }
+};
+
+/**
+ * 手动新增一条原始记忆（用户在设置页手动记录，等价于 AI 的 memory_note 工具）
+ */
+export const addMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { text } = data ?? {};
+    if (typeof text !== 'string') {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'text (string) is required.');
+    }
+    const result = await mgr.note(text);
+    ctx.sendResponse(requestId, { success: true, id: result.id });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'ADD_MEMORY_ENTRY_ERROR', error.message || 'Failed to add memory entry');
   }
 };
 
@@ -203,13 +234,34 @@ export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
     const { id, text } = data;
-    if (typeof id !== 'number' || typeof text !== 'string') {
-      return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (number) and text (string) are required.');
+    if (typeof id !== 'number' || !Number.isInteger(id) || id < 0 || typeof text !== 'string') {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (non-negative integer) and text (string) are required.');
     }
     await mgr.updateEntry(id, text);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'UPDATE_MEMORY_ENTRY_ERROR', error.message || 'Failed to update memory entry');
+  }
+};
+
+/**
+ * 删除单条原始记忆（真·单条删除：该条之后的记录 id 前移一格并重编号，
+ * 相关树摘要由 MemoryManager 清空，下次 recall/compress 重建）
+ */
+export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { id } = data;
+    if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (non-negative integer) is required.');
+    }
+    await mgr.deleteEntry(id);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_MEMORY_ENTRY_ERROR', error.message || 'Failed to delete memory entry');
   }
 };
 
@@ -401,7 +453,9 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getMemoryConfig', getMemoryConfig);
   registry.set('updateMemoryConfig', updateMemoryConfig);
   registry.set('getMemoryEntries', getMemoryEntries);
+  registry.set('addMemoryEntry', addMemoryEntry);
   registry.set('updateMemoryEntry', updateMemoryEntry);
+  registry.set('deleteMemoryEntry', deleteMemoryEntry);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);

@@ -2215,7 +2215,15 @@ const ja: LanguageMessages = {
                     rawEntries: {
                         title: '生の記憶エントリ',
                         description: '生の記憶エントリを表示・編集します。編集すると関連する要約がクリアされます（次回の圧縮時に再構築されます）。',
-                        empty: 'まだ記憶エントリがありません。'
+                        empty: 'まだ記憶エントリがありません。',
+                        addPlaceholder: '記憶したい内容を入力し「記憶を追加」をクリックすると、手動で長期記憶に書き込まれます（AI の memory_note と同等）。Ctrl+Enter / Cmd+Enter でも送信できます。',
+                        add: '記憶を追加',
+                        added: '記憶 #{id} を追加しました',
+                        addEmpty: '内容が空です。追加できません。',
+                        addTooLong: '内容が 1 件あたりの上限（{limit} バイト）を超えています。',
+                        truncatedNotice: '記憶が {limit} 件を超えています。リストには最初の {limit} 件のみ表示されます（残りはチャットで memory_recall を使って検索できます）。',
+                        deleteConfirmTitle: '記憶エントリを削除',
+                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
                     }
                 },
 
