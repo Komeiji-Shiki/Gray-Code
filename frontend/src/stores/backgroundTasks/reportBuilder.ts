@@ -28,6 +28,8 @@ export interface BackgroundTaskRecord {
   /** SubAgent 最终报告全文 */
   response?: string
   steps?: number
+  /** SubAgent 实际调用的工具名列表（空数组 = 未调用任何工具） */
+  toolsUsed?: string[]
   /** 命令输出尾部 */
   output?: string
   exitCode?: number | null
@@ -112,6 +114,7 @@ export function applyCompletionEvent(record: BackgroundTaskRecord, event: TaskEv
     finishedAt: typeof event.createdAt === 'number' ? event.createdAt : Date.now(),
     response: typeof data.response === 'string' ? data.response : record.response,
     steps: typeof data.steps === 'number' ? data.steps : record.steps,
+    toolsUsed: Array.isArray(data.toolsUsed) ? data.toolsUsed as string[] : record.toolsUsed,
     output: typeof data.output === 'string' ? data.output : record.output,
     exitCode: typeof data.exitCode === 'number' || data.exitCode === null
       ? data.exitCode as number | null
@@ -137,7 +140,11 @@ function buildSubAgentSection(task: BackgroundTaskRecord): string {
     ? 'success'
     : task.status === 'cancelled' ? 'cancelled by user' : 'failed'
   const meta: string[] = []
-  if (typeof task.steps === 'number') meta.push(`${task.steps} steps`)
+  if (typeof task.steps === 'number' && task.steps > 0) meta.push(`${task.steps} steps`)
+  // 工具使用标记（中性陈述）：空数组 = 未调用任何工具
+  if (Array.isArray(task.toolsUsed)) {
+    meta.push(task.toolsUsed.length > 0 ? `tools: ${task.toolsUsed.join(', ')}` : 'tools: none')
+  }
   const duration = formatDurationSeconds(task)
   if (duration) meta.push(duration)
   lines.push(`Status: ${statusText}${meta.length > 0 ? ` (${meta.join(', ')})` : ''}`)

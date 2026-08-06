@@ -3294,7 +3294,10 @@ const ja: LanguageMessages = {
                 failed: '失敗',
                 executing: '実行中...',
                 partialResponse: '部分レスポンス',
-                background: 'バックグラウンド'
+                background: 'バックグラウンド',
+                steps: '{count} ステップ',
+                noTools: 'ツール未使用',
+                toolsUsed: 'ツール: {tools}'
             },
             media: {
                 generateImage: '画像を生成',

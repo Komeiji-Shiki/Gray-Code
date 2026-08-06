@@ -133,13 +133,17 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.unregisterTask).toHaveBeenCalledTimes(1);
     });
 
-    it('executor 成功后注销任务并携带完整结果载荷', async () => {
+    it('executor 成功后注销任务并携带完整结果载荷（含 toolsUsed）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
             response: 'final report body',
             steps: 5,
             runId: 'subagent_run_tool_abc',
-            cancelled: false
+            cancelled: false,
+            toolCalls: [
+                { tool: 'read_file', args: { path: 'a.png' }, result: { ok: true }, success: true },
+                { tool: 'get_symbols', args: { path: 'a.ts' }, result: {}, success: true }
+            ]
         }));
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
 
@@ -157,7 +161,8 @@ describe('SubAgents 工具后台分支', () => {
                 runId: 'subagent_run_tool_abc',
                 agentName: 'Test Agent',
                 response: 'final report body',
-                steps: 5
+                steps: 5,
+                toolsUsed: ['read_file', 'get_symbols']
             })
         );
     });
@@ -234,6 +239,34 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.registerTask).not.toHaveBeenCalled();
     });
 
+    it('前台模式 executor 运行后被取消时返回 cancelled 并携带工具使用信息（MED-1）', async () => {
+        const fakeExecutor = jest.fn(() => Promise.resolve({
+            success: false,
+            cancelled: true,
+            error: 'User cancelled',
+            response: '部分分析结果',
+            steps: 2,
+            runId: 'subagent_run_cancel_1',
+            toolCalls: [
+                { tool: 'read_file', args: { path: 'a.png' }, result: { ok: true }, success: true }
+            ]
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            { toolId: 'tool_abc', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        expect(result.success).toBe(false);
+        expect(result.cancelled).toBe(true);
+        // 取消前已调用工具：toolsUsed 非空，主模型可区分"从未开始"与"运行后被取消"
+        expect(result.data.toolsUsed).toEqual(['read_file']);
+        expect(result.data.steps).toBe(2);
+        expect(result.data.partialResponse).toBe('部分分析结果');
+    });
+
     it('默认 background 缺省为前台行为（不注册任务、正常 await executor）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
@@ -255,6 +288,57 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.unregisterTask).not.toHaveBeenCalled();
         expect(result.success).toBe(true);
         expect(result.data.background).toBeUndefined();
+    });
+
+    it('前台成功返回时 data 携带 toolsUsed 工具名列表（幻觉检测）', async () => {
+        const fakeExecutor = jest.fn(() => Promise.resolve({
+            success: true,
+            response: 'done',
+            steps: 2,
+            runId: 'subagent_run_tool_abc',
+            cancelled: false,
+            toolCalls: [
+                { tool: 'read_file', args: { path: 'a.png' }, result: { ok: true }, success: true },
+                { tool: 'get_symbols', args: { path: 'a.ts' }, result: {}, success: true }
+            ]
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            { toolId: 'tool_abc', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        // 只列名称，不含参数/结果（防 prompt 膨胀与敏感信息泄漏）
+        expect(result.data.toolsUsed).toEqual(['read_file', 'get_symbols']);
+        expect(result.data.steps).toBe(2);
+    });
+
+    it('前台成功返回且子代理未调用任何工具时 toolsUsed 为空数组', async () => {
+        const fakeExecutor = jest.fn(() => Promise.resolve({
+            success: true,
+            response: '完整分析……',
+            steps: 0,
+            runId: 'subagent_run_tool_abc',
+            cancelled: false,
+            toolCalls: []
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            { toolId: 'tool_abc', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        // toolsUsed 空数组 = 子代理没调用任何工具却输出了内容 → 主模型应警惕幻觉
+        expect(result.data.toolsUsed).toEqual([]);
+        expect(result.data.steps).toBe(0);
     });
 
     it('显式注册的自定义 executor 被正式调用路径使用并收到会话上下文（F-08）', async () => {

@@ -174,6 +174,16 @@ export function serializeToolResultForLLM(
             if (typeof data.message === 'string' && data.message.trim()) {
                 parts.push('', `Message: ${data.message.trim()}`);
             }
+
+            // 子代理工具使用信息（subagents 失败/部分响应路径）：
+            // 与成功路径（兜底 JSON.stringify 完整保留）对齐，主模型在失败时也能看到
+            // 子代理是否调用过工具及调用了哪些（空数组 = 未调用任何工具）。
+            if (typeof data.steps === 'number' || Array.isArray(data.toolsUsed)) {
+                parts.push('', `Progress: steps=${JSON.stringify(data.steps ?? 0)}, toolsUsed=${JSON.stringify(data.toolsUsed ?? [])}`);
+            }
+            if (typeof data.partialResponse === 'string' && data.partialResponse.trim()) {
+                parts.push('', 'Partial response:', data.partialResponse.trimEnd());
+            }
         }
         return parts.join('\n');
     }
