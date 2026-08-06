@@ -225,6 +225,9 @@ const en: LanguageMessages = {
                 openWorkspaces: 'Open Workspaces',
                 savedWorkspaces: 'Saved Workspaces',
                 openWorkspaceFolder: 'Open Workspace Folder…',
+                saveWorkspace: 'Save Current Workspace',
+                saveWorkspaceHint: 'Add the current workspace to the saved list',
+                saveWorkspaceSaved: 'The current workspace is already in the saved list',
                 removeWorkspace: 'Remove from saved',
                 noSavedWorkspaces: 'No saved workspaces'
             }
@@ -2105,6 +2108,10 @@ const en: LanguageMessages = {
                     subagents: {
                         title: 'Sub-Agents',
                         description: 'Configure specialized sub-agents that AI can invoke'
+                    },
+                    dependencies: {
+                        title: 'Dependencies',
+                        description: 'Install and manage dependency tools such as Python and Node'
                     },
                     sound: {
                         title: 'Notification System',

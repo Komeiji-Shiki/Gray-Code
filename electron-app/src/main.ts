@@ -163,6 +163,11 @@ async function pickWorkspaceFolder(): Promise<void> {
   });
   if (!result.canceled && result.filePaths.length > 0) {
     await setWorkspaceFolders(result.filePaths);
+    // 与 UI「打开工作区文件夹…」一致：File 菜单打开的工作区同样进入收藏，
+    // 多工作区「保存 + 打开 + 重启保留」闭环（不依赖渲染层消息路径）。
+    void backendHost?.addSavedWorkspaceFsPaths(result.filePaths).catch((err) => {
+      console.error('[main] failed to save workspace favorites:', err);
+    });
   }
 }
 
@@ -170,8 +175,12 @@ async function pickWorkspaceFolder(): Promise<void> {
 async function openWorkspaceFolder(fsPath: string): Promise<void> {
   if (!fsPath) return;
   try {
-    if (!fs.statSync(fsPath).isDirectory()) return;
-  } catch {
+    if (!fs.statSync(fsPath).isDirectory()) {
+      console.warn('[main] openWorkspaceFolder: not a directory:', fsPath);
+      return;
+    }
+  } catch (err) {
+    console.warn('[main] openWorkspaceFolder: inaccessible folder:', fsPath, err);
     return;
   }
   await setWorkspaceFolders([fsPath]);

@@ -792,7 +792,8 @@ description: "このスキルの機能と使用場面の簡単な説明"
         networkError: 'ネットワークエラー',
         invalidRequest: '無効なリクエスト',
         internalError: '内部エラー',
-        workspaceFolderNotFound: 'フォルダが存在しないか、移動されました'
+        workspaceFolderNotFound: 'フォルダが存在しないか、移動されました',
+        noActiveWorkspace: '開かれているワークスペースがありません。先にワークスペースフォルダを開いてください'
     }
 };
 

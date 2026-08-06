@@ -46,6 +46,16 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   'dependencies.install',
   'dependencies.uninstall',
   'storagePath.migrate',
+  // 原生对话框驱动的请求：用户浏览文件夹/文件可能超过 60s 队列超时。
+  // 此前在串行队列中 await dialog 会让 60s 超时先触发（HANDLER_TIMEOUT 已回传、
+  // 前端请求已结算），用户稍后选择路径时 handler 才继续执行——收藏虽已写入、
+  // 工作区也已切换，但响应被当作迟到广播丢弃，UI 状态不同步，表现为
+  // 「打开/保存工作区没反应」。fire-and-forget 后对话框可无限期停留，
+  // 响应按 requestId 照常路由回发起方。
+  'workspace.openFolder',
+  'storagePath.selectFolder',
+  'settings.import',
+  'settings.export',
   // M-1: 检查点全量扫描/枚举可能耗时数秒到数分钟（大工作区），
   // 若在串行队列中 await 会阻塞 cancelStream / checkpoint.cancelOperation / 消息删除等全部 IPC，
   // 导致 webview 消息通道整体冻结；fire-and-forget 让取消类消息始终能及时送达。

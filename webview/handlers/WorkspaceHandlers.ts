@@ -18,7 +18,14 @@ import { getWorkspaceManager } from '../utils/WorkspaceManager';
 import type { WorkspaceFolderInfo } from '../utils/WorkspaceManager';
 
 /** globalState 中收藏工作区列表的键 */
-const SAVED_WORKSPACES_KEY = 'graycode.savedWorkspaces';
+export const SAVED_WORKSPACES_KEY = 'graycode.savedWorkspaces';
+
+/** 桌面版 File 菜单等宿主侧入口复用收藏键时，与主进程共享的常量 */
+const WIN32 = process.platform === 'win32';
+
+function normalizeFsPath(p: string): string {
+  return WIN32 ? p.replace(/\\/g, '/').toLowerCase() : p;
+}
 
 function isDirectory(fsPath: string): boolean {
   try {
@@ -38,9 +45,11 @@ function loadSavedFsPaths(ctx: HandlerContext): string[] {
   }
 }
 
-function persistSavedFsPaths(ctx: HandlerContext, fsPaths: string[]): void {
+async function persistSavedFsPaths(ctx: HandlerContext, fsPaths: string[]): Promise<void> {
   try {
-    void ctx.context?.globalState?.update(SAVED_WORKSPACES_KEY, fsPaths);
+    // 收藏写入不能 fire-and-forget：打开工作区后立即退出时写队列未排空会丢收藏。
+    // 与 VS Code 契约一致（Memento.update 返回 Thenable），await 后响应才返回。
+    await ctx.context?.globalState?.update(SAVED_WORKSPACES_KEY, fsPaths);
   } catch {
     // 持久化失败不影响本次会话
   }
@@ -56,14 +65,37 @@ function buildSavedInfos(fsPaths: string[]): WorkspaceFolderInfo[] {
   }));
 }
 
-/** 加入收藏（去重）并持久化，返回更新后的列表 */
-function addSavedFsPath(ctx: HandlerContext, fsPath: string): string[] {
+/** 加入收藏（去重，Windows 下按大小写不敏感）并持久化，返回更新后的列表 */
+async function addSavedFsPath(ctx: HandlerContext, fsPath: string): Promise<string[]> {
   const next = loadSavedFsPaths(ctx);
-  if (!next.includes(fsPath)) {
+  if (!next.some((p) => normalizeFsPath(p) === normalizeFsPath(fsPath))) {
     next.push(fsPath);
-    persistSavedFsPaths(ctx, next);
+    await persistSavedFsPaths(ctx, next);
   }
   return next;
+}
+
+/** 把 fsPath 转成与 WorkspaceManager 列表同口径的 URI 字符串（Uri.file().toString()） */
+function fsPathToUriString(fsPath: string): string {
+  return vscode.Uri.file(fsPath).toString();
+}
+
+/** 判断收藏中是否已存在某路径（Windows 大小写不敏感） */
+function isSavedFsPath(ctx: HandlerContext, fsPath: string): boolean {
+  const norm = normalizeFsPath(fsPath);
+  return loadSavedFsPaths(ctx).some((p) => normalizeFsPath(p) === norm);
+}
+
+/** 等待工作区列表出现指定文件夹（vscode.openFolder 在宿主侧异步生效，最多等 3s） */
+async function waitForWorkspaceOpened(uriString: string, manager: { getWorkspaceList(): WorkspaceFolderInfo[] }): Promise<boolean> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (manager.getWorkspaceList().some((w) => w.uri === uriString)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return manager.getWorkspaceList().some((w) => w.uri === uriString);
 }
 
 export const getWorkspaceList: MessageHandler = async (data, requestId, ctx) => {
@@ -96,7 +128,7 @@ export const getSavedWorkspaces: MessageHandler = async (data, requestId, ctx) =
             saved: buildSavedInfos(loadSavedFsPaths(ctx))
         });
     } catch (error: any) {
-        ctx.sendError(requestId, 'GET_SAVED_WORKSPACES_ERROR', error?.message || t('webview.errors.unknown'));
+        ctx.sendError(requestId, 'GET_SAVED_WORKSPACES_ERROR', error?.message || t('errors.unknown'));
     }
 };
 
@@ -104,14 +136,52 @@ export const getSavedWorkspaces: MessageHandler = async (data, requestId, ctx) =
 export const removeSavedWorkspace: MessageHandler = async (data, requestId, ctx) => {
     try {
         const fsPath = typeof data?.fsPath === 'string' ? data.fsPath : '';
-        const next = loadSavedFsPaths(ctx).filter((p) => p !== fsPath);
-        persistSavedFsPaths(ctx, next);
+        const next = loadSavedFsPaths(ctx).filter((p) => normalizeFsPath(p) !== normalizeFsPath(fsPath));
+        await persistSavedFsPaths(ctx, next);
         ctx.sendResponse(requestId, {
             success: true,
             saved: buildSavedInfos(next)
         });
     } catch (error: any) {
-        ctx.sendError(requestId, 'REMOVE_SAVED_WORKSPACE_ERROR', error?.message || t('webview.errors.unknown'));
+        ctx.sendError(requestId, 'REMOVE_SAVED_WORKSPACE_ERROR', error?.message || t('errors.unknown'));
+    }
+};
+
+/**
+ * 把当前激活的工作区保存到收藏（显式「保存工作区」入口）
+ *
+ * - 无激活工作区：报错（前端提示先打开工作区）
+ * - 已在收藏：幂等返回
+ * - 持久化完成（await 写队列）后才响应，避免立即退出丢收藏
+ */
+export const saveCurrentWorkspace: MessageHandler = async (data, requestId, ctx) => {
+    try {
+        const manager = getWorkspaceManager();
+        if (!manager) {
+            ctx.sendError(requestId, 'WORKSPACE_MANAGER_NOT_INITIALIZED', 'WorkspaceManager is not initialized.');
+            return;
+        }
+        const activeUri = manager.getActiveWorkspaceUri();
+        if (!activeUri) {
+            ctx.sendError(requestId, 'NO_ACTIVE_WORKSPACE', t('errors.noActiveWorkspace'));
+            return;
+        }
+        // 激活工作区 URI 可能来自 shim（file:/// 编码形式），与收藏存储口径（纯路径）不同：
+        // 先按 URI 反解出 fsPath，取不到时回退为列表项里的 fsPath。
+        const list = manager.getWorkspaceList();
+        const entry = list.find((w) => w.uri === activeUri);
+        const fsPath = entry?.fsPath || (activeUri.startsWith('file://') ? vscode.Uri.parse(activeUri).fsPath : '');
+        if (!fsPath || !isDirectory(fsPath)) {
+            ctx.sendError(requestId, 'WORKSPACE_FOLDER_NOT_FOUND', t('errors.workspaceFolderNotFound'));
+            return;
+        }
+        const next = await addSavedFsPath(ctx, fsPath);
+        ctx.sendResponse(requestId, {
+            success: true,
+            saved: buildSavedInfos(next)
+        });
+    } catch (error: any) {
+        ctx.sendError(requestId, 'SAVE_CURRENT_WORKSPACE_ERROR', error?.message || t('errors.unknown'));
     }
 };
 
@@ -119,9 +189,10 @@ export const removeSavedWorkspace: MessageHandler = async (data, requestId, ctx)
  * 打开工作区文件夹
  *
  * - 不传 fsPath 时弹出文件夹选择对话框
- * - 选中的文件夹自动加入收藏
+ * - 选中的文件夹自动加入收藏（await 持久化完成）
  * - 已在当前窗口打开：直接固定为活动工作区
- * - 未打开：通过宿主打开（Electron 走 vscode.openFolder shim，VS Code 走原生命令）
+ * - 未打开：通过宿主打开（Electron 走 vscode.openFolder shim，VS Code 走原生命令），
+ *   等待列表生效后再响应，避免返回过期的工作区状态
  */
 export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) => {
     const manager = getWorkspaceManager();
@@ -136,8 +207,8 @@ export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) 
                 canSelectFiles: false,
                 canSelectFolders: true,
                 canSelectMany: false,
-                title: t('webview.dialogs.openWorkspaceFolder'),
-                openLabel: t('webview.dialogs.selectFolder')
+                title: t('dialogs.openWorkspaceFolder'),
+                openLabel: t('dialogs.selectFolder')
             });
             fsPath = result && result.length > 0 ? result[0].fsPath : '';
         }
@@ -146,18 +217,25 @@ export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) 
             return;
         }
         if (!isDirectory(fsPath)) {
-            ctx.sendError(requestId, 'WORKSPACE_FOLDER_NOT_FOUND', t('webview.errors.workspaceFolderNotFound'));
+            ctx.sendError(requestId, 'WORKSPACE_FOLDER_NOT_FOUND', t('errors.workspaceFolderNotFound'));
             return;
         }
 
-        addSavedFsPath(ctx, fsPath);
+        await addSavedFsPath(ctx, fsPath);
 
-        const uri = vscode.Uri.file(fsPath).toString();
-        if (manager.getWorkspaceList().some((w) => w.uri === uri)) {
+        const uri = fsPathToUriString(fsPath);
+        // Windows 大小写不敏感：同一目录以不同大小写路径打开时不再重复触发宿主替换，
+        // 且固定时用列表里已存在的 URI（Uri.file 保留路径大小写，用新串会匹配失败静默解除固定）
+        const existing = manager.getWorkspaceList().find((w) => {
+            if (w.uri === uri) return true;
+            return WIN32 && normalizeFsPath(w.fsPath) === normalizeFsPath(fsPath);
+        });
+        if (existing) {
             // 已打开：直接固定，不重复触发宿主打开
-            manager.setActiveWorkspaceUri(uri);
+            manager.setActiveWorkspaceUri(existing.uri);
         } else {
             await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(fsPath));
+            await waitForWorkspaceOpened(uri, manager);
         }
 
         ctx.sendResponse(requestId, {
@@ -167,7 +245,7 @@ export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) 
             saved: buildSavedInfos(loadSavedFsPaths(ctx))
         });
     } catch (error: any) {
-        ctx.sendError(requestId, 'OPEN_WORKSPACE_FOLDER_ERROR', error?.message || t('webview.errors.unknown'));
+        ctx.sendError(requestId, 'OPEN_WORKSPACE_FOLDER_ERROR', error?.message || t('errors.unknown'));
     }
 };
 
@@ -176,5 +254,6 @@ export function registerWorkspaceHandlers(registry: Map<string, MessageHandler>)
     registry.set('workspace.setActive', setActiveWorkspace);
     registry.set('workspace.getSaved', getSavedWorkspaces);
     registry.set('workspace.removeSaved', removeSavedWorkspace);
+    registry.set('workspace.saveCurrent', saveCurrentWorkspace);
     registry.set('workspace.openFolder', openWorkspaceFolder);
 }

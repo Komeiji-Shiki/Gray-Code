@@ -134,7 +134,7 @@ onMounted(() => {
     </div>
 
     <template v-else>
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="loading-text">
         <label class="group-label">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           {{ t('components.settings.appearanceSettings.loadingText.title') }}
@@ -150,7 +150,7 @@ onMounted(() => {
         <p class="field-hint">{{ t('components.settings.appearanceSettings.loadingText.defaultHint', { text: defaultLoadingText }) }}</p>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="smooth-output">
         <label class="group-label">
           <i class="codicon codicon-type"></i>
           {{ t('components.settings.appearanceSettings.smoothStreaming.title') }}
@@ -165,7 +165,7 @@ onMounted(() => {
         </select>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="selection-entry">
         <div class="toggle-row">
           <div class="toggle-content">
             <label class="group-label">
@@ -188,7 +188,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="tps-bar">
         <div class="toggle-row">
           <div class="toggle-content">
             <label class="group-label">
@@ -211,7 +211,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="splash-animation">
         <div class="toggle-row">
           <div class="toggle-content">
             <label class="group-label">

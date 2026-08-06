@@ -48,6 +48,7 @@ import { MessageRouter } from '../../../webview/MessageRouter';
 import { WebviewClientRegistry, WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegistry';
 import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAgentsHandlers';
 import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
+import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
 import type { HandlerContext } from '../../../webview/types';
 import { getDiffManager } from '../../../backend/tools/file/diffManager';
 import { ElectronContext } from './ElectronContext';
@@ -339,6 +340,13 @@ export class BackendHost {
       // ignore
     }
     this.windowsAgentStopNotificationService?.dispose();
+    // 排空 globalState/workspaceState 写队列：收藏工作区等 fire-and-forget 写入
+    // 由调用方 await，这里兜底等待仍在队列中的落盘完成，退出后不丢数据。
+    try {
+      await this.context.flush();
+    } catch {
+      // ignore
+    }
   }
 
   // ==========================================================================
@@ -822,5 +830,33 @@ export class BackendHost {
   setWorkspaceFolders(fsPaths: string[]): void {
     __setWorkspaceFolders(fsPaths);
     // context awareness needs re-read on next prompt build; nothing to push here
+  }
+
+  /**
+   * 把工作区路径加入收藏（与 webview/handlers/WorkspaceHandlers 同键、同文件），
+   * 供主进程侧入口（File > Open Workspace Folder 等不经渲染层的打开路径）复用：
+   * 打开的工作区同样进入「已保存的工作区」列表，多工作区收藏闭环。
+   */
+  async addSavedWorkspaceFsPath(fsPath: string): Promise<void> {
+    try {
+      const key = SAVED_WORKSPACES_KEY;
+      const raw = this.context.globalState.get<string[]>(key);
+      const list = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string' && p.length > 0) : [];
+      const norm = (p: string) => (process.platform === 'win32' ? p.replace(/\\/g, '/').toLowerCase() : p);
+      if (list.some((p) => norm(p) === norm(fsPath))) return;
+      list.push(fsPath);
+      await this.context.globalState.update(key, list);
+    } catch (err) {
+      console.error('[BackendHost] failed to save workspace favorite:', err);
+    }
+  }
+
+  /**
+   * 把多个工作区路径加入收藏（幂等；供 File 菜单多选打开等宿主侧路径使用）
+   */
+  async addSavedWorkspaceFsPaths(fsPaths: string[]): Promise<void> {
+    for (const fsPath of fsPaths) {
+      await this.addSavedWorkspaceFsPath(fsPath);
+    }
   }
 }

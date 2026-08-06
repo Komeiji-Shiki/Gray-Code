@@ -122,6 +122,23 @@ function onOpenWorkspaceFolder() {
   void chatStore.openWorkspaceFolder()
 }
 
+/** 保存当前工作区到收藏（显式「保存工作区」入口） */
+function onSaveCurrentWorkspace() {
+  closeMenu()
+  void chatStore.saveCurrentWorkspace()
+}
+
+/** 当前激活的工作区是否已在收藏中（避免重复保存） */
+const isCurrentSaved = computed(() => {
+  const current = chatStore.currentWorkspaceUri
+  if (!current) return false
+  const norm = (p: string) => (p || '').replace(/\\/g, '/').toLowerCase()
+  const currentFs = chatStore.workspaceList.find(ws => ws.uri === current)?.fsPath
+  return currentFs
+    ? chatStore.savedWorkspaces.some(ws => norm(ws.fsPath) === norm(currentFs))
+    : false
+})
+
 onMounted(() => {
   document.addEventListener('click', handleOutsideClick)
   document.addEventListener('keydown', handleKeydown)
@@ -219,6 +236,17 @@ onUnmounted(() => {
         </div>
 
         <div class="ws-menu-divider"></div>
+
+        <div
+          v-if="selectedWorkspace"
+          class="ws-menu-item ws-menu-action"
+          :class="{ 'ws-menu-disabled': isCurrentSaved }"
+          :title="isCurrentSaved ? t('components.tabs.workspaceSelector.saveWorkspaceSaved') : t('components.tabs.workspaceSelector.saveWorkspaceHint')"
+          @click="isCurrentSaved ? undefined : onSaveCurrentWorkspace()"
+        >
+          <i class="codicon codicon-save ws-item-plus"></i>
+          <span class="ws-item-label">{{ t('components.tabs.workspaceSelector.saveWorkspace') }}</span>
+        </div>
 
         <div class="ws-menu-item ws-menu-action" @click="onOpenWorkspaceFolder">
           <i class="codicon codicon-add ws-item-plus"></i>
@@ -359,6 +387,15 @@ onUnmounted(() => {
 
 .ws-menu-action {
   color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.ws-menu-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ws-menu-disabled:hover {
+  background: transparent;
 }
 
 .ws-menu-empty {

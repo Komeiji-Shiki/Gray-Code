@@ -68,6 +68,7 @@ import {
   removeSavedWorkspace,
   openWorkspaceFolderAction,
   openSavedWorkspace,
+  saveCurrentWorkspace,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
   handleRetryStatus,
@@ -879,6 +880,7 @@ export const useChatStore = defineStore('chat', () => {
     removeSavedWorkspace: (fsPath: string) => removeSavedWorkspace(state, fsPath),
     openWorkspaceFolder: (fsPath?: string) => openWorkspaceFolderAction(state, fsPath),
     openSavedWorkspace: (entry: WorkspaceFolderInfo) => openSavedWorkspace(state, entry),
+    saveCurrentWorkspace: () => saveCurrentWorkspace(state),
     
     // 输入框
     inputValue: state.inputValue,

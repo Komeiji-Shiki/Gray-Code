@@ -793,7 +793,8 @@ description: "简要描述该技能的功能及使用场景"
         networkError: '网络错误',
         invalidRequest: '无效的请求',
         internalError: '内部错误',
-        workspaceFolderNotFound: '文件夹不存在或已被移动'
+        workspaceFolderNotFound: '文件夹不存在或已被移动',
+        noActiveWorkspace: '没有已打开的工作区，请先打开工作区文件夹'
     }
 };
 

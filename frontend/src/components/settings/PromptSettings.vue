@@ -1441,7 +1441,7 @@ watch(selectedChannel, () => {
     
     <template v-else>
       <!-- 模式选择栏 -->
-      <div class="mode-selector-bar">
+      <div class="mode-selector-bar" data-search-anchor="prompt-mode-selector">
         <div class="mode-selector-left">
           <label class="mode-label">
             <i class="codicon codicon-symbol-method"></i>
@@ -1510,7 +1510,7 @@ watch(selectedChannel, () => {
       </div>
 
       <!-- 提示词组装方式 -->
-      <div class="template-section assembly-section">
+      <div class="template-section assembly-section" data-search-anchor="prompt-assembly">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-settings-gear"></i>
@@ -1545,7 +1545,7 @@ watch(selectedChannel, () => {
       </div>
 
       <!-- 动态上下文保留策略：传统模板和预设条目都生效 -->
-      <div class="template-section dynamic-strategy-section">
+      <div class="template-section dynamic-strategy-section" data-search-anchor="prompt-dynamic-strategy">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-history"></i>
@@ -1580,7 +1580,7 @@ watch(selectedChannel, () => {
 
       <template v-if="promptAssemblyMode === 'entries'">
         <!-- 预设提示词条目编辑区 -->
-        <div class="template-section entries-section">
+        <div class="template-section entries-section" data-search-anchor="prompt-entries">
           <div class="section-header">
             <label class="section-label">
               <i class="codicon codicon-list-tree"></i>
@@ -1602,7 +1602,7 @@ watch(selectedChannel, () => {
       
       <template v-else>
         <!-- 静态系统提示词编辑区 -->
-        <div class="template-section">
+        <div class="template-section" data-search-anchor="static-prompt">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-file-code"></i>
@@ -1628,7 +1628,7 @@ watch(selectedChannel, () => {
         </div>
       
         <!-- 动态上下文模板编辑区 -->
-        <div class="template-section dynamic-section">
+        <div class="template-section dynamic-section" data-search-anchor="dynamic-context">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-sync"></i>
@@ -1672,7 +1672,7 @@ watch(selectedChannel, () => {
       </template>
 
       <!-- 模式工具策略 -->
-      <div class="template-section tool-policy-section">
+      <div class="template-section tool-policy-section" data-search-anchor="tool-policy">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-tools"></i>
@@ -1789,7 +1789,7 @@ watch(selectedChannel, () => {
         </div>
         
         <!-- Token 计数显示 -->
-        <div class="token-count-section">
+        <div class="token-count-section" data-search-anchor="prompt-token-count">
           <div class="token-count-header">
             <label class="token-label">
               <i class="codicon codicon-symbol-numeric"></i>
@@ -1884,7 +1884,7 @@ watch(selectedChannel, () => {
       </div>
       
       <!-- 可用变量参考 -->
-      <div class="modules-reference">
+      <div class="modules-reference" data-search-anchor="prompt-modules">
         <h5 class="reference-title">
           <i class="codicon codicon-references"></i>
           {{ t('components.settings.promptSettings.modulesReference.title') }}

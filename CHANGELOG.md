@@ -21,9 +21,27 @@
   - **设置导入/导出的对话框 filters 形状不匹配（与上述同族）**：VS Code 契约的 `filters` 是 `{ 'JSON Files': ['json'] }` 对象，native.ts 原样透传给 Electron（要求 `[{ name, extensions }]` 数组）导致过滤被忽略/对话框异常；新增 `normalizeDialogFilters` 统一转换
   - **桌面版 `env.openExternal` 拒绝 `file:` URI（「打开 Skills 目录」等按钮静默无效）**：`file:` URI 走不了 `shell:openExternal` 的 http/https/mailto 白名单；现 shim 对 `file:` 方案的 Uri 改走 `shell:openPath`（含目录/可执行扩展名校验），与 VS Code 中打开系统资源管理器的语义一致
   - 修复说明：vscode-shim 全链路扫描（子智能体审查）未发现其他同等级 P0 形状不匹配；已知的 P1 降级项（文件写盘与文档事件脱节、未注册命令桩等）另行跟踪
+  - **打开/保存工作区（多工作区收藏）仍失效的残留根因（本轮彻底扫描修复）**：
+    - **60s 队列超时斩杀原生对话框**：`workspace.openFolder` / `storagePath.selectFolder` / `settings.import` / `settings.export` 的 handler 会 await 原生对话框（用户浏览文件夹可能远超 60 秒），此前在 `messageHandlingQueue` 串行队列中等待，60s 超时先触发并回传 `HANDLER_TIMEOUT`——前端请求已结算，用户稍后选完路径 handler 才继续执行（收藏已写入、工作区已切换），但迟到响应被前端当作广播丢弃，UI 状态不同步，表现为「打开/保存工作区点了没反应」。现四个对话框驱动类型全部移入 `NON_BLOCKING_MESSAGE_TYPES`（fire-and-forget，响应仍按 requestId 路由回发起方），`MessageRouter.ts` 同步
+    - **打开收藏工作区失败被静默吞掉**：收藏目录已被删除/移动时（`WORKSPACE_FOLDER_NOT_FOUND`）或超时等错误，前端 `openWorkspaceFolderAction` 仅 `console.warn`，用户看到「点了没反应」；现统一经 `showNotification` 弹出错误提示（取消对话框不打扰）
+    - **响应返回过期工作区状态**：`vscode.openFolder` 在宿主侧异步生效（native 层 fire-and-forget），handler 先于 `__setWorkspaceFolders` 返回过期列表/激活工作区，前端拿旧状态覆盖广播；现 `openWorkspaceFolder` 打开后轮询等待列表生效（≤3s）再响应（`WorkspaceHandlers.waitForWorkspaceOpened`）
+    - **File 菜单打开的工作区不进入收藏**：`File > Open Workspace Folder…` 走主进程 `pickWorkspaceFolder`，不经渲染层消息路径，打开的工作区不在「已保存的工作区」列表；现 `BackendHost` 新增 `addSavedWorkspaceFsPaths`（与 WorkspaceHandlers 同键 `graycode.savedWorkspaces` 写入同一 `global-state.json`），File 菜单打开即加入收藏，多工作区「保存 + 打开 + 重启保留」闭环补全
+    - **收藏写入 fire-and-forget，退出竞态丢数据**：`persistSavedFsPaths` 不 await，打开工作区后立即退出收藏可能丢失；现改为 await 写队列（VS Code 契约一致），`ElectronContext.FileMemento` 新增 `flush()` 并在 `BackendHost.dispose()` 排空（`before-quit` 兜底）
+    - **Windows 路径大小写敏感比较**：`__setWorkspaceFolders` 差集、收藏去重、已打开判定一律按 Windows 大小写不敏感比较（`C:\Foo` 与 `c:\foo` 不再误判 added+removed 触发技能重复扫描/列表闪烁，同一目录不再重复触发宿主替换）
+    - **新增显式「保存当前工作区」入口**：此前收藏只在打开文件夹时隐式写入，没有显式保存动作，用户找不到「保存工作区」；现工作区选择器下拉新增「保存当前工作区」菜单项（`workspace.saveCurrent` handler + 前端 action，无激活工作区时报错、已在收藏时置灰幂等），三语 i18n 同步
+    - **顺带修复 WorkspaceHandlers 的 i18n key 前缀错误**：`t('webview.errors.*')` / `t('webview.dialogs.*')` 在三语语言包中均不存在（实际命名空间是顶层 `errors.*` / `dialogs.*`），此前所有错误/对话框文案实际显示为原始 key 字符串；已统一修正
+  - **设置页搜索不能覆盖全部设置项（本轮彻底扫描修复）**：
+    - `SEARCH_INDEX` 从 22 条页签级条目扩展为 **110 条**（17 个页签兜底 + 93 条带 `data-search-anchor` 精确锚点的设置项条目），17 个设置组件（渠道/工具/自动执行/MCP/子代理/存档/总结/图像生成/依赖/上下文/提示词/Token 计数/通知/外观/记忆等）共 93 个设置块逐个加锚点——搜索「API URL」「多模态」「传输类型」「白名单」「宽高比」「分支清理」「排除配置」「音量」「开屏动画」等具体设置项不再搜不到，点击结果直达对应设置块（精确锚点 → h4 → h3 → 首个锚点 → 节容器 五级回退）
+    - **dependencies 页签 i18n key 缺失**：`settingsPanel.sections.dependencies` 在三语中均不存在，搜索结果行显示原始 key 字符串且跳转失败；现三语补齐
+    - **匹配空格敏感**：`'token 用量'` 匹配不到 `'token用量'`；query 与关键词统一去空白后 `includes`
+    - **移除误导性关键词**：appearance 的「主题/字体/深色/亮色/界面/ui/语言」（外观页不存在）、tools 的「重试/git/固定文件」、channel 的「提示词模式」（实际在 prompt 页）等误导词删除，改为各页真实设置项
 
 ### Added
   - **设置页设置项搜索**：设置面板标题栏新增搜索框——输入关键词实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），支持键盘上下键选择与回车跳转；点击结果自动切换到对应页签并滚动定位到设置项（节标题或精确锚点，附带 1.6s 闪烁高亮），搜索「存储路径/代理/语言/导入导出/应用信息」可精确直达对应设置块；内置中/英/日三语关键词索引（`SettingsPanel.vue` 静态 `SEARCH_INDEX`），空结果有提示文案，三语 i18n 同步
+
+### Tests
+  - 新增 `backend/__tests__/webview/workspaceHandlers.test.ts`（8 用例）：保存当前工作区（无激活报错/加入收藏/幂等）、打开工作区（目录缺失报错/已打开直接固定不重复触发宿主/未打开经宿主打开并等待生效后返回新状态/对话框选择自动收藏/取消不写收藏）、收藏持久化在响应前完成
+  - `messageRouterNonBlocking.test.ts` 增补对话框驱动类型（workspace.openFolder / storagePath.selectFolder / settings.import / settings.export）非阻塞断言
 
 ## [1.6.7] - 2026-08-06
 

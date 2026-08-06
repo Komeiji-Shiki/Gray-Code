@@ -792,7 +792,8 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
         networkError: 'Network error',
         invalidRequest: 'Invalid request',
         internalError: 'Internal error',
-        workspaceFolderNotFound: 'The folder does not exist or has been moved'
+        workspaceFolderNotFound: 'The folder does not exist or has been moved',
+        noActiveWorkspace: 'No workspace folder is open. Open one first to save it.'
     }
 };
 

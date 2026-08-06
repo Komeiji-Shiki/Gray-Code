@@ -47,6 +47,11 @@ class FileMemento {
     await this.writeQueue;
   }
 
+  /** 等待串行写队列排空（退出前调用，避免打开/保存工作区后立即退出丢收藏） */
+  async flush(): Promise<void> {
+    await this.writeQueue;
+  }
+
   keys(): readonly string[] {
     return Object.keys(this.cache);
   }
@@ -70,6 +75,11 @@ export class ElectronContext {
   readonly workspaceState: FileMemento;
   readonly subscriptions: Array<{ dispose(): void }> = [];
   readonly extension: any;
+
+  /** 等待全部 Memento 写队列排空（退出前调用，防止收藏/状态丢失） */
+  async flush(): Promise<void> {
+    await Promise.all([this.globalState.flush(), this.workspaceState.flush()]);
+  }
 
   constructor(options: ElectronContextOptions) {
     this.globalStoragePath = path.join(options.userDataPath, 'graycode');

@@ -227,7 +227,7 @@ onMounted(() => {
 
     <div v-else class="settings-form">
       <!-- 长期记忆总开关 -->
-      <div class="section memory-toggle-section">
+      <div class="section memory-toggle-section" data-search-anchor="memory-toggle">
         <CustomCheckbox
           v-model="enabled"
           :label="t('components.settings.settingsPanel.memory.enabled.label')"
@@ -240,7 +240,7 @@ onMounted(() => {
       </div>
 
       <!-- 自定义提示词 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="memory-custom-prompt">
         <label class="group-label">
           <i class="codicon codicon-note"></i>
           {{ t('components.settings.settingsPanel.memory.systemPrompt.title') }}
@@ -257,7 +257,7 @@ onMounted(() => {
       </div>
 
       <!-- 运行时参数 -->
-      <div class="section">
+      <div class="section" data-search-anchor="memory-runtime">
         <h5 class="section-title">
           <i class="codicon codicon-settings-gear"></i>
           {{ t('components.settings.settingsPanel.memory.runtime.title') }}
@@ -341,7 +341,7 @@ onMounted(() => {
       </div>
 
       <!-- ─── 记忆条目管理 ─── -->
-      <div class="section">
+      <div class="section" data-search-anchor="memory-raw-entries">
         <h5 class="section-title">
           <i class="codicon codicon-list-flat"></i>
           {{ t('components.settings.settingsPanel.memory.rawEntries.title') }}

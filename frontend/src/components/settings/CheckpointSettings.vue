@@ -213,7 +213,7 @@ onUnmounted(() => {
     
     <template v-else>
       <!-- 全局开关 -->
-      <div class="setting-group">
+      <div class="setting-group" data-search-anchor="checkpoint-enable">
         <div class="setting-header">
           <CustomCheckbox
             :modelValue="config.enabled"
@@ -229,7 +229,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 消息类型存档点 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-messages">
         <h4 class="group-title">
           <i class="codicon codicon-comment"></i>
           {{ t('components.settings.checkpoint.sections.messages.title') }}
@@ -316,7 +316,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 工具备份配置 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-tools">
         <h4 class="group-title">
           <i class="codicon codicon-file-code"></i>
           {{ t('components.settings.checkpoint.sections.tools.title') }}
@@ -382,7 +382,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 其他配置 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-other">
         <h4 class="group-title">
           <i class="codicon codicon-settings-gear"></i>
           {{ t('components.settings.checkpoint.sections.other.title') }}
@@ -406,7 +406,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 排除配置（EX-08 / EX-09） -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-exclusions">
         <h4 class="group-title">
           <i class="codicon codicon-filter"></i>
           {{ t('components.settings.checkpoint.sections.exclusion.title') }}
@@ -608,7 +608,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 存档点清理 -->
-      <div class="setting-group">
+      <div class="setting-group" data-search-anchor="checkpoint-cleanup">
         <h4 class="group-title">
           <i class="codicon codicon-trash"></i>
           {{ t('components.settings.checkpoint.sections.cleanup.title') }}

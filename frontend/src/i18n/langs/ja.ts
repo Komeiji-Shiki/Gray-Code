@@ -225,6 +225,9 @@ const ja: LanguageMessages = {
                 openWorkspaces: '開いているワークスペース',
                 savedWorkspaces: '保存済みワークスペース',
                 openWorkspaceFolder: 'ワークスペースフォルダを開く…',
+                saveWorkspace: '現在のワークスペースを保存',
+                saveWorkspaceHint: '現在のワークスペースを保存済みリストに追加',
+                saveWorkspaceSaved: '現在のワークスペースは保存済みリストにあります',
                 removeWorkspace: '保存済みから削除',
                 noSavedWorkspaces: '保存済みワークスペースはありません'
             }
@@ -2105,6 +2108,10 @@ const ja: LanguageMessages = {
                     subagents: {
                         title: 'サブエージェント',
                         description: 'AI が呼び出せる専門サブエージェントを設定'
+                    },
+                    dependencies: {
+                        title: '拡張依存関係',
+                        description: 'Python や Node などの依存ツールのインストールと管理'
                     },
                     sound: {
                         title: '通知システム',

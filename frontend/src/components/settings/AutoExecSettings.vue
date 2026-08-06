@@ -227,7 +227,7 @@ onMounted(() => {
 <template>
   <div class="auto-exec-settings">
     <!-- 说明文字 -->
-    <div class="settings-intro">
+    <div class="settings-intro" data-search-anchor="auto-exec-intro">
       <i class="codicon codicon-shield"></i>
       <div class="intro-content">
         <p class="intro-title">{{ t('components.settings.autoExec.intro.title') }}</p>
@@ -264,7 +264,7 @@ onMounted(() => {
     </div>
     
     <!-- 工具列表 -->
-    <div v-else class="tools-list">
+    <div v-else class="tools-list" data-search-anchor="auto-exec-list">
       <div 
         v-for="(categoryTools, category) in toolsByCategory" 
         :key="category"
@@ -321,7 +321,7 @@ onMounted(() => {
     </div>
     
     <!-- 提示信息 -->
-    <div class="settings-tips">
+    <div class="settings-tips" data-search-anchor="auto-exec-tips">
       <i class="codicon codicon-info"></i>
       <div class="tips-content">
         <p>{{ t('components.settings.autoExec.tips.diffReviewNote') }}</p>

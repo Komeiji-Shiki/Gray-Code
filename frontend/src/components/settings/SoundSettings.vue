@@ -490,7 +490,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="section-body">
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="sound-enabled">
             <label class="group-label">
               <i class="codicon codicon-bell"></i>
               {{ t('components.settings.soundSettings.enabled.title') }}
@@ -500,7 +500,7 @@ onBeforeUnmount(() => {
             <CustomCheckbox v-model="enabled" :label="t('components.settings.soundSettings.enabled.label')" />
           </div>
 
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="volume">
             <label class="group-label">
               <i class="codicon codicon-unmute"></i>
               {{ t('components.settings.soundSettings.volume.title') }}
@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="min-interval">
             <label class="group-label">
               <i class="codicon codicon-clock"></i>
               {{ t('components.settings.soundSettings.cooldown.title') }}
@@ -540,7 +540,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="event-types">
             <label class="group-label">
               <i class="codicon codicon-symbol-event"></i>
               {{ t('components.settings.soundSettings.cues.title') }}
@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="custom-sounds">
             <label class="group-label">
               <i class="codicon codicon-file-media"></i>
               {{ t('components.settings.soundSettings.assets.title') }}
@@ -659,7 +659,7 @@ onBeforeUnmount(() => {
             </span>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="test-play">
             <label class="group-label">
               <i class="codicon codicon-play"></i>
               {{ t('components.settings.soundSettings.test.title') }}
@@ -695,7 +695,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="section-body">
-          <div class="form-group">
+          <div class="form-group" data-search-anchor="win-agent-notify">
             <label class="group-label">
               <i class="codicon codicon-bell-dot"></i>
               {{ t('components.settings.soundSettings.windowsAgentStopNotification.optionsTitle') }}

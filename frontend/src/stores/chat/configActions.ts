@@ -5,7 +5,7 @@
  */
 
 import type { ChatStoreState, WorkspaceFolderInfo } from './types'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
 
 const CONVERSATION_MODEL_CONFIG_KEY = 'inputModelConfig'
 const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig'
@@ -343,6 +343,10 @@ export async function removeSavedWorkspace(state: ChatStoreState, fsPath: string
 export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: string): Promise<any> {
   try {
     const resp = await sendToExtension<any>('workspace.openFolder', { fsPath: fsPath ?? null })
+    if (resp?.success === false && resp?.canceled) {
+      // 用户在对话框里取消：不是错误，不打扰
+      return resp
+    }
     if (resp?.activeWorkspaceUri !== undefined) {
       setCurrentWorkspaceUri(state, resp.activeWorkspaceUri)
     }
@@ -353,8 +357,30 @@ export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: 
       setSavedWorkspaces(state, resp.saved)
     }
     return resp
-  } catch (error) {
+  } catch (error: any) {
+    // 打开失败（收藏目录已被删除/移动、超时等）不能静默吞掉：
+    // 此前仅 console.warn，用户看到「点了没反应」。
+    const message = error?.message || String(error)
     console.warn('[configActions] Failed to open workspace folder:', error)
+    void showNotification(message, 'error')
+    return null
+  }
+}
+
+/**
+ * 显式保存当前工作区到收藏（多工作区「保存工作区」入口）
+ */
+export async function saveCurrentWorkspace(state: ChatStoreState): Promise<any> {
+  try {
+    const resp = await sendToExtension<any>('workspace.saveCurrent', {})
+    if (Array.isArray(resp?.saved)) {
+      setSavedWorkspaces(state, resp.saved)
+    }
+    return resp
+  } catch (error: any) {
+    const message = error?.message || String(error)
+    console.warn('[configActions] Failed to save current workspace:', error)
+    void showNotification(message, 'error')
     return null
   }
 }

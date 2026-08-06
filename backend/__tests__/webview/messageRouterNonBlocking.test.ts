@@ -47,4 +47,20 @@ describe('MessageRouter non-blocking message types', () => {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);
         }
     });
+
+    it('dialog-driven types are non-blocking (native dialogs may outlive the 60s queue timeout)', () => {
+        // 打开/保存工作区、存储路径选择、设置导入/导出都会 await 原生对话框：
+        // 用户在对话框里浏览可能超过 60s 队列超时，若在串行队列中 await，
+        // 超时先触发（HANDLER_TIMEOUT 已回传）后 handler 才继续执行，
+        // 后续响应被前端当作迟到广播丢弃，表现为「打开/保存工作区没反应」。
+        const DIALOG_DRIVEN = [
+            'workspace.openFolder',
+            'storagePath.selectFolder',
+            'settings.import',
+            'settings.export'
+        ];
+        for (const t of DIALOG_DRIVEN) {
+            expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);
+        }
+    });
 });

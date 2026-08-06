@@ -765,11 +765,14 @@ export function __setWorkspaceFolders(fsPaths: string[]): void {
   const next = [...fsPaths];
   const prev = workspaceFolderUris;
   // 按新旧列表差集生成 added/removed：避免把保留的文件夹重复报为 added（技能重复扫描），
-  // 也让被移除的文件夹触发 removed 清理（此前 removed 恒为空）
-  const prevSet = new Set(prev);
-  const nextSet = new Set(next);
-  const addedPaths = next.filter(p => !prevSet.has(p));
-  const removedPaths = prev.filter(p => !nextSet.has(p));
+  // 也让被移除的文件夹触发 removed 清理（此前 removed 恒为空）。
+  // Windows 路径大小写不敏感：C:\Foo 与 c:\foo 是同一文件夹，
+  // 收藏/恢复链路中路径大小写可能漂移，若按大小写敏感比较会误报 added+removed。
+  const norm = (p: string) => (WIN32 ? p.replace(/\\/g, '/').toLowerCase() : p);
+  const prevSet = new Set(prev.map(norm));
+  const nextSet = new Set(next.map(norm));
+  const addedPaths = next.filter(p => !prevSet.has(norm(p)));
+  const removedPaths = prev.filter(p => !nextSet.has(norm(p)));
   workspaceFolderUris = next;
   cachedWorkspaceFolders = next.map((fsPath, index) => buildWorkspaceFolder(fsPath, index));
   workspaceOnDidChangeFolders.fire({

@@ -586,7 +586,7 @@ onMounted(async () => {
       </div>
 
       <!-- 全局配置 -->
-      <div class="config-section global-config">
+      <div class="config-section global-config" data-search-anchor="subagents-global">
         <h5>{{ t('components.settings.subagents.globalConfig') }}</h5>
         <div class="form-row">
           <div class="form-group flex-1">
@@ -622,7 +622,7 @@ onMounted(async () => {
       </div>
       
       <!-- 子代理选择器 -->
-      <div class="agent-selector">
+      <div class="agent-selector" data-search-anchor="subagents-selector">
         <CustomSelect
           v-if="agentOptions.length > 0"
           :modelValue="currentAgentType"
@@ -661,7 +661,7 @@ onMounted(async () => {
       <!-- 代理配置表单 -->
       <div v-if="currentAgent" class="agent-config">
         <!-- 基本信息 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-basic-info">
           <h5>{{ t('components.settings.subagents.basicInfo') }}</h5>
           
           <div class="form-group">
@@ -708,7 +708,7 @@ onMounted(async () => {
         </div>
         
         <!-- 系统提示词 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-system-prompt">
           <h5>{{ t('components.settings.subagents.systemPrompt') }}</h5>
           <textarea
             class="system-prompt-textarea"
@@ -720,7 +720,7 @@ onMounted(async () => {
         </div>
         
         <!-- 渠道和模型 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-channel-model">
           <h5>{{ t('components.settings.subagents.channelModel') }}</h5>
           
           <div class="form-row">
@@ -748,7 +748,7 @@ onMounted(async () => {
         </div>
         
         <!-- 工具配置 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-tools">
           <h5>{{ t('components.settings.subagents.tools') }}</h5>
           <p class="section-description">{{ t('components.settings.subagents.toolsDescription') }}</p>
           

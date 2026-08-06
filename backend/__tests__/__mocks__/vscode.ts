@@ -71,6 +71,9 @@ export const window = {
     showTextDocument: jest.fn(),
     setStatusBarMessage: jest.fn(),
     tabGroups: { all: [], close: jest.fn() },
+    // WorkspaceHandlers 弹窗（打开/保存工作区、存储路径选择、设置导入/导出）用
+    showOpenDialog: jest.fn(),
+    showSaveDialog: jest.fn(),
     // ActivityTracker 依赖的窗口状态/活动事件（返回可 dispose 的订阅对象）
     state: { focused: true },
     onDidChangeWindowState: jest.fn(() => ({ dispose: jest.fn() })),

@@ -226,6 +226,9 @@ const zhCN = {
                 openWorkspaces: '已打开的工作区',
                 savedWorkspaces: '已保存的工作区',
                 openWorkspaceFolder: '打开工作区文件夹…',
+                saveWorkspace: '保存当前工作区',
+                saveWorkspaceHint: '将当前工作区加入已保存列表',
+                saveWorkspaceSaved: '当前工作区已在已保存列表中',
                 removeWorkspace: '从收藏中移除',
                 noSavedWorkspaces: '暂无已保存的工作区'
             }
@@ -2106,6 +2109,10 @@ const zhCN = {
                     subagents: {
                         title: '子代理',
                         description: '配置可由 AI 调用的专业子代理'
+                    },
+                    dependencies: {
+                        title: '扩展依赖',
+                        description: '安装和管理 Python/Node 等扩展依赖工具'
                     },
                     sound: {
                         title: '通知系统',
