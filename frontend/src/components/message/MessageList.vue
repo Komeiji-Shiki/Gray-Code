@@ -540,6 +540,7 @@ type RenderRow =
   | { kind: 'build'; key: 'build-bar' }
   | { kind: 'message'; key: string; item: EnhancedMessage }
   | { kind: 'todo'; key: 'todo-bar' }
+  | { kind: 'summarize-divider'; key: 'summarize-divider' }
 
 function shouldInsertSticky(anchor: number | null, idx: number): boolean {
   return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
@@ -554,6 +555,15 @@ const messageRenderRows = computed<RenderRow[]>(() => {
   let buildInserted = !showBuildBar.value
   let todoInserted = !showTodoBar.value
 
+  // 逻辑截断：最后一个总结消息之后渲染横线，分隔「已总结区域」与「未总结区域」。
+  // 被总结消息（isSummarized）原文照常显示（不折叠），横线作为两者边界。
+  let lastSummaryBackendIndex: number | null = null
+  for (const item of visible) {
+    if (item.message.isSummary && typeof item.backendIndex === 'number') {
+      lastSummaryBackendIndex = item.backendIndex
+    }
+  }
+
   for (const item of visible) {
     const idx = item.backendIndex
     if (!buildInserted && shouldInsertSticky(buildAnchor, idx)) {
@@ -567,6 +577,11 @@ const messageRenderRows = computed<RenderRow[]>(() => {
     }
 
     rows.push({ kind: 'message', key: item.message.id, item })
+
+    // 在最后一个总结消息之后插入分隔线（已总结 / 未总结分界）
+    if (lastSummaryBackendIndex !== null && idx === lastSummaryBackendIndex) {
+      rows.push({ kind: 'summarize-divider', key: 'summarize-divider' })
+    }
   }
 
   if (!buildInserted && showBuildBar.value) {
@@ -1400,6 +1415,11 @@ function formatCheckpointTime(timestamp: number): string {
             </template>
           </template>
 
+          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） -->
+          <div v-else-if="row.kind === 'summarize-divider'" class="summarize-divider" aria-hidden="true">
+            <div class="summarize-divider-line"></div>
+          </div>
+
           <div v-else-if="row.kind === 'todo'" class="todo-sticky-shell">
             <div class="build-bar todo-snapshot-bar" :class="{ expanded: isTodoExpanded }">
               <div class="build-header" @click="toggleTodoExpanded()">
@@ -2138,6 +2158,19 @@ function formatCheckpointTime(timestamp: number): string {
   border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） */
+.summarize-divider {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+}
+
+.summarize-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-editor-lineHighlightBorder, rgba(128, 128, 128, 0.35));
 }
 
 .checkpoint-bar.checkpoint-before {

@@ -575,6 +575,7 @@ const en: LanguageMessages = {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
+                restoreTitle: 'Restore Original (undo summary, resend compressed messages)',
                 autoTriggered: 'Auto Triggered',
                 compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
                 legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',

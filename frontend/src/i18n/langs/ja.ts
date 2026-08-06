@@ -575,6 +575,7 @@ const ja: LanguageMessages = {
                 title: 'コンテキスト要約',
                 compressed: '{count} 件のメッセージを圧縮しました',
                 deleteTitle: '要約を削除',
+                restoreTitle: '原文を復元（要約を元に戻し、圧縮されたメッセージを再送信）',
                 autoTriggered: '自動トリガー',
                 compressionTokens: '置換された履歴 → 新しい要約（推定 {saved} トークン削減。実際のコンテキストは次の応答後に更新）',
                 legacyRequestTokens: '旧形式：要約モデルの入力 → 出力。メインコンテキストの前後サイズではありません',
