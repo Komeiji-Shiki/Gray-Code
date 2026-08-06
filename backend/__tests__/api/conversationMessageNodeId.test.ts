@@ -88,4 +88,39 @@ describe('BCP-01: ConversationManager.getMessageNodeIdAt', () => {
 
         await expect(manager.getMessageNodeIdAt('conv-node-empty', 0)).resolves.toBeUndefined();
     });
+
+    test('BCP-01 写路径失效：仓储 saveContents 重写历史后反查返回新 id（不命中陈旧缓存）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await manager.createConversation('conv-node-save', 'SaveContents');
+
+        const oldHistory = [makeMessage('user', 'hi', 0, true), makeMessage('model', 'hello', 1, true)];
+        await storage.saveHistory('conv-node-save', oldHistory);
+
+        // 首次反查填充 nodeIdCache（300ms TTL 窗口内）
+        await expect(manager.getMessageNodeIdAt('conv-node-save', 0)).resolves.toBe('id-0');
+
+        // 结构性变更：经仓储委托整体替换历史（拒绝工具调用/分支编辑等路径）
+        // 新历史消息 id 与旧历史不同：缓存未失效时会命中旧数组返回 id-0，测试可区分
+        const repo = manager.getTranscriptRepository('conv-node-save');
+        await repo.replaceContents([makeMessage('user', 'rewritten', 5, true)]);
+
+        // 写路径必须失效 nodeIdCache：立即反查应读到新历史而非陈旧缓存
+        await expect(manager.getMessageNodeIdAt('conv-node-save', 0)).resolves.toBe('id-5');
+        await expect(manager.getMessageNodeIdAt('conv-node-save', 1)).resolves.toBeUndefined();
+        const current = await manager.getMessagesRaw('conv-node-save');
+        expect(current).toHaveLength(1);
+    });
+
+    test('BCP-01 写路径失效：deleteConversation 后反查返回 undefined（缓存清除 + 已删除短路）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await manager.createConversation('conv-node-del', 'Delete');
+
+        await storage.saveHistory('conv-node-del', [makeMessage('user', 'hi', 0, true)]);
+        await expect(manager.getMessageNodeIdAt('conv-node-del', 0)).resolves.toBe('id-0');
+
+        await manager.deleteConversation('conv-node-del');
+        await expect(manager.getMessageNodeIdAt('conv-node-del', 0)).resolves.toBeUndefined();
+    });
 });

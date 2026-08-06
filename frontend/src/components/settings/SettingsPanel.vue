@@ -783,6 +783,13 @@ function moveSearchSelection(delta: number) {
   activeSearchIndex.value = (activeSearchIndex.value + delta + count) % count
 }
 
+// M-2：键盘导航/鼠标悬停时让选中项保持在下拉可视区域内（结果超出 max-height 时跟随滚动）
+watch(activeSearchIndex, () => {
+  nextTick(() => {
+    document.querySelector('.settings-search-result.active')?.scrollIntoView({ block: 'nearest' })
+  })
+})
+
 function openSearchSelection() {
   const list = searchResults.value
   if (list.length === 0) return

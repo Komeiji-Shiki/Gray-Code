@@ -236,6 +236,70 @@ export function clearRunAllowedTools(runId: string): void {
 let executorContext: SubAgentExecutorContext | null = null;
 
 /**
+ * 子代理路径共享的 ToolDeclarationResolver（按依赖引用身份缓存）：
+ * - 生产环境依赖（toolRegistry/settingsManager/mcpManager）是全局单例，同一依赖组合只建一个
+ *   实例 → 注册到 McpManager 的事件监听器只有 3 个常驻，不再随每次 run 无界累积（H-1）；
+ * - 同配置多次 run 复用同一实例的声明缓存（缓存键含 promptModeSnapshot 等 per-call 输入，
+ *   配置变化自动命中不同条目，无陈旧风险）；
+ * - 容量上限兜底：不同依赖组合（测试等场景）最多保留 TOOL_RESOLVER_CACHE_CAPACITY 个实例，
+ *   超限 dispose 最久未用实例，释放其 MCP 监听器。
+ */
+const TOOL_RESOLVER_CACHE_CAPACITY = 4;
+const sharedToolResolvers = new Map<string, ToolDeclarationResolver>();
+/** 依赖对象 → 自增 id（WeakMap 不阻止 GC；对象销毁后条目自动消失，无泄漏） */
+const resolverDepIds = new WeakMap<object, number>();
+let resolverDepIdCounter = 0;
+
+function toolResolverCacheKey(context: SubAgentExecutorContext): string {
+    return `${refIdentity(context.toolRegistry)}|${refIdentity(context.settingsManager)}|${refIdentity(context.mcpManager)}`;
+}
+
+function refIdentity(value: unknown): string {
+    if (!value || typeof value !== 'object') return String(value ?? '');
+    let id = resolverDepIds.get(value);
+    if (id === undefined) {
+        id = ++resolverDepIdCounter;
+        resolverDepIds.set(value, id);
+    }
+    return `#${id}`;
+}
+
+function getSharedToolResolver(context: SubAgentExecutorContext): ToolDeclarationResolver {
+    const key = toolResolverCacheKey(context);
+    const cached = sharedToolResolvers.get(key);
+    if (cached) {
+        // LRU 触碰
+        sharedToolResolvers.delete(key);
+        sharedToolResolvers.set(key, cached);
+        return cached;
+    }
+    const resolver = new ToolDeclarationResolver(
+        context.toolRegistry,
+        context.settingsManager,
+        context.mcpManager
+    );
+    sharedToolResolvers.set(key, resolver);
+    if (sharedToolResolvers.size > TOOL_RESOLVER_CACHE_CAPACITY) {
+        const oldestKey = sharedToolResolvers.keys().next().value;
+        if (oldestKey !== undefined) {
+            const oldest = sharedToolResolvers.get(oldestKey);
+            // 注意：dispose 可能是 undefined（mock/旧实现），需用双重可选链
+            oldest?.dispose?.();
+            sharedToolResolvers.delete(oldestKey);
+        }
+    }
+    return resolver;
+}
+
+/** 仅供测试/诊断：清理共享 resolver 缓存并释放全部 MCP 监听器 */
+export function clearSharedToolResolvers(): void {
+    for (const resolver of sharedToolResolvers.values()) {
+        resolver.dispose?.();
+    }
+    sharedToolResolvers.clear();
+}
+
+/**
  * 设置执行器上下文
  * 
  * 应在应用启动时调用，注入所需的依赖
@@ -277,11 +341,9 @@ export async function resolveSubAgentAvailableTools(
     // 修改原因：SubAgent 过去直接读取 toolRegistry/MCP 并自己清理 schema，导致工具声明与主会话动态声明分叉。
     // 修改方式：统一委托 ToolDeclarationResolver，并把 SubAgent 自己的 provider config、工具白名单和黑名单作为输入。
     // 修改目的：read_file 多模态说明、图片工具过滤、MCP schema 清理等以后只需要升级一个入口。
-    const resolver = new ToolDeclarationResolver(
-        context.toolRegistry,
-        context.settingsManager,
-        context.mcpManager
-    );
+    // H-1（修复）：不再每次 run 新建实例——构造函数会向 McpManager 单例注册监听器，
+    // 无界新建会累积永久监听器；改用按依赖引用共享的实例（见 getSharedToolResolver）。
+    const resolver = getSharedToolResolver(context);
 
     const resolved = resolver.resolve({
         multimodalEnabled: channelConfig.multimodalToolsEnabled,
