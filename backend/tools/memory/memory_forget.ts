@@ -60,7 +60,7 @@ async function memoryForgetHandler(args: Record<string, unknown>, _context?: Too
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed memory #${id}.`,
+                    message: `Removed memory #${id}. Remaining ids were renumbered; run memory_wake to refresh before further deletes.`,
                 },
             };
         }
@@ -70,12 +70,15 @@ async function memoryForgetHandler(args: Record<string, unknown>, _context?: Too
             const [loStr, hiStr] = blockId.split(',');
             const lo = parseInt(loStr, 10);
             const hi = parseInt(hiStr, 10);
+            if (lo > hi) {
+                return { success: false, error: `Invalid range: lo(${lo}) > hi(${hi}). Expected "lo,hi" with lo <= hi.` };
+            }
             const result = await mgr.deleteRange(lo, hi);
             return {
                 success: true,
                 data: {
                     removed: result.removed,
-                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}.`,
+                    message: `Removed ${result.removed} raw memories #${lo}-#${hi}. Remaining ids were renumbered; run memory_wake to refresh before further deletes.`,
                 },
             };
         }

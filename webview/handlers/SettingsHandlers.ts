@@ -15,6 +15,14 @@ import { getProductMetadata } from '../../backend/core/productMetadata';
 import { getExtensionVersion } from '../utils/extensionInfo';
 
 /**
+ * 批量删除记忆条目的单次请求上限。
+ *
+ * 为什么设上限：MemoryManager.deleteEntries 对不相邻 id 会逐个触发全量 LOG 重建（O(n·T)），
+ * 超大 ids 数组会让扩展主线程长时间停滞；前端列表展示上限为 ENTRIES_LIMIT(5000)，此处取 10000 留足余量。
+ */
+const MAX_BATCH_DELETE_IDS = 10000;
+
+/**
  * 获取设置
  */
 export const getSettings: MessageHandler = async (data, requestId, ctx) => {
@@ -277,8 +285,10 @@ export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) 
     }
     const { ids } = data ?? {};
     if (!Array.isArray(ids) || ids.length === 0 ||
+        ids.length > MAX_BATCH_DELETE_IDS ||
         ids.some(id => typeof id !== 'number' || !Number.isInteger(id) || id < 0)) {
-      return ctx.sendError(requestId, 'INVALID_PARAMS', 'ids (non-empty array of non-negative integers) is required.');
+      return ctx.sendError(requestId, 'INVALID_PARAMS',
+        `ids (non-empty array of ${MAX_BATCH_DELETE_IDS} non-negative integers max) is required.`);
     }
     const result = await mgr.deleteEntries(ids);
     ctx.sendResponse(requestId, { success: true, removed: result.removed });

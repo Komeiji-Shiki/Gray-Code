@@ -238,6 +238,9 @@ async function loadConfig() {
 // 加载记忆条目
 async function loadEntries() {
   entriesLoading.value = true
+  // 列表重载后旧 id 可能已重编号/失效：清空选中集，避免基于过期 id 批量删除误删其他条目
+  selectedIds.value = new Set()
+  editingId.value = null
   try {
     const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT })
     if (result?.entries) {
@@ -531,7 +534,7 @@ onMounted(() => {
             </label>
             <button
               class="btn btn-sm btn-danger"
-              :disabled="selectedIds.size === 0 || batchDeleteSaving"
+              :disabled="selectedIds.size === 0 || batchDeleteSaving || entriesLoading"
               @click="requestDeleteSelected"
             >
               <i v-if="batchDeleteSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -546,7 +549,7 @@ onMounted(() => {
               class="entry-checkbox"
               :checked="selectedIds.has(entry.id)"
               @change="toggleSelectEntry(entry)"
-              :disabled="batchDeleteSaving"
+              :disabled="batchDeleteSaving || entriesLoading"
               :title="t('common.select')"
             />
             <span class="entry-id">#{{ entry.id }}</span>
