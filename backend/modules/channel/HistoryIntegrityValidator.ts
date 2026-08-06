@@ -32,7 +32,8 @@ export interface ValidateHistoryIntegrityOptions {
     detectOrphanFunctionCall?: boolean;
 }
 
-function normalizeCallId(value: unknown): string {
+/** 归一化调用 ID（trim 后比较；导出供 ContextTrimService 的 O(n) 后缀有效性预计算复用同一口径） */
+export function normalizeCallId(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 

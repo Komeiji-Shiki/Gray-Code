@@ -2045,6 +2045,12 @@ const ja: LanguageMessages = {
                 backToChat: '会話に戻る',
                 sidebarCollapse: 'サイドバーを折りたたむ',
                 sidebarExpand: 'サイドバーを展開する',
+                search: {
+                    placeholder: '設定項目を検索…',
+                    clear: '検索をクリア',
+                    noResults: '一致する設定項目が見つかりません',
+                    hint: 'キーワードを入力して設定を検索。Enter で最初の結果を開きます'
+                },
                 sections: {
                     channel: {
                         title: 'チャンネル設定',
@@ -2089,6 +2095,10 @@ const ja: LanguageMessages = {
                     subagents: {
                         title: 'サブエージェント',
                         description: 'AI が呼び出せる専門サブエージェントを設定'
+                    },
+                    dependencies: {
+                        title: '拡張依存関係',
+                        description: 'Python や Node などの依存ツールのインストールと管理'
                     },
                     sound: {
                         title: '通知システム',

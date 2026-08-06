@@ -148,6 +148,11 @@ export interface ReplayTodoOptions {
   stopAtToolId?: string
   /** 仅重放到指定 backendIndex（包含该消息），用于 toolId 缺失/不稳定时兜底 */
   stopAtBackendIndex?: number
+  /** 增量重放：仅处理 fromIndex（含）之后的消息；此前状态由 initial* 提供 */
+  fromIndex?: number
+  initialTodos?: TodoItem[] | null
+  initialAnchorBackendIndex?: number | null
+  initialTouched?: boolean
 }
 
 
@@ -155,9 +160,13 @@ export function replayTodoStateFromMessages(
   messages: Message[],
   options?: ReplayTodoOptions
 ): ReplayTodoState {
-  let touched = false
-  let list: TodoItem[] = []
-  let anchorBackendIndex: number | null = null
+  let touched = options?.initialTouched ?? false
+  let list = options?.initialTodos ?? []
+  let anchorBackendIndex = options?.initialAnchorBackendIndex ?? null
+  const fromIndex =
+    typeof options?.fromIndex === 'number' && Number.isFinite(options.fromIndex) && options.fromIndex > 0
+      ? Math.min(options.fromIndex, messages.length)
+      : 0
   const stopAtToolId = typeof options?.stopAtToolId === 'string' ? options.stopAtToolId.trim() : ''
   const stopAtBackendIndex =
     typeof options?.stopAtBackendIndex === 'number' && Number.isFinite(options.stopAtBackendIndex)
@@ -165,7 +174,8 @@ export function replayTodoStateFromMessages(
       : null
   let stopped = false
 
-  for (const msg of messages) {
+  for (let i = fromIndex; i < messages.length; i++) {
+    const msg = messages[i]
     if (stopped) break
     const msgBackendIndex =
       typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)

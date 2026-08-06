@@ -120,6 +120,21 @@ function isTodoInitToolForSticky(tool: any): boolean {
   return false
 }
 
+// 模块级常量：todo 相关工具名集合（todoStickyMeta 的轻量预过滤用，避免每次评估重建 Set）
+const TODO_TOOL_NAME_SET = new Set(['todo_write', 'create_plan', 'update_plan'])
+
+/**
+ * activeBuildPlanSync 增量缓存：以 build 对象引用 + 前缀消息引用快照作指纹。
+ * 指纹不变时仅扫描尾部新增消息（含旧尾消息——流式期间其 tools 会被原地改写），
+ * 其余结构变更/build 变更自动回退全量扫描。chatStore 是单例，模块级缓存跨实例共享安全。
+ */
+let activeBuildPlanSyncCache: {
+  build: unknown
+  scannedCount: number
+  messagesRef: Message[]
+  latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null
+} | null = null
+
 const allMessageIndexBounds = computed(() => {
   let firstIndexed: number | null = null
   let lastIndexed: number | null = null
@@ -139,10 +154,16 @@ const allMessageIndexBounds = computed(() => {
 
 const todoStickyMeta = computed(() => {
   const fallbackName = t('components.message.tool.todoWrite.label')
+  const messages = chatStore.allMessages
 
-  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
-    const msg = chatStore.allMessages[i]
+  // 工具名先于昂贵的合并判定做轻量过滤：todo_write / create_plan / update_plan 之外的
+  // 消息直接跳过（isTodoInitToolForSticky 含 getMergedToolResult + 确认文案判定，仅对有
+  // 相关工具名的消息调用），窗口内没有任何相关工具名时直接返回空态
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
+    const hasTodoToolName = msg.tools.some(t => TODO_TOOL_NAME_SET.has(t.name))
+    if (!hasTodoToolName) continue
     const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
     if (!initTool) continue
 
@@ -308,12 +329,36 @@ const activeBuildPlanSync = computed<null | {
   signature: string
 }>(() => {
   const build = chatStore.activeBuild
-  if (!build?.planPath) return null
+  if (!build?.planPath) {
+    activeBuildPlanSyncCache = null
+    return null
+  }
 
   const buildAnchor = typeof build.anchorBackendIndex === 'number' ? build.anchorBackendIndex : null
   let latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null = null
 
-  for (const msg of chatStore.allMessages) {
+  const messages = chatStore.allMessages
+  const len = messages.length
+  let fromIndex = 0
+
+  // 前缀引用校验：同一 build 且缓存窗口是当前窗口的前缀（含尾消息原地替换）时只扫尾部
+  const cache = activeBuildPlanSyncCache
+  if (cache !== null && cache.build === build && cache.messagesRef.length <= len) {
+    let prefixOk = true
+    for (let i = 0; i < cache.scannedCount; i++) {
+      if (messages[i] !== cache.messagesRef[i]) {
+        prefixOk = false
+        break
+      }
+    }
+    if (prefixOk) {
+      latest = cache.latest
+      fromIndex = cache.scannedCount
+    }
+  }
+
+  for (let i = fromIndex; i < len; i++) {
+    const msg = messages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
 
     const isAfterBuildStart = (
@@ -349,6 +394,14 @@ const activeBuildPlanSync = computed<null | {
       if (!content) continue
       latest = { kind: 'progress_sync', content, order }
     }
+  }
+
+  // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+  activeBuildPlanSyncCache = {
+    build,
+    scannedCount: Math.max(0, len - 1),
+    messagesRef: messages,
+    latest
   }
 
   if (!latest) return null

@@ -229,7 +229,7 @@ onMounted(() => {
 <template>
   <div class="tools-settings">
     <!-- 全局配置 -->
-    <div class="global-config">
+    <div class="global-config" data-search-anchor="max-tool-iterations">
       <div class="config-item">
         <div class="config-label">
           <span class="label-text">{{ t('components.settings.toolsSettings.maxIterations.label') }}</span>
@@ -282,7 +282,7 @@ onMounted(() => {
     </div>
     
     <!-- 工具列表 -->
-    <div v-else class="tools-list">
+    <div v-else class="tools-list" data-search-anchor="tool-list">
       <div 
         v-for="(categoryTools, category) in toolsByCategory" 
         :key="category"
