@@ -45,6 +45,46 @@ describe('regexGuard 危险模式检测（ReDoS）', () => {
         expect(validateRegexPattern('(ab*c)*').ok).toBe(false);
     });
 
+    it('拒绝嵌套分组穿透形态 ((a+)+)+ 与 ((a|a)+)+', () => {
+        expect(validateRegexPattern('((a+)+)+').ok).toBe(false);
+        expect(validateRegexPattern('((a|a)+)+').ok).toBe(false);
+    });
+
+    it('拒绝嵌套 + 裸量词原子 (?:a+|(?:ab))+（正则层 [^()]* 盲区）', () => {
+        expect(validateRegexPattern('(?:a+|(?:ab))+').ok).toBe(false);
+    });
+
+    it('拒绝命名组嵌套量词 (?<name>a+)+', () => {
+        expect(validateRegexPattern('(?<name>a+)+').ok).toBe(false);
+    });
+
+    it('拒绝问号家族组合 ((a+)?)+ 与 ((a+)+)?', () => {
+        expect(validateRegexPattern('((a+)?)+').ok).toBe(false);
+        expect(validateRegexPattern('((a+)+)?').ok).toBe(false);
+    });
+
+    it('拒绝组内可选量词 (a?)+ 与范围量词 (a{2,})+', () => {
+        expect(validateRegexPattern('(a?)+').ok).toBe(false);
+        expect(validateRegexPattern('(a{2,})+').ok).toBe(false);
+    });
+
+    it('不误伤线性可选组 (a+)? 与 (ab+)?', () => {
+        expect(validateRegexPattern('(a+)?').ok).toBe(true);
+        expect(validateRegexPattern('(ab+)?').ok).toBe(true);
+    });
+
+    it('不误伤转义括号/字符类/定长量词/环视', () => {
+        expect(validateRegexPattern('\\(a+\\\)+').ok).toBe(true);
+        expect(validateRegexPattern('([a+])+').ok).toBe(true);
+        expect(validateRegexPattern('(a{2}){2}').ok).toBe(true);
+        expect(validateRegexPattern('(?<=a)b+').ok).toBe(true);
+        expect(validateRegexPattern('[()]+').ok).toBe(true);
+    });
+
+    it('不误伤嵌套定长分支 (?:a|(?:ab))+（嵌套分支不做完备分析，放行）', () => {
+        expect(validateRegexPattern('(?:a|(?:ab))+').ok).toBe(true);
+    });
+
     it('不误伤单组字面量 (abc)+', () => {
         const result = validateRegexPattern('(abc)+');
         expect(result.ok).toBe(true);
