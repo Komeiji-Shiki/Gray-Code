@@ -15,6 +15,14 @@ import { getProductMetadata } from '../../backend/core/productMetadata';
 import { getExtensionVersion } from '../utils/extensionInfo';
 
 /**
+ * 批量删除记忆条目的单次请求上限。
+ *
+ * 为什么设上限：MemoryManager.deleteEntries 对不相邻 id 会逐个触发全量 LOG 重建（O(n·T)），
+ * 超大 ids 数组会让扩展主线程长时间停滞；前端列表展示上限为 ENTRIES_LIMIT(5000)，此处取 10000 留足余量。
+ */
+const MAX_BATCH_DELETE_IDS = 10000;
+
+/**
  * 获取设置
  */
 export const getSettings: MessageHandler = async (data, requestId, ctx) => {
@@ -259,9 +267,33 @@ export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
       return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (non-negative integer) is required.');
     }
     await mgr.deleteEntry(id);
-    ctx.sendResponse(requestId, { success: true });
+    ctx.sendResponse(requestId, { success: true, removed: 1 });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_MEMORY_ENTRY_ERROR', error.message || 'Failed to delete memory entry');
+  }
+};
+
+/**
+ * 批量删除多条原始记忆（id 数组，可乱序/重复；按闭区间聚合从大到小删除，
+ * 删除后剩余记录 id 前移重编号，相关树摘要一并清空）
+ */
+export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = getGlobalMemoryManager();
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { ids } = data ?? {};
+    if (!Array.isArray(ids) || ids.length === 0 ||
+        ids.length > MAX_BATCH_DELETE_IDS ||
+        ids.some(id => typeof id !== 'number' || !Number.isInteger(id) || id < 0)) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS',
+        `ids (non-empty array of ${MAX_BATCH_DELETE_IDS} non-negative integers max) is required.`);
+    }
+    const result = await mgr.deleteEntries(ids);
+    ctx.sendResponse(requestId, { success: true, removed: result.removed });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_MEMORY_ENTRIES_ERROR', error.message || 'Failed to delete memory entries');
   }
 };
 
@@ -456,6 +488,7 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('addMemoryEntry', addMemoryEntry);
   registry.set('updateMemoryEntry', updateMemoryEntry);
   registry.set('deleteMemoryEntry', deleteMemoryEntry);
+  registry.set('deleteMemoryEntries', deleteMemoryEntries);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);
