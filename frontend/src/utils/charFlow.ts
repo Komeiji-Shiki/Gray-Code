@@ -52,6 +52,13 @@ export interface CharFlowOptions {
   /** 尾部窗口：只保留最近 N 个字符（丢弃开头）。折叠预览内容有界，
    * 避免超长思考撑爆单行容器 */
   tailWindow?: number
+  /** 垂直滚动容器（默认 host 自身）：多行预览时滚动发生在父容器上，
+   * host 自身不滚动，贴底需写在容器上 */
+  scrollContainer?: HTMLElement
+  /** 内容更新时是否应贴底：返回 false 表示用户正在向上查看，不打扰 */
+  stickBottom?: () => boolean
+  /** 尾部窗口首次发生裁剪时回调（中展开裁剪提示用） */
+  onTrimmed?: () => void
 }
 
 export class CharFlow {
@@ -66,6 +73,10 @@ export class CharFlow {
   private readonly noFade: boolean
   private readonly squashLineBreaks: boolean
   private readonly tailWindow?: number
+  private readonly scrollContainer?: HTMLElement
+  private readonly stickBottom?: () => boolean
+  private readonly onTrimmed?: () => void
+  private trimmed = false
 
   constructor(
     private readonly host: HTMLElement,
@@ -77,6 +88,9 @@ export class CharFlow {
     this.noFade = options.noFade === true
     this.squashLineBreaks = options.squashLineBreaks === true
     this.tailWindow = options.tailWindow !== undefined && options.tailWindow > 0 ? options.tailWindow : undefined
+    this.scrollContainer = options.scrollContainer
+    this.stickBottom = options.stickBottom
+    this.onTrimmed = options.onTrimmed
     host.classList.add('char-flow')
     this.settled = document.createTextNode('')
     host.appendChild(this.settled)
@@ -137,11 +151,18 @@ export class CharFlow {
     this.settled.appendData(text)
   }
 
-  /** 尾部窗口裁剪：内容超出窗口时丢弃开头（保留最新字符；折叠预览用） */
+  /** 尾部窗口裁剪：内容超出窗口时丢弃开头（保留最新字符；折叠预览用）。
+   * 首次发生裁剪时回调 onTrimmed（组件据此显示「内容过长」提示） */
   private trimToWindow(): void {
     if (this.tailWindow === undefined) return
     const excess = this.settled.data.length - this.tailWindow
-    if (excess > 0) this.settled.replaceData(0, excess, '')
+    if (excess > 0) {
+      this.settled.replaceData(0, excess, '')
+      if (!this.trimmed) {
+        this.trimmed = true
+        this.onTrimmed?.()
+      }
+    }
   }
 
   /** 是否还有未播完动画的字符（供「升级为稳定块」判断） */
@@ -194,10 +215,19 @@ export class CharFlow {
     this.scrollToEnd()
   }
 
-  /** 折叠的单行思维预览始终展示最新字符；正文与展开态不启用。 */
+  /**
+   * 内容更新后的滚动跟随：
+   * - followEnd：单行水平预览始终滚动到最新字符；
+   * - stickBottom：多行滚动容器按用户意图贴底（用户滚上去查看时返回 false 停止打扰）。
+   * 正文与展开态不启用。
+   */
   private scrollToEnd(): void {
+    const scroller = this.scrollContainer ?? this.host
     if (this.followEnd) {
-      this.host.scrollLeft = this.host.scrollWidth
+      scroller.scrollLeft = scroller.scrollWidth
+    }
+    if (this.stickBottom?.()) {
+      scroller.scrollTop = scroller.scrollHeight
     }
   }
 

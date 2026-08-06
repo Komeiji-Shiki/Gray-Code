@@ -566,7 +566,11 @@ const ja: LanguageMessages = {
             },
             thought: {
                 thinking: '考え中...',
-                thoughtProcess: '思考プロセス'
+                thoughtProcess: '思考プロセス',
+                viewCollapsed: '折りたたむ',
+                viewMedium: 'スクロール表示',
+                viewExpanded: 'すべて展開',
+                trimmedHint: '内容が長すぎるため、最新部分のみ表示しています。すべて展開で全文をご覧ください'
             },
             contextBlocks: {
                 clickToView: 'クリックして完全な内容を表示'

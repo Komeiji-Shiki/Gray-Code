@@ -566,7 +566,11 @@ const en: LanguageMessages = {
             },
             thought: {
                 thinking: 'Thinking...',
-                thoughtProcess: 'Thought Process'
+                thoughtProcess: 'Thought Process',
+                viewCollapsed: 'Collapse',
+                viewMedium: 'Scroll view',
+                viewExpanded: 'Expand all',
+                trimmedHint: 'Content too long — showing only the latest part. Use expand-all to view the full text'
             },
             contextBlocks: {
                 clickToView: 'Click to view full content'

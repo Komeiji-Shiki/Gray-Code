@@ -59,7 +59,7 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../u
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
-import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import { type RenderBlock, type ThoughtViewMode, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
 import type { SmoothDisplayText } from '../../stores/chat/types'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
@@ -136,7 +136,7 @@ const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoot
 
 // 活动尾块信息：流式期间最后一个 text/thought part（与 smoothText.partKey 匹配）
 // 由 CharFlow 显示层托管。text 尾块在本组件挂载独立 host；thought 尾块保留思维卡片，
-// 由 MessageRenderBlock 在折叠预览或展开内容中挂载 host。
+// 由 MessageRenderBlock 在中展开预览或完全展开内容中挂载 host。
 const tailInfo = computed<{ type: 'text' | 'thought'; partKey: string } | null>(() => {
   const smooth = smoothText.value
   if (!smooth || !isStreaming.value) return null
@@ -208,8 +208,8 @@ watch(
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
 
-// 思考内容展开状态
-const isThoughtExpanded = ref(false)
+// 思考内容三段式视图模式（对齐后台任务）：折叠 / 中展开 / 完全展开，默认中展开
+const thoughtViewMode = ref<ThoughtViewMode>('medium')
 
 
 const todoDebugPrinted = new Set<string>()
@@ -691,8 +691,8 @@ watch(showResponseDialog, (open) => {
   })
 })
 
-function toggleThought() {
-  isThoughtExpanded.value = !isThoughtExpanded.value
+function setThoughtViewMode(mode: ThoughtViewMode) {
+  thoughtViewMode.value = mode
 }
 
 function handleRetry() {
@@ -853,12 +853,12 @@ function handleRestoreAndRetry(checkpointId: string) {
             :message-role="isUser ? 'user' : 'assistant'"
             :message-backend-index="message.backendIndex"
             :is-streaming="isStreaming"
-            :is-thought-expanded="isThoughtExpanded"
+            :thought-view-mode="thoughtViewMode"
             :is-thinking="isThinking"
             :thinking-time-display="thinkingTimeDisplay"
             :smooth-display-active="isSmoothThoughtBlock(block)"
-            :toggle-thought="toggleThought"
-            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))"
+            :set-thought-view-mode="setThoughtViewMode"
+            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))"
           />
         </template>
 
@@ -1312,133 +1312,6 @@ function handleRestoreAndRetry(checkpointId: string) {
   opacity: 1;
 }
 
-/* 思考块样式 - 使用灰色调、斜体，保持简洁 */
-.thought-block {
-  /*
-   * 思考内容（MarkdownRenderer）样式覆写：
-   * - 以前通过 .thought-text（父组件 scoped）控制，但 scoped CSS 不会作用到子组件根节点
-   * - 改为用 CSS 变量传递给 MarkdownRenderer（变量可跨组件继承）
-   */
-  --lim-md-font-size: 12px;
-  --lim-md-line-height: 1.5;
-  --lim-md-color: var(--vscode-descriptionForeground);
-  --lim-md-font-style: italic;
-
-  margin: 8px 0;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  background: var(--vscode-textBlockQuote-background);
-  overflow: hidden;
-}
-
-.thought-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 0.15s;
-}
-
-.thought-header:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.thought-header .codicon {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-icon {
-  color: var(--vscode-descriptionForeground) !important;
-}
-
-/* 思考中灯泡闪烁动画 */
-.thought-icon.thinking-pulse {
-  color: var(--vscode-charts-yellow, #ddb92f) !important;
-  animation: lightbulb-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes lightbulb-pulse {
-  0%, 100% {
-    opacity: 0.4;
-    text-shadow: none;
-  }
-  50% {
-    opacity: 1;
-    text-shadow: 0 0 8px var(--vscode-charts-yellow, #ddb92f);
-  }
-}
-
-.thought-label {
-  font-size: 12px;
-  font-weight: 500;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-time {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
-  padding: 1px 6px;
-  border-radius: 10px;
-  margin-left: 4px;
-  transition: all 0.2s ease;
-}
-
-.thought-time.thinking-active {
-  color: var(--vscode-charts-yellow, #ddb92f);
-  animation: time-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes time-pulse {
-  0%, 100% {
-    opacity: 0.8;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.thought-preview {
-  flex: 1;
-  font-size: 11px;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thought-content {
-  padding: 12px;
-  /*
-   * 不在标题与内容之间绘制明显分界线：
-   * 与深色模式视觉风格保持一致，改为无硬边框分隔。
-   */
-  border-top: none;
-}
-
-/*
- * 注意：.thought-text 是挂在 MarkdownRenderer 根节点上的 class。
- * 由于本文件是 scoped CSS，如需影响子组件内容，需要使用 :deep。
- * 这里保留段落间距微调。
- */
-.thought-block :deep(.thought-text p) {
-  margin: 0.5em 0;
-}
-
-.thought-block :deep(.thought-text p:first-child) {
-  margin-top: 0;
-}
-
-.thought-block :deep(.thought-text p:last-child) {
-  margin-bottom: 0;
-}
 
 /* 总结消息样式 */
 .summary-message {
