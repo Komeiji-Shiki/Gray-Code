@@ -944,6 +944,9 @@ export class ConversationManager {
                 const functionResponseParts = parts.filter(part => !!part.functionResponse);
                 const restParts = parts.filter(part => !part.functionResponse);
                 nextContents.push({
+                    ...(node.contentMetadata
+                        ? JSON.parse(JSON.stringify(node.contentMetadata))
+                        : {}),
                     role: node.role,
                     parts: JSON.parse(JSON.stringify(restParts)),
                     id: node.id,
@@ -951,6 +954,7 @@ export class ConversationManager {
                     timestamp: node.timestamp ?? node.createdAt,
                     modelVersion: node.modelVersion,
                     usageMetadata: node.usageMetadata,
+                    usageMetadataPartial: node.usageMetadataPartial,
                 });
                 if (functionResponseParts.length > 0) {
                     // R8a-H1：优先复用旧主历史中对应 FR 消息的 id（匹配不到留给步骤 2 生成）。
@@ -1832,13 +1836,16 @@ export class ConversationManager {
      */
     async deleteMessage(conversationId: string, messageIndex: number): Promise<void> {
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-        if (messageIndex < 0 || messageIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
-        }
-        // 决策 6：删除前捕获被删消息 id（删除后主历史不再包含它），供分支图同步锚定
-        const deletedMessageId = history[messageIndex]?.id ?? null;
+        let deletedMessageId: string | null = null;
+        let deletedWasSummary = false;
         const nextHistory = await repository.mutateContents(contents => {
+            if (messageIndex < 0 || messageIndex >= contents.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+            }
+            // 在实际持锁快照内捕获删除锚点与总结类型，避免 getContents 与 mutateContents 之间
+            // 并发插入/删除导致按旧下标走错分支同步策略。
+            deletedMessageId = contents[messageIndex]?.id ?? null;
+            deletedWasSummary = contents[messageIndex]?.isSummary === true;
             let next = contents;
             // 逻辑截断：删除总结消息时先恢复其覆盖的原文（取消 isSummarized 标记），
             // 避免「既无总结文本也无原文」的上下文真空（原文保留在存储中但不再发送）。
@@ -1864,7 +1871,13 @@ export class ConversationManager {
             const branchService = getGlobalBranchService();
             if (branchService) {
                 try {
-                    await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                    if (deletedWasSummary) {
+                        // 删除总结会同时恢复其覆盖原文的 isSummarized 标记，不是普通子树删除；
+                        // 必须按当前主历史重建活跃路径与消息元数据，不能把总结后的全部后继软删。
+                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+                    } else {
+                        await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                    }
                 } catch (error) {
                     log.warn('branch_delete_sync_failed', {
                         conversationId,

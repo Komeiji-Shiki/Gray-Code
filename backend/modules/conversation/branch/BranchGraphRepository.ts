@@ -15,6 +15,7 @@
  */
 
 import * as fsp from 'fs/promises';
+import { constants as fsConstants } from 'fs';
 import * as path from 'path';
 import { ConversationBranchGraph, BranchRetentionConfig, isBranchGraphShape } from './types';
 import { BranchError } from './types';
@@ -271,6 +272,38 @@ export class BranchGraphRepository {
      */
     async save(conversationId: string, graph: ConversationBranchGraph): Promise<void> {
         await runWriteSerialized(conversationId, () => this.writeGraphFile(conversationId, graph));
+    }
+
+    /**
+     * 在修复/重建 sidecar 前保存原文件的逐字节备份。
+     *
+     * - 与 save/delete 共用会话写队列，避免复制过程与单次写入本身交错；上层仍须在同一会话锁内
+     *   连续执行 backup + save，保证中间没有其它业务写入；
+     * - 使用 COPYFILE_EXCL，绝不覆盖已有备份；
+     * - 源文件不存在返回 null，其它错误直接抛出，调用方必须停止重建。
+     */
+    async backup(conversationId: string, reason = 'recovery'): Promise<string | null> {
+        return await runWriteSerialized(conversationId, async () => {
+            const filePath = this.getBranchesFilePath(conversationId);
+            const safeReason = reason.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'recovery';
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+                const suffix = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+                const backupPath = path.join(path.dirname(filePath), `branches.backup-${safeReason}-${suffix}.json`);
+                try {
+                    await fsp.copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL);
+                    return backupPath;
+                } catch (error) {
+                    const code = (error as NodeJS.ErrnoException)?.code;
+                    if (code === 'ENOENT') {
+                        return null;
+                    }
+                    if (code !== 'EEXIST' || attempt === 4) {
+                        throw error;
+                    }
+                }
+            }
+            return null;
+        });
     }
 
     /**

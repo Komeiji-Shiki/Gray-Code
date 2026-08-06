@@ -99,6 +99,22 @@ describe('BranchGraphRepository sidecar 读写', () => {
         expect(result.graph!.nodes['a']).toBeTruthy(); // 旧候选仍在图中
     });
 
+    test('backup：覆盖前保存逐字节副本，不覆盖已有备份；源文件缺失返回 null', async () => {
+        const graph = sampleGraph('original');
+        await repo.save(conversationId, graph);
+        const originalPath = repo.getBranchesFilePath(conversationId);
+        const original = await fsp.readFile(originalPath);
+
+        const backupPath = await repo.backup(conversationId, 'history-diverged');
+        expect(backupPath).toBeTruthy();
+        expect(path.basename(backupPath!)).toMatch(/^branches\.backup-history-diverged-/);
+        expect(await fsp.readFile(backupPath!)).toEqual(original);
+
+        await repo.save(conversationId, sampleGraph('replacement'));
+        expect(await fsp.readFile(backupPath!)).toEqual(original);
+        await expect(repo.backup('missing-conversation')).resolves.toBeNull();
+    });
+
     test('损坏 JSON → BRANCH_STORAGE_CORRUPT，graph 为 null（调用方降级线性模式）', async () => {
         const filePath = repo.getBranchesFilePath(conversationId);
         await fsp.mkdir(path.dirname(filePath), { recursive: true });
