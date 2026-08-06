@@ -6,8 +6,9 @@
  * - 溢出裁剪循环迭代：整轮排除后重新估算，直到装得下或没有可排除的内容
  * - 全部排除后仍超限：返回 CONTEXT_OVERFLOW，不把必败的请求发给 API
  * - H1 物理替换语义：删除 [historyStartIndex, insertIndex) + 插入总结在同一次
- *   mutateContents（会话写锁）内完成；总结成功后历史 = [旧总结(如有), 新总结, 尾巴]，
- *   返回 insertIndex = 替换完成后总结的新下标（= 原 historyStartIndex），removedCount 正确
+ *   mutateContents（会话写锁）内完成；首条用户消息受保护不删除（原始任务指令原样
+ *   保留），总结成功后历史 = [首条用户消息(如有), 旧总结(如有), 新总结, 尾巴]，
+ *   返回 insertIndex = 替换完成后总结的新下标，removedCount 正确
  * - H2 并发安全：写锁内基于最新历史重新校验；historyStartIndex/insertIndex 越界
  *   或总结范围会吞掉当前回合真实用户消息时返回 STALE_RANGE，不落盘
  * - C 总结质量：summaryText 低于 MIN_SUMMARY_LENGTH 时返回 LOW_QUALITY_SUMMARY，不替换历史
@@ -222,22 +223,22 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            // H1：insertIndex 是替换完成后总结的新下标 = historyStartIndex = 0
-            expect(result.insertIndex).toBe(0);
-            // 被总结区间 [0, 3) = u1/fc1/fr1，removedCount = 3
-            expect(result.removedCount).toBe(3);
-            expect(result.summarizedMessageCount).toBe(3);
+            // 首条用户消息 r1（index 0）受保护：删除区间从它之后开始 [1, 3) = fc1/fr1
+            expect(result.insertIndex).toBe(1);
+            expect(result.removedCount).toBe(2);
+            expect(result.summarizedMessageCount).toBe(2);
         }
         expect(generate).toHaveBeenCalledTimes(1);
         const history = (generate.mock.calls[0][0] as { history: Content[] }).history;
         // 3 条被总结消息 + 1 条总结提示词
         expect(history.length).toBe(4);
 
-        // H1：历史 = [新总结, 尾巴]，被总结的 r1 轮已物理删除
-        expect(liveHistory).toHaveLength(10 - 3 + 1);
-        expect(liveHistory[0]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 0 });
-        expect(liveHistory[0].parts[0].text).toContain('[对话总结]');
-        expect(liveHistory.slice(1).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'r3', 'fc3', 'fc3', 'done']);
+        // H1：历史 = [首条用户消息 r1, 新总结, 尾巴]，被总结的 fc1/fr1 已物理删除
+        expect(liveHistory).toHaveLength(10 - 2 + 1);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[1]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 1 });
+        expect(liveHistory[1].parts[0].text).toContain('[对话总结]');
+        expect(liveHistory.slice(2).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'r3', 'fc3', 'fc3', 'done']);
     });
 
     it('同一轮内的多个工具交互一起排除（不拆散轮）', async () => {
@@ -257,12 +258,13 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            // 整轮2（含两个工具交互与轮首用户消息）一起排除，被总结区间 = [0, 3)
-            expect(result.insertIndex).toBe(0);
-            expect(result.removedCount).toBe(3);
+            // 整轮2（含两个工具交互与轮首用户消息）一起排除，被总结区间 = [1, 3)（fc1/fr1，r1 受保护）
+            expect(result.insertIndex).toBe(1);
+            expect(result.removedCount).toBe(2);
         }
         expect(generate).toHaveBeenCalledTimes(1);
-        expect(liveHistory.slice(1).map(msgLabel))
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory.slice(2).map(msgLabel))
             .toEqual(['r2', 'fc2a', 'fc2a', 'fc2b', 'fc2b', 'r3', 'fc3', 'fc3', 'done']);
     });
 
@@ -336,18 +338,23 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            // 旧累计 3（sum1）+ 本次新总结 [r3]（1 条）= 4；旧实现会回退到数组下标 2 得出 3
-            expect(result.summarizedMessageCount).toBe(4);
-            expect(result.insertIndex).toBe(3); // = historyStartIndex（sum2 之后）
-            expect(result.removedCount).toBe(1);
+            // 旧累计 3（sum1）+ 本次实际删除 0（r3 是第一条真实用户消息，受保护不删除，
+            // 本次总结退化为纯插入）= 3；旧实现会回退到数组下标 2 得出 3
+            expect(result.summarizedMessageCount).toBe(3);
+            expect(result.insertIndex).toBe(4); // 总结插入到 r3 之后（原 insertIndex 位置）
+            expect(result.removedCount).toBe(0);
         }
         expect(generate).toHaveBeenCalledTimes(1);
-        expect(liveHistory.slice(4).map(msgLabel)).toEqual(['m3', 'r4', 'fc4', 'fc4']);
+        // 历史 = [sum1, m1, sum2, r3(首条用户消息,保留), 新总结, m3, r4, fc4, fc4]
+        expect(liveHistory).toHaveLength(8 + 1);
+        expect(liveHistory[3].parts[0].text).toBe('r3');
+        expect(liveHistory[4]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 4 });
+        expect(liveHistory.slice(5).map(msgLabel)).toEqual(['m3', 'r4', 'fc4', 'fc4']);
     });
 });
 
 describe('SummarizeService.handleAutoSummarize - H1 物理替换语义', () => {
-    it('无旧总结时：历史 = [新总结, 尾巴]，removedCount 正确', async () => {
+    it('无旧总结时：历史 = [第一条用户消息, 新总结, 尾巴]，removedCount 正确', async () => {
         const { service, liveHistory } = createHarness({
             fullHistory: [
                 userMsg('r1', 50), fcMsg('fc1', 50), frMsg('fc1', 50),
@@ -360,13 +367,15 @@ describe('SummarizeService.handleAutoSummarize - H1 物理替换语义', () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            expect(result.insertIndex).toBe(0);
-            expect(result.removedCount).toBe(3);
-            expect(result.summarizedMessageCount).toBe(3);
+            // 首条用户消息 r1 受保护：删除 [1, 3) = fc1/fr1，总结插入到 1
+            expect(result.insertIndex).toBe(1);
+            expect(result.removedCount).toBe(2);
+            expect(result.summarizedMessageCount).toBe(2);
         }
-        expect(liveHistory).toHaveLength(7 - 3 + 1);
-        expect(liveHistory[0]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 0 });
-        expect(liveHistory.slice(1).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'done']);
+        expect(liveHistory).toHaveLength(7 - 2 + 1);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[1]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 1 });
+        expect(liveHistory.slice(2).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'done']);
     });
 });
 

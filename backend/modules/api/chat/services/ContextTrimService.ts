@@ -1349,6 +1349,17 @@ export class ContextTrimService {
         // 标记，由 ToolIterationLoopService 在发送请求前触发总结。自动总结成功后历史已被物理
         // 替换（总结消息代替被总结区间），token 估算口径与模型视角一致，不会每轮反复触发。
         if (policy.mode === 'summarize') {
+            // 首条用户消息保护：用户的原始任务指令是长期上下文锚点，总结文本永远不如原话
+            // 清楚，必须原样出现在请求里（不能只依赖 Preserved user inputs 档案——首次总结
+            // 物理替换后首条用户消息可能早于最后总结，且档案可能超长截断）。若首条用户消息
+            // 早于最后总结，把它原样拼到请求历史最前（与档案并存，轻微冗余换取原话完整）。
+            let firstUserIndex = -1;
+            for (let i = 0; i < fullHistory.length; i++) {
+                if (isRealUserMessage(fullHistory[i])) {
+                    firstUserIndex = i;
+                    break;
+                }
+            }
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
                 fullHistory,
@@ -1357,6 +1368,9 @@ export class ContextTrimService {
                 summaryStartIndex,
                 dynamicContextStrategy
             );
+            const summarizeHistory = (firstUserIndex >= 0 && firstUserIndex < summaryStartIndex)
+                ? [fullHistory[firstUserIndex], ...normalizedHistory.history]
+                : normalizedHistory.history;
             
             // 估算当前 token 总量来判断是否需要总结
             const fullTokenResult = this.accumulateTokens(
@@ -1420,7 +1434,7 @@ export class ContextTrimService {
             }
             
             return {
-                history: normalizedHistory.history,
+                history: summarizeHistory,
                 trimStartIndex: normalizedHistory.trimStartIndex,
                 needsAutoSummarize,
                 needsContextFallback,
