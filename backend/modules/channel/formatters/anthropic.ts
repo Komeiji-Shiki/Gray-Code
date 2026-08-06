@@ -371,7 +371,13 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 this.pushMergedMessage(messages, 'assistant', contentArray);
-            } else if (functionResponseParts.length > 0) {
+            }
+
+            // 工具结果独立生成（与 functionCall 解耦）：同一历史消息同时携带
+            // functionCall + functionResponse（如中断残留/修复数据的混合形态）时，
+            // 原来的 else-if 会吞掉 functionResponse，导致 assistant tool_use
+            // 后没有对应 tool_result → Anthropic 400。这里改为独立分支。
+            if (functionResponseParts.length > 0) {
                 // user 消息包含 tool_result
                 const contentArray: any[] = [];
                 
