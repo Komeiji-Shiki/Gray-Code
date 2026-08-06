@@ -2223,7 +2223,12 @@ const ja: LanguageMessages = {
                         addTooLong: '内容が 1 件あたりの上限（{limit} バイト）を超えています。',
                         truncatedNotice: '記憶が {limit} 件を超えています。リストには最初の {limit} 件のみ表示されます（残りはチャットで memory_recall を使って検索できます）。',
                         deleteConfirmTitle: '記憶エントリを削除',
-                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
+                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
+                        selectAll: 'すべて選択',
+                        deleteSelected: '選択した {count} 件を削除',
+                        deletedBatch: '{count} 件の記憶を削除しました。',
+                        batchDeleteConfirmTitle: '記憶エントリを一括削除',
+                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
                     }
                 },
 
