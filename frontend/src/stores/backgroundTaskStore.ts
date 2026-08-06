@@ -165,14 +165,14 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   }
 
   /**
-   * 一键清除全部已结束且已回流（reported）的任务 chip。
-   * 保留未回流任务：其回执尚未进入对话历史，清除会导致模型永远收不到结果。
+   * 一键清除全部已结束（非 running）的任务 chip。
+   * 未回流任务（回执尚未进入对话历史）也一并清除——调用方需自行确认（UI 层弹确认框提示）。
    */
   function dismissCompletedTasks(): void {
     const next = { ...tasks.value }
     let changed = false
     for (const record of taskList.value) {
-      if (record.status === 'running' || !record.reported) continue
+      if (record.status === 'running') continue
       delete next[record.taskId]
       changed = true
     }

@@ -60,7 +60,7 @@ describe('backgroundTaskStore.dismissCompletedTasks', () => {
     setActivePinia(createPinia())
   })
 
-  it('一键清除已结束且已回流任务，保留运行中与未回流任务', async () => {
+  it('一键清除所有已结束任务（含未回流），仅保留运行中', async () => {
     const store = useBackgroundTaskStore()
 
     // t1、t2：完成并成功回流（reported=true）
@@ -88,11 +88,11 @@ describe('backgroundTaskStore.dismissCompletedTasks', () => {
     expect(store.taskList.find(t => t.taskId === 't3')?.status).toBe('running')
     expect(store.taskList.find(t => t.taskId === 't4')?.reported).toBe(false)
 
+    // 一键清除：所有非 running 任务（含未回流的 t4）都被移除，运行中的 t3 保留
     store.dismissCompletedTasks()
 
-    expect(store.taskList.map(t => t.taskId).sort()).toEqual(['t3', 't4'])
+    expect(store.taskList.map(t => t.taskId)).toEqual(['t3'])
     expect(store.taskList.find(t => t.taskId === 't3')?.status).toBe('running')
-    expect(store.taskList.find(t => t.taskId === 't4')?.status).toBe('completed')
   })
 
   it('无可清除任务时不改动任务表', () => {
