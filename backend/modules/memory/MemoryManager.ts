@@ -845,6 +845,11 @@ export class MemoryManager {
         const release = await this.lock.acquire();
         let T = 0;
         try {
+            // 输入校验：非整数/NaN 不得进入，避免 NaN 比较恒 false 导致静默全量重写；
+            // 负数属于“越界”，交给下方 lo < 0 检查抛 “No memory at index”，语义更准确
+            if (!Number.isInteger(lo) || !Number.isInteger(hi)) {
+                die(`Invalid delete range: lo=${lo}, hi=${hi}.`);
+            }
             const logPath = this.logPath();
             await this.repair(logPath, LOG_REC);
             T = await this.logLen();
@@ -872,18 +877,11 @@ export class MemoryManager {
             } finally {
                 await handle.close();
             }
-            // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
-            // tmp+rename 原子替换，崩溃不损坏线上文件。
-            const tmpPath = `${logPath}.tmp`;
-            await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
-            await fs.rename(tmpPath, logPath);
 
-            // 删除后记录编号变化（中间删除整段重编号、尾部删除长度收缩），旧树摘要
-            // 的块寻址随之失效——中间删除清空全部；尾部删除按新长度截断（与 truncateLog
-            // 同口径），清除覆盖被删记录的尾部块，保留完全位于保留区内的块。
-            // 直接用文件操作清空而不调用 treeDrop：treeDrop 内部会重新 acquire 锁（AsyncLock
-            // 不可重入，持锁调用会死锁），且其循环以当前 logLen 为界，无法清理 size > 当前
-            // 长度的旧树文件。此处仍在锁内：与并发 treePut/logAppend 串行，无交错写风险。
+            // 先清树摘要、后原子换 LOG：树是缓存，缺失只触发重建（安全）；
+            // 陈旧摘要会被 wake/zoom 当作权威数据展示（危险）。若先 rename LOG 再截断树，
+            // 崩溃窗口内新 LOG + 旧摘要共存，已删记忆会在 wake 中“复活”且 pending() 认为
+            // 已压缩永不重建。顺序反之后，崩溃窗口最多是“摘要缺失”，自愈安全。
             const newT = T - (hi - lo + 1);
             for (let size = 2; size <= T; size *= 2) {
                 const p = this.treePath(size);
@@ -899,6 +897,12 @@ export class MemoryManager {
                     }
                 }
             }
+
+            // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
+            // tmp+rename 原子替换，崩溃不损坏线上文件。
+            const tmpPath = `${logPath}.tmp`;
+            await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
+            await fs.rename(tmpPath, logPath);
         } finally {
             release();
         }
@@ -921,9 +925,16 @@ export class MemoryManager {
      * 返回实际删除条数。删除后相关树摘要随 deleteRange 一并清空。
      */
     async deleteEntries(ids: number[]): Promise<{ removed: number }> {
+        if (!Array.isArray(ids)) {
+            die('deleteEntries: ids must be an array.');
+        }
         const sorted = Array.from(new Set(ids)).sort((a, b) => a - b);
         if (sorted.length === 0) {
             return { removed: 0 };
+        }
+        // 防御：非负整数校验（调用方已校验，这里是 API 层兜底，防止 NaN/负数/浮点进入 deleteRange）
+        if (sorted.some(id => !Number.isInteger(id) || id < 0)) {
+            die('deleteEntries: ids must be non-negative integers.');
         }
         let removed = 0;
         for (let i = sorted.length - 1; i >= 0; ) {

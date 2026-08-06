@@ -49,7 +49,10 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'storagePath.selectFolder',
   'checkpoint.restore',
   'checkpoint.deleteBatch',
-  'checkpoint.previewRestore'
+  'checkpoint.previewRestore',
+  // deleteMemoryEntries：批量删除记忆可能对交错 id 触发多次全量 LOG 重建（O(n·T)），
+  // 大选择量下可能超过 180s；超时会让前端误判失败而后端已删，重试又因 id 失效报错（memory-review）
+  'deleteMemoryEntries'
 ])
 
 /**
