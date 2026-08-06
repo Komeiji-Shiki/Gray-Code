@@ -204,6 +204,7 @@ describe('DiffManager lifecycle closure', () => {
         const provider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
         (provider.getSession as jest.Mock).mockReset();
         (provider.getSessionByFilePath as jest.Mock).mockReset();
+        (provider.removeSession as jest.Mock).mockReset();
     });
 
     it('opens native tool diff in the main chat column even when Monitor owns another group', async () => {
@@ -417,6 +418,28 @@ describe('DiffManager lifecycle closure', () => {
         expect(diff.status).toBe('accepted');
         expect(diff.partial).toBe(true);
         // 无 rejected 块：rejectedBlockIndices 为空数组（partial=true 时总会写入该字段）
+        expect(diff.rejectedBlockIndices).toEqual([]);
+    });
+
+    it('acceptDiff with partial but no lens session writes empty rejectedBlockIndices', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+        (diff as any).userEditedContent = 'user manually edited';
+
+        const lensProvider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
+        // lens session 不存在（如 skip-diff-view 路径）→ partial=true 且 rejectedBlockIndices 为空数组
+        (lensProvider.getSession as jest.Mock).mockReturnValue(undefined);
+
+        const accepted = await manager.acceptDiff(diff.id, false, false);
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        expect(diff.partial).toBe(true);
         expect(diff.rejectedBlockIndices).toEqual([]);
     });
 
