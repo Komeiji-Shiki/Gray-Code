@@ -4,20 +4,25 @@
  *
  * 包含两部分：
  * 1. 提示词 & 运行时参数配置
- * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
+ * 2. 原始记忆条目管理（查看 / 编辑 / 删除，支持全局记忆 / 工作区记忆双作用域）
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
 const { t } = useI18n()
 
+/** 条目列表展示上限（与后端 getMemoryEntries 默认 limit 一致） */
+const ENTRIES_LIMIT = 5000
+
 // 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）
 const DEFAULT_SYSTEM_PROMPT = [
   '启动时必须主动激活记忆',
   '',
   '在每次会话中，在进行任何其他工具调用之前运行 memory_wake，然后严格按照其提示执行，直到一切结束。',
+  '',
+  '记忆包含两部分：全局记忆（所有工作区共享）与当前工作区记忆（按工作区隔离），memory_wake 会同时输出两者，注意区分 --- Global memory --- 与 --- Workspace memory --- 标注；记录新记忆时 memory_note 默认写入当前工作区的记忆存储。',
   '',
   '工作期间可主动记录记忆',
   '',
@@ -45,6 +50,11 @@ const isSaving = ref(false)
 const statusMessage = ref('')
 const statusError = ref(false)
 const enabled = ref(true)
+// 配置是否已成功加载过至少一次（静默刷新失败时据此决定是否保留现有表单值）
+const configLoadedOnce = ref(false)
+// 配置/条目请求序号：快速切换作用域时丢弃过期响应，防止旧数据覆盖新数据造成内容闪烁/错乱
+let configLoadSeq = 0
+let entryLoadSeq = 0
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
 const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
@@ -61,8 +71,6 @@ interface LogEntry {
   date: string
   text: string
 }
-// 设置页一次性最多加载/展示的原始记忆条目数（与后端 getMemoryEntries 默认 limit 对齐）
-const ENTRIES_LIMIT = 5000
 const entries = ref<LogEntry[]>([])
 const entriesLoading = ref(false)
 const entriesTotal = ref(0)
@@ -75,66 +83,118 @@ const deleteCandidate = ref<LogEntry | null>(null)
 const showDeleteConfirm = ref(false)
 const deleteSaving = ref(false)
 
-// ─── 批量删除 ───
+// ─── 记忆作用域（全局 / 工作区） ───
+interface WorkspaceMemoryScope {
+  uri: string
+  name: string
+  fsPath: string
+  hasData: boolean
+}
+const memoryScope = ref<'global' | 'workspace'>('global')
+const workspaceScopes = ref<WorkspaceMemoryScope[]>([])
+const selectedWorkspaceUri = ref('')
+const scopesLoading = ref(false)
+
+// ─── 作用域数据缓存 ───
+// 每个作用域最近一次成功加载的数据。切换作用域时立即渲染目标作用域的缓存
+// （无中间空态/加载占位帧），随后后台静默刷新——消除列表高度塌陷造成的一帧
+// 空白闪烁（工作区→全局切换时工作区列表很高、全局实例已预热响应很快，
+// 旧实现中间态只持续 1-2 帧，肉眼可见闪烁而低帧率录屏捕捉不到）。
+interface ScopeCache {
+  entries: LogEntry[]
+  total: number
+  truncated: boolean
+  config?: {
+    enabled: boolean
+    systemPrompt: string
+    wakeLines: number
+    entryChars: number
+    partChars: number
+    partLines: number
+  }
+  entriesLoaded: boolean
+  configLoaded: boolean
+}
+const scopeCache = new Map<string, ScopeCache>()
+
+/** 当前作用域的缓存键：全局为 'global'；工作区为 'ws:<uri>'；未选工作区返回 null */
+function scopeKey(): string | null {
+  if (memoryScope.value === 'global') return 'global'
+  return selectedWorkspaceUri.value ? `ws:${selectedWorkspaceUri.value}` : null
+}
+
+function getOrCreateScopeCache(key: string): ScopeCache {
+  let cached = scopeCache.get(key)
+  if (!cached) {
+    cached = { entries: [], total: 0, truncated: false, entriesLoaded: false, configLoaded: false }
+    scopeCache.set(key, cached)
+  }
+  return cached
+}
+
+/** 当前作用域的 workspaceUri 参数（全局为空对象，工作区带上 uri） */
+function scopeParams(): { workspaceUri?: string } {
+  return memoryScope.value === 'workspace' && selectedWorkspaceUri.value
+    ? { workspaceUri: selectedWorkspaceUri.value }
+    : {}
+}
+
+/**
+ * 切换作用域瞬间：立即应用目标作用域的缓存数据（或清空进入加载态），
+ * 再配合 loadConfig(true)/loadEntries(false) 后台静默刷新。
+ * 未选择工作区（工作区 tab 刚打开、列表未加载完）时不发请求，直接显示空态——
+ * 避免 scopeParams 为空时误把全局数据渲染在工作区 tab 下。
+ */
+function applyCachedScope(): void {
+  const key = scopeKey()
+  if (!key) {
+    entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
+    entriesLoading.value = false
+    return
+  }
+  const cached = scopeCache.get(key)
+  if (cached?.entriesLoaded) {
+    entries.value = cached.entries
+    entriesTotal.value = cached.total
+    entriesTruncated.value = cached.truncated
+    entriesLoading.value = false
+  } else {
+    entries.value = []
+    entriesLoading.value = true
+  }
+  if (cached?.configLoaded && cached.config) {
+    // 立即应用目标作用域的运行时参数，避免表单短暂显示上一作用域的值再跳变
+    enabled.value = cached.config.enabled
+    systemPrompt.value = cached.config.systemPrompt
+    wakeLines.value = cached.config.wakeLines
+    entryChars.value = cached.config.entryChars
+    partChars.value = cached.config.partChars
+    partLines.value = cached.config.partLines
+    configLoadedOnce.value = true
+  }
+}
+
+/** 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目 */
+function refreshCurrentScope(): void {
+  statusMessage.value = ''
+  statusError.value = false
+  // 目标作用域条目的 id 空间独立：清空选中与编辑态，防旧 id 错位静默删错/改错
+  selectedIds.value = new Set()
+  editingId.value = null
+  editingText.value = ''
+  applyCachedScope()
+  loadConfig(true)
+  loadEntries(false)
+}
+
+/** 批量删除选中项（上限与后端 MAX_BATCH_DELETE_IDS 一致） */
 const selectedIds = ref<Set<number>>(new Set())
 const showBatchDeleteConfirm = ref(false)
 const batchDeleteSaving = ref(false)
-const isAllSelected = computed(() =>
-  entries.value.length > 0 && entries.value.every(e => selectedIds.value.has(e.id))
-)
-
-function toggleSelectAll() {
-  if (isAllSelected.value) {
-    selectedIds.value = new Set()
-  } else {
-    selectedIds.value = new Set(entries.value.map(e => e.id))
-  }
-}
-
-function toggleSelectEntry(entry: LogEntry) {
-  const next = new Set(selectedIds.value)
-  if (next.has(entry.id)) {
-    next.delete(entry.id)
-  } else {
-    next.add(entry.id)
-  }
-  selectedIds.value = next
-}
-
-// 请求批量删除：弹出确认框
-function requestDeleteSelected() {
-  if (selectedIds.value.size === 0) return
-  showBatchDeleteConfirm.value = true
-}
-
-// 确认批量删除
-async function confirmDeleteSelected() {
-  if (selectedIds.value.size === 0) return
-  batchDeleteSaving.value = true
-  try {
-    const result = await sendToExtension<any>('deleteMemoryEntries', {
-      ids: Array.from(selectedIds.value),
-    })
-    showBatchDeleteConfirm.value = false
-    selectedIds.value = new Set()
-    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', {
-      count: result?.removed ?? 0,
-    })
-    statusError.value = false
-    // 删除后 id 重编号：整表重载
-    await loadEntries()
-  } catch (e: any) {
-    statusMessage.value = e?.message || 'Failed to delete entries'
-    statusError.value = true
-  } finally {
-    batchDeleteSaving.value = false
-  }
-}
-
-// 取消批量删除
-function cancelDeleteSelected() {
-  showBatchDeleteConfirm.value = false
-}
+const batchDeleteCount = computed(() => selectedIds.value.size)
+const isAllSelected = computed(() => entries.value.length > 0 && selectedIds.value.size === entries.value.length)
 
 // ─── 手动新增记忆 ───
 const newEntryText = ref('')
@@ -163,14 +223,13 @@ async function addEntry() {
   }
   addingEntry.value = true
   try {
-    const result = await sendToExtension<any>('addMemoryEntry', { text })
+    const result = await sendToExtension<any>('addMemoryEntry', { text, ...scopeParams() })
     newEntryText.value = ''
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.added', {
       id: result?.id ?? '',
     })
     statusError.value = false
     await loadEntries()
-    setTimeout(() => { statusMessage.value = '' }, 3000)
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to add entry'
     statusError.value = true
@@ -191,10 +250,9 @@ async function confirmDeleteEntry() {
   if (!entry) return
   deleteSaving.value = true
   try {
-    await sendToExtension('deleteMemoryEntry', { id: entry.id })
+    await sendToExtension('deleteMemoryEntry', { id: entry.id, ...scopeParams() })
     deleteCandidate.value = null
     showDeleteConfirm.value = false
-    selectedIds.value = new Set()
     // 删除后 id 重编号：整表重载（不能只按 id 过滤本地列表）
     await loadEntries()
   } catch (e: any) {
@@ -211,12 +269,80 @@ function cancelDeleteEntry() {
   showDeleteConfirm.value = false
 }
 
-// 加载配置
-async function loadConfig() {
-  isLoading.value = true
-  statusMessage.value = ''
+// ─── 批量删除 ───
+function toggleSelectEntry(id: number) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function toggleSelectAll() {
+  if (isAllSelected.value) selectedIds.value = new Set()
+  else selectedIds.value = new Set(entries.value.map(e => e.id))
+}
+
+function requestDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  showBatchDeleteConfirm.value = true
+}
+
+async function confirmDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  batchDeleteSaving.value = true
+  const count = selectedIds.value.size
   try {
-    const config = await sendToExtension<any>('getMemoryConfig', {})
+    await sendToExtension('deleteMemoryEntries', { ids: [...selectedIds.value], ...scopeParams() })
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', { count })
+    statusError.value = false
+    setTimeout(() => { statusMessage.value = '' }, 3000)
+    selectedIds.value = new Set()
+    showBatchDeleteConfirm.value = false
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to delete entries'
+    statusError.value = true
+  } finally {
+    batchDeleteSaving.value = false
+  }
+}
+
+function cancelDeleteSelected() {
+  showBatchDeleteConfirm.value = false
+}
+
+// 加载工作区记忆 scope 列表
+async function loadWorkspaceScopes() {
+  scopesLoading.value = true
+  try {
+    const resp = await sendToExtension<any>('listMemoryScopes', {})
+    if (Array.isArray(resp?.scopes)) {
+      workspaceScopes.value = resp.scopes
+      // 保持已选工作区有效；无效时默认选第一个（若有）
+      if (!selectedWorkspaceUri.value || !resp.scopes.some((s: WorkspaceMemoryScope) => s.uri === selectedWorkspaceUri.value)) {
+        selectedWorkspaceUri.value = resp.scopes[0]?.uri ?? ''
+      }
+    }
+  } catch {
+    workspaceScopes.value = []
+  } finally {
+    scopesLoading.value = false
+  }
+}
+
+// 加载配置
+// silent=true（作用域/工作区切换）时只刷新配置值：不触整页 loading、不清空/覆盖
+// statusMessage；失败时若已有配置则仅 console.warn，保留现有表单值
+async function loadConfig(silent = false) {
+  const seq = ++configLoadSeq
+  if (!silent) {
+    isLoading.value = true
+    statusMessage.value = ''
+  }
+  try {
+    const config = await sendToExtension<any>('getMemoryConfig', scopeParams())
+    // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域配置覆盖新作用域
+    if (seq !== configLoadSeq) return
     if (config) {
       if (typeof config.enabled === 'boolean') enabled.value = config.enabled
       if (typeof config.systemPrompt === 'string' && config.systemPrompt.trim()) {
@@ -226,23 +352,56 @@ async function loadConfig() {
       if (typeof config.entryChars === 'number') entryChars.value = config.entryChars
       if (typeof config.partChars === 'number') partChars.value = config.partChars
       if (typeof config.partLines === 'number') partLines.value = config.partLines
+      configLoadedOnce.value = true
+      // 写回缓存：切换回来时可立即渲染，无需重新等待
+      const key = scopeKey()
+      if (key) {
+        const cached = getOrCreateScopeCache(key)
+        cached.config = {
+          enabled: enabled.value,
+          systemPrompt: systemPrompt.value,
+          wakeLines: wakeLines.value,
+          entryChars: entryChars.value,
+          partChars: partChars.value,
+          partLines: partLines.value,
+        }
+        cached.configLoaded = true
+      }
     }
   } catch (e: any) {
-    statusMessage.value = e?.message || 'Failed to load config'
-    statusError.value = true
+    if (seq !== configLoadSeq) return
+    if (silent && configLoadedOnce.value) {
+      // 静默刷新失败：不覆盖现有表单值，仅记录
+      console.warn('[MemorySettings] silent loadConfig failed:', e?.message)
+    } else {
+      statusMessage.value = e?.message || 'Failed to load config'
+      statusError.value = true
+    }
   } finally {
-    isLoading.value = false
+    if (!silent && seq === configLoadSeq) isLoading.value = false
   }
 }
 
 // 加载记忆条目
-async function loadEntries() {
-  entriesLoading.value = true
-  // 列表重载后旧 id 可能已重编号/失效：清空选中集，避免基于过期 id 批量删除误删其他条目
-  selectedIds.value = new Set()
-  editingId.value = null
+// showLoading=false（作用域切换触发的刷新）且已有缓存时：不置加载占位，
+// 直接展示缓存数据、响应到达后原位更新——防止列表高度塌陷造成一帧空白闪烁
+async function loadEntries(showLoading = true) {
+  const key = scopeKey()
+  if (!key) {
+    // 工作区 tab 未选择工作区：不发请求（scopeParams 为空会误拉全局数据）
+    entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
+    entriesLoading.value = false
+    return
+  }
+  const seq = ++entryLoadSeq
+  const hasCache = scopeCache.get(key)?.entriesLoaded === true
+  if (showLoading || !hasCache) entriesLoading.value = true
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT })
+    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT, ...scopeParams() })
+    // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域条目闪现/覆盖
+    if (seq !== entryLoadSeq) return
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
@@ -252,12 +411,23 @@ async function loadEntries() {
       entriesTotal.value = 0
       entriesTruncated.value = false
     }
+    // 写回缓存：切换回来时可立即渲染
+    const cached = getOrCreateScopeCache(key)
+    cached.entries = entries.value
+    cached.total = entriesTotal.value
+    cached.truncated = entriesTruncated.value
+    cached.entriesLoaded = true
+    // 作用域/数据变化后清理残留选中与编辑态（防旧 id 错位静默删错）
+    selectedIds.value = new Set()
+    editingId.value = null
+    editingText.value = ''
   } catch {
+    if (seq !== entryLoadSeq) return
     entries.value = []
     entriesTotal.value = 0
     entriesTruncated.value = false
   } finally {
-    entriesLoading.value = false
+    if (seq === entryLoadSeq) entriesLoading.value = false
   }
 }
 
@@ -293,6 +463,7 @@ async function saveEdit() {
     await sendToExtension('updateMemoryEntry', {
       id: editingId.value,
       text: editingText.value,
+      ...scopeParams(),
     })
     // 更新本地缓存
     const idx = entries.value.findIndex(e => e.id === editingId.value)
@@ -323,6 +494,7 @@ async function saveConfig() {
         partChars: partChars.value,
         partLines: partLines.value,
       },
+      ...scopeParams(),
     })
     statusMessage.value = t('components.settings.settingsPanel.memory.saved')
     statusError.value = false
@@ -348,6 +520,17 @@ function resetToDefault() {
 onMounted(() => {
   loadConfig()
   loadEntries()
+  loadWorkspaceScopes()
+})
+
+// 作用域或工作区切换：静默刷新配置并重新加载条目（含缓存即时渲染，避免闪烁）
+watch(memoryScope, () => {
+  refreshCurrentScope()
+})
+watch(selectedWorkspaceUri, (next, prev) => {
+  if (next !== prev && memoryScope.value === 'workspace') {
+    refreshCurrentScope()
+  }
 })
 </script>
 
@@ -462,7 +645,7 @@ onMounted(() => {
           <i class="codicon codicon-discard"></i>
           {{ t('components.settings.settingsPanel.memory.reset') }}
         </button>
-        <button class="btn btn-secondary" @click="loadEntries" :disabled="entriesLoading">
+        <button class="btn btn-secondary" @click="() => loadEntries()" :disabled="entriesLoading">
           <i :class="entriesLoading ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-refresh'"></i>
           {{ t('common.refresh') }}
         </button>
@@ -484,6 +667,48 @@ onMounted(() => {
           {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
 
+        <!-- 记忆作用域切换（全局 / 工作区） -->
+        <div class="scope-switcher">
+          <button
+            class="scope-tab"
+            :class="{ active: memoryScope === 'global' }"
+            :title="t('components.settings.settingsPanel.memory.rawEntries.scopeGlobalHint')"
+            @click="memoryScope = 'global'"
+          >
+            <i class="codicon codicon-globe"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.scopeGlobal') }}
+          </button>
+          <button
+            class="scope-tab"
+            :class="{ active: memoryScope === 'workspace' }"
+            :title="t('components.settings.settingsPanel.memory.rawEntries.scopeWorkspaceHint')"
+            @click="memoryScope = 'workspace'"
+          >
+            <i class="codicon codicon-folder"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.scopeWorkspace') }}
+          </button>
+        </div>
+
+        <!-- 工作区记忆分区：选择工作区（当前打开的 + 已有记忆数据的） -->
+        <div v-if="memoryScope === 'workspace'" class="scope-workspace-picker">
+          <label class="param-label">
+            {{ t('components.settings.settingsPanel.memory.rawEntries.selectScopeWorkspace') }}
+          </label>
+          <select
+            v-model="selectedWorkspaceUri"
+            class="scope-workspace-select"
+            :disabled="scopesLoading || workspaceScopes.length === 0"
+          >
+            <option v-if="scopesLoading" value="" disabled>
+              {{ t('common.loading') }}
+            </option>
+            <option v-for="ws in workspaceScopes" :key="ws.uri" :value="ws.uri">{{ ws.name }}</option>
+          </select>
+          <p v-if="!scopesLoading && workspaceScopes.length === 0" class="field-description">
+            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceMemoryEmpty') }}
+          </p>
+        </div>
+
         <!-- 手动新增记忆 -->
         <div class="add-entry-box">
           <textarea
@@ -491,7 +716,7 @@ onMounted(() => {
             class="form-textarea add-entry-textarea"
             rows="3"
             :placeholder="t('components.settings.settingsPanel.memory.rawEntries.addPlaceholder')"
-            :disabled="addingEntry"
+            :disabled="addingEntry || (memoryScope === 'workspace' && !selectedWorkspaceUri)"
             @keydown.ctrl.enter.prevent="addEntry"
             @keydown.meta.enter.prevent="addEntry"
           ></textarea>
@@ -499,7 +724,7 @@ onMounted(() => {
             <span class="char-count" :class="{ 'char-overflow': newEntryBytes > entryChars }">
               {{ newEntryBytes }}/{{ entryChars }} {{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}
             </span>
-            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry">
+            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry || (memoryScope === 'workspace' && !selectedWorkspaceUri)">
               <i v-if="addingEntry" class="codicon codicon-loading codicon-modifier-spin"></i>
               <i v-else class="codicon codicon-add"></i>
               {{ t('components.settings.settingsPanel.memory.rawEntries.add') }}
@@ -513,44 +738,49 @@ onMounted(() => {
           {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: ENTRIES_LIMIT }) }}
         </div>
 
-        <!-- 空状态 -->
-        <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
+        <!-- 条目工具栏：全选 + 批量删除 -->
+        <div v-if="entries.length > 0" class="entries-toolbar">
+          <label class="select-all-label">
+            <input
+              type="checkbox"
+              class="entry-checkbox"
+              :checked="isAllSelected"
+              :disabled="entriesLoading"
+              @change="toggleSelectAll"
+            />
+            {{ t('components.settings.settingsPanel.memory.rawEntries.selectAll') }}
+          </label>
+          <button
+            class="btn btn-sm btn-danger"
+            :disabled="batchDeleteCount === 0 || entriesLoading || batchDeleteSaving"
+            @click="requestDeleteSelected"
+          >
+            <i v-if="batchDeleteSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
+            <i v-else class="codicon codicon-trash"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.deleteSelected', { count: batchDeleteCount }) }}
+          </button>
+        </div>
+
+        <!-- 空状态 / 加载占位 / 条目列表（三分支互斥：加载中显示占位，避免闪白与回顶） -->
+        <div v-if="entriesLoading" class="entries-loading">
+          <i class="codicon codicon-loading codicon-modifier-spin"></i>
+          {{ t('components.settings.settingsPanel.memory.loading') }}
+        </div>
+        <div v-else-if="entries.length === 0" class="empty-entries">
           <i class="codicon codicon-info"></i>
           {{ t('components.settings.settingsPanel.memory.rawEntries.empty') }}
         </div>
 
         <!-- 条目列表 -->
         <div v-else class="entries-list">
-          <!-- 批量操作工具条 -->
-          <div class="entries-toolbar">
-            <label class="select-all-label">
-              <input
-                type="checkbox"
-                :checked="isAllSelected"
-                @change="toggleSelectAll"
-                :disabled="entriesLoading"
-              />
-              <span>{{ t('components.settings.settingsPanel.memory.rawEntries.selectAll') }}</span>
-            </label>
-            <button
-              class="btn btn-sm btn-danger"
-              :disabled="selectedIds.size === 0 || batchDeleteSaving || entriesLoading"
-              @click="requestDeleteSelected"
-            >
-              <i v-if="batchDeleteSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-              <i v-else class="codicon codicon-trash"></i>
-              {{ t('components.settings.settingsPanel.memory.rawEntries.deleteSelected', { count: selectedIds.size }) }}
-            </button>
-          </div>
-
           <div v-for="entry in entries" :key="entry.id" class="entry-row">
             <input
+              v-if="editingId !== entry.id"
               type="checkbox"
               class="entry-checkbox"
               :checked="selectedIds.has(entry.id)"
-              @change="toggleSelectEntry(entry)"
-              :disabled="batchDeleteSaving || entriesLoading"
-              :title="t('common.select')"
+              :disabled="entriesLoading || batchDeleteSaving"
+              @change="toggleSelectEntry(entry.id)"
             />
             <span class="entry-id">#{{ entry.id }}</span>
             <span class="entry-date">{{ entry.date }}</span>
@@ -597,11 +827,11 @@ onMounted(() => {
         @cancel="cancelDeleteEntry"
       />
 
-      <!-- 批量删除确认 -->
+      <!-- 批量删除记忆确认 -->
       <ConfirmDialog
         v-model="showBatchDeleteConfirm"
         :title="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmTitle')"
-        :message="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmMessage', { count: selectedIds.size })"
+        :message="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmMessage', { count: batchDeleteCount })"
         :confirm-text="t('common.delete')"
         is-danger
         @confirm="confirmDeleteSelected"
@@ -856,6 +1086,15 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.btn-danger {
+  background: var(--vscode-errorForeground, #f14c4c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
 .status-message {
   font-size: 12px;
   padding: 6px 10px;
@@ -907,7 +1146,109 @@ onMounted(() => {
   justify-content: center;
 }
 
+/* ─── 记忆作用域切换 ─── */
+.scope-switcher {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.scope-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.scope-tab:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.scope-tab.active {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.scope-tab i {
+  font-size: 13px;
+}
+
+.scope-workspace-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scope-workspace-select {
+  flex: 1;
+  max-width: 320px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+}
+
+.scope-workspace-select:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+}
+
+/* ─── 批量删除工具栏 ─── */
+.entries-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.entry-checkbox {
+  accent-color: var(--vscode-focusBorder);
+  flex-shrink: 0;
+  margin: 2px 0 0 0;
+}
+
 /* ─── 条目列表 ─── */
+.entries-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 96px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.entries-loading i {
+  font-size: 13px;
+}
+
 .empty-entries {
   display: flex;
   align-items: center;
@@ -1058,59 +1399,5 @@ onMounted(() => {
   gap: 2px;
   flex-shrink: 0;
   align-self: center;
-}
-
-.entry-actions .btn-icon.danger {
-  color: var(--vscode-errorForeground);
-}
-
-.entry-actions .btn-icon.danger:hover {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-errorForeground);
-}
-
-/* ─── 批量删除 ─── */
-.entries-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 4px 2px 8px;
-}
-
-.select-all-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  cursor: pointer;
-  user-select: none;
-}
-
-.select-all-label input[type='checkbox'],
-.entry-checkbox {
-  accent-color: var(--vscode-focusBorder);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.btn-danger {
-  background: var(--vscode-errorForeground);
-  color: var(--vscode-button-foreground, #fff);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--vscode-errorForeground);
-  opacity: 0.9;
-}
-
-.entry-checkbox {
-  margin-top: 3px;
-}
-
-.entry-checkbox:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 </style>
