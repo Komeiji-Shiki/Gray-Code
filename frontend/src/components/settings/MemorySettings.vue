@@ -22,6 +22,8 @@ const DEFAULT_SYSTEM_PROMPT = [
   '',
   '在每次会话中，在进行任何其他工具调用之前运行 memory_wake，然后严格按照其提示执行，直到一切结束。',
   '',
+  '记忆包含两部分：全局记忆（所有工作区共享）与当前工作区记忆（按工作区隔离），memory_wake 会同时输出两者，注意区分 --- Global memory --- 与 --- Workspace memory --- 标注；记录新记忆时 memory_note 默认写入当前工作区的记忆存储。',
+  '',
   '工作期间可主动记录记忆',
   '',
   '当你学到新东西，或发生值得保留的事情时，调用 memory_note。',
@@ -48,6 +50,8 @@ const isSaving = ref(false)
 const statusMessage = ref('')
 const statusError = ref(false)
 const enabled = ref(true)
+// 配置是否已成功加载过至少一次（静默刷新失败时据此决定是否保留现有表单值）
+const configLoadedOnce = ref(false)
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
 const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
@@ -237,9 +241,13 @@ async function loadWorkspaceScopes() {
 }
 
 // 加载配置
-async function loadConfig() {
-  isLoading.value = true
-  statusMessage.value = ''
+// silent=true（作用域/工作区切换）时只刷新配置值：不触整页 loading、不清空/覆盖
+// statusMessage；失败时若已有配置则仅 console.warn，保留现有表单值
+async function loadConfig(silent = false) {
+  if (!silent) {
+    isLoading.value = true
+    statusMessage.value = ''
+  }
   try {
     const config = await sendToExtension<any>('getMemoryConfig', scopeParams())
     if (config) {
@@ -251,12 +259,18 @@ async function loadConfig() {
       if (typeof config.entryChars === 'number') entryChars.value = config.entryChars
       if (typeof config.partChars === 'number') partChars.value = config.partChars
       if (typeof config.partLines === 'number') partLines.value = config.partLines
+      configLoadedOnce.value = true
     }
   } catch (e: any) {
-    statusMessage.value = e?.message || 'Failed to load config'
-    statusError.value = true
+    if (silent && configLoadedOnce.value) {
+      // 静默刷新失败：不覆盖现有表单值，仅记录
+      console.warn('[MemorySettings] silent loadConfig failed:', e?.message)
+    } else {
+      statusMessage.value = e?.message || 'Failed to load config'
+      statusError.value = true
+    }
   } finally {
-    isLoading.value = false
+    if (!silent) isLoading.value = false
   }
 }
 
@@ -379,14 +393,14 @@ onMounted(() => {
   loadWorkspaceScopes()
 })
 
-// 作用域或工作区切换：重新加载配置与条目
+// 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目
 watch(memoryScope, () => {
-  loadConfig()
+  loadConfig(true)
   loadEntries()
 })
 watch(selectedWorkspaceUri, (next, prev) => {
   if (next !== prev && memoryScope.value === 'workspace') {
-    loadConfig()
+    loadConfig(true)
     loadEntries()
   }
 })

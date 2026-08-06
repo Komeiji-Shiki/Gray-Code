@@ -175,6 +175,16 @@ function uriToFsPathForMeta(scopeKey: string): string {
 }
 
 /**
+ * 获取工作区文件夹名（basename，供工具输出标注用，如 wake 的工作区段头）。
+ * 工作区 URI 缺失/不可解析时返回 null，由调用方回退为不带名字的标注。
+ */
+export function getWorkspaceFolderName(workspaceUri: string): string | null {
+    const scopeKey = workspaceUriToScopeKey(workspaceUri);
+    if (!scopeKey) return null;
+    return path.basename(scopeKey.replace(/\//g, path.sep));
+}
+
+/**
  * 工具层取实例入口：按工具上下文注入的工作区路由到对应记忆实例，
  * 无工作区（或解析失败）时回退全局记忆（旧行为）。
  */

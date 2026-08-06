@@ -13,6 +13,7 @@ import { getSkillsManager } from '../../backend/modules/skills';
 import { getGlobalMemoryManager, getMemoryManagerForWorkspace, listWorkspaceMemoryScopes } from '../../backend/modules/memory';
 import { getProductMetadata } from '../../backend/core/productMetadata';
 import { getExtensionVersion } from '../utils/extensionInfo';
+import { SAVED_WORKSPACES_KEY } from './WorkspaceHandlers';
 
 /** 批量删除的 ids 数量上限：防御超大数组触发 O(n·T) 全量 LOG 重建 */
 const MAX_BATCH_DELETE_IDS = 10000;
@@ -310,11 +311,50 @@ export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) 
 };
 
 /**
- * 枚举全部已存在的工作区记忆 scope（设置页记忆分区下拉用）
+ * 枚举全部工作区记忆 scope（设置页记忆分区下拉用）
+ *
+ * 合并「收藏的工作区」+「已有记忆数据的工作区」：
+ * - 收藏工作区（globalState 持久化，与 WorkspaceHandlers.loadSavedFsPaths 同口径）
+ *   即使还没有记忆数据也可选——首次访问时 memory 层会惰性创建记忆目录；
+ * - 已有数据的 scope（memory-workspaces/<hash>/scope.json 枚举）优先复用其元信息
+ *   （uri/name/hasData），按 fsPath 归一化去重（Windows 大小写不敏感）。
  */
 export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) => {
   try {
-    const scopes = await listWorkspaceMemoryScopes();
+    // 已有记忆数据的工作区 scope
+    const existing = await listWorkspaceMemoryScopes();
+
+    // 收藏的工作区列表（过滤 string、去空，与 WorkspaceHandlers.loadSavedFsPaths 同口径）
+    let savedFsPaths: string[] = [];
+    try {
+      const raw = ctx.context?.globalState?.get<string[]>(SAVED_WORKSPACES_KEY);
+      if (Array.isArray(raw)) {
+        savedFsPaths = raw.filter((p): p is string => typeof p === 'string' && p.length > 0);
+      }
+    } catch {
+      savedFsPaths = [];
+    }
+
+    // 路径归一化（Windows 大小写不敏感 + 统一正斜杠），与 memory 层 normalizeWorkspaceKey 一致
+    const WIN32 = process.platform === 'win32';
+    const normalizeFsPath = (p: string): string => {
+      const n = p.replace(/\\/g, '/');
+      return WIN32 ? n.toLowerCase() : n;
+    };
+
+    // 已有数据按归一化 fsPath 索引，合并时复用其 uri/name/hasData
+    const existingByPath = new Map(existing.map((s) => [normalizeFsPath(s.fsPath), s]));
+
+    const scopes = [...existing];
+    for (const fsPath of savedFsPaths) {
+      if (existingByPath.has(normalizeFsPath(fsPath))) continue; // 已在已有数据列表，复用
+      scopes.push({
+        uri: vscode.Uri.file(fsPath).toString(),
+        name: path.basename(fsPath) || fsPath,
+        fsPath,
+        hasData: false,
+      });
+    }
     ctx.sendResponse(requestId, { scopes });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_MEMORY_SCOPES_ERROR', error.message || 'Failed to list memory scopes');

@@ -739,6 +739,8 @@ export class PromptManager {
             '',
             '在每次会话中，在进行任何其他工具调用之前运行 memory_wake，然后严格按照其提示执行，直到一切结束。',
             '',
+            '记忆包含两部分：全局记忆（所有工作区共享）与当前工作区记忆（按工作区隔离），memory_wake 会同时输出两者，注意区分 --- Global memory --- 与 --- Workspace memory --- 标注；记录新记忆时 memory_note 默认写入当前工作区的记忆存储。',
+            '',
             '工作期间可主动记录记忆',
             '',
             '当你学到新东西，或发生值得保留的事情时，调用 memory_note。',
