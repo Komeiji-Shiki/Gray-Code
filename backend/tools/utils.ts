@@ -145,6 +145,22 @@ export function getWorkspaceByIdentifier(identifier: string | number): Workspace
 }
 
 /**
+ * 工作区根下是否存在与工作区同名的真实目录（zip/7z 解压嵌套，如 proj/proj/...）。
+ *
+ * 存在时路径首段（与工作区同名）是真实目录而非工作区名前缀，parseWorkspacePath
+ * 不得剥离该前缀；不存在时首段才按「工作区名 + 路径」格式解释。Windows/macOS
+ * 文件系统大小写不敏感，statSync 直接命中；Linux 上内层目录大小写通常与
+ * 工作区名一致（解压保留原名），精确匹配即可覆盖实际场景。
+ */
+function hasSameNameNestedDir(workspace: WorkspaceInfo): boolean {
+    try {
+        return fsSync.statSync(path.join(workspace.fsPath, workspace.name)).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
+/**
  * 解析带工作区前缀的路径
  *
  * 支持格式：
@@ -174,14 +190,25 @@ export function parseWorkspacePath(pathStr: string, preferredWorkspaceUri?: stri
     // 后，绑定工作区的相对路径仍解析到原工作区而不是新打开的工作区。
     const boundWorkspace = preferredWorkspaceUri ? getWorkspaceByUri(preferredWorkspaceUri) : undefined;
 
-    // 绑定工作区前缀剥离：路径以绑定工作区名开头时视为其相对路径
+    // 绑定工作区前缀剥离：路径以绑定工作区名开头时视为其相对路径。
+    // 注意：zip/7z 解压会在工作区根下产生与工作区同名的真实目录（proj/proj/... 双层嵌套），
+    // 此时首段「与工作区同名」是真实目录而非工作区名前缀——无脑剥离会把文件树索引里
+    // 显示的 proj/README.md 解析到根下的 README.md（错位一层），read/write/list 全部 ENOENT。
+    // 因此仅当工作区根下不存在同名目录时才剥离；存在时按原样解析（与索引展示一致），
+    // 多层重名（proj/proj/proj/...）同理只判定首段。
     if (boundWorkspace) {
         const boundPrefix = boundWorkspace.name + '/';
-        if (pathStr.startsWith(boundPrefix)) {
+        const maybeNested = pathStr === boundWorkspace.name || pathStr.startsWith(boundPrefix);
+        const hasNestedSameName = maybeNested ? hasSameNameNestedDir(boundWorkspace) : false;
+        if (pathStr.startsWith(boundPrefix) && !hasNestedSameName) {
             return { workspace: boundWorkspace, relativePath: pathStr.substring(boundPrefix.length), isExplicit: true };
         }
-        if (pathStr === boundWorkspace.name) {
+        if (pathStr === boundWorkspace.name && !hasNestedSameName) {
             return { workspace: boundWorkspace, relativePath: '.', isExplicit: true };
+        }
+        if (hasNestedSameName) {
+            // 同名嵌套目录存在：路径首段是真实目录，按原样解析（含多层重名）
+            return { workspace: boundWorkspace, relativePath: pathStr, isExplicit: true };
         }
     }
 

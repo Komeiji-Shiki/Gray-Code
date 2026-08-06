@@ -100,3 +100,94 @@ describe('bound workspace independence (closed bound workspace)', () => {
         expect(resolved.workspace?.fsPath).toBe(openRoot);
     });
 });
+
+/**
+ * 同名嵌套目录（zip/7z 双解压，proj/proj/...）回归测试：
+ * 工作区根下存在与工作区同名的真实目录时，parseWorkspacePath 不得剥离首段前缀，
+ * 否则索引里显示的 proj/README.md 会被解析到根下的 README.md（错位一层，读写全部 ENOENT）。
+ */
+describe('nested same-name workspace folder (zip/7z double-extraction)', () => {
+    let nestedRoot: string;
+    let cleanupDirs: string[] = [];
+
+    const fileUriString = (fsPath: string): string =>
+        'file://' + fsPath.replace(/\\/g, '/');
+
+    beforeEach(() => {
+        const wsName = `gc-nested-${Date.now()}`;
+        // 工作区根 + 同名内层目录：<tmp>/gc-nested-XXX/gc-nested-XXX/
+        nestedRoot = path.join(os.tmpdir(), wsName);
+        const inner = path.join(nestedRoot, wsName);
+        fs.mkdirSync(path.join(inner, 'app'), { recursive: true });
+        fs.writeFileSync(path.join(inner, 'README.md'), 'nested readme', 'utf-8');
+        fs.writeFileSync(path.join(inner, 'app', 'bot.py'), 'print(1)', 'utf-8');
+        // 第三层同名嵌套：<tmp>/gc-nested-XXX/gc-nested-XXX/gc-nested-XXX/file.txt
+        fs.mkdirSync(path.join(inner, wsName), { recursive: true });
+        fs.writeFileSync(path.join(inner, wsName, 'file.txt'), 'deep', 'utf-8');
+        cleanupDirs = [nestedRoot];
+
+        (vscode.workspace as any).workspaceFolders = [{
+            name: path.basename(nestedRoot),
+            uri: vscode.Uri.file(nestedRoot)
+        }];
+    });
+
+    afterEach(() => {
+        for (const dir of cleanupDirs) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+        (vscode.workspace as any).workspaceFolders = [];
+    });
+
+    const boundUri = (): string => fileUriString(nestedRoot);
+    const wsName = (): string => path.basename(nestedRoot);
+
+    it('双层同名嵌套：索引显示的 proj/README.md 按真实路径解析（不再错位剥离）', () => {
+        const parsed = parseWorkspacePath(`${wsName()}/README.md`, boundUri());
+
+        expect(parsed.workspace?.fsPath).toBe(nestedRoot);
+        // 首段是真实目录，前缀不被剥离
+        expect(parsed.relativePath).toBe(`${wsName()}/README.md`);
+
+        const resolved = resolveFileToolPathWithInfo(`${wsName()}/README.md`, boundUri());
+        expect(resolved.uri?.fsPath).toBe(path.join(nestedRoot, wsName(), 'README.md'));
+        expect(resolved.isOutsideWorkspace).toBe(false);
+    });
+
+    it('双层同名嵌套：写入路径同样解析到内层目录', () => {
+        const resolved = resolveFileToolPathWithInfo(`${wsName()}/app/bot.py`, boundUri());
+
+        expect(resolved.uri?.fsPath).toBe(path.join(nestedRoot, wsName(), 'app', 'bot.py'));
+        expect(resolved.relativePath).toBe(`${wsName()}/app/bot.py`);
+    });
+
+    it('多层同名嵌套（proj/proj/proj/file.txt）：索引路径按原样逐层解析', () => {
+        const parsed = parseWorkspacePath(`${wsName()}/${wsName()}/file.txt`, boundUri());
+
+        expect(parsed.workspace?.fsPath).toBe(nestedRoot);
+        expect(parsed.relativePath).toBe(`${wsName()}/${wsName()}/file.txt`);
+
+        const resolved = resolveFileToolPathWithInfo(`${wsName()}/${wsName()}/file.txt`, boundUri());
+        expect(resolved.uri?.fsPath).toBe(path.join(nestedRoot, wsName(), wsName(), 'file.txt'));
+    });
+
+    it('路径仅等于工作区名时解析到同名嵌套目录本身', () => {
+        const parsed = parseWorkspacePath(wsName(), boundUri());
+
+        expect(parsed.workspace?.fsPath).toBe(nestedRoot);
+        expect(parsed.relativePath).toBe(wsName());
+        expect(parsed.isExplicit).toBe(true);
+    });
+
+    it('同名嵌套目录不存在时仍按工作区前缀剥离（原行为不回归）', () => {
+        const plainRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-plain-'));
+        cleanupDirs.push(plainRoot);
+        fs.mkdirSync(path.join(plainRoot, 'app'), { recursive: true });
+        fs.writeFileSync(path.join(plainRoot, 'app', 'bot.py'), 'print(1)', 'utf-8');
+
+        const parsed = parseWorkspacePath(`${path.basename(plainRoot)}/app/bot.py`, fileUriString(plainRoot));
+
+        expect(parsed.workspace?.fsPath).toBe(plainRoot);
+        expect(parsed.relativePath).toBe('app/bot.py');
+    });
+});

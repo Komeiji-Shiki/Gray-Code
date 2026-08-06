@@ -35,6 +35,7 @@
     - **dependencies 页签 i18n key 缺失**：`settingsPanel.sections.dependencies` 在三语中均不存在，搜索结果行显示原始 key 字符串且跳转失败；现三语补齐
     - **匹配空格敏感**：`'token 用量'` 匹配不到 `'token用量'`；query 与关键词统一去空白后 `includes`
     - **移除误导性关键词**：appearance 的「主题/字体/深色/亮色/界面/ui/语言」（外观页不存在）、tools 的「重试/git/固定文件」、channel 的「提示词模式」（实际在 prompt 页）等误导词删除，改为各页真实设置项
+  - **同名嵌套工作区目录（zip/7z 双解压）路径错位一层**：工作区根下存在与工作区同名的真实目录（`proj/proj/...`）时，`parseWorkspacePath` 的绑定工作区前缀剥离把首段误当「工作区名前缀」——文件树索引里显示的 `proj/README.md` 被解析到根下的 `README.md`，read_file/write_file/list_files/搜索/命令 cwd 等全部 ENOENT（现场会话中模型只能靠「加双前缀」绕过）。现仅当工作区根下**不存在**同名目录时才剥离前缀；存在时按原样解析（与索引展示一致），多层重名（`proj/proj/proj/...`）同理只判定首段；路径等于工作区名时解析到同名嵌套目录本身。新增回归测试（双层/多层/写入/纯目录名/无嵌套不回归）
 
 ### Added
   - **设置页设置项搜索**：设置面板标题栏新增搜索框——输入关键词实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），支持键盘上下键选择与回车跳转；点击结果自动切换到对应页签并滚动定位到设置项（节标题或精确锚点，附带 1.6s 闪烁高亮），搜索「存储路径/代理/语言/导入导出/应用信息」可精确直达对应设置块；内置中/英/日三语关键词索引（`SettingsPanel.vue` 静态 `SEARCH_INDEX`），空结果有提示文案，三语 i18n 同步
@@ -42,6 +43,7 @@
 ### Tests
   - 新增 `backend/__tests__/webview/workspaceHandlers.test.ts`（8 用例）：保存当前工作区（无激活报错/加入收藏/幂等）、打开工作区（目录缺失报错/已打开直接固定不重复触发宿主/未打开经宿主打开并等待生效后返回新状态/对话框选择自动收藏/取消不写收藏）、收藏持久化在响应前完成
   - `messageRouterNonBlocking.test.ts` 增补对话框驱动类型（workspace.openFolder / storagePath.selectFolder / settings.import / settings.export）非阻塞断言
+  - `boundWorkspaceIndependence.test.ts` 新增「同名嵌套工作区目录」套件（5 用例）：双层同名嵌套按真实路径解析（读写）、多层同名嵌套逐层解析、路径等于工作区名时解析到嵌套目录本身、无同名嵌套时前缀剥离行为不回归
 
 ## [1.6.7] - 2026-08-06
 
