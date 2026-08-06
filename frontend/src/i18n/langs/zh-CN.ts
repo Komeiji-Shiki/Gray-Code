@@ -567,7 +567,11 @@ const zhCN = {
             },
             thought: {
                 thinking: '正在思考...',
-                thoughtProcess: '思考过程'
+                thoughtProcess: '思考过程',
+                viewCollapsed: '折叠',
+                viewMedium: '中展开（滚动查看）',
+                viewExpanded: '完全展开',
+                trimmedHint: '内容过长，仅显示最近部分，请使用完全展开查看'
             },
             contextBlocks: {
                 clickToView: '点击查看完整内容'

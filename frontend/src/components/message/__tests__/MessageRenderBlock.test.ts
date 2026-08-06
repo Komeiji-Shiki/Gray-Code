@@ -48,11 +48,11 @@ function mountThoughtBlock(isStreaming: boolean, text = 'thinking...') {
       block,
       messageRole: 'assistant',
       isStreaming,
-      isThoughtExpanded: true,
+      thoughtViewMode: 'expanded',
       isThinking: false,
       thinkingTimeDisplay: null,
       messageBackendIndex: 0,
-      toggleThought: () => {}
+      setThoughtViewMode: () => {}
     },
     global: {
       stubs: {
