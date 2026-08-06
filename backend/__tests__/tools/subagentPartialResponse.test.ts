@@ -13,6 +13,8 @@
  *    工具调用轮次的文本一律视为中间产物，不进入最终/partial 响应。
  */
 
+/// <reference types="jest" />
+
 import { createDefaultExecutor } from '../../tools/subagents/executor';
 import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
 import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
