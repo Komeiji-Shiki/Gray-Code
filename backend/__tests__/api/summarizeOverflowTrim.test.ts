@@ -23,6 +23,11 @@
 import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
 import { ChannelError, ErrorType } from '../../modules/channel/types';
 import type { Content } from '../../modules/conversation/types';
+import { setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
+
+afterEach(() => {
+    setGlobalBranchService(undefined);
+});
 
 // ==================== 消息构造工具 ====================
 
@@ -362,6 +367,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
 describe('SummarizeService.handleAutoSummarize - 逻辑截断语义', () => {
     it('无旧总结时：历史 = [第一条用户消息, 被总结消息(isSummarized), 新总结, 尾巴]，removedCount 正确', async () => {
+        const structuralSync = jest.fn(async () => ({ synced: true, deferred: false }));
+        setGlobalBranchService({ syncMainHistoryAfterStructuralMutation: structuralSync } as any);
         const { service, liveHistory } = createHarness({
             fullHistory: [
                 userMsg('r1', 50), fcMsg('fc1', 50), frMsg('fc1', 50),
@@ -386,6 +393,7 @@ describe('SummarizeService.handleAutoSummarize - 逻辑截断语义', () => {
         expect(liveHistory[2]).toMatchObject({ isSummarized: true });
         expect(liveHistory[3]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 3 });
         expect(liveHistory.slice(4).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'done']);
+        expect(structuralSync).toHaveBeenCalledWith('conv1', 'summary_inserted');
     });
 });
 

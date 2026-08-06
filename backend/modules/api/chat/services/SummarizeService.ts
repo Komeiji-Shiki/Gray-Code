@@ -20,6 +20,7 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { Content } from '../../../conversation/types';
 import type { SummaryTokenStats } from '../../../conversation/types';
+import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
 import type { GenerateResponse, StreamChunk } from '../../../channel/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
@@ -1313,6 +1314,7 @@ export class SummarizeService {
         if (stale) {
             return { ok: false, code: 'STALE_RANGE', freshHistoryLength };
         }
+        await this.syncBranchGraphAfterSummaryMutation(conversationId, 'summary_inserted');
         return { ok: true, markedCount, insertIndex: replacedInsertIndex };
     }
 
@@ -1356,8 +1358,38 @@ export class SummarizeService {
             return restored.contents.slice();
         });
 
+        if (removedSummaryId) {
+            await this.syncBranchGraphAfterSummaryMutation(conversationId, 'summary_restored');
+        }
+
         this.log.info('restore.completed', { conversationId, summaryMessageId, restoredCount, removedSummaryId });
         return { success: true, restoredCount, removedSummaryId };
+    }
+
+    /**
+     * 总结是主历史的预期结构变更；已有分支图时同步活跃路径与 Content 元数据。
+     * 主历史已经成功落盘，因此图同步失败只记录告警，异常修复入口会在下次分支操作前再次对账。
+     */
+    private async syncBranchGraphAfterSummaryMutation(
+        conversationId: string,
+        reason: 'summary_inserted' | 'summary_restored'
+    ): Promise<void> {
+        const branchService = getGlobalBranchService();
+        if (!branchService) {
+            return;
+        }
+        try {
+            const result = await branchService.syncMainHistoryAfterStructuralMutation(conversationId, reason);
+            if (result.deferred) {
+                this.log.info('branch_sync_deferred_for_active_candidate', { conversationId, reason });
+            }
+        } catch (error) {
+            this.log.warn('branch_summary_sync_failed', {
+                conversationId,
+                reason,
+                error: (error as Error)?.message ?? String(error),
+            });
+        }
     }
 
     /**
