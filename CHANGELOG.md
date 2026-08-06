@@ -23,7 +23,10 @@
   - 子代理路径 `ToolDeclarationResolver` 监听器泄漏（H-1）：每次 run 新建实例会向 McpManager 单例注册 3 个永久事件监听器且从不释放，重度多代理下监听器无界累积、MCP 事件派发退化为 O(n)；改为按依赖引用共享实例（容量 4 LRU 淘汰），并新增 `dispose()` 释放监听器，同时让子代理路径真正享受声明缓存收益。
   - `ConversationManager` 节点 ID 反查缓存（`nodeIdCache`）失效覆盖不完整：`invalidateCaches` 定义了但从未被调用，saveContents / 全量重写 / 历史迁移 / 删除对话等写路径不失效缓存，工具循环内（拒绝工具调用等结构性变更后 300ms 窗口内）checkpoint 反查可能命中陈旧节点 id；现全部写路径统一走 `invalidateCaches`。
   - 设置搜索下拉键盘导航滚动跟随：结果超出下拉可视高度时，↑/↓ 选中的高亮项现在会保持在可视区域内（`scrollIntoView({ block: 'nearest' })`）。
-  - 新增回归测试：`subagentResolverSharing.test.ts`（监听器只注册一次 / dispose 释放 / 容量淘汰）、`conversationMessageNodeId.test.ts` 补写路径失效断言（仓储替换、删除对话）。
+  - `ContextTrimService.computeValidSuffixMap` 反向扫描与正向 `validateHistoryIntegrity` 在乱序配对时语义不一致（L-5）：functionResponse 出现在其配对 functionCall 之前（跨消息或同消息内）时，正向判孤儿（invalid）而旧反向实现误判 valid，裁剪后可能把乱序配对发给 API；修复为按「本消息内更早 part / 右侧消息 / 待左侧治愈」三分支精确匹配正向语义。
+  - 设置搜索跳转时序与状态残留（L-1/L-2）：跳转定位改为按目标元素相对滚动容器偏移计算一次 `scrollTo`（避免 smooth 动画未推进时同步读 rect 的时序冲突、打断动画）；跳转成功后清空搜索词，侧边栏恢复常态高亮；`search.hint` 词条投入使用（搜索框聚焦且未输入时显示提示）。
+  - `pendingWholeBuffer` 注释修正（L-4）：原注释声称「上限由硬限制保护」，实际代码对未知格式的整段累积没有大小上限（与改动前行为一致），已修正为准确描述。
+  - 新增回归测试：`subagentResolverSharing.test.ts`（监听器只注册一次 / dispose 释放 / 容量淘汰）、`conversationMessageNodeId.test.ts` 补写路径失效断言（仓储替换、删除对话）、`contextTrimValidSuffixEquivalence.test.ts`（computeValidSuffixMap 与正向校验逐候选等价 + 固定 seed 随机模糊对比 50 轮）、`toolDeclarationResolverCache.test.ts`（缓存命中 / 参数与设置指纹与 MCP 版本失效 / dispose）、`settingsSearchAnchorConsistency.test.ts`（SEARCH_INDEX 锚点与组件 data-search-anchor 一致性）、`todoListIncremental.test.ts`（增量重放参数分段一致性）与 `computed.test.ts` 增量分支（流式追加 / 尾消息原地更新 / 前缀替换回退 / 数组缩短 / 总结估算）。
 
 ## [1.4.3] - 2026-08-06
 
