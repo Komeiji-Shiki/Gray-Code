@@ -12,6 +12,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { replayTodoStateFromMessages } from '../todoList'
+import type { TodoItem } from '../todoList'
 import type { Message } from '../../types'
 
 function tool(id: string, name: string, args: Record<string, unknown>, result?: Record<string, unknown>) {
@@ -27,7 +28,7 @@ function assistantMsg(backendIndex: number, tools: any[]): Message {
   return { role: 'assistant', backendIndex, tools } as any
 }
 
-const PLAN_TODOS = [
+const PLAN_TODOS: TodoItem[] = [
   { id: 'a', content: 'A', status: 'pending' },
   { id: 'b', content: 'B', status: 'pending' }
 ]
@@ -107,7 +108,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
   })
 
   it('todo_update 增量操作正确应用在 initial 列表上（含 add 与 update）', () => {
-    const initialTodos = [
+    const initialTodos: TodoItem[] = [
       { id: 'a', content: 'A', status: 'pending' },
       { id: 'b', content: 'B', status: 'pending' }
     ]
