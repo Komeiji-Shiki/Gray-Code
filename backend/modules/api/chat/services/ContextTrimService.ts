@@ -317,8 +317,15 @@ export class ContextTrimService {
      * validateHistoryIntegrity」判定（validSuffix[i]），使 normalizeTrimStartIndex 的每个
      * 候选判定降为 O(1)。语义与 validateHistoryIntegrity（不开启 detectOrphanFunctionCall）
      * 完全一致：重复 functionCall id、重复 functionResponse id、以及「functionResponse
-     * 的配对 functionCall 不在切片内」的孤儿响应。扫描方向与校验方向相反（先加右侧消息），
-     * 但每个消息内部仍按 parts 原序处理，seen 集合的成员关系与正向校验逐位等价。
+     * 的配对 functionCall 不在切片内」的孤儿响应。
+     *
+     * 配对方向注意（与正向校验逐位等价的关键）：正向中「response 的配对 call 必须出现在
+     * response 之前」（同一消息内更早的 part 或更左侧的消息）；反向扫描时因此要区分三种情况：
+     * - 本消息内更早 part 已有 call（localCallSeen）→ 配对成立；
+     * - seenFunctionCallIds 已有但本消息内没有（call 在右侧消息，乱序配对）→ 正向判孤儿，
+     *   置 hasOrphanResponse（该切片向左扩展后仍至少是重复或孤儿，永久 invalid，不可治愈）；
+     * - 两侧都无 → 可能是跨消息正常配对（call 在更左侧，尚未扫到），先记入孤儿集合，
+     *   扫到左侧 call 时治愈；本消息新增孤儿不得被本消息内 call 治愈（同消息乱序）。
      */
     private computeValidSuffixMap(fullHistory: Content[]): boolean[] {
         const validSuffix = new Array<boolean>(fullHistory.length);
@@ -327,19 +334,33 @@ export class ContextTrimService {
         const orphanedFunctionResponseIds = new Set<string>();
         let hasDuplicateCall = false;
         let hasDuplicateResponse = false;
+        let hasOrphanResponse = false;
 
         for (let i = fullHistory.length - 1; i >= 0; i--) {
             const message = fullHistory[i];
             const parts = Array.isArray(message?.parts) ? message.parts : [];
+            // 本消息内全部 functionCall id（跨消息治愈用）
+            const localCallIds = new Set<string>();
             for (const part of parts) {
                 const functionCallId = normalizeCallId(part.functionCall?.id);
                 if (functionCallId) {
+                    localCallIds.add(functionCallId);
+                }
+            }
+            // 本消息内已按 parts 原序处理过的 functionCall（配对判定：call 必须在本 response 之前）
+            const localCallSeen = new Set<string>();
+            // 本消息新增的孤儿 response（同消息内 call 在 response 之后时，正向确实判孤儿，
+            // 不得被本消息的 call 治愈）
+            const newOrphanIds = new Set<string>();
+            // parts 原序处理（与正向校验同序）：重复检测 + 配对判定
+            for (const part of parts) {
+                const functionCallId = normalizeCallId(part.functionCall?.id);
+                if (functionCallId) {
+                    localCallSeen.add(functionCallId);
                     if (seenFunctionCallIds.has(functionCallId)) {
                         hasDuplicateCall = true;
                     } else {
                         seenFunctionCallIds.add(functionCallId);
-                        // 该调用补齐了右侧（已在切片内）孤儿响应的配对
-                        orphanedFunctionResponseIds.delete(functionCallId);
                     }
                 }
 
@@ -351,12 +372,29 @@ export class ContextTrimService {
                     hasDuplicateResponse = true;
                 } else {
                     seenFunctionResponseIds.add(functionResponseId);
-                    if (!seenFunctionCallIds.has(functionResponseId)) {
-                        orphanedFunctionResponseIds.add(functionResponseId);
-                    }
+                }
+
+                if (localCallSeen.has(functionResponseId)) {
+                    // 本消息内更早的 part 已有配对 call → 配对成立（正向不判孤儿）
+                } else if (seenFunctionCallIds.has(functionResponseId)) {
+                    // call 在右侧消息（乱序配对）→ 正向判孤儿；切片向左扩展后仍至少
+                    // 是重复或孤儿，永久 invalid，不可治愈
+                    hasOrphanResponse = true;
+                } else {
+                    // 可能是跨消息正常配对（call 在更左侧尚未扫到）→ 暂记孤儿，等待治愈
+                    orphanedFunctionResponseIds.add(functionResponseId);
+                    newOrphanIds.add(functionResponseId);
                 }
             }
-            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse && orphanedFunctionResponseIds.size === 0;
+            // 跨消息治愈：本消息的 call 在右侧消息孤儿 response 的左侧 → 治愈
+            // （本消息新增孤儿除外——同消息乱序在正向中确实是孤儿）
+            for (const callId of localCallIds) {
+                if (!newOrphanIds.has(callId)) {
+                    orphanedFunctionResponseIds.delete(callId);
+                }
+            }
+            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse
+                && !hasOrphanResponse && orphanedFunctionResponseIds.size === 0;
         }
         return validSuffix;
     }
@@ -513,9 +551,13 @@ export class ContextTrimService {
             startIndex: normalization.startIndex,
             includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
         });
-        const history = this.prependPreservedUserInputs(
-            formattedHistory,
+        const history = this.prependFirstUserMessage(
             fullHistory,
+            this.prependPreservedUserInputs(
+                formattedHistory,
+                fullHistory,
+                normalization.startIndex
+            ),
             normalization.startIndex
         );
 
@@ -524,6 +566,39 @@ export class ContextTrimService {
             trimStartIndex: normalization.startIndex,
             normalization
         };
+    }
+
+    /**
+     * 首条用户消息永远发送（任务锚点）。
+     *
+     * 逻辑截断语义下，发送历史从最后一个总结消息 / 裁剪点开始，首条用户消息通常不在其中；
+     * 主人的原始任务指令是长期锚点，总结文本永远不如原话清楚，必须原样拼到请求历史最前
+     * （与保留用户输入档案并存，轻微冗余换取原话完整）。
+     *
+     * @param fullHistory 过滤 isSummarized 后的完整历史
+     * @param history 已构建的发送历史
+     * @param startIndex 发送切片起点（过滤后历史索引）；<= 0 时首条用户消息必然已在切片内
+     * @returns 含首条用户消息的发送历史（已在其中则原样返回，避免重复前置）
+     */
+    private prependFirstUserMessage(fullHistory: Content[], history: Content[], startIndex: number): Content[] {
+        // 从 0 开始发送：首条用户消息必然已在切片内，无需处理
+        if (startIndex <= 0) {
+            return history;
+        }
+        const firstUserIndex = fullHistory.findIndex(message => isRealUserMessage(message));
+        if (firstUserIndex < 0) {
+            return history;
+        }
+        const firstUser = fullHistory[firstUserIndex];
+        // 首条用户消息已在切片内（异常数据：历史以 system 等开头且首条下标 >= startIndex）→ 不重复前置
+        if (firstUserIndex >= startIndex) {
+            return history;
+        }
+        // 防御：有稳定 id 时按 id 判重（历史以 system 开头时上述下标判断已覆盖，此处仅兜底）
+        if (firstUser.id !== undefined && history.some(message => message.id === firstUser.id)) {
+            return history;
+        }
+        return [firstUser, ...history];
     }
 
     /**
@@ -722,8 +797,7 @@ export class ContextTrimService {
     private async countAndUpdateMessageTokens(
         conversationId: string,
         channelType: string,
-        messages: Array<{ index: number; message: Content }>,
-        externalSignal?: AbortSignal
+        messages: Array<{ index: number; message: Content }>
     ): Promise<number[]> {
         if (messages.length === 0) {
             return [];
@@ -734,19 +808,14 @@ export class ContextTrimService {
         await this.tokenEstimationService.preCountUserMessageTokensBatch(
             conversationId,
             channelType,
-            messageIndices,
-            undefined,
-            externalSignal
+            messageIndices
         );
         
         // 返回计算后的 token 数（从更新后的消息中获取）
         const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
         return messages.map(({ index }) => {
             const msg = updatedHistory[index];
-            // 并发结构性删除可能使 index 越界（getHistoryRef 与 preCount 之间发生截断）：
-            // 此时按 0 token 处理，避免 estimateMessageTokens(undefined) 崩溃中断整个回合
-            if (!msg) return 0;
-            return msg.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
+            return msg?.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
         });
     }
 
@@ -782,11 +851,13 @@ export class ContextTrimService {
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         stableStartIndex?: number,
-        fixedPromptTokens = 0,
-        externalSignal?: AbortSignal
+        fixedPromptTokens = 0
     ): Promise<ContextTrimInfo> {
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
-        if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
+        if (rawHistory.length === 0) return { history: [], trimStartIndex: 0 };
+
+        // 逻辑截断：被总结消息（isSummarized）不参与发送与统计（与 getHistoryWithContextTrimInfo 一致）
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
 
         const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
         const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
@@ -825,12 +896,9 @@ export class ContextTrimService {
         );
 
         const throwContextOverflow = (minimumLegalHistoryTokens = 0): never => {
-            // 走到这里说明没有任何合法候选（历史结构损坏，所有切点均未通过完整性校验）。
-            // 即使模型窗口未知也必须以可识别错误码显式拒绝：用渠道 maxContextTokens 作为
-            // envelope 参考上限报 CONTEXT_OVERFLOW，避免退化为 UNKNOWN_ERROR 让前端无法区分
-            // （changelog 口径：CONTEXT_OVERFLOW 仅在「最小合法请求仍超窗」时抛出——此处
-            // 最小合法请求根本不存在，同样属于不可构建请求的拒绝语义）。
-            const effectiveHardLimit = hardInputTokenLimit ?? fallbackEnvelopeInputTokenLimit;
+            if (hardInputTokenLimit === undefined) {
+                throw new Error('Context overflow rejection requires a known model context window');
+            }
             const estimatedMinimumInputTokens = normalizedFixedPromptTokens + minimumLegalHistoryTokens;
             this.log.error('trim.fallback_context_overflow', {
                 conversationId,
@@ -846,12 +914,9 @@ export class ContextTrimService {
                 fallbackEnvelopeHistoryBudgetTokens,
                 minimumLegalHistoryTokens,
                 estimatedMinimumInputTokens,
-                originalHistoryLength: fullHistory.length,
-                note: hardInputTokenLimit === undefined
-                    ? 'model window unknown; rejecting with channel maxContextTokens as reference limit'
-                    : undefined
+                originalHistoryLength: fullHistory.length
             });
-            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, effectiveHardLimit);
+            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, hardInputTokenLimit);
         };
 
         // 回合内稳定起点优先：工具结果增长不再把切点往后推（否则每轮 retainedHistory 开头漂移，
@@ -869,7 +934,10 @@ export class ContextTrimService {
                     fullHistory,
                     stableStartIndex
                 );
-                const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                // 首条用户消息永远发送（任务锚点）
+                const history = this.normalizeFallbackHistoryStart(
+                    this.prependFirstUserMessage(fullHistory, historyWithUserInputs, stableStartIndex)
+                );
                 const estimatedStableTokens = estimateFinalHistoryTokens(history);
                 if (estimatedStableTokens <= fallbackEnvelopeHistoryBudgetTokens) {
                     this.log.warn('trim.fallback_stable_start_reused', {
@@ -943,7 +1011,10 @@ export class ContextTrimService {
                 fullHistory,
                 absoluteStartIndex
             );
-            const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+            // 首条用户消息永远发送（任务锚点）
+            const history = this.normalizeFallbackHistoryStart(
+                this.prependFirstUserMessage(fullHistory, historyWithUserInputs, absoluteStartIndex)
+            );
             const estimatedFallbackTokens = estimateFinalHistoryTokens(history);
             return { relativeStartIndex, absoluteStartIndex, history, estimatedTokens: estimatedFallbackTokens };
         };
@@ -1078,24 +1149,27 @@ export class ContextTrimService {
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        evaluationOptions: ContextTrimEvaluationOptions = {},
-        externalSignal?: AbortSignal
+        evaluationOptions: ContextTrimEvaluationOptions = {}
     ): Promise<ContextTrimInfo> {
-        // 先获取完整的原始历史
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
+        // 先获取完整的原始历史（含已被总结覆盖的 isSummarized 消息）
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
         
         // 如果历史为空，直接返回
-        if (fullHistory.length === 0) {
+        if (rawHistory.length === 0) {
             return { history: [], trimStartIndex: 0 };
         }
+
+        // 逻辑截断：被总结覆盖的消息（isSummarized）不参与发送与统计，但原文完整保留在存储中
+        // （可显示、可搜索）。过滤后的历史与「物理删除后」的历史语义完全等价，
+        // 下游所有索引 / token / 回合计算无需感知标记消息，也不会因残留历史死循环触发总结。
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
-            // 手动总结是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
-            // 手动总结仍为纯插入语义（历史只增长）；自动总结（handleAutoSummarize）已改为
-            // “删除被总结区间 + 插入总结”的原子替换，不会再有被总结原始消息残留。
-            // 无论哪种语义，这里都从最后一个总结消息开始发送，避免把总结边界之前的内容
-            // 重新携带进请求（插入不删除时若仍从 0 发送，会等同于完全没有压缩）。
+            // 总结（手动/自动）是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
+            // 总结采用逻辑截断语义：被覆盖消息打 isSummarized 标记保留在历史中（上面已过滤），
+            // 发送时从最后一个总结消息开始，避免把总结边界之前的内容重新携带进请求
+            // （否则等同于完全没有压缩）。
             const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
             if (lastSummaryIndex >= 0) {
                 const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
@@ -1231,21 +1305,16 @@ export class ContextTrimService {
         }
         
         // 加载 runtime 元数据以便正确生成系统提示词和动态上下文
-        // （getMetadata 防御性探测：测试替身可能未实现，缺失时视为未绑定工作区）
-        const [todoList, pinnedFiles, skills, meta] = await Promise.all([
+        const [todoList, pinnedFiles, skills] = await Promise.all([
             this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
             this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
-            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined),
-            (typeof this.conversationManager.getMetadata === 'function'
-                ? this.conversationManager.getMetadata(conversationId).catch(() => null)
-                : Promise.resolve(null))
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
         ]);
 
         const runtime = {
             todoList,
             pinnedFiles,
-            skills,
-            workspaceUri: meta?.workspaceUri
+            skills
         };
 
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
@@ -1274,9 +1343,9 @@ export class ContextTrimService {
 
         // 并行执行文本计数和消息计数
         const [textTokenResults, messageTokenResults] = await Promise.all([
-            this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType, externalSignal),
+            this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
             missingTokenMessages.length > 0
-                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages, externalSignal)
+                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
                 : Promise.resolve([] as number[])
         ]);
 
@@ -1339,7 +1408,7 @@ export class ContextTrimService {
                     !!text?.trim()
                 );
             const preservedDynamicContextTexts = preservedDynamicContextEntries.map(entry => entry.text!);
-            const preservedDynamicContextTokens = await this.tokenEstimationService.countTextTokensBatch(preservedDynamicContextTexts, channelType, externalSignal);
+            const preservedDynamicContextTokens = await this.tokenEstimationService.countTextTokensBatch(preservedDynamicContextTexts, channelType);
             preservedDynamicContextEntries.forEach((entry, index) => {
                 preservedDynamicContextTokenByIndex.set(entry.index, preservedDynamicContextTokens[index] ?? 0);
             });
@@ -1414,20 +1483,12 @@ export class ContextTrimService {
         
         // ========== 自动总结模式 ==========
         // 自动总结模式下不做裁剪，而是返回「最后一个总结消息及其之后」的历史 + needsAutoSummarize
-        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。自动总结成功后历史已被物理
-        // 替换（总结消息代替被总结区间），token 估算口径与模型视角一致，不会每轮反复触发。
+        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。逻辑截断语义下被总结消息已在上方
+        // 过滤（isSummarized 不参与统计），token 估算口径与模型视角一致，不会每轮反复触发。
         if (policy.mode === 'summarize') {
-            // 首条用户消息保护：用户的原始任务指令是长期上下文锚点，总结文本永远不如原话
-            // 清楚，必须原样出现在请求里（不能只依赖 Preserved user inputs 档案——首次总结
-            // 物理替换后首条用户消息可能早于最后总结，且档案可能超长截断）。若首条用户消息
-            // 早于最后总结，把它原样拼到请求历史最前（与档案并存，轻微冗余换取原话完整）。
-            let firstUserIndex = -1;
-            for (let i = 0; i < fullHistory.length; i++) {
-                if (isRealUserMessage(fullHistory[i])) {
-                    firstUserIndex = i;
-                    break;
-                }
-            }
+            // 首条用户消息永远发送（任务锚点）：getNormalizedHistoryForStartIndex 返回前统一调用
+            // prependFirstUserMessage 原样前置（与 Preserved user inputs 档案并存，轻微冗余换取原话完整），
+            // 这里不再手动拼接，避免重复。
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
                 fullHistory,
@@ -1436,9 +1497,7 @@ export class ContextTrimService {
                 summaryStartIndex,
                 dynamicContextStrategy
             );
-            const summarizeHistory = (firstUserIndex >= 0 && firstUserIndex < summaryStartIndex)
-                ? [fullHistory[firstUserIndex], ...normalizedHistory.history]
-                : normalizedHistory.history;
+            const summarizeHistory = normalizedHistory.history;
             
             // 估算当前 token 总量来判断是否需要总结
             const fullTokenResult = this.accumulateTokens(

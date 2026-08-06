@@ -9,6 +9,40 @@
 ## [Unreleased]
 
 ### Added
+  - 设置页新增设置项搜索：标题栏搜索框实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），键盘上下选择/回车跳转，点击结果自动切换页签并滚动定位（节标题或精确锚点 + 1.6s 闪烁高亮）；内置中/英/日三语关键词索引（SEARCH_INDEX），17 个设置组件 93 个设置块加 `data-search-anchor` 精确锚点，具体设置项全部可搜可直达；空结果提示，三语 i18n 同步。
+
+### Changed
+  - 思维链（思考块）视图从两态升级为三段式（对齐后台任务回流消息）：**折叠**（只保留头部标题行）/ **中展开**（默认，固定约 10 行滚动查看）/ **完全展开**；头部单击三档循环切换，头部右侧新增三个精确模式按钮（chevron-up / list-flat / chevron-down，`@click.stop` 防冒泡）；`ThoughtViewMode` 类型与 `getRenderBlockMemoDeps` 签名同步更新（`isThoughtExpanded` → `thoughtViewMode`），清理 MessageItem 中遗留的 thought 样式死代码；三语 i18n 同步；MessageRenderBlock 测试重写为三态覆盖。
+  - 思维链中展开（medium）模式完善：**中展开与完全展开同源 markdown 渲染**（流式时渐进 markdown 即时渲染已定型完整段落 + 未完成尾巴 CharFlow 托管，非流式 MarkdownRenderer 直接渲染，不再显示纯文本）；**可中断自动吸底**——内容更新自动贴底跟随最新，用户向上滚动超过 40px 阈值即暂停跟随不打扰，滚回底部附近自动恢复（CharFlow 新增 `scrollContainer` / `stickBottom` 回调，贴底写在滚动容器上）；**裁剪提示**——单段超长内容触发 tailWindow 裁剪时，内容区顶部显示「内容过长，仅显示最近部分，请使用完全展开查看」提示条（CharFlow 新增 `onTrimmed` 回调，仅流式期间显示）；三语 i18n 同步。
+  - 思维链中展开吸底稳定性修复：① promote 剥离内容时 CharFlow host 同步变矮、MarkdownRenderer 下一 tick 才渲染变高（两段式高度变化），原同步校正停在中间——改为 `nextTick` 后按最终 `scrollHeight` 校正；② scroll 事件由浏览器合帧派发、滞后于实际滚动，用户刚滚离底部时 append 可能误拉回——`shouldStickBottom` 增加实时位置复验（距底 ≥40px 即同步置 false 不贴底）；③ 新增 `userScrolled` 标志：未滚动/重新进入中展开时无条件贴底（避免初始 scrollTop=0 被复验误判），滚动后按位置复验；注册中展开时重置吸底状态；新增 3 个回归测试（滞后复验 / nextTick 最终高度校正 / 原有恢复路径）。
+  - 思维链自动视图模式：思考中默认「中展开」；思考与输出全部结束后自动折叠为**单行第一行预览**（折叠视图新增内容预览区：非流式取思考内容首行，流式由 CharFlow 单行模式实时显示最新字符——`squashLineBreaks` 折叠换行 + `tailWindow` 有界 + `followEnd` 跟随）；用户手动切换过视图模式后自动切换不再干预（尊重用户选择）；已结束消息重建后初始即为折叠态；新增折叠预览与自动模式切换测试。
+  - 上下文总结（自动 + 手动）从「物理删除被总结消息」改为「逻辑截断」：被总结区间的原始消息打 `isSummarized` 标记完整保留在历史中（不再从磁盘消失，`history_search` 现在可以检索到被压缩的原文），发送给 AI 与 token 统计跳过被总结区间（`ContextTrimService` 统一过滤）；**首条用户消息永远发送**（任务锚点，`prependFirstUserMessage` 在所有发送路径前置，含手动总结边界与 trim 裁剪场景）；`isRealUserMessage` 排除 `isSummarized`，回合识别/总结规划/`isFirstMessage` 判断（过滤后活跃消息数）全部适配；协议 `insertIndex` 改为总结消息插入位置（= summarizeEndIndex）、`removedCount` 改为本次标记的消息数，前端 `handleAutoSummary` 同步为「标记本地消息 + 插入总结」（不再删除/平移索引）；消息列表在最后一个总结消息后渲染横线分隔「已总结 / 未总结」区域（原文照常显示不折叠）；自动总结的 `STALE_RANGE` 并发校验与低质量总结拒绝保留；历史文件无限增长为接受项（原文永不清理）。
+  - 新增「恢复原文」能力（逻辑截断反向操作）：总结消息卡片新增恢复按钮（`restoreSummarizedMessages` API），点击后取消该总结覆盖区间的 `isSummarized` 标记并删除总结消息本身，发送起点回退到上一个总结（或 0），原文重新参与发送与统计；删除总结消息（`deleteMessage` / `deleteMessagesInRange` 命中总结消息）同样自动恢复覆盖区间，杜绝「既无总结文本也无原文」的上下文真空（`restoreSummarizedRange` 纯函数，覆盖区间 = 上一个总结之后到该总结，从晚到早逐个恢复多总结场景）；三语 i18n 与新增回归测试（summarizeRestore.test.ts 7 用例）。
+  - 全链路性能与资源占用优化（移植自下游桌面版，仅含前后端可移植部分）：
+    - 后端读路径缓存：checkpoint 节点反查（`getMessageNodeIdAt`）300ms 短 TTL + LRU 缓存，一轮对话免十几次全量读盘；分支图读路径只读引用缓存（60s TTL + 200 会话 LRU + mtime/size 外部改写校验），大图不再每次迭代全量 structuredClone；模型列表 5 分钟 TTL；工具声明指纹缓存（tools JSON Schema 构建结果按声明/模式/工具逻辑/MCP 版本缓存）；会话元数据读路径与分支图读路径解耦。
+    - 热路径算法：上下文裁剪起点由 O(候选历史) 改为前缀扫描 O(n) 预计算；运行时上下文回合内复用，同一回合不再重复生成；流式响应 chunk 用 offset 游标解析，消除每个数据包 Buffer.concat / 字符串拼接的 O(n²)。
+    - 前端流式渲染：hljs 已知语言高亮缓存（流式期间同一语言块不再反复全量高亮）；`usedTokens` 增量指纹（每 chunk 免全量历史扫描）；todo 快照尾部增量重放（每 chunk 免全量重放，前缀引用与响应表校验不一致时自动回退）；MessageList 构建/todo sticky 列表短路（无 build / 无 todo 时免扫描）。
+    - 前端高频路径：i18n `t()` 翻译缓存（无参键免 split + 查找）；CustomScrollbar 值相等检查（无变化不写响应式 ref）+ rAF 节流 + 贴底阈值；平滑流式增量基线（每 chunk 免累计文本 slice）。
+    - webview：分支图富化响应前浅拷贝（配合只读引用缓存契约）；`requiresJsonRoundTrip` 小 payload 短路（高频小消息免分配 visited Set 深遍历）；广播直接迭代订阅者 Set（免每 50ms 复制订阅者集合）；`getExtensionVersion` memo。
+
+### Fixed
+  - 修复编辑用户消息保存后候选切换器（‹ 2/2 ›）不立即显示：编辑分支流结束后分支图虽已刷新，但本地窗口中被编辑消息仍保留旧候选 id，`buildCandidateGroupForNode` 判定其为候选组非活跃成员返回 null，需切换会话再切回（loadHistory 重载后 id 与后端一致）才恢复；现 `loadBranchGraph` 刷新成功后把窗口内「候选组非活跃成员」的用户消息 id 对齐为图活跃候选（BR-01 原则：窗口 id 与后端主历史 Content.id 一致），保存后立即可见切换器，幂等不误伤其他路径；新增回归测试（editBranchRefresh.test.ts 第 5 用例：complete 后 id 对齐 + 候选组命中）。
+  - 后台任务状态条（BackgroundTaskBar）新增「清除已完成」按钮：一键清除所有已完成的后台任务 chip（运行中保留）；若存在结果尚未汇报给模型的任务（回执未进入对话历史），先弹危险确认框提示再清除，避免静默丢失任务结果；按钮带可清除数量提示，三语 i18n 同步；新增 `backgroundTaskStore.dismissCompletedTasks` 单元测试（backgroundTaskDismiss.test.ts）。
+  - 子代理路径 `ToolDeclarationResolver` 监听器泄漏（H-1）：每次 run 新建实例会向 McpManager 单例注册 3 个永久事件监听器且从不释放，重度多代理下监听器无界累积、MCP 事件派发退化为 O(n)；改为按依赖引用共享实例（容量 4 LRU 淘汰），并新增 `dispose()` 释放监听器，同时让子代理路径真正享受声明缓存收益。
+  - `ConversationManager` 节点 ID 反查缓存（`nodeIdCache`）失效覆盖不完整：`invalidateCaches` 定义了但从未被调用，saveContents / 全量重写 / 历史迁移 / 删除对话等写路径不失效缓存，工具循环内（拒绝工具调用等结构性变更后 300ms 窗口内）checkpoint 反查可能命中陈旧节点 id；现全部写路径统一走 `invalidateCaches`。
+  - 设置搜索下拉键盘导航滚动跟随：结果超出下拉可视高度时，↑/↓ 选中的高亮项现在会保持在可视区域内（`scrollIntoView({ block: 'nearest' })`）。
+  - `ContextTrimService.computeValidSuffixMap` 反向扫描与正向 `validateHistoryIntegrity` 在乱序配对时语义不一致（L-5）：functionResponse 出现在其配对 functionCall 之前（跨消息或同消息内）时，正向判孤儿（invalid）而旧反向实现误判 valid，裁剪后可能把乱序配对发给 API；修复为按「本消息内更早 part / 右侧消息 / 待左侧治愈」三分支精确匹配正向语义。
+  - 设置搜索跳转时序与状态残留（L-1/L-2）：跳转定位改为按目标元素相对滚动容器偏移计算一次 `scrollTo`（避免 smooth 动画未推进时同步读 rect 的时序冲突、打断动画）；跳转成功后清空搜索词，侧边栏恢复常态高亮；`search.hint` 词条投入使用（搜索框聚焦且未输入时显示提示）。
+  - `pendingWholeBuffer` 注释修正（L-4）：原注释声称「上限由硬限制保护」，实际代码对未知格式的整段累积没有大小上限（与改动前行为一致），已修正为准确描述。
+  - 新增回归测试：`subagentResolverSharing.test.ts`（监听器只注册一次 / dispose 释放 / 容量淘汰）、`conversationMessageNodeId.test.ts` 补写路径失效断言（仓储替换、删除对话）、`contextTrimValidSuffixEquivalence.test.ts`（computeValidSuffixMap 与正向校验逐候选等价 + 固定 seed 随机模糊对比 50 轮）、`toolDeclarationResolverCache.test.ts`（缓存命中 / 参数与设置指纹与 MCP 版本失效 / dispose）、`settingsSearchAnchorConsistency.test.ts`（SEARCH_INDEX 锚点与组件 data-search-anchor 一致性）、`todoListIncremental.test.ts`（增量重放参数分段一致性）与 `computed.test.ts` 增量分支（流式追加 / 尾消息原地更新 / 前缀替换回退 / 数组缩短 / 总结估算）。
+  - 全仓审计修复（PR #17 合并）：①跨对话存档误删——`CheckpointQueryService.removeOrphanBackupDirs` 孤儿判定汇总全部对话的存档记录（有界并发枚举）+ manifest 身份守卫（fail-closed，含 manifest 的目录绝不删）+ 无 manifest 目录的 mtime 新鲜度守卫（创建中窗口跳过）；②代理流式 buffer 偏移——`ChannelManager` 直接以 `parseStreamBuffer` 返回的 remaining 为下轮基线（修复 JSON-lines 逐行格式丢 chunk、SSE 事件跨 chunk 尾随空行切坏 `data:` 前缀）；③总结消息插入窗口中间不可见/重复——`insertMessageAt` 中间插入清可见消息增量缓存；④`StreamAbortManager`：create() 替换控制器时释放 idleWaiters、`waitForIdle` 退休链等待超时后返回（修复 `awaitConversationIdle` → 后台回执永久挂起）；⑤分支图冻结自愈——空占位超龄判定（10 分钟，`isActiveEmptyPlaceholder`）：崩溃/被杀遗留的空 reroll/edit 占位不再让 append 跳过图同步（append 前先收敛、deferred 同步不再永久 defer），超龄幽灵占位软删回收；⑥SubAgent Monitor contentDelta：快照尾部为工具结果时追加新楼层而非覆盖上一轮模型消息（附 5 例回归测试）；⑦分支：deleteToMessage 截断含总结走 summary_deleted 全量重建、edit 流程补写节点 contentMetadata、contentMetadata 排除 turnDynamicContext 快照、修复备份保留数上限；⑧安全：regexGuard 嵌套分组量词检测、SettingsCore 深合并过滤 `__proto__`/constructor/prototype、Memento 写队列串行化、FileSettingsStorage 原子写、McpManager 重连前断开旧 stdio、StdioClient 通知吞错、nodeIdCache epoch 守卫防陈旧回填；⑨前端：autoSummary chunk 不再被 streamId 门禁丢弃（含 tab 缓冲路径）、error 路径结束半截消息 streaming 标志、cancelled/error/本地取消重置 turnBaseTokens、WorkspaceRestoreGuard 等待旧流完全退出、thought 视图模式与裁剪提示按 messageId 持久化 + prune 集成、SummaryMessage 删除/恢复互斥、投递提示按 seq 精确移除。
+  - regexGuard 增强（审查后优化）：扫描式嵌套量词检测补「裸量词原子」跟踪（拦截 `(?:a+|(?:ab))+`、`(?<name>a+)+` 等嵌套 + 原子量词形态，同时保持 `(a+)?`/`(ab+)?` 线性形态放行）；正则启发式检测前净化转义序列与字符类（不再误伤 `\(a+\\)+`、`([a+])+`）；范围量词只认可变 `{n,}`/`{n,m}`（定长 `(a{2}){2}` 放行）；新增 10 组检测矩阵用例。
+  - `ConversationManager` nodeIdCache epoch 改全局单调计数器 + LRU 容量淘汰（审查后优化）：
+    计数器不归零、淘汰只删最旧条目，消除「整体清空后 0===0」与在途读盘回填的碰撞窗口。
+  - `modelList` 缓存读写改浅拷贝一层（原 JSON 序列化深拷贝会丢失 undefined 字段且有全量序列化开销）；`FileSettingsStorage` tmp 文件名加随机后缀（并发 save 不再互相踩）+ rename 失败清理残留；`handleAutoSummary` 标记起点下界钳制 `Math.max(0, insertIndex - markedCount)`（负起点会把窗口外消息全部误标记）。
+
+
+### Added
   - **记忆设置页支持手动增加记忆（设置 → 记忆 → 原始记忆条目）**：此前记忆只能由 AI 通过 `memory_note` 工具写入，用户想记录一条事实/约定必须让模型代劳。现条目列表顶部新增输入框 + 「添加记忆」按钮（支持 Ctrl+Enter / ⌘+Enter 快捷提交），写入链路与 AI 的 `memory_note` 完全等价（同一 `MemoryManager.note`，同样触发待压缩提示）；新增 `addMemoryEntry` IPC 处理器，添加成功提示新条目 ID 并自动刷新列表
   - **记忆条目列表超限保护**：`getMemoryEntries` 支持 `limit`（默认 5000），`MemoryManager` 新增 O(1) 的 `totalEntries()`；海量记忆（10 万条以上）时不再全量 postMessage 传输 + `v-for` 渲染冻结设置页，截断时前端提示「仅展示前 N 条，其余可用 memory_recall 检索」
 

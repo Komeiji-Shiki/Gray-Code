@@ -16,6 +16,12 @@ import {
     FileSystemStorageAdapter,
     FileUsageIndexStore
 } from '../backend/modules/conversation';
+import {
+    BranchGraphRepository,
+    BranchService,
+    getGlobalBranchService,
+    setGlobalBranchService,
+} from '../backend/modules/conversation/branch';
 import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config';
 import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
@@ -121,6 +127,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private configManager!: ConfigManager;
     private channelManager!: ChannelManager;
     private conversationManager!: ConversationManager;
+    private branchService?: BranchService;
     private chatHandler!: ChatHandler;
     private modelsHandler!: ModelsHandler;
     private settingsManager!: SettingsManager;
@@ -267,6 +274,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             storageAdapter,
             new FileUsageIndexStore(vscode, effectiveDataUri)
         );
+
+        // 分支图同步是普通追加与总结写入的后台职责，不能依赖用户先打开分支面板才初始化。
+        // 本次实故障由已结束的空 reroll 占位冻结同步触发；这里额外封堵窗口重载后已有 sidecar
+        // 但全局服务尚未懒创建的独立复发路径。懒解析 handler 会复用这个实例。
+        this.branchService = new BranchService(
+            this.conversationManager,
+            new BranchGraphRepository(this.storagePathManager.getEffectiveDataPath())
+        );
+        setGlobalBranchService(this.branchService);
 
         // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
         void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {
@@ -1113,6 +1129,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.windowsAgentStopNotificationService?.dispose();
         this.subAgentMonitorPanel?.dispose();
         this.subAgentMonitorPanel = undefined;
+        if (getGlobalBranchService() === this.branchService) {
+            setGlobalBranchService(undefined);
+        }
+        this.branchService = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
 

@@ -484,7 +484,19 @@ export interface Content {
      * - false/undefined: 手动总结
      */
     isAutoSummary?: boolean;
-    
+
+    /**
+     * 标识此消息已被上下文总结覆盖（逻辑截断）。
+     *
+     * 仅对非总结消息有意义：
+     * - true: 该消息已被总结消息覆盖，原文仍完整保留在历史中（可显示、可搜索），
+     *   但默认不再参与发送给 AI 的请求与 token 统计（发送历史从最后一个总结消息开始）；
+     * - false/undefined: 活跃消息。
+     *
+     * 首条真实用户消息（任务锚点）永不标记，始终发送。
+     */
+    isSummarized?: boolean;
+
     /**
      * 标识此消息是用户主动输入的消息
      *

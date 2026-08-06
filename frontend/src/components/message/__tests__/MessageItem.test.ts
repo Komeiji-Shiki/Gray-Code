@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { defineComponent, nextTick } from 'vue'
 import MessageItem, {
   backgroundTaskViewModeByMessageId,
   pruneBackgroundTaskViewModes,
@@ -41,13 +42,24 @@ vi.mock('@/stores/settingsStore', () => ({
 
 // 子组件全部打桩：本测试只关心折叠态切换与持久化
 // ResponseViewerDialog 用显式桩（不声明 props），避免 value 为 null 时的 prop 校验告警
+// 捕获 props 的 MessageRenderBlock 桩（验证 thoughtViewMode 自动切换透传）
+const MessageRenderBlockCapture = defineComponent({
+  name: 'MessageRenderBlock',
+  props: {
+    block: { type: Object, required: true },
+    thoughtViewMode: { type: String, default: 'medium' },
+    setThoughtViewMode: { type: Function, default: () => {} }
+  },
+  template: '<div class="render-block-stub" />'
+})
+
 const GLOBAL_STUBS = {
   MessageActions: true,
   MessageAttachments: true,
   InlineContextMessage: true,
   MessageTaskCards: true,
   ResponseViewerDialog: { template: '<div class="response-viewer-stub" />' },
-  MessageRenderBlock: true,
+  MessageRenderBlock: MessageRenderBlockCapture,
   MarkdownRenderer: true,
   RetryDialog: true,
   EditDialog: true
@@ -112,6 +124,57 @@ describe('R3-#5: 后台任务三段式折叠态持久化', () => {
     expect(w2.find('.bg-task-content').classes()).toContain('view-collapsed')
     w1.unmount()
     w2.unmount()
+  })
+})
+
+describe('思考块视图自动模式切换', () => {
+  function createThoughtMessage(id: string, streaming: boolean): Message {
+    return {
+      id,
+      role: 'assistant',
+      content: '思考内容',
+      timestamp: Date.now(),
+      backendIndex: 0,
+      streaming,
+      parts: [{ text: '第一行思考\n第二行思考', thought: true }]
+    } as Message
+  }
+
+  it('已结束消息（非流式）自动折叠为第一行预览', async () => {
+    const wrapper = mountItem(createThoughtMessage('thought_ended', false))
+    await nextTick()
+    const stub = wrapper.findComponent(MessageRenderBlockCapture)
+    expect(stub.exists()).toBe(true)
+    expect(stub.props('thoughtViewMode')).toBe('collapsed')
+    wrapper.unmount()
+  })
+
+  it('思考中（流式）默认中展开', async () => {
+    const wrapper = mountItem(createThoughtMessage('thought_streaming', true))
+    await nextTick()
+    const stub = wrapper.findComponent(MessageRenderBlockCapture)
+    expect(stub.exists()).toBe(true)
+    expect(stub.props('thoughtViewMode')).toBe('medium')
+    wrapper.unmount()
+  })
+
+  it('思考结束且输出结束后自动折叠；用户手动切换后不再覆盖', async () => {
+    const message = createThoughtMessage('thought_manual', true)
+    const wrapper = mountItem(message)
+    await nextTick()
+    expect(wrapper.findComponent(MessageRenderBlockCapture).props('thoughtViewMode')).toBe('medium')
+
+    // 用户手动切到完全展开
+    const stub = wrapper.findComponent(MessageRenderBlockCapture)
+    ;(stub.props('setThoughtViewMode') as (mode: string) => void)('expanded')
+    await nextTick()
+    expect(stub.props('thoughtViewMode')).toBe('expanded')
+
+    // 消息流式结束：用户已干预 → 自动折叠不覆盖
+    await wrapper.setProps({ message: { ...message, streaming: false } })
+    await nextTick()
+    expect(wrapper.findComponent(MessageRenderBlockCapture).props('thoughtViewMode')).toBe('expanded')
+    wrapper.unmount()
   })
 })
 

@@ -769,8 +769,7 @@ export class ToolIterationLoopService {
                 promptModeSnapshot,
                 modelOverride,
                 dynamicContextStrategy,
-                { allowStateAdvance: !contextManagementEvaluatedForTurn },
-                abortSignal
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('stream.trim_result', {
@@ -823,7 +822,7 @@ export class ToolIterationLoopService {
                             autoSummary: true as const,
                             summaryContent: summarizeResult.summaryContent,
                             insertIndex: summarizeResult.insertIndex,
-                            // H1：本次总结物理删除的消息数；缺省/0 时前端保持纯插入旧行为
+                            // 逻辑截断：本次总结标记（被覆盖）的消息数；前端据此标记本地消息并插入总结
                             removedCount: summarizeResult.removedCount ?? 0
                         } satisfies ChatStreamAutoSummaryData;
                     }
@@ -901,8 +900,7 @@ export class ToolIterationLoopService {
                     modelOverride,
                     dynamicContextStrategy,
                     this.granularFallbackStartByConversation.get(conversationId),
-                    trimResult.fixedPromptTokens,
-                    abortSignal
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
                 // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
@@ -1212,22 +1210,26 @@ export class ToolIterationLoopService {
                     if (abortSignal?.aborted) {
                         break;
                     }
-                    // waitForNextSettlement 本身无 abort 监听：若某工具不响应
-                    // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
-                    // 与 abort 事件做 race，取消时立即退出等待循环。
-                    let onAbort: (() => void) | undefined;
-                    const abortPromise = abortSignal
-                        ? new Promise<void>((resolve) => {
+                    if (abortSignal) {
+                        // waitForNextSettlement 本身无 abort 监听：若某工具不响应
+                        // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
+                        // 与 abort 事件做 race，取消时立即退出等待循环。
+                        let onAbort: (() => void) | undefined;
+                        const abortPromise = new Promise<void>((resolve) => {
                             onAbort = () => resolve();
                             abortSignal.addEventListener('abort', onAbort, { once: true });
-                        })
-                        : Promise.resolve();
-                    try {
-                        await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
-                    } finally {
-                        if (onAbort && abortSignal) {
-                            abortSignal.removeEventListener('abort', onAbort);
+                        });
+                        try {
+                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
+                        } finally {
+                            if (onAbort) {
+                                abortSignal.removeEventListener('abort', onAbort);
+                            }
                         }
+                    } else {
+                        // 无 abort 信号时直接等下一次落定——若用已 resolve 的 Promise 做 race，
+                        // 循环会退化为纯忙等（100% CPU）直到工具落定。
+                        await earlyToolProgressQueue.waitForNextSettlement();
                     }
                 }
                 for (const statusChunk of drainSettledEarlyToolStatuses()) {
@@ -1717,8 +1719,7 @@ export class ToolIterationLoopService {
                 promptModeSnapshot,
                 modelOverride,
                 dynamicContextStrategy,
-                { allowStateAdvance: !contextManagementEvaluatedForTurn },
-                abortSignal
+                { allowStateAdvance: !contextManagementEvaluatedForTurn }
             );
 
             this.log.debug('nonstream.trim_result', {
@@ -1797,8 +1798,7 @@ export class ToolIterationLoopService {
                     modelOverride,
                     dynamicContextStrategy,
                     this.granularFallbackStartByConversation.get(conversationId),
-                    trimResult.fixedPromptTokens,
-                    abortSignal
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
                 // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）

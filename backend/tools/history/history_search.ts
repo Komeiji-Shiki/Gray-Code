@@ -29,8 +29,9 @@
  *   16 | 连接断开后怎么重连？
  * ```
  *
- * 数据来源：ConversationManager.getHistoryRef() 获取完整历史（只读引用，命中缓存时零拷贝），
- * 然后只处理 isSummary 标记之前（被压缩）的消息。
+ * 数据来源：ConversationManager.getHistory() 获取完整历史，
+ * 然后只处理带 isSummarized 标记（已被总结覆盖）的消息。
+ * 逻辑截断语义下被总结的原文完整保留，因此可以检索到完整原始内容。
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
@@ -64,24 +65,13 @@ interface RuntimeConfig {
 // ─── 格式化引擎 ─────────────────────────────────────────
 
 /**
- * 查找历史中最后一个总结消息的索引
- */
-function findLastSummaryIndex(history: Content[]): number {
-    for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].isSummary) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/**
- * 从历史消息中提取被总结覆盖的消息（总结之前的消息）
+ * 从历史消息中提取被总结覆盖的消息（isSummarized 标记）
+ *
+ * 逻辑截断语义下被总结的原始消息完整保留在历史中并打 isSummarized 标记；
+ * 直接按标记过滤（不依赖总结消息位置），手动总结同样生效。
  */
 function getSummarizedMessages(history: Content[]): Content[] {
-    const summaryIndex = findLastSummaryIndex(history);
-    if (summaryIndex < 0) return [];
-    return history.slice(0, summaryIndex);
+    return history.filter(message => message.isSummarized === true);
 }
 
 /**
@@ -525,8 +515,8 @@ async function historySearchHandler(
         // 获取完整对话历史：本工具只读（格式化/搜索/行读取），
         // 优先取引用（命中 ConversationManager 缓存时零拷贝），
         // 旧实现没有 getHistoryRef 时回退到 getHistory 深拷贝。
-        const fullHistory = (typeof conversationStore.getHistoryRef === 'function'
-            ? await conversationStore.getHistoryRef(conversationId)
+        const fullHistory = (typeof (conversationStore as any).getHistoryRef === 'function'
+            ? await (conversationStore as any).getHistoryRef(conversationId)
             : await conversationStore.getHistory(conversationId)) as Content[];
 
         const targetMessages = cfg.searchScope === 'summarized' ? getSummarizedMessages(fullHistory) : fullHistory;

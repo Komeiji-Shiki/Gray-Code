@@ -11,7 +11,8 @@ const MessageRenderBlockStub = defineComponent({
   name: 'MessageRenderBlock',
   props: {
     block: { type: Object, required: true },
-    smoothDisplayActive: Boolean
+    smoothDisplayActive: Boolean,
+    thoughtViewMode: { type: String, default: '' }
   },
   template: '<div class="render-block-stub">{{ block.text }}</div>'
 })
@@ -145,6 +146,8 @@ describe('MessageItem streaming render exclusivity', () => {
 
     const block = wrapper.getComponent(MessageRenderBlockStub)
     expect(block.props('smoothDisplayActive')).toBe(true)
+    // 思维链三段式默认中展开
+    expect(block.props('thoughtViewMode')).toBe('medium')
     expect(wrapper.find('.char-flow-host').exists()).toBe(false)
     expect(wrapper.find('.markdown-stub').exists()).toBe(false)
     wrapper.unmount()

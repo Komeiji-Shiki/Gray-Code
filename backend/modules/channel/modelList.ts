@@ -62,7 +62,7 @@ function touchModelListCache(key: string): void {
 
 function buildModelListCacheKey(type: string, url: string, config: ChannelConfig, proxyUrl?: string): string {
   const cfg = config as any;
-  const customHeaders = cfg.customHeadersEnabled ? JSON.stringify(cfg.customHeaders ?? {}) : '';
+  const customHeaders = cfg.customHeadersEnabled ? JSON.stringify(cfg.customHeaders ?? '') : '';
   return `${type}|${url}|${String(cfg.apiKey ?? '')}|${String(cfg.useAuthorizationHeader ?? '')}|${customHeaders}|${proxyUrl ?? ''}`;
 }
 
@@ -75,23 +75,26 @@ function getModelListCached(key: string): ModelInfo[] | null {
     return null;
   }
   touchModelListCache(key);
-  return JSON.parse(JSON.stringify(entry.models));
+  // ModelInfo 是扁平纯数据对象，浅拷贝一层即可隔离调用方对返回值的修改；
+  // 避免 JSON 序列化（丢失 undefined 字段 + 大列表全量序列化开销）。
+  return entry.models.map(model => ({ ...model }));
 }
 
 function cacheModelList(key: string, models: ModelInfo[]): void {
-  modelListCache.set(key, { models, expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
+  // 存副本：miss 路径会把调用方传入的列表按引用缓存，若首个调用方随后就地修改
+  // （排序/过滤/元素改写）会污染缓存条目——命中路径返回的是浅拷贝，语义不一致。
+  modelListCache.set(key, { models: models.map(model => ({ ...model })), expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
   touchModelListCache(key);
 }
 
 /**
- * 从渠道配置中提取已启用的自定义标头，合并到已有的 headers 对象中
- * （含键名校验与保留标头过滤，见 base.ts 的 applyCustomHeaders）
+ * 从渠道配置中提取已启用的自定义标头，合并到已有的 headers 对象中。
+ * （含键名校验与保留标头过滤，来自 base.ts 的 applyCustomHeaders）
  */
 function applyCustomHeadersFromConfig(headers: Record<string, string>, config: ChannelConfig): void {
   const cfg = config as any;
   applyCustomHeaders(headers, cfg.customHeaders, cfg.customHeadersEnabled);
 }
-
 /**
  * 规范化 Anthropic 模型列表基础 URL
  *

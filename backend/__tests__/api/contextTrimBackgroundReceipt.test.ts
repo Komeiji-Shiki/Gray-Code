@@ -194,9 +194,16 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         );
 
         expect(result.trimStartIndex).toBe(2);
-        expect(result.history[0]).toMatchObject({ role: 'user', isSummary: true });
-        expect(result.history[0].parts[0].text).toContain('最初目标');
-        expect(result.history.slice(1)).toEqual(summarizedHistory.slice(2));
+        // 首条用户消息永远发送（任务锚点）：位于发送历史最前
+        expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: '最初目标' }] });
+        expect(result.history[0]).not.toHaveProperty('isSummary');
+        // Preserved user inputs 档案紧随其后（含首条用户消息原文）
+        expect(result.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[1].parts[0].text).toContain('最初目标');
+        // 手动总结边界仍然生效：总结消息在档案之后，总结之前的内容不重新携带
+        expect(result.history[2]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[2].parts[0].text).toContain('手动总结');
+        expect(result.history.slice(3)).toEqual(summarizedHistory.slice(3));
         expect(result.contextManagementDecision).toMatchObject({
             enabled: false,
             mode: 'off',
@@ -294,11 +301,14 @@ describe('ContextTrimService - turn-scoped trim state', () => {
 
         expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
         expect(result.trimStartIndex).toBe(3);
-        expect(result.history[0]).toMatchObject({ role: 'user', isSummary: true });
-        expect(result.history[0].parts[0].text).toContain('old');
-        expect(result.history[0].parts[0].text).toContain('current');
-        expect(result.history[1].parts[0].functionCall?.id).toBe('a');
-        expect(result.history[2].parts[0].functionResponse?.id).toBe('a');
+        // 首条用户消息永远发送（任务锚点）：history[0] = old，history[1] = preserved 档案（含 old/current）
+        expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'old' }] });
+        expect(result.history[0]).not.toHaveProperty('isSummary');
+        expect(result.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[1].parts[0].text).toContain('old');
+        expect(result.history[1].parts[0].text).toContain('current');
+        expect(result.history[2].parts[0].functionCall?.id).toBe('a');
+        expect(result.history[3].parts[0].functionResponse?.id).toBe('a');
         expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
     });
 

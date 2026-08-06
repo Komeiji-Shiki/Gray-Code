@@ -63,6 +63,12 @@ interface SmoothDisplay {
   squashLineBreaks: boolean
   tailWindow?: number
   restoreFull: boolean
+  /** 垂直滚动容器：多行预览贴底写在容器上（host 自身不滚动） */
+  scrollContainer?: HTMLElement
+  /** 内容更新时是否应贴底（用户向上查看时返回 false 停止打扰） */
+  stickBottom?: () => boolean
+  /** 尾部窗口首次裁剪时回调（中展开裁剪提示） */
+  onTrimmed?: () => void
   /** 渐进 markdown：已定型文本到达安全段落边界时回调提升的文本 */
   onPromote?: (text: string) => void
 }
@@ -81,6 +87,12 @@ export interface SmoothDisplayOptions {
   /** 注册时恢复完整累计文本（不裁剪已提升部分）。折叠预览无渐进渲染层，
    * 需要显示完整内容流；展开态（有 onPromote）恢复未提升尾巴 + 重放提升文本 */
   restoreFull?: boolean
+  /** 垂直滚动容器：多行预览贴底写在容器上（host 自身不滚动） */
+  scrollContainer?: HTMLElement
+  /** 内容更新时是否应贴底（用户向上查看时返回 false 停止打扰） */
+  stickBottom?: () => boolean
+  /** 尾部窗口首次裁剪时回调（中展开裁剪提示） */
+  onTrimmed?: () => void
   /** 渐进 markdown：已定型文本到达安全段落边界（\n\n + fence 配对）时回调提升的文本。
    * 正文尾块与展开的思考块启用；折叠预览不启用 */
   onPromote?: (text: string) => void
@@ -211,6 +223,9 @@ export function registerSmoothDisplay(
   const squashLineBreaks = options.squashLineBreaks === true
   const tailWindow = options.tailWindow !== undefined && options.tailWindow > 0 ? options.tailWindow : undefined
   const restoreFull = options.restoreFull === true
+  const scrollContainer = options.scrollContainer
+  const stickBottom = options.stickBottom
+  const onTrimmed = options.onTrimmed
   const onPromote = options.onPromote
   const existing = displays.get(messageId)
   if (
@@ -220,6 +235,9 @@ export function registerSmoothDisplay(
     existing.squashLineBreaks === squashLineBreaks &&
     existing.tailWindow === tailWindow &&
     existing.restoreFull === restoreFull &&
+    existing.scrollContainer === scrollContainer &&
+    existing.stickBottom === stickBottom &&
+    existing.onTrimmed === onTrimmed &&
     existing.onPromote === onPromote
   ) {
     return
@@ -235,7 +253,10 @@ export function registerSmoothDisplay(
     noFade,
     followEnd,
     squashLineBreaks,
-    tailWindow
+    tailWindow,
+    scrollContainer,
+    stickBottom,
+    onTrimmed
   })
   const entry = entries.get(messageId)
   if (entry) {
@@ -251,7 +272,7 @@ export function registerSmoothDisplay(
       onPromote(entry.promotedText)
     }
   }
-  displays.set(messageId, { host, flow, followEnd, noFade, squashLineBreaks, tailWindow, restoreFull, onPromote })
+  displays.set(messageId, { host, flow, followEnd, noFade, squashLineBreaks, tailWindow, restoreFull, scrollContainer, stickBottom, onTrimmed, onPromote })
   hostToMessageId.set(host, messageId)
   if (entry && onPromote) {
     // 注册后立即尝试提升已定型完整段落：展开/重建后不用等下一个字符才出格式

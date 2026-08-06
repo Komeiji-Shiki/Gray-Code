@@ -290,7 +290,9 @@ const zhCN = {
             shortMinute: 'm',
             dailyTitle: '每日使用时长',
             monthlyTitle: '每月使用时长（点击月份查看每日明细）',
+            monthlyTitleShort: '每月使用时长',
             monthActiveDays: '{days} 天活跃',
+            onlyShowLatest: '仅显示最近 {days} 天',
             expandMonth: '展开该月每日明细',
             heatmapTitle: '最近 7 天作息热力（悬停查看详情）'
         },
@@ -339,6 +341,8 @@ const zhCN = {
             skills: 'Skills',
             summarizeContext: '总结上下文',
             tpsTooltip: 'TPS（tokens per second）',
+            tpsTokenizerReal: '模型 tokenizer 精确计数',
+            tpsTokenizerEstimate: 'tokenizer 未就绪，按字符估算',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',
@@ -581,7 +585,11 @@ const zhCN = {
             },
             thought: {
                 thinking: '正在思考...',
-                thoughtProcess: '思考过程'
+                thoughtProcess: '思考过程',
+                viewCollapsed: '折叠',
+                viewMedium: '中展开（滚动查看）',
+                viewExpanded: '完全展开',
+                trimmedHint: '内容过长，仅显示最近部分，请使用完全展开查看'
             },
             contextBlocks: {
                 clickToView: '点击查看完整内容'
@@ -590,6 +598,7 @@ const zhCN = {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
+                restoreTitle: '恢复原文（撤销总结，重新发送被压缩的消息）',
                 autoTriggered: '自动触发',
                 compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
                 legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
@@ -2741,6 +2750,11 @@ const zhCN = {
             cancelled: '已取消',
             cancel: '取消任务',
             dismiss: '清除',
+            dismissAllCompleted: '清除已完成',
+            dismissAllCompletedTitle: '一键清除所有已完成的后台任务（未汇报结果的任务会弹出确认）',
+            dismissAllConfirmTitle: '清除已完成任务？',
+            dismissAllConfirmMessage: '{count} 个任务的结果尚未汇报给模型，清除后模型将收不到这些结果。确定清除？',
+            dismissAllConfirmAction: '仍要清除',
             pendingReport: '结果待汇报给模型',
             outputTitle: '命令输出',
             noOutput: '暂无输出',

@@ -107,6 +107,7 @@ import {
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
+  restoreSummarizedMessages as restoreSummarizedMessagesFn,
   clearMessages as clearMessagesFn
 } from './chat/messageActions'
 
@@ -307,7 +308,7 @@ export const useChatStore = defineStore('chat', () => {
    *
    * 背景：MessageItem 每个组件实例都对自己的 messageIndex 全量 filter/sort 检查点
    * （O(n) × 实例数），且 checkpoints 数组在会话内只原地 push（checkpointActions.addCheckpoint）
-   * 或整体替换（切换对话 / 裁剪 filter / 回档）。因此用“数组引用 + 长度 + 尾元素”指纹做
+   * 或整体替换（切换对话 / 裁剪 filter / 回档）。因此用"数组引用 + 长度 + 尾元素"指纹做
    * 增量维护：纯尾部追加只处理新增段，其余回退全量重建（WeakMap 以数组为键，旧会话数组随 GC 释放）。
    *
    * 输出（与原有消费语义逐项对齐）：
@@ -745,6 +746,7 @@ export const useChatStore = defineStore('chat', () => {
     restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
+  const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)
 
   // ============ 流式处理 ============
 
@@ -1053,6 +1055,7 @@ export const useChatStore = defineStore('chat', () => {
     // 上下文总结
     summarizeContext,
     cancelSummarizeRequest,
+    restoreSummarizedMessages,
 
     // 标签页
     openTabs: state.openTabs,

@@ -17,12 +17,12 @@ import {
   flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
-import { syncFoldedHistoryHint, syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceAllMessages, replaceMessageAt } from './state'
+import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, trimWindowFromTop } from './windowUtils'
+import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 import { isPerfEnabled } from '../../utils/perf'
 import type { StreamFunctionCall } from '../../utils/functionCallMerge'
-import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor } from '../../utils/tokenCounter'
+import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor, isTokenizerReady } from '../../utils/tokenCounter'
 
 /**
  * 工具调用参数的 TPS 已计文本跟踪（per-tool call id）。
@@ -49,6 +49,15 @@ let activeFactor = 1
 /** 本轮（当前 API 调用流）累计的 base token 估算，流结束用于校准 */
 let turnBaseTokens = 0
 
+/**
+ * 清空本轮 base 估算（本地取消路径使用）：后端此后可能不发任何终结 chunk（挂死/断网），
+ * 残留估算会混入下一轮流（realTokens 是新流真值、base 混入旧流字符）拉偏校准因子。
+ * handleCancelled/handleError 的终结路径已内联清空，无需调用本函数。
+ */
+export function resetTurnBaseTokenEstimate(): void {
+  turnBaseTokens = 0
+}
+
 /** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
 function resolveModelKey(state: ChatStoreState): string {
   const selected = state.selectedModelId?.value?.trim() ?? ''
@@ -66,11 +75,16 @@ function syncModelContext(state: ChatStoreState): void {
   ensureTokenCounterLoaded(modelKey)
 }
 
-/** record：base 估算 × 校准因子；同时累计 base 供流结束校准 */
+/** record：base 估算 × 校准因子；同时累计 base 供流结束校准。
+ * source 标记当前计数方式：模型 tokenizer 就绪 → 真实计数，否则 → 字符加权估算。 */
 function recordTpsTokens(base: number, ts?: number): void {
   if (base <= 0) return
   turnBaseTokens += base
-  tpsMeter.record(Math.max(1, Math.round(base * activeFactor)), ts)
+  tpsMeter.record(
+    Math.max(1, Math.round(base * activeFactor)),
+    ts,
+    isTokenizerReady(activeModelKey) ? 'tokenizer' : 'estimate'
+  )
 }
 
 function getNextBackendIndex(state: ChatStoreState): number {
@@ -1267,9 +1281,10 @@ export function handleAutoSummaryStatus(
 /**
  * 处理 autoSummary 类型
  *
- * 自动总结在后端历史中是"物理替换"：后端已删除 backendIndex ∈ [insertIndex, insertIndex + removedCount)
- * 的消息，并把总结消息插入到 insertIndex（后端新下标）。removedCount 缺省为 0 = 旧"纯插入"语义。
- * 前端需要同步窗口状态，避免必须重载历史才能看到。
+ * 逻辑截断语义：后端不删除任何消息，只给被总结区间 [insertIndex - removedCount, insertIndex)
+ * 的消息打 isSummarized 标记，并把总结消息插入到 insertIndex（= summarizeEndIndex）。
+ * removedCount = 本次标记的消息数；前端同步：标记窗口内对应消息、插入总结消息、
+ * 后续消息 backendIndex +1、totalMessages +1。
  */
 export function handleAutoSummary(
   chunk: StreamChunk,
@@ -1287,14 +1302,13 @@ export function handleAutoSummary(
     parts: Array.isArray(summaryContent.parts) ? summaryContent.parts : []
   }
   const insertIndex = chunk.insertIndex
-  // 物理替换语义：后端已删除 [insertIndex, insertIndex + removedCount) 区间消息并插入总结
-  const removedCount = typeof chunk.removedCount === 'number' && chunk.removedCount > 0
+  // 逻辑截断语义：后端已标记 [insertIndex - removedCount, insertIndex) 区间的消息（不删除）
+  const markedCount = typeof chunk.removedCount === 'number' && chunk.removedCount > 0
     ? chunk.removedCount
     : 0
 
   // 去重：优先用后端稳定消息 id（Content.id）；无 id（旧后端）时回退到
-  // "窗口内是否已有 backendIndex === insertIndex 的 isSummary 消息"。
-  // 替换语义下被删的旧消息已不在窗口，直接用该判定即可。
+  // “窗口内是否已有 backendIndex === insertIndex 的 isSummary 消息”。
   const summaryContentId = typeof summaryContent.id === 'string' && summaryContent.id.length > 0
     ? summaryContent.id
     : undefined
@@ -1307,42 +1321,28 @@ export function handleAutoSummary(
     return
   }
 
-  // ===== removedCount === 0：旧"纯插入"语义，行为保持不变 =====
-  if (removedCount === 0) {
-    // 如果插入位置在当前窗口之前，仅维护索引偏移即可
-    if (insertIndex < state.windowStartIndex.value) {
-      state.windowStartIndex.value += 1
-      for (const msg of state.allMessages.value) {
-        if (typeof msg.backendIndex === 'number') {
-          msg.backendIndex += 1
-        }
-      }
-      syncTotalMessagesFromWindow(state)
-      // 窗口起点前移后同步折叠提示（foldedMessageCount 由 windowStartIndex 推导）
-      syncFoldedHistoryHint(state)
-      return
-    }
-
-    // 先将当前窗口中插入点及之后的 backendIndex 后移 1
+  // 标记被总结覆盖的本地消息（backendIndex ∈ [insertIndex - markedCount, insertIndex)），
+  // 原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）。
+  // 下界钳制：markedCount 大于 insertIndex 时（如窗口起始即被总结覆盖）
+  // 负的 markStart 会让下方 `b >= markStart` 对全部消息恒真，误标记窗口之外的消息。
+  const markStart = Math.max(0, insertIndex - markedCount)
+  if (markedCount > 0) {
     for (const msg of state.allMessages.value) {
-      if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
+      const b = msg.backendIndex
+      if (typeof b === 'number' && b >= markStart && b < insertIndex) {
+        msg.isSummarized = true
+      }
+    }
+  }
+
+  // 如果插入位置在当前窗口之前，仅维护索引偏移即可（总结消息在窗口外不插入）
+  if (insertIndex < state.windowStartIndex.value) {
+    state.windowStartIndex.value += 1
+    for (const msg of state.allMessages.value) {
+      if (typeof msg.backendIndex === 'number') {
         msg.backendIndex += 1
       }
     }
-
-    const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
-    summaryMessage.backendIndex = insertIndex
-    summaryMessage.timestamp = summaryContent.timestamp || Date.now()
-    summaryMessage.localOnly = false
-    summaryMessage.streaming = false
-
-    const localInsertIndex = Math.min(
-      Math.max(insertIndex - state.windowStartIndex.value, 0),
-      state.allMessages.value.length
-    )
-
-    insertMessageAt(state, localInsertIndex, summaryMessage)
-
     syncTotalMessagesFromWindow(state)
     // 窗口前插入会顶掉一条可见消息：同步折叠提示，否则 foldedMessageCount 虚高
     syncFoldedHistoryHint(state)
@@ -1351,86 +1351,26 @@ export function handleAutoSummary(
     return
   }
 
-  // ===== removedCount > 0：物理替换语义 =====
-  // 净效果：删除 removedCount 条 + 插入 1 条总结 → 窗口内已加载消息整体前移
-  // shift = removedCount - 1（总结本身占一个新位置）
-  const rangeEnd = insertIndex + removedCount
-  const shift = removedCount - 1
-
-  // 情况1：被删区间完全在窗口之前（rangeEnd <= windowStartIndex）→
-  // 所有已加载消息与窗口起点整体前移 shift，totalMessages 同步减少；总结在窗口外不插入
-  if (rangeEnd <= state.windowStartIndex.value) {
-    state.windowStartIndex.value = Math.max(0, state.windowStartIndex.value - shift)
-    for (const msg of state.allMessages.value) {
-      if (typeof msg.backendIndex === 'number') {
-        msg.backendIndex = Math.max(0, msg.backendIndex - shift)
-      }
-    }
-    state.totalMessages.value = Math.max(0, state.totalMessages.value - shift)
-    syncFoldedHistoryHint(state)
-    return
-  }
-
-  // 情况2/3：区间与窗口重叠，或完全在窗口内/后 →
-  // 删除已加载消息中 backendIndex ∈ [insertIndex, rangeEnd) 的（即被后端替换掉的消息），
-  // 幸存者（backendIndex >= rangeEnd）整体前移 shift
-  const streamingId = state.streamingMessageId.value
-  let removedAny = false
-  const kept: Message[] = []
+  // 先将当前窗口中插入点及之后的 backendIndex 后移 1
   for (const msg of state.allMessages.value) {
-    const b = msg.backendIndex
-    const inReplacedRange = typeof b === 'number' && b >= insertIndex && b < rangeEnd
-    if (inReplacedRange) {
-      // 防御：后端保证不会把当前流式消息纳入替换区间（总结在工具循环中触发，
-      // 不越过当前用户消息）。若发生则跳过并告警，避免破坏正在进行的流。
-      if (msg.id === streamingId) {
-        console.warn('[handleAutoSummary] replaced range contains streaming message, skipped', {
-          insertIndex,
-          removedCount,
-          messageId: msg.id
-        })
-        kept.push(msg)
-      } else {
-        removedAny = true
-      }
-      continue
-    }
-    kept.push(msg)
-  }
-  if (removedAny) {
-    replaceAllMessages(state, kept)
-  }
-  for (const msg of state.allMessages.value) {
-    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= rangeEnd) {
-      msg.backendIndex -= shift
+    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
+      msg.backendIndex += 1
     }
   }
 
-  if (insertIndex >= state.windowStartIndex.value) {
-    // 情况2：总结在窗口内/后 → 插入总结消息（backendIndex = insertIndex）
-    const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
-    summaryMessage.backendIndex = insertIndex
-    summaryMessage.timestamp = summaryContent.timestamp || Date.now()
-    summaryMessage.localOnly = false
-    summaryMessage.streaming = false
+  const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
+  summaryMessage.backendIndex = insertIndex
+  summaryMessage.timestamp = summaryContent.timestamp || Date.now()
+  summaryMessage.localOnly = false
+  summaryMessage.streaming = false
 
-    const localInsertIndex = Math.min(
-      Math.max(insertIndex - state.windowStartIndex.value, 0),
-      state.allMessages.value.length
-    )
+  const localInsertIndex = Math.min(
+    Math.max(insertIndex - state.windowStartIndex.value, 0),
+    state.allMessages.value.length
+  )
 
-    insertMessageAt(state, localInsertIndex, summaryMessage)
-  } else {
-    // 情况3：总结在窗口之前（insertIndex < windowStartIndex < rangeEnd）→ 不插入，
-    // 窗口起点前移到第一个幸存消息的新下标（整窗被删完时落在总结之后）
-    const first = state.allMessages.value[0]
-    state.windowStartIndex.value = first && typeof first.backendIndex === 'number'
-      ? first.backendIndex
-      : insertIndex + 1
-    syncFoldedHistoryHint(state)
-  }
+  insertMessageAt(state, localInsertIndex, summaryMessage)
 
-  state.totalMessages.value = Math.max(0, state.totalMessages.value - shift)
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
   state.autoSummaryStatus.value = null
@@ -1573,6 +1513,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
+  turnBaseTokens = 0
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastApprovalGatedStreamId.value = null
@@ -1640,6 +1582,11 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     } else if (messageToRemove) {
       // 有内容的半截消息：保留展示，但记录其 ID，
       // 供 retryAfterError 在重试前回滚（后端从未持久化该消息）。
+      // 与 handleCancelled 的保留路径一致，结束其流式渲染标志——
+      // 否则 loading 指示器/光标永久闪烁（无后续 chunk 会再置它）。
+      if (messageToRemove.streaming) {
+        replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
+      }
       state._failedStreamMessageId.value = messageToRemove.id
     } else {
       state._failedStreamMessageId.value = null
@@ -1654,6 +1601,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
+  turnBaseTokens = 0
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

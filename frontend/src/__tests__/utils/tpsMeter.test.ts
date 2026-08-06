@@ -232,3 +232,40 @@ describe('退订与状态清理', () => {
     un2()
   })
 })
+
+
+describe('计数来源标记', () => {
+  it('record 带 source 后快照携带来源；不带 source 保持 null（旧调用兼容）', () => {
+    const samples: TpsSample[] = []
+    subscribe((s) => samples.push(s))
+
+    tpsMeter.record(10) // 不带 source：不更新来源
+    vi.advanceTimersByTime(200)
+    expect(samples[0].source).toBeNull()
+
+    tpsMeter.record(10, undefined, 'tokenizer')
+    vi.advanceTimersByTime(200)
+    expect(samples[1].source).toBe('tokenizer')
+
+    // 衰减期（非 live）来源保持——曲线数据仍是上次真实计数的延续
+    vi.advanceTimersByTime(2400)
+    const last = samples[samples.length - 1]
+    expect(last.live).toBe(false)
+    expect(last.source).toBe('tokenizer')
+
+    // 来源可切换（tokenizer 就绪/未就绪交替）
+    tpsMeter.record(10, undefined, 'estimate')
+    vi.advanceTimersByTime(200)
+    expect(samples[samples.length - 1].source).toBe('estimate')
+  })
+
+  it('停表清空后 source 归 null', () => {
+    const un = subscribe(() => {})
+    tpsMeter.record(10, undefined, 'estimate')
+    vi.advanceTimersByTime(200)
+    expect(tpsMeter.snapshot.source).toBe('estimate')
+
+    un()
+    expect(tpsMeter.snapshot.source).toBeNull()
+  })
+})

@@ -452,6 +452,8 @@ const showUnsavedConfirm = ref(false)
 const showResetStaticConfirm = ref(false)
 const showResetDynamicConfirm = ref(false)
 const pendingModeId = ref('')
+// 可用变量参考区（上游合并：可收缩，默认收起）
+const collapsedReference = ref(false)
 const duplicatingModeId = ref('')
 const duplicatingModeName = ref('')
 const renamingModeId = ref('')
@@ -1671,7 +1673,118 @@ watch(selectedChannel, () => {
         </div>
       </template>
 
-      <!-- 模式工具策略 -->
+      <!-- 可用变量参考（可收缩，默认收起） -->
+      <div class="modules-reference collapsible" data-search-anchor="prompt-modules">
+        <button
+          type="button"
+          class="reference-header"
+          :aria-expanded="!collapsedReference"
+          aria-controls="prompt-modules-reference-content"
+          @click="collapsedReference = !collapsedReference"
+        >
+          <span class="reference-title">
+            <i class="codicon codicon-references"></i>
+            {{ t('components.settings.promptSettings.modulesReference.title') }}
+          </span>
+          <i class="codicon" :class="collapsedReference ? 'codicon-chevron-right' : 'codicon-chevron-down'"></i>
+        </button>
+
+        <div v-if="!collapsedReference" id="prompt-modules-reference-content">
+          <!-- 静态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-lock"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
+              <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
+
+            <div class="modules-list">
+              <div
+                v-for="module in STATIC_PROMPT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertStaticModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 动态变量组 -->
+          <div class="modules-group">
+            <div class="group-header">
+              <i class="codicon codicon-sync"></i>
+              <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
+              <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
+            </div>
+            <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
+
+            <div class="modules-list">
+              <div
+                v-for="module in DYNAMIC_CONTEXT_MODULES"
+                :key="module.id"
+                class="module-item"
+                :class="{ expanded: expandedModule === module.id }"
+              >
+                <div class="module-header" @click="toggleModule(module.id)">
+                  <div class="module-info">
+                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                  </div>
+                  <button
+                    class="insert-btn"
+                    @click.stop="insertDynamicModule(module.id)"
+                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                  >
+                    <i class="codicon codicon-add"></i>
+                  </button>
+                </div>
+
+                <div v-if="expandedModule === module.id" class="module-details">
+                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+
+                  <div v-if="module.requiresConfig" class="module-requires">
+                    <i class="codicon codicon-info"></i>
+                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                  </div>
+
+                  <div v-if="module.example" class="module-example">
+                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                    <pre>{{ module.example }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="template-section tool-policy-section" data-search-anchor="tool-policy">
         <div class="section-header">
           <label class="section-label">
@@ -1880,108 +1993,6 @@ watch(selectedChannel, () => {
           <p class="token-hint">
             {{ t('components.settings.promptSettings.tokenCount.hint') }}
           </p>
-        </div>
-      </div>
-      
-      <!-- 可用变量参考 -->
-      <div class="modules-reference" data-search-anchor="prompt-modules">
-        <h5 class="reference-title">
-          <i class="codicon codicon-references"></i>
-          {{ t('components.settings.promptSettings.modulesReference.title') }}
-        </h5>
-        
-        <!-- 静态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-lock"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
-            <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in STATIC_PROMPT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertStaticModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 动态变量组 -->
-        <div class="modules-group">
-          <div class="group-header">
-            <i class="codicon codicon-sync"></i>
-            <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
-            <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
-          </div>
-          <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
-          
-          <div class="modules-list">
-            <div
-              v-for="module in DYNAMIC_CONTEXT_MODULES"
-              :key="module.id"
-              class="module-item"
-              :class="{ expanded: expandedModule === module.id }"
-            >
-              <div class="module-header" @click="toggleModule(module.id)">
-                <div class="module-info">
-                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                </div>
-                <button
-                  class="insert-btn"
-                  @click.stop="insertDynamicModule(module.id)"
-                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                >
-                  <i class="codicon codicon-add"></i>
-                </button>
-              </div>
-              
-              <div v-if="expandedModule === module.id" class="module-details">
-                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-                
-                <div v-if="module.requiresConfig" class="module-requires">
-                  <i class="codicon codicon-info"></i>
-                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                </div>
-                
-                <div v-if="module.example" class="module-example">
-                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                  <pre>{{ module.example }}</pre>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </template>

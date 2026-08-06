@@ -289,7 +289,9 @@ const ja: LanguageMessages = {
             shortMinute: 'm',
             dailyTitle: '1 日あたりの使用時間',
             monthlyTitle: '月ごとの使用時間（月をクリックで日別詳細）',
+            monthlyTitleShort: '月ごとの使用時間',
             monthActiveDays: '{days} 日間アクティブ',
+            onlyShowLatest: '直近 {days} 日のみ表示',
             expandMonth: 'この月の日別詳細を展開',
             heatmapTitle: '直近 7 日間の活動ヒートマップ（ホバーで詳細）'
         },
@@ -338,6 +340,8 @@ const ja: LanguageMessages = {
             skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
             tpsTooltip: 'TPS（トークン毎秒）',
+            tpsTokenizerReal: 'モデルトークナイザーによる正確なカウント',
+            tpsTokenizerEstimate: 'トークナイザー未準備、文字数で推定中',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
@@ -580,7 +584,11 @@ const ja: LanguageMessages = {
             },
             thought: {
                 thinking: '考え中...',
-                thoughtProcess: '思考プロセス'
+                thoughtProcess: '思考プロセス',
+                viewCollapsed: '折りたたむ',
+                viewMedium: 'スクロール表示',
+                viewExpanded: 'すべて展開',
+                trimmedHint: '内容が長すぎるため、最新部分のみ表示しています。すべて展開で全文をご覧ください'
             },
             contextBlocks: {
                 clickToView: 'クリックして完全な内容を表示'
@@ -589,6 +597,7 @@ const ja: LanguageMessages = {
                 title: 'コンテキスト要約',
                 compressed: '{count} 件のメッセージを圧縮しました',
                 deleteTitle: '要約を削除',
+                restoreTitle: '原文を復元（要約を元に戻し、圧縮されたメッセージを再送信）',
                 autoTriggered: '自動トリガー',
                 compressionTokens: '置換された履歴 → 新しい要約（推定 {saved} トークン削減。実際のコンテキストは次の応答後に更新）',
                 legacyRequestTokens: '旧形式：要約モデルの入力 → 出力。メインコンテキストの前後サイズではありません',
@@ -2740,6 +2749,11 @@ const ja: LanguageMessages = {
             cancelled: 'キャンセル済み',
             cancel: 'タスクをキャンセル',
             dismiss: '削除',
+            dismissAllCompleted: '完了済みを一括クリア',
+            dismissAllCompletedTitle: '完了済みのバックグラウンドタスクを一括クリア（未報告の結果がある場合は確認ダイアログを表示）',
+            dismissAllConfirmTitle: '完了済みタスクをクリアしますか？',
+            dismissAllConfirmMessage: '{count} 件のタスク結果がモデルに未報告です。クリアするとモデルは結果を受け取れません。続行しますか？',
+            dismissAllConfirmAction: 'それでもクリア',
             pendingReport: '結果はモデルへの報告待ち',
             outputTitle: 'コマンド出力',
             noOutput: '出力はまだありません',

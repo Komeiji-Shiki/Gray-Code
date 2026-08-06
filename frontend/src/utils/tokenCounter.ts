@@ -141,6 +141,11 @@ export function ensureTokenCounterLoaded(modelKey: string): void {
   ensureLoaded(pickTokenizerKind(modelKey))
 }
 
+/** 查询 modelKey 对应 tokenizer 是否已加载就绪（false = 当前走字符加权估算） */
+export function isTokenizerReady(modelKey: string): boolean {
+  return tokenizerCounters.has(pickTokenizerKind(modelKey))
+}
+
 /** 读取 modelKey 的校准因子（未学习时 1） */
 export function getCalibrationFactor(modelKey: string): number {
   try {

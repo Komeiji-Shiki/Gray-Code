@@ -28,6 +28,8 @@ const chatStore = useChatStore()
 
 // 删除状态
 const isDeleting = ref(false)
+// 恢复状态
+const isRestoring = ref(false)
 
 // 展开/收起状态
 const isExpanded = ref(false)
@@ -74,10 +76,10 @@ const tokenModeLabel = computed(() => summaryTokenStats.value
   : t('components.message.summary.requestTokenLabel')
 )
 
-// 删除总结消息
+// 删除总结消息（后端会自动恢复其覆盖的原文，避免上下文真空）
 async function handleDelete() {
-  if (isDeleting.value) return
-  
+  if (isDeleting.value || isRestoring.value) return  // 与恢复互斥，防并发双 IPC + 双次历史重载
+
   isDeleting.value = true
   try {
     await chatStore.deleteSingleMessage(props.messageIndex)
@@ -86,6 +88,22 @@ async function handleDelete() {
     console.error('Failed to delete summary message:', error)
   } finally {
     isDeleting.value = false
+  }
+}
+
+// 恢复原文：取消该总结覆盖消息的 isSummarized 标记并删除总结消息，原文重新参与发送
+async function handleRestore() {
+  if (isRestoring.value || isDeleting.value) return  // 与删除互斥
+  if (!props.message.id) return
+
+  isRestoring.value = true
+  try {
+    await chatStore.restoreSummarizedMessages(props.message.id)
+    emit('deleted')
+  } catch (error) {
+    console.error('Failed to restore summarized messages:', error)
+  } finally {
+    isRestoring.value = false
   }
 }
 </script>
@@ -115,6 +133,14 @@ async function handleDelete() {
           <span v-if="summaryTokenStats" class="token-saved">−{{ summaryTokenStats.estimatedTokensSaved }}</span>
         </span>
         <span class="summary-time">{{ formattedTime }}</span>
+        <button
+          class="delete-button"
+          :disabled="isRestoring"
+          @click.stop="handleRestore"
+          :title="t('components.message.summary.restoreTitle')"
+        >
+          <i class="codicon codicon-discard"></i>
+        </button>
         <button
           class="delete-button"
           :disabled="isDeleting"

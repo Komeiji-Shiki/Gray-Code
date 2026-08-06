@@ -737,6 +737,18 @@ export class McpManager {
         
         switch (transport.type) {
             case 'stdio': {
+                // error 状态下旧 stdio 子进程可能仍存活：直接覆盖 clients 条目会把旧 client
+                // 孤儿化（子进程存活到自然退出）。先断开旧 client（tree-kill）再建新连接；
+                // 旧 client 的 exit 回调带代际 + 引用双重校验，不会误删随后注册的新 client。
+                const previousClient = this.clients.get(info.config.id);
+                if (previousClient) {
+                    try {
+                        await previousClient.disconnect();
+                    } catch {
+                        // 旧进程可能已死；忽略，继续建新连接
+                    }
+                }
+
                 const client = new StdioMcpClient(
                     transport.command,
                     transport.args || [],

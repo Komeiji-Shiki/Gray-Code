@@ -289,7 +289,9 @@ const en: LanguageMessages = {
             shortMinute: 'm',
             dailyTitle: 'Daily usage',
             monthlyTitle: 'Monthly usage (click a month for daily details)',
+            monthlyTitleShort: 'Monthly usage',
             monthActiveDays: '{days} active days',
+            onlyShowLatest: 'Showing latest {days} days only',
             expandMonth: 'Expand daily details for this month',
             heatmapTitle: 'Activity heatmap (last 7 days, hover for details)'
         },
@@ -338,6 +340,8 @@ const en: LanguageMessages = {
             skills: 'Skills',
             summarizeContext: 'Summarize context',
             tpsTooltip: 'TPS (tokens per second)',
+            tpsTokenizerReal: 'Accurate model tokenizer counting',
+            tpsTokenizerEstimate: 'Tokenizer not ready, estimating by characters',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
@@ -580,7 +584,11 @@ const en: LanguageMessages = {
             },
             thought: {
                 thinking: 'Thinking...',
-                thoughtProcess: 'Thought Process'
+                thoughtProcess: 'Thought Process',
+                viewCollapsed: 'Collapse',
+                viewMedium: 'Scroll view',
+                viewExpanded: 'Expand all',
+                trimmedHint: 'Content too long — showing only the latest part. Use expand-all to view the full text'
             },
             contextBlocks: {
                 clickToView: 'Click to view full content'
@@ -589,6 +597,7 @@ const en: LanguageMessages = {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
+                restoreTitle: 'Restore Original (undo summary, resend compressed messages)',
                 autoTriggered: 'Auto Triggered',
                 compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
                 legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',
@@ -2740,6 +2749,11 @@ const en: LanguageMessages = {
             cancelled: 'Cancelled',
             cancel: 'Cancel task',
             dismiss: 'Dismiss',
+            dismissAllCompleted: 'Clear completed',
+            dismissAllCompletedTitle: 'Dismiss all completed background tasks (confirmation shown when results are pending report)',
+            dismissAllConfirmTitle: 'Clear completed tasks?',
+            dismissAllConfirmMessage: '{count} task(s) have results pending report to the model. Dismissing them will prevent the model from receiving these results. Continue?',
+            dismissAllConfirmAction: 'Dismiss anyway',
             pendingReport: 'Result pending report to the model',
             outputTitle: 'Command output',
             noOutput: 'No output yet',

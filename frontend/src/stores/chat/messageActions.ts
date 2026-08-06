@@ -139,6 +139,8 @@ export interface InterruptDeliveryNotice {
   errorCode?: string
   errorMessage?: string
   createdAt: number
+  /** 单调递增序号：TTL 到期按序号精确移除，避免同 tick（createdAt 相同）的其它会话提示被误删 */
+  seq?: number
 }
 
 /** 提示保留时长：超过后自动从列表中移除 */
@@ -150,10 +152,11 @@ export const recentInterruptDeliveries = shallowRef<InterruptDeliveryNotice[]>([
 
 /** 投递提示的 TTL 定时器（key: conversationId:kind -> timer），clearInterruptDeliveries 时同步取消 */
 const interruptNoticeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let interruptNoticeSeq = 0
 
 /** 记录一条投递提示：同一会话同类型只保留最新一条；超出上限丢弃最旧；TTL 后自动移除 */
 export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'createdAt'>): void {
-  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now() }
+  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now(), seq: interruptNoticeSeq++ }
   const filtered = recentInterruptDeliveries.value.filter(
     n => !(n.conversationId === full.conversationId && n.kind === full.kind)
   )
@@ -166,7 +169,9 @@ export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'c
   }
   interruptNoticeTimers.set(timerKey, setTimeout(() => {
     interruptNoticeTimers.delete(timerKey)
-    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.createdAt !== full.createdAt)
+    // 按 seq 精确移除：多条提示 createdAt 可能相同（同一 tick 的并发投递），
+    // 按 createdAt 过滤会误删仍在 TTL 内的其它会话提示
+    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.seq !== full.seq)
   }, INTERRUPT_NOTICE_TTL_MS))
 }
 
@@ -1596,5 +1601,56 @@ export async function cancelSummarizeRequest(state: ChatStoreState): Promise<voi
     await sendToExtension('cancelSummarizeRequest', { conversationId })
   } catch (error) {
     console.error('[messageActions] Failed to cancel summarize request:', error)
+  }
+}
+
+/**
+ * 恢复指定总结消息覆盖的原文（逻辑截断的反向操作）
+ *
+ * 后端取消覆盖区间的 isSummarized 标记并删除总结消息本身，原文重新参与发送与统计
+ * （发送起点回退到上一个总结或 0）。成功后重新加载消息窗口：总结消息消失、原文恢复活跃。
+ *
+ * @returns 是否成功
+ */
+export async function restoreSummarizedMessages(
+  state: ChatStoreState,
+  summaryMessageId: string
+): Promise<boolean> {
+  const originConvId = state.currentConversationId.value
+  if (!originConvId || !summaryMessageId) return false
+
+  try {
+    const response = await sendToExtension<{ success: boolean }>('restoreSummarizedMessages', {
+      conversationId: originConvId,
+      summaryMessageId
+    })
+
+    // 校验归属：await 期间当前会话可能已切换
+    if (state.currentConversationId.value !== originConvId) return false
+    if (!response?.success) return false
+
+    // 重新加载最后一页，确保 backendIndex 与消息列表不错位（总结消息已删除、原文恢复显示）
+    const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      conversationId: originConvId,
+      limit: MESSAGES_PAGE_SIZE
+    })
+    if (state.currentConversationId.value !== originConvId) return false
+
+    const page = result?.messages || []
+    state.totalMessages.value = result?.total ?? page.length
+    state.windowStartIndex.value = page[0]?.index ?? 0
+    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+    rebuildMessageIndexById(state)
+
+    state.isLoadingMoreMessages.value = false
+    state.historyFolded.value = false
+    state.foldedMessageCount.value = 0
+    return true
+  } catch (err: any) {
+    safeSetError(state, originConvId, {
+      code: err.code || 'RESTORE_SUMMARY_ERROR',
+      message: err.message || 'Restore summary failed'
+    })
+    return false
   }
 }

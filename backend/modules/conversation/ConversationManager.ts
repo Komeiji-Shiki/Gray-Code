@@ -29,11 +29,11 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, History
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, collectRespondedToolCallIds, buildRejectedResponseParts, findFunctionResponseInsertIndex, rejectUnresolvedToolCalls } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange, collectRespondedToolCallIds, buildRejectedResponseParts, findFunctionResponseInsertIndex, rejectUnresolvedToolCalls } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
-import { activePath, findUnsyncedFunctionResponses, isFunctionResponseMessage } from './branch/BranchGraph';
+import { activePath, findUnsyncedFunctionResponses, isActiveEmptyPlaceholder, isFunctionResponseMessage } from './branch/BranchGraph';
 import { BranchError } from './branch/types';
 import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import { Logger } from '../../core/logger';
@@ -435,9 +435,18 @@ export class ConversationManager {
                                     return; // 线性对话未建图：不强制建
                                 }
                                 const tail = graph.activeTailNodeId ? graph.nodes[graph.activeTailNodeId] : undefined;
+                                if (isActiveEmptyPlaceholder(tail)) {
+                                    return; // 流式占位候选：跳过，由 finishReroll 回填
+                                }
                                 if (tail && (tail.parts?.length ?? 0) === 0
                                     && (tail.kind === 'reroll' || tail.kind === 'edit')) {
-                                    return; // 流式占位候选：跳过，由 finishReroll 回填
+                                    // 超龄空占位（进程崩溃/被杀遗留，isActiveEmptyPlaceholder 判定为已死亡）：
+                                    // 先以主历史收敛图（占位移出活跃路径），再增量并入新消息。
+                                    // 不收敛直接 append 会把新消息挂到死占位下，冻结依旧。
+                                    await branchService.syncMainHistoryAfterStructuralMutation(
+                                        conversationId,
+                                        'branch_finished'
+                                    );
                                 }
                                 await branchService.appendHistoryToGraph(conversationId, withNodeIds);
                             } catch (error) {
@@ -972,6 +981,7 @@ export class ConversationManager {
                 const functionResponseParts = parts.filter(part => !!part.functionResponse);
                 const restParts = parts.filter(part => !part.functionResponse);
                 nextContents.push({
+                    ...(node.contentMetadata ? structuredClone(node.contentMetadata) : {}),
                     role: node.role,
                     parts: this.cloneJson(restParts),
                     id: node.id,
@@ -979,6 +989,7 @@ export class ConversationManager {
                     timestamp: node.timestamp ?? node.createdAt,
                     modelVersion: node.modelVersion,
                     usageMetadata: node.usageMetadata,
+                    usageMetadataPartial: node.usageMetadataPartial,
                 });
                 if (functionResponseParts.length > 0) {
                     // R8a-H1：优先复用旧主历史中对应 FR 消息的 id（匹配不到留给步骤 2 生成）。
@@ -1325,8 +1336,9 @@ export class ConversationManager {
                 // MED-2：对话删除即清理 A-COMM 信箱（内存同步操作，与删除同一锁内原子执行；
                 // 删除失败不会走到这里，信箱状态与对话生命周期保持一致，防 ID 复用时限流/误注入）
                 agentMailbox.clearConversation(conversationId);
-                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读
-                this.metaCache.delete(conversationId);
+                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读；
+                // 节点 ID 反查缓存一并清除（BCP-01：防 ID 复用后反查命中旧会话节点）
+                this.invalidateCaches(conversationId);
             });
             // 删除成功后统一失效内存缓存：已删除会话的历史/元数据快照不得再泄漏给下一次读取
             this.invalidateCaches(conversationId);
@@ -1858,13 +1870,25 @@ export class ConversationManager {
      */
     async deleteMessage(conversationId: string, messageIndex: number): Promise<void> {
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-        if (messageIndex < 0 || messageIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
-        }
-        // 决策 6：删除前捕获被删消息 id（删除后主历史不再包含它），供分支图同步锚定
-        const deletedMessageId = history[messageIndex]?.id ?? null;
-        const nextHistory = await repository.mutateContents(contents => deleteLogicalMessage(contents, messageIndex));
+        let deletedMessageId: string | null = null;
+        let deletedWasSummary = false;
+        const nextHistory = await repository.mutateContents(contents => {
+            if (messageIndex < 0 || messageIndex >= contents.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+            }
+            // 在实际持锁快照内捕获删除锚点与总结类型，避免 getContents 与 mutateContents 之间
+            // 并发插入/删除导致按旧下标走错分支同步策略。
+            deletedMessageId = contents[messageIndex]?.id ?? null;
+            deletedWasSummary = contents[messageIndex]?.isSummary === true;
+            let next = contents;
+            // 逻辑截断：删除总结消息时先恢复其覆盖的原文（取消 isSummarized 标记），
+            // 避免「既无总结文本也无原文」的上下文真空（原文保留在存储中但不再发送）。
+            if (next[messageIndex]?.isSummary) {
+                const restored = restoreSummarizedRange(next, messageIndex);
+                next = restored.contents;
+            }
+            return deleteLogicalMessage(next, messageIndex);
+        });
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'message_deleted');
@@ -1881,7 +1905,13 @@ export class ConversationManager {
             const branchService = getGlobalBranchService();
             if (branchService) {
                 try {
-                    await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                    if (deletedWasSummary) {
+                        // 删除总结会同时恢复其覆盖原文的 isSummarized 标记，不是普通子树删除；
+                        // 必须按当前主历史重建活跃路径与消息元数据，不能把总结后的全部后继软删。
+                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+                    } else {
+                        await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                    }
                 } catch (error) {
                     log.warn('branch_delete_sync_failed', {
                         conversationId,
@@ -1960,12 +1990,26 @@ export class ConversationManager {
         const nextHistory = await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const start = Math.max(0, startIndex);
             const end = Math.min(history.length, endIndex + 1);
-            const deleted = history.slice(start, end);
-            history.splice(start, end - start);
+            let next = history;
+            // 逻辑截断：删除区间内的总结消息前，先恢复其覆盖的原文（取消 isSummarized 标记）。
+            // 从晚到早逐个恢复：每个总结的覆盖区间以历史中它之前的最近总结为界，互不重叠；
+            // 覆盖区间可能延伸到删除区间之外（幸存部分同样恢复，避免上下文真空）。
+            const summaryIndices: number[] = [];
+            for (let i = start; i < end; i++) {
+                if (history[i]?.isSummary) {
+                    summaryIndices.push(i);
+                }
+            }
+            for (let i = summaryIndices.length - 1; i >= 0; i--) {
+                const restored = restoreSummarizedRange(next, summaryIndices[i]);
+                next = restored.contents;
+            }
+            const deleted = next.slice(start, end);
+            next.splice(start, end - start);
             // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继
             // parentId===被删id 的消息重链到被删消息的 parent；分支跨链不受影响）
-            repairParentChainAfterDelete(history, deleted);
-            return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
+            repairParentChainAfterDelete(next, deleted);
+            return next.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);

@@ -17,14 +17,80 @@
  * 规划不变量（L1310–1337）：主历史 = 当前活跃路径；本模块只提供路径解析，不触碰主历史。
  */
 
-import {
-    BRANCH_GRAPH_VERSION,
+import { BRANCH_GRAPH_VERSION, BranchError } from './types';
+import type {
     BranchCandidateSummary,
-    BranchError,
+    BranchContentMetadata,
     ConversationBranchGraph,
     ConversationBranchNode,
 } from './types';
 import type { Content, ContentPart, UsageMetadata } from '../types';
+
+/** 从主历史消息提取需要随分支节点往返保留的非拓扑元数据。 */
+export function extractBranchContentMetadata(message: Content): BranchContentMetadata | undefined {
+    const metadata: Record<string, unknown> = { ...message };
+    for (const key of [
+        'id',
+        'parentId',
+        'role',
+        'parts',
+        'index',
+        'timestamp',
+        'modelVersion',
+        'usageMetadata',
+        'usageMetadataPartial',
+        // 回合内动态上下文的完整序列化快照（可能数 KB~数十 KB）：随节点往返 sidecar 会让
+        // branches.json 显著膨胀，且切分支重写主历史时会回写图中**旧回合**的缓存，若该消息
+        // 的缓存之后已被 updateMessagesBatch 刷新（工具循环每回合重写），切走切回会把陈旧
+        // 缓存覆盖回主历史。动态上下文缓存本应在下一回合按当前上下文重新生成，不参与往返。
+        'turnDynamicContext',
+        'turnDynamicContextStrategy',
+    ]) {
+        delete metadata[key];
+    }
+    // 显式 undefined 字段（如流式完成时被移除的 thinkingStartTime）不参与往返，
+    // 否则 sidecar 会序列化出空对象/无效键，且后续每次对账都产生无意义的元数据差异。
+    for (const key of Object.keys(metadata)) {
+        if (metadata[key] === undefined) {
+            delete metadata[key];
+        }
+    }
+    if (Object.keys(metadata).length === 0) {
+        return undefined;
+    }
+    return structuredClone(metadata) as BranchContentMetadata;
+}
+
+/**
+ * 空占位候选（reroll/edit 流式窗口的活跃尾）的超龄阈值。
+ *
+ * 进程崩溃/被杀会让空占位永久残留为活跃尾，后续普通追加因此持续跳过图同步，
+ * branches.json 永久冻结（PR #16 只修了优雅路径）。超过该时长仍为空的占位视为
+ * 「流已死亡」——正常流式窗口内的占位是新建的（远小于该阈值），超龄只会出现在
+ * 流从未回填且不再活跃的场景，允许图同步把它移出活跃路径。
+ */
+export const EMPTY_PLACEHOLDER_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * 判定活跃尾是否为「仍在流式窗口内」的空占位候选（reroll/edit、parts 为空、未超龄）。
+ * 非活跃路径上的空节点或超龄占位返回 false——前者本就不锁活跃路径，
+ * 后者视为流已死亡，不应再阻止图同步。
+ */
+export function isActiveEmptyPlaceholder(
+    tail: ConversationBranchNode | undefined,
+    now: number = Date.now()
+): boolean {
+    if (!tail || (tail.parts?.length ?? 0) !== 0) {
+        return false;
+    }
+    if (tail.kind !== 'reroll' && tail.kind !== 'edit') {
+        return false;
+    }
+    if (typeof tail.createdAt === 'number' && now - tail.createdAt > EMPTY_PLACEHOLDER_STALE_MS) {
+        return false;
+    }
+    return true;
+}
 
 /**
  * TREE-09：判断软删节点是否已过保留期（deletedAt + retentionDays）。
@@ -208,6 +274,7 @@ export function importLinearHistory(
             timestamp: message.timestamp,
             modelVersion: message.modelVersion,
             usageMetadata: message.usageMetadata,
+            contentMetadata: extractBranchContentMetadata(message),
             // R8b-M2：中断/取消流的截断用量标记随节点一起拷贝（统计端回退估算）
             usageMetadataPartial: message.usageMetadataPartial,
         };
@@ -215,6 +282,115 @@ export function importLinearHistory(
         previousNode = node;
     }
     return graph;
+}
+
+/**
+ * 以主历史重建“活跃路径”，同时保留 sidecar 中的旧候选与非活跃子树。
+ *
+ * 用于恢复这种可解析但已落后的 sidecar：已经结束的空 reroll/edit 占位节点曾让后续追加
+ * 永久跳过同步，或结构性历史更新没有同步进 branches.json。主历史是当前路径的唯一真源；
+ * 旧图只作为候选归档保留。
+ *
+ * 安全边界：
+ * - 两边根节点必须一致；根已变化意味着无法在单根模型中无损合并，明确拒绝；
+ * - 当前历史节点复用同 id 的旧节点元数据（标签、工作区存档、kind），正文与父链以历史为准；
+ * - 从旧活跃路径移出的节点仍留在 nodes 中，成为非活跃候选，不做物理删除；
+ * - 返回前执行完整 validate，无法保持图不变量时拒绝修复。
+ */
+export function rebaseActivePathFromHistory(
+    graph: ConversationBranchGraph,
+    history: ReadonlyArray<Content>
+): ConversationBranchGraph {
+    const canonical = importLinearHistory(history);
+    if (graph.rootNodeId === null) {
+        return canonical;
+    }
+    if (canonical.rootNodeId === null) {
+        throw new BranchError(
+            'BRANCH_OPERATION_CONFLICT',
+            'cannot reconcile a non-empty branch graph with an empty main history'
+        );
+    }
+    if (graph.rootNodeId !== canonical.rootNodeId) {
+        throw new BranchError(
+            'BRANCH_OPERATION_CONFLICT',
+            `cannot safely reconcile branch graph root ${graph.rootNodeId} with main history root ${canonical.rootNodeId}`
+        );
+    }
+
+    const historyPath = activePath(canonical);
+    const nodes: Record<string, ConversationBranchNode> = { ...graph.nodes };
+    for (let index = 0; index < historyPath.length; index += 1) {
+        const id = historyPath[index]!;
+        const source = canonical.nodes[id]!;
+        const existing = nodes[id];
+        const merged: ConversationBranchNode = existing
+            ? {
+                ...existing,
+                id,
+                parentId: source.parentId,
+                role: source.role,
+                parts: structuredClone(source.parts),
+                createdAt: source.createdAt,
+                timestamp: source.timestamp,
+                modelVersion: source.modelVersion,
+                usageMetadata: source.usageMetadata,
+                usageMetadataPartial: source.usageMetadataPartial,
+                contentMetadata: source.contentMetadata ? structuredClone(source.contentMetadata) : undefined,
+                activeChildId: historyPath[index + 1] ?? null,
+            }
+            : {
+                ...source,
+                parts: structuredClone(source.parts),
+                kind: 'imported',
+                activeChildId: historyPath[index + 1] ?? null,
+            };
+        // 主历史中的节点属于当前活跃路径，不能继续携带旧的软删除状态。
+        delete merged.deleted;
+        delete merged.deletedAt;
+        nodes[id] = merged;
+    }
+
+    // 当前节点被重新挂接后，旧父节点可能仍指向它；清除所有不再指向真实直接子节点的活动指针。
+    for (const [id, node] of Object.entries(nodes)) {
+        const childId = node.activeChildId;
+        if (childId && nodes[childId]?.parentId !== id) {
+            nodes[id] = { ...node, activeChildId: null };
+        }
+    }
+    // 上一步只清旧指针；再次明确写入当前路径，保证当前路径始终是唯一活跃链。
+    for (let index = 0; index < historyPath.length; index += 1) {
+        const id = historyPath[index]!;
+        nodes[id] = { ...nodes[id]!, activeChildId: historyPath[index + 1] ?? null };
+    }
+
+    const candidateSummaries = (graph.candidateSummaries ?? []).map(summary => {
+        const node = nodes[summary.nodeId];
+        if (!node) return summary;
+        const nextSummary: BranchCandidateSummary = { ...summary, parentId: node.parentId };
+        if (!node.deleted) {
+            delete nextSummary.deleted;
+            delete nextSummary.deletedAt;
+        }
+        return nextSummary;
+    });
+    const root = nodes[canonical.rootNodeId]!;
+    const next: ConversationBranchGraph = {
+        ...graph,
+        rootNodeId: canonical.rootNodeId,
+        activeTailNodeId: canonical.activeTailNodeId,
+        nodes,
+        activeChildId: root.activeChildId ?? null,
+        candidateSummaries,
+    };
+    const validation = validate(next);
+    if (!validation.valid) {
+        throw new BranchError(
+            'BRANCH_OPERATION_CONFLICT',
+            `cannot safely reconcile branch graph with main history: ${validation.issues.map(issue => issue.message).join('; ')}`
+        );
+    }
+    return next;
 }
 
 /** 浅拷贝图（nodes 记录复制，节点对象与 parts 共享引用——数据视为不可变） */
@@ -1230,6 +1406,7 @@ export function updateNodeContent(
         usageMetadata?: UsageMetadata;
         /** R8b-M2：中断/取消流的截断用量标记（随 usageMetadata 一起写入节点） */
         usageMetadataPartial?: boolean;
+        contentMetadata?: BranchContentMetadata;
         timestamp?: number;
     }
 ): ConversationBranchGraph {
@@ -1244,6 +1421,9 @@ export function updateNodeContent(
         ...(patch.modelVersion !== undefined ? { modelVersion: patch.modelVersion } : {}),
         ...(patch.usageMetadata !== undefined ? { usageMetadata: patch.usageMetadata } : {}),
         ...(patch.usageMetadataPartial !== undefined ? { usageMetadataPartial: patch.usageMetadataPartial } : {}),
+        ...(patch.contentMetadata !== undefined
+            ? { contentMetadata: structuredClone(patch.contentMetadata) }
+            : {}),
         ...(patch.timestamp !== undefined ? { timestamp: patch.timestamp } : {}),
     };
     return next;
