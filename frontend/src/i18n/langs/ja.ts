@@ -3069,6 +3069,8 @@ const ja: LanguageMessages = {
                     pending: 'レビュー待ち',
                     accepted: '承認済み',
                     rejected: '拒否済み',
+                    partial: '一部受け入れ',
+                    rejectedBlock: 'このブロックはユーザーにより拒否されました',
                     line: '開始行',
                     diffNumber: '#',
                     collapse: '折りたたむ',
