@@ -1411,6 +1411,28 @@ export function createDefaultExecutor(
                     : [];
                 const textContent = extractTextContent(response);
 
+                // 修改原因：xml/json prompt tool mode 下模型经常在发起工具调用的同一轮
+                // "抢跑"输出一段看似完整的分析文本——此时工具结果尚未返回，文本是模型基于文件名
+                // 与提示词编造的幻觉（实测：模型在 read_file 前先编出整页不存在的台词内容）。
+                // 旧逻辑把这段文本原样写入 history（污染后续轮次与续跑上下文），失败时还会作为
+                // partialResponse 返回给主模型。
+                // 修改方式：在"本轮之前没有任何工具结果"的前提下，若本轮同时包含文本与工具调用，
+                //          将该轮文本 parts 剥离，只保留 functionCall parts；工具照常执行，
+                //          模型下一轮只能基于真实工具结果作答，幻觉文本不进 history/lastResponse。
+                // 修改目的：从源头杜绝幻觉预生成进入子代理上下文与最终响应。
+                // 注：已有工具结果后的"文本+工具调用"可能是基于真实结果的中间分析，不剥离。
+                if (textContent && currentToolCalls.length > 0 && toolMode !== 'function_call') {
+                    const hasPriorToolResult = history.some(
+                        msg => msg.role === 'user' && (msg.parts || []).some(p => (p as any).functionResponse || (p as any).inlineData)
+                    );
+                    if (!hasPriorToolResult) {
+                        const parts = (response as any)?.content?.parts;
+                        if (Array.isArray(parts)) {
+                            (response as any).content.parts = parts.filter((p: any) => !(p.text && !p.thought));
+                        }
+                    }
+                }
+
                 // 记录子代理实际运行的模型版本（优先 content.modelVersion，其次 response.model）
                 const mvCandidate =
                     (response as any)?.content?.modelVersion
@@ -1420,7 +1442,18 @@ export function createDefaultExecutor(
                     modelVersion = mvCandidate.trim();
                 }
                 
-                if (textContent) {
+                // 修改原因：xml/json prompt 模式下模型经常在同一轮里"抢跑"——
+                // 先输出一段看似完整的分析文本，再（或同时）发起工具调用；此时图片/文件
+                // 工具结果尚未返回，这段文本是模型基于文件名与提示词编造的幻觉内容。
+                // 旧逻辑无条件把 textContent 写入 lastResponse，一旦后续轮次遇到空响应
+                // （上游返回空内容 / 超时 / API 失败），finalizeRun 会把这份幻觉文本
+                // 作为 partialResponse 返回给主模型（实测：主模型因此读到全部编造的
+                // 台词内容，误判页面内容）。
+                // 修改方式：只有本轮没有工具调用（即代理即将完成、文本才是最终答案）时
+                //          才更新 lastResponse；工具调用轮次的文本一律视为中间产物。
+                // 修改目的：失败/空响应时 partialResponse 不再携带工具调用前的幻觉预生成，
+                //          主模型只会看到空内容或上一次真正完成的回答。
+                if (textContent && currentToolCalls.length === 0) {
                     lastResponse = textContent;
                 }
                 
