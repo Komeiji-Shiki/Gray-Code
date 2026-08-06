@@ -327,10 +327,11 @@ export function createMultiTextMessage(
  * - 顶层：diffContentId, diffId, diffs, pendingDiffId,
  *          agentInbox（A-COMM 信箱消息，drain 一次性语义，仅当轮随工具结果返回给模型，禁止历史重放）
  * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
- *                   channelName, modelId, steps（subagents 运行时元数据，仅供 UI 展示）, agentInbox
+ *                   channelName, modelId（subagents 运行时元数据，仅供 UI 展示）, agentInbox
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
- * 保留的字段：killed, duration（AI 需要知道命令执行状态）
+ * 保留的字段：killed, duration（AI 需要知道命令执行状态）；
+ *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）
  *
  * @param response functionResponse.response 对象
  * @param isHistoryMessage 是否是历史消息（当前回合之前的消息）。默认 true：历史中的
@@ -374,8 +375,8 @@ export function cleanFunctionResponseForAPI(
             // subagents 运行时元数据（仅供前端 UI 展示，不发给 AI）
             channelName: dataChannelName,
             modelId: dataModelId,
-            steps: dataSteps,
-            // A-COMM 瞬态信箱消息（与顶层 agentInbox 同理，禁止历史重放）
+            // steps / toolsUsed 保留给 AI：用于告知子代理是否调用过工具及调用数量
+            // （空数组 = 未调用任何工具），不参与剥离。
             agentInbox: dataAgentInbox,
             ...dataRest
         } = rest.data as Record<string, unknown>;

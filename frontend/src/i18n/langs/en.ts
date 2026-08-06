@@ -3294,7 +3294,10 @@ const en: LanguageMessages = {
                 failed: 'Failed',
                 executing: 'Executing...',
                 partialResponse: 'Partial Response',
-                background: 'Background'
+                background: 'Background',
+                steps: '{count} steps',
+                noTools: 'No tools called',
+                toolsUsed: 'Tools: {tools}'
             },
             media: {
                 generateImage: 'Generate Image',

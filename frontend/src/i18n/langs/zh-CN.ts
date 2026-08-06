@@ -3486,7 +3486,10 @@ const zhCN = {
                 failed: '执行失败',
                 executing: '正在执行...',
                 partialResponse: '部分响应',
-                background: '后台'
+                background: '后台',
+                steps: '步骤 {count}',
+                noTools: '未调用工具',
+                toolsUsed: '工具: {tools}'
             }
         }
     },
