@@ -150,6 +150,12 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
 /**
  * 获取记忆配置
  * 合并 SettingsManager 中的用户设置和 MemoryManager 的运行时配置。
+ *
+ * 数值项（wakeLines/entryChars/partChars/partLines）以目标作用域 MemoryManager 的
+ * 运行时配置为权威来源：settings 配置的数值项经 getToolsConfigEntry 深合并默认值后
+ * 永远有值（96/280/20000/500），?? 兜底恒不生效，会掩盖工作区各自的运行时配置——
+ * 记忆隔离下每个工作区的 config 独立持久化，这里必须按 data.workspaceUri 读对应实例。
+ * enabled/systemPrompt 属于全局设置段，仍取 settings 配置。
  */
 export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
@@ -157,13 +163,14 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
     // 合并 MemoryManager 的运行时配置（如果已初始化；data.workspaceUri 指定时读该工作区实例）
     const mgr = await resolveMemoryManager(data);
     if (mgr) {
-      const runtimeConfig = mgr.getConfig();
+      // loadConfig() 保证读到磁盘上的最新配置（含刚被 memory_config 工具改过的值）
+      const runtimeConfig = await mgr.loadConfig();
       return ctx.sendResponse(requestId, {
         ...config,
-        wakeLines: config.wakeLines ?? runtimeConfig.wakeLines,
-        entryChars: config.entryChars ?? runtimeConfig.entryChars,
-        partChars: config.partChars ?? runtimeConfig.partChars,
-        partLines: config.partLines ?? runtimeConfig.partLines,
+        wakeLines: runtimeConfig.wakeLines,
+        entryChars: runtimeConfig.entryChars,
+        partChars: runtimeConfig.partChars,
+        partLines: runtimeConfig.partLines,
       });
     }
     ctx.sendResponse(requestId, config);
@@ -174,13 +181,34 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 更新记忆配置
- * 同时更新 SettingsManager（持久化）和 MemoryManager（运行时生效）。
+ *
+ * - 传了 workspaceUri：配置保存到该作用域 MemoryManager（记忆隔离），不写全局
+ *   SettingsManager——否则工作区 tab 保存的数值会污染全局配置，且全局 toolsConfig
+ *   深合并默认值后所有工作区读到同一份配置，隔离失效。
+ * - 未传 workspaceUri（全局）：写 SettingsManager（持久化）并同步全局 MemoryManager 运行时。
  */
 export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { config } = data;
+    const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
+    if (wsUri) {
+      // 工作区作用域：仅写该工作区 MemoryManager（数值项校验并持久化到其 config 文件）
+      const mgr = await resolveMemoryManager(data);
+      if (!mgr) {
+        return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+      }
+      const runtimeUpdates: Record<string, number> = {};
+      if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
+      if (typeof config.entryChars === 'number') runtimeUpdates.entryChars = config.entryChars;
+      if (typeof config.partChars === 'number') runtimeUpdates.partChars = config.partChars;
+      if (typeof config.partLines === 'number') runtimeUpdates.partLines = config.partLines;
+      if (Object.keys(runtimeUpdates).length > 0) {
+        await mgr.updateConfig(runtimeUpdates);
+      }
+      return ctx.sendResponse(requestId, { success: true });
+    }
+    // 全局作用域：写 SettingsManager（持久化）并同步全局 MemoryManager 运行时
     await ctx.settingsManager.updateMemoryConfig(config);
-    // 同步运行时参数到 MemoryManager（如果已初始化；data.workspaceUri 指定时同步到该工作区实例）
     const mgr = await resolveMemoryManager(data);
     if (mgr) {
       const runtimeUpdates: Record<string, number> = {};
@@ -348,15 +376,30 @@ export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) =>
     // 已有数据按归一化 fsPath 索引，合并时复用其 uri/name/hasData
     const existingByPath = new Map(existing.map((s) => [normalizeFsPath(s.fsPath), s]));
 
-    const scopes = [...existing];
+    // 当前打开的工作区文件夹排在最前（前端 loadWorkspaceScopes 默认选中 scopes[0]）：
+    // 用户打开新项目 B（尚无记忆）但有历史项目 A 的数据时，默认应选中 B 而不是 A，
+    // 否则在工作区 tab 添加记忆会静默写进历史项目 A（记忆隔离错位）。
+    const scopes: Array<{ uri: string; name: string; fsPath: string; hasData: boolean }> = [];
+    const usedExistingPaths = new Set<string>();
     for (const folder of openFolders) {
-      if (existingByPath.has(normalizeFsPath(folder.fsPath))) continue; // 已在已有数据列表，复用
-      scopes.push({
-        uri: folder.uri,
-        name: folder.name,
-        fsPath: folder.fsPath,
-        hasData: false,
-      });
+      const norm = normalizeFsPath(folder.fsPath);
+      const existingEntry = existingByPath.get(norm);
+      if (existingEntry) {
+        usedExistingPaths.add(norm);
+        scopes.push(existingEntry);
+      } else {
+        scopes.push({
+          uri: folder.uri,
+          name: folder.name,
+          fsPath: folder.fsPath,
+          hasData: false,
+        });
+      }
+    }
+    // 其余「已有记忆数据但未打开」的工作区追加到末尾
+    for (const s of existing) {
+      if (usedExistingPaths.has(normalizeFsPath(s.fsPath))) continue;
+      scopes.push(s);
     }
     ctx.sendResponse(requestId, { scopes });
   } catch (error: any) {

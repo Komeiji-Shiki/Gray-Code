@@ -41,6 +41,9 @@ export {
     isMemoryToolName,
 } from './types';
 
+/** 记忆作用域：全局（跨工作区共享）或当前工作区 */
+export type MemoryScope = 'global' | 'workspace';
+
 // ─── 单例访问器 ──────────────────────────────────
 
 let _instance: import('./MemoryManager').MemoryManager | null = null;
@@ -133,15 +136,32 @@ function uriToFsPathForMeta(scopeKey: string): string {
 
 /**
  * 获取指定工作区的 MemoryManager 实例（惰性创建并持久化 scope 元信息）。
+ *
+ * createIfMissing 为 false 时（只读工具 wake/recall/zoom 使用）：工作区目录不存在
+ * 则直接返回 null，不创建目录、不写 scope.json，避免只读访问产生磁盘副作用。
  * 工作区 URI 缺失/不可解析时返回 null，由调用方回退全局记忆。
  */
-export async function getMemoryManagerForWorkspace(workspaceUri: string): Promise<import('./MemoryManager').MemoryManager | null> {
+export async function getMemoryManagerForWorkspace(
+    workspaceUri: string,
+    createIfMissing = true
+): Promise<import('./MemoryManager').MemoryManager | null> {
     const scopeKey = workspaceUriToScopeKey(workspaceUri);
     if (!scopeKey) return null;
     const existing = _workspaceInstances.get(scopeKey);
     if (existing) return existing;
     const pending = _workspaceInitPromises.get(scopeKey);
     if (pending) return pending;
+
+    if (!createIfMissing) {
+        // 只读访问：目录不存在时不创建、不写 scope.json
+        const dir = workspaceMemoryDir(scopeKey);
+        if (!dir) return null;
+        try {
+            await fs.promises.stat(dir);
+        } catch {
+            return null;
+        }
+    }
 
     const initPromise = (async () => {
         const dir = workspaceMemoryDir(scopeKey);
@@ -185,13 +205,34 @@ export function getWorkspaceFolderName(workspaceUri: string): string | null {
 }
 
 /**
- * 工具层取实例入口：按工具上下文注入的工作区路由到对应记忆实例，
- * 无工作区（或解析失败）时回退全局记忆（旧行为）。
+ * 工具层取实例入口：按工具上下文注入的工作区路由到对应记忆实例。
+ *
+ * scope 规则：
+ * - 'global'：直接返回全局实例，不依赖 workspaceUri。
+ * - 'workspace'：必须能解析出工作区实例（有 workspaceUri 且目录可访问），否则返回 null（由调用方报错）。
+ * - 未传：有 workspaceUri 用工作区，否则全局（向后兼容）。
+ *
+ * 注意：调用方传了 workspaceUri 说明意图是工作区——即使未显式传 scope，工作区解析失败
+ * 也返回 null（不再静默回退全局）；只有 workspaceUri 为 null/undefined 时才回退全局。
  */
-export async function getMemoryManagerForTool(workspaceUri?: string | null): Promise<import('./MemoryManager').MemoryManager | null> {
+export async function getMemoryManagerForTool(
+    workspaceUri?: string | null,
+    scope?: MemoryScope,
+    createIfMissing = true
+): Promise<import('./MemoryManager').MemoryManager | null> {
+    // 显式要求全局作用域：不依赖 workspaceUri
+    if (scope === 'global') {
+        return getGlobalMemoryManager();
+    }
     if (workspaceUri) {
-        const scoped = await getMemoryManagerForWorkspace(workspaceUri);
+        const scoped = await getMemoryManagerForWorkspace(workspaceUri, createIfMissing);
         if (scoped) return scoped;
+        // 传了 workspaceUri 说明意图是工作区：解析失败不再静默回退全局，由调用方报错
+        return null;
+    }
+    if (scope === 'workspace') {
+        // 显式要求工作区作用域但缺少工作区上下文
+        return null;
     }
     return getGlobalMemoryManager();
 }

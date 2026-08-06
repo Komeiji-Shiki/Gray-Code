@@ -200,17 +200,25 @@ const isAllSelected = computed(() => entries.value.length > 0 && selectedIds.val
 const newEntryText = ref('')
 const addingEntry = ref(false)
 
-// UTF-8 字节数（后端按字节校验 entryChars；String.length 计的是 UTF-16 码元，
+// UTF-8 字节数（后端按 trim 后的字节校验 entryChars；String.length 计的是 UTF-16 码元，
 // 中文等字符会低估，导致前端放行、后端报 Too long）
-const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
+const utf8Bytes = (s: string) => new TextEncoder().encode(s.trim()).length
 const newEntryBytes = computed(() => utf8Bytes(newEntryText.value))
 const editingBytes = computed(() => utf8Bytes(editingText.value))
+
+// 是否含换行符（后端 note/updateEntry 对多行文本直接报错，前端提前拦截并提示）
+const hasNewline = (s: string) => /\r|\n/.test(s.trim())
 
 // 手动新增一条记忆（等价于 AI 的 memory_note）
 async function addEntry() {
   const text = newEntryText.value
   if (!text.trim()) {
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (hasNewline(text)) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.newlineNotAllowed')
     statusError.value = true
     return
   }
@@ -334,6 +342,13 @@ async function loadWorkspaceScopes() {
 // silent=true（作用域/工作区切换）时只刷新配置值：不触整页 loading、不清空/覆盖
 // statusMessage；失败时若已有配置则仅 console.warn，保留现有表单值
 async function loadConfig(silent = false) {
+  // 工作区 tab 未选择工作区：不发请求（scopeParams 为空会误拉全局配置），
+  // 同时递增序号使在途的全局配置响应过期，避免旧作用域配置覆盖表单
+  if (!scopeKey()) {
+    ++configLoadSeq
+    if (!silent) isLoading.value = false
+    return
+  }
   const seq = ++configLoadSeq
   if (!silent) {
     isLoading.value = true
@@ -389,6 +404,9 @@ async function loadEntries(showLoading = true) {
   const key = scopeKey()
   if (!key) {
     // 工作区 tab 未选择工作区：不发请求（scopeParams 为空会误拉全局数据）
+    // 同时递增请求序号，使在途的全局条目请求（如 mount 时发出的）过期——
+    // 否则其响应仍会通过 seq 校验，把全局条目渲染到工作区 tab 下（竞态）
+    ++entryLoadSeq
     entries.value = []
     entriesTotal.value = 0
     entriesTruncated.value = false
@@ -448,6 +466,11 @@ async function saveEdit() {
   if (editingId.value === null) return
   if (!editingText.value.trim()) {
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (hasNewline(editingText.value)) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.newlineNotAllowed')
     statusError.value = true
     return
   }
@@ -705,7 +728,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
             <option v-for="ws in workspaceScopes" :key="ws.uri" :value="ws.uri">{{ ws.name }}</option>
           </select>
           <p v-if="!scopesLoading && workspaceScopes.length === 0" class="field-description">
-            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceMemoryEmpty') }}
+            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceNone') }}
           </p>
         </div>
 
@@ -787,11 +810,12 @@ watch(selectedWorkspaceUri, (next, prev) => {
             <div class="entry-text-wrap">
               <pre v-if="editingId !== entry.id" class="entry-text">{{ entry.text }}</pre>
               <div v-else class="entry-edit-row">
+                <!-- 不设 maxlength：后端按 trim 后 UTF-8 字节数校验（entryChars），
+                     maxlength 按 UTF-16 码元计数会与字节校验不一致；保存时仍做字节拦截 -->
                 <textarea
                   v-model="editingText"
                   class="entry-textarea"
                   rows="3"
-                  :maxlength="entryChars"
                 ></textarea>
                 <div class="entry-edit-actions">
                   <button class="btn btn-sm btn-primary" @click="saveEdit" :disabled="editSaving">

@@ -2235,7 +2235,9 @@ const zhCN = {
                         scopeWorkspace: '工作区记忆',
                         scopeWorkspaceHint: '每个工作区独立保存的记忆，与其他工作区及全局记忆互不影响。',
                         selectScopeWorkspace: '选择工作区…',
-                        workspaceMemoryEmpty: '该工作区还没有记忆。在此分区添加的记忆仅对该工作区可见。'
+                        workspaceNone: '当前没有可选的工作区。请在 VS Code 中打开一个文件夹后重试。',
+                        workspaceMemoryEmpty: '该工作区还没有记忆。在此分区添加的记忆仅对该工作区可见。',
+                        newlineNotAllowed: '记忆必须为单行文本。请删除换行后重试。'
                     }
                 },
 

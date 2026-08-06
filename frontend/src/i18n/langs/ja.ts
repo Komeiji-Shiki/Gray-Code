@@ -2234,7 +2234,9 @@ const ja: LanguageMessages = {
                         scopeWorkspace: 'ワークスペース記憶',
                         scopeWorkspaceHint: 'ワークスペースごとに独立して保存される記憶で、他のワークスペースやグローバル記憶とは互いに影響しません。',
                         selectScopeWorkspace: 'ワークスペースを選択…',
-                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶は、このワークスペースにのみ表示されます。'
+                        workspaceNone: '現在利用可能なワークスペースがありません。VS Code でフォルダーを開いてから再試行してください。',
+                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶は、このワークスペースにのみ表示されます。',
+                        newlineNotAllowed: '記憶は 1 行で記述する必要があります。改行を削除して再試行してください。'
                     }
                 },
 

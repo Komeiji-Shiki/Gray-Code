@@ -300,7 +300,10 @@ export async function syncConversationWorkspaceUri(
 
   const conv = state.conversations.value.find(c => c.id === conversationId)
   if (!conv || !conv.isPersisted) return
-  if (conv.workspaceUri === workspaceUri) return
+  // 记忆隔离（PR #20 审查 M5）：目标会话已有非空 workspaceUri（如分支继承自源对话）时不覆盖，
+  // 仅当未绑定/为空时才用当前活动工作区补齐——既保留“新会话自动绑定”，
+  // 又不破坏后端 createBranchConversation 的工作区继承。
+  if (conv.workspaceUri) return
 
   try {
     await sendToExtension('conversation.setWorkspaceUri', {
