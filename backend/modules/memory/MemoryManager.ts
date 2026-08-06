@@ -55,6 +55,13 @@ function parse(line: string): LogEntry {
 }
 
 /**
+ * 固定宽度记录头部 "#<id> <date> " 的最大字节开销：
+ * "#"(1) + id(最多 10 位) + " "(1) + date(ISO 日期恒 10 位) + " "(1) = 23。
+ * id 超过 10 位（99 亿+ 条记忆）时 assertRecordFits 仍会精确兜底。
+ */
+const MAX_HEADER_BYTES = 1 + 10 + 1 + 10 + 1;
+
+/**
  * 校验「#id date text」整条固定宽度记录可容纳。
  *
  * 固定宽度记录为 LOG_REC 字节，头部 "#<id> <date> " 随 id 位数增长（约 13~23 字节）。
@@ -88,14 +95,14 @@ function records(buf: Buffer): LogEntry[] {
 
 /**
  * 各配置项的合法范围（与固定宽度记录/分页逻辑配套）：
- * - entryChars 上限须留出 "#<id> <date> " 记录头部空间（约 23 字节），否则
+ * - entryChars 上限须留出 "#<id> <date> " 记录头部空间（MAX_HEADER_BYTES），否则
  *   note/updateEntry 会在 assertRecordFits/pad 处抛 Too long——上限取
- *   LOG_REC - 1 - 23（id 增长到 10 位仍有余量），runtime 层仍有精确校验兜底；
+ *   LOG_REC - 1 - MAX_HEADER_BYTES（id 增长到 10 位仍有余量），runtime 层仍有精确校验兜底；
  * - 其余项要求为正整数，避免 0/负数导致分页、cover 或 recall 窗口行为异常。
  */
 const MEMORY_CONFIG_BOUNDS: Array<[keyof MemoryConfig, number, number]> = [
     ['wakeLines', 1, 10000],
-    ['entryChars', 1, LOG_REC - 1 - 23],
+    ['entryChars', 1, LOG_REC - 1 - MAX_HEADER_BYTES],
     ['partChars', 1, 1000000],
     ['partLines', 1, 100000],
 ];
@@ -210,6 +217,10 @@ export class MemoryManager {
             const chunks: Buffer[] = [];
             for (let k = 0; k < items.length; k++) {
                 const { date, text } = items[k];
+                // 锁内用真实分配的 id 精确校验整条记录容量（含 "#<id> <date> " 头部开销）：
+                // id 由本方法在锁内分配，此处校验与实际写入完全一致，不存在估算竞态
+                // （锁外按 logLen 估算可能低估 id 位数，并发追加时仍会在 pad() 抛晦涩 Too long）。
+                assertRecordFits(base + k, date, text);
                 chunks.push(pad(`#${base + k} ${date} ${text}`, LOG_REC));
             }
             await fs.appendFile(this.logPath(), Buffer.concat(chunks));
@@ -612,11 +623,7 @@ export class MemoryManager {
         }
 
         const today = new Date().toISOString().slice(0, 10);
-        // 整条固定宽度记录校验（含 "#<id> <date> " 头部开销）：id 由 logAppend
-        // 在锁内分配，此处用当前日志长度估算 id 位数；并发追加只可能让 id 更大、
-        // 头部更长——若当前能通过，实际写入时也必然在预算内。
-        await assertRecordFits(await this.logLen(), today, trimmed);
-
+        // 整条固定宽度记录容量校验（含头部开销）在 logAppend 锁内按真实 id 执行
         const id = await this.logAppend([{ date: today, text: trimmed }]);
 
         const nap = await this.nextNap(id + 1);
