@@ -13,7 +13,9 @@ import type { HandlerContext, MessageHandler } from '../types';
  */
 export const createConversation: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, title, workspaceUri } = data;
-  const wsUri = workspaceUri || ctx.getCurrentWorkspaceUri();
+  // 两者皆空时归一为 undefined（不要传 null）：后端元数据 workspaceUri 类型是 string | undefined，
+  // 传 null 会被 JSON.stringify 持久化为字面 null，破坏记忆隔离的工作区判定（L-2）。
+  const wsUri = workspaceUri || ctx.getCurrentWorkspaceUri() || undefined;
   await ctx.conversationManager.createConversation(conversationId, title, wsUri);
   ctx.sendResponse(requestId, { success: true });
 };
@@ -156,7 +158,12 @@ export const createBranchConversation: MessageHandler = async (data, requestId, 
  */
 export const getMessages: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId } = data;
-  const messages = await ctx.conversationManager.getMessages(conversationId);
+  // 记忆隔离（H4）：读取可能触发后端 loadHistory 按需自动创建会话，
+  // 补传当前工作区 URI，让自动创建的新会话在创建时就绑定工作区，避免记忆工具回退全局。
+  const messages = await ctx.conversationManager.getMessages(
+    conversationId,
+    ctx.getCurrentWorkspaceUri() || undefined
+  );
   ctx.sendResponse(requestId, messages);
 };
 
@@ -165,7 +172,12 @@ export const getMessages: MessageHandler = async (data, requestId, ctx) => {
  */
 export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, beforeIndex, offset, limit } = data || {};
-  const result = await ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit });
+  // 记忆隔离（H4）：分页读取可能触发后端 loadHistory 按需自动创建会话，补传当前工作区 URI。
+  const result = await ctx.conversationManager.getMessagesPaged(
+    conversationId,
+    { beforeIndex, offset, limit },
+    ctx.getCurrentWorkspaceUri() || undefined
+  );
   ctx.sendResponse(requestId, result);
 };
 
@@ -176,9 +188,15 @@ export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => 
  */
 export const loadConversationForView: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, beforeIndex, offset, limit } = data || {};
+  // 记忆隔离（H4）：getMessagesPaged 可能触发后端 loadHistory 按需自动创建会话，
+  // 补传当前工作区 URI，让自动创建的新会话在创建时就绑定工作区。
   const [metadata, result] = await Promise.all([
     ctx.conversationManager.getMetadata(conversationId),
-    ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit })
+    ctx.conversationManager.getMessagesPaged(
+      conversationId,
+      { beforeIndex, offset, limit },
+      ctx.getCurrentWorkspaceUri() || undefined
+    )
   ]);
 
   const custom = (metadata?.custom || {}) as Record<string, unknown>;

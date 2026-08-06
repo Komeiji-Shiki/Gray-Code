@@ -39,9 +39,23 @@ const CustomCheckboxStub = defineComponent({
   template: `<button class="cb-stub" :disabled="disabled" @click="$emit('update:modelValue', !modelValue)" />`
 })
 
+// ConfirmDialog 桩：渲染确认按钮，点击触发 confirm——便于测试删除流程走完整请求路由
+const ConfirmDialogStub = defineComponent({
+  name: 'ConfirmDialog',
+  props: {
+    modelValue: { type: Boolean, default: false },
+    title: String,
+    message: String,
+    confirmText: String,
+    isDanger: Boolean
+  },
+  emits: ['confirm', 'cancel', 'update:modelValue'],
+  template: `<div class="cd-stub"><button class="cd-confirm" @click="$emit('confirm')">ok</button></div>`
+})
+
 const GLOBAL_STUBS = {
   CustomCheckbox: CustomCheckboxStub,
-  ConfirmDialog: true
+  ConfirmDialog: ConfirmDialogStub
 }
 
 const GLOBAL_ENTRIES = [
@@ -163,7 +177,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
   })
 
   it('快速切换作用域：过期响应不覆盖当前作用域（seq 竞态守卫）', async () => {
-    // 全局条目响应慢：先发起的全局请求晚于后发起的工作区请求返回
+    // 真正构造乱序：工作区条目响应慢（30ms），后发起的工作区请求晚于全局请求返回
     mockSend.mockImplementation((type: string, payload: any) => {
       switch (type) {
         case 'getMemoryConfig':
@@ -174,9 +188,41 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
           })
         case 'getMemoryEntries':
           if (payload?.workspaceUri) {
-            return Promise.resolve({ entries: WS_ENTRIES, total: WS_ENTRIES.length, truncated: false })
+            // 工作区：延迟返回，模拟慢响应
+            return new Promise((resolve) => {
+              setTimeout(() => resolve({ entries: WS_ENTRIES, total: WS_ENTRIES.length, truncated: false }), 30)
+            })
           }
-          // 全局：延迟到工作区响应之后才返回
+          // 全局：立即返回
+          return Promise.resolve({ entries: GLOBAL_ENTRIES, total: GLOBAL_ENTRIES.length, truncated: false })
+        default:
+          return Promise.resolve({})
+      }
+    })
+    const wrapper = await mountSettings()
+    // 全局条目已就绪（立即返回）
+    expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
+
+    // 切到工作区（发出工作区请求，30ms 后返回），随后立刻切回全局（再发全局请求）
+    await wrapper.findAll('.scope-tab')[1].trigger('click')
+    await wrapper.findAll('.scope-tab')[0].trigger('click')
+    await new Promise((r) => setTimeout(r, 60))
+    await flushPromises()
+
+    // 慢响应（工作区的，seq 已过期）若被应用会把全局条目冲掉；seq 守卫应丢弃它
+    expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
+  })
+
+  it('工作区 tab 未选工作区：在途全局条目响应被丢弃（loadEntries 空 key 早退递增序号）', async () => {
+    // 全局条目响应延迟：mount 时的全局请求在用户切到工作区 tab（无选中）之后才返回
+    mockSend.mockImplementation((type: string) => {
+      switch (type) {
+        case 'getMemoryConfig':
+          return Promise.resolve({ ...BASE_CONFIG })
+        case 'listMemoryScopes':
+          // scope 列表挂起 → selectedWorkspaceUri 保持 '' → 工作区 tab 无选中
+          return new Promise(() => {})
+        case 'getMemoryEntries':
           return new Promise((resolve) => {
             setTimeout(() => resolve({ entries: GLOBAL_ENTRIES, total: GLOBAL_ENTRIES.length, truncated: false }), 30)
           })
@@ -185,18 +231,44 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
       }
     })
     const wrapper = await mountSettings()
-    // 全局条目经 30ms 定时器返回：等待其落定并写入缓存
-    await new Promise((r) => setTimeout(r, 40))
-    await flushPromises()
-    expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
+    // mount 时全局条目请求已发出（30ms 后返回，此刻仍在途）
 
-    // 切到工作区（先发请求），随后立刻切回全局（再发请求）
+    // 切到工作区 tab：scope 列表未就绪 → 未选工作区 → loadEntries 空 key 早退（递增 entryLoadSeq）
     await wrapper.findAll('.scope-tab')[1].trigger('click')
-    await wrapper.findAll('.scope-tab')[0].trigger('click')
     await new Promise((r) => setTimeout(r, 60))
     await flushPromises()
 
-    // 慢响应（工作区的）若被应用会把全局条目冲掉；seq 守卫应丢弃它
-    expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
+    // 在途全局响应（旧 seq）已过期被丢弃：工作区 tab 下保持空态而非全局条目
+    expect(entryTexts(wrapper)).toEqual([])
+    expect(wrapper.find('.entries-loading').exists()).toBe(false)
+  })
+
+  it('工作区作用域：新增 / 删除记忆请求携带正确的 workspaceUri（作用域路由）', async () => {
+    defaultSendImplementation()
+    const wrapper = await mountSettings()
+
+    // 切到工作区 tab（scope 列表已就绪 → 默认选中 WS_URI）
+    await wrapper.findAll('.scope-tab')[1].trigger('click')
+    await flushPromises()
+    expect(entryTexts(wrapper)).toEqual(['workspace-memory-gamma'])
+
+    // 新增：请求必须带 workspaceUri
+    await wrapper.find('.add-entry-textarea').setValue('new-workspace-entry')
+    await wrapper.find('.add-entry-actions .btn-primary').trigger('click')
+    await flushPromises()
+    const addCalls = (mockSend.mock.calls as Array<[string, any]>).filter(c => c[0] === 'addMemoryEntry')
+    expect(addCalls.length).toBe(1)
+    expect(addCalls[0][1]?.workspaceUri).toBe(WS_URI)
+    expect(addCalls[0][1]?.text).toBe('new-workspace-entry')
+
+    // 删除：点击删除按钮 → 确认框确认 → 请求带 workspaceUri
+    await wrapper.find('.entry-row .btn-icon.danger').trigger('click')
+    await flushPromises()
+    await wrapper.find('.cd-confirm').trigger('click')
+    await flushPromises()
+    const deleteCalls = (mockSend.mock.calls as Array<[string, any]>).filter(c => c[0] === 'deleteMemoryEntry')
+    expect(deleteCalls.length).toBe(1)
+    expect(deleteCalls[0][1]?.id).toBe(0)
+    expect(deleteCalls[0][1]?.workspaceUri).toBe(WS_URI)
   })
 })

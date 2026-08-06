@@ -134,6 +134,8 @@ export class ToolExecutionService {
      */
     private readonly mailboxDrainEpochs = new Map<string, number>();
     private mailboxDrainEpochCounter = 0;
+    /** H4 兜底可观测性：已提示过「会话未绑定工作区」的会话集合（每会话仅告警一次，避免刷屏） */
+    private readonly unboundWorkspaceWarned = new Set<string>();
     private readonly log = Logger.get('ToolExec');
 
     private claimMailboxDrainEpoch(
@@ -431,6 +433,16 @@ export class ToolExecutionService {
             resolvedWorkspaceUri = await this.conversationManager.getMetadata(conversationId)
                 .then(meta => meta?.workspaceUri || undefined)
                 .catch(() => undefined);
+        }
+        // H4 兜底可观测性：会话未绑定工作区时记忆工具会回退全局作用域（跨工作区污染风险）。
+        // webview 正常路径会在创建/读取时绑定工作区；此处覆盖纯后端/API 等漏网路径，
+        // 把「静默降级」变为可观测——每会话仅告警一次。
+        if (conversationId && !resolvedWorkspaceUri && !this.unboundWorkspaceWarned.has(conversationId)) {
+            this.unboundWorkspaceWarned.add(conversationId);
+            this.log.warn('conversation_unbound_workspace', {
+                conversationId,
+                hint: '会话未绑定工作区，记忆工具将使用全局作用域；如预期应为工作区记忆，请检查会话创建/读取路径是否传入 workspaceUri',
+            });
         }
 
         const responseParts: ContentPart[] = [];
