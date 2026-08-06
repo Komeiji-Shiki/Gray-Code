@@ -100,6 +100,7 @@ import {
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
+  restoreSummarizedMessages as restoreSummarizedMessagesFn,
   clearMessages as clearMessagesFn
 } from './chat/messageActions'
 
@@ -595,6 +596,7 @@ export const useChatStore = defineStore('chat', () => {
     restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
+  const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)
 
   // ============ 流式处理 ============
 
@@ -881,6 +883,7 @@ export const useChatStore = defineStore('chat', () => {
     // 上下文总结
     summarizeContext,
     cancelSummarizeRequest,
+    restoreSummarizedMessages,
 
     // 标签页
     openTabs: state.openTabs,

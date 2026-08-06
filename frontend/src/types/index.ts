@@ -141,6 +141,8 @@ export interface Content {
   summarizedMessageCount?: number
   /** 是否为自动触发的总结消息 */
   isAutoSummary?: boolean
+  /** 该消息已被上下文总结覆盖（逻辑截断）：原文保留、仍可显示/搜索，但不参与发送给 AI */
+  isSummarized?: boolean
   /**
    * 思考开始时间戳（毫秒）
    *
@@ -257,6 +259,8 @@ export interface Message {
   summaryTokenStats?: SummaryTokenStats
   /** 是否为自动触发的总结消息 */
   isAutoSummary?: boolean
+  /** 该消息已被上下文总结覆盖（逻辑截断）：原文保留、仍可显示/搜索，但不参与发送给 AI */
+  isSummarized?: boolean
 }
 
 export interface MessageMetadata {
@@ -603,8 +607,8 @@ export interface StreamChunk {
   /** 总结消息插入位置（完整历史绝对索引） */
   insertIndex?: number
   /**
-   * 物理替换语义：后端已删除历史中 backendIndex ∈ [insertIndex, insertIndex + removedCount)
-   * 的消息，并把总结消息插入到 insertIndex（后端新下标）。缺省 0 = 旧"纯插入"语义。
+   * 逻辑截断语义：后端不删除消息，只给历史中 backendIndex ∈ [insertIndex - removedCount, insertIndex)
+   * 的消息打 isSummarized 标记（原文保留），并把总结消息插入到 insertIndex。缺省/0 = 无消息被标记。
    */
   removedCount?: number
 }

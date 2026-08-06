@@ -576,6 +576,7 @@ const zhCN = {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
+                restoreTitle: '恢复原文（撤销总结，重新发送被压缩的消息）',
                 autoTriggered: '自动触发',
                 compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
                 legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
