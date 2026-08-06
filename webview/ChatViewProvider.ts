@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { randomBytes } from 'crypto';
 import { t, setLanguage as setBackendLanguage } from '../backend/i18n';
 import type { SupportedLanguage } from '../backend/i18n';
 import {
@@ -15,6 +16,12 @@ import {
     FileSystemStorageAdapter,
     FileUsageIndexStore
 } from '../backend/modules/conversation';
+import {
+    BranchGraphRepository,
+    BranchService,
+    getGlobalBranchService,
+    setGlobalBranchService,
+} from '../backend/modules/conversation/branch';
 import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config';
 import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
@@ -30,6 +37,8 @@ import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, Tas
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import { MemoryManager, setGlobalMemoryManager } from '../backend/modules/memory';
+import { ActivityTracker, setGlobalActivityTracker } from '../backend/modules/activity';
+import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../backend/modules/tokenizer';
 import type { SettingsExportData } from '../backend/modules/settings';
 import {
     setGlobalSettingsManager,
@@ -52,6 +61,7 @@ import { WindowsAgentStopNotificationService } from '../backend/modules/notifica
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
+import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
 
 const log = Logger.get('ChatViewProvider');
@@ -116,6 +126,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private configManager!: ConfigManager;
     private channelManager!: ChannelManager;
     private conversationManager!: ConversationManager;
+    private branchService?: BranchService;
     private chatHandler!: ChatHandler;
     private modelsHandler!: ModelsHandler;
     private settingsManager!: SettingsManager;
@@ -128,6 +139,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private conversationStorageAdapter?: FileSystemStorageAdapter;
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
+    private activityTracker?: ActivityTracker;
     private mainChatClientDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
     
@@ -220,6 +232,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             storageAdapter,
             new FileUsageIndexStore(vscode, effectiveDataUri)
         );
+
+        // 分支图同步是普通追加与总结写入的后台职责，不能依赖用户先打开分支面板才初始化。
+        // 本次实故障由已结束的空 reroll 占位冻结同步触发；这里额外封堵窗口重载后已有 sidecar
+        // 但全局服务尚未懒创建的独立复发路径。懒解析 handler 会复用这个实例。
+        this.branchService = new BranchService(
+            this.conversationManager,
+            new BranchGraphRepository(this.storagePathManager.getEffectiveDataPath())
+        );
+        setGlobalBranchService(this.branchService);
 
         // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
         void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {
@@ -370,6 +391,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await memoryManager.loadConfig();
         setGlobalMemoryManager(memoryManager);
         
+        // 25.65. 初始化使用时间统计追踪器（活跃采样：心跳 + 用户活动事件，按天落盘）
+        const activityTracker = new ActivityTracker(
+            path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
+        );
+        activityTracker.start();
+        this.activityTracker = activityTracker;
+        setGlobalActivityTracker(activityTracker);
+
+        // 25.66. 初始化 tokenizer 词表资源管理器（运行时下载 cl100k / DeepSeek 词表到数据目录）
+        const tokenizerManager = new TokenizerResourceManager(this.storagePathManager.getTokenizerPath());
+        setGlobalTokenizerResourceManager(tokenizerManager);
+        
         // 25.7. 设置 SubAgent 执行器上下文
         setSubAgentExecutorContext({
             channelManager: this.channelManager,
@@ -458,6 +491,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理统一任务事件，推送到前端
      */
     private handleTaskEvent(event: TaskEvent): void {
+        // AI 任务（终端/图像生成/后台子代理等）运行中视为用户在场：
+        // 主人在等待任务结果时可能不操作编辑器，不能被空闲判定误判为离开
+        this.activityTracker?.markAiActive();
+
         if (!this._view) return;
         
         this._view.webview.postMessage({
@@ -965,11 +1002,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.windowsAgentStopNotificationService?.dispose();
         this.subAgentMonitorPanel?.dispose();
         this.subAgentMonitorPanel = undefined;
+        if (getGlobalBranchService() === this.branchService) {
+            setGlobalBranchService(undefined);
+        }
+        this.branchService = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
 
         // 释放用量统计的目录监听与内存缓存
         disposeUsageCache();
+
+        // 释放使用时间统计：停止采样并落盘，清理全局引用与结果缓存
+        this.activityTracker?.dispose();
+        this.activityTracker = undefined;
+        setGlobalActivityTracker(null);
+        disposeActivityStatsCache();
 
         log.info('disposed');
     }
@@ -1188,8 +1235,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private buildCsp(webview: vscode.Webview, devServerOrigin?: string): string {
-        const scriptSrc = [webview.cspSource, "'unsafe-inline'"];
+    private buildCsp(webview: vscode.Webview, nonce: string, devServerOrigin?: string): string {
+        const scriptSrc = [webview.cspSource, `'nonce-${nonce}'`];
         const styleSrc = [webview.cspSource, "'unsafe-inline'"];
         const imgSrc = [webview.cspSource, 'data:', 'blob:'];
         const mediaSrc = [webview.cspSource, 'data:', 'blob:'];
@@ -1229,8 +1276,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
-        const cspContent = this.buildCsp(webview, devServerOrigin);
-        const builtinSoundAssetsScript = `<script>window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
+        const nonce = randomBytes(16).toString('base64');
+        const cspContent = this.buildCsp(webview, nonce, devServerOrigin);
+        const builtinSoundAssetsScript = `<script nonce="${nonce}">window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
@@ -1246,8 +1294,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="app"></div>
-    <script type="module" src="${devServerUrl}/@vite/client"></script>
-    <script type="module" src="${devServerUrl}/src/main.ts"></script>
+    <script nonce="${nonce}" type="module" src="${devServerUrl}/@vite/client"></script>
+    <script nonce="${nonce}" type="module" src="${devServerUrl}/src/main.ts"></script>
 </body>
 </html>`;
         }
@@ -1266,7 +1314,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="app"></div>
-    <script type="module" src="${scriptUri}"></script>
+    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
     }

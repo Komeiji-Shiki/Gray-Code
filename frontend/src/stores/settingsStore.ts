@@ -5,8 +5,9 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { SmoothMode } from '../utils/smoothStream'
 
-export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'general' | 'memory'
+export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'memory' | 'general' | 'usage'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'
@@ -27,8 +28,17 @@ export const useSettingsStore = defineStore('settings', () => {
   // 外观设置：流式 Loading 文本（为空表示使用默认值）
   const appearanceLoadingText = ref<string>('')
 
+  // 外观设置：流式平滑输出档位（off=直通 / smooth=灵敏 / balanced=标准 / silky=丝滑）
+  const smoothStreaming = ref<SmoothMode>('balanced')
+
   // 外观设置：选中内容入口开关
   const selectionContextEnabled = ref(true)
+
+  // 外观设置：TPS 实时可视化条开关（隐藏后仍继续采样，重新开启立即恢复）
+  const tpsBarEnabled = ref(true)
+
+  // 外观设置：开屏动画开关（关闭后启动直接进入主界面）
+  const splashEnabled = ref(true)
   
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
@@ -79,8 +89,21 @@ export const useSettingsStore = defineStore('settings', () => {
     appearanceLoadingText.value = text
   }
 
+  // 设置外观：流式平滑输出档位
+  function setSmoothStreaming(mode: SmoothMode) {
+    smoothStreaming.value = mode
+  }
+
   function setSelectionContextEnabled(enabled: boolean) {
     selectionContextEnabled.value = enabled
+  }
+
+  function setTpsBarEnabled(enabled: boolean) {
+    tpsBarEnabled.value = enabled
+  }
+
+  function setSplashEnabled(enabled: boolean) {
+    splashEnabled.value = enabled
   }
   
   // 通知模式列表刷新
@@ -95,7 +118,10 @@ export const useSettingsStore = defineStore('settings', () => {
     activeTab,
     language,
     appearanceLoadingText,
+    smoothStreaming,
     selectionContextEnabled,
+    tpsBarEnabled,
+    splashEnabled,
     promptModesVersion,
 
     // 方法
@@ -107,7 +133,10 @@ export const useSettingsStore = defineStore('settings', () => {
     setActiveTab,
     setLanguage,
     setAppearanceLoadingText,
+    setSmoothStreaming,
     setSelectionContextEnabled,
+    setTpsBarEnabled,
+    setSplashEnabled,
     refreshPromptModes
   }
 })

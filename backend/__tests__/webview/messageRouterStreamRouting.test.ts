@@ -12,9 +12,10 @@
 // 注意：本仓库 ts-jest 不保证 hoist jest.mock，mock 声明必须放在依赖它的 import 之前
 // （与 backend/__tests__/tools/diffManager.test.ts 同约定）。
 // 屏蔽真实 DiffManager（cancelStream 清理路径会触碰 vscode 依赖），聚焦路由行为。
+const cancelAllPendingMock = jest.fn().mockResolvedValue({ cancelled: [] });
 jest.mock('../../../backend/tools/file/diffManager', () => ({
   getDiffManager: () => ({
-    cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
+    cancelAllPending: cancelAllPendingMock
   })
 }));
 
@@ -76,6 +77,7 @@ function createHarness() {
 describe('MessageRouter 流式请求路由生命周期', () => {
   afterEach(() => {
     subAgentRunController.unregister('router_detach_fg');
+    cancelAllPendingMock.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -115,10 +117,27 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     const resp = h.monitorMessages.find((m: any) => m.type === 'response' && m.requestId === 'req_cancel_3');
     expect(resp).toBeDefined();
     expect(resp.data).toEqual({ cancelled: true });
+    expect(cancelAllPendingMock).toHaveBeenCalledWith('conv_cancel_1');
+    expect(cancelAllPendingMock).not.toHaveBeenCalledWith();
     expect(h.conversationManager.rejectAllPendingToolCalls).toHaveBeenCalledWith('conv_cancel_1');
     expect(h.rawSendResponse).not.toHaveBeenCalled();
     expect(h.rawSendError).not.toHaveBeenCalled();
     expect((h.router as any).requestClients.size).toBe(0);
+  });
+
+  it('cancelAllStreams 使用全局 diff 清理，同时逐会话拒绝待确认工具', async () => {
+    const h = createHarness();
+    const abortManager = h.router.getAbortManager();
+    abortManager.create('conv_all_1');
+    abortManager.create('conv_all_2');
+
+    h.router.cancelAllStreams();
+    await flushAsync();
+
+    expect(cancelAllPendingMock).toHaveBeenCalledTimes(1);
+    expect(cancelAllPendingMock).toHaveBeenCalledWith();
+    expect(h.conversationManager.rejectAllPendingToolCalls).toHaveBeenCalledWith('conv_all_1');
+    expect(h.conversationManager.rejectAllPendingToolCalls).toHaveBeenCalledWith('conv_all_2');
   });
 
   it('cancelStream 保留子 Agent 时先转后台再取消旧流', async () => {

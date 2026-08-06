@@ -49,7 +49,10 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'storagePath.selectFolder',
   'checkpoint.restore',
   'checkpoint.deleteBatch',
-  'checkpoint.previewRestore'
+  'checkpoint.previewRestore',
+  // deleteMemoryEntries：批量删除记忆可能对交错 id 触发多次全量 LOG 重建（O(n·T)），
+  // 大选择量下可能超过 180s；超时会让前端误判失败而后端已删，重试又因 id 失效报错（memory-review）
+  'deleteMemoryEntries'
 ])
 
 /**
@@ -90,10 +93,31 @@ function isVueReactiveProxy(value: any): boolean {
  *
  * 遍历为引用级检查，不复制字符串，开销远小于 JSON.stringify；visited 防止循环引用死循环。
  */
-function requiresJsonRoundTrip(value: any, visited: Set<object> = new Set()): boolean {
+function requiresJsonRoundTrip(value: any, visited?: Set<object>): boolean {
   if (value === null || typeof value !== 'object') return false
-  if (visited.has(value)) return true
-  visited.add(value)
+  // 小 payload 短路：≤2 个基本类型属性的扁平对象必然可结构化克隆，
+  // 高频小消息（如 { focused: bool }）无需分配 visited Set 和深遍历。
+  // 响应式 Proxy 必须排除（走完整检查返回 true，保持原有 JSON 解包语义）。
+  if (!Array.isArray(value) && !isVueReactiveProxy(value)) {
+    const proto = Object.getPrototypeOf(value)
+    if (proto === Object.prototype || proto === null) {
+      const keys = Object.keys(value)
+      if (keys.length <= 2) {
+        let flat = true
+        for (const key of keys) {
+          const v = value[key]
+          if (v !== null && (typeof v === 'object' || typeof v === 'function')) {
+            flat = false
+            break
+          }
+        }
+        if (flat) return false
+      }
+    }
+  }
+  const set = visited ?? new Set()
+  if (set.has(value)) return true
+  set.add(value)
 
   if (isVueReactiveProxy(value)) return true
 
@@ -102,13 +126,13 @@ function requiresJsonRoundTrip(value: any, visited: Set<object> = new Set()): bo
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      if (requiresJsonRoundTrip(item, visited)) return true
+      if (requiresJsonRoundTrip(item, set)) return true
     }
     return false
   }
 
   for (const key of Object.keys(value)) {
-    if (requiresJsonRoundTrip(value[key], visited)) return true
+    if (requiresJsonRoundTrip(value[key], set)) return true
   }
   return false
 }
@@ -210,9 +234,10 @@ let dispatcherAttached = false
 
 function dispatchExtensionMessage(event: MessageEvent) {
   routeExtensionMessage(event.data, messageHandlers, message => {
-    // 复制一份再遍历：订阅者可能在处理过程中取消订阅
+    // Set 迭代语义：迭代中订阅者增删不影响当前轮，与复制快照行为一致，
+    // 直接迭代避免每条广播（含每 50ms 的 streamChunkBatch）复制整个订阅者集合。
     // 单个订阅者崩溃不应中断其余订阅者（如 backgroundTaskStore 等）
-    for (const subscriber of [...pushMessageSubscribers]) {
+    for (const subscriber of pushMessageSubscribers) {
       try {
         subscriber(message as VSCodeMessage)
       } catch (error) {

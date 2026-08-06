@@ -4,7 +4,7 @@
  * 定义对话相关的请求和响应类型
  */
 
-import type { Content } from '../../conversation/types';
+import type { Content, SummaryTokenStats } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
 import type { DynamicContextStrategy } from '../../settings/types';
@@ -74,6 +74,13 @@ export interface ChatRequestData {
     
     /** 用户消息（文本） */
     message: string;
+
+    /**
+     * 用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）。
+     * 前端发送时携带自身生成的 id，后端原样落库，保证窗口消息 id 与主历史/分支图一致；
+     * 省略时由后端生成（兼容旧客户端与后端内部调用）。
+     */
+    messageId?: string;
     
     /** 附件列表（可选） */
     attachments?: AttachmentData[];
@@ -214,8 +221,19 @@ export interface ChatStreamAutoSummaryData {
     autoSummary: true;
     /** 自动总结内容 */
     summaryContent: Content;
-    /** 总结消息插入位置（完整历史中的绝对索引） */
+    /** 总结消息插入位置（完整历史中的绝对索引）。
+     *
+     * 逻辑截断语义下不删除任何消息：该值 = summarizeEndIndex（被总结区间终点），
+     * 总结消息直接插入此位置；被总结区间的原始消息打 isSummarized 标记保留在历史中。 */
     insertIndex: number;
+    /**
+     * 本次总结标记（被总结覆盖）的原始消息数。
+     *
+     * 逻辑截断协议：前端应给本地 [insertIndex - removedCount, insertIndex) 区间的消息
+     * 打 isSummarized 标记（不删除），并把总结消息插入到 insertIndex；缺省/0 表示本次
+     * 没有消息被标记（如首条用户消息保护导致空区间）。
+     */
+    removedCount?: number;
 }
 
 /**
@@ -313,6 +331,15 @@ export interface EditAndRetryRequestData {
      * 使其不随检查点清理而消失，支持反复回档到同一位置。
      */
     preserveCheckpointId?: string;
+
+    /**
+     * 可选，被编辑消息的消息 ID（防索引漂移校验）。
+     *
+     * 请求带 messageId 时，后端会读取 messageIndex 处的消息并校验 id 一致；
+     * 不一致说明索引已漂移（并发插入/删除/上下文压缩等），返回 MESSAGE_CHANGED。
+     * 旧前端不带该字段时保持旧行为（仅按索引操作）。
+     */
+    messageId?: string;
 }
 
 // ==================== 删除消息 ====================
@@ -488,6 +515,12 @@ export interface ToolConfirmationResponseData {
     /** 用户批注（可选，会作为用户消息发送给 AI） */
     annotation?: string;
 
+    /**
+     * 批注用户消息的稳定节点 ID（BR-01 对齐，语义同 ChatRequestData.messageId）。
+     * 前端窗口中的批注消息 id 需与后端落库 id 一致，编辑/重试才能定位。
+     */
+    annotationMessageId?: string;
+
     /** 取消信号 */
     abortSignal?: AbortSignal;
 
@@ -513,6 +546,9 @@ export interface SummarizeContextRequestData {
     
     /** 配置 ID */
     configId: string;
+
+    /** 当前对话实际选中的模型（频道默认模型为空或被临时切换时使用） */
+    modelOverride?: string;
     
     /** 保留最近 N 轮不参与总结（默认 2） */
     keepRecentRounds?: number;
@@ -533,12 +569,25 @@ export interface SummarizeContextSuccessData {
     summaryContent: Content;
     /** 被总结的消息数量 */
     summarizedMessageCount: number;
-    /** 总结前的上下文 token 数（promptTokenCount） */
+    /** @deprecated 总结模型请求的 promptTokenCount；不是主上下文大小。 */
     beforeTokenCount?: number;
-    /** 总结后的内容 token 数（candidatesTokenCount） */
+    /** @deprecated 总结模型请求的 candidatesTokenCount；不是主上下文大小。 */
     afterTokenCount?: number;
-    /** 总结消息插入位置（完整历史中的绝对索引） */
+    /** 主上下文压缩统计。 */
+    summaryTokenStats?: SummaryTokenStats;
+    /** 总结消息插入位置（完整历史中的绝对索引）。
+     *
+     * 逻辑截断语义下不删除任何消息：该值 = summarizeEndIndex（被总结区间终点），
+     * 总结消息直接插入此位置；被总结区间的原始消息打 isSummarized 标记保留在历史中。 */
     insertIndex?: number;
+    /**
+     * 本次总结标记（被总结覆盖）的原始消息数。
+     *
+     * 逻辑截断语义下恒不删除消息：自动总结（handleAutoSummarize）与手动总结（handleSummarizeContext）
+     * 都把 [markStart, insertIndex) 区间的消息标记为 isSummarized（首条用户消息受保护不标记），
+     * 值 = insertIndex - markStart。前端据此标记本地消息并插入总结消息，无需删除任何消息。
+     */
+    removedCount: number;
 }
 
 /**

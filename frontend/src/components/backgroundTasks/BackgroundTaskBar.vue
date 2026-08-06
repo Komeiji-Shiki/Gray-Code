@@ -13,6 +13,7 @@ import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
 import { useTerminalStore } from '../../stores/terminalStore'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
+import { ConfirmDialog } from '../common'
 import type { BackgroundTaskRecord } from '../../stores/backgroundTasks/reportBuilder'
 
 const { t } = useI18n()
@@ -21,6 +22,9 @@ const terminalStore = useTerminalStore()
 
 /** 展开的终端输出面板 */
 const expandedTerminalId = ref<string | null>(null)
+
+/** 一键清除确认框（存在未回流任务时弹出） */
+const showClearConfirm = ref(false)
 
 /** 每秒刷新一次，驱动运行中任务的耗时显示 */
 const now = ref(Date.now())
@@ -56,6 +60,24 @@ onUnmounted(() => {
 })
 
 const visibleTasks = computed(() => store.taskList)
+
+/** 可一键清除的任务数：已结束（非运行中） */
+const dismissibleCount = computed(() =>
+  visibleTasks.value.filter(t => t.status !== 'running').length
+)
+
+/** 已结束但回执尚未汇报给模型的任务数（清除会丢弃回执，需要确认） */
+const unreportedCount = computed(() =>
+  visibleTasks.value.filter(t => t.status !== 'running' && !t.reported).length
+)
+
+function handleClearCompleted(): void {
+  if (unreportedCount.value > 0) {
+    showClearConfirm.value = true
+    return
+  }
+  store.dismissCompletedTasks()
+}
 
 const expandedTerminal = computed(() =>
   expandedTerminalId.value ? terminalStore.getTerminal(expandedTerminalId.value) : undefined
@@ -141,7 +163,28 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
           <i class="codicon codicon-close"></i>
         </button>
       </div>
+
+      <!-- 一键清除所有已完成（已结束）的任务 chip；未回流任务弹出确认框 -->
+      <button
+        v-if="dismissibleCount > 0"
+        class="clear-completed-btn"
+        :title="t('components.backgroundTasks.dismissAllCompletedTitle')"
+        @click="handleClearCompleted"
+      >
+        <i class="codicon codicon-clear-all"></i>
+        <span>{{ t('components.backgroundTasks.dismissAllCompleted') }} ({{ dismissibleCount }})</span>
+      </button>
     </div>
+
+    <!-- 未回流任务确认框：清除后回执不会进入对话历史，模型将收不到任务结果 -->
+    <ConfirmDialog
+      v-model="showClearConfirm"
+      :title="t('components.backgroundTasks.dismissAllConfirmTitle')"
+      :message="t('components.backgroundTasks.dismissAllConfirmMessage', { count: unreportedCount })"
+      :confirm-text="t('components.backgroundTasks.dismissAllConfirmAction')"
+      is-danger
+      @confirm="store.dismissCompletedTasks()"
+    />
 
     <!-- 终端输出展开面板 -->
     <div v-if="expandedTerminal" class="task-output-panel">
@@ -233,6 +276,26 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
 
 .chip-btn:hover {
   color: var(--vscode-foreground);
+}
+
+/* 一键清除已完成任务按钮：与 task-chip 同高，弱化视觉 */
+.clear-completed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.clear-completed-btn:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
 }
 
 .task-output-panel {

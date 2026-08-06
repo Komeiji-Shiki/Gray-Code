@@ -132,6 +132,18 @@ async function writeSingleFile(
             try {
                 // 创建空文件以便 DiffManager 可以操作
                 await fs.promises.writeFile(absolutePath, '', 'utf8');
+            } catch (error) {
+                // H2：预创建空文件失败时清理可能残留的空文件（仅当确认是本次创建的空文件，
+                // 避免误删其它并发写入者刚写入的真实内容）。
+                try {
+                    const stat = await fs.promises.stat(absolutePath);
+                    if (stat.size === 0) {
+                        await fs.promises.unlink(absolutePath);
+                    }
+                } catch {
+                    // 文件不存在或删除失败：无需/无法清理
+                }
+                throw error;
             } finally {
                 if (prewriteLocked) {
                     fileWriteLockManager.release([absolutePath], lockHolder!);

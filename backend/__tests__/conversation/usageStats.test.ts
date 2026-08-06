@@ -53,7 +53,7 @@ function userMessage(): Content {
 }
 
 /** 构造内存数据源 */
-function createSource(conversations: Record<string, { metadata?: Partial<ConversationMetadata> | null; messages: Content[]; failing?: boolean }>): UsageStatsSource {
+function createSource(conversations: Record<string, { metadata?: Partial<ConversationMetadata> | null; messages: Content[]; failing?: boolean; messagesFailing?: boolean }>): UsageStatsSource {
     return {
         async listConversations() {
             return Object.keys(conversations);
@@ -65,7 +65,7 @@ function createSource(conversations: Record<string, { metadata?: Partial<Convers
         },
         async getMessages(id: string) {
             const entry = conversations[id];
-            if (entry?.failing) throw new Error('read error');
+            if (entry?.failing || entry?.messagesFailing) throw new Error('read error');
             return entry?.messages ?? [];
         }
     };
@@ -178,6 +178,26 @@ describe('aggregateUsageStats', () => {
         expect(stats.totals.skippedConversations).toBe(1);
         expect(stats.totals.conversations).toBe(1);
         expect(stats.totals.promptTokens).toBe(10);
+        // 明细含被跳过的对话；meta 也读取失败时标题回退为 conversationId
+        expect(stats.totals.skippedConversationDetails).toEqual([
+            { conversationId: 'conv-bad', title: 'conv-bad' }
+        ]);
+    });
+
+    test('读取失败时尽力提供对话标题（meta 可读时）', async () => {
+        const source = createSource({
+            'conv-broken': {
+                metadata: { title: 'Broken Conversation' } as Partial<ConversationMetadata>,
+                messages: [],
+                messagesFailing: true
+            }
+        });
+
+        const stats = await aggregateUsageStats(source);
+        expect(stats.totals.skippedConversations).toBe(1);
+        expect(stats.totals.skippedConversationDetails).toEqual([
+            { conversationId: 'conv-broken', title: 'Broken Conversation' }
+        ]);
     });
 
     test('时间范围筛选：仅统计范围内消息，缺时间戳消息被排除', async () => {

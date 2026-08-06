@@ -3,6 +3,7 @@
  */
 
 import { computed } from 'vue'
+import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
 import {
   getToolApprovalStopKind,
@@ -11,9 +12,61 @@ import {
 import { getVisibleChatMessagesCached } from './windowUtils'
 
 /**
+ * usedTokens 增量扫描的区间输出（供全量/增量两种路径共用，保证口径完全一致）
+ */
+interface UsedTokensScanOutput {
+  lastAssistantUsage: { timestamp: number; totalTokenCount: number } | undefined
+  latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
+}
+
+/**
+ * 单趟逆序扫描一个区间（原实现为「正序找最新总结估算」+「逆序找最后一条助手消息」两趟，
+ * 合并为一趟减少数组访问）：
+ * - lastAssistantUsage：区间内最后一条带 usageMetadata 的助手消息
+ * - latestSummaryEstimate：区间内全部总结消息中 timestamp 最大的估算（与正序扫描取 max 等价）
+ */
+function scanUsedTokensRange(
+  messages: Message[],
+  from: number,
+  to: number,
+  out: UsedTokensScanOutput
+): void {
+  for (let i = to - 1; i >= from; i--) {
+    const msg = messages[i]
+    if (msg.role === 'assistant' && msg.metadata?.usageMetadata && !out.lastAssistantUsage) {
+      out.lastAssistantUsage = {
+        timestamp: msg.timestamp,
+        totalTokenCount: msg.metadata.usageMetadata.totalTokenCount || 0
+      }
+    }
+    const estimated = msg.summaryTokenStats?.estimatedContextTokenCountAfter
+    if (msg.isSummary && typeof estimated === 'number') {
+      if (!out.latestSummaryEstimate || msg.timestamp >= out.latestSummaryEstimate.timestamp) {
+        out.latestSummaryEstimate = { timestamp: msg.timestamp, tokens: estimated }
+      }
+    }
+  }
+}
+
+/**
+ * usedTokens 增量缓存：缓存 [0, scannedCount) 的扫描结果 + 该前缀的消息引用快照。
+ * 前缀引用逐元素相等且窗口只增不减时，仅扫描尾部新增消息（含上次未缓存的旧尾消息，
+ * 它的 metadata.usageMetadata 会在流式 done 时原地写入）；其余结构变更自动回退全量重扫。
+ */
+interface UsedTokensScanCache {
+  scannedCount: number
+  messagesRef: Message[]
+  lastAssistantUsage: { timestamp: number; totalTokenCount: number } | undefined
+  latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
+}
+
+/**
  * 创建 Chat Store 计算属性
  */
 export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
+  /** usedTokens 增量扫描缓存（见 UsedTokensScanCache 定义）：流式期间每 chunk 只扫尾部 */
+  let usedTokensScanCache: UsedTokensScanCache | null = null
+
   /** 当前对话 */
   const currentConversation = computed(() => 
     state.conversations.value.find(c => c.id === state.currentConversationId.value) || null
@@ -60,14 +113,66 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   
   /** 当前使用的 Tokens（从最后一条助手消息获取） */
   const usedTokens = computed(() => {
-    // 从后往前找最后一条助手消息
-    for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
-      const msg = state.allMessages.value[i]
-      if (msg.role === 'assistant' && msg.metadata?.usageMetadata) {
-        return msg.metadata.usageMetadata.totalTokenCount || 0
+    const messages = state.allMessages.value
+    const len = messages.length
+    if (len === 0) {
+      usedTokensScanCache = null
+      return 0
+    }
+
+    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量
+    let scanCache = usedTokensScanCache
+    let prefixOk = false
+    if (scanCache !== null && scanCache.messagesRef.length <= len) {
+      prefixOk = true
+      for (let i = 0; i < scanCache.scannedCount; i++) {
+        if (messages[i] !== scanCache.messagesRef[i]) {
+          prefixOk = false
+          break
+        }
       }
     }
-    return 0
+
+    const out: UsedTokensScanOutput = {
+      lastAssistantUsage: undefined,
+      latestSummaryEstimate: undefined
+    }
+    if (prefixOk && scanCache !== null) {
+      // 尾区间独立逆序扫描后与缓存合并（与全量单趟语义一致：总结取 timestamp 最大者，
+      // 并列取数组更靠前者；助手 usage 取数组中最后一条）：
+      // - lastAssistantUsage：尾区间有命中即取代缓存（位置必然更靠后）
+      // - latestSummaryEstimate：仅当尾区间最大值严格大于缓存时才取代（并列取更早的缓存）
+      scanUsedTokensRange(messages, scanCache.scannedCount, len, out)
+      if (out.lastAssistantUsage === undefined) {
+        out.lastAssistantUsage = scanCache.lastAssistantUsage
+      }
+      if (out.latestSummaryEstimate === undefined) {
+        out.latestSummaryEstimate = scanCache.latestSummaryEstimate
+      } else if (
+        scanCache.latestSummaryEstimate !== undefined &&
+        out.latestSummaryEstimate.timestamp <= scanCache.latestSummaryEstimate.timestamp
+      ) {
+        out.latestSummaryEstimate = scanCache.latestSummaryEstimate
+      }
+    } else {
+      scanUsedTokensRange(messages, 0, len, out)
+    }
+
+    // 尾消息可能在流式期间原地更新（usageMetadata 在 done 分支写入），始终不纳入缓存
+    usedTokensScanCache = {
+      scannedCount: Math.max(0, len - 1),
+      messagesRef: messages,
+      lastAssistantUsage: out.lastAssistantUsage,
+      latestSummaryEstimate: out.latestSummaryEstimate
+    }
+
+    if (!out.lastAssistantUsage) return 0
+    // 总结消息会插入到被压缩范围的末尾，数组位置早于保留消息；用 timestamp 判断
+    // 它是否发生在这条旧 usage 之后。下一次真实主回复到达后自然恢复使用真实值。
+    if (out.latestSummaryEstimate && out.latestSummaryEstimate.timestamp >= out.lastAssistantUsage.timestamp) {
+      return out.latestSummaryEstimate.tokens
+    }
+    return out.lastAssistantUsage.totalTokenCount
   })
   
   /**

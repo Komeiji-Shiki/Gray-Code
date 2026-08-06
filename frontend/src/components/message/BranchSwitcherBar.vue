@@ -4,9 +4,9 @@
  *
  * 展示位置：由 MessageActions.vue 挂载在对应消息的操作栏内，和复制 / 重试按钮同一行；
  * 也支持普通模式单独挂载（用于组件测试与独立复用）。
- * 在哪条消息处重 roll / 编辑过分支，就在那条消息的操作栏显示切换器，而非消息区顶部。
+ * 在哪条消息处重 roll / 编辑过分支，切换器就跟随那条消息（当前活跃候选），而非父节点或消息区顶部。
  *
- * 数据源：chatStore.branchGraph + parentNodeId（buildCandidateGroupAt 推导该父节点的候选组）。
+ * 数据源：chatStore.branchGraph + nodeId（buildCandidateGroupForNode 推导该消息节点所属的候选组）。
  * 交互：
  * - ‹ / ›：切换到上一个 / 下一个候选（conversation.switchBranchCandidate，TREE-07 重建链路）；
  * - 中间「2 / 3」：展开候选列表（fixed 定位浮层，防滚动容器裁剪），点击候选切换；
@@ -18,14 +18,14 @@
 import { ref, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
-import { buildCandidateGroupAt, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
+import { buildCandidateGroupForNode, needsWorkspaceConfirm } from '../../stores/chat/branchActions'
 import { ConfirmDialog } from '../common'
 import type { BranchNodeData } from '../../stores/chat/types'
 import type { SwitchBranchWorkspaceMode } from '../../stores/chat/branchActions'
 
 const props = defineProps<{
-  /** 候选组的父节点（消息）ID；该消息有 ≥2 个子候选时显示切换器 */
-  parentNodeId: string
+  /** 消息自身的节点 ID；该消息是某候选组（≥2 候选）的当前活跃成员时显示切换器 */
+  nodeId: string
   /** 是否作为消息操作栏内的紧凑按钮组渲染 */
   compact?: boolean
 }>()
@@ -57,8 +57,8 @@ const pendingDeleteNodeId = ref<string | null>(null)
 const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
 
-/** 该父节点下的候选组（null = 无图 / 无候选 / 单候选） */
-const group = computed(() => buildCandidateGroupAt(chatStore.branchGraph, props.parentNodeId))
+/** 该消息节点所属的候选组（null = 无图 / 无候选 / 单候选 / 非活跃成员） */
+const group = computed(() => buildCandidateGroupForNode(chatStore.branchGraph, props.nodeId))
 
 /** 无当前对话 / 无候选组时隐藏 */
 const visible = computed(() => {
@@ -327,11 +327,13 @@ function toggleDelete(nodeId: string): void {
 /* 消息操作栏内的紧凑按钮组：与复制 / 重试 IconButton 共用同一行和高度 */
 .branch-switcher-bar.compact {
   height: 24px;
-  margin: 0;
-  padding: 0 2px;
+  margin: 0 2px;
+  padding: 0;
   gap: 0;
   border: none;
   background: transparent;
+  /* 与 IconButton 一致：窄侧边栏下不被压缩变形，保持等宽等高 */
+  flex-shrink: 0;
 }
 
 .branch-switcher-bar.compact .branch-switcher-btn {

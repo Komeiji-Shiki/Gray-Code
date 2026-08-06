@@ -271,7 +271,7 @@ onMounted(async () => {
     </div>
     
     <!-- 手动总结说明 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-manual">
       <h5 class="section-title">
         <i class="codicon codicon-fold"></i>
         {{ t('components.settings.summarizeSettings.manualSection.title') }}
@@ -282,7 +282,7 @@ onMounted(async () => {
     </div>
     
     <!-- 总结选项 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-options">
       <h5 class="section-title">
         <i class="codicon codicon-settings"></i>
         {{ t('components.settings.summarizeSettings.optionsSection.title') }}
@@ -294,13 +294,14 @@ onMounted(async () => {
           <input
             type="number"
             :value="summarizeConfig.keepRecentRounds"
-            min="0"
+            min="1"
             max="10"
             @input="(e: any) => updateConfigField('keepRecentRounds', Number(e.target.value))"
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsUnit') }}</span>
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsHint') }}</p>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsMinNote') }}</p>
       </div>
 
       <div class="form-group">
@@ -386,7 +387,7 @@ onMounted(async () => {
     </div>
     
     <!-- 专用总结模型 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-model">
       <h5 class="section-title">
         <i class="codicon codicon-beaker"></i>
         {{ t('components.settings.summarizeSettings.modelSection.title') }}

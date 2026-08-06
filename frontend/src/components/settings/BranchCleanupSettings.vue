@@ -43,7 +43,7 @@ onMounted(() => {
 <template>
   <div class="branch-cleanup-settings">
     <div class="divider"></div>
-    <div class="setting-group">
+    <div class="setting-group" data-search-anchor="branch-cleanup">
       <h4 class="group-title">
         <i class="codicon codicon-git-branch"></i>
         <span>{{ t('components.settings.checkpoint.sections.branchCleanup.title') }}</span>

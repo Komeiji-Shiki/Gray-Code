@@ -162,7 +162,7 @@ onMounted(() => {
             </div>
             
             <!-- Gemini 配置 -->
-            <div class="channel-panel" :class="{ expanded: expandedPanels.gemini }">
+            <div class="channel-panel" :class="{ expanded: expandedPanels.gemini }" data-search-anchor="token-count-gemini">
                 <div class="panel-header" @click="togglePanel('gemini')">
                     <div class="panel-title">
                         <i :class="['codicon', expandedPanels.gemini ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
@@ -224,7 +224,7 @@ onMounted(() => {
             </div>
             
             <!-- OpenAI 配置 -->
-            <div class="channel-panel" :class="{ expanded: expandedPanels.openai }">
+            <div class="channel-panel" :class="{ expanded: expandedPanels.openai }" data-search-anchor="token-count-openai">
                 <div class="panel-header" @click="togglePanel('openai')">
                     <div class="panel-title">
                         <i :class="['codicon', expandedPanels.openai ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
@@ -329,7 +329,7 @@ Authorization: Bearer {apiKey}
             </div>
             
             <!-- Anthropic 配置 -->
-            <div class="channel-panel" :class="{ expanded: expandedPanels.anthropic }">
+            <div class="channel-panel" :class="{ expanded: expandedPanels.anthropic }" data-search-anchor="token-count-anthropic">
                 <div class="panel-header" @click="togglePanel('anthropic')">
                     <div class="panel-title">
                         <i :class="['codicon', expandedPanels.anthropic ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
@@ -390,7 +390,7 @@ Authorization: Bearer {apiKey}
             </div>
             
             <!-- OpenAI Responses 配置 -->
-            <div class="channel-panel" :class="{ expanded: expandedPanels['openai-responses'] }">
+            <div class="channel-panel" :class="{ expanded: expandedPanels['openai-responses'] }" data-search-anchor="token-count-openai-responses">
                 <div class="panel-header" @click="togglePanel('openai-responses')">
                     <div class="panel-title">
                         <i :class="['codicon', expandedPanels['openai-responses'] ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>

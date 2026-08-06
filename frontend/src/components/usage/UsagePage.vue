@@ -12,6 +12,7 @@
 
 import { ref, computed, watch, onMounted } from 'vue'
 import { CustomScrollbar } from '../common'
+import UsageTimeSection from './UsageTimeSection.vue'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '../../i18n'
@@ -20,7 +21,8 @@ import type {
   UsageStatsResult,
   UsageTimeRange,
   ModelPricing,
-  UsagePricingMap
+  UsagePricingMap,
+  SkippedConversationInfo
 } from '@/types/usage'
 
 const settingsStore = useSettingsStore()
@@ -29,6 +31,9 @@ const chatStore = useChatStore()
 const isLoading = ref(false)
 const loadError = ref('')
 const stats = ref<UsageStatsResult | null>(null)
+
+/** 读取失败被跳过的对话明细（后端尽力提供标题，失败时回退 conversationId） */
+const skippedConversationList = computed<SkippedConversationInfo[]>(() => stats.value?.totals.skippedConversationDetails ?? [])
 
 type UsageTab = 'byConversation' | 'byModel' | 'byDay'
 const activeTab = ref<UsageTab>('byConversation')
@@ -273,6 +278,9 @@ const tabs = computed(() => ([
     </div>
 
     <CustomScrollbar class="page-content">
+      <!-- 使用时间统计（独立于 token 用量，编辑器活跃即有数据） -->
+      <UsageTimeSection />
+
       <!-- 加载中 -->
       <div v-if="isLoading" class="state-hint">
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -338,8 +346,19 @@ const tabs = computed(() => ([
         <!-- 读取失败提示 -->
         <div v-if="stats.totals.skippedConversations > 0" class="skipped-hint">
           <i class="codicon codicon-warning"></i>
-          {{ t('components.usage.skippedHint', { count: stats.totals.skippedConversations }) }}
+          <span>{{ t('components.usage.skippedHint', { count: stats.totals.skippedConversations }) }}</span>
         </div>
+        <ul v-if="skippedConversationList.length > 0" class="skipped-list">
+          <li
+            v-for="item in skippedConversationList"
+            :key="item.conversationId"
+            class="skipped-item"
+            :title="item.conversationId"
+          >
+            <i class="codicon codicon-comment-discussion"></i>
+            <span class="skipped-title">{{ item.title }}</span>
+          </li>
+        </ul>
 
         <!-- 维度切换 -->
         <div class="tab-bar">
@@ -607,6 +626,41 @@ const tabs = computed(() => ([
   border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
   color: var(--vscode-foreground);
   font-size: 11px;
+}
+
+/* 跳过明细列表（紧贴上方提示） */
+.skipped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin: -8px 0 12px;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  list-style: none;
+}
+
+.skipped-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+}
+
+.skipped-item .codicon {
+  font-size: 12px;
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.skipped-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 维度切换 */

@@ -66,6 +66,7 @@ function handleCopy() {
       v-if="canEdit"
       icon="codicon-edit"
       size="small"
+      :tooltip="t('components.message.actions.edit')"
       @click="emit('edit')"
     />
 
@@ -73,7 +74,7 @@ function handleCopy() {
     <IconButton
       :icon="isCopied ? 'codicon-check' : 'codicon-copy'"
       size="small"
-      :tooltip="isCopied ? t('components.common.tooltip.copied') : t('common.copy')"
+      :tooltip="isCopied ? t('components.common.tooltip.copied') : t('components.message.actions.copy')"
       @click="handleCopy"
     />
 
@@ -100,13 +101,15 @@ function handleCopy() {
       v-if="canRetry"
       icon="codicon-refresh"
       size="small"
+      :tooltip="t('components.message.actions.retry')"
       @click="emit('retry')"
     />
 
-    <!-- 候选切换器：与复制 / 重试共用消息操作栏，不再单独占一行 -->
+    <!-- 候选切换器：与复制 / 重试共用消息操作栏，不再单独占一行；
+         跟随消息自身的节点 ID（该消息是某候选组的当前活跃成员时才显示） -->
     <BranchSwitcherBar
       v-if="canBranch"
-      :parent-node-id="message.id"
+      :node-id="message.id"
       compact
     />
 
@@ -115,6 +118,7 @@ function handleCopy() {
       icon="codicon-trash"
       size="small"
       variant="danger"
+      :tooltip="t('components.message.actions.delete')"
       @click="emit('delete')"
     />
   </div>
@@ -126,5 +130,7 @@ function handleCopy() {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  /* 窄侧边栏下禁止压缩：与 IconButton 的 flex-shrink: 0 一致，保持按钮等宽等高 */
+  flex-shrink: 0;
 }
 </style>

@@ -15,6 +15,8 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
+import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
+import { isMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
 
 const { t } = useI18n()
 
@@ -61,6 +63,7 @@ interface ToolInfo {
   category?: string
   source: 'builtin' | 'mcp'
   serverId?: string
+  serverName?: string
 }
 
 // 预设模板（与后端 backend/tools/subagents/presets.ts 同构）
@@ -171,15 +174,8 @@ const toolModeOptions = computed<SelectOption[]>(() => [
   { value: 'blacklist', label: t('components.settings.subagents.toolMode.blacklist') }
 ])
 
-// 内置工具列表
-const builtinTools = computed(() => 
-  allTools.value.filter(t => t.source === 'builtin')
-)
-
-// MCP 工具列表
-const mcpTools = computed(() => 
-  allTools.value.filter(t => t.source === 'mcp')
-)
+// 按分类分组的全部工具（内置 + MCP，MCP 归入 mcp 分类）
+const toolsByCategory = computed(() => groupToolsByCategory(allTools.value))
 
 // 当前工具列表（白名单或黑名单）
 const currentToolList = computed(() => {
@@ -220,6 +216,11 @@ async function toggleTool(toolName: string, selected: boolean) {
     ...currentAgent.value.tools,
     [listKey]: currentList
   })
+}
+
+// 判断是否为 MCP 工具（category 标记或编码名前缀均可识别）
+function isMcpTool(tool: ToolInfo): boolean {
+  return tool.category === 'mcp' || isMcpToolName(tool.name)
 }
 
 // ==================== 方法 ====================
@@ -310,7 +311,8 @@ async function loadTools() {
       description: t.description || '',
       category: 'mcp',
       source: 'mcp' as const,
-      serverId: t.serverId
+      serverId: t.serverId,
+      serverName: t.serverName
     }))
     
     allTools.value = [...builtinTools, ...mcpTools]
@@ -584,7 +586,7 @@ onMounted(async () => {
       </div>
 
       <!-- 全局配置 -->
-      <div class="config-section global-config">
+      <div class="config-section global-config" data-search-anchor="subagents-global">
         <h5>{{ t('components.settings.subagents.globalConfig') }}</h5>
         <div class="form-row">
           <div class="form-group flex-1">
@@ -620,7 +622,7 @@ onMounted(async () => {
       </div>
       
       <!-- 子代理选择器 -->
-      <div class="agent-selector">
+      <div class="agent-selector" data-search-anchor="subagents-selector">
         <CustomSelect
           v-if="agentOptions.length > 0"
           :modelValue="currentAgentType"
@@ -659,7 +661,7 @@ onMounted(async () => {
       <!-- 代理配置表单 -->
       <div v-if="currentAgent" class="agent-config">
         <!-- 基本信息 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-basic-info">
           <h5>{{ t('components.settings.subagents.basicInfo') }}</h5>
           
           <div class="form-group">
@@ -706,7 +708,7 @@ onMounted(async () => {
         </div>
         
         <!-- 系统提示词 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-system-prompt">
           <h5>{{ t('components.settings.subagents.systemPrompt') }}</h5>
           <textarea
             class="system-prompt-textarea"
@@ -718,7 +720,7 @@ onMounted(async () => {
         </div>
         
         <!-- 渠道和模型 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-channel-model">
           <h5>{{ t('components.settings.subagents.channelModel') }}</h5>
           
           <div class="form-row">
@@ -746,7 +748,7 @@ onMounted(async () => {
         </div>
         
         <!-- 工具配置 -->
-        <div class="config-section">
+        <div class="config-section" data-search-anchor="subagents-tools">
           <h5>{{ t('components.settings.subagents.tools') }}</h5>
           <p class="section-description">{{ t('components.settings.subagents.toolsDescription') }}</p>
           
@@ -772,37 +774,25 @@ onMounted(async () => {
               <span v-else>{{ t('components.settings.subagents.blacklistHint') }}</span>
             </div>
             
-            <!-- 内置工具 -->
-            <div v-if="builtinTools.length > 0" class="tool-category">
+            <!-- 按分类分组的工具列表 -->
+            <div v-for="(categoryTools, category) in toolsByCategory" :key="category" class="tool-category">
               <div class="category-header">
-                <i class="codicon codicon-tools"></i>
-                <span>{{ t('components.settings.subagents.builtinTools') }}</span>
-                <span class="tool-count">{{ builtinTools.length }}</span>
+                <i :class="['codicon', getCategoryIcon(category)]"></i>
+                <span>{{ getCategoryName(category) }}</span>
+                <span class="tool-count">{{ categoryTools.length }}</span>
               </div>
               <div class="tool-items">
-                <div v-for="tool in builtinTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
+                <div v-for="tool in categoryTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
                   <div class="tool-info">
-                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
-                  </div>
-                  <CustomCheckbox
-                    :modelValue="isToolSelected(tool.name)"
-                    @update:modelValue="toggleTool(tool.name, $event)"
-                  />
-                </div>
-              </div>
-            </div>
-            
-            <!-- MCP 工具 -->
-            <div v-if="mcpTools.length > 0" class="tool-category">
-              <div class="category-header">
-                <i class="codicon codicon-plug"></i>
-                <span>{{ t('components.settings.subagents.mcpTools') }}</span>
-                <span class="tool-count">{{ mcpTools.length }}</span>
-              </div>
-              <div class="tool-items">
-                <div v-for="tool in mcpTools" :key="tool.name" class="tool-item" :title="getToolDescription(tool.name, tool.description)">
-                  <div class="tool-info">
-                    <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
+                    <div class="tool-name-row">
+                      <span class="tool-name" :title="isMcpTool(tool) ? tool.name : undefined">{{ getToolDisplayName(tool.name) }}</span>
+                      <span v-if="isMcpTool(tool)" class="mcp-badge">
+                        <i class="codicon codicon-plug"></i>
+                        {{ tool.serverName }}
+                      </span>
+                      <span v-if="!isMcpTool(tool)" class="tool-id">{{ tool.name }}</span>
+                    </div>
+                    <div class="tool-description">{{ getToolDescription(tool.name, tool.description) }}</div>
                   </div>
                   <CustomCheckbox
                     :modelValue="isToolSelected(tool.name)"
@@ -1460,7 +1450,9 @@ input[type="number"]::-webkit-inner-spin-button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   transition: background 0.15s;
 }
@@ -1477,10 +1469,56 @@ input[type="number"]::-webkit-inner-spin-button {
   min-width: 0;
 }
 
+.tool-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .tool-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
+  font-weight: 600;
   color: var(--vscode-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-id {
+  overflow: hidden;
   font-family: var(--vscode-editor-font-family), monospace;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgba(var(--vscode-textLink-foreground), 0.1);
+  color: var(--vscode-textLink-foreground);
+  border: 1px solid var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  font-size: 10px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.mcp-badge .codicon {
+  font-size: 10px;
+}
+
+.tool-description {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .no-tools {

@@ -196,7 +196,9 @@ const ja: BackendLanguageMessages = {
                 requestTimeoutNoResponse: 'リクエストがタイムアウトしました ({timeout}ms 内に応答なし)',
                 requestCancelled: 'リクエストがキャンセルされました',
                 requestAborted: 'リクエストが中止されました',
-                noResponseBody: 'レスポンスボディがありません'
+                noResponseBody: 'レスポンスボディがありません',
+                emptyResponse: 'モデルが空の応答を返しました',
+                streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります'
             },
             modelList: {
                 errors: {
@@ -289,8 +291,14 @@ const ja: BackendLanguageMessages = {
                     noMessagesToSummarize: '要約するメッセージがありません',
                     summarizeAborted: '要約リクエストが中止されました',
                     emptySummary: 'AI が生成した要約が空です',
+                    lowQualitySummary: 'AI が生成した要約が短すぎて重要な情報が失われる可能性があるため、履歴の置き換えは行いませんでした',
+                    summarizeRangeStale: '要約中に会話履歴が変更されたため、要約範囲が無効になり、書き込みを中止しました',
                     messageNotFound: 'メッセージが見つかりません: インデックス {messageIndex}',
-                    canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}'
+                    canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}',
+                    messageChanged: 'メッセージが変更されました。更新後に再試行してください',
+                    editTargetNotInHistory: '選択したメッセージは現在の会話履歴にありません。コンテキスト圧縮で削除された可能性があります',
+                    contextOverflow: 'モデルのコンテキストウィンドウ内で有効なリクエストを構築できません: 最小候補は約 {estimatedInputTokens} 入力トークン必要で、{inputTokenLimit} トークンのウィンドウを超えています。モデルのコンテキストウィンドウを増やすか、履歴/保持予算を調整してください',
+                    summarizeContextOverflow: '要約対象の内容と要約プロンプトが要約モデルのコンテキスト上限を超えています。要約モデルのコンテキストウィンドウを増やすか、保持予算を調整してください'
                 },
                 prompts: {
                     defaultSummarizePrompt: `上記の会話内容を簡潔に要約してください。書式マーカーなしで直接要約を出力してください。

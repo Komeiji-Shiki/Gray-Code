@@ -13,7 +13,7 @@ import { computed, ref, watch } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n } from '../../../composables/useI18n'
-import { computeLineDiff, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
+import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { escapeHtml } from '../../common/markdownUtils'
 
@@ -142,6 +142,17 @@ const groupedResults = computed(() => {
 // 文件数量
 const fileCount = computed(() => Object.keys(groupedResults.value).length)
 
+// 按文件预分组的匹配列表：模板内不再每次渲染对全量结果做 filter
+const matchesByFile = computed(() => {
+  const byFile = new Map<string, SearchMatch[]>()
+  for (const match of searchResults.value) {
+    const list = byFile.get(match.file)
+    if (list) list.push(match)
+    else byFile.set(match.file, [match])
+  }
+  return byFile
+})
+
 // 预览匹配数
 const previewMatchCount = 10
 
@@ -199,13 +210,14 @@ const diffLoadErrors = ref<Map<string, string>>(new Map())
 // 显示模式：'matches' | 'diff'
 const viewModes = ref<Map<string, 'matches' | 'diff'>>(new Map())
 
-// 监听结果变化，自动加载 diff 内容
+// 监听结果变化，自动加载 diff 内容（并行加载：批量文件不再逐个串行等待）
 watch(replaceResults, async (results) => {
-  for (const result of results) {
-    if (result.diffContentId && !diffContents.value.has(result.file) && !loadingDiffs.value.has(result.file)) {
-      await loadDiffContent(result.file, result.diffContentId)
-    }
-  }
+  const pending = results.filter(
+    result => result.diffContentId
+      && !diffContents.value.has(result.file)
+      && !loadingDiffs.value.has(result.file)
+  )
+  await Promise.all(pending.map(result => loadDiffContent(result.file, result.diffContentId!)))
 }, { immediate: true })
 
 // 加载 diff 内容
@@ -303,18 +315,28 @@ function buildContextualDiffLines(diffLines: LineDiffEntry[]): DisplayDiffLine[]
   return contextualLines
 }
 
-const renderedSearchDiffs = computed(() => {
-  const rendered = new Map<string, RenderedSearchDiff>()
-  for (const [path, content] of diffContents.value) {
-    const lineDiff = computeLineDiff(content.originalContent, content.newContent)
-    rendered.set(path, {
-      content,
-      lineDiff,
-      contextualLines: buildContextualDiffLines(lineDiff.lines)
-    })
+// 增量式 diff 结果缓存：只有新加载/变更的文件才重新计算行级差分与上下文行，
+// 已计算的文件保持原结果对象引用，避免单个文件加载完成触发全部文件重复计算。
+const renderedSearchDiffs = ref<Map<string, RenderedSearchDiff>>(new Map())
+
+watch(diffContents, (contents) => {
+  const next = new Map(renderedSearchDiffs.value)
+  for (const [path, content] of contents) {
+    const existing = next.get(path)
+    if (!existing || existing.content !== content) {
+      const lineDiff = computeLineDiffCached(content.originalContent, content.newContent)
+      next.set(path, {
+        content,
+        lineDiff,
+        contextualLines: buildContextualDiffLines(lineDiff.lines)
+      })
+    }
   }
-  return rendered
-})
+  for (const path of Array.from(next.keys())) {
+    if (!contents.has(path)) next.delete(path)
+  }
+  renderedSearchDiffs.value = next
+}, { immediate: true })
 
 function getRenderedSearchDiff(path: string): RenderedSearchDiff | undefined {
   return renderedSearchDiffs.value.get(path)
@@ -323,11 +345,43 @@ function getRenderedSearchDiff(path: string): RenderedSearchDiff | undefined {
 // Diff 展开状态
 const expandedDiffs = ref<Set<string>>(new Set())
 
-function getDisplayDiffLines(diff: RenderedSearchDiff, path: string): DisplayDiffLine[] {
-  return expandedDiffs.value.has(path)
-    ? diff.contextualLines
-    : diff.contextualLines.slice(0, previewDiffLineCount)
+// 模板兜底用共享空数组（避免 key 缺失时每次渲染创建新数组引用）
+const EMPTY_DISPLAY_LINES: DisplayDiffLine[] = []
+const EMPTY_MATCHES: SearchMatch[] = []
+
+// 展开/折叠展示行的稳定引用缓存：同一 path 的结果对象在展开状态或上下文行源
+// （contextualLines 引用）变化前保持不变，避免模板内 slice 每次渲染生成新数组、
+// 让 VirtualDiffLines 反复整体重渲染；展开/折叠任一文件时只有该 path 重建。
+interface DisplayLinesEntry {
+  expanded: boolean
+  source: DisplayDiffLine[]
+  lines: DisplayDiffLine[]
 }
+const displayLinesCache = new Map<string, DisplayLinesEntry>()
+const displayDiffLinesByPath = computed(() => {
+  const map = new Map<string, DisplayDiffLine[]>()
+  for (const [path, diff] of renderedSearchDiffs.value) {
+    const source = diff.contextualLines
+    const isExpandedFlag = expandedDiffs.value.has(path)
+    const cached = displayLinesCache.get(path)
+    if (cached && cached.expanded === isExpandedFlag && cached.source === source) {
+      map.set(path, cached.lines)
+      continue
+    }
+    const lines = isExpandedFlag ? source : source.slice(0, previewDiffLineCount)
+    displayLinesCache.set(path, { expanded: isExpandedFlag, source, lines })
+    map.set(path, lines)
+  }
+  // 清理已消失的 path（renderedSearchDiffs 缩短时）；同步修剪展开集合，
+  // 避免文件消失后残留的展开标记在新列表中被误用（A-L4）
+  for (const key of Array.from(displayLinesCache.keys())) {
+    if (!renderedSearchDiffs.value.has(key)) {
+      displayLinesCache.delete(key)
+      expandedDiffs.value.delete(key)
+    }
+  }
+  return map
+})
 
 function needsDiffExpand(diff: RenderedSearchDiff): boolean {
   return diff.contextualLines.length > previewDiffLineCount
@@ -478,7 +532,7 @@ function isDiffExpanded(path: string): boolean {
             </span>
           </div>
           <VirtualDiffLines
-            :lines="getDisplayDiffLines(getRenderedSearchDiff(replaceResult.file)!, replaceResult.file)"
+            :lines="displayDiffLinesByPath.get(replaceResult.file) || EMPTY_DISPLAY_LINES"
             :line-number-width="getRenderedSearchDiff(replaceResult.file)!.lineDiff.lineNumberWidth"
             :max-height="300"
           />
@@ -497,7 +551,7 @@ function isDiffExpanded(path: string): boolean {
           <CustomScrollbar :max-height="200">
             <div class="match-items">
               <div
-                v-for="(match, index) in searchResults.filter(m => m.file === replaceResult.file)"
+                v-for="(match, index) in matchesByFile.get(replaceResult.file) || EMPTY_MATCHES"
                 :key="`${match.line}-${index}`"
                 class="match-item-compact"
               >

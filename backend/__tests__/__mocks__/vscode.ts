@@ -19,6 +19,7 @@ export const workspace = {
     onWillSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidCloseTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidChangeTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
 };
 
 function createFileUri(inputPath: string) {
@@ -72,6 +73,13 @@ export const window = {
     showTextDocument: jest.fn(),
     setStatusBarMessage: jest.fn(),
     tabGroups: { all: [], close: jest.fn() },
+    // ActivityTracker 依赖的窗口状态/活动事件（返回可 dispose 的订阅对象）
+    state: { focused: true },
+    onDidChangeWindowState: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidChangeTextEditorSelection: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidChangeTextEditorVisibleRanges: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidChangeActiveTextEditor: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidOpenTerminal: jest.fn(() => ({ dispose: jest.fn() })),
 };
 export const SymbolKind = {
     File: 0,

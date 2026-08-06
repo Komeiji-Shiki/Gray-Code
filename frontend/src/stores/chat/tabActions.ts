@@ -9,6 +9,7 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
+import { clearAllSmoothForState } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
 
 /** 最大标签页数量 */
@@ -111,6 +112,8 @@ export function restoreSessionFromSnapshot(
  * 重置当前会话状态为空白
  */
 export function resetConversationState(state: ChatStoreState): void {
+  // H1：会话重置前清理所有平滑条目（销毁实例 + 删除显示文本），UI 切回真实 content
+  clearAllSmoothForState(state)
   state.currentConversationId.value = null
   state.allMessages.value = []
   state.windowStartIndex.value = 0
@@ -228,6 +231,9 @@ export function closeTab(
 
   // 如果关闭的是当前活跃标签页
   if (state.activeTabId.value === tabId) {
+    // H1：关闭活跃标签页时，后端 cancelled 会被 bufferBackgroundChunk 丢弃、前端收不到终结
+    // 事件——这里在切换前本地清理该会话的平滑显示层（真实内容已由后端持久化/取消保留）
+    clearAllSmoothForState(state)
     if (newTabs.length > 0) {
       // 切换到相邻标签页（优先右边，否则左边）
       const nextIndex = Math.min(tabIndex, newTabs.length - 1)
@@ -257,6 +263,10 @@ export function switchTab(
 ): void {
   const currentTabId = state.activeTabId.value
   if (currentTabId === targetTabId) return
+
+  // H1：切换标签页前清理当前会话的平滑条目——切走后该会话的 chunk 进入后台缓冲，
+  // 显示层实例不再被驱动；返回时由缓冲回放按真实文本基线重建（H3），不会跳变/残留。
+  clearAllSmoothForState(state)
 
   // 确认目标标签页存在
   const targetTab = state.openTabs.value.find(t => t.id === targetTabId)
@@ -338,8 +348,14 @@ export function bufferBackgroundChunk(
 
   const snapshot = state.sessionSnapshots.value.get(tab.id)
 
+  // 总结类 chunk 例外（与 handleStreamChunk 门禁一致）：总结请求使用独立 abort 信号，
+  // 主流结束后在途总结的完成事件仍会到达——此时按 streamId 过滤会漏掉总结消息与标记，
+  // 而用户停留在其它标签页正是总结完成后才启动的常见场景（缓冲路径的本职）。
+  const isSummaryType = chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus'
+
   // 若快照已绑定 activeStreamId，则过滤掉旧流的迟到 chunk
   if (
+    !isSummaryType &&
     snapshot?.activeStreamId &&
     chunk.streamId &&
     chunk.streamId !== snapshot.activeStreamId
@@ -349,6 +365,7 @@ export function bufferBackgroundChunk(
 
   // 快照当前并不处于等待/流式阶段时，收到带 streamId 的 chunk 视为迟到包，直接忽略。
   if (
+    !isSummaryType &&
     snapshot &&
     !snapshot.activeStreamId &&
     chunk.streamId &&
@@ -358,8 +375,10 @@ export function bufferBackgroundChunk(
     return
   }
 
-  // 快照尚未绑定时，首次收到带 streamId 的 chunk 即建立绑定
-  if (snapshot && !snapshot.activeStreamId && chunk.streamId) {
+  // 快照尚未绑定时，首次收到带 streamId 的 chunk 即建立绑定。
+  // 总结 chunk 不参与绑定：其 streamId 属于总结请求（与主流不同），绑定会把后续
+  // 主流 chunk 全部误滤（tabActions 下游与回放路径都按 activeStreamId 校验）。
+  if (snapshot && !snapshot.activeStreamId && chunk.streamId && !isSummaryType) {
     snapshot.activeStreamId = chunk.streamId
   }
 
@@ -422,12 +441,17 @@ export function updateTabStreamingStatus(
     ? state.activeStreamId.value
     : state.sessionSnapshots.value.get(tab.id)?.activeStreamId || null
 
+  // 总结类 chunk 例外（与 handleStreamChunk 门禁一致）：按独立总结流 id 放行，
+  // 只影响标签页指示器状态，不影响消息内容。
+  const isSummaryType = chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus'
+
   // 没有预期 streamId 时，不接收带 streamId 的 chunk（通常是迟到包）
-  if (chunk.streamId && !expectedStreamId) {
+  if (!isSummaryType && chunk.streamId && !expectedStreamId) {
     return
   }
 
   if (
+    !isSummaryType &&
     expectedStreamId &&
     chunk.streamId &&
     chunk.streamId !== expectedStreamId

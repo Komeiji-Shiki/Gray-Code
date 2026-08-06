@@ -213,7 +213,7 @@ onUnmounted(() => {
     
     <template v-else>
       <!-- 全局开关 -->
-      <div class="setting-group">
+      <div class="setting-group" data-search-anchor="checkpoint-enable">
         <div class="setting-header">
           <CustomCheckbox
             :modelValue="config.enabled"
@@ -229,7 +229,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 消息类型存档点 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-messages">
         <h4 class="group-title">
           <i class="codicon codicon-comment"></i>
           {{ t('components.settings.checkpoint.sections.messages.title') }}
@@ -316,7 +316,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 工具备份配置 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-tools">
         <h4 class="group-title">
           <i class="codicon codicon-file-code"></i>
           {{ t('components.settings.checkpoint.sections.tools.title') }}
@@ -382,7 +382,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 其他配置 -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-other">
         <h4 class="group-title">
           <i class="codicon codicon-settings-gear"></i>
           {{ t('components.settings.checkpoint.sections.other.title') }}
@@ -406,7 +406,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 排除配置（EX-08 / EX-09） -->
-      <div class="setting-group" :class="{ disabled: !config.enabled }">
+      <div class="setting-group" :class="{ disabled: !config.enabled }" data-search-anchor="checkpoint-exclusions">
         <h4 class="group-title">
           <i class="codicon codicon-filter"></i>
           {{ t('components.settings.checkpoint.sections.exclusion.title') }}
@@ -433,17 +433,19 @@ onUnmounted(() => {
             :disabled="!config.enabled"
             @update:modelValue="(v: boolean) => toggleProfile(profileId, v)"
           />
-          <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
-            {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
-          </span>
-          <button
-            class="profile-edit-btn"
-            :disabled="!config.enabled"
-            @click="openProfileEditor(profileId)"
-          >
-            <i class="codicon codicon-edit"></i>
-            {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.edit') }}
-          </button>
+          <div class="profile-row-actions">
+            <span class="profile-patterns" :title="profilePatterns(profileId).join('\n')">
+              {{ profilePatterns(profileId).length }} {{ t('components.settings.checkpoint.sections.exclusion.patterns') }}
+            </span>
+            <button
+              class="profile-edit-btn"
+              :disabled="!config.enabled"
+              @click="openProfileEditor(profileId)"
+            >
+              <i class="codicon codicon-edit"></i>
+              {{ t('components.settings.checkpoint.sections.exclusion.profilePatterns.edit') }}
+            </button>
+          </div>
         </div>
 
         <!-- 类别模式编辑面板 -->
@@ -606,7 +608,7 @@ onUnmounted(() => {
       <div class="divider"></div>
       
       <!-- 存档点清理 -->
-      <div class="setting-group">
+      <div class="setting-group" data-search-anchor="checkpoint-cleanup">
         <h4 class="group-title">
           <i class="codicon codicon-trash"></i>
           {{ t('components.settings.checkpoint.sections.cleanup.title') }}
@@ -1784,14 +1786,46 @@ onUnmounted(() => {
 .profile-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 4px 0;
+}
+
+/* 右侧操作列：规则计数 + 编辑按钮整体右对齐，计数紧贴按钮左侧，不再随行漂移居中 */
+.profile-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .profile-patterns {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   white-space: nowrap;
+}
+
+.profile-edit-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.profile-edit-btn:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.profile-edit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .patterns-row {

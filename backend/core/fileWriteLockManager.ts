@@ -186,6 +186,28 @@ export function getWritePathsForCall(toolName: string, args: Record<string, unkn
 export class FileWriteLockManager {
     private readonly locks = new Map<string, LockEntry>();
 
+    /** 锁集合变化代际：release / releaseAllByHolder 真正释放锁时自增，用于唤醒等待 acquire 的调用方 */
+    private lockGeneration = 0;
+    /** 等待锁释放的 acquire 等待者（释放时 notify 唤醒；acquire 内 50ms 兜底轮询防唤醒丢失） */
+    private generationWaiters: Array<() => void> = [];
+
+    /** 锁被实际释放（从集合删除）时自增代际并唤醒全部等待者 */
+    private bumpLockGeneration(): void {
+        this.lockGeneration++;
+        const waiters = this.generationWaiters;
+        this.generationWaiters = [];
+        for (const waiter of waiters) {
+            waiter();
+        }
+    }
+
+    private removeGenerationWaiter(waiter: () => void): void {
+        const idx = this.generationWaiters.indexOf(waiter);
+        if (idx >= 0) {
+            this.generationWaiters.splice(idx, 1);
+        }
+    }
+
     tryAcquire(paths: string[], holder: LockHolder): TryAcquireResult {
         // 锁 key 使用绝对规范路径：同一物理文件的不同写法（.. / 相对 / 绝对 / file://）归一为同一 key
         const keys = paths.map(p => ({ key: normalizeLockPath(resolveLockPath(p)), display: p }));
@@ -234,27 +256,41 @@ export class FileWriteLockManager {
             const result = this.tryAcquire(paths, holder);
             if (result.acquired) return;
 
+            // 等待「锁被释放」的通知（release/releaseAllByHolder 会 bump 代际并唤醒），
+            // 而不是固定周期轮询——锁未释放时不再反复做 O(锁数) 冲突扫描空转；
+            // 50ms 兜底轮询补上「通知先于注册」的竞态/丢失窗口，保证不会永久睡死。
             await new Promise<void>((resolve, reject) => {
                 let settled = false;
-                const timer = setTimeout(() => {
-                    if (settled) return;
-                    settled = true;
-                    abortSignal?.removeEventListener('abort', onAbort);
-                    resolve();
-                }, 25);
-                const onAbort = () => {
+                const wake = () => {
                     if (settled) return;
                     settled = true;
                     clearTimeout(timer);
                     abortSignal?.removeEventListener('abort', onAbort);
+                    resolve();
+                };
+                const timer = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    this.removeGenerationWaiter(wake);
+                    abortSignal?.removeEventListener('abort', onAbort);
+                    resolve();
+                }, 50);
+                const onAbort = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    this.removeGenerationWaiter(wake);
+                    abortSignal?.removeEventListener('abort', onAbort);
                     reject(new Error('File write lock acquisition was cancelled'));
                 };
+                this.generationWaiters.push(wake);
                 abortSignal?.addEventListener('abort', onAbort, { once: true });
             });
         }
     }
 
     release(paths: string[], holder: LockHolder): void {
+        let released = false;
         for (const p of paths) {
             // 与 tryAcquire 使用同一解析结果，保证等价写法能正确释放
             const key = normalizeLockPath(resolveLockPath(p));
@@ -265,7 +301,12 @@ export class FileWriteLockManager {
             entry.count -= 1;
             if (entry.count <= 0) {
                 this.locks.delete(key);
+                released = true;
             }
+        }
+        // 只有锁被真正释放（从集合删除）才唤醒等待者：重入计数减少不产生新的获取机会
+        if (released) {
+            this.bumpLockGeneration();
         }
     }
 
@@ -273,10 +314,15 @@ export class FileWriteLockManager {
      * 释放指定持有者的全部锁（run 结束/会话中止时的兜底清理）。
      */
     releaseAllByHolder(holderId: string): void {
+        let released = false;
         for (const [key, entry] of this.locks) {
             if (entry.holder.id === holderId) {
                 this.locks.delete(key);
+                released = true;
             }
+        }
+        if (released) {
+            this.bumpLockGeneration();
         }
     }
 

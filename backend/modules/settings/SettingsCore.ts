@@ -14,6 +14,19 @@ import type {
 import { DEFAULT_GLOBAL_SETTINGS } from './types';
 
 /**
+ * 合并键黑名单：webview 消息直接透传进 updateSettings（SettingsHandler 无键白名单），
+ * `JSON.parse('{"__proto__":{...}}')` 会产出 own 属性，Object.entries 会遍历到它；
+ * 当目标对象无 own `__proto__` 时 `out['__proto__'] = value` 会触发原型 setter，
+ * 把合并结果的原型链替换成攻击者对象（后续 settings.xxx 读取可被原型属性遮蔽/伪造）。
+ * constructor/prototype 一并过滤（标准防护集）。
+ */
+const UNSAFE_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isSafeMergeKey(key: string): boolean {
+    return !UNSAFE_MERGE_KEYS.has(key);
+}
+
+/**
  * 递归深合并纯对象（数组与原始值直接覆盖），用于工具配置与默认配置合并。
  * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
  * 其它子字段全部丢失），这里对纯对象逐层合并。
@@ -21,6 +34,9 @@ import { DEFAULT_GLOBAL_SETTINGS } from './types';
 export function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
     for (const [key, value] of Object.entries(override)) {
+        if (!isSafeMergeKey(key)) {
+            continue;
+        }
         const baseValue = (base as Record<string, unknown>)[key];
         if (
             value !== null && typeof value === 'object' && !Array.isArray(value) &&
@@ -125,6 +141,9 @@ export class SettingsCore {
         // 保留 stored 中独有的 key（用户可能新增了我们当前版本未知但应该保留的配置）
         for (const key of Object.keys(storedConfig)) {
             if (!(key in defaultConfig)) {
+                if (!isSafeMergeKey(key)) {
+                    continue; // 原型链污染防护：__proto__/constructor/prototype 不并入
+                }
                 merged[key] = storedConfig[key];
             }
         }
@@ -153,7 +172,12 @@ export class SettingsCore {
         if (!this.settings.toolsConfig) {
             this.settings.toolsConfig = {};
         }
-        this.settings.toolsConfig[key] = newConfig as unknown as Record<string, unknown>;
+        // 整体替换 toolsConfig 对象（而非原地改 toolsConfig[key]）：任何存储实现的
+        // diff 快照都不会因「同对象引用复用」而漏写嵌套配置（同 setToolsEnabled 约定）
+        this.settings.toolsConfig = {
+            ...this.settings.toolsConfig,
+            [key]: newConfig as unknown as Record<string, unknown>
+        };
         this.settings.lastUpdated = Date.now();
 
         await this.storage.save(this.settings);
@@ -227,8 +251,10 @@ export class SettingsCore {
      */
     async reset(): Promise<void> {
         const oldSettings = { ...this.settings };
+        // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
+        // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
         this.settings = {
-            ...DEFAULT_GLOBAL_SETTINGS,
+            ...this.cloneConfig(DEFAULT_GLOBAL_SETTINGS),
             lastUpdated: Date.now()
         };
         

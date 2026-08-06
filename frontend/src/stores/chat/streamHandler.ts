@@ -23,7 +23,8 @@ import {
   handleAutoSummaryStatus,
   handleAutoSummary,
   handleCancelled,
-  handleError
+  handleError,
+  finishSmoothStreamForState
 } from './streamChunkHandlers'
 import { loadBranchGraph } from './branchActions'
 
@@ -144,12 +145,17 @@ export function handleStreamChunk(
   // 同一对话可能并发/串行触发多次流式请求，
   // 通过 streamId 只接收“当前活跃请求”的 chunk，避免迟到 chunk 污染新请求状态。
   const activeStreamId = state.activeStreamId.value
-  if (chunk.streamId && !activeStreamId) {
+  // 总结类 chunk 例外：总结请求使用独立 abort 信号（summarizeAbortSignal），用户停止主流后
+  // 在途总结仍会完成并携带自身 streamId 送达——此时 activeStreamId 已清空或被新请求占用，
+  // 按 streamId 过滤会把它静默丢弃，前端漏掉总结消息与 isSummarized 标记直到重载。
+  // 总结 chunk 自带 conversationId（已在上方校验为当前对话）+ 内容 id 去重，可安全放行。
+  const isSummaryType = chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus'
+  if (!isSummaryType && chunk.streamId && !activeStreamId) {
     warnLateApprovalGatedChunk(chunk, state)
     return
   }
 
-  if (activeStreamId && chunk.streamId !== activeStreamId) {
+  if (!isSummaryType && activeStreamId && chunk.streamId !== activeStreamId) {
     warnLateApprovalGatedChunk(chunk, state)
     return
   }
@@ -174,6 +180,12 @@ export function handleStreamChunk(
       
     case 'awaitingConfirmation':
       handleAwaitingConfirmation(chunk, state, addCheckpoint)
+      // 编辑分支 / reroll 流停在工具确认（awaitingConfirmation 终结）时同样消费刷新标记：
+      // 后端候选已创建并落盘（editCandidate 在流开始时就 save），此时刷新分支图可让
+      // BranchSwitcherBar 立即显示新候选（此前遗漏导致标记残留：编辑分支流停在工具确认时
+      // 分支切换器不显示，切换对话触发 loadBranchGraph 后才恢复）。
+      finishSmoothStreamForState(state)
+      finishBranchStreamTracking(state)
       break
       
     case 'toolIteration':
@@ -183,10 +195,12 @@ export function handleStreamChunk(
         // handleToolIteration 终结路径会把 activeStreamId 置空，据此消费分支图刷新标记；
         // 非终结路径（继续下一轮工具循环）activeStreamId 保持原值，不提前消费。
         if (state.activeStreamId.value === null) {
+          finishSmoothStreamForState(state)
           finishBranchStreamTracking(state)
         }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        finishSmoothStreamForState(state)
         resetTerminalStreamState(state)
         finishBranchStreamTracking(state)
       }
@@ -197,6 +211,7 @@ export function handleStreamChunk(
         handleComplete(chunk, state, addCheckpoint, updateConversationAfterMessage)
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
+        finishSmoothStreamForState(state)
         resetTerminalStreamState(state)
       }
       finishBranchStreamTracking(state)
@@ -250,6 +265,9 @@ export function handleStreamChunkBatch(
 
   const isChunkForCurrentActiveStream = (chunk: StreamChunk): boolean => {
     if (chunk.conversationId !== activeConversationId) return false
+    // 总结类 chunk 例外（与 handleStreamChunk 门禁一致）：总结请求用独立 abort 信号，
+    // 主流结束后在途总结的完成事件仍会到达，按 streamId 过滤会漏掉总结消息与标记。
+    if (chunk.type === 'autoSummary' || chunk.type === 'autoSummaryStatus') return true
     if (chunk.streamId && !activeStreamId) return false
     if (!activeStreamId || !chunk.streamId) return true
     return chunk.streamId === activeStreamId
@@ -269,6 +287,13 @@ export function handleStreamChunkBatch(
     if (!TERMINAL_TYPES.has(candidate.type)) {
       continue
     }
+    // H3：content-less 终结 chunk（后端可能只发终结信号、不携带替代内容，见
+    // resetTerminalStreamState 注释）不触发“跳过前序增量”优化——其前序 chunk 的增量
+    // 解析不能被跳过，否则整段回答会因内容无处落地而空白。
+    // handleStreamChunk 对这类终结 chunk 只做状态复位，消息内容完全依赖前序增量累积。
+    if (!candidate.content) {
+      continue
+    }
     // stale stream / 非当前会话的终结事件不应触发“跳过前序 chunk”优化，
     // 否则可能误跳过当前活跃请求的有效增量。
     if (isChunkForCurrentActiveStream(candidate)) {
@@ -285,14 +310,21 @@ export function handleStreamChunkBatch(
     skipChunksBefore = lastTerminalIndex
 
     // 诊断日志：记录被跳过的 chunk 事件信息，方便排查工具调用消失等问题
+    // 用循环计数代替 slice+filter 分配临时数组（终结 batch 每次都会走到这里）
     if (typeof console !== 'undefined' && console.debug) {
-      const skippedChunks = chunks.slice(0, skipChunksBefore).filter(c => c.type === 'chunk')
-      if (skippedChunks.length > 0) {
+      let skippedCount = 0
+      let hasFunctionCall = false
+      for (let k = 0; k < skipChunksBefore; k++) {
+        const c = chunks[k]
+        if (c.type !== 'chunk') continue
+        skippedCount++
+        if (!hasFunctionCall && c.chunk?.delta?.some((p: any) => p.functionCall)) {
+          hasFunctionCall = true
+        }
+      }
+      if (skippedCount > 0) {
         const terminalType = chunks[lastTerminalIndex]?.type
-        const hasFunctionCall = skippedChunks.some(c =>
-          c.chunk?.delta?.some((p: any) => p.functionCall)
-        )
-        console.debug(`[streamHandler] batch skip: ${skippedChunks.length} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
+        console.debug(`[streamHandler] batch skip: ${skippedCount} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
       }
     }
   }

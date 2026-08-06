@@ -8,6 +8,8 @@
  * 使用 reactive(Map) 以便 computed getter 追踪 key 访问、setter 触发更新。
  */
 import { reactive } from 'vue'
+import type { ThoughtViewMode } from './renderBlocks'
+
 export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
 export const backgroundTaskViewModeByMessageId = reactive(new Map<string, BackgroundTaskViewMode>())
 
@@ -31,6 +33,26 @@ export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
     }
   }
 }
+
+/**
+ * 思考块视图模式记录的同口径清理（与 pruneBackgroundTaskViewModes 一起由 MessageList
+ * 在对话/标签页切换时调用）：消息删除/窗口裁剪/重试截断/对话关闭后移除不再渲染的 id。
+ */
+export function pruneThoughtViewModes(activeIds: Set<string>): void {
+  for (const messageId of Array.from(thoughtViewModeByMessageId.keys())) {
+    if (!activeIds.has(messageId)) {
+      thoughtViewModeByMessageId.delete(messageId)
+    }
+  }
+}
+
+/**
+ * 思考块三段式视图模式的模块级持久化（与 backgroundTaskViewModeByMessageId 同模式）：
+ * 虚拟列表滚动回收 MessageItem 后，用户选择的折叠/完全展开不应复位为默认中展开。
+ * 带容量上限（消息删除/窗口裁剪会留下不再渲染的 messageId 记录）。
+ */
+export const thoughtViewModeByMessageId = reactive(new Map<string, ThoughtViewMode>())
+export const THOUGHT_VIEW_MODE_CAP = 500
 </script>
 
 <script setup lang="ts">
@@ -60,6 +82,8 @@ import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
 import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import type { SmoothDisplayText } from '../../stores/chat/types'
+import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
 const { t } = useI18n()
 
@@ -127,12 +151,105 @@ const backgroundTaskViewMode = computed<BackgroundTaskViewMode>({
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
+// 平滑流式显示层：当前消息正在流出的段落（最后一个 text/thought part）的平滑文本。
+// 流式期间存在（含空字符串占位，表示新段落从 0 开始打字），终结后由 store 删除。
+// 测试 mock 状态可能不含 smoothTexts，缺失时按 undefined 处理（无可选链兜底语义不变）
+const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoothTexts?.get(props.message.id))
+
+// 活动尾块信息：流式期间最后一个 text/thought part（与 smoothText.partKey 匹配）
+// 由 CharFlow 显示层托管。text 尾块在本组件挂载独立 host；thought 尾块保留思维卡片，
+// 由 MessageRenderBlock 在中展开预览或完全展开内容中挂载 host。
+const tailInfo = computed<{ type: 'text' | 'thought'; partKey: string } | null>(() => {
+  const smooth = smoothText.value
+  if (!smooth || !isStreaming.value) return null
+  const parts = props.message.parts
+  if (!parts || parts.length === 0) return null
+  const lastPart = parts[parts.length - 1]
+  if (typeof lastPart.text !== 'string' || !lastPart.text.trim()) return null
+
+  const type = lastPart.thought === true ? 'thought' : 'text'
+  const prevPart = parts[parts.length - 2]
+  const prevType = prevPart?.thought === true ? 'thought' : 'text'
+  if (prevPart && typeof prevPart.text === 'string' && prevType === type) return null
+
+  const key = `${type}:${parts.length - 1}`
+  if (key !== smooth.partKey) return null
+  return { type, partKey: key }
+})
+
+function isSmoothThoughtBlock(block: RenderBlock): boolean {
+  const tail = tailInfo.value
+  return block.type === 'thought' && tail?.type === 'thought' && block.partKey === tail.partKey
+}
+
+// text 活动尾块 host 生命周期。监听 primitive partKey 而不是整个 smoothText，避免每次
+// 低频快照都注销并重建同一个 CharFlow。
+const tailHostRef = ref<HTMLElement | null>(null)
+let registeredTextHost: HTMLElement | null = null
+let registeredTextMessageId: string | null = null
+
+// 渐进 markdown：流式期间已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 即时渲染格式；未完成尾巴仍在 tailHost 逐字流出。段落切换/终结时清空（稳定块完整接管）。
+const tailRendered = ref('')
+function handleTailPromote(text: string): void {
+  tailRendered.value += text
+}
+
+function releaseTextDisplay(): void {
+  if (!registeredTextHost || !registeredTextMessageId) return
+  unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  registeredTextHost = null
+  registeredTextMessageId = null
+  // 渐进渲染内容随显示层释放：旧段落由稳定块（renderBlocks）完整接管，避免重复显示
+  if (tailRendered.value) tailRendered.value = ''
+}
+
+watch(
+  [
+    () => props.message.id,
+    () => tailInfo.value?.type === 'text' ? tailInfo.value.partKey : null,
+    tailHostRef
+  ],
+  ([messageId, partKey, host]) => {
+    if (
+      registeredTextHost &&
+      (!partKey || registeredTextHost !== host || registeredTextMessageId !== messageId)
+    ) {
+      releaseTextDisplay()
+    }
+    if (partKey && host && !registeredTextHost) {
+      registerSmoothDisplay(messageId, host, { onPromote: handleTailPromote })
+      registeredTextHost = host
+      registeredTextMessageId = messageId
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
+
 
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
 
-// 思考内容展开状态
-const isThoughtExpanded = ref(false)
+// 思考内容三段式视图模式（对齐后台任务）：折叠 / 中展开 / 完全展开，默认中展开。
+// 模块级 Map 按 messageId 持久化（与 backgroundTaskViewModeByMessageId 同模式）：
+// 虚拟列表滚动回收 MessageItem 后恢复用户选择，而不是复位为 medium。
+const thoughtViewMode = computed<ThoughtViewMode>({
+  get: () => thoughtViewModeByMessageId.get(props.message.id) ?? 'medium',
+  set: (mode: ThoughtViewMode) => {
+    if (
+      !thoughtViewModeByMessageId.has(props.message.id) &&
+      thoughtViewModeByMessageId.size >= THOUGHT_VIEW_MODE_CAP
+    ) {
+      const oldestKey = thoughtViewModeByMessageId.keys().next().value
+      if (oldestKey !== undefined) {
+        thoughtViewModeByMessageId.delete(oldestKey)
+      }
+    }
+    thoughtViewModeByMessageId.set(props.message.id, mode)
+  }
+})
+// 用户是否手动切换过视图模式（自动模式切换只在用户未干预时生效）
+const thoughtViewTouched = ref(false)
 
 
 const todoDebugPrinted = new Set<string>()
@@ -189,6 +306,8 @@ function stopThinkingTimer() {
 // 组件卸载时清理定时器
 onUnmounted(() => {
   stopThinkingTimer()
+  // 注销当前组件持有的正文 CharFlow 宿主；按 host 校验，不影响刚切换出的 thought host。
+  releaseTextDisplay()
 })
 
 /**
@@ -214,7 +333,13 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   let currentTextBlock: string[] = []
   let currentToolBlock: ToolUsage[] = []
   let currentThoughtBlock: string[] = []
-  
+  // 块级段落身份（H2-B）：记录合并进当前块的最后一个 part 索引与 part 数量，
+  // 与平滑显示层的 partKey 对齐，供流式期间按段落精确替换。
+  let currentTextPartIndex = -1
+  let currentTextPartCount = 0
+  let currentThoughtPartIndex = -1
+  let currentThoughtPartCount = 0
+
   const messageTools = props.message.tools || []
   let functionCallOrdinal = 0
 
@@ -226,9 +351,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         // 修改原因：流式正文每个 delta 都会改变 text.length；把长度/正文片段写进 key 会让 Vue 销毁重建 MarkdownRenderer，触发闪烁。
         // 修改方式：key 只表达结构身份（第几个 block + 类型），内容增长只通过 props 更新。
         // 修改目的：让主聊天与 Monitor 的流式文本块都复用同一组件实例，保留旧 HTML 直到新 HTML 渲染完成。
-        blocks.push({ type: 'text', text, key: `${blocks.length}:text` })
+        blocks.push({ type: 'text', text, key: `${blocks.length}:text`, partKey: `text:${currentTextPartIndex}`, partCount: currentTextPartCount })
       }
       currentTextBlock = []
+      currentTextPartIndex = -1
+      currentTextPartCount = 0
     }
   }
   
@@ -252,9 +379,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         // 修改原因：thought 与正文共享同一 RenderBlock 身份契约；思考内容增长也不应改变组件身份。
         // 修改方式：移除 text.length/text.slice 这类内容派生 key，只保留结构位置和类型。
         // 修改目的：避免展开思考块接入流式渲染后重现正文闪烁问题。
-        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought` })
+        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought`, partKey: `thought:${currentThoughtPartIndex}`, partCount: currentThoughtPartCount })
       }
       currentThoughtBlock = []
+      currentThoughtPartIndex = -1
+      currentThoughtPartCount = 0
     }
   }
 
@@ -280,13 +409,16 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     upsertToolRenderEntry(currentToolBlock, entry)
   }
   
-  for (const part of parts) {
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    const part = parts[partIndex]
     // 处理思考内容
     if (part.thought && part.text) {
       // 思考内容：先刷新其他块
       flushText()
       flushTools()
       currentThoughtBlock.push(part.text)
+      currentThoughtPartIndex = partIndex
+      currentThoughtPartCount += 1
       continue
     }
     
@@ -296,6 +428,8 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       flushThought()
       flushTools()
       currentTextBlock.push(part.text)
+      currentTextPartIndex = partIndex
+      currentTextPartCount += 1
     }
     
     // 处理工具调用（即使同一个 part 有 thoughtSignature）
@@ -338,6 +472,29 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushText()
   flushTools()
 
+  // 平滑流式显示：活动 text 尾块摘出，活动 thought 尾块保留卡片外壳但正文由
+  // MessageRenderBlock 内的 CharFlow host 托管。两条高频路径都绕过 Vue/Markdown。
+  // 条件（与 tailInfo 严格对齐）：partKey 匹配 + 单 part 块（partCount===1）。
+  // ① 新段落前导空白不推入显示层（H2-A），不会覆盖上一段已完成块；
+  // ② partKey 切换瞬间（switchPart flush 尾巴提交旧段落文本）命中的是旧段落块（文本相同，无视觉变化）；
+  // ③ 合并块（多个同类型 part 合入一块）无法按段落粒度摘出，跳过（回退真实文本，安全）。
+  const smooth = smoothText.value
+  const tail = tailInfo.value
+  if (tail && smooth !== undefined && isStreaming.value) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i]
+      if (tail.type === 'text' && b.type === 'text' && b.partKey === tail.partKey && b.partCount === 1) {
+        blocks.splice(i, 1) // 摘出：该段落显示由 CharFlow 托管
+        break
+      }
+      if (tail.type === 'thought' && b.type === 'thought' && b.partKey === tail.partKey && b.partCount === 1) {
+        // block.text 仅保留低频恢复快照；活动态视觉文本由 CharFlow 逐帧写入。
+        blocks[i] = { ...b, text: smooth.text }
+        break
+      }
+    }
+  }
+
   // 引用稳定化：复用上一次内容相同的 text/thought block 的对象引用，
   // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染
   const prev = _prevRenderBlocks
@@ -372,6 +529,7 @@ const contentRenderBlocks = computed<RenderBlock[]>(() => {
 // 注意：必须在 renderBlocks 定义之后才能使用
 const isThinking = computed(() => {
   if (!isStreaming.value) return false
+  if (tailInfo.value?.type === 'text') return false
   
   // 如果已经有后端计算的思考时间，说明思考已完成
   if (props.message.metadata?.thinkingDuration) return false
@@ -408,6 +566,19 @@ watch(isThinking, (thinking) => {
     startThinkingTimer()
   } else {
     stopThinkingTimer()
+  }
+}, { immediate: true })
+
+// 思考视图自动模式：思考中默认中展开；思考与输出都结束后自动折叠为第一行预览。
+// 用户手动切换过视图模式后不再自动干预；无思考块的消息不处理。
+watch([isThinking, isStreaming], ([thinking, streaming]) => {
+  if (thoughtViewTouched.value) return
+  const hasThought = renderBlocks.value.some(block => block.type === 'thought')
+  if (!hasThought) return
+  if (thinking) {
+    thoughtViewMode.value = 'medium'
+  } else if (!streaming) {
+    thoughtViewMode.value = 'collapsed'
   }
 }, { immediate: true })
 
@@ -573,8 +744,9 @@ watch(showResponseDialog, (open) => {
   })
 })
 
-function toggleThought() {
-  isThoughtExpanded.value = !isThoughtExpanded.value
+function setThoughtViewMode(mode: ThoughtViewMode) {
+  thoughtViewTouched.value = true
+  thoughtViewMode.value = mode
 }
 
 function handleRetry() {
@@ -731,36 +903,52 @@ function handleRestoreAndRetry(checkpointId: string) {
             v-for="block in contentRenderBlocks"
             :key="getRenderBlockKey(block)"
             :block="block"
+            :message-id="message.id"
             :message-role="isUser ? 'user' : 'assistant'"
             :message-backend-index="message.backendIndex"
             :is-streaming="isStreaming"
-            :is-thought-expanded="isThoughtExpanded"
+            :thought-view-mode="thoughtViewMode"
             :is-thinking="isThinking"
             :thinking-time-display="thinkingTimeDisplay"
-            :toggle-thought="toggleThought"
-            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay)"
+            :smooth-display-active="isSmoothThoughtBlock(block)"
+            :set-thought-view-mode="setThoughtViewMode"
+            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, isSmoothThoughtBlock(block))"
           />
         </template>
-        
-        <!-- 无 parts 但有 content 时：直接渲染 content -->
-        <!-- 用户消息仅渲染 LaTeX，如果有上下文块则使用解析后的内容 -->
-        <InlineContextMessage
-          v-else-if="isUser && message.content && hasContextBlocks(message.content)"
-          :content="message.content"
-        />
 
-        <MarkdownRenderer
-          v-else-if="message.content"
-          :content="message.content"
-          :latex-only="isUser"
-          :is-streaming="isStreaming"
-          class="content-text"
-        />
-
-        <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
-        <div v-else-if="!isStreaming" class="empty-response">
-          {{ t('components.message.emptyResponse') }}
+        <!-- 活动正文尾块：已完成段落渐进 markdown + 活动尾巴 CharFlow 托管（批内错峰淡入流水） -->
+        <div v-if="tailInfo?.type === 'text'" class="tail-stream">
+          <MarkdownRenderer
+            v-if="tailRendered"
+            :content="tailRendered"
+            :latex-only="false"
+            :is-streaming="true"
+            class="content-text"
+          />
+          <div ref="tailHostRef" class="char-flow-host"></div>
         </div>
+
+        <!-- 仅在没有 parts 渲染块和活动尾块时使用 content 兜底。显式互斥，避免新增兄弟节点拆断 v-else-if 链。 -->
+        <template v-if="renderBlocks.length === 0 && !tailInfo">
+          <!-- 用户消息仅渲染 LaTeX；有上下文块时使用内联上下文渲染。 -->
+          <InlineContextMessage
+            v-if="isUser && message.content && hasContextBlocks(message.content)"
+            :content="message.content"
+          />
+
+          <MarkdownRenderer
+            v-else-if="message.content"
+            :content="message.content"
+            :latex-only="isUser"
+            :is-streaming="isStreaming"
+            class="content-text"
+          />
+
+          <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
+          <div v-else-if="!isStreaming" class="empty-response">
+            {{ t('components.message.emptyResponse') }}
+          </div>
+        </template>
         
         <!-- 流式指示器 - Loading 逐字波动 -->
         <span
@@ -953,6 +1141,17 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .message-content {
   position: relative;
+}
+
+/* 活动正文尾块：流式尾巴（CharFlow）与同容器 md 渲染字体规格对齐。
+ * 正文 md 默认 13px/1.6 正常色（未定义 --lim-md-* 变量时），
+ * 若不固定，CharFlow 会继承全局 --vscode-font-size，用户调大字号后
+ * 已提升的 md 段落与正在流式的尾巴同样会出现字号跳变 */
+.tail-stream {
+  font-size: var(--lim-md-font-size, 13px);
+  line-height: var(--lim-md-line-height, 1.6);
+  color: var(--lim-md-color, var(--vscode-foreground));
+  word-break: break-word;
 }
 
 .todo-tool-blocks {
@@ -1167,133 +1366,6 @@ function handleRestoreAndRetry(checkpointId: string) {
   opacity: 1;
 }
 
-/* 思考块样式 - 使用灰色调、斜体，保持简洁 */
-.thought-block {
-  /*
-   * 思考内容（MarkdownRenderer）样式覆写：
-   * - 以前通过 .thought-text（父组件 scoped）控制，但 scoped CSS 不会作用到子组件根节点
-   * - 改为用 CSS 变量传递给 MarkdownRenderer（变量可跨组件继承）
-   */
-  --lim-md-font-size: 12px;
-  --lim-md-line-height: 1.5;
-  --lim-md-color: var(--vscode-descriptionForeground);
-  --lim-md-font-style: italic;
-
-  margin: 8px 0;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  background: var(--vscode-textBlockQuote-background);
-  overflow: hidden;
-}
-
-.thought-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 0.15s;
-}
-
-.thought-header:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.thought-header .codicon {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-icon {
-  color: var(--vscode-descriptionForeground) !important;
-}
-
-/* 思考中灯泡闪烁动画 */
-.thought-icon.thinking-pulse {
-  color: var(--vscode-charts-yellow, #ddb92f) !important;
-  animation: lightbulb-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes lightbulb-pulse {
-  0%, 100% {
-    opacity: 0.4;
-    text-shadow: none;
-  }
-  50% {
-    opacity: 1;
-    text-shadow: 0 0 8px var(--vscode-charts-yellow, #ddb92f);
-  }
-}
-
-.thought-label {
-  font-size: 12px;
-  font-weight: 500;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-time {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
-  padding: 1px 6px;
-  border-radius: 10px;
-  margin-left: 4px;
-  transition: all 0.2s ease;
-}
-
-.thought-time.thinking-active {
-  color: var(--vscode-charts-yellow, #ddb92f);
-  animation: time-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes time-pulse {
-  0%, 100% {
-    opacity: 0.8;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.thought-preview {
-  flex: 1;
-  font-size: 11px;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thought-content {
-  padding: 12px;
-  /*
-   * 不在标题与内容之间绘制明显分界线：
-   * 与深色模式视觉风格保持一致，改为无硬边框分隔。
-   */
-  border-top: none;
-}
-
-/*
- * 注意：.thought-text 是挂在 MarkdownRenderer 根节点上的 class。
- * 由于本文件是 scoped CSS，如需影响子组件内容，需要使用 :deep。
- * 这里保留段落间距微调。
- */
-.thought-block :deep(.thought-text p) {
-  margin: 0.5em 0;
-}
-
-.thought-block :deep(.thought-text p:first-child) {
-  margin-top: 0;
-}
-
-.thought-block :deep(.thought-text p:last-child) {
-  margin-bottom: 0;
-}
 
 /* 总结消息样式 */
 .summary-message {

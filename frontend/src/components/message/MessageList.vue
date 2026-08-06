@@ -19,7 +19,8 @@ export {
 
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
-import MessageItem, { pruneBackgroundTaskViewModes } from './MessageItem.vue'
+import MessageItem, { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './MessageItem.vue'
+import { pruneMediumTrimmedByMessageId } from './MessageRenderBlock.vue'
 import SummaryMessage from './SummaryMessage.vue'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import { useChatStore } from '../../stores'
@@ -34,6 +35,7 @@ import {
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import { clearLineDiffCache } from '../../utils/lineDiff'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 
 const { t } = useI18n()
@@ -119,6 +121,21 @@ function isTodoInitToolForSticky(tool: any): boolean {
   return false
 }
 
+// 模块级常量：todo 相关工具名集合（todoStickyMeta 的轻量预过滤用，避免每次评估重建 Set）
+const TODO_TOOL_NAME_SET = new Set(['todo_write', 'create_plan', 'update_plan'])
+
+/**
+ * activeBuildPlanSync 增量缓存：以 build 对象引用 + 前缀消息引用快照作指纹。
+ * 指纹不变时仅扫描尾部新增消息（含旧尾消息——流式期间其 tools 会被原地改写），
+ * 其余结构变更/build 变更自动回退全量扫描。chatStore 是单例，模块级缓存跨实例共享安全。
+ */
+let activeBuildPlanSyncCache: {
+  build: unknown
+  scannedCount: number
+  messagesRef: Message[]
+  latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null
+} | null = null
+
 const allMessageIndexBounds = computed(() => {
   let firstIndexed: number | null = null
   let lastIndexed: number | null = null
@@ -138,10 +155,16 @@ const allMessageIndexBounds = computed(() => {
 
 const todoStickyMeta = computed(() => {
   const fallbackName = t('components.message.tool.todoWrite.label')
+  const messages = chatStore.allMessages
 
-  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
-    const msg = chatStore.allMessages[i]
+  // 工具名先于昂贵的合并判定做轻量过滤：todo_write / create_plan / update_plan 之外的
+  // 消息直接跳过（isTodoInitToolForSticky 含 getMergedToolResult + 确认文案判定，仅对有
+  // 相关工具名的消息调用），窗口内没有任何相关工具名时直接返回空态
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
+    const hasTodoToolName = msg.tools.some(t => TODO_TOOL_NAME_SET.has(t.name))
+    if (!hasTodoToolName) continue
     const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
     if (!initTool) continue
 
@@ -307,12 +330,36 @@ const activeBuildPlanSync = computed<null | {
   signature: string
 }>(() => {
   const build = chatStore.activeBuild
-  if (!build?.planPath) return null
+  if (!build?.planPath) {
+    activeBuildPlanSyncCache = null
+    return null
+  }
 
   const buildAnchor = typeof build.anchorBackendIndex === 'number' ? build.anchorBackendIndex : null
   let latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null = null
 
-  for (const msg of chatStore.allMessages) {
+  const messages = chatStore.allMessages
+  const len = messages.length
+  let fromIndex = 0
+
+  // 前缀引用校验：同一 build 且缓存窗口是当前窗口的前缀（含尾消息原地替换）时只扫尾部
+  const cache = activeBuildPlanSyncCache
+  if (cache !== null && cache.build === build && cache.messagesRef.length <= len) {
+    let prefixOk = true
+    for (let i = 0; i < cache.scannedCount; i++) {
+      if (messages[i] !== cache.messagesRef[i]) {
+        prefixOk = false
+        break
+      }
+    }
+    if (prefixOk) {
+      latest = cache.latest
+      fromIndex = cache.scannedCount
+    }
+  }
+
+  for (let i = fromIndex; i < len; i++) {
+    const msg = messages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
 
     const isAfterBuildStart = (
@@ -348,6 +395,14 @@ const activeBuildPlanSync = computed<null | {
       if (!content) continue
       latest = { kind: 'progress_sync', content, order }
     }
+  }
+
+  // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+  activeBuildPlanSyncCache = {
+    build,
+    scannedCount: Math.max(0, len - 1),
+    messagesRef: messages,
+    latest
   }
 
   if (!latest) return null
@@ -486,6 +541,7 @@ type RenderRow =
   | { kind: 'build'; key: 'build-bar' }
   | { kind: 'message'; key: string; item: EnhancedMessage }
   | { kind: 'todo'; key: 'todo-bar' }
+  | { kind: 'summarize-divider'; key: 'summarize-divider' }
 
 function shouldInsertSticky(anchor: number | null, idx: number): boolean {
   return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
@@ -500,6 +556,15 @@ const messageRenderRows = computed<RenderRow[]>(() => {
   let buildInserted = !showBuildBar.value
   let todoInserted = !showTodoBar.value
 
+  // 逻辑截断：最后一个总结消息之后渲染横线，分隔「已总结区域」与「未总结区域」。
+  // 被总结消息（isSummarized）原文照常显示（不折叠），横线作为两者边界。
+  let lastSummaryBackendIndex: number | null = null
+  for (const item of visible) {
+    if (item.message.isSummary && typeof item.backendIndex === 'number') {
+      lastSummaryBackendIndex = item.backendIndex
+    }
+  }
+
   for (const item of visible) {
     const idx = item.backendIndex
     if (!buildInserted && shouldInsertSticky(buildAnchor, idx)) {
@@ -513,6 +578,11 @@ const messageRenderRows = computed<RenderRow[]>(() => {
     }
 
     rows.push({ kind: 'message', key: item.message.id, item })
+
+    // 在最后一个总结消息之后插入分隔线（已总结 / 未总结分界）
+    if (lastSummaryBackendIndex !== null && idx === lastSummaryBackendIndex) {
+      rows.push({ kind: 'summarize-divider', key: 'summarize-divider' })
+    }
   }
 
   if (!buildInserted && showBuildBar.value) {
@@ -528,7 +598,6 @@ const messageRenderRows = computed<RenderRow[]>(() => {
 
 // 是否正在加载更多（用于节流）
 const viewportHeight = ref(0)
-const scrollTop = ref(0)
 
 const isLoadingMore = ref(false)
 
@@ -596,7 +665,6 @@ async function loadMore() {
 function handleScroll(e: Event) {
   const container = e.target as HTMLElement
   if (!container) return
-  scrollTop.value = container.scrollTop
   if (viewportHeight.value !== container.clientHeight) {
     viewportHeight.value = container.clientHeight
   }
@@ -672,7 +740,6 @@ function restoreUiState(tabId?: string) {
       const container = scrollbarRef.value?.getContainer()
       if (container) {
         container.scrollTop = saved.scrollTop
-        scrollTop.value = saved.scrollTop
       }
       suppressConversationReset.value = false
     })
@@ -696,7 +763,10 @@ watch(() => props.tabId, (newTabId, oldTabId) => {
   if (oldTabId && oldTabId !== newTabId) {
     saveCurrentUiState(oldTabId)
     // M1-1：对话/标签页切换时清理已不存在的消息视图模式（非渲染热路径，仅切换时执行）
-    pruneBackgroundTaskViewModes(collectActiveBackgroundTaskMessageIds())
+    const activeIds = collectActiveBackgroundTaskMessageIds()
+    pruneBackgroundTaskViewModes(activeIds)
+    pruneThoughtViewModes(activeIds)
+    pruneMediumTrimmedByMessageId(activeIds)
   }
   restoreUiState(newTabId)
 }, { immediate: true })
@@ -750,7 +820,6 @@ onMounted(() => {
     
     // 添加滚动事件监听以支持自动加载
     viewportHeight.value = container.clientHeight
-    scrollTop.value = container.scrollTop
     container.addEventListener('scroll', handleScroll, { passive: true })
     
     resizeObserver = new ResizeObserver((entries) => {
@@ -788,6 +857,9 @@ onBeforeUnmount(() => {
     resizeObserver = null
   }
   saveCurrentUiState(props.tabId)
+
+  // A-M2：消息列表卸载后不再有 diff 面板消费方，主动释放模块级行级差分缓存
+  clearLineDiffCache()
 })
 
 const emit = defineEmits<{
@@ -1346,6 +1418,11 @@ function formatCheckpointTime(timestamp: number): string {
               </template>
             </template>
           </template>
+
+          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） -->
+          <div v-else-if="row.kind === 'summarize-divider'" class="summarize-divider" aria-hidden="true">
+            <div class="summarize-divider-line"></div>
+          </div>
 
           <div v-else-if="row.kind === 'todo'" class="todo-sticky-shell">
             <div class="build-bar todo-snapshot-bar" :class="{ expanded: isTodoExpanded }">
@@ -2085,6 +2162,19 @@ function formatCheckpointTime(timestamp: number): string {
   border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） */
+.summarize-divider {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+}
+
+.summarize-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-editor-lineHighlightBorder, rgba(128, 128, 128, 0.35));
 }
 
 .checkpoint-bar.checkpoint-before {

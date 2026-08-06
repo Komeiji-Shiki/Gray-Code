@@ -137,12 +137,25 @@ function stableStringify(value: unknown): string {
  * 修改方式：超长字符串降级为定长指纹；哈希碰撞只影响护栏误拦概率，风险可忽。
  */
 const LARGE_STRING_THRESHOLD = 64 * 1024;
+/** 超长字符串采样段的长度：前缀 + 三个中部采样点 + 后缀，指纹总长有界 */
+const LARGE_STRING_SAMPLE_SIZE = 4 * 1024;
 
 function hashLargeString(value: string): string {
-    // djb2：快、无依赖，护栏签名用途下强度足够
+    // 采样哈希：多 MB 字符串不再逐字符迭代（djb2 逐字符 O(n)，每次调用数百万次），
+    // 改为「前缀 + 1/4、1/2、3/4 处采样点 + 后缀 + 长度」拼接成定长指纹后再哈希；
+    // 同一输入结果稳定（纯函数），碰撞只影响护栏误拦概率，风险可忽。
+    const len = value.length;
+    const head = value.slice(0, LARGE_STRING_SAMPLE_SIZE);
+    const tail = value.slice(Math.max(0, len - LARGE_STRING_SAMPLE_SIZE));
+    const quarter = value.slice(Math.floor(len / 4), Math.floor(len / 4) + LARGE_STRING_SAMPLE_SIZE);
+    const mid = value.slice(Math.floor(len / 2), Math.floor(len / 2) + LARGE_STRING_SAMPLE_SIZE);
+    const threeQuarter = value.slice(Math.floor(3 * len / 4), Math.floor(3 * len / 4) + LARGE_STRING_SAMPLE_SIZE);
+    const fingerprint = `${len}:${head}:${quarter}:${mid}:${threeQuarter}:${tail}`;
+
+    // djb2：快、无依赖，护栏签名用途下强度足够（指纹长度有界，迭代次数恒定）
     let hash = 5381;
-    for (let i = 0; i < value.length; i++) {
-        hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+        hash = ((hash << 5) + hash + fingerprint.charCodeAt(i)) | 0;
     }
     return (hash >>> 0).toString(36);
 }

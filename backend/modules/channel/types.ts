@@ -331,7 +331,10 @@ export enum ErrorType {
     TIMEOUT_ERROR = 'TIMEOUT_ERROR',
     
     /** 用户取消错误（不应重试） */
-    CANCELLED_ERROR = 'CANCELLED_ERROR'
+    CANCELLED_ERROR = 'CANCELLED_ERROR',
+
+    /** 空响应错误（HTTP 成功但模型返回空内容；应重试） */
+    EMPTY_RESPONSE_ERROR = 'EMPTY_RESPONSE_ERROR'
 }
 
 /**

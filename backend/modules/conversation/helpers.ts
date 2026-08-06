@@ -12,6 +12,8 @@ import type { Content, ContentPart } from './types';
  * MED-3 / H1-1：回合边界 = 真实用户输入。排除 functionResponse（工具结果）与
  * isSummary/isAutoSummary 总结消息——总结发生在回合内（SummarizeService 以 insertIndex
  * 在历史中间插入总结消息），不构成新回合；新回合只由新的真实 user 消息开始。
+ * 同时排除 isSummarized（已被总结覆盖的原始消息）：逻辑截断语义下它们不再参与回合识别、
+ * 发送与统计，但原文仍保留在历史中。
  *
  * 谓词统一入口：ConversationManager.addMessage / addContent / addBatch 的清空主会话信箱
  * 判定，与 formatHistoryForAPI 的当轮边界（lastNonFunctionResponseUserIndex）和回合列表
@@ -23,6 +25,7 @@ export function isRealUserMessage(message: {
     isFunctionResponse?: boolean;
     isSummary?: boolean;
     isAutoSummary?: boolean;
+    isSummarized?: boolean;
     isUserInput?: boolean;
     source?: 'user' | 'background_task';
 }): boolean {
@@ -30,7 +33,8 @@ export function isRealUserMessage(message: {
         && message.source !== 'background_task'
         && !message.isFunctionResponse
         && !message.isSummary
-        && !message.isAutoSummary;
+        && !message.isAutoSummary
+        && !message.isSummarized;
 }
 
 /**

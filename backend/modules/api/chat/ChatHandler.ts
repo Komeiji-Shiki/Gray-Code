@@ -57,6 +57,7 @@ import {
     type FunctionCallInfo
 } from './utils';
 import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
+import { ContextBudgetExceededError } from './services/ContextTrimService';
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
 
@@ -270,6 +271,17 @@ export class ChatHandler {
      * 如果有详细错误信息（如 API 返回的响应体），直接追加显示
      */
     private formatError(error: unknown): { code: string; message: string } {
+        if (error instanceof ContextBudgetExceededError) {
+            // 上下文窗口内无法构造合法请求：这是可解释的确定性错误，走 i18n 消息并透出 CONTEXT_OVERFLOW 码，
+            // 而不是把异常英文原文（含估算数字）直接展示给用户。
+            return {
+                code: error.code,
+                message: t('modules.api.chat.errors.contextOverflow', {
+                    estimatedInputTokens: error.estimatedInputTokens,
+                    inputTokenLimit: error.inputTokenLimit
+                })
+            };
+        }
         if (error instanceof ChannelError) {
             let message = error.message;
             
@@ -408,6 +420,20 @@ export class ChatHandler {
         request: SummarizeContextRequestData
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         return this.summarizeService.handleSummarizeContext(request);
+    }
+
+    /**
+     * 恢复指定总结消息覆盖的原文（逻辑截断的反向操作）
+     *
+     * 取消覆盖区间的 isSummarized 标记并删除总结消息，原文重新参与发送与统计。
+     *
+     * @returns 恢复的消息数与被删除的总结消息 id
+     */
+    async handleRestoreSummarizedMessages(
+        conversationId: string,
+        summaryMessageId: string
+    ): Promise<{ success: true; restoredCount: number; removedSummaryId?: string }> {
+        return this.summarizeService.restoreSummarizedMessages(conversationId, summaryMessageId);
     }
     
 /**

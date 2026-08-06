@@ -8,6 +8,7 @@
 
 import type { ITranscriptRepository } from '../../modules/conversation/TranscriptRepository';
 import type { Content } from '../../modules/conversation/types';
+import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
 import { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 import type { ToolProgressEvent } from '../types';
 
@@ -47,7 +48,12 @@ export interface SubAgentRunPersistedRecord {
     status: SubAgentRunStatus;
     createdAt: number;
     updatedAt: number;
-    contents: Content[];
+    /** 新格式只保存独立 transcript 引用；contents 仅用于读取旧元数据并迁移。 */
+    transcriptRef?: string;
+    contentCount?: number;
+    preview?: string;
+    lastMessageRole?: Content['role'];
+    contents?: Content[];
     /**
      * 修改原因：历史 metadata 只有 contents/updatedAt，无法判断异步 window 响应是否过期。
      * 修改方式：持久化 transcript 修订号；旧 metadata 读取时会补 0，后续写入自然升级。
@@ -75,10 +81,13 @@ export interface SubAgentRunPersistedRecord {
 }
 
 export interface SubAgentRunSnapshot extends SubAgentRunPersistedRecord {
+    contents: Content[];
     events: SubAgentRunEvent[];
     conversationId?: string;
     contentRevision: number;
     eventSequence: number;
+    /** false 表示只恢复了轻量 metadata，完整 transcript 尚未从独立文件读取。 */
+    transcriptLoaded?: boolean;
 }
 
 export interface SubAgentRunManifest {
@@ -118,6 +127,9 @@ export interface SubAgentRunContentWindowOptions {
 export interface SubAgentRunConversationStore {
     getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
     setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    saveSubAgentTranscript?(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string>;
+    loadSubAgentTranscript?(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null>;
+    deleteSubAgentTranscript?(conversationId: string, runId: string): Promise<void>;
 }
 
 type SubAgentRunListener = (event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot) => void;
@@ -160,6 +172,15 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<SubAgentRunStatus> = new Set<SubAgentRu
     'cancelled',
     'interrupted'
 ]);
+
+/**
+ * flushRun 落盘重试次数上限。
+ *
+ * 修改原因：终态元数据/transcript 写入失败或写入期间产生新变更时，flushRun 需要重新排队等待；
+ *          重试次数写死为魔数 3 不易维护，也无法在日志中解释“为什么是 3 次”。
+ * 修改方式：提取为命名常量，与 PERSIST_THROTTLE_MS 等持久化参数并列。
+ */
+const MAX_FLUSH_RETRY_ATTEMPTS = 3;
 
 function cloneContentsForWindow(contents: Content[]): Content[] {
     // 修改原因：按需 transcript window 会被前端本地流式 delta 临时修改，不能把事件总线内存对象引用直接交出去。
@@ -234,7 +255,8 @@ function toManifest(snapshot: SubAgentRunSnapshot): SubAgentRunManifest {
     // 修改目的：避免 monitorReady 阶段把所有 run 的 contents 经 stringify/postMessage/deserialize 一次性送进前端，并让前端能判断窗口新旧。
     ensureSnapshotProtocolFields(snapshot);
     const contents = snapshot.contents || [];
-    const lastContent = contents.length > 0 ? contents[contents.length - 1] : undefined;
+    const transcriptLoaded = snapshot.transcriptLoaded !== false;
+    const lastContent = transcriptLoaded && contents.length > 0 ? contents[contents.length - 1] : undefined;
     return {
         runId: snapshot.runId,
         agentName: snapshot.agentName,
@@ -242,13 +264,101 @@ function toManifest(snapshot: SubAgentRunSnapshot): SubAgentRunManifest {
         createdAt: snapshot.createdAt,
         updatedAt: snapshot.updatedAt,
         conversationId: snapshot.conversationId,
-        contentCount: contents.length,
+        contentCount: transcriptLoaded ? contents.length : (snapshot.contentCount ?? 0),
         eventCount: (snapshot.events || []).length,
         contentRevision: snapshot.contentRevision,
         eventSequence: snapshot.eventSequence,
-        preview: extractContentPreview(lastContent),
-        lastMessageRole: lastContent?.role
+        preview: transcriptLoaded ? extractContentPreview(lastContent) : snapshot.preview,
+        lastMessageRole: transcriptLoaded ? lastContent?.role : snapshot.lastMessageRole
     };
+}
+
+function providerHistoryBucketKey(content: Content): string {
+    const parts = content.parts || [];
+    // 粗指纹：role + parts 数量 + 首个文本部分的长度。
+    // 绝大多数消息在这一层即可区分，避免对大型 parts（图片/长工具结果）做全量 stringify。
+    const firstPart = parts[0] as { text?: unknown } | undefined;
+    const firstTextLength = typeof firstPart?.text === 'string' ? firstPart.text.length : 0;
+    return `${content.role}:${parts.length}:${firstTextLength}`;
+}
+
+function providerHistoryKey(content: Content): string {
+    return JSON.stringify({ role: content.role, parts: content.parts || [] });
+}
+
+function buildLastSentHistoryProjection(
+    contents: Content[],
+    lastSentHistory: Content[]
+): NonNullable<SubAgentTranscriptData['lastSentHistoryProjection']> {
+    // 两级索引：先按粗桶（role + parts 数量 + 首文本长度）分组，桶内再惰性建立精确 key 索引。
+    // 与直接把每个 content 全量 stringify 作 Map key 相比，桶内无匹配时（绝大多数情况）不会
+    // 为大型 parts 产生大字符串；同一桶的精确索引也只构建一次。
+    const contentIndicesByBucket = new Map<string, number[]>();
+    contents.forEach((content, index) => {
+        const bucket = providerHistoryBucketKey(content);
+        const indices = contentIndicesByBucket.get(bucket) ?? [];
+        indices.push(index);
+        contentIndicesByBucket.set(bucket, indices);
+    });
+    const exactIndexByBucket = new Map<string, Map<string, number[]>>();
+    const getExactIndex = (bucket: string): Map<string, number[]> => {
+        let exact = exactIndexByBucket.get(bucket);
+        if (exact) return exact;
+        exact = new Map<string, number[]>();
+        for (const index of contentIndicesByBucket.get(bucket) ?? []) {
+            const key = providerHistoryKey(contents[index]);
+            const indices = exact.get(key) ?? [];
+            indices.push(index);
+            exact.set(key, indices);
+        }
+        exactIndexByBucket.set(bucket, exact);
+        return exact;
+    };
+    const consumedByKey = new Map<string, number>();
+    return {
+        version: 1,
+        entries: lastSentHistory.map(content => {
+            const exact = getExactIndex(providerHistoryBucketKey(content));
+            const key = providerHistoryKey(content);
+            const indices = exact.get(key) ?? [];
+            const consumed = consumedByKey.get(key) ?? 0;
+            const contentIndex = indices[consumed];
+            if (contentIndex === undefined) {
+                return { content: JSON.parse(JSON.stringify(content)) as Content };
+            }
+            consumedByKey.set(key, consumed + 1);
+            return { contentIndex };
+        })
+    };
+}
+
+function restoreLastSentHistory(data: SubAgentTranscriptData): Content[] | undefined {
+    if (Array.isArray(data.lastSentHistory)) {
+        return data.lastSentHistory;
+    }
+    if (!Array.isArray(data.contents)) return undefined;
+    const projection = data.lastSentHistoryProjection;
+    if (!projection || projection.version !== 1 || !Array.isArray(projection.entries)) return undefined;
+    const restored: Content[] = [];
+    for (const entry of projection.entries) {
+        if (!entry || typeof entry !== 'object') return undefined;
+        if ('content' in entry) {
+            if (!entry.content || typeof entry.content !== 'object') return undefined;
+            restored.push(JSON.parse(JSON.stringify(entry.content)) as Content);
+            continue;
+        }
+        if (!('contentIndex' in entry) || !Number.isInteger(entry.contentIndex) || entry.contentIndex < 0) {
+            return undefined;
+        }
+        const source = data.contents[entry.contentIndex];
+        if (!source || typeof source !== 'object' || !Array.isArray(source.parts)) return undefined;
+        // Provider formatter只消费 role/parts；显示层的 index/timestamp/isFunctionResponse 等字段不属于请求前缀。
+        restored.push({
+            role: source.role,
+            parts: JSON.parse(JSON.stringify(source.parts || []))
+        } as Content);
+    }
+    return restored;
 }
 
 function isLiveOnlyEvent(event: SubAgentRunEvent): boolean {
@@ -266,6 +376,13 @@ function normalizePersistedMap(raw: unknown): Record<string, SubAgentRunPersiste
 }
 
 export class SubAgentRunEventBus {
+    private markStaleRecordInterrupted(record: SubAgentRunPersistedRecord): boolean {
+        if (TERMINAL_RUN_STATUSES.has(record.status)) return false;
+        record.status = 'interrupted';
+        record.updatedAt = Date.now();
+        return true;
+    }
+
     getTranscriptRepository(runId: string): ITranscriptRepository {
         // 修改原因：SubAgent 子 transcript 需要与主聊天共享同一仓储抽象，而不暴露事件总线内部的 snapshot/persist 细节。
         // 修改方式：为指定 runId 创建一个绑定当前事件总线的 SubAgentTranscriptRepository。
@@ -292,6 +409,10 @@ export class SubAgentRunEventBus {
     private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
     /** 各 run 上一次真正发起落盘的时刻 */
     private readonly lastPersistAt = new Map<string, number>();
+    /** transcript 按 run 惰性加载时合并并发请求，避免同一大文件重复 parse。 */
+    private readonly transcriptLoadPromises = new Map<string, Promise<SubAgentRunSnapshot | undefined>>();
+    /** 最近一次持久化错误；flushRun 会有限重试并在仍失败时上抛。 */
+    private readonly persistErrors = new Map<string, unknown>();
 
     /**
      * 追加事件到 run 的内存 journal，并保持长度有界。
@@ -315,6 +436,11 @@ export class SubAgentRunEventBus {
      */
     private commitContentChange(snapshot: SubAgentRunSnapshot, timestamp: number): void {
         snapshot.updatedAt = timestamp;
+        snapshot.transcriptLoaded = true;
+        snapshot.contentCount = snapshot.contents.length;
+        const lastContent = snapshot.contents[snapshot.contents.length - 1];
+        snapshot.preview = extractContentPreview(lastContent);
+        snapshot.lastMessageRole = lastContent?.role;
         bumpContentRevision(snapshot);
         const event = stampRunEvent(snapshot, {
             runId: snapshot.runId,
@@ -404,7 +530,8 @@ export class SubAgentRunEventBus {
             // 修改方式：eventSequence/contentRevision 从 0 开始，事件发送和 transcript 写入分别递增。
             // 修改目的：避免前端在首个 manifest/window 上收到 undefined revision，导致旧窗口保护失效。
             contentRevision: 0,
-            eventSequence: 0
+            eventSequence: 0,
+            transcriptLoaded: true
         };
         this.snapshots.set(runId, snapshot);
         if (options?.conversationId && options.conversationStore) {
@@ -419,6 +546,62 @@ export class SubAgentRunEventBus {
             payload
         });
         return snapshot;
+    }
+
+    /**
+     * 续跑：复用已终态 run 的快照继续执行（continueFromRunId 语义）。
+     *
+     * 修改原因：续跑过去会 createRun 重建快照，Monitor 里出现两条相同身份的 run，
+     *          且 events 清空、contentRevision/eventSequence 重置，展示上像两个不同的子代理。
+     * 修改方式：快照已存在时不清空 contents/events/lastSentHistory，不重置协议序号，
+     *          仅把状态从终态切回 running、追加本次 initialContents，并广播 run_resumed
+     *          （事件类型与 Monitor 暂停恢复复用同一语义，emit 已有 status 映射）。
+     * 修改目的：续跑 = 同一条 run 接着跑——transcript 一条线连续、Monitor 记录唯一、
+     *          provider 前缀缓存命中条件不变；快照缺失时防御性回退 createRun。
+     */
+    resumeRun(
+        runId: string,
+        agentName?: string,
+        payload?: unknown,
+        options?: {
+            conversationId?: string;
+            conversationStore?: SubAgentRunConversationStore;
+            initialContents?: Content[];
+        }
+    ): SubAgentRunSnapshot {
+        const existing = this.snapshots.get(runId);
+        if (!existing) {
+            // 防御：续跑校验已保证快照存在（内存或持久化恢复），缺失时退化为新建
+            return this.createRun(runId, agentName, payload, options);
+        }
+        const now = Date.now();
+        const fromStatus = existing.status;
+        existing.status = 'running';
+        existing.updatedAt = now;
+        existing.transcriptLoaded = true;
+        if (agentName) {
+            existing.agentName = agentName;
+        }
+        if (options?.conversationId) {
+            existing.conversationId = options.conversationId;
+            if (options.conversationStore) {
+                this.stores.set(runId, options.conversationStore);
+            }
+        }
+        this.emit({
+            runId,
+            agentName,
+            type: 'run_resumed',
+            timestamp: now,
+            payload: {
+                ...(payload || {}),
+                fromStatus
+            }
+        });
+        for (const content of options?.initialContents ?? []) {
+            this.appendContent(runId, content);
+        }
+        return existing;
     }
 
     emit(event: ToolProgressEvent & { runId: string; agentName?: string }): void {
@@ -442,7 +625,8 @@ export class SubAgentRunEventBus {
                 // 修改方式：自动 snapshot 同样从 0 初始化 eventSequence/contentRevision。
                 // 修改目的：保证 Monitor 对异常/恢复事件也能执行同一 stale 判断。
                 contentRevision: 0,
-                eventSequence: 0
+                eventSequence: 0,
+                transcriptLoaded: true
             };
             this.snapshots.set(normalized.runId, snapshot);
         }
@@ -610,7 +794,7 @@ export class SubAgentRunEventBus {
 
     getContentWindow(runId: string, options: SubAgentRunContentWindowOptions = {}): SubAgentRunContentWindow | undefined {
         const snapshot = this.snapshots.get(runId);
-        if (!snapshot) {
+        if (!snapshot || snapshot.transcriptLoaded === false) {
             return undefined;
         }
 
@@ -667,6 +851,87 @@ export class SubAgentRunEventBus {
         return Array.from(this.snapshots.values()).sort((a, b) => b.updatedAt - a.updatedAt);
     }
 
+    /** 仅在 Monitor 打开某个 run、续跑或修改 transcript 时读取该 run 的独立 transcript。 */
+    async loadRunTranscript(runId: string): Promise<SubAgentRunSnapshot | undefined> {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot || snapshot.transcriptLoaded !== false) return snapshot;
+        const existingLoad = this.transcriptLoadPromises.get(runId);
+        if (existingLoad) return await existingLoad;
+
+        const load = (async () => {
+            const store = this.stores.get(runId);
+            if (!store?.loadSubAgentTranscript || !snapshot.conversationId || !snapshot.transcriptRef) {
+                snapshot.transcriptLoaded = true;
+                return snapshot;
+            }
+            const external = await store.loadSubAgentTranscript(snapshot.conversationId, runId);
+            snapshot.contents = Array.isArray(external?.contents) ? external.contents : [];
+            const lastSentHistory = external ? restoreLastSentHistory(external) : undefined;
+            if (Array.isArray(lastSentHistory)) {
+                snapshot.lastSentHistory = JSON.parse(JSON.stringify(lastSentHistory)) as Content[];
+            } else {
+                delete snapshot.lastSentHistory;
+            }
+            snapshot.contentCount = snapshot.contents.length;
+            const lastContent = snapshot.contents[snapshot.contents.length - 1];
+            snapshot.preview = extractContentPreview(lastContent);
+            snapshot.lastMessageRole = lastContent?.role;
+            snapshot.transcriptLoaded = true;
+            return snapshot;
+        })().finally(() => {
+            this.transcriptLoadPromises.delete(runId);
+        });
+        this.transcriptLoadPromises.set(runId, load);
+        return await load;
+    }
+
+    /** 等待指定 run 的最新 transcript 与终态元数据落盘；失败时重试，避免工具已返回而 metadata 仍为 running。 */
+    async flushRun(runId: string): Promise<void> {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot?.conversationId || snapshot.transcriptLoaded === false) return;
+        for (let attempt = 0; attempt < MAX_FLUSH_RETRY_ATTEMPTS; attempt++) {
+            const timer = this.persistTimers.get(runId);
+            if (timer) {
+                clearTimeout(timer);
+                this.persistTimers.delete(runId);
+            }
+            this.persistErrors.delete(runId);
+            this.flushPersist(runId);
+            const tail = this.persistQueues.get(snapshot.conversationId);
+            await (tail ?? Promise.resolve());
+            const error = this.persistErrors.get(runId);
+            const dirty = this.pendingPersists.has(runId) || this.persistTimers.has(runId);
+            if (!error && !dirty) return;
+            if (attempt === MAX_FLUSH_RETRY_ATTEMPTS - 1 && error) throw error;
+        }
+        throw new Error(`SubAgent persistence did not become idle for run ${runId}`);
+    }
+
+    /** 等待该会话已排队的 transcript/索引写入完成，并吸收写入期间产生的后续脏状态。 */
+    async flushConversation(conversationId: string): Promise<void> {
+        const runIds = (): string[] => Array.from(this.snapshots.values())
+            .filter(snapshot => snapshot.conversationId === conversationId)
+            .map(snapshot => snapshot.runId);
+        for (const runId of runIds()) await this.flushRun(runId);
+    }
+
+    /** 对话删除后清理事件总线内存与队列引用，防止旧 run 再写入已删除会话。 */
+    forgetConversation(conversationId: string): void {
+        for (const [runId, snapshot] of this.snapshots) {
+            if (snapshot.conversationId !== conversationId) continue;
+            const timer = this.persistTimers.get(runId);
+            if (timer) clearTimeout(timer);
+            this.persistTimers.delete(runId);
+            this.pendingPersists.delete(runId);
+            this.lastPersistAt.delete(runId);
+            this.stores.delete(runId);
+            this.snapshots.delete(runId);
+            this.transcriptLoadPromises.delete(runId);
+            this.persistErrors.delete(runId);
+        }
+        this.persistQueues.delete(conversationId);
+    }
+
     async loadConversationSnapshots(
         conversationId: string,
         store: SubAgentRunConversationStore
@@ -674,6 +939,8 @@ export class SubAgentRunEventBus {
         const raw = await store.getCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY);
         const persistedMap = normalizePersistedMap(raw);
         const snapshots: SubAgentRunSnapshot[] = [];
+        let migratedLegacyRecord = false;
+        let interruptedStaleRecord = false;
 
         for (const record of Object.values(persistedMap)) {
             const existing = this.snapshots.get(record.runId);
@@ -681,8 +948,17 @@ export class SubAgentRunEventBus {
                 snapshots.push(existing);
                 continue;
             }
+            // 扩展宿主重启后，元数据中的非终态 run 已不可能继续执行；及时纠正状态，
+            // 避免 Monitor 永久显示 running/queued。当前进程仍活跃的 run 已命中上面的 snapshot 分支。
+            interruptedStaleRecord = this.markStaleRecordInterrupted(record) || interruptedStaleRecord;
+            // 独立 transcript 只恢复轻量索引；Monitor 聚焦、续跑或消息修改时才按 run 读取正文。
+            // 旧内嵌格式必须先读取现有数组并迁移，迁移完成后的本次快照仍可直接使用。
+            const legacyContents = Array.isArray(record.contents) ? record.contents : undefined;
+            const legacyLastSentHistory = Array.isArray(record.lastSentHistory) ? record.lastSentHistory : undefined;
+            const contents = legacyContents ?? [];
             const snapshot: SubAgentRunSnapshot = {
                 ...record,
+                contents,
                 events: [],
                 conversationId,
                 // 修改原因：旧 metadata 没有 revision/sequence 字段；恢复为 snapshot 时必须补齐，后续写回会自动升级持久格式。
@@ -690,15 +966,29 @@ export class SubAgentRunEventBus {
                 // 修改目的：历史 run 也能参与前端 stale window 判断，不需要专门兼容分支。
                 contentRevision: Number.isFinite(record.contentRevision) ? record.contentRevision! : 0,
                 eventSequence: Number.isFinite(record.eventSequence) ? record.eventSequence! : 0,
+                transcriptLoaded: !record.transcriptRef || !!legacyContents,
                 // 修改原因：lastSentHistory 是续跑复用 provider 前缀缓存的唯一依据，恢复时深拷贝避免与持久化对象共享引用。
                 // 修改方式：仅在字段为数组时显式重建；旧数据缺字段时保持 undefined，由 executor 降级处理。
-                ...(Array.isArray(record.lastSentHistory)
-                    ? { lastSentHistory: JSON.parse(JSON.stringify(record.lastSentHistory)) as Content[] }
+                ...(Array.isArray(legacyLastSentHistory)
+                    ? { lastSentHistory: JSON.parse(JSON.stringify(legacyLastSentHistory)) as Content[] }
                     : {})
             };
+            if (!record.transcriptRef && Array.isArray(record.contents) && store.saveSubAgentTranscript) {
+                record.transcriptRef = await store.saveSubAgentTranscript(conversationId, record.runId, {
+                    contents,
+                    ...(legacyLastSentHistory ? { lastSentHistory: legacyLastSentHistory } : {})
+                });
+                record.contentCount = contents.length;
+                delete record.contents;
+                delete record.lastSentHistory;
+                migratedLegacyRecord = true;
+            }
             this.snapshots.set(record.runId, snapshot);
             this.stores.set(record.runId, store);
             snapshots.push(snapshot);
+        }
+        if (migratedLegacyRecord || interruptedStaleRecord) {
+            await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
         }
         this.evictSnapshotsIfNeeded();
 
@@ -748,7 +1038,7 @@ export class SubAgentRunEventBus {
     private flushPersist(runId: string): void {
         const snapshot = this.snapshots.get(runId);
         const store = this.stores.get(runId);
-        if (!snapshot?.conversationId || !store) {
+        if (!snapshot?.conversationId || !store || snapshot.transcriptLoaded === false) {
             return;
         }
         this.lastPersistAt.set(runId, Date.now());
@@ -775,6 +1065,18 @@ export class SubAgentRunEventBus {
             .then(async () => {
                 // 进入真正写入前清除脏标记：写入期间发生的新变更会重新排队一次后续写入
                 this.pendingPersists.delete(runId);
+                const terminal = TERMINAL_RUN_STATUSES.has(snapshot.status);
+                const transcriptData: SubAgentTranscriptData = {
+                    contents: snapshot.contents,
+                    ...(Array.isArray(snapshot.lastSentHistory)
+                        ? (terminal
+                            ? { lastSentHistoryProjection: buildLastSentHistoryProjection(snapshot.contents, snapshot.lastSentHistory) }
+                            : { lastSentHistory: snapshot.lastSentHistory })
+                        : {})
+                };
+                const transcriptRef = store.saveSubAgentTranscript
+                    ? await store.saveSubAgentTranscript(conversationId, runId, transcriptData)
+                    : undefined;
                 const raw = await store.getCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY);
                 const persistedMap = normalizePersistedMap(raw);
                 ensureSnapshotProtocolFields(snapshot);
@@ -784,21 +1086,26 @@ export class SubAgentRunEventBus {
                     status: snapshot.status,
                     createdAt: snapshot.createdAt,
                     updatedAt: snapshot.updatedAt,
-                    contents: snapshot.contents,
+                    contentCount: snapshot.contents.length,
                     contentRevision: snapshot.contentRevision,
                     eventSequence: snapshot.eventSequence,
-                    // 修改原因：续跑要复用旧 run 最后一次实际发送给 provider 的 history（lastSentHistory），
-                    //          它必须与 contents 一起落盘，重载/内存淘汰后仍可恢复。
-                    // 修改方式：随现有 metadata 持久化；缺失时保持 undefined，不污染旧格式。
-                    ...(Array.isArray(snapshot.lastSentHistory)
-                        ? { lastSentHistory: snapshot.lastSentHistory }
-                        : {})
+                    preview: extractContentPreview(snapshot.contents[snapshot.contents.length - 1]),
+                    lastMessageRole: snapshot.contents[snapshot.contents.length - 1]?.role,
+                    ...(transcriptRef
+                        ? { transcriptRef }
+                        : {
+                            contents: snapshot.contents,
+                            ...(Array.isArray(snapshot.lastSentHistory) ? { lastSentHistory: snapshot.lastSentHistory } : {})
+                        })
                 };
                 persistedMap[runId] = record;
+
                 await store.setCustomMetadata(conversationId, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
+                this.persistErrors.delete(runId);
             })
             .catch(error => {
                 this.pendingPersists.delete(runId);
+                this.persistErrors.set(runId, error);
                 console.warn('[SubAgentRunEventBus] Failed to persist SubAgent run:', error);
             });
 

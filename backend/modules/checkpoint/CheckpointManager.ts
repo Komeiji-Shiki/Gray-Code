@@ -224,6 +224,15 @@ export class CheckpointManager {
     }
 
     /**
+     * 检查点备份和索引位于扩展 globalStorage；删除不要求当前工作区仍处于打开状态。
+     * 有工作区时沿用工作区锁，无工作区时用稳定虚拟键保持删除操作之间的互斥。
+     */
+    private getCheckpointDeletionLockIds(): string[] {
+        const roots = this.getRuntimeWorkspaceRoots();
+        return roots.length > 0 ? roots.map(root => root.id) : ['checkpoint-global-storage'];
+    }
+
+    /**
      * 把存档键（可能为旧格式相对路径）归一化为 scoped 键。
      * 旧格式单根时按当前第一个根包装；多根下无法包装的键原样保留（不参与匹配）。
      */
@@ -465,6 +474,14 @@ export class CheckpointManager {
                             copiedCount++;
                             reportProgress({ processed: copiedCount });
                         });
+
+                        // 复制失败（markUnbacked 剔除）的文件已从 currentHashes 剔除，
+                        // changes 必须按同一口径过滤（复制失败发生在记录 change 之后）：
+                        // manifest.files 只含真正备份成功的文件，若 changes 仍引用未落盘路径，
+                        // 恢复/增量链会指向不存在的备份文件
+                        if (unbackedPathSet.size > 0) {
+                            changes = changes.filter(c => !unbackedPathSet.has(c.path));
+                        }
 
                         log.info('incremental_backup', { added: added.length, modified: modified.length, deleted: deleted.length, unbacked: unbackedPaths.length });
                     }
@@ -1047,12 +1064,8 @@ export class CheckpointManager {
      * 删除检查点
      */
     async deleteCheckpoint(conversationId: string, checkpointId: string): Promise<boolean> {
-        const roots = this.getRuntimeWorkspaceRoots();
-        if (roots.length === 0) {
-            return false;
-        }
         return checkpointOperationLockManager.runExclusive(
-            roots.map(root => root.id),
+            this.getCheckpointDeletionLockIds(),
             'delete',
             `checkpoint:${conversationId}:${checkpointId}`,
             () => this.deleteCheckpointInternal(conversationId, checkpointId)
@@ -1125,12 +1138,8 @@ export class CheckpointManager {
      *                            用于回档场景：刚用于恢复的存档点应保留，支持反复回档到同一位置。
      */
     async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
-        const roots = this.getRuntimeWorkspaceRoots();
-        if (roots.length === 0) {
-            return 0;
-        }
         return checkpointOperationLockManager.runExclusive(
-            roots.map(root => root.id),
+            this.getCheckpointDeletionLockIds(),
             'delete',
             `checkpoint:${conversationId}:delete-from-index`,
             () => this.deleteCheckpointsFromIndexInternal(conversationId, fromIndex, excludeCheckpointId)
@@ -1229,15 +1238,12 @@ export class CheckpointManager {
      * 删除对话的所有检查点
      */
     async deleteAllCheckpoints(conversationId: string): Promise<{ success: boolean; deletedCount: number }> {
-        const roots = this.getRuntimeWorkspaceRoots();
-        if (roots.length === 0) {
-            return { success: false, deletedCount: 0 };
-        }
+        const lockWorkspaceIds = this.getCheckpointDeletionLockIds();
         // CPF-11: 删除操作注册进度/取消句柄
         const { operationId, signal, report } = this.beginOperation('delete', conversationId);
         try {
             return await checkpointOperationLockManager.runExclusive(
-            roots.map(root => root.id),
+            lockWorkspaceIds,
             'delete',
             `checkpoint:${conversationId}:delete-all`,
             async () => {
@@ -1321,17 +1327,11 @@ export class CheckpointManager {
                 success: false
             };
 
-            const roots = this.getRuntimeWorkspaceRoots();
-            if (roots.length === 0) {
-                results.push(result);
-                continue;
-            }
-
             // M7: 每个对话注册进度/取消句柄（设置页批量删除可展示进度并取消）
             const { operationId, signal, report } = this.beginOperation('delete', item.conversationId);
             try {
                 await checkpointOperationLockManager.runExclusive(
-                    roots.map(root => root.id),
+                    this.getCheckpointDeletionLockIds(),
                     'delete',
                     `checkpoint:${item.conversationId}:delete-batch`,
                     async () => {
@@ -1456,13 +1456,9 @@ export class CheckpointManager {
             result.success = true;
             return result;
         }
-        const roots = this.getRuntimeWorkspaceRoots();
-        if (roots.length === 0) {
-            return result;
-        }
         try {
             await checkpointOperationLockManager.runExclusive(
-                roots.map(root => root.id),
+                this.getCheckpointDeletionLockIds(),
                 'delete',
                 `checkpoint:${conversationId}:delete-by-node-ids`,
                 async () => {

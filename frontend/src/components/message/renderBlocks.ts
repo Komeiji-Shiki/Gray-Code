@@ -13,7 +13,22 @@ export interface RenderBlock {
   text?: string
   tools?: ToolUsage[]
   key?: string
+  /**
+   * 段落身份（text/thought + 最后一个贡献 part 的索引）：
+   * 与平滑显示层（smoothTexts）的 partKey 对齐，MessageItem 据此只替换匹配块。
+   */
+  partKey?: string
+  /** 合并进本块的同类型 part 数量（合并块无法按段落粒度替换，平滑层跳过） */
+  partCount?: number
 }
+
+/**
+ * 思维链（思考块）三段式视图模式，对齐后台任务回流消息的三段式：
+ * - collapsed：完全折叠，只保留头部标题行（不显示任何内容预览）
+ * - medium：中展开，固定行数滚动查看（足以看清一部分当前思考内容）
+ * - expanded：完全展开，完整渲染全部内容
+ */
+export type ThoughtViewMode = 'collapsed' | 'medium' | 'expanded'
 
 /**
  * 为渲染块生成稳定 key，避免 v-memo 缓存跨元素错位。
@@ -39,16 +54,21 @@ export function getRenderBlockMemoDeps(
   block: RenderBlock,
   isStreaming: boolean,
   isUser: boolean,
-  isThoughtExpanded: boolean,
+  thoughtViewMode: ThoughtViewMode,
   isThinking: boolean,
   thinkingTimeDisplay: string | null,
+  smoothDisplayActive = false,
 ): unknown[] {
+  // 活动平滑块的字符由 CharFlow 手动写入宿主，block.text 不再影响 Vue 输出；
+  // 因此不能让每次真实 delta 或低频快照使 v-memo 失效。
   if (block.type === 'tool') {
     return [block.type, block.tools, isStreaming, isUser]
   }
 
   if (block.type === 'thought') {
-    return [block.type, block.text ?? '', isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay]
+    return smoothDisplayActive
+      ? [block.type, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, true]
+      : [block.type, block.text ?? '', isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, false]
   }
 
   return [block.type, block.text ?? '', isStreaming, isUser]

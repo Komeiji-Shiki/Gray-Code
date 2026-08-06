@@ -10,6 +10,16 @@ import { subAgentRunController } from '../../backend/tools/subagents/runControll
 import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
 
 /**
+ * 旧流退出等待超时（毫秒）。
+ *
+ * 用户「停止后立即重发」时，新流必须在旧流完全退出（工具结算落盘、finally 注销控制器）
+ * 后才能写入用户消息，否则旧流的结算 addContent 会落在新用户消息之后，历史出现半截旧回答/
+ * 错位结算。旧流 abort 后通常在工具结算窗口（约 3s）+ 收尾窗口（约 2s）内退出，这里留出余量；
+ * 超时兜底保证旧流异常挂死时也不会阻塞新流启动太久。
+ */
+export const OLD_STREAM_EXIT_WAIT_TIMEOUT_MS = 6000;
+
+/**
  * 流式请求管理器
  *
  * 修改原因：WP21 需要把 conversation run 的最小控制能力提升为共享契约，供后续 RunController / TurnSession 演进复用。
@@ -23,6 +33,137 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   private summaryControllers: Map<string, AbortController> = new Map();
   /** 会话主流真正退出时唤醒等待者；由 delete() 在控制器引用仍匹配时统一释放。 */
   private idleWaiters: Map<string, Set<() => void>> = new Map();
+  /**
+   * 已退休旧流（被 cancel / create 替换）的退出信号链：conversationId → { chain, resolveTail }。
+   *
+   * 背景（H1）：停止按钮 cancel() 会先把旧流控制器移出 controllers，但旧流取消路径还要等
+   * 工具结算窗口（约 3s）落盘、finally 执行 delete() 才算真正退出；若新流不等旧流退出就写入
+   * 用户消息，旧流的结算 addContent 会落在新用户消息之后（半截旧回答/错位结算）。
+   * cancel() 移出 controllers 后，旧流 finally 的 delete() 因引用校验不匹配而提前 return，
+   * 退出信号必须独立于 controllers 记录，由 delete() 按 controller 引用释放。
+   * 链式叠加：连续多次 stop/重发时，新请求等待的是所有旧代退出后的总信号。
+   */
+  private retiredExits: Map<string, { chain: Promise<void>; resolveTail: () => void }> = new Map();
+  /** 已退休旧流 controller → 该代退出信号的 resolve（delete() 按引用释放） */
+  private retiredResolvers: Map<AbortController, () => void> = new Map();
+
+  /**
+   * 记录一代已退休旧流的退出信号；其 finally 调用 delete() 时由 releaseRetiredExit 释放。
+   */
+  private trackRetiredExit(conversationId: string, controller: AbortController): void {
+    const prev = this.retiredExits.get(conversationId);
+    let resolveTail: () => void = () => {};
+    const tail = new Promise<void>((resolve) => { resolveTail = resolve; });
+    const chain = prev ? prev.chain.then(() => tail) : tail;
+    this.retiredExits.set(conversationId, { chain, resolveTail });
+    this.retiredResolvers.set(controller, resolveTail);
+  }
+
+  /**
+   * 释放指定旧流的退出信号（其 finally 已执行）。若该代就是当前链尾，一并移除记录防残留；
+   * 不是链尾时只释放自身（链式 promise 会继续等待后续代）。
+   */
+  private releaseIdleWaiters(conversationId: string): void {
+    const waiters = this.idleWaiters.get(conversationId);
+    if (!waiters) return;
+    this.idleWaiters.delete(conversationId);
+    for (const resolve of waiters) resolve();
+  }
+
+  private releaseAllRetiredExits(): void {
+    const resolvers = Array.from(this.retiredResolvers.values());
+    this.retiredResolvers.clear();
+    this.retiredExits.clear();
+    for (const resolve of resolvers) resolve();
+  }
+
+  private releaseRetiredExit(conversationId: string, controller: AbortController): void {
+    const resolver = this.retiredResolvers.get(controller);
+    if (!resolver) return;
+    this.retiredResolvers.delete(controller);
+    const current = this.retiredExits.get(conversationId);
+    if (current && current.resolveTail === resolver) {
+      this.retiredExits.delete(conversationId);
+    }
+    resolver();
+  }
+
+  /**
+   * 竞速等待一组信号，超时兜底（避免等待方永久挂起）。
+   *
+   * @returns true = 超时胜出（信号未全部落定）；false = 信号先落定
+   */
+  private async raceWithTimeout(signals: Array<Promise<void> | undefined>, timeoutMs: number): Promise<boolean> {
+    const pending = signals.filter((signal): signal is Promise<void> => !!signal);
+    if (pending.length === 0) return false;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, Math.max(0, timeoutMs));
+    });
+    try {
+      await Promise.race([Promise.all(pending), timeoutPromise]);
+    } finally {
+      // 信号先落定时清理 timer，避免残留 open handle
+      if (timer) clearTimeout(timer);
+    }
+    return timedOut;
+  }
+
+  /**
+   * 中止当前活跃流并等待其完全退出（含已退休旧流的收尾），带超时兜底。
+   *
+   * 用途：流式入口（chatStream / retryStream / editAndRetryStream / toolConfirmationStream）
+   * 在 create() 之前调用，保证写入用户消息/截断历史时旧流已完全退出——
+   * 旧流的工具结算 addContent 不会再落在新用户消息之后（H1 写序竞态）。
+   * 无旧流时立即返回；有活跃流时先 abort 再等其 finally（delete 唤醒 waitForIdle）。
+   *
+   * @param timeoutMs 超时兜底，默认 OLD_STREAM_EXIT_WAIT_TIMEOUT_MS
+   */
+  async abortAndWaitForCompletion(conversationId: string, timeoutMs: number = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<void> {
+    const existing = this.controllers.get(conversationId);
+    // 先注册等待者再 abort：若旧流在 abort 与 waitForIdle 之间退出，waitForIdle 会立即返回，
+    // 不存在漏唤醒。
+    const idle = this.waitForIdle(conversationId);
+    if (existing) {
+      existing.abort();
+    }
+    // 已退休（cancel 场景）与当前活跃流两路信号都要等：cancel 移出 controllers 后旧流
+    // finally 的 delete() 走引用不匹配分支，只释放 retired 信号；活跃流走匹配分支释放 idle。
+    const retired = this.retiredExits.get(conversationId);
+    await this.raceWithTimeout([idle, retired?.chain], timeoutMs);
+  }
+
+  /**
+   * 只等待旧流退出信号，不中止当前流。
+   *
+   * 用途：后端 ChatFlowService 各入口在写入用户消息/截断历史之前调用——此时新流控制器
+   * 已在 webview 层 create() 登记，不能再 abort；本方法只等被 cancel/替换的旧流 finally
+   * 完成（delete() 释放 retired 信号）。无旧流时立即返回；旧流挂死时由超时兜底。
+   */
+  async waitForOldStreamCompletion(conversationId: string, timeoutMs: number = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<void> {
+    const retired = this.retiredExits.get(conversationId);
+    if (!retired) return;
+    await this.raceWithTimeout([retired.chain], timeoutMs);
+  }
+
+  /**
+   * 全局实例注册（供后端 ChatFlowService 读取同一实例做旧流退出等待，H1）。
+   *
+   * 后端 ChatFlowService 由 ChatHandler 在 webview 层之前构建，无法通过构造函数拿到
+   * abort manager，因此在 StreamRequestHandler 构造时注册到这里；ChatFlowService 经
+   * getGlobalInstance() 读取。测试/独立调用路径未注册时为 undefined，等待退化为 no-op。
+   */
+  private static globalInstance: StreamAbortManager | undefined;
+  static setGlobalInstance(manager: StreamAbortManager | undefined): void {
+    StreamAbortManager.globalInstance = manager;
+  }
+  static getGlobalInstance(): StreamAbortManager | undefined {
+    return StreamAbortManager.globalInstance;
+  }
 
   /**
    * 创建并存储新的 AbortController
@@ -38,6 +179,14 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     const existing = this.controllers.get(conversationId);
     if (existing) {
       existing.abort();
+      // 被替换的旧流已不在 controllers 中：记录其退出信号，供「停止后立即重发」的
+      // abortAndWaitForCompletion / waitForOldStreamCompletion 等待其 finally 完成。
+      this.trackRetiredExit(conversationId, existing);
+      // 同时释放 waitForIdle 的当前代等待者：旧流 finally 的 delete() 因引用不匹配
+      // 只释放退休信号、不会释放 idleWaiters，若这里不放行，等待者会错过唤醒窗口，
+      // 只能等到新流也结束后才在重检中醒来（新流挂起时即永久挂起）。释放后等待者
+      // 会重检并针对新控制器重新注册，语义不变。
+      this.releaseIdleWaiters(conversationId);
     }
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
@@ -82,7 +231,11 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
     if (controller) {
       controller.abort();
+      // 先登记退休链，再从活跃表移除并释放 waitForIdle 的当前代等待者。等待者醒来后会
+      // 继续检查 retiredExits，直到旧流 finally 真正释放该代信号，不会假报空闲。
+      this.trackRetiredExit(conversationId, controller);
       this.controllers.delete(conversationId);
+      this.releaseIdleWaiters(conversationId);
       cancelled = true;
     }
 
@@ -160,19 +313,40 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 已执行。后台任务回执若只看前端 isStreaming，会在这个窗口创建新流并中止旧流。
    * 本方法以控制器 Map 为唯一生命周期事实来源；空闲时立即返回，活跃时由 delete() 唤醒。
    */
-  waitForIdle(conversationId: string): Promise<void> {
-    if (!this.controllers.has(conversationId)) {
-      return Promise.resolve();
-    }
-
-    return new Promise(resolve => {
-      let waiters = this.idleWaiters.get(conversationId);
-      if (!waiters) {
-        waiters = new Set();
-        this.idleWaiters.set(conversationId, waiters);
+  async waitForIdle(conversationId: string): Promise<void> {
+    while (true) {
+      if (this.controllers.has(conversationId)) {
+        await new Promise<void>(resolve => {
+          let waiters = this.idleWaiters.get(conversationId);
+          if (!waiters) {
+            waiters = new Set();
+            this.idleWaiters.set(conversationId, waiters);
+          }
+          waiters.add(resolve);
+        });
+        continue;
       }
-      waiters.add(resolve);
-    });
+
+      const retired = this.retiredExits.get(conversationId);
+      if (!retired) return;
+      // 超时兜底：退休旧流的 finally 可能因工具挂死/网络挂起长期不执行，其退出信号链
+      // 永不 resolve。与 abortAndWaitForCompletion 的退出等待同一超时口径；**超时后必须
+      // 返回**（而不是 continue 循环重试）——否则 waitForIdle 会每 6s 重试一次、
+      // 永不返回，chat.awaitConversationIdle → backgroundTaskStore.flushReports 依旧
+      // 永久挂起。超时视同「旧流已退出」：调用方按既有语义继续。
+      // 顺带移除该代退出记录：晚到的 finally 由 releaseRetiredExit 按 resolver 释放，
+      // 条目残留会让后续 waitForIdle 再白等 6s。
+      const timedOut = await this.raceWithTimeout(
+        [retired.chain],
+        OLD_STREAM_EXIT_WAIT_TIMEOUT_MS
+      );
+      if (timedOut) {
+        if (this.retiredExits.get(conversationId) === retired) {
+          this.retiredExits.delete(conversationId);
+        }
+        return;
+      }
+    }
   }
 
   /**
@@ -215,16 +389,17 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     // 引用校验：同一会话可能已启动新流，旧流结束时不能误删新流的控制器，
     // 否则新流变孤儿，点停止无反应。
     if (controller && this.controllers.get(conversationId) !== controller) {
+      // 已退休旧流（被 cancel / create 替换）的 finally：只释放其退出信号，
+      // 不动新流控制器；「停止后立即重发」的等待方（abortAndWaitForCompletion /
+      // waitForOldStreamCompletion）据此继续。
+      this.releaseRetiredExit(conversationId, controller);
       return;
     }
     this.controllers.delete(conversationId);
-    const waiters = this.idleWaiters.get(conversationId);
-    if (waiters) {
-      this.idleWaiters.delete(conversationId);
-      for (const resolve of waiters) {
-        resolve();
-      }
+    if (controller) {
+      this.releaseRetiredExit(conversationId, controller);
     }
+    this.releaseIdleWaiters(conversationId);
   }
 
   /**
@@ -270,6 +445,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   cancelAll(view?: { webview: vscode.Webview }): void {
     for (const [conversationId, controller] of this.controllers) {
       controller.abort();
+      // 与 cancel() 一致：记录退出信号，供停止后的新流等待旧流 finally（H1 写序竞态）
+      this.trackRetiredExit(conversationId, controller);
       try {
         view?.webview.postMessage({
           type: 'streamChunk',
@@ -284,6 +461,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       }
     }
     this.controllers.clear();
+    // cancelAll 仅用于视图/扩展整体销毁，不会有后续写入；直接终结所有退休链，避免销毁等待者挂起。
+    this.releaseAllRetiredExits();
     for (const waiters of this.idleWaiters.values()) {
       for (const resolve of waiters) {
         resolve();

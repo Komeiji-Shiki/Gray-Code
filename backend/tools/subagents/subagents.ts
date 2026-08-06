@@ -10,6 +10,8 @@ import { MAX_SUBAGENT_NESTING_DEPTH } from './types';
 import type { SubAgentConfig, SubAgentExecutor } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools, agentLacksWriteCapability } from './executor';
+import { subAgentRunEventBus } from './runEventBus';
+import type { SubAgentRunStatus } from './runEventBus';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 import { TaskManager } from '../taskManager';
@@ -332,6 +334,48 @@ function getPreallocatedRunId(context?: ToolContext): string | undefined {
     return toolId ? `subagent_run_${toolId}` : undefined;
 }
 
+/**
+ * 续跑身份解析：continueFromRunId 必须沿用旧 run 的 agent 身份。
+ *
+ * 修改原因：旧实现续跑时仍用本次调用传入的 agentName 创建新 run，模型常把续跑
+ *          传成 General Worker，Monitor 里出现两个不同身份的子代理；且系统提示/工具集
+ *          变化会让 provider 前缀缓存（DeepSeek KVCache / Anthropic user_id 域）失效。
+ * 修改方式：先校验旧 run（存在 / 同对话 / 终态），再返回旧 run 的 agentName 作为
+ *          有效身份；本次传入的 agentName 只用于「身份一致」时的快速路径参考。
+ * 修改目的：续跑 = 同一条 run 同一种身份继续，工具集/系统提示不变，缓存命中条件不变。
+ */
+async function resolveContinuationIdentity(
+    continueFromRunId: string,
+    currentAgentName: string,
+    context?: ToolContext
+): Promise<{ ok: true; agentName: string } | { ok: false; error: string }> {
+    const conversationId = (context?.conversationId as string | undefined)
+        ?? (context?.mailboxConversationId as string | undefined);
+    const conversationStore = context?.conversationStore as any;
+
+    // 与 executor 续跑校验同口径：先查内存快照；未命中且当前调用可提供对话 store 时，
+    // 只加载当前对话的持久化快照（不扫描其他对话，避免 runId 跨对话碰撞）。
+    let oldSnapshot = subAgentRunEventBus.getSnapshot(continueFromRunId);
+    if (!oldSnapshot && conversationId && conversationStore) {
+        await subAgentRunEventBus.loadConversationSnapshots(conversationId, conversationStore);
+        oldSnapshot = subAgentRunEventBus.getSnapshot(continueFromRunId);
+    }
+    if (!oldSnapshot) {
+        return { ok: false, error: `Cannot continue from run "${continueFromRunId}": run not found. It may have been cleared or never existed.` };
+    }
+    if (oldSnapshot.conversationId && conversationId && oldSnapshot.conversationId !== conversationId) {
+        return { ok: false, error: `Cannot continue from run "${continueFromRunId}": the run belongs to a different conversation.` };
+    }
+    const terminalStatuses: SubAgentRunStatus[] = ['completed', 'failed', 'cancelled', 'interrupted'];
+    if (!terminalStatuses.includes(oldSnapshot.status)) {
+        return { ok: false, error: `Cannot continue from run "${continueFromRunId}": the run is still ${oldSnapshot.status}. Only terminal runs (completed / failed / cancelled) can be continued.` };
+    }
+
+    // 身份继承：旧 run 未记录 agentName 时（极旧数据）回退为本次传入值
+    const oldAgentName = oldSnapshot.agentName?.trim() || currentAgentName;
+    return { ok: true, agentName: oldAgentName };
+}
+
 async function subAgentsHandler(args: Record<string, any>, context?: ToolContext): Promise<ToolResult> {
     const agentName = args.agentName as string;
     const prompt = args.prompt as string;
@@ -348,8 +392,19 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
 
     const settings = getSubAgentsSettings();
 
+    // 续跑身份继承：有效身份以旧 run 为准（系统提示/工具集不变，provider 前缀缓存才能命中），
+    // 本次传入的 agentName 仅作为「身份一致」时的快速路径参考。
+    let effectiveAgentName = agentName;
+    if (continueFromRunId) {
+        const resolution = await resolveContinuationIdentity(continueFromRunId, agentName, context);
+        if (!resolution.ok) {
+            return { success: false, error: resolution.error };
+        }
+        effectiveAgentName = resolution.agentName;
+    }
+
     // General Worker 虚拟子代理：运行时动态构造配置，无需用户手动创建
-    if (isGeneralWorker(agentName)) {
+    if (isGeneralWorker(effectiveAgentName)) {
         if (settings.generalWorkerEnabled === false) {
             return { success: false, error: 'General Worker is disabled. Enable it in SubAgents settings.' };
         }
@@ -374,19 +429,19 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             enabled: true
         };
 
-        return executeSubAgent(dynamicConfig, agentName, prompt, additionalContext, continueFromRunId, runId, context, background);
+        return executeSubAgent(dynamicConfig, effectiveAgentName, prompt, additionalContext, continueFromRunId, runId, context, background);
     }
 
-    const agentEntry = subAgentRegistry.getByName(agentName);
+    const agentEntry = subAgentRegistry.getByName(effectiveAgentName);
     if (!agentEntry) {
         const availableNames = getAvailableAgentNames();
-        return { success: false, error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
+        return { success: false, error: `SubAgent "${effectiveAgentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
     }
 
     // F-08：显式注册的自定义 executor 优先；未注册时由 executeSubAgent 动态创建默认 executor
     return executeSubAgent(
         agentEntry.config,
-        agentName,
+        effectiveAgentName,
         prompt,
         additionalContext,
         continueFromRunId,

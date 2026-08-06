@@ -101,7 +101,9 @@ export function getExtensionFromMime(mimeType: string): string {
  * 检查 Content 是否只包含 functionResponse（工具执行结果）
  */
 export function isOnlyFunctionResponse(content: Content): boolean {
-  return content.parts.length > 0 && content.parts.every(p => p.functionResponse !== undefined)
+  // M1：后端消息可能缺 parts 字段（旧后端/异常数据），零容错会抛 TypeError 导致整个历史加载崩溃
+  const parts = Array.isArray(content.parts) ? content.parts : []
+  return parts.length > 0 && parts.every(p => p.functionResponse !== undefined)
 }
 
 type FunctionCallPart = NonNullable<Content['parts'][number]['functionCall']> & {
@@ -240,7 +242,9 @@ function getContentNodeId(content: Content): string | undefined {
  * 将 Content 转换为 Message
  */
 export function contentToMessage(content: Content, id?: string): Message {
-  const normalizedParts = normalizeFunctionCallParts(content.parts)
+  // M1：后端消息可能缺 parts 字段，按空数组容错，避免 normalizeFunctionCallParts 抛 TypeError
+  const sourceParts = Array.isArray(content.parts) ? content.parts : []
+  const normalizedParts = normalizeFunctionCallParts(sourceParts)
   const textParts = normalizedParts.filter(p => p.text && !p.thought)
   const text = textParts.map(p => p.text).join('')
   
@@ -254,6 +258,9 @@ export function contentToMessage(content: Content, id?: string): Message {
     // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
     // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
     id: id || getContentNodeId(content) || generateId(),
+    // BR-01：透传父节点 id（首条消息为 null）——前端据此判断根节点，
+    // 编辑根节点时自动降级为「原地保存」（根节点无父节点可挂编辑候选）
+    parentId: content.parentId,
     role,
     content: text,
     timestamp: Date.now(),
@@ -263,6 +270,8 @@ export function contentToMessage(content: Content, id?: string): Message {
     // 总结消息标记（通常由 contentToMessageEnhanced 处理，这里保持一致）
     isSummary: content.isSummary,
     isAutoSummary: content.isAutoSummary,
+    isSummarized: content.isSummarized,
+    summaryTokenStats: content.summaryTokenStats,
     metadata: {
       // 存储模型版本（仅 model 消息有值）
       modelVersion: content.modelVersion,
@@ -292,7 +301,9 @@ export function contentToMessage(content: Content, id?: string): Message {
  * 同时会从 inlineData 中提取附件信息
  */
 export function contentToMessageEnhanced(content: Content, id?: string): Message {
-  const normalizedParts = normalizeFunctionCallParts(content.parts)
+  // M1：后端消息可能缺 parts 字段，按空数组容错，避免 normalizeFunctionCallParts 抛 TypeError
+  const sourceParts = Array.isArray(content.parts) ? content.parts : []
+  const normalizedParts = normalizeFunctionCallParts(sourceParts)
   const textParts = normalizedParts.filter(p => p.text && !p.thought)
   const text = textParts.map(p => p.text).join('')
   
@@ -356,6 +367,9 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
     // BR-01：优先透传后端稳定节点 id（content.id），不再每次加载重新生成；
     // 无 id（旧后端/流式占位）时回退生成，保持向后兼容。
     id: id || getContentNodeId(content) || generateId(),
+    // BR-01：透传父节点 id（首条消息为 null）——前端据此判断根节点，
+    // 编辑根节点时自动降级为「原地保存」（根节点无父节点可挂编辑候选）
+    parentId: content.parentId,
     role,
     content: text,
     // 使用后端存储的时间戳，如果没有则为 0（前端会判断不显示）
@@ -367,7 +381,9 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
     isFunctionResponse,  // 标记是否为纯 functionResponse 消息
     isSummary: content.isSummary,  // 标记是否为总结消息
     isAutoSummary: content.isAutoSummary,  // 标记是否为自动触发的总结消息
+    isSummarized: content.isSummarized,  // 标记是否已被总结覆盖（逻辑截断）
     summarizedMessageCount: content.summarizedMessageCount,  // 总结消息覆盖的消息数量
+    summaryTokenStats: content.summaryTokenStats,
     metadata: {
       modelVersion: content.modelVersion,
       usageMetadata: content.usageMetadata,

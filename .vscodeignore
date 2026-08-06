@@ -30,6 +30,7 @@ coverage/**
 diff_analyzer.py
 graycode-settings*.json
 limcode-settings*.json
+splash-preview.html
 report.md
 .env
 .env.*

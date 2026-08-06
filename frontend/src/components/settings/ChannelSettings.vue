@@ -697,7 +697,7 @@ onMounted(async () => {
     
     <!-- 配置表单 -->
     <div v-if="currentConfig" class="config-form">
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="api-url">
         <label>{{ t('components.settings.channelSettings.form.apiUrl.label') }}</label>
         <input
           :value="currentConfig.url"
@@ -709,7 +709,7 @@ onMounted(async () => {
         />
       </div>
       
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="api-key">
         <label>{{ t('components.settings.channelSettings.form.apiKey.label') }}</label>
         <div class="input-with-action">
           <input
@@ -748,7 +748,7 @@ onMounted(async () => {
       </div>
       
       <!-- 模型管理器 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="model-list">
         <ModelManager
           :config-id="currentConfig.id"
           :models="currentConfig.models || []"
@@ -759,11 +759,11 @@ onMounted(async () => {
       </div>
       
       <!-- 流式输出 -->
-      <div class="form-group checkbox-group">
+      <div class="form-group checkbox-group" data-search-anchor="stream-output">
         <label class="custom-checkbox">
           <input
             type="checkbox"
-            :checked="currentConfig.options?.stream ?? false"
+            :checked="currentConfig.options?.stream ?? true"
             @change="(e: any) => updateOption('stream', e.target.checked)"
           />
           <span class="checkmark"></span>
@@ -772,7 +772,7 @@ onMounted(async () => {
       </div>
       
       <!-- 渠道类型显示 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="channel-type">
         <label>{{ t('components.settings.channelSettings.form.channelType.label') }}</label>
         <div class="type-display">
           <span class="type-badge">{{ getTypeName(currentConfig.type) }}</span>
@@ -780,7 +780,7 @@ onMounted(async () => {
       </div>
       
       <!-- 工具调用格式 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="tool-mode">
         <label>{{ t('components.settings.channelSettings.form.toolMode.label') }}</label>
         <CustomSelect
           :model-value="currentConfig.toolMode || 'function_call'"
@@ -801,7 +801,7 @@ onMounted(async () => {
       </div>
       
       <!-- 多模态工具 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="multimodal">
         <div class="checkbox-with-hint">
           <label class="custom-checkbox">
             <input
@@ -909,7 +909,7 @@ onMounted(async () => {
       </div>
       
       <!-- Strict Tool Use -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="strict-tools">
         <div class="checkbox-with-hint">
           <label class="custom-checkbox">
             <input
@@ -948,7 +948,7 @@ onMounted(async () => {
         </div>
       </div>
       
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="timeout">
         <label>{{ t('components.settings.channelSettings.form.timeout.label') }}</label>
         <input
           :value="currentConfig.timeout"
@@ -958,7 +958,7 @@ onMounted(async () => {
         />
       </div>
       
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="max-context-tokens">
         <label>{{ t('components.settings.channelSettings.form.maxContextTokens.label') }}</label>
         <input
           :value="currentConfig.maxContextTokens || 256000"
@@ -970,7 +970,7 @@ onMounted(async () => {
       </div>
       
       <!-- 上下文管理 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="context-management">
         <button
           class="advanced-toggle"
           @click="showContextThreshold = !showContextThreshold"
@@ -1031,7 +1031,7 @@ onMounted(async () => {
 
       
       <!-- 工具配置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="tool-options">
         <button
           class="advanced-toggle"
           @click="showToolOptions = !showToolOptions"
@@ -1049,7 +1049,7 @@ onMounted(async () => {
       </div>
       
       <!-- Token 计数方式 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="token-count-method">
         <button
           class="advanced-toggle"
           @click="showTokenCountMethod = !showTokenCountMethod"
@@ -1070,7 +1070,7 @@ onMounted(async () => {
       </div>
       
       <!-- 高级选项 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="advanced-options">
         <button
           class="advanced-toggle"
           @click="showAdvancedOptions = !showAdvancedOptions"
@@ -1119,7 +1119,7 @@ onMounted(async () => {
       </div>
       
       <!-- 自定义 Body -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="custom-body">
         <button
           class="advanced-toggle"
           @click="showCustomBody = !showCustomBody"
@@ -1147,7 +1147,7 @@ onMounted(async () => {
       </div>
       
       <!-- 自定义标头 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="custom-headers">
         <button
           class="advanced-toggle"
           @click="showCustomHeaders = !showCustomHeaders"
@@ -1175,7 +1175,7 @@ onMounted(async () => {
       </div>
       
       <!-- 自动重试 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="auto-retry">
         <button
           class="advanced-toggle"
           @click="showRetryOptions = !showRetryOptions"
@@ -1230,7 +1230,7 @@ onMounted(async () => {
         </div>
       </div>
       
-      <div class="form-group checkbox-group">
+      <div class="form-group checkbox-group" data-search-anchor="channel-enabled">
         <label class="custom-checkbox">
           <input
             type="checkbox"

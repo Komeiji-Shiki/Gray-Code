@@ -26,11 +26,11 @@
  */
 
 import { defineStore } from 'pinia'
-import { computed as vueComputed } from 'vue'
-import type { Attachment, CheckpointRecord, StreamChunk } from '../types'
+import { computed as vueComputed, watch } from 'vue'
+import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
-import { replayTodoStateFromMessages } from '../utils/todoList'
+import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
@@ -100,6 +100,7 @@ import {
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
+  restoreSummarizedMessages as restoreSummarizedMessagesFn,
   clearMessages as clearMessagesFn
 } from './chat/messageActions'
 
@@ -127,13 +128,27 @@ import {
 } from './chat/tabActions'
 
 import type { StreamHandlerContext } from './chat/streamHandler'
+import { useSettingsStore } from './settingsStore'
 
 // 重新导出类型
 export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
 
+// 模块级初始化保护（HIGH）：App.vue onMounted / HMR 重挂载会重复调用 initialize()。
+// 若不幂等，会重复注册 onMessageFromExtension 订阅——每条 streamChunk 被重复处理 N 次
+// （文本重复追加、checkpoint 重复写入、tps 计数翻倍）。取消函数保留在模块级，
+// 重复调用时先注销旧监听再注册，保证任意时刻只有一份活跃订阅。
+let disposeChatStreamListener: (() => void) | null = null
+
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
+
+  // M1：平滑档位经 state 传递——streamChunkHandlers 每 chunk 只读 state.smoothMode，
+  // 不内联 useSettingsStore()（高频调用 + try/catch 吞错）。
+  const settingsStore = useSettingsStore()
+  watch(() => settingsStore.smoothStreaming, (v) => {
+    state.smoothMode.value = v
+  }, { immediate: true })
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
@@ -162,14 +177,31 @@ export const useChatStore = defineStore('chat', () => {
     return grouped
   })
 
+  /**
+   * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态 + 前缀消息引用快照。
+   * 前缀引用逐元素相等、窗口只增不减且响应解析表与缓存时逐项一致时，
+   * 仅从上次位置增量重放尾部（含旧尾消息——流式期间其 tools 会被原地追加/改写）；
+   * 其余结构变更自动回退全量重放。尾消息始终不纳入缓存，保证流式工具状态更新可见。
+   */
+  let todoReplayCache: {
+    scannedCount: number
+    messagesRef: Message[]
+    responseMap: Map<string, unknown>
+    list: TodoItem[] | null
+    anchorBackendIndex: number | null
+  } | null = null
+
   const todoSnapshot = vueComputed(() => {
+    const allMessages = state.allMessages.value
+    const len = allMessages.length
+
     const responseMap = new Map<string, unknown>()
 
     for (const [toolId, response] of state.toolResponseCache.value.entries()) {
       responseMap.set(toolId, response)
     }
 
-    for (const message of state.allMessages.value) {
+    for (const message of allMessages) {
       if (!message.isFunctionResponse || !Array.isArray(message.parts)) continue
       for (const part of message.parts) {
         const toolId = part.functionResponse?.id
@@ -179,9 +211,55 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    return replayTodoStateFromMessages(state.allMessages.value, {
-      resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
-    })
+    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量
+    const cache = todoReplayCache
+    let prefixOk = false
+    if (cache !== null && cache.messagesRef.length <= len) {
+      prefixOk = true
+      for (let i = 0; i < cache.scannedCount; i++) {
+        if (allMessages[i] !== cache.messagesRef[i]) {
+          prefixOk = false
+          break
+        }
+      }
+    }
+    if (prefixOk && cache !== null) {
+      // 响应解析表与缓存时逐项一致（引用比较）才可增量：toolResponseCache 可能被外部
+      // getToolResponseById 回填/改写而消息引用不变，任何差异一律回退全量重放
+      const cachedMap = cache.responseMap
+      if (responseMap.size !== cachedMap.size) {
+        prefixOk = false
+      } else {
+        for (const [toolId, response] of responseMap.entries()) {
+          if (cachedMap.get(toolId) !== response) {
+            prefixOk = false
+            break
+          }
+        }
+      }
+    }
+
+    const result = prefixOk && cache !== null
+      ? replayTodoStateFromMessages(allMessages, {
+          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId),
+          fromIndex: cache.scannedCount,
+          initialTodos: cache.list,
+          initialAnchorBackendIndex: cache.anchorBackendIndex,
+          initialTouched: cache.list !== null
+        })
+      : replayTodoStateFromMessages(allMessages, {
+          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
+        })
+
+    // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+    todoReplayCache = {
+      scannedCount: Math.max(0, len - 1),
+      messagesRef: allMessages,
+      responseMap,
+      list: result.todos,
+      anchorBackendIndex: result.anchorBackendIndex
+    }
+    return result
   })
 
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)
@@ -518,6 +596,7 @@ export const useChatStore = defineStore('chat', () => {
     restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
+  const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)
 
   // ============ 流式处理 ============
 
@@ -611,7 +690,11 @@ export const useChatStore = defineStore('chat', () => {
   // ============ 初始化 ============
   
   async function initialize(): Promise<void> {
-    onMessageFromExtension((message) => {
+    // 幂等保护：重复调用（HMR/App 重挂载）时先注销旧订阅再重新注册，
+    // 避免每条 streamChunk 被重复处理（文本重复追加、checkpoint 重复写入、tps 计数翻倍）。
+    disposeChatStreamListener?.()
+
+    disposeChatStreamListener = onMessageFromExtension((message) => {
       if (message.type === 'streamChunk') {
         handleStreamChunkWrapper(message.data)
       } else if (message.type === 'streamChunkBatch') {
@@ -678,6 +761,7 @@ export const useChatStore = defineStore('chat', () => {
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
+    smoothTexts: state.smoothTexts,
     error: state.error,
     
     // 计算属性
@@ -799,6 +883,7 @@ export const useChatStore = defineStore('chat', () => {
     // 上下文总结
     summarizeContext,
     cancelSummarizeRequest,
+    restoreSummarizedMessages,
 
     // 标签页
     openTabs: state.openTabs,

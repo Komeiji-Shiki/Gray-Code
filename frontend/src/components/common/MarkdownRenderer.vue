@@ -1,29 +1,16 @@
-<script setup lang="ts">
+<script lang="ts">
 /**
- * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
+ * 模块级单例（跨消息块共享）
  *
- * 使用 markdown-it 作为渲染引擎，支持：
- * - 完整 GFM 语法
- * - 脚注
- * - 定义列表
- * - 任务列表
- * - 代码高亮
- * - LaTeX 数学公式
+ * 文件存在性缓存 / 图片缓存 / 代码高亮缓存 / Mermaid 渲染队列 / markdown-it 实例
+ * 必须是真正的模块级状态：消息列表会同时挂载多个 MarkdownRenderer 实例，若这些状态
+ * 声明在 <script setup> 顶层，会随每个组件实例重新执行一遍（缓存失效、Mermaid 并发
+ * 渲染、重复创建 markdown-it 实例）。
+ *
+ * 因此这里用普通 <script> 块承载（每模块只执行一次），<script setup> 内仅引用。
  */
-
-import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Options } from 'markdown-it'
-import type Token from 'markdown-it/lib/token.mjs'
-import type Renderer from 'markdown-it/lib/renderer.mjs'
-import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import hljs from 'highlight.js'
-import katex from 'katex'
-import { sendToExtension, showNotification } from '@/utils/vscode'
-import { useI18n } from '@/i18n'
-import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
-
-// ===================== 模块级单例（跨消息块共享） =====================
 
 /** 工作区文件存在性缓存：路径 → 是否存在 */
 const fileExistenceCache = new Map<string, boolean>()
@@ -42,6 +29,60 @@ function setCached<V>(map: Map<string, V>, key: string, value: V): void {
     const oldestKey = map.keys().next().value
     if (oldestKey !== undefined) {
       map.delete(oldestKey)
+    }
+  }
+}
+
+/**
+ * 图片缓存字节预算（估算驻留内存）：base64 data URL 单条可达数 MB，
+ * 仅按条数限界会让叠加缓存膨胀到数百 MB；超限时按 FIFO 淘汰最旧条目。
+ * 字节数按 UTF-16 字符串驻留内存估算（length * 2）。
+ */
+const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
+/** 单张图片文件大小上限：超过则直接显示不缓存，避免单条击穿预算并连带淘汰整批小图 */
+const IMAGE_CACHE_MAX_SINGLE_BYTES = 1024 * 1024
+
+/** 估算 data URL 的驻留字节数（UTF-16，每字符 2 字节） */
+function estimateDataUrlBytes(dataUrl: string): number {
+  return dataUrl.length * 2
+}
+
+/** 估算 data URL 编码前的原始图片文件字节数（base64 载荷 ≈ 原始字节 * 4/3） */
+function estimateImageFileBytes(dataUrl: string): number {
+  const commaIndex = dataUrl.indexOf(',')
+  const base64Len = commaIndex >= 0 ? dataUrl.length - commaIndex - 1 : dataUrl.length
+  return Math.ceil(base64Len * 0.75)
+}
+
+/** 图片缓存写入：带总字节预算 + 单张大小上限 + 条数上限 */
+let imageCacheBytes = 0
+function setCachedImage(path: string, dataUrl: string): void {
+  // 单张超大图片直接显示不缓存（调用方仍会设置 src，仅跳过缓存写入）
+  if (estimateImageFileBytes(dataUrl) > IMAGE_CACHE_MAX_SINGLE_BYTES) {
+    return
+  }
+  const bytes = estimateDataUrlBytes(dataUrl)
+  const existing = imageCache.get(path)
+  if (existing !== undefined) {
+    imageCacheBytes -= estimateDataUrlBytes(existing)
+  }
+  imageCache.set(path, dataUrl)
+  imageCacheBytes += bytes
+  // 字节预算超限：按 FIFO 淘汰最旧条目，直到回到预算内（单张 ≤1MB 上限保证不会全部被清空）
+  while (imageCacheBytes > IMAGE_CACHE_MAX_BYTES && imageCache.size > 1) {
+    const oldestKey = imageCache.keys().next().value
+    if (oldestKey === undefined) break
+    const oldest = imageCache.get(oldestKey)!
+    imageCache.delete(oldestKey)
+    imageCacheBytes -= estimateDataUrlBytes(oldest)
+  }
+  // 条数上限兜底（与其它缓存一致）
+  if (imageCache.size > CACHE_MAX_SIZE) {
+    const oldestKey = imageCache.keys().next().value
+    if (oldestKey !== undefined) {
+      const oldest = imageCache.get(oldestKey)!
+      imageCache.delete(oldestKey)
+      imageCacheBytes -= estimateDataUrlBytes(oldest)
     }
   }
 }
@@ -66,6 +107,30 @@ function loadMermaid() {
   }
   return mermaidPromise
 }
+</script>
+
+<script setup lang="ts">
+/**
+ * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
+ *
+ * 使用 markdown-it 作为渲染引擎，支持：
+ * - 完整 GFM 语法
+ * - 脚注
+ * - 定义列表
+ * - 任务列表
+ * - 代码高亮
+ * - LaTeX 数学公式
+ */
+
+import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import type Token from 'markdown-it/lib/token.mjs'
+import type Renderer from 'markdown-it/lib/renderer.mjs'
+import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
+import hljs from 'highlight.js'
+import katex from 'katex'
+import { sendToExtension, showNotification } from '@/utils/vscode'
+import { useI18n } from '@/i18n'
+import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
 
 // 插件导入
 import footnote from 'markdown-it-footnote'
@@ -97,6 +162,12 @@ const containerRef = ref<HTMLElement | null>(null)
 
 // 代码块换行状态（同一条消息内尽量保持；key 为 data-block-id）
 const codeWrapOverrides = new Map<string, boolean>() // true => nowrap
+
+// 流式期间“超高”代码块（自然高度超过折叠阈值，流式结束恢复 max-height 后会塌缩）：
+// 结束/中断时为这些块保留展开态（keep-expanded），避免布局跳动丢失阅读位置；
+// 用户点击换行按钮或滚动离开该块后恢复正常高度限制。
+const CODE_BLOCK_COLLAPSE_HEIGHT = 400
+const streamingOverHeightBlockIds = new Set<string>()
 
 // 复制按钮状态计时器存储
 const copyTimers = new Map<HTMLButtonElement, number>()
@@ -666,12 +737,21 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     let highlighted: string
     let langClass = ''
     if (lang && hljs.getLanguage(lang)) {
-      try {
-        highlighted = hljs.highlight(code, { language: lang }).value
-        langClass = `language-${lang}`
-      } catch {
-        highlighted = escapeHtml(code)
+      // 已知语言路径复用与 auto 相同的模块级有界缓存：流式期间同一段增长中的代码
+      // 每帧重复高亮，缓存命中直接取上次结果（键为 lang + 代码全文）
+      const cacheKey = `${lang}:${code}`
+      const cached = codeHighlightCache.get(cacheKey)
+      if (cached !== undefined) {
+        highlighted = cached
+      } else {
+        try {
+          highlighted = hljs.highlight(code, { language: lang }).value
+          setCached(codeHighlightCache, cacheKey, highlighted)
+        } catch {
+          highlighted = escapeHtml(code)
+        }
       }
+      langClass = `language-${lang}`
     } else if (lang) {
       // 标注了语言但 hljs 不识别的，尝试 auto + 缓存
       const cacheKey = `auto:${code}`
@@ -996,6 +1076,10 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
 // 渲染结果（用 shallowRef 而不是 computed，便于在流式阶段节流，且保持已完成消息的 HTML 引用稳定）
 const renderedContent = shallowRef('')
 
+// 流式类的“滞后副本”：isStreaming 变 false 时先保留 is-streaming 类，
+// 等完成态渲染把 keep-expanded 应用到超高块后再解除，使过渡原子化（无塌缩跳变）。
+const isStreamingClassActive = ref(props.isStreaming)
+
 const STREAM_RENDER_DEBOUNCE_MS = 120
 const STREAM_RENDER_MAX_WAIT_MS = 180
 /**
@@ -1145,6 +1229,11 @@ function scheduleRender() {
   clearRenderTimer()
 
   if (props.isStreaming) {
+    // 新流开始：激活流式类并清空上一轮的展开态记录（超高块会在每次渲染后重新测量记录）
+    if (!isStreamingClassActive.value) {
+      isStreamingClassActive.value = true
+      streamingOverHeightBlockIds.clear()
+    }
     const now = Date.now()
     const shouldRenderLeading = !!props.content && renderedContent.value === ''
     const shouldRenderByMaxWait = !!props.content && now - lastStreamingRenderAt >= STREAM_RENDER_MAX_WAIT_MS
@@ -1228,17 +1317,32 @@ function scheduleRender() {
 }
 
 /**
- * 回填代码块的换行状态与按钮提示
+ * 回填代码块的换行状态与按钮提示；同时维护流式保留展开态（B-M1）：
+ * - 流式期间/收尾窗口（is-streaming 类尚未解除，pre 仍为自然高度）测量并记录超高块；
+ * - 非流式时按记录恢复 keep-expanded（is-streaming 类负责流式期间的放开）；
+ * - 收尾窗口记录完毕后解除流式类，使过渡原子化。
  */
 function applyCodeBlockWrapStates() {
   if (!containerRef.value) return
 
   const blocks = containerRef.value.querySelectorAll<HTMLElement>('.code-block-container[data-block-id]')
+  // 记录窗口：流式期间，或“流式类尚未解除”的收尾窗口（此时 pre 仍为自然高度，可测 scrollHeight）
+  const recording = props.isStreaming || isStreamingClassActive.value
+
   blocks.forEach((block) => {
     const blockId = block.getAttribute('data-block-id') || ''
     const isNoWrap = codeWrapOverrides.get(blockId) === true
 
     block.classList.toggle('is-nowrap', isNoWrap)
+
+    if (recording) {
+      const pre = block.querySelector<HTMLElement>('pre.code-block-wrapper')
+      if (pre && pre.scrollHeight > CODE_BLOCK_COLLAPSE_HEIGHT) {
+        streamingOverHeightBlockIds.add(blockId)
+      }
+    }
+    // 非流式时按记录恢复展开态（流式期间由 is-streaming 类放开高度，无需 keep-expanded）
+    block.classList.toggle('keep-expanded', !props.isStreaming && streamingOverHeightBlockIds.has(blockId))
 
     const wrapBtn = block.querySelector<HTMLButtonElement>('.code-wrap-btn')
     if (wrapBtn) {
@@ -1250,6 +1354,59 @@ function applyCodeBlockWrapStates() {
       wrapBtn.setAttribute('aria-pressed', String(isNoWrap))
     }
   })
+
+  // 流式结束：keep-expanded 已就位后解除流式类（过渡原子化，无塌缩跳变）
+  if (!props.isStreaming && isStreamingClassActive.value) {
+    isStreamingClassActive.value = false
+  }
+
+  // 用户滚动离开后恢复正常高度限制（IntersectionObserver 观察 keep-expanded 块）
+  observeKeepExpandedBlocks(blocks)
+}
+
+let keepExpandedObserver: IntersectionObserver | null = null
+const keepExpandedObservedBlocks = new Set<HTMLElement>()
+
+/**
+ * 释放某个代码块的流式保留展开态：恢复正常高度限制并停止观察。
+ * 触发时机：用户点击换行按钮，或该块滚动离开视口（IntersectionObserver）。
+ */
+function releaseKeepExpandedBlock(block: HTMLElement, blockId: string) {
+  streamingOverHeightBlockIds.delete(blockId)
+  block.classList.remove('keep-expanded')
+  keepExpandedObserver?.unobserve(block)
+  keepExpandedObservedBlocks.delete(block)
+}
+
+/** 观察 keep-expanded 块：一旦滚出视口即恢复正常高度限制 */
+function observeKeepExpandedBlocks(blocks: NodeListOf<HTMLElement>) {
+  // jsdom 等无 IntersectionObserver 的环境直接跳过（保留展开态直到用户点击换行按钮）
+  if (typeof IntersectionObserver === 'undefined') return
+
+  // 修剪已从 DOM 移除的观察目标（v-html 重建后旧元素失效）
+  for (const block of Array.from(keepExpandedObservedBlocks)) {
+    if (!block.isConnected) {
+      keepExpandedObserver?.unobserve(block)
+      keepExpandedObservedBlocks.delete(block)
+    }
+  }
+
+  if (!keepExpandedObserver) {
+    keepExpandedObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) continue
+        const block = entry.target as HTMLElement
+        releaseKeepExpandedBlock(block, block.getAttribute('data-block-id') || '')
+      }
+    })
+  }
+
+  for (const block of blocks) {
+    if (!block.classList.contains('keep-expanded')) continue
+    if (keepExpandedObservedBlocks.has(block)) continue
+    keepExpandedObservedBlocks.add(block)
+    keepExpandedObserver.observe(block)
+  }
 }
 
 /**
@@ -1272,6 +1429,9 @@ function handleCodeToolbarClick(event: Event) {
     } else {
       codeWrapOverrides.set(blockId, true)
     }
+
+    // 手动点击换行按钮视为用户已接管该块的展示：清除流式保留展开态，恢复正常高度限制（B-M1）
+    releaseKeepExpandedBlock(block, blockId)
 
     applyCodeBlockWrapStates()
     return
@@ -1402,7 +1562,8 @@ async function loadWorkspaceImages() {
       
       if (response?.success && response.data) {
         const dataUrl = `data:${response.mimeType || 'image/png'};base64,${response.data}`
-        setCached(imageCache, imgPath, dataUrl)
+        // 带字节预算写入缓存；超大图片跳过缓存但下方仍直接设置 src 显示
+        setCachedImage(imgPath, dataUrl)
         img.setAttribute('src', dataUrl)
         img.classList.remove('workspace-image')
         img.classList.add('loaded-image')
@@ -1545,11 +1706,14 @@ onUnmounted(()=> {
     window.clearTimeout(timer)
   })
   copyTimers.clear()
+  keepExpandedObserver?.disconnect()
+  keepExpandedObserver = null
+  keepExpandedObservedBlocks.clear()
 })
 </script>
 
 <template>
-  <div ref="containerRef" class="markdown-content" v-html="renderedContent"></div>
+  <div ref="containerRef" class="markdown-content" :class="{ 'is-streaming': isStreamingClassActive }" v-html="renderedContent"></div>
 
   <!-- 沉浸式全屏查看 -->
   <Teleport to="body">
@@ -1837,8 +2001,28 @@ onUnmounted(()=> {
   scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4)) transparent;
 }
 
+/* 流式期间长代码块不限制高度（自然展开，用户跟随输出阅读）：
+ * v-html 每次内容更新会整体重建 DOM，pre.code-block-wrapper 作为内部滚动容器会被销毁重建，
+ * scrollTop 因此被重置为 0——流式输出中长代码块一旦出现滚动条就无法滚动。
+ * 流式期间去掉 max-height 让代码块随输出自然增高。
+ * 注意：这里用 overflow: visible（同时声明两轴）。若只声明 overflow-y: visible，
+ * 与基础规则的 overflow-x: hidden 并存时，计算值会变成 overflow-y: auto（声明无效）；
+ * 换行开关（.is-nowrap 的 overflow-x: auto）在本规则之后声明，同优先级按源码顺序覆盖生效。 */
+.markdown-content.is-streaming :deep(.code-block-container pre.code-block-wrapper) {
+  max-height: none;
+  overflow: visible;
+}
+
 .markdown-content :deep(.code-block-container.is-nowrap pre.code-block-wrapper) {
-  overflow-x: auto; /* 不换行时开启横向滚动 */
+  /* 不换行时开启横向滚动（置于流式规则之后：同优先级按源码顺序覆盖其 overflow-x） */
+  overflow-x: auto;
+}
+
+/* 流式结束/中断：对“流式期间超高”的代码块保留展开态（keep-expanded），
+ * 避免 is-streaming 类移除瞬间高度从自然高度塌缩回 400px、视口上移丢失阅读位置；
+ * 用户点击换行按钮或滚动离开该块后恢复正常限制（见 applyCodeBlockWrapStates）。 */
+.markdown-content :deep(.code-block-container.keep-expanded pre.code-block-wrapper) {
+  max-height: none;
 }
 
 /* 代码块内的 code */

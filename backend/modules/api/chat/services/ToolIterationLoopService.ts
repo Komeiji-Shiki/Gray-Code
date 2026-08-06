@@ -48,6 +48,7 @@ import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './s
 import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
+import type { DynamicRuntimeContext } from '../../../prompt/PromptManager';
 import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
@@ -74,6 +75,19 @@ export const STREAM_CANCEL_TOOL_SETTLE_GRACE_MS = 3000;
 export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
 
 /**
+ * 收尾窗口超时后给 gen.return() 的回收窗口（毫秒）。
+ *
+ * M2：工具不响应 abort 且永不结束时，drain 超时返回前必须显式调用 gen.return()，
+ * 让 executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放等）有机会执行。
+ * 但生成器若挂在某个不可中断的 await 上，return() 也只能排队等待——窗口结束即放弃并记录
+ * 日志（JS 无法强制中断挂起的 promise），避免请求进一步被拖长。
+ */
+export const GEN_RETURN_RECOVERY_GRACE_MS = 500;
+
+/** drain 收尾日志（模块级，供 drainToolExecutionGeneratorAfterAbort 使用） */
+const drainLog = Logger.get('ToolLoopDrain');
+
+/**
  * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
  *
  * 必须先等 initialNext（即主循环里那次正在恢复生成器的 next() 请求）：
@@ -84,17 +98,20 @@ export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
  *
  * 窗口（graceMs）内拿到最终值则返回；超时（工具不响应 abort 且永不结束）返回 undefined，
  * 调用方走既有取消路径，保证请求不永久挂起。
+ *
+ * M2：超时路径会显式调用 gen.return() 回收生成器（带独立短窗口），确保
+ * executeFunctionCallsWithProgress 的 finally（mailbox drain epoch 释放）尽量执行，
+ * 避免生成器被放弃后资源泄漏。
  */
 export async function drainToolExecutionGeneratorAfterAbort(
     gen: AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void>,
     initialNext: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>,
     graceMs: number
 ): Promise<ToolExecutionFullResult | undefined> {
-    const drainDeadline = Date.now() + graceMs;
-    const raceWithDeadline = <T>(promise: Promise<T>): Promise<T | undefined> => {
+    const raceWithTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), Math.max(0, drainDeadline - Date.now()));
+            timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
         });
         // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
         promise.then(
@@ -104,13 +121,39 @@ export async function drainToolExecutionGeneratorAfterAbort(
         return Promise.race([promise, timeoutPromise]);
     };
 
-    let drained = await raceWithDeadline(initialNext);
+    const drainDeadline = Date.now() + graceMs;
+    let drained = await raceWithTimeout(initialNext, drainDeadline - Date.now());
     while (drained !== undefined && !drained.done && Date.now() < drainDeadline) {
-        drained = await raceWithDeadline(gen.next());
+        drained = await raceWithTimeout(gen.next(), drainDeadline - Date.now());
     }
 
     if (drained !== undefined && drained.done) {
         return drained.value as ToolExecutionFullResult;
+    }
+
+    // M2：窗口超时（工具不响应 abort 且永不结束）——回收生成器，让 try/finally 执行。
+    // return 给独立短窗口：生成器若挂在不可中断的 await 上，return() 只能排队，窗口结束
+    // 即放弃（finally 无法强制执行），记录日志便于排查泄漏。
+    try {
+        // TReturn 为 ToolExecutionFullResult，undefined 需经类型断言传入
+        const returnResult = gen.return(undefined as unknown as ToolExecutionFullResult);
+        // 伪生成器（测试 mock 等）的 return() 可能不返回 promise：此时没有 finally 可回收，
+        // 直接放弃，不做竞速（raceWithTimeout 需要 promise）。
+        if (!returnResult || typeof (returnResult as Promise<unknown>)?.then !== 'function') {
+            return undefined;
+        }
+        const returned = await raceWithTimeout(returnResult as Promise<unknown>, GEN_RETURN_RECOVERY_GRACE_MS);
+        if (returned === undefined) {
+            drainLog.warn('drain_return_timeout', {
+                graceMs,
+                note: 'generator did not respond to return() within grace window; its finally may not have run',
+            });
+        }
+    } catch (error) {
+        drainLog.warn('drain_return_failed', {
+            graceMs,
+            error: (error as Error)?.message ?? String(error),
+        });
     }
     return undefined;
 }
@@ -188,6 +231,8 @@ export interface NonStreamToolLoopResult {
     content?: Content;
     /** 是否超过最大工具迭代次数 */
     exceededMaxIterations: boolean;
+    /** 是否因主请求取消（abortSignal.aborted）提前终止（与流式路径的 cancelled 输出对齐） */
+    cancelled?: boolean;
 }
 
 /**
@@ -208,6 +253,37 @@ export class ToolIterationLoopService {
      * 持续后移，provider 前缀缓存无法命中；新回合（isNewTurn）与总结成功后重新评估时清除。
      */
     private readonly granularFallbackStartByConversation = new Map<string, number>();
+
+    /**
+     * 回合内动态运行时上下文缓存（todoList / pinnedFiles / skills / workspaceUri）。
+     *
+     * 现状：同一回合内 runToolLoop 可能被多次调用（新回合生成 → 工具确认 / 隐藏
+     * functionResponse 续跑），每次调用都重新 getCustomMetadata 读取元数据并 structuredClone
+     * 整份 meta。这里按「会话 + 回合起始消息 id」缓存一次加载结果：同一回合续跑直接复用；
+     * 新回合（起始消息 id 变化）自动重新加载；自动总结删除锚点消息导致 id 变化时同样重新加载。
+     * 与 granularFallbackStartByConversation 同模式保持有界（M5）。
+     */
+    private readonly runtimeContextByTurn = new Map<string, { context: DynamicRuntimeContext; turnStartId: string | null }>();
+
+    /**
+     * 会话级 Map 最大条目数（M5）。
+     *
+     * 会话删除路径（webview 层 deleteConversation → ConversationManager.deleteConversation）
+     * 不经过本服务，无法在该路径挂清理 hook；这里在 set 处保持有界，超出后淘汰最旧条目
+     * （仅影响被淘汰会话的“回合内起点复用 / 尝试计数”，下一回合自然重新规划/清零，无副作用）。
+     */
+    private static readonly MAX_CONVERSATION_SCOPED_MAP_ENTRIES = 512;
+
+    /** M5：会话级 Map 写入时保持有界（淘汰最旧条目，防止删除会话后条目残留导致无界增长） */
+    private evictOldestIfOversized<K>(map: Map<K, unknown>): void {
+        while (map.size > ToolIterationLoopService.MAX_CONVERSATION_SCOPED_MAP_ENTRIES) {
+            const oldestKey = map.keys().next().value;
+            if (oldestKey === undefined) {
+                break;
+            }
+            map.delete(oldestKey);
+        }
+    }
 
     constructor(
         private channelManager: ChannelManager,
@@ -252,6 +328,28 @@ export class ToolIterationLoopService {
             pinnedFiles,
             skills
         };
+    }
+
+    /**
+     * 回合内动态运行时上下文复用：同一回合（同一起始用户消息 id）内只加载一次。
+     * turnStartId 为 null（无起始用户消息可锚定）时不缓存，保持原有每次加载语义。
+     */
+    private async getOrLoadRuntimeContext(
+        conversationId: string,
+        turnStartId: string | null
+    ): Promise<DynamicRuntimeContext> {
+        if (turnStartId !== null) {
+            const cached = this.runtimeContextByTurn.get(conversationId);
+            if (cached && cached.turnStartId === turnStartId) {
+                return cached.context;
+            }
+        }
+        const context = await this.loadDynamicRuntimeContext(conversationId);
+        if (turnStartId !== null) {
+            this.runtimeContextByTurn.set(conversationId, { context, turnStartId });
+            this.evictOldestIfOversized(this.runtimeContextByTurn);
+        }
+        return context;
     }
 
     private orderToolResultsByCallSequence(
@@ -331,6 +429,54 @@ export class ToolIterationLoopService {
             }
         }
         return -1;
+    }
+
+    /**
+     * 会话级自动总结已用次数：conversationId → { turnStartMessageId, attempts }。
+     *
+     * M3：autoSummarizeAttempts 原为每次 runToolLoop / runNonStreamLoop 的局部变量，
+     * 工具确认后 isNewTurn=false 的续跑会重新从 0 计数，maxAutoSummarizeAttemptsPerTurn
+     * 形同虚设。这里以「回合起始用户消息 id」作为真实用户回合标识：新回合清零，续跑读取并
+     * 累加。同一会话在 H1 写序竞态修复后不会并发两个流式循环（webview 层等待旧流退出），
+     * 单写者假设成立；新回合 set 覆盖旧条目即完成清理，Map 不随回合数增长。
+     */
+    private readonly turnAutoSummarizeAttempts = new Map<string, { turnStartMessageId: string; attempts: number }>();
+
+    /**
+     * M3：解析本回合已用的自动总结尝试次数。
+     *
+     * - 新真实用户回合（isNewTurn=true）或回合锚点变化（总结等结构变化导致起始消息漂移）：
+     *   清零并记录新锚点；
+     * - 回合续跑（retry / 工具确认后的继续，isNewTurn=false 且锚点未变）：复用已用次数。
+     */
+    private resolveTurnAutoSummarizeAttempts(
+        conversationId: string,
+        turnStartMessageId: string | undefined,
+        isNewTurn: boolean,
+    ): number {
+        const anchor = typeof turnStartMessageId === 'string' && turnStartMessageId.trim()
+            ? turnStartMessageId.trim()
+            : '';
+        const current = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (isNewTurn || anchor !== current?.turnStartMessageId) {
+            this.turnAutoSummarizeAttempts.set(conversationId, { turnStartMessageId: anchor, attempts: 0 });
+            // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+            this.evictOldestIfOversized(this.turnAutoSummarizeAttempts);
+            return 0;
+        }
+        return current.attempts;
+    }
+
+    /**
+     * M3：累加并持久化一次自动总结尝试（供总结分支在 autoSummarizeAttempts++ 处调用）。
+     */
+    private consumeTurnAutoSummarizeAttempt(conversationId: string, currentAttempts: number): number {
+        const nextAttempts = currentAttempts + 1;
+        const entry = this.turnAutoSummarizeAttempts.get(conversationId);
+        if (entry) {
+            entry.attempts = nextAttempts;
+        }
+        return nextAttempts;
     }
 
     /**
@@ -512,7 +658,6 @@ export class ToolIterationLoopService {
         // 上下文裁剪/自动总结只允许在真实用户回合边界推进一次。工具确认后的继续属于同一回合，
         // 只能复用已有起点；否则前台 SubAgent 的大 functionResponse 会在回合中途挤掉整段旧历史。
         let contextManagementEvaluatedForTurn = !isNewTurn;
-        let autoSummarizeAttempts = 0;
         // 新回合（含总结成功后重新评估）不继承上一回合的 fallback 切点，重新规划。
         if (isNewTurn) {
             this.granularFallbackStartByConversation.delete(conversationId);
@@ -536,6 +681,15 @@ export class ToolIterationLoopService {
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // 回合锚点：起始用户消息 id（缓存命中分支与新回合分支共用，用于回合内运行时上下文复用）
+        const turnStartId = turnStartIndex >= 0 ? (historyRef[turnStartIndex]?.id ?? null) : null;
+        // M3：自动总结已用次数提升到「真实用户回合」级——新回合清零，续跑（isNewTurn=false）
+        // 从会话级记录读取已用次数，避免续跑重新从 0 计数导致 maxAutoSummarizeAttemptsPerTurn 失效。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -543,7 +697,7 @@ export class ToolIterationLoopService {
 
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
                 beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
@@ -571,8 +725,8 @@ export class ToolIterationLoopService {
                 afterHistoryMessages: cached.afterHistoryMessages,
                 historyPlacement: cached.historyPlacement
             };
-            // 加载 runtime 以便解析系统提示词
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            // 加载 runtime 以便解析系统提示词（回合内复用同一份，避免重复读元数据）
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
         // -1 表示无限制
@@ -627,8 +781,9 @@ export class ToolIterationLoopService {
                 this.summarizeService &&
                 autoSummarizeAttempts < maxAutoSummarizeAttempts
             ) {
-                autoSummarizeAttempts++;
-                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
                 // 先通知前端显示“自动总结中”提示
                 yield {
@@ -644,7 +799,8 @@ export class ToolIterationLoopService {
                     summarizeResult = await this.summarizeService.handleAutoSummarize(
                         conversationId,
                         configId,
-                        merged.signal
+                        merged.signal,
+                        modelOverride
                     );
                 } finally {
                     merged.dispose();
@@ -659,7 +815,9 @@ export class ToolIterationLoopService {
                             conversationId,
                             autoSummary: true as const,
                             summaryContent: summarizeResult.summaryContent,
-                            insertIndex: summarizeResult.insertIndex
+                            insertIndex: summarizeResult.insertIndex,
+                            // 逻辑截断：本次总结标记（被覆盖）的消息数；前端据此标记本地消息并插入总结
+                            removedCount: summarizeResult.removedCount ?? 0
                         } satisfies ChatStreamAutoSummaryData;
                     }
 
@@ -721,7 +879,7 @@ export class ToolIterationLoopService {
                 }
             }
 
-            if (trimResult.needsAutoSummarize) {
+            if (trimResult.needsAutoSummarize || trimResult.needsContextFallback) {
                 // 总结失败、总结服务不可用或本回合尝试次数耗尽：使用不持久化的细粒度安全裁剪，
                 // 不再把超阈值全量历史直接交给 provider，也不永久修改 trimState。
                 // 回合内首次评估（含总结成功后重新评估）重新规划切点；后续工具迭代复用已确定起点，
@@ -735,9 +893,12 @@ export class ToolIterationLoopService {
                     historyOptions,
                     modelOverride,
                     dynamicContextStrategy,
-                    this.granularFallbackStartByConversation.get(conversationId)
+                    this.granularFallbackStartByConversation.get(conversationId),
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+                // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+                this.evictOldestIfOversized(this.granularFallbackStartByConversation);
             }
 
             // 一旦本回合即将真正请求主模型，后续工具迭代固定复用当前裁剪起点。
@@ -1039,22 +1200,26 @@ export class ToolIterationLoopService {
                     if (abortSignal?.aborted) {
                         break;
                     }
-                    // waitForNextSettlement 本身无 abort 监听：若某工具不响应
-                    // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
-                    // 与 abort 事件做 race，取消时立即退出等待循环。
-                    let onAbort: (() => void) | undefined;
-                    const abortPromise = abortSignal
-                        ? new Promise<void>((resolve) => {
+                    if (abortSignal) {
+                        // waitForNextSettlement 本身无 abort 监听：若某工具不响应
+                        // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
+                        // 与 abort 事件做 race，取消时立即退出等待循环。
+                        let onAbort: (() => void) | undefined;
+                        const abortPromise = new Promise<void>((resolve) => {
                             onAbort = () => resolve();
                             abortSignal.addEventListener('abort', onAbort, { once: true });
-                        })
-                        : Promise.resolve();
-                    try {
-                        await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
-                    } finally {
-                        if (onAbort && abortSignal) {
-                            abortSignal.removeEventListener('abort', onAbort);
+                        });
+                        try {
+                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
+                        } finally {
+                            if (onAbort) {
+                                abortSignal.removeEventListener('abort', onAbort);
+                            }
                         }
+                    } else {
+                        // 无 abort 信号时直接等下一次落定——若用已 resolve 的 Promise 做 race，
+                        // 循环会退化为纯忙等（100% CPU）直到工具落定。
+                        await earlyToolProgressQueue.waitForNextSettlement();
                     }
                 }
                 for (const statusChunk of drainSettledEarlyToolStatuses()) {
@@ -1450,12 +1615,13 @@ export class ToolIterationLoopService {
         modelOverride?: string,
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        isNewTurn: boolean = true
+        isNewTurn: boolean = true,
+        abortSignal?: AbortSignal,
+        summarizeAbortSignal?: AbortSignal
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
         let contextManagementEvaluatedForTurn = !isNewTurn;
-        let autoSummarizeAttempts = 0;
         // 新回合不继承上一回合的 fallback 切点，重新规划。
         if (isNewTurn) {
             this.granularFallbackStartByConversation.delete(conversationId);
@@ -1471,6 +1637,14 @@ export class ToolIterationLoopService {
         // 不能重新生成并让动态上下文跟随历史尾部漂移。
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
         const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        // 回合锚点：起始用户消息 id（缓存命中分支与新回合分支共用，用于回合内运行时上下文复用）
+        const turnStartId = turnStartIndex >= 0 ? (historyRef[turnStartIndex]?.id ?? null) : null;
+        // M3：与流式路径一致——自动总结已用次数按「真实用户回合」记录，续跑读取并累加。
+        let autoSummarizeAttempts = this.resolveTurnAutoSummarizeAttempts(
+            conversationId,
+            historyRef[turnStartIndex]?.id,
+            isNewTurn,
+        );
 
         if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
             await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
@@ -1482,7 +1656,7 @@ export class ToolIterationLoopService {
         let runtimeContext: any = undefined;
 
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
                 beforeHistoryMessages: promptContextBundle.beforeHistoryMessages,
@@ -1509,12 +1683,18 @@ export class ToolIterationLoopService {
                 historyPlacement: cached.historyPlacement
             };
 
-            runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
+
+            // D2：与流式路径（runToolLoop 循环顶部）对齐——主请求取消时立即返回，
+            // 不再发起新一轮 API 请求（此前会继续调 generate，取消语义依赖 provider 侧）。
+            if (abortSignal?.aborted) {
+                return { exceededMaxIterations: false, cancelled: true };
+            }
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
             let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
@@ -1543,13 +1723,24 @@ export class ToolIterationLoopService {
                 this.summarizeService &&
                 autoSummarizeAttempts < maxAutoSummarizeAttempts
             ) {
-                autoSummarizeAttempts++;
-                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration });
+                // M3：累加并持久化到会话级回合记录（续跑时读回）
+                autoSummarizeAttempts = this.consumeTurnAutoSummarizeAttempt(conversationId, autoSummarizeAttempts);
+                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration, autoSummarizeAttempts });
 
-                const summarizeResult = await this.summarizeService.handleAutoSummarize(
-                    conversationId,
-                    configId
-                );
+                // H5：非流式路径透传 abort 信号——主请求取消（abortSignal）或仅取消总结
+                // （summarizeAbortSignal）任一触发都中止总结调用，与流式路径对齐。
+                const merged = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
+                let summarizeResult: Awaited<ReturnType<SummarizeService['handleAutoSummarize']>>;
+                try {
+                    summarizeResult = await this.summarizeService.handleAutoSummarize(
+                        conversationId,
+                        configId,
+                        merged.signal,
+                        modelOverride
+                    );
+                } finally {
+                    merged.dispose();
+                }
 
                 if (summarizeResult.success) {
                     // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
@@ -1581,7 +1772,7 @@ export class ToolIterationLoopService {
                 }
             }
 
-            if (trimResult.needsAutoSummarize) {
+            if (trimResult.needsAutoSummarize || trimResult.needsContextFallback) {
                 // 与流式路径一致：回合内首次评估重新规划切点，后续迭代复用已确定起点（前缀缓存稳定）。
                 if (!contextManagementEvaluatedForTurn) {
                     this.granularFallbackStartByConversation.delete(conversationId);
@@ -1592,9 +1783,12 @@ export class ToolIterationLoopService {
                     historyOptions,
                     modelOverride,
                     dynamicContextStrategy,
-                    this.granularFallbackStartByConversation.get(conversationId)
+                    this.granularFallbackStartByConversation.get(conversationId),
+                    trimResult.fixedPromptTokens
                 );
                 this.granularFallbackStartByConversation.set(conversationId, trimResult.trimStartIndex);
+                // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+                this.evictOldestIfOversized(this.granularFallbackStartByConversation);
             }
 
             contextManagementEvaluatedForTurn = true;
