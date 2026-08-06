@@ -271,7 +271,9 @@ const ja: LanguageMessages = {
             shortMinute: 'm',
             dailyTitle: '1 日あたりの使用時間',
             monthlyTitle: '月ごとの使用時間（月をクリックで日別詳細）',
+            monthlyTitleShort: '月ごとの使用時間',
             monthActiveDays: '{days} 日間アクティブ',
+            onlyShowLatest: '直近 {days} 日のみ表示',
             expandMonth: 'この月の日別詳細を展開',
             heatmapTitle: '直近 7 日間の活動ヒートマップ（ホバーで詳細）'
         },
@@ -320,6 +322,8 @@ const ja: LanguageMessages = {
             skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
             tpsTooltip: 'TPS（トークン毎秒）',
+            tpsTokenizerReal: 'モデルトークナイザーによる正確なカウント',
+            tpsTokenizerEstimate: 'トークナイザー未準備、文字数で推定中',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
