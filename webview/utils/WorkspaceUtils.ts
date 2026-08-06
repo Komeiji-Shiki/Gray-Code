@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { t } from '../../backend/i18n';
 import { getWorkspaceManager } from './WorkspaceManager';
 
@@ -127,16 +128,44 @@ export function getRelativePathFromAbsolute(absolutePath: string): string {
 }
 
 /**
+ * 按 URI 解析工作区文件夹（含已关闭的对话绑定工作区）。
+ *
+ * 多工作区语义：对话绑定工作区必须独立于“当前打开的工作区”——桌面版切换打开
+ * 工作区后绑定工作区会从 workspaceFolders 移除，但对话仍需在该工作区内读写文件。
+ * URI 未命中已打开文件夹时，目录仍存在则按 URI 重建虚拟文件夹（index = -1）。
+ */
+export function resolveWorkspaceFolderByUri(workspaceUri?: string): vscode.WorkspaceFolder | undefined {
+  if (!workspaceUri) return undefined;
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (workspaceFolders) {
+    const open = workspaceFolders.find(f => f.uri.toString() === workspaceUri);
+    if (open) return open;
+  }
+  // 仅处理本地 file 工作区；远程 scheme（vscode-remote:// 等）不做虚拟解析
+  if (workspaceUri.includes('://') && !workspaceUri.startsWith('file://')) {
+    return undefined;
+  }
+  try {
+    const uri = workspaceUri.startsWith('file://') ? vscode.Uri.parse(workspaceUri) : vscode.Uri.file(workspaceUri);
+    if (uri.scheme !== 'file' || !uri.fsPath) return undefined;
+    if (!fs.existsSync(uri.fsPath) || !fs.statSync(uri.fsPath).isDirectory()) return undefined;
+    return {
+      uri,
+      name: path.basename(uri.fsPath) || uri.fsPath,
+      index: -1,
+      fsPath: uri.fsPath
+    } as vscode.WorkspaceFolder;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 检查文件是否存在
  */
 export async function checkFileExists(relativePath: string, workspaceUri: string): Promise<boolean> {
   try {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-      return false;
-    }
-    
-    const workspaceFolder = workspaceFolders.find(f => f.uri.toString() === workspaceUri);
+    const workspaceFolder = resolveWorkspaceFolderByUri(workspaceUri);
     if (!workspaceFolder) {
       return false;
     }
@@ -183,9 +212,10 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
     } else if (path.isAbsolute(filePath)) {
       fileUri = vscode.Uri.file(filePath);
     } else {
+      // 对话绑定工作区可能已关闭：按 URI 虚拟解析，保证绑定工作区独立
       const targetWorkspace = workspaceUri
-        ? workspaceFolders.find(f => f.uri.toString() === workspaceUri)
-        : workspaceFolders[0];
+        ? resolveWorkspaceFolderByUri(workspaceUri)
+        : workspaceFolders?.[0];
       if (!targetWorkspace) {
         return { valid: false, error: t('webview.errors.workspaceNotFound'), errorCode: 'WORKSPACE_NOT_FOUND' };
       }
@@ -216,6 +246,18 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
         if (fileFsPath.startsWith(workspaceFsPath + '/') || fileFsPath === workspaceFsPath) {
           belongingWorkspace = folder;
           break;
+        }
+      }
+
+      // 对话绑定工作区已关闭：按 URI 虚拟解析归属（大小写不敏感比对，兼容 Windows）
+      if (!belongingWorkspace && workspaceUri) {
+        const virtual = resolveWorkspaceFolderByUri(workspaceUri);
+        if (virtual) {
+          const normalizedFile = fileUri.fsPath.replace(/\\/g, '/').toLowerCase();
+          const normalizedVirtual = (virtual as any).fsPath.replace(/\\/g, '/').toLowerCase();
+          if (normalizedFile.startsWith(normalizedVirtual + '/') || normalizedFile === normalizedVirtual) {
+            belongingWorkspace = virtual;
+          }
         }
       }
     }
@@ -266,6 +308,11 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
       relativePath = fileFsPath.substring(workspacePath.length + 1);
     } else if (fileFsPath === workspacePath) {
       relativePath = '';
+    } else if (belongingWorkspace.index === -1) {
+      // 虚拟工作区（已关闭的绑定工作区）：用 fsPath 计算，避免 Uri.file 与
+      // Uri.parse 之间盘符大小写差异导致前缀匹配失败
+      const rel = path.relative((belongingWorkspace as any).fsPath, fileUri.fsPath);
+      relativePath = rel ? rel.replace(/\\/g, '/') : '';
     } else {
       // 回退到 VSCode API
       relativePath = vscode.workspace.asRelativePath(fileUri, false);

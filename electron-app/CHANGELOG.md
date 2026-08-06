@@ -11,6 +11,7 @@ are tracked in the root `CHANGELOG.md`.
 ## [1.6.8] - 2026-08-06
 
 ### Fixed
+  - **对话工作区独立（已关闭的绑定工作区仍然生效）**：桌面版切换「打开的工作区」后，绑定工作区的文件夹从 `workspaceFolders` 移除，工具路径解析静默回落到当前打开的工作区——对话上下文与工具读写不一致（backend/webview 公共部分，详见根 `CHANGELOG.md` [1.6.8]）：解析层新增虚拟工作区能力，绑定工作区关闭后工具/文件树/搜索/命令仍限定原工作区
   - **打开/保存工作区（多工作区收藏）桌面版失效的根因修复**：`vscode-shim` 的 `showOpenDialog` / `showSaveDialog` 此前把 native 层 Electron 形状（`{ filePaths, canceled }` / `{ filePath, canceled }`）原样返回，而调用方按 VS Code 契约消费（`result.length` / `result[0].fsPath` / `result.fsPath`）——工作区选择器「打开工作区文件夹」弹窗选完目录后永远被判为取消，收藏列表既存不进也打不开，存储路径选择与设置导入/导出同受其害。现 shim 统一转换为 VS Code 契约（`Uri[] | undefined` / `Uri | undefined`），桌面版工作区收藏「保存 + 打开 + 重启保留」链路端到端打通
   - **设置导入/导出对话框 filters 形状不匹配（同族）**：`native.ts` 新增 `normalizeDialogFilters`，把 VS Code 对象形状的 `filters` 转换为 Electron `[{ name, extensions }]` 数组，导入/导出对话框的 JSON 过滤恢复生效
   - **桌面版 `env.openExternal` 拒绝 `file:` URI**：shim 对 `file:` 方案的 Uri 改走 `shell:openPath`（「打开 Skills 目录」等按钮恢复可用）

@@ -11,6 +11,12 @@
 ## [1.6.8] - 2026-08-06
 
 ### Fixed
+  - **对话工作区独立（已关闭的绑定工作区仍然生效）**：此前桌面版切换「打开的工作区」后，绑定工作区的文件夹会从 `workspaceFolders` 移除，工具路径解析（list_files/read_file/write_file/apply_diff/search/find/execute_command/媒体工具等）全部静默回落到**当前打开的工作区**——对话上下文里还是原工作区的文件树，工具却读写新工作区的文件，AI 会误报「工作区内容与任务上下文不一致」（例如绑定项目 A 的对话在打开项目 B 后把 B 当成了工作区）。现解析层对对话绑定工作区提供「虚拟工作区」能力（按 URI 重建 index=-1 的虚拟文件夹，目录已删除时回退旧行为）：
+    - `backend/tools/utils.ts`：`getWorkspaceByUri` 支持已关闭的绑定工作区；`parseWorkspacePath` 单工作区/无工作区时优先解析到绑定工作区（支持绑定工作区名前缀剥离）；`findWorkspaceForAbsolutePath` 增补 preferred 参数，绑定工作区内的绝对路径归属该工作区
+    - `backend/modules/prompt/fileTree.ts`：`getWorkspaceFolderByUri` 虚拟解析，绑定工作区已关闭时文件树/静态环境/诊断/固定文件仍限定原工作区（不泄漏当前打开的项目）
+    - `backend/tools/search/find_files.ts`：单工作区模式也按绑定工作区搜索；`search_in_files` / `execute_command` / 媒体 `pathGuard` / `list_files` 的「无工作区」守卫改为「无工作区且无绑定工作区」
+    - `webview/utils/WorkspaceUtils.ts`：新增 `resolveWorkspaceFolderByUri`，`validateFileInWorkspace` / `checkFileExists` 对已关闭的绑定工作区做虚拟归属校验（Windows 大小写不敏感）；`webview/handlers/FileHandlers.ts` 的 `resolveTargetWorkspaceFolder` 同步支持
+  - 新增回归测试：`backend/__tests__/tools/boundWorkspaceIndependence.test.ts`（相对路径/绝对路径/名前缀/目录删除回退）、`fileTree.test.ts` 增补「绑定工作区已关闭时按虚拟 URI 生成文件树」
   - **打开/保存工作区（多工作区收藏）在桌面版完全失效的根因**：`vscode-shim` 的 `showOpenDialog` / `showSaveDialog` 把 native 层的 Electron 形状结果（`{ filePaths, canceled }` / `{ filePath, canceled }`）原样返回给按 VS Code 契约消费的调用方（`result.length` / `result[i].fsPath` / `result.fsPath`）——打开工作区文件夹弹窗、收藏工作区打开、存储路径选择、设置导入/导出全部静默退化为「取消」。现 shim 统一转换为 VS Code 契约（`Uri[] | undefined` / `Uri | undefined`），工作区收藏「保存 + 打开 + 重启保留」链路在桌面版端到端打通；存储路径选择与设置导入/导出同步修复
   - **设置导入/导出的对话框 filters 形状不匹配（与上述同族）**：VS Code 契约的 `filters` 是 `{ 'JSON Files': ['json'] }` 对象，native.ts 原样透传给 Electron（要求 `[{ name, extensions }]` 数组）导致过滤被忽略/对话框异常；新增 `normalizeDialogFilters` 统一转换
   - **桌面版 `env.openExternal` 拒绝 `file:` URI（「打开 Skills 目录」等按钮静默无效）**：`file:` URI 走不了 `shell:openExternal` 的 http/https/mailto 白名单；现 shim 对 `file:` 方案的 Uri 改走 `shell:openPath`（含目录/可执行扩展名校验），与 VS Code 中打开系统资源管理器的语义一致

@@ -123,26 +123,27 @@ async function findWithPattern(
     activeWorkspaceUri?: string
 ): Promise<FindResult> {
     const workspaces = getAllWorkspaces();
-    if (workspaces.length === 0) {
+    // 无打开工作区但对话绑定工作区仍存在（虚拟解析）时允许继续
+    if (workspaces.length === 0 && !getWorkspaceByUri(activeWorkspaceUri as string)) {
         return {
             pattern,
             success: false,
             error: 'No workspace folder open'
         };
     }
-    
-    // 单工作区模式
+
+    // 会话绑定工作区优先（含已关闭的虚拟工作区）：对话工作区独立于当前打开的工作区
+    const boundWorkspace = activeWorkspaceUri ? getWorkspaceByUri(activeWorkspaceUri) : undefined;
+
+    // 单工作区模式（绑定工作区不同/已关闭时搜索绑定工作区）
     if (workspaces.length === 1) {
-        return findInWorkspace(workspaces[0], pattern, exclude, maxResults, false);
+        return findInWorkspace(boundWorkspace || workspaces[0], pattern, exclude, maxResults, false);
     }
     
     // 多工作区模式：会话绑定工作区时只搜索该工作区，否则在所有工作区中查找
     let searchWorkspaces = workspaces;
-    if (activeWorkspaceUri) {
-        const preferred = getWorkspaceByUri(activeWorkspaceUri);
-        if (preferred) {
-            searchWorkspaces = [preferred];
-        }
+    if (boundWorkspace) {
+        searchWorkspaces = [boundWorkspace];
     }
     
     // 多工作区模式：在所有工作区中查找

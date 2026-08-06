@@ -120,4 +120,25 @@ describe('fileTree buildFileTree', () => {
         expect(afterSecond.compiles).toBe(afterFirst.compiles + 1)
         expect(afterSecond.hits).toBeGreaterThan(afterFirst.hits)
     })
+
+    it('对话绑定的工作区已关闭时仍按其虚拟 URI 生成文件树（对话工作区独立）', () => {
+        // 第二个目录不在 workspaceFolders 中（模拟桌面版切换打开工作区后被移除的绑定工作区）
+        const boundRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'graycode-filetree-bound-'))
+        try {
+            fs.mkdirSync(path.join(boundRoot, 'app'), { recursive: true })
+            fs.writeFileSync(path.join(boundRoot, 'README.md'), 'readme', 'utf-8')
+            fs.writeFileSync(path.join(boundRoot, 'app', 'bot.py'), 'print(1)', 'utf-8')
+
+            const boundUri = 'file://' + boundRoot.replace(/\\/g, '/')
+            const tree = getWorkspaceFileTree(10, [], FILE_TREE_MAX_NODES, boundUri)
+
+            expect(tree).toContain('README.md')
+            expect(tree).toContain('bot.py')
+            // 不泄漏当前打开工作区（root）的内容
+            expect(tree).not.toContain('f7.txt')
+            expect(tree).not.toContain('a.log')
+        } finally {
+            fs.rmSync(boundRoot, { recursive: true, force: true })
+        }
+    })
 })

@@ -9,7 +9,7 @@
  */
 
 import * as vscode from 'vscode';
-import { resolveUri, getAllWorkspaces, isPathInsideOrEqualReal } from '../utils';
+import { resolveUri, getAllWorkspaces, isPathInsideOrEqualReal, getWorkspaceByUri } from '../utils';
 
 /** 媒体输入文件大小上限：50MB（超过即拒绝，避免内存 DoS） */
 export const MEDIA_MAX_INPUT_BYTES = 50 * 1024 * 1024;
@@ -30,12 +30,23 @@ export function ensureMediaPathsSafe(
     activeWorkspaceUri?: string
 ): string | null {
     const workspaces = getAllWorkspaces();
-    if (workspaces.length === 0) {
+    // 无打开工作区但对话绑定工作区仍存在（虚拟解析）时允许继续
+    if (workspaces.length === 0 && !getWorkspaceByUri(activeWorkspaceUri as string)) {
         return 'No workspace folder open';
     }
 
     const isInsideAnyWorkspace = (uri: vscode.Uri): boolean => {
-        return workspaces.some(w => isPathInsideOrEqualReal(uri.fsPath, w.uri.fsPath));
+        if (workspaces.some(w => isPathInsideOrEqualReal(uri.fsPath, w.uri.fsPath))) {
+            return true;
+        }
+        // 对话绑定工作区（可能已关闭）：命中虚拟工作区同样视为工作区内
+        if (activeWorkspaceUri) {
+            const bound = getWorkspaceByUri(activeWorkspaceUri);
+            if (bound && isPathInsideOrEqualReal(uri.fsPath, bound.fsPath)) {
+                return true;
+            }
+        }
+        return false;
     };
 
     const inputUri = resolveUri(inputPath, activeWorkspaceUri);

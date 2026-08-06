@@ -84,11 +84,40 @@ export function getAllWorkspaces(): WorkspaceInfo[] {
 }
 
 /**
- * 按 URI 查找工作区
+ * 按 URI 查找工作区。
+ *
+ * 多工作区语义：对话绑定工作区必须独立于“当前打开的工作区”——桌面版切换打开
+ * 工作区后，绑定工作区会从 workspaceFolders 移除，但对话仍需在该工作区内解析
+ * 工具路径、执行命令与读写文件。因此 URI 未命中已打开文件夹时，若目录仍存在，
+ * 则按 URI 重建“虚拟工作区”（index = -1 表示不在当前窗口打开）继续解析。
  */
 export function getWorkspaceByUri(workspaceUri: string): WorkspaceInfo | undefined {
     const workspaces = getAllWorkspaces();
-    return workspaces.find(w => w.uri.toString() === workspaceUri);
+    const open = workspaces.find(w => {
+        // 防御性访问 toString（测试替身的 Uri 可能没有该方法），真实宿主必有
+        const uriString = typeof (w.uri as any)?.toString === 'function' ? (w.uri as any).toString() : undefined;
+        return uriString === workspaceUri;
+    });
+    if (open) return open;
+
+    if (!workspaceUri) return undefined;
+    try {
+        const uri = workspaceUri.startsWith('file://')
+            ? vscode.Uri.parse(workspaceUri)
+            : vscode.Uri.file(workspaceUri);
+        if (uri.scheme !== 'file' || !uri.fsPath) return undefined;
+        const fsPath = uri.fsPath;
+        try {
+            if (!fsSync.existsSync(fsPath) || !fsSync.statSync(fsPath).isDirectory()) {
+                return undefined;
+            }
+        } catch {
+            return undefined;
+        }
+        return { name: path.basename(fsPath) || fsPath, uri, fsPath, index: -1 };
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -139,17 +168,40 @@ export function parseWorkspacePath(pathStr: string, preferredWorkspaceUri?: stri
     error?: string;       // 错误信息
 } {
     const workspaces = getAllWorkspaces();
-    
-    // 如果没有工作区
+
+    // 对话绑定工作区（可能已关闭，getWorkspaceByUri 会按 URI 重建虚拟工作区）：
+    // 绑定工作区优先于当前打开文件夹，保证对话工作区独立——桌面版切换打开工作区
+    // 后，绑定工作区的相对路径仍解析到原工作区而不是新打开的工作区。
+    const boundWorkspace = preferredWorkspaceUri ? getWorkspaceByUri(preferredWorkspaceUri) : undefined;
+
+    // 绑定工作区前缀剥离：路径以绑定工作区名开头时视为其相对路径
+    if (boundWorkspace) {
+        const boundPrefix = boundWorkspace.name + '/';
+        if (pathStr.startsWith(boundPrefix)) {
+            return { workspace: boundWorkspace, relativePath: pathStr.substring(boundPrefix.length), isExplicit: true };
+        }
+        if (pathStr === boundWorkspace.name) {
+            return { workspace: boundWorkspace, relativePath: '.', isExplicit: true };
+        }
+    }
+
+    // 如果没有工作区：绑定工作区（虚拟）仍可解析
     if (workspaces.length === 0) {
+        if (boundWorkspace) {
+            return { workspace: boundWorkspace, relativePath: pathStr, isExplicit: false };
+        }
         return { workspace: undefined, relativePath: pathStr, isExplicit: false, error: 'No workspace folder open' };
     }
-    
+
     // 如果只有一个工作区，直接返回
     if (workspaces.length === 1) {
+        // 绑定工作区与打开工作区不同（已关闭）时：对话工作区独立，解析到绑定工作区
+        if (boundWorkspace) {
+            return { workspace: boundWorkspace, relativePath: pathStr, isExplicit: false };
+        }
         return { workspace: workspaces[0], relativePath: pathStr, isExplicit: false };
     }
-    
+
     // 多工作区模式，必须显式指定前缀
     
     // 处理 @ 前缀格式
@@ -208,12 +260,9 @@ export function parseWorkspacePath(pathStr: string, preferredWorkspaceUri?: stri
         }
     }
     
-    // 多工作区时未指定前缀：优先使用首选工作区（按 URI 匹配）兜底，找不到才返回错误
-    if (preferredWorkspaceUri) {
-        const preferred = getWorkspaceByUri(preferredWorkspaceUri);
-        if (preferred) {
-            return { workspace: preferred, relativePath: pathStr, isExplicit: false };
-        }
+    // 多工作区时未指定前缀：优先使用首选工作区（按 URI 匹配，含已关闭的绑定工作区）兜底
+    if (boundWorkspace) {
+        return { workspace: boundWorkspace, relativePath: pathStr, isExplicit: false };
     }
 
     // 多工作区时未指定前缀，返回错误
@@ -452,10 +501,21 @@ export function isPathInsideOrEqualReal(childPath: string, parentPath: string): 
 
 /**
  * 查找绝对路径所属的工作区。
+ *
+ * @param preferredWorkspaceUri 对话绑定工作区 URI：绝对路径未命中已打开工作区、
+ *        但位于绑定工作区（可能已关闭）内时归属该工作区
  */
-export function findWorkspaceForAbsolutePath(absolutePath: string): WorkspaceInfo | undefined {
+export function findWorkspaceForAbsolutePath(absolutePath: string, preferredWorkspaceUri?: string): WorkspaceInfo | undefined {
     const workspaces = getAllWorkspaces();
-    return workspaces.find(workspace => isPathInsideOrEqualReal(absolutePath, workspace.fsPath));
+    const open = workspaces.find(workspace => isPathInsideOrEqualReal(absolutePath, workspace.fsPath));
+    if (open) return open;
+    if (preferredWorkspaceUri) {
+        const bound = getWorkspaceByUri(preferredWorkspaceUri);
+        if (bound && isPathInsideOrEqualReal(absolutePath, bound.fsPath)) {
+            return bound;
+        }
+    }
+    return undefined;
 }
 
 /**
@@ -487,7 +547,7 @@ export function resolveFileToolPathWithInfo(pathStr: string, preferredWorkspaceU
     if (isAbsoluteFilePathLike(pathStr)) {
         try {
             const uri = toFileUri(pathStr);
-            const workspace = findWorkspaceForAbsolutePath(uri.fsPath);
+            const workspace = findWorkspaceForAbsolutePath(uri.fsPath, preferredWorkspaceUri);
             let relativePath = uri.fsPath;
             if (workspace) {
                 relativePath = path.relative(workspace.fsPath, uri.fsPath).replace(/\\/g, '/');
@@ -578,7 +638,7 @@ export function resolveUriWithInfo(relativePath: string, preferredWorkspaceUri?:
     if (isAbsoluteFilePathLike(relativePath)) {
         try {
             const uri = toFileUri(relativePath);
-            const workspace = findWorkspaceForAbsolutePath(uri.fsPath);
+            const workspace = findWorkspaceForAbsolutePath(uri.fsPath, preferredWorkspaceUri);
             let relPath = uri.fsPath;
             if (workspace) {
                 relPath = path.relative(workspace.fsPath, uri.fsPath).replace(/\\/g, '/');

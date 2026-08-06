@@ -1049,7 +1049,8 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             }
 
             const workspaces = getAllWorkspaces();
-            if (workspaces.length === 0) {
+            // 无打开工作区但对话绑定工作区仍存在（虚拟解析）时允许继续
+            if (workspaces.length === 0 && !getWorkspaceByUri(context?.activeWorkspaceUri as string)) {
                 return { success: false, error: 'No workspace folder open' };
             }
 

@@ -9,7 +9,7 @@ import * as os from 'os';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { resolveUriWithInfo } from '../../backend/tools/utils';
-import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute } from '../utils/WorkspaceUtils';
+import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute, resolveWorkspaceFolderByUri } from '../utils/WorkspaceUtils';
 import { assertSafeId } from '../../backend/core/idValidation';
 import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
 import { getPlanSourceStatusFromContent, type PlanSourceStatusResult } from '../../backend/tools/plan/sourceArtifactSection';
@@ -64,21 +64,23 @@ export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
  *
  * 优先级：显式传入的 workspaceUri > 当前激活工作区（ctx.getCurrentWorkspaceUri）> 第一个文件夹。
  * 旧实现固定取第一个文件夹，多工作区下激活工作区不是首个文件夹时会把文件解析到错误项目。
+ * 显式 workspaceUri 为对话绑定工作区且已关闭时（桌面版切换打开工作区），按 URI 虚拟解析，
+ * 保证对话工作区独立。
  */
 export function resolveTargetWorkspaceFolder(
   ctx: HandlerContext,
   workspaceUri?: string
 ): vscode.WorkspaceFolder | undefined {
   const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    return undefined;
-  }
   const uri = workspaceUri || ctx.getCurrentWorkspaceUri?.() || undefined;
   if (uri) {
-    const byUri = folders.find(f => f.uri.toString() === uri);
-    if (byUri) {
-      return byUri;
+    const explicit = resolveWorkspaceFolderByUri(uri);
+    if (explicit) {
+      return explicit;
     }
+  }
+  if (!folders || folders.length === 0) {
+    return undefined;
   }
   return folders[0];
 }

@@ -381,13 +381,34 @@ export function invalidateFileTreeCache(workspacePath?: string): void {
 
 /**
  * 按 URI 查找工作区文件夹
+ *
+ * 对话绑定的工作区可能已关闭（如桌面版切换打开的工作区）：目录仍存在时按 URI
+ * 重建“虚拟 WorkspaceFolder”（index = -1 表示不在当前窗口打开），保证绑定工作区
+ * 的文件树/诊断/固定文件继续限定在该工作区，而不是回落到当前打开的工作区。
+ *
  * @param workspaceUri 工作区 URI
  * @returns 匹配的 WorkspaceFolder，未找到或未提供返回 undefined
  */
 export function getWorkspaceFolderByUri(workspaceUri: string): vscode.WorkspaceFolder | undefined {
+    if (!workspaceUri) return undefined;
     const folders = vscode.workspace.workspaceFolders;
-    if (!folders || !workspaceUri) return undefined;
-    return folders.find(f => f.uri.toString() === workspaceUri);
+    if (folders) {
+        const open = folders.find(f => f.uri.toString() === workspaceUri);
+        if (open) return open;
+    }
+    try {
+        const uri = workspaceUri.startsWith('file://') ? vscode.Uri.parse(workspaceUri) : vscode.Uri.file(workspaceUri);
+        if (uri.scheme !== 'file' || !uri.fsPath) return undefined;
+        if (!fs.existsSync(uri.fsPath) || !fs.statSync(uri.fsPath).isDirectory()) return undefined;
+        return {
+            uri,
+            name: path.basename(uri.fsPath) || uri.fsPath,
+            index: -1,
+            fsPath: uri.fsPath
+        } as vscode.WorkspaceFolder;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -399,7 +420,8 @@ export function getWorkspaceFolderByUri(workspaceUri: string): vscode.WorkspaceF
  * @returns 文件列表字符串，一行一个
  */
 export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES, workspaceUri?: string): string {
-    // 绑定工作区模式：只显示该工作区，文件夹已关闭时返回空（不泄漏其他项目）
+    // 绑定工作区模式：只显示该工作区。绑定工作区已关闭时按 URI 虚拟解析其文件树
+    // （对话工作区独立于当前打开的工作区，不泄漏其他项目）。
     if (workspaceUri) {
         const targetFolder = getWorkspaceFolderByUri(workspaceUri);
         if (targetFolder) {
