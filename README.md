@@ -135,7 +135,7 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 | 子代理 | subagents | 委派任务给专用子代理：前台等待、后台运行、`continueFromRunId` 接续；子代理不含永久记忆工具，过程可在 SubAgent Monitor 查看 |
 | 历史 / 技能 / 通知 | history_search、read_skill、show_windows_notification | 检索对话历史、读取 Skill 内容、Windows 系统通知 |
 | 使用时间 | get_activity_stats | 查询用户 IDE 使用时间统计（每日使用时长、最近作息热力、连续工作时长），数据仅含时间戳 |
-| 记忆 | memory_wake、memory_note、memory_recall、memory_compress、memory_zoom、memory_forget、memory_config | OptMem 永久记忆：唤醒、记录、正则搜索、压缩合并、树节点展开、丢弃摘要或截断日志、参数管理 |
+| 记忆 | memory_wake、memory_note、memory_recall、memory_compress、memory_zoom、memory_forget、memory_config | OptMem 永久记忆：唤醒、记录、正则搜索、压缩合并、树节点展开、丢弃摘要或删除单条/闭区间原始记忆、参数管理 |
 
 ## 设置页面说明
 

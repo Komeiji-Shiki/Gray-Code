@@ -2224,7 +2224,12 @@ const zhCN = {
                         addTooLong: '内容超过单条记忆上限（{limit} 字节）。',
                         truncatedNotice: '记忆超过 {limit} 条，列表仅展示前 {limit} 条（其余可在对话中通过 memory_recall 检索）。',
                         deleteConfirmTitle: '删除记忆条目',
-                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
+                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
+                        selectAll: '全选',
+                        deleteSelected: '删除所选（{count}）',
+                        deletedBatch: '已删除 {count} 条记忆。',
+                        batchDeleteConfirmTitle: '批量删除记忆条目',
+                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
                     }
                 },
 

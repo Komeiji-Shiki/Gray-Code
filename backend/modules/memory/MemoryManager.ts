@@ -830,60 +830,53 @@ export class MemoryManager {
     }
 
     /**
-     * deleteEntry: 删除单条原始记忆（真·单条删除，不连坐 truncateLog）。
+     * deleteRange: 删除闭区间 [lo, hi] 内的所有原始记忆（真·单条/批量删除，不连坐 truncateLog）。
      *
      * LOG 记录 id = 物理序号（内嵌于记录头 "#id date text"），删除中间某条后其后的
      * 记录 id 整体前移一格，所有树摘要（按 [lo,hi) 块寻址）随之失效，一并清空
      * （下次 recall/compress 按需重建，与 updateEntry/truncateLog 的摘要清理语义一致）。
      * 采用「读全量 → 过滤 → 重编号 → tmp+rename 原子写回」，崩溃安全；
      * 与 truncateLog 的物理截断不同，本方法不会误删目标之后的记忆。
-     * 仅删除最后一条时后续 id 不变，但覆盖被删记录的尾部树摘要（如 size=2 的
+     * 仅删除尾部的区间时后续 id 不变，但覆盖被删记录的尾部树摘要（如 size=2 的
      * [T-2,T) 块、size=4 的 [0,4) 块）仍引用已删内容：若不清除，T 回升后
      * wake/zoom 会重现已删除的记忆且 pending() 认为该块已压缩而永不重建。
      */
-    async deleteEntry(id: number): Promise<{ removed: number }> {
+    async deleteRange(lo: number, hi: number): Promise<{ removed: number }> {
         const release = await this.lock.acquire();
         let T = 0;
         try {
             const logPath = this.logPath();
             await this.repair(logPath, LOG_REC);
             T = await this.logLen();
-            if (id < 0 || id >= T) {
-                die(`No memory at index ${id}.`);
+            if (lo < 0 || lo >= T) {
+                die(`No memory at index ${lo}.`);
+            }
+            if (hi < lo || hi >= T) {
+                die(`No memory at index ${hi}.`);
             }
 
-            if (T === 1) {
-                // 唯一一条：直接清空
-                const handle = await fs.open(logPath, 'r+');
-                try {
-                    await handle.truncate(0);
-                } finally {
-                    await handle.close();
+            const rebuilt: Buffer[] = [];
+            const handle = await fs.open(logPath, 'r');
+            try {
+                const rec = Buffer.alloc(LOG_REC);
+                for (let i = 0; i < T; i++) {
+                    const { bytesRead } = await handle.read(rec, 0, LOG_REC, i * LOG_REC);
+                    if (bytesRead <= 0) break;
+                    const str = rec.subarray(0, bytesRead).toString('utf-8').trimEnd();
+                    // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
+                    if (!str) continue;
+                    if (i >= lo && i <= hi) continue;
+                    const parsed = parse(str);
+                    rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
                 }
-            } else {
-                const rebuilt: Buffer[] = [];
-                const handle = await fs.open(logPath, 'r');
-                try {
-                    const rec = Buffer.alloc(LOG_REC);
-                    for (let i = 0; i < T; i++) {
-                        const { bytesRead } = await handle.read(rec, 0, LOG_REC, i * LOG_REC);
-                        if (bytesRead <= 0) break;
-                        const str = rec.subarray(0, bytesRead).toString('utf-8').trimEnd();
-                        // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
-                        if (!str) continue;
-                        if (i === id) continue;
-                        const parsed = parse(str);
-                        rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
-                    }
-                } finally {
-                    await handle.close();
-                }
-                // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
-                // tmp+rename 原子替换，崩溃不损坏线上文件。
-                const tmpPath = `${logPath}.tmp`;
-                await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
-                await fs.rename(tmpPath, logPath);
+            } finally {
+                await handle.close();
             }
+            // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
+            // tmp+rename 原子替换，崩溃不损坏线上文件。
+            const tmpPath = `${logPath}.tmp`;
+            await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
+            await fs.rename(tmpPath, logPath);
 
             // 删除后记录编号变化（中间删除整段重编号、尾部删除长度收缩），旧树摘要
             // 的块寻址随之失效——中间删除清空全部；尾部删除按新长度截断（与 truncateLog
@@ -891,10 +884,10 @@ export class MemoryManager {
             // 直接用文件操作清空而不调用 treeDrop：treeDrop 内部会重新 acquire 锁（AsyncLock
             // 不可重入，持锁调用会死锁），且其循环以当前 logLen 为界，无法清理 size > 当前
             // 长度的旧树文件。此处仍在锁内：与并发 treePut/logAppend 串行，无交错写风险。
-            const newT = T - 1;
+            const newT = T - (hi - lo + 1);
             for (let size = 2; size <= T; size *= 2) {
                 const p = this.treePath(size);
-                const keep = id < newT ? 0 : Math.floor(newT / size);
+                const keep = hi < T - 1 ? 0 : Math.floor(newT / size);
                 const n = await this.count(p, TREE_REC);
                 if (n > keep) {
                     await this.repair(p, TREE_REC);
@@ -910,7 +903,39 @@ export class MemoryManager {
             release();
         }
 
-        return { removed: 1 };
+        return { removed: hi - lo + 1 };
+    }
+
+    /**
+     * deleteEntry: 删除单条原始记忆（真·单条删除，不连坐 truncateLog）。
+     */
+    async deleteEntry(id: number): Promise<{ removed: number }> {
+        return this.deleteRange(id, id);
+    }
+
+    /**
+     * deleteEntries: 批量删除多条原始记忆（按闭区间聚合）。
+     *
+     * 接收非负整数 id 数组（可乱序、可重复），内部排序后合并相邻 id 为闭区间，
+     * 从大到小逐个 deleteRange（删除大 id 不影响小 id 的索引），
+     * 返回实际删除条数。删除后相关树摘要随 deleteRange 一并清空。
+     */
+    async deleteEntries(ids: number[]): Promise<{ removed: number }> {
+        const sorted = Array.from(new Set(ids)).sort((a, b) => a - b);
+        if (sorted.length === 0) {
+            return { removed: 0 };
+        }
+        let removed = 0;
+        for (let i = sorted.length - 1; i >= 0; ) {
+            let j = i;
+            while (j > 0 && sorted[j] - sorted[j - 1] === 1) {
+                j--;
+            }
+            const r = await this.deleteRange(sorted[j], sorted[i]);
+            removed += r.removed;
+            i = j - 1;
+        }
+        return { removed };
     }
 
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */

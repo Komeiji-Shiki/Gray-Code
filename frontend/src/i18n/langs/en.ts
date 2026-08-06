@@ -2223,7 +2223,12 @@ const en: LanguageMessages = {
                         addTooLong: 'Content exceeds the per-entry limit ({limit} bytes).',
                         truncatedNotice: 'More than {limit} memories: only the first {limit} are shown here (use memory_recall in chat to search the rest).',
                         deleteConfirmTitle: 'Delete memory entry',
-                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).'
+                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).',
+                        selectAll: 'Select All',
+                        deleteSelected: 'Delete Selected ({count})',
+                        deletedBatch: 'Deleted {count} memories.',
+                        batchDeleteConfirmTitle: 'Delete memory entries',
+                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).'
                     }
                 },
 
