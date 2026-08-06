@@ -15,7 +15,7 @@ export function createMemoryForgetDeclaration(): ToolDeclaration {
         description:
             '丢弃错误的树摘要，或删除原始记忆。\n' +
             '当 blockId 是范围（如 "16-31"）：仅丢弃树摘要及其上层摘要，原始记忆（LOG）不会被触碰。\n' +
-            '当 blockId 是单个数字（如 "5"）：截断原始 LOG，删除 ID >= 该值的所有原始记忆及关联的树摘要。\n' +
+            '当 blockId 是单个数字（如 "5"）：这是截断模式——删除 ID >= 该值的所有原始记忆（不是只删除这一条！）及其关联的树摘要。如需删除单条记忆，请使用设置界面的原始记忆条目删除功能。\n' +
             '参数：blockId（块 ID 如 "16-31"，或单个 ID 如 "5"）。',
         category: 'memory',
         parameters: {
@@ -23,7 +23,7 @@ export function createMemoryForgetDeclaration(): ToolDeclaration {
             properties: {
                 blockId: {
                     type: 'string',
-                    description: '块 ID（如 "16-31"）或单个 ID（如 "5"）。单个 ID 会截断原始记忆。',
+                    description: '块 ID（如 "16-31"）或单个 ID（如 "5"）。⚠ 单个 ID 会截断删除该 ID 及之后的所有原始记忆。',
                 },
             },
             required: ['blockId'],
