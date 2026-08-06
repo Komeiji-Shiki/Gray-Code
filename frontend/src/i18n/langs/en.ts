@@ -2041,6 +2041,12 @@ const en: LanguageMessages = {
                 backToChat: 'Back to Chat',
                 sidebarCollapse: 'Collapse sidebar',
                 sidebarExpand: 'Expand sidebar',
+                search: {
+                    placeholder: 'Search settings…',
+                    clear: 'Clear search',
+                    noResults: 'No matching settings found',
+                    hint: 'Type a keyword to find settings; press Enter to open the first result'
+                },
                 sections: {
                     channel: {
                         title: 'Channel Settings',
@@ -2085,6 +2091,10 @@ const en: LanguageMessages = {
                     subagents: {
                         title: 'Sub-Agents',
                         description: 'Configure specialized sub-agents that AI can invoke'
+                    },
+                    dependencies: {
+                        title: 'Dependencies',
+                        description: 'Install and manage dependency tools such as Python and Node'
                     },
                     sound: {
                         title: 'Notification System',

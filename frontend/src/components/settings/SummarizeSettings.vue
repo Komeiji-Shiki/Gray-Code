@@ -271,7 +271,7 @@ onMounted(async () => {
     </div>
     
     <!-- 手动总结说明 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-manual">
       <h5 class="section-title">
         <i class="codicon codicon-fold"></i>
         {{ t('components.settings.summarizeSettings.manualSection.title') }}
@@ -282,7 +282,7 @@ onMounted(async () => {
     </div>
     
     <!-- 总结选项 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-options">
       <h5 class="section-title">
         <i class="codicon codicon-settings"></i>
         {{ t('components.settings.summarizeSettings.optionsSection.title') }}
@@ -387,7 +387,7 @@ onMounted(async () => {
     </div>
     
     <!-- 专用总结模型 -->
-    <div class="section">
+    <div class="section" data-search-anchor="summarize-model">
       <h5 class="section-title">
         <i class="codicon codicon-beaker"></i>
         {{ t('components.settings.summarizeSettings.modelSection.title') }}

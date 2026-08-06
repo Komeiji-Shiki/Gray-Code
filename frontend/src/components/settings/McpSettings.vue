@@ -483,7 +483,7 @@ onMounted(() => {
     <!-- 列表视图 -->
     <div v-if="viewMode === 'list'" class="mcp-list-view">
       <!-- 工具栏 -->
-      <div class="mcp-toolbar">
+      <div class="mcp-toolbar" data-search-anchor="mcp-toolbar">
         <button class="toolbar-btn primary" @click="startCreate">
           <i class="codicon codicon-add"></i>
           <span>{{ t('components.settings.mcpSettings.toolbar.addServer') }}</span>
@@ -511,7 +511,7 @@ onMounted(() => {
         <p>{{ t('components.settings.mcpSettings.empty.description') }}</p>
       </div>
       
-      <div v-else class="server-list">
+      <div v-else class="server-list" data-search-anchor="mcp-server-list">
         <div
           v-for="server in servers"
           :key="server.config.id"
@@ -601,7 +601,7 @@ onMounted(() => {
       
       <div class="edit-form">
         <!-- 基本信息 -->
-        <div class="form-section">
+        <div class="form-section" data-search-anchor="mcp-basic-info">
           <!-- 自定义 ID（仅创建时显示） -->
           <div v-if="isCreating" class="form-group">
             <label>{{ t('components.settings.mcpSettings.form.serverId') }}</label>
@@ -659,7 +659,7 @@ onMounted(() => {
         </div>
         
         <!-- 传输类型 -->
-        <div class="form-section">
+        <div class="form-section" data-search-anchor="mcp-transport-type">
           <label class="section-label">{{ t('components.settings.mcpSettings.form.transportType') }}</label>
           <div class="transport-tabs">
             <button
@@ -687,7 +687,7 @@ onMounted(() => {
         </div>
         
         <!-- Stdio 配置 -->
-        <div v-if="formData.transportType === 'stdio'" class="form-section">
+        <div v-if="formData.transportType === 'stdio'" class="form-section" data-search-anchor="mcp-stdio-config">
           <div class="form-group">
             <label>{{ t('components.settings.mcpSettings.form.command') }} <span class="required">{{ t('components.settings.mcpSettings.form.required') }}</span></label>
             <input
@@ -720,7 +720,7 @@ onMounted(() => {
         </div>
         
         <!-- SSE/WebSocket 配置 -->
-        <div v-else class="form-section">
+        <div v-else class="form-section" data-search-anchor="mcp-url-config">
           <div class="form-group">
             <label>{{ t('components.settings.mcpSettings.form.url') }} <span class="required">{{ t('components.settings.mcpSettings.form.required') }}</span></label>
             <input
@@ -743,7 +743,7 @@ onMounted(() => {
         </div>
         
         <!-- 选项 -->
-        <div class="form-section">
+        <div class="form-section" data-search-anchor="mcp-options">
           <label class="section-label">{{ t('components.settings.mcpSettings.form.options') }}</label>
           
           <div class="form-row">

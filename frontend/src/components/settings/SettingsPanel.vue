@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useSettingsStore, type SettingsTab } from '@/stores/settingsStore'
 import ChannelSettings from './ChannelSettings.vue'
 import ToolsSettings from './ToolsSettings.vue'
@@ -61,6 +61,793 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
   { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
 ])
+
+// ========== 设置项搜索 ==========
+
+interface SearchIndexEntry {
+  /** 稳定唯一键（结果列表 key） */
+  key: string
+  /** 目标页签 */
+  tab: SettingsTab
+  /** 结果行显示标签（i18n key） */
+  labelKey: string
+  /** 搜索关键词（中/英/日混合，小写包含匹配） */
+  keywords: string[]
+  /** 目标元素选择器（相对 .settings-section）；缺省定位到节标题 h4 */
+  anchor?: string
+}
+
+// 静态搜索索引：设置项为硬编码组件，无统一注册表，用关键词索引覆盖各页签主要设置项。
+// 每个页签级条目作为兜底；每个设置块都有 data-search-anchor 锚点条目。
+// 关键词同时包含中/英/日，任意界面语言下都能搜到（匹配时统一去空白）。
+const SEARCH_INDEX: SearchIndexEntry[] = [
+  {
+    key: 'channel', tab: 'channel',
+    labelKey: 'components.settings.settingsPanel.sections.channel.title',
+    keywords: ['渠道', 'channel', 'チャンネル', '配置渠道', 'api key', 'api密钥', 'apiキー', '密钥', '模型', 'model', 'モデル', 'gemini', 'openai', 'claude', 'deepseek', 'glm', '自定义模型']
+  },
+  {
+    key: 'channel-api-url', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.apiUrl.label',
+    keywords: ['api url', 'url', '接口地址', '地址', 'endpoint', 'エンドポイント', 'api地址'],
+    anchor: '[data-search-anchor="api-url"]'
+  },
+  {
+    key: 'channel-api-key', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.apiKey.label',
+    keywords: ['api key', 'api密钥', 'apiキー', '密钥', 'key', '认证', 'authorization'],
+    anchor: '[data-search-anchor="api-key"]'
+  },
+  {
+    key: 'channel-model-list', tab: 'channel',
+    labelKey: 'components.settings.modelManager.title',
+    keywords: ['模型', 'model', 'モデル', '模型列表', '获取模型', '清除全部'],
+    anchor: '[data-search-anchor="model-list"]'
+  },
+  {
+    key: 'channel-stream', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.stream.label',
+    keywords: ['流式', 'stream', 'ストリーム', '流式输出', '打字机'],
+    anchor: '[data-search-anchor="stream-output"]'
+  },
+  {
+    key: 'channel-type', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.channelType.label',
+    keywords: ['渠道类型', 'channel type', 'タイプ', 'gemini', 'openai', 'anthropic', 'claude', 'openai responses'],
+    anchor: '[data-search-anchor="channel-type"]'
+  },
+  {
+    key: 'channel-tool-mode', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.toolMode.label',
+    keywords: ['工具调用格式', 'tool mode', 'function call', 'xml', 'json', '工具调用'],
+    anchor: '[data-search-anchor="tool-mode"]'
+  },
+  {
+    key: 'channel-multimodal', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.multimodal.label',
+    keywords: ['多模态', 'multimodal', 'マルチモーダル', '图片', '图像', '文档', '附件', '读取图片'],
+    anchor: '[data-search-anchor="multimodal"]'
+  },
+  {
+    key: 'channel-strict-tools', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.strictTools.label',
+    keywords: ['strict tool use', '严格工具', '强制工具', '工具调用'],
+    anchor: '[data-search-anchor="strict-tools"]'
+  },
+  {
+    key: 'channel-timeout', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.timeout.label',
+    keywords: ['超时', 'timeout', 'タイムアウト', '请求超时', '毫秒'],
+    anchor: '[data-search-anchor="timeout"]'
+  },
+  {
+    key: 'channel-max-context-tokens', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.maxContextTokens.label',
+    keywords: ['上下文', 'context', 'コンテキスト', 'token', 'トークン', '最大', 'max', '限制'],
+    anchor: '[data-search-anchor="max-context-tokens"]'
+  },
+  {
+    key: 'channel-context-management', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.contextManagement.title',
+    keywords: ['上下文管理', 'context management', '阈值', 'threshold', 'しきい値', '自动总结', '裁剪'],
+    anchor: '[data-search-anchor="context-management"]'
+  },
+  {
+    key: 'channel-tool-options', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.toolOptions.title',
+    keywords: ['工具配置', 'tool options', '裁切', 'crop', '坐标'],
+    anchor: '[data-search-anchor="tool-options"]'
+  },
+  {
+    key: 'channel-token-count-method', tab: 'channel',
+    labelKey: 'components.channels.tokenCountMethod.title',
+    keywords: ['token 计数', 'token count', '计数方式', '计算方法'],
+    anchor: '[data-search-anchor="token-count-method"]'
+  },
+  {
+    key: 'channel-advanced-options', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.advancedOptions.title',
+    keywords: ['高级选项', 'advanced options', '高度な設定', 'gemini', 'openai', 'anthropic', '扩展'],
+    anchor: '[data-search-anchor="advanced-options"]'
+  },
+  {
+    key: 'channel-custom-body', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.customBody.title',
+    keywords: ['自定义 body', 'custom body', '请求体', '请求内容', 'json'],
+    anchor: '[data-search-anchor="custom-body"]'
+  },
+  {
+    key: 'channel-custom-headers', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.customHeaders.title',
+    keywords: ['自定义标头', 'custom headers', 'header', 'ヘッダー', '请求头'],
+    anchor: '[data-search-anchor="custom-headers"]'
+  },
+  {
+    key: 'channel-auto-retry', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.autoRetry.title',
+    keywords: ['重试', 'retry', 'リトライ', '自动重试', '重试次数', '重试间隔'],
+    anchor: '[data-search-anchor="auto-retry"]'
+  },
+  {
+    key: 'channel-enabled', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.enabled.label',
+    keywords: ['启用', 'enabled', '有効', '渠道开关', '启用渠道'],
+    anchor: '[data-search-anchor="channel-enabled"]'
+  },
+  {
+    key: 'tools', tab: 'tools',
+    labelKey: 'components.settings.settingsPanel.sections.tools.title',
+    keywords: ['工具', 'tools', 'ツール', 'apply_diff', 'insert_code', 'delete_code', '文件编辑', '终端', 'terminal', 'ターミナル', '浏览器', 'browser', '搜索', 'search', '网页抓取', '图片', '图像', 'image', '生成', 'generate', '诊断', 'diagnostics']
+  },
+  {
+    key: 'tools-max-iterations', tab: 'tools',
+    labelKey: 'components.settings.toolsSettings.maxIterations.label',
+    keywords: ['最大工具调用次数', 'max iterations', '工具调用', 'iteration', '反復', '无限制', '循环'],
+    anchor: '[data-search-anchor="max-tool-iterations"]'
+  },
+  {
+    key: 'tools-list', tab: 'tools',
+    labelKey: 'components.settings.settingsPanel.sections.tools.title',
+    keywords: ['工具列表', 'tool list', 'ツール一覧', '全部启用', '全部禁用', '启用', '禁用', '依赖'],
+    anchor: '[data-search-anchor="tool-list"]'
+  },
+  {
+    key: 'autoExec', tab: 'autoExec',
+    labelKey: 'components.settings.settingsPanel.sections.autoExec.title',
+    keywords: ['自动执行', 'auto exec', '自動実行', '确认', 'confirmation', '確認', '批准', '执行模式', '手动', '工具确认', 'diff 审阅']
+  },
+  {
+    key: 'autoExec-intro', tab: 'autoExec',
+    labelKey: 'components.settings.autoExec.intro.title',
+    keywords: ['自动执行', 'auto exec', '自動実行', '说明', '确认'],
+    anchor: '[data-search-anchor="auto-exec-intro"]'
+  },
+  {
+    key: 'autoExec-list', tab: 'autoExec',
+    labelKey: 'components.settings.settingsPanel.sections.autoExec.title',
+    keywords: ['工具列表', '自动执行', '需要确认', '危险工具', 'mcp 工具'],
+    anchor: '[data-search-anchor="auto-exec-list"]'
+  },
+  {
+    key: 'autoExec-tips', tab: 'autoExec',
+    labelKey: 'components.settings.autoExec.tips.diffReviewNote',
+    keywords: ['提示', 'tips', 'ヒント', 'diff 审阅', '自动应用', '危险', '警告'],
+    anchor: '[data-search-anchor="auto-exec-tips"]'
+  },
+  {
+    key: 'mcp', tab: 'mcp',
+    labelKey: 'components.settings.settingsPanel.sections.mcp.title',
+    keywords: ['mcp', 'server', '服务器', 'サーバー', '模型上下文协议', 'model context protocol', '工具']
+  },
+  {
+    key: 'mcp-toolbar', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.toolbar.addServer',
+    keywords: ['添加服务器', 'add server', 'サーバー追加', '编辑 json', '刷新'],
+    anchor: '[data-search-anchor="mcp-toolbar"]'
+  },
+  {
+    key: 'mcp-server-list', tab: 'mcp',
+    labelKey: 'components.settings.settingsPanel.sections.mcp.title',
+    keywords: ['服务器列表', 'server list', '连接', 'connect', '切断', '状态', '启用'],
+    anchor: '[data-search-anchor="mcp-server-list"]'
+  },
+  {
+    key: 'mcp-basic-info', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.form.serverName',
+    keywords: ['服务器名称', 'server name', '描述', 'description', 'id', '标识'],
+    anchor: '[data-search-anchor="mcp-basic-info"]'
+  },
+  {
+    key: 'mcp-transport-type', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.form.transportType',
+    keywords: ['传输类型', 'transport', '転送', 'stdio', 'sse', 'streamable http', '传输方式'],
+    anchor: '[data-search-anchor="mcp-transport-type"]'
+  },
+  {
+    key: 'mcp-stdio-config', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.form.command',
+    keywords: ['命令', 'command', 'コマンド', '参数', 'args', '环境变量', 'env'],
+    anchor: '[data-search-anchor="mcp-stdio-config"]'
+  },
+  {
+    key: 'mcp-url-config', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.form.url',
+    keywords: ['url', '地址', 'エンドポイント', 'headers', '标头'],
+    anchor: '[data-search-anchor="mcp-url-config"]'
+  },
+  {
+    key: 'mcp-options', tab: 'mcp',
+    labelKey: 'components.settings.mcpSettings.form.options',
+    keywords: ['选项', 'options', 'オプション', '启用', '自动连接', 'auto connect', '超时', 'timeout', 'schema'],
+    anchor: '[data-search-anchor="mcp-options"]'
+  },
+  {
+    key: 'subagents', tab: 'subagents',
+    labelKey: 'components.settings.settingsPanel.sections.subagents.title',
+    keywords: ['子代理', 'subagent', 'サブエージェント', '迭代', 'iteration', '反復', '次数', '专业代理', '模型', 'worker']
+  },
+  {
+    key: 'subagents-global', tab: 'subagents',
+    labelKey: 'components.settings.subagents.globalConfig',
+    keywords: ['全局配置', 'global', '並行', '并发', 'concurrent', '默认迭代', 'worker', '通用'],
+    anchor: '[data-search-anchor="subagents-global"]'
+  },
+  {
+    key: 'subagents-selector', tab: 'subagents',
+    labelKey: 'components.settings.subagents.selectAgent',
+    keywords: ['选择子代理', 'select agent', '新建', '重命名', '删除'],
+    anchor: '[data-search-anchor="subagents-selector"]'
+  },
+  {
+    key: 'subagents-basic-info', tab: 'subagents',
+    labelKey: 'components.settings.subagents.basicInfo',
+    keywords: ['基本信息', 'basic', '描述', 'description', '迭代次数', '最大运行时间', '启用'],
+    anchor: '[data-search-anchor="subagents-basic-info"]'
+  },
+  {
+    key: 'subagents-system-prompt', tab: 'subagents',
+    labelKey: 'components.settings.subagents.systemPrompt',
+    keywords: ['系统提示词', 'system prompt', 'システムプロンプト', '提示词'],
+    anchor: '[data-search-anchor="subagents-system-prompt"]'
+  },
+  {
+    key: 'subagents-channel-model', tab: 'subagents',
+    labelKey: 'components.settings.subagents.channelModel',
+    keywords: ['渠道', 'channel', 'モデル', '模型', 'model', '选择渠道', '选择模型'],
+    anchor: '[data-search-anchor="subagents-channel-model"]'
+  },
+  {
+    key: 'subagents-tools', tab: 'subagents',
+    labelKey: 'components.settings.subagents.tools',
+    keywords: ['工具', 'tools', 'ツール', '白名单', 'whitelist', 'ブラックリスト', '黑名单', 'blacklist', '工具模式'],
+    anchor: '[data-search-anchor="subagents-tools"]'
+  },
+  {
+    key: 'checkpoint', tab: 'checkpoint',
+    labelKey: 'components.settings.settingsPanel.sections.checkpoint.title',
+    keywords: ['存档', 'checkpoint', 'チェックポイント', '快照', 'snapshot', 'スナップショット', '备份', 'backup', 'バックアップ', '回退', 'restore', '復元', '分支', 'branch', 'ブランチ', '工作区', 'workspace']
+  },
+  {
+    key: 'checkpoint-enable', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.enable.label',
+    keywords: ['启用', 'enable', '有効', '存档点', 'checkpoint', '总开关'],
+    anchor: '[data-search-anchor="checkpoint-enable"]'
+  },
+  {
+    key: 'checkpoint-messages', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.messages.title',
+    keywords: ['消息', 'message', 'メッセージ', '模型', 'model', '存档', '外层'],
+    anchor: '[data-search-anchor="checkpoint-messages"]'
+  },
+  {
+    key: 'checkpoint-tools', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.tools.title',
+    keywords: ['工具', 'tools', 'ツール', '备份', '存档', 'before', 'after', '之前', '之后'],
+    anchor: '[data-search-anchor="checkpoint-tools"]'
+  },
+  {
+    key: 'checkpoint-other', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.other.title',
+    keywords: ['最大存档点数量', 'max checkpoints', '数量', '上限', '保留'],
+    anchor: '[data-search-anchor="checkpoint-other"]'
+  },
+  {
+    key: 'checkpoint-exclusions', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.exclusion.title',
+    keywords: ['排除', 'exclusion', '除外', '模式', 'pattern', '自定义', '预览', '大小', 'max file size'],
+    anchor: '[data-search-anchor="checkpoint-exclusions"]'
+  },
+  {
+    key: 'checkpoint-cleanup', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.cleanup.title',
+    keywords: ['清理', 'cleanup', 'クリーンアップ', '删除', 'delete', '批量', '对话', '存储'],
+    anchor: '[data-search-anchor="checkpoint-cleanup"]'
+  },
+  {
+    key: 'checkpoint-branch-cleanup', tab: 'checkpoint',
+    labelKey: 'components.settings.checkpoint.sections.branchCleanup.title',
+    keywords: ['分支清理', 'branch cleanup', 'ブランチ', '软删', '保留期', 'retention', '清理'],
+    anchor: '[data-search-anchor="branch-cleanup"]'
+  },
+  {
+    key: 'summarize', tab: 'summarize',
+    labelKey: 'components.settings.settingsPanel.sections.summarize.title',
+    keywords: ['总结', 'summarize', '要約', '自动总结', '上下文压缩', '压缩', '对话历史', 'token']
+  },
+  {
+    key: 'summarize-manual', tab: 'summarize',
+    labelKey: 'components.settings.summarizeSettings.manualSection.title',
+    keywords: ['手动总结', 'manual', 'マニュアル', '总结'],
+    anchor: '[data-search-anchor="summarize-manual"]'
+  },
+  {
+    key: 'summarize-options', tab: 'summarize',
+    labelKey: 'components.settings.summarizeSettings.optionsSection.title',
+    keywords: ['保留轮数', 'keep rounds', '保留', 'token', '提示词', 'prompt', '最大尝试', '输入占比', '预算'],
+    anchor: '[data-search-anchor="summarize-options"]'
+  },
+  {
+    key: 'summarize-model', tab: 'summarize',
+    labelKey: 'components.settings.summarizeSettings.modelSection.title',
+    keywords: ['专用模型', 'separate model', 'モデル', '渠道', 'channel', '选择模型'],
+    anchor: '[data-search-anchor="summarize-model"]'
+  },
+  {
+    key: 'imageGen', tab: 'imageGen',
+    labelKey: 'components.settings.settingsPanel.sections.imageGen.title',
+    keywords: ['图像生成', 'image generation', '画像生成', '图片', 'image', '绘图', '生成模型']
+  },
+  {
+    key: 'imageGen-api', tab: 'imageGen',
+    labelKey: 'components.settings.generateImageSettings.api.title',
+    keywords: ['api', 'url', '接口地址', 'api key', '密钥', '模型', 'model', 'gemini'],
+    anchor: '[data-search-anchor="image-api-config"]'
+  },
+  {
+    key: 'imageGen-aspect-ratio', tab: 'imageGen',
+    labelKey: 'components.settings.generateImageSettings.aspectRatio.title',
+    keywords: ['宽高比', 'aspect ratio', 'アスペクト比', '比例', '横屏', '竖屏', '16:9', '1:1'],
+    anchor: '[data-search-anchor="aspect-ratio"]'
+  },
+  {
+    key: 'imageGen-image-size', tab: 'imageGen',
+    labelKey: 'components.settings.generateImageSettings.imageSize.title',
+    keywords: ['图片尺寸', 'image size', 'サイズ', '1k', '2k', '4k', '分辨率'],
+    anchor: '[data-search-anchor="image-size"]'
+  },
+  {
+    key: 'imageGen-batch', tab: 'imageGen',
+    labelKey: 'components.settings.generateImageSettings.batch.title',
+    keywords: ['批量', 'batch', 'バッチ', '上限', '任务数', '图片数', '最大'],
+    anchor: '[data-search-anchor="batch-limits"]'
+  },
+  {
+    key: 'imageGen-usage', tab: 'imageGen',
+    labelKey: 'components.settings.generateImageSettings.usage.title',
+    keywords: ['使用说明', 'usage', '使い方', '步骤', '说明', '教程'],
+    anchor: '[data-search-anchor="image-usage"]'
+  },
+  {
+    key: 'dependencies', tab: 'dependencies',
+    labelKey: 'components.settings.settingsPanel.sections.dependencies.title',
+    keywords: ['依赖', 'dependencies', '依存', '安装', 'install', 'インストール', 'python', 'node', 'ffmpeg', '检查']
+  },
+  {
+    key: 'dependencies-install-path', tab: 'dependencies',
+    labelKey: 'components.settings.dependencySettings.installPath',
+    keywords: ['安装路径', 'install path', 'インストール先', '路径', '目录'],
+    anchor: '[data-search-anchor="install-path"]'
+  },
+  {
+    key: 'dependencies-tools', tab: 'dependencies',
+    labelKey: 'components.settings.dependencySettings.title',
+    keywords: ['依赖', 'dependencies', '依存', '安装', 'install', 'インストール', '卸载', 'uninstall', 'python', 'node', 'ffmpeg'],
+    anchor: '[data-search-anchor="dependency-tools"]'
+  },
+  {
+    key: 'context', tab: 'context',
+    labelKey: 'components.settings.settingsPanel.sections.context.title',
+    keywords: ['上下文', 'context', 'コンテキスト', '文件树', 'file tree', 'ファイルツリー', '目录', '深度', 'depth', '忽略', 'ignore', '無視', '诊断', '错误', '警告', '环境信息']
+  },
+  {
+    key: 'context-file-tree', tab: 'context',
+    labelKey: 'components.settings.contextSettings.workspaceFiles.title',
+    keywords: ['文件树', 'file tree', 'ファイルツリー', '工作区', 'workspace', '深度', 'depth', '发送'],
+    anchor: '[data-search-anchor="file-tree"]'
+  },
+  {
+    key: 'context-open-tabs', tab: 'context',
+    labelKey: 'components.settings.contextSettings.openTabs.title',
+    keywords: ['打开的标签页', 'open tabs', 'タブ', '标签页', 'tabs'],
+    anchor: '[data-search-anchor="open-tabs"]'
+  },
+  {
+    key: 'context-active-editor', tab: 'context',
+    labelKey: 'components.settings.contextSettings.activeEditor.title',
+    keywords: ['活动编辑器', 'active editor', 'エディタ', '当前文件', '正在编辑'],
+    anchor: '[data-search-anchor="active-editor"]'
+  },
+  {
+    key: 'context-diagnostics', tab: 'context',
+    labelKey: 'components.settings.contextSettings.diagnostics.title',
+    keywords: ['诊断', 'diagnostics', '診断', '错误', '警告', 'error', 'warning', '严重程度', 'severity'],
+    anchor: '[data-search-anchor="diagnostics"]'
+  },
+  {
+    key: 'context-ignore-patterns', tab: 'context',
+    labelKey: 'components.settings.contextSettings.ignorePatterns.title',
+    keywords: ['忽略', 'ignore', '無視', '模式', 'pattern', '通配符', 'wildcard', '排除'],
+    anchor: '[data-search-anchor="ignore-patterns"]'
+  },
+  {
+    key: 'context-preview', tab: 'context',
+    labelKey: 'components.settings.contextSettings.preview.title',
+    keywords: ['预览', 'preview', 'プレビュー', '效果', '自动刷新'],
+    anchor: '[data-search-anchor="context-preview"]'
+  },
+  {
+    key: 'prompt', tab: 'prompt',
+    labelKey: 'components.settings.settingsPanel.sections.prompt.title',
+    keywords: ['提示词', 'prompt', 'プロンプト', '系统提示词', 'system prompt', '预设', 'preset', '结构']
+  },
+  {
+    key: 'prompt-mode-selector', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.modes.label',
+    keywords: ['提示词模式', 'prompt mode', 'プロンプトモード', '模式', '添加', '重命名', '删除', '复制', '导入', '导出'],
+    anchor: '[data-search-anchor="prompt-mode-selector"]'
+  },
+  {
+    key: 'prompt-assembly', tab: 'prompt',
+    labelKey: 'components.settings.settingsPanel.sections.prompt.title',
+    keywords: ['组装方式', 'assembly', '伝統的なテンプレート', '传统模板', '预设条目', 'entries', 'legacy'],
+    anchor: '[data-search-anchor="prompt-assembly"]'
+  },
+  {
+    key: 'prompt-dynamic-strategy', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.dynamicSection.strategyTitle',
+    keywords: ['动态上下文', 'dynamic context', '保留策略', 'strategy', 'preserve', 'single'],
+    anchor: '[data-search-anchor="prompt-dynamic-strategy"]'
+  },
+  {
+    key: 'prompt-entries', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.staticSection.title',
+    keywords: ['预设条目', 'entries', '条目', 'role', 'chat history', '排序'],
+    anchor: '[data-search-anchor="prompt-entries"]'
+  },
+  {
+    key: 'prompt-static', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.staticSection.title',
+    keywords: ['静态模板', 'static', 'スタティック', '系统提示词', 'system prompt', '缓存'],
+    anchor: '[data-search-anchor="static-prompt"]'
+  },
+  {
+    key: 'prompt-dynamic', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.dynamicSection.title',
+    keywords: ['动态上下文', 'dynamic context', 'ダイナミック', '模板', 'template', '变量', 'variables'],
+    anchor: '[data-search-anchor="dynamic-context"]'
+  },
+  {
+    key: 'prompt-tool-policy', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.toolPolicy.title',
+    keywords: ['工具策略', 'tool policy', 'ツールポリシー', '继承', 'inherit', 'custom', '自定义', '工具列表'],
+    anchor: '[data-search-anchor="tool-policy"]'
+  },
+  {
+    key: 'prompt-token-count', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.tokenCount.label',
+    keywords: ['token 计数', 'token count', 'トークン数', '静态', '动态', '刷新'],
+    anchor: '[data-search-anchor="prompt-token-count"]'
+  },
+  {
+    key: 'prompt-modules', tab: 'prompt',
+    labelKey: 'components.settings.promptSettings.modulesReference.title',
+    keywords: ['变量参考', 'modules', 'モジュール', '变量', 'variables', '引用', '占位符', 'environment', 'tools'],
+    anchor: '[data-search-anchor="prompt-modules"]'
+  },
+  {
+    key: 'tokenCount', tab: 'tokenCount',
+    labelKey: 'components.settings.settingsPanel.sections.tokenCount.title',
+    keywords: ['token', '计数', 'count', 'カウント', '计算', 'tiktoken', '字符']
+  },
+  {
+    key: 'tokenCount-gemini', tab: 'tokenCount',
+    labelKey: 'components.settings.tokenCountSettings.enableChannel',
+    keywords: ['gemini', '计数 api', 'count tokens', 'google'],
+    anchor: '[data-search-anchor="token-count-gemini"]'
+  },
+  {
+    key: 'tokenCount-openai', tab: 'tokenCount',
+    labelKey: 'components.settings.tokenCountSettings.customApi',
+    keywords: ['openai', '自定义 api', 'custom api', '兼容', '接口规范'],
+    anchor: '[data-search-anchor="token-count-openai"]'
+  },
+  {
+    key: 'tokenCount-anthropic', tab: 'tokenCount',
+    labelKey: 'components.settings.tokenCountSettings.enableChannel',
+    keywords: ['anthropic', 'claude', 'count tokens', '计数 api'],
+    anchor: '[data-search-anchor="token-count-anthropic"]'
+  },
+  {
+    key: 'tokenCount-openai-responses', tab: 'tokenCount',
+    labelKey: 'components.settings.tokenCountSettings.enableChannel',
+    keywords: ['openai responses', 'responses', 'input tokens'],
+    anchor: '[data-search-anchor="token-count-openai-responses"]'
+  },
+  {
+    key: 'sound', tab: 'sound',
+    labelKey: 'components.settings.settingsPanel.sections.sound.title',
+    keywords: ['通知', 'notification', '通知', '声音', 'sound', 'サウンド', '提示音', 'windows']
+  },
+  {
+    key: 'sound-enabled', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.enabled.title',
+    keywords: ['启用', 'enabled', '有効', '声音提醒', '开关'],
+    anchor: '[data-search-anchor="sound-enabled"]'
+  },
+  {
+    key: 'sound-volume', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.volume.title',
+    keywords: ['音量', 'volume', 'ボリューム', '大小', '声音'],
+    anchor: '[data-search-anchor="volume"]'
+  },
+  {
+    key: 'sound-cooldown', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.cooldown.title',
+    keywords: ['最小间隔', 'cooldown', 'インターバル', '间隔', '冷却', '频率'],
+    anchor: '[data-search-anchor="min-interval"]'
+  },
+  {
+    key: 'sound-cues', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.cues.title',
+    keywords: ['事件类型', 'cues', 'イベント', '事件', '警告', '错误', '任务完成', '任务失败'],
+    anchor: '[data-search-anchor="event-types"]'
+  },
+  {
+    key: 'sound-assets', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.assets.title',
+    keywords: ['自定义音效', 'assets', '音效文件', '音频', 'audio', '导入'],
+    anchor: '[data-search-anchor="custom-sounds"]'
+  },
+  {
+    key: 'sound-test', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.test.title',
+    keywords: ['测试播放', 'test', 'テスト', '试听', '播放'],
+    anchor: '[data-search-anchor="test-play"]'
+  },
+  {
+    key: 'sound-windows-notify', tab: 'sound',
+    labelKey: 'components.settings.soundSettings.windowsAgentStopNotification.optionsTitle',
+    keywords: ['windows 通知', 'agent 停止', '系统通知', '模板', 'template', '预览', '横幅'],
+    anchor: '[data-search-anchor="win-agent-notify"]'
+  },
+  {
+    key: 'appearance', tab: 'appearance',
+    labelKey: 'components.settings.settingsPanel.sections.appearance.title',
+    keywords: ['外观', 'appearance', '外観', '加载', 'loading', '流式', '平滑', '选中', 'tps', '启动画面']
+  },
+  {
+    key: 'appearance-loading-text', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.loadingText.title',
+    keywords: ['加载', 'loading', 'ローディング', '加载文字', '提示文字'],
+    anchor: '[data-search-anchor="loading-text"]'
+  },
+  {
+    key: 'appearance-smooth-streaming', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.smoothStreaming.title',
+    keywords: ['流式输出', 'smooth', 'スムーズ', '平滑', 'silky', 'balanced', '模式'],
+    anchor: '[data-search-anchor="smooth-output"]'
+  },
+  {
+    key: 'appearance-selection-context', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.selectionContext.title',
+    keywords: ['选中内容', 'selection', 'セレクション', '选中上下文', '悬停'],
+    anchor: '[data-search-anchor="selection-entry"]'
+  },
+  {
+    key: 'appearance-tps-bar', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.tpsBar.title',
+    keywords: ['tps', '速度', '速率', '显示', 'bar'],
+    anchor: '[data-search-anchor="tps-bar"]'
+  },
+  {
+    key: 'appearance-splash', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.splash.title',
+    keywords: ['启动画面', 'splash', 'スプラッシュ', '启动动画', '开机'],
+    anchor: '[data-search-anchor="splash-animation"]'
+  },
+  {
+    key: 'memory', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.sections.memory.title',
+    keywords: ['记忆', 'memory', 'メモリ', '长期记忆', '向量', '检索', 'retrieval', '知识', '条目']
+  },
+  {
+    key: 'memory-toggle', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.memory.enabled.label',
+    keywords: ['启用', 'enabled', '有効', '长期记忆', '总开关'],
+    anchor: '[data-search-anchor="memory-toggle"]'
+  },
+  {
+    key: 'memory-custom-prompt', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.memory.systemPrompt.title',
+    keywords: ['自定义提示词', 'system prompt', 'プロンプト', '提示词', '记忆'],
+    anchor: '[data-search-anchor="memory-custom-prompt"]'
+  },
+  {
+    key: 'memory-runtime', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.memory.runtime.title',
+    keywords: ['运行时参数', 'runtime', '実行時', '唤醒', 'wake', '字节', '分页', '行数'],
+    anchor: '[data-search-anchor="memory-runtime"]'
+  },
+  {
+    key: 'memory-raw-entries', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.memory.rawEntries.title',
+    keywords: ['原始记忆', 'entries', '条目', '编辑', '删除', '记忆记录'],
+    anchor: '[data-search-anchor="memory-raw-entries"]'
+  },
+  {
+    key: 'general', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.sections.general.title',
+    keywords: ['通用', 'general', '一般', '代理', 'proxy', 'プロキシ', '语言', 'language', '言語', '存储路径', 'storage', '保存先', '导入', 'import', 'インポート', '导出', 'export', 'エクスポート', '应用信息', 'about', 'バージョン', '版本', '工作区', 'workspace', 'github']
+  },
+  {
+    key: 'general-proxy', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.proxy.title',
+    keywords: ['代理', 'proxy', 'プロキシ', '代理地址', 'proxy url'],
+    anchor: '[data-search-anchor="proxy"]'
+  },
+  {
+    key: 'general-language', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.language.title',
+    keywords: ['语言', 'language', '言語', '界面语言', '简体中文', 'english', '日本語'],
+    anchor: '[data-search-anchor="language"]'
+  },
+  {
+    key: 'general-storage', tab: 'general',
+    labelKey: 'components.settings.storageSettings.title',
+    keywords: ['存储路径', 'storage', '保存先', '数据目录', '自定义路径', '迁移'],
+    anchor: '[data-search-anchor="storage"]'
+  },
+  {
+    key: 'general-importExport', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.exportImport.title',
+    keywords: ['导入', 'import', 'インポート', '导出', 'export', 'エクスポート', '备份设置', '配置转移'],
+    anchor: '[data-search-anchor="importExport"]'
+  },
+  {
+    key: 'general-appInfo', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.appInfo.title',
+    keywords: ['应用信息', 'about', 'バージョン', '版本', '版本号', '仓库', 'repository'],
+    anchor: '[data-search-anchor="appInfo"]'
+  },
+  {
+    key: 'usage', tab: 'usage',
+    labelKey: 'components.settings.settingsPanel.sections.usage.title',
+    keywords: ['用量', 'usage', '使用量', '统计', 'stats', '統計', 'token用量', '使用时间', 'activity', 'アクティビティ', '热力图']
+  }
+]
+
+const searchQuery = ref('')
+const searchFocused = ref(false)
+const activeSearchIndex = ref(0)
+const searchRootRef = ref<HTMLElement>()
+const scrollbarRef = ref<InstanceType<typeof CustomScrollbar>>()
+
+// 关键词变化后重置选中项，避免旧索引落到不存在的条目上
+watch(searchQuery, () => {
+  activeSearchIndex.value = 0
+})
+
+// 归一化：小写 + 去掉所有空白（'token 用量' 与 'token用量' 可互相匹配）
+const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase().replace(/\s+/g, ''))
+
+/** 搜索是否生效（决定侧边栏高亮/置灰） */
+const searchActive = computed(() => normalizedQuery.value.length > 0)
+
+/** 匹配的搜索结果（按页签顺序排序） */
+const searchResults = computed(() => {
+  const q = normalizedQuery.value
+  if (!q) return []
+  const tabOrder = new Map(tabs.value.map((tab, i) => [tab.id, i]))
+  return SEARCH_INDEX
+    .filter((entry) => {
+      const label = t(entry.labelKey).toLowerCase().replace(/\s+/g, '')
+      return label.includes(q) || entry.keywords.some((k) => k.toLowerCase().replace(/\s+/g, '').includes(q))
+    })
+    .sort((a, b) => (tabOrder.get(a.tab) ?? 99) - (tabOrder.get(b.tab) ?? 99))
+})
+
+/** 含匹配项结果的页签集合（侧边栏高亮用） */
+const tabsWithMatches = computed(() => {
+  const set = new Set<SettingsTab>()
+  for (const entry of searchResults.value) set.add(entry.tab)
+  return set
+})
+
+function tabIcon(tabId: SettingsTab): string {
+  return tabs.value.find((tab) => tab.id === tabId)?.icon || 'codicon-settings-gear'
+}
+
+function closeSearchDropdown() {
+  searchFocused.value = false
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  activeSearchIndex.value = 0
+  searchInputRef.value?.focus()
+}
+
+function moveSearchSelection(delta: number) {
+  const count = searchResults.value.length
+  if (count === 0) return
+  activeSearchIndex.value = (activeSearchIndex.value + delta + count) % count
+}
+
+function openSearchSelection() {
+  const list = searchResults.value
+  if (list.length === 0) return
+  openSearchResult(list[Math.min(activeSearchIndex.value, list.length - 1)])
+}
+
+/** 跳转到搜索结果：切换页签 → 等待渲染 → 滚动定位并闪烁高亮 */
+function openSearchResult(entry: SearchIndexEntry) {
+  closeSearchDropdown()
+  settingsStore.setActiveTab(entry.tab)
+  nextTick(() => {
+    const section = document.querySelector('.settings-section')
+    if (!section) return
+    let target: HTMLElement | null = null
+    // 回退链：精确锚点 → h4 → h3 → 页内第一个锚点元素 → 节容器本身
+    if (entry.anchor) {
+      target = section.querySelector<HTMLElement>(entry.anchor)
+    }
+    if (!target) {
+      target = section.querySelector<HTMLElement>('h4')
+    }
+    if (!target) {
+      target = section.querySelector<HTMLElement>('h3')
+    }
+    if (!target) {
+      target = section.querySelector<HTMLElement>('[data-search-anchor]')
+    }
+    if (!target) {
+      target = section as HTMLElement
+    }
+    const scrollContainer = scrollbarRef.value?.getContainer()
+    // 等 v-if 渲染的节内容布局完成再滚动，避免滚动位置偏移
+    requestAnimationFrame(() => {
+      target!.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      if (scrollContainer) {
+        const containerRect = scrollContainer.getBoundingClientRect()
+        const targetRect = target!.getBoundingClientRect()
+        // 节标题紧贴滚动容器顶部会被压住，留 12px 间距
+        if (targetRect.top < containerRect.top + 12) {
+          scrollContainer.scrollTop += targetRect.top - containerRect.top - 12
+        }
+      }
+    })
+    target!.classList.add('search-flash')
+    window.setTimeout(() => target!.classList.remove('search-flash'), 1600)
+  })
+}
+
+function handleSearchOutsideClick(event: MouseEvent) {
+  if (!searchFocused.value) return
+  const root = searchRootRef.value
+  if (root && !root.contains(event.target as Node)) {
+    closeSearchDropdown()
+  }
+}
+
+const searchInputRef = ref<HTMLInputElement>()
+
+onMounted(() => {
+  document.addEventListener('click', handleSearchOutsideClick)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleSearchOutsideClick)
+})
 
 // 代理设置
 const proxySettings = reactive({
@@ -528,6 +1315,59 @@ onMounted(() => {
   <div class="settings-panel">
     <div class="settings-header">
       <h3>{{ t('components.settings.settingsPanel.title') }}</h3>
+      <div ref="searchRootRef" class="settings-search-root">
+        <div
+          class="settings-search-box"
+          :class="{ focused: searchFocused, 'has-query': !!searchQuery }"
+        >
+          <i class="codicon codicon-search settings-search-icon"></i>
+          <input
+            ref="searchInputRef"
+            v-model="searchQuery"
+            type="text"
+            :placeholder="t('components.settings.settingsPanel.search.placeholder')"
+            @focus="searchFocused = true"
+            @keydown.down.prevent="moveSearchSelection(1)"
+            @keydown.up.prevent="moveSearchSelection(-1)"
+            @keydown.enter.prevent="openSearchSelection"
+            @keydown.esc="closeSearchDropdown"
+          />
+          <button
+            v-if="searchQuery"
+            class="settings-search-clear"
+            :title="t('components.settings.settingsPanel.search.clear')"
+            @click="clearSearch"
+          >
+            <i class="codicon codicon-close"></i>
+          </button>
+        </div>
+        <Transition name="settings-search-dropdown">
+          <div
+            v-if="searchFocused && searchActive"
+            class="settings-search-results"
+            :class="{ 'is-empty': searchResults.length === 0 }"
+          >
+            <template v-if="searchResults.length > 0">
+              <div
+                v-for="(result, index) in searchResults"
+                :key="result.key"
+                class="settings-search-result"
+                :class="{ active: index === activeSearchIndex }"
+                @mousedown.prevent="openSearchResult(result)"
+                @mouseenter="activeSearchIndex = index"
+              >
+                <i :class="['codicon', tabIcon(result.tab)]"></i>
+                <span class="settings-search-result-label">{{ t(result.labelKey) }}</span>
+                <span class="settings-search-result-tab">{{ t(`components.settings.tabs.${result.tab}`) }}</span>
+              </div>
+            </template>
+            <div v-else class="settings-search-no-results">
+              <i class="codicon codicon-search"></i>
+              {{ t('components.settings.settingsPanel.search.noResults') }}
+            </div>
+          </div>
+        </Transition>
+      </div>
       <button class="settings-close-btn" :title="t('components.settings.settingsPanel.backToChat')" @click="settingsStore.showChat">
         <i class="codicon codicon-close"></i>
       </button>
@@ -546,7 +1386,11 @@ onMounted(() => {
         <button
           v-for="tab in tabs"
           :key="tab.id"
-          :class="['settings-tab', { active: settingsStore.activeTab === tab.id }]"
+          :class="['settings-tab', {
+            active: settingsStore.activeTab === tab.id,
+            'has-match': searchActive && tabsWithMatches.has(tab.id),
+            dimmed: searchActive && !tabsWithMatches.has(tab.id)
+          }]"
           :data-tooltip="tab.label"
           @click="settingsStore.setActiveTab(tab.id)"
         >
@@ -556,7 +1400,7 @@ onMounted(() => {
       </div>
       
       <!-- 右侧内容 -->
-      <CustomScrollbar class="settings-main-scrollbar">
+      <CustomScrollbar ref="scrollbarRef" class="settings-main-scrollbar">
         <div class="settings-main">
           <!-- 渠道设置 -->
           <div v-if="settingsStore.activeTab === 'channel'" class="settings-section">
@@ -682,7 +1526,7 @@ onMounted(() => {
             
             <div class="settings-form">
               <!-- 代理设置 -->
-              <div class="form-group">
+              <div class="form-group" data-search-anchor="proxy">
                 <label class="group-label">
                   <i class="codicon codicon-globe"></i>
                   {{ t('components.settings.settingsPanel.proxy.title') }}
@@ -731,7 +1575,7 @@ onMounted(() => {
               <div class="divider"></div>
               
               <!-- 语言设置 -->
-              <div class="form-group">
+              <div class="form-group" data-search-anchor="language">
                 <label class="group-label">
                   <i class="codicon codicon-globe"></i>
                   {{ t('components.settings.settingsPanel.language.title') }}
@@ -751,7 +1595,7 @@ onMounted(() => {
               <div class="divider"></div>
               
               <!-- 存储路径设置 -->
-              <div class="form-group">
+              <div class="form-group" data-search-anchor="storage">
                 <label class="group-label">
                   <i class="codicon codicon-folder"></i>
                   {{ t('components.settings.storageSettings.title') }}
@@ -844,7 +1688,7 @@ onMounted(() => {
               <div class="divider"></div>
               
               <!-- 设置导入/导出 -->
-              <div class="form-group">
+              <div class="form-group" data-search-anchor="importExport">
                 <label class="group-label">
                   <i class="codicon codicon-export"></i>
                   {{ t('components.settings.settingsPanel.exportImport.title') }}
@@ -882,7 +1726,7 @@ onMounted(() => {
               <div class="divider"></div>
               
               <!-- 应用信息 -->
-              <div class="form-group">
+              <div class="form-group" data-search-anchor="appInfo">
                 <label class="group-label">
                   <i class="codicon codicon-info"></i>
                   {{ t('components.settings.settingsPanel.appInfo.title') }}
@@ -1853,5 +2697,193 @@ onMounted(() => {
 
 .usage-open-full-btn .codicon {
   font-size: 12px;
+}
+
+/* ===== 设置项搜索 ===== */
+
+.settings-search-root {
+  position: relative;
+  flex: 1;
+  max-width: 380px;
+  margin: 0 12px;
+}
+
+.settings-search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
+  border-radius: 4px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.settings-search-box.focused {
+  border-color: var(--vscode-focusBorder, #3794ff);
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder, #3794ff);
+}
+
+.settings-search-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.settings-search-box input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.settings-search-box input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #9d9d9d));
+}
+
+.settings-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.settings-search-clear:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+  color: var(--vscode-foreground);
+}
+
+.settings-search-clear .codicon {
+  font-size: 11px;
+}
+
+.settings-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 2147482000;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px 0;
+  background: var(--vscode-dropdown-background, var(--vscode-editorWidget-background, #252526));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border, #454545));
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.settings-search-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.settings-search-result:hover,
+.settings-search-result.active {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.settings-search-result .codicon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.settings-search-result-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-search-result-tab {
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.settings-search-result:hover .settings-search-result-tab,
+.settings-search-result.active .settings-search-result-tab {
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+  opacity: 0.8;
+}
+
+.settings-search-no-results {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.settings-search-no-results .codicon {
+  font-size: 12px;
+}
+
+.settings-search-dropdown-enter-active,
+.settings-search-dropdown-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.settings-search-dropdown-enter-from,
+.settings-search-dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* 搜索生效时侧边栏：命中页签高亮，未命中置灰 */
+.settings-tab.has-match {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.settings-tab.has-match.active {
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.settings-tab.dimmed {
+  opacity: 0.35;
+}
+
+/* 搜索结果跳转后的临时闪烁高亮 */
+.search-flash {
+  animation: settings-search-flash 1.6s ease;
+}
+
+@keyframes settings-search-flash {
+  0% {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  }
+  60% {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 </style>
