@@ -82,3 +82,47 @@ describe('MessageRenderBlock 思考块流式透传', () => {
     wrapper.unmount()
   })
 })
+
+describe('MessageRenderBlock 思考块折叠预览', () => {
+  function mountCollapsed(text: string) {
+    const block: RenderBlock = { type: 'thought', text, key: '0:thought' }
+    return mount(MessageRenderBlock, {
+      props: {
+        block,
+        messageRole: 'assistant',
+        isStreaming: false,
+        thoughtViewMode: 'collapsed',
+        isThinking: false,
+        thinkingTimeDisplay: null,
+        messageBackendIndex: 0,
+        setThoughtViewMode: () => {}
+      },
+      global: {
+        stubs: {
+          MarkdownRenderer: MarkdownRendererStub,
+          ToolMessage: true,
+          InlineContextMessage: true
+        }
+      }
+    })
+  }
+
+  it('折叠模式显示思考内容第一行作为预览（多行文本只取第一行）', () => {
+    const wrapper = mountCollapsed('第一行思考内容\n第二行\n第三行')
+    expect(wrapper.find('.thought-collapsed-text').text()).toBe('第一行思考内容')
+    // 折叠模式不渲染中展开/完全展开内容区
+    expect(wrapper.find('.thought-medium').exists()).toBe(false)
+    expect(wrapper.find('.thought-content').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('折叠模式跳过空行，取首个非空行；空文本预览为空', () => {
+    const wrapper = mountCollapsed('\n  \n第二行')
+    expect(wrapper.find('.thought-collapsed-text').text()).toBe('第二行')
+    wrapper.unmount()
+
+    const empty = mountCollapsed('')
+    expect(empty.find('.thought-collapsed-text').text()).toBe('')
+    empty.unmount()
+  })
+})

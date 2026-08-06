@@ -28,7 +28,7 @@ export function pruneMediumTrimmedByMessageId(activeIds: Set<string>): void {
  * memo 边界由父组件 MessageItem.vue 放在 v-for 同一组件元素上；本组件内部不声明 memo，也不引入 display:contents 或额外 wrapper。
  */
 
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { RenderBlock, ThoughtViewMode } from './renderBlocks'
 import { hasContextBlocks } from '../../types/contextParser'
 import { useI18n } from '../../i18n'
@@ -135,6 +135,13 @@ let registeredThoughtMessageId: string | null = null
 // 即时渲染格式（思维链分段渲染）；未完成尾巴仍在 CharFlow host 逐字淡出。
 // 折叠态不启用（无内容区）。
 const thoughtRendered = ref('')
+
+/** 折叠视图预览文本：思考内容第一行（非流式路径；流式路径由 CharFlow host 托管） */
+const collapsedPreview = computed(() => {
+    const firstLine = (props.block.text ?? '').split('\n').find(line => line.trim().length > 0) ?? ''
+    return firstLine.trim()
+})
+
 function handleThoughtPromote(text: string): void {
   thoughtRendered.value += text
   scrollMediumToBottomIfStuck()
@@ -165,7 +172,18 @@ watch(
       releaseThoughtDisplay()
     }
     if (active && messageId && host && !registeredThoughtHost) {
-      if (viewMode === 'expanded') {
+      if (viewMode === 'collapsed') {
+        // 折叠：单行预览。noFade 直接追加、换行折叠为零宽空格、followEnd 始终
+        // 滚动到最新字符、tailWindow 让超长思考内容有界（防撑爆单行容器）；
+        // 无渐进渲染层，restoreFull 注册时恢复完整累计文本。
+        registerSmoothDisplay(messageId, host, {
+          noFade: true,
+          squashLineBreaks: true,
+          tailWindow: 120,
+          followEnd: true,
+          restoreFull: true
+        })
+      } else if (viewMode === 'expanded') {
         // 完全展开：保留逐字淡入 + 渐进 markdown（已定型完整段落即时渲染格式）
         registerSmoothDisplay(messageId, host, { onPromote: handleThoughtPromote })
       } else {
@@ -248,6 +266,13 @@ onUnmounted(releaseThoughtDisplay)
           <i class="codicon codicon-chevron-down"></i>
         </button>
       </div>
+    </div>
+    <!-- 折叠：单行显示思考内容最新字符作为预览（流式 CharFlow / 非流式第一行） -->
+    <div v-if="thoughtViewMode === 'collapsed'" class="thought-collapsed-preview">
+      <template v-if="smoothDisplayActive">
+        <div ref="thoughtFlowHostRef" class="thought-collapsed-text"></div>
+      </template>
+      <span v-else class="thought-collapsed-text">{{ collapsedPreview }}</span>
     </div>
     <!-- 中展开：固定行数滚动查看（流式渐进 markdown + CharFlow 尾巴，非流式 markdown 渲染） -->
     <div
@@ -464,6 +489,23 @@ onUnmounted(releaseThoughtDisplay)
 .thought-trim-hint .codicon {
   font-size: 12px;
   flex-shrink: 0;
+}
+
+/* 折叠预览：单行显示第一行/最新字符，超出省略 */
+.thought-collapsed-preview {
+  padding: 0 12px 8px;
+  border-top: none;
+}
+
+.thought-collapsed-text {
+  display: block;
+  font-size: var(--lim-md-font-size, 12px);
+  line-height: var(--lim-md-line-height, 1.5);
+  color: var(--lim-md-color, var(--vscode-descriptionForeground));
+  font-style: var(--lim-md-font-style, italic);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .thought-medium {
