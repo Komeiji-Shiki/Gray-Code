@@ -262,6 +262,14 @@ export interface ToolContext {
         getCustomMetadata: (conversationId: string, key: string) => Promise<unknown>;
         setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
     };
+
+    /**
+     * 当前对话绑定的工作区 URI
+     *
+     * 记忆隔离等按工作区路由的功能使用：memory_* 工具据此把记忆写入/读取到
+     * 对应工作区的记忆存储，无工作区时回退全局记忆。
+     */
+    activeWorkspaceUri?: string;
     
     /** 其他上下文信息 */
     [key: string]: unknown;

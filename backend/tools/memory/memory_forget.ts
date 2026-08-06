@@ -8,7 +8,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { getGlobalMemoryManager } from '../../modules/memory';
+import { getMemoryManagerForTool } from '../../modules/memory';
 
 export function createMemoryForgetDeclaration(): ToolDeclaration {
     return {
@@ -43,8 +43,8 @@ function isRange(s: string): boolean {
     return /^\d+,\d+$/.test(s);
 }
 
-async function memoryForgetHandler(args: Record<string, unknown>, _context?: ToolContext): Promise<ToolResult> {
-    const mgr = getGlobalMemoryManager();
+async function memoryForgetHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
+    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri);
     if (!mgr) {
         return { success: false, error: 'MemoryManager is not initialized.' };
     }

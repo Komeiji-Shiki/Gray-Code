@@ -2228,7 +2228,13 @@ const ja: LanguageMessages = {
                         deleteSelected: '選択した {count} 件を削除',
                         deletedBatch: '{count} 件の記憶を削除しました。',
                         batchDeleteConfirmTitle: '記憶エントリを一括削除',
-                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
+                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
+                        scopeGlobal: 'グローバル記憶',
+                        scopeGlobalHint: 'すべてのワークスペースで共有される既定の記憶です。ワークスペースのコンテキストがない場合、AI はグローバル記憶を使用します。',
+                        scopeWorkspace: 'ワークスペース記憶',
+                        scopeWorkspaceHint: 'ワークスペースごとに独立して保存される記憶で、他のワークスペースやグローバル記憶とは互いに影響しません。',
+                        selectScopeWorkspace: 'ワークスペースを選択…',
+                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶は、このワークスペースにのみ表示されます。'
                     }
                 },
 
