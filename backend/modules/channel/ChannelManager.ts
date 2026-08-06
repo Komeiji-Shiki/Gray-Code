@@ -903,7 +903,9 @@ export class ChannelManager {
                 let bufferOffset = 0;
                 // 未知格式整段残留标记：parseStreamBuffer 无法识别流格式时把整段缓冲原样
                 // 作为 remaining 返回（同一引用），需要完整累积后才能识别格式——此时不清空、
-                // 不压缩，保持「完整累积后识别格式」的既有语义（上限由硬限制保护）
+                // 不压缩，保持「完整累积后识别格式」的既有语义。
+                // 注意：与改动前行为一致，此处对未知格式的整段累积没有大小上限（异常上游
+                // 持续输出非 SSE/JSON 内容时会累积到流结束）；如需防护应在后续版本补充截断策略。
                 let pendingWholeBuffer = false;
                 
                 for await (const chunk of proxyStreamFetch(url, {

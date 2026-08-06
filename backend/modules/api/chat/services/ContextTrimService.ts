@@ -317,8 +317,15 @@ export class ContextTrimService {
      * validateHistoryIntegrity」判定（validSuffix[i]），使 normalizeTrimStartIndex 的每个
      * 候选判定降为 O(1)。语义与 validateHistoryIntegrity（不开启 detectOrphanFunctionCall）
      * 完全一致：重复 functionCall id、重复 functionResponse id、以及「functionResponse
-     * 的配对 functionCall 不在切片内」的孤儿响应。扫描方向与校验方向相反（先加右侧消息），
-     * 但每个消息内部仍按 parts 原序处理，seen 集合的成员关系与正向校验逐位等价。
+     * 的配对 functionCall 不在切片内」的孤儿响应。
+     *
+     * 配对方向注意（与正向校验逐位等价的关键）：正向中「response 的配对 call 必须出现在
+     * response 之前」（同一消息内更早的 part 或更左侧的消息）；反向扫描时因此要区分三种情况：
+     * - 本消息内更早 part 已有 call（localCallSeen）→ 配对成立；
+     * - seenFunctionCallIds 已有但本消息内没有（call 在右侧消息，乱序配对）→ 正向判孤儿，
+     *   置 hasOrphanResponse（该切片向左扩展后仍至少是重复或孤儿，永久 invalid，不可治愈）；
+     * - 两侧都无 → 可能是跨消息正常配对（call 在更左侧，尚未扫到），先记入孤儿集合，
+     *   扫到左侧 call 时治愈；本消息新增孤儿不得被本消息内 call 治愈（同消息乱序）。
      */
     private computeValidSuffixMap(fullHistory: Content[]): boolean[] {
         const validSuffix = new Array<boolean>(fullHistory.length);
@@ -327,19 +334,33 @@ export class ContextTrimService {
         const orphanedFunctionResponseIds = new Set<string>();
         let hasDuplicateCall = false;
         let hasDuplicateResponse = false;
+        let hasOrphanResponse = false;
 
         for (let i = fullHistory.length - 1; i >= 0; i--) {
             const message = fullHistory[i];
             const parts = Array.isArray(message?.parts) ? message.parts : [];
+            // 本消息内全部 functionCall id（跨消息治愈用）
+            const localCallIds = new Set<string>();
             for (const part of parts) {
                 const functionCallId = normalizeCallId(part.functionCall?.id);
                 if (functionCallId) {
+                    localCallIds.add(functionCallId);
+                }
+            }
+            // 本消息内已按 parts 原序处理过的 functionCall（配对判定：call 必须在本 response 之前）
+            const localCallSeen = new Set<string>();
+            // 本消息新增的孤儿 response（同消息内 call 在 response 之后时，正向确实判孤儿，
+            // 不得被本消息的 call 治愈）
+            const newOrphanIds = new Set<string>();
+            // parts 原序处理（与正向校验同序）：重复检测 + 配对判定
+            for (const part of parts) {
+                const functionCallId = normalizeCallId(part.functionCall?.id);
+                if (functionCallId) {
+                    localCallSeen.add(functionCallId);
                     if (seenFunctionCallIds.has(functionCallId)) {
                         hasDuplicateCall = true;
                     } else {
                         seenFunctionCallIds.add(functionCallId);
-                        // 该调用补齐了右侧（已在切片内）孤儿响应的配对
-                        orphanedFunctionResponseIds.delete(functionCallId);
                     }
                 }
 
@@ -351,12 +372,29 @@ export class ContextTrimService {
                     hasDuplicateResponse = true;
                 } else {
                     seenFunctionResponseIds.add(functionResponseId);
-                    if (!seenFunctionCallIds.has(functionResponseId)) {
-                        orphanedFunctionResponseIds.add(functionResponseId);
-                    }
+                }
+
+                if (localCallSeen.has(functionResponseId)) {
+                    // 本消息内更早的 part 已有配对 call → 配对成立（正向不判孤儿）
+                } else if (seenFunctionCallIds.has(functionResponseId)) {
+                    // call 在右侧消息（乱序配对）→ 正向判孤儿；切片向左扩展后仍至少
+                    // 是重复或孤儿，永久 invalid，不可治愈
+                    hasOrphanResponse = true;
+                } else {
+                    // 可能是跨消息正常配对（call 在更左侧尚未扫到）→ 暂记孤儿，等待治愈
+                    orphanedFunctionResponseIds.add(functionResponseId);
+                    newOrphanIds.add(functionResponseId);
                 }
             }
-            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse && orphanedFunctionResponseIds.size === 0;
+            // 跨消息治愈：本消息的 call 在右侧消息孤儿 response 的左侧 → 治愈
+            // （本消息新增孤儿除外——同消息乱序在正向中确实是孤儿）
+            for (const callId of localCallIds) {
+                if (!newOrphanIds.has(callId)) {
+                    orphanedFunctionResponseIds.delete(callId);
+                }
+            }
+            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse
+                && !hasOrphanResponse && orphanedFunctionResponseIds.size === 0;
         }
         return validSuffix;
     }

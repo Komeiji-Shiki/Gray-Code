@@ -796,9 +796,12 @@ function openSearchSelection() {
   openSearchResult(list[Math.min(activeSearchIndex.value, list.length - 1)])
 }
 
-/** 跳转到搜索结果：切换页签 → 等待渲染 → 滚动定位并闪烁高亮 */
+/** 跳转到搜索结果：切换页签 → 清空搜索 → 等待渲染 → 滚动定位并闪烁高亮 */
 function openSearchResult(entry: SearchIndexEntry) {
   closeSearchDropdown()
+  // L-2：跳转完成即清空搜索词，侧边栏恢复常态高亮（避免跳转后仍整页置灰/高亮）
+  searchQuery.value = ''
+  activeSearchIndex.value = 0
   settingsStore.setActiveTab(entry.tab)
   nextTick(() => {
     const section = document.querySelector('.settings-section')
@@ -823,14 +826,15 @@ function openSearchResult(entry: SearchIndexEntry) {
     const scrollContainer = scrollbarRef.value?.getContainer()
     // 等 v-if 渲染的节内容布局完成再滚动，避免滚动位置偏移
     requestAnimationFrame(() => {
-      target!.scrollIntoView({ block: 'start', behavior: 'smooth' })
       if (scrollContainer) {
+        // L-1：直接按目标元素相对滚动容器的偏移计算目标位置（含 12px 顶部间距），
+        // 避免「scrollIntoView smooth 未推进时同步读 rect」的时序冲突，也不打断动画
         const containerRect = scrollContainer.getBoundingClientRect()
         const targetRect = target!.getBoundingClientRect()
-        // 节标题紧贴滚动容器顶部会被压住，留 12px 间距
-        if (targetRect.top < containerRect.top + 12) {
-          scrollContainer.scrollTop += targetRect.top - containerRect.top - 12
-        }
+        const targetTop = scrollContainer.scrollTop + (targetRect.top - containerRect.top) - 12
+        scrollContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+      } else {
+        target!.scrollIntoView({ block: 'start', behavior: 'smooth' })
       }
     })
     target!.classList.add('search-flash')
@@ -1350,11 +1354,11 @@ onMounted(() => {
         </div>
         <Transition name="settings-search-dropdown">
           <div
-            v-if="searchFocused && searchActive"
+            v-if="searchFocused"
             class="settings-search-results"
-            :class="{ 'is-empty': searchResults.length === 0 }"
+            :class="{ 'is-empty': searchActive && searchResults.length === 0 }"
           >
-            <template v-if="searchResults.length > 0">
+            <template v-if="searchActive && searchResults.length > 0">
               <div
                 v-for="(result, index) in searchResults"
                 :key="result.key"
@@ -1368,9 +1372,13 @@ onMounted(() => {
                 <span class="settings-search-result-tab">{{ t(`components.settings.tabs.${result.tab}`) }}</span>
               </div>
             </template>
-            <div v-else class="settings-search-no-results">
+            <div v-else-if="searchActive" class="settings-search-no-results">
               <i class="codicon codicon-search"></i>
               {{ t('components.settings.settingsPanel.search.noResults') }}
+            </div>
+            <div v-else class="settings-search-no-results">
+              <i class="codicon codicon-search"></i>
+              {{ t('components.settings.settingsPanel.search.hint') }}
             </div>
           </div>
         </Transition>
