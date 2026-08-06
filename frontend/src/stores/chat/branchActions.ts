@@ -153,6 +153,49 @@ export function buildCandidateGroupForNode(
 }
 
 /**
+ * BR-01 窗口 id 对齐（TREE-10 回归）：编辑用户消息（branch 模式）后，后端主历史中该消息
+ * 已被替换为新编辑候选节点（editCandidate 新建的节点 id），而本地窗口仍保留旧候选 id——
+ * 导致 buildCandidateGroupForNode 把该消息判定为「候选组非活跃成员」返回 null，
+ * BranchSwitcherBar 不显示（切走再切回触发 loadHistory 重载后才恢复）。
+ *
+ * 本函数在分支图刷新成功后执行：窗口内凡是「候选组中的非活跃成员」的用户消息，
+ * 且候选组存在、窗口中没有活跃候选 id 的消息时，把该消息 id 对齐为活跃候选 id
+ * （BR-01 原则：窗口 id 与后端主历史 Content.id 必须一致）。
+ * 只处理 role='user'：assistant 占位消息 id 由 complete/cancelled 终结替换，不在此列。
+ * 幂等：对齐后消息已位于活跃路径，再次执行不会重复替换。
+ */
+export function alignWindowUserMessageIdsToGraph(
+  state: ChatStoreState,
+  graph: BranchGraphData | null
+): void {
+  if (!graph?.nodes) return
+  const messages = state.allMessages.value
+  if (messages.length === 0) return
+
+  const activeIds = new Set(buildActivePathIds(graph))
+  const seenIds = new Set(messages.map(m => m.id))
+  let changed = false
+
+  const aligned = messages.map((msg) => {
+    if (msg.role !== 'user' || activeIds.has(msg.id)) return msg
+    const node = graph.nodes[msg.id]
+    if (!node || node.deleted || node.parentId === null) return msg
+    const group = buildCandidateGroupAt(graph, node.parentId)
+    if (!group || group.activeIndex < 0) return msg
+    const activeId = group.candidates[group.activeIndex].id
+    if (activeId === msg.id || seenIds.has(activeId)) return msg
+    seenIds.add(activeId)
+    changed = true
+    return { ...msg, id: activeId }
+  })
+
+  if (changed) {
+    state.allMessages.value = aligned
+    rebuildMessageIndexById(state)
+  }
+}
+
+/**
  * 子节点索引（TREE-11 分支树面板数据源）：Map<parentId, 子节点列表>。
  * 镜像后端 BranchGraph.childrenIndex：按 createdAt 升序（同毫秒按 id 字典序），
  * 软删节点也包含在内（由展示方按需灰显）。
@@ -208,6 +251,10 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
 
     if (result?.graph) {
       state.branchGraph.value = result.graph
+      // BR-01 对齐（TREE-10 回归）：编辑用户消息后窗口 id 落后于图活跃候选，
+      // 刷新图时把窗口内非活跃候选成员的用户消息 id 对齐为活跃候选，
+      // BranchSwitcherBar 才能在保存后立即显示「‹ 2/2 ›」切换器。
+      alignWindowUserMessageIdsToGraph(state, result.graph)
     } else {
       if (result?.errorCode) {
         console.warn('[branchActions] branch graph unavailable:', result.errorCode, result.errorMessage ?? '')
