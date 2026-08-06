@@ -209,7 +209,7 @@ function rejectIfStreaming(ctx: HandlerContext, conversationId: string, requestI
     return false;
 }
 
-/** 懒解析/创建全局 BranchService（首次调用时用 ctx 中的数据路径构造） */
+/** 解析启动期注册的 BranchService；测试/异常初始化场景下保留按需构造兜底。 */
 function resolveBranchService(ctx: HandlerContext): BranchService {
     const existing = getGlobalBranchService();
     if (existing) {
@@ -350,6 +350,10 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       return;
     }
     const service = resolveBranchService(ctx);
+
+    // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
+    // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
+    await service.assertMainHistoryRepresentedInGraph(conversationId);
 
     // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支
     // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。

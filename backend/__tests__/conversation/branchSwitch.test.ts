@@ -281,24 +281,23 @@ describe('TREE-04/06 候选切换全链（handler 编排）', () => {
         expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
     });
 
-    test('切换到空候选（失败候选）：从 sidecar 物化空消息，主历史 = 活跃路径', async () => {
+    test('无输出的空候选会被丢弃，旧候选仍可切回，空节点不可再切换', async () => {
         const [userNodeId, modelNodeId] = await seedConversation('c1');
-        // reroll 开始但流式未产生内容（失败候选，决策 10）——候选节点 parts 为空
+        // reroll 开始但流式未产生内容：finish 会移除没有任何可恢复内容的瞬时占位。
         const started = await service.startReroll('c1', modelNodeId);
         const candidateNodeId = started.candidateNodeId;
-        await service.finishReroll('c1', candidateNodeId);
+        const finished = await service.finishReroll('c1', candidateNodeId);
+        expect(finished.discardedEmptyCandidate).toBe(true);
         // 主历史当前 = [U]（startReroll 截断到父节点）
 
         // 先切回旧候选 M
         await doSwitch('c1', modelNodeId);
         expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
 
-        // 再切到空候选：主历史物化空消息（内容来自 sidecar）
-        await doSwitch('c1', candidateNodeId);
-        const history = await manager.getMessagesRaw('c1');
-        expect(history.map(m => m.id)).toEqual([userNodeId, candidateNodeId]);
-        expect(history[1]!.parts).toEqual([]);
-        expect(await service.validateActivePathMatchesHistory('c1')).toMatchObject({ valid: true });
+        // 空占位已经物理移除，继续引用旧 ID 必须明确 NODE_NOT_FOUND，且不改主历史。
+        await switchBranchCandidate({ conversationId: 'c1', nodeId: candidateNodeId }, 'req-empty', makeCtx());
+        expect(errors[errors.length - 1]).toMatchObject({ code: 'NODE_NOT_FOUND' });
+        expect((await manager.getMessagesRaw('c1')).map(m => m.id)).toEqual([userNodeId, modelNodeId]);
     });
 
     test('切换后继续对话 append 到新活跃尾（appendHistoryToGraph 已接线）', async () => {

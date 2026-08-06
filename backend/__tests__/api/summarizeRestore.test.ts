@@ -14,6 +14,11 @@ import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { restoreSummarizedRange } from '../../modules/conversation/TranscriptMutation';
 import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
 import type { Content } from '../../modules/conversation/types';
+import { setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
+
+afterEach(() => {
+    setGlobalBranchService(undefined);
+});
 
 // ==================== 消息构造工具 ====================
 
@@ -110,6 +115,12 @@ describe('ConversationManager 删除总结消息自动恢复原文', () => {
 
     it('deleteMessage 删除总结消息 → 覆盖区间自动取消标记（原文恢复活跃）', async () => {
         const { manager, id } = await seedManager(summarizedHistory());
+        const structuralSync = jest.fn(async () => ({ synced: true, deferred: false }));
+        const ordinaryDeleteSync = jest.fn();
+        setGlobalBranchService({
+            syncMainHistoryAfterStructuralMutation: structuralSync,
+            syncGraphAfterHistoryDelete: ordinaryDeleteSync,
+        } as any);
         // 定位总结消息下标（addContent 按序追加，下标 3）
         const summaryIndex = 3;
 
@@ -124,6 +135,8 @@ describe('ConversationManager 删除总结消息自动恢复原文', () => {
         // 首条用户消息与活跃消息不受影响
         expect(history[0].isSummarized).toBeUndefined();
         expect(history[3].parts[0].text).toBe('m3');
+        expect(structuralSync).toHaveBeenCalledWith(id, 'summary_deleted');
+        expect(ordinaryDeleteSync).not.toHaveBeenCalled();
     });
 
     it('deleteMessagesInRange 删除区间含多个总结 → 从晚到早逐个恢复各自覆盖区', async () => {
@@ -178,6 +191,8 @@ describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () 
 
     it('恢复：取消覆盖区间标记 + 删除总结消息，返回恢复数', async () => {
         const { service, liveHistory } = createHarness(summarizedHistory());
+        const structuralSync = jest.fn(async () => ({ synced: true, deferred: false }));
+        setGlobalBranchService({ syncMainHistoryAfterStructuralMutation: structuralSync } as any);
 
         const result = await service.restoreSummarizedMessages('conv1', 'sum-1');
 
@@ -191,6 +206,7 @@ describe('SummarizeService.restoreSummarizedMessages（恢复按钮 API）', () 
         expect(history[2].isSummarized).toBeUndefined();
         // 总结消息已删除
         expect(history.some(m => m.id === 'sum-1')).toBe(false);
+        expect(structuralSync).toHaveBeenCalledWith('conv1', 'summary_restored');
     });
 
     it('总结消息不存在时成功返回 0，不落盘', async () => {
