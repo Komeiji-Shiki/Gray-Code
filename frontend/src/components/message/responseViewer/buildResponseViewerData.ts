@@ -653,6 +653,15 @@ function deriveToolStatusFromResult(
       return 'warning'
     }
 
+    // 部分接受（apply_diff 返回 partial:true 或 status:'partial'）→ warning
+    const data = record.data
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>
+      if (d.partial === true || d.status === 'partial') {
+        return 'warning'
+      }
+    }
+
     if (typeof record.error === 'string' && record.error.trim()) {
       return 'error'
     }

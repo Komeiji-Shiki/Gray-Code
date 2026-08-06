@@ -8,13 +8,16 @@ jest.mock('fs', () => ({
     unlinkSync: jest.fn()
 }));
 
-jest.mock('../../tools/file/DiffCodeLensProvider', () => ({
-    getDiffCodeLensProvider: () => ({
+jest.mock('../../tools/file/DiffCodeLensProvider', () => {
+    const provider = {
         removeSession: jest.fn(),
         getSession: jest.fn(),
         getSessionByFilePath: jest.fn()
-    })
-}));
+    };
+    return {
+        getDiffCodeLensProvider: () => provider
+    };
+});
 
 jest.mock('../../core/settingsContext', () => ({
     getGlobalSettingsManager: () => null
@@ -196,6 +199,11 @@ describe('DiffManager lifecycle closure', () => {
     afterEach(() => {
         jest.useRealTimers();
         resetDiffManagerSingleton();
+        // 复位 provider 上残留的 mock 返回值，防止 partial 测试的 getSession.mockReturnValue
+        // 泄漏到后续用例（缓存实例跨测试共享，restoreAllMocks 不会清掉 jest.fn 的返回值）
+        const provider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
+        (provider.getSession as jest.Mock).mockReset();
+        (provider.getSessionByFilePath as jest.Mock).mockReset();
     });
 
     it('opens native tool diff in the main chat column even when Monitor owns another group', async () => {
@@ -323,6 +331,93 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).saveListeners.has(diff.id)).toBe(false);
         expect((manager as any).closeListeners.has(diff.id)).toBe(false);
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
+    });
+    it('acceptDiff records partial and rejectedBlockIndices on partial acceptance', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        const lensProvider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
+        // blocks 含：已确认(0)、已拒绝(1)、未处理(2)——用 index 2 区分 rejected 过滤与 !confirmed 过滤
+        (lensProvider.getSession as jest.Mock).mockImplementation((id: string) =>
+            id === diff.id
+                ? {
+                      id: diff.id,
+                      blocks: [
+                          { index: 0, startLine: 1, endLine: 2, confirmed: true },
+                          { index: 1, startLine: 3, endLine: 4, rejected: true },
+                          { index: 2, startLine: 5, endLine: 6 }
+                      ]
+                  }
+                : undefined
+        );
+
+        const accepted = await manager.acceptDiff(diff.id, false, false);
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        expect(diff.partial).toBe(true);
+        // 只有 rejected 的块(1)应被收集；未处理的块(2)不算拒绝
+        expect(diff.rejectedBlockIndices).toEqual([1]);
+        expect((manager as any).saveListeners.has(diff.id)).toBe(false);
+    });
+
+    it('acceptDiff without rejected blocks keeps partial unset', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        const lensProvider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
+        (lensProvider.getSession as jest.Mock).mockImplementation((id: string) =>
+            id === diff.id
+                ? {
+                      id: diff.id,
+                      blocks: [
+                          { index: 0, startLine: 1, endLine: 2, confirmed: true }
+                      ]
+                  }
+                : undefined
+        );
+
+        const accepted = await manager.acceptDiff(diff.id, false, false);
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        expect(diff.partial).toBeUndefined();
+        expect(diff.rejectedBlockIndices).toBeUndefined();
+    });
+
+    it('acceptDiff with userEditedContent records partial even without rejected blocks', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+        (diff as any).userEditedContent = 'user manually edited';
+
+        const lensProvider = require('../../tools/file/DiffCodeLensProvider').getDiffCodeLensProvider();
+        // 无任何 rejected 块
+        (lensProvider.getSession as jest.Mock).mockImplementation((id: string) =>
+            id === diff.id ? { id: diff.id, blocks: [{ index: 0, startLine: 1, endLine: 2, confirmed: true }] } : undefined
+        );
+
+        const accepted = await manager.acceptDiff(diff.id, false, false);
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        expect(diff.partial).toBe(true);
+        // 无 rejected 块：rejectedBlockIndices 为空数组（partial=true 时总会写入该字段）
+        expect(diff.rejectedBlockIndices).toEqual([]);
     });
 
     it('createPendingDiff keeps the diff pending when opening the diff view fails', async () => {

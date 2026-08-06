@@ -3064,6 +3064,8 @@ const en: LanguageMessages = {
                     pending: 'Pending review',
                     accepted: 'Accepted',
                     rejected: 'Rejected',
+                    partial: 'Partially accepted',
+                    rejectedBlock: 'This block was rejected by the user',
                     line: 'From line',
                     diffNumber: '#',
                     collapse: 'Collapse',

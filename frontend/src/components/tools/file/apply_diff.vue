@@ -61,6 +61,8 @@ interface DiffBlock {
   new_start_line?: number
   success?: boolean
   error?: string
+  /** 是否被用户拒绝（部分接受/部分拒绝时由 rejectedBlockIndices 标记） */
+  rejected?: boolean
 }
 
 function parseUnifiedPatchToDiffBlocks(patch: string): DiffBlock[] {
@@ -147,6 +149,8 @@ const filePath = computed(() => {
 // - 新格式：优先读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
 // - 旧格式：兼容 args.diffs
 const diffList = computed((): DiffBlock[] => {
+  const rejectedIndices = new Set<number>(resultData.value?.rejectedBlockIndices || [])
+
   // 结构化 hunks（推荐新格式）
   const hunks = props.args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined
   if (hunks && Array.isArray(hunks) && hunks.length > 0) {
@@ -160,7 +164,8 @@ const diffList = computed((): DiffBlock[] => {
         replace: h.newContent,
         start_line: h.startLine,
         success: r?.success,
-        error: r?.error
+        error: r?.error,
+        rejected: rejectedIndices.has(i)
       }
     })
   }
@@ -176,14 +181,15 @@ const diffList = computed((): DiffBlock[] => {
     return blocks.map((b, i) => {
       const r = results.find(x => x.index === i)
       if (!r) {
-        return { ...b }
+        return { ...b, rejected: rejectedIndices.has(i) }
       }
       return {
         ...b,
         success: r.success,
         error: r.error,
         // 统一使用后端返回的 startLine（更接近真实应用位置）；没有则退回参数
-        start_line: (r.startLine as any) ?? b.start_line
+        start_line: (r.startLine as any) ?? b.start_line,
+        rejected: rejectedIndices.has(i)
       }
     })
   }
@@ -202,7 +208,8 @@ const diffList = computed((): DiffBlock[] => {
         success: res.success,
         error: res.error,
         // 不要默认填充为 1：start_line 仅在“参数中提供/后端返回匹配行号”时才展示
-        start_line: res.matchedLine ?? res.start_line ?? diff.start_line
+        start_line: res.matchedLine ?? res.start_line ?? diff.start_line,
+        rejected: rejectedIndices.has(i)
       }
     })
   }
@@ -215,7 +222,8 @@ const diffList = computed((): DiffBlock[] => {
       success: !failure,
       error: failure?.error,
       // start_line 允许为空；为空时前端不显示“line xx”标记，但内部行号仍会从 1 开始计算
-      start_line: diff.start_line
+      start_line: diff.start_line,
+      rejected: rejectedIndices.has(i)
     }
   })
 })
@@ -259,10 +267,14 @@ const isFailed = computed(() => {
   return !!props.error || (resultData.value && resultData.value.appliedCount === 0)
 })
 
-// 是否为部分成功（有成功也有失败）
+// 是否为部分成功（有成功也有失败，或后端显式标记 partial）
 const isPartial = computed(() => {
   const data = resultData.value
-  return !props.error && data && data.appliedCount > 0 && data.failedCount > 0
+  return !props.error && data && data.status !== 'rejected' && (
+    data.partial === true ||
+    data.status === 'partial' ||
+    (data.appliedCount > 0 && data.failedCount > 0)
+  )
 })
 
 // 获取文件名
@@ -438,6 +450,7 @@ onBeforeUnmount(() => {
         <template v-else>{{ t('components.tools.file.applyDiffPanel.diffApplied') }}</template>
       </span>
       <span v-if="resultData.status === 'pending'" class="status-badge pending">{{ t('components.tools.file.applyDiffPanel.pending') }}</span>
+      <span v-else-if="resultData.status === 'partial'" class="status-badge partial">{{ t('components.tools.file.applyDiffPanel.partial') }}</span>
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
       <span v-else-if="resultData.status === 'rejected'" class="status-badge rejected">{{ t('components.tools.file.applyDiffPanel.rejected') }}</span>
     </div>
@@ -469,15 +482,18 @@ onBeforeUnmount(() => {
         v-for="(diff, index) in renderedDiffList"
         :key="index"
         class="diff-block"
-        :class="{ 'is-failed': diff.success === false }"
+        :class="{ 'is-failed': diff.success === false, 'is-rejected': diff.rejected }"
       >
         <!-- Diff 头部 -->
-        <div class="diff-header" :class="{ 'is-failed': diff.success === false }">
+        <div class="diff-header" :class="{ 'is-failed': diff.success === false, 'is-rejected': diff.rejected }">
           <div class="diff-info">
             <span class="diff-number">{{ t('components.tools.file.applyDiffPanel.diffNumber') }}{{ index + 1 }}</span>
             
             <!-- 状态图标 -->
-            <span v-if="diff.success === true" class="status-icon success" :title="t('common.success')">
+            <span v-if="diff.rejected" class="status-icon rejected" :title="t('components.tools.file.applyDiffPanel.rejectedBlock')">
+              <span class="codicon codicon-close"></span>
+            </span>
+            <span v-else-if="diff.success === true" class="status-icon success" :title="t('common.success')">
               <span class="codicon codicon-check"></span>
             </span>
             <span v-else-if="diff.success === false" class="status-icon error" :title="diff.error || t('common.failed')">
@@ -490,7 +506,7 @@ onBeforeUnmount(() => {
               {{ t('components.tools.file.applyDiffPanel.line') }} {{ diff.start_line }}
             </span>
             <!-- 统计信息 -->
-            <span v-if="diff.success !== false" class="diff-stats">
+            <span v-if="diff.success !== false && !diff.rejected" class="diff-stats">
               <span class="stat deleted">
                 <span class="codicon codicon-remove"></span>
                 {{ diff.lineDiff.deleted }}
@@ -674,6 +690,10 @@ onBeforeUnmount(() => {
   color: var(--vscode-charts-yellow);
 }
 
+.status-icon.rejected {
+  color: var(--vscode-charts-yellow);
+}
+
 .status-text {
   flex: 1;
   font-size: 11px;
@@ -699,6 +719,11 @@ onBeforeUnmount(() => {
 
 .status-badge.rejected {
   background: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+.status-badge.partial {
+  background: var(--vscode-charts-yellow, #e69500);
   color: var(--vscode-editor-background);
 }
 
@@ -922,6 +947,10 @@ onBeforeUnmount(() => {
   opacity: 0.8;
 }
 
+.diff-block.is-rejected {
+  border-color: var(--vscode-charts-yellow, #e69500);
+}
+
 /* Diff 头部 */
 .diff-header {
   display: flex;
@@ -930,6 +959,10 @@ onBeforeUnmount(() => {
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
   background: var(--vscode-editor-inactiveSelectionBackground);
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.diff-header.is-rejected {
+  background: rgba(230, 149, 0, 0.08);
 }
 
 .diff-header.is-failed {
