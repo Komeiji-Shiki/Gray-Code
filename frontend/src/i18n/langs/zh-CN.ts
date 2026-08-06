@@ -2720,6 +2720,8 @@ const zhCN = {
             cancelled: '已取消',
             cancel: '取消任务',
             dismiss: '清除',
+            dismissAllCompleted: '清除已完成',
+            dismissAllCompletedTitle: '一键清除所有已完成且已回流的后台任务（未回流的保留）',
             pendingReport: '结果待汇报给模型',
             outputTitle: '命令输出',
             noOutput: '暂无输出',

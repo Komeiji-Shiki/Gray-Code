@@ -2719,6 +2719,8 @@ const ja: LanguageMessages = {
             cancelled: 'キャンセル済み',
             cancel: 'タスクをキャンセル',
             dismiss: '削除',
+            dismissAllCompleted: '完了済みを一括クリア',
+            dismissAllCompletedTitle: '完了済みで報告済みのバックグラウンドタスクを一括クリア（未報告は保持）',
             pendingReport: '結果はモデルへの報告待ち',
             outputTitle: 'コマンド出力',
             noOutput: '出力はまだありません',

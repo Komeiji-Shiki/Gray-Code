@@ -2719,6 +2719,8 @@ const en: LanguageMessages = {
             cancelled: 'Cancelled',
             cancel: 'Cancel task',
             dismiss: 'Dismiss',
+            dismissAllCompleted: 'Clear completed',
+            dismissAllCompletedTitle: 'Dismiss all completed background tasks (tasks with pending reports are kept)',
             pendingReport: 'Result pending report to the model',
             outputTitle: 'Command output',
             noOutput: 'No output yet',

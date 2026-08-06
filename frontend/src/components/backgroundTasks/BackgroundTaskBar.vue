@@ -57,6 +57,11 @@ onUnmounted(() => {
 
 const visibleTasks = computed(() => store.taskList)
 
+/** 可一键清除的任务数：已结束（非运行中）且已回流（reported） */
+const dismissibleCount = computed(() =>
+  visibleTasks.value.filter(t => t.status !== 'running' && t.reported).length
+)
+
 const expandedTerminal = computed(() =>
   expandedTerminalId.value ? terminalStore.getTerminal(expandedTerminalId.value) : undefined
 )
@@ -141,6 +146,17 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
           <i class="codicon codicon-close"></i>
         </button>
       </div>
+
+      <!-- 一键清除所有已完成（已回流）的任务 chip -->
+      <button
+        v-if="dismissibleCount > 0"
+        class="clear-completed-btn"
+        :title="t('components.backgroundTasks.dismissAllCompletedTitle')"
+        @click="store.dismissCompletedTasks()"
+      >
+        <i class="codicon codicon-clear-all"></i>
+        <span>{{ t('components.backgroundTasks.dismissAllCompleted') }} ({{ dismissibleCount }})</span>
+      </button>
     </div>
 
     <!-- 终端输出展开面板 -->
@@ -233,6 +249,26 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
 
 .chip-btn:hover {
   color: var(--vscode-foreground);
+}
+
+/* 一键清除已完成任务按钮：与 task-chip 同高，弱化视觉 */
+.clear-completed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.clear-completed-btn:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
 }
 
 .task-output-panel {
