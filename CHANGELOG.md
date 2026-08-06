@@ -19,6 +19,12 @@
     - 前端高频路径：i18n `t()` 翻译缓存（无参键免 split + 查找）；CustomScrollbar 值相等检查（无变化不写响应式 ref）+ rAF 节流 + 贴底阈值；平滑流式增量基线（每 chunk 免累计文本 slice）。
     - webview：分支图富化响应前浅拷贝（配合只读引用缓存契约）；`requiresJsonRoundTrip` 小 payload 短路（高频小消息免分配 visited Set 深遍历）；广播直接迭代订阅者 Set（免每 50ms 复制订阅者集合）；`getExtensionVersion` memo。
 
+### Fixed
+  - 子代理路径 `ToolDeclarationResolver` 监听器泄漏（H-1）：每次 run 新建实例会向 McpManager 单例注册 3 个永久事件监听器且从不释放，重度多代理下监听器无界累积、MCP 事件派发退化为 O(n)；改为按依赖引用共享实例（容量 4 LRU 淘汰），并新增 `dispose()` 释放监听器，同时让子代理路径真正享受声明缓存收益。
+  - `ConversationManager` 节点 ID 反查缓存（`nodeIdCache`）失效覆盖不完整：`invalidateCaches` 定义了但从未被调用，saveContents / 全量重写 / 历史迁移 / 删除对话等写路径不失效缓存，工具循环内（拒绝工具调用等结构性变更后 300ms 窗口内）checkpoint 反查可能命中陈旧节点 id；现全部写路径统一走 `invalidateCaches`。
+  - 设置搜索下拉键盘导航滚动跟随：结果超出下拉可视高度时，↑/↓ 选中的高亮项现在会保持在可视区域内（`scrollIntoView({ block: 'nearest' })`）。
+  - 新增回归测试：`subagentResolverSharing.test.ts`（监听器只注册一次 / dispose 释放 / 容量淘汰）、`conversationMessageNodeId.test.ts` 补写路径失效断言（仓储替换、删除对话）。
+
 ## [1.4.3] - 2026-08-06
 
 ### Added

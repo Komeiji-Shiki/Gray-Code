@@ -46,6 +46,8 @@ export class ToolDeclarationResolver {
     private readonly declarationCache = new Map<string, ToolDeclaration[]>();
     /** MCP 工具列表版本：服务器连接/断开/能力刷新事件时递增（工具列表变化的可靠失效信号） */
     private mcpToolsVersion = 0;
+    /** 已注册的 MCP 事件解绑句柄：dispose() 时逐一移除，防止一次性实例向 McpManager 单例泄漏监听器 */
+    private readonly mcpEventDisposers: Array<() => void> = [];
 
     constructor(
         private readonly toolRegistry?: ToolRegistry,
@@ -56,9 +58,19 @@ export class ToolDeclarationResolver {
             const bumpToolsVersion = (): void => {
                 this.mcpToolsVersion += 1;
             };
-            this.mcpManager.addEventListener('server:connected', bumpToolsVersion);
-            this.mcpManager.addEventListener('server:disconnected', bumpToolsVersion);
-            this.mcpManager.addEventListener('server:capabilities_updated', bumpToolsVersion);
+            for (const eventType of ['server:connected', 'server:disconnected', 'server:capabilities_updated'] as const) {
+                this.mcpManager.addEventListener(eventType, bumpToolsVersion);
+                this.mcpEventDisposers.push(() => {
+                    this.mcpManager?.removeEventListener?.(eventType, bumpToolsVersion);
+                });
+            }
+        }
+    }
+
+    /** 释放 MCP 事件监听（一次性实例用完后调用，避免向单例 McpManager 无界累积监听器） */
+    dispose(): void {
+        for (const disposer of this.mcpEventDisposers.splice(0)) {
+            disposer();
         }
     }
 

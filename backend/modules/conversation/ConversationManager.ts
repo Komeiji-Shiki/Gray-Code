@@ -366,8 +366,10 @@ export class ConversationManager {
             saveContents: async contents => {
                 this.assertNotDeleted(conversationId);
                 await this.storage.saveHistory(conversationId, contents);
-                // 存储层 saveHistory 会刷新 updatedAt：失效元数据缓存，否则对话列表排序读到陈旧时间戳
-                this.metaCache.delete(conversationId);
+                // 存储层 saveHistory 会刷新 updatedAt：失效元数据缓存，否则对话列表排序读到陈旧时间戳；
+                // 结构性变更（删除/插入/拒绝工具调用等）替换了历史内容，节点 ID 反查缓存一并失效
+                // （BCP-01：nodeIdCache 存的是旧数组引用，不失效会在 300ms TTL 窗口内返回陈旧节点 id）
+                this.invalidateCaches(conversationId);
                 await this.updateUsageIndex(conversationId, contents);
                 // PERF：返回落盘形态。存储适配器（FileSystem/Memory/VSCode）对消息内容只做
                 // JSON 往返序列化，不补 timestamp/index 等字段（与 append 委托不同），
@@ -396,9 +398,9 @@ export class ConversationManager {
                     history.push(...withNodeIds);
                     await this.storage.saveHistory(conversationId, history);
                 }
-                // append-only/回退都会刷新 updatedAt：失效元数据缓存，避免对话列表排序读到陈旧时间戳
-                this.metaCache.delete(conversationId);
-                this.nodeIdCache.delete(conversationId);
+                // append-only/回退都会刷新 updatedAt：失效元数据缓存，避免对话列表排序读到陈旧时间戳；
+                // 追加后历史尾部变化，节点 ID 反查缓存一并失效（BCP-01）
+                this.invalidateCaches(conversationId);
                 await this.updateUsageIndexAppend(conversationId, withNodeIds);
 
                 // TREE-05：主历史追加成功后，把新消息增量并入分支图。
@@ -767,8 +769,9 @@ export class ConversationManager {
 
             this.assertNotDeleted(conversationId);
             await this.storage.saveHistory(conversationId, migrated);
-            // 迁移直写不走仓储：同步失效元数据缓存（存储层刷新 updatedAt）
-            this.metaCache.delete(conversationId);
+            // 迁移直写不走仓储：同步失效元数据缓存（存储层刷新 updatedAt）；迁移重写了历史，
+            // 节点 ID 反查缓存一并失效（BCP-01）
+            this.invalidateCaches(conversationId);
             await this.updateUsageIndex(conversationId, migrated);
 
             const persisted = await this.storage.loadHistoryWithStatus(conversationId);
@@ -1033,8 +1036,9 @@ export class ConversationManager {
             await this.invalidateContextManagementState(conversationId, 'branch_path_switched');
             await this.storage.saveHistory(conversationId, nextContents);
             // 全量重写直写不走仓储：invalidateContextManagementState 已回填旧 custom，
-            // 必须在 saveHistory 刷新 updatedAt 后再失效一次，保证缓存与落盘形态一致
-            this.metaCache.delete(conversationId);
+            // 必须在 saveHistory 刷新 updatedAt 后再失效一次，保证缓存与落盘形态一致；
+            // 分支切换重写了历史，节点 ID 反查缓存一并失效（BCP-01）
+            this.invalidateCaches(conversationId);
             await this.updateUsageIndex(conversationId, nextContents);
 
             return {
@@ -1352,8 +1356,9 @@ export class ConversationManager {
                 // MED-2：对话删除即清理 A-COMM 信箱（内存同步操作，与删除同一锁内原子执行；
                 // 删除失败不会走到这里，信箱状态与对话生命周期保持一致，防 ID 复用时限流/误注入）
                 agentMailbox.clearConversation(conversationId);
-                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读
-                this.metaCache.delete(conversationId);
+                // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读；
+                // 节点 ID 反查缓存一并清除（BCP-01：防 ID 复用后反查命中旧会话节点）
+                this.invalidateCaches(conversationId);
             });
         } catch (error) {
             // 删除失败：撤销标记，避免会话被冻结（后续 append/mutate 仍可用）
