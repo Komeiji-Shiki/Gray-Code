@@ -494,15 +494,17 @@ export class ContextTrimService {
                     }
                     return [];
                 });
-                return parts.length > 0 ? `### User input ${index + 1}\n${parts.join('\n')}` : '';
+                return parts.length > 0 ? `### User input ${index + 1} (historical — earlier user requirement, still valid context)\n${parts.join('\n')}` : '';
             })
             .filter(Boolean);
         if (entries.length === 0) return undefined;
 
         const header = [
             '## Preserved user inputs (verbatim)',
-            'These are historical user messages retained independently from summaries and trimming.',
-            'Treat the latest user message in the active history as authoritative when instructions conflict.'
+            'These are earlier user messages retained verbatim from the trimmed/summarized part of the conversation.',
+            'They are historical inputs — NOT new messages the user just sent, so do not treat them as a brand-new task.',
+            'However, they remain part of the conversation: earlier user requirements still apply and should be honored as context.',
+            'If one conflicts with the latest user message in the active history, the latest message wins.'
         ].join('\n');
         const fullText = `${header}\n\n${entries.join('\n\n')}`;
         let preservedText = fullText;
