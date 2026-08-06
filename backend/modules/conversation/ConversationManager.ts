@@ -1151,8 +1151,8 @@ export class ConversationManager {
      * 整个读-改-写过程在仓储互斥执行器内完成；无未响应调用时不写回（返回原引用跳过），
      * 避免基于旧快照的整体写回覆盖并发落盘的真实工具结果。
      */
-    private async normalizeHistoryForDisplay(conversationId: string): Promise<ConversationHistory> {
-        return await this.getTranscriptRepository(conversationId).mutateContents(history => {
+    private async normalizeHistoryForDisplay(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
+        return await this.getTranscriptRepository(conversationId, workspaceUri).mutateContents(history => {
             // 共享逻辑：收集未响应 functionCall → 标记 rejected → 插入 functionResponse 占位
             // （行为与 rejectAllPendingToolCalls 完全等价，见 TranscriptMutation.rejectUnresolvedToolCalls）。
             if (!rejectUnresolvedToolCalls(history, (content, parent) => this.ensureNodeId(content, parent))) {
@@ -1443,8 +1443,13 @@ export class ConversationManager {
      *   createBranchConversation、deleteConversation）必须调用 invalidateCaches 或重新填充缓存，
      *   否则旧快照会泄漏给下一次读取；
      * - 读路径拿到引用后禁止原地修改（如需要变更必须走仓储写入口，见 getTranscriptRepository）。
+     *
+     * @param workspaceUri 可选工作区 URI：仅当历史不存在、按需自动创建会话时使用，
+     *                     把该 URI 一并写入新会话元数据（H4 记忆隔离——自动创建的会话
+     *                     若不绑定 workspaceUri，记忆工具执行时会回退全局，造成跨工作区污染）。
+     *                     默认 undefined 保持向后兼容；webview 读取入口可传入当前工作区 URI。
      */
-    private async loadHistory(conversationId: string): Promise<ConversationHistory> {
+    private async loadHistory(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
         if (this.deletedConversationIds.has(conversationId)) {
             // 已删除会话：读路径不再自动重建（防止删除后读操作把会话“复活”为空历史）
             return [];
@@ -1459,7 +1464,8 @@ export class ConversationManager {
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
-            await this.createConversation(conversationId);
+            // 自动创建会话时可选绑定 workspaceUri（H4 记忆隔离，见上方 @param 说明）
+            await this.createConversation(conversationId, undefined, workspaceUri);
             return [];
         }
         throw new Error(
@@ -1633,12 +1639,12 @@ export class ConversationManager {
      * 
      * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
-    async getMessages(conversationId: string): Promise<Content[]> {
-        const history = await this.normalizeHistoryForDisplay(conversationId);
+    async getMessages(conversationId: string, workspaceUri?: string): Promise<Content[]> {
+        const history = await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
         if (ConversationManager.needsNodeIdMigration(history)) {
             // BR-02：惰性补 ID（幂等），迁移后重新读取（normalize 返回的数组是迁移前形态）
             await this.ensureHistoryNodeIds(conversationId);
-            return this.toDisplayMessages(await this.loadHistory(conversationId));
+            return this.toDisplayMessages(await this.loadHistory(conversationId, workspaceUri));
         }
         return this.toDisplayMessages(history);
     }
@@ -1780,7 +1786,8 @@ export class ConversationManager {
      */
     async getMessagesPaged(
         conversationId: string,
-        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {},
+        workspaceUri?: string
     ): Promise<{ total: number; messages: Content[] }> {
         // 分段存储的分页读取只拿到一个窗口，判断不了跨窗口的工具调用配对，因此下面的快路径
         // 无法复用 normalizeHistoryForDisplay。若不在这里补齐，取消/中断留下的悬空 functionCall
@@ -1794,7 +1801,7 @@ export class ConversationManager {
             if (scan.hasUnresolvedCalls) {
                 // 只有浅扫描命中悬空工具调用时才走 mutate + 深拷贝写回路径；
                 // 正常历史跳过 normalizeHistoryForDisplay 的全量 JSON 深拷贝。
-                await this.normalizeHistoryForDisplay(conversationId);
+                await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
             }
             if (scan.needsNodeIdMigration) {
                 // BR-02：首次加载检测到缺 id 时在写锁内补 ID（幂等，之后不再触发）
@@ -1822,7 +1829,7 @@ export class ConversationManager {
             };
         }
 
-        const history = await this.normalizeHistoryForDisplay(conversationId);
+        const history = await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
 
         const total = history.length;
         const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));

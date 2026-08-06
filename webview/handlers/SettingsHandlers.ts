@@ -397,7 +397,7 @@ export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) =>
       } else if (savedFsPaths.some((p) => normalizeFsPath(p) === norm)) {
         usedPaths.add(norm);
         scopes.push({
-          uri: activeUri,
+          uri: activeUri!,
           name: path.basename(activeFsPath) || activeFsPath,
           fsPath: activeFsPath,
           hasData: false,
