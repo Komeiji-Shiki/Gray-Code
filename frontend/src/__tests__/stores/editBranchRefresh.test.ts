@@ -13,6 +13,7 @@ import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, CheckpointRecord, BranchGraphData, BranchNodeData } from '../../stores/chat/types'
 import { handleStreamChunk } from '../../stores/chat/streamHandler'
 import { editAndRetry } from '../../stores/chat/messageActions'
+import { buildCandidateGroupForNode } from '../../stores/chat/branchActions'
 
 vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn().mockResolvedValue({ success: true })
@@ -310,5 +311,65 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     await Promise.resolve()
     await Promise.resolve()
     expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
+  })
+
+  it('complete 后窗口被编辑的用户消息 id 对齐图活跃候选（BranchSwitcherBar 立即显示回归）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    // getBranchGraph 返回编辑后的分支图（含新 edit 候选 + 模型候选）
+    vi.mocked(sendToExtension).mockImplementation((type: string) => {
+      if (type === 'conversation.getBranchGraph') {
+        return Promise.resolve({ graph: makeEditedGraph() })
+      }
+      return Promise.resolve({ success: true })
+    })
+
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {}, 'branch')
+    const streamId = state.activeStreamId.value
+
+    // 后端返回 complete（带 content）：占位消息被替换为持久化 id msg_m2
+    handleStreamChunk({
+      conversationId: 'conv_1',
+      streamId,
+      type: 'complete',
+      content: {
+        id: 'msg_m2',
+        role: 'model',
+        timestamp: Date.now(),
+        parts: [{ text: '模型新回答' }]
+      }
+    } as any, {
+      state,
+      currentModelName: () => 'test-model',
+      addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(),
+      processQueue: vi.fn()
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // 图已刷新
+    expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
+
+    // 窗口中被编辑的用户消息 id 对齐为图活跃候选 msg_u2（BR-01：窗口 id 与后端主历史一致）
+    const editedMessage = state.allMessages.value.find(m => m.content === '新回答')
+    expect(editedMessage).toBeDefined()
+    expect(editedMessage!.id).toBe('msg_u2')
+
+    // BranchSwitcherBar 挂载条件成立：该消息是候选组 {u1, u2} 的活跃成员
+    const group = buildCandidateGroupForNode(state.branchGraph.value, editedMessage!.id)
+    expect(group).not.toBeNull()
+    expect(group!.candidates.map(c => c.id)).toEqual(['msg_u1', 'msg_u2'])
+    expect(group!.activeIndex).toBe(1)
+
+    // 旧候选 id 不再命中（对齐前 buildCandidateGroupForNode(msg_u1) 返回 null 是 bug 根源）
+    expect(buildCandidateGroupForNode(state.branchGraph.value, 'msg_u1')).toBeNull()
   })
 })
