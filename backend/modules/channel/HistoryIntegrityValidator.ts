@@ -44,6 +44,9 @@ export function validateHistoryIntegrity(
     const issues: HistoryIntegrityIssue[] = [];
     const seenFunctionCallIds = new Set<string>();
     const seenFunctionResponseIds = new Set<string>();
+    // rejected 的 functionCall（中断/取消/超时后由 ConversationManager 标记）：
+    // 表示"无对应响应是有意的"，formatter 发送时已过滤，不构成孤儿。
+    const rejectedFunctionCallIds = new Set<string>();
 
     for (let messageIndex = 0; messageIndex < history.length; messageIndex++) {
         const message = history[messageIndex];
@@ -63,6 +66,9 @@ export function validateHistoryIntegrity(
                     });
                 } else {
                     seenFunctionCallIds.add(functionCallId);
+                }
+                if (part.functionCall?.rejected) {
+                    rejectedFunctionCallIds.add(functionCallId);
                 }
             }
 
@@ -100,7 +106,8 @@ export function validateHistoryIntegrity(
     // 这种悬空调用会导致 Anthropic / OpenAI 直接 400，比 orphan_function_response 更危险。
     if (options.detectOrphanFunctionCall) {
         for (const callId of seenFunctionCallIds) {
-            if (!seenFunctionResponseIds.has(callId)) {
+            // 跳过 rejected：无响应是设计语义（中断/取消残留），且 formatter 已过滤不会发送
+            if (!seenFunctionResponseIds.has(callId) && !rejectedFunctionCallIds.has(callId)) {
                 issues.push({
                     kind: 'orphan_function_call',
                     callId,
