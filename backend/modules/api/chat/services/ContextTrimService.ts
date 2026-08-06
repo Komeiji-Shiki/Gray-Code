@@ -33,7 +33,7 @@ import type { MessageBuilderService } from './MessageBuilderService';
 
 import { Logger } from '../../../../core/logger';
 import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/promptContextCache';
-import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
+import { validateHistoryIntegrity, normalizeCallId } from '../../../channel/HistoryIntegrityValidator';
 import { planSummarizeMessages } from './summarizeRangePlanner';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -312,6 +312,55 @@ export class ContextTrimService {
         return starts;
     }
 
+    /**
+     * PERF：一次从右向左扫描，预计算每个下标 i 的「切片 fullHistory.slice(i) 是否通过
+     * validateHistoryIntegrity」判定（validSuffix[i]），使 normalizeTrimStartIndex 的每个
+     * 候选判定降为 O(1)。语义与 validateHistoryIntegrity（不开启 detectOrphanFunctionCall）
+     * 完全一致：重复 functionCall id、重复 functionResponse id、以及「functionResponse
+     * 的配对 functionCall 不在切片内」的孤儿响应。扫描方向与校验方向相反（先加右侧消息），
+     * 但每个消息内部仍按 parts 原序处理，seen 集合的成员关系与正向校验逐位等价。
+     */
+    private computeValidSuffixMap(fullHistory: Content[]): boolean[] {
+        const validSuffix = new Array<boolean>(fullHistory.length);
+        const seenFunctionCallIds = new Set<string>();
+        const seenFunctionResponseIds = new Set<string>();
+        const orphanedFunctionResponseIds = new Set<string>();
+        let hasDuplicateCall = false;
+        let hasDuplicateResponse = false;
+
+        for (let i = fullHistory.length - 1; i >= 0; i--) {
+            const message = fullHistory[i];
+            const parts = Array.isArray(message?.parts) ? message.parts : [];
+            for (const part of parts) {
+                const functionCallId = normalizeCallId(part.functionCall?.id);
+                if (functionCallId) {
+                    if (seenFunctionCallIds.has(functionCallId)) {
+                        hasDuplicateCall = true;
+                    } else {
+                        seenFunctionCallIds.add(functionCallId);
+                        // 该调用补齐了右侧（已在切片内）孤儿响应的配对
+                        orphanedFunctionResponseIds.delete(functionCallId);
+                    }
+                }
+
+                const functionResponseId = normalizeCallId(part.functionResponse?.id);
+                if (!functionResponseId) {
+                    continue;
+                }
+                if (seenFunctionResponseIds.has(functionResponseId)) {
+                    hasDuplicateResponse = true;
+                } else {
+                    seenFunctionResponseIds.add(functionResponseId);
+                    if (!seenFunctionCallIds.has(functionResponseId)) {
+                        orphanedFunctionResponseIds.add(functionResponseId);
+                    }
+                }
+            }
+            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse && orphanedFunctionResponseIds.size === 0;
+        }
+        return validSuffix;
+    }
+
     private normalizeTrimStartIndex(
         fullHistory: Content[],
         minimumStartIndex: number,
@@ -360,30 +409,30 @@ export class ContextTrimService {
             }
         }
 
+        // PERF：O(n) 预计算全部后缀的有效性，替代对每个候选 slice + validateHistoryIntegrity
+        const validSuffix = this.computeValidSuffixMap(fullHistory);
         const candidateStarts = [normalizedStartIndex, ...legalStartIndices.filter(index => index > normalizedStartIndex)];
-        let firstIssue: ReturnType<typeof validateHistoryIntegrity>['issues'][number] | undefined;
 
         for (let i = 0; i < candidateStarts.length; i++) {
             const startIndex = candidateStarts[i];
-            const validation = validateHistoryIntegrity(fullHistory.slice(startIndex));
-            if (validation.valid) {
+            if (validSuffix[startIndex]) {
                 return {
                     startIndex,
                     valid: true,
                     reason: i === 0 ? reason : 'advanced_to_valid_round'
                 };
             }
-            if (!firstIssue && validation.issues.length > 0) {
-                firstIssue = validation.issues[0];
-            }
         }
 
+        // 全部候选无效：与旧实现一致，firstIssue 只来自第一个候选（normalizedStartIndex），
+        // 失败路径只出现一次 O(n) 校验（结构异常历史的低频路径）。
+        const validation = validateHistoryIntegrity(fullHistory.slice(normalizedStartIndex));
         return {
             startIndex: normalizedStartIndex,
             valid: false,
             reason,
-            issueKind: firstIssue?.kind,
-            issueCallId: firstIssue?.callId
+            issueKind: validation.issues[0]?.kind,
+            issueCallId: validation.issues[0]?.callId
         };
     }
 

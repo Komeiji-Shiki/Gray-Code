@@ -14,11 +14,7 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -48,30 +44,24 @@ jobs:
           npm test
           npm --prefix frontend test
 
-      - name: Install Linux GUI dependencies (xvfb for headless Electron)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 libgbm1
-
       - name: Build frontend + main process
         run: npm run build:all
         working-directory: electron-app
 
       - name: Backend E2E tests
-        run: ${{ matrix.os == 'ubuntu-latest' && 'xvfb-run -a' || '' }} npm run e2e
+        run: npm run e2e
         working-directory: electron-app
         env:
           GRAYCODE_CI: '1'
 
       - name: UI smoke test
-        run: ${{ matrix.os == 'ubuntu-latest' && 'xvfb-run -a' || '' }} npm run smoke
+        run: npm run smoke
         working-directory: electron-app
         env:
           GRAYCODE_CI: '1'
 
       - name: Package (electron-builder)
-        run: npx electron-builder --${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'win' || 'mac' }}
+        run: npx electron-builder --win
         working-directory: electron-app
         env:
           GRAYCODE_CI: '1'
@@ -79,12 +69,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: graycode-desktop-${{ matrix.os }}
+          name: graycode-desktop-windows
           path: |
             electron-app/release/*.exe
             electron-app/release/*.zip
-            electron-app/release/*.dmg
-            electron-app/release/*.AppImage
-            electron-app/release/*.deb
           if-no-files-found: ignore
           retention-days: 14

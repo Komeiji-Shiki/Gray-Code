@@ -27,10 +27,10 @@
 
 import { defineStore } from 'pinia'
 import { computed as vueComputed, watch } from 'vue'
-import type { Attachment, CheckpointRecord, StreamChunk } from '../types'
+import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
-import { replayTodoStateFromMessages } from '../utils/todoList'
+import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
@@ -182,14 +182,31 @@ export const useChatStore = defineStore('chat', () => {
     return grouped
   })
 
+  /**
+   * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态 + 前缀消息引用快照。
+   * 前缀引用逐元素相等、窗口只增不减且响应解析表与缓存时逐项一致时，
+   * 仅从上次位置增量重放尾部（含旧尾消息——流式期间其 tools 会被原地追加/改写）；
+   * 其余结构变更自动回退全量重放。尾消息始终不纳入缓存，保证流式工具状态更新可见。
+   */
+  let todoReplayCache: {
+    scannedCount: number
+    messagesRef: Message[]
+    responseMap: Map<string, unknown>
+    list: TodoItem[] | null
+    anchorBackendIndex: number | null
+  } | null = null
+
   const todoSnapshot = vueComputed(() => {
+    const allMessages = state.allMessages.value
+    const len = allMessages.length
+
     const responseMap = new Map<string, unknown>()
 
     for (const [toolId, response] of state.toolResponseCache.value.entries()) {
       responseMap.set(toolId, response)
     }
 
-    for (const message of state.allMessages.value) {
+    for (const message of allMessages) {
       if (!message.isFunctionResponse || !Array.isArray(message.parts)) continue
       for (const part of message.parts) {
         const toolId = part.functionResponse?.id
@@ -199,9 +216,55 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    return replayTodoStateFromMessages(state.allMessages.value, {
-      resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
-    })
+    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量
+    const cache = todoReplayCache
+    let prefixOk = false
+    if (cache !== null && cache.messagesRef.length <= len) {
+      prefixOk = true
+      for (let i = 0; i < cache.scannedCount; i++) {
+        if (allMessages[i] !== cache.messagesRef[i]) {
+          prefixOk = false
+          break
+        }
+      }
+    }
+    if (prefixOk && cache !== null) {
+      // 响应解析表与缓存时逐项一致（引用比较）才可增量：toolResponseCache 可能被外部
+      // getToolResponseById 回填/改写而消息引用不变，任何差异一律回退全量重放
+      const cachedMap = cache.responseMap
+      if (responseMap.size !== cachedMap.size) {
+        prefixOk = false
+      } else {
+        for (const [toolId, response] of responseMap.entries()) {
+          if (cachedMap.get(toolId) !== response) {
+            prefixOk = false
+            break
+          }
+        }
+      }
+    }
+
+    const result = prefixOk && cache !== null
+      ? replayTodoStateFromMessages(allMessages, {
+          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId),
+          fromIndex: cache.scannedCount,
+          initialTodos: cache.list,
+          initialAnchorBackendIndex: cache.anchorBackendIndex,
+          initialTouched: cache.list !== null
+        })
+      : replayTodoStateFromMessages(allMessages, {
+          resolveToolResponseById: (toolCallId) => responseMap.get(toolCallId)
+        })
+
+    // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+    todoReplayCache = {
+      scannedCount: Math.max(0, len - 1),
+      messagesRef: allMessages,
+      responseMap,
+      list: result.todos,
+      anchorBackendIndex: result.anchorBackendIndex
+    }
+    return result
   })
 
   const getToolResponseById = (toolCallId: string) => getToolResponseByIdFn(state, toolCallId)

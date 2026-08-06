@@ -75,9 +75,19 @@ const currentMessages = computed(() => {
 });
 
 /**
+ * 无参数翻译结果缓存：t() 在消息列表/工具卡渲染中是高频调用（key.split + 逐层属性访问），
+ * 命中后直接返回。语言切换（setLanguage / setDetectedLanguage）时整体清空。
+ * 缺失 key 不缓存——每次仍走 fallback 输出 console.warn，保持既有调试行为。
+ */
+const translationCache = new Map<string, string>();
+
+/**
  * 设置语言
  */
 export function setLanguage(lang: SupportedLanguage) {
+    if (currentLanguage.value !== lang) {
+        translationCache.clear();
+    }
     currentLanguage.value = lang;
 }
 
@@ -92,6 +102,9 @@ export function getLanguage(): SupportedLanguage {
  * 设置检测到的语言（由后端传入）
  */
 export function setDetectedLanguage(lang: string) {
+    if (detectedLanguage.value !== lang) {
+        translationCache.clear();
+    }
     detectedLanguage.value = lang;
 }
 
@@ -103,6 +116,12 @@ export function setDetectedLanguage(lang: string) {
  * 支持参数替换：t('message.error', { count: 5 })
  */
 export function t(key: string, params?: Record<string, any>): string {
+    // 无参数调用直接查缓存（命中即返回，跳过 split + 逐层属性访问）
+    if (!params) {
+        const cached = translationCache.get(key);
+        if (cached !== undefined) return cached;
+    }
+
     const keys = key.split('.');
     let result: any = currentMessages.value;
     
@@ -110,7 +129,7 @@ export function t(key: string, params?: Record<string, any>): string {
         if (result && typeof result === 'object' && k in result) {
             result = result[k];
         } else {
-            // 找不到翻译，返回 key 本身
+            // 找不到翻译，返回 key 本身（不缓存，保留每次调用的缺失警告）
             console.warn(`[i18n] Missing translation: ${key}`);
             return key;
         }
@@ -123,6 +142,7 @@ export function t(key: string, params?: Record<string, any>): string {
                 return params[paramName] !== undefined ? String(params[paramName]) : match;
             });
         }
+        translationCache.set(key, result);
         return result;
     }
     

@@ -24,6 +24,13 @@
     - 上游 PR #14 设置持久化修复与 fork 独立实现（bdf9b36）同源，双端语义已一致
     - 保留 fork 的 electron-app / 变更查看面板 / 媒体工具路径护栏 / 多工作区 / 独立版本号增量
 
+### Changed（性能与资源占用优化）
+  - **后端读路径去重**：checkpoint 消息节点反查（`getMessageNodeIdAt`）加 300ms 短 TTL + LRU 缓存，不再每回合十几次全量读盘；分支图读路径返回只读引用（去掉每迭代一次的全图 structuredClone），缓存加 200 会话 LRU 上限；模型列表拉取加 5 分钟 TTL 缓存；工具声明（tools JSON Schema）按「渠道/模式/启用工具集/MCP 版本」指纹缓存，工具循环每迭代不再重建整棵 Schema
+  - **后端热路径算法优化**：上下文裁剪起点归一化由 O(候选×历史) 改为单遍前缀扫描 O(n) 预计算；动态运行时上下文在回合内复用（不再同回合加载两次）；流式响应 chunk 解析改 offset 游标累积（消除每数据包 Buffer.concat / 字符串拼接的 O(n²) 拷贝）
+  - **前端流式渲染优化**：hljs 已知语言代码高亮加有界缓存（流式期间同一增长代码块不再每次全量重高亮）；`usedTokens` 改增量指纹（每 chunk 不再全窗口逆序扫描）；todo 快照改尾部增量重放（不再每 chunk 全量重放全部消息×工具）；MessageList 的 build/todo sticky 计算加短路与指纹，无 build / 无 todo 工具时零扫描
+  - **前端高频路径**：i18n `t()` 翻译结果缓存（无参调用免 split+逐层遍历）；CustomScrollbar 布局值相等检查（无变化不写响应式 ref）、滚动改 rAF 节流、贴底跟随加 2px 阈值；平滑流式文本增量基线（不再每 chunk 对整段累计文本 slice 拷贝）
+  - **Electron 内存与 IPC**：`diffPreviewContents` 加 50 条淘汰上限（对齐 VS Code 版，防无界增长）；EventEmitter fire 零分配监听快照（版本号惰性重建）；`workspace.workspaceFolders` getter 结果缓存（热路径免重复 Uri 编码）；渲染层广播直接迭代订阅者 Set；`requiresJsonRoundTrip` 小 payload 短路（高频小消息免全树深遍历）；`getExtensionVersion` 加 memo；删除 BackendHost 死代码
+  - **CI**：GitHub Actions 构建矩阵收敛为仅 Windows（移除 ubuntu/macos），不再吃 Linux/mac 打包报错
 
 ## [1.6.6] - 2026-08-06
 

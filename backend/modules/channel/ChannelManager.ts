@@ -1043,6 +1043,13 @@ export class ChannelManager {
             // 使用代理流式请求
             if (proxyUrl) {
                 let buffer = '';
+                // PERF：offset 游标——已解析前缀不参与后续拼接与解析，
+                // 每包只复制「未解析尾部 + 新块」，避免对整段累积缓冲重复复制（O(n²)）
+                let bufferOffset = 0;
+                // 未知格式整段残留标记：parseStreamBuffer 无法识别流格式时把整段缓冲原样
+                // 作为 remaining 返回（同一引用），需要完整累积后才能识别格式——此时不清空、
+                // 不压缩，保持「完整累积后识别格式」的既有语义（上限由硬限制保护）
+                let pendingWholeBuffer = false;
                 
                 for await (const chunk of proxyStreamFetch(url, {
                     method,
@@ -1059,6 +1066,15 @@ export class ChannelManager {
                     // 收到数据，重置超时计时器
                     resetTimeout();
                     
+                    // 压缩已解析前缀后再追加新块
+                    if (pendingWholeBuffer) {
+                        // 未知格式：保持完整累积
+                    } else if (bufferOffset > 0) {
+                        buffer = buffer.slice(bufferOffset);
+                        bufferOffset = 0;
+                    } else {
+                        buffer = '';
+                    }
                     buffer += chunk;
 
                     // 缓冲硬上限：上游异常/恶意代理持续发“永远解析不出”的数据时
@@ -1070,10 +1086,16 @@ export class ChannelManager {
                         );
                     }
                     
-                    // 处理流式响应
+                    // 处理流式响应（解析窗口只含未解析尾部 + 新块）
                     const result = parseStreamBuffer(buffer);
-                    buffer = result.remaining;
                     parsedChunkCount += result.chunks.length;
+                    if (result.remaining === buffer) {
+                        pendingWholeBuffer = true;
+                        bufferOffset = 0;
+                    } else {
+                        pendingWholeBuffer = false;
+                        bufferOffset = result.remaining.length;
+                    }
 
                     
                     for (const parsed of result.chunks) {
@@ -1083,8 +1105,11 @@ export class ChannelManager {
                 
                 // 处理剩余的 buffer（用户已取消时不产出半截残留：原生 fetch 分支在 abort 时
                 // reader.read() 直接抛错，根本走不到这里，两条路径保持一致）
-                if (!externalSignal?.aborted && buffer.trim()) {
-                    const result = parseStreamBuffer(buffer, true);
+                const finalTail = pendingWholeBuffer
+                    ? buffer
+                    : (bufferOffset > 0 ? buffer.slice(bufferOffset) : '');
+                if (!externalSignal?.aborted && finalTail.trim()) {
+                    const result = parseStreamBuffer(finalTail, true);
                     parsedChunkCount += result.chunks.length;
                     unparsedTail = result.unparsed || '';
 

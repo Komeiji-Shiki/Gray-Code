@@ -92,16 +92,21 @@ function collectPathToolNames(
  * BCP-04：为 getBranchGraph / switchBranchCandidate 响应的每个节点补充
  * hasWorkspaceState（workspaceCheckpointId 存在）与 wroteToWorkspace
  * （root→该节点路径上工具名 ∩ 写工具集非空），供前端弹「是否连工作区一起恢复」确认框。
- * 仅改写内存中的响应对象（repository.load 的返回），不落盘。
+ * 先浅拷贝（图 + 节点对象，parts 共享）再富化：BranchService 读路径现在返回缓存条目的
+ * 共享引用（只读契约），原地富化会把富化字段写进缓存快照，并随下一次写盘持久化进 sidecar。
+ * 返回富化后的新图（调用方用它替换响应中的 graph）。
  */
-function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): void {
+function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): ConversationBranchGraph {
+    const nodes: Record<string, ConversationBranchNode> = {};
+    for (const [id, node] of Object.entries(graph.nodes)) {
+        nodes[id] = node ? { ...node } : node;
+    }
+    const target: ConversationBranchGraph = { ...graph, nodes };
     // 自顶向下单次 DFS 累积 root→节点路径上的工具名集合（O(n)），
     // 替代原实现对每个节点沿 parentId 链回溯到 root 的 O(n²) 方案。
-    const nodes = graph.nodes;
-
     // 预构建 parentId → 子节点 id 邻接表，避免 DFS 过程中反复全表扫描（保持整体 O(n)）。
     const childrenByParent = new Map<string, string[]>();
-    for (const [id, node] of Object.entries(nodes)) {
+    for (const [id, node] of Object.entries(target.nodes)) {
         if (!node?.parentId) continue;
         const siblings = childrenByParent.get(node.parentId);
         if (siblings) {
@@ -118,7 +123,7 @@ function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): void {
             return;
         }
         visited.add(nodeId);
-        const node = nodes[nodeId];
+        const node = target.nodes[nodeId];
         if (!node) {
             return;
         }
@@ -143,14 +148,14 @@ function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): void {
     };
 
     // 根节点：无 parentId 或 parentId 悬空（父节点不存在）。一次 DFS 覆盖整棵正常树。
-    for (const [id, node] of Object.entries(nodes)) {
-        if (node && (!node.parentId || !nodes[node.parentId])) {
+    for (const [id, node] of Object.entries(target.nodes)) {
+        if (node && (!node.parentId || !target.nodes[node.parentId])) {
             visit(id, new Set<string>());
         }
     }
 
     // 兜底：环等异常结构下 DFS 覆盖不到的节点，沿用原回溯路径收集，保证全部被充实。
-    for (const [id, node] of Object.entries(nodes)) {
+    for (const [id, node] of Object.entries(target.nodes)) {
         if (!node || visited.has(id)) {
             continue;
         }
@@ -160,8 +165,9 @@ function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): void {
         };
         enriched.hasWorkspaceState =
             typeof node.workspaceCheckpointId === 'string' && node.workspaceCheckpointId.length > 0;
-        enriched.wroteToWorkspace = collectPathToolNames(graph, node.id).some(name => WRITE_TOOL_NAMES.has(name));
+        enriched.wroteToWorkspace = collectPathToolNames(target, node.id).some(name => WRITE_TOOL_NAMES.has(name));
     }
+    return target;
 }
 
 /** TREE-13：流式生成期间变更类分支操作被拒时的固定文案 */
@@ -236,8 +242,9 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
     }
     const result = await resolveBranchService(ctx).getBranchGraph(conversationId);
     // BCP-04：响应富化——每节点补充 hasWorkspaceState / wroteToWorkspace（决策 1 判据）
+    // （enrichGraphWorkspaceInfo 内部浅拷贝后再富化，不污染 BranchService 缓存共享引用）
     if (result.graph) {
-      enrichGraphWorkspaceInfo(result.graph);
+      result.graph = enrichGraphWorkspaceInfo(result.graph);
     }
     ctx.sendResponse(requestId, result);
   } catch (error) {
@@ -470,7 +477,7 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
     //    BCP-03：chat-and-workspace 额外返回 workspaceRestored / restoredSummary
     const branchGraph = await service.getBranchGraph(conversationId);
     if (branchGraph.graph) {
-      enrichGraphWorkspaceInfo(branchGraph.graph);
+      branchGraph.graph = enrichGraphWorkspaceInfo(branchGraph.graph);
     }
     ctx.sendResponse(requestId, {
       success: true,

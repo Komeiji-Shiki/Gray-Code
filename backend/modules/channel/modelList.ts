@@ -30,6 +30,59 @@ export interface ModelInfo {
   maxOutputTokens?: number;
 }
 
+// ==================== 模型列表进程内 TTL 缓存 ====================
+// 模型列表每次请求都重新发起网络请求（含多页分页遍历）；同一渠道配置下的列表在
+// 会话生命周期内几乎不变，短 TTL 缓存避免设置页/模型下拉频繁触发完整网络往返。
+// 缓存键覆盖所有影响列表来源的输入（类型 / 地址 / 认证密钥 / 自定义标头 / 代理），
+// 任一变化都会命中不同条目；错误不缓存（失败后下次调用重试网络）。
+const MODEL_LIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const MODEL_LIST_CACHE_CAPACITY = 64;
+
+interface ModelListCacheEntry {
+  models: ModelInfo[];
+  expiresAt: number;
+}
+
+const modelListCache = new Map<string, ModelListCacheEntry>();
+
+/** LRU 触碰 + 容量淘汰（与 ConversationManager.touchCache 同模式） */
+function touchModelListCache(key: string): void {
+  const value = modelListCache.get(key);
+  if (value !== undefined) {
+    modelListCache.delete(key);
+    modelListCache.set(key, value);
+  }
+  if (modelListCache.size > MODEL_LIST_CACHE_CAPACITY) {
+    const oldest = modelListCache.keys().next().value;
+    if (oldest !== undefined) {
+      modelListCache.delete(oldest);
+    }
+  }
+}
+
+function buildModelListCacheKey(type: string, url: string, config: ChannelConfig, proxyUrl?: string): string {
+  const cfg = config as any;
+  const customHeaders = cfg.customHeadersEnabled ? JSON.stringify(cfg.customHeaders ?? {}) : '';
+  return `${type}|${url}|${String(cfg.apiKey ?? '')}|${String(cfg.useAuthorizationHeader ?? '')}|${customHeaders}|${proxyUrl ?? ''}`;
+}
+
+/** 命中返回克隆（调用方可能修改返回值，克隆避免污染缓存条目） */
+function getModelListCached(key: string): ModelInfo[] | null {
+  const entry = modelListCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    modelListCache.delete(key);
+    return null;
+  }
+  touchModelListCache(key);
+  return JSON.parse(JSON.stringify(entry.models));
+}
+
+function cacheModelList(key: string, models: ModelInfo[]): void {
+  modelListCache.set(key, { models, expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
+  touchModelListCache(key);
+}
+
 /**
  * 从渠道配置中提取已启用的自定义标头，合并到已有的 headers 对象中
  * （含键名校验与保留标头过滤，见 base.ts 的 applyCustomHeaders）
@@ -75,6 +128,12 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
 
   if (!apiKey) {
     throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+  }
+
+  const cacheKey = buildModelListCacheKey('gemini', url, config, proxyUrl);
+  const cached = getModelListCached(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   try {
@@ -136,7 +195,7 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
     } while (pageToken);
 
     // 过滤出支持 generateContent 的模型（兼容第三方中转站未返回 supportedGenerationMethods 的情况）
-    return allModels
+    const models = allModels
       .filter((m: any) => 
         !m.supportedGenerationMethods || (Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
       )
@@ -147,6 +206,8 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
         contextWindow: m.inputTokenLimit,
         maxOutputTokens: m.outputTokenLimit
       }));
+    cacheModelList(cacheKey, models);
+    return models;
   } catch (error) {
     console.error('Failed to get Gemini models:', error);
     throw error;
@@ -173,6 +234,12 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
 
   if (!apiKey) {
     throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+  }
+
+  const cacheKey = buildModelListCacheKey(config.type, url, config, proxyUrl);
+  const cached = getModelListCached(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   try {
@@ -245,11 +312,13 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
       ).values()
     );
 
-    return uniqueModels.map((m: any) => ({
+    const models = uniqueModels.map((m: any) => ({
       id: m.id,
       name: m.id,
       description: m.created ? `Created: ${new Date(m.created * 1000).toLocaleDateString()}` : undefined
     }));
+    cacheModelList(cacheKey, models);
+    return models;
   } catch (error) {
     console.error('Failed to get OpenAI models:', error);
     throw error;
@@ -266,6 +335,12 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
 
   if (!apiKey) {
     throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+  }
+
+  const cacheKey = buildModelListCacheKey('anthropic', baseUrl, config, proxyUrl);
+  const cached = getModelListCached(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   try {
@@ -341,13 +416,15 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
       ).values()
     );
 
-    return uniqueModels.map((m: any) => ({
+    const models = uniqueModels.map((m: any) => ({
       id: m.id,
       name: m.display_name || m.id,
       description: m.display_name ? m.id : undefined,
       contextWindow: m.input_token_limit,
       maxOutputTokens: m.output_token_limit
     }));
+    cacheModelList(cacheKey, models);
+    return models;
   } catch (error) {
     console.error('Failed to get Claude models:', error);
     throw error;

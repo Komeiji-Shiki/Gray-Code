@@ -92,11 +92,18 @@ const log = Logger.get('BranchService');
 // 读图路径（分支切换 / usageStats / Monitor）也无缓存；大图反复读改写是磁盘 IO 热路径。
 // 这里按分支文件完整路径（baseDir + conversationId，天然区分多工作区/多数据目录）做短 TTL 缓存：
 // - 写入（validateAndSave / saveBranchGraph）成功后回填快照，deleteConversationBranch 失效；
-// - 读取命中返回快照的深拷贝，杜绝调用方原地修改污染缓存（图仅经锁内读写的约定不变）；
+// - 读取命中返回缓存的只读引用（不再 structuredClone 整张图——大图含工具结果，深拷贝是
+//   工具循环每次迭代的主要开销）；读侧约定只读：调用方需要修改必须先自行拷贝
+//   （webview 富化响应前浅拷贝，见 BranchHandlers.enrichGraphWorkspaceInfo）；
+// - 写路径（loadGraphCached）与缓存条目共享同一对象，但全部图变更函数（insertNode /
+//   updateNodeContent / switchActivePath 等）均为纯函数（内部 cloneGraph），不会原地修改
+//   共享条目；validateAndSave 落盘后以快照重新回填（写侧独立克隆契约不变）；
 // - 每次命中前 stat 文件（mtime + size，与 storage.readSegmentCached 同模式）：文件被
 //   仓储之外的路径直接改写（测试/外部工具）时缓存自动失效重读，不依赖 TTL 过期；
 // - 损坏/缺失态不缓存（错误降级路径保持原语义）。
 const BRANCH_GRAPH_CACHE_TTL_MS = 60_000;
+/** 分支图缓存条目上限（会话数）：超限按最久未访问淘汰（与 ConversationManager 的 LRU 同模式） */
+const BRANCH_GRAPH_CACHE_CAPACITY = 200;
 
 interface BranchGraphCacheEntry {
     graph: ConversationBranchGraph;
@@ -117,7 +124,25 @@ function statBranchesFile(filePath: string): Promise<{ mtimeMs: number | null; s
         .catch(() => ({ mtimeMs: null, size: null }));
 }
 
-/** 命中返回缓存图（深拷贝，可安全修改）；过期 / 文件被外部改写 / 未命中返回 null */
+/** LRU 触碰 + 容量淘汰（与 ConversationManager.touchCache 同模式） */
+function touchBranchGraphCache(key: string): void {
+    const value = branchGraphCache.get(key);
+    if (value !== undefined) {
+        branchGraphCache.delete(key);
+        branchGraphCache.set(key, value);
+    }
+    if (branchGraphCache.size > BRANCH_GRAPH_CACHE_CAPACITY) {
+        const oldest = branchGraphCache.keys().next().value;
+        if (oldest !== undefined) {
+            branchGraphCache.delete(oldest);
+        }
+    }
+}
+
+/**
+ * 命中返回缓存图的只读引用（不再深拷贝）；过期 / 文件被外部改写 / 未命中返回 null。
+ * 调用方必须保持只读纪律（图变更函数均为纯函数，不会破坏该契约）。
+ */
 async function getBranchGraphCached(key: string): Promise<ConversationBranchGraph | null> {
     const entry = branchGraphCache.get(key);
     if (!entry) return null;
@@ -131,7 +156,8 @@ async function getBranchGraphCached(key: string): Promise<ConversationBranchGrap
         branchGraphCache.delete(key);
         return null;
     }
-    return structuredClone(entry.graph);
+    touchBranchGraphCache(key);
+    return entry.graph;
 }
 
 /** 写入成功后回填快照（并刷新 TTL）；存快照防止调用方后续修改污染缓存 */
@@ -143,6 +169,7 @@ async function setBranchGraphCached(key: string, graph: ConversationBranchGraph)
         mtimeMs: stat.mtimeMs,
         size: stat.size,
     });
+    touchBranchGraphCache(key);
 }
 
 /** 供测试/诊断清理分支图缓存（可选按会话，不传清空全部） */
@@ -356,7 +383,8 @@ export class BranchService {
         const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
         const cached = await getBranchGraphCached(cacheKey);
         if (cached) {
-            // 缓存内图在回填时已通过 validate + activePath（见下与 validateAndSave），直接复用
+            // 缓存内图在回填时已通过 validate + activePath（见下与 validateAndSave），直接复用。
+            // 返回的是缓存条目共享引用（只读契约）：调用方不得原地修改，需要改动先自行拷贝。
             return { graph: cached };
         }
         const loaded = await this.repository.load(conversationId);
@@ -1689,7 +1717,8 @@ export class BranchService {
         const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
         const cached = await getBranchGraphCached(cacheKey);
         if (cached) {
-            // 缓存内图已通过 validate + activePath（回填点保证），可直接修改
+            // 缓存内图已通过 validate + activePath（回填点保证）；与读路径共享同一对象，
+            // 图变更依赖纯函数（insertNode/updateNodeContent 等内部 cloneGraph），不会污染共享条目。
             return cached;
         }
         const loaded = await this.repository.load(conversationId);

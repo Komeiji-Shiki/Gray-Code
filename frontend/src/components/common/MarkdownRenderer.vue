@@ -740,12 +740,21 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     let highlighted: string
     let langClass = ''
     if (lang && hljs.getLanguage(lang)) {
-      try {
-        highlighted = hljs.highlight(code, { language: lang }).value
-        langClass = `language-${lang}`
-      } catch {
-        highlighted = escapeHtml(code)
+      // 已知语言路径复用与 auto 相同的模块级有界缓存：流式期间同一段增长中的代码
+      // 每帧重复高亮，缓存命中直接取上次结果（键为 lang + 代码全文）
+      const cacheKey = `${lang}:${code}`
+      const cached = codeHighlightCache.get(cacheKey)
+      if (cached !== undefined) {
+        highlighted = cached
+      } else {
+        try {
+          highlighted = hljs.highlight(code, { language: lang }).value
+          setCached(codeHighlightCache, cacheKey, highlighted)
+        } catch {
+          highlighted = escapeHtml(code)
+        }
       }
+      langClass = `language-${lang}`
     } else if (lang) {
       // 标注了语言但 hljs 不识别的，尝试 auto + 缓存
       const cacheKey = `auto:${code}`

@@ -105,6 +105,8 @@ export class BackendHost {
   /** 单条消息处理超时：handler 卡死（挂起的工具调用/等待 toast 回复等）不应把整个串行队列冻结 */
   private static readonly MESSAGE_HANDLING_TIMEOUT_MS = 60_000;
   private unsubscribers: Array<() => void> = [];
+  /** diff 预览内容缓存条目数上限：完整文件内容可能数百 KB，超限按插入序淘汰最旧条目防无界增长 */
+  private static readonly MAX_DIFF_PREVIEW_CONTENTS_ENTRIES = 50;
   private diffPreviewContents = new Map<string, string>();
   private diffPreviewChangeEmitter = new (require('events').EventEmitter)();
   private diffPreviewProvider = {
@@ -114,7 +116,17 @@ export class BackendHost {
     },
     setContent: (uri: string, content: string): void => {
       const prev = this.diffPreviewContents.get(uri);
+      // 先删后设：被更新的条目移到 Map 末尾（最新位置），淘汰时优先保留最近使用的预览
+      if (prev !== undefined) {
+        this.diffPreviewContents.delete(uri);
+      }
       this.diffPreviewContents.set(uri, content);
+      if (this.diffPreviewContents.size > BackendHost.MAX_DIFF_PREVIEW_CONTENTS_ENTRIES) {
+        const oldest = this.diffPreviewContents.keys().next().value;
+        if (oldest !== undefined) {
+          this.diffPreviewContents.delete(oldest);
+        }
+      }
       if (prev !== content) {
         this.diffPreviewChangeEmitter.emit('change', vscode.Uri.parse(uri));
       }
@@ -492,8 +504,6 @@ export class BackendHost {
         allProcessed
       });
     });
-    // Initial diff state
-    getDiffManager().getPendingDiffs();
 
     this.messageRouter = new MessageRouter(
       this.chatHandler,

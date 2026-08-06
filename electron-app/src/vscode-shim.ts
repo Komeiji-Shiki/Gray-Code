@@ -59,21 +59,42 @@ function host(): HostBridge | null {
 
 export class EventEmitter<T = void> {
   private listeners = new Set<(e: T) => any>();
+  // 监听器集合版本号：每次增删 +1。fire 复用它判断迭代期间集合是否变化，
+  // 绝大多数 fire（无回调内增删）直接复用上次快照，零分配。
+  private listenersVersion = 0;
+  private listenersSnapshot: Array<(e: T) => any> | null = null;
   public event = (listener: (e: T) => any): Disposable => {
     this.listeners.add(listener);
-    return new Disposable(() => this.listeners.delete(listener));
+    this.listenersVersion++;
+    this.listenersSnapshot = null;
+    return new Disposable(() => {
+      this.listeners.delete(listener);
+      this.listenersVersion++;
+      this.listenersSnapshot = null;
+    });
   };
   fire(e: T): void {
-    for (const fn of [...this.listeners]) {
+    if (this.listenersSnapshot === null) {
+      this.listenersSnapshot = [...this.listeners];
+    }
+    const snapshot = this.listenersSnapshot;
+    const version = this.listenersVersion;
+    for (const fn of snapshot) {
       try {
         fn(e);
       } catch (err) {
         console.error('[vscode-shim] event listener error:', err);
       }
     }
+    // 迭代期间有回调增删监听器：丢弃缓存，下次 fire 重新取快照
+    if (this.listenersVersion !== version) {
+      this.listenersSnapshot = null;
+    }
   }
   dispose(): void {
     this.listeners.clear();
+    this.listenersVersion++;
+    this.listenersSnapshot = null;
   }
 }
 
@@ -736,6 +757,9 @@ export interface WorkspaceFolder {
 }
 
 let workspaceFolderUris: string[] = [];
+// 缓存构建好的 WorkspaceFolder 数组（含 Uri 对象）：getter 每次访问都重新
+// Uri.file + 编码会反复分配；调用方只读（find/map/[0]/length），可直接复用。
+let cachedWorkspaceFolders: WorkspaceFolder[] = [];
 
 export function __setWorkspaceFolders(fsPaths: string[]): void {
   const next = [...fsPaths];
@@ -747,6 +771,7 @@ export function __setWorkspaceFolders(fsPaths: string[]): void {
   const addedPaths = next.filter(p => !prevSet.has(p));
   const removedPaths = prev.filter(p => !nextSet.has(p));
   workspaceFolderUris = next;
+  cachedWorkspaceFolders = next.map((fsPath, index) => buildWorkspaceFolder(fsPath, index));
   workspaceOnDidChangeFolders.fire({
     added: addedPaths.map(p => buildWorkspaceFolder(p, next.indexOf(p))),
     removed: removedPaths.map(p => buildWorkspaceFolder(p, prev.indexOf(p)))
@@ -766,7 +791,7 @@ function buildWorkspaceFolder(fsPath: string, index: number): WorkspaceFolder {
 }
 
 function getWorkspaceFolders(): WorkspaceFolder[] {
-  return workspaceFolderUris.map((fsPath, index) => buildWorkspaceFolder(fsPath, index));
+  return cachedWorkspaceFolders;
 }
 
 const workspaceOnDidChangeFolders = new EventEmitter<{ added: WorkspaceFolder[]; removed: WorkspaceFolder[] }>();
