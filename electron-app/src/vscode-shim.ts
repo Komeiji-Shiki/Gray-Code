@@ -1318,16 +1318,30 @@ function showInputBox(_options?: any): Promise<string | undefined> {
   });
 }
 
-async function showOpenDialog(options: any): Promise<{ filePaths: string[]; canceled: boolean } | undefined> {
+async function showOpenDialog(options: any): Promise<Uri[] | undefined> {
   const h = host();
   if (!h) return undefined;
-  return h.native<{ filePaths: string[]; canceled: boolean }>('dialog:open', options);
+  // native 层返回 Electron 形状 { filePaths, canceled }，此处转换为 VS Code 契约
+  // （Uri[] | undefined）：全部调用方（工作区打开/存储路径选择/设置导入等）都按
+  // result.length / result[i].fsPath 消费，直接透传 Electron 形状会导致对话框
+  // 永远被视为“取消”、选中路径丢失。
+  const result = await h.native<{ filePaths: string[]; canceled: boolean }>('dialog:open', options);
+  if (!result || result.canceled || !Array.isArray(result.filePaths)) {
+    return undefined;
+  }
+  return result.filePaths.map((p) => Uri.file(p));
 }
 
-async function showSaveDialog(options: any): Promise<{ filePath: string; canceled: boolean } | undefined> {
+async function showSaveDialog(options: any): Promise<Uri | undefined> {
   const h = host();
   if (!h) return undefined;
-  return h.native<{ filePath: string; canceled: boolean }>('dialog:save', options);
+  // 同理转换为 VS Code 契约（Uri | undefined）：导出设置等调用方直接读 result.fsPath，
+  // 原实现透传 { filePath, canceled } 会让 result.fsPath 为 undefined。
+  const result = await h.native<{ filePath: string; canceled: boolean }>('dialog:save', options);
+  if (!result || result.canceled || !result.filePath) {
+    return undefined;
+  }
+  return Uri.file(result.filePath);
 }
 
 class OutputChannelImpl {
@@ -1642,6 +1656,15 @@ export const env = {
     const h = host();
     if (!h) return false;
     try {
+      if (typeof target !== 'string') {
+        // file: URI（如「打开 Skills 目录」）不能走 shell:openExternal 的
+        // http/https/mailto 白名单，改走 shell:openPath（含目录/可执行扩展名校验），
+        // 与 VS Code 中 openExternal(file URI) 打开系统资源管理器的语义一致。
+        if (target.scheme === 'file' && target.fsPath) {
+          await h.native('shell:openPath', { path: target.fsPath });
+          return true;
+        }
+      }
       await h.native('shell:openExternal', { url: typeof target === 'string' ? target : target.toString() });
       return true;
     } catch {

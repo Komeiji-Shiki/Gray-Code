@@ -61,6 +61,22 @@ function isAllowedOpenPath(filePath: string): boolean {
   }
 }
 
+function normalizeDialogFilters(filters: any): Electron.FileFilter[] | undefined {
+  // VS Code 契约：filters 是 { 'JSON Files': ['json'], ... } 对象；
+  // Electron 契约：数组 [{ name, extensions }]。原样透传会让 Electron
+  // 校验失败（对话框不弹出）或过滤被静默忽略。
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+    return filters as Electron.FileFilter[] | undefined;
+  }
+  const out: Electron.FileFilter[] = [];
+  for (const [name, exts] of Object.entries(filters)) {
+    if (Array.isArray(exts) && exts.length > 0) {
+      out.push({ name, extensions: exts.map((e) => String(e)) });
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** 窗口可能已销毁（关闭竞态）：isDestroyed 的窗口传给 dialog/webContents 会抛 "Object has been destroyed" */
 function usableWindow(win: BrowserWindow | null): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
@@ -87,7 +103,7 @@ export async function runNative<T = any>(
       const dialogOptions: Electron.OpenDialogOptions = {
         title: options.title,
         buttonLabel: options.openLabel,
-        filters: options.filters,
+        filters: normalizeDialogFilters(options.filters),
         properties: [
           ...(options.canSelectFiles !== false ? (['openFile'] as const) : []),
           ...(options.canSelectFolders ? (['openDirectory'] as const) : []),
@@ -104,7 +120,7 @@ export async function runNative<T = any>(
       const dialogOptions: Electron.SaveDialogOptions = {
         title: options.title,
         defaultPath: options.defaultUri?.fsPath,
-        filters: options.filters
+        filters: normalizeDialogFilters(options.filters)
       };
       const result = w
         ? await dialog.showSaveDialog(w, dialogOptions)
