@@ -12,6 +12,8 @@
   - 设置页新增设置项搜索：标题栏搜索框实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），键盘上下选择/回车跳转，点击结果自动切换页签并滚动定位（节标题或精确锚点 + 1.6s 闪烁高亮）；内置中/英/日三语关键词索引（SEARCH_INDEX），17 个设置组件 93 个设置块加 `data-search-anchor` 精确锚点，具体设置项全部可搜可直达；空结果提示，三语 i18n 同步。
 
 ### Changed
+  - 上下文总结（自动 + 手动）从「物理删除被总结消息」改为「逻辑截断」：被总结区间的原始消息打 `isSummarized` 标记完整保留在历史中（不再从磁盘消失，`history_search` 现在可以检索到被压缩的原文），发送给 AI 与 token 统计跳过被总结区间（`ContextTrimService` 统一过滤）；**首条用户消息永远发送**（任务锚点，`prependFirstUserMessage` 在所有发送路径前置，含手动总结边界与 trim 裁剪场景）；`isRealUserMessage` 排除 `isSummarized`，回合识别/总结规划/`isFirstMessage` 判断（过滤后活跃消息数）全部适配；协议 `insertIndex` 改为总结消息插入位置（= summarizeEndIndex）、`removedCount` 改为本次标记的消息数，前端 `handleAutoSummary` 同步为「标记本地消息 + 插入总结」（不再删除/平移索引）；消息列表在最后一个总结消息后渲染横线分隔「已总结 / 未总结」区域（原文照常显示不折叠）；自动总结的 `STALE_RANGE` 并发校验与低质量总结拒绝保留；历史文件无限增长为接受项（原文永不清理）。
+  - 新增「恢复原文」能力（逻辑截断反向操作）：总结消息卡片新增恢复按钮（`restoreSummarizedMessages` API），点击后取消该总结覆盖区间的 `isSummarized` 标记并删除总结消息本身，发送起点回退到上一个总结（或 0），原文重新参与发送与统计；删除总结消息（`deleteMessage` / `deleteMessagesInRange` 命中总结消息）同样自动恢复覆盖区间，杜绝「既无总结文本也无原文」的上下文真空（`restoreSummarizedRange` 纯函数，覆盖区间 = 上一个总结之后到该总结，从晚到早逐个恢复多总结场景）；三语 i18n 与新增回归测试（summarizeRestore.test.ts 7 用例）。
   - 全链路性能与资源占用优化（移植自下游桌面版，仅含前后端可移植部分）：
     - 后端读路径缓存：checkpoint 节点反查（`getMessageNodeIdAt`）300ms 短 TTL + LRU 缓存，一轮对话免十几次全量读盘；分支图读路径只读引用缓存（60s TTL + 200 会话 LRU + mtime/size 外部改写校验），大图不再每次迭代全量 structuredClone；模型列表 5 分钟 TTL；工具声明指纹缓存（tools JSON Schema 构建结果按声明/模式/工具逻辑/MCP 版本缓存）；会话元数据读路径与分支图读路径解耦。
     - 热路径算法：上下文裁剪起点由 O(候选历史) 改为前缀扫描 O(n) 预计算；运行时上下文回合内复用，同一回合不再重复生成；流式响应 chunk 用 offset 游标解析，消除每个数据包 Buffer.concat / 字符串拼接的 O(n²)。

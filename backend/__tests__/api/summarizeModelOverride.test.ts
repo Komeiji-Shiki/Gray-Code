@@ -47,7 +47,20 @@ function createHarness(
     const conversationManager = {
         getHistory: jest.fn().mockResolvedValue(history),
         getHistoryRef: jest.fn().mockResolvedValue(history),
-        insertContent: jest.fn().mockResolvedValue(undefined)
+        insertContent: jest.fn().mockResolvedValue(undefined),
+        // 逻辑截断语义：总结走仓储 mutateContents（标记 + 插入），不再使用 insertContent
+        getTranscriptRepository: jest.fn(() => ({
+            mutateContents: jest.fn(async (mutator: (h: Content[]) => Content[]) => {
+                const copy = JSON.parse(JSON.stringify(history)) as Content[];
+                const next = mutator(copy);
+                if (next !== copy) {
+                    const persisted = JSON.parse(JSON.stringify(next)) as Content[];
+                    history.splice(0, history.length, ...persisted);
+                    return persisted;
+                }
+                return copy;
+            })
+        }))
     };
     const contextTrimService = {
         findLastSummaryIndex: jest.fn().mockReturnValue(-1),
