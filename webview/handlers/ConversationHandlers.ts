@@ -3,6 +3,9 @@
  */
 
 import { t } from '../../backend/i18n';
+import { subAgentRunController } from '../../backend/tools/subagents/runController';
+import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
+import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../stream/StreamAbortManager';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -82,11 +85,44 @@ export const setCustomMetadata: MessageHandler = async (data, requestId, ctx) =>
  * 删除对话
  */
 export const deleteConversation: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId } = data;
-  // 先删除该对话的所有检查点（包括备份目录）
-  await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
-  // 再删除对话本身
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'DELETE_CONVERSATION_INVALID_ID', 'Invalid conversation ID');
+    return;
+  }
+
+  // 先停止主流并等 finally/工具结算完成，不能让迟到写入跨过删除边界。
+  const abortManager = ctx.streamAbortControllers as any;
+  if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
+    await abortManager.abortAndWaitForCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+  } else {
+    abortManager?.get?.(conversationId)?.abort?.();
+  }
+
+  // 前台和后台 SubAgent 都属于该会话；删除时全部退出，并有界等待 executor 注销。
+  const runIds = subAgentRunEventBus.getSnapshots()
+    .filter(snapshot => snapshot.conversationId === conversationId && subAgentRunController.isActive(snapshot.runId))
+    .map(snapshot => snapshot.runId);
+  for (const runId of runIds) {
+    subAgentRunController.exit(runId, 'Conversation deleted');
+  }
+  await subAgentRunController.waitForInactive(runIds, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+  await subAgentRunEventBus.flushConversation(conversationId);
+
+  const checkpointDeleteResult = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+  if (!checkpointDeleteResult?.success) {
+    ctx.sendError(
+      requestId,
+      'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
+      t('webview.errors.deleteAllCheckpointsFailed')
+    );
+    return;
+  }
   await ctx.conversationManager.deleteConversation(conversationId);
+  // E-2：删除会话时同步清理 ToolExecutionService 的 mailbox drain epoch 条目，
+  // 防止会话 ID 复用后残留 epoch 影响新会话的 drain 权收敛（尽力而为，失败不影响删除结果）。
+  ctx.chatHandler?.getToolExecutionService?.().clearMailboxDrainEpochsForConversation(conversationId);
+  subAgentRunEventBus.forgetConversation(conversationId);
   ctx.sendResponse(requestId, { success: true });
 };
 

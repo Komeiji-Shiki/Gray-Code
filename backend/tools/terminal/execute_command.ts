@@ -361,7 +361,7 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         // WSL 需要特殊检测
         if (shellType === 'wsl') {
             return new Promise((resolve) => {
-                cp.exec('wsl --status', { timeout: 5000 }, (error) => {
+                cp.execFile('wsl.exe', ['--status'], { timeout: 5000 }, (error) => {
                     if (error) {
                         resolve({ available: false, reason: t('tools.terminal.shellCheck.wslNotInstalled') });
                     } else {
@@ -384,7 +384,8 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         
         // 对于命令名，使用 where 命令检查 PATH
         return new Promise((resolve) => {
-            cp.exec(`where ${shellPath}`, { timeout: 5000 }, (error) => {
+            // 参数必须通过 argv 传递，不能拼进 shell 命令；customPath 属于用户可控配置。
+            cp.execFile('where.exe', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {
@@ -407,7 +408,7 @@ export async function checkShellAvailability(shellType: string, customPath?: str
         
         // 对于命令名，使用 which 命令检查 PATH
         return new Promise((resolve) => {
-            cp.exec(`which ${shellPath}`, { timeout: 5000 }, (error) => {
+            cp.execFile('which', [shellPath], { timeout: 5000 }, (error) => {
                 if (error) {
                     resolve({ available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) });
                 } else {
@@ -1140,6 +1141,14 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         windowsVerbatimArguments: isWindows && isCmdWithS
                     });
 
+                    // CPU 友好：后台命令降优先级（Windows: BELOW_NORMAL_PRIORITY_CLASS；
+                    // POSIX: nice）。spawn 后设置 shell 进程，Windows 上子进程树创建时继承
+                    // 父进程优先级类——cmd/powershell 后续启动的 node/jest 等子进程同样让出
+                    // CPU，跑测试/长任务时不再抢占前台交互（主进程/渲染进程为 normal，竞争时
+                    // 自动让路），空闲时仍全速。前台命令保持 normal：模型同步等待，降级会
+                    // 无谓拖慢。detach 转后台的进程保持启动时优先级（罕见场景，不动态调整）。
+                    setTerminalProcessPriority(proc.pid, background);
+
                     // 创建终端进程信息
                     const terminalProcess: TerminalProcess = {
                         id: terminalId,
@@ -1589,6 +1598,39 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
     };
 }
 
+
+/**
+ * 调整终端进程的 CPU 优先级（尽力而为，失败静默）。
+ *
+ * Windows：用 PowerShell 设置 shell 进程的优先级类（BELOW_NORMAL / NORMAL）。
+ * Windows 上子进程在创建时继承父进程的优先级类，因此 cmd/powershell 后续启动的
+ * node/jest 等子进程树同样降级——后台跑测试/长任务时让出 CPU 给前台交互，
+ * 空闲时仍全速执行。
+ * POSIX：process.setPriority（nice 值），子进程同样继承。
+ *
+ * 注：Node 的 spawn priority 选项在 Windows 上实测不生效，且 @types/node 24 类型
+ * 定义缺失，故采用 spawn 后外部设置。spawn→设置的竞态窗口（毫秒级）内启动的
+ * 子进程可能继承 normal，可接受。
+ */
+function setTerminalProcessPriority(pid: number | undefined, background: boolean): void {
+    if (!pid) return;
+    try {
+        if (os.platform() === 'win32') {
+            const priorityClass = background ? 'BelowNormal' : 'Normal';
+            cp.exec(
+                `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'"`,
+                { windowsHide: true, timeout: 5000 },
+                () => { /* 失败静默：优先级是软约束 */ }
+            );
+        } else {
+            // POSIX：belowNormal ≈ nice +5，normal = 0
+            const setPriority = (process as any).setPriority as ((pid: number, p: number | string) => void) | undefined;
+            setPriority?.(pid, background ? 'belowNormal' : 'normal');
+        }
+    } catch {
+        // 忽略：优先级设置失败不影响命令执行
+    }
+}
 /**
  * 杀掉终端进程
  * 同时支持直接调用和通过 TaskManager 取消

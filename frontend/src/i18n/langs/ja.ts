@@ -250,6 +250,34 @@ const ja: LanguageMessages = {
             openConversation: 'クリックしてこの会話を開く'
         },
 
+        usageTime: {
+            title: '使用時間',
+            refresh: '更新',
+            loading: '集計中…',
+            loadFailed: '読み込みに失敗しました',
+            empty: '使用時間データはまだありません（エディターでの操作で記録が始まります）',
+            today: '今日',
+            currentSession: '現在の連続作業',
+            totalInRange: '期間内合計',
+            range7d: '直近 7 日',
+            range30d: '直近 30 日',
+            range90d: '直近 90 日',
+            range1y: '直近 1 年',
+            rangeAll: 'すべて',
+            hours: '時間',
+            minutes: '分',
+            durationHM: '{hours}時間{minutes}分',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: '1 日あたりの使用時間',
+            monthlyTitle: '月ごとの使用時間（月をクリックで日別詳細）',
+            monthlyTitleShort: '月ごとの使用時間',
+            monthActiveDays: '{days} 日間アクティブ',
+            onlyShowLatest: '直近 {days} 日のみ表示',
+            expandMonth: 'この月の日別詳細を展開',
+            heatmapTitle: '直近 7 日間の活動ヒートマップ（ホバーで詳細）'
+        },
+
         history: {
             title: '会話履歴',
             empty: '会話履歴がありません',
@@ -293,6 +321,9 @@ const ja: LanguageMessages = {
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
+            tpsTooltip: 'TPS（トークン毎秒）',
+            tpsTokenizerReal: 'モデルトークナイザーによる正確なカウント',
+            tpsTokenizerEstimate: 'トークナイザー未準備、文字数で推定中',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
@@ -396,8 +427,12 @@ const ja: LanguageMessages = {
                 assistant: 'アシスタント'
             },
             actions: {
+                edit: 'メッセージを編集',
+                copy: 'コピー',
+                retry: '再生成',
                 viewResponse: '応答を見る',
-                branchFromHere: 'ここから分岐'
+                branchFromHere: 'ここから分岐',
+                delete: 'メッセージを削除'
             },
             branch: {
                 previous: '前の候補',
@@ -415,17 +450,26 @@ const ja: LanguageMessages = {
                 workspaceConfirmCancel: 'キャンセル'
             },
             branchTree: {
-                open: '分岐ツリー',
+                open: '分岐履歴を表示',
                 close: '閉じる',
-                title: '分岐ツリー',
+                title: '分岐履歴',
                 empty: '分岐はまだありません',
+                nodeCount: '{count} ノード',
+                navigationMode: '分岐ナビゲーション',
+                fullMode: 'メッセージグラフ',
+                navigationHint: '連続メッセージを折りたたみ、分岐点と候補を表示します',
+                fullHint: 'トラック形式の全メッセージグラフ：レーンは同時に存在する候補ブランチに応じて変化します',
+                collapsedMessages: '連続する {count} 件のメッセージを折りたたみ',
                 candidateCount: '{count} 件の候補',
                 deleted: '削除済み',
+                system: 'システム',
                 restore: '復元',
                 rename: '名前を変更',
                 renamePlaceholder: '分岐ラベルを入力…',
                 save: '保存',
-                cancel: 'キャンセル'
+                cancel: 'キャンセル',
+                expandAllMessages: '全メッセージを展開',
+                collapseLinearMessages: '線形部分を折りたたむ'
             },
             responseViewer: {
                 commonMode: '通常モード',
@@ -522,7 +566,11 @@ const ja: LanguageMessages = {
             },
             thought: {
                 thinking: '考え中...',
-                thoughtProcess: '思考プロセス'
+                thoughtProcess: '思考プロセス',
+                viewCollapsed: '折りたたむ',
+                viewMedium: 'スクロール表示',
+                viewExpanded: 'すべて展開',
+                trimmedHint: '内容が長すぎるため、最新部分のみ表示しています。すべて展開で全文をご覧ください'
             },
             contextBlocks: {
                 clickToView: 'クリックして完全な内容を表示'
@@ -531,7 +579,12 @@ const ja: LanguageMessages = {
                 title: 'コンテキスト要約',
                 compressed: '{count} 件のメッセージを圧縮しました',
                 deleteTitle: '要約を削除',
-                autoTriggered: '自動トリガー'
+                restoreTitle: '原文を復元（要約を元に戻し、圧縮されたメッセージを再送信）',
+                autoTriggered: '自動トリガー',
+                compressionTokens: '置換された履歴 → 新しい要約（推定 {saved} トークン削減。実際のコンテキストは次の応答後に更新）',
+                legacyRequestTokens: '旧形式：要約モデルの入力 → 出力。メインコンテキストの前後サイズではありません',
+                historyTokenLabel: '履歴',
+                requestTokenLabel: 'リクエスト'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',
@@ -895,7 +948,8 @@ const ja: LanguageMessages = {
                 sound: '通知システム',
                 appearance: '外観',
                 memory: '記憶',
-                general: '一般'
+                general: '一般',
+                usage: '使用量統計'
             },
             channelSettings: {
                 selector: {
@@ -1125,6 +1179,7 @@ const ja: LanguageMessages = {
                     design: 'デザイン',
                     notification: '通知',
                     agents: 'エージェント',
+                    activity: '使用時間',
                     other: 'その他'
                 },
                 badges: {
@@ -1705,8 +1760,6 @@ const ja: LanguageMessages = {
                     whitelist: 'ホワイトリスト',
                     blacklist: 'ブラックリスト'
                 },
-                builtinTools: '組み込みツール',
-                mcpTools: 'MCP ツール',
                 noTools: '利用可能なツールなし',
                 whitelistHint: 'チェックされたツールのみ使用可能',
                 blacklistHint: 'チェックされたツールはブロックされます',
@@ -1962,6 +2015,7 @@ const ja: LanguageMessages = {
                     keepRounds: '最少保持ラウンド数',
                     keepRoundsUnit: 'ラウンド',
                     keepRoundsHint: '保持バジェットの下限保護として、少なくとも最近の N ラウンドは要約されません',
+                    keepRoundsMinNote: '下限は 1 ラウンドです（バックエンドが最低 1 ラウンドを強制します）',
                     keepTokens: '直近保持バジェット',
                     keepTokensHint: '要約時に圧縮せず保持する直近コンテキストの量：トークン数（例 30000）またはモデル最大コンテキストに対する割合（例 25%）。実際の範囲はこのバジェット内でラウンド境界に揃えられます',
                     maxAttempts: '自動要約の最大試行回数',
@@ -1996,6 +2050,12 @@ const ja: LanguageMessages = {
                 backToChat: '会話に戻る',
                 sidebarCollapse: 'サイドバーを折りたたむ',
                 sidebarExpand: 'サイドバーを展開する',
+                search: {
+                    placeholder: '設定項目を検索…',
+                    clear: '検索をクリア',
+                    noResults: '一致する設定項目が見つかりません',
+                    hint: 'キーワードを入力して設定を検索。Enter で最初の結果を開きます'
+                },
                 sections: {
                     channel: {
                         title: 'チャンネル設定',
@@ -2041,6 +2101,10 @@ const ja: LanguageMessages = {
                         title: 'サブエージェント',
                         description: 'AI が呼び出せる専門サブエージェントを設定'
                     },
+                    dependencies: {
+                        title: '拡張依存関係',
+                        description: 'Python や Node などの依存ツールのインストールと管理'
+                    },
                     sound: {
                         title: '通知システム',
                         description: 'サウンド通知と Windows Agent 停止通知をまとめて設定'
@@ -2056,6 +2120,11 @@ const ja: LanguageMessages = {
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
+                    },
+                    usage: {
+                        title: '使用時間と統計',
+                        description: '使用時間とトークン使用量の統計を表示',
+                        openFullPage: '詳細な統計を表示'
                     }
                 },
                 proxy: {
@@ -2146,7 +2215,20 @@ const ja: LanguageMessages = {
                     rawEntries: {
                         title: '生の記憶エントリ',
                         description: '生の記憶エントリを表示・編集します。編集すると関連する要約がクリアされます（次回の圧縮時に再構築されます）。',
-                        empty: 'まだ記憶エントリがありません。'
+                        empty: 'まだ記憶エントリがありません。',
+                        addPlaceholder: '記憶したい内容を入力し「記憶を追加」をクリックすると、手動で長期記憶に書き込まれます（AI の memory_note と同等）。Ctrl+Enter / Cmd+Enter でも送信できます。',
+                        add: '記憶を追加',
+                        added: '記憶 #{id} を追加しました',
+                        addEmpty: '内容が空です。追加できません。',
+                        addTooLong: '内容が 1 件あたりの上限（{limit} バイト）を超えています。',
+                        truncatedNotice: '記憶が {limit} 件を超えています。リストには最初の {limit} 件のみ表示されます（残りはチャットで memory_recall を使って検索できます）。',
+                        deleteConfirmTitle: '記憶エントリを削除',
+                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
+                        selectAll: 'すべて選択',
+                        deleteSelected: '選択した {count} 件を削除',
+                        deletedBatch: '{count} 件の記憶を削除しました。',
+                        batchDeleteConfirmTitle: '記憶エントリを一括削除',
+                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
                     }
                 },
 
@@ -2345,6 +2427,8 @@ const ja: LanguageMessages = {
                     design: 'デザイン',
                     notification: '通知',
                     agents: 'エージェント',
+                    mcp: 'MCP ツール',
+                    activity: '使用時間',
                     other: 'その他'
                 },
                 dependency: {
@@ -2404,6 +2488,7 @@ const ja: LanguageMessages = {
                     toggle_skills: 'スキル切替',
                     subagents: 'サブエージェント',
                     agent_send_message: 'エージェントにメッセージ送信',
+                    get_activity_stats: 'アクティビティ統計を取得',
                 },
                 toolDescriptions: {
                     read_file: 'ワークスペース内のファイルを読み取ります。テキストとバイナリファイルに対応。',
@@ -2446,7 +2531,7 @@ const ja: LanguageMessages = {
                     memory_recall: 'すべての永続記憶を正規表現で検索します。',
                     memory_compress: '保留中の記憶の圧縮とマージを実行します。',
                     memory_zoom: '記憶ツリーノードを展開して詳細を表示します。',
-                    memory_forget: '誤った記憶ツリーのサマリーを破棄します（元の記憶は保持）。',
+                    memory_forget: '誤った記憶ツリーのサマリーを破棄します。または単一 ID／閉区間で元の記憶を削除します（例: "5" で 1 件削除、"1,3" で ID 1〜3 を削除）。',
                     memory_config: '永続記憶システムの設定パラメータを表示または変更します。',
                     insert_code: '指定行の前にコードを挿入します。「最終行 + 1」で末尾に追加できます。',
                     delete_code: 'ファイル内の指定行範囲のコードを削除します。',
@@ -2454,6 +2539,7 @@ const ja: LanguageMessages = {
                     toggle_skills: '以降のリクエストで使用するスキルを有効・無効にします。',
                     subagents: 'サブエージェントを起動してタスクを実行します。',
                     agent_send_message: '現在の会話内の別エージェント（サブエージェント）またはメインセッション（メインモデル）に非同期でメッセージを送信します。宛先は targetRunId（現在の会話でアクティブなサブエージェント実行 ID）または targetAgentName（"main" はメインセッション）で指定します。同じスレッドの返信は hopDepth が増加し、5 ホップを超えると配信が拒否されます（ループ防止）。送信元は自動識別され、なりすましはできません。',
+                    get_activity_stats: 'ユーザーの IDE 使用時間統計を取得します：日別使用分数、最近の活動パターン（時間別ヒートマップ）、連続作業時間。ユーザーの作業・休息リズムの把握、長時間の連続作業セッションの検出、現在アクティブかどうかの確認に使用します。データはタイムスタンプのみでユーザーコンテンツは含まれません。返り値の時刻はローカルタイムです。',
                 },
             },
             tokenCountSettings: {
@@ -2582,6 +2668,22 @@ const ja: LanguageMessages = {
                     title: '選択内容の入口',
                     description: '「選択内容を入力欄に追加」を、選択ホバーと Ctrl / コードアクションの両方で表示するかをまとめて制御します。'
                 },
+                smoothStreaming: {
+                    title: 'ストリーミング平滑表示',
+                    description: '突発的なストリーミング出力を均一なタイピング風表示に整えます（オフ = チャンク毎のそのまま表示。後ろの段階ほど遅延が増え滑らかになります）。',
+                    off: 'オフ',
+                    smooth: 'レスポンシブ',
+                    balanced: '標準',
+                    silky: 'なめらか'
+                },
+                tpsBar: {
+                    title: 'TPS リアルタイム可視化バー',
+                    description: '入力エリア下部にリアルタイムのトークン/秒 曲線を表示します。非表示中はサンプリングを停止し、再度有効にすると現在のストリームから再集計します。'
+                },
+                splash: {
+                    title: 'スプラッシュアニメーション',
+                    description: '起動時にオープニングアニメーションを再生します。オフにするとすぐメイン画面に進みます。'
+                },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'
             },
@@ -2635,6 +2737,11 @@ const ja: LanguageMessages = {
             cancelled: 'キャンセル済み',
             cancel: 'タスクをキャンセル',
             dismiss: '削除',
+            dismissAllCompleted: '完了済みを一括クリア',
+            dismissAllCompletedTitle: '完了済みのバックグラウンドタスクを一括クリア（未報告の結果がある場合は確認ダイアログを表示）',
+            dismissAllConfirmTitle: '完了済みタスクをクリアしますか？',
+            dismissAllConfirmMessage: '{count} 件のタスク結果がモデルに未報告です。クリアするとモデルは結果を受け取れません。続行しますか？',
+            dismissAllConfirmAction: 'それでもクリア',
             pendingReport: '結果はモデルへの報告待ち',
             outputTitle: 'コマンド出力',
             noOutput: '出力はまだありません',
@@ -3459,7 +3566,8 @@ const ja: LanguageMessages = {
                 restoreDeleteFailed: '復元して削除に失敗しました',
                 noConfigSelected: '設定が選択されていません',
                 summarizeFailed: '要約に失敗しました',
-                restoreEditFailed: '復元して編集に失敗しました'
+                restoreEditFailed: '復元して編集に失敗しました',
+                messageChanged: 'メッセージが変更されました。履歴を更新して再試行してください'
             },
             relativeTime: {
                 justNow: 'たった今',

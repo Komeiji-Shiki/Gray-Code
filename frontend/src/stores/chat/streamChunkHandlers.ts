@@ -6,6 +6,8 @@
 
 import type { Content, Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
+import { tpsMeter } from '../../utils/tpsMeter'
+import { pushSmoothText, finishSmoothStream, migrateSmoothStream } from './smoothStreamManager'
 import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
 import { contentToMessage, contentToMessageEnhanced } from './parsers'
@@ -18,9 +20,98 @@ import {
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
+import type { StreamFunctionCall } from '../../utils/functionCallMerge'
+import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor, isTokenizerReady } from '../../utils/tokenCounter'
+
+/**
+ * 工具调用参数的 TPS 已计文本跟踪（per-tool call id）。
+ * 用途：① OpenAI Responses 的 finalArgs 事件携带完整 JSON 且与前面的 delta 增量重复，
+ * 用「已见文本」只计增量差值，防止同一份参数 JSON 被计两次；
+ * ② 工具参数也按真实 tokenizer 计数（JSON 标点密集，字符粗估会把 1 token 估成 ~2）。
+ * 有界：流结束（done）时清空；容量超限时整体清空兜底。
+ */
+const fcSeenBodies = new Map<string, string>()
+const MAX_FC_SEEN_TRACKED = 200
+
+/**
+ * 平滑基线缓存：messageId → 上次计算的 slice 基线文本。
+ * 流式期间 partText 只增不减（增量追加），partText 仍以缓存基线开头时，
+ * 新基线 = 缓存基线 + 中间增量切片，避免每 chunk 对全串 slice（O(n) 展开）。
+ * 段落切换/权威快照/流终结时由 finishSmoothStreamForState 清理；容量超限整体清空兜底。
+ */
+const smoothBaseCache = new Map<string, string>()
+const MAX_SMOOTH_BASE_TRACKED = 200
+
+/** 当前流使用的模型与校准因子（模型切换时重新读取） */
+let activeModelKey = ''
+let activeFactor = 1
+/** 本轮（当前 API 调用流）累计的 base token 估算，流结束用于校准 */
+let turnBaseTokens = 0
+
+/**
+ * 清空本轮 base 估算（本地取消路径使用）：后端此后可能不发任何终结 chunk（挂死/断网），
+ * 残留估算会混入下一轮流（realTokens 是新流真值、base 混入旧流字符）拉偏校准因子。
+ * handleCancelled/handleError 的终结路径已内联清空，无需调用本函数。
+ */
+export function resetTurnBaseTokenEstimate(): void {
+  turnBaseTokens = 0
+}
+
+/** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
+function resolveModelKey(state: ChatStoreState): string {
+  const selected = state.selectedModelId?.value?.trim() ?? ''
+  if (selected) return selected
+  const model = state.currentConfig?.value?.model?.trim() ?? ''
+  return model || 'default'
+}
+
+/** 模型变化时重新读取校准因子并触发对应 tokenizer 懒加载 */
+function syncModelContext(state: ChatStoreState): void {
+  const modelKey = resolveModelKey(state)
+  if (modelKey === activeModelKey) return
+  activeModelKey = modelKey
+  activeFactor = getCalibrationFactor(modelKey)
+  ensureTokenCounterLoaded(modelKey)
+}
+
+/** record：base 估算 × 校准因子；同时累计 base 供流结束校准。
+ * source 标记当前计数方式：模型 tokenizer 就绪 → 真实计数，否则 → 字符加权估算。 */
+function recordTpsTokens(base: number, ts?: number): void {
+  if (base <= 0) return
+  turnBaseTokens += base
+  tpsMeter.record(
+    Math.max(1, Math.round(base * activeFactor)),
+    ts,
+    isTokenizerReady(activeModelKey) ? 'tokenizer' : 'estimate'
+  )
+}
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
+}
+
+/**
+ * H4：无 streamId 的 error/cancelled chunk 降级归属判定。
+ *
+ * 后端部分终结事件（error/cancelled）不携带 streamId，此时 handleStreamChunk 的
+ * streamId 过滤无法拦截它们。当“当前流存在活跃 streamId”（说明有更新的请求在跑）
+ * 时，这类 chunk 无法证明属于当前流——它可能是旧请求的迟到回调。
+ *
+ * 判定规则（核心：旧流的迟到终结 chunk 不能删除/改写新请求创建的占位消息）：
+ * - chunk 无 conversationId：无法归属 → 视为“未确认”迟到（调用方只记错误，不删消息）；
+ * - chunk.conversationId 与当前会话不一致：迟到；
+ * - 目标占位消息创建时间晚于 chunk.createdAt：chunk 属于更早的请求 → 迟到。
+ *
+ * 返回 true 表示该 chunk 应被当作迟到处理：不得触碰占位消息，也不得复位当前流状态。
+ */
+function isLateTerminalChunkWithoutStreamId(chunk: StreamChunk, state: ChatStoreState): boolean {
+  if (chunk.streamId || !state.activeStreamId.value) return false
+  if (!chunk.conversationId) return true
+  if (chunk.conversationId !== state.currentConversationId.value) return true
+  const targetIndex = getMessageIndexById(state, state.streamingMessageId.value)
+  const targetMessage = targetIndex >= 0 ? state.allMessages.value[targetIndex] : undefined
+  if (!targetMessage) return false
+  return typeof chunk.createdAt === 'number' && chunk.createdAt < targetMessage.timestamp
 }
 
 /**
@@ -37,6 +128,8 @@ function contentToPersistedMessage(content: Content, currentMessage: Message, st
 
   if (persistedId !== currentMessage.id && state.streamingMessageId.value === currentMessage.id) {
     state.streamingMessageId.value = persistedId
+    // H1：平滑显示层键随占位 id → 持久化 id 迁移，避免按新 id 终结清理时残留旧条目
+    migrateSmoothStreamForState(state, currentMessage.id, persistedId)
   }
   return persistedMessage
 }
@@ -191,9 +284,109 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
 }
 
 /**
+ * 平滑流式：真实内容已累加（addTextToMessage / processStreamingText），
+ * 这里把增量文本送入显示层蓄水池（SmoothStreamer）；TPS 等指标吃真实 chunk，不经此层。
+ * 段落身份（thought/text + part 索引）变化时由 manager 自动重置蓄水池。
+ */
+function pushSmoothTextForMessage(message: Message, deltaText: string, state: ChatStoreState): void {
+  // M1：档位经 state.smoothMode 传递（chatStore watch settingsStore 同步），
+  // 不再每 chunk 内联 useSettingsStore()；测试 mock 状态缺字段时兜底 'off'。
+  const mode = state.smoothMode?.value ?? 'off'
+  if (!deltaText) return
+  if (mode === 'off') {
+    // H3 on→off：档位切回直通时立即放完积压并销毁实例，UI 切回真实 content
+    finishSmoothStreamForState(state, message.id)
+    return
+  }
+  // M5：非 streaming 消息不写平滑层（与 MessageItem 的 isStreaming 门控对齐）
+  if (message.streaming !== true) return
+  const parts = message.parts
+  if (!parts || parts.length === 0) return
+  const lastPart = parts[parts.length - 1]
+  if (typeof lastPart.text !== 'string') return
+  // H2-A：新段落前导空白（该 part 尚无可见文本）不推入显示层——flushText 因 trim 为空
+  // 不会为其生成块，推入会让平滑文本覆盖上一段已完成块（消失→重现闪烁）。
+  if (!lastPart.text.trim()) return
+  const partKey = `${lastPart.thought === true ? 'thought' : 'text'}:${parts.length - 1}`
+  // H3 off→on / 段落切换：显示基线 = 当前 part 已累计真实文本（不含本次 delta），
+  // 首次 commit 时 displayText = baseText + delta，与已渲染真实内容连续、不跳变。
+  const partText = lastPart.text
+  if (!partText.endsWith(deltaText)) {
+    // 权威快照或异常合并使“本次 delta 位于尾部”的前提失效时，不能继续拼接错误基线。
+    // 立即结束旧显示层并回到真实 parts；下一次可验证的 delta 会从当前真实文本重建。
+    smoothBaseCache.delete(message.id)
+    finishSmoothStreamForState(state, message.id)
+    return
+  }
+  // 增量基线：partText 仍以缓存基线开头时（流式期间几乎总是成立），
+  // 新基线 = 缓存基线 + 中间增量片段，跳过对全串的 slice 展开
+  const baseTextLen = partText.length - deltaText.length
+  const cachedBase = smoothBaseCache.get(message.id)
+  const baseText = cachedBase !== undefined && partText.startsWith(cachedBase)
+    ? cachedBase + partText.slice(cachedBase.length, baseTextLen)
+    : partText.slice(0, baseTextLen)
+  smoothBaseCache.set(message.id, baseText)
+  if (smoothBaseCache.size > MAX_SMOOTH_BASE_TRACKED) {
+    smoothBaseCache.clear()
+  }
+  pushSmoothText(message.id, partKey, deltaText, mode, baseText, (messageIdAtSnapshot, partKeyAtSnapshot, displayText) => {
+    // M3+：快照由 manager 低频节流（~120ms），这里只在值变化时写 store.smoothTexts；
+    // 高频动画路径走 manager → CharFlow 直连（手动 DOM），不经 Vue 响应式链。
+    // messageIdAtSnapshot 来自 manager 当前 entry，持久化 id 迁移后不会把旧占位键重新写回来。
+    const prev = state.smoothTexts.get(messageIdAtSnapshot)
+    if (!prev || prev.partKey !== partKeyAtSnapshot || prev.text !== displayText) {
+      state.smoothTexts.set(messageIdAtSnapshot, { partKey: partKeyAtSnapshot, text: displayText })
+    }
+  })
+}
+
+/**
+ * H1：平滑显示层条目随消息 id 迁移（占位 id → 后端持久化 id）。
+ * manager entry 与 smoothTexts 键同步改名，终结清理按新 id 即可命中，不残留旧条目。
+ */
+function migrateSmoothStreamForState(state: ChatStoreState, fromId: string, toId: string): void {
+  migrateSmoothStream(fromId, toId)
+  const text = state.smoothTexts?.get(fromId)
+  if (text !== undefined) {
+    state.smoothTexts.delete(fromId)
+    state.smoothTexts.set(toId, text)
+  }
+}
+
+/**
+ * 终结清理：放完积压（不丢尾巴）、销毁实例并删除显示文本，UI 切回真实 content。
+ * 同时清理传入 id 与当前 streamingMessageId（cancelled 可能把占位 id 替换为后端持久化 id）。
+ */
+export function finishSmoothStreamForState(state: ChatStoreState, messageId?: string | null): void {
+  const ids = new Set<string>()
+  if (messageId) ids.add(messageId)
+  if (state.streamingMessageId.value) ids.add(state.streamingMessageId.value)
+  for (const id of ids) {
+    finishSmoothStream(id)
+    smoothBaseCache.delete(id)
+    // smoothTexts 为本模块新增的显示层字段；测试 mock 状态可能不含它，缺失时跳过清理
+    state.smoothTexts?.delete(id)
+  }
+}
+
+/**
+ * 清空状态中所有平滑条目（清空会话/重置/关闭标签页等本地重置路径用）：
+ * 先放完当前流积压并销毁实例，再清空 smoothTexts，UI 立即切回真实 content。
+ */
+export function clearAllSmoothForState(state: ChatStoreState): void {
+  finishSmoothStreamForState(state)
+  smoothBaseCache.clear()
+  for (const id of Array.from(state.smoothTexts?.keys() ?? [])) {
+    finishSmoothStream(id)
+    state.smoothTexts?.delete(id)
+  }
+}
+
+/**
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
+  syncModelContext(state)
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex === -1 || !chunk.chunk) {
     return
@@ -201,6 +394,10 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 
   const snapshotContent = chunk.chunk.contentSnapshot
   if (snapshotContent) {
+    // contentSnapshot 表示后端发生了纯文本 delta 无法表达的权威变更（如工具结构变化）。
+    // 旧 entry 的 baseText/partKey 已不再可靠，先终结显示层并切回真实快照；下一条普通
+    // 文本 delta 会以快照内容为新基线重新创建 CharFlow。
+    finishSmoothStreamForState(state, state.streamingMessageId.value)
     const updatedMessage = buildMessageFromContentSnapshot(state.allMessages.value[messageIndex], snapshotContent)
     replaceMessageAt(state, messageIndex, updatedMessage)
   }
@@ -216,15 +413,59 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     if (!snapshotContent) {
       for (const part of chunk.chunk.delta) {
         if (part.text) {
+          // TPS 实时可视化：thought 与正文都是模型输出（思考速度也是生成速度的一部分），
+          // 统一按模型专属 tokenizer 计数 × 自校准因子（懒加载完成前回退字符加权估算）。
+          // 时间戳用 chunk.createdAt——后台积压回放的 chunk 按原始发生时间入窗并被窗口
+          // 立即修剪，不产生回放尖峰。
+          recordTpsTokens(
+            countBaseTokens(part.text, activeModelKey),
+            typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
+          )
           if (part.thought) {
             addTextToMessage(message, part.text, true)
           } else {
             processStreamingText(message, part.text, state)
           }
+          // 平滑显示层：真实内容已累加，这里驱动打字节奏（关闭时直通，无副作用）
+          pushSmoothTextForMessage(message, part.text, state)
         }
 
         // 处理工具调用（原生 function call format）
+        // 工具参数 JSON 也是模型的输出，必须计入生成速度；文本按真实 tokenizer 精确计数
+        // （JSON 标点/结构字符压缩率高，字符粗估会把 1 token 估成 ~2 token）。
+        // OpenAI Responses 的 finalArgs 事件携带完整 JSON 且与前面的 delta 增量重复：
+        // 用 per-tool 已见文本只计增量差值，finalArgs 到达时文本不再增长 → 不重复计。
         if (part.functionCall) {
+          const fc = part.functionCall as StreamFunctionCall
+          const fcName = typeof fc.name === 'string' ? fc.name : ''
+          const fcBody = typeof fc.partialArgs === 'string'
+            ? fc.partialArgs
+            : (fc.args && typeof fc.args === 'object' ? JSON.stringify(fc.args) : '')
+          const recordTs = typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
+          const fcKey = typeof fc.id === 'string' && fc.id.length > 0 ? fc.id : null
+          if (fcKey) {
+            const lastBody = fcSeenBodies.get(fcKey)
+            if (lastBody === undefined) {
+              // 首次到达：函数名 + 当前参数体（finalArgs 整块场景一次计全）
+              recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+            } else if (fcBody.length >= lastBody.length) {
+              // 增量追加（partialArgs 流式语义）：只计新增部分
+              const deltaText = fcBody.slice(lastBody.length)
+              if (deltaText) {
+                recordTpsTokens(countBaseTokens(deltaText, activeModelKey), recordTs)
+              }
+            } else {
+              // 长度回退（快照/结构重置）：按当前全量重计
+              recordTpsTokens(countBaseTokens(fcBody, activeModelKey), recordTs)
+            }
+            fcSeenBodies.set(fcKey, fcBody)
+            if (fcSeenBodies.size > MAX_FC_SEEN_TRACKED) {
+              fcSeenBodies.clear()
+            }
+          } else {
+            // 无稳定 call id（罕见）：按完整长度计一次
+            recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+          }
           handleFunctionCallPart(part, message)
         }
       }
@@ -243,6 +484,23 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     // 如果是最后一个 chunk（done=true），更新 token 信息
     // 注意：modelVersion 保持创建时的值，不从 API 响应更新
     if (chunk.chunk.done) {
+      // 本轮流输出结束：所有工具参数已到达，清空增量计数跟踪
+      fcSeenBodies.clear()
+      // 校准：用本次 API 调用的最终 usage 真值对比本轮 base 估算。
+      // 口径说明：candidatesTokenCount 在 Anthropic（output_tokens）与多数 OAI 兼容渠道
+      // （completion_tokens）中已包含思考 token（tokenRate.ts 同口径），而估算端
+      // countBaseTokens 同样计入 thought 文本——两边都含思考，直接对齐，不再减
+      // thoughtsTokenCount（剔除会让真值偏小、校准因子被压低，TPS 显示反而偏低）。
+      const finalUsage = chunk.chunk.usage
+      if (finalUsage && turnBaseTokens > 0) {
+        const realTokens = typeof finalUsage.candidatesTokenCount === 'number'
+          ? finalUsage.candidatesTokenCount
+          : 0
+        if (realTokens > 0) {
+          calibrate(activeModelKey, turnBaseTokens, realTokens)
+        }
+      }
+      turnBaseTokens = 0
       // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
       if (message.tools) {
         for (const tool of message.tools) {
@@ -274,6 +532,10 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
  * 处理 toolsExecuting 类型
  */
 export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState): void {
+  // 工具开始执行时模型输出段已经结束；先保存迁移前占位 id，确保持久化 id 替换后
+  // 旧、新两个键都能被 finishSmoothStreamForState 清理。
+  const streamMessageIdAtStart = state.streamingMessageId.value
+
   // 工具即将开始执行（不需要确认的工具，或用户已确认的工具）
   // 在工具执行前先更新消息的计时信息，让前端立即显示
 
@@ -345,6 +607,10 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
     replaceMessageAt(state, messageIndex, updatedMessage)
   }
+
+  // toolsExecuting 是当前模型文本段的终点。放完积压并删除 smoothTexts，消息正文切回
+  // 后端持久化的真实 parts；全局 isStreaming 仍保持 true，以便工具执行期间可以取消。
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   // 注意：不改变 streaming 状态，工具还在执行中
 }
 
@@ -636,6 +902,9 @@ export function handleToolIteration(
 ): void {
   // 工具迭代完成：当前消息包含工具调用
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
+  // H1：终结清理所需的占位 id——contentToPersistedMessage 可能迁移 streamingMessageId；
+  // manager entry / smoothTexts 键按占位 id（迁移前）清理，避免残留。
+  const placeholderId = state.streamingMessageId.value
   
   // 检查是否有工具被取消或拒绝
   const cancelledToolIds = new Set<string>()
@@ -806,6 +1075,9 @@ export function handleToolIteration(
   // requiresUserConfirmation: 工具执行后的门闸（如 create_plan）
   // hasApprovalStop: 覆盖 review -> plan 这类不依赖 requiresUserConfirmation 的宿主审批停止
   if (hasCancelledTools || hasUserConfirmation || hasApprovalStop) {
+    // H1：终结性 toolIteration（工具被取消/审批门闸，后端不再发 complete）：
+    // 必须在 streamingMessageId 置 null 之前清理平滑显示层（置空后 ids 为空会 no-op）
+    finishSmoothStreamForState(state, placeholderId)
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
     state.isStreaming.value = false
@@ -817,6 +1089,10 @@ export function handleToolIteration(
   }
 
   state._lastApprovalGatedStreamId.value = null
+
+  // H1：流继续（下一轮工具循环）——上一段工具调用消息已终结：放完其积压并清理显示文本；
+  // 新占位消息的后续 delta 会创建新条目。
+  finishSmoothStreamForState(state, placeholderId)
   
   // 创建新的占位消息用于接收后续 AI 响应
   const newAssistantMessageId = generateId()
@@ -865,6 +1141,10 @@ export function handleComplete(
     state._lastCancelledStreamId.value = null
     return
   }
+
+  // H1：终结清理所需的占位 id——contentToPersistedMessage 可能把它迁移为后端持久化 id，
+  // manager entry / smoothTexts 键须按占位 id（迁移前）清理，否则按新 id 清理会残留。
+  const streamMessageIdAtStart = state.streamingMessageId.value
 
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1) {
@@ -918,6 +1198,10 @@ export function handleComplete(
       addCheckpoint(cp)
     }
   }
+  
+  // 平滑流式：放完积压并清理显示文本（真实 content 已由 complete 替换）
+  // 传占位 id：即使 streamingMessageId 已被迁移为持久化 id，也能命中迁移前的 manager entry
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
@@ -975,8 +1259,10 @@ export function handleAutoSummaryStatus(
 /**
  * 处理 autoSummary 类型
  *
- * 自动总结是在后端历史中直接 insertContent 的，
- * 前端需要同步插入一条总结消息，避免必须重载历史才能看到。
+ * 逻辑截断语义：后端不删除任何消息，只给被总结区间 [insertIndex - removedCount, insertIndex)
+ * 的消息打 isSummarized 标记，并把总结消息插入到 insertIndex（= summarizeEndIndex）。
+ * removedCount = 本次标记的消息数；前端同步：标记窗口内对应消息、插入总结消息、
+ * 后续消息 backendIndex +1、totalMessages +1。
  */
 export function handleAutoSummary(
   chunk: StreamChunk,
@@ -986,17 +1272,48 @@ export function handleAutoSummary(
     return
   }
 
+  const summaryContent = chunk.summaryContent
+  // M1：与 parsers 对齐——summaryContent 缺 parts 字段时按空数组容错，
+  // 避免 contentToMessageEnhanced 抛 TypeError 中断流式处理
+  const normalizedSummaryContent: Content = {
+    ...summaryContent,
+    parts: Array.isArray(summaryContent.parts) ? summaryContent.parts : []
+  }
   const insertIndex = chunk.insertIndex
+  // 逻辑截断语义：后端已标记 [insertIndex - removedCount, insertIndex) 区间的消息（不删除）
+  const markedCount = typeof chunk.removedCount === 'number' && chunk.removedCount > 0
+    ? chunk.removedCount
+    : 0
 
-  // 去重：避免重复插入同一个 summary
-  const exists = state.allMessages.value.some(
-    m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
-  )
+  // 去重：优先用后端稳定消息 id（Content.id）；无 id（旧后端）时回退到
+  // “窗口内是否已有 backendIndex === insertIndex 的 isSummary 消息”。
+  const summaryContentId = typeof summaryContent.id === 'string' && summaryContent.id.length > 0
+    ? summaryContent.id
+    : undefined
+  const exists = summaryContentId
+    ? state.allMessages.value.some(m => m.id === summaryContentId)
+    : state.allMessages.value.some(
+        m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
+      )
   if (exists) {
     return
   }
 
-  // 如果插入位置在当前窗口之前，仅维护索引偏移即可
+  // 标记被总结覆盖的本地消息（backendIndex ∈ [insertIndex - markedCount, insertIndex)），
+  // 原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）。
+  // 下界钳制：markedCount 大于 insertIndex 时（如窗口起始即被总结覆盖）
+  // 负的 markStart 会让下方 `b >= markStart` 对全部消息恒真，误标记窗口之外的消息。
+  const markStart = Math.max(0, insertIndex - markedCount)
+  if (markedCount > 0) {
+    for (const msg of state.allMessages.value) {
+      const b = msg.backendIndex
+      if (typeof b === 'number' && b >= markStart && b < insertIndex) {
+        msg.isSummarized = true
+      }
+    }
+  }
+
+  // 如果插入位置在当前窗口之前，仅维护索引偏移即可（总结消息在窗口外不插入）
   if (insertIndex < state.windowStartIndex.value) {
     state.windowStartIndex.value += 1
     for (const msg of state.allMessages.value) {
@@ -1015,9 +1332,9 @@ export function handleAutoSummary(
     }
   }
 
-  const summaryMessage = contentToMessageEnhanced(chunk.summaryContent)
+  const summaryMessage = contentToMessageEnhanced(normalizedSummaryContent)
   summaryMessage.backendIndex = insertIndex
-  summaryMessage.timestamp = chunk.summaryContent.timestamp || Date.now()
+  summaryMessage.timestamp = summaryContent.timestamp || Date.now()
   summaryMessage.localOnly = false
   summaryMessage.streaming = false
 
@@ -1037,6 +1354,17 @@ export function handleAutoSummary(
  * 处理 cancelled 类型
  */
 export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void {
+  // H4：无 streamId 的迟到 cancelled chunk：不删除/改写新请求的占位消息，也不复位当前流状态
+  if (isLateTerminalChunkWithoutStreamId(chunk, state)) {
+    console.warn('[streamChunkHandlers] Late cancelled chunk without streamId ignored (new stream active)', {
+      conversationId: chunk.conversationId,
+      createdAt: chunk.createdAt,
+      streamingMessageId: state.streamingMessageId.value,
+      activeStreamId: state.activeStreamId.value
+    })
+    return
+  }
+
   // 竞态检测：判断这个 cancelled chunk 是否属于已被 cancelStream() 清理过的旧请求。
   // 如果 cancelStream() 已经清理了状态并且新请求已经开始（streamingMessageId 已变为新 ID），
   // 此时迟到的 cancelled chunk 不应该重置新请求的全局状态。
@@ -1059,6 +1387,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     state._lastCancelledStreamId.value = null
     return
   }
+
+  // H1：终结清理所需的占位 id——下方 persistedId 分支可能把 streamingMessageId 迁移为
+  // 后端持久化 id；manager entry / smoothTexts 键按占位 id（迁移前）清理，避免残留。
+  const streamMessageIdAtStart = state.streamingMessageId.value
 
   // 正常的 cancelled 处理
   let messageIndex = -1
@@ -1127,6 +1459,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
         : message.id
       if (persistedId !== message.id && state.streamingMessageId.value === message.id) {
         state.streamingMessageId.value = persistedId
+        // H1：平滑显示层键随占位 id → 持久化 id 迁移，避免按新 id 清理时残留旧条目
+        migrateSmoothStreamForState(state, message.id, persistedId)
       }
 
       // 创建更新后的消息对象
@@ -1146,10 +1480,15 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
       replaceMessageAt(state, messageIndex, updatedMessage)
     }
   }
+  // 平滑流式：放完积压并清理显示文本（半截内容已由 cancelled 替换/保留）
+  // 传占位 id：即使 streamingMessageId 已被迁移为持久化 id，也能命中迁移前的 manager entry
+  finishSmoothStreamForState(state, streamMessageIdAtStart)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
+  turnBaseTokens = 0
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastApprovalGatedStreamId.value = null
@@ -1160,6 +1499,24 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
  * 处理 error 类型
  */
 export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
+  // H4：无 streamId 的迟到 error chunk：不删除新请求的占位消息，也不复位当前流状态。
+  // 无 conversationId 时无法归属，保守只记错误不删消息；可归属的迟到 chunk 直接忽略。
+  if (isLateTerminalChunkWithoutStreamId(chunk, state)) {
+    if (!chunk.conversationId) {
+      state.error.value = chunk.error || {
+        code: 'STREAM_ERROR',
+        message: 'Stream error'
+      }
+    }
+    console.warn('[streamChunkHandlers] Late error chunk without streamId ignored (new stream active)', {
+      conversationId: chunk.conversationId,
+      createdAt: chunk.createdAt,
+      streamingMessageId: state.streamingMessageId.value,
+      activeStreamId: state.activeStreamId.value
+    })
+    return
+  }
+
   // 竞态检测：与 handleCancelled 相同的逻辑
   const lastCancelledId = state._lastCancelledStreamId.value
   const isStaleCallback = !chunk.streamId && !!(
@@ -1180,8 +1537,14 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     message: 'Stream error'
   }
   
+  // 平滑流式：放完积压并清理显示文本（半截消息已保留/删除）。
+  // 必须在 streamingMessageId 置 null 之前调用：finishSmoothStreamForState 依赖
+  // streamingMessageId 定位 manager entry，置空后 ids 为空会 no-op 导致条目泄漏（H1）。
+  finishSmoothStreamForState(state)
+
   if (state.streamingMessageId.value) {
-    const messageToRemove = state.allMessages.value.find(m => m.id === state.streamingMessageId.value)
+    const errorMessageIndex = getMessageIndexById(state, state.streamingMessageId.value)
+    const messageToRemove = errorMessageIndex >= 0 ? state.allMessages.value[errorMessageIndex] : undefined
     
     // 删除空的占位消息（不依赖 streaming 标记；网络中断等场景可能已被提前置为非 streaming）
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
@@ -1193,6 +1556,11 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     } else if (messageToRemove) {
       // 有内容的半截消息：保留展示，但记录其 ID，
       // 供 retryAfterError 在重试前回滚（后端从未持久化该消息）。
+      // 与 handleCancelled 的保留路径一致，结束其流式渲染标志——
+      // 否则 loading 指示器/光标永久闪烁（无后续 chunk 会再置它）。
+      if (messageToRemove.streaming) {
+        replaceMessageAt(state, errorMessageIndex, { ...messageToRemove, streaming: false })
+      }
       state._failedStreamMessageId.value = messageToRemove.id
     } else {
       state._failedStreamMessageId.value = null
@@ -1207,6 +1575,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
+  turnBaseTokens = 0
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

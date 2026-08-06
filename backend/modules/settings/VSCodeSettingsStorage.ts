@@ -84,6 +84,28 @@ function deepEqual(a: unknown, b: unknown): boolean {
     ));
 }
 
+/**
+ * 深拷贝配置值（快照用）。
+ *
+ * 缺陷修复：save() 的快照此前直接保存活对象引用——保存成功后对同一对象的任何
+ * 原地变更（如 `settings.toolAutoExec[tool] = x`、`settings.toolsConfig[k] = v`）
+ * 都会被 deepEqual 的 `a === b` 引用短路误判为「无变化」而跳过写盘，
+ * 表现为「自动执行 / 工具策略等嵌套配置重启后丢失」。快照必须与活对象解耦。
+ */
+function deepCloneValue(value: unknown): unknown {
+    if (value === undefined) return undefined;
+    try {
+        return structuredClone(value);
+    } catch {
+        // 非常规对象（函数等）回退 JSON 往返；快照仅用于 diff，丢失原型可接受
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch {
+            return value;
+        }
+    }
+}
+
 export class VSCodeSettingsStorage implements SettingsStorage {
     private options: Required<VSCodeSettingsStorageOptions>;
 
@@ -126,12 +148,12 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         return settings;
     }
 
-    /** 从设置对象提取全部配置键的快照 */
+    /** 从设置对象提取全部配置键的快照（值做深拷贝，与活对象解耦，见 deepCloneValue） */
     private buildSnapshot(settings: GlobalSettings): Record<string, unknown> {
         const snapshot: Record<string, unknown> = {};
         const source = settings as unknown as Record<string, unknown>;
         for (const key of ALL_CONFIG_KEYS) {
-            snapshot[key] = source[key];
+            snapshot[key] = deepCloneValue(source[key]);
         }
         return snapshot;
     }
@@ -150,7 +172,8 @@ export class VSCodeSettingsStorage implements SettingsStorage {
 
             for (const key of ALL_CONFIG_KEYS) {
                 const value = source[key];
-                nextSnapshot[key] = value;
+                // 快照存深拷贝：与活对象解耦，后续原地变更才能被 deepEqual 检出
+                nextSnapshot[key] = deepCloneValue(value);
                 if (deepEqual(value, this.lastSavedSnapshot[key])) {
                     continue;
                 }

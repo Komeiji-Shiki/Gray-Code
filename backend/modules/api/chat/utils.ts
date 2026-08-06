@@ -30,12 +30,19 @@ export interface ContextTrimInfo {
     trimStartIndex: number;
     /** 是否需要触发自动总结（仅当 autoSummarizeEnabled 开启且 token 超过阈值时为 true） */
     needsAutoSummarize?: boolean;
+    /** 自动总结没有足够可压缩内容，但请求已逼近模型硬窗口，需要直接执行请求级 fallback。 */
+    needsContextFallback?: boolean;
+    /**
+     * 不属于 history 数组、但会随主请求一起发送的固定输入 token。
+     * 当前包含系统提示词和本轮 prompt context；fallback 必须把它从总输入预算中扣除。
+     */
+    fixedPromptTokens?: number;
     /** 本轮上下文管理决策记录，用于日志和测试观测。 */
     contextManagementDecision?: {
         enabled: boolean;
         mode: 'off' | 'trim' | 'summarize';
         source: 'explicit' | 'legacy';
-        action: 'disabled' | 'not_needed' | 'saved_state_reused' | 'turn_state_reused' | 'trim_applied' | 'auto_summarize_needed' | 'fallback_trim_applied' | 'fallback_stable_start_reused';
+        action: 'disabled' | 'manual_summary_applied' | 'not_needed' | 'saved_state_reused' | 'turn_state_reused' | 'trim_applied' | 'auto_summarize_needed' | 'auto_summarize_skipped_low_savings' | 'hard_fallback_needed' | 'fallback_trim_applied' | 'fallback_stable_start_reused' | 'fallback_hard_limit_applied' | 'fallback_best_effort_applied';
     };
 }
 

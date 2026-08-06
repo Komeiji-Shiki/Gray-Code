@@ -31,14 +31,115 @@ export interface ToolDeclarationResolveOptions {
     excludeToolNames?: string[];
 }
 
+// ==================== 工具声明缓存 ====================
+// 工具循环每迭代都会经 ChannelManager.getFilteredTools → resolve() 重建全部声明
+// （遍历工具注册表 + 逐工具递归 cleanJsonSchema + 遍历全部 MCP 工具），同一回合内
+// 解析输入几乎不变。按「解析选项 + 设置指纹 + MCP 工具列表版本」缓存结果：
+// - 设置指纹取影响工具声明的配置切片（toolsEnabled / toolAutoExec / imageTools /
+//   memory / subagents），任何相关设置变更都会改变指纹 → 自动失效；
+// - MCP 连接/断开/能力刷新事件递增版本号（getAllTools 只返回已连接且有能力缓存的
+//   服务器，这三个事件覆盖工具列表的全部变化点）；
+// - 命中返回浅克隆（数组层）：声明对象是解析时的私有快照，调用方（formatter）只读使用。
+const TOOL_DECLARATION_CACHE_CAPACITY = 32;
+
 export class ToolDeclarationResolver {
+    private readonly declarationCache = new Map<string, ToolDeclaration[]>();
+    /** MCP 工具列表版本：服务器连接/断开/能力刷新事件时递增（工具列表变化的可靠失效信号） */
+    private mcpToolsVersion = 0;
+    /** 已注册的 MCP 事件解绑句柄：dispose() 时逐一移除，防止一次性实例向 McpManager 单例泄漏监听器 */
+    private readonly mcpEventDisposers: Array<() => void> = [];
+
     constructor(
         private readonly toolRegistry?: ToolRegistry,
         private readonly settingsManager?: SettingsManager,
         private readonly mcpManager?: McpManager
-    ) {}
+    ) {
+        if (this.mcpManager && typeof (this.mcpManager as any).addEventListener === 'function') {
+            const bumpToolsVersion = (): void => {
+                this.mcpToolsVersion += 1;
+            };
+            for (const eventType of ['server:connected', 'server:disconnected', 'server:capabilities_updated'] as const) {
+                this.mcpManager.addEventListener(eventType, bumpToolsVersion);
+                this.mcpEventDisposers.push(() => {
+                    this.mcpManager?.removeEventListener?.(eventType, bumpToolsVersion);
+                });
+            }
+        }
+    }
+
+    /** 释放 MCP 事件监听（一次性实例用完后调用，避免向单例 McpManager 无界累积监听器） */
+    dispose(): void {
+        for (const disposer of this.mcpEventDisposers.splice(0)) {
+            disposer();
+        }
+    }
+
+    private touchDeclarationCache(key: string): void {
+        const value = this.declarationCache.get(key);
+        if (value !== undefined) {
+            this.declarationCache.delete(key);
+            this.declarationCache.set(key, value);
+        }
+        if (this.declarationCache.size > TOOL_DECLARATION_CACHE_CAPACITY) {
+            const oldest = this.declarationCache.keys().next().value;
+            if (oldest !== undefined) {
+                this.declarationCache.delete(oldest);
+            }
+        }
+    }
+
+    /** 设置指纹：只序列化影响工具声明的配置切片（值都很小，序列化成本可忽略） */
+    private settingsFingerprint(): string {
+        const settings = this.settingsManager
+            && typeof (this.settingsManager as any).getSettings === 'function'
+            ? (this.settingsManager as any).getSettings() as { toolsEnabled?: unknown; toolAutoExec?: unknown; toolsConfig?: Record<string, unknown> }
+            : undefined;
+        if (!settings) {
+            return '';
+        }
+        const toolsConfig = settings.toolsConfig ?? {};
+        return JSON.stringify([
+            settings.toolsEnabled ?? {},
+            settings.toolAutoExec ?? null,
+            toolsConfig.memory ?? null,
+            toolsConfig.generate_image ?? null,
+            toolsConfig.remove_background ?? null,
+            toolsConfig.crop_image ?? null,
+            toolsConfig.resize_image ?? null,
+            toolsConfig.rotate_image ?? null,
+            toolsConfig.subagents ?? null,
+        ]);
+    }
+
+    private buildCacheKey(options: ToolDeclarationResolveOptions): string {
+        const toolPolicy = Array.isArray(options.promptModeSnapshot?.toolPolicy)
+            && options.promptModeSnapshot.toolPolicy.length > 0
+            ? options.promptModeSnapshot.toolPolicy
+            : undefined;
+        return JSON.stringify([
+            options.channelType ?? '',
+            options.toolMode ?? '',
+            options.multimodalEnabled ?? false,
+            options.includeBuiltins !== false,
+            options.includeMcp !== false,
+            options.allowlist ?? null,
+            options.denylist ?? null,
+            options.excludeToolNames ?? null,
+            toolPolicy ?? null,
+            this.settingsFingerprint(),
+            this.mcpToolsVersion,
+            hasAvailableSubAgent(),
+        ]);
+    }
 
     resolve(options: ToolDeclarationResolveOptions = {}): ToolDeclaration[] | undefined {
+        const cacheKey = this.buildCacheKey(options);
+        const cached = this.declarationCache.get(cacheKey);
+        if (cached !== undefined) {
+            this.touchDeclarationCache(cacheKey);
+            return cached.length > 0 ? cached.slice() : undefined;
+        }
+
         const includeBuiltins = options.includeBuiltins !== false;
         const includeMcp = options.includeMcp !== false;
         const tools: ToolDeclaration[] = [];
@@ -52,6 +153,8 @@ export class ToolDeclarationResolver {
         }
 
         const filtered = this.applyFinalFilters(tools, options);
+        this.declarationCache.set(cacheKey, filtered);
+        this.touchDeclarationCache(cacheKey);
         return filtered.length > 0 ? filtered : undefined;
     }
 

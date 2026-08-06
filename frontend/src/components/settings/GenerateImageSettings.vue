@@ -92,7 +92,7 @@ onMounted(async () => {
     </div>
     
     <!-- API 配置 -->
-    <div class="section">
+    <div class="section" data-search-anchor="image-api-config">
       <h5 class="section-title">
         <i class="codicon codicon-plug"></i>
         {{ t('components.settings.generateImageSettings.api.title') }}
@@ -142,7 +142,7 @@ onMounted(async () => {
     </div>
     
     <!-- 宽高比参数 -->
-    <div class="section">
+    <div class="section" data-search-anchor="aspect-ratio">
       <h5 class="section-title">
         <i class="codicon codicon-symbol-ruler"></i>
         {{ t('components.settings.generateImageSettings.aspectRatio.title') }}
@@ -178,7 +178,7 @@ onMounted(async () => {
     </div>
     
     <!-- 图片尺寸参数 -->
-    <div class="section">
+    <div class="section" data-search-anchor="image-size">
       <h5 class="section-title">
         <i class="codicon codicon-screen-full"></i>
         {{ t('components.settings.generateImageSettings.imageSize.title') }}
@@ -214,7 +214,7 @@ onMounted(async () => {
     </div>
     
     <!-- 批量生成限制 -->
-    <div class="section">
+    <div class="section" data-search-anchor="batch-limits">
       <h5 class="section-title">
         <i class="codicon codicon-layers"></i>
         {{ t('components.settings.generateImageSettings.batch.title') }}
@@ -251,7 +251,7 @@ onMounted(async () => {
     </div>
     
     <!-- 使用说明 -->
-    <div class="section">
+    <div class="section" data-search-anchor="image-usage">
       <h5 class="section-title">
         <i class="codicon codicon-question"></i>
         {{ t('components.settings.generateImageSettings.usage.title') }}

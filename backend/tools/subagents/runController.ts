@@ -182,6 +182,16 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         return Array.from(this.activeRuns.keys());
     }
 
+    /** 等待一组 run 从活跃控制表注销；超时后返回，避免无响应工具永久阻塞删除。 */
+    async waitForInactive(runIds: readonly string[], timeoutMs = 6000): Promise<void> {
+        const deadline = Date.now() + Math.max(0, timeoutMs);
+        while (runIds.some(runId => this.activeRuns.has(runId))) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) return;
+            await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)));
+        }
+    }
+
     /**
      * 修改原因：IRunController 需要统一暴露 controller 的 scope 类型。
      * 修改方式：返回固定的 subagent 字面量，不引入额外状态源。

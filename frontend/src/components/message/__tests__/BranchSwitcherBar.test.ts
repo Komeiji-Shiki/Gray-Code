@@ -46,16 +46,16 @@ function makeThreeCandidateGraph(activeTailNodeId: string): BranchGraphData {
   )
 }
 
-function mountBar(): ReturnType<typeof mount> {
+function mountBar(nodeId = 'a2'): ReturnType<typeof mount> {
   return mount(BranchSwitcherBar, {
-    props: { parentNodeId: 'u1' },
+    props: { nodeId },
     // 交互测试关注候选行为；定位回归测试单独使用真实 Teleport。
     global: { stubs: { teleport: true } }
   })
 }
 
 function mountTeleportedBar(): ReturnType<typeof mount> {
-  return mount(BranchSwitcherBar, { props: { parentNodeId: 'u1' } })
+  return mount(BranchSwitcherBar, { props: { nodeId: 'a2' } })
 }
 
 describe('BranchSwitcherBar 显隐', () => {
@@ -73,19 +73,34 @@ describe('BranchSwitcherBar 显隐', () => {
     wrapper.unmount()
   })
 
-  it('单候选 → 隐藏', () => {
+  it('单候选（即使消息在图中）→ 隐藏', () => {
     chatStoreMock.branchGraph = makeGraph(
       { u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }), a1: makeNode('a1', 'u1') },
       'a1'
     )
-    const wrapper = mountBar()
+    const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'a1' } })
     expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('未知父节点（消息不在图中）→ 隐藏', () => {
+  it('未知节点（消息不在图中）→ 隐藏', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
-    const wrapper = mount(BranchSwitcherBar, { props: { parentNodeId: 'not_in_graph' } })
+    const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'not_in_graph' } })
+    expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('候选组的父节点（自己不是候选成员）→ 隐藏', () => {
+    // 切换器跟随活跃候选（a2），而不是挂在父节点 u1 上
+    chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
+    const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'u1' } })
+    expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('非活跃候选 → 隐藏（旧候选不在主历史 UI，不渲染切换器）', () => {
+    chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
+    const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'a1' } })
     expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -100,7 +115,7 @@ describe('BranchSwitcherBar 显隐', () => {
 
   it('compact 模式用于消息操作栏：保留候选切换器但使用紧凑类', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
-    const wrapper = mount(BranchSwitcherBar, { props: { parentNodeId: 'u1', compact: true } })
+    const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'a2', compact: true } })
     expect(wrapper.find('.branch-switcher-bar').classes()).toContain('compact')
     expect(wrapper.find('.branch-switcher-position-text').text()).toBe('2 / 3')
     wrapper.unmount()
@@ -129,7 +144,7 @@ describe('BranchSwitcherBar 切换交互', () => {
 
   it('右箭头：从候选 3 循环到候选 1', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a3')
-    const wrapper = mountBar()
+    const wrapper = mountBar('a3')
 
     await wrapper.findAll('.branch-switcher-btn')[1].trigger('click')
 

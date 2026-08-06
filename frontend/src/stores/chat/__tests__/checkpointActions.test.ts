@@ -431,11 +431,26 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
     expect(result.summarizedMessageCount).toBe(5)
     expect(mockSend).toHaveBeenCalledWith('summarizeContext', {
       conversationId: 'conv_1',
-      configId: 'cfg_1'
+      configId: 'cfg_1',
+      modelOverride: undefined
     })
     expect(loadHistoryFn).toHaveBeenCalled()
     // 结束后清除总结状态
     expect(state.autoSummaryStatus.value).toBeNull()
+  })
+
+  it('使用当前对话模型时透传界面选中的模型', async () => {
+    mockSend.mockResolvedValue({ success: true, summaryContent: '...', summarizedMessageCount: 5 })
+    const state = createState({
+      selectedModelId: ref('deepseek-v4-flash'),
+      currentConfig: ref({ model: '' } as any)
+    })
+
+    await summarizeContext(state, async () => {})
+
+    expect(mockSend).toHaveBeenCalledWith('summarizeContext', expect.objectContaining({
+      modelOverride: 'deepseek-v4-flash'
+    }))
   })
 
   it('后端返回失败时透传错误码与信息', async () => {
@@ -547,7 +562,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 
@@ -580,7 +595,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 
@@ -635,7 +650,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     const state = createState({
       allMessages: ref([
         createMessage({ id: 'm0', role: 'user', content: 'hi', backendIndex: 0 }),
-        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1 })
+        createMessage({ id: 'm1', role: 'user', content: 'old', backendIndex: 1, parentId: 'm0' })
       ])
     })
 

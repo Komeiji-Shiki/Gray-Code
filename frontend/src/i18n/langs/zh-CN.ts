@@ -251,6 +251,34 @@ const zhCN = {
             openConversation: '点击打开此对话'
         },
 
+        usageTime: {
+            title: '使用时间',
+            refresh: '刷新',
+            loading: '正在统计…',
+            loadFailed: '加载失败',
+            empty: '暂无使用时间数据（在编辑器中活动即可开始记录）',
+            today: '今日已用',
+            currentSession: '当前连续工作',
+            totalInRange: '范围内合计',
+            range7d: '近 7 天',
+            range30d: '近 30 天',
+            range90d: '近 90 天',
+            range1y: '近 1 年',
+            rangeAll: '全部',
+            hours: '小时',
+            minutes: '分钟',
+            durationHM: '{hours}小时{minutes}分钟',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: '每日使用时长',
+            monthlyTitle: '每月使用时长（点击月份查看每日明细）',
+            monthlyTitleShort: '每月使用时长',
+            monthActiveDays: '{days} 天活跃',
+            onlyShowLatest: '仅显示最近 {days} 天',
+            expandMonth: '展开该月每日明细',
+            heatmapTitle: '最近 7 天作息热力（悬停查看详情）'
+        },
+
         history: {
             title: '对话历史',
             empty: '暂无对话记录',
@@ -294,6 +322,9 @@ const zhCN = {
             pinnedFiles: '固定文件',
             skills: 'Skills',
             summarizeContext: '总结上下文',
+            tpsTooltip: 'TPS（tokens per second）',
+            tpsTokenizerReal: '模型 tokenizer 精确计数',
+            tpsTokenizerEstimate: 'tokenizer 未就绪，按字符估算',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',
@@ -397,8 +428,12 @@ const zhCN = {
                 assistant: '助手'
             },
             actions: {
+                edit: '编辑消息',
+                copy: '复制',
+                retry: '重新生成',
                 viewResponse: '查看回复',
-                branchFromHere: '从这里创建分支'
+                branchFromHere: '从这里创建分支',
+                delete: '删除消息'
             },
             branch: {
                 previous: '上一个候选',
@@ -416,17 +451,26 @@ const zhCN = {
                 workspaceConfirmCancel: '取消'
             },
             branchTree: {
-                open: '查看分支树',
+                open: '查看分支历史',
                 close: '关闭',
-                title: '分支树',
+                title: '分支历史',
                 empty: '暂无分支',
+                nodeCount: '{count} 个节点',
+                navigationMode: '分支导航',
+                fullMode: '完整消息图',
+                navigationHint: '折叠连续消息，只显示分支点与候选',
+                fullHint: '轨道式完整消息图：轨道数随同时存在的候选分支变化',
+                collapsedMessages: '已折叠 {count} 条连续消息',
                 candidateCount: '{count} 个候选',
                 deleted: '已删除',
+                system: '系统',
                 restore: '恢复',
                 rename: '重命名',
                 renamePlaceholder: '输入分支标签…',
                 save: '保存',
-                cancel: '取消'
+                cancel: '取消',
+                expandAllMessages: '展开完整消息',
+                collapseLinearMessages: '收起线性段'
             },
             responseViewer: {
                 commonMode: '常用模式',
@@ -523,7 +567,11 @@ const zhCN = {
             },
             thought: {
                 thinking: '正在思考...',
-                thoughtProcess: '思考过程'
+                thoughtProcess: '思考过程',
+                viewCollapsed: '折叠',
+                viewMedium: '中展开（滚动查看）',
+                viewExpanded: '完全展开',
+                trimmedHint: '内容过长，仅显示最近部分，请使用完全展开查看'
             },
             contextBlocks: {
                 clickToView: '点击查看完整内容'
@@ -532,7 +580,12 @@ const zhCN = {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
-                autoTriggered: '自动触发'
+                restoreTitle: '恢复原文（撤销总结，重新发送被压缩的消息）',
+                autoTriggered: '自动触发',
+                compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
+                legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
+                historyTokenLabel: '历史',
+                requestTokenLabel: '请求'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',
@@ -896,7 +949,8 @@ const zhCN = {
                 sound: '通知系统',
                 appearance: '外观',
                 memory: '记忆',
-                general: '通用'
+                general: '通用',
+                usage: '用量统计'
             },
             channelSettings: {
                 selector: {
@@ -1126,6 +1180,7 @@ const zhCN = {
                     design: '设计',
                     notification: '通知',
                     agents: '代理',
+                    activity: '使用时间',
                     other: '其他'
                 },
                 badges: {
@@ -1706,8 +1761,6 @@ const zhCN = {
                     whitelist: '白名单',
                     blacklist: '黑名单'
                 },
-                builtinTools: '内置工具',
-                mcpTools: 'MCP 工具',
                 noTools: '暂无可用工具',
                 whitelistHint: '勾选的工具将被允许使用',
                 blacklistHint: '勾选的工具将被禁止使用',
@@ -1963,6 +2016,7 @@ const zhCN = {
                     keepRounds: '最少保留轮数',
                     keepRoundsUnit: '轮',
                     keepRoundsHint: '作为保留预算的下限保护，至少保留最近 N 轮对话不参与总结',
+                    keepRoundsMinNote: '下限为 1 轮（后端强制至少保留 1 轮）',
                     keepTokens: '保留内容预算',
                     keepTokensHint: '总结时保留最近约多少上下文不被压缩：填 token 数（如 30000）或相对模型最大上下文的百分比（如 25%），实际范围按此预算对齐到轮边界',
                     maxAttempts: '自动总结最大尝试次数',
@@ -1997,6 +2051,12 @@ const zhCN = {
                 backToChat: '返回对话',
                 sidebarCollapse: '收起边栏',
                 sidebarExpand: '展开边栏',
+                search: {
+                    placeholder: '搜索设置项…',
+                    clear: '清除搜索',
+                    noResults: '未找到匹配的设置项',
+                    hint: '输入关键词查找设置，回车打开第一个结果'
+                },
                 sections: {
                     channel: {
                         title: '渠道设置',
@@ -2042,6 +2102,10 @@ const zhCN = {
                         title: '子代理',
                         description: '配置可由 AI 调用的专业子代理'
                     },
+                    dependencies: {
+                        title: '扩展依赖',
+                        description: '安装和管理 Python/Node 等扩展依赖工具'
+                    },
                     sound: {
                         title: '通知系统',
                         description: '统一配置声音提示与 Windows Agent 停止系统通知'
@@ -2057,6 +2121,11 @@ const zhCN = {
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
+                    },
+                    usage: {
+                        title: '使用时间与用量',
+                        description: '查看你的使用时间与 Token 用量统计',
+                        openFullPage: '查看完整统计'
                     }
                 },
                 proxy: {
@@ -2147,7 +2216,20 @@ const zhCN = {
                     rawEntries: {
                         title: '原始记忆条目',
                         description: '查看和编辑原始记忆条目。编辑会清除相关摘要（下次压缩时重新构建）。',
-                        empty: '暂无记忆条目。'
+                        empty: '暂无记忆条目。',
+                        addPlaceholder: '输入要记住的内容，点击「添加记忆」手动写入长期记忆（与 AI 的 memory_note 等效）。支持 Ctrl+Enter / Cmd+Enter 快捷提交。',
+                        add: '添加记忆',
+                        added: '已添加记忆 #{id}',
+                        addEmpty: '内容为空，无法添加记忆。',
+                        addTooLong: '内容超过单条记忆上限（{limit} 字节）。',
+                        truncatedNotice: '记忆超过 {limit} 条，列表仅展示前 {limit} 条（其余可在对话中通过 memory_recall 检索）。',
+                        deleteConfirmTitle: '删除记忆条目',
+                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
+                        selectAll: '全选',
+                        deleteSelected: '删除所选（{count}）',
+                        deletedBatch: '已删除 {count} 条记忆。',
+                        batchDeleteConfirmTitle: '批量删除记忆条目',
+                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
                     }
                 },
 
@@ -2346,6 +2428,8 @@ const zhCN = {
                     design: '设计',
                     notification: '通知',
                     agents: '代理',
+                    mcp: 'MCP 工具',
+                    activity: '使用时间',
                     other: '其他'
                 },
                 dependency: {
@@ -2405,6 +2489,7 @@ const zhCN = {
                     toggle_skills: '切换技能',
                     subagents: '子代理',
                     agent_send_message: '发送代理消息',
+                    get_activity_stats: '获取活动统计',
                 },
                 toolDescriptions: {
                     read_file: '读取工作区文件，支持文本和二进制文件，可指定行范围。',
@@ -2447,7 +2532,7 @@ const zhCN = {
                     memory_recall: '搜索全部永久记忆，支持正则表达式匹配。',
                     memory_compress: '执行待处理的记忆压缩合并，优化记忆存储。',
                     memory_zoom: '展开记忆树节点查看详细内容。',
-                    memory_forget: '丢弃错误的记忆树摘要（不删除原始记忆）。',
+                    memory_forget: '丢弃错误的记忆树摘要；或删除单条/闭区间原始记忆（如 "5" 删单条、"1,3" 删 1 到 3）。',
                     memory_config: '查看或修改永久记忆系统的配置参数。',
                     insert_code: '在指定行前插入代码，可用「最后一行 + 1」追加到文件末尾。',
                     delete_code: '删除文件中指定行范围内的代码。',
@@ -2455,6 +2540,7 @@ const zhCN = {
                     toggle_skills: '启用或禁用技能，控制后续请求使用的知识模块。',
                     subagents: '派生子代理执行任务，支持传入提示词和上下文。',
                     agent_send_message: '向当前对话中的另一个代理（子代理）或主会话（主模型）异步发送消息。寻址方式二选一：targetRunId（当前对话中活跃的子代理运行 ID）或 targetAgentName（"main" 表示主会话）。同一线程回复超过 5 跳后投递被拒绝（防循环）；发送方身份自动识别，无法冒充。',
+                    get_activity_stats: '查询用户的 IDE 使用时间统计：每日使用时长、最近作息（24 小时热力）与连续工作时长。用于了解用户的工作休息节奏、检测长时间连续工作会话，或查看用户当前是否活跃。数据仅含时间戳，不含用户内容；返回时间为本地时间。',
                 },
             },
             tokenCountSettings: {
@@ -2583,6 +2669,22 @@ const zhCN = {
                     title: '选中内容入口',
                     description: '统一控制“添加选中内容到输入框”是否显示在选中文本悬浮和长按 Ctrl / 代码操作中。'
                 },
+                smoothStreaming: {
+                    title: '流式平滑输出',
+                    description: '把突发的流式输出抹成匀速打字效果（关闭 = 原始逐块输出；档位越靠后延迟越高、越丝滑）。',
+                    off: '关闭',
+                    smooth: '灵敏',
+                    balanced: '标准',
+                    silky: '丝滑'
+                },
+                tpsBar: {
+                    title: 'TPS 实时可视化条',
+                    description: '在输入区底部显示实时 tokens/秒 曲线。隐藏后停止采样，重新开启后从当前流重新统计。'
+                },
+                splash: {
+                    title: '开屏动画',
+                    description: '启动时播放 Gray logo 描线开场动画。关闭后直接进入主界面。'
+                },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },
@@ -2636,6 +2738,11 @@ const zhCN = {
             cancelled: '已取消',
             cancel: '取消任务',
             dismiss: '清除',
+            dismissAllCompleted: '清除已完成',
+            dismissAllCompletedTitle: '一键清除所有已完成的后台任务（未汇报结果的任务会弹出确认）',
+            dismissAllConfirmTitle: '清除已完成任务？',
+            dismissAllConfirmMessage: '{count} 个任务的结果尚未汇报给模型，清除后模型将收不到这些结果。确定清除？',
+            dismissAllConfirmAction: '仍要清除',
             pendingReport: '结果待汇报给模型',
             outputTitle: '命令输出',
             noOutput: '暂无输出',
@@ -3460,7 +3567,8 @@ const zhCN = {
                 restoreDeleteFailed: '回档并删除失败',
                 noConfigSelected: '未选择配置',
                 summarizeFailed: '总结失败',
-                restoreEditFailed: '回档并编辑失败'
+                restoreEditFailed: '回档并编辑失败',
+                messageChanged: '消息已发生变化，请刷新历史后重试'
             },
             relativeTime: {
                 justNow: '刚刚',

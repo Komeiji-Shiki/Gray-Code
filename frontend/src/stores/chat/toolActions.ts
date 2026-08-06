@@ -11,6 +11,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 
 /**
  * 根据工具调用 ID 获取工具响应。
@@ -331,12 +332,17 @@ export async function cancelStreamAndRejectTools(
   stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
+  // H1：本地取消路径立即清理平滑显示层（真实内容半截已保留，UI 切回真实文本）；
+  // 必须在 streamingMessageId 置 null 之前调用（置空后 ids 为空会 no-op）。
+  finishSmoothStreamForState(state, currentStreamingId)
   // 新建/切换会话同样立即结束本地等待；后端拒绝工具与取消流仍按下方顺序完成。
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 与 cancelStream 一致：本地取消路径清空本轮 base 估算，防止残留混入下一轮流校准
+  resetTurnBaseTokenEstimate()
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -421,6 +427,9 @@ export async function cancelStream(
   stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免残留空消息导致索引越界
   removeEmptyAssistantPlaceholder(state, currentStreamingId)
+  // H1：本地取消路径立即清理平滑显示层（真实内容半截已保留，UI 切回真实文本）；
+  // 必须在 streamingMessageId 置 null 之前调用（置空后 ids 为空会 no-op）。
+  finishSmoothStreamForState(state, currentStreamingId)
   
   // 点击后立即收敛本地状态，不等待后端关闭 diff、拒绝悬空工具和持久化 functionResponse。
   // 调用方仍会 await 下方请求，因此删除/切会话等依赖后端清理的操作顺序保持不变。
@@ -431,6 +440,9 @@ export async function cancelStream(
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 本地取消路径同样清空本轮 base 估算（与 handleCancelled 一致）：
+  // 若后端此后不发任何终结 chunk（挂死/断网），残留估算会混入下一轮流校准因子
+  resetTurnBaseTokenEstimate()
 
   try {
     await sendToExtension('cancelStream', cancelRequest)
@@ -461,6 +473,9 @@ export async function rejectPendingToolsWithAnnotation(
   if (toolResponses.length === 0) return
 
   const trimmedAnnotation = annotation.trim()
+
+  // BR-01：批注窗口消息的稳定节点 id（随 toolConfirmation 传给后端原样落库）
+  let annotationMessageId: string | undefined
 
   if (state.streamingMessageId.value) {
     const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
@@ -494,8 +509,14 @@ export async function rejectPendingToolsWithAnnotation(
       content: trimmedAnnotation,
       timestamp: Date.now(),
       backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
+      // BR-01：本地窗口近似父链（首条为 null）——编辑时根节点判断用；后端落库时生成准确 parentId
+      parentId: state.allMessages.value.length > 0
+        ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
+        : null,
       parts: [{ text: trimmedAnnotation }]
     }
+    // BR-01：批注消息 id 随 toolConfirmation 传给后端原样落库（窗口 id 与后端 id 对齐）
+    annotationMessageId = userMessage.id
     state.allMessages.value.push(userMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -511,6 +532,7 @@ export async function rejectPendingToolsWithAnnotation(
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation,
+      annotationMessageId,
       streamId,
       promptModeId: state.currentPromptModeId.value
     })

@@ -22,6 +22,9 @@ import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurre
 
 const log = Logger.get('CheckpointQueryService');
 
+/** 无 manifest 目录的 mtime 新鲜度阈值：创建中窗口（目录已建、manifest 未写）内跳过 */
+const ORPHAN_MANIFEST_MISSING_FRESH_MS = 5 * 60 * 1000;
+
 /** 对话级存档统计（设置页清理视图使用） */
 export interface ConversationCheckpointStats {
     conversationId: string;
@@ -285,15 +288,56 @@ export class CheckpointQueryService {
     /**
      * 清理孤儿备份目录：磁盘上存在但没有任何检查点记录引用的目录。
      * 只在恢复/预览的存档锁内调用（prepareRestore → prune），只处理 `cp_*` 格式目录。
+     *
+     * CP-ORPHAN-1: 孤儿判定必须基于**全部对话**的存档记录——checkpointsDir 是
+     * 所有对话共享的平铺目录，若只拿当前对话的记录做 knownDirs，会把其他对话的
+     * 存档目录误判为孤儿并 `fs.rm(recursive)` 删除（跨对话数据丢失）。
+     * 汇总用有界并发池（runBounded），对话数多时不串行放大恢复路径耗时。
      */
     async removeOrphanBackupDirs(checkpoints: CheckpointRecord[]): Promise<void> {
         try {
             const knownDirs = new Set(checkpoints.map(cp => cp.backupDir));
+            const conversationIds = await this.conversationManager.listConversations();
+            await runBounded(conversationIds, DEFAULT_CHECKPOINT_CONCURRENCY, async conversationId => {
+                let records: CheckpointRecord[] = [];
+                try {
+                    records = await this.getCheckpointRecords(conversationId);
+                } catch {
+                    // 单个对话元数据读取失败：fail-closed——抛出让本次清理整体中止（下方
+                    // manifest 守卫兜底），不让无法枚举的对话存档被误删
+                    throw new Error(`failed to enumerate checkpoints of conversation ${conversationId}`);
+                }
+                for (const cp of records) {
+                    if (typeof cp?.backupDir === 'string' && cp.backupDir.length > 0) {
+                        knownDirs.add(cp.backupDir);
+                    }
+                }
+            });
             const entries = await fs.readdir(this.checkpointsDir, { withFileTypes: true });
             for (const entry of entries) {
                 if (!entry.isDirectory()) continue;
                 if (knownDirs.has(entry.name)) continue;
                 if (!/^cp_[a-z0-9_]+$/i.test(entry.name)) continue;
+                // CP-ORPHAN-2（fail-closed）：目录内含 manifest.json 的存档绝不当作孤儿删除。
+                // getCustomMetadata 对元数据损坏/瞬时可读失败会降级返回 undefined（fail-open），
+                // 该对话的存档目录因此不在 knownDirs 中——manifest 是每个存档创建时必写的
+                // 身份文件，存在 manifest 即说明它属于某个（可能暂时无法枚举的）对话。
+                try {
+                    await fs.access(path.join(this.checkpointsDir, entry.name, 'manifest.json'));
+                    continue;
+                } catch {
+                    // 无 manifest：叠加 mtime 新鲜度守卫——「目录已建、manifest 未写」的
+                    // 创建中窗口内跳过（检查点创建流程先建目录后写 manifest），超龄无
+                    // manifest 目录才是真孤儿（创建中断残留/无 manifest 的旧格式）。
+                    try {
+                        const stat = await fs.stat(path.join(this.checkpointsDir, entry.name));
+                        if (Date.now() - stat.mtimeMs < ORPHAN_MANIFEST_MISSING_FRESH_MS) {
+                            continue;
+                        }
+                    } catch {
+                        continue; // stat 失败（目录刚消失等）：本次跳过，下轮再判
+                    }
+                }
                 try {
                     await fs.rm(path.join(this.checkpointsDir, entry.name), { recursive: true, force: true });
                     this.manifestRepository.clearCache(entry.name);
@@ -303,7 +347,7 @@ export class CheckpointQueryService {
                 }
             }
         } catch {
-            // checkpointsDir 不存在等：忽略
+            // checkpointsDir 不存在或任一对话枚举失败（fail-closed）：忽略，本次不清理
         }
     }
 

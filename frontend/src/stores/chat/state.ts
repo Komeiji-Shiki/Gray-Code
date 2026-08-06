@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
@@ -23,6 +23,7 @@ import type {
   BranchStreamReplayContext
 } from './types'
 import { clearVisibleChatMessagesCache } from './windowUtils'
+import type { SmoothMode } from '../../utils/smoothStream'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
 export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById' | 'toolResponseIndex'>>
@@ -148,8 +149,17 @@ export function appendMessage(state: MessageIndexLookupState, message: Message):
 
 export function insertMessageAt(state: MessageIndexLookupState, index: number, message: Message): void {
   const boundedIndex = Math.max(0, Math.min(index, state.allMessages.value.length))
+  const isPureAppend = boundedIndex >= state.allMessages.value.length
   state.allMessages.value.splice(boundedIndex, 0, message)
   rebuildMessageIndexById(state)
+
+  // L1：中间位置插入（splice 原地改数组、首尾元素不变）会命中 windowUtils 的
+  // 可见消息增量缓存——指纹只校验首尾元素，会把被插入的消息漏掉并把旧尾元素
+  // 重复 concat 一次。与 replaceMessageAt 的中间替换处理对齐：非纯尾部追加一律
+  // 清除缓存。典型场景：handleAutoSummary 在流式过程中把总结消息插到窗口中间。
+  if (!isPureAppend) {
+    clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+  }
 }
 
 export function replaceMessageAt(state: MessageIndexLookupState, index: number, nextMessage: Message): void {
@@ -288,6 +298,18 @@ export function createChatState(): ChatStoreState {
   /** 当前流式消息ID */
   const streamingMessageId = ref<string | null>(null)
 
+  /**
+   * 平滑流式显示层：messageId -> 当前正在输出的段落（最后一个 text/thought part）的平滑文本。
+   * reactive Map：高频 commit（约 32ms 一次）直接 .set/.delete，无需整体替换。
+   */
+  const smoothTexts = reactive(new Map<string, import('./types').SmoothDisplayText>())
+
+  /**
+   * 平滑档位（M1）：默认 'balanced'，由 chatStore watch settingsStore.smoothStreaming 同步。
+   * streamChunkHandlers 每 chunk 只读本 ref，不再内联 useSettingsStore()（高频调用 + try/catch 吞错）。
+   */
+  const smoothMode = ref<SmoothMode>('balanced')
+
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   const activeStreamId = ref<string | null>(null)
   
@@ -412,6 +434,8 @@ export function createChatState(): ChatStoreState {
     error,
     streamingMessageId,
     activeStreamId,
+    smoothTexts,
+    smoothMode,
     isWaitingForResponse,
     retryStatus,
     autoSummaryStatus,

@@ -9,8 +9,15 @@ registerTool('memory_forget', {
   label: 'Memory Forget',
   icon: 'codicon-trash',
   descriptionFormatter: (args) => {
-    const id = typeof args.blockId === 'string' ? args.blockId : '?'
-    return `Forget block ${id}`
+    const raw = typeof args.blockId === 'string' ? args.blockId : '?'
+    if (/^\d+$/.test(raw)) {
+      return `Delete memory #${raw}`
+    }
+    if (/^\d+,\d+$/.test(raw)) {
+      const [lo, hi] = raw.split(',')
+      return `Delete memories #${lo}-#${hi}`
+    }
+    return `Forget block ${raw}`
   },
   contentComponent: MemoryResult,
 })

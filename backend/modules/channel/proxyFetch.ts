@@ -10,6 +10,22 @@ import * as http from 'http';
 import * as tls from 'tls';
 import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
+import { getGlobalSettingsManager } from '../../core/settingsContext';
+
+/**
+ * 解析是否跳过 TLS 证书校验。
+ *
+ * - 显式传入的参数优先（测试或调用方可直接指定）；
+ * - 否则读取全局设置 graycode.proxy.insecureSkipVerify（默认 false = 校验证书）。
+ *
+ * 仅用于自签名证书调试，生产环境应保持校验开启。
+ */
+export function resolveProxyInsecureSkipVerify(explicit?: boolean): boolean {
+    if (explicit !== undefined) {
+        return explicit;
+    }
+    return getGlobalSettingsManager()?.getProxyInsecureSkipVerify() ?? false;
+}
 
 /**
  * 从上游 API 的非 2xx 响应体中提取人类可读错误消息。
@@ -169,12 +185,16 @@ function createAbortError(message = 'Request cancelled'): Error {
 async function fetchWithProxy(
     targetUrl: URL,
     init: FetchOptions,
-    proxyUrl: string
+    proxyUrl: string,
+    insecureSkipVerify?: boolean
 ): Promise<FetchResponse> {
     const proxyLeg = parseProxyLeg(proxyUrl);
     const targetHost = targetUrl.hostname;
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
+
+    // 仅当用户显式开启（设置或参数）时才跳过证书校验；默认校验证书
+    const skipVerify = resolveProxyInsecureSkipVerify(insecureSkipVerify);
 
     // 检查是否已取消
     if (init.signal?.aborted) {
@@ -198,7 +218,8 @@ async function fetchWithProxy(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
+            ...(proxyLeg.request === https.request && skipVerify ? { rejectUnauthorized: false } : {}),
             headers: reqHeaders
         });
 
@@ -232,10 +253,11 @@ async function fetchWithProxy(
 
             if (isHttps) {
                 // 在隧道上建立 TLS 连接
+                // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: false // 允许自签名证书（抓包用）
+                    ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
                     sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
                 });
@@ -556,11 +578,15 @@ export function decodeChunkedBuffer(data: Buffer): string {
  * 创建支持代理的流式 fetch
  *
  * 返回一个异步生成器，产出原始响应行
+ *
+ * @param insecureSkipVerify 是否跳过 TLS 证书校验（可选，仅用于自签名证书调试；
+ *        缺省时读取全局设置 graycode.proxy.insecureSkipVerify，默认 false = 校验证书）
  */
 export async function* proxyStreamFetch(
     url: string,
     init: FetchOptions,
-    proxyUrl?: string
+    proxyUrl?: string,
+    insecureSkipVerify?: boolean
 ): AsyncGenerator<string> {
     if (!proxyUrl) {
         // 无代理，使用原生 fetch
@@ -620,6 +646,9 @@ export async function* proxyStreamFetch(
     const targetPort = targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80);
     const isHttps = targetUrl.protocol === 'https:';
 
+    // 仅当用户显式开启（设置或参数）时才跳过证书校验；默认校验证书
+    const skipVerify = resolveProxyInsecureSkipVerify(insecureSkipVerify);
+
     // 检查是否已取消
     if (init.signal?.aborted) {
         throw createAbortError();
@@ -676,7 +705,8 @@ export async function* proxyStreamFetch(
             method: 'CONNECT',
             path: `${targetHost}:${targetPort}`,
             timeout,
-            ...(proxyLeg.request === https.request ? { rejectUnauthorized: false } : {}),
+            // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
+            ...(proxyLeg.request === https.request && skipVerify ? { rejectUnauthorized: false } : {}),
             headers: reqHeaders
         });
         
@@ -688,10 +718,11 @@ export async function* proxyStreamFetch(
             }
             
             if (isHttps) {
+                // 仅用于自签名证书调试：只有显式开启 skipVerify 时才跳过证书校验
                 const tlsSocket = tls.connect({
                     socket: socket,
                     servername: targetHost,
-                    rejectUnauthorized: false
+                    ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
                     finishResolve(tlsSocket);
                 });
@@ -739,11 +770,12 @@ export async function* proxyStreamFetch(
     }
     
     // 读取响应
-    let rawBuffer = Buffer.alloc(0);  // 使用 Buffer 处理原始数据
+    let rawBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);  // 使用 Buffer 处理原始数据
     let headersParsed = false;
     let statusCode = 0;
     let isChunked = false;
-    let chunkedBuffer = Buffer.alloc(0);  // chunked 解码缓冲区
+    let chunkedBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);  // chunked 解码缓冲区（单一 buffer + offset 游标）
+    let chunkedOffset = 0;  // 已解码前缀游标：未消费数据 = chunkedBuffer.subarray(chunkedOffset)
     // 流式 TextDecoder：跨 chunk 被切开的 UTF-8 多字节字符在内部缓冲拼接，
     // 不会在第一个包就固化成 U+FFFD 导致后续 SSE 行 JSON.parse 永远失败
     const decoder = new TextDecoder();
@@ -758,9 +790,10 @@ export async function* proxyStreamFetch(
     
     /**
      * 实时解码 chunked 数据
-     * 返回已解码的数据和剩余的未完成 chunk
+     * 返回已解码的数据和未消费数据的起始偏移（调用方用单一 buffer + offset 游标保留剩余，
+     * 避免每包对整段累积 Buffer.concat / Buffer.from 复制的 O(n²) 行为）
      */
-    const decodeChunkedStream = (data: Buffer): { decoded: Buffer | null, remaining: Buffer } => {
+    const decodeChunkedStream = (data: Buffer): { decoded: Buffer | null, consumed: number } => {
         // 只收集原始字节，不做字符串解码：被 TCP/chunk 边界切开的 UTF-8 多字节字符
         // 若在第一个包就 toString('utf8') 会固化成 U+FFFD，中文内容损坏/流中断
         const pieces: Buffer[] = [];
@@ -815,7 +848,7 @@ export async function* proxyStreamFetch(
         
         return {
             decoded: pieces.length > 0 ? Buffer.concat(pieces) : null,
-            remaining: data.subarray(offset)
+            consumed: offset
         };
     };
     
@@ -903,7 +936,9 @@ export async function* proxyStreamFetch(
                         return;
                     }
 
-                    rawBuffer = Buffer.concat([rawBuffer, chunk]);
+                    // PERF：rawBuffer 在 header 解析后被逐包清空（下方 drain），
+                    // 空时直接复用新块避免每包一次 Buffer.concat 分配
+                    rawBuffer = rawBuffer.length === 0 ? chunk : Buffer.concat([rawBuffer, chunk]);
 
                     if (!headersParsed) {
                         const headerEndMarker = Buffer.from('\r\n\r\n');
@@ -956,11 +991,17 @@ export async function* proxyStreamFetch(
                     if (headersParsed && rawBuffer.length > 0) {
                         if (isChunked) {
                             // 实时解码 chunked 数据
+                            // PERF：offset 游标累积——先压缩已解码前缀（subarray 零拷贝视图），
+                            // 再一次性 concat 新字节；解码后只移动游标，不再 Buffer.from 拷贝剩余
+                            if (chunkedOffset > 0) {
+                                chunkedBuffer = chunkedBuffer.subarray(chunkedOffset);
+                                chunkedOffset = 0;
+                            }
                             chunkedBuffer = Buffer.concat([chunkedBuffer, rawBuffer]);
                             rawBuffer = Buffer.alloc(0);
 
-                            const { decoded, remaining } = decodeChunkedStream(chunkedBuffer);
-                            chunkedBuffer = Buffer.from(remaining);
+                            const { decoded, consumed } = decodeChunkedStream(chunkedBuffer);
+                            chunkedOffset = consumed;
 
                             if (decoded) {
                                 // 流式解码：跨 chunk 的多字节字符由 TextDecoder 内部缓冲拼接
@@ -1068,7 +1109,7 @@ export async function* proxyStreamFetch(
         // 处理剩余数据
         if (!init.signal?.aborted) {
             if (isChunked && chunkedBuffer.length > 0) {
-                const { decoded } = decodeChunkedStream(chunkedBuffer);
+                const { decoded } = decodeChunkedStream(chunkedBuffer.subarray(chunkedOffset));
                 if (decoded) {
                     yield decoder.decode(decoded, { stream: true });
                 }

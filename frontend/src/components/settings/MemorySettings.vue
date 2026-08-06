@@ -6,8 +6,8 @@
  * 1. 提示词 & 运行时参数配置
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
-import { ref, onMounted } from 'vue'
-import { CustomCheckbox } from '../common'
+import { ref, computed, onMounted } from 'vue'
+import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
@@ -43,6 +43,7 @@ const DEFAULT_SYSTEM_PROMPT = [
 const isLoading = ref(true)
 const isSaving = ref(false)
 const statusMessage = ref('')
+const statusError = ref(false)
 const enabled = ref(true)
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
@@ -60,12 +61,155 @@ interface LogEntry {
   date: string
   text: string
 }
+// 设置页一次性最多加载/展示的原始记忆条目数（与后端 getMemoryEntries 默认 limit 对齐）
+const ENTRIES_LIMIT = 5000
 const entries = ref<LogEntry[]>([])
 const entriesLoading = ref(false)
 const entriesTotal = ref(0)
+const entriesTruncated = ref(false)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
 const editSaving = ref(false)
+// 待删除的条目（确认框展示；确认后调用 deleteMemoryEntry）
+const deleteCandidate = ref<LogEntry | null>(null)
+const showDeleteConfirm = ref(false)
+const deleteSaving = ref(false)
+
+// ─── 批量删除 ───
+const selectedIds = ref<Set<number>>(new Set())
+const showBatchDeleteConfirm = ref(false)
+const batchDeleteSaving = ref(false)
+const isAllSelected = computed(() =>
+  entries.value.length > 0 && entries.value.every(e => selectedIds.value.has(e.id))
+)
+
+function toggleSelectAll() {
+  if (isAllSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(entries.value.map(e => e.id))
+  }
+}
+
+function toggleSelectEntry(entry: LogEntry) {
+  const next = new Set(selectedIds.value)
+  if (next.has(entry.id)) {
+    next.delete(entry.id)
+  } else {
+    next.add(entry.id)
+  }
+  selectedIds.value = next
+}
+
+// 请求批量删除：弹出确认框
+function requestDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  showBatchDeleteConfirm.value = true
+}
+
+// 确认批量删除
+async function confirmDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  batchDeleteSaving.value = true
+  try {
+    const result = await sendToExtension<any>('deleteMemoryEntries', {
+      ids: Array.from(selectedIds.value),
+    })
+    showBatchDeleteConfirm.value = false
+    selectedIds.value = new Set()
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', {
+      count: result?.removed ?? 0,
+    })
+    statusError.value = false
+    // 删除后 id 重编号：整表重载
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to delete entries'
+    statusError.value = true
+  } finally {
+    batchDeleteSaving.value = false
+  }
+}
+
+// 取消批量删除
+function cancelDeleteSelected() {
+  showBatchDeleteConfirm.value = false
+}
+
+// ─── 手动新增记忆 ───
+const newEntryText = ref('')
+const addingEntry = ref(false)
+
+// UTF-8 字节数（后端按字节校验 entryChars；String.length 计的是 UTF-16 码元，
+// 中文等字符会低估，导致前端放行、后端报 Too long）
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
+const newEntryBytes = computed(() => utf8Bytes(newEntryText.value))
+const editingBytes = computed(() => utf8Bytes(editingText.value))
+
+// 手动新增一条记忆（等价于 AI 的 memory_note）
+async function addEntry() {
+  const text = newEntryText.value
+  if (!text.trim()) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (newEntryBytes.value > entryChars.value) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addTooLong', {
+      limit: entryChars.value,
+    })
+    statusError.value = true
+    return
+  }
+  addingEntry.value = true
+  try {
+    const result = await sendToExtension<any>('addMemoryEntry', { text })
+    newEntryText.value = ''
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.added', {
+      id: result?.id ?? '',
+    })
+    statusError.value = false
+    await loadEntries()
+    setTimeout(() => { statusMessage.value = '' }, 3000)
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to add entry'
+    statusError.value = true
+  } finally {
+    addingEntry.value = false
+  }
+}
+
+// 请求删除：弹出确认框
+function requestDeleteEntry(entry: LogEntry) {
+  deleteCandidate.value = entry
+  showDeleteConfirm.value = true
+}
+
+// 确认删除单条原始记忆
+async function confirmDeleteEntry() {
+  const entry = deleteCandidate.value
+  if (!entry) return
+  deleteSaving.value = true
+  try {
+    await sendToExtension('deleteMemoryEntry', { id: entry.id })
+    deleteCandidate.value = null
+    showDeleteConfirm.value = false
+    selectedIds.value = new Set()
+    // 删除后 id 重编号：整表重载（不能只按 id 过滤本地列表）
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to delete entry'
+    statusError.value = true
+  } finally {
+    deleteSaving.value = false
+  }
+}
+
+// 取消删除
+function cancelDeleteEntry() {
+  deleteCandidate.value = null
+  showDeleteConfirm.value = false
+}
 
 // 加载配置
 async function loadConfig() {
@@ -85,6 +229,7 @@ async function loadConfig() {
     }
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to load config'
+    statusError.value = true
   } finally {
     isLoading.value = false
   }
@@ -93,17 +238,24 @@ async function loadConfig() {
 // 加载记忆条目
 async function loadEntries() {
   entriesLoading.value = true
+  // 列表重载后旧 id 可能已重编号/失效：清空选中集，避免基于过期 id 批量删除误删其他条目
+  selectedIds.value = new Set()
+  editingId.value = null
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', {})
+    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT })
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
+      entriesTruncated.value = !!result.truncated
     } else {
       entries.value = []
       entriesTotal.value = 0
+      entriesTruncated.value = false
     }
   } catch {
     entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
   } finally {
     entriesLoading.value = false
   }
@@ -124,6 +276,18 @@ function cancelEdit() {
 // 保存编辑
 async function saveEdit() {
   if (editingId.value === null) return
+  if (!editingText.value.trim()) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (editingBytes.value > entryChars.value) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addTooLong', {
+      limit: entryChars.value,
+    })
+    statusError.value = true
+    return
+  }
   editSaving.value = true
   try {
     await sendToExtension('updateMemoryEntry', {
@@ -138,6 +302,7 @@ async function saveEdit() {
     cancelEdit()
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to update entry'
+    statusError.value = true
   } finally {
     editSaving.value = false
   }
@@ -160,9 +325,11 @@ async function saveConfig() {
       },
     })
     statusMessage.value = t('components.settings.settingsPanel.memory.saved')
+    statusError.value = false
     setTimeout(() => { statusMessage.value = '' }, 3000)
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to save config'
+    statusError.value = true
   } finally {
     isSaving.value = false
   }
@@ -193,7 +360,7 @@ onMounted(() => {
 
     <div v-else class="settings-form">
       <!-- 长期记忆总开关 -->
-      <div class="section memory-toggle-section">
+      <div class="section memory-toggle-section" data-search-anchor="memory-toggle">
         <CustomCheckbox
           v-model="enabled"
           :label="t('components.settings.settingsPanel.memory.enabled.label')"
@@ -206,7 +373,7 @@ onMounted(() => {
       </div>
 
       <!-- 自定义提示词 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="memory-custom-prompt">
         <label class="group-label">
           <i class="codicon codicon-note"></i>
           {{ t('components.settings.settingsPanel.memory.systemPrompt.title') }}
@@ -223,7 +390,7 @@ onMounted(() => {
       </div>
 
       <!-- 运行时参数 -->
-      <div class="section">
+      <div class="section" data-search-anchor="memory-runtime">
         <h5 class="section-title">
           <i class="codicon codicon-settings-gear"></i>
           {{ t('components.settings.settingsPanel.memory.runtime.title') }}
@@ -302,12 +469,12 @@ onMounted(() => {
       </div>
 
       <!-- 状态消息 -->
-      <div v-if="statusMessage" class="status-message" :class="{ 'status-error': statusMessage.includes('Failed') || statusMessage.includes('失败') }">
+      <div v-if="statusMessage" class="status-message" :class="{ 'status-error': statusError }">
         {{ statusMessage }}
       </div>
 
       <!-- ─── 记忆条目管理 ─── -->
-      <div class="section">
+      <div class="section" data-search-anchor="memory-raw-entries">
         <h5 class="section-title">
           <i class="codicon codicon-list-flat"></i>
           {{ t('components.settings.settingsPanel.memory.rawEntries.title') }}
@@ -317,6 +484,35 @@ onMounted(() => {
           {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
 
+        <!-- 手动新增记忆 -->
+        <div class="add-entry-box">
+          <textarea
+            v-model="newEntryText"
+            class="form-textarea add-entry-textarea"
+            rows="3"
+            :placeholder="t('components.settings.settingsPanel.memory.rawEntries.addPlaceholder')"
+            :disabled="addingEntry"
+            @keydown.ctrl.enter.prevent="addEntry"
+            @keydown.meta.enter.prevent="addEntry"
+          ></textarea>
+          <div class="add-entry-actions">
+            <span class="char-count" :class="{ 'char-overflow': newEntryBytes > entryChars }">
+              {{ newEntryBytes }}/{{ entryChars }} {{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}
+            </span>
+            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry">
+              <i v-if="addingEntry" class="codicon codicon-loading codicon-modifier-spin"></i>
+              <i v-else class="codicon codicon-add"></i>
+              {{ t('components.settings.settingsPanel.memory.rawEntries.add') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 截断提示：条目超过展示上限时提示，避免误以为数据丢失 -->
+        <div v-if="entriesTruncated" class="truncated-notice">
+          <i class="codicon codicon-info"></i>
+          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: ENTRIES_LIMIT }) }}
+        </div>
+
         <!-- 空状态 -->
         <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
           <i class="codicon codicon-info"></i>
@@ -325,7 +521,37 @@ onMounted(() => {
 
         <!-- 条目列表 -->
         <div v-else class="entries-list">
+          <!-- 批量操作工具条 -->
+          <div class="entries-toolbar">
+            <label class="select-all-label">
+              <input
+                type="checkbox"
+                :checked="isAllSelected"
+                @change="toggleSelectAll"
+                :disabled="entriesLoading"
+              />
+              <span>{{ t('components.settings.settingsPanel.memory.rawEntries.selectAll') }}</span>
+            </label>
+            <button
+              class="btn btn-sm btn-danger"
+              :disabled="selectedIds.size === 0 || batchDeleteSaving || entriesLoading"
+              @click="requestDeleteSelected"
+            >
+              <i v-if="batchDeleteSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
+              <i v-else class="codicon codicon-trash"></i>
+              {{ t('components.settings.settingsPanel.memory.rawEntries.deleteSelected', { count: selectedIds.size }) }}
+            </button>
+          </div>
+
           <div v-for="entry in entries" :key="entry.id" class="entry-row">
+            <input
+              type="checkbox"
+              class="entry-checkbox"
+              :checked="selectedIds.has(entry.id)"
+              @change="toggleSelectEntry(entry)"
+              :disabled="batchDeleteSaving || entriesLoading"
+              :title="t('common.select')"
+            />
             <span class="entry-id">#{{ entry.id }}</span>
             <span class="entry-date">{{ entry.date }}</span>
             <div class="entry-text-wrap">
@@ -344,7 +570,7 @@ onMounted(() => {
                     {{ t('common.save') }}
                   </button>
                   <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">{{ t('common.cancel') }}</button>
-                  <span class="char-count">{{ editingText.length }}/{{ entryChars }}</span>
+                  <span class="char-count" :class="{ 'char-overflow': editingBytes > entryChars }">{{ editingBytes }}/{{ entryChars }}</span>
                 </div>
               </div>
             </div>
@@ -352,10 +578,35 @@ onMounted(() => {
               <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
+              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving" @click="requestDeleteEntry(entry)">
+                <i class="codicon codicon-trash"></i>
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- 删除单条记忆确认 -->
+      <ConfirmDialog
+        v-model="showDeleteConfirm"
+        :title="t('components.settings.settingsPanel.memory.rawEntries.deleteConfirmTitle')"
+        :message="t('components.settings.settingsPanel.memory.rawEntries.deleteConfirmMessage', { id: deleteCandidate?.id ?? '' })"
+        :confirm-text="t('common.delete')"
+        is-danger
+        @confirm="confirmDeleteEntry"
+        @cancel="cancelDeleteEntry"
+      />
+
+      <!-- 批量删除确认 -->
+      <ConfirmDialog
+        v-model="showBatchDeleteConfirm"
+        :title="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmTitle')"
+        :message="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmMessage', { count: selectedIds.size })"
+        :confirm-text="t('common.delete')"
+        is-danger
+        @confirm="confirmDeleteSelected"
+        @cancel="cancelDeleteSelected"
+      />
 
       <!-- 提示 -->
       <div class="info-box">
@@ -754,10 +1005,112 @@ onMounted(() => {
   margin-left: auto;
 }
 
+.char-overflow {
+  color: var(--vscode-errorForeground);
+  font-weight: 600;
+}
+
+/* ─── 手动新增记忆 ─── */
+.add-entry-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.add-entry-textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.add-entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.add-entry-actions .char-count {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.truncated-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-textBlockQuote-background);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.truncated-notice i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .entry-actions {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
   align-self: center;
+}
+
+.entry-actions .btn-icon.danger {
+  color: var(--vscode-errorForeground);
+}
+
+.entry-actions .btn-icon.danger:hover {
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-errorForeground);
+}
+
+/* ─── 批量删除 ─── */
+.entries-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 2px 8px;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all-label input[type='checkbox'],
+.entry-checkbox {
+  accent-color: var(--vscode-focusBorder);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.btn-danger {
+  background: var(--vscode-errorForeground);
+  color: var(--vscode-button-foreground, #fff);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--vscode-errorForeground);
+  opacity: 0.9;
+}
+
+.entry-checkbox {
+  margin-top: 3px;
+}
+
+.entry-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>

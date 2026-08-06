@@ -18,6 +18,19 @@ import { Logger } from '../../core/logger';
 
 const log = Logger.get('storage');
 
+/**
+ * 校验会被直接用作文件/目录名的存储 ID。
+ *
+ * conversationId / snapshotId 会来自 Webview 消息和导入数据，不能在未校验时交给
+ * Uri.joinPath。只允许项目当前生成器使用的 ASCII 安全集合，既覆盖 conv_*、UUID、
+ * 测试中的 c-*，也从根源拒绝 ..、路径分隔符、盘符与 URI 编码绕过。
+ */
+export function assertSafeStorageId(value: unknown, label = 'storage id'): asserts value is string {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) {
+        throw new Error(`Unsafe ${label}: ${String(value)}`);
+    }
+}
+
 // 同一会话的分段历史写入必须串行化：writeSegmentedHistory 涉及"删目录→重写段→写 index"，
 // 并发写会互相删除对方刚写入的段文件，导致 index 与 segment 不一致、历史错位混合。
 // 锁只保证写写互斥，读（load）不参与，读侧已有容错。
@@ -175,6 +188,19 @@ export interface ConversationStorageLocation {
  * - ConversationManager 负责内存中的状态管理
  * - StorageAdapter 负责持久化(保存到文件、数据库等)
  */
+export interface SubAgentTranscriptData {
+    contents: Content[];
+    lastSentHistory?: Content[];
+    /**
+     * 新格式把 provider history 中可由 contents 重建的消息保存为索引，只内嵌无法匹配的消息。
+     * 这样大型工具结果/图片不会在 contents 与 lastSentHistory 中重复保存两份。
+     */
+    lastSentHistoryProjection?: {
+        version: 1;
+        entries: Array<{ contentIndex: number } | { content: Content }>;
+    };
+}
+
 export interface IStorageAdapter {
     /**
      * 保存对话历史(Gemini 格式)
@@ -208,6 +234,11 @@ export interface IStorageAdapter {
      * 非文件系统存储（内存等）不实现，调用方退化全量扫描。
      */
     getConversationsDirFsPath?(): string | undefined;
+
+    /** 子代理完整 transcript 独立存储，避免 Base64/长历史膨胀 conversation meta.json。 */
+    saveSubAgentTranscript?(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string>;
+    loadSubAgentTranscript?(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null>;
+    deleteSubAgentTranscript?(conversationId: string, runId: string): Promise<void>;
     
     /**
      * 保存对话元数据
@@ -293,6 +324,7 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     private histories: Map<string, ConversationHistory> = new Map();
     private metadata: Map<string, ConversationMetadata> = new Map();
     private snapshots: Map<string, HistorySnapshot> = new Map();
+    private subAgentTranscripts: Map<string, SubAgentTranscriptData> = new Map();
 
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         // 深拷贝以避免引用问题
@@ -351,10 +383,27 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     async deleteHistory(conversationId: string): Promise<void> {
         this.histories.delete(conversationId);
         this.metadata.delete(conversationId);
+        for (const key of this.subAgentTranscripts.keys()) {
+            if (key.startsWith(`${conversationId}:`)) this.subAgentTranscripts.delete(key);
+        }
     }
 
     async listConversations(): Promise<string[]> {
         return Array.from(this.histories.keys());
+    }
+
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string> {
+        this.subAgentTranscripts.set(`${conversationId}:${runId}`, JSON.parse(JSON.stringify(data)));
+        return `subagents/${encodeURIComponent(runId)}.json`;
+    }
+
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null> {
+        const data = this.subAgentTranscripts.get(`${conversationId}:${runId}`);
+        return data ? JSON.parse(JSON.stringify(data)) : null;
+    }
+
+    async deleteSubAgentTranscript(conversationId: string, runId: string): Promise<void> {
+        this.subAgentTranscripts.delete(`${conversationId}:${runId}`);
     }
 
     async saveMetadata(metadata: ConversationMetadata): Promise<void> {
@@ -414,6 +463,7 @@ export class MemoryStorageAdapter implements IStorageAdapter {
         this.histories.clear();
         this.metadata.clear();
         this.snapshots.clear();
+        this.subAgentTranscripts.clear();
     }
 }
 
@@ -512,8 +562,14 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
     async deleteHistory(conversationId: string): Promise<void> {
         const historyKey = `limcode.history.${conversationId}`;
         const metaKey = `limcode.meta.${conversationId}`;
-        await this.context.globalState.update(historyKey, undefined);
-        await this.context.globalState.update(metaKey, undefined);
+        await withMetadataWriteSerialized(conversationId, async () => {
+            await this.context.globalState.update(historyKey, undefined);
+            await this.context.globalState.update(metaKey, undefined);
+            const prefix = `limcode.subagent.${conversationId}.`;
+            for (const key of this.context.globalState.keys()) {
+                if (key.startsWith(prefix)) await this.context.globalState.update(key, undefined);
+            }
+        });
     }
 
     async listConversations(): Promise<string[]> {
@@ -521,6 +577,19 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         return keys
             .filter((k: string) => k.startsWith('limcode.history.'))
             .map((k: string) => k.replace('limcode.history.', ''));
+    }
+
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string> {
+        await this.context.globalState.update(`limcode.subagent.${conversationId}.${runId}`, data);
+        return `globalState:${runId}`;
+    }
+
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null> {
+        return (this.context.globalState.get(`limcode.subagent.${conversationId}.${runId}`) as SubAgentTranscriptData | undefined) ?? null;
+    }
+
+    async deleteSubAgentTranscript(conversationId: string, runId: string): Promise<void> {
+        await this.context.globalState.update(`limcode.subagent.${conversationId}.${runId}`, undefined);
     }
 
     async saveMetadata(metadata: ConversationMetadata): Promise<void> {
@@ -636,6 +705,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getLegacyHistoryPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -644,6 +714,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getConversationDir(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -655,11 +726,20 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         return this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'history');
     }
 
+    private getSubAgentTranscriptPath(conversationId: string, runId: string): any {
+        return this.vscode.Uri.joinPath(
+            this.getConversationDir(conversationId),
+            'subagents',
+            `${encodeURIComponent(runId)}.json`
+        );
+    }
+
     private getHistoryIndexPath(conversationId: string): any {
         return this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'history.index.json');
     }
 
     private getMetadataPath(conversationId: string): any {
+        assertSafeStorageId(conversationId, 'conversation id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
@@ -668,6 +748,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     private getSnapshotPath(snapshotId: string): any {
+        assertSafeStorageId(snapshotId, 'snapshot id');
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'snapshots',
@@ -1539,29 +1620,30 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
-        // 入队与 saveHistory/migrateLegacy 串行：否则 delete 先完成、队列里已排队的写
-        // 随后会把已删除会话的目录重新创建（"删除后复活"），或写进行中删掉 tmp 目录导致写失败。
+        // 删除与历史写、元数据整体写回都必须串行。尤其是大 meta 写已读取旧值后，若删除不进入
+        // metadata 链，其晚到 rename 会在删除完成后重新创建幽灵 .meta.json。
         await runSegmentedHistoryWriteSerialized(conversationId, async () => {
-            // 删除会话：清理该会话的全部段缓存（HIS-06）
-            this.segmentCache.invalidateConversation(conversationId);
-            const historyUri = this.getLegacyHistoryPath(conversationId);
-            const metaUri = this.getMetadataPath(conversationId);
-            const conversationDir = this.getConversationDir(conversationId);
-            try {
-                await this.vscode.workspace.fs.delete(historyUri, { useTrash: false });
-            } catch {
-                // ignore
-            }
-            try {
-                await this.vscode.workspace.fs.delete(conversationDir, { recursive: true, useTrash: false });
-            } catch {
-                // ignore
-            }
-            try {
-                await this.vscode.workspace.fs.delete(metaUri, { useTrash: false });
-            } catch {
-                // ignore
-            }
+            await withMetadataWriteSerialized(conversationId, async () => {
+                this.segmentCache.invalidateConversation(conversationId);
+                const historyUri = this.getLegacyHistoryPath(conversationId);
+                const metaUri = this.getMetadataPath(conversationId);
+                const conversationDir = this.getConversationDir(conversationId);
+                try {
+                    await this.vscode.workspace.fs.delete(historyUri, { useTrash: false });
+                } catch {
+                    // ignore
+                }
+                try {
+                    await this.vscode.workspace.fs.delete(conversationDir, { recursive: true, useTrash: false });
+                } catch {
+                    // ignore
+                }
+                try {
+                    await this.vscode.workspace.fs.delete(metaUri, { useTrash: false });
+                } catch {
+                    // ignore
+                }
+            });
         });
     }
 
@@ -1592,6 +1674,34 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             return Array.from(ids);
         } catch {
             return [];
+        }
+    }
+
+    async saveSubAgentTranscript(conversationId: string, runId: string, data: SubAgentTranscriptData): Promise<string> {
+        const uri = this.getSubAgentTranscriptPath(conversationId, runId);
+        const directory = this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'subagents');
+        const tmpUri = this.vscode.Uri.joinPath(directory, `${encodeURIComponent(runId)}.json.tmp`);
+        await this.vscode.workspace.fs.createDirectory(directory);
+        try {
+            await this.vscode.workspace.fs.writeFile(tmpUri, Buffer.from(JSON.stringify(data), 'utf8'));
+            await this.renameOverwrite(tmpUri, uri);
+        } catch (error) {
+            try { await this.vscode.workspace.fs.delete(tmpUri, { useTrash: false }); } catch { /* ignore */ }
+            throw error;
+        }
+        return `subagents/${encodeURIComponent(runId)}.json`;
+    }
+
+    async loadSubAgentTranscript(conversationId: string, runId: string): Promise<SubAgentTranscriptData | null> {
+        const result = await this.readJsonFile<SubAgentTranscriptData>(this.getSubAgentTranscriptPath(conversationId, runId));
+        return result.value;
+    }
+
+    async deleteSubAgentTranscript(conversationId: string, runId: string): Promise<void> {
+        try {
+            await this.vscode.workspace.fs.delete(this.getSubAgentTranscriptPath(conversationId, runId), { useTrash: false });
+        } catch (error) {
+            if (!this.isNotFoundError(error)) throw error;
         }
     }
 

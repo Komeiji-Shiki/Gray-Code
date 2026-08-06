@@ -196,7 +196,9 @@ const en: BackendLanguageMessages = {
                 requestTimeoutNoResponse: 'Request timeout (no response in {timeout}ms)',
                 requestCancelled: 'Request cancelled',
                 requestAborted: 'Request aborted',
-                noResponseBody: 'No response body'
+                noResponseBody: 'No response body',
+                emptyResponse: 'The model returned an empty response',
+                streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption'
             },
             modelList: {
                 errors: {
@@ -289,8 +291,14 @@ const en: BackendLanguageMessages = {
                     noMessagesToSummarize: 'No messages to summarize',
                     summarizeAborted: 'Summarize request aborted',
                     emptySummary: 'AI generated summary is empty',
+                    lowQualitySummary: 'AI generated summary is too short and may lose important information; history was not replaced',
+                    summarizeRangeStale: 'Conversation history changed while summarizing; the summary range is stale and was not written',
                     messageNotFound: 'Message not found: index {messageIndex}',
-                    canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}'
+                    canOnlyEditUserMessage: 'Can only edit user messages, current message role: {role}',
+                    messageChanged: 'Message has changed, please refresh and try again',
+                    editTargetNotInHistory: 'The selected message is no longer in the current conversation history; it may have been removed by context compaction',
+                    contextOverflow: 'Unable to build a legal request within the model context window: the smallest candidate needs about {estimatedInputTokens} input tokens, exceeding the {inputTokenLimit}-token window. Please increase the model context window, or reduce history/keep budget',
+                    summarizeContextOverflow: 'Content to summarize plus the summary prompt exceeds the summarization model context limit. Please increase the summarization model context window or adjust the keep budget'
                 },
                 prompts: {
                     defaultSummarizePrompt: `Please summarize the above conversation content concisely, output the summary directly without any format markers.

@@ -34,6 +34,7 @@ import { fileWriteLockManager, getWritePathsForCall, type LockHolder } from '../
 import { agentMailbox } from '../../../../tools/subagents/agentMailbox';
 import { Logger } from '../../../../core/logger';
 import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
+import { beginAiWork, endAiWork } from '../../../activity';
 
 /**
  * 工具执行完整结果
@@ -72,6 +73,35 @@ function cloneToolResponse(response: Record<string, unknown>): Record<string, un
     } catch {
         return JSON.parse(JSON.stringify(response));
     }
+}
+
+/**
+ * 并行工具组 abort 后的收尾窗口（毫秒）。
+ *
+ * 与 ToolIterationLoopService 的 MAIN_LOOP_ABORT_DRAIN_GRACE_MS 语义一致：
+ * abort 先于 Promise.all 落定时，响应 abort 的工具会快速返回已完成部分的真实结果
+ * （真实副作用结果不能丢）；窗口结束仍未返回（不响应 abort 且永不结束）的按取消
+ * 结算，保证停止按钮不被拖死。
+ */
+const PARALLEL_GROUP_ABORT_DRAIN_GRACE_MS = 2000;
+
+/**
+ * promise 与超时竞速：超时先到返回 undefined。
+ *
+ * 与 ToolIterationLoopService.drainToolExecutionGeneratorAfterAbort 内部的
+ * raceWithTimeout 同构（并行组收尾窗口使用）；竞速双方任意一方先落定都清理 timer，
+ * 避免残留 open handle。
+ */
+function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
+    });
+    promise.then(
+        () => { if (timer) clearTimeout(timer); },
+        () => { if (timer) clearTimeout(timer); }
+    );
+    return Promise.race([promise, timeoutPromise]);
 }
 
 /**
@@ -599,7 +629,20 @@ export class ToolExecutionService {
                     yield { type: 'start', call: item.executionCall };
                 }
 
-                const responses = await Promise.all(group.map(item =>
+                // abort 竞速 + 收尾窗口（复用 ToolIterationLoopService 主循环的
+                // abort-race 模式）：组内工具若不响应 abortSignal 且永不结束，
+                // 裸 Promise.all 会让整个请求（含停止按钮）永久挂起。abort 先到时
+                // 给已启动调用一个收尾窗口，窗口内落定的用真实结果结算（真实副作用
+                // 结果不能丢），窗口结束仍未落定的按取消结算；窗口有界，停止按钮不被拖死。
+                let onAbort: (() => void) | undefined;
+                const abortPromise: Promise<undefined> | undefined = abortSignal
+                    ? new Promise<undefined>((resolve) => {
+                        onAbort = () => resolve(undefined);
+                        abortSignal.addEventListener('abort', onAbort, { once: true });
+                    })
+                    : undefined;
+
+                const callPromises = group.map(item =>
                     this.runSingleToolCall(
                         item.executionCall,
                         conversationId,
@@ -615,12 +658,43 @@ export class ToolExecutionService {
                         beforeCheckpointPromise,
                         deferWriteLock
                     )
-                ));
+                );
+
+                let responses: Array<Record<string, unknown> | undefined>;
+                try {
+                    const winner = abortPromise
+                        ? await Promise.race([Promise.all(callPromises), abortPromise])
+                        : await Promise.all(callPromises);
+                    if (winner === undefined) {
+                        // abort 先到：收尾窗口内等已启动调用返回真实结果
+                        // （响应 abort 的工具会快速返回），窗口结束仍未返回
+                        // （不响应 abort 且永不结束）按取消处理。
+                        const drainDeadline = Date.now() + PARALLEL_GROUP_ABORT_DRAIN_GRACE_MS;
+                        responses = await Promise.all(callPromises.map(p =>
+                            raceWithTimeout(p, drainDeadline - Date.now())
+                        ));
+                    } else {
+                        responses = winner;
+                    }
+                } finally {
+                    if (onAbort && abortSignal) {
+                        abortSignal.removeEventListener('abort', onAbort);
+                    }
+                }
 
                 for (let k = 0; k < group.length; k++) {
+                    // 收尾窗口超时仍未落定（工具不响应 abort 且永不结束）：
+                    // 按取消结算，取消占位写入历史/前端，避免下一轮
+                    // rejectAllPendingToolCalls 误标"用户拒绝"（占位结构与
+                    // ToolIterationLoopService.settleCancelledToolCalls 一致）。
+                    const response = responses[k] ?? {
+                        success: false,
+                        error: t('modules.api.chat.errors.toolCallCancelled'),
+                        cancelled: true
+                    };
                     const toolResult = this.finalizeToolResponse(
                         group[k].executionCall,
-                        responses[k],
+                        response,
                         group[k].warnings,
                         config,
                         toolMode,
@@ -846,6 +920,8 @@ export class ToolExecutionService {
         checkpointReady?: Promise<CheckpointRecord | null> | null,
         deferWriteLock?: boolean
     ): Promise<Record<string, unknown>> {
+        // AI 正在执行工具：工具执行期间算用户在场（主人在等待/查看结果）
+        beginAiWork();
         try {
             if (isMcpToolName(executionCall.name) && this.mcpManager) {
                 return await this.executeMcpTool(executionCall, abortSignal);
@@ -871,6 +947,8 @@ export class ToolExecutionService {
                 success: false,
                 error: err.message || t('modules.api.chat.errors.toolExecutionFailed')
             };
+        } finally {
+            endAiWork();
         }
     }
 

@@ -8,6 +8,7 @@
 import { SubAgentRunEventBus, SUBAGENT_RUNS_METADATA_KEY } from '../../tools/subagents/runEventBus';
 import type { SubAgentRunConversationStore } from '../../tools/subagents/runEventBus';
 import type { Content } from '../../modules/conversation/types';
+import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
 
 /** 让持久化队列（微任务链）排空 */
 const flushPersistQueue = () => new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -479,6 +480,196 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
         expect(c2?.['run_c2']).toBeDefined();
     });
 });
+
+
+describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
+    function createExternalStore(initialMetadata?: unknown) {
+        let metadata = initialMetadata;
+        let transcriptLoadCount = 0;
+        const transcripts = new Map<string, SubAgentTranscriptData>();
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata() { return metadata; },
+            async setCustomMetadata(_conversationId, _key, value) { metadata = value; },
+            async saveSubAgentTranscript(conversationId, runId, data) {
+                transcripts.set(`${conversationId}:${runId}`, JSON.parse(JSON.stringify(data)));
+                return `subagents/${runId}.json`;
+            },
+            async loadSubAgentTranscript(conversationId, runId) {
+                transcriptLoadCount++;
+                return transcripts.get(`${conversationId}:${runId}`) ?? null;
+            }
+        };
+        return {
+            store,
+            transcripts,
+            readMetadata: () => metadata as Record<string, any>,
+            getTranscriptLoadCount: () => transcriptLoadCount
+        };
+    }
+
+    it('正式新路径只在元数据保存轻量索引，完整内容写入独立 transcript', async () => {
+        const bus = new SubAgentRunEventBus();
+        const external = createExternalStore();
+        bus.createRun('run_external', 'Agent', undefined, {
+            conversationId: 'conv_external',
+            conversationStore: external.store,
+            initialContents: [textContent('user', '包含大内容')]
+        });
+        bus.updateLastSentHistory('run_external', [textContent('user', 'provider history')]);
+        await bus.flushConversation('conv_external');
+
+        const record = external.readMetadata().run_external;
+        expect(record.transcriptRef).toBe('subagents/run_external.json');
+        expect(record.contentCount).toBe(1);
+        expect(record.contents).toBeUndefined();
+        expect(record.lastSentHistory).toBeUndefined();
+        expect(external.transcripts.get('conv_external:run_external')).toEqual({
+            contents: [textContent('user', '包含大内容')],
+            lastSentHistory: [textContent('user', 'provider history')]
+        });
+    });
+
+    it('读取旧内嵌格式时迁移到独立 transcript 并清除元数据大字段', async () => {
+        const legacyContents = [textContent('user', 'legacy')];
+        const legacyHistory = [textContent('model', 'history')];
+        const external = createExternalStore({
+            legacy_run: {
+                runId: 'legacy_run', agentName: 'Agent', status: 'completed', createdAt: 1, updatedAt: 2,
+                contents: legacyContents, lastSentHistory: legacyHistory
+            }
+        });
+        const bus = new SubAgentRunEventBus();
+        const loaded = await bus.loadConversationSnapshots('conv_legacy', external.store);
+
+        expect(loaded[0].contents).toEqual(legacyContents);
+        expect(loaded[0].lastSentHistory).toEqual(legacyHistory);
+        expect(external.readMetadata().legacy_run.contents).toBeUndefined();
+        expect(external.readMetadata().legacy_run.lastSentHistory).toBeUndefined();
+        expect(external.readMetadata().legacy_run.transcriptRef).toBe('subagents/legacy_run.json');
+    });
+
+    it('首次加载时把上次宿主进程遗留的非终态 run 标记为 interrupted', async () => {
+        const external = createExternalStore({
+            stale_run: {
+                runId: 'stale_run', agentName: 'Agent', status: 'running', createdAt: 1, updatedAt: 2,
+                contents: [textContent('user', 'legacy running')]
+            }
+        });
+        const bus = new SubAgentRunEventBus();
+
+        const [loaded] = await bus.loadConversationSnapshots('conv_stale', external.store);
+
+        expect(loaded.status).toBe('interrupted');
+        expect(external.readMetadata().stale_run.status).toBe('interrupted');
+        expect(external.readMetadata().stale_run.transcriptRef).toBe('subagents/stale_run.json');
+    });
+
+    it('重复加载同会话时不把当前进程的活跃 run 误标为 interrupted', async () => {
+        const external = createExternalStore();
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('active_run', 'Agent', undefined, {
+            conversationId: 'conv_active',
+            conversationStore: external.store,
+            initialContents: [textContent('user', 'working')]
+        });
+        await bus.flushConversation('conv_active');
+
+        const [loaded] = await bus.loadConversationSnapshots('conv_active', external.store);
+
+        expect(loaded.status).toBe('running');
+        expect(external.readMetadata().active_run.status).toBe('running');
+    });
+
+    it('恢复会话时只加载轻量 metadata，聚焦单个 run 后才读取它的 transcript', async () => {
+        const external = createExternalStore({
+            lazy_run: {
+                runId: 'lazy_run', agentName: 'Agent', status: 'completed', createdAt: 1, updatedAt: 2,
+                transcriptRef: 'subagents/lazy_run.json', contentCount: 2,
+                preview: 'final answer', lastMessageRole: 'model'
+            }
+        });
+        external.transcripts.set('conv_lazy:lazy_run', {
+            contents: [textContent('user', 'prompt'), textContent('model', 'final answer')]
+        });
+        const bus = new SubAgentRunEventBus();
+
+        const [metadataOnly] = await bus.loadConversationSnapshots('conv_lazy', external.store);
+
+        expect(external.getTranscriptLoadCount()).toBe(0);
+        expect(metadataOnly.transcriptLoaded).toBe(false);
+        expect(metadataOnly.contents).toEqual([]);
+        expect(bus.getManifest('lazy_run')).toMatchObject({
+            contentCount: 2,
+            preview: 'final answer',
+            lastMessageRole: 'model'
+        });
+
+        const loaded = await bus.loadRunTranscript('lazy_run');
+        expect(external.getTranscriptLoadCount()).toBe(1);
+        expect(loaded?.contents).toHaveLength(2);
+        expect(bus.getContentWindow('lazy_run')?.contents).toHaveLength(2);
+    });
+
+    it('终态 transcript 用 contents 索引去重 provider history，并可在惰性加载时还原', async () => {
+        const external = createExternalStore();
+        const bus = new SubAgentRunEventBus();
+        const largeToolResult = textContent('model', `image:${'x'.repeat(20_000)}`);
+        bus.createRun('projected_run', 'Agent', undefined, {
+            conversationId: 'conv_projected',
+            conversationStore: external.store,
+            initialContents: [textContent('user', '# SubAgent Invocation'), largeToolResult]
+        });
+        bus.updateLastSentHistory('projected_run', [
+            textContent('user', 'actual provider prompt'),
+            largeToolResult
+        ]);
+        bus.emit({ runId: 'projected_run', type: 'run_completed' } as any);
+        await bus.flushRun('projected_run');
+
+        const persisted = external.transcripts.get('conv_projected:projected_run')!;
+        expect(persisted.lastSentHistory).toBeUndefined();
+        expect(persisted.lastSentHistoryProjection?.entries).toEqual([
+            { content: textContent('user', 'actual provider prompt') },
+            { contentIndex: 1 }
+        ]);
+
+        const reloadedBus = new SubAgentRunEventBus();
+        await reloadedBus.loadConversationSnapshots('conv_projected', external.store);
+        const restored = await reloadedBus.loadRunTranscript('projected_run');
+        expect(restored?.lastSentHistory).toEqual([
+            textContent('user', 'actual provider prompt'),
+            largeToolResult
+        ]);
+    });
+
+    it('flushRun 会等待终态 metadata 写入完成', async () => {
+        let metadata: unknown;
+        let releaseWrite: () => void = () => undefined;
+        const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+        const store: SubAgentRunConversationStore = {
+            async getCustomMetadata() { return metadata; },
+            async setCustomMetadata(_conversationId, _key, value) {
+                await writeGate;
+                metadata = value;
+            },
+            async saveSubAgentTranscript(_conversationId, runId) { return `subagents/${runId}.json`; }
+        };
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('terminal_run', 'Agent', undefined, {
+            conversationId: 'conv_terminal', conversationStore: store, initialContents: []
+        });
+        bus.emit({ runId: 'terminal_run', type: 'run_completed' } as any);
+
+        let settled = false;
+        const flush = bus.flushRun('terminal_run').then(() => { settled = true; });
+        await flushPersistQueue();
+        expect(settled).toBe(false);
+        releaseWrite();
+        await flush;
+
+        expect((metadata as Record<string, any>).terminal_run.status).toBe('completed');
+    });
+});
 describe('SubAgentRunEventBus - runId 分配', () => {
     it('runId 未被占用时原样返回', () => {
         const bus = new SubAgentRunEventBus();
@@ -511,5 +702,57 @@ describe('SubAgentRunEventBus - runId 分配', () => {
         bus.createRun(bus.allocateRunId('subagent_run_tool_1'), 'Agent');
 
         expect(bus.allocateRunId('subagent_run_tool_1')).toBe('subagent_run_tool_1__3');
+    });
+});
+describe('SubAgentRunEventBus - resumeRun（续跑复用快照）', () => {
+    it('快照存在时保留 contents/events/lastSentHistory，状态切回 running 并广播 run_resumed', () => {
+        const bus = new SubAgentRunEventBus();
+        bus.createRun('resume_old', 'Tester', undefined, {
+            conversationId: 'conv_1',
+            initialContents: [textContent('user', 'old marker')]
+        });
+        bus.updateLastSentHistory('resume_old', [textContent('user', 'sent-1')]);
+        bus.emit({ runId: 'resume_old', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+
+        const before = bus.getSnapshot('resume_old')!;
+        const eventsBefore = before.events.length;
+        const revisionBefore = before.contentRevision;
+        const seqBefore = before.eventSequence;
+
+        const resumed = bus.resumeRun('resume_old', 'Tester', { depth: 1 }, {
+            conversationId: 'conv_1',
+            initialContents: [textContent('user', 'continue card')]
+        });
+
+        // 复用同一快照对象，未重建
+        expect(resumed).toBe(before);
+        expect(resumed.status).toBe('running');
+        // contents 保留旧内容 + 追加新内容
+        expect(resumed.contents).toHaveLength(2);
+        expect((resumed.contents[0].parts![0] as any).text).toBe('old marker');
+        expect((resumed.contents[1].parts![0] as any).text).toBe('continue card');
+        // lastSentHistory 保留（续跑 generate 前仍以此为前缀）
+        expect(resumed.lastSentHistory).toEqual([textContent('user', 'sent-1')]);
+        // 事件 journal 保留并追加 run_resumed
+        expect(resumed.events.length).toBeGreaterThan(eventsBefore);
+        expect(resumed.events.some(e => e.type === 'run_resumed')).toBe(true);
+        const resumedEvent = resumed.events.find(e => e.type === 'run_resumed')!;
+        expect((resumedEvent.payload as any).fromStatus).toBe('completed');
+        // 协议序号继续递增（不重置）
+        expect(resumed.contentRevision).toBeGreaterThan(revisionBefore);
+        expect(resumed.eventSequence).toBeGreaterThan(seqBefore);
+    });
+
+    it('快照不存在时防御性回退 createRun', () => {
+        const bus = new SubAgentRunEventBus();
+        const snapshot = bus.resumeRun('resume_fallback', 'Tester', undefined, {
+            initialContents: [textContent('user', 'x')]
+        });
+        expect(snapshot.runId).toBe('resume_fallback');
+        expect(snapshot.status).toBe('running');
+        expect(snapshot.contents).toHaveLength(1);
+        // 走 createRun 路径：广播的是 run_created 而非 run_resumed
+        expect(snapshot.events.some(e => e.type === 'run_created')).toBe(true);
+        expect(snapshot.events.some(e => e.type === 'run_resumed')).toBe(false);
     });
 });

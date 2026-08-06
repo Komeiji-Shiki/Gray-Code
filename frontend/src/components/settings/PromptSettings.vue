@@ -1451,7 +1451,7 @@ watch(selectedChannel, () => {
 
     <template v-else>
       <!-- 模式选择栏 -->
-      <div class="mode-selector-bar">
+      <div class="mode-selector-bar" data-search-anchor="prompt-mode-selector">
         <div class="mode-selector-left">
           <label class="mode-label">
             <i class="codicon codicon-symbol-method"></i>
@@ -1474,6 +1474,7 @@ watch(selectedChannel, () => {
             :title="t('components.settings.promptSettings.saveButton')"
           >
             <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
+            <span class="save-action-text">{{ t('components.settings.promptSettings.saveButton') }}</span>
           </button>
           <span class="mode-actions-divider"></span>
           <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
@@ -1529,7 +1530,7 @@ watch(selectedChannel, () => {
       </div>
 
       <!-- 提示词组装方式 -->
-      <div class="template-section assembly-section">
+      <div class="template-section assembly-section" data-search-anchor="prompt-assembly">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-settings-gear"></i>
@@ -1563,10 +1564,9 @@ watch(selectedChannel, () => {
         </div>
       </div>
 
-
       <template v-if="promptAssemblyMode === 'entries'">
         <!-- 预设提示词条目编辑区 -->
-        <div class="template-section entries-section">
+        <div class="template-section entries-section" data-search-anchor="prompt-entries">
           <div class="section-header">
             <label class="section-label">
               <i class="codicon codicon-list-tree"></i>
@@ -1586,7 +1586,7 @@ watch(selectedChannel, () => {
         </div>
 
         <!-- 动态上下文保留策略（预设条目模式） -->
-        <div class="template-section dynamic-strategy-section">
+        <div class="template-section dynamic-strategy-section" data-search-anchor="prompt-dynamic-strategy">
           <div class="section-header">
             <label class="section-label">
               <i class="codicon codicon-history"></i>
@@ -1622,7 +1622,7 @@ watch(selectedChannel, () => {
 
       <template v-else>
         <!-- 静态系统提示词编辑区 -->
-        <div class="template-section">
+        <div class="template-section" data-search-anchor="static-prompt">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-file-code"></i>
@@ -1648,7 +1648,7 @@ watch(selectedChannel, () => {
         </div>
 
         <!-- 动态上下文模板编辑区 -->
-        <div class="template-section dynamic-section">
+        <div class="template-section dynamic-section" data-search-anchor="dynamic-context">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-sync"></i>
@@ -1724,7 +1724,7 @@ watch(selectedChannel, () => {
       </template>
 
       <!-- 可用变量参考（可收缩，默认收起） -->
-      <div class="modules-reference collapsible">
+      <div class="modules-reference collapsible" data-search-anchor="prompt-modules">
         <button
           type="button"
           class="reference-header"
@@ -1836,7 +1836,7 @@ watch(selectedChannel, () => {
         </div>
       </div>
       <!-- 模式工具策略 -->
-      <div class="template-section tool-policy-section">
+      <div class="template-section tool-policy-section" data-search-anchor="tool-policy">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-tools"></i>
@@ -1939,7 +1939,7 @@ watch(selectedChannel, () => {
       <!-- Token 计数 -->
       <div class="save-section">
         <!-- Token 计数显示 -->
-        <div class="token-count-section">
+        <div class="token-count-section" data-search-anchor="prompt-token-count">
           <div class="token-count-header">
             <label class="token-label">
               <i class="codicon codicon-symbol-numeric"></i>
@@ -2032,7 +2032,6 @@ watch(selectedChannel, () => {
           </p>
         </div>
       </div>
-
     </template>
 
     <!-- 保存浮窗提示 -->
@@ -2294,7 +2293,28 @@ watch(selectedChannel, () => {
 }
 
 .save-action-btn {
-  color: var(--vscode-terminal-ansiGreen);
+  width: auto; /* 覆盖 .mode-action-btn 的 width: 24px（保存按钮按内容撑开） */
+  min-width: 88px;
+  flex-shrink: 0; /* 不被 flex 压缩，避免「保存配置」文字被挤成两行 */
+  height: 28px;
+  padding: 0 12px;
+  gap: 6px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.save-action-text {
+  white-space: nowrap; /* 文字强制单行，窄窗口下不再按字符断行 */
+}
+
+.save-action-btn .codicon {
+  font-size: 15px;
+}
+
+.save-action-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
 }
 
 .save-action-btn:disabled {

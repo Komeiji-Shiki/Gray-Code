@@ -197,7 +197,9 @@ const zhCN = {
                 requestTimeoutNoResponse: '请求超时 ({timeout}ms 内无响应)',
                 requestCancelled: '请求已取消',
                 requestAborted: '请求已中止',
-                noResponseBody: '没有响应体'
+                noResponseBody: '没有响应体',
+                emptyResponse: '模型返回了空内容',
+                streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致'
             },
             modelList: {
                 errors: {
@@ -290,8 +292,14 @@ const zhCN = {
                     noMessagesToSummarize: '没有需要总结的消息',
                     summarizeAborted: '总结请求已取消',
                     emptySummary: 'AI 生成的总结为空',
+                    lowQualitySummary: 'AI 生成的总结过短，可能丢失重要信息，已放弃替换对话历史',
+                    summarizeRangeStale: '对话历史在总结期间发生变化，本次总结的范围已失效，已放弃写入',
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
-                    canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}'
+                    canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
+                    messageChanged: '消息已变化，请刷新后重试',
+                    editTargetNotInHistory: '所选消息不在当前对话历史中，可能已被上下文压缩移除',
+                    contextOverflow: '无法在模型上下文窗口内构造合法请求：最小候选约需 {estimatedInputTokens} 个输入 token，超出 {inputTokenLimit} token 的窗口。请增大模型上下文窗口，或清理历史/调整保留预算',
+                    summarizeContextOverflow: '待总结内容和总结提示词超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
                 },
                 prompts: {
                     defaultSummarizePrompt: `请将以上对话内容进行简洁总结，直接输出总结内容，不需要任何格式标记。

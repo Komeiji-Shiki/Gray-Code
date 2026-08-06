@@ -250,6 +250,34 @@ const en: LanguageMessages = {
             openConversation: 'Click to open this conversation'
         },
 
+        usageTime: {
+            title: 'Usage Time',
+            refresh: 'Refresh',
+            loading: 'Loading…',
+            loadFailed: 'Failed to load',
+            empty: 'No usage time data yet (activity in the editor starts recording)',
+            today: 'Today',
+            currentSession: 'Current session',
+            totalInRange: 'Total in range',
+            range7d: '7 days',
+            range30d: '30 days',
+            range90d: '90 days',
+            range1y: '1 year',
+            rangeAll: 'All',
+            hours: 'h',
+            minutes: 'm',
+            durationHM: '{hours}h {minutes}m',
+            shortHour: 'h',
+            shortMinute: 'm',
+            dailyTitle: 'Daily usage',
+            monthlyTitle: 'Monthly usage (click a month for daily details)',
+            monthlyTitleShort: 'Monthly usage',
+            monthActiveDays: '{days} active days',
+            onlyShowLatest: 'Showing latest {days} days only',
+            expandMonth: 'Expand daily details for this month',
+            heatmapTitle: 'Activity heatmap (last 7 days, hover for details)'
+        },
+
         history: {
             title: 'Chat History',
             empty: 'No conversations yet',
@@ -293,6 +321,9 @@ const en: LanguageMessages = {
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
             summarizeContext: 'Summarize context',
+            tpsTooltip: 'TPS (tokens per second)',
+            tpsTokenizerReal: 'Accurate model tokenizer counting',
+            tpsTokenizerEstimate: 'Tokenizer not ready, estimating by characters',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
@@ -396,8 +427,12 @@ const en: LanguageMessages = {
                 assistant: 'Assistant'
             },
             actions: {
+                edit: 'Edit message',
+                copy: 'Copy',
+                retry: 'Regenerate',
                 viewResponse: 'View response',
-                branchFromHere: 'Branch from here'
+                branchFromHere: 'Branch from here',
+                delete: 'Delete message'
             },
             branch: {
                 previous: 'Previous candidate',
@@ -415,17 +450,26 @@ const en: LanguageMessages = {
                 workspaceConfirmCancel: 'Cancel'
             },
             branchTree: {
-                open: 'Branch tree',
+                open: 'View branch history',
                 close: 'Close',
-                title: 'Branch tree',
+                title: 'Branch history',
                 empty: 'No branches yet',
+                nodeCount: '{count} nodes',
+                navigationMode: 'Branch navigation',
+                fullMode: 'Message graph',
+                navigationHint: 'Collapse linear messages and focus on branch points',
+                fullHint: 'Track-based full message graph: lanes follow concurrent candidate branches',
+                collapsedMessages: '{count} linear messages collapsed',
                 candidateCount: '{count} candidates',
                 deleted: 'Deleted',
+                system: 'System',
                 restore: 'Restore',
                 rename: 'Rename',
                 renamePlaceholder: 'Enter a branch label…',
                 save: 'Save',
-                cancel: 'Cancel'
+                cancel: 'Cancel',
+                expandAllMessages: 'Expand all messages',
+                collapseLinearMessages: 'Collapse linear runs'
             },
             responseViewer: {
                 commonMode: 'Common mode',
@@ -522,7 +566,11 @@ const en: LanguageMessages = {
             },
             thought: {
                 thinking: 'Thinking...',
-                thoughtProcess: 'Thought Process'
+                thoughtProcess: 'Thought Process',
+                viewCollapsed: 'Collapse',
+                viewMedium: 'Scroll view',
+                viewExpanded: 'Expand all',
+                trimmedHint: 'Content too long — showing only the latest part. Use expand-all to view the full text'
             },
             contextBlocks: {
                 clickToView: 'Click to view full content'
@@ -531,7 +579,12 @@ const en: LanguageMessages = {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
-                autoTriggered: 'Auto Triggered'
+                restoreTitle: 'Restore Original (undo summary, resend compressed messages)',
+                autoTriggered: 'Auto Triggered',
+                compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
+                legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',
+                historyTokenLabel: 'History',
+                requestTokenLabel: 'Request'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',
@@ -895,7 +948,8 @@ const en: LanguageMessages = {
                 sound: 'Notification System',
                 appearance: 'Appearance',
                 memory: 'Memory',
-                general: 'General'
+                general: 'General',
+                usage: 'Usage Statistics'
             },
             channelSettings: {
                 selector: {
@@ -1125,6 +1179,7 @@ const en: LanguageMessages = {
                     design: 'Design',
                     notification: 'Notifications',
                     agents: 'Agents',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 badges: {
@@ -1705,8 +1760,6 @@ const en: LanguageMessages = {
                     whitelist: 'Whitelist',
                     blacklist: 'Blacklist'
                 },
-                builtinTools: 'Built-in Tools',
-                mcpTools: 'MCP Tools',
                 noTools: 'No tools available',
                 whitelistHint: 'Checked tools will be allowed',
                 blacklistHint: 'Checked tools will be blocked',
@@ -1962,6 +2015,7 @@ const en: LanguageMessages = {
                     keepRounds: 'Minimum Rounds to Keep',
                     keepRoundsUnit: 'rounds',
                     keepRoundsHint: 'Lower-bound protection for the keep budget: at least the most recent N rounds are never summarized',
+                    keepRoundsMinNote: 'Minimum is 1 round (backend enforces at least 1 round)',
                     keepTokens: 'Keep Recent Budget',
                     keepTokensHint: 'How much recent context to keep unsummarized: a token count (e.g. 30000) or a percentage of the model context window (e.g. 25%). The actual range aligns to round boundaries within this budget',
                     maxAttempts: 'Max Auto-Summarize Attempts',
@@ -1996,6 +2050,12 @@ const en: LanguageMessages = {
                 backToChat: 'Back to Chat',
                 sidebarCollapse: 'Collapse sidebar',
                 sidebarExpand: 'Expand sidebar',
+                search: {
+                    placeholder: 'Search settings…',
+                    clear: 'Clear search',
+                    noResults: 'No matching settings found',
+                    hint: 'Type a keyword to find settings; press Enter to open the first result'
+                },
                 sections: {
                     channel: {
                         title: 'Channel Settings',
@@ -2041,6 +2101,10 @@ const en: LanguageMessages = {
                         title: 'Sub-Agents',
                         description: 'Configure specialized sub-agents that AI can invoke'
                     },
+                    dependencies: {
+                        title: 'Dependencies',
+                        description: 'Install and manage dependency tools such as Python and Node'
+                    },
                     sound: {
                         title: 'Notification System',
                         description: 'Configure sound cues and Windows Agent stop notifications'
@@ -2056,6 +2120,11 @@ const en: LanguageMessages = {
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
+                    },
+                    usage: {
+                        title: 'Usage Time & Statistics',
+                        description: 'View your usage time and token statistics',
+                        openFullPage: 'View Full Statistics'
                     }
                 },
                 proxy: {
@@ -2146,7 +2215,20 @@ const en: LanguageMessages = {
                     rawEntries: {
                         title: 'Raw Memory Entries',
                         description: 'View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).',
-                        empty: 'No memory entries yet.'
+                        empty: 'No memory entries yet.',
+                        addPlaceholder: 'Type what you want to remember and click "Add Memory" to write it to permanent memory manually (equivalent to the AI memory_note tool). Ctrl+Enter / Cmd+Enter submits.',
+                        add: 'Add Memory',
+                        added: 'Memory #{id} added',
+                        addEmpty: 'The content is empty. Nothing to add.',
+                        addTooLong: 'Content exceeds the per-entry limit ({limit} bytes).',
+                        truncatedNotice: 'More than {limit} memories: only the first {limit} are shown here (use memory_recall in chat to search the rest).',
+                        deleteConfirmTitle: 'Delete memory entry',
+                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).',
+                        selectAll: 'Select All',
+                        deleteSelected: 'Delete Selected ({count})',
+                        deletedBatch: 'Deleted {count} memories.',
+                        batchDeleteConfirmTitle: 'Delete memory entries',
+                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).'
                     }
                 },
 
@@ -2345,6 +2427,8 @@ const en: LanguageMessages = {
                     design: 'Design',
                     notification: 'Notifications',
                     agents: 'Agents',
+                    mcp: 'MCP Tools',
+                    activity: 'Usage Time',
                     other: 'Other'
                 },
                 dependency: {
@@ -2404,6 +2488,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Toggle Skills',
                     subagents: 'Subagents',
                     agent_send_message: 'Send Agent Message',
+                    get_activity_stats: 'Get Activity Stats',
                 },
                 toolDescriptions: {
                     read_file: 'Read a file in the workspace. Supports text and binary files with optional line range.',
@@ -2446,7 +2531,7 @@ const en: LanguageMessages = {
                     memory_recall: 'Search all permanent memories with regex support.',
                     memory_compress: 'Execute pending memory compression and merging.',
                     memory_zoom: 'Expand a memory tree node to view details.',
-                    memory_forget: 'Discard an incorrect memory tree summary (original memories preserved).',
+                    memory_forget: 'Discard an incorrect memory tree summary; or delete raw memories by single id or closed range (e.g. "5" deletes one, "1,3" deletes ids 1-3).',
                     memory_config: 'View or modify the permanent memory system configuration parameters.',
                     insert_code: 'Insert code before a specified line. Use "last line + 1" to append at the end.',
                     delete_code: 'Delete code within a specified line range in files.',
@@ -2454,6 +2539,7 @@ const en: LanguageMessages = {
                     toggle_skills: 'Enable or disable skills for subsequent requests.',
                     subagents: 'Spawn sub-agents to execute tasks with prompts and context.',
                     agent_send_message: 'Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: the recipient sees it appended to its most recent tool result. Address by targetRunId (an active sub-agent run in this conversation) or targetAgentName ("main" reaches the main session). Replies in the same thread increment hopDepth; after 5 hops delivery is rejected (loop protection). You are identified automatically; you cannot impersonate another agent.',
+                    get_activity_stats: 'Get the user\'s IDE usage time statistics: daily usage minutes, recent schedule (hourly heatmap of when the user is active), and how long the user has been continuously working. Use this to understand the user\'s work-rest rhythm, detect long continuous working sessions, or check whether the user is currently active. Data contains timestamps only, no user content. Returned times are in local time (HH:mm, YYYY-MM-DD).',
                 },
             },
             tokenCountSettings: {
@@ -2582,6 +2668,22 @@ const en: LanguageMessages = {
                     title: 'Selection Entry',
                     description: 'Controls whether "Add selection to input" appears in both the selection hover and Ctrl / code action entry points.'
                 },
+                smoothStreaming: {
+                    title: 'Smooth Streaming',
+                    description: 'Smooth out bursty streaming output into a steady typing effect (off = raw per-chunk output; higher tiers add more latency for a silkier feel).',
+                    off: 'Off',
+                    smooth: 'Responsive',
+                    balanced: 'Balanced',
+                    silky: 'Silky'
+                },
+                tpsBar: {
+                    title: 'TPS Live Visualization',
+                    description: 'Show a live tokens-per-second chart at the bottom of the input area. Sampling stops while hidden and restarts with the current stream when re-enabled.'
+                },
+                splash: {
+                    title: 'Splash Animation',
+                    description: 'Play the Gray Code logo drawing animation on startup. Disable to go straight to the main view.'
+                },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },
@@ -2635,6 +2737,11 @@ const en: LanguageMessages = {
             cancelled: 'Cancelled',
             cancel: 'Cancel task',
             dismiss: 'Dismiss',
+            dismissAllCompleted: 'Clear completed',
+            dismissAllCompletedTitle: 'Dismiss all completed background tasks (confirmation shown when results are pending report)',
+            dismissAllConfirmTitle: 'Clear completed tasks?',
+            dismissAllConfirmMessage: '{count} task(s) have results pending report to the model. Dismissing them will prevent the model from receiving these results. Continue?',
+            dismissAllConfirmAction: 'Dismiss anyway',
             pendingReport: 'Result pending report to the model',
             outputTitle: 'Command output',
             noOutput: 'No output yet',
@@ -3459,7 +3566,8 @@ const en: LanguageMessages = {
                 restoreDeleteFailed: 'Restore and delete failed',
                 noConfigSelected: 'No config selected',
                 summarizeFailed: 'Summarize failed',
-                restoreEditFailed: 'Restore and edit failed'
+                restoreEditFailed: 'Restore and edit failed',
+                messageChanged: 'Message has changed, please refresh the history and try again'
             },
             relativeTime: {
                 justNow: 'Just now',

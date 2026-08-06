@@ -45,6 +45,10 @@ export class FileSettingsStorage implements SettingsStorage {
     
     /**
      * 保存设置
+     *
+     * 原子写：先写同目录临时文件再 rename 覆盖——直接 writeFile 线上文件在进程崩溃时
+     * 会留下半截 JSON（load 抛错，设置整体不可用）。生产走 VSCodeSettingsStorage，
+     * 本实现用于 legacy/测试路径，同样保证崩溃安全性。
      */
     async save(settings: GlobalSettings): Promise<void> {
         try {
@@ -54,7 +58,17 @@ export class FileSettingsStorage implements SettingsStorage {
             
             // 格式化 JSON（缩进 2 空格）
             const content = JSON.stringify(settings, null, 2);
-            await fs.writeFile(this.filePath, content, 'utf-8');
+            // 原子写：tmp 名带随机后缀，避免并发 save 写同一 tmp 互相踩（固定名会让
+            // 两个 writeFile 交错写同一路径，最终 rename 出混合内容）
+            const tmpPath = `${this.filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            await fs.writeFile(tmpPath, content, 'utf-8');
+            try {
+                await fs.rename(tmpPath, this.filePath);
+            } catch (renameError) {
+                // 清理残留 tmp（rename 失败如 Windows EPERM 时），不让半成品堆积
+                await fs.unlink(tmpPath).catch(() => undefined);
+                throw renameError;
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
             throw error;

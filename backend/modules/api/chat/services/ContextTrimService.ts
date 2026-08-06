@@ -33,14 +33,47 @@ import type { MessageBuilderService } from './MessageBuilderService';
 
 import { Logger } from '../../../../core/logger';
 import { getPromptContextCacheDynamicSnapshotText } from '../../../prompt/promptContextCache';
-import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
+import { validateHistoryIntegrity, normalizeCallId } from '../../../channel/HistoryIntegrityValidator';
 import { planSummarizeMessages } from './summarizeRangePlanner';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 /** 最多约 40k token；正常用户输入远小于此值，只有异常大粘贴才会触发有界截断。 */
-const PRESERVED_USER_INPUT_MAX_CHARS = 160_000;
+/**
+ * 被裁剪历史的逐字用户输入档案上限。
+ *
+ * 旧值 160k 字符在常见英文口径下约 40k token，单是这个“保险副本”就会吃掉默认
+ * 256k 上下文保留预算（25%=64k token）的多数空间，使总结后上下文几乎不下降。
+ * 64k 字符约 16k token，仍足以保留长任务约束，同时让摘要/裁剪真正释放空间。
+ */
+export const PRESERVED_USER_INPUT_MAX_CHARS = 64_000;
+const PRESERVED_USER_INPUT_OMISSION_MARKER =
+    '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n';
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const CONTEXT_TRIM_DEBUG_ENABLED = true;
+const FALLBACK_PROVIDER_RESERVE_RATIO = 0.1;
+const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
+const MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 256;
+const MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 8_192;
+
+/**
+ * fallback 已无法构造不超过主模型输入预算的合法历史。
+ *
+ * 注意：message 仅作开发/日志兜底（英文），对外展示的消息由上层（ChatHandler.formatError）
+ * 按 code = CONTEXT_OVERFLOW 走 i18n，并携带 estimatedInputTokens / inputTokenLimit 两个参数。
+ */
+export class ContextBudgetExceededError extends Error {
+    readonly code = 'CONTEXT_OVERFLOW';
+
+    constructor(
+        readonly estimatedInputTokens: number,
+        readonly inputTokenLimit: number
+    ) {
+        super(
+            `Unable to build a legal request within the context window: the smallest candidate uses about ${estimatedInputTokens} input tokens, above the ${inputTokenLimit}-token window`
+        );
+        this.name = 'ContextBudgetExceededError';
+    }
+}
 
 /**
  * 回合 Token 信息（内部使用）
@@ -98,12 +131,74 @@ export interface ContextTrimEvaluationOptions {
     allowStateAdvance?: boolean;
 }
 
-interface MaxContextResolution {
+export interface MaxContextResolution {
     maxContextTokens: number;
     source: 'config.maxContextTokens' | 'model.contextWindow' | 'default';
     configMaxContextTokens?: unknown;
     modelId?: string;
     modelContextWindow?: unknown;
+}
+
+function normalizePositiveTokenValue(value: unknown): number | undefined {
+    const numericValue = typeof value === 'number'
+        ? value
+        : (typeof value === 'string' ? Number(value) : NaN);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return undefined;
+    return Math.floor(numericValue);
+}
+
+function resolveCandidateModelId(config: BaseChannelConfig, modelOverride?: string): string {
+    if (typeof modelOverride === 'string' && modelOverride.trim()) return modelOverride.trim();
+    const configModel = (config as { model?: unknown }).model;
+    return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
+}
+
+/** 返回当前实际选择模型声明的窗口；未能识别模型时不把渠道显示上限伪装成模型硬边界。 */
+export function resolveModelContextWindowForConfig(
+    config: BaseChannelConfig,
+    modelOverride?: string
+): MaxContextResolution | undefined {
+    const candidateModelId = resolveCandidateModelId(config, modelOverride);
+    if (!candidateModelId) return undefined;
+    const modelList = Array.isArray((config as { models?: unknown }).models)
+        ? ((config as { models?: ModelInfo[] }).models as ModelInfo[])
+        : [];
+    const matchedModel = modelList.find(model => model?.id === candidateModelId);
+    const modelContextWindow = normalizePositiveTokenValue(matchedModel?.contextWindow);
+    if (modelContextWindow === undefined) return undefined;
+    return {
+        maxContextTokens: modelContextWindow,
+        source: 'model.contextWindow',
+        configMaxContextTokens: config.maxContextTokens,
+        modelId: candidateModelId,
+        modelContextWindow: matchedModel?.contextWindow
+    };
+}
+
+/** 解析上下文管理的预算基准：显式渠道上限优先，模型窗口和默认值依次回退。 */
+export function resolveMaxContextTokensForConfig(
+    config: BaseChannelConfig,
+    modelOverride?: string
+): MaxContextResolution {
+    const configuredMax = normalizePositiveTokenValue(config.maxContextTokens);
+    if (configuredMax !== undefined) {
+        return {
+            maxContextTokens: configuredMax,
+            source: 'config.maxContextTokens',
+            configMaxContextTokens: config.maxContextTokens
+        };
+    }
+
+    const candidateModelId = resolveCandidateModelId(config, modelOverride);
+    const modelWindow = resolveModelContextWindowForConfig(config, modelOverride);
+    if (modelWindow) return modelWindow;
+
+    return {
+        maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+        source: 'default',
+        configMaxContextTokens: config.maxContextTokens,
+        modelId: candidateModelId || undefined
+    };
 }
 
 interface NormalizedTrimStartResult {
@@ -199,20 +294,6 @@ export class ContextTrimService {
     }
 
     /**
-     * 归一化 token 数值：仅接受有限正数
-     */
-    private normalizePositiveTokenValue(value: unknown): number | undefined {
-        const numericValue = typeof value === 'number'
-            ? value
-            : (typeof value === 'string' ? Number(value) : NaN);
-
-        if (!Number.isFinite(numericValue) || numericValue <= 0) {
-            return undefined;
-        }
-        return Math.floor(numericValue);
-    }
-
-    /**
      * 上下文起点允许落在真实用户消息或总结消息上；functionResponse 不能作为起点。
      * 总结消息本身是 user 角色，若排除它，归一化会错误跳到总结后的下一条用户消息并把总结也丢掉。
      */
@@ -229,6 +310,93 @@ export class ContextTrimService {
             }
         }
         return starts;
+    }
+
+    /**
+     * PERF：一次从右向左扫描，预计算每个下标 i 的「切片 fullHistory.slice(i) 是否通过
+     * validateHistoryIntegrity」判定（validSuffix[i]），使 normalizeTrimStartIndex 的每个
+     * 候选判定降为 O(1)。语义与 validateHistoryIntegrity（不开启 detectOrphanFunctionCall）
+     * 完全一致：重复 functionCall id、重复 functionResponse id、以及「functionResponse
+     * 的配对 functionCall 不在切片内」的孤儿响应。
+     *
+     * 配对方向注意（与正向校验逐位等价的关键）：正向中「response 的配对 call 必须出现在
+     * response 之前」（同一消息内更早的 part 或更左侧的消息）；反向扫描时因此要区分三种情况：
+     * - 本消息内更早 part 已有 call（localCallSeen）→ 配对成立；
+     * - seenFunctionCallIds 已有但本消息内没有（call 在右侧消息，乱序配对）→ 正向判孤儿，
+     *   置 hasOrphanResponse（该切片向左扩展后仍至少是重复或孤儿，永久 invalid，不可治愈）；
+     * - 两侧都无 → 可能是跨消息正常配对（call 在更左侧，尚未扫到），先记入孤儿集合，
+     *   扫到左侧 call 时治愈；本消息新增孤儿不得被本消息内 call 治愈（同消息乱序）。
+     */
+    private computeValidSuffixMap(fullHistory: Content[]): boolean[] {
+        const validSuffix = new Array<boolean>(fullHistory.length);
+        const seenFunctionCallIds = new Set<string>();
+        const seenFunctionResponseIds = new Set<string>();
+        const orphanedFunctionResponseIds = new Set<string>();
+        let hasDuplicateCall = false;
+        let hasDuplicateResponse = false;
+        let hasOrphanResponse = false;
+
+        for (let i = fullHistory.length - 1; i >= 0; i--) {
+            const message = fullHistory[i];
+            const parts = Array.isArray(message?.parts) ? message.parts : [];
+            // 本消息内全部 functionCall id（跨消息治愈用）
+            const localCallIds = new Set<string>();
+            for (const part of parts) {
+                const functionCallId = normalizeCallId(part.functionCall?.id);
+                if (functionCallId) {
+                    localCallIds.add(functionCallId);
+                }
+            }
+            // 本消息内已按 parts 原序处理过的 functionCall（配对判定：call 必须在本 response 之前）
+            const localCallSeen = new Set<string>();
+            // 本消息新增的孤儿 response（同消息内 call 在 response 之后时，正向确实判孤儿，
+            // 不得被本消息的 call 治愈）
+            const newOrphanIds = new Set<string>();
+            // parts 原序处理（与正向校验同序）：重复检测 + 配对判定
+            for (const part of parts) {
+                const functionCallId = normalizeCallId(part.functionCall?.id);
+                if (functionCallId) {
+                    localCallSeen.add(functionCallId);
+                    if (seenFunctionCallIds.has(functionCallId)) {
+                        hasDuplicateCall = true;
+                    } else {
+                        seenFunctionCallIds.add(functionCallId);
+                    }
+                }
+
+                const functionResponseId = normalizeCallId(part.functionResponse?.id);
+                if (!functionResponseId) {
+                    continue;
+                }
+                if (seenFunctionResponseIds.has(functionResponseId)) {
+                    hasDuplicateResponse = true;
+                } else {
+                    seenFunctionResponseIds.add(functionResponseId);
+                }
+
+                if (localCallSeen.has(functionResponseId)) {
+                    // 本消息内更早的 part 已有配对 call → 配对成立（正向不判孤儿）
+                } else if (seenFunctionCallIds.has(functionResponseId)) {
+                    // call 在右侧消息（乱序配对）→ 正向判孤儿；切片向左扩展后仍至少
+                    // 是重复或孤儿，永久 invalid，不可治愈
+                    hasOrphanResponse = true;
+                } else {
+                    // 可能是跨消息正常配对（call 在更左侧尚未扫到）→ 暂记孤儿，等待治愈
+                    orphanedFunctionResponseIds.add(functionResponseId);
+                    newOrphanIds.add(functionResponseId);
+                }
+            }
+            // 跨消息治愈：本消息的 call 在右侧消息孤儿 response 的左侧 → 治愈
+            // （本消息新增孤儿除外——同消息乱序在正向中确实是孤儿）
+            for (const callId of localCallIds) {
+                if (!newOrphanIds.has(callId)) {
+                    orphanedFunctionResponseIds.delete(callId);
+                }
+            }
+            validSuffix[i] = !hasDuplicateCall && !hasDuplicateResponse
+                && !hasOrphanResponse && orphanedFunctionResponseIds.size === 0;
+        }
+        return validSuffix;
     }
 
     private normalizeTrimStartIndex(
@@ -279,30 +447,30 @@ export class ContextTrimService {
             }
         }
 
+        // PERF：O(n) 预计算全部后缀的有效性，替代对每个候选 slice + validateHistoryIntegrity
+        const validSuffix = this.computeValidSuffixMap(fullHistory);
         const candidateStarts = [normalizedStartIndex, ...legalStartIndices.filter(index => index > normalizedStartIndex)];
-        let firstIssue: ReturnType<typeof validateHistoryIntegrity>['issues'][number] | undefined;
 
         for (let i = 0; i < candidateStarts.length; i++) {
             const startIndex = candidateStarts[i];
-            const validation = validateHistoryIntegrity(fullHistory.slice(startIndex));
-            if (validation.valid) {
+            if (validSuffix[startIndex]) {
                 return {
                     startIndex,
                     valid: true,
                     reason: i === 0 ? reason : 'advanced_to_valid_round'
                 };
             }
-            if (!firstIssue && validation.issues.length > 0) {
-                firstIssue = validation.issues[0];
-            }
         }
 
+        // 全部候选无效：与旧实现一致，firstIssue 只来自第一个候选（normalizedStartIndex），
+        // 失败路径只出现一次 O(n) 校验（结构异常历史的低频路径）。
+        const validation = validateHistoryIntegrity(fullHistory.slice(normalizedStartIndex));
         return {
             startIndex: normalizedStartIndex,
             valid: false,
             reason,
-            issueKind: firstIssue?.kind,
-            issueCallId: firstIssue?.callId
+            issueKind: validation.issues[0]?.kind,
+            issueCallId: validation.issues[0]?.callId
         };
     }
 
@@ -339,11 +507,15 @@ export class ContextTrimService {
         const fullText = `${header}\n\n${entries.join('\n\n')}`;
         let preservedText = fullText;
         if (fullText.length > PRESERVED_USER_INPUT_MAX_CHARS) {
-            const headBudget = Math.floor(PRESERVED_USER_INPUT_MAX_CHARS * 0.35);
-            const tailBudget = PRESERVED_USER_INPUT_MAX_CHARS - headBudget;
+            const contentBudget = Math.max(
+                0,
+                PRESERVED_USER_INPUT_MAX_CHARS - PRESERVED_USER_INPUT_OMISSION_MARKER.length
+            );
+            const headBudget = Math.floor(contentBudget * 0.35);
+            const tailBudget = contentBudget - headBudget;
             preservedText = [
                 fullText.slice(0, headBudget),
-                '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n',
+                PRESERVED_USER_INPUT_OMISSION_MARKER,
                 fullText.slice(-tailBudget)
             ].join('');
         }
@@ -379,9 +551,13 @@ export class ContextTrimService {
             startIndex: normalization.startIndex,
             includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
         });
-        const history = this.prependPreservedUserInputs(
-            formattedHistory,
+        const history = this.prependFirstUserMessage(
             fullHistory,
+            this.prependPreservedUserInputs(
+                formattedHistory,
+                fullHistory,
+                normalization.startIndex
+            ),
             normalization.startIndex
         );
 
@@ -393,52 +569,48 @@ export class ContextTrimService {
     }
 
     /**
+     * 首条用户消息永远发送（任务锚点）。
+     *
+     * 逻辑截断语义下，发送历史从最后一个总结消息 / 裁剪点开始，首条用户消息通常不在其中；
+     * 主人的原始任务指令是长期锚点，总结文本永远不如原话清楚，必须原样拼到请求历史最前
+     * （与保留用户输入档案并存，轻微冗余换取原话完整）。
+     *
+     * @param fullHistory 过滤 isSummarized 后的完整历史
+     * @param history 已构建的发送历史
+     * @param startIndex 发送切片起点（过滤后历史索引）；<= 0 时首条用户消息必然已在切片内
+     * @returns 含首条用户消息的发送历史（已在其中则原样返回，避免重复前置）
+     */
+    private prependFirstUserMessage(fullHistory: Content[], history: Content[], startIndex: number): Content[] {
+        // 从 0 开始发送：首条用户消息必然已在切片内，无需处理
+        if (startIndex <= 0) {
+            return history;
+        }
+        const firstUserIndex = fullHistory.findIndex(message => isRealUserMessage(message));
+        if (firstUserIndex < 0) {
+            return history;
+        }
+        const firstUser = fullHistory[firstUserIndex];
+        // 首条用户消息已在切片内（异常数据：历史以 system 等开头且首条下标 >= startIndex）→ 不重复前置
+        if (firstUserIndex >= startIndex) {
+            return history;
+        }
+        // 防御：有稳定 id 时按 id 判重（历史以 system 开头时上述下标判断已覆盖，此处仅兜底）
+        if (firstUser.id !== undefined && history.some(message => message.id === firstUser.id)) {
+            return history;
+        }
+        return [firstUser, ...history];
+    }
+
+    /**
      * 解析当前轮应使用的最大上下文 token 数。
      *
      * 优先级：
      * 1. 配置显式 maxContextTokens
      * 2. 当前模型（modelOverride 或 config.model）在 models 列表中的 contextWindow
-     * 3. 默认值 128000
+     * 3. 默认值 256000
      */
-    private resolveMaxContextTokens(config: BaseChannelConfig, modelOverride?: string): MaxContextResolution {
-        const configuredMax = this.normalizePositiveTokenValue(config.maxContextTokens);
-        if (configuredMax !== undefined) {
-            return {
-                maxContextTokens: configuredMax,
-                source: 'config.maxContextTokens',
-                configMaxContextTokens: config.maxContextTokens
-            };
-        }
-
-        const candidateModelId = (() => {
-            if (typeof modelOverride === 'string' && modelOverride.trim()) {
-                return modelOverride.trim();
-            }
-            const configModel = (config as { model?: unknown }).model;
-            return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
-        })();
-
-        if (candidateModelId) {
-            const modelList = Array.isArray((config as { models?: unknown }).models) ? ((config as { models?: ModelInfo[] }).models as ModelInfo[]) : [];
-            const matchedModel = modelList.find(model => model?.id === candidateModelId);
-            const modelContextWindow = this.normalizePositiveTokenValue(matchedModel?.contextWindow);
-            if (modelContextWindow !== undefined) {
-                return {
-                    maxContextTokens: modelContextWindow,
-                    source: 'model.contextWindow',
-                    configMaxContextTokens: config.maxContextTokens,
-                    modelId: candidateModelId,
-                    modelContextWindow: matchedModel?.contextWindow
-                };
-            }
-        }
-
-        return {
-            maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
-            source: 'default',
-            configMaxContextTokens: config.maxContextTokens,
-            modelId: candidateModelId || undefined
-        };
+    resolveMaxContextTokens(config: BaseChannelConfig, modelOverride?: string): MaxContextResolution {
+        return resolveMaxContextTokensForConfig(config, modelOverride);
     }
 
     /**
@@ -668,7 +840,9 @@ export class ContextTrimService {
      *
      * @param stableStartIndex 同一真实用户回合内已确定的切点（绝对索引）。工具结果增长时复用该起点，
      * 保持每轮请求 retainedHistory 前缀一致，让 provider 前缀缓存可以命中；仅当完整性校验失败或
-     * 估算 token 超过硬上限（maxContextTokens 的 95%）时才重新规划切点。新回合/总结成功后传 undefined。
+     * 估算总输入超过安全上限时才重新规划切点。新回合/总结成功后传 undefined。
+     * @param fixedPromptTokens 系统提示词和本轮 prompt context 的 token 数；这些内容不在 history 中，
+     * 但会随请求一起发送，因此必须从总输入预算中扣除。
      */
     async getHistoryWithGranularFallback(
         conversationId: string,
@@ -676,24 +850,78 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         modelOverride?: string,
         dynamicContextStrategy: DynamicContextStrategy = 'single',
-        stableStartIndex?: number
+        stableStartIndex?: number,
+        fixedPromptTokens = 0
     ): Promise<ContextTrimInfo> {
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
-        if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
+        if (rawHistory.length === 0) return { history: [], trimStartIndex: 0 };
+
+        // 逻辑截断：被总结消息（isSummarized）不参与发送与统计（与 getHistoryWithContextTrimInfo 一致）
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
 
         const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
         const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
         const messages = fullHistory.slice(historyStartIndex);
         const channelType = config.type || 'custom';
         const maxContextTokens = this.resolveMaxContextTokens(config, modelOverride).maxContextTokens;
+        const actualModelWindow = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
         const threshold = this.calculateThreshold(config.contextThreshold ?? '80%', maxContextTokens);
-        // 为系统提示词、动态上下文和 provider 包装预留 10%，避免 fallback 刚好贴住硬上限。
-        const historyBudgetTokens = Math.max(1, Math.floor(threshold * 0.9));
+        // contextThreshold 只是触发自动总结和“优先压缩到此处”的软阈值，绝不能当成主 Agent 的硬上限。
+        // 95% 只作为优先裁剪目标，给 provider 包装/输出留出余量；真正拒绝请求的边界仍是完整模型窗口。
+        const preferredInputTokenLimit = Math.max(
+            1,
+            Math.floor((actualModelWindow ?? maxContextTokens) * 0.95)
+        );
+        // 只有模型条目明确声明的 contextWindow 才能成为拒绝边界。渠道 maxContextTokens 是
+        // 显示/上下文管理基准；模型元数据缺失时最多做 best-effort 裁剪，绝不据此阻止主请求。
+        const hardInputTokenLimit = actualModelWindow;
+        const fallbackEnvelopeInputTokenLimit = actualModelWindow ?? maxContextTokens;
+        const softInputTokenLimit = Math.max(1, Math.min(threshold, preferredInputTokenLimit));
+        const providerReserveTokens = Math.max(1, Math.floor(softInputTokenLimit * FALLBACK_PROVIDER_RESERVE_RATIO));
+        const normalizedFixedPromptTokens = Number.isFinite(fixedPromptTokens)
+            ? Math.max(0, Math.floor(fixedPromptTokens))
+            : 0;
+        const softHistoryBudgetTokens = Math.max(
+            0,
+            softInputTokenLimit - normalizedFixedPromptTokens - providerReserveTokens
+        );
+        const fallbackEnvelopeHistoryBudgetTokens = Math.max(
+            0,
+            fallbackEnvelopeInputTokenLimit - normalizedFixedPromptTokens
+        );
+
+        const estimateFinalHistoryTokens = (history: Content[]): number => history.reduce(
+            (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
+            0
+        );
+
+        const throwContextOverflow = (minimumLegalHistoryTokens = 0): never => {
+            if (hardInputTokenLimit === undefined) {
+                throw new Error('Context overflow rejection requires a known model context window');
+            }
+            const estimatedMinimumInputTokens = normalizedFixedPromptTokens + minimumLegalHistoryTokens;
+            this.log.error('trim.fallback_context_overflow', {
+                conversationId,
+                maxContextTokens,
+                threshold,
+                softInputTokenLimit,
+                preferredInputTokenLimit,
+                hardInputTokenLimit,
+                fallbackEnvelopeInputTokenLimit,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                providerReserveTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                minimumLegalHistoryTokens,
+                estimatedMinimumInputTokens,
+                originalHistoryLength: fullHistory.length
+            });
+            throw new ContextBudgetExceededError(estimatedMinimumInputTokens, hardInputTokenLimit);
+        };
 
         // 回合内稳定起点优先：工具结果增长不再把切点往后推（否则每轮 retainedHistory 开头漂移，
-        // provider 前缀缓存只能命中 history 之前的固定系统/工具段）。
-        // 硬上限取 maxContextTokens 的 95%：软预算可以略超（fallback 是最后防线），
-        // 但绝不能顶到 provider 的硬上限——系统提示词、动态上下文与工具定义还要占一部分。
+        // provider 前缀缓存只能命中 history 之前的固定系统/工具段）。稳定起点允许超过总结软阈值，
+        // 只要完整请求仍装得进模型硬窗口；总结阈值不能让正在运行的 Agent 提前中止。
         if (typeof stableStartIndex === 'number' && stableStartIndex >= historyStartIndex && stableStartIndex < fullHistory.length) {
             const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
@@ -706,18 +934,24 @@ export class ContextTrimService {
                     fullHistory,
                     stableStartIndex
                 );
-                const estimatedStableTokens = historyWithUserInputs.reduce(
-                    (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
-                    0
+                // 首条用户消息永远发送（任务锚点）
+                const history = this.normalizeFallbackHistoryStart(
+                    this.prependFirstUserMessage(fullHistory, historyWithUserInputs, stableStartIndex)
                 );
-                const stableHardLimit = Math.floor(maxContextTokens * 0.95);
-                if (estimatedStableTokens <= stableHardLimit) {
-                    const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+                const estimatedStableTokens = estimateFinalHistoryTokens(history);
+                if (estimatedStableTokens <= fallbackEnvelopeHistoryBudgetTokens) {
                     this.log.warn('trim.fallback_stable_start_reused', {
                         conversationId,
                         stableStartIndex,
                         estimatedStableTokens,
-                        stableHardLimit,
+                        fixedPromptTokens: normalizedFixedPromptTokens,
+                        providerReserveTokens,
+                        softInputTokenLimit,
+                        preferredInputTokenLimit,
+                        hardInputTokenLimit,
+                        fallbackEnvelopeInputTokenLimit,
+                        softHistoryBudgetTokens,
+                        fallbackEnvelopeHistoryBudgetTokens,
                         originalHistoryLength: fullHistory.length,
                         fallbackHistoryLength: history.length
                     });
@@ -745,57 +979,70 @@ export class ContextTrimService {
         const plan = planSummarizeMessages({
             messages,
             messageTokens,
-            keepBudgetTokens: historyBudgetTokens,
+            keepBudgetTokens: Math.max(1, softHistoryBudgetTokens),
             minKeepRounds: 1,
             mode: 'auto'
         });
-        if (!plan) {
-            const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
-                ...historyOptions,
-                startIndex: historyStartIndex,
-                includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
-            });
-            const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
-            return { history, trimStartIndex: historyStartIndex };
-        }
 
-        const candidateIndices: number[] = [plan.cutIndex];
-        for (let i = plan.cutIndex + 1; i < messages.length; i++) {
+        // planner 返回 null 既可能代表完整历史已经在预算内，也可能代表单个巨大回合无法按轮规划。
+        // 两种情况都从最早合法起点开始逐个验证，绝不能因此直接返回未经预算检查的完整历史。
+        const firstCandidateIndex = plan?.cutIndex ?? 0;
+        const candidateIndices: number[] = [firstCandidateIndex];
+        for (let i = firstCandidateIndex + 1; i < messages.length; i++) {
             if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) candidateIndices.push(i);
         }
 
-        for (const relativeStartIndex of candidateIndices) {
+        const evaluateCandidate = (relativeStartIndex: number): {
+            relativeStartIndex: number;
+            absoluteStartIndex: number;
+            history: Content[];
+            estimatedTokens: number;
+        } | undefined => {
             const absoluteStartIndex = historyStartIndex + relativeStartIndex;
             const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
                 startIndex: absoluteStartIndex,
                 includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
             });
-            if (!validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) continue;
+            if (!validateHistoryIntegrity(suffix, { detectOrphanFunctionCall: true }).valid) return undefined;
 
             const historyWithUserInputs = this.prependPreservedUserInputs(
                 suffix,
                 fullHistory,
                 absoluteStartIndex
             );
-            const estimatedFallbackTokens = historyWithUserInputs.reduce(
-                (total, message) => total + this.tokenEstimationService.estimateMessageTokens(message),
-                0
+            // 首条用户消息永远发送（任务锚点）
+            const history = this.normalizeFallbackHistoryStart(
+                this.prependFirstUserMessage(fullHistory, historyWithUserInputs, absoluteStartIndex)
             );
-            if (estimatedFallbackTokens > historyBudgetTokens) continue;
-            const history = this.normalizeFallbackHistoryStart(historyWithUserInputs);
+            const estimatedFallbackTokens = estimateFinalHistoryTokens(history);
+            return { relativeStartIndex, absoluteStartIndex, history, estimatedTokens: estimatedFallbackTokens };
+        };
+
+        const softCandidate = candidateIndices
+            .map(evaluateCandidate)
+            .find((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => (
+                !!candidate && candidate.estimatedTokens <= softHistoryBudgetTokens
+            ));
+        if (softCandidate) {
             this.log.warn('trim.fallback_granular_applied', {
                 conversationId,
-                absoluteStartIndex,
-                relativeStartIndex,
-                boundary: plan.boundary,
-                historyBudgetTokens,
+                absoluteStartIndex: softCandidate.absoluteStartIndex,
+                relativeStartIndex: softCandidate.relativeStartIndex,
+                boundary: plan?.boundary ?? 'unplanned',
+                historyBudgetTokens: softHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                providerReserveTokens,
+                softInputTokenLimit,
+                preferredInputTokenLimit,
+                hardInputTokenLimit,
+                fallbackEnvelopeInputTokenLimit,
                 originalHistoryLength: fullHistory.length,
-                fallbackHistoryLength: history.length
+                fallbackHistoryLength: softCandidate.history.length
             });
             return {
-                history,
-                trimStartIndex: absoluteStartIndex,
+                history: softCandidate.history,
+                trimStartIndex: softCandidate.absoluteStartIndex,
                 contextManagementDecision: {
                     enabled: true,
                     mode: 'summarize',
@@ -805,13 +1052,77 @@ export class ContextTrimService {
             };
         }
 
-        const formattedHistory = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
-            ...historyOptions,
-            startIndex: historyStartIndex,
-            includeTurnDynamicContext: dynamicContextStrategy === 'preserve'
-        });
-        const history = this.prependPreservedUserInputs(formattedHistory, fullHistory, historyStartIndex);
-        return { history, trimStartIndex: historyStartIndex };
+        // 无法达到自动总结软阈值时，从完整历史开始寻找仍低于模型硬窗口的最早合法起点。
+        // 这条路径宁可多带上下文，也不能把“总结触发阈值”升级成主 Agent 的请求禁令。
+        const hardCandidateIndices: number[] = [0];
+        for (let i = 1; i < messages.length; i++) {
+            if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) hardCandidateIndices.push(i);
+        }
+        const hardCandidates = hardCandidateIndices
+            .map(evaluateCandidate)
+            .filter((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => !!candidate);
+        const hardCandidate = actualModelWindow === undefined
+            ? undefined
+            : hardCandidates.find(candidate => candidate.estimatedTokens <= fallbackEnvelopeHistoryBudgetTokens);
+        if (hardCandidate) {
+            this.log.warn('trim.fallback_hard_limit_applied', {
+                conversationId,
+                absoluteStartIndex: hardCandidate.absoluteStartIndex,
+                relativeStartIndex: hardCandidate.relativeStartIndex,
+                estimatedHistoryTokens: hardCandidate.estimatedTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                hardInputTokenLimit,
+                originalHistoryLength: fullHistory.length,
+                fallbackHistoryLength: hardCandidate.history.length
+            });
+            return {
+                history: hardCandidate.history,
+                trimStartIndex: hardCandidate.absoluteStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: this.resolveContextManagementPolicy(config).source,
+                    action: 'fallback_hard_limit_applied'
+                }
+            };
+        }
+
+        if (actualModelWindow === undefined && hardCandidates.length > 0) {
+            // 不知道 provider 的真实窗口时，选择 token 最少的合法候选尽力降低失败概率，
+            // 但绝不把渠道显示/总结基准升级成 CONTEXT_OVERFLOW 拒绝。
+            const bestEffortCandidate = hardCandidates.reduce((best, candidate) => (
+                candidate.estimatedTokens < best.estimatedTokens ? candidate : best
+            ));
+            this.log.warn('trim.fallback_best_effort_applied', {
+                conversationId,
+                absoluteStartIndex: bestEffortCandidate.absoluteStartIndex,
+                relativeStartIndex: bestEffortCandidate.relativeStartIndex,
+                estimatedHistoryTokens: bestEffortCandidate.estimatedTokens,
+                softHistoryBudgetTokens,
+                fallbackEnvelopeHistoryBudgetTokens,
+                fixedPromptTokens: normalizedFixedPromptTokens,
+                originalHistoryLength: fullHistory.length,
+                fallbackHistoryLength: bestEffortCandidate.history.length
+            });
+            return {
+                history: bestEffortCandidate.history,
+                trimStartIndex: bestEffortCandidate.absoluteStartIndex,
+                contextManagementDecision: {
+                    enabled: true,
+                    mode: 'summarize',
+                    source: this.resolveContextManagementPolicy(config).source,
+                    action: 'fallback_best_effort_applied'
+                }
+            };
+        }
+
+        const minimumLegalHistoryTokens = hardCandidates.reduce(
+            (minimum, candidate) => Math.min(minimum, candidate.estimatedTokens),
+            Number.POSITIVE_INFINITY
+        );
+        return throwContextOverflow(Number.isFinite(minimumLegalHistoryTokens) ? minimumLegalHistoryTokens : 0);
     }
 
     /**
@@ -840,16 +1151,53 @@ export class ContextTrimService {
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         evaluationOptions: ContextTrimEvaluationOptions = {}
     ): Promise<ContextTrimInfo> {
-        // 先获取完整的原始历史
-        const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
+        // 先获取完整的原始历史（含已被总结覆盖的 isSummarized 消息）
+        const rawHistory = await this.conversationManager.getHistoryRef(conversationId);
         
         // 如果历史为空，直接返回
-        if (fullHistory.length === 0) {
+        if (rawHistory.length === 0) {
             return { history: [], trimStartIndex: 0 };
         }
+
+        // 逻辑截断：被总结覆盖的消息（isSummarized）不参与发送与统计，但原文完整保留在存储中
+        // （可显示、可搜索）。过滤后的历史与「物理删除后」的历史语义完全等价，
+        // 下游所有索引 / token / 回合计算无需感知标记消息，也不会因残留历史死循环触发总结。
+        const fullHistory = rawHistory.filter(message => !message.isSummarized);
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
+            // 总结（手动/自动）是用户显式要求建立的上下文边界，不应依赖自动上下文管理开关。
+            // 总结采用逻辑截断语义：被覆盖消息打 isSummarized 标记保留在历史中（上面已过滤），
+            // 发送时从最后一个总结消息开始，避免把总结边界之前的内容重新携带进请求
+            // （否则等同于完全没有压缩）。
+            const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
+            if (lastSummaryIndex >= 0) {
+                const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                    conversationId,
+                    fullHistory,
+                    historyOptions,
+                    lastSummaryIndex,
+                    lastSummaryIndex,
+                    dynamicContextStrategy
+                );
+                this.log.info('manual_summary_boundary_applied', {
+                    conversationId,
+                    summaryStartIndex: lastSummaryIndex,
+                    fullHistoryLength: fullHistory.length,
+                    historyLength: normalizedHistory.history.length
+                });
+                return {
+                    history: normalizedHistory.history,
+                    trimStartIndex: normalizedHistory.trimStartIndex,
+                    contextManagementDecision: {
+                        enabled: false,
+                        mode: 'off',
+                        source: policy.source,
+                        action: 'manual_summary_applied'
+                    }
+                };
+            }
+
             // HIS-03/04：fullHistory 已在上面加载，直接复用，避免同一迭代内第二次 loadHistory
             const history = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
@@ -1134,9 +1482,13 @@ export class ContextTrimService {
         });
         
         // ========== 自动总结模式 ==========
-        // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
-        // 由 ToolIterationLoopService 在发送请求前触发总结
+        // 自动总结模式下不做裁剪，而是返回「最后一个总结消息及其之后」的历史 + needsAutoSummarize
+        // 标记，由 ToolIterationLoopService 在发送请求前触发总结。逻辑截断语义下被总结消息已在上方
+        // 过滤（isSummarized 不参与统计），token 估算口径与模型视角一致，不会每轮反复触发。
         if (policy.mode === 'summarize') {
+            // 首条用户消息永远发送（任务锚点）：getNormalizedHistoryForStartIndex 返回前统一调用
+            // prependFirstUserMessage 原样前置（与 Preserved user inputs 档案并存，轻微冗余换取原话完整），
+            // 这里不再手动拼接，避免重复。
             const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
                 conversationId,
                 fullHistory,
@@ -1145,6 +1497,7 @@ export class ContextTrimService {
                 summaryStartIndex,
                 dynamicContextStrategy
             );
+            const summarizeHistory = normalizedHistory.history;
             
             // 估算当前 token 总量来判断是否需要总结
             const fullTokenResult = this.accumulateTokens(
@@ -1166,13 +1519,41 @@ export class ContextTrimService {
             // - 用户消息优先使用 estimatedTokenCount（由 TokenCount API 或本地估算预写入）
             // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
             // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
-            const needsAutoSummarize = fullTokenResult.estimatedTotalTokens > threshold;
+            const exceedsSoftThreshold = fullTokenResult.estimatedTotalTokens > threshold;
+            const hardInputTokenLimit = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
+            const compressibleHistoryTokens = Math.max(0, fullTokenResult.estimatedTotalTokens - promptTokens);
+            const minimumUsefulHistoryTokens = Math.max(
+                MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
+                Math.min(
+                    MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
+                    Math.floor(maxContextTokens * AUTO_SUMMARY_USEFUL_HISTORY_RATIO)
+                )
+            );
+            // 固定 prompt 自身已经越过总结软阈值时，总结无法把总量压回阈值以下。若此时只有很少的
+            // 新历史可压缩，反复总结只会每轮省几百到一两千 token；跳过这次低收益总结并继续主请求。
+            const lowSavingsBecauseFixedPromptExceedsThreshold =
+                exceedsSoftThreshold &&
+                promptTokens >= threshold &&
+                compressibleHistoryTokens < minimumUsefulHistoryTokens;
+            const needsAutoSummarize = exceedsSoftThreshold && !lowSavingsBecauseFixedPromptExceedsThreshold;
+            // 跳过低收益总结不等于忽略真正的模型窗口。只有已经逼近硬窗口时才直接进入请求级 fallback；
+            // 位于软阈值与硬窗口之间时原样继续，避免把总结阈值升级成 Agent 请求禁令。
+            const needsContextFallback =
+                !needsAutoSummarize &&
+                hardInputTokenLimit !== undefined &&
+                fullTokenResult.estimatedTotalTokens > hardInputTokenLimit;
 
             this.logDebug('trim.auto_summarize_check', {
                 conversationId,
                 estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
                 threshold,
-                needsAutoSummarize
+                hardInputTokenLimit,
+                promptTokens,
+                compressibleHistoryTokens,
+                minimumUsefulHistoryTokens,
+                lowSavingsBecauseFixedPromptExceedsThreshold,
+                needsAutoSummarize,
+                needsContextFallback
             });
 
             if (needsAutoSummarize) {
@@ -1180,14 +1561,26 @@ export class ContextTrimService {
             }
             
             return {
-                history: normalizedHistory.history,
+                history: summarizeHistory,
                 trimStartIndex: normalizedHistory.trimStartIndex,
                 needsAutoSummarize,
+                needsContextFallback,
+                // 口径说明：fixedPromptTokens 只含系统提示词 + 动态上下文（不会随裁剪变化、且不在 history 中），
+                // 不含 preservedUserInputTokens——被裁剪区域的逐字用户输入档案由 fallback 的 prependPreservedUserInputs
+                // 在裁剪后的 history 内重新计算，若在此扣除会造成重复预算；而 accumulateTokens 的 promptTokens
+                // （用于软阈值/硬窗口判定）是另一口径，包含该档案。
+                fixedPromptTokens: systemPromptTokens + dynamicContextTokens,
                 contextManagementDecision: {
                     enabled: true,
                     mode: 'summarize',
                     source: policy.source,
-                    action: needsAutoSummarize ? 'auto_summarize_needed' : 'not_needed'
+                    action: needsAutoSummarize
+                        ? 'auto_summarize_needed'
+                        : (needsContextFallback
+                            ? 'hard_fallback_needed'
+                            : (lowSavingsBecauseFixedPromptExceedsThreshold
+                                ? 'auto_summarize_skipped_low_savings'
+                                : 'not_needed'))
                 }
             };
         }

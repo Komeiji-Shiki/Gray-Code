@@ -23,6 +23,24 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById, appendMessage } from './state'
+import { finishSmoothStreamForState, clearAllSmoothForState } from './streamChunkHandlers'
+import { translate } from '../../composables/useI18n'
+import { useSettingsStore } from '../settingsStore'
+
+/**
+ * H5：复位“本次 sendMessage 遗留的流式/待发送状态”。
+ *
+ * sendMessage 在 await 间隙提前终止（如会话已切换导致 validateSessionIdentity 失败）
+ * 时必须复位本次发送设置的标志，否则 isStreaming/isWaitingForResponse/streamingMessageId
+ * 会永久残留，界面一直卡在“等待响应”。
+ */
+function resetPendingSendState(state: ChatStoreState): void {
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state._lastCancelledStreamId.value = null
+}
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -98,6 +116,8 @@ export interface InterruptDeliveryNotice {
   errorCode?: string
   errorMessage?: string
   createdAt: number
+  /** 单调递增序号：TTL 到期按序号精确移除，避免同 tick（createdAt 相同）的其它会话提示被误删 */
+  seq?: number
 }
 
 /** 提示保留时长：超过后自动从列表中移除 */
@@ -107,15 +127,19 @@ export const INTERRUPT_NOTICE_MAX = 3
 
 export const recentInterruptDeliveries = shallowRef<InterruptDeliveryNotice[]>([])
 
+let interruptNoticeSeq = 0
+
 /** 记录一条投递提示：同一会话同类型只保留最新一条；超出上限丢弃最旧；TTL 后自动移除 */
 export function recordInterruptDelivery(notice: Omit<InterruptDeliveryNotice, 'createdAt'>): void {
-  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now() }
+  const full: InterruptDeliveryNotice = { ...notice, createdAt: Date.now(), seq: interruptNoticeSeq++ }
   const filtered = recentInterruptDeliveries.value.filter(
     n => !(n.conversationId === full.conversationId && n.kind === full.kind)
   )
   recentInterruptDeliveries.value = [full, ...filtered].slice(0, INTERRUPT_NOTICE_MAX)
   setTimeout(() => {
-    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.createdAt !== full.createdAt)
+    // 按 seq 精确移除：多条提示 createdAt 可能相同（同一 tick 的并发投递），
+    // 按 createdAt 过滤会误删仍在 TTL 内的其它会话提示
+    recentInterruptDeliveries.value = recentInterruptDeliveries.value.filter(n => n.seq !== full.seq)
   }, INTERRUPT_NOTICE_TTL_MS)
 }
 
@@ -325,9 +349,12 @@ export async function sendMessage(
   attachments?: Attachment[],
   options?: SendMessageOptions
 ): Promise<boolean> {
-  const hiddenFunctionResponse = options?.hidden?.functionResponse
+    const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
   if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return false
+
+  // BR-01：本次发送窗口 user 消息的稳定节点 id（随 chatStream 传给后端原样落库）
+  let pendingUserMessageId: string | undefined
 
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
@@ -387,9 +414,17 @@ export async function sendMessage(
         content: messageText,
         timestamp: Date.now(),
         backendIndex: getNextBackendIndex(state),
+        // BR-01：本地窗口近似父链（首条为 null）——用于编辑时根节点判断（parentId==null 降级 keep）；
+        // 后端落库时 ensureNodeId 会生成准确 parentId，加载历史后以后端为准
+        parentId: state.allMessages.value.length > 0
+          ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
+          : null,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
         source: options?.source
       }
+      // BR-01：记录窗口消息 id 并随 chatStream 传给后端原样落库，
+      // 保证主历史 Content.id 与窗口消息 id 一致（编辑/重试/分支操作按 id 定位）
+      pendingUserMessageId = userMessage.id
       state.allMessages.value.push(userMessage)
     }
 
@@ -427,7 +462,15 @@ export async function sendMessage(
     await syncConversationWorkspaceUri(state, targetConvId)
 
     // 写入全局状态前校验会话归属，防止跨会话投递
-    if (!validateSessionIdentity(state, targetConvId)) return false
+    if (!validateSessionIdentity(state, targetConvId)) {
+      // H5(a)：会话已切换：复位本次发送设置的流式状态，避免 isStreaming 等永久残留。
+      // 仅当当前 streamingMessageId 仍是本次发送的占位时才复位，
+      // 避免误清新会话自己正在进行的流。
+      if (state.streamingMessageId.value === assistantMessageId) {
+        resetPendingSendState(state)
+      }
+      return false
+    }
 
     state.pendingModelOverride.value = effectiveModelOverride || null
     const streamId = generateId()
@@ -453,6 +496,8 @@ export async function sendMessage(
       conversationId: targetConvId,
       configId: state.configId.value,
       message: messageText,
+      // BR-01：窗口 user 消息的稳定节点 id（后端原样落库，编辑/重试才能按 id 定位）
+      messageId: pendingUserMessageId,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
@@ -462,16 +507,23 @@ export async function sendMessage(
       streamId
     })
 
+    // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
+    // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
+    if (!validateSessionIdentity(state, targetConvId)) {
+      console.warn('[messageActions] sendMessage: conversation switched while chatStream in flight; stream continues in background', {
+        targetConvId,
+        currentConversationId: state.currentConversationId.value
+      })
+      return false
+    }
+
   } catch (err: any) {
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
-      state.streamingMessageId.value = null
-      state.isStreaming.value = false
-      state.activeStreamId.value = null
-      state.isWaitingForResponse.value = false
+      resetPendingSendState(state)
     }
     return false
   } finally {
@@ -836,16 +888,22 @@ async function replayBranchStreamAfterError(
     if (targetIndex === -1) return
 
     const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
+    const isKeepReplay = context.kind === 'editBranch' && context.mode === 'keep'
     if (context.kind === 'reroll') {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
     } else {
       const targetMessage = state.allMessages.value[targetIndex]
       targetMessage.content = context.newText
       targetMessage.parts = [{ text: context.newText }]
-      state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+      // keep 模式（真·原地保存）：只改写目标消息，后续消息全部保留，不截断
+      if (!isKeepReplay) {
+        state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
+      }
     }
-    clearCheckpointsFromIndex(state, backendIndex)
-    setTotalMessagesFromWindow(state)
+    if (!isKeepReplay) {
+      clearCheckpointsFromIndex(state, backendIndex)
+      setTotalMessagesFromWindow(state)
+    }
   }
 
   state.error.value = null
@@ -853,24 +911,28 @@ async function replayBranchStreamAfterError(
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
 
-  const assistantMessageId = generateId()
-  appendMessage(state, {
-    id: assistantMessageId,
-    role: 'assistant',
-    content: '',
-    timestamp: Date.now(),
-    backendIndex: getNextBackendIndex(state),
-    streaming: true,
-    localOnly: true,
-    metadata: {
-      modelVersion: computed.currentModelName.value
-    }
-  })
-  state.streamingMessageId.value = assistantMessageId
-  syncTotalMessagesFromWindow(state)
-  trimWindowFromTop(state)
+  // keep 模式（真·原地保存）重放：不创建占位（后端不重新生成，complete 仅复位状态）
+  const isKeepReplay = context.kind === 'editBranch' && context.mode === 'keep'
+  if (!isKeepReplay) {
+    const assistantMessageId = generateId()
+    appendMessage(state, {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
+      streaming: true,
+      localOnly: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
+    })
+    state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
+  }
 
-  state._pendingBranchRefreshAfterStream.value = originConvId
+  state._pendingBranchRefreshAfterStream.value = isKeepReplay ? null : originConvId
   state._pendingBranchReplayContext.value = context
 
   try {
@@ -1067,36 +1129,47 @@ export async function editAndRetry(
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   const targetMessage = state.allMessages.value[messageIndex]
+  // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
+  // branch 模式自动降级为 keep（真·原地保存）
+  const effectiveMode = mode === 'branch' && targetMessage.parentId == null ? 'keep' : mode
   targetMessage.content = newMessage
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
-  
-  state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
-  clearCheckpointsFromIndex(state, backendMessageIndex)
-  setTotalMessagesFromWindow(state)
 
-  
-  const assistantMessageId = generateId()
-  const assistantMessage: Message = {
-    id: assistantMessageId,
-    role: 'assistant',
-    content: '',
-    timestamp: Date.now(),
-    backendIndex: getNextBackendIndex(state),
-    streaming: true,
-    localOnly: true,
-    metadata: {
-      modelVersion: computed.currentModelName.value
+  if (effectiveMode === 'keep') {
+    // 真·原地保存：只改写本条消息，后续消息 / 检查点 / 分支全部保留，
+    // 不截断窗口、不创建占位（后端不重新生成，流结束仅复位状态）
+  } else {
+    // branch 模式：截断窗口到目标消息 + 创建流式占位
+    state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+    clearCheckpointsFromIndex(state, backendMessageIndex)
+    setTotalMessagesFromWindow(state)
+
+    const assistantMessageId = generateId()
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      backendIndex: getNextBackendIndex(state),
+      streaming: true,
+      localOnly: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
     }
+    state.allMessages.value.push(assistantMessage)
+    state.streamingMessageId.value = assistantMessageId
+    syncTotalMessagesFromWindow(state)
+    trimWindowFromTop(state)
   }
-  state.allMessages.value.push(assistantMessage)
-  state.streamingMessageId.value = assistantMessageId
-  syncTotalMessagesFromWindow(state)
-  trimWindowFromTop(state)
 
   // 置位：流结束（complete/error/cancelled）后刷新分支图，
   // 让 BranchSwitcherBar 显示新编辑候选的「‹ 2/2 ›」切换器（streamHandler 按会话消费并复位）。
-  state._pendingBranchRefreshAfterStream.value = originConvId
+  // keep 模式（真·原地保存）不产生候选，无需刷新分支图。
+  if (effectiveMode !== 'keep') {
+    state._pendingBranchRefreshAfterStream.value = originConvId
+  }
 
   let replayContext: BranchStreamReplayContext | null = null
   try {
@@ -1109,7 +1182,7 @@ export async function editAndRetry(
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      mode: effectiveMode
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -1123,12 +1196,15 @@ export async function editAndRetry(
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId,
       newText: newMessage,
       configId: state.configId.value,
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value,
-      mode
+      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      mode: effectiveMode
     })
   } catch (err: any) {
     const branchReplayContext = replayContext
@@ -1142,10 +1218,15 @@ export async function editAndRetry(
     // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
     state._pendingBranchRefreshAfterStream.value = null
     if (state.isStreaming.value) {
+      // MESSAGE_CHANGED：目标消息已被其他操作改动（索引漂移校验失败），提示用户刷新历史，
+      // 不附带 branchReplayContext（重放已无意义）
+      const isMessageChanged = err?.code === 'MESSAGE_CHANGED'
       safeSetError(state, originConvId, {
-        code: err.code || 'EDIT_RETRY_ERROR',
-        message: err.message || 'Edit and retry failed',
-        branchReplayContext: branchReplayContext ?? undefined
+        code: isMessageChanged ? 'MESSAGE_CHANGED' : (err.code || 'EDIT_RETRY_ERROR'),
+        message: isMessageChanged
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err.message || 'Edit and retry failed'),
+        branchReplayContext: isMessageChanged ? undefined : (branchReplayContext ?? undefined)
       })
     }
     // 会话已切换时不恢复：窗口已由新会话 loadHistory 接管，避免跨会话污染
@@ -1188,6 +1269,8 @@ export async function deleteMessage(
   // 如果删除目标是”本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
   if (isLocalPlaceholder) {
     const msgId = state.allMessages.value[targetIndex]?.id
+    // H1/M6：删除前清理该消息的平滑条目（如流式占位残留），避免 smoothTexts 泄漏
+    finishSmoothStreamForState(state, msgId)
     // 重新计算（可能因为 cancel 导致窗口变化）
     const currentBackendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
@@ -1208,7 +1291,9 @@ export async function deleteMessage(
   try {
     const response = await sendToExtension<any>('deleteMessage', {
       conversationId: originConvId,
-      targetIndex: backendIndex
+      targetIndex: backendIndex,
+      // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
+      messageId: targetMessageId
     })
 
     // 再次校验归属
@@ -1218,19 +1303,25 @@ export async function deleteMessage(
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
+      // H1/M6：删除消息后清理其平滑条目（如流式期间删除半截回答），避免 smoothTexts 泄漏
+      finishSmoothStreamForState(state, targetMessageId)
       await refreshCurrentConversationBuildSession(state)
     } else {
       const err = response?.error
       safeSetError(state, originConvId, {
         code: err?.code || 'DELETE_ERROR',
-        message: err?.message || 'Delete failed'
+        message: err?.code === 'MESSAGE_CHANGED'
+          ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+          : (err?.message || 'Delete failed')
       })
       console.error('[messageActions] deleteMessage failed:', response)
     }
   } catch (err: any) {
     safeSetError(state, originConvId, {
       code: err.code || 'DELETE_ERROR',
-      message: err.message || 'Delete failed'
+      message: err.code === 'MESSAGE_CHANGED'
+        ? translate(useSettingsStore().language || 'zh-CN', 'stores.chatStore.errors.messageChanged')
+        : (err.message || 'Delete failed')
     })
   }
 }
@@ -1252,6 +1343,9 @@ export async function deleteSingleMessage(
   // 因此这里把 targetIndex 视为”后端绝对索引（backendIndex）”，并在成功后重新加载窗口，避免索引错位。
   const backendIndex = targetIndex
   if (backendIndex < 0) return
+
+  // H1/M6：记录将被删除消息的本地 id（按 backendIndex 定位），成功后清理其平滑条目
+  const removedMessageId = state.allMessages.value.find(m => m.backendIndex === backendIndex)?.id
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -1289,6 +1383,11 @@ export async function deleteSingleMessage(
       state.historyFolded.value = false
       state.foldedMessageCount.value = 0
 
+      // H1/M6：删除成功后清理被删消息的平滑条目（如流式期间删除半截回答）
+      if (removedMessageId) {
+        finishSmoothStreamForState(state, removedMessageId)
+      }
+
       await loadCheckpoints(state)
       await refreshCurrentConversationBuildSession(state)
     }
@@ -1304,6 +1403,8 @@ export async function deleteSingleMessage(
  * 清空当前对话的消息
  */
 export function clearMessages(state: ChatStoreState): void {
+  // H1/M6：清空前清理所有平滑条目（销毁实例 + 删除显示文本），UI 立即切回真实 content
+  clearAllSmoothForState(state)
   state.allMessages.value = []
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
@@ -1383,7 +1484,8 @@ export async function summarizeContext(
       error?: { code: string; message: string }
     }>('summarizeContext', {
       conversationId: originConversationId,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride: resolveConversationModelOverride(state)
     })
 
     if (result.success && result.summaryContent) {
@@ -1424,5 +1526,56 @@ export async function cancelSummarizeRequest(state: ChatStoreState): Promise<voi
     await sendToExtension('cancelSummarizeRequest', { conversationId })
   } catch (error) {
     console.error('[messageActions] Failed to cancel summarize request:', error)
+  }
+}
+
+/**
+ * 恢复指定总结消息覆盖的原文（逻辑截断的反向操作）
+ *
+ * 后端取消覆盖区间的 isSummarized 标记并删除总结消息本身，原文重新参与发送与统计
+ * （发送起点回退到上一个总结或 0）。成功后重新加载消息窗口：总结消息消失、原文恢复活跃。
+ *
+ * @returns 是否成功
+ */
+export async function restoreSummarizedMessages(
+  state: ChatStoreState,
+  summaryMessageId: string
+): Promise<boolean> {
+  const originConvId = state.currentConversationId.value
+  if (!originConvId || !summaryMessageId) return false
+
+  try {
+    const response = await sendToExtension<{ success: boolean }>('restoreSummarizedMessages', {
+      conversationId: originConvId,
+      summaryMessageId
+    })
+
+    // 校验归属：await 期间当前会话可能已切换
+    if (state.currentConversationId.value !== originConvId) return false
+    if (!response?.success) return false
+
+    // 重新加载最后一页，确保 backendIndex 与消息列表不错位（总结消息已删除、原文恢复显示）
+    const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      conversationId: originConvId,
+      limit: MESSAGES_PAGE_SIZE
+    })
+    if (state.currentConversationId.value !== originConvId) return false
+
+    const page = result?.messages || []
+    state.totalMessages.value = result?.total ?? page.length
+    state.windowStartIndex.value = page[0]?.index ?? 0
+    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+    rebuildMessageIndexById(state)
+
+    state.isLoadingMoreMessages.value = false
+    state.historyFolded.value = false
+    state.foldedMessageCount.value = 0
+    return true
+  } catch (err: any) {
+    safeSetError(state, originConvId, {
+      code: err.code || 'RESTORE_SUMMARY_ERROR',
+      message: err.message || 'Restore summary failed'
+    })
+    return false
   }
 }

@@ -53,6 +53,16 @@ export interface ProxySettings {
      * 例如: http://127.0.0.1:7890
      */
     url?: string;
+    
+    /**
+     * 是否跳过 TLS 证书校验（仅用于自签名证书调试）
+     *
+     * - true: 传递 rejectUnauthorized: false，跳过证书校验（抓包/自签名场景）
+     * - false（默认）: 校验证书
+     *
+     * 默认值：false（校验证书）
+     */
+    insecureSkipVerify?: boolean;
 }
 
 /**
@@ -211,6 +221,16 @@ export interface GlobalSettings {
             selectionContextEnabled?: boolean;
 
             /**
+             * 流式平滑输出档位
+             *
+             * - off: 关闭（原始逐块输出）
+             * - smooth: 灵敏（lookahead 220ms）
+             * - balanced: 标准（lookahead 320ms）
+             * - silky: 丝滑（lookahead 450ms）
+             */
+            smoothStreaming?: 'off' | 'smooth' | 'balanced' | 'silky';
+
+            /**
              * 兼容旧版：是否启用选中文本悬浮入口
              * @deprecated 请改用 selectionContextEnabled
              */
@@ -221,6 +241,14 @@ export interface GlobalSettings {
              * @deprecated 请改用 selectionContextEnabled
              */
             selectionContextCodeActionEnabled?: boolean;
+
+            /**
+             * 开屏动画开关
+             *
+             * - true: 启动时播放开场动画（Splash）
+             * - false: 直接进入主界面
+             */
+            splashEnabled?: boolean;
         };
 
         /**
@@ -325,7 +353,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: '',
-            selectionContextEnabled: true
+            selectionContextEnabled: true,
+            smoothStreaming: 'balanced',
+            splashEnabled: true
         },
         sound: {
             enabled: false,

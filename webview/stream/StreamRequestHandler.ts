@@ -8,7 +8,7 @@ import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
 import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
 import type { SettingsManager } from '../../backend/modules/settings/SettingsManager';
-import { StreamAbortManager } from './StreamAbortManager';
+import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
@@ -31,7 +31,29 @@ export interface StreamHandlerDeps {
  * 流式请求处理器
  */
 export class StreamRequestHandler {
-  constructor(private deps: StreamHandlerDeps) {}
+  constructor(private deps: StreamHandlerDeps) {
+    // H1：把 abort manager 注册为全局单例，供后端 ChatFlowService 读取同一实例，
+    // 在写入用户消息/截断历史之前等待旧流退出（reroll / editBranch 等不经本类
+    // create 的入口同样被覆盖）。
+    StreamAbortManager.setGlobalInstance(this.deps.abortManager);
+  }
+
+  /**
+   * 在启动新流之前等待旧流完全退出（H1 写序竞态）。
+   *
+   * 用户「停止后立即重发」时，旧流取消路径还要等工具结算窗口（约 3s）落盘、finally 注销
+   * 控制器；若不等它退出就 create() 新流并写入用户消息，旧流的结算 addContent 会落在新
+   * 用户消息之后（半截旧回答/错位结算）。本方法 abort 旧流并等待其 finally（带超时兜底，
+   * 不阻塞新流启动太久）。
+   */
+  private async awaitOldStreamCompletion(conversationId: string): Promise<void> {
+    try {
+      await this.deps.abortManager.abortAndWaitForCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+    } catch (error) {
+      // 等待失败不应阻断新流启动（等待内部已有超时兜底，此处仅防御性兜底）
+      console.warn('[StreamRequestHandler] Failed to wait for old stream completion:', error);
+    }
+  }
 
   /**
    * 规范化请求携带的 Prompt 模式 ID。
@@ -87,19 +109,29 @@ export class StreamRequestHandler {
     return requestId
   }
 
-  private async cleanupAbortedConversations(conversationIds: string[]): Promise<void> {
-    try {
-      const diffManager = getDiffManager();
-      await diffManager.cancelAllPending();
-    } catch (err) {
-      console.error('Failed to cancel pending diffs:', err);
-    }
-
-    if (conversationIds.length === 0) {
-      return;
+  private async cleanupAbortedConversations(
+    conversationIds: string[],
+    options: { cancelAllPendingDiffs?: boolean } = {}
+  ): Promise<void> {
+    if (options.cancelAllPendingDiffs) {
+      // 扩展整体关闭/停止全部必须清理所有未决 diff，包括已没有活跃主流但仍在等确认的会话。
+      try {
+        await getDiffManager().cancelAllPending();
+      } catch (err) {
+        console.error('Failed to cancel pending diffs:', err);
+      }
     }
 
     await Promise.all(conversationIds.map(async (conversationId) => {
+      // 普通停止只清理当前会话。旧实现漏传 conversationId，会把其他标签页仍在等待确认的
+      // diff 一并取消，表现为“停止 A 会话，B 会话也莫名停止/拒绝工具”。
+      if (!options.cancelAllPendingDiffs) {
+        try {
+          await getDiffManager().cancelAllPending(conversationId);
+        } catch (err) {
+          console.error(`Failed to cancel pending diffs for conversation ${conversationId}:`, err);
+        }
+      }
       try {
         await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
       } catch (err) {
@@ -111,7 +143,7 @@ export class StreamRequestHandler {
   async cancelAllStreams(): Promise<void> {
     const conversationIds = this.deps.abortManager.listConversationIds();
     this.deps.abortManager.cancelAll(this.deps.getClientView());
-    await this.cleanupAbortedConversations(conversationIds);
+    await this.cleanupAbortedConversations(conversationIds, { cancelAllPendingDiffs: true });
   }
 
   /**
@@ -121,6 +153,7 @@ export class StreamRequestHandler {
     const {
       conversationId,
       message,
+      messageId,
       configId,
       attachments,
       modelOverride,
@@ -131,6 +164,8 @@ export class StreamRequestHandler {
     } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
+    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在新用户消息之后）
+    await this.awaitOldStreamCompletion(conversationId);
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -139,6 +174,7 @@ export class StreamRequestHandler {
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
         message,
+        messageId,
         configId,
         modelOverride,
         attachments,
@@ -184,6 +220,8 @@ export class StreamRequestHandler {
     const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
+    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在重试截断/新消息之后）
+    await this.awaitOldStreamCompletion(conversationId);
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -227,9 +265,11 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, streamId: clientStreamId } = data;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, messageId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
+    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在编辑截断之后）
+    await this.awaitOldStreamCompletion(conversationId);
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -243,6 +283,8 @@ export class StreamRequestHandler {
         modelOverride,
         attachments,
         preserveCheckpointId,
+        // M1：透传消息 id 供后端做防索引漂移校验（可选；旧前端不传时保持旧行为）
+        messageId,
         promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
@@ -277,9 +319,11 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
+    const { conversationId, toolResponses, annotation, annotationMessageId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     
+    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算与工具确认结算交错写历史）
+    await this.awaitOldStreamCompletion(conversationId);
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -289,6 +333,7 @@ export class StreamRequestHandler {
         conversationId,
         toolResponses,
         annotation,
+        annotationMessageId,
         configId,
         modelOverride,
         promptModeId: this.normalizePromptModeId(promptModeId),

@@ -22,6 +22,9 @@ describe('isRealUserMessage', () => {
         expect(isRealUserMessage({ role: 'user', source: 'background_task' })).toBe(false);
         expect(isRealUserMessage({ role: 'user', isFunctionResponse: true })).toBe(false);
         expect(isRealUserMessage({ role: 'user', isSummary: true })).toBe(false);
+        expect(isRealUserMessage({ role: 'user', isAutoSummary: true })).toBe(false);
+        // 逻辑截断：被总结覆盖的原始消息不构成新回合边界
+        expect(isRealUserMessage({ role: 'user', isSummarized: true })).toBe(false);
     });
 });
 

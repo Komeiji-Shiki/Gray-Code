@@ -15,7 +15,7 @@
  * 第六部分 L1619–1630（workspaceState）、第七部分 L1703–1711（错误码）。
  */
 
-import type { ContentPart, UsageMetadata } from '../types';
+import type { Content, ContentPart, UsageMetadata } from '../types';
 
 /** branches.json 当前结构版本（MIG-04 版本迁移状态机的基线） */
 export const BRANCH_GRAPH_VERSION = 1;
@@ -27,6 +27,18 @@ export const BRANCH_GRAPH_VERSION = 1;
  * 0 表示不自动清理（永不过期）。
  */
 export const DEFAULT_BRANCH_RETENTION_DAYS = 30;
+
+/**
+ * 分支节点需要随消息往返保留、但不参与图拓扑的 Content 字段。
+ *
+ * 结构字段在 ConversationBranchNode 顶层维护；index 是展示时计算值，不进入 sidecar。
+ * 使用一个扩展元数据包可避免新增 Content 字段时，分支切换静默把它丢掉。尤其是逻辑总结的
+ * isSummary / isSummarized / summaryTokenStats 等字段，丢失后会让已压缩原文重新进入模型上下文。
+ */
+export type BranchContentMetadata = Omit<
+    Content,
+    'id' | 'parentId' | 'role' | 'parts' | 'index' | 'timestamp' | 'modelVersion' | 'usageMetadata' | 'usageMetadataPartial'
+>;
 
 /** 分支保留期配置（branches.config.json / BranchService 构造选项共用） */
 export interface BranchRetentionConfig {
@@ -120,6 +132,8 @@ export interface ConversationBranchNode {
      * 避免中断 reroll 候选按截断原值计入导致低估。与 Content.usageMetadataPartial 同语义。
      */
     usageMetadataPartial?: boolean;
+    /** Content 的非拓扑元数据；分支切换重建主历史时原样恢复。 */
+    contentMetadata?: BranchContentMetadata;
     /**
      * 当前选中的子分支指针（唯一真源）。
      * 不存 childrenIds；子列表运行时用 childrenIndex 建立索引。

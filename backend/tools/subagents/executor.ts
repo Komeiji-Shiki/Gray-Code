@@ -31,6 +31,7 @@ import { subAgentRunController } from './runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from './concurrencyLimiter';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 import { agentMailbox } from './agentMailbox';
+import { markAiActive } from '../../modules/activity';
 
 /**
  * 子代理内部工具执行结果。
@@ -235,6 +236,70 @@ export function clearRunAllowedTools(runId: string): void {
 let executorContext: SubAgentExecutorContext | null = null;
 
 /**
+ * 子代理路径共享的 ToolDeclarationResolver（按依赖引用身份缓存）：
+ * - 生产环境依赖（toolRegistry/settingsManager/mcpManager）是全局单例，同一依赖组合只建一个
+ *   实例 → 注册到 McpManager 的事件监听器只有 3 个常驻，不再随每次 run 无界累积（H-1）；
+ * - 同配置多次 run 复用同一实例的声明缓存（缓存键含 promptModeSnapshot 等 per-call 输入，
+ *   配置变化自动命中不同条目，无陈旧风险）；
+ * - 容量上限兜底：不同依赖组合（测试等场景）最多保留 TOOL_RESOLVER_CACHE_CAPACITY 个实例，
+ *   超限 dispose 最久未用实例，释放其 MCP 监听器。
+ */
+const TOOL_RESOLVER_CACHE_CAPACITY = 4;
+const sharedToolResolvers = new Map<string, ToolDeclarationResolver>();
+/** 依赖对象 → 自增 id（WeakMap 不阻止 GC；对象销毁后条目自动消失，无泄漏） */
+const resolverDepIds = new WeakMap<object, number>();
+let resolverDepIdCounter = 0;
+
+function toolResolverCacheKey(context: SubAgentExecutorContext): string {
+    return `${refIdentity(context.toolRegistry)}|${refIdentity(context.settingsManager)}|${refIdentity(context.mcpManager)}`;
+}
+
+function refIdentity(value: unknown): string {
+    if (!value || typeof value !== 'object') return String(value ?? '');
+    let id = resolverDepIds.get(value);
+    if (id === undefined) {
+        id = ++resolverDepIdCounter;
+        resolverDepIds.set(value, id);
+    }
+    return `#${id}`;
+}
+
+function getSharedToolResolver(context: SubAgentExecutorContext): ToolDeclarationResolver {
+    const key = toolResolverCacheKey(context);
+    const cached = sharedToolResolvers.get(key);
+    if (cached) {
+        // LRU 触碰
+        sharedToolResolvers.delete(key);
+        sharedToolResolvers.set(key, cached);
+        return cached;
+    }
+    const resolver = new ToolDeclarationResolver(
+        context.toolRegistry,
+        context.settingsManager,
+        context.mcpManager
+    );
+    sharedToolResolvers.set(key, resolver);
+    if (sharedToolResolvers.size > TOOL_RESOLVER_CACHE_CAPACITY) {
+        const oldestKey = sharedToolResolvers.keys().next().value;
+        if (oldestKey !== undefined) {
+            const oldest = sharedToolResolvers.get(oldestKey);
+            // 注意：dispose 可能是 undefined（mock/旧实现），需用双重可选链
+            oldest?.dispose?.();
+            sharedToolResolvers.delete(oldestKey);
+        }
+    }
+    return resolver;
+}
+
+/** 仅供测试/诊断：清理共享 resolver 缓存并释放全部 MCP 监听器 */
+export function clearSharedToolResolvers(): void {
+    for (const resolver of sharedToolResolvers.values()) {
+        resolver.dispose?.();
+    }
+    sharedToolResolvers.clear();
+}
+
+/**
  * 设置执行器上下文
  * 
  * 应在应用启动时调用，注入所需的依赖
@@ -276,11 +341,9 @@ export async function resolveSubAgentAvailableTools(
     // 修改原因：SubAgent 过去直接读取 toolRegistry/MCP 并自己清理 schema，导致工具声明与主会话动态声明分叉。
     // 修改方式：统一委托 ToolDeclarationResolver，并把 SubAgent 自己的 provider config、工具白名单和黑名单作为输入。
     // 修改目的：read_file 多模态说明、图片工具过滤、MCP schema 清理等以后只需要升级一个入口。
-    const resolver = new ToolDeclarationResolver(
-        context.toolRegistry,
-        context.settingsManager,
-        context.mcpManager
-    );
+    // H-1（修复）：不再每次 run 新建实例——构造函数会向 McpManager 单例注册监听器，
+    // 无界新建会累积永久监听器；改用按依赖引用共享的实例（见 getSharedToolResolver）。
+    const resolver = getSharedToolResolver(context);
 
     const resolved = resolver.resolve({
         multimodalEnabled: channelConfig.multimodalToolsEnabled,
@@ -604,9 +667,15 @@ export function createDefaultExecutor(
         // 修改目的：让 pending、完成态和历史态的 Open details 都能定位同一次运行，同时兼容非主聊天入口。
         const requestedRunId = typeof request.runId === 'string' && request.runId.trim() ? request.runId.trim() : undefined;
         // 预分配的 runId 可能撞上同一 toolId 上一次仍在运行的 run，交给事件总线判重
-        const runId = subAgentRunEventBus.allocateRunId(
-            requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-        );
+        // 修改原因：续跑必须复用旧 runId——run 记录、transcript、provider 缓存域三位一体；
+        //          用新 runId 会在 Monitor 里出现第二条记录，续跑退化为「新 run 前置旧 transcript」。
+        // 修改方式：continueFromRunId 存在时直接沿用旧 runId（快照存在性已由上方续跑校验保证），
+        //          普通新 run 仍走 allocateRunId 判重。
+        const runId = request.continueFromRunId
+            ? request.continueFromRunId
+            : subAgentRunEventBus.allocateRunId(
+                requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            );
 
         // F2：嵌套深度——由派发方（subagents handler）按“父深度 + 1”计算后随 request 传入；
         // 缺省按 0（主模型直接派发）处理。深度用于：超限校验已在 handler 完成，这里负责
@@ -635,6 +704,9 @@ export function createDefaultExecutor(
             if (!oldSnapshot && currentConversationId && currentConversationStore) {
                 await subAgentRunEventBus.loadConversationSnapshots(currentConversationId, currentConversationStore);
                 oldSnapshot = subAgentRunEventBus.getSnapshot(request.continueFromRunId);
+            }
+            if (oldSnapshot?.transcriptLoaded === false) {
+                oldSnapshot = await subAgentRunEventBus.loadRunTranscript(request.continueFromRunId);
             }
             if (!oldSnapshot) {
                 return {
@@ -699,17 +771,29 @@ export function createDefaultExecutor(
             isUserInput: true,
             timestamp: Date.now()
         } as Content;
-        subAgentRunEventBus.createRun(runId, config.name, {
-            agentType: request.agentType,
-            prompt: request.prompt,
-            context: request.context,
-            // F2：深度随 run_created payload 暴露，Monitor 可按需展示嵌套层级。
-            depth
-        }, {
-            conversationId: currentConversationId,
-            conversationStore: currentConversationStore,
-            initialContents: [...baseContents, initialPromptContent]
-        });
+        if (request.continueFromRunId) {
+            // 续跑：复用旧快照继续（保留 contents/events/lastSentHistory，不重建 run），
+            // 只追加本次的 Invocation 卡片；run_resumed 由 resumeRun 广播，Monitor 记录唯一。
+            subAgentRunEventBus.resumeRun(runId, config.name, {
+                depth
+            }, {
+                conversationId: currentConversationId,
+                conversationStore: currentConversationStore,
+                initialContents: [initialPromptContent]
+            });
+        } else {
+            subAgentRunEventBus.createRun(runId, config.name, {
+                agentType: request.agentType,
+                prompt: request.prompt,
+                context: request.context,
+                // F2：深度随 run_created payload 暴露，Monitor 可按需展示嵌套层级。
+                depth
+            }, {
+                conversationId: currentConversationId,
+                conversationStore: currentConversationStore,
+                initialContents: [...baseContents, initialPromptContent]
+            });
+        }
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
         // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
@@ -827,11 +911,13 @@ export function createDefaultExecutor(
             const message = queueError instanceof SubAgentQueueCancelledError
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
                 : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
-            return finalizeRun({
+            const finalized = finalizeRun({
                 success: false,
                 error: message,
                 cancelled: true
             });
+            await subAgentRunEventBus.flushRun(runId);
+            return finalized;
         } finally {
             releaseAcquireSignal?.();
             releaseAcquireSignal = undefined;
@@ -1199,6 +1285,8 @@ export function createDefaultExecutor(
                         // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
                         // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
                         for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
+                            // 子代理正在生成：视为用户在场（主人在 Monitor/主窗口查看）
+                            markAiActive();
                             if (operationSignal?.aborted || checkTimeout().exceeded) {
                                 break;
                             }
@@ -1505,6 +1593,8 @@ export function createDefaultExecutor(
             // 修改方式：按 runId 兜底清理该 run 持有的全部锁。
             // 修改目的：避免锁泄漏导致其他 agent 永久无法修改相关文件。
             fileWriteLockManager.releaseAllByHolder(runId);
+            // 终态事件必须在工具 Promise 返回主流程前落盘；否则扩展重载会把已完成 run 误判为 interrupted。
+            await subAgentRunEventBus.flushRun(runId);
         }
     };
 }

@@ -327,3 +327,111 @@ describe('CheckpointQueryService', () => {
         expect(result[1].messageIndex).toBe(0);
         expect((result as CheckpointQueryResult).error).toBeUndefined();
     });
+
+
+describe('CheckpointQueryService.removeOrphanBackupDirs（CP-ORPHAN）', () => {
+    /** 构造指向独立临时目录的 service（harness 的固定目录不适合写磁盘） */
+    async function createDirHarness(): Promise<{
+        service: CheckpointQueryService;
+        manager: { getCustomMetadata: jest.Mock; listConversations: jest.Mock };
+        root: string;
+    }> {
+        const manager = {
+            getCustomMetadata: jest.fn(),
+            getMetadataLight: jest.fn(),
+            listConversations: jest.fn().mockResolvedValue(['conv-1', 'conv-2']),
+            updateCustomMetadata: jest.fn()
+        };
+        const manifestRepository = { loadManifest: jest.fn(), clearCache: jest.fn() };
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-orphan-'));
+        const service = new CheckpointQueryService(
+            manager as unknown as ConversationManager,
+            root,
+            manifestRepository as unknown as CheckpointManifestRepository,
+            () => 'title'
+        );
+        return { service, manager, root };
+    }
+
+    test('跨对话汇总：其它对话引用的存档目录不当作孤儿删除（回归：跨对话误删）', async () => {
+        const { service, manager, root } = await createDirHarness();
+        try {
+            // conv-1 的当前记录引用 cp_1；conv-2 的汇总记录引用 cp_2
+            const currentRecords = [makeRecord({ id: 'cp-1', backupDir: 'cp_1' })];
+            manager.getCustomMetadata.mockImplementation(async (conversationId: string) => {
+                if (conversationId === 'conv-2') {
+                    return [makeRecord({ id: 'cp-2', backupDir: 'cp_2', conversationId: 'conv-2' })];
+                }
+                return null;
+            });
+            for (const name of ['cp_1', 'cp_2', 'cp_3']) {
+                await fs.mkdir(path.join(root, name));
+            }
+            // cp_3 无引用、无 manifest：回拨 mtime 成超龄真孤儿，确保守卫放行
+            const old = new Date(Date.now() - 10 * 60 * 1000);
+            await fs.utimes(path.join(root, 'cp_3'), old, old);
+
+            await service.removeOrphanBackupDirs(currentRecords);
+
+            // cp_1（当前对话记录）、cp_2（其它对话记录）都保留；cp_3 无引用被清理
+            for (const name of ['cp_1', 'cp_2']) {
+                const stat = await fs.stat(path.join(root, name)).catch(() => null);
+                expect(stat?.isDirectory()).toBe(true);
+            }
+            await expect(fs.access(path.join(root, 'cp_3'))).rejects.toThrow();
+            // 两个对话的元数据都被枚举（汇总口径）
+            expect(manager.getCustomMetadata).toHaveBeenCalledWith('conv-1', 'checkpoints');
+            expect(manager.getCustomMetadata).toHaveBeenCalledWith('conv-2', 'checkpoints');
+        } finally {
+            await fs.rm(root, { recursive: true, force: true });
+        }
+    });
+
+    test('manifest 守卫（fail-closed）：含 manifest.json 的目录绝不删除，即使记录枚举失败', async () => {
+        const { service, manager, root } = await createDirHarness();
+        try {
+            const currentRecords = [makeRecord({ id: 'cp-1', backupDir: 'cp_1' })];
+            // 枚举对话 2 元数据失败 → fail-closed：本次清理整体中止
+            manager.getCustomMetadata.mockImplementation(async (conversationId: string) => {
+                if (conversationId === 'conv-2') {
+                    throw new Error('metadata corrupted');
+                }
+                return null;
+            });
+            for (const name of ['cp_1', 'cp_2']) {
+                await fs.mkdir(path.join(root, name));
+            }
+            await fs.writeFile(path.join(root, 'cp_2', 'manifest.json'), '{}');
+
+            await service.removeOrphanBackupDirs(currentRecords);
+
+            // 枚举失败 → 整体中止，cp_2（即使无记录可引）也保留
+            const stat = await fs.stat(path.join(root, 'cp_2')).catch(() => null);
+            expect(stat?.isDirectory()).toBe(true);
+        } finally {
+            await fs.rm(root, { recursive: true, force: true });
+        }
+    });
+
+    test('mtime 新鲜度守卫：无 manifest 但新建的目录跳过（创建中窗口），超龄无 manifest 才删', async () => {
+        const { service, manager, root } = await createDirHarness();
+        try {
+            const currentRecords = [makeRecord({ id: 'cp-1', backupDir: 'cp_1' })];
+            manager.getCustomMetadata.mockResolvedValue(null);
+            for (const name of ['cp_1', 'cp_fresh', 'cp_old']) {
+                await fs.mkdir(path.join(root, name));
+            }
+            // cp_fresh 保持新建 mtime；cp_old 回拨到 10 分钟前（超过 5 分钟阈值）
+            const old = new Date(Date.now() - 10 * 60 * 1000);
+            await fs.utimes(path.join(root, 'cp_old'), old, old);
+
+            await service.removeOrphanBackupDirs(currentRecords);
+
+            const fresh = await fs.stat(path.join(root, 'cp_fresh')).catch(() => null);
+            expect(fresh?.isDirectory()).toBe(true);
+            await expect(fs.access(path.join(root, 'cp_old'))).rejects.toThrow();
+        } finally {
+            await fs.rm(root, { recursive: true, force: true });
+        }
+    });
+});

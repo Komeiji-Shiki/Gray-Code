@@ -242,7 +242,7 @@ function stopAutoRefresh() {
     
     <div v-else class="settings-form">
       <!-- 文件树设置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="file-tree">
         <label class="group-label">
           <i class="codicon codicon-list-tree"></i>
           {{ t('components.settings.contextSettings.workspaceFiles.title') }}
@@ -279,7 +279,7 @@ function stopAutoRefresh() {
       <div class="divider"></div>
       
       <!-- 打开的标签页设置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="open-tabs">
         <label class="group-label">
           <i class="codicon codicon-files"></i>
           {{ t('components.settings.contextSettings.openTabs.title') }}
@@ -316,7 +316,7 @@ function stopAutoRefresh() {
       <div class="divider"></div>
       
       <!-- 当前活动编辑器设置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="active-editor">
         <label class="group-label">
           <i class="codicon codicon-file-code"></i>
           {{ t('components.settings.contextSettings.activeEditor.title') }}
@@ -337,7 +337,7 @@ function stopAutoRefresh() {
       <div class="divider"></div>
       
       <!-- 诊断信息设置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="diagnostics">
         <label class="group-label">
           <i class="codicon codicon-warning"></i>
           {{ t('components.settings.contextSettings.diagnostics.title') }}
@@ -436,7 +436,7 @@ function stopAutoRefresh() {
       <div class="divider"></div>
       
       <!-- 忽略模式设置 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="ignore-patterns">
         <label class="group-label">
           <i class="codicon codicon-exclude"></i>
           {{ t('components.settings.contextSettings.ignorePatterns.title') }}
@@ -492,7 +492,7 @@ function stopAutoRefresh() {
       <div class="divider"></div>
       
       <!-- 预览区域 -->
-      <div class="form-group">
+      <div class="form-group" data-search-anchor="context-preview">
         <div class="preview-header">
           <label class="group-label">
             <i class="codicon codicon-eye"></i>

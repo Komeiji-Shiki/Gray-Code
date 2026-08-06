@@ -17,6 +17,7 @@ import {
     insertNode,
     isDeletedNodeExpired,
     pruneDeletedNodes,
+    rebaseActivePathFromHistory,
     rebuildActivePath,
     removeCandidateSummary,
     removeSubtree,
@@ -585,6 +586,77 @@ describe('importLinearHistory（MIG-01 / BR-09 线性导入）', () => {
         expect(validate(g).valid).toBe(true);
     });
 
+    test('逻辑总结与其它 Content 元数据进入节点，展示 index 不进入 sidecar', () => {
+        const g = importLinearHistory([
+            {
+                role: 'user',
+                parts: [{ text: 'covered' }],
+                id: 'u1',
+                parentId: null,
+                timestamp: 1,
+                index: 99,
+                isSummarized: true,
+                isUserInput: true,
+                tokenCountByChannel: { openai: 42 },
+            },
+            {
+                role: 'user',
+                parts: [{ text: 'summary' }],
+                id: 'sum-1',
+                parentId: 'u1',
+                timestamp: 2,
+                isSummary: true,
+                isAutoSummary: true,
+                summarizedMessageCount: 12,
+                summaryTokenStats: {
+                    sourceTokenCount: 100,
+                    summaryTokenCount: 20,
+                    estimatedTokensSaved: 80,
+                },
+            },
+        ] as any);
+
+        expect(g.nodes['u1']!.contentMetadata).toMatchObject({
+            isSummarized: true,
+            isUserInput: true,
+            tokenCountByChannel: { openai: 42 },
+        });
+        expect(g.nodes['u1']!.contentMetadata).not.toHaveProperty('index');
+        expect(g.nodes['sum-1']!.contentMetadata).toMatchObject({
+            isSummary: true,
+            isAutoSummary: true,
+            summarizedMessageCount: 12,
+            summaryTokenStats: { estimatedTokensSaved: 80 },
+        });
+    });
+
+    test('显式 undefined 的元数据字段被过滤，全部为空时不产生 contentMetadata', () => {
+        const g = importLinearHistory([
+            {
+                role: 'user',
+                parts: [{ text: 'q1' }],
+                id: 'u1',
+                parentId: null,
+                timestamp: 1,
+                isSummarized: undefined,
+                thinkingStartTime: undefined,
+                isUserInput: true,
+            },
+            {
+                role: 'model',
+                parts: [{ text: 'a1' }],
+                id: 'm1',
+                parentId: 'u1',
+                timestamp: 2,
+                isSummarized: undefined,
+            },
+        ] as any);
+
+        expect(g.nodes['u1']!.contentMetadata).toEqual({ isUserInput: true });
+        expect(g.nodes['u1']!.contentMetadata).not.toHaveProperty('isSummarized');
+        expect(g.nodes['m1']!.contentMetadata).toBeUndefined();
+    });
+
     test('functionResponse 不独立成节点（决策 8）：parts 合并进前一个模型节点，后续 parentId 不悬空', () => {
         const history = [
             { role: 'user', parts: [{ text: 'q1' }], id: 'u1', parentId: null, timestamp: 100 },
@@ -666,6 +738,54 @@ describe('importLinearHistory（MIG-01 / BR-09 线性导入）', () => {
         }
     });
 });
+
+describe('rebaseActivePathFromHistory（旧 sidecar 安全追平主历史）', () => {
+    test('补入中间插入与尾部新增消息，同时保留旧候选为非活跃分支', () => {
+        let graph = importLinearHistory([
+            { role: 'user', parts: [{ text: 'q1' }], id: 'u1', timestamp: 1 },
+            { role: 'model', parts: [{ text: 'a1' }], id: 'm1', parentId: 'u1', timestamp: 2 },
+        ] as any);
+        graph = rerollCandidate(graph, 'u1', node('old-candidate', 'u1', {
+            role: 'model',
+            kind: 'reroll',
+            parts: [{ text: 'old' }],
+            createdAt: 3,
+            workspaceCheckpointId: 'cp-old',
+        }));
+
+        const history = [
+            { role: 'user', parts: [{ text: 'q1' }], id: 'u1', timestamp: 1 },
+            { role: 'user', parts: [{ text: 'summary' }], id: 'summary-1', parentId: 'u1', timestamp: 2, isSummary: true },
+            { role: 'model', parts: [{ text: 'a1-current' }], id: 'm1', parentId: 'summary-1', timestamp: 3, isSummarized: true },
+            { role: 'user', parts: [{ text: 'q2' }], id: 'u2', parentId: 'm1', timestamp: 4 },
+        ] as any;
+        const repaired = rebaseActivePathFromHistory(graph, history);
+
+        expect(activePath(repaired)).toEqual(['u1', 'summary-1', 'm1', 'u2']);
+        expect(repaired.nodes['m1']!.parentId).toBe('summary-1');
+        expect(repaired.nodes['m1']!.parts).toEqual([{ text: 'a1-current' }]);
+        expect(repaired.nodes['summary-1']!.contentMetadata?.isSummary).toBe(true);
+        expect(repaired.nodes['m1']!.contentMetadata?.isSummarized).toBe(true);
+        expect(repaired.nodes['old-candidate']).toMatchObject({
+            parentId: 'u1',
+            workspaceCheckpointId: 'cp-old',
+        });
+        expect(repaired.nodes['u1']!.activeChildId).toBe('summary-1');
+        expect(validate(repaired).valid).toBe(true);
+    });
+
+    test('根节点变化时拒绝合并，不修改原图', () => {
+        const graph = importLinearHistory([
+            { role: 'user', parts: [{ text: 'old' }], id: 'old-root', timestamp: 1 },
+        ] as any);
+        const snapshot = structuredClone(graph);
+        expect(() => rebaseActivePathFromHistory(graph, [
+            { role: 'user', parts: [{ text: 'new' }], id: 'new-root', timestamp: 2 },
+        ] as any)).toThrow(/cannot safely reconcile branch graph root/);
+        expect(graph).toEqual(snapshot);
+    });
+});
+
 describe('findUnsyncedFunctionResponses（R8a-M2：FR 内容同步校验）', () => {
     const frPart = (id: string) => ({ functionResponse: { id, name: 'toolA', response: { success: true } } });
     const frMessage = (id: string | undefined, frIds: string[]) => ({

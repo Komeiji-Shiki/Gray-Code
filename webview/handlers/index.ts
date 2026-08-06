@@ -21,6 +21,8 @@ import { registerSkillsHandlers } from './SkillsHandlers';
 import { registerSubAgentsHandlers } from './SubAgentsHandlers';
 import { registerNotificationHandlers } from './NotificationHandlers';
 import { registerUsageHandlers } from './UsageHandlers';
+import { registerActivityHandlers } from './ActivityHandlers';
+import { registerTokenizerHandlers } from './TokenizerHandlers';
 
 // 重新导出各个模块
 export * from './ConversationHandlers';
@@ -40,6 +42,8 @@ export * from './SkillsHandlers';
 export * from './SubAgentsHandlers';
 export * from './NotificationHandlers';
 export * from './UsageHandlers';
+export * from './ActivityHandlers';
+export * from './TokenizerHandlers';
 
 /**
  * 创建并注册所有消息处理器
@@ -65,6 +69,8 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerSubAgentsHandlers(registry);
   registerNotificationHandlers(registry);
   registerUsageHandlers(registry);
+  registerActivityHandlers(registry);
+  registerTokenizerHandlers(registry);
   
   return registry;
 }

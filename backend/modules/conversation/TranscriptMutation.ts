@@ -174,6 +174,49 @@ export function deleteLogicalMessage(contents: Content[], contentIndex: number):
     return normalizeIndexes(next);
 }
 
+/**
+ * 逻辑截断：恢复指定总结消息覆盖的原文区间（取消 isSummarized 标记）。
+ *
+ * 覆盖区间 = [该总结之前最近的总结消息之后, 该总结位置)；区间内所有 isSummarized 消息
+ * 取消标记，恢复为活跃消息（重新参与发送与统计）。首条用户消息从不标记，不受影响。
+ * 不改变数组长度与 parentId 链（纯字段变更）。
+ *
+ * 幂等：区间内无 isSummarized 消息时 restoredCount = 0，返回克隆（无副作用）。
+ *
+ * @param contents 完整历史
+ * @param summaryIndex 要恢复的总结消息下标
+ * @returns 恢复后的历史（新数组）与恢复的消息数
+ */
+export function restoreSummarizedRange(
+    contents: Content[],
+    summaryIndex: number
+): { contents: Content[]; restoredCount: number } {
+    const cloned = cloneContents(contents);
+    if (summaryIndex < 0 || summaryIndex >= cloned.length || !cloned[summaryIndex]?.isSummary) {
+        return { contents: cloned, restoredCount: 0 };
+    }
+
+    // 覆盖区间起点 = 该总结之前最近的总结消息之后（无更早总结则从 0 开始）
+    let rangeStart = 0;
+    for (let i = summaryIndex - 1; i >= 0; i--) {
+        if (cloned[i]?.isSummary) {
+            rangeStart = i + 1;
+            break;
+        }
+    }
+
+    let restoredCount = 0;
+    for (let i = rangeStart; i < summaryIndex; i++) {
+        const message = cloned[i];
+        if (message?.isSummarized) {
+            const { isSummarized: _removed, ...rest } = message;
+            cloned[i] = rest as Content;
+            restoredCount++;
+        }
+    }
+    return { contents: cloned, restoredCount };
+}
+
 export async function mutateTranscript(
     adapter: TranscriptAdapter,
     mutator: (contents: Content[]) => Content[]

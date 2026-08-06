@@ -5,6 +5,7 @@
 import type { Ref, ComputedRef } from 'vue'
 import type { Message, ErrorInfo, CheckpointSummary, Attachment, BranchStreamReplayContext } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
+import type { SmoothMode } from '../../utils/smoothStream'
 
 // 重新导出类型以供其他模块使用
 // CPF-03: 新代码使用 CheckpointSummary；CheckpointRecord 保留导出（结构同构，兼容旧消费方）
@@ -164,6 +165,16 @@ export interface QueuedMessage {
 }
 
 /**
+ * 平滑流式显示条目：partKey 标识当前正在流出的段落（text/thought + part 索引），
+ * text 为该段落的累计显示文本（含创建时的真实文本基线）。
+ * MessageItem 只替换 partKey 匹配的块，找不到匹配就不替换（避免覆盖上一段已完成块）。
+ */
+export interface SmoothDisplayText {
+  partKey: string
+  text: string
+}
+
+/**
  * Chat Store 状态类型
  */
 export interface ChatStoreState {
@@ -227,6 +238,18 @@ export interface ChatStoreState {
   streamingMessageId: Ref<string | null>
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   activeStreamId: Ref<string | null>
+  /**
+   * 平滑流式显示层：messageId -> 当前正在输出的段落（最后一个 text/thought part）的平滑文本。
+   * 真实内容（parts/content）由流式累加，此 Map 只驱动显示节奏；
+   * 流式结束/中止时由调用方 delete 对应键，UI 切回真实 content。
+   */
+  smoothTexts: Map<string, SmoothDisplayText>
+  /**
+   * 平滑档位（M1）：由 chatStore watch settingsStore.smoothStreaming 同步，
+   * streamChunkHandlers 每 chunk 只读该 ref，不再内联 useSettingsStore()。
+   * 测试 mock 状态可能不含此字段（读侧用可选链兜底为 'off'）。
+   */
+  smoothMode: Ref<SmoothMode>
   /** 等待AI响应状态 */
   isWaitingForResponse: Ref<boolean>
   /** 重试状态 */
