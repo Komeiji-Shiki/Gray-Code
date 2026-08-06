@@ -8,7 +8,21 @@
 
 ## [Unreleased]
 
+### Added
+  - **记忆设置页支持手动增加记忆（设置 → 记忆 → 原始记忆条目）**：此前记忆只能由 AI 通过 `memory_note` 工具写入，用户想记录一条事实/约定必须让模型代劳。现条目列表顶部新增输入框 + 「添加记忆」按钮（支持 Ctrl+Enter / ⌘+Enter 快捷提交），写入链路与 AI 的 `memory_note` 完全等价（同一 `MemoryManager.note`，同样触发待压缩提示）；新增 `addMemoryEntry` IPC 处理器，添加成功提示新条目 ID 并自动刷新列表
+  - **记忆条目列表超限保护**：`getMemoryEntries` 支持 `limit`（默认 5000），`MemoryManager` 新增 O(1) 的 `totalEntries()`；海量记忆（10 万条以上）时不再全量 postMessage 传输 + `v-for` 渲染冻结设置页，截断时前端提示「仅展示前 N 条，其余可用 memory_recall 检索」
+
 ### Changed
+  - **记忆写入容量校验精确化**：`note` / `updateEntry` 此前只按 `entryChars` 校验文本长度，用户把 `entryChars` 调高或 id 位数增长后会在 `pad()` 处以晦涩的 "Too long" 报错（固定宽度记录含 "#<id> <date> " 头部开销）；现按实际 id 精确校验整条记录，报错信息包含头部开销与可用预算；`memory_config` 工具与配置边界的 `entryChars` 上限同步收敛（`LOG_REC - 1 - 23`），工具描述不再写死错误的「最大值 280」
+  - **`wake` 连续原始块批量读取**：此前每个原始记忆块一次 `logSlice` → 一次 open/read/close 文件句柄循环（`T ≤ wakeLines` 时一次 wake 可达上万次）；现 cover 输出的连续原始块合并为一次 `logSlice` 批量读取，句柄数降为块数级别，读取结果逐条输出顺序不变
+  - **MemoryManager 初始化收敛**：VS Code 扩展（ChatViewProvider）与 Electron 桌面版（BackendHost）重复的「建 memory 路径 → new MemoryManager → init → loadConfig → setGlobal」五连复制粘贴提取为 `initMemoryManager(dataPath)` 共享助手，两宿主行为零漂移
+
+### Fixed
+  - **崩溃残留的撕裂尾部记录被当作有效记忆**：日志末尾不足 `LOG_REC` 字节的半条记录此前会被解析成垃圾条目出现在 wake/recall/listEntries 中；现 `records()` 只解析完整记录，下一次追加时由既有 `repair()` 截断修复
+  - **`count()` / `logScan()` 静默吞掉 IO 错误**：此前权限/IO 错误一律当成「空日志」，wake 会在文件实际不可读时谎报「没有记忆」；现只把 ENOENT 视为空，其余错误上抛
+  - **设置页记忆条目字节校验对齐后端**：新增/编辑条目的字符计数此前用 UTF-16 码元数（中文等多字节字符低估长度，前端放行、后端报错）；现按 UTF-8 字节数校验并实时显示（超限红色提示），错误提示样式不再依赖字符串内容猜测
+
+### Changed（结构收敛）
   - **性能与资源占用优化（子智能体并行审计 + 修复，全链路）**：
     - **流式渐进 Markdown 渲染根治 O(n²) 重解析**：此前流式期间已定型的段落被持续累积进单一字符串，每次渲染 tick（最长 180ms 一次）都把全部累计文本重新做一遍 markdown-it 解析 + 代码高亮 + 整体 `v-html` 替换——回答越长每帧成本线性增长，长代码生成场景流式后期卡顿。现 promote 文本按 `\n\n` 段落边界切块（`$$` 数学块未闭合的边界暂不切，保证与整段渲染语义一致），每块一个独立的 `MarkdownRenderer` 实例（key 不变 → Vue 复用旧块，只渲染新块）；软上限 200 块防御性淘汰最旧块
     - **smoothStreamManager fence 配对扫描增量 化**：此前每帧对全文从零做 fence 配对正则扫描（长代码块流式时每候选段落一次 O(前缀长) 扫描）；现按流实例维护增量扫描状态（只扫新增区间 + 二分计数），`findPromoteCut` 行为完全不变但每帧成本降为 O(delta)

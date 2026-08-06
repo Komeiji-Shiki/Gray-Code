@@ -34,7 +34,7 @@ import { DependencyManager, type InstallProgressEvent } from '../../../backend/m
 import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../../../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../../../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../../../backend/modules/skills';
-import { MemoryManager, setGlobalMemoryManager } from '../../../backend/modules/memory';
+import { initMemoryManager } from '../../../backend/modules/memory';
 import { WindowsAgentStopNotificationService } from '../../../backend/modules/notifications/WindowsAgentStopNotificationService';
 import {
   setGlobalSettingsManager,
@@ -462,11 +462,7 @@ export class BackendHost {
     this.chatHandler.setMcpManager(this.mcpManager);
     setGlobalMcpManager(this.mcpManager);
 
-    const memoryPath = path.join(this.storagePathManager.getEffectiveDataPath(), 'memory');
-    const memoryManager = new MemoryManager(memoryPath);
-    await memoryManager.init();
-    await memoryManager.loadConfig();
-    setGlobalMemoryManager(memoryManager);
+    await initMemoryManager(this.storagePathManager.getEffectiveDataPath());
 
     setSubAgentExecutorContext({
       channelManager: this.channelManager,

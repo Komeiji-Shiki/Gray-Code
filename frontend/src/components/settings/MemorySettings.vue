@@ -6,7 +6,7 @@
  * 1. 提示词 & 运行时参数配置
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -43,6 +43,7 @@ const DEFAULT_SYSTEM_PROMPT = [
 const isLoading = ref(true)
 const isSaving = ref(false)
 const statusMessage = ref('')
+const statusError = ref(false)
 const enabled = ref(true)
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
@@ -63,6 +64,7 @@ interface LogEntry {
 const entries = ref<LogEntry[]>([])
 const entriesLoading = ref(false)
 const entriesTotal = ref(0)
+const entriesTruncated = ref(false)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
 const editSaving = ref(false)
@@ -70,6 +72,48 @@ const editSaving = ref(false)
 const deleteCandidate = ref<LogEntry | null>(null)
 const showDeleteConfirm = ref(false)
 const deleteSaving = ref(false)
+
+// ─── 手动新增记忆 ───
+const newEntryText = ref('')
+const addingEntry = ref(false)
+
+// UTF-8 字节数（后端按字节校验 entryChars；String.length 计的是 UTF-16 码元，
+// 中文等字符会低估，导致前端放行、后端报 Too long）
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
+const newEntryBytes = computed(() => utf8Bytes(newEntryText.value))
+const editingBytes = computed(() => utf8Bytes(editingText.value))
+
+// 手动新增一条记忆（等价于 AI 的 memory_note）
+async function addEntry() {
+  const text = newEntryText.value
+  if (!text.trim()) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (newEntryBytes.value > entryChars.value) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addTooLong', {
+      limit: entryChars.value,
+    })
+    statusError.value = true
+    return
+  }
+  addingEntry.value = true
+  try {
+    const result = await sendToExtension<any>('addMemoryEntry', { text })
+    newEntryText.value = ''
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.added', {
+      id: result?.id ?? '',
+    })
+    statusError.value = false
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to add entry'
+    statusError.value = true
+  } finally {
+    addingEntry.value = false
+  }
+}
 
 // 请求删除：弹出确认框
 function requestDeleteEntry(entry: LogEntry) {
@@ -90,6 +134,7 @@ async function confirmDeleteEntry() {
     await loadEntries()
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to delete entry'
+    statusError.value = true
   } finally {
     deleteSaving.value = false
   }
@@ -119,6 +164,7 @@ async function loadConfig() {
     }
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to load config'
+    statusError.value = true
   } finally {
     isLoading.value = false
   }
@@ -128,16 +174,20 @@ async function loadConfig() {
 async function loadEntries() {
   entriesLoading.value = true
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', {})
+    const result = await sendToExtension<any>('getMemoryEntries', { limit: 5000 })
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
+      entriesTruncated.value = !!result.truncated
     } else {
       entries.value = []
       entriesTotal.value = 0
+      entriesTruncated.value = false
     }
   } catch {
     entries.value = []
+    entriesTotal.value = 0
+    entriesTruncated.value = false
   } finally {
     entriesLoading.value = false
   }
@@ -158,6 +208,18 @@ function cancelEdit() {
 // 保存编辑
 async function saveEdit() {
   if (editingId.value === null) return
+  if (!editingText.value.trim()) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addEmpty')
+    statusError.value = true
+    return
+  }
+  if (editingBytes.value > entryChars.value) {
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.addTooLong', {
+      limit: entryChars.value,
+    })
+    statusError.value = true
+    return
+  }
   editSaving.value = true
   try {
     await sendToExtension('updateMemoryEntry', {
@@ -172,6 +234,7 @@ async function saveEdit() {
     cancelEdit()
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to update entry'
+    statusError.value = true
   } finally {
     editSaving.value = false
   }
@@ -194,9 +257,11 @@ async function saveConfig() {
       },
     })
     statusMessage.value = t('components.settings.settingsPanel.memory.saved')
+    statusError.value = false
     setTimeout(() => { statusMessage.value = '' }, 3000)
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to save config'
+    statusError.value = true
   } finally {
     isSaving.value = false
   }
@@ -336,7 +401,7 @@ onMounted(() => {
       </div>
 
       <!-- 状态消息 -->
-      <div v-if="statusMessage" class="status-message" :class="{ 'status-error': statusMessage.includes('Failed') || statusMessage.includes('失败') }">
+      <div v-if="statusMessage" class="status-message" :class="{ 'status-error': statusError }">
         {{ statusMessage }}
       </div>
 
@@ -350,6 +415,35 @@ onMounted(() => {
         <p class="field-description" style="margin-bottom: 12px;">
           {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
+
+        <!-- 手动新增记忆 -->
+        <div class="add-entry-box">
+          <textarea
+            v-model="newEntryText"
+            class="form-textarea add-entry-textarea"
+            rows="3"
+            :placeholder="t('components.settings.settingsPanel.memory.rawEntries.addPlaceholder')"
+            :disabled="addingEntry"
+            @keydown.ctrl.enter.prevent="addEntry"
+            @keydown.meta.enter.prevent="addEntry"
+          ></textarea>
+          <div class="add-entry-actions">
+            <span class="char-count" :class="{ 'char-overflow': newEntryBytes > entryChars }">
+              {{ newEntryBytes }}/{{ entryChars }} {{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}
+            </span>
+            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry">
+              <i v-if="addingEntry" class="codicon codicon-loading codicon-modifier-spin"></i>
+              <i v-else class="codicon codicon-add"></i>
+              {{ t('components.settings.settingsPanel.memory.rawEntries.add') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 截断提示：条目超过展示上限时提示，避免误以为数据丢失 -->
+        <div v-if="entriesTruncated" class="truncated-notice">
+          <i class="codicon codicon-info"></i>
+          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: 5000 }) }}
+        </div>
 
         <!-- 空状态 -->
         <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
@@ -378,7 +472,7 @@ onMounted(() => {
                     {{ t('common.save') }}
                   </button>
                   <button class="btn btn-sm btn-secondary" @click="cancelEdit" :disabled="editSaving">{{ t('common.cancel') }}</button>
-                  <span class="char-count">{{ editingText.length }}/{{ entryChars }}</span>
+                  <span class="char-count" :class="{ 'char-overflow': editingBytes > entryChars }">{{ editingBytes }}/{{ entryChars }}</span>
                 </div>
               </div>
             </div>
@@ -800,6 +894,54 @@ onMounted(() => {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   margin-left: auto;
+}
+
+.char-overflow {
+  color: var(--vscode-errorForeground);
+  font-weight: 600;
+}
+
+/* ─── 手动新增记忆 ─── */
+.add-entry-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.add-entry-textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.add-entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.add-entry-actions .char-count {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.truncated-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-textBlockQuote-background);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.truncated-notice i {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
 .entry-actions {

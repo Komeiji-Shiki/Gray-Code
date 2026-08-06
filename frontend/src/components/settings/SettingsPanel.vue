@@ -681,7 +681,7 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   {
     key: 'memory-raw-entries', tab: 'memory',
     labelKey: 'components.settings.settingsPanel.memory.rawEntries.title',
-    keywords: ['原始记忆', 'entries', '条目', '编辑', '删除', '记忆记录'],
+    keywords: ['原始记忆', 'entries', '条目', '编辑', '删除', '记忆记录', '添加记忆', 'add memory', '手動', '追加', '记住', 'remember'],
     anchor: '[data-search-anchor="memory-raw-entries"]'
   },
   {

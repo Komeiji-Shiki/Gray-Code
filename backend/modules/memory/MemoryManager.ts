@@ -54,10 +54,29 @@ function parse(line: string): LogEntry {
     return { id, date, text };
 }
 
+/**
+ * 校验「#id date text」整条固定宽度记录可容纳。
+ *
+ * 固定宽度记录为 LOG_REC 字节，头部 "#<id> <date> " 随 id 位数增长（约 13~23 字节）。
+ * 若只按文本长度（entryChars）校验，用户在把 entryChars 调高或 id 位数增长后
+ * 会在 pad() 处以晦涩的 "Too long" 报错。此处按实际 id 精确计算可用文本预算。
+ */
+function assertRecordFits(id: number, date: string, text: string): void {
+    const overhead = 1 + String(id).length + 1 + date.length + 1;
+    const used = overhead + Buffer.byteLength(text, 'utf-8');
+    if (used > LOG_REC - 1) {
+        die(`Too long: text takes ${used - overhead} bytes, budget ${LOG_REC - 1 - overhead} bytes ` +
+            `(fixed-width record holds ${LOG_REC - 1}, header takes ${overhead}).`);
+    }
+}
+
 /** 从字节缓冲区解析多条记录 */
 function records(buf: Buffer): LogEntry[] {
     const out: LogEntry[] = [];
-    for (let i = 0; i < buf.length; i += LOG_REC) {
+    // 只解析完整记录：崩溃残留的尾部半条记录（长度不是 LOG_REC 的整数倍）
+    // 会被忽略而不是解析成垃圾条目——修复发生在下一次追加（repair），
+    // 但修复前的 wake/recall/listEntries 不应把撕裂的尾巴当作有效记忆。
+    for (let i = 0; i + LOG_REC <= buf.length; i += LOG_REC) {
         const slice = buf.subarray(i, i + LOG_REC);
         const str = slice.toString('utf-8').trimEnd();
         if (str) {
@@ -69,12 +88,14 @@ function records(buf: Buffer): LogEntry[] {
 
 /**
  * 各配置项的合法范围（与固定宽度记录/分页逻辑配套）：
- * - entryChars 上限为 LOG_REC - 1（319），超过后所有 note/compress 写入都会在 pad() 抛 Too long；
+ * - entryChars 上限须留出 "#<id> <date> " 记录头部空间（约 23 字节），否则
+ *   note/updateEntry 会在 assertRecordFits/pad 处抛 Too long——上限取
+ *   LOG_REC - 1 - 23（id 增长到 10 位仍有余量），runtime 层仍有精确校验兜底；
  * - 其余项要求为正整数，避免 0/负数导致分页、cover 或 recall 窗口行为异常。
  */
 const MEMORY_CONFIG_BOUNDS: Array<[keyof MemoryConfig, number, number]> = [
     ['wakeLines', 1, 10000],
-    ['entryChars', 1, LOG_REC - 1],
+    ['entryChars', 1, LOG_REC - 1 - 23],
     ['partChars', 1, 1000000],
     ['partLines', 1, 100000],
 ];
@@ -168,7 +189,10 @@ export class MemoryManager {
         try {
             const stat = await fs.stat(filePath);
             return Math.floor(stat.size / rec);
-        } catch {
+        } catch (e: any) {
+            // 只有「文件不存在」视为空；权限/IO 错误应上抛而不是静默当成 0 条，
+            // 否则 wake 会在文件实际不可读时谎报「没有记忆」。
+            if (e?.code !== 'ENOENT') throw e;
             return 0;
         }
     }
@@ -220,23 +244,23 @@ export class MemoryManager {
 
     /** 流式扫描全部日志 */
     private async *logScan(): AsyncGenerator<LogEntry> {
+        let handle: import('fs').promises.FileHandle | null = null;
         try {
-            const handle = await fs.open(this.logPath(), 'r');
-            try {
-                let offset = 0;
-                while (true) {
-                    const buf = Buffer.alloc(LOG_REC * 4096);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
-                    if (bytesRead === 0) break;
-                    const entries = records(buf.subarray(0, bytesRead));
-                    for (const e of entries) yield e;
-                    offset += bytesRead;
-                }
-            } finally {
-                await handle.close();
+            handle = await fs.open(this.logPath(), 'r');
+            let offset = 0;
+            while (true) {
+                const buf = Buffer.alloc(LOG_REC * 4096);
+                const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
+                if (bytesRead === 0) break;
+                const entries = records(buf.subarray(0, bytesRead));
+                for (const e of entries) yield e;
+                offset += bytesRead;
             }
-        } catch {
-            // 文件不存在，什么都不产出
+        } catch (e: any) {
+            // 日志不存在视为空扫描；其余 IO 错误上抛（与 count 同口径）
+            if (e?.code !== 'ENOENT') throw e;
+        } finally {
+            if (handle) await handle.close();
         }
     }
 
@@ -485,31 +509,54 @@ export class MemoryManager {
         }
 
         const lines: string[] = [];
+        // 连续原始块（cover 输出按 lo 升序）合并为一次 logSlice 读取：
+        // 此前逐块 logGet → logSlice 各做一次 open/read/close，记忆量大
+        // （T ≤ wakeLines 可达 10000 条）时一次 wake 产生上万次文件句柄循环。
+        let runLo = -1;
+        let runHi = -1;
+        const flushRawRun = async (lo: number, hi: number): Promise<void> => {
+            const entries = await this.logSlice(lo, hi);
+            if (entries.length !== hi - lo) {
+                // 读取期间日志被并发截断/改写：旧实现会在 logGet 处以
+                // "No memory at index" 报错，此处保持同等的严格提示。
+                die(`The log changed while reading #${lo}-${hi - 1}. Run memory_wake again.`);
+            }
+            for (const e of entries) {
+                lines.push(`#${e.id} ${e.date} ${e.text}`);
+            }
+        };
         for (const [lo, hi] of this.cover(snapshotT, this.config.wakeLines)) {
             if (hi - lo === 1) {
-                const e = await this.logGet(lo);
-                lines.push(`#${e.id} ${e.date} ${e.text}`);
-            } else {
-                let s = await this.treeGet(lo, hi);
-                if (s === null) {
-                    const pc = await this.pendingCount(snapshotT);
-                    if (pc > 0) {
-                        // 直接用实际缺失的块构造提示，而不是 nextNap 返回的
-                        // "第一个待压缩块"（可能不是 wake 实际缺失的那个块）。
-                        const nap = await this.napPrompt(lo, hi, pc - 1);
-                        throw new Error(
-                            `Cannot wake: the memory context needs #${lo}-${hi - 1}, ` +
-                            `which is not compressed yet.\nDo the ${plural(pc, 'compression')} below, ` +
-                            `then run memory_wake again.\n\n${nap.prompt}`
-                        );
-                    }
-                    s = await this.treeGet(lo, hi); // 并行会话可能已完成
-                }
-                if (s === null) {
-                    die(`The summary of #${lo}-${hi - 1} is blank. Run: memory_forget ${lo}-${hi - 1}`);
-                }
-                lines.push(`#${lo}-${hi - 1} ${s}`);
+                if (runLo < 0) runLo = lo;
+                runHi = hi;
+                continue;
             }
+            if (runLo >= 0) {
+                await flushRawRun(runLo, runHi);
+                runLo = -1;
+            }
+            let s = await this.treeGet(lo, hi);
+            if (s === null) {
+                const pc = await this.pendingCount(snapshotT);
+                if (pc > 0) {
+                    // 直接用实际缺失的块构造提示，而不是 nextNap 返回的
+                    // "第一个待压缩块"（可能不是 wake 实际缺失的那个块）。
+                    const nap = await this.napPrompt(lo, hi, pc - 1);
+                    throw new Error(
+                        `Cannot wake: the memory context needs #${lo}-${hi - 1}, ` +
+                        `which is not compressed yet.\nDo the ${plural(pc, 'compression')} below, ` +
+                        `then run memory_wake again.\n\n${nap.prompt}`
+                    );
+                }
+                s = await this.treeGet(lo, hi); // 并行会话可能已完成
+            }
+            if (s === null) {
+                die(`The summary of #${lo}-${hi - 1} is blank. Run: memory_forget ${lo}-${hi - 1}`);
+            }
+            lines.push(`#${lo}-${hi - 1} ${s}`);
+        }
+        if (runLo >= 0) {
+            await flushRawRun(runLo, runHi);
         }
 
         const parts = this.paginate(lines);
@@ -565,6 +612,11 @@ export class MemoryManager {
         }
 
         const today = new Date().toISOString().slice(0, 10);
+        // 整条固定宽度记录校验（含 "#<id> <date> " 头部开销）：id 由 logAppend
+        // 在锁内分配，此处用当前日志长度估算 id 位数；并发追加只可能让 id 更大、
+        // 头部更长——若当前能通过，实际写入时也必然在预算内。
+        await assertRecordFits(await this.logLen(), today, trimmed);
+
         const id = await this.logAppend([{ date: today, text: trimmed }]);
 
         const nap = await this.nextNap(id + 1);
@@ -716,6 +768,11 @@ export class MemoryManager {
         return entries;
     }
 
+    /** 当前原始记忆总数（O(1)，仅一次 stat；供设置页列表分页/截断展示） */
+    async totalEntries(): Promise<number> {
+        return this.logLen();
+    }
+
     /**
      * updateEntry: 原地覆写单条原始记忆的文本。
      * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 319 字节）。
@@ -742,6 +799,8 @@ export class MemoryManager {
 
             // 读取原条目以保留 ID 和日期
             const entry = await this.logGet(id);
+            // 整条记录容量校验（头部 + 文本），避免 pad() 处晦涩的 Too long
+            assertRecordFits(entry.id, entry.date, trimmed);
             const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
 
             const buf = pad(newLine, LOG_REC);

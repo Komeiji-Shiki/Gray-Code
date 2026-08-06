@@ -2224,6 +2224,12 @@ const en: LanguageMessages = {
                         title: 'Raw Memory Entries',
                         description: 'View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).',
                         empty: 'No memory entries yet.',
+                        addPlaceholder: 'Type what you want to remember and click "Add Memory" to write it to permanent memory manually (equivalent to the AI memory_note tool). Ctrl+Enter / ⌘+Enter submits.',
+                        add: 'Add Memory',
+                        added: 'Memory #{id} added',
+                        addEmpty: 'The content is empty. Nothing to add.',
+                        addTooLong: 'Content exceeds the per-entry limit ({limit} bytes).',
+                        truncatedNotice: 'More than {limit} memories: only the first {limit} are shown here (use memory_recall in chat to search the rest).',
                         deleteConfirmTitle: 'Delete memory entry',
                         deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).'
                     }

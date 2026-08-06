@@ -30,7 +30,7 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
                 },
                 entryChars: {
                     type: 'number',
-                    description: '单条记忆最大字节数。最大值 280。',
+                    description: '单条记忆最大字节数。默认 280，上限受固定宽度记录约束（含记录头部开销）。',
                 },
                 partChars: {
                     type: 'number',
