@@ -2055,6 +2055,12 @@ const ja: LanguageMessages = {
                 backToChat: '会話に戻る',
                 sidebarCollapse: 'サイドバーを折りたたむ',
                 sidebarExpand: 'サイドバーを展開する',
+                search: {
+                    placeholder: '設定項目を検索…',
+                    clear: '検索をクリア',
+                    noResults: '一致する設定項目が見つかりません',
+                    hint: 'キーワードを入力して設定を検索。Enter で最初の結果を開きます'
+                },
                 sections: {
                     channel: {
                         title: 'チャンネル設定',

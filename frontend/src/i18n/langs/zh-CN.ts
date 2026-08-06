@@ -2056,6 +2056,12 @@ const zhCN = {
                 backToChat: '返回对话',
                 sidebarCollapse: '收起边栏',
                 sidebarExpand: '展开边栏',
+                search: {
+                    placeholder: '搜索设置项…',
+                    clear: '清除搜索',
+                    noResults: '未找到匹配的设置项',
+                    hint: '输入关键词查找设置，回车打开第一个结果'
+                },
                 sections: {
                     channel: {
                         title: '渠道设置',
