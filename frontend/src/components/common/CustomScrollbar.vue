@@ -175,6 +175,19 @@ function isAtBottom(): boolean {
 // 记录是否在底部（内容变化前检查）
 let wasAtBottom = true
 
+/** 贴底跟随写入阈值（px）：与目标位置差值小于该值时跳过写 scrollTop，避免每帧赋值 */
+const STICKY_FOLLOW_THRESHOLD = 2
+
+/** 上次 updateScrollbar 读取的布局值：三项均未变化时跳过响应式写入（流式期间绝大多数帧相同） */
+let lastScrollMetrics: {
+  scrollHeight: number
+  clientHeight: number
+  scrollTop: number
+  scrollWidth: number
+  clientWidth: number
+  scrollLeft: number
+} | null = null
+
 // 计算并更新滚动条状态
 function updateScrollbar() {
   if (!scrollContainer.value) return
@@ -184,8 +197,34 @@ function updateScrollbar() {
   const clientHeight = container.clientHeight
   const scrollTop = container.scrollTop
 
+  let unchanged = lastScrollMetrics !== null &&
+    lastScrollMetrics.scrollHeight === scrollHeight &&
+    lastScrollMetrics.clientHeight === clientHeight &&
+    lastScrollMetrics.scrollTop === scrollTop
+
+  let scrollWidth = 0
+  let clientWidth = 0
+  let scrollLeft = 0
+  if (props.horizontal) {
+    scrollWidth = container.scrollWidth
+    clientWidth = container.clientWidth
+    scrollLeft = container.scrollLeft
+    unchanged = unchanged &&
+      lastScrollMetrics !== null &&
+      lastScrollMetrics.scrollWidth === scrollWidth &&
+      lastScrollMetrics.clientWidth === clientWidth &&
+      lastScrollMetrics.scrollLeft === scrollLeft
+  }
+
+  // 布局值未变化：不写任何响应式 ref（流式期间每帧调度，绝大多数帧在此提前返回）
+  if (unchanged) return
+  lastScrollMetrics = { scrollHeight, clientHeight, scrollTop, scrollWidth, clientWidth, scrollLeft }
+
   // 判断是否需要显示垂直滚动条
-  showScrollbar.value = scrollHeight > clientHeight
+  const shouldShowScrollbar = scrollHeight > clientHeight
+  if (showScrollbar.value !== shouldShowScrollbar) {
+    showScrollbar.value = shouldShowScrollbar
+  }
   
   if (showScrollbar.value) {
     // 垂直轨道实际高度（排除跳转按钮）
@@ -194,32 +233,43 @@ function updateScrollbar() {
     // 计算滑块高度：滑块在轨道中的占比应等于可见内容在总内容中的占比
     // 公式：thumbHeight / trackHeight = clientHeight / scrollHeight
     const ratio = clientHeight / Math.max(1, scrollHeight)
-    thumbHeight.value = Math.max(props.minThumbHeight, trackHeight * ratio)
+    const nextThumbHeight = Math.max(props.minThumbHeight, trackHeight * ratio)
+    if (thumbHeight.value !== nextThumbHeight) {
+      thumbHeight.value = nextThumbHeight
+    }
 
     // 计算滑块位置
     const maxScrollTop = Math.max(1, scrollHeight - clientHeight)
-    const maxThumbTop = Math.max(0, trackHeight - thumbHeight.value)
-    thumbTop.value = (scrollTop / maxScrollTop) * maxThumbTop
+    const maxThumbTop = Math.max(0, trackHeight - nextThumbHeight)
+    const nextThumbTop = (scrollTop / maxScrollTop) * maxThumbTop
+    if (thumbTop.value !== nextThumbTop) {
+      thumbTop.value = nextThumbTop
+    }
   }
   
   // 更新横向滚动条
   if (props.horizontal) {
-    const scrollWidth = container.scrollWidth
-    const clientWidth = container.clientWidth
-    const scrollLeft = container.scrollLeft
-    
     // 判断是否需要显示横向滚动条
-    showHScrollbar.value = scrollWidth > clientWidth
+    const shouldShowHScrollbar = scrollWidth > clientWidth
+    if (showHScrollbar.value !== shouldShowHScrollbar) {
+      showHScrollbar.value = shouldShowHScrollbar
+    }
     
     if (showHScrollbar.value) {
       // 计算滑块宽度（最小 minThumbHeight）
       const hRatio = clientWidth / Math.max(1, scrollWidth)
-      thumbWidth.value = Math.max(props.minThumbHeight, clientWidth * hRatio)
+      const nextThumbWidth = Math.max(props.minThumbHeight, clientWidth * hRatio)
+      if (thumbWidth.value !== nextThumbWidth) {
+        thumbWidth.value = nextThumbWidth
+      }
       
       // 计算滑块位置
       const maxScrollLeft = Math.max(1, scrollWidth - clientWidth)
-      const maxThumbLeft = Math.max(1, clientWidth - thumbWidth.value)
-      thumbLeft.value = (scrollLeft / maxScrollLeft) * maxThumbLeft
+      const maxThumbLeft = Math.max(1, clientWidth - nextThumbWidth)
+      const nextThumbLeft = (scrollLeft / maxScrollLeft) * maxThumbLeft
+      if (thumbLeft.value !== nextThumbLeft) {
+        thumbLeft.value = nextThumbLeft
+      }
     }
   }
 }
@@ -393,7 +443,11 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
 
   const container = scrollContainer.value
   if (options.preserveBottom && props.stickyBottom && wasAtBottom) {
-    container.scrollTop = container.scrollHeight
+    // 贴底跟随：与目标位置差值超过阈值才写 scrollTop（已贴底时每帧赋值是纯浪费）
+    const targetTop = container.scrollHeight - container.clientHeight
+    if (Math.abs(container.scrollTop - targetTop) > STICKY_FOLLOW_THRESHOLD) {
+      container.scrollTop = container.scrollHeight
+    }
   }
 
   updateScrollbar()
@@ -427,11 +481,16 @@ const markerBaseColor = computed(() => {
   return props.markerColor || 'rgba(100, 160, 255, 0.55)'
 })
 
-// 滚动事件处理
+// 滚动事件处理：rAF 节流——一帧内的多次滚动事件合并为一次布局更新（含贴底判定）
+let scrollRafId: number | null = null
 function handleScroll() {
-  updateScrollbar()
-  // 更新底部状态
-  wasAtBottom = isAtBottom()
+  if (scrollRafId !== null) return
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null
+    updateScrollbar()
+    // 更新底部状态
+    wasAtBottom = isAtBottom()
+  })
 }
 
 // 垂直滚动 - 鼠标按下滑块
@@ -674,6 +733,10 @@ onBeforeUnmount(() => {
   if (layoutUpdateRafId !== null) {
     cancelAnimationFrame(layoutUpdateRafId)
     layoutUpdateRafId = null
+  }
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
   }
   if (tooltipHideTimer) {
     clearTimeout(tooltipHideTimer)
