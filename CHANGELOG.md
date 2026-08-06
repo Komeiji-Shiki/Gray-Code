@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 修复系统提示词设置页「保存配置」按钮文字折行成「保存配/置」：`.save-action-btn` 同时挂 `.mode-action-btn` 类，继承了其 `width: 24px`（仅覆盖 `min-width: 88px`），窄窗口下按钮被 flex 压缩到 88px 时内容（图标 + 「保存配置」需 ~97px）放不下，中文按字符断行；现按钮 `width: auto` 按内容撑开 + `flex-shrink: 0` 禁止压缩 + `.save-action-text` 强制 `white-space: nowrap`，窄窗口下文字保持单行。
+
 ## [1.4.3] - 2026-08-06
 
 ### Added

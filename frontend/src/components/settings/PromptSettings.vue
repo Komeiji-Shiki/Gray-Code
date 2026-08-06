@@ -2295,7 +2295,9 @@ watch(selectedChannel, () => {
 }
 
 .save-action-btn {
+  width: auto; /* 覆盖 .mode-action-btn 的 width: 24px（保存按钮按内容撑开） */
   min-width: 88px;
+  flex-shrink: 0; /* 不被 flex 压缩，避免「保存配置」文字被挤成两行 */
   height: 28px;
   padding: 0 12px;
   gap: 6px;
@@ -2303,6 +2305,10 @@ watch(selectedChannel, () => {
   background: var(--vscode-button-background);
   font-size: 13px;
   font-weight: 500;
+}
+
+.save-action-text {
+  white-space: nowrap; /* 文字强制单行，窄窗口下不再按字符断行 */
 }
 
 .save-action-btn .codicon {
