@@ -248,6 +248,8 @@ const thoughtViewMode = computed<ThoughtViewMode>({
     thoughtViewModeByMessageId.set(props.message.id, mode)
   }
 })
+// 用户是否手动切换过视图模式（自动模式切换只在用户未干预时生效）
+const thoughtViewTouched = ref(false)
 
 
 const todoDebugPrinted = new Set<string>()
@@ -567,6 +569,19 @@ watch(isThinking, (thinking) => {
   }
 }, { immediate: true })
 
+// 思考视图自动模式：思考中默认中展开；思考与输出都结束后自动折叠为第一行预览。
+// 用户手动切换过视图模式后不再自动干预；无思考块的消息不处理。
+watch([isThinking, isStreaming], ([thinking, streaming]) => {
+  if (thoughtViewTouched.value) return
+  const hasThought = renderBlocks.value.some(block => block.type === 'thought')
+  if (!hasThought) return
+  if (thinking) {
+    thoughtViewMode.value = 'medium'
+  } else if (!streaming) {
+    thoughtViewMode.value = 'collapsed'
+  }
+}, { immediate: true })
+
 // 监听 thinkingStartTime 变化（确保首次有值时启动）
 watch(
   () => props.message.metadata?.thinkingStartTime,
@@ -730,6 +745,7 @@ watch(showResponseDialog, (open) => {
 })
 
 function setThoughtViewMode(mode: ThoughtViewMode) {
+  thoughtViewTouched.value = true
   thoughtViewMode.value = mode
 }
 
