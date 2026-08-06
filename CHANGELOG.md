@@ -21,7 +21,7 @@
 
 ### Fixed
   - 修复编辑用户消息保存后候选切换器（‹ 2/2 ›）不立即显示：编辑分支流结束后分支图虽已刷新，但本地窗口中被编辑消息仍保留旧候选 id，`buildCandidateGroupForNode` 判定其为候选组非活跃成员返回 null，需切换会话再切回（loadHistory 重载后 id 与后端一致）才恢复；现 `loadBranchGraph` 刷新成功后把窗口内「候选组非活跃成员」的用户消息 id 对齐为图活跃候选（BR-01 原则：窗口 id 与后端主历史 Content.id 一致），保存后立即可见切换器，幂等不误伤其他路径；新增回归测试（editBranchRefresh.test.ts 第 5 用例：complete 后 id 对齐 + 候选组命中）。
-  - 后台任务状态条（BackgroundTaskBar）新增「清除已完成」按钮：一键清除所有已结束且已回流（reported）的后台任务 chip（运行中与未回流任务保留，未回流回执尚未进入对话历史，清除会导致模型收不到结果），按钮带可清除数量提示，三语 i18n 同步；新增 `backgroundTaskStore.dismissCompletedTasks` 单元测试（backgroundTaskDismiss.test.ts）。
+  - 后台任务状态条（BackgroundTaskBar）新增「清除已完成」按钮：一键清除所有已完成的后台任务 chip（运行中保留）；若存在结果尚未汇报给模型的任务（回执未进入对话历史），先弹危险确认框提示再清除，避免静默丢失任务结果；按钮带可清除数量提示，三语 i18n 同步；新增 `backgroundTaskStore.dismissCompletedTasks` 单元测试（backgroundTaskDismiss.test.ts）。
   - 子代理路径 `ToolDeclarationResolver` 监听器泄漏（H-1）：每次 run 新建实例会向 McpManager 单例注册 3 个永久事件监听器且从不释放，重度多代理下监听器无界累积、MCP 事件派发退化为 O(n)；改为按依赖引用共享实例（容量 4 LRU 淘汰），并新增 `dispose()` 释放监听器，同时让子代理路径真正享受声明缓存收益。
   - `ConversationManager` 节点 ID 反查缓存（`nodeIdCache`）失效覆盖不完整：`invalidateCaches` 定义了但从未被调用，saveContents / 全量重写 / 历史迁移 / 删除对话等写路径不失效缓存，工具循环内（拒绝工具调用等结构性变更后 300ms 窗口内）checkpoint 反查可能命中陈旧节点 id；现全部写路径统一走 `invalidateCaches`。
   - 设置搜索下拉键盘导航滚动跟随：结果超出下拉可视高度时，↑/↓ 选中的高亮项现在会保持在可视区域内（`scrollIntoView({ block: 'nearest' })`）。
