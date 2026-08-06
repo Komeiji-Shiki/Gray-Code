@@ -333,7 +333,14 @@ export class OpenAIFormatter extends BaseFormatter {
                     : '';
                 
                 messages.push(message);
-            } else if (functionResponseParts.length > 0) {
+            }
+
+            // 工具响应独立生成（与 functionCall 解耦）：同一历史消息同时携带
+            // functionCall + functionResponse（如中断残留/修复数据的混合形态）时，
+            // 原来的 else-if 会吞掉 functionResponse，导致 assistant tool_calls
+            // 后没有对应 tool 消息 → OpenAI 400 "insufficient tool messages"。
+            // 这里改为独立分支，混合形态也能正确拆分出 tool 消息。
+            if (functionResponseParts.length > 0) {
                 // 工具响应用 role: tool 发送
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
