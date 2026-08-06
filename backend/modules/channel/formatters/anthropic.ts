@@ -391,7 +391,17 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 this.pushMergedMessage(messages, 'user', contentArray);
-            } else if (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0) {
+            }
+
+            // 普通消息独立生成：必须同时排除 functionCall 与 functionResponse。
+            // 若挂成 else-if（仅排除 functionResponse），"text + functionCall"
+            // 同消息的最普通形态会把文本输出两次，tool_use 与 tool_result
+            // 被分隔 → 400。与 openai.ts 的修复保持一致。
+            if (
+                functionCallParts.length === 0 &&
+                functionResponseParts.length === 0 &&
+                (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0)
+            ) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];
                 
