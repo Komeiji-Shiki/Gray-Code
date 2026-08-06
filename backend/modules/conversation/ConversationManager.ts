@@ -386,12 +386,12 @@ export class ConversationManager {
             || Object.prototype.hasOwnProperty.call(updates, 'isFunctionResponse');
     }
 
-    getTranscriptRepository(conversationId: string): ITranscriptRepository {
+    getTranscriptRepository(conversationId: string, workspaceUri?: string): ITranscriptRepository {
         // 修改原因：主聊天 transcript 需要一个统一的仓储入口，供当前适配和后续协作者复用。
         // 修改方式：把 ConversationManager 既有的“缺失历史时自动建会话”读取语义，与底层 saveHistory 持久化语义一起绑定到仓储委托。
         // 修改目的：外部协作者不再直接接触 storage.loadHistory/saveHistory，也不会复制主聊天特有的初始化规则。
         return new ConversationTranscriptRepository({
-            loadContents: async () => await this.loadHistory(conversationId),
+            loadContents: async () => await this.loadHistory(conversationId, workspaceUri),
             saveContents: async contents => {
                 this.assertNotDeleted(conversationId);
                 await this.storage.saveHistory(conversationId, contents);
@@ -1108,8 +1108,8 @@ export class ConversationManager {
      * 整个读-改-写过程在仓储互斥执行器内完成；无未响应调用时不写回（返回原引用跳过），
      * 避免基于旧快照的整体写回覆盖并发落盘的真实工具结果。
      */
-    private async normalizeHistoryForDisplay(conversationId: string): Promise<ConversationHistory> {
-        return await this.getTranscriptRepository(conversationId).mutateContents(history => {
+    private async normalizeHistoryForDisplay(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
+        return await this.getTranscriptRepository(conversationId, workspaceUri).mutateContents(history => {
             // 收集所有 functionResponse 的 ID
             const respondedToolCallIds = new Set<string>();
             for (const message of history) {
@@ -1448,8 +1448,13 @@ export class ConversationManager {
 
     /**
      * 加载对话历史（直接从存储读取）
+     *
+     * @param workspaceUri 可选工作区 URI：仅当历史不存在、按需自动创建会话时使用，
+     *                     把该 URI 一并写入新会话元数据（H4 记忆隔离——自动创建的会话
+     *                     若不绑定 workspaceUri，记忆工具执行时会回退全局，造成跨工作区污染）。
+     *                     默认 undefined 保持向后兼容；webview 读取入口可传入当前工作区 URI。
      */
-    private async loadHistory(conversationId: string): Promise<ConversationHistory> {
+    private async loadHistory(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
         if (this.deletedConversationIds.has(conversationId)) {
             // 已删除会话：读路径不再自动重建（防止删除后读操作把会话“复活”为空历史）
             return [];
@@ -1459,7 +1464,9 @@ export class ConversationManager {
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
-            await this.createConversation(conversationId);
+            // 按需自动创建：把可选 workspaceUri 传给 createConversation，
+            // 避免自动创建的会话未绑定工作区导致记忆工具回退全局（H4）。
+            await this.createConversation(conversationId, undefined, workspaceUri);
             return [];
         }
         throw new Error(
@@ -1631,12 +1638,12 @@ export class ConversationManager {
      * 
      * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
-    async getMessages(conversationId: string): Promise<Content[]> {
-        const history = await this.normalizeHistoryForDisplay(conversationId);
+    async getMessages(conversationId: string, workspaceUri?: string): Promise<Content[]> {
+        const history = await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
         if (ConversationManager.needsNodeIdMigration(history)) {
             // BR-02：惰性补 ID（幂等），迁移后重新读取（normalize 返回的数组是迁移前形态）
             await this.ensureHistoryNodeIds(conversationId);
-            return this.toDisplayMessages(await this.loadHistory(conversationId));
+            return this.toDisplayMessages(await this.loadHistory(conversationId, workspaceUri));
         }
         return this.toDisplayMessages(history);
     }
@@ -1737,12 +1744,14 @@ export class ConversationManager {
      *
      * - beforeIndex: 取 [0, beforeIndex) 区间内的最后 limit 条（用于上拉加载更早消息）
      * - offset/limit: 取 [offset, offset+limit) 区间（用于任意分页）
+     * - workspaceUri: 可选工作区 URI，仅当历史不存在、按需自动创建会话时使用（H4 记忆隔离）
      *
      * 返回的 messages 中每条都包含绝对 index（即后端历史索引）。
      */
     async getMessagesPaged(
         conversationId: string,
-        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {},
+        workspaceUri?: string
     ): Promise<{ total: number; messages: Content[] }> {
         // 分段存储的分页读取只拿到一个窗口，判断不了跨窗口的工具调用配对，因此下面的快路径
         // 无法复用 normalizeHistoryForDisplay。若不在这里补齐，取消/中断留下的悬空 functionCall
@@ -1756,7 +1765,7 @@ export class ConversationManager {
             if (scan.hasUnresolvedCalls) {
                 // 只有浅扫描命中悬空工具调用时才走 mutate + 深拷贝写回路径；
                 // 正常历史跳过 normalizeHistoryForDisplay 的全量 JSON 深拷贝。
-                await this.normalizeHistoryForDisplay(conversationId);
+                await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
             }
             if (scan.needsNodeIdMigration) {
                 // BR-02：首次加载检测到缺 id 时在写锁内补 ID（幂等，之后不再触发）
@@ -1776,7 +1785,7 @@ export class ConversationManager {
             };
         }
 
-        const history = await this.normalizeHistoryForDisplay(conversationId);
+        const history = await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
 
         const total = history.length;
         const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
@@ -2825,8 +2834,11 @@ export class ConversationManager {
 
     /**
      * 设置工作区 URI
+     *
+     * workspaceUri 传 undefined 表示解绑对话（恢复"跟随活动编辑器"）：
+     * 元数据持久化时该字段会被 JSON.stringify 丢弃，即从磁盘移除。
      */
-    async setWorkspaceUri(conversationId: string, workspaceUri: string): Promise<void> {
+    async setWorkspaceUri(conversationId: string, workspaceUri?: string): Promise<void> {
         // 同 setTitle：整对象读改写必须与 setCustomMetadata 共用同一条元数据写链。
         await withMetadataWriteSerialized(conversationId, async () => {
             let meta = await this.loadMetadataForWrite(conversationId);

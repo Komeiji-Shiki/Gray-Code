@@ -6,7 +6,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { getGlobalMemoryManager, DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../modules/memory';
+import { getMemoryManagerForTool, DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../modules/memory';
 
 export function createMemoryConfigDeclaration(): ToolDeclaration {
     return {
@@ -45,9 +45,13 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
     };
 }
 
-async function memoryConfigHandler(args: Record<string, unknown>, _context?: ToolContext): Promise<ToolResult> {
-    const mgr = getGlobalMemoryManager();
+async function memoryConfigHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
+    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri);
     if (!mgr) {
+        // 调用方传了 workspaceUri 说明意图是工作区：解析失败不要静默回退全局
+        if (context?.activeWorkspaceUri) {
+            return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
+        }
         return { success: false, error: 'MemoryManager is not initialized.' };
     }
 
