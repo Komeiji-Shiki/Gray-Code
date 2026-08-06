@@ -298,14 +298,28 @@ export class OpenAIFormatter extends BaseFormatter {
      * - functionResponse 用 role: tool 发送
      */
     private convertHistoryFunctionCallMode(history: Content[], messages: any[], pdfAttachmentEnabled: boolean = false): void {
+        // 收集被 rejected 的 functionCall id：其配对 functionResponse（占位拒绝响应）
+        // 也一并丢弃，避免「call 被滤掉而 tool 消息残留」的孤儿 tool 消息 400。
+        // 主路径 formatHistoryForAPI 已做配对感知处理（成对保留/丢弃），此处是防御层。
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
             // 分离各种类型的 parts
             const textParts = content.parts.filter(p => 'text' in p && !p.thought);
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought === true);
-            const functionCallParts = content.parts.filter(p => p.functionCall);
-            const functionResponseParts = content.parts.filter(p => p.functionResponse);
+            const functionCallParts = content.parts.filter(p => p.functionCall && !p.functionCall.rejected);
+            const functionResponseParts = content.parts.filter(
+                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
+            );
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
             if (functionCallParts.length > 0) {
@@ -483,11 +497,23 @@ export class OpenAIFormatter extends BaseFormatter {
      * - 支持多媒体内容
      */
     private convertHistoryTextMode(history: Content[], messages: any[], mode: 'xml' | 'json', pdfAttachmentEnabled: boolean = false): void {
+        // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃（见 function_call 模式注释）
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
             // 分离各种类型的 parts
-            const functionResponseParts = content.parts.filter(p => p.functionResponse);
+            const functionResponseParts = content.parts.filter(
+                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
+            );
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought === true);
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
@@ -526,7 +552,7 @@ export class OpenAIFormatter extends BaseFormatter {
                         continue;
                     }
                     
-                    if (part.functionCall) {
+                    if (part.functionCall && !part.functionCall.rejected) {
                         // 将 functionCall 转回文本
                         const callText = mode === 'xml'
                             ? convertFunctionCallToXML(part.functionCall.name, part.functionCall.args)

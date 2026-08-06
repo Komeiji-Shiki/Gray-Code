@@ -89,7 +89,28 @@ export class GeminiFormatter extends BaseFormatter {
             processedHistory = this.convertHistoryToJSONMode(history);
         } else {
             // Function Call 模式：直接使用原始历史
-            processedHistory = history;
+            // 过滤 rejected 残留（中断/取消的无响应调用），避免孤儿 functionCall part
+            // 发给 Gemini（与 XML/JSON 模式及 OpenAI/Anthropic 的过滤口径一致）。
+            // 配对 functionResponse 一起丢弃（成对过滤）；过滤后丢弃空 parts 消息
+            // （Gemini 要求每个 content 至少一个 part）。
+            const rejectedCallIds = new Set<string>();
+            for (const content of history) {
+                for (const part of content.parts) {
+                    if (part.functionCall?.rejected && part.functionCall.id) {
+                        rejectedCallIds.add(part.functionCall.id);
+                    }
+                }
+            }
+            processedHistory = history
+                .map(content => ({
+                    ...content,
+                    parts: content.parts.filter(p => {
+                        if (p.functionCall?.rejected) return false;
+                        if (p.functionResponse?.id && rejectedCallIds.has(p.functionResponse.id)) return false;
+                        return true;
+                    })
+                }))
+                .filter(content => content.parts.length > 0);
         }
         
         // 转换思考签名格式：将 thoughtSignatures.gemini 转换为 thoughtSignature
@@ -471,46 +492,64 @@ export class GeminiFormatter extends BaseFormatter {
      * 注意：functionResponse.parts 中的多模态内容会被提取并添加到消息中
      */
     private convertHistoryToXMLMode(history: Content[]): Content[] {
-        return history.map(content => {
-            const newParts: ContentPart[] = [];
-            
+        // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃
+        //（避免 prompt 里出现无前序调用的孤响应文本）
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
             for (const part of content.parts) {
-                if (part.functionCall) {
-                    // 将 functionCall 转换为 XML 文本
-                    const xmlText = convertFunctionCallToXML(
-                        part.functionCall.name,
-                        part.functionCall.args
-                    );
-                    newParts.push({ text: xmlText });
-                } else if (part.functionResponse) {
-                    // 将 functionResponse 转换为 XML 文本
-                    const xmlText = convertFunctionResponseToXML(
-                        part.functionResponse.name,
-                        part.functionResponse.response
-                    );
-                    newParts.push({ text: xmlText });
-                    
-                    // 提取 functionResponse.parts 中的多模态内容
-                    // 这些内容（如工具返回的图片）需要作为独立的 parts 发送给 AI
-                    if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
-                        for (const responsePart of part.functionResponse.parts) {
-                            // 只提取多模态内容（inlineData 或 fileData）
-                            if (responsePart.inlineData || responsePart.fileData) {
-                                newParts.push(responsePart);
-                            }
-                        }
-                    }
-                } else {
-                    // 其他类型的 part 保持不变
-                    newParts.push(part);
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
                 }
             }
-            
-            return {
-                ...content,
-                parts: newParts
-            };
-        });
+        }
+
+        return history
+            .map(content => {
+                const newParts: ContentPart[] = [];
+                
+                for (const part of content.parts) {
+                    // rejected 残留（中断/取消）：整体跳过，避免落入 else 分支原样回推
+                    if (part.functionCall?.rejected) {
+                        continue;
+                    }
+                    if (part.functionCall && !part.functionCall.rejected) {
+                        // 将 functionCall 转换为 XML 文本
+                        const xmlText = convertFunctionCallToXML(
+                            part.functionCall.name,
+                            part.functionCall.args
+                        );
+                        newParts.push({ text: xmlText });
+                    } else if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) {
+                        // 将 functionResponse 转换为 XML 文本
+                        const xmlText = convertFunctionResponseToXML(
+                            part.functionResponse.name,
+                            part.functionResponse.response
+                        );
+                        newParts.push({ text: xmlText });
+                        
+                        // 提取 functionResponse.parts 中的多模态内容
+                        // 这些内容（如工具返回的图片）需要作为独立的 parts 发送给 AI
+                        if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
+                            for (const responsePart of part.functionResponse.parts) {
+                                // 只提取多模态内容（inlineData 或 fileData）
+                                if (responsePart.inlineData || responsePart.fileData) {
+                                    newParts.push(responsePart);
+                                }
+                            }
+                        }
+                    } else {
+                        // 其他类型的 part 保持不变
+                        newParts.push(part);
+                    }
+                }
+                
+                return {
+                    ...content,
+                    parts: newParts
+                };
+            })
+            // 丢弃过滤后变空的 parts 消息（Gemini 要求每个 content 至少一个 part）
+            .filter(content => content.parts.length > 0);
     }
     
     /**
@@ -522,46 +561,63 @@ export class GeminiFormatter extends BaseFormatter {
      * 注意：functionResponse.parts 中的多模态内容会被提取并添加到消息中
      */
     private convertHistoryToJSONMode(history: Content[]): Content[] {
-        return history.map(content => {
-            const newParts: ContentPart[] = [];
-            
+        // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
             for (const part of content.parts) {
-                if (part.functionCall) {
-                    // 将 functionCall 转换为 JSON 代码块
-                    const jsonText = convertFunctionCallToJSON(
-                        part.functionCall.name,
-                        part.functionCall.args
-                    );
-                    newParts.push({ text: jsonText });
-                } else if (part.functionResponse) {
-                    // 将 functionResponse 转换为 JSON 代码块
-                    const jsonText = convertFunctionResponseToJSON(
-                        part.functionResponse.name,
-                        part.functionResponse.response
-                    );
-                    newParts.push({ text: jsonText });
-                    
-                    // 提取 functionResponse.parts 中的多模态内容
-                    // 这些内容（如工具返回的图片）需要作为独立的 parts 发送给 AI
-                    if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
-                        for (const responsePart of part.functionResponse.parts) {
-                            // 只提取多模态内容（inlineData 或 fileData）
-                            if (responsePart.inlineData || responsePart.fileData) {
-                                newParts.push(responsePart);
-                            }
-                        }
-                    }
-                } else {
-                    // 其他类型的 part 保持不变
-                    newParts.push(part);
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
                 }
             }
-            
-            return {
-                ...content,
-                parts: newParts
-            };
-        });
+        }
+
+        return history
+            .map(content => {
+                const newParts: ContentPart[] = [];
+                
+                for (const part of content.parts) {
+                    // rejected 残留（中断/取消）：整体跳过，避免落入 else 分支原样回推
+                    if (part.functionCall?.rejected) {
+                        continue;
+                    }
+                    if (part.functionCall && !part.functionCall.rejected) {
+                        // 将 functionCall 转换为 JSON 代码块
+                        const jsonText = convertFunctionCallToJSON(
+                            part.functionCall.name,
+                            part.functionCall.args
+                        );
+                        newParts.push({ text: jsonText });
+                    } else if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) {
+                        // 将 functionResponse 转换为 JSON 代码块
+                        const jsonText = convertFunctionResponseToJSON(
+                            part.functionResponse.name,
+                            part.functionResponse.response
+                        );
+                        newParts.push({ text: jsonText });
+                        
+                        // 提取 functionResponse.parts 中的多模态内容
+                        // 这些内容（如工具返回的图片）需要作为独立的 parts 发送给 AI
+                        if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
+                            for (const responsePart of part.functionResponse.parts) {
+                                // 只提取多模态内容（inlineData 或 fileData）
+                                if (responsePart.inlineData || responsePart.fileData) {
+                                    newParts.push(responsePart);
+                                }
+                            }
+                        }
+                    } else {
+                        // 其他类型的 part 保持不变
+                        newParts.push(part);
+                    }
+                }
+                
+                return {
+                    ...content,
+                    parts: newParts
+                };
+            })
+            // 丢弃过滤后变空的 parts 消息（Gemini 要求每个 content 至少一个 part）
+            .filter(content => content.parts.length > 0);
     }
     
     /**

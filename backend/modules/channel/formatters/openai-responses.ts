@@ -136,6 +136,17 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
     private convertToResponsesInput(history: Content[]): any[] {
         const input: any[] = [];
         
+        // 成对过滤：rejected functionCall 及其配对 function_call_output 一起丢弃，
+        // 避免「function_call 被滤掉而 output 残留」的孤儿 output（Responses API 400）。
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+        
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -196,7 +207,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
 
                 // 4. 处理函数调用 (Function Call Item)
-                if (part.functionCall) {
+                // rejected 的调用（无对应 functionResponse 的中断/取消残留）不发，
+                // 否则 OpenAI Responses API 会因 call_id 无输出项而报错。
+                if (part.functionCall && !part.functionCall.rejected) {
                     flushMessage();
                     input.push({
                         type: 'function_call',
@@ -210,7 +223,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
 
                 // 5. 处理函数响应 (Function Call Output Item)
-                if (part.functionResponse) {
+                // 配对响应属于被 rejected 的调用时一起丢弃（成对过滤）
+                if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) {
                     flushMessage();
                     input.push({
                         type: 'function_call_output',
