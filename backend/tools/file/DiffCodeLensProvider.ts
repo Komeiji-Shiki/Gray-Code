@@ -129,16 +129,21 @@ export class DiffCodeLensProvider implements vscode.CodeLensProvider {
     
     /**
      * 更新 diff 块状态
+     *
+     * 注意：blockIndex 是块的业务下标（hunk/raw-diff 下标，来自 block.index），
+     * 不是数组下标——blocks 只包含初始成功的块，混合成败时下标是稀疏的（如
+     * [{index:0},{index:2}]），用数组下标定位会静默 no-op 导致会话永不 complete。
      */
     public updateBlockStatus(sessionId: string, blockIndex: number, confirmed: boolean): void {
         const session = this.activeSessions.get(sessionId);
-        if (session && session.blocks[blockIndex]) {
+        const block = session?.blocks.find(b => b.index === blockIndex);
+        if (block) {
             if (confirmed) {
-                session.blocks[blockIndex].confirmed = true;
-                session.blocks[blockIndex].rejected = false;
+                block.confirmed = true;
+                block.rejected = false;
             } else {
-                session.blocks[blockIndex].confirmed = false;
-                session.blocks[blockIndex].rejected = true;
+                block.confirmed = false;
+                block.rejected = true;
             }
             this._onDidChangeCodeLenses.fire();
         }

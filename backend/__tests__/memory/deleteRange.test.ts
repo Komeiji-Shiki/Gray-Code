@@ -107,6 +107,41 @@ describe('MemoryManager.deleteRange', () => {
             fs.rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it('非法参数：非整数 / NaN 抛错且不改变数据', async () => {
+        const { mm, dir } = setup();
+        try {
+            await mm.init();
+            await mm.note('a');
+            await mm.note('b');
+
+            await expect(mm.deleteRange(NaN, 1)).rejects.toThrow('Invalid delete range');
+            await expect(mm.deleteRange(0, NaN)).rejects.toThrow('Invalid delete range');
+            await expect(mm.deleteRange(1.5, 1.5)).rejects.toThrow('Invalid delete range');
+            const entries = await mm.listEntries();
+            expect(entries).toHaveLength(2);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('deleteEntries：非数组 / 非法 id 抛错且不改变数据', async () => {
+        const { mm, dir } = setup();
+        try {
+            await mm.init();
+            await mm.note('a');
+            await mm.note('b');
+            await mm.note('c');
+
+            await expect((mm as any).deleteEntries('not-array')).rejects.toThrow('ids must be an array');
+            await expect(mm.deleteEntries([0, -1])).rejects.toThrow('ids must be non-negative integers');
+            await expect(mm.deleteEntries([0, 1.5])).rejects.toThrow('ids must be non-negative integers');
+            const entries = await mm.listEntries();
+            expect(entries).toHaveLength(3);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('MemoryManager.deleteEntries', () => {

@@ -2261,7 +2261,7 @@ export class ChatFlowService {
             let status: ChatStreamToolStatusData['tool']['status'] = 'success';
             if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
               status = 'error';
-            } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || (r.data.appliedCount > 0 && r.data.failedCount > 0))) {
               status = 'warning';
             }
 
@@ -2401,7 +2401,7 @@ export class ChatFlowService {
             let status: ChatStreamToolStatusData['tool']['status'] = 'success';
             if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
               status = 'error';
-            } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || (r.data.appliedCount > 0 && r.data.failedCount > 0))) {
               status = 'warning';
             }
 

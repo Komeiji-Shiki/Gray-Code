@@ -3070,6 +3070,8 @@ const zhCN = {
                     pending: '待审阅',
                     accepted: '已接受',
                     rejected: '已拒绝',
+                    partial: '部分接受',
+                    rejectedBlock: '此块已被用户拒绝',
                     line: '起始行',
                     diffNumber: '#',
                     collapse: '收起',
