@@ -19,6 +19,7 @@ import {
   getPendingApprovalGateMismatchReason,
   type PendingApprovalGateExpectation
 } from '../../backend/modules/conversation/pendingApprovalGate';
+import { DEFAULT_IGNORED_DIRS } from '../../backend/tools/ignoreLists';
 
 // ========== 附件大小上限 ==========
 
@@ -140,8 +141,9 @@ export const listWorkspaceDirectory: MessageHandler = async (data, requestId, ct
 
     const items = await vscode.workspace.fs.readDirectory(dirUri);
 
-    const DEFAULT_IGNORED = ['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.next', 'coverage'];
-    const shouldIgnore = (name: string): boolean => DEFAULT_IGNORED.includes(name);
+    // M-9：与 backend/tools/ignoreLists.ts 统一忽略列表（导出名固定为 DEFAULT_IGNORED_DIRS）。
+    // 内容与 FileHandlers 原有本地列表一致（不含 target/out），统一后行为不变。
+    const shouldIgnore = (name: string): boolean => DEFAULT_IGNORED_DIRS.includes(name);
 
     const entries = items
       .filter(([name]) => !shouldIgnore(name))
@@ -881,6 +883,14 @@ export const openWorkspaceFile: MessageHandler = async (data, requestId, ctx) =>
 let jumpHighlightDecorationType: vscode.TextEditorDecorationType | null = null;
 const jumpHighlightTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** 清理全部跳转高亮定时器（宿主级 dispose 生命周期内调用） */
+function clearAllJumpHighlightTimers(): void {
+  for (const timer of jumpHighlightTimers.values()) {
+    clearTimeout(timer);
+  }
+  jumpHighlightTimers.clear();
+}
+
 function getJumpHighlightDecorationType(ctx: HandlerContext): vscode.TextEditorDecorationType {
   if (!jumpHighlightDecorationType) {
     jumpHighlightDecorationType = vscode.window.createTextEditorDecorationType({
@@ -890,8 +900,18 @@ function getJumpHighlightDecorationType(ctx: HandlerContext): vscode.TextEditorD
       overviewRulerLane: vscode.OverviewRulerLane.Right
     });
 
-    // 绑定到扩展生命周期，避免资源泄漏
-    ctx.context?.subscriptions?.push(jumpHighlightDecorationType);
+    // 绑定到扩展生命周期：dispose 时先清掉全部高亮定时器（避免回调在装饰器已销毁后
+    // 仍尝试 setDecorations），再销毁装饰器本身。M-9：定时器挂在装饰器的 dispose 生命周期，
+    // 与 ctx.context.subscriptions 对齐，扩展停用时一并回收。
+    ctx.context?.subscriptions?.push({
+      dispose() {
+        clearAllJumpHighlightTimers();
+        if (jumpHighlightDecorationType) {
+          jumpHighlightDecorationType.dispose();
+          jumpHighlightDecorationType = null;
+        }
+      }
+    });
   }
   return jumpHighlightDecorationType;
 }

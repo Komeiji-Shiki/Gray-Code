@@ -1,31 +1,15 @@
 /**
  * Design 工具路径辅助函数
+ *
+ * 修改原因：与 plan/progress 的 pathUtils 同构（多根工作区前缀校验 + 父目录创建），
+ * 收敛到 ../pathPolicy 统一实现，本文件保留原导出名与签名。
  */
 
-import * as vscode from 'vscode';
-import * as path from 'path';
-import { getAllWorkspaces } from '../utils';
+import { isScopedPathAllowedWithMultiRoot, ensureParentDir } from '../pathPolicy';
 import { isDesignPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
 export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  if (isDesignPathAllowed(pathStr)) return true;
-
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isDesignPathAllowed(rest);
+  return isScopedPathAllowedWithMultiRoot(pathStr, isDesignPathAllowed);
 }
 
-export async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
-}
+export { ensureParentDir };

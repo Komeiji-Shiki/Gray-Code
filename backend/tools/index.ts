@@ -143,14 +143,15 @@ export function registerAllTools(
         ...getSubAgentsRegistrations()
     ];
 
-    // 注册所有工具（read_skill 除外，它需要特殊处理）
+    // 注册所有工具（read_skill 除外，它需要特殊处理）。
+    // 修改原因：旧实现先 `probe = registration()` 仅为了判断工具名是否 read_skill，
+    // 等于把每个工具的工厂都多实例化一次（execute_command 等会重复构建声明并触发
+    // checkShellAvailabilitySync 的 execFileSync 探测），随后 registry.register 内部
+    // 还会再调用一次工厂。
+    // 修改方式：read_skill 不在 collectAllToolRegistrations 与 subagents 注册表中
+    //（collectAllToolRegistrations 明确排除，subagents 注册表无 read_skill），
+    // 无需探针即可保证不会重复注册；read_skill 由下方真实工厂单独注册。
     for (const registration of registrations) {
-        // read_skill 不在 collectAllToolRegistrations 中，此处仅作防御性跳过，
-        // 保持"read_skill 单独以真实工厂注册"的既有逻辑。
-        const probe = registration();
-        if (probe.declaration.name === 'read_skill') {
-            continue;
-        }
         registry.register(registration);
     }
 

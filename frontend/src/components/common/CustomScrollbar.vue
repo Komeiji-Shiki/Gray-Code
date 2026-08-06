@@ -438,6 +438,41 @@ function requestMarkerScan() {
   }
 }
 
+/**
+ * 字符级变更节流（M-5）：流式期间 CharFlow / v-html 每帧改写 text node（characterData），
+ * 若每帧都走 scheduleLayoutUpdate 的 rAF，则每帧都读取 scrollHeight/clientHeight 等布局值。
+ * 这里把纯字符变更合并到 ~100ms 窗口内执行一次布局更新（含贴底跟随语义）；
+ * childList 结构变更仍保持即时（scheduleLayoutUpdate 原路径）。
+ */
+const CHAR_LAYOUT_THROTTLE_MS = 100
+let lastCharLayoutAt = 0
+let pendingCharLayoutTimer: ReturnType<typeof setTimeout> | null = null
+let pendingCharLayoutPreserveBottom = false
+
+function scheduleCharacterLayoutUpdate(options: { preserveBottom?: boolean } = {}) {
+  pendingCharLayoutPreserveBottom ||= !!options.preserveBottom
+  if (pendingCharLayoutTimer) return
+
+  const now = Date.now()
+  const elapsed = now - lastCharLayoutAt
+  const runLayout = () => {
+    lastCharLayoutAt = Date.now()
+    scheduleLayoutUpdate({ preserveBottom: pendingCharLayoutPreserveBottom })
+    pendingCharLayoutPreserveBottom = false
+  }
+
+  if (elapsed >= CHAR_LAYOUT_THROTTLE_MS) {
+    // 距上次字符布局更新已超过节流窗口：立即执行
+    runLayout()
+    return
+  }
+  // 尾沿补偿：窗口内合并，到点执行一次（保证流式结束后滚动条/贴底最终与 DOM 一致）
+  pendingCharLayoutTimer = setTimeout(() => {
+    pendingCharLayoutTimer = null
+    runLayout()
+  }, CHAR_LAYOUT_THROTTLE_MS - elapsed)
+}
+
 function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
   if (!scrollContainer.value) return
 
@@ -698,11 +733,15 @@ onMounted(() => {
     if (scrollContainer.value) {
       mutationObserver = new MutationObserver((mutations) => {
         // 字符级变更（CharFlow 直写 text node、v-html 内容替换）只改变文字/内容尺寸，
-        // 不改变 marker 元素集合（marker 位置只依赖内容结构）；仍调度布局更新
-        // （滚动条尺寸 + 贴底跟随），但不触发 marker 重扫，避免流式期间每帧
-        // 对 marker 元素逐个 getBoundingClientRect() 强制同步布局。
+        // 不改变 marker 元素集合（marker 位置只依赖内容结构）。M-5：纯字符变更合并到
+        // ~100ms 窗口再调度布局（流式期间每帧触发），避免每帧同步读布局；
+        // 结构变更（childList）仍即时调度（含 marker 重扫）。
         const hasStructuralChange = mutations.some(mutation => mutation.type === 'childList')
-        scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: hasStructuralChange })
+        if (hasStructuralChange) {
+          scheduleLayoutUpdate({ preserveBottom: true, updateMarkers: true })
+        } else {
+          scheduleCharacterLayoutUpdate({ preserveBottom: true })
+        }
       })
       mutationObserver.observe(scrollContainer.value, {
         childList: true,
@@ -733,6 +772,10 @@ onBeforeUnmount(() => {
   if (layoutUpdateRafId !== null) {
     cancelAnimationFrame(layoutUpdateRafId)
     layoutUpdateRafId = null
+  }
+  if (pendingCharLayoutTimer !== null) {
+    clearTimeout(pendingCharLayoutTimer)
+    pendingCharLayoutTimer = null
   }
   if (scrollRafId !== null) {
     cancelAnimationFrame(scrollRafId)

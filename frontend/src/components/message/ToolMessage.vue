@@ -82,6 +82,29 @@ const persistedDiffGuardWarnings = ref<Map<string, { warning: string; deletePerc
 // 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
 const seenDiffToolIds = ref<Set<string>>(new Set())
 
+/**
+ * M-6：持久化警戒 / 已见 diff 工具容量的上限（防御性兜底，参照 MessageItem 的
+ * BACKGROUND_TASK_VIEW_MODE_CAP 模式）。长会话中大量 diff 工具会不断累积条目，
+ * 超限时按插入序淘汰最旧条目，保证容器有界。
+ */
+const DIFF_STATE_CAP = 500
+
+function capDiffStateMap<K>(map: Map<K, unknown>): void {
+  while (map.size > DIFF_STATE_CAP) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey === undefined) break
+    map.delete(oldestKey)
+  }
+}
+
+function capDiffStateSet<T>(set: Set<T>): void {
+  while (set.size > DIFF_STATE_CAP) {
+    const oldestValue = set.values().next().value
+    if (oldestValue === undefined) break
+    set.delete(oldestValue)
+  }
+}
+
 // diff 工具从 pendingDiffs 列表消失到收到最终 functionResponse 之间，可能会出现短暂的空窗。
 // 为避免 UI 闪烁（先 error 再 success），这里给一个宽限期。
 const pendingDiffOrphanedAt = ref<Map<string, number>>(new Map())
@@ -423,6 +446,8 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
     for (const [toolId, warning] of newWarnings.entries()) {
       nextPersisted.set(toolId, warning)
     }
+    // M-6：容量上限兜底（Map 保持插入序，超限时淘汰最旧条目）
+    capDiffStateMap(nextPersisted)
     persistedDiffGuardWarnings.value = nextPersisted
   }
 
@@ -431,6 +456,8 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
   for (const toolId of newMapping.keys()) {
     nextSeen.add(toolId)
   }
+  // M-6：容量上限兜底
+  capDiffStateSet(nextSeen)
   seenDiffToolIds.value = nextSeen
 
   const activeSessionIds = new Set<string>(pendingDiffs.map((d: any) => d.id))
@@ -466,6 +493,20 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
     }
   }
 })
+
+// M-6：会话切换时清空持久化警戒 / 已见 diff 工具记录（防御：组件实例可能跨会话复用，
+// 旧会话的警戒与已见集合对当前会话无意义，清空避免无界增长）
+watch(
+  () => chatStore.currentConversationId,
+  () => {
+    if (persistedDiffGuardWarnings.value.size > 0) {
+      persistedDiffGuardWarnings.value = new Map()
+    }
+    if (seenDiffToolIds.value.size > 0) {
+      seenDiffToolIds.value = new Set()
+    }
+  }
+)
 
 onBeforeUnmount(() => {
   // 只注销本组件注册的事件监听器

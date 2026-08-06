@@ -3,7 +3,6 @@
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
 import { ChatViewProvider } from './webview/ChatViewProvider';
 import { t, setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { Logger } from './backend/core/logger';
@@ -12,6 +11,7 @@ import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorAct
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
 import { getDiffManager } from './backend/tools/file/diffManager';
 import { getSelectionContextProvider, SelectionContextProvider, type SelectionContextCommandArgs } from './backend/tools/file/SelectionContextProvider';
+import { runExportSettings, runImportSettings, runMigrateConversationHistories } from './webview/commands/settingsTransfer';
 
 // 保存 ChatViewProvider 实例以便在停用时清理
 let chatViewProvider: ChatViewProvider | undefined;
@@ -93,158 +93,22 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 注册命令：导出设置
     context.subscriptions.push(
-        vscode.commands.registerCommand('graycode.exportSettings', async () => {
-            if (!chatViewProvider) {
-                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法导出设置。');
-                return;
-            }
-
-            try {
-                // 让用户选择保存位置
-                const result = await vscode.window.showSaveDialog({
-                    defaultUri: vscode.Uri.file('graycode-settings.json'),
-                    filters: {
-                        'JSON Files': ['json'],
-                        'All Files': ['*']
-                    },
-                    title: '导出 GrayCode 设置'
-                });
-
-                if (!result) {
-                    return; // 用户取消
-                }
-
-                const json = await vscode.window.withProgress({
-                    location: vscode.ProgressLocation.Notification,
-                    title: 'GrayCode：正在导出设置...',
-                    cancellable: false
-                }, async () => {
-                    return await chatViewProvider!.exportSettings();
-                });
-
-                // 写入文件
-                await fs.writeFile(result.fsPath, json, 'utf-8');
-
-                vscode.window.showInformationMessage(`设置已成功导出到：${result.fsPath}`);
-            } catch (error: any) {
-                vscode.window.showErrorMessage(`GrayCode 导出设置失败：${error?.message || String(error)}`);
-            }
+        vscode.commands.registerCommand('graycode.exportSettings', () => {
+            return runExportSettings(chatViewProvider);
         })
     );
 
     // 注册命令：导入设置
     context.subscriptions.push(
-        vscode.commands.registerCommand('graycode.importSettings', async () => {
-            if (!chatViewProvider) {
-                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法导入设置。');
-                return;
-            }
-
-            try {
-                // 让用户选择导入文件
-                const result = await vscode.window.showOpenDialog({
-                    canSelectFiles: true,
-                    canSelectFolders: false,
-                    canSelectMany: false,
-                    filters: {
-                        'JSON Files': ['json'],
-                        'All Files': ['*']
-                    },
-                    title: '导入 GrayCode 设置'
-                });
-
-                if (!result || result.length === 0) {
-                    return; // 用户取消
-                }
-
-                const filePath = result[0].fsPath;
-
-                // 读取文件
-                const json = await fs.readFile(filePath, 'utf-8');
-
-                // 让用户确认导入选项
-                const overwriteChoice = await vscode.window.showQuickPick(
-                    [
-                        { label: '跳过已存在的项', description: '只导入新的配置，不覆盖已有配置', value: 'skip' },
-                        { label: '覆盖所有', description: '覆盖所有已有配置（建议先备份）', value: 'overwrite' }
-                    ],
-                    {
-                        placeHolder: '选择导入方式',
-                        title: 'GrayCode 导入设置'
-                    }
-                );
-
-                if (!overwriteChoice) {
-                    return; // 用户取消
-                }
-
-                const overwrite = overwriteChoice.value === 'overwrite';
-
-                const importResult = await vscode.window.withProgress({
-                    location: vscode.ProgressLocation.Notification,
-                    title: 'GrayCode：正在导入设置...',
-                    cancellable: false
-                }, async () => {
-                    return await chatViewProvider!.importSettings(json, {
-                        overwriteChannelConfigs: overwrite,
-                        overwriteMcpServers: overwrite,
-                        overwriteSkills: overwrite
-                    });
-                });
-
-                // 构建结果消息
-                const parts: string[] = [];
-                if (importResult.imported.vscodeSettings) parts.push('VSCode 设置');
-                if (importResult.imported.channelConfigs > 0) parts.push(`${importResult.imported.channelConfigs} 个渠道配置`);
-                if (importResult.imported.mcpServers > 0) parts.push(`${importResult.imported.mcpServers} 个 MCP 服务器`);
-                if (importResult.imported.skills > 0) parts.push(`${importResult.imported.skills} 个 Skills`);
-
-                if (importResult.success) {
-                    const importedItems = parts.length > 0 ? `已导入：${parts.join('、')}` : '没有可导入的项';
-                    vscode.window.showInformationMessage(`设置导入完成。${importedItems}。`);
-                } else {
-                    const importedItems = parts.length > 0 ? `已导入：${parts.join('、')}。` : '';
-                    const errorSummary = importResult.errors.join('；');
-                    vscode.window.showWarningMessage(`设置导入部分完成。${importedItems}错误：${errorSummary}`);
-                }
-            } catch (error: any) {
-                vscode.window.showErrorMessage(`GrayCode 导入设置失败：${error?.message || String(error)}`);
-            }
+        vscode.commands.registerCommand('graycode.importSettings', () => {
+            return runImportSettings(chatViewProvider);
         })
     );
 
     // 注册命令：迁移旧版单文件对话历史到分段存储格式
     context.subscriptions.push(
-        vscode.commands.registerCommand('graycode.migrateConversationHistories', async () => {
-            if (!chatViewProvider) {
-                vscode.window.showErrorMessage('GrayCode 尚未完成初始化，无法迁移旧对话历史。');
-                return;
-            }
-
-            try {
-                const result = await vscode.window.withProgress({
-                    location: vscode.ProgressLocation.Notification,
-                    title: 'GrayCode：正在迁移旧对话历史',
-                    cancellable: false
-                }, async progress => {
-                    return await chatViewProvider!.migrateConversationHistories(({ current, total, conversationId }) => {
-                        progress.report({
-                            message: total > 0 ? `${current}/${total}${conversationId ? ` · ${conversationId}` : ''}` : '没有需要迁移的旧对话',
-                            increment: total > 0 ? (100 / total) : undefined
-                        });
-                    });
-                });
-
-                const basePath = chatViewProvider.getEffectiveConversationDataPath();
-                const summary = `迁移完成。已迁移 ${result.migrated} 个对话，已跳过 ${result.skipped} 个对话，失败 ${result.failed.length} 个。存储路径：${basePath}`;
-                if (result.failed.length > 0) {
-                    vscode.window.showWarningMessage(summary);
-                } else {
-                    vscode.window.showInformationMessage(summary);
-                }
-            } catch (error: any) {
-                vscode.window.showErrorMessage(`GrayCode 迁移旧对话历史失败：${error?.message || String(error)}`);
-            }
+        vscode.commands.registerCommand('graycode.migrateConversationHistories', () => {
+            return runMigrateConversationHistories(chatViewProvider);
         })
     );
 

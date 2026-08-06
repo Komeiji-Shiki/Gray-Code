@@ -308,7 +308,12 @@ function handleContextMouseLeave() {
     clearTimeout(hoverTimer)
     hoverTimer = null
   }
-  setTimeout(() => {
+  // M-7：保存定时器句柄并在 onBeforeUnmount 清理，避免组件卸载后回调访问已卸载状态
+  if (leavePreviewTimer) {
+    clearTimeout(leavePreviewTimer)
+  }
+  leavePreviewTimer = setTimeout(() => {
+    leavePreviewTimer = null
     if (!hoveredContextId.value) {
       previewContext.value = null
     }
@@ -638,6 +643,7 @@ const placeholderText = computed(() => {
 const hoveredContextId = ref<string | null>(null)
 const previewContext = ref<PromptContextItem | null>(null)
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
+let leavePreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 function truncatePreview(content: string, maxLines = 10, maxChars = 500): string {
   const lines = content.split('\n').slice(0, maxLines)
@@ -695,6 +701,8 @@ onBeforeUnmount(() => {
   disposeRestoreFocusListener = null
   if (hoverTimer) clearTimeout(hoverTimer)
   hoverTimer = null
+  if (leavePreviewTimer) clearTimeout(leavePreviewTimer)
+  leavePreviewTimer = null
 })
 
 defineExpose({

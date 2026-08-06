@@ -644,6 +644,9 @@ onBeforeUnmount(() => {
   agentStopNotificationController?.dispose()
   agentStopNotificationController = null
 
+  // M-7：注销 terminalStore 的扩展消息监听（onMessageFromExtension 取消函数）
+  terminalStore.dispose?.()
+
   // H1：webview 卸载兜底——销毁所有平滑流式实例（防泄漏；显示文本随 webview 一起销毁）
   disposeAllSmoothStreams()
 })

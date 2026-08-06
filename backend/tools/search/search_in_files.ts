@@ -20,7 +20,8 @@ import {
     isPathInsideOrEqualReal,
     detectSuspectedRegexIntent,
     createSuspectedRegexSuggestion,
-    resolveFileToolPathWithInfo
+    resolveFileToolPathWithInfo,
+    mapWithConcurrency
 } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
@@ -30,16 +31,26 @@ import { validateRegexPattern } from './regexGuard';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../modules/settings/types';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
+import { DEFAULT_EXCLUDE_GLOB } from '../ignoreLists';
 
 /**
- * 默认排除模式
+ * 默认排除模式（统一收敛自 ../ignoreLists）
  */
-const DEFAULT_EXCLUDE = '**/node_modules/**';
+const DEFAULT_EXCLUDE = DEFAULT_EXCLUDE_GLOB;
 
 /**
  * 替换模式 matches 收集预算上限：防止 maxFiles×高频 query 产生数百万条匹配全量回传
  */
 const MAX_REPLACE_MATCHES = 20000;
+
+/**
+ * 文件级扫描并发上限。
+ *
+ * 修改原因：searchInDirectory / searchAndReplaceInDirectory 对最多 1000 个文件
+ * 串行做 stat/读文件头/读全文等 I/O，单次搜索耗时随文件数线性增长。
+ * 修改方式：复用 utils.mapWithConcurrency 受控并发（默认 8），结果仍按原文件顺序返回。
+ */
+const FILE_SCAN_CONCURRENCY = 8;
 
 /**
  * 获取 search_in_files 工具配置（带默认值兜底）
@@ -370,22 +381,33 @@ async function searchInDirectory(
     const contextAfter = Math.floor(clampNonNegativeNumber(config.contextLinesAfter, 1));
     const maxLinePreviewChars = Math.floor(clampNonNegativeNumber(config.maxLinePreviewChars, 300));
     const maxMatchPreviewChars = Math.floor(clampNonNegativeNumber(config.maxMatchPreviewChars, 220));
-    
-    for (const fileUri of files) {
-        if (results.length >= maxResults) {
-            break;
+
+    // 共享匹配总数：达到 maxResults 后仍"在飞"的任务快速退出（并发下无法立即中断，
+    // 但可避免继续发起新工作）；结果按原文件顺序由外部拼接，保证返回顺序不变。
+    let totalResults = 0;
+
+    // 修改原因：对最多 1000 个文件串行 stat/读头/读全文，I/O 全串行。
+    // 修改方式：每个文件独立扫描（大小护栏、文本检测、逐行匹配），受控并发执行；
+    // 扫描结果按文件顺序返回，再统一拼接，与旧的串行循环产出完全一致。
+    const perFileResults = await mapWithConcurrency(files, FILE_SCAN_CONCURRENCY, async (fileUri) => {
+        if (totalResults >= maxResults) {
+            return [];
         }
         if (budget && budget.remainingChars <= 0) {
             budget.truncated = true;
-            break;
+            return [];
         }
-        
+
+        // 单文件局部结果：并发下各文件的匹配先各自收集，最后按文件顺序拼接，
+        // 避免跨文件交错导致返回顺序与 findFiles 顺序不一致
+        const localResults: SearchMatch[] = [];
+
         try {
             // 文件大小护栏（避免读入超大文件）
             if (maxFileSizeBytes > 0) {
                 const size = await tryGetFileSizeBytes(fileUri);
                 if (typeof size === 'number' && size > maxFileSizeBytes) {
-                    continue;
+                    return localResults;
                 }
             }
 
@@ -396,7 +418,7 @@ async function searchInDirectory(
                     const header = await readHeaderBytes(fileUri, headerSampleBytes);
                     detection = detectTextFromHeader(header);
                     if (!detection.isText) {
-                        continue;
+                        return localResults;
                     }
                 } catch {
                     // header 检测失败时退化为旧行为（仍有大小/输出护栏）
@@ -412,7 +434,7 @@ async function searchInDirectory(
             const relativePath = toRelativePath(fileUri, workspaceName !== null);
             
             for (let i = 0; i < lines.length; i++) {
-                if (results.length >= maxResults) {
+                if (totalResults >= maxResults) {
                     break;
                 }
                 if (budget && budget.remainingChars <= 0) {
@@ -425,7 +447,7 @@ async function searchInDirectory(
                 searchRegex.lastIndex = 0;
                 
                 while ((match = searchRegex.exec(line)) !== null) {
-                    if (results.length >= maxResults) {
+                    if (totalResults >= maxResults) {
                         break;
                     }
                     if (budget && budget.remainingChars <= 0) {
@@ -463,7 +485,7 @@ async function searchInDirectory(
                         break;
                     }
                     
-                    results.push({
+                    localResults.push({
                         file: relativePath,
                         workspace: workspaceName || undefined,
                         line: i + 1,
@@ -471,6 +493,8 @@ async function searchInDirectory(
                         match: matchText,
                         context
                     });
+                    // 同步段内递增，多任务交错不产生竞态
+                    totalResults++;
 
                     if (budget) {
                         budget.remainingChars -= cost;
@@ -485,6 +509,19 @@ async function searchInDirectory(
         } catch {
             // 跳过无法读取的文件
         }
+        return localResults;
+    });
+
+    // 按原文件顺序拼接（mapWithConcurrency 按输入顺序返回）；并发在飞任务可能
+    // 略微超出 maxResults，这里统一封顶，与旧串行循环的截断语义一致
+    for (const perFile of perFileResults) {
+        results.push(...perFile);
+        if (results.length >= maxResults) {
+            break;
+        }
+    }
+    if (results.length > maxResults) {
+        results.length = maxResults;
     }
     
     return results;
@@ -547,30 +584,55 @@ async function searchAndReplaceInDirectory(
     const maxReplaceFileSizeBytes = clampNonNegativeNumber(config.maxReplaceFileSizeBytes, 1 * 1024 * 1024);
     const maxMatchPreviewChars = Math.floor(clampNonNegativeNumber(config.maxMatchPreviewChars, 220));
     
-    let processedFiles = 0;
-    const diffManager = getDiffManager();
-    
-    for (const fileUri of files) {
-        // 检查是否已取消
+    // ============ 阶段一：并发扫描（只读 I/O） ============
+    //
+    // 修改原因：旧实现对最多 1000 个文件串行做 stat/读头/读全文/匹配，
+    // 且"创建 diff + 等待用户审阅"（waitForDiffResolution）也串行在其中，
+    // 单个文件的审阅等待会阻塞后续所有文件的读取。
+    // 修改方式：拆成两阶段——读文件+扫描匹配阶段用 mapWithConcurrency 受控并发；
+    // 替换动作（createPendingDiff / waitForDiffResolution / 保存）仍在串行阶段
+    // 按 findFiles 顺序逐个 await 执行，保持原有的 diff 审阅顺序语义。
+    //
+    // 共享计数（在同步代码段内递增，多任务交错不产生竞态）：
+    // - matchesCollected：matches 收集预算上限（内存护栏，替换本身不受限）
+    // - scanFoundFiles：已发现"有内容变化"的文件数，用于尽早跳过 maxFiles 之后的文件
+    let matchesCollected = 0;
+    let scanFoundFiles = 0;
+
+    interface ReplaceScanEntry {
+        kind: 'apply';
+        fileUri: vscode.Uri;
+        relativePath: string;
+        originalText: string;
+        newText: string;
+        fileReplacementCount: number;
+        localMatches: SearchMatch[];
+    }
+    type ReplaceScanResult = ReplaceScanEntry | { kind: 'noop' } | { kind: 'skipped'; info: SkippedFileInfo };
+
+    const scans: ReplaceScanResult[] = await mapWithConcurrency(files, FILE_SCAN_CONCURRENCY, async (fileUri): Promise<ReplaceScanResult> => {
+        // 扫描阶段同样响应取消与 maxFiles：并发下无法立即中断在飞任务，
+        // 但可避免继续发起新的读文件工作
         if (abortSignal?.aborted) {
-            cancelledBySignal = true;
-            break;
+            return { kind: 'noop' };
+        }
+        if (scanFoundFiles >= maxFiles) {
+            return { kind: 'noop' };
         }
 
-        if (processedFiles >= maxFiles) {
-            break;
-        }
-        
+        const localMatches: SearchMatch[] = [];
         try {
             // 文件大小护栏（替换模式更保守，避免生成超大 diff）
             if (maxReplaceFileSizeBytes > 0) {
                 const size = await tryGetFileSizeBytes(fileUri);
                 if (typeof size === 'number' && size > maxReplaceFileSizeBytes) {
-                    skippedFiles.push({
-                        file: toRelativePath(fileUri, workspaceName !== null),
-                        reason: `File exceeds the replace-mode size limit (${size} > ${maxReplaceFileSizeBytes} bytes)`
-                    });
-                    continue;
+                    return {
+                        kind: 'skipped',
+                        info: {
+                            file: toRelativePath(fileUri, workspaceName !== null),
+                            reason: `File exceeds the replace-mode size limit (${size} > ${maxReplaceFileSizeBytes} bytes)`
+                        }
+                    };
                 }
             }
 
@@ -581,7 +643,7 @@ async function searchAndReplaceInDirectory(
                     const header = await readHeaderBytes(fileUri, headerSampleBytes);
                     detection = detectTextFromHeader(header);
                     if (!detection.isText) {
-                        continue;
+                        return { kind: 'noop' };
                     }
                 } catch {
                     detection = { isText: true, encoding: 'utf-8', bomLength: 0 };
@@ -595,10 +657,8 @@ async function searchAndReplaceInDirectory(
             // 检查是否有匹配
             searchRegex.lastIndex = 0;
             if (!searchRegex.test(originalText)) {
-                continue;
+                return { kind: 'noop' };
             }
-            
-            processedFiles++;
             
             // 使用支持多工作区的相对路径
             const relativePath = toRelativePath(fileUri, workspaceName !== null);
@@ -637,13 +697,13 @@ async function searchAndReplaceInDirectory(
 
             while ((match = searchRegex.exec(originalText)) !== null) {
                 const rawMatchText = match[0] ?? '';
-                if (matches.length < MAX_REPLACE_MATCHES) {
+                if (matchesCollected < MAX_REPLACE_MATCHES) {
                     const matchText = rawMatchText.length > maxMatchPreviewChars
                         ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
                         : rawMatchText;
                     const pos = offsetToLineCol(match.index);
 
-                    matches.push({
+                    localMatches.push({
                         file: relativePath,
                         workspace: workspaceName || undefined,
                         line: pos.line,
@@ -652,6 +712,7 @@ async function searchAndReplaceInDirectory(
                         // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
                         context: ''
                     });
+                    matchesCollected++;
                 } else {
                     // 达到收集预算上限：停止收集匹配，但继续计数与执行替换
                     matchesTruncated = true;
@@ -670,93 +731,144 @@ async function searchAndReplaceInDirectory(
             const newText = originalText.replace(searchRegex, replacement);
             
             if (newText !== originalText) {
-                totalReplacements += fileReplacementCount;
-                
-                let diffContentId: string | undefined;
-                let status: 'accepted' | 'rejected' | 'pending' = 'pending';
-                let pendingDiffId: string | undefined;
-
-                // 使用 DiffManager 创建待审阅的 diff
-                const newContentLines = newText.split('\n').length;
-                const blocks = [{
-                    index: 0,
-                    startLine: 1,
-                    endLine: newContentLines
-                }];
-
-                const pendingDiff = await diffManager.createPendingDiff(
+                // 先计数：后续串行阶段按 maxFiles 顺序截断，这里只用于让并发任务尽早跳过
+                scanFoundFiles++;
+                return {
+                    kind: 'apply',
+                    fileUri,
                     relativePath,
-                    fileUri.fsPath,
                     originalText,
                     newText,
-                    blocks,
-                    undefined,
-                    toolId,
-                    {
-                        conversationId,
-                        // checkpoint 写盘屏障 + 写盘锁持有者身份：与 write_file/apply_diff 一致，
-                        // 替换模式同样参与 checkpoint 写盘屏障（M9）
-                        checkpointReady,
-                        lockHolder
-                    }
-                );
-
-                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
-
-                const wasInterrupted = interruptReason !== 'none';
-                if (wasInterrupted) {
-                    cancelledBySignal = true;
-                }
-
-                const finalDiff = diffManager.getDiff(pendingDiff.id);
-                // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
-                // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"替换成功"。
-                const wasAccepted = interruptReason === 'none';
-                const autoSaveError = finalDiff?.autoSaveError;
-
-                // 取消/中断视为 rejected，避免前端继续显示 waiting
-                status = wasAccepted ? 'accepted' : 'rejected';
-                pendingDiffId = undefined;
-
-                // 保存 diff 内容用于前端显示
-                const diffStorageManager = getDiffStorageManager();
-                if (diffStorageManager) {
-                    try {
-                        const diffRef = await diffStorageManager.saveGlobalDiff({
-                            originalContent: originalText,
-                            newContent: newText,
-                            filePath: relativePath
-                        });
-                        diffContentId = diffRef.diffId;
-                    } catch (e) {
-                        console.warn('Failed to save diff content:', e);
-                    }
-                }
-                
-                replacements.push({
-                    file: relativePath,
-                    workspace: workspaceName || undefined,
-                    replacements: fileReplacementCount,
-                    status,
-                    diffContentId,
-                    autoSaveError,
-                    pendingDiffId
-                });
-            } else if (fileReplacementCount > 0) {
+                    fileReplacementCount,
+                    localMatches
+                };
+            }
+            if (fileReplacementCount > 0) {
                 // 有匹配但替换后内容无变化（替换文本与原文相同），
                 // 明确告知而不是让 matches 与 filesModified 矛盾得让模型困惑
-                skippedFiles.push({
-                    file: relativePath,
-                    reason: `Matched ${fileReplacementCount} time(s) but the replacement produced no changes (replacement text equals the original)`
-                });
+                return {
+                    kind: 'skipped',
+                    info: {
+                        file: relativePath,
+                        reason: `Matched ${fileReplacementCount} time(s) but the replacement produced no changes (replacement text equals the original)`
+                    }
+                };
             }
+            return { kind: 'noop' };
         } catch (e) {
             // 文件处理失败不再静默吞掉，记录原因让模型能区分“没匹配”和“处理失败”
-            skippedFiles.push({
-                file: toRelativePath(fileUri, workspaceName !== null),
-                reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
-            });
+            return {
+                kind: 'skipped',
+                info: {
+                    file: toRelativePath(fileUri, workspaceName !== null),
+                    reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
+                }
+            };
         }
+    });
+
+    // ============ 阶段二：串行替换（保持原有 await 顺序语义） ============
+    const diffManager = getDiffManager();
+    let processedFiles = 0;
+
+    for (const scan of scans) {
+        // 检查是否已取消
+        if (abortSignal?.aborted) {
+            cancelledBySignal = true;
+            break;
+        }
+
+        if (processedFiles >= maxFiles) {
+            break;
+        }
+
+        if (scan.kind === 'skipped') {
+            skippedFiles.push(scan.info);
+            continue;
+        }
+        if (scan.kind !== 'apply') {
+            continue;
+        }
+
+        processedFiles++;
+
+        const { fileUri, relativePath, originalText, newText, fileReplacementCount, localMatches } = scan;
+
+        // 按原文件顺序收拢 matches（扫描阶段已按全局预算收集）
+        matches.push(...localMatches);
+
+        totalReplacements += fileReplacementCount;
+
+        let diffContentId: string | undefined;
+        let status: 'accepted' | 'rejected' | 'pending' = 'pending';
+        let pendingDiffId: string | undefined;
+
+        // 使用 DiffManager 创建待审阅的 diff
+        const newContentLines = newText.split('\n').length;
+        const blocks = [{
+            index: 0,
+            startLine: 1,
+            endLine: newContentLines
+        }];
+
+        const pendingDiff = await diffManager.createPendingDiff(
+            relativePath,
+            fileUri.fsPath,
+            originalText,
+            newText,
+            blocks,
+            undefined,
+            toolId,
+            {
+                conversationId,
+                // checkpoint 写盘屏障 + 写盘锁持有者身份：与 write_file/apply_diff 一致，
+                // 替换模式同样参与 checkpoint 写盘屏障（M9）
+                checkpointReady,
+                lockHolder
+            }
+        );
+
+        const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
+
+        const wasInterrupted = interruptReason !== 'none';
+        if (wasInterrupted) {
+            cancelledBySignal = true;
+        }
+
+        const finalDiff = diffManager.getDiff(pendingDiff.id);
+        // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
+        // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"替换成功"。
+        const wasAccepted = interruptReason === 'none';
+        const autoSaveError = finalDiff?.autoSaveError;
+
+        // 取消/中断视为 rejected，避免前端继续显示 waiting
+        status = wasAccepted ? 'accepted' : 'rejected';
+        pendingDiffId = undefined;
+
+        // 保存 diff 内容用于前端显示
+        const diffStorageManager = getDiffStorageManager();
+        if (diffStorageManager) {
+            try {
+                const diffRef = await diffStorageManager.saveGlobalDiff({
+                    originalContent: originalText,
+                    newContent: newText,
+                    filePath: relativePath
+                });
+                diffContentId = diffRef.diffId;
+            } catch (e) {
+                console.warn('Failed to save diff content:', e);
+            }
+        }
+        
+        replacements.push({
+            file: relativePath,
+            workspace: workspaceName || undefined,
+            replacements: fileReplacementCount,
+            status,
+            diffContentId,
+            autoSaveError,
+            pendingDiffId
+        });
     }
     
     return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal, truncated: matchesTruncated };

@@ -6,7 +6,8 @@
  * 修改目的：避免主窗口和 SubAgent 子对话各自复制一套消息变更逻辑，后续工具配对规则升级时只改一个入口。
  */
 
-import type { Content } from './types';
+import type { Content, ContentPart } from './types';
+import { t } from '../../i18n';
 
 export interface TranscriptAdapter {
     load(): Promise<Content[]>;
@@ -185,4 +186,141 @@ export async function mutateTranscript(
     const next = mutator(contents);
     await adapter.save(next);
     return next;
+}
+
+// ==================== 未响应工具调用的拒绝/补齐（共享逻辑） ====================
+// 修改原因：normalizeHistoryForDisplay / rejectToolCalls / rejectAllPendingToolCalls 三处
+// 各自复制「收集未响应 functionCall → 构造 rejected functionResponse → 定位插入位置」逻辑，
+// 工具配对规则升级时容易漏同步。
+// 修改方式：把纯函数部分收敛到本模块（原地标记 rejected + 构造占位 parts + 插入位置查找），
+// 调用方只负责互斥执行器（mutateContents）与写回契约（返回原引用=跳过写回）。
+// 修改目的：三处行为完全等价且只保留一个升级入口。
+
+/** 收集历史中所有已有响应的工具调用 ID（functionResponse.id 集合） */
+export function collectRespondedToolCallIds(history: ReadonlyArray<Content>): Set<string> {
+    const respondedToolCallIds = new Set<string>();
+    for (const message of history) {
+        if (message.parts) {
+            for (const part of message.parts) {
+                if (part.functionResponse?.id) {
+                    respondedToolCallIds.add(part.functionResponse.id);
+                }
+            }
+        }
+    }
+    return respondedToolCallIds;
+}
+
+/**
+ * 扫描历史中「没有对应响应且尚未被标记 rejected」的 functionCall，原地标记 rejected，
+ * 并按所在消息索引分组返回调用信息。无未响应调用时返回空 Map（不做任何修改）。
+ */
+export function collectUnresolvedToolCalls(
+    history: Content[],
+    respondedToolCallIds: ReadonlySet<string>
+): Map<number, Array<{ id: string; name: string }>> {
+    const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+    for (let i = 0; i < history.length; i++) {
+        const message = history[i];
+        if (message.parts) {
+            for (const part of message.parts) {
+                if (part.functionCall && part.functionCall.id) {
+                    // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                    if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                        part.functionCall.rejected = true;
+                        const calls = unresolvedCallsByIndex.get(i) || [];
+                        calls.push({
+                            id: part.functionCall.id,
+                            name: part.functionCall.name || 'unknown'
+                        });
+                        unresolvedCallsByIndex.set(i, calls);
+                    }
+                }
+            }
+        }
+    }
+    return unresolvedCallsByIndex;
+}
+
+/** 构造「用户拒绝」的 functionResponse parts（与三处旧实现逐字段一致） */
+export function buildRejectedResponseParts(calls: Array<{ id: string; name: string }>): ContentPart[] {
+    return calls.map(call => ({
+        functionResponse: {
+            name: call.name,
+            id: call.id,
+            response: {
+                success: false,
+                error: t('modules.api.chat.errors.userRejectedTool'),
+                rejected: true
+            }
+        }
+    }));
+}
+
+/**
+ * 查找 functionResponse 消息的正确插入位置。
+ *
+ * 工具响应必须紧跟对应的工具调用消息。若该位置之后已存在同批次
+ * functionResponse 消息，则插到它们之后，保持与 functionCall 输出顺序一致。
+ *
+ * @param history 当前对话历史
+ * @param messageIndex 工具调用消息的索引
+ * @returns functionResponse 应插入的位置索引
+ */
+export function findFunctionResponseInsertIndex(history: ReadonlyArray<Content>, messageIndex: number): number {
+    let insertAt = messageIndex + 1;
+    while (insertAt < history.length && history[insertAt]?.isFunctionResponse) {
+        insertAt++;
+    }
+    return insertAt;
+}
+
+/**
+ * 从后往前在工具调用消息紧接后面插入 rejected functionResponse 占位消息（原地修改），
+ * 返回是否有插入（调用方据此决定是否触发写回）。
+ *
+ * @param ensureNodeId 为新消息补齐稳定节点 id / 线性 parentId（由 ConversationManager 注入）
+ */
+export function insertRejectedResponses(
+    history: Content[],
+    unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>>,
+    ensureNodeId: (content: Content, parent: Content | null | undefined) => Content
+): boolean {
+    let inserted = false;
+    // 从后往前插入以避免索引偏移问题
+    const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
+
+    for (const messageIndex of sortedIndices) {
+        const calls = unresolvedCallsByIndex.get(messageIndex)!;
+        const rejectedResponseParts = buildRejectedResponseParts(calls);
+
+        // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
+        const insertAt = findFunctionResponseInsertIndex(history, messageIndex);
+        const parent = insertAt > 0 ? history[insertAt - 1] : null;
+        history.splice(insertAt, 0, ensureNodeId({
+            role: 'user',
+            parts: rejectedResponseParts,
+            isFunctionResponse: true
+        }, parent));
+        inserted = true;
+    }
+    return inserted;
+}
+
+/**
+ * 全历史「标记未响应工具调用为 rejected + 插入 functionResponse 占位」一体化入口
+ * （normalizeHistoryForDisplay 与 rejectAllPendingToolCalls 共用）。
+ *
+ * 原地修改 history；返回是否有任何变更（标记或插入）。
+ */
+export function rejectUnresolvedToolCalls(
+    history: Content[],
+    ensureNodeId: (content: Content, parent: Content | null | undefined) => Content
+): boolean {
+    const respondedToolCallIds = collectRespondedToolCallIds(history);
+    const unresolvedCallsByIndex = collectUnresolvedToolCalls(history, respondedToolCallIds);
+    if (unresolvedCallsByIndex.size === 0) {
+        return false;
+    }
+    return insertRejectedResponses(history, unresolvedCallsByIndex, ensureNodeId);
 }

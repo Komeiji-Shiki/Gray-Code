@@ -131,6 +131,9 @@ export class ChannelManager {
      * 重建内部 ToolDeclarationResolver 以持有 MCP 管理器（resolver 的 MCP 依赖经构造函数注入）。
      */
     setMcpManager(mcpManager: McpManager): void {
+        // 重建前先释放旧 resolver 在 MCP 管理器上注册的事件监听器：
+        // 每次 setMcpManager 都重建 resolver，不 dispose 会让监听器永久累积（泄漏）。
+        this.toolResolver?.dispose();
         this.toolResolver = new ToolDeclarationResolver(this.toolRegistry, this.settingsManager, mcpManager);
     }
     

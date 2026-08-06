@@ -31,6 +31,13 @@ export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
     }
   }
 }
+
+/**
+ * H-1：渐进 markdown 分块的软上限。流式期间 promote 出的完整段落按 \n\n 边界切块渲染，
+ * 块数随消息长度增长；正常流式（单条消息）不会触发，超限时丢弃最旧块（防御性兜底，
+ * 避免极端长消息累积无界 DOM）。
+ */
+export const TAIL_BLOCKS_CAP = 200
 </script>
 
 <script setup lang="ts">
@@ -168,9 +175,107 @@ let registeredTextMessageId: string | null = null
 
 // 渐进 markdown：流式期间已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
 // 即时渲染格式；未完成尾巴仍在 tailHost 逐字流出。段落切换/终结时清空（稳定块完整接管）。
-const tailRendered = ref('')
+//
+// 性能设计（H-1，根治流式 O(n²) 重渲染）：promote 文本按 \n\n 边界切块，每块一个
+// MarkdownRenderer 实例。已挂载旧块的 key 不变、props 不变，Vue 直接复用不重渲染；
+// 只有新块触发一次 markdown-it 解析，不再每帧把全部累计文本重新喂给渲染器。
+const tailBlocks = ref<Array<{ text: string }>>([])
+
+// 分块状态机（非响应式，仅切块逻辑内部使用）：
+// - tailFullText：已接收的完整提升文本，作为增量切块基准（区分重建重放前缀与续写）；
+// - tailPending：尚未到达安全切块边界（$$ 数学块未闭合）的尾部文本，与下一次 delta 合并；
+// - tailMathOpen：行级扫描维护的 $$ 数学块开合状态，跨 promote 增量持续。fence 在
+//   promote 边界必然配对（findPromoteCut 保证），故 fence 状态只在单次扫描内维护。
+//   数学块不参与 promote 判定，切块必须跳过其内部 \n\n 边界——否则闭合后的整块公式
+//   会被拆成两段纯文本段落，与整段渲染结果不一致。
+let tailFullText = ''
+let tailPending = ''
+let tailMathOpen = false
+
+/** 未闭合数学块防御上限：极端情况下数学块永不闭合时按文本块输出，避免内存无界 */
+const TAIL_PENDING_CAP = 4096
+
+function resetTailBlocks(): void {
+  tailBlocks.value = []
+  tailFullText = ''
+  tailPending = ''
+  tailMathOpen = false
+}
+
+function pushTailBlock(text: string): void {
+  // 软上限兜底：超限时丢弃最旧块（防御性；正常流式不会触发）
+  if (tailBlocks.value.length >= TAIL_BLOCKS_CAP) {
+    tailBlocks.value.shift()
+  }
+  tailBlocks.value.push({ text })
+}
+
+/**
+ * 增量消费一段 promote 文本：按 \n\n 边界切块，数学块未闭合的边界暂不切（并入 pending，
+ * 等闭合后的下一次 promote 一起成块，保证 markdown-it 对数学块/段落的解析与整段渲染等价）。
+ */
+function consumeTailDelta(delta: string): void {
+  const work = tailPending + delta
+  tailPending = ''
+  if (!work) return
+
+  // fence 在 promote 边界必然配对，单次扫描内从闭合态开始
+  let fenceOpen = false
+  let chunkStart = 0
+  let i = 0
+  const len = work.length
+  while (i < len) {
+    const nl = work.indexOf('\n', i)
+    if (nl === -1) break
+    const line = work.slice(i, nl)
+
+    // 更新该行对数学块/fence 状态的影响（与 markdown-it mathBlock 规则的判定对齐）
+    if (tailMathOpen) {
+      // 数学块内：任意一行包含 $$ 即视为闭合（mathBlock 向下寻找首个含 $$ 的行）
+      if (line.includes('$$')) tailMathOpen = false
+    } else {
+      const stripped = line.replace(/^[^\S\n\r]+/, '')
+      if (/^(?:```|~~~)/.test(stripped)) {
+        // fence 行只翻转 fence 状态（fence 内的 $$ 是代码内容，不参与数学块判定）
+        fenceOpen = !fenceOpen
+      } else if (!fenceOpen && stripped.startsWith('$$') && !stripped.slice(2).trim().endsWith('$$')) {
+        // 行首 $$ 且非单行闭合（$$...$$）→ 开启数学块
+        tailMathOpen = true
+      }
+    }
+
+    // \n\n 空行边界：数学块闭合时切块；否则并入 pending 等待数学块闭合
+    if (work[nl + 1] === '\n' && !tailMathOpen) {
+      const cut = nl + 2
+      pushTailBlock(work.slice(chunkStart, cut))
+      chunkStart = cut
+      i = cut
+      continue
+    }
+    i = nl + 1
+  }
+
+  tailPending = work.slice(chunkStart)
+  if (tailPending.length > TAIL_PENDING_CAP) {
+    // 防御：数学块长时间不闭合时降级输出为文本块，避免渲染缺失/内存无界
+    pushTailBlock(tailPending)
+    tailPending = ''
+  }
+}
+
 function handleTailPromote(text: string): void {
-  tailRendered.value += text
+  if (!text) return
+  const full = tailFullText
+  if (text.length < full.length || !text.startsWith(full)) {
+    // 意外回退 / 前缀不匹配（理论不出现）：整体重置后重放
+    resetTailBlocks()
+    tailFullText = text
+    consumeTailDelta(text)
+    return
+  }
+  if (text === full) return
+  tailFullText = text
+  consumeTailDelta(text.slice(full.length))
 }
 
 function releaseTextDisplay(): void {
@@ -179,7 +284,7 @@ function releaseTextDisplay(): void {
   registeredTextHost = null
   registeredTextMessageId = null
   // 渐进渲染内容随显示层释放：旧段落由稳定块（renderBlocks）完整接管，避免重复显示
-  if (tailRendered.value) tailRendered.value = ''
+  resetTailBlocks()
 }
 
 watch(
@@ -543,40 +648,88 @@ watch(
 // 获取当前消息及之前所有消息的检查点
 // 之前消息的存档点：包含所有阶段（before/after），因为这些代表已完成的操作状态
 // 当前消息的存档点：只包含 before 阶段，因为用户要撤销的是这条消息的效果
+// H-4：走 store 的增量分组缓存（checkpointLookup：升序 keys + 保序分组 + 前缀终点），
+// 前序检查点按数组前缀切片 O(1) 取得，不再每实例对全量 checkpoints filter（O(n) × 实例数）。
+// 分组单调（sorted）时语义与原始 filter 完全一致；非单调（防御）时回退原始 filter。
 const availableCheckpoints = computed<CheckpointRecord[]>(() => {
-  return chatStore.checkpoints
-    .filter(cp => {
-      if (cp.messageIndex < props.messageIndex) return true          // 之前的消息：包含所有阶段
-      if (cp.messageIndex === props.messageIndex && cp.phase === 'before') return true  // 当前消息：只包含 before
-      return false
-    })
+  const lookup = chatStore.checkpointLookup
+  if (lookup.sorted) {
+    const keys = lookup.keys
+    // 二分：最后一个 key < props.messageIndex
+    let lo = 0
+    let hi = keys.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (keys[mid] < props.messageIndex) lo = mid + 1
+      else hi = mid
+    }
+    const priorEnd = lo > 0 ? lookup.cumEndByKey?.get(keys[lo - 1]) ?? 0 : 0
+    const prior = priorEnd > 0 ? chatStore.checkpoints.slice(0, priorEnd) : []
+    const currentGroup = lookup.groups.get(props.messageIndex)
+    if (currentGroup) {
+      const beforeOnly = currentGroup.filter(cp => cp.phase === 'before')
+      return beforeOnly.length > 0 ? prior.concat(beforeOnly) : prior
+    }
+    return prior
+  }
+  // 防御：非单调分组时回退原始全量 filter（语义一致）
+  return chatStore.checkpoints.filter(cp => {
+    if (cp.messageIndex < props.messageIndex) return true
+    if (cp.messageIndex === props.messageIndex && cp.phase === 'before') return true
+    return false
+  })
 })
 
 // 获取用于编辑用户消息的最新检查点
 // 优先显示该用户消息的"消息前存档"（如果存在）
 // 如果不存在，则显示之前最近的一个存档点
+// H-4：分组 Map 直接取当前组 O(1)；前序最近存档点用升序 keys 二分（O(log n)），
+// 取最近 key 的组内首条（保序分组下与原始 filter+sort 的"最大索引、组内最前"语义一致）。
 const checkpointsBeforeMessage = computed<CheckpointRecord[]>(() => {
-  // 首先查找该消息的"用户消息前"存档点
-  const userMessageBefore = chatStore.checkpoints.find(cp =>
+  const lookup = chatStore.checkpointLookup
+  const currentGroup = lookup.groups.get(props.messageIndex)
+  if (currentGroup) {
+    const userMessageBefore = currentGroup.find(cp =>
+      cp.toolName === 'user_message' && cp.phase === 'before'
+    )
+    if (userMessageBefore) {
+      return [userMessageBefore]
+    }
+  }
+  if (lookup.sorted && lookup.keys.length > 0) {
+    const keys = lookup.keys
+    let lo = 0
+    let hi = keys.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (keys[mid] < props.messageIndex) lo = mid + 1
+      else hi = mid
+    }
+    if (lo > 0) {
+      const group = lookup.groups.get(keys[lo - 1])
+      if (group && group.length > 0) {
+        return [group[0]]
+      }
+    }
+    return []
+  }
+  // 防御：非单调分组时回退原始逻辑（先找"消息前"存档，再找之前最近的一个）
+  const userMessageBeforeFallback = chatStore.checkpoints.find(cp =>
     cp.messageIndex === props.messageIndex &&
     cp.toolName === 'user_message' &&
     cp.phase === 'before'
   )
-  
-  if (userMessageBefore) {
-    // 如果有该消息的"消息前存档"，只返回这一个
-    return [userMessageBefore]
+  if (userMessageBeforeFallback) {
+    return [userMessageBeforeFallback]
   }
-  
-  // 否则，找之前最近的一个存档点（按 messageIndex 降序排列取第一个）
   const previousCheckpoints = chatStore.checkpoints
     .filter(cp => cp.messageIndex < props.messageIndex)
     .sort((a, b) => b.messageIndex - a.messageIndex)
-  
+
   if (previousCheckpoints.length > 0) {
     return [previousCheckpoints[0]]
   }
-  
+
   return []
 })
 
@@ -864,13 +1017,17 @@ function handleRestoreAndRetry(checkpointId: string) {
 
         <!-- 活动正文尾块：已完成段落渐进 markdown + 活动尾巴 CharFlow 托管（批内错峰淡入流水） -->
         <div v-if="tailInfo?.type === 'text'" class="tail-stream">
-          <MarkdownRenderer
-            v-if="tailRendered"
-            :content="tailRendered"
-            :latex-only="false"
-            :is-streaming="true"
-            class="content-text"
-          />
+          <!-- H-1：按段落切块渲染。已挂载块 key/props 不变，Vue 复用不重渲染；
+               只有新块触发一次 markdown-it 解析（流式期间不再整段重喂累计文本） -->
+          <template v-for="(block, index) in tailBlocks" :key="index">
+            <MarkdownRenderer
+              :content="block.text"
+              :latex-only="false"
+              :is-streaming="true"
+              :data-tail-block-index="index"
+              class="content-text"
+            />
+          </template>
           <div ref="tailHostRef" class="char-flow-host"></div>
         </div>
 

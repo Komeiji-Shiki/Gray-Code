@@ -311,6 +311,13 @@ export async function resolveSubAgentAvailableTools(
         excludeToolNames: [...MEMORY_TOOL_NAMES, ...TODO_TOOL_NAMES, ...blockedByDefault]
     }) || [];
 
+    // 解析完成即释放 resolver：resolve 为同步且此后不再使用监听器，
+    // 每次子代理派发都会新建 resolver，不 dispose 会在 MCP 管理器上永久累积监听器（泄漏）。
+    // 防御性调用：测试中可能注入不带 dispose 的 mock 实现。
+    if (typeof (resolver as any).dispose === 'function') {
+        resolver.dispose();
+    }
+
     // H-1（R4 复查）：对不具备完整写/执行能力的代理，从可用工具集中移除 subagents——
     // 防止只读/受限代理（blacklist 排除写工具、whitelist 缺写工具、mcp 等）派发
     // mode='all' 的 General Worker 获得自身没有的写/执行权限（权限逃逸）。

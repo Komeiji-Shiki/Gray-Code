@@ -51,6 +51,8 @@ interface SmoothEntry {
   lastSnapshotPartKey: string | null
   /** 快照回调：写入 store.smoothTexts（低频节流，由本模块控制频率） */
   onSnapshot: (messageId: string, partKey: string, displayText: string) => void
+  /** 增量 fence 配对扫描状态（见 FenceScanState；显示目标重建/段落切换时重置） */
+  fenceScan: FenceScanState
 }
 
 interface SmoothDisplay {
@@ -95,36 +97,83 @@ const hostToMessageId = new Map<HTMLElement, string>()
 const SNAPSHOT_INTERVAL_MS = 120
 
 /**
- * 找最后一个安全的渐进渲染边界：以 \n\n 结尾、且该点之前行首 fence（```/~~~）配对。
- * fence 未配对时向前回退到更早的空行边界；找不到则返回 0（不提升，等段落完成）。
+ * 增量 fence 配对扫描状态（每个 SmoothStreamer 实例一份，多流并发互不干扰）。
+ *
+ * 背景：findPromoteCut 每帧从文本末尾向前找最后一个安全 \n\n 边界，原实现对每个候选
+ * 边界都从文本开头全量扫一遍行首 fence（O(n) × 候选数），流式期间每帧重复。fence 行
+ * 只增不删，因此改为增量：fenceEnds 保存已扫描区间内每条行首 fence 的结束位置
+ * （m.index + m[0].length，与 FENCE_LINE_RE 全量扫描的计数语义一致），升序追加；
+ * 查询某 cut 前的 fence 奇偶只需二分统计 ≤ cut 的条数（O(log n)），每次 commit 只
+ * 扫描新增文本区间（O(delta)）。
+ *
+ * 归属：状态挂在 SmoothEntry（per messageId）上，随实例创建/重建/段落切换重置；
+ * 显示目标重建（registerSmoothDisplay 换 host / restore 后缀文本）时文本坐标系变化，
+ * 必须一并重置（见 registerSmoothDisplay / pushSmoothText）。
  */
-function findPromoteCut(text: string): number {
-  if (text.length < 4) return 0
-  let idx = text.lastIndexOf('\n\n')
-  while (idx > 0) {
-    const cut = idx + 2
-    if (!hasUnclosedFence(text, cut)) return cut
-    idx = text.lastIndexOf('\n\n', idx - 1)
-  }
-  return 0
+interface FenceScanState {
+  /** 已扫描的 settledText 前缀长度 */
+  scanLen: number
+  /** 升序排列的 fence 匹配结束位置（m.index + m[0].length，全部 ≤ scanLen） */
+  fenceEnds: number[]
+}
+
+function createFenceScanState(): FenceScanState {
+  return { scanLen: 0, fenceEnds: [] }
 }
 
 /** 行首 fence 匹配：fence 标记必须位于行首（允许前导空白），全扫描不逐行分配 */
 const FENCE_LINE_RE = /(?:^|\n|\r)[^\S\n\r]*(?:```|~~~)/g
 
 /**
- * 行首 fence（``` / ~~~）是否未配对：未配对时不能提升（半截代码块渲染会崩坏）。
- * 只统计 [0, limit) 前缀内的 fence（limit 缺省为全文）；避免每帧 text.slice 分配。
+ * 增量扩展扫描：只处理 (scanLen, targetLen] 区间内新出现的 fence 行。
+ * 从 scanLen - 1 处开始切片：fence 匹配包含行首换行符，可能跨旧边界
+ * （fence 起始行的前一个字符是 \n）；只计入结束位置落在 (scanLen, targetLen]
+ * 的匹配，保证每条 fence 行恰好计数一次。
  */
-function hasUnclosedFence(text: string, limit = text.length): boolean {
+function extendFenceScan(state: FenceScanState, text: string, targetLen: number): void {
+  if (targetLen <= state.scanLen) return
+  const sliceStart = Math.max(0, state.scanLen - 1)
+  const slice = text.slice(sliceStart, targetLen)
+  const ends = state.fenceEnds
   FENCE_LINE_RE.lastIndex = 0
-  let count = 0
   let m: RegExpExecArray | null
-  while ((m = FENCE_LINE_RE.exec(text)) !== null) {
-    if (m.index >= limit) break
-    if (m.index + m[0].length <= limit) count++
+  while ((m = FENCE_LINE_RE.exec(slice)) !== null) {
+    const end = sliceStart + m.index + m[0].length
+    if (end > state.scanLen && end <= targetLen) {
+      ends.push(end)
+    }
   }
-  return count % 2 === 1
+  state.scanLen = targetLen
+}
+
+/** 统计 [0, cut) 前缀内完整 fence 行数量（与全量扫描 hasUnclosedFence 的计数语义一致） */
+function countFencesWithin(state: FenceScanState, cut: number): number {
+  const ends = state.fenceEnds
+  let lo = 0
+  let hi = ends.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (ends[mid] <= cut) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/**
+ * 找最后一个安全的渐进渲染边界：以 \n\n 结尾、且该点之前行首 fence（```/~~~）配对。
+ * fence 未配对时向前回退到更早的空行边界；找不到则返回 0（不提升，等段落完成）。
+ * 行为与原 findPromoteCut 完全一致，但 fence 判定走增量扫描状态（O(delta) + O(log n)/候选）。
+ */
+function findPromoteCut(state: FenceScanState, text: string): number {
+  if (text.length < 4) return 0
+  extendFenceScan(state, text, text.length)
+  let idx = text.lastIndexOf('\n\n')
+  while (idx > 0) {
+    const cut = idx + 2
+    if (countFencesWithin(state, cut) % 2 === 0) return cut
+    idx = text.lastIndexOf('\n\n', idx - 1)
+  }
+  return 0
 }
 
 /**
@@ -135,7 +184,7 @@ function hasUnclosedFence(text: string, limit = text.length): boolean {
 function maybePromote(entry: SmoothEntry): void {
   const display = displays.get(entry.messageId)
   if (!display || typeof display.onPromote !== 'function') return
-  const cut = findPromoteCut(display.flow.settledText)
+  const cut = findPromoteCut(entry.fenceScan, display.flow.settledText)
   if (cut <= 0) return
   const promoted = display.flow.promote(cut)
   if (!promoted) return
@@ -190,6 +239,9 @@ export function registerSmoothDisplay(
   })
   const entry = entries.get(messageId)
   if (entry) {
+    // 显示目标重建：新 flow 的 settledText 是（未提升部分的）后缀文本，与旧 flow 的
+    // 文本坐标系不同，fence 增量扫描状态必须重置，否则 end 位置错位导致配对误判
+    entry.fenceScan = createFenceScanState()
     // 渐进渲染：已提升部分不重复显示（由 onPromote 重放交给 markdown 层），
     // CharFlow 只恢复未提升的尾巴，保证组件重建（切标签页/虚拟列表）后显示连续。
     // 折叠预览（restoreFull）没有渐进渲染层，恢复完整累计文本供单行滚动预览。
@@ -276,7 +328,8 @@ export function pushSmoothText(
       lastSnapshotAt: null,
       lastSnapshotText: null,
       lastSnapshotPartKey: null,
-      onSnapshot
+      onSnapshot,
+      fenceScan: createFenceScanState()
     }
     created.streamer = new SmoothStreamer(
       (graphemes, frameDurMs, instant) => {
@@ -314,6 +367,7 @@ export function pushSmoothText(
     entry.baseText = baseText
     entry.committed = ''
     entry.promotedText = ''
+    entry.fenceScan = createFenceScanState()
     entry.partKey = partKey
     maybeSnapshot(entry, true)
   }

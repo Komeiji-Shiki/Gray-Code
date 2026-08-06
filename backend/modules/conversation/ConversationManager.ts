@@ -29,7 +29,7 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, History
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, collectRespondedToolCallIds, buildRejectedResponseParts, findFunctionResponseInsertIndex, rejectUnresolvedToolCalls } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
@@ -202,8 +202,10 @@ export class ConversationManager {
      * BCP-01 PERF：getMessageNodeIdAt 短 TTL 缓存时长。
      * 该缓存只在「缓存条目的权威数据」上生效（见 nodeIdCache 注释），TTL 仅用于
      * 兜底会话外部的直写存储场景（进程内写链全部走失效，不受 TTL 影响）。
+     * 30s：写路径（invalidateCaches / append-only 失效）已保证进程内一致性，
+     * TTL 只兜底外部直写存储，300ms 会让 CheckpointService 同一写链内多次全量读盘。
      */
-    private static readonly NODE_ID_CACHE_TTL_MS = 300;
+    private static readonly NODE_ID_CACHE_TTL_MS = 30_000;
     /** BCP-01 PERF：节点 ID 反查缓存容量（与历史 LRU 同量级） */
     private static readonly NODE_ID_CACHE_CAPACITY = 24;
 
@@ -556,7 +558,13 @@ export class ConversationManager {
     }
 
     private cloneJson<T>(value: T): T {
-        return JSON.parse(JSON.stringify(value));
+        // structuredClone 比 JSON 往返更快且语义更完整（保留 undefined/Date/Map/Set 等）；
+        // 极少数不可克隆值（如含函数）回退到 JSON 序列化，保持与旧实现一致的容错。
+        try {
+            return structuredClone(value);
+        } catch {
+            return JSON.parse(JSON.stringify(value));
+        }
     }
 
     private getTextPreviewFromContent(content: Content | undefined, maxLength = 50): string | undefined {
@@ -965,7 +973,7 @@ export class ConversationManager {
                 const restParts = parts.filter(part => !part.functionResponse);
                 nextContents.push({
                     role: node.role,
-                    parts: JSON.parse(JSON.stringify(restParts)),
+                    parts: this.cloneJson(restParts),
                     id: node.id,
                     parentId: node.parentId,
                     timestamp: node.timestamp ?? node.createdAt,
@@ -993,7 +1001,7 @@ export class ConversationManager {
                     }
                     nextContents.push({
                         role: 'user',
-                        parts: JSON.parse(JSON.stringify(functionResponseParts)),
+                        parts: this.cloneJson(functionResponseParts),
                         isFunctionResponse: true,
                         id: reusedId,
                         timestamp: node.timestamp ?? node.createdAt,
@@ -1070,13 +1078,12 @@ export class ConversationManager {
         });
     }
 
-    /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
+    /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、浅拷贝 */
     private toDisplayMessages(history: ConversationHistory): Content[] {
-        return history.map((message, index) => {
-            // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = message;
-            return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
-        });
+        // 复用分页路径的 toFrontendMessage 浅拷贝语义（去掉逐条的 JSON 深拷贝）：
+        // 消息随后经 IPC 同步序列化发给渲染层，前端拿到独立副本，不存在被反向修改的风险；
+        // 后端读路径约定不原地修改（见 loadHistory 缓存契约）。
+        return history.map((message, index) => this.toFrontendMessage(message, index));
     }
 
     /**
@@ -1089,73 +1096,12 @@ export class ConversationManager {
      */
     private async normalizeHistoryForDisplay(conversationId: string): Promise<ConversationHistory> {
         return await this.getTranscriptRepository(conversationId).mutateContents(history => {
-            // 收集所有 functionResponse 的 ID
-            const respondedToolCallIds = new Set<string>();
-            for (const message of history) {
-                if (message.parts) {
-                    for (const part of message.parts) {
-                        if (part.functionResponse?.id) {
-                            respondedToolCallIds.add(part.functionResponse.id);
-                        }
-                    }
-                }
-            }
-
-            // 收集未响应的工具调用，记录它们所在的消息索引
-            const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-            for (let i = 0; i < history.length; i++) {
-                const message = history[i];
-                if (message.parts) {
-                    for (const part of message.parts) {
-                        if (part.functionCall && part.functionCall.id) {
-                            // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                            if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                                part.functionCall.rejected = true;
-                                const calls = unresolvedCallsByIndex.get(i) || [];
-                                calls.push({
-                                    id: part.functionCall.id,
-                                    name: part.functionCall.name || 'unknown'
-                                });
-                                unresolvedCallsByIndex.set(i, calls);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 无未响应的工具调用：没有任何修改，返回原引用跳过写回
-            if (unresolvedCallsByIndex.size === 0) {
+            // 共享逻辑：收集未响应 functionCall → 标记 rejected → 插入 functionResponse 占位
+            // （行为与 rejectAllPendingToolCalls 完全等价，见 TranscriptMutation.rejectUnresolvedToolCalls）。
+            if (!rejectUnresolvedToolCalls(history, (content, parent) => this.ensureNodeId(content, parent))) {
+                // 无未响应的工具调用：没有任何修改，返回原引用跳过写回
                 return history;
             }
-
-            // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
-            // 从后往前插入以避免索引偏移问题
-            const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
-
-            for (const messageIndex of sortedIndices) {
-                const calls = unresolvedCallsByIndex.get(messageIndex)!;
-                const rejectedResponseParts: ContentPart[] = calls.map(call => ({
-                    functionResponse: {
-                        name: call.name,
-                        id: call.id,
-                        response: {
-                            success: false,
-                            error: t('modules.api.chat.errors.userRejectedTool'),
-                            rejected: true
-                        }
-                    }
-                }));
-
-                // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                const parent = insertAt > 0 ? history[insertAt - 1] : null;
-                history.splice(insertAt, 0, this.ensureNodeId({
-                    role: 'user',
-                    parts: rejectedResponseParts,
-                    isFunctionResponse: true
-                }, parent));
-            }
-
             // 有新插入：返回新引用触发写回（契约：返回原引用=跳过写回）
             return history.slice();
         });
@@ -1471,9 +1417,9 @@ export class ConversationManager {
         if (ConversationManager.needsNodeIdMigration(history)) {
             // BR-02：读取入口惰性触发补 ID（显式触发，不做启动全扫）；迁移幂等，二次读取不再触发。
             await this.ensureHistoryNodeIds(conversationId);
-            return JSON.parse(JSON.stringify(await this.loadHistory(conversationId)));
+            return this.cloneJson(await this.loadHistory(conversationId));
         }
-        return JSON.parse(JSON.stringify(history));
+        return this.cloneJson(history);
     }
 
     /**
@@ -1516,7 +1462,7 @@ export class ConversationManager {
         }
         await this.getTranscriptRepository(conversationId).appendContent({
             role,
-            parts: JSON.parse(JSON.stringify(parts)),
+            parts: this.cloneJson(parts),
             timestamp: Date.now(),  // 自动添加时间
             // BR-01：前端发送时携带稳定节点 id（窗口消息 id 与后端落库 id 对齐，
             // 编辑/重试/分支操作才能按 id 定位）；省略时由仓储委托补齐（ensureNodeId）。
@@ -1529,7 +1475,7 @@ export class ConversationManager {
      * 添加完整的 Content 对象（对 functionResponse 自动去重）
      */
     async addContent(conversationId: string, content: Content): Promise<Content | undefined> {
-        const contentCopy = JSON.parse(JSON.stringify(content));
+        const contentCopy = this.cloneJson(content);
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
@@ -1598,7 +1544,7 @@ export class ConversationManager {
      */
     async addBatch(conversationId: string, contents: Content[]): Promise<void> {
         const now = Date.now();
-        const contentsCopy = JSON.parse(JSON.stringify(contents)).map((content: Content, index: number) => {
+        const contentsCopy = this.cloneJson(contents).map((content: Content, index: number) => {
             // 如果没有时间戳，自动添加（同一批次的消息时间戳递增）
             if (!content.timestamp) {
                 content.timestamp = now + index;
@@ -1853,7 +1799,7 @@ export class ConversationManager {
         if (index < 0 || index >= history.length) {
             return undefined;
         }
-        return JSON.parse(JSON.stringify(history[index]));
+        return this.cloneJson(history[index]);
     }
 
     /**
@@ -1962,7 +1908,7 @@ export class ConversationManager {
             const oldParentId = oldParent?.id ?? null;
             const inserted = this.ensureNodeId({
                 role,
-                parts: JSON.parse(JSON.stringify(parts)),
+                parts: this.cloneJson(parts),
                 timestamp: Date.now()  // 自动添加时间
             } as Content, oldParent);
             history.splice(index, 0, inserted);
@@ -1982,7 +1928,7 @@ export class ConversationManager {
         position: number,
         content: Content
     ): Promise<void> {
-        const contentCopy = JSON.parse(JSON.stringify(content));
+        const contentCopy = this.cloneJson(content);
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
@@ -2146,7 +2092,7 @@ export class ConversationManager {
         const history = await this.loadHistory(conversationId);
         return history
             .filter(msg => msg.role === role)
-            .map(msg => JSON.parse(JSON.stringify(msg)));
+            .map(msg => this.cloneJson(msg));
     }
 
     // ==================== 快照管理 ====================
@@ -2167,7 +2113,7 @@ export class ConversationManager {
             name,
             description,
             timestamp: Date.now(),
-            history: JSON.parse(JSON.stringify(history))
+            history: this.cloneJson(history)
         };
         await this.storage.saveSnapshot(snapshot);
         return snapshot;
@@ -2903,7 +2849,7 @@ export class ConversationManager {
         const integrityStatus = this.resolveIntegrityStatus(integrity);
 
         if (metadataResult.value) {
-            const metadata = JSON.parse(JSON.stringify(metadataResult.value)) as ConversationMetadata;
+            const metadata = this.cloneJson(metadataResult.value) as ConversationMetadata;
             if (integrityStatus && integrityStatus !== 'ok') {
                 metadata.integrityStatus = integrityStatus;
             } else {
@@ -3101,7 +3047,7 @@ export class ConversationManager {
         // 从「每次 fs 读 + JSON parse」降为纯内存命中。返回深拷贝，防止调用方污染缓存。
         const cached = this.metaCache.get(conversationId);
         if (cached !== undefined) {
-            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+            return cached === null ? null : this.cloneJson(cached) as ConversationMetadata;
         }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
         if (result.value) {
@@ -3285,29 +3231,21 @@ export class ConversationManager {
      * 键在工具迭代热路径每轮读取多次，此前每次都是整份 meta.json 的磁盘读 + JSON parse。
      */
     async getCustomMetadata(conversationId: string, key: string): Promise<unknown> {
+        // 缓存命中时只克隆命中的键：metaCache 存的是最近一次持久化快照（写路径统一失效/回填），
+        // trimState/todoList/checkpoints 等键在工具迭代热路径每轮读取多次，整份 meta 深拷贝纯属浪费。
+        const cached = this.metaCache.get(conversationId);
+        if (cached !== undefined) {
+            if (cached === null) {
+                return undefined;
+            }
+            const value = cached.custom?.[key];
+            return value === undefined ? undefined : this.cloneJson(value);
+        }
         const meta = await this.getMetadataLight(conversationId);
         return meta?.custom?.[key];
     }
 
     // ==================== 工具调用管理 ====================
-
-    /**
-     * 查找 functionResponse 消息的正确插入位置。
-     *
-     * 工具响应必须紧跟对应的工具调用消息。若该位置之后已存在同批次
-     * functionResponse 消息，则插到它们之后，保持与 functionCall 输出顺序一致。
-     *
-     * @param history 当前对话历史
-     * @param messageIndex 工具调用消息的索引
-     * @returns functionResponse 应插入的位置索引
-     */
-    private findFunctionResponseInsertIndex(history: ConversationHistory, messageIndex: number): number {
-        let insertAt = messageIndex + 1;
-        while (insertAt < history.length && history[insertAt]?.isFunctionResponse) {
-            insertAt++;
-        }
-        return insertAt;
-    }
 
     /**
      * 标记指定消息中的工具调用为拒绝状态
@@ -3340,26 +3278,13 @@ export class ConversationManager {
             const message = history[messageIndex];
             let localModified = false;
 
-            // 收集所有已有响应的工具 ID
-            const respondedToolIds = new Set<string>();
-            for (let i = messageIndex + 1; i < history.length; i++) {
-                const msg = history[i];
-                // R5b-2.3：与 rejectAllPendingToolCalls / normalizeHistoryForDisplay 对齐，
-                // 防御历史中存在无 parts 的消息时抛错
-                if (!msg.parts) {
-                    continue;
-                }
-                for (const part of msg.parts) {
-                    if (part.functionResponse?.id) {
-                        respondedToolIds.add(part.functionResponse.id);
-                    }
-                }
-            }
+            // 收集目标消息之后所有已有响应的工具 ID（与旧实现范围一致：只扫描 messageIndex 之后）
+            const respondedToolIds = collectRespondedToolCallIds(history.slice(messageIndex + 1));
 
-            // 收集需要拒绝的工具调用
+            // 收集需要拒绝的工具调用（构造 functionResponse parts 复用 TranscriptMutation 共享逻辑）
             const rejectedCalls: Array<{ id: string; name: string }> = [];
 
-            // 标记工具为拒绝状态（R5b-2.4：与同函数 2904-2910 行 / rejectAllPendingToolCalls 一致，
+            // 标记工具为拒绝状态（R5b-2.4：与同函数旧实现 / rejectAllPendingToolCalls 一致，
             // 防御目标消息本身无 parts 时抛 TypeError）
             if (message.parts) {
                 for (const part of message.parts) {
@@ -3385,20 +3310,10 @@ export class ConversationManager {
 
             // 为被拒绝的工具添加 functionResponse
             if (rejectedCalls.length > 0) {
-                const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
-                    functionResponse: {
-                        name: call.name,
-                        id: call.id,
-                        response: {
-                            success: false,
-                            error: t('modules.api.chat.errors.userRejectedTool'),
-                            rejected: true
-                        }
-                    }
-                }));
+                const rejectedResponseParts = buildRejectedResponseParts(rejectedCalls);
 
                 // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
+                const insertAt = findFunctionResponseInsertIndex(history, messageIndex);
                 const parent = insertAt > 0 ? history[insertAt - 1] : null;
                 history.splice(insertAt, 0, this.ensureNodeId({
                     role: 'user',
@@ -3440,75 +3355,15 @@ export class ConversationManager {
         await repository.mutateContents((history) => {
             if (history.length === 0) return history;
 
-            // 收集所有 functionResponse 的 ID
-            const respondedToolCallIds = new Set<string>();
-            for (const message of history) {
-                if (message.parts) {
-                    for (const part of message.parts) {
-                        if (part.functionResponse?.id) {
-                            respondedToolCallIds.add(part.functionResponse.id);
-                        }
-                    }
-                }
+            // 共享逻辑：收集未响应 functionCall → 标记 rejected → 插入 functionResponse 占位
+            // （行为与 normalizeHistoryForDisplay 完全等价，见 TranscriptMutation.rejectUnresolvedToolCalls）。
+            if (!rejectUnresolvedToolCalls(history, (content, parent) => this.ensureNodeId(content, parent))) {
+                // 无变更：返回原引用跳过写回（此时没有任何原地修改）
+                return history;
             }
-
-            // 收集未响应的工具调用，记录它们所在的消息索引
-            const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
-            for (let i = 0; i < history.length; i++) {
-                const message = history[i];
-                if (message.parts) {
-                    for (const part of message.parts) {
-                        if (part.functionCall && part.functionCall.id) {
-                            // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                            if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                                part.functionCall.rejected = true;
-                                const calls = unresolvedCallsByIndex.get(i) || [];
-                                calls.push({
-                                    id: part.functionCall.id,
-                                    name: part.functionCall.name || 'unknown'
-                                });
-                                unresolvedCallsByIndex.set(i, calls);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
-            // 从后往前插入以避免索引偏移问题
-            if (unresolvedCallsByIndex.size > 0) {
-                const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
-
-                for (const messageIndex of sortedIndices) {
-                    const calls = unresolvedCallsByIndex.get(messageIndex)!;
-                    const rejectedResponseParts: ContentPart[] = calls.map(call => ({
-                        functionResponse: {
-                            name: call.name,
-                            id: call.id,
-                            response: {
-                                success: false,
-                                error: t('modules.api.chat.errors.userRejectedTool'),
-                                rejected: true
-                            }
-                        }
-                    }));
-
-                    // 插到工具调用消息的紧接后面，保持与 functionCall 输出顺序一致
-                    const insertAt = this.findFunctionResponseInsertIndex(history, messageIndex);
-                    const parent = insertAt > 0 ? history[insertAt - 1] : null;
-                    history.splice(insertAt, 0, this.ensureNodeId({
-                        role: 'user',
-                        parts: rejectedResponseParts,
-                        isFunctionResponse: true
-                    }, parent));
-                }
-                changed = true;
-                // 有插入：返回新引用触发写回（mutateContents 契约：返回原引用=跳过写回）
-                return history.slice();
-            }
-
-            // 无变更：返回原引用跳过写回（此时没有任何原地修改）
-            return history;
+            changed = true;
+            // 有插入：返回新引用触发写回（mutateContents 契约：返回原引用=跳过写回）
+            return history.slice();
         });
 
         if (changed) {

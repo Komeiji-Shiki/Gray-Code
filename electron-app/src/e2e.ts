@@ -34,7 +34,6 @@ interface PendingRequest {
 }
 
 export async function runE2E(): Promise<void> {
-  const PORT = 18999 + Math.floor(Math.random() * 500);
   const userData = path.join(app.getPath('temp'), 'graycode-e2e-' + Date.now());
   fs.mkdirSync(userData, { recursive: true });
 
@@ -131,7 +130,14 @@ export async function runE2E(): Promise<void> {
     });
   });
 
-  await new Promise<void>((resolve) => server.listen(PORT, '127.0.0.1', resolve));
+  // 监听端口 0：由系统分配空闲端口，避免固定随机区间（18999-19499）在并发/占用时
+  // 撞端口导致 mock server 起不来（listen 回调触发后 address() 才有效）
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address() as { port: number } | null;
+  const PORT = addr?.port ?? 0;
+  if (!PORT) {
+    throw new Error('failed to obtain ephemeral port for mock server');
+  }
   log(`mock server on :${PORT}`);
 
   const capturedPreviews: any[] = [];

@@ -147,6 +147,26 @@ type DiffSaveListener = (diff: PendingDiff) => void;
 export type DiffResolutionReason = 'none' | 'abort' | 'user' | 'rejected';
 
 /**
+ * 等待 diff 结算时的轮询兜底间隔。
+ *
+ * 修改原因：waitForDiffResolution 以 100ms 常驻轮询，而状态变化本来就有
+ * statusListener 实时驱动（约 2297 行），轮询只起兜底防漏作用，100ms 属于空转。
+ * 修改方式：降到 1.5s，事件驱动为主、轮询兜底，减少无谓定时器唤醒。
+ */
+const DIFF_POLL_INTERVAL_MS = 1500;
+
+/**
+ * 等待 diff 结算的最长时长。
+ *
+ * 修改原因：没有上限时，用户一直不处理某个 pending diff（或事件漏发且轮询兜底
+ * 失效），工具 Promise 会永久悬挂。
+ * 修改方式：超过上限后按超时收敛——拒绝该 diff 并返回 'rejected'，
+ * 与用户中断路径一致，避免把“仍在等待审阅”误报为“已接受”（'none' 会被
+ * write_file/apply_diff 等工具判定为 accepted）。
+ */
+const DIFF_WAIT_MAX_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
  * 用户中断跟踪（按会话隔离，防止标签页 A 的请求中断强杀 B 会话的 pending diff）。
  * 不传 conversationId 时退化为全局中断（向后兼容）。
  */
@@ -2203,6 +2223,8 @@ export class DiffManager {
             let pollTimer: ReturnType<typeof setTimeout> | undefined;
             let abortHandler: (() => void) | undefined;
             let statusListener: StatusChangeListener | undefined;
+            // 最长等待上限定时器：超时按拒绝收敛，防止工具 Promise 永久悬挂
+            let waitTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
             const clearPollTimer = () => {
                 if (pollTimer) {
@@ -2215,6 +2237,10 @@ export class DiffManager {
                 if (resolved) return;
                 resolved = true;
                 clearPollTimer();
+                if (waitTimeoutTimer) {
+                    clearTimeout(waitTimeoutTimer);
+                    waitTimeoutTimer = undefined;
+                }
                 this.activeDiffWaiters.delete(id);
 
                 if (statusListener) {
@@ -2240,10 +2266,12 @@ export class DiffManager {
 
             const scheduleNextCheck = () => {
                 if (resolved || pollTimer) return;
+                // 事件驱动为主：状态变化由 statusListener 即时触发 checkStatus，
+                // 轮询仅兜底防漏，间隔放宽到 1.5s 减少空转
                 pollTimer = setTimeout(() => {
                     pollTimer = undefined;
                     checkStatus();
-                }, 100);
+                }, DIFF_POLL_INTERVAL_MS);
             };
 
             const checkStatus = () => {
@@ -2293,6 +2321,13 @@ export class DiffManager {
                 }
                 abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
             }
+
+            // 最长等待上限：超过后按超时收敛（拒绝该 diff），
+            // 防止用户长时间不处理 pending diff 时工具 Promise 永久悬挂
+            waitTimeoutTimer = setTimeout(() => {
+                waitTimeoutTimer = undefined;
+                rejectAndFinish('rejected');
+            }, DIFF_WAIT_MAX_TIMEOUT_MS);
 
             statusListener = () => {
                 checkStatus();

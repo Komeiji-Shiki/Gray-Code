@@ -5,7 +5,8 @@ import { workspace } from '../__mocks__/vscode'
 import {
     FILE_TREE_MAX_NODES,
     getIgnoreRegexCacheStats,
-    getWorkspaceFileTree
+    getWorkspaceFileTree,
+    invalidateFileTreeCache
 } from '../../modules/prompt/fileTree'
 
 describe('fileTree buildFileTree', () => {
@@ -98,7 +99,7 @@ describe('fileTree buildFileTree', () => {
         expect(secondResult).toBe(firstResult)
     })
 
-    it('文件树缓存：gitignore mtime 变化时自动失效重建', () => {
+    it('文件树缓存：TTL 内信任缓存（gitignore 变化不立即重建），显式失效后重建', () => {
         write('.gitignore', '*.alpha\n')
         write('a.alpha', 'a')
         write('b.txt', 'b')
@@ -110,15 +111,20 @@ describe('fileTree buildFileTree', () => {
         expect(first).not.toContain('a.alpha')
         const afterFirst = getIgnoreRegexCacheStats()
 
-        // 修改 .gitignore（mtime 变化 → 缓存失效）：新规则生效，无需等待 TTL
+        // 修改 .gitignore：TTL（30s）内命中缓存，结果不变（不再逐命中 statSync gitignore mtime）
         write('.gitignore', '*.alpha\n*.txt\n')
         const second = getWorkspaceFileTree(10)
-        expect(second).not.toContain('b.txt')
-        expect(second).not.toContain('a.alpha')
+        expect(second).toBe(first)
+
+        // 显式失效缓存后重建：新规则生效
+        invalidateFileTreeCache(root)
+        const third = getWorkspaceFileTree(10)
+        expect(third).not.toContain('b.txt')
+        expect(third).not.toContain('a.alpha')
         // 重建后正则重新求值（命中数增加）；*.txt 是新增模式，编译数 +1（*.alpha 仍命中缓存）
-        const afterSecond = getIgnoreRegexCacheStats()
-        expect(afterSecond.compiles).toBe(afterFirst.compiles + 1)
-        expect(afterSecond.hits).toBeGreaterThan(afterFirst.hits)
+        const afterThird = getIgnoreRegexCacheStats()
+        expect(afterThird.compiles).toBe(afterFirst.compiles + 1)
+        expect(afterThird.hits).toBeGreaterThan(afterFirst.hits)
     })
 
     it('对话绑定的工作区已关闭时仍按其虚拟 URI 生成文件树（对话工作区独立）', () => {

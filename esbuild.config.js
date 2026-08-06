@@ -26,7 +26,8 @@ const buildOptions = {
     outfile: path.join(outdir, 'extension.js'),
     platform: 'node',
     format: 'cjs',
-    target: 'node18',
+    // 与根 package.json engines.node >=20 对齐（electron-app/build.mjs 已用 node22）
+    target: 'node20',
     external: externalModules,
     // 单次构建（发布产物）压缩并关闭 sourcemap；watch 模式保留原始形态便于调试
     sourcemap: isWatch,

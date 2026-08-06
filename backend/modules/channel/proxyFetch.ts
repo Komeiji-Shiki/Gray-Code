@@ -167,6 +167,26 @@ export interface FetchResponse {
 }
 
 /**
+ * 代理 fetch 记忆化缓存：按 proxyUrl 复用同一 fetch 闭包。
+ *
+ * 修改原因：ChannelManager 的 executeRequest / sendKeepAliveRequest 每次请求都调用
+ * createProxyFetch，旧实现每次都会新建闭包（并重复绑定 proxyUrl）；代理配置不变时
+ * 反复重建属于纯浪费。
+ * 修改方式：模块级 Map 按 proxyUrl 记忆化；无代理直接返回原生 fetch（不缓存）。
+ * 注意：proxy 配置（URL / 证书跳过开关）变化时，如需立即生效请调用
+ * clearProxyFetchCache() 清空缓存（当前无全局设置监听点挂载，新 URL 自然产生新键）。
+ */
+const proxyFetchCache = new Map<string, ProxyFetchFn>();
+
+/** 代理 fetch 闭包签名（记忆化缓存条目类型） */
+type ProxyFetchFn = (url: string | URL, init?: RequestInit) => Promise<Response>;
+
+/** 清空代理 fetch 记忆化缓存（代理配置变化时调用；新 proxyUrl 也会自动生成新条目） */
+export function clearProxyFetchCache(): void {
+    proxyFetchCache.clear();
+}
+
+/**
  * 创建一个支持代理的 fetch 函数
  *
  * @param proxyUrl 代理地址（可选），如 http://127.0.0.1:7890
@@ -177,8 +197,12 @@ export function createProxyFetch(proxyUrl?: string) {
         // 无代理，使用原生 fetch
         return fetch;
     }
-    
-    return async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const cached = proxyFetchCache.get(proxyUrl);
+    if (cached) {
+        return cached;
+    }
+
+    const fetchFn = async (url: string | URL, init?: RequestInit): Promise<Response> => {
         const targetUrl = typeof url === 'string' ? new URL(url) : url;
         const options: FetchOptions = {
             method: init?.method || 'GET',
@@ -201,6 +225,8 @@ export function createProxyFetch(proxyUrl?: string) {
             headers: response.headers
         });
     };
+    proxyFetchCache.set(proxyUrl, fetchFn);
+    return fetchFn;
 }
 
 /**

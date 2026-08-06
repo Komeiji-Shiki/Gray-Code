@@ -13,6 +13,13 @@ import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { useI18n } from '../composables/useI18n'
 
 /**
+ * 终端输出监听的取消函数（模块级单例，与 chatStore 的 disposeChatStreamListener 同模式）。
+ * HMR / App.vue 重挂载会重复 initialize()，保存句柄后重复调用时先注销旧监听再注册，
+ * 保证任意时刻只有一份活跃订阅；dispose() 由 App.vue onBeforeUnmount 调用。
+ */
+let disposeTerminalOutputListener: (() => void) | null = null
+
+/**
  * 终端输出缓冲上限（字符数）。
  * 长驻终端的累积输出可能达到数 MB：无上限时每次追加都是 O(n²) 字符串拼接，
  * 且整段输出作为响应式状态会触发整段重渲染。超过上限后截断，仅保留最近部分。
@@ -68,8 +75,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   const terminals = ref<Map<string, TerminalState>>(new Map())
   
   /** 是否已初始化监听 */
-  const initialized = ref(false)
-  
+  const initialized = ref(false)  
   // ============ 计算属性 ============
   
   /** 运行中的终端数量 */
@@ -307,13 +313,24 @@ export const useTerminalStore = defineStore('terminal', () => {
   function initialize(): void {
     if (initialized.value) return
     
-    onMessageFromExtension((message) => {
+    // M-7：保存 onMessageFromExtension 返回的取消函数，dispose() 时注销，
+    // 避免 HMR/重复初始化产生多份活跃订阅
+    disposeTerminalOutputListener = onMessageFromExtension((message) => {
       if (message.type === 'terminalOutput') {
         handleTerminalOutput(message.data as TerminalOutputEvent)
       }
     })
     
     initialized.value = true
+  }
+  
+  /**
+   * 释放资源：注销扩展消息监听并复位初始化状态（App.vue onBeforeUnmount 调用）
+   */
+  function dispose(): void {
+    disposeTerminalOutputListener?.()
+    disposeTerminalOutputListener = null
+    initialized.value = false
   }
   
   return {
@@ -334,6 +351,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     cleanup,
     removeTerminal,
     clearAll,
-    initialize
+    initialize,
+    dispose
   }
 })

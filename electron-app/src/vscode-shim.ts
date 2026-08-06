@@ -423,7 +423,9 @@ export class Selection extends Range {
     super(anchor, active);
   }
   get isReversed(): boolean {
-    return this.anchor === this.end;
+    // 选区反向：anchor 位于 active 之后。原实现比较 anchor === end 恒不成立
+    // （anchor/active 是构造时传入的独立对象），按 vscode 语义改为 isAfter 判断。
+    return this.anchor.isAfter(this.active);
   }
 }
 

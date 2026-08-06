@@ -30,6 +30,7 @@ import {
     // 现改为从 utils.ts 统一导入。
     gcd,
     calculateAspectRatio,
+    parseImageDimensionsFromBytes,
     type ImageDimensions
 } from '../utils';
 
@@ -106,89 +107,19 @@ interface ReadResult {
 }
 
 /**
- * 从图片数据解析尺寸
- * 支持 PNG, JPEG, WebP, GIF
+ * 从图片数据解析尺寸（统一收敛自 utils.parseImageDimensionsFromBytes，
+ * 宽高比字符串仍由 utils.calculateAspectRatio 计算，与原实现输出一致）
  */
 function parseImageDimensions(buffer: Uint8Array, mimeType: string): ImageDimensions | undefined {
-    try {
-        let width: number | undefined;
-        let height: number | undefined;
-        
-        if (mimeType === 'image/png') {
-            // PNG: 宽度在偏移 16-19，高度在 20-23（大端序）
-            if (buffer.length >= 24 &&
-                buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-                width = (buffer[16] << 24) | (buffer[17] << 16) | (buffer[18] << 8) | buffer[19];
-                height = (buffer[20] << 24) | (buffer[21] << 16) | (buffer[22] << 8) | buffer[23];
-            }
-        } else if (mimeType === 'image/jpeg') {
-            // JPEG: 需要查找 SOF0/SOF2 标记
-            let offset = 2;  // 跳过 FFD8
-            while (offset < buffer.length - 9) {
-                if (buffer[offset] !== 0xFF) {
-                    offset++;
-                    continue;
-                }
-                const marker = buffer[offset + 1];
-                // SOF0 (0xC0) 或 SOF2 (0xC2) 标记包含尺寸
-                if (marker === 0xC0 || marker === 0xC2) {
-                    height = (buffer[offset + 5] << 8) | buffer[offset + 6];
-                    width = (buffer[offset + 7] << 8) | buffer[offset + 8];
-                    break;
-                }
-                // 跳到下一个标记
-                const length = (buffer[offset + 2] << 8) | buffer[offset + 3];
-                offset += 2 + length;
-            }
-        } else if (mimeType === 'image/webp') {
-            // WebP: 检查 RIFF 头和 VP8/VP8L/VP8X 块
-            if (buffer.length >= 30 &&
-                buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-                buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
-                // VP8X (扩展格式)
-                if (buffer[12] === 0x56 && buffer[13] === 0x50 && buffer[14] === 0x38 && buffer[15] === 0x58) {
-                    width = ((buffer[24] | (buffer[25] << 8) | (buffer[26] << 16)) + 1);
-                    height = ((buffer[27] | (buffer[28] << 8) | (buffer[29] << 16)) + 1);
-                }
-                // VP8L (无损格式)
-                else if (buffer[12] === 0x56 && buffer[13] === 0x50 && buffer[14] === 0x38 && buffer[15] === 0x4C) {
-                    const signature = buffer[21];
-                    if (signature === 0x2F) {
-                        const bits = (buffer[22] | (buffer[23] << 8) | (buffer[24] << 16) | (buffer[25] << 24));
-                        width = (bits & 0x3FFF) + 1;
-                        height = ((bits >> 14) & 0x3FFF) + 1;
-                    }
-                }
-                // VP8 (有损格式)
-                else if (buffer[12] === 0x56 && buffer[13] === 0x50 && buffer[14] === 0x38 && buffer[15] === 0x20) {
-                    // VP8 格式需要查找帧头
-                    if (buffer.length >= 30) {
-                        // 帧头在偏移 23 开始
-                        width = (buffer[26] | (buffer[27] << 8)) & 0x3FFF;
-                        height = (buffer[28] | (buffer[29] << 8)) & 0x3FFF;
-                    }
-                }
-            }
-        } else if (mimeType === 'image/gif') {
-            // GIF: 宽度在偏移 6-7，高度在 8-9（小端序）
-            if (buffer.length >= 10 &&
-                buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
-                width = buffer[6] | (buffer[7] << 8);
-                height = buffer[8] | (buffer[9] << 8);
-            }
-        }
-        
-        if (width && height && width > 0 && height > 0) {
-            return {
-                width,
-                height,
-                aspectRatio: calculateAspectRatio(width, height)
-            };
-        }
-    } catch (e) {
-        // 解析失败，返回 undefined
+    const parsed = parseImageDimensionsFromBytes(buffer, mimeType);
+    if (!parsed) {
+        return undefined;
     }
-    return undefined;
+    return {
+        width: parsed.width,
+        height: parsed.height,
+        aspectRatio: calculateAspectRatio(parsed.width, parsed.height)
+    };
 }
 
 function normalizeLineNumber(value: unknown): number | undefined {

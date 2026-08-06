@@ -46,6 +46,12 @@ export class ToolDeclarationResolver {
     private readonly declarationCache = new Map<string, ToolDeclaration[]>();
     /** MCP 工具列表版本：服务器连接/断开/能力刷新事件时递增（工具列表变化的可靠失效信号） */
     private mcpToolsVersion = 0;
+    /**
+     * MCP 事件解绑函数集合：每次 SubAgent 执行与 ChannelManager.setMcpManager 都会新建
+     * resolver，若不显式解绑会在 MCP 管理器上永久累积监听器（长会话/多次派发后泄漏）。
+     * dispose() 逐一执行并清空。
+     */
+    private readonly unbinds: Array<() => void> = [];
 
     constructor(
         private readonly toolRegistry?: ToolRegistry,
@@ -56,9 +62,30 @@ export class ToolDeclarationResolver {
             const bumpToolsVersion = (): void => {
                 this.mcpToolsVersion += 1;
             };
+            // 同一监听函数分别注册到三种事件，解绑也必须按事件逐一摘除（McpManager 按类型分 Set）
             this.mcpManager.addEventListener('server:connected', bumpToolsVersion);
+            this.unbinds.push(() => this.mcpManager!.removeEventListener('server:connected', bumpToolsVersion));
             this.mcpManager.addEventListener('server:disconnected', bumpToolsVersion);
+            this.unbinds.push(() => this.mcpManager!.removeEventListener('server:disconnected', bumpToolsVersion));
             this.mcpManager.addEventListener('server:capabilities_updated', bumpToolsVersion);
+            this.unbinds.push(() => this.mcpManager!.removeEventListener('server:capabilities_updated', bumpToolsVersion));
+        }
+    }
+
+    /**
+     * 释放资源：解绑全部 MCP 事件监听器。
+     *
+     * 生命周期约定：resolver 是一次性/短生命周期的对象（SubAgent 每次解析、ChannelManager
+     * 重建前），用完必须调用本方法，否则监听器在 McpManager 上永久累积。
+     */
+    dispose(): void {
+        while (this.unbinds.length > 0) {
+            const unbind = this.unbinds.pop();
+            try {
+                unbind?.();
+            } catch {
+                // 解绑失败不影响主流程（McpManager.removeEventListener 本身幂等）
+            }
         }
     }
 

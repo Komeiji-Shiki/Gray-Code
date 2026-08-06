@@ -67,6 +67,18 @@ const MAX_RETAINED_OUTPUT_LINES = 50000;
  *  内存与最终响应体均无界；超限时截断保留尾部并计入 omittedOutputLines。 */
 const MAX_SINGLE_LINE_CHARS = 1_000_000;
 
+/**
+ * 输出数组前段清理的摊销阈值。
+ *
+ * 修改原因：pushOutputLines 每次超限都 splice(0, dropped)，当输出逐行到达时
+ * 每 push 一行都要对 5 万行数组做一次 O(n) 前段删除，总复杂度退化为 O(n²)。
+ * 修改方式：超限量小于阈值时只计数不物理删除，数组在“上限 + 阈值”内有界浮动，
+ * 累计超限达到阈值后再做一次前段删除（摊销后总删除次数与超限量成正比）。
+ * 语义不变：输出仍被截断到 MAX_RETAINED_OUTPUT_LINES（允许阈值内的浮动），
+ * omittedOutputLines 统计被丢弃的行数。
+ */
+const OUTPUT_TRIM_AMORTIZE_THRESHOLD = 1000;
+
 function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
     if (lines.length === 0) return;
     for (const line of lines) {
@@ -80,8 +92,11 @@ function pushOutputLines(tp: TerminalProcess, lines: string[]): void {
     }
     if (tp.output.length > MAX_RETAINED_OUTPUT_LINES) {
         const dropped = tp.output.length - MAX_RETAINED_OUTPUT_LINES;
-        tp.output.splice(0, dropped);
         tp.omittedOutputLines = (tp.omittedOutputLines ?? 0) + dropped;
+        // 摊销清理：累计超限达到阈值才做一次前段删除（见 OUTPUT_TRIM_AMORTIZE_THRESHOLD 注释）
+        if (tp.output.length - MAX_RETAINED_OUTPUT_LINES >= OUTPUT_TRIM_AMORTIZE_THRESHOLD) {
+            tp.output.splice(0, tp.output.length - MAX_RETAINED_OUTPUT_LINES);
+        }
     }
 }
 
@@ -646,6 +661,43 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
 }
 
 /**
+ * 检查 Shell 是否可用（同步缓存版），并生成与原异步 checkShellAvailability
+ * 一致的不可用原因。
+ *
+ * 修改原因：execute_command handler 热路径原来每次执行命令都走
+ * checkShellAvailability 的 execFile 子进程探测（where / which / wsl --status），
+ * 高频命令调用会反复 spawn 子进程。
+ * 修改方式：可用性直接复用 checkShellAvailabilitySync（5 分钟 TTL 缓存），
+ * 不再 spawn；仅不可用路径按原异步版本的相同分支生成 reason 文案，语义保持一致。
+ */
+function getShellAvailabilityWithReason(shellType: string, customPath?: string): { available: boolean; reason?: string } {
+    const available = checkShellAvailabilitySync(shellType, customPath);
+    if (available) {
+        return { available: true };
+    }
+
+    const platform = os.platform();
+    const shellPath = customPath || getDefaultShellPath(shellType);
+    if (platform === 'win32') {
+        // WSL 需要特殊检测
+        if (shellType === 'wsl') {
+            return { available: false, reason: t('tools.terminal.shellCheck.wslNotInstalled') };
+        }
+        // 对于绝对路径，检查文件是否存在
+        if (shellPath.includes('\\') || shellPath.includes('/')) {
+            return { available: false, reason: t('tools.terminal.shellCheck.shellNotFound', { shellPath }) };
+        }
+        return { available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) };
+    }
+
+    // Unix 系统
+    if (shellPath.startsWith('/')) {
+        return { available: false, reason: t('tools.terminal.shellCheck.shellNotFound', { shellPath }) };
+    }
+    return { available: false, reason: t('tools.terminal.shellCheck.shellNotInPath', { shellPath }) };
+}
+
+/**
  * 获取启用且可用的 Shell 列表
  */
 function getAvailableShells(): Array<{ type: string; displayName: string; isDefault: boolean }> {
@@ -1074,8 +1126,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                 };
             }
             
-            // 检查 shell 可用性
-            const availability = await checkShellAvailability(actualShellType, shellInfo?.path);
+            // 检查 shell 可用性（同步缓存版：复用工具创建时的 5 分钟 TTL 缓存，
+            // 不再每次执行命令都 spawn 探测子进程；不可用原因与原异步版本语义一致）
+            const availability = getShellAvailabilityWithReason(actualShellType, shellInfo?.path);
             if (!availability.available) {
                 return {
                     success: false,
@@ -1665,19 +1718,24 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
  * 子进程可能继承 normal，可接受。
  */
 function setTerminalProcessPriority(pid: number | undefined, background: boolean): void {
+    // 前台命令进程优先级本来就是 Normal（Windows 默认优先级类 / POSIX nice 0），
+    // 再 spawn powershell 设置是纯浪费；只有后台命令需要降优先级。
+    if (!background) return;
     if (!pid) return;
     try {
         if (os.platform() === 'win32') {
-            const priorityClass = background ? 'BelowNormal' : 'Normal';
-            cp.exec(
-                `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'"`,
+            // argv 数组形式（execFile）：pid 为 Node 生成的数值型进程号，
+            // 不经过 shell 解析，避免 `&`、`|` 等字符注入面
+            cp.execFile(
+                'powershell.exe',
+                ['-NoProfile', '-Command', `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = 'BelowNormal'`],
                 { windowsHide: true, timeout: 5000 },
                 () => { /* 失败静默：优先级是软约束 */ }
             );
         } else {
             // POSIX：belowNormal ≈ nice +5，normal = 0
             const setPriority = (process as any).setPriority as ((pid: number, p: number | string) => void) | undefined;
-            setPriority?.(pid, background ? 'belowNormal' : 'normal');
+            setPriority?.(pid, 'belowNormal');
         }
     } catch {
         // 忽略：优先级设置失败不影响命令执行

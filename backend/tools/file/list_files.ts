@@ -11,11 +11,12 @@ import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines, mapWithConcurrency, getWorkspaceByUri } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
+import { DEFAULT_IGNORED_DIRS, RECURSIVE_SKIP_DIRS as RECURSIVE_SKIP_DIRS_LIST } from '../ignoreLists';
 
 /**
- * 默认忽略的目录和文件
+ * 默认忽略的目录和文件（统一收敛自 ../ignoreLists，避免多处重复维护）
  */
-const DEFAULT_IGNORED = ['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.next', 'coverage'];
+const DEFAULT_IGNORED = DEFAULT_IGNORED_DIRS;
 
 /**
  * 递归列出的最大深度（0 表示只列根目录直属一层；到达深度后不再下钻）
@@ -37,8 +38,9 @@ const MAX_RECURSIVE_ENTRIES = 5000;
  * 修改原因：默认忽略列表只有 .git，用户未配置自定义忽略时，
  * node_modules/dist 等巨型目录会被整树遍历，递归无界。
  * 修改方式：仅在递归下钻时跳过（不影响非递归的顶层显式列出）。
+ * 列表统一收敛自 ../ignoreLists，避免多处重复维护。
  */
-const RECURSIVE_SKIP_DIRS = ['.git', 'node_modules', 'dist', 'out', 'build', 'target', 'coverage', '.venv', 'venv', '__pycache__', '.cache'];
+const RECURSIVE_SKIP_DIRS = RECURSIVE_SKIP_DIRS_LIST;
 
 /**
  * 递归遍历共享状态：条目计数与截断标志

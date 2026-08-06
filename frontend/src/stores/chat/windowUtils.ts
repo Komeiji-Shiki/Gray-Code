@@ -128,6 +128,126 @@ export function clearVisibleChatMessagesCache(state: ChatStoreState): void {
   visibleMessagesCache.delete(state)
 }
 
+// ==================== allMessageIndexBounds 增量缓存（M-3） ====================
+
+/**
+ * allMessageIndexBounds 增量缓存：与 getVisibleChatMessagesCached 同模式。
+ *
+ * allMessages 数组在会话内被原地 push / 尾元素替换（流式 replaceMessageAt），引用不变；
+ * 因此以数组为 WeakMap 键，用（长度 + 首元素 + 尾元素）指纹校验：
+ * - 指纹不匹配 / 长度收缩 / 首元素变化 → 全量重建；
+ * - 长度不变且仅尾元素被替换（流式原地更新）→ 只重算尾元素索引；
+ * - 长度增长且旧尾元素身份未变 → 只扫描新增尾部。
+ * 中间位置同长度替换由 state.replaceMessageAt 的 L1 钩子（clearMessageIndexBoundsCache）兜底。
+ */
+interface IndexBoundsCacheEntry {
+  length: number
+  first: Message | undefined
+  last: Message | undefined
+  firstIndexed: number | null
+  lastIndexed: number | null
+  /** 尾元素（[0, length-1] 最后一条）是否带 backendIndex */
+  lastWasIndexed: boolean
+  /** [0, length-1) 内最后一条带 backendIndex 的消息索引（尾元素被替换为无索引消息时回退） */
+  indexedBeforeTail: number | null
+}
+
+const indexBoundsCache = new WeakMap<Message[], IndexBoundsCacheEntry>()
+
+function getMessageBackendIndex(message: Message | undefined): number | null {
+  const bi = message?.backendIndex
+  return typeof bi === 'number' && Number.isFinite(bi) ? bi : null
+}
+
+export interface AllMessageIndexBounds {
+  firstIndexed: number | null
+  lastIndexed: number | null
+  nextFallbackIndex: number
+}
+
+export function getAllMessageIndexBoundsCached(
+  messages: Message[],
+  windowStartIndex: number
+): AllMessageIndexBounds {
+  const len = messages.length
+  const cached = indexBoundsCache.get(messages)
+
+  const buildFull = (): AllMessageIndexBounds => {
+    let firstIndexed: number | null = null
+    let lastIndexed: number | null = null
+    let indexedBeforeTail: number | null = null
+    for (let i = 0; i < len; i++) {
+      const idx = getMessageBackendIndex(messages[i])
+      if (idx === null) continue
+      if (firstIndexed === null) firstIndexed = idx
+      if (i < len - 1) indexedBeforeTail = idx
+      lastIndexed = idx
+    }
+    indexBoundsCache.set(messages, {
+      length: len,
+      first: messages[0],
+      last: messages[len - 1],
+      firstIndexed,
+      lastIndexed,
+      lastWasIndexed: getMessageBackendIndex(messages[len - 1]) !== null,
+      indexedBeforeTail
+    })
+    return { firstIndexed, lastIndexed, nextFallbackIndex: windowStartIndex + len }
+  }
+
+  if (!cached) return buildFull()
+
+  // 指纹校验：收缩 / 首元素变化 / 未知结构性变更 → 全量重建
+  if (len < cached.length || cached.first !== messages[0]) return buildFull()
+
+  if (len === cached.length) {
+    if (messages[len - 1] === cached.last) {
+      // 完全未变（Vue 重复求值 / 非尾替换的已知空洞，由 L1 钩子兜底）：直接返回缓存
+      return {
+        firstIndexed: cached.firstIndexed,
+        lastIndexed: cached.lastIndexed,
+        nextFallbackIndex: windowStartIndex + len
+      }
+    }
+    // 仅尾元素被替换（流式原地更新）：尾元素无索引时回退到 [0, len-1) 的最后索引
+    const tailIdx = getMessageBackendIndex(messages[len - 1])
+    const lastIndexed = tailIdx !== null ? tailIdx : cached.indexedBeforeTail
+    indexBoundsCache.set(messages, {
+      ...cached,
+      last: messages[len - 1],
+      lastIndexed,
+      lastWasIndexed: tailIdx !== null
+    })
+    return { firstIndexed: cached.firstIndexed, lastIndexed, nextFallbackIndex: windowStartIndex + len }
+  }
+
+  // 长度增长：旧尾元素身份未变 → 纯尾部追加，只扫描新增尾部；否则重建
+  if (cached.length > 0 && messages[cached.length - 1] !== cached.last) {
+    return buildFull()
+  }
+  let lastIndexed = cached.lastIndexed
+  for (let i = cached.length; i < len; i++) {
+    const idx = getMessageBackendIndex(messages[i])
+    if (idx !== null) lastIndexed = idx
+  }
+  const tailIdx = getMessageBackendIndex(messages[len - 1])
+  indexBoundsCache.set(messages, {
+    length: len,
+    first: cached.first,
+    last: messages[len - 1],
+    firstIndexed: cached.firstIndexed,
+    lastIndexed,
+    lastWasIndexed: tailIdx !== null,
+    indexedBeforeTail: cached.lastWasIndexed ? cached.lastIndexed : cached.indexedBeforeTail
+  })
+  return { firstIndexed: cached.firstIndexed, lastIndexed, nextFallbackIndex: windowStartIndex + len }
+}
+
+/** L1 钩子：中间位置同长度替换（指纹只校验首尾元素）时由 state.replaceMessageAt 调用清除缓存 */
+export function clearMessageIndexBoundsCache(messages: Message[]): void {
+  indexBoundsCache.delete(messages)
+}
+
 function getMessageAbsoluteIndex(message: Message | undefined, fallbackIndex: number): number {
   if (typeof message?.backendIndex === 'number' && Number.isFinite(message.backendIndex)) {
     return message.backendIndex

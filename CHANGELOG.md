@@ -8,6 +8,40 @@
 
 ## [Unreleased]
 
+### Changed
+  - **性能与资源占用优化（子智能体并行审计 + 修复，全链路）**：
+    - **流式渐进 Markdown 渲染根治 O(n²) 重解析**：此前流式期间已定型的段落被持续累积进单一字符串，每次渲染 tick（最长 180ms 一次）都把全部累计文本重新做一遍 markdown-it 解析 + 代码高亮 + 整体 `v-html` 替换——回答越长每帧成本线性增长，长代码生成场景流式后期卡顿。现 promote 文本按 `\n\n` 段落边界切块（`$$` 数学块未闭合的边界暂不切，保证与整段渲染语义一致），每块一个独立的 `MarkdownRenderer` 实例（key 不变 → Vue 复用旧块，只渲染新块）；软上限 200 块防御性淘汰最旧块
+    - **smoothStreamManager fence 配对扫描增量 化**：此前每帧对全文从零做 fence 配对正则扫描（长代码块流式时每候选段落一次 O(前缀长) 扫描）；现按流实例维护增量扫描状态（只扫新增区间 + 二分计数），`findPromoteCut` 行为完全不变但每帧成本降为 O(delta)
+    - **MessageList / MessageItem 热路径缓存**：`allMessageIndexBounds` / `todoStickyMeta` / `mergeableCheckpointKeys` 改为「引用指纹 + 尾部增量」缓存（复用 `getVisibleChatMessagesCached` 模式），流式 50ms 批次不再对全窗口（≤800 条）重复全扫；`availableCheckpoints` / `checkpointsBeforeMessage` 改走 store 新增的 `checkpointLookup` 增量分组（升序 keys + 前缀终点，二分取最近前序），40 个可见实例不再各自 filter+sort 全量 checkpoints（非单调时防御性回退原逻辑）
+    - **CustomScrollbar 流式期间布局节流**：`characterData` 变更（流式每帧发生）合并到 ~100ms 窗口批量更新布局，`childList` 结构变更保持即时；卸载时清理挂起定时器
+    - **终端输出全链路节流**：此前 stdout/stderr 每个 data chunk 独立 `postMessage`（高频输出命令消息风暴），且前端每次响应式整体重写 `<pre>`；现 `ChatViewProvider` 按 terminalId 聚合 output/error 80ms 批量发送（start/exit 即时且先冲刷未决输出保持顺序），前端 `terminalStore` 只追加字符串、格式完全兼容
+    - **`execute_command` 每次执行的外部进程开销消除**：热路径不再每次 spawn 子进程检测 shell 可用性（改走已存在的 5 分钟 TTL 同步缓存，错误文案语义不变）；Windows 前台命令不再额外启动 `powershell.exe` 设置优先级（前台本就是默认 Normal，纯浪费），后台命令改用 `execFile` argv 数组形式（无 shell 解析面）
+    - **`search_in_files` 并发化**：最多 1000 个文件从逐文件串行 I/O 改为受控并发（并发度 8，复用 `mapWithConcurrency`，结果保持原文件顺序）；replace 模式拆两阶段——并发只读扫描 + 串行 diff 审阅（保持审阅顺序语义不变）
+    - **`pushOutputLines` 截断摊销化**：5 万行上限后不再每个 chunk 都 `splice(0, dropped)` 整段前移，累计超限 1000 行才清理一次（O(n²) → O(1) 摊销）
+    - **`waitForDiffResolution` 轮询降耗**：100ms 常驻轮询降为 1.5s 兜底轮询（事件驱动为主）+ 5 分钟最长等待上限，超时按「用户中断」语义收敛，杜绝永不结算的 pending diff 空转
+    - **`ConversationManager` 读路径深拷贝消除**：`getMessages` 逐条 `JSON.parse(JSON.stringify)` 深拷贝与分页路径浅拷贝方案对齐（IPC 序列化天然隔离）；`cloneJson` 统一为 `structuredClone`（快数倍且保 `undefined`）；`getCustomMetadata` 缓存命中只克隆目标键，不再整份 metadata 克隆
+    - **`getMessageNodeIdAt` 缓存 TTL 300ms → 30s**：此前工具循环中相邻两次反查间隔超过 300ms 即缓存失效，导致每轮反复全量重读 transcript 文件（写路径已统一失效该缓存，TTL 仅兜底外部直写）；顺带 `usageCache` 降级 mtime 扫描从 15s 同步 stat 风暴改为 60s + `fs.promises` 异步递归
+    - **`fileTree` 缓存命中跳过 statSync**：TTL 内不再每次 `statSync` gitignore 文件（miss 时才同步遍历全树）；`createProxyFetch` 按 proxyUrl 记忆化（不再每次请求重建闭包 + 重解析代理）；`PromptManager` 占位符正则模块级预编译缓存；`i18n.t()` 加载时拍平为 Map 查找 + 缺失 key 告警去重（只告警一次，不再刷屏）
+    - **Electron 桌面版**：`graycode://` 协议静态资源缓存改 LRU（热点大 bundle 命中即刷新，不再被小资源挤出反复读盘）；`workspace.json` 改 `.tmp` + rename 原子写（崩溃不再损坏收藏工作区记录）；e2e 端口改监听 0 取实际端口（消除并行冲突）；esbuild target `node18` → `node20` 与 engines 对齐；CI 去掉重复的 vue-tsc 全仓检查（build 内置一次即可）+ 增加 30 分钟超时
+
+### Fixed
+  - **ToolDeclarationResolver 事件监听器泄漏**：每次 SubAgent 执行 / `ChannelManager.setMcpManager` 重建都会向全局 McpManager 累积 3 个永久监听器（长会话无界增长、闭包阻碍 GC）；新增 `dispose()` 解绑（executor 用完即释放、重建前先解绑）
+  - **`cleanupTerminals` 死代码**：活跃进程表只靠 close/error 事件清理，挂死进程条目永久滞留；现 `ChatViewProvider.dispose()` 调用清理
+  - **工具注册双重实例化**：注册探针不再执行工厂（此前每次启动多一轮工具声明构建 + shell 检测 execFileSync 阻塞），read_skill 仍以真实工厂注册
+  - **Electron 主进程崩溃恢复**：新增 `uncaughtException` 处理（错误对话框提供重启选项）；渲染进程 `render-process-gone` 自动 reload（最多 2 次后弹窗，防死窗）；`before-quit` 二次触发竞态修复（dispose 期间二次退出不再截断写队列，统一由首次收尾）
+  - **`monitor-smoke` CI 挂起**：失败/异常时不再让进程无窗口挂死，try/catch/finally + 状态码退出（与 e2e 对齐）
+  - **`Selection.isReversed` 逻辑错误**：`anchor === end` 恒假，改为 `anchor.isAfter(active)` 的官方语义
+  - **前端资源清理补全**：`ToolMessage` 的 `seenDiffToolIds` / `persistedDiffGuardWarnings` 加 500 上限 + 会话切换清空；`InputBox` 预览消失定时器保存句柄并在卸载时清理；`terminalStore.initialize()` 保存取消函数并暴露 `dispose()`（App 卸载时调用）；`FileHandlers` 高亮定时器挂到装饰器 dispose 生命周期
+
+### Changed（结构收敛）
+  - **`execute_command` / `diffManager` / `search_in_files` 重复逻辑收敛**：图片尺寸解析（PNG/JPEG/WebP/GIF）两份同构实现统一为 `parseImageDimensionsFromBytes`；plan/design/progress 三处 `ensureParentDir` + 多工作区路径策略统一收敛到 `backend/tools/pathPolicy.ts`（薄封装保留原导出）；四处分散不一致的忽略列表统一到 `backend/tools/ignoreLists.ts`
+  - **`ConversationManager` 三处重复的「未响应工具调用拒绝/补齐」逻辑**提取到 `backend/modules/conversation/TranscriptMutation.ts` 共享纯函数（杜绝语义漂移）
+  - **`extension.ts` 瘦身**：导出设置/导入设置/迁移旧对话历史三个命令的完整 UI 流程抽取到 `webview/commands/settingsTransfer.ts`（依赖注入，行为逐字等价），入口只留注册与生命周期编排
+  - **`ModuleRegistry` 日志降噪**：注册/注销改 debug 级
+
+### Tests
+  - 全量回归：backend jest 215 套件 / 2196 用例、frontend vitest 55 文件 / 551 用例全绿；新增/更新 `fileTree.test.ts`（缓存命中跳过 gitignore stat 的新语义）、`MessageItem.test.ts`（checkpointLookup mock）、`MessageItemStreaming`（分块渲染）、`smoothStreamManager`（增量 fence 扫描）等；Electron e2e / monitor-smoke / uismoke 冒烟通过
+
 ## [1.6.8] - 2026-08-06
 
 ### Fixed

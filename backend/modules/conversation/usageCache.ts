@@ -126,7 +126,7 @@ export function parseConversationIdFromPath(filename: string): string | undefine
 /** 递归能力探测超时（毫秒） */
 const DEFAULT_PROBE_TIMEOUT_MS = 1500;
 /** 非递归降级时 mtime 快照扫描间隔（毫秒） */
-const DEFAULT_FALLBACK_SCAN_INTERVAL_MS = 15_000;
+const DEFAULT_FALLBACK_SCAN_INTERVAL_MS = 60_000;
 /** 探测探针目录名前缀（扫描器跳过，避免把探针文件计入 mtime 快照） */
 const PROBE_DIR_PREFIX = '.usage-watch-probe-';
 
@@ -187,13 +187,16 @@ export function probeRecursiveWatchSupport(
  * 递归不可用时的降级路径：扫描 conversations 目录下所有文件的 mtime，
  * 每个对话取最大 mtime（写历史/元数据/索引都会触碰对应文件）。
  * 目录不存在或不可读时返回空 Map。
+ *
+ * 异步实现（fs.promises）：旧实现同步递归 readdirSync/statSync 在对话多/目录深时会阻塞
+ * 事件循环数百毫秒，这里改为异步遍历，语义与返回结构完全一致。
  */
-export function scanConversationMtimes(conversationsDirPath: string): Map<string, number> {
+export async function scanConversationMtimes(conversationsDirPath: string): Promise<Map<string, number>> {
     const result = new Map<string, number>();
-    const walk = (dir: string, prefix: string): void => {
+    const walk = async (dir: string, prefix: string): Promise<void> => {
         let entries: fs.Dirent[];
         try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
+            entries = await fs.promises.readdir(dir, { withFileTypes: true });
         } catch {
             return;
         }
@@ -201,13 +204,13 @@ export function scanConversationMtimes(conversationsDirPath: string): Map<string
             if (entry.name.startsWith(PROBE_DIR_PREFIX)) continue; // 跳过探测残留
             const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
             if (entry.isDirectory()) {
-                walk(path.join(dir, entry.name), rel);
+                await walk(path.join(dir, entry.name), rel);
                 continue;
             }
             const conversationId = parseConversationIdFromPath(rel);
             if (!conversationId) continue;
             try {
-                const mtime = fs.statSync(path.join(dir, entry.name)).mtimeMs;
+                const mtime = (await fs.promises.stat(path.join(dir, entry.name))).mtimeMs;
                 const prev = result.get(conversationId);
                 if (prev === undefined || mtime > prev) {
                     result.set(conversationId, mtime);
@@ -217,7 +220,7 @@ export function scanConversationMtimes(conversationsDirPath: string): Map<string
             }
         }
     };
-    walk(conversationsDirPath, '');
+    await walk(conversationsDirPath, '');
     return result;
 }
 
@@ -236,6 +239,9 @@ export function diffMtimeSnapshots(previous: Map<string, number>, current: Map<s
  * 非递归降级兜底：定期对 conversations 目录做 mtime 快照比对，
  * 把 mtime 变化的对话标记为 dirty（等价于 recursive watcher 的失效信号）。
  * 首次扫描只建立基线不标记 dirty，避免启动即全量失效。返回停止函数（清定时器）。
+ *
+ * 扫描为异步（scanConversationMtimes 用 fs.promises 遍历，不阻塞事件循环）；
+ * 用 in-flight 标记防止上一轮异步扫描未完成时下一轮 setInterval 重复进入。
  */
 export function startMtimeFallbackScanner(
     conversationsDirPath: string,
@@ -244,14 +250,22 @@ export function startMtimeFallbackScanner(
 ): () => void {
     let baseline: Map<string, number> | null = null;
     let timer: NodeJS.Timeout | null = null;
+    let scanning = false;
     const scan = (): void => {
-        const current = scanConversationMtimes(conversationsDirPath);
-        if (baseline) {
-            for (const id of diffMtimeSnapshots(baseline, current)) {
-                cache.markDirty(id);
-            }
-        }
-        baseline = current;
+        if (scanning) return; // 上一轮异步扫描未完成：跳过本轮，避免重叠扫描
+        scanning = true;
+        void scanConversationMtimes(conversationsDirPath)
+            .then(current => {
+                if (baseline) {
+                    for (const id of diffMtimeSnapshots(baseline, current)) {
+                        cache.markDirty(id);
+                    }
+                }
+                baseline = current;
+            })
+            .finally(() => {
+                scanning = false;
+            });
     };
     scan();
     timer = setInterval(scan, intervalMs);

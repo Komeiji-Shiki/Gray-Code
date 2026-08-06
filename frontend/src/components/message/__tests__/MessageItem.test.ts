@@ -15,10 +15,17 @@ import MessageItem, {
 import type { Message } from '../../../types'
 
 // 假 chatStore / settingsStore：MessageItem 仅用到 checkpoints / allMessages /
-// appearanceLoadingText（且均为惰性 computed，后台任务消息路径基本不触发）
+// checkpointLookup / appearanceLoadingText（且均为惰性 computed，后台任务消息路径基本不触发）。
+// checkpointLookup 的 sorted=false 会让组件走防御性回退路径（原始 filter），语义一致。
 const chatStoreMock = {
   checkpoints: [],
-  allMessages: []
+  allMessages: [],
+  checkpointLookup: {
+    sorted: false,
+    keys: [],
+    groups: new Map(),
+    cumEndByKey: null
+  }
 }
 const settingsStoreMock = {
   appearanceLoadingText: ''

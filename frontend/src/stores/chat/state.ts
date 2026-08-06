@@ -23,7 +23,7 @@ import type {
   BranchGraphData,
   BranchStreamReplayContext
 } from './types'
-import { clearVisibleChatMessagesCache } from './windowUtils'
+import { clearVisibleChatMessagesCache, clearMessageIndexBoundsCache } from './windowUtils'
 import type { SmoothMode } from '../../utils/smoothStream'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById' | 'toolResponseIndex'>
@@ -177,6 +177,7 @@ export function replaceMessageAt(state: MessageIndexLookupState, index: number, 
   // 只有尾元素替换才是流式原地更新的安全模式，其余一律清除缓存。
   if (index !== state.allMessages.value.length - 1) {
     clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+    clearMessageIndexBoundsCache(state.allMessages.value)
   }
 
   assertMessageIndexInvariant(state)

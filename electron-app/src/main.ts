@@ -44,6 +44,33 @@ process.on('unhandledRejection', (reason) => {
   console.error('[main] unhandled rejection:', reason);
 });
 
+// 未捕获异常保护：事件监听器内抛错、同步异常漏网之鱼等都会走这里，直接崩掉主进程
+// 会截断写队列丢数据。记录完整堆栈后弹错误对话框，用户可选择「重启」或「退出」，
+// 模式与 loadURL 失败（M-7）及 backend 初始化失败（M-8）的既有处理一致。
+// EPIPE 在 installStdioEpipeGuard 内已静默吞掉，不走到这里；非 EPIPE 流错误与
+// 其它异常一样会弹窗（行为更明确，且不再触发 Electron 默认的崩溃弹窗）。
+process.on('uncaughtException', (error) => {
+  console.error('[main] uncaught exception:', error);
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const options: Electron.MessageBoxOptions = {
+    type: 'error',
+    title: 'GrayCode Crashed',
+    message: 'An unexpected error occurred.',
+    detail: String(error?.stack || error?.message || error),
+    buttons: ['Restart', 'Quit'],
+    cancelId: 1
+  };
+  try {
+    void (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)).then(({ response }) => {
+      if (response === 0) app.relaunch();
+      app.exit(1);
+    });
+  } catch {
+    // 对话框本身失败（极端情况下 UI 线程已不可用）也必须退出，不能悬挂
+    app.exit(1);
+  }
+});
+
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 
@@ -138,7 +165,13 @@ function filterExistingFolders(folders: string[]): string[] {
 function saveWorkspaceState(folders: string[]): void {
   try {
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
-    fs.writeFileSync(workspaceStateFile(), JSON.stringify({ folders }, null, 2), 'utf-8');
+    // 原子写：先写同目录 .tmp 临时文件再 rename 覆盖，崩溃/断电不会留下半截 JSON
+    // 导致下次启动 loadWorkspaceState 解析失败（与 vscode-shim JsonConfigStore/
+    // JsonFileMemento 的既有策略一致）。Windows 上 rename 目标已存在时会直接替换。
+    const file = workspaceStateFile();
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ folders }, null, 2), 'utf-8');
+    fs.renameSync(tmp, file);
   } catch (err) {
     console.error('Failed to persist workspace state:', err);
   }
@@ -372,6 +405,10 @@ export function registerCustomProtocol(): void {
       const mime = MIME_BY_EXT[path.extname(fsPath).toLowerCase()];
       const cached = fileCache.get(fsPath);
       if (cached && cached.mtimeMs === stat.mtimeMs) {
+        // LRU 刷新：命中项先删后设、移到 Map 末尾（最新位置），避免热点大 bundle
+        // 被后续小资源挤到淘汰位反复读盘（与 BackendHost.diffPreviewContents 同策略）
+        fileCache.delete(fsPath);
+        fileCache.set(fsPath, cached);
         return new Response(cached.body as unknown as BodyInit, {
           status: 200,
           headers: { 'Content-Type': cached.mime }
@@ -599,6 +636,41 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // 渲染进程崩溃处理：记录崩溃原因后先自动 reload 恢复（最多 2 次）；若仍连续崩溃
+  // （确定性崩溃 reload 也救不回来），改弹错误对话框由用户选择「重载」或「退出」，
+  // 避免无限 reload 循环（计数不随 did-finish-load 重置，防刷屏式崩溃自愈假象）。
+  let rendererCrashCount = 0;
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[main] renderer process gone:', details?.reason, 'exitCode=' + details?.exitCode);
+    rendererCrashCount++;
+    if (rendererCrashCount <= 2) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.reload();
+        }
+      }, 300);
+      return;
+    }
+    const win = mainWindow;
+    const options: Electron.MessageBoxOptions = {
+      type: 'error',
+      title: 'GrayCode Interface Crashed',
+      message: 'The interface crashed repeatedly.',
+      detail: `Reason: ${details?.reason || 'unknown'} (exit code: ${details?.exitCode ?? 'n/a'})`,
+      buttons: ['Reload', 'Quit'],
+      cancelId: 1
+    };
+    void (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options))
+      .then(({ response }) => {
+        if (response === 0) {
+          if (win && !win.isDestroyed()) win.webContents.reload();
+        } else {
+          app.quit();
+        }
+      })
+      .catch(() => undefined);
   });
 
   mainWindow.loadURL(`${CUSTOM_SCHEME}://local/frontend/dist/index.html`).catch((error) => {
@@ -1051,11 +1123,19 @@ if (gotSingleInstanceLock) {
     app.whenReady().then(async () => {
       const { runE2E } = await import('./e2e');
       await runE2E();
+    }).catch((err) => {
+      // 兜底退出：e2e 内部异常（如动态导入失败）未走 process.exit 时，这里必须以
+      // 失败状态码收尾，否则无窗口的 Electron 进程会一直挂着拖死 CI。
+      console.error('[main] e2e run failed:', err);
+      app.exit(1);
     });
   } else if (process.env.GRAYCODE_MONITOR_SMOKE === '1') {
     app.whenReady().then(async () => {
       const { runMonitorSmoke } = await import('./monitor-smoke');
       await runMonitorSmoke();
+    }).catch((err) => {
+      console.error('[main] monitor smoke run failed:', err);
+      app.exit(1);
     });
   } else {
     app.whenReady().then(() => {
@@ -1092,7 +1172,13 @@ if (gotSingleInstanceLock) {
     // 等待异步写队列排空再退出：直接 quit 会截断 JsonFileMemento/JsonConfigStore 的
     // 串行写队列与进行中的流处理，丢数据。preventDefault 后 await dispose()，
     // 10s 超时兜底（dispose 卡死也必须能退出），然后 app.exit(0) 结束进程。
-    if (quitting) return;
+    if (quitting) {
+      // 首次触发已 preventDefault 进入异步 dispose（最长 10s 排空写队列），
+      // 此间再次触发的 before-quit 若放行默认退出流程，可能先于 dispose 完成截断
+      // 串行写队列丢数据；继续 preventDefault，统一由首次触发的 app.exit(0) 收尾。
+      event.preventDefault();
+      return;
+    }
     quitting = true;
     event.preventDefault();
     // dispose 可能同步抛错（cancelAllStreams/TaskManager 未包 try 时）：

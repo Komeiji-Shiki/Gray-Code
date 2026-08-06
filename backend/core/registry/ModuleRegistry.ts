@@ -9,6 +9,9 @@ import type {
     IModuleRegistry
 } from './types';
 import { t } from '../../i18n';
+import { Logger } from '../logger';
+
+const log = Logger.get('ModuleRegistry');
 
 /**
  * 模块注册表
@@ -34,7 +37,8 @@ export class ModuleRegistry implements IModuleRegistry {
         }
 
         this.modules.set(module.id, module);
-        console.log(t('core.registry.registeringModule', { moduleId: module.id, moduleName: module.name, version: module.version }));
+        // 注册/注销是启动期与热加载期的常规操作，console.log 会刷屏；降为 debug 级
+        log.debug('module.registered', { moduleId: module.id, moduleName: module.name, version: module.version });
     }
 
     /**
@@ -47,7 +51,7 @@ export class ModuleRegistry implements IModuleRegistry {
         }
 
         this.modules.delete(moduleId);
-        console.log(t('core.registry.unregisteringModule', { moduleId }));
+        log.debug('module.unregistered', { moduleId });
     }
 
     /**

@@ -27,7 +27,7 @@ import { CheckpointManager } from '../backend/modules/checkpoint';
 import { McpManager, VSCodeFileSystemMcpStorageAdapter } from '../backend/modules/mcp';
 import type { CreateMcpServerInput, UpdateMcpServerInput, McpServerInfo } from '../backend/modules/mcp';
 import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
-import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
+import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext, cleanupTerminals } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import { MemoryManager, setGlobalMemoryManager } from '../backend/modules/memory';
@@ -148,6 +148,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private imageGenOutputUnsubscribe?: () => void;
     private taskEventUnsubscribe?: () => void;
     private dependencyProgressUnsubscribe?: () => void;
+
+    // 终端输出节流：高频 output/error 事件按 terminalId 聚合，定时批量发送；
+    // start/exit 等低频事件不受节流，即时转发
+    private terminalOutputPending = new Map<string, { type: 'output' | 'error'; data: string }>();
+    private terminalOutputFlushTimer?: NodeJS.Timeout;
+    private static readonly TERMINAL_OUTPUT_THROTTLE_MS = 80;
     
     // 初始化状态
     private initPromise: Promise<void>;
@@ -486,15 +492,90 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     
     /**
-     * 处理终端输出事件，推送到前端
+     * 处理终端输出事件，推送到前端。
+     *
+     * 节流说明：命令高频输出时（每 data 事件一条 postMessage）会造成 webview
+     * 消息风暴。output/error 事件按 terminalId 聚合 data 后合并为一条消息发送
+     *（前端 terminalStore 只追加 data 字符串，聚合后格式完全兼容）；start/exit
+     * 等低频事件即时发送，且发送前先冲刷该终端未决的输出批次，保证事件顺序不变。
      */
     private handleTerminalOutputEvent(event: TerminalOutputEvent): void {
         if (!this._view) return;
-        
+
+        if (event.type === 'output' || event.type === 'error') {
+            const pending = this.terminalOutputPending.get(event.terminalId);
+            if (pending && pending.type === event.type) {
+                // 同 terminalId 连续同类 data 事件：合并追加
+                pending.data += event.data ?? '';
+            } else {
+                // 类型切换（output→error 或反之）：先冲刷旧批次再开启新批次，保持顺序
+                if (pending) {
+                    this.flushTerminalOutput(event.terminalId);
+                }
+                this.terminalOutputPending.set(event.terminalId, {
+                    type: event.type,
+                    data: event.data ?? ''
+                });
+            }
+            this.scheduleTerminalOutputFlush();
+            return;
+        }
+
+        // start/exit 等低频事件：先冲刷该终端未决输出，再即时发送
+        this.flushTerminalOutput(event.terminalId);
         this._view.webview.postMessage({
             type: 'terminalOutput',
             data: event
         });
+    }
+
+    /**
+     * 调度终端输出批量 flush（节流窗口内只保留一个定时器）。
+     */
+    private scheduleTerminalOutputFlush(): void {
+        if (this.terminalOutputFlushTimer) return;
+        this.terminalOutputFlushTimer = setTimeout(() => {
+            this.terminalOutputFlushTimer = undefined;
+            this.flushTerminalOutput();
+        }, ChatViewProvider.TERMINAL_OUTPUT_THROTTLE_MS);
+    }
+
+    /**
+     * 冲刷待发送的终端输出批次。
+     * @param terminalId 指定终端时只冲刷该终端；不传则冲刷全部。
+     */
+    private flushTerminalOutput(terminalId?: string): void {
+        if (!this._view) {
+            this.terminalOutputPending.clear();
+            return;
+        }
+
+        if (terminalId) {
+            const pending = this.terminalOutputPending.get(terminalId);
+            if (!pending) return;
+            this.terminalOutputPending.delete(terminalId);
+            this._view.webview.postMessage({
+                type: 'terminalOutput',
+                data: {
+                    terminalId,
+                    type: pending.type,
+                    data: pending.data
+                }
+            });
+            return;
+        }
+
+        for (const [id, pending] of this.terminalOutputPending) {
+            this._view.webview.postMessage({
+                type: 'terminalOutput',
+                data: {
+                    terminalId: id,
+                    type: pending.type,
+                    data: pending.data
+                }
+            });
+        }
+        this.terminalOutputPending.clear();
     }
     
     /**
@@ -996,10 +1077,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 重置视图引用，避免重开面板后 postMessage 被静默丢弃（M7）
         this._view = undefined;
         
-        // 取消终端输出订阅
+        // 取消终端输出订阅，并清空未决的节流批次与定时器
         if (this.terminalOutputUnsubscribe) {
             this.terminalOutputUnsubscribe();
         }
+        if (this.terminalOutputFlushTimer) {
+            clearTimeout(this.terminalOutputFlushTimer);
+            this.terminalOutputFlushTimer = undefined;
+        }
+        this.terminalOutputPending.clear();
         
         // 取消图像生成输出订阅
         if (this.imageGenOutputUnsubscribe) {
@@ -1018,6 +1104,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 取消所有活跃任务
         TaskManager.cancelAllTasks();
+
+        // 清理已结束的终端进程条目（activeProcesses 平时靠 close/error 事件自清理，
+        // 这里是扩展卸载时的兜底清扫）
+        cleanupTerminals();
         
         // 释放 MCP 管理器资源（断开所有连接）
         this.mcpManager?.dispose();

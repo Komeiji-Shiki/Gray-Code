@@ -78,6 +78,22 @@ const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
     'SKILLS'
 ])
 
+// ========== 占位符正则缓存 ==========
+// 模板占位符 {{$KEY}} 的正则在每次生成静态/动态提示词时被逐键 new RegExp，
+// 键集合固定（ENVIRONMENT / TOOLS / TODO_LIST / WORKSPACE_FILES ...），
+// 每次提示词组装（工具循环每轮）都重复编译纯属浪费。这里按 key 缓存编译结果。
+// 注意：缓存的正则带 'g' 标志，String.replace 使用全局正则前会重置 lastIndex，可安全复用。
+const promptPlaceholderRegexCache = new Map<string, RegExp>()
+
+function getPromptPlaceholderRegex(key: string): RegExp {
+    let regex = promptPlaceholderRegexCache.get(key)
+    if (!regex) {
+        regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+        promptPlaceholderRegexCache.set(key, regex)
+    }
+    return regex
+}
+
 // ========== 固定文件读取预算与缓存（热路径：每条消息都会组装动态上下文） ==========
 //
 // 调用链 getPromptContextBundle -> getLegacyDynamicContextMessages -> buildDynamicPromptModules
@@ -432,7 +448,7 @@ export class PromptManager {
         // 替换模板中的占位符（使用 {{$xxx}} 格式）
         let result = template
         for (const [key, value] of Object.entries(modules)) {
-            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            const regex = getPromptPlaceholderRegex(key)
             result = result.replace(regex, value)
         }
         
@@ -468,7 +484,7 @@ export class PromptManager {
 
         let result = template
         for (const [key, value] of Object.entries(templateModules)) {
-            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            const regex = getPromptPlaceholderRegex(key)
             result = result.replace(regex, value)
         }
 
@@ -790,7 +806,7 @@ export class PromptManager {
 
         let result = template
         for (const [key, value] of Object.entries(modules)) {
-            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            const regex = getPromptPlaceholderRegex(key)
             result = result.replace(regex, value)
         }
 

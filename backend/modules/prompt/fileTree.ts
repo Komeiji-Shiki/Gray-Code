@@ -307,8 +307,10 @@ function treeToLines(nodes: FileTreeNode[], prefix: string = ''): string[] {
 function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2, customIgnorePatterns: string[] = [], nodeBudget: number = FILE_TREE_MAX_NODES): string {
     const cacheKey = getFileTreeCacheKey(workspacePath, maxDepth, customIgnorePatterns, nodeBudget);
     const cached = fileTreeCache.get(cacheKey);
-    const gitignoreMtime = getGitignoreMtime(workspacePath);
-    if (cached && cached.expiresAt > Date.now() && cached.gitignoreMtime === gitignoreMtime) {
+    if (cached && cached.expiresAt > Date.now()) {
+        // TTL 内直接信任缓存，不再 statSync .gitignore：工具循环每轮请求都会重建整棵文件树，
+        // 每次命中都多一次磁盘 stat 属于纯浪费。gitignore 的 mtime 已在 set 时记录进缓存条目
+        // （见 FileTreeCacheEntry），其变更会在 TTL 过期后的下一次全量重建中自然纳入。
         return cached.result;
     }
     // 解析 .gitignore
@@ -326,6 +328,8 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
     }
     
     const result = lines.join('\n')
+    // 记录本次生成时的 .gitignore mtime（TTL 内命中不再重新 stat，条目值仅作诊断/校验用）
+    const gitignoreMtime = getGitignoreMtime(workspacePath);
     fileTreeCache.set(cacheKey, { result, expiresAt: Date.now() + FILE_TREE_CACHE_TTL_MS, gitignoreMtime });
     // 顺带清理过期条目：键组合（nodeBudget/ignorePatterns 变化）多样时防止过期条目累积
     if (fileTreeCache.size > 64) {
@@ -342,13 +346,15 @@ function getSingleWorkspaceFileTree(workspacePath: string, maxDepth: number = 2,
 // ==================== 文件树 TTL 缓存 ====================
 // 工具循环中每轮请求都会重建整棵文件树（同步 readdirSync 递归，大工作区阻塞后端）。
 // getSystemPrompt 已有 60s 缓存，但 WORKSPACE_FILES 动态上下文不走该缓存；
-// 这里按 (workspacePath + maxDepth + 自定义忽略模式 + 节点预算) 键控加 30s TTL 缓存，
-// .gitignore 的 mtime 纳入每次命中的校验（改动即失效，其余文件改动接受 TTL 内的短时陈旧）。
+// 这里按 (workspacePath + maxDepth + 自定义忽略模式 + 节点预算) 键控加 30s TTL 缓存。
+// TTL 内直接信任缓存（不 statSync .gitignore）——gitignore 的 mtime 在 set 时记录进缓存条目，
+// 其变更在 TTL 过期后的下一次全量重建中自然纳入；其余文件改动接受 TTL 内的短时陈旧。
 const FILE_TREE_CACHE_TTL_MS = 30_000;
 
 interface FileTreeCacheEntry {
     result: string;
     expiresAt: number;
+    /** 缓存生成时的 .gitignore mtime（set 时记录；TTL 内命中不再重新 stat，仅作诊断/校验用） */
     gitignoreMtime: number | null;
 }
 

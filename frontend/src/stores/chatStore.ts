@@ -27,7 +27,7 @@
 
 import { defineStore } from 'pinia'
 import { computed as vueComputed, watch } from 'vue'
-import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
+import type { Attachment, CheckpointRecord, CheckpointSummary, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
 import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
@@ -145,6 +145,125 @@ export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './ch
 // 重复调用时先注销旧监听再注册，保证任意时刻只有一份活跃订阅。
 let disposeChatStreamListener: (() => void) | null = null
 
+// ============ 检查点查询缓存（H-4） ============
+
+/**
+ * 检查点查询缓存结构（见 store 内 checkpointLookup computed 的注释）：
+ * 数组引用 + 长度 + 首尾元素指纹，纯尾部追加时增量维护，其余回退全量重建。
+ */
+interface CheckpointLookup {
+  ref: CheckpointSummary[]
+  length: number
+  first: CheckpointSummary | undefined
+  last: CheckpointSummary | undefined
+  /** messageIndex 升序去重数组（仅 sorted 时有效，供二分查找） */
+  keys: number[]
+  /** messageIndex → 原数组顺序的检查点列表 */
+  groups: Map<number, CheckpointSummary[]>
+  /** 单调分组时每个 key 的组在数组中的终止位置（下标 + 1）；非单调为 null */
+  cumEndByKey: Map<number, number> | null
+  /** 数组是否按 messageIndex 单调分组 */
+  sorted: boolean
+}
+
+/** 全量重建（引用更换 / 收缩 / 尾元素被改写 / 非单调追加） */
+function rebuildCheckpointLookup(checkpoints: CheckpointSummary[]): CheckpointLookup {
+  const len = checkpoints.length
+  const keys: number[] = []
+  const groups = new Map<number, CheckpointSummary[]>()
+  const cumEndByKey = new Map<number, number>()
+  let sorted = true
+  let lastKey: number | undefined
+  for (let i = 0; i < len; i++) {
+    const cp = checkpoints[i]
+    const k = cp.messageIndex
+    if (lastKey !== undefined && k < lastKey) sorted = false
+    if (k !== lastKey) {
+      keys.push(k)
+      lastKey = k
+    }
+    cumEndByKey.set(k, i + 1)
+    let group = groups.get(k)
+    if (!group) {
+      group = []
+      groups.set(k, group)
+    }
+    group.push(cp)
+  }
+  const lookup: CheckpointLookup = {
+    ref: checkpoints,
+    length: len,
+    first: checkpoints[0],
+    last: checkpoints[len - 1],
+    keys: sorted ? keys : [],
+    groups,
+    cumEndByKey: sorted ? cumEndByKey : null,
+    sorted
+  }
+  checkpointLookupCache.set(checkpoints, lookup)
+  return lookup
+}
+
+const checkpointLookupCache = new WeakMap<CheckpointSummary[], CheckpointLookup>()
+
+function buildCheckpointLookup(checkpoints: CheckpointSummary[]): CheckpointLookup {
+  const len = checkpoints.length
+  const cached = checkpointLookupCache.get(checkpoints)
+  const prefixOk = (
+    cached !== undefined &&
+    len >= cached.length &&
+    (cached.length === 0 || checkpoints[cached.length - 1] === cached.last)
+  )
+  if (!prefixOk) {
+    return rebuildCheckpointLookup(checkpoints)
+  }
+  if (cached.length === len) {
+    // 同一指纹（Vue 重复求值 / 无变化）：直接复用，保持对象身份稳定
+    return cached
+  }
+  // 纯尾部追加：增量维护（新 lookup 对象身份变化驱动下游 computed 重算）
+  const keys = cached.keys.slice()
+  const groups = new Map(cached.groups)
+  const cumEndByKey = cached.cumEndByKey !== null ? new Map(cached.cumEndByKey) : null
+  for (let i = cached.length; i < len; i++) {
+    const cp = checkpoints[i]
+    const k = cp.messageIndex
+    const lastKey = keys[keys.length - 1]
+    if (lastKey !== undefined && k < lastKey) {
+      // 非单调追加：前缀优化失效，全量重建（重估 sorted/cumEndByKey）
+      return rebuildCheckpointLookup(checkpoints)
+    }
+    if (k !== lastKey) {
+      keys.push(k)
+    }
+    if (cumEndByKey !== null) {
+      cumEndByKey.set(k, i + 1)
+    }
+    let group = groups.get(k)
+    if (group !== undefined) {
+      // 已有组：克隆后再追加，避免新 lookup 与旧 lookup 共享可变数组
+      group = group.slice()
+      groups.set(k, group)
+    } else {
+      group = []
+      groups.set(k, group)
+    }
+    group.push(cp)
+  }
+  const lookup: CheckpointLookup = {
+    ref: checkpoints,
+    length: len,
+    first: cached.first,
+    last: checkpoints[len - 1],
+    keys,
+    groups,
+    cumEndByKey,
+    sorted: cached.sorted
+  }
+  checkpointLookupCache.set(checkpoints, lookup)
+  return lookup
+}
+
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
@@ -182,6 +301,23 @@ export const useChatStore = defineStore('chat', () => {
     }
     return grouped
   })
+
+  /**
+   * 检查点查询缓存（H-4）：按 messageIndex 保序分组 + 升序 key 数组 + 前缀终点索引。
+   *
+   * 背景：MessageItem 每个组件实例都对自己的 messageIndex 全量 filter/sort 检查点
+   * （O(n) × 实例数），且 checkpoints 数组在会话内只原地 push（checkpointActions.addCheckpoint）
+   * 或整体替换（切换对话 / 裁剪 filter / 回档）。因此用“数组引用 + 长度 + 尾元素”指纹做
+   * 增量维护：纯尾部追加只处理新增段，其余回退全量重建（WeakMap 以数组为键，旧会话数组随 GC 释放）。
+   *
+   * 输出（与原有消费语义逐项对齐）：
+   * - keys：messageIndex 升序去重数组（供二分查最近前序；非单调时为 []）；
+   * - groups：messageIndex → 原数组顺序的检查点列表（含 before/after 交错顺序）；
+   * - cumEndByKey：单调分组时每个 key 的组在数组中的终止位置（组最后一条的下标 + 1），
+   *   供 availableCheckpoints 用 slice(0, ...) O(1) 取全部前序；非单调时为 null；
+   * - sorted：数组是否按 messageIndex 单调分组（非单调时调用方回退原始 filter，语义完全一致）。
+   */
+  const checkpointLookup = vueComputed(() => buildCheckpointLookup(state.checkpoints.value))
 
   /**
    * todoSnapshot 增量重放缓存：缓存 [0, scannedCount) 的重放中间态 + 前缀消息引用快照。
@@ -803,6 +939,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingToolCalls: computed.pendingToolCalls,
     todoSnapshot,
     checkpointsByMessageIndex,
+    checkpointLookup,
     previewRestore,
     isRestorePreviewing: state.isRestorePreviewing,
 

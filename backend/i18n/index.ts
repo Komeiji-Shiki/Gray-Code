@@ -20,6 +20,33 @@ const messages: Record<string, BackendLanguageMessages> = {
 };
 
 /**
+ * 拍平后的语言包：key 为点号连接的路径（如 'core.registry.moduleAlreadyRegistered'）。
+ * 加载时一次性递归拍平，t() 直接 Map 查找，避免每次调用都逐层走对象属性访问。
+ */
+const flattenedMessages: Record<string, Map<string, string>> = {};
+
+/** 递归拍平嵌套语言对象（仅收集字符串叶子；数组/其他类型与旧 t() 语义一致视为缺失返回 key） */
+function flattenMessages(obj: Record<string, unknown>, prefix: string, target: Map<string, string>): void {
+    for (const [key, value] of Object.entries(obj)) {
+        const fullKey = prefix ? `${prefix}.${key}` : key;
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            flattenMessages(value as Record<string, unknown>, fullKey, target);
+        } else if (typeof value === 'string') {
+            target.set(fullKey, value);
+        }
+    }
+}
+
+for (const [lang, msgs] of Object.entries(messages)) {
+    const map = new Map<string, string>();
+    flattenMessages(msgs as unknown as Record<string, unknown>, '', map);
+    flattenedMessages[lang] = map;
+}
+
+/** 已告警过的缺失 key（去重：同一 key 只告警一次，避免缺失键在热路径每调刷屏） */
+const warnedMissingKeys = new Set<string>();
+
+/**
  * 当前语言设置
  */
 let currentLanguage: SupportedLanguage = 'zh-CN';
@@ -110,33 +137,27 @@ export function setDetectedLanguage(lang: string): void {
  * 支持参数替换：{paramName} 格式的占位符
  */
 export function t(key: string, params?: Record<string, any>): string {
-    const keys = key.split('.');
-    let result: any = getCurrentMessages();
-
-    for (const k of keys) {
-        if (result && typeof result === 'object' && k in result) {
-            result = result[k];
-        } else {
-            // 找不到翻译，返回 key 本身
+    const map = flattenedMessages[getActualLanguage()] || flattenedMessages['zh-CN'];
+    const result = map.get(key);
+    if (result === undefined) {
+        // 找不到翻译，返回 key 本身；同一 key 只告警一次（缺失键可能在热路径被高频调用）
+        if (!warnedMissingKeys.has(key)) {
+            warnedMissingKeys.add(key);
             console.warn(`[i18n] Missing translation: ${key}`);
-            return key;
         }
+        return key;
     }
 
-    if (typeof result === 'string') {
-        // 如果有参数，替换占位符
-        if (params) {
-            return result.replace(/\{(\w+)\}/g, (match, paramName) => {
-                // hasOwnProperty 防护：{toString} 这类占位符不得访问原型链方法
-                return Object.prototype.hasOwnProperty.call(params, paramName)
-                    ? String(params[paramName])
-                    : match;
-            });
-        }
-        return result;
+    // 如果有参数，替换占位符
+    if (params) {
+        return result.replace(/\{(\w+)\}/g, (match, paramName) => {
+            // hasOwnProperty 防护：{toString} 这类占位符不得访问原型链方法
+            return Object.prototype.hasOwnProperty.call(params, paramName)
+                ? String(params[paramName])
+                : match;
+        });
     }
-
-    return key;
+    return result;
 }
 
 // 导出类型

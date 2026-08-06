@@ -36,9 +36,10 @@ import { mergeToolResult } from '../../utils/toolResult'
 import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
 import { clearLineDiffCache } from '../../utils/lineDiff'
+import { getAllMessageIndexBoundsCached } from '../../stores/chat/windowUtils'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 
-const { t } = useI18n()
+const { t, actualLanguage } = useI18n()
 
 const props = defineProps<{
   messages: Message[]
@@ -128,72 +129,120 @@ let activeBuildPlanSyncCache: {
   latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null
 } | null = null
 
+/**
+ * allMessageIndexBounds 增量缓存（M-3）：走 windowUtils.getAllMessageIndexBoundsCached
+ * （引用指纹 + 尾部增量模式），流式期间每个 chunk 的数组原地变更不再全量扫 800 条。
+ * 中间位置同长度替换由 state.replaceMessageAt 的 L1 钩子清除缓存兜底。
+ */
 const allMessageIndexBounds = computed(() => {
-  let firstIndexed: number | null = null
-  let lastIndexed: number | null = null
-
-  for (const message of chatStore.allMessages) {
-    if (typeof message.backendIndex !== 'number' || !Number.isFinite(message.backendIndex)) continue
-    if (firstIndexed === null) firstIndexed = message.backendIndex
-    lastIndexed = message.backendIndex
-  }
-
+  const bounds = getAllMessageIndexBoundsCached(chatStore.allMessages, chatStore.windowStartIndex)
   return {
-    firstIndexed,
-    lastIndexed,
+    firstIndexed: bounds.firstIndexed,
+    lastIndexed: bounds.lastIndexed,
     nextFallbackIndex: chatStore.windowStartIndex + chatStore.allMessages.length
   }
 })
 
+/**
+ * todoStickyMeta 增量缓存（M-3）：与 activeBuildPlanSyncCache 同模式
+ * （引用指纹 + 尾部增量 + 尾消息不纳入缓存）。只缓存 [0, scannedCount) 的扫描结果；
+ * 尾消息在流式期间可能被原地改写（tools 追加），因此始终重新扫描尾消息，
+ * 前缀元素引用逐一校验，任何结构变更（插入/删除/替换）回退全量扫描。
+ * i18n 语言纳入缓存键：panelName 的回退文案随语言切换需要重算。
+ */
+let todoStickyMetaCache: {
+  messagesRef: Message[]
+  scannedCount: number
+  language: string
+  meta: { hasTodoInitTool: boolean; anchorBackendIndex: number | null; panelName: string }
+} | null = null
+
+/** 由某条已确认的 todo 初始化消息构建 sticky meta（与原始内联逻辑逐项一致） */
+function buildTodoStickyMetaFromMessage(msg: Message, initTool: any, fallbackName: string) {
+  let panelName = fallbackName
+  if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
+    const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
+    if (title) {
+      panelName = title
+    } else {
+      const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
+      if (path) {
+        const normalized = path.replace(/\\/g, '/')
+        const name = normalized.split('/').filter(Boolean).pop() || path
+        panelName = name.replace(/\.md$/i, '')
+      } else {
+        panelName = t('components.message.tool.createPlan.fallbackTitle')
+      }
+    }
+  }
+
+  const anchorBackendIndex =
+    typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)
+      ? msg.backendIndex + 1
+      : null
+
+  return {
+    hasTodoInitTool: true,
+    anchorBackendIndex,
+    panelName
+  }
+}
+
 const todoStickyMeta = computed(() => {
   const fallbackName = t('components.message.tool.todoWrite.label')
+  const language = actualLanguage.value
   const messages = chatStore.allMessages
+  const len = messages.length
+
+  // 引用指纹 + 尾部增量：前缀 [0, scannedCount) 逐元素校验，命中时只扫新增尾部
+  const cache = todoStickyMetaCache
+  let latest = cache?.meta ?? null
+  let fromIndex = 0
+  let prefixOk = false
+  if (cache !== null && cache.language === language && cache.messagesRef.length <= len) {
+    prefixOk = true
+    for (let i = 0; i < cache.scannedCount; i++) {
+      if (messages[i] !== cache.messagesRef[i]) {
+        prefixOk = false
+        break
+      }
+    }
+    if (prefixOk) {
+      latest = cache.meta
+      fromIndex = cache.scannedCount
+    }
+  }
 
   // 工具名先于昂贵的合并判定做轻量过滤：todo_write / create_plan / update_plan 之外的
   // 消息直接跳过（isTodoInitToolForSticky 含 getMergedToolResult + 确认文案判定，仅对有
   // 相关工具名的消息调用），窗口内没有任何相关工具名时直接返回空态
-  for (let i = messages.length - 1; i >= 0; i--) {
+  let found: { hasTodoInitTool: boolean; anchorBackendIndex: number | null; panelName: string } | null = null
+  for (let i = len - 1; i >= fromIndex; i--) {
     const msg = messages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const hasTodoToolName = msg.tools.some(t => TODO_TOOL_NAME_SET.has(t.name))
+    const hasTodoToolName = msg.tools.some(tool => TODO_TOOL_NAME_SET.has(tool.name))
     if (!hasTodoToolName) continue
     const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
     if (!initTool) continue
-
-    let panelName = fallbackName
-    if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
-      const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
-      if (title) {
-        panelName = title
-      } else {
-        const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
-        if (path) {
-          const normalized = path.replace(/\\/g, '/')
-          const name = normalized.split('/').filter(Boolean).pop() || path
-          panelName = name.replace(/\.md$/i, '')
-        } else {
-          panelName = t('components.message.tool.createPlan.fallbackTitle')
-        }
-      }
-    }
-
-    const anchorBackendIndex =
-      typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)
-        ? msg.backendIndex + 1
-        : null
-
-    return {
-      hasTodoInitTool: true,
-      anchorBackendIndex,
-      panelName
-    }
+    found = buildTodoStickyMetaFromMessage(msg, initTool, fallbackName)
+    break
   }
 
-  return {
+  const meta = found ?? latest ?? {
     hasTodoInitTool: false,
     anchorBackendIndex: null,
     panelName: fallbackName
   }
+
+  // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
+  todoStickyMetaCache = {
+    messagesRef: messages,
+    scannedCount: Math.max(0, len - 1),
+    language,
+    meta
+  }
+
+  return meta
 })
 
 const hasTodoInitTool = computed(() => todoStickyMeta.value.hasTodoInitTool)
@@ -490,25 +539,74 @@ interface EnhancedMessage {
 // 预计算可见消息的增强信息，避免在模板中进行昂贵的计算
 const checkpointsByMsgIndex = computed(() => chatStore.checkpointsByMessageIndex)
 
-const mergeableCheckpointKeys = computed(() => {
-  const keys = new Set<string>()
-  if (!chatStore.mergeUnchangedCheckpoints) return keys
+/**
+ * mergeableCheckpointKeys 增量缓存（M-3）：checkpoints 数组会话内只原地 push
+ * （checkpointActions.addCheckpoint 去重后追加）或整体替换，指纹 =（数组引用 + 长度 + 旧尾元素）。
+ * 纯尾部追加时只对新增检查点所在的组增量合并（组可能同时新增 before/after，按组整体重新合并），
+ * 其余变更回退全量重建。返回的 Set 在指纹未变时复用同一对象（消费者只读 .has）。
+ */
+let mergeableCheckpointKeysCache: {
+  ref: CheckpointRecord[]
+  length: number
+  last: CheckpointRecord | undefined
+  keysSet: Set<string>
+} | null = null
 
-  for (const [messageIndex, group] of checkpointsByMsgIndex.value.entries()) {
-    if (!group.before.length || !group.after.length) continue
-    const beforeHashes = new Map<string, string>()
-    for (const cp of group.before) {
-      if (cp.contentHash) beforeHashes.set(cp.toolName, cp.contentHash)
-    }
-    for (const cp of group.after) {
-      const beforeHash = beforeHashes.get(cp.toolName)
-      if (beforeHash && cp.contentHash && beforeHash === cp.contentHash) {
-        keys.add(`${messageIndex}:${cp.toolName}`)
-      }
-    }
+const EMPTY_MERGEABLE_KEYS = new Set<string>()
+
+const mergeableCheckpointKeys = computed(() => {
+  if (!chatStore.mergeUnchangedCheckpoints) return EMPTY_MERGEABLE_KEYS
+
+  const checkpoints = chatStore.checkpoints
+  const len = checkpoints.length
+  const lookup = chatStore.checkpointLookup
+
+  let cache = mergeableCheckpointKeysCache
+  if (
+    cache === null ||
+    cache.ref !== checkpoints ||
+    len < cache.length ||
+    (cache.length > 0 && checkpoints[cache.length - 1] !== cache.last)
+  ) {
+    cache = { ref: checkpoints, length: 0, last: undefined, keysSet: new Set() }
+    mergeableCheckpointKeysCache = cache
   }
 
-  return keys
+  // 增量处理 [cache.length, len) 新增检查点所在的组：同组 before/after 成对判定
+  if (len > cache.length) {
+    const processedGroups = new Set<number>()
+    for (let i = cache.length; i < len; i++) {
+      const messageIndex = checkpoints[i].messageIndex
+      if (processedGroups.has(messageIndex)) continue
+      processedGroups.add(messageIndex)
+
+      const group = lookup.groups.get(messageIndex)
+      if (!group || group.length < 2) continue
+
+      const beforeHashes = new Map<string, string>()
+      let hasAfter = false
+      for (const cp of group) {
+        if (cp.phase === 'before') {
+          if (cp.contentHash) beforeHashes.set(cp.toolName, cp.contentHash)
+        } else {
+          hasAfter = true
+        }
+      }
+      if (!hasAfter) continue
+
+      for (const cp of group) {
+        if (cp.phase !== 'after') continue
+        const beforeHash = beforeHashes.get(cp.toolName)
+        if (beforeHash && cp.contentHash && beforeHash === cp.contentHash) {
+          cache.keysSet.add(`${messageIndex}:${cp.toolName}`)
+        }
+      }
+    }
+    cache.length = len
+    cache.last = checkpoints[len - 1]
+  }
+
+  return cache.keysSet
 })
 
 const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {

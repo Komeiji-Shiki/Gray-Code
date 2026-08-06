@@ -136,7 +136,7 @@ describe('mtime 快照降级扫描（非递归 watcher 兜底）', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    test('scanConversationMtimes 收集每个对话的最大 mtime，忽略探针目录', () => {
+    test('scanConversationMtimes 收集每个对话的最大 mtime，忽略探针目录', async () => {
         fs.mkdirSync(path.join(dir, 'conv-a', 'history'), { recursive: true });
         fs.mkdirSync(path.join(dir, 'conv-b'), { recursive: true });
         fs.writeFileSync(path.join(dir, 'conv-a', 'history', 'segment-1.json'), 'x');
@@ -147,7 +147,7 @@ describe('mtime 快照降级扫描（非递归 watcher 兜底）', () => {
         fs.mkdirSync(probeDir, { recursive: true });
         fs.writeFileSync(path.join(probeDir, 'probe.txt'), 'x');
 
-        const snapshot = scanConversationMtimes(dir);
+        const snapshot = await scanConversationMtimes(dir);
         expect([...snapshot.keys()].sort()).toEqual(['conv-a', 'conv-b']);
         expect(snapshot.get('conv-a')!).toBeGreaterThan(0);
     });

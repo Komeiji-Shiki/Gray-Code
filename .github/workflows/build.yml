@@ -15,6 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -33,10 +34,13 @@ jobs:
           npm ci --prefix frontend
           npm ci --prefix electron-app
 
-      - name: Typecheck (backend + frontend + electron)
+      # frontend 的类型检查已含在其 build 脚本（vue-tsc --noEmit && vite build）内，
+      # 由下方 build:all 一并执行；这里若再单独跑 vue-tsc 会让每次 CI 对全仓重复
+      # 两遍 vue-tsc（frontend/package.json 的 build 脚本不属于本工作流可改范围，
+      # 故在 workflow 层面去重，保留 root tsc + electron tsc）
+      - name: Typecheck (backend + electron)
         run: |
           npx tsc -p ./ --noEmit
-          npm --prefix frontend run typecheck
           npm --prefix electron-app run typecheck
 
       - name: Unit tests (backend jest + frontend vitest)

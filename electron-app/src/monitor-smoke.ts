@@ -42,123 +42,139 @@ export async function runMonitorSmoke(): Promise<void> {
     native: async <T = any>() => undefined as T,
     onOpenDiffPreview: () => undefined
   });
-  await host.ready;
 
-  const findResponse = (requestId: string) =>
-    received.find((r) => r?.requestId === requestId && (r.type === 'response' || r.type === 'error'));
+  try {
+    await host.ready;
 
-  // 1. monitorReady (via the real renderer entry point, clientId tag as the panel sends)
-  await host.handleRendererMessage({
-    type: 'subagents.monitorReady',
-    requestId: 'smoke_ready',
-    clientId: 'subagent-monitor',
-    data: {}
-  });
-  await sleep(300);
-  const readyState = findResponse('smoke_ready');
-  assert(
-    !!readyState && Array.isArray(readyState.data?.manifests) && readyState.success === true,
-    `monitorReady returned manifests (${readyState?.data?.manifests?.length ?? 'n/a'} runs)`
-  );
+    const findResponse = (requestId: string) =>
+      received.find((r) => r?.requestId === requestId && (r.type === 'response' || r.type === 'error'));
 
-  // 2. getRunWindow for an unknown run must fail gracefully (not hang)
-  await host.handleRendererMessage({
-    type: 'subagents.monitor.getRunWindow',
-    requestId: 'smoke_window',
-    clientId: 'subagent-monitor',
-    data: { runId: 'does-not-exist' }
-  });
-  await sleep(300);
-  const windowState = findResponse('smoke_window');
-  assert(
-    !!windowState && windowState.success === false && /not found/i.test(String(windowState.error?.message || '')),
-    `getRunWindow rejects unknown run (${windowState?.error?.message || 'no response'})`
-  );
+    // 1. monitorReady (via the real renderer entry point, clientId tag as the panel sends)
+    await host.handleRendererMessage({
+      type: 'subagents.monitorReady',
+      requestId: 'smoke_ready',
+      clientId: 'subagent-monitor',
+      data: {}
+    });
+    await sleep(300);
+    const readyState = findResponse('smoke_ready');
+    assert(
+      !!readyState && Array.isArray(readyState.data?.manifests) && readyState.success === true,
+      `monitorReady returned manifests (${readyState?.data?.manifests?.length ?? 'n/a'} runs)`
+    );
 
-  // 3. setVisible controls event delivery
-  await host.handleRendererMessage({
-    type: 'subagents.monitor.setVisible',
-    requestId: 'smoke_vis_false',
-    clientId: 'subagent-monitor',
-    data: { visible: false }
-  });
-  await sleep(200);
-  const visFalse = findResponse('smoke_vis_false');
-  assert(!!visFalse && visFalse.success === true && visFalse.data?.visible === false, 'setVisible(false) acknowledged');
+    // 2. getRunWindow for an unknown run must fail gracefully (not hang)
+    await host.handleRendererMessage({
+      type: 'subagents.monitor.getRunWindow',
+      requestId: 'smoke_window',
+      clientId: 'subagent-monitor',
+      data: { runId: 'does-not-exist' }
+    });
+    await sleep(300);
+    const windowState = findResponse('smoke_window');
+    assert(
+      !!windowState && windowState.success === false && /not found/i.test(String(windowState.error?.message || '')),
+      `getRunWindow rejects unknown run (${windowState?.error?.message || 'no response'})`
+    );
 
-  // 4a. hidden panel: llm_delta must NOT be pushed
-  received.length = 0;
-  subAgentRunEventBus.emit({
-    runId: 'smoke-run-hidden',
-    agentName: 'Smoke Agent',
-    type: 'llm_delta',
-    timestamp: Date.now(),
-    payload: { delta: [{ text: 'hidden' }] }
-  });
-  await sleep(300);
-  assert(
-    !received.some((r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-hidden'),
-    'llm_delta dropped while panel hidden'
-  );
+    // 3. setVisible controls event delivery
+    await host.handleRendererMessage({
+      type: 'subagents.monitor.setVisible',
+      requestId: 'smoke_vis_false',
+      clientId: 'subagent-monitor',
+      data: { visible: false }
+    });
+    await sleep(200);
+    const visFalse = findResponse('smoke_vis_false');
+    assert(!!visFalse && visFalse.success === true && visFalse.data?.visible === false, 'setVisible(false) acknowledged');
 
-  // 4b. hidden panel: low-frequency status events still pushed
-  received.length = 0;
-  subAgentRunEventBus.emit({
-    runId: 'smoke-run-hidden-status',
-    agentName: 'Smoke Agent',
-    type: 'tool_started',
-    timestamp: Date.now(),
-    payload: { toolName: 'read_file', toolId: 't1' }
-  });
-  await sleep(300);
-  assert(
-    received.some((r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-hidden-status'),
-    'status event pushed while panel hidden'
-  );
+    // 4a. hidden panel: llm_delta must NOT be pushed
+    received.length = 0;
+    subAgentRunEventBus.emit({
+      runId: 'smoke-run-hidden',
+      agentName: 'Smoke Agent',
+      type: 'llm_delta',
+      timestamp: Date.now(),
+      payload: { delta: [{ text: 'hidden' }] }
+    });
+    await sleep(300);
+    assert(
+      !received.some((r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-hidden'),
+      'llm_delta dropped while panel hidden'
+    );
 
-  // 5. visible panel: llm_delta pushed (batched, 50ms flush)
-  await host.handleRendererMessage({
-    type: 'subagents.monitor.setVisible',
-    requestId: 'smoke_vis_true',
-    clientId: 'subagent-monitor',
-    data: { visible: true }
-  });
-  await sleep(200);
-  received.length = 0;
-  subAgentRunEventBus.emit({
-    runId: 'smoke-run-visible',
-    agentName: 'Smoke Agent',
-    type: 'llm_delta',
-    timestamp: Date.now(),
-    payload: { delta: [{ text: 'hello' }, { text: ' world' }] }
-  });
-  await sleep(300);
-  const deltaEvent = received.find(
-    (r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-visible'
-  );
-  assert(
-    !!deltaEvent && Array.isArray(deltaEvent.data?.event?.payload?.delta),
-    `llm_delta pushed while panel visible (delta=${deltaEvent?.data?.event?.payload?.delta?.length ?? 'n/a'} parts)`
-  );
+    // 4b. hidden panel: low-frequency status events still pushed
+    received.length = 0;
+    subAgentRunEventBus.emit({
+      runId: 'smoke-run-hidden-status',
+      agentName: 'Smoke Agent',
+      type: 'tool_started',
+      timestamp: Date.now(),
+      payload: { toolName: 'read_file', toolId: 't1' }
+    });
+    await sleep(300);
+    assert(
+      received.some((r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-hidden-status'),
+      'status event pushed while panel hidden'
+    );
 
-  // 6. openRun (backend "open details") pushes a navigate manifest + command
-  received.length = 0;
-  const hostBridge = (host as any).subAgentMonitorBridge;
-  assert(!!hostBridge, 'backend owns a SubAgentMonitorBridge');
-  hostBridge?.openRun('smoke-run-visible', undefined);
-  await sleep(300);
-  assert(
-    received.some((r) => r?.type === 'subagentMonitor.manifest' && r?.data?.focusRunId === 'smoke-run-visible'),
-    'openRun pushed navigate manifest with focusRunId'
-  );
+    // 5. visible panel: llm_delta pushed (batched, 50ms flush)
+    await host.handleRendererMessage({
+      type: 'subagents.monitor.setVisible',
+      requestId: 'smoke_vis_true',
+      clientId: 'subagent-monitor',
+      data: { visible: true }
+    });
+    await sleep(200);
+    received.length = 0;
+    subAgentRunEventBus.emit({
+      runId: 'smoke-run-visible',
+      agentName: 'Smoke Agent',
+      type: 'llm_delta',
+      timestamp: Date.now(),
+      payload: { delta: [{ text: 'hello' }, { text: ' world' }] }
+    });
+    await sleep(300);
+    const deltaEvent = received.find(
+      (r) => r?.type === 'subagentMonitor.event' && r?.data?.event?.runId === 'smoke-run-visible'
+    );
+    assert(
+      !!deltaEvent && Array.isArray(deltaEvent.data?.event?.payload?.delta),
+      `llm_delta pushed while panel visible (delta=${deltaEvent?.data?.event?.payload?.delta?.length ?? 'n/a'} parts)`
+    );
 
-  await host.dispose();
-  fs.rmSync(userData, { recursive: true, force: true });
-
-  if (failures === 0) {
-    log('ALL MONITOR SMOKE TESTS PASSED');
-  } else {
-    log(`${failures} MONITOR SMOKE TEST(S) FAILED`);
+    // 6. openRun (backend "open details") pushes a navigate manifest + command
+    received.length = 0;
+    const hostBridge = (host as any).subAgentMonitorBridge;
+    assert(!!hostBridge, 'backend owns a SubAgentMonitorBridge');
+    hostBridge?.openRun('smoke-run-visible', undefined);
+    await sleep(300);
+    assert(
+      received.some((r) => r?.type === 'subagentMonitor.manifest' && r?.data?.focusRunId === 'smoke-run-visible'),
+      'openRun pushed navigate manifest with focusRunId'
+    );
+  } catch (err) {
+    failures++;
+    log('MONITOR SMOKE ERROR: ' + (err as Error).message);
+    console.error(err);
+  } finally {
+    // 兜底退出：无论成功/断言失败/异常，都排空写队列、清理临时数据目录并以明确状态码
+    // 结束进程，绝不让无窗口的 Electron 挂着拖死 CI（与 e2e.ts 的 try/catch/finally 同模式）。
+    try {
+      await host.dispose();
+    } catch (err) {
+      console.error('[monitor-smoke] dispose failed:', err);
+    }
+    try {
+      fs.rmSync(userData, { recursive: true, force: true });
+    } catch {
+      // 清理失败不影响测试结论
+    }
+    if (failures === 0) {
+      log('ALL MONITOR SMOKE TESTS PASSED');
+    } else {
+      log(`${failures} MONITOR SMOKE TEST(S) FAILED`);
+    }
+    app.exit(failures === 0 ? 0 : 1);
   }
-  app.exit(failures === 0 ? 0 : 1);
 }
