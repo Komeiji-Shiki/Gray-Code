@@ -1300,8 +1300,10 @@ export function handleAutoSummary(
   }
 
   // 标记被总结覆盖的本地消息（backendIndex ∈ [insertIndex - markedCount, insertIndex)），
-  // 原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）
-  const markStart = insertIndex - markedCount
+  // 原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）。
+  // 下界钳制：markedCount 大于 insertIndex 时（如窗口起始即被总结覆盖）
+  // 负的 markStart 会让下方 `b >= markStart` 对全部消息恒真，误标记窗口之外的消息。
+  const markStart = Math.max(0, insertIndex - markedCount)
   if (markedCount > 0) {
     for (const msg of state.allMessages.value) {
       const b = msg.backendIndex

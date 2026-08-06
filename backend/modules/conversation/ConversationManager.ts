@@ -225,12 +225,24 @@ export class ConversationManager {
      * 递增对应会话计数，读盘前后计数一致才允许回填，消除该窗口。
      */
     private readonly nodeIdCacheEpochs = new Map<string, number>();
+    /**
+     * 全局单调 epoch 计数器：每个会话的 epoch 取全局递增值，清理 Map 时不会归零。
+     * 若 per-conversation 自增 + 整体清空，清空后所有会话回落为 0，恰好与
+     * 「读盘前捕获 0」的在途反查碰撞（0 === 0 误放行回填），竞态窗口回归。
+     */
+    private nodeIdCacheEpochCounter = 0;
 
     private bumpNodeIdCacheEpoch(conversationId: string): void {
-        this.nodeIdCacheEpochs.set(conversationId, (this.nodeIdCacheEpochs.get(conversationId) ?? 0) + 1);
+        this.nodeIdCacheEpochs.set(conversationId, ++this.nodeIdCacheEpochCounter);
         if (this.nodeIdCacheEpochs.size > 200) {
-            // 会话数量极多时的防御性清理：epoch 清零只损失一次缓存回填，无正确性影响
-            this.nodeIdCacheEpochs.clear();
+            // LRU 淘汰最旧而非整体 clear()：整体清空会把「刚 bump 的条目」也删掉，
+            // 让「清空后 get 回落为 undefined ?? 0」与首次读捕获的 0 碰撞（0 === 0 误放行）；
+            // 删最旧则刚写入的条目必然幸存，且被淘汰会话的在途读（捕获旧值 N ≥ 1）
+            // 与回落值 0 不相等，守卫保持完整。
+            const oldest = this.nodeIdCacheEpochs.keys().next().value;
+            if (oldest !== undefined) {
+                this.nodeIdCacheEpochs.delete(oldest);
+            }
         }
     }
 

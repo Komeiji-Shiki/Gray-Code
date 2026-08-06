@@ -58,9 +58,17 @@ export class FileSettingsStorage implements SettingsStorage {
             
             // 格式化 JSON（缩进 2 空格）
             const content = JSON.stringify(settings, null, 2);
-            const tmpPath = `${this.filePath}.tmp`;
+            // 原子写：tmp 名带随机后缀，避免并发 save 写同一 tmp 互相踩（固定名会让
+            // 两个 writeFile 交错写同一路径，最终 rename 出混合内容）
+            const tmpPath = `${this.filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             await fs.writeFile(tmpPath, content, 'utf-8');
-            await fs.rename(tmpPath, this.filePath);
+            try {
+                await fs.rename(tmpPath, this.filePath);
+            } catch (renameError) {
+                // 清理残留 tmp（rename 失败如 Windows EPERM 时），不让半成品堆积
+                await fs.unlink(tmpPath).catch(() => undefined);
+                throw renameError;
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
             throw error;

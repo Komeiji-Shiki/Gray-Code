@@ -1480,8 +1480,12 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
 
             const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
             await writeFile(backupRoot, 'a.txt', visibleContent);
-            // 构造孤儿目录（磁盘存在但无任何记录引用，如删除失败残留）
+            // 构造孤儿目录（磁盘存在但无任何记录引用，如删除失败残留）。
+            // mtime 回拨超龄：新建目录会被 mtime 新鲜度守卫跳过（目录已建、manifest 未写的
+            // 创建中窗口），只有超龄无 manifest 目录才是可清理的真孤儿。
             await writeFile(path.join(storageRoot, 'checkpoints', orphanDir), 'junk.txt', 'junk');
+            const oldMtime = new Date(Date.now() - 10 * 60 * 1000);
+            await fs.utimes(path.join(storageRoot, 'checkpoints', orphanDir), oldMtime, oldMtime);
 
             const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
             await manager.previewRestore(conversationId, checkpointId);
