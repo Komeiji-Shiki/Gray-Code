@@ -52,6 +52,9 @@ const statusError = ref(false)
 const enabled = ref(true)
 // 配置是否已成功加载过至少一次（静默刷新失败时据此决定是否保留现有表单值）
 const configLoadedOnce = ref(false)
+// 配置/条目请求序号：快速切换作用域时丢弃过期响应，防止旧数据覆盖新数据造成内容闪烁/错乱
+let configLoadSeq = 0
+let entryLoadSeq = 0
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
 const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
@@ -244,12 +247,15 @@ async function loadWorkspaceScopes() {
 // silent=true（作用域/工作区切换）时只刷新配置值：不触整页 loading、不清空/覆盖
 // statusMessage；失败时若已有配置则仅 console.warn，保留现有表单值
 async function loadConfig(silent = false) {
+  const seq = ++configLoadSeq
   if (!silent) {
     isLoading.value = true
     statusMessage.value = ''
   }
   try {
     const config = await sendToExtension<any>('getMemoryConfig', scopeParams())
+    // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域配置覆盖新作用域
+    if (seq !== configLoadSeq) return
     if (config) {
       if (typeof config.enabled === 'boolean') enabled.value = config.enabled
       if (typeof config.systemPrompt === 'string' && config.systemPrompt.trim()) {
@@ -262,6 +268,7 @@ async function loadConfig(silent = false) {
       configLoadedOnce.value = true
     }
   } catch (e: any) {
+    if (seq !== configLoadSeq) return
     if (silent && configLoadedOnce.value) {
       // 静默刷新失败：不覆盖现有表单值，仅记录
       console.warn('[MemorySettings] silent loadConfig failed:', e?.message)
@@ -270,15 +277,18 @@ async function loadConfig(silent = false) {
       statusError.value = true
     }
   } finally {
-    if (!silent) isLoading.value = false
+    if (!silent && seq === configLoadSeq) isLoading.value = false
   }
 }
 
 // 加载记忆条目
 async function loadEntries() {
+  const seq = ++entryLoadSeq
   entriesLoading.value = true
   try {
     const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT, ...scopeParams() })
+    // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域条目闪现/覆盖
+    if (seq !== entryLoadSeq) return
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
@@ -293,11 +303,12 @@ async function loadEntries() {
     editingId.value = null
     editingText.value = ''
   } catch {
+    if (seq !== entryLoadSeq) return
     entries.value = []
     entriesTotal.value = 0
     entriesTruncated.value = false
   } finally {
-    entriesLoading.value = false
+    if (seq === entryLoadSeq) entriesLoading.value = false
   }
 }
 
@@ -393,13 +404,20 @@ onMounted(() => {
   loadWorkspaceScopes()
 })
 
-// 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目
+// 作用域或工作区切换：静默刷新配置（不触整页 loading，避免回顶）并重新加载条目。
+// 切换瞬间清空条目列表：配合加载占位展示，避免旧作用域条目在新数据到达前闪现造成闪烁
 watch(memoryScope, () => {
+  entries.value = []
+  statusMessage.value = ''
+  statusError.value = false
   loadConfig(true)
   loadEntries()
 })
 watch(selectedWorkspaceUri, (next, prev) => {
   if (next !== prev && memoryScope.value === 'workspace') {
+    entries.value = []
+    statusMessage.value = ''
+    statusError.value = false
     loadConfig(true)
     loadEntries()
   }
@@ -633,8 +651,12 @@ watch(selectedWorkspaceUri, (next, prev) => {
           </button>
         </div>
 
-        <!-- 空状态 -->
-        <div v-if="!entriesLoading && entries.length === 0" class="empty-entries">
+        <!-- 空状态 / 加载占位 / 条目列表（三分支互斥：加载中显示占位，避免闪白与回顶） -->
+        <div v-if="entriesLoading" class="entries-loading">
+          <i class="codicon codicon-loading codicon-modifier-spin"></i>
+          {{ t('components.settings.settingsPanel.memory.loading') }}
+        </div>
+        <div v-else-if="entries.length === 0" class="empty-entries">
           <i class="codicon codicon-info"></i>
           {{ t('components.settings.settingsPanel.memory.rawEntries.empty') }}
         </div>
@@ -1103,6 +1125,20 @@ watch(selectedWorkspaceUri, (next, prev) => {
 }
 
 /* ─── 条目列表 ─── */
+.entries-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 96px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.entries-loading i {
+  font-size: 13px;
+}
+
 .empty-entries {
   display: flex;
   align-items: center;
