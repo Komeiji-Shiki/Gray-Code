@@ -55,7 +55,7 @@ const isLoading = ref(false)
 const loadError = ref('')
 const stats = ref<ActivityStatsResult | null>(null)
 
-const activeRange = ref<RangeId>('30d')
+const activeRange = ref<RangeId>('7d')
 
 /** 展开查看每日明细的月份（YYYY-MM，空表示未展开） */
 const expandedMonth = ref('')
