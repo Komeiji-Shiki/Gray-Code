@@ -11,7 +11,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { finishSmoothStreamForState } from './streamChunkHandlers'
+import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 
 /**
  * 根据工具调用 ID 获取工具响应。
@@ -341,6 +341,8 @@ export async function cancelStreamAndRejectTools(
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 与 cancelStream 一致：本地取消路径清空本轮 base 估算，防止残留混入下一轮流校准
+  resetTurnBaseTokenEstimate()
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -438,6 +440,9 @@ export async function cancelStream(
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  // 本地取消路径同样清空本轮 base 估算（与 handleCancelled 一致）：
+  // 若后端此后不发任何终结 chunk（挂死/断网），残留估算会混入下一轮流校准因子
+  resetTurnBaseTokenEstimate()
 
   try {
     await sendToExtension('cancelStream', cancelRequest)

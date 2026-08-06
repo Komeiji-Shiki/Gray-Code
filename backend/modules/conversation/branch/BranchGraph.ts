@@ -39,6 +39,12 @@ export function extractBranchContentMetadata(message: Content): BranchContentMet
         'modelVersion',
         'usageMetadata',
         'usageMetadataPartial',
+        // 回合内动态上下文的完整序列化快照（可能数 KB~数十 KB）：随节点往返 sidecar 会让
+        // branches.json 显著膨胀，且切分支重写主历史时会回写图中**旧回合**的缓存，若该消息
+        // 的缓存之后已被 updateMessagesBatch 刷新（工具循环每回合重写），切走切回会把陈旧
+        // 缓存覆盖回主历史。动态上下文缓存本应在下一回合按当前上下文重新生成，不参与往返。
+        'turnDynamicContext',
+        'turnDynamicContextStrategy',
     ]) {
         delete metadata[key];
     }
@@ -53,6 +59,37 @@ export function extractBranchContentMetadata(message: Content): BranchContentMet
         return undefined;
     }
     return structuredClone(metadata) as BranchContentMetadata;
+}
+
+/**
+ * 空占位候选（reroll/edit 流式窗口的活跃尾）的超龄阈值。
+ *
+ * 进程崩溃/被杀会让空占位永久残留为活跃尾，后续普通追加因此持续跳过图同步，
+ * branches.json 永久冻结（PR #16 只修了优雅路径）。超过该时长仍为空的占位视为
+ * 「流已死亡」——正常流式窗口内的占位是新建的（远小于该阈值），超龄只会出现在
+ * 流从未回填且不再活跃的场景，允许图同步把它移出活跃路径。
+ */
+export const EMPTY_PLACEHOLDER_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * 判定活跃尾是否为「仍在流式窗口内」的空占位候选（reroll/edit、parts 为空、未超龄）。
+ * 非活跃路径上的空节点或超龄占位返回 false——前者本就不锁活跃路径，
+ * 后者视为流已死亡，不应再阻止图同步。
+ */
+export function isActiveEmptyPlaceholder(
+    tail: ConversationBranchNode | undefined,
+    now: number = Date.now()
+): boolean {
+    if (!tail || (tail.parts?.length ?? 0) !== 0) {
+        return false;
+    }
+    if (tail.kind !== 'reroll' && tail.kind !== 'edit') {
+        return false;
+    }
+    if (typeof tail.createdAt === 'number' && now - tail.createdAt > EMPTY_PLACEHOLDER_STALE_MS) {
+        return false;
+    }
+    return true;
 }
 
 /**

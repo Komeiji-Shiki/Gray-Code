@@ -1,3 +1,27 @@
+<script lang="ts">
+/**
+ * 中展开裁剪提示按 messageId 记忆（模块级）：内容超长被裁是消息内容的属性，不是视图
+ * 切换的状态。切到完全展开再切回中展开时 watch 重新注册、CharFlow restore 恢复的尾巴
+ * 可能 ≤ 窗口、不再触发 onTrimmed——若无条件重置 mediumTrimmed，提示条会消失而内容
+ * 仍被裁过。模块级 Map + 清理函数（与 MessageItem 的视图模式 Map 同模式）。
+ */
+export const mediumTrimmedByMessageId = new Map<string, boolean>()
+export const MEDIUM_TRIMMED_CAP = 500
+
+/**
+ * 裁剪提示记录清理（与 MessageList 的 pruneBackgroundTaskViewModes 同口径调用）：
+ * 消息删除/窗口裁剪后移除不再渲染的 messageId，避免 Map 只靠容量上限兜底淘汰
+ * 仍在渲染的消息记录。
+ */
+export function pruneMediumTrimmedByMessageId(activeIds: Set<string>): void {
+  for (const messageId of Array.from(mediumTrimmedByMessageId.keys())) {
+    if (!activeIds.has(messageId)) {
+      mediumTrimmedByMessageId.delete(messageId)
+    }
+  }
+}
+</script>
+
 <script setup lang="ts">
 /**
  * MessageRenderBlock 是渲染块纯展示子组件。
@@ -70,9 +94,18 @@ function shouldStickBottom(): boolean {
   }
   return true
 }
-/** 稳定引用：尾部窗口首次裁剪时置标志，显示「内容过长」提示 */
+/** 稳定引用：尾部窗口首次裁剪时置标志，显示「内容过长」提示（按 messageId 记忆） */
 function handleTrimmed(): void {
   mediumTrimmed.value = true
+  if (props.messageId) {
+    if (!mediumTrimmedByMessageId.has(props.messageId) && mediumTrimmedByMessageId.size >= MEDIUM_TRIMMED_CAP) {
+      const oldestKey = mediumTrimmedByMessageId.keys().next().value
+      if (oldestKey !== undefined) {
+        mediumTrimmedByMessageId.delete(oldestKey)
+      }
+    }
+    mediumTrimmedByMessageId.set(props.messageId, true)
+  }
 }
 /** 滚动容器滚动事件：标记用户已干预；滚离底部即暂停吸底，滚回底部附近恢复 */
 function onMediumScroll(): void {
@@ -141,7 +174,8 @@ watch(
         // tailWindow 保护超长未完成段落（触发 onTrimmed 显示裁剪提示）；
         // scrollContainer + stickBottom：贴底写在滚动容器上，用户滚上去时暂停跟随。
         // 重新进入中展开（切模式/重建）重置吸底状态：默认看最新内容。
-        mediumTrimmed.value = false
+        // 裁剪提示不重置：内容超长是消息属性，按 messageId 记忆（切走再切回仍显示）。
+        mediumTrimmed.value = messageId ? mediumTrimmedByMessageId.get(messageId) ?? false : false
         stickToBottom.value = true
         userScrolled.value = false
         registerSmoothDisplay(messageId, host, {
