@@ -28,7 +28,7 @@
   - 前端 `handleAutoSummary` 同步「物理替换」语义：收到 `removedCount > 0` 时删除本地窗口中被替换区间、幸存消息 `backendIndex` 平移、插入总结（去重优先用后端消息 id）；`StreamChunkProcessor` 转发 `removedCount` 字段。
   - 修复自动总结后模型丢失原始任务指令：物理替换被总结区间时删除起点不越过第一条真实用户消息（用户首条消息承载任务目标，总结文本永远不如原话清楚，必须原样保留）；请求组装时若首条用户消息早于最后总结，把它原样拼到请求历史最前（不能只依赖 Preserved user inputs 档案——首次总结后档案读不到已被删除的首条消息）；实际删除数回填 `summarizedMessageCount` 与返回协议（`insertIndex` 为替换完成后总结新下标）。
   - 修复底部 TPS 统计在代码编辑/写入时虚高：`record` 透传 `chunk.createdAt` 真实到达时间（后台标签页回放/隐藏 webview 积压的整段数据按原时间入窗并被窗口立即修剪，不再产生天量尖峰）；`tpsMeter` 突发摊薄（单事件 > 250 token 按最近 1s 均匀铺开、总量守恒）与速率硬上限（1200 tok/s）；工具调用 JSON 参数与思考 token 均计入生成速度（都是模型输出），计数改为模型专属 tokenizer（见下条）。
-  - TPS 统计接入模型专属 tokenizer + 自校准叠加：文本/思考/工具参数统一按真实编码计数——DeepSeek 模型用官方 `deepseek_v3_tokenizer` 转换词表（`js-tiktoken/lite` 加载，与官方 Python 基准 12 类样本逐位一致，含中文/代码/JSON/emoji），其余模型用 `gpt-tokenizer`（cl100k）；词表懒加载（独立 chunk，首次遇到对应模型才拉取），加载完成前回退字符类别加权估算（ASCII/CJK/其他分系数）；每轮流结束用最终 usage（`candidatesTokenCount`，含思考，与估算口径一致）对比本轮估算，按模型 EMA 学习校准因子（离群剔除 0.4~2.5 挡 usage 异常，localStorage 持久化），同一模型系统性偏差收敛到 ~3~5%；超长文本分批计数规避 tokenizer 合并缓存非线性退化（300k 字符 ~380ms、误差 <0.2%）。
+  - TPS 统计接入模型专属 tokenizer + 自校准叠加：文本/思考/工具参数统一按真实编码计数——DeepSeek 模型用官方 `deepseek_v3_tokenizer` 转换词表（与官方 Python 基准 12 类样本逐位一致，含中文/代码/JSON/emoji），其余模型用 cl100k（OpenAI 系近精确，其他模型由校准因子修正）；词表不打包进 vsix，由扩展端 `TokenizerResourceManager` 运行时联网下载到数据目录 `tokenizers/`（cl100k 来自 OpenAI encodings CDN、DeepSeek 来自官方 api-docs zip，下载/解压/转换后本地缓存，启动复用不再联网；首次需要时触发），前端经 `tokenizer.getResource` 消息通道获取并用 `js-tiktoken/lite`（~9KB BPE 引擎）加载，下载失败/离线时回退字符类别加权估算（ASCII/CJK/其他分系数）；每轮流结束用最终 usage（`candidatesTokenCount`，含思考，与估算口径一致）对比本轮估算，按模型 EMA 学习校准因子（离群剔除 0.4~2.5 挡 usage 异常，localStorage 持久化），同一模型系统性偏差收敛到 ~3~5%；超长文本分批计数规避 tokenizer 合并缓存非线性退化；vsix 体积不增反降（移除 gpt-tokenizer 双词表与内置 DeepSeek 词表）。
   - 修复子代理设置面板 MCP 工具名显示为「Mcp Mcp 1785407697930 5wldv41 Search」：`getToolDisplayName` 增加 MCP 分支（`decodeMcpToolName` 解码后只对原始工具名做 Title Case），`SubAgentsSettings` 保留 `serverName` 并以徽标展示（与自动执行页一致），原始编码名降级为悬浮提示；`useCheckpointConfig` 重复实现改为复用 `toolLocalization`，`AutoExecSettings` 的 `split('__')` 改用 codec。
   - 修复 checkpoint 增量快照静默过期：`CheckpointSnapshotBuilder` stat 复用哈希的 `mtimeNs` 分支补 `size` 校验（FAT32/SMB/容器挂载卷上同一时间刻度内重写且字节数不变时不再错误复用旧哈希）。
   - 修复 MCP stdio 客户端内存无界增长：`StdioClient` buffer 设 16MB 硬上限（超限终止连接），单条消息 > 4MB 拒绝发送（背压保护）。
@@ -40,6 +40,7 @@
   - 修复 `chatStore.initialize()` 监听器非幂等（HMR/重挂载重复订阅导致流式消息被处理 N 次）：重复调用先注销旧监听再注册。
   - 修复终端输出无上限（长驻终端 O(n²) 拼接 + 整段重渲染）：`terminalStore` 输出截断保留最近 200KB。
   - 修复 `MessageRouter` NON_BLOCKING 分支 handler 未回复时 `requestClients` 条目泄漏；`SubAgentMonitor` run 终态清理 `renderMessageCacheByRun`；`MarkdownRenderer` imageCache 增加 32MB 字节预算（单图 > 1MB 不缓存）；`smoothStreamManager` 反查索引 O(1)；`agentStopNotificationController` 日志收敛为 debug；`MessageList` 删除 scrollTop 死代码。
+  - 后台命令不再吃满 CPU：`execute_command` 后台（background）启动的 shell 进程降为低优先级（Windows: `BelowNormal` 优先级类，spawn 后 PowerShell 设置，子进程树创建时继承——cmd/powershell 后续启动的 node/jest 等同样让路；POSIX: nice +5），跑测试/长任务时让出 CPU 给前台交互、空闲时仍全速；前台命令保持 normal 不拖慢同步等待。注：Node spawn 的 `priority` 选项在 Windows 上实测不生效，故采用 spawn 后外部设置（尽力而为，失败静默）。
 
 ## [1.4.2] - 2026-08-06
 
