@@ -10,7 +10,7 @@ import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
 import { getSkillsManager } from '../../backend/modules/skills';
-import { getGlobalMemoryManager } from '../../backend/modules/memory';
+import { getGlobalMemoryManager, getMemoryManagerForWorkspace, listWorkspaceMemoryScopes } from '../../backend/modules/memory';
 import { getProductMetadata } from '../../backend/core/productMetadata';
 import { getExtensionVersion } from '../utils/extensionInfo';
 
@@ -21,6 +21,20 @@ import { getExtensionVersion } from '../utils/extensionInfo';
  * 超大 ids 数组会让扩展主线程长时间停滞；前端列表展示上限为 ENTRIES_LIMIT(5000)，此处取 10000 留足余量。
  */
 const MAX_BATCH_DELETE_IDS = 10000;
+
+/**
+ * 记忆 handler 解析目标 MemoryManager：
+ * - data.workspaceUri（string）→ 该工作区专属记忆实例（记忆隔离）
+ * - 未传 → 全局记忆实例（旧行为）
+ * 设置页分区明确传递作用域，不隐式使用当前激活工作区。
+ */
+async function resolveMemoryManager(data?: any): Promise<import('../../backend/modules/memory').MemoryManager | null> {
+  const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
+  if (wsUri) {
+    return getMemoryManagerForWorkspace(wsUri);
+  }
+  return getGlobalMemoryManager();
+}
 
 /**
  * 获取设置
@@ -136,20 +150,27 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
 /**
  * 获取记忆配置
  * 合并 SettingsManager 中的用户设置和 MemoryManager 的运行时配置。
+ *
+ * 数值项（wakeLines/entryChars/partChars/partLines）以目标作用域 MemoryManager 的
+ * 运行时配置为权威来源：settings 配置的数值项经 getToolsConfigEntry 深合并默认值后
+ * 永远有值（96/280/20000/500），?? 兜底恒不生效，会掩盖工作区各自的运行时配置——
+ * 记忆隔离下每个工作区的 config 独立持久化，这里必须按 data.workspaceUri 读对应实例。
+ * enabled/systemPrompt 属于全局设置段，仍取 settings 配置。
  */
 export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const config = ctx.settingsManager.getMemoryConfig();
-    // 合并 MemoryManager 的运行时配置（如果已初始化）
-    const mgr = getGlobalMemoryManager();
+    // 合并 MemoryManager 的运行时配置（如果已初始化；data.workspaceUri 指定时读该工作区实例）
+    const mgr = await resolveMemoryManager(data);
     if (mgr) {
-      const runtimeConfig = mgr.getConfig();
+      // loadConfig() 保证读到磁盘上的最新配置（含刚被 memory_config 工具改过的值）
+      const runtimeConfig = await mgr.loadConfig();
       return ctx.sendResponse(requestId, {
         ...config,
-        wakeLines: config.wakeLines ?? runtimeConfig.wakeLines,
-        entryChars: config.entryChars ?? runtimeConfig.entryChars,
-        partChars: config.partChars ?? runtimeConfig.partChars,
-        partLines: config.partLines ?? runtimeConfig.partLines,
+        wakeLines: runtimeConfig.wakeLines,
+        entryChars: runtimeConfig.entryChars,
+        partChars: runtimeConfig.partChars,
+        partLines: runtimeConfig.partLines,
       });
     }
     ctx.sendResponse(requestId, config);
@@ -160,14 +181,35 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 更新记忆配置
- * 同时更新 SettingsManager（持久化）和 MemoryManager（运行时生效）。
+ *
+ * - 传了 workspaceUri：配置保存到该作用域 MemoryManager（记忆隔离），不写全局
+ *   SettingsManager——否则工作区 tab 保存的数值会污染全局配置，且全局 toolsConfig
+ *   深合并默认值后所有工作区读到同一份配置，隔离失效。
+ * - 未传 workspaceUri（全局）：写 SettingsManager（持久化）并同步全局 MemoryManager 运行时。
  */
 export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { config } = data;
+    const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
+    if (wsUri) {
+      // 工作区作用域：仅写该工作区 MemoryManager（数值项校验并持久化到其 config 文件）
+      const mgr = await resolveMemoryManager(data);
+      if (!mgr) {
+        return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+      }
+      const runtimeUpdates: Record<string, number> = {};
+      if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
+      if (typeof config.entryChars === 'number') runtimeUpdates.entryChars = config.entryChars;
+      if (typeof config.partChars === 'number') runtimeUpdates.partChars = config.partChars;
+      if (typeof config.partLines === 'number') runtimeUpdates.partLines = config.partLines;
+      if (Object.keys(runtimeUpdates).length > 0) {
+        await mgr.updateConfig(runtimeUpdates);
+      }
+      return ctx.sendResponse(requestId, { success: true });
+    }
+    // 全局作用域：写 SettingsManager（持久化）并同步全局 MemoryManager 运行时
     await ctx.settingsManager.updateMemoryConfig(config);
-    // 同步运行时参数到 MemoryManager（如果已初始化）
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (mgr) {
       const runtimeUpdates: Record<string, number> = {};
       if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
@@ -192,7 +234,7 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
  */
 export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendResponse(requestId, { entries: [], total: 0, initialized: false });
     }
@@ -217,7 +259,7 @@ export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => 
  */
 export const addMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -237,7 +279,7 @@ export const addMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
  */
 export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -258,7 +300,7 @@ export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
  */
 export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -279,7 +321,7 @@ export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
  */
 export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -294,6 +336,74 @@ export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) 
     ctx.sendResponse(requestId, { success: true, removed: result.removed });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_MEMORY_ENTRIES_ERROR', error.message || 'Failed to delete memory entries');
+  }
+};
+
+/**
+ * 枚举全部工作区记忆 scope（设置页记忆分区下拉用）
+ *
+ * 合并「当前打开的工作区文件夹」+「已有记忆数据的工作区」：
+ * - 当前打开的工作区（vscode.workspace.workspaceFolders）即使还没有记忆数据也可选——
+ *   首次访问时 memory 层会惰性创建记忆目录；
+ * - 已有数据的 scope（memory-workspaces/<hash>/scope.json 枚举）优先复用其元信息
+ *   （uri/name/hasData），按 fsPath 归一化去重（Windows 大小写不敏感）。
+ */
+export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    // 已有记忆数据的工作区 scope
+    const existing = await listWorkspaceMemoryScopes();
+
+    // 当前打开的工作区文件夹
+    const openFolders: Array<{ uri: string; name: string; fsPath: string }> = [];
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders) {
+      for (const folder of folders) {
+        openFolders.push({
+          uri: folder.uri.toString(),
+          name: folder.name,
+          fsPath: folder.uri.fsPath,
+        });
+      }
+    }
+
+    // 路径归一化（Windows 大小写不敏感 + 统一正斜杠），与 memory 层 normalizeWorkspaceKey 一致
+    const WIN32 = process.platform === 'win32';
+    const normalizeFsPath = (p: string): string => {
+      const n = p.replace(/\\/g, '/');
+      return WIN32 ? n.toLowerCase() : n;
+    };
+
+    // 已有数据按归一化 fsPath 索引，合并时复用其 uri/name/hasData
+    const existingByPath = new Map(existing.map((s) => [normalizeFsPath(s.fsPath), s]));
+
+    // 当前打开的工作区文件夹排在最前（前端 loadWorkspaceScopes 默认选中 scopes[0]）：
+    // 用户打开新项目 B（尚无记忆）但有历史项目 A 的数据时，默认应选中 B 而不是 A，
+    // 否则在工作区 tab 添加记忆会静默写进历史项目 A（记忆隔离错位）。
+    const scopes: Array<{ uri: string; name: string; fsPath: string; hasData: boolean }> = [];
+    const usedExistingPaths = new Set<string>();
+    for (const folder of openFolders) {
+      const norm = normalizeFsPath(folder.fsPath);
+      const existingEntry = existingByPath.get(norm);
+      if (existingEntry) {
+        usedExistingPaths.add(norm);
+        scopes.push(existingEntry);
+      } else {
+        scopes.push({
+          uri: folder.uri,
+          name: folder.name,
+          fsPath: folder.fsPath,
+          hasData: false,
+        });
+      }
+    }
+    // 其余「已有记忆数据但未打开」的工作区追加到末尾
+    for (const s of existing) {
+      if (usedExistingPaths.has(normalizeFsPath(s.fsPath))) continue;
+      scopes.push(s);
+    }
+    ctx.sendResponse(requestId, { scopes });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'LIST_MEMORY_SCOPES_ERROR', error.message || 'Failed to list memory scopes');
   }
 };
 
@@ -489,6 +599,7 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('updateMemoryEntry', updateMemoryEntry);
   registry.set('deleteMemoryEntry', deleteMemoryEntry);
   registry.set('deleteMemoryEntries', deleteMemoryEntries);
+  registry.set('listMemoryScopes', listMemoryScopes);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);

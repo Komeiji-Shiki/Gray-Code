@@ -15,7 +15,8 @@ import type { StorageStats } from './types';
 /**
  * 存储路径管理器
  */
-const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills', 'activity', 'tokenizers'];
+// 记忆目录随自定义存储路径一起迁移/清理/统计：memory 为全局记忆，memory-workspaces 下每个 <hash>/ 子目录对应一个工作区记忆
+const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills', 'activity', 'tokenizers', 'memory', 'memory-workspaces'];
 
 export class StoragePathManager {
     private defaultDataPath: string;
@@ -123,7 +124,10 @@ export class StoragePathManager {
             path.join(basePath, 'dependencies'),
             path.join(basePath, 'diffs'),
             path.join(basePath, 'activity'),
-            path.join(basePath, 'tokenizers')
+            path.join(basePath, 'tokenizers'),
+            // 记忆目录：全局记忆 memory/，工作区记忆 memory-workspaces/（各 <hash>/ 子目录惰性创建）
+            path.join(basePath, 'memory'),
+            path.join(basePath, 'memory-workspaces')
         ];
         
         // settings 目录只在默认路径创建
@@ -223,7 +227,7 @@ export class StoragePathManager {
     async getStorageStats(targetPath?: string): Promise<StorageStats> {
         const basePath = targetPath || this.getEffectiveDataPath();
         
-        const [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers] = await Promise.all([
+        const [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers, memory, memoryWorkspaces] = await Promise.all([
             this.getDirectorySize(path.join(basePath, 'conversations')),
             this.getDirectorySize(path.join(basePath, 'checkpoints')),
             this.getDirectorySize(path.join(basePath, 'snapshots')),
@@ -232,10 +236,13 @@ export class StoragePathManager {
             this.getDirectorySize(path.join(basePath, 'diffs')),
             this.getDirectorySize(path.join(basePath, 'skills')),
             this.getDirectorySize(path.join(basePath, 'activity')),
-            this.getDirectorySize(path.join(basePath, 'tokenizers'))
+            this.getDirectorySize(path.join(basePath, 'tokenizers')),
+            // 记忆目录纳入统计：全局记忆与工作区记忆（含各 <hash>/ 子目录）
+            this.getDirectorySize(path.join(basePath, 'memory')),
+            this.getDirectorySize(path.join(basePath, 'memory-workspaces'))
         ]);
 
-        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers];
+        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers, memory, memoryWorkspaces];
         const totalSize = allStats.reduce((sum, stat) => sum + stat.size, 0);
         const fileCount = allStats.reduce((sum, stat) => sum + stat.count, 0);
         

@@ -2228,7 +2228,15 @@ const en: LanguageMessages = {
                         deleteSelected: 'Delete Selected ({count})',
                         deletedBatch: 'Deleted {count} memories.',
                         batchDeleteConfirmTitle: 'Delete memory entries',
-                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).'
+                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).',
+                        scopeGlobal: 'Global Memory',
+                        scopeGlobalHint: 'Default memory shared by all workspaces. The AI uses global memory when there is no workspace context.',
+                        scopeWorkspace: 'Workspace Memory',
+                        scopeWorkspaceHint: 'Memory stored independently per workspace, isolated from other workspaces and from global memory.',
+                        selectScopeWorkspace: 'Select a workspace…',
+                        workspaceNone: 'No workspace is currently available. Open a folder in VS Code and try again.',
+                        workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible to this workspace.',
+                        newlineNotAllowed: 'A memory must be a single line. Remove line breaks and try again.'
                     }
                 },
 

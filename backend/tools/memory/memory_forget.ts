@@ -8,7 +8,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { getGlobalMemoryManager } from '../../modules/memory';
+import { getMemoryManagerForTool } from '../../modules/memory';
 
 export function createMemoryForgetDeclaration(): ToolDeclaration {
     return {
@@ -18,7 +18,8 @@ export function createMemoryForgetDeclaration(): ToolDeclaration {
             '当 blockId 是范围（如 "16-31"，破折号）：仅丢弃树摘要及其上层摘要，原始记忆（LOG）不会被触碰。\n' +
             '当 blockId 是单个数字（如 "5"）：删除这一条原始记忆（其后的记录 id 前移重编号）。\n' +
             '当 blockId 是闭区间（如 "1,3"，逗号分隔）：删除 ID 1 到 3 的所有原始记忆（含端点）。\n' +
-            '参数：blockId（块 ID 如 "16-31"、单个 ID 如 "5"、或闭区间如 "1,3"）。',
+            '参数：blockId（块 ID 如 "16-31"、单个 ID 如 "5"、或闭区间如 "1,3"）。\n' +
+            '作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope="global"。',
         category: 'memory',
         parameters: {
             type: 'object',
@@ -26,6 +27,11 @@ export function createMemoryForgetDeclaration(): ToolDeclaration {
                 blockId: {
                     type: 'string',
                     description: '块 ID（如 "16-31"）丢弃树摘要；单个 ID（如 "5"）删除这一条记忆；闭区间（如 "1,3"）删除 1 到 3 的所有记忆。',
+                },
+                scope: {
+                    type: 'string',
+                    enum: ['global', 'workspace'],
+                    description: '记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 "global"，如需显式操作工作区记忆请传 "workspace"。',
                 },
             },
             required: ['blockId'],
@@ -43,10 +49,19 @@ function isRange(s: string): boolean {
     return /^\d+,\d+$/.test(s);
 }
 
-async function memoryForgetHandler(args: Record<string, unknown>, _context?: ToolContext): Promise<ToolResult> {
-    const mgr = getGlobalMemoryManager();
+async function memoryForgetHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
+    const scope = args.scope === 'global' || args.scope === 'workspace' ? args.scope : undefined;
+    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri, scope);
     if (!mgr) {
-        return { success: false, error: 'MemoryManager is not initialized.' };
+        // scope 为全局或本无工作区上下文时是全局实例未初始化；
+        // 其余情况说明工作区记忆不可用，不要静默回退全局
+        if (scope === 'global' || (!scope && !context?.activeWorkspaceUri)) {
+            return { success: false, error: 'MemoryManager is not initialized.' };
+        }
+        if (scope === 'workspace' && !context?.activeWorkspaceUri) {
+            return { success: false, error: 'Workspace scope requires an active workspace.' };
+        }
+        return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
     }
 
     try {
