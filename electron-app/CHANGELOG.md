@@ -8,6 +8,19 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.6.9] - 2026-08-07
+
+### Merged
+  - 增量合入上游 `70ecbb3..cf9330d` + 80e9de7 修正版（backend/webview/frontend 公共部分，详见根 `CHANGELOG.md` [1.6.9]）：记忆隔离作用域加固（只读不建目录 / scope 显式参数 / 不静默回退全局 / T= 快照重试）、H4 自动建会话即绑定工作区、记忆设置页作用域配置隔离（`listMemoryScopes` 当前激活工作区优先）、子代理工具轮幻觉剥离、nodeIdCache epoch 写链守卫、存储统计纳入记忆目录；80e9de7 以上游修正版合入（混合形态 tool 消息拆分 + 日常形态回归防护，上游原版会破坏 function_call 模式）
+
+### Fixed
+  - 修复 `memory_wake` 跨作用域 snapshotT 不匹配静默丢内容（改用该作用域当前总数重试）
+  - 修复只读记忆工具隐式创建 `memory-workspaces/<hash>/` 目录的磁盘副作用
+  - 修复工作区记忆解析失败静默回退全局的跨工作区污染（改为显式报错）
+  - 修复自动创建会话未绑定工作区导致记忆工具回退全局（H4）
+  - 修复子代理失败/空响应时 partialResponse 携带幻觉预生成文本
+  - 修复混合形态消息（同消息 call+response）转换时 functionResponse 被吞（80e9de7 修正版）
+
 ## [1.6.8] - 2026-08-06
 
 ### Fixed

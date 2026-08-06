@@ -95,6 +95,34 @@
 ### Tests
   - 全量回归：backend jest 215 套件 / 2196 用例、frontend vitest 55 文件 / 551 用例全绿；新增/更新 `fileTree.test.ts`（缓存命中跳过 gitignore stat 的新语义）、`MessageItem.test.ts`（checkpointLookup mock）、`MessageItemStreaming`（分块渲染）、`smoothStreamManager`（增量 fence 扫描）等；Electron e2e / monitor-smoke / uismoke 冒烟通过
 
+## [1.6.9] - 2026-08-07
+
+### Merged
+  - 增量合入上游 `70ecbb3..cf9330d`（5 提交：记忆隔离移植 986c4d9、子代理工具轮幻觉剥离 e1d71ec、测试类型引用 92473f0、PR #20 记忆隔离审查修复 80a9fc7、merge cf9330d），保留 fork 的 electron-app / 多工作区 / 安全加固增量：
+    - **记忆隔离作用域加固（PR #20 审查）**：`memory_wake`/`recall`/`zoom` 等只读工具不再隐式创建工作区记忆目录（`createIfMissing=false`，只读访问零磁盘副作用）；`memory_wake` 续读时 "T=" 快照过期不再误判为「已读完」跳过——改用该作用域自身当前总数重试，跨作用域 snapshotT 不匹配时内容不丢；`memory_*` 工具新增 `scope` 显式参数（`global`/`workspace`），工作区解析失败不再静默回退全局（防跨工作区记忆污染）；wake/recall 输出段头带作用域与工作区名标注，顶层元数据（blocks/part/totalParts/totalMemories/pendingCompression）改为双作用域合并口径
+    - **H4 自动建会话即绑定工作区**：`ConversationManager.loadHistory`/`getMessages`/`getMessagesPaged`/`normalizeHistoryForDisplay` 透传当前工作区 URI，webview 读取入口按需自动创建的会话在创建时就写入 `workspaceUri` 元数据（避免记忆工具回退全局造成跨工作区污染）；`createConversation` 两者皆空归一为 `undefined`（不再持久化字面 null）；`ToolExecutionService` 新增 `conversation_unbound_workspace` 每会话一次告警（把静默降级变为可观测）；前端切换对话时对未绑定工作区的会话用当前活动工作区补绑（`syncConversationWorkspaceUri`，已有绑定/分支继承不覆盖）
+    - **记忆设置页作用域配置隔离**：`getMemoryConfig`/`updateMemoryConfig` 按 `data.workspaceUri` 读写对应作用域 MemoryManager 的运行时配置（`loadConfig()` 读磁盘最新值），工作区 tab 保存的数值不再污染全局配置；`listMemoryScopes` 改为「当前激活工作区优先」排序（默认选中项与用户当前项目一致，防记忆写入历史项目造成隔离错位）
+    - **子代理工具轮幻觉剥离**：xml/json prompt 模式下，模型在发起工具调用的同一轮"抢跑"输出的文本（无工具结果前的幻觉预生成）从该轮 parts 剥离，不进 history/续跑上下文；`lastResponse` 只在无工具调用的最终轮更新——失败/空响应时 `partialResponse` 不再携带幻觉文本（新增 `subagentPartialResponse.test.ts` 5 例回归）
+    - **nodeIdCache epoch 写链守卫**：`getMessageNodeIdAt` 读盘不持会话写锁，读盘前后 epoch 一致才允许回填缓存（消除写提交与旧盘面回填之间的竞态窗口；epoch 全局单调 + LRU 淘汰防清空后归零碰撞）
+    - **存储统计/迁移纳入记忆目录**：`StoragePathManager` 的清理/迁移/统计覆盖 `memory` 与 `memory-workspaces`
+    - 冲突解决要点：`ConversationManager` 保留 fork 缓存体系（30s TTL + 权威回填，弃用上游移除 historyCache 的做法）；`SettingsHandlers.listMemoryScopes` 保留 fork 收藏工作区口径（上游 `vscode.workspace.workspaceFolders` 不适用于桌面版）；`ConversationHandlers` 保留 fork `assertSafeId` 校验与 trim 清理；webview 多工作区（WorkspaceManager/终端节流/多文件夹 skills 扫描）与前端多工作区体验（切换恢复工作区/标题附加工作区名/消息索引清理）全部保留；i18n 保留桌面键并补充 `workspaceNone`/`newlineNotAllowed`（文案适配桌面版）
+  - 合入上游 `80e9de7`（混合形态消息 functionCall+functionResponse 同消息拆分 tool 消息）**修正版**：上游原提交把 formatter 的 else-if 链改为独立 if，修复「同消息 call+response 时 response 被吞」的同时引入严重回归——「文本 + functionCall」同消息的日常形态被重复推送为第二条 assistant 消息，且 tool/tool_result 消息不再紧跟 tool_calls（OpenAI/Anthropic 400，上游实测 function_call 模式整体失败）；桌面版合入时在普通消息分支加 `functionCallParts.length === 0` 守卫，混合形态修复与日常形态行为两全（新增 `formatterMixedToolMessage.test.ts` 上游 3 例 + 回归 2 例）
+
+### Added
+  - 记忆工具新增 `scope` 显式参数（global/workspace）与设置页记忆作用域配置隔离（详见上方 Merged）
+
+### Fixed
+  - 修复 `memory_wake` 续读时跨作用域 snapshotT 不匹配被误判为「已读完」跳过导致内容静默丢失（改用该作用域当前总数重试）
+  - 修复只读记忆工具（wake/recall/zoom）隐式创建 `memory-workspaces/<hash>/` 目录的磁盘副作用
+  - 修复工作区记忆解析失败时静默回退全局记忆的跨工作区污染风险（改为显式报错）
+  - 修复自动创建会话未绑定工作区导致记忆工具回退全局的跨工作区污染（H4）
+  - 修复子代理失败/空响应时 partialResponse 携带工具调用前幻觉预生成文本（e1d71ec）
+  - 修复 nodeIdCache 读盘回填竞态（写提交与旧盘面回填之间 300ms 窗口陈旧节点 id）
+  - 修复混合形态消息（同消息 call+response）转换时 functionResponse 被吞（80e9de7 修正版，含日常形态回归防护）
+
+### Tests
+  - 全量回归：backend jest 225 套件 / 2291 用例、frontend vitest 63 文件 / 610 用例、tsc --noEmit 全绿；新增 `memoryWakeScopes.test.ts`（跨作用域 snapshotT 重试 / nextPart 合并推进 / 压缩提示作用域标注 / 只读不建目录）、`subagentPartialResponse.test.ts`（5 例）、`formatterMixedToolMessage.test.ts`（混合形态 3 例 + 日常形态回归 2 例）、`MemorySettings.test.ts`（作用域缓存防闪烁等）
+
 ## [1.6.8] - 2026-08-06
 
 ### Fixed
