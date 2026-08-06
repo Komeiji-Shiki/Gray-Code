@@ -1,15 +1,28 @@
 /**
- * tokenCounter：模型 token 计数管线（专属 tokenizer + 自校准因子）测试。
+ * tokenCounter：模型 token 计数管线（运行时词表 + 自校准因子）测试。
+ *
+ * 词表通过消息通道（tokenizer.getResource）获取，测试 mock 掉 sendToExtension：
+ * - cl100k：用 js-tiktoken 内置真实词表（node_modules/dist/ranks/cl100k_base.cjs），
+ *   验证 'hello world' = 2（cl100k 精确值）
+ * - deepseek-v3：用小型固定词表验证加载路径与模型选择逻辑
  *
  * 覆盖：
- * - 回退估算：tokenizer 未加载时字符类别加权估算可用（>0）
- * - gpt tokenizer：加载后 'hello world' 精确 = 2（cl100k）
- * - DeepSeek 专属 tokenizer：与官方 Python 基准一致的样本（'你好，世界！'=4、'Hello!'=2）
+ * - 回退估算：词表未就绪时字符类别加权估算可用（>0）
+ * - gpt 加载：真实 cl100k 词表精确计数
+ * - deepseek 加载：模型名含 deepseek → 请求 deepseek-v3 资源并计数
  * - 分批计数：大文本分批与单次编码误差 <1%
- * - 校准：EMA 更新、离群剔除（0.4~2.5）、样本门槛（base<50 跳过）、localStorage 持久化
+ * - 校准：EMA 更新、离群剔除（0.4~2.5）、样本门槛、localStorage 持久化
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createRequire } from 'node:module'
+import * as path from 'node:path'
 
+// mock 消息通道：tokenCounter 通过 sendToExtension 向扩展端获取词表
+vi.mock('../vscode', () => ({
+  sendToExtension: vi.fn()
+}))
+
+import { sendToExtension } from '../vscode'
 import {
   countBaseTokens,
   ensureTokenCounterLoaded,
@@ -17,13 +30,33 @@ import {
   calibrate
 } from '../tokenCounter'
 
+const require = createRequire(import.meta.url)
+/** js-tiktoken 内置真实 cl100k 词表（bpe_ranks/pat_str/special_tokens 即 Tiktoken 构造参数） */
+// 注意：js-tiktoken 的 exports 未暴露 dist/ranks 子路径，用绝对路径绕过 exports 映射
+const cl100kRanks = require(path.resolve(process.cwd(), 'node_modules/js-tiktoken/dist/ranks/cl100k_base.cjs'))
+
+const mockedSend = vi.mocked(sendToExtension)
+
 const CAL_KEY_PREFIX = 'graycode:tpsCal:'
 
 beforeEach(() => {
   localStorage.clear()
+  mockedSend.mockReset()
+  mockedSend.mockImplementation(async (_type: string, data: { name?: string }) => {
+    if (data?.name === 'deepseek-v3') {
+      // 小型固定词表：仅 '!'（base64 IQ==，rank 0）
+      return { name: 'deepseek-v3', bpeRanks: 'x 0 IQ==\n', patStr: '.+', specialTokens: {} }
+    }
+    return {
+      name: 'cl100k',
+      bpeRanks: cl100kRanks.bpe_ranks,
+      patStr: cl100kRanks.pat_str,
+      specialTokens: cl100kRanks.special_tokens
+    }
+  })
 })
 
-describe('countBaseTokens - 回退估算（tokenizer 未加载）', () => {
+describe('countBaseTokens - 回退估算（词表未就绪）', () => {
   it('未加载时返回字符类别加权估算（>0）', () => {
     const n = countBaseTokens('hello world 你好', 'gpt-4o')
     expect(n).toBeGreaterThan(0)
@@ -34,10 +67,9 @@ describe('countBaseTokens - 回退估算（tokenizer 未加载）', () => {
   })
 })
 
-describe('countBaseTokens - gpt tokenizer（懒加载后精确）', () => {
+describe('countBaseTokens - cl100k 词表（消息通道加载后精确）', () => {
   it('加载后 hello world = 2（cl100k）', async () => {
     ensureTokenCounterLoaded('gpt-4o')
-    // 等待懒加载完成（轮询最多 5s）
     let n = 0
     for (let i = 0; i < 100; i++) {
       n = countBaseTokens('hello world', 'gpt-4o')
@@ -45,37 +77,21 @@ describe('countBaseTokens - gpt tokenizer（懒加载后精确）', () => {
       await new Promise(r => setTimeout(r, 50))
     }
     expect(n).toBe(2)
+    expect(mockedSend).toHaveBeenCalledWith('tokenizer.getResource', { name: 'cl100k' }, expect.anything())
   })
 })
 
-describe('countBaseTokens - DeepSeek 专属 tokenizer（与官方基准一致）', () => {
-  it('加载后中文/英文样本与官方 Python 基准一致', async () => {
+describe('countBaseTokens - DeepSeek 资源路径', () => {
+  it('模型名含 deepseek 时请求 deepseek-v3 资源并计数', async () => {
     ensureTokenCounterLoaded('deepseek-chat')
-    let zh = 0
-    let en = 0
-    for (let i = 0; i < 200; i++) {
-      zh = countBaseTokens('你好，世界！', 'deepseek-chat')
-      en = countBaseTokens('Hello!', 'deepseek-chat')
-      if (zh === 4 && en === 2) break
+    let n = 0
+    for (let i = 0; i < 100; i++) {
+      n = countBaseTokens('!', 'deepseek-chat')
+      if (n === 1) break
       await new Promise(r => setTimeout(r, 50))
     }
-    expect(zh).toBe(4)
-    expect(en).toBe(2)
-  }, 30000)
-
-  it('模型名含 deepseek 时选择专属词表（数值不同）', async () => {
-    ensureTokenCounterLoaded('deepseek-chat')
-    let ds = 0
-    let gpt = 0
-    for (let i = 0; i < 200; i++) {
-      ds = countBaseTokens('深度学习模型训练', 'deepseek-chat')
-      gpt = countBaseTokens('深度学习模型训练', 'gpt-4o')
-      if (ds === 3) break
-      await new Promise(r => setTimeout(r, 50))
-    }
-    // 实测：'深度学习模型训练' DeepSeek 词表 = 3 tokens，cl100k = 5 tokens
-    expect(ds).toBe(3)
-    expect(gpt).toBe(5)
+    expect(n).toBe(1)
+    expect(mockedSend).toHaveBeenCalledWith('tokenizer.getResource', { name: 'deepseek-v3' }, expect.anything())
   }, 30000)
 })
 
@@ -90,9 +106,14 @@ describe('countBaseTokens - 分批计数', () => {
       if (batched > 100) break
       await new Promise(r => setTimeout(r, 50))
     }
-    // 加载完成后单次编码对照
-    const { countTokens } = await import('gpt-tokenizer')
-    const exact = countTokens(text)
+    // 单次编码对照（直接用同一词表构造）
+    const { Tiktoken } = await import('js-tiktoken/lite')
+    const enc = new Tiktoken({
+      bpe_ranks: cl100kRanks.bpe_ranks,
+      pat_str: cl100kRanks.pat_str,
+      special_tokens: cl100kRanks.special_tokens
+    })
+    const exact = enc.encode(text).length
     expect(batched).toBeGreaterThan(0)
     expect(Math.abs(batched - exact) / exact).toBeLessThan(0.01)
   }, 30000)

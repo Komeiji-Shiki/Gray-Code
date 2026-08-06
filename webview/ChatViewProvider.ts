@@ -32,6 +32,7 @@ import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../bac
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import { MemoryManager, setGlobalMemoryManager } from '../backend/modules/memory';
 import { ActivityTracker, setGlobalActivityTracker } from '../backend/modules/activity';
+import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../backend/modules/tokenizer';
 import type { SettingsExportData } from '../backend/modules/settings';
 import {
     setGlobalSettingsManager,
@@ -381,6 +382,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         activityTracker.start();
         this.activityTracker = activityTracker;
         setGlobalActivityTracker(activityTracker);
+
+        // 25.66. 初始化 tokenizer 词表资源管理器（运行时下载 cl100k / DeepSeek 词表到数据目录）
+        const tokenizerManager = new TokenizerResourceManager(this.storagePathManager.getTokenizerPath());
+        setGlobalTokenizerResourceManager(tokenizerManager);
         
         // 25.7. 设置 SubAgent 执行器上下文
         setSubAgentExecutorContext({
