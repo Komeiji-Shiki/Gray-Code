@@ -70,6 +70,16 @@ export interface PendingDiff {
     timestamp: number;
     /** 状态*/
     status: 'pending' | 'accepted' | 'rejected';
+    /**
+     * 是否为部分接受（用户拒绝了部分块或手动编辑了内容）。
+     *
+     * 为什么需要：DiffReviewSession 的 outcome 把 partial 映射为 public status 'accepted'，
+     * 工具 handler（apply_diff 等）从 PendingDiff 读不到 partial，会把"部分接受"误报成"全部接受"。
+     * 怎么改：finalizeAcceptedDiff 在终结时把 partial 标记写到 PendingDiff 上，工具结果据此返回 partial 状态。
+     */
+    partial?: boolean;
+    /** 被用户拒绝的块索引（部分接受时有效；供前端标记块级状态） */
+    rejectedBlockIndices?: number[];
     /** 关联的diff 块（用于 CodeLens）*/
     blocks?: Array<{
         index: number;
@@ -766,9 +776,25 @@ export class DiffManager {
         if (diff.status !== 'pending') {
             return;
         }
+
+        // 部分接受标记必须写回 PendingDiff：session.accept 只把 outcome 存进 DiffReviewSession，
+        // 工具 handler 读的是 PendingDiff（getDiff），不记录 partial 就无法区分"全部接受"与"部分接受"。
+        const isPartial = options?.partial ?? !!diff.userEditedContent;
+        if (isPartial) {
+            diff.partial = true;
+            // 记录被拒绝的块索引（cleanup 会移除 CodeLens session，必须在此前统计）
+            const provider = getDiffCodeLensProvider();
+            const lensSession = provider.getSession(diff.id);
+            if (lensSession) {
+                diff.rejectedBlockIndices = lensSession.blocks
+                    .filter((b) => b.rejected)
+                    .map((b) => b.index);
+            }
+        }
+
         const session = this.diffSessions.get(diff.id);
         const finalized = session
-            ? session.accept({ partial: options?.partial ?? !!diff.userEditedContent })
+            ? session.accept({ partial: isPartial })
             : this.finalizeLegacyPendingDiff(diff, 'accepted');
         if (!finalized) {
             return;

@@ -563,7 +563,11 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       }
 
       // 检查是否为部分成功 (针对 apply_diff 等工具)
-      if (success && data && data.appliedCount > 0 && data.failedCount > 0) {
+      // 判定条件：后端显式标记 partial（status='partial' 或 partial=true），或结果计数同时存在成功与失败。
+      // 后端在 partial 时会返回修正后的 finalAppliedCount/finalFailedCount；
+      // 计数兜底用于兼容旧版本工具（未显式标记 partial 但混合成败）。
+      // 显式排除 pending：partial 标记不会与 pending 共存，避免误覆盖 awaiting_apply。
+      if (success && data && data.status !== 'pending' && (data.partial === true || data.status === 'partial' || (data.appliedCount > 0 && data.failedCount > 0))) {
         status = 'warning'
       }
 
