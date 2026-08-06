@@ -133,7 +133,9 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
 export const createBranchConversation: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { sourceConversationId, branchAtIndex, title, conversationId, workspaceUri } = data || {};
-    const resolvedWorkspaceUri = workspaceUri || ctx.getCurrentWorkspaceUri() || undefined;
+    // 不在此兜底激活工作区：分支对话的 workspaceUri 由后端继承源对话（传入 undefined 时），
+    // 用激活工作区兜底会把分支错误绑定到当前活动项目
+    const resolvedWorkspaceUri = workspaceUri || undefined;
     const result = await ctx.conversationManager.createBranchConversation(
       sourceConversationId,
       Number(branchAtIndex),

@@ -2229,7 +2229,13 @@ const zhCN = {
                         deleteSelected: '删除所选（{count}）',
                         deletedBatch: '已删除 {count} 条记忆。',
                         batchDeleteConfirmTitle: '批量删除记忆条目',
-                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
+                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
+                        scopeGlobal: '全局记忆',
+                        scopeGlobalHint: '所有工作区共享的默认记忆。AI 在无工作区上下文时使用全局记忆。',
+                        scopeWorkspace: '工作区记忆',
+                        scopeWorkspaceHint: '每个工作区独立保存的记忆，与其他工作区及全局记忆互不影响。',
+                        selectScopeWorkspace: '选择工作区…',
+                        workspaceMemoryEmpty: '该工作区还没有记忆。在此分区添加的记忆仅对该工作区可见。'
                     }
                 },
 

@@ -2825,8 +2825,11 @@ export class ConversationManager {
 
     /**
      * 设置工作区 URI
+     *
+     * workspaceUri 传 undefined 表示解绑对话（恢复"跟随活动编辑器"）：
+     * 元数据持久化时该字段会被 JSON.stringify 丢弃，即从磁盘移除。
      */
-    async setWorkspaceUri(conversationId: string, workspaceUri: string): Promise<void> {
+    async setWorkspaceUri(conversationId: string, workspaceUri?: string): Promise<void> {
         // 同 setTitle：整对象读改写必须与 setCustomMetadata 共用同一条元数据写链。
         await withMetadataWriteSerialized(conversationId, async () => {
             let meta = await this.loadMetadataForWrite(conversationId);
