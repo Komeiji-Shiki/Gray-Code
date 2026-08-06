@@ -20,6 +20,48 @@ import {
 import { syncFoldedHistoryHint, syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceAllMessages, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
+import type { StreamFunctionCall } from '../../utils/functionCallMerge'
+import { calibrate, countBaseTokens, ensureTokenCounterLoaded, getCalibrationFactor } from '../../utils/tokenCounter'
+
+/**
+ * 工具调用参数的 TPS 已计文本跟踪（per-tool call id）。
+ * 用途：① OpenAI Responses 的 finalArgs 事件携带完整 JSON 且与前面的 delta 增量重复，
+ * 用「已见文本」只计增量差值，防止同一份参数 JSON 被计两次；
+ * ② 工具参数也按真实 tokenizer 计数（JSON 标点密集，字符粗估会把 1 token 估成 ~2）。
+ * 有界：流结束（done）时清空；容量超限时整体清空兜底。
+ */
+const fcSeenBodies = new Map<string, string>()
+const MAX_FC_SEEN_TRACKED = 200
+
+/** 当前流使用的模型与校准因子（模型切换时重新读取） */
+let activeModelKey = ''
+let activeFactor = 1
+/** 本轮（当前 API 调用流）累计的 base token 估算，流结束用于校准 */
+let turnBaseTokens = 0
+
+/** 从会话状态解析当前模型 key（与 checkpointActions 的 resolveConversationModelOverride 同口径） */
+function resolveModelKey(state: ChatStoreState): string {
+  const selected = state.selectedModelId?.value?.trim() ?? ''
+  if (selected) return selected
+  const model = state.currentConfig?.value?.model?.trim() ?? ''
+  return model || 'default'
+}
+
+/** 模型变化时重新读取校准因子并触发对应 tokenizer 懒加载 */
+function syncModelContext(state: ChatStoreState): void {
+  const modelKey = resolveModelKey(state)
+  if (modelKey === activeModelKey) return
+  activeModelKey = modelKey
+  activeFactor = getCalibrationFactor(modelKey)
+  ensureTokenCounterLoaded(modelKey)
+}
+
+/** record：base 估算 × 校准因子；同时累计 base 供流结束校准 */
+function recordTpsTokens(base: number, ts?: number): void {
+  if (base <= 0) return
+  turnBaseTokens += base
+  tpsMeter.record(Math.max(1, Math.round(base * activeFactor)), ts)
+}
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -308,6 +350,7 @@ export function clearAllSmoothForState(state: ChatStoreState): void {
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
+  syncModelContext(state)
   const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex === -1 || !chunk.chunk) {
     return
@@ -334,15 +377,14 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     if (!snapshotContent) {
       for (const part of chunk.chunk.delta) {
         if (part.text) {
-          // TPS 实时可视化：按文本长度粗估 token 到达（供应商无逐 chunk usage 时）。
-          // thought token 不参与统计（思考段整块/突发到达会虚高）；时间戳用 chunk.createdAt，
-          // 后台积压回放的 chunk 按原始发生时间入窗并被窗口立即修剪，不产生回放尖峰。
-          if (!part.thought) {
-            tpsMeter.record(
-              Math.ceil(part.text.length / 3),
-              typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
-            )
-          }
+          // TPS 实时可视化：thought 与正文都是模型输出（思考速度也是生成速度的一部分），
+          // 统一按模型专属 tokenizer 计数 × 自校准因子（懒加载完成前回退字符加权估算）。
+          // 时间戳用 chunk.createdAt——后台积压回放的 chunk 按原始发生时间入窗并被窗口
+          // 立即修剪，不产生回放尖峰。
+          recordTpsTokens(
+            countBaseTokens(part.text, activeModelKey),
+            typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
+          )
           if (part.thought) {
             addTextToMessage(message, part.text, true)
           } else {
@@ -353,9 +395,41 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
         }
 
         // 处理工具调用（原生 function call format）
-        // 注意：工具参数是结构化输出——OpenAI Responses 的 finalArgs 整块到达且与 delta 重复计数，
-        // 整块/突发计入实时 TPS 会造成虚高尖峰，因此工具参数不参与 TPS 统计。
+        // 工具参数 JSON 也是模型的输出，必须计入生成速度；文本按真实 tokenizer 精确计数
+        // （JSON 标点/结构字符压缩率高，字符粗估会把 1 token 估成 ~2 token）。
+        // OpenAI Responses 的 finalArgs 事件携带完整 JSON 且与前面的 delta 增量重复：
+        // 用 per-tool 已见文本只计增量差值，finalArgs 到达时文本不再增长 → 不重复计。
         if (part.functionCall) {
+          const fc = part.functionCall as StreamFunctionCall
+          const fcName = typeof fc.name === 'string' ? fc.name : ''
+          const fcBody = typeof fc.partialArgs === 'string'
+            ? fc.partialArgs
+            : (fc.args && typeof fc.args === 'object' ? JSON.stringify(fc.args) : '')
+          const recordTs = typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
+          const fcKey = typeof fc.id === 'string' && fc.id.length > 0 ? fc.id : null
+          if (fcKey) {
+            const lastBody = fcSeenBodies.get(fcKey)
+            if (lastBody === undefined) {
+              // 首次到达：函数名 + 当前参数体（finalArgs 整块场景一次计全）
+              recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+            } else if (fcBody.length >= lastBody.length) {
+              // 增量追加（partialArgs 流式语义）：只计新增部分
+              const deltaText = fcBody.slice(lastBody.length)
+              if (deltaText) {
+                recordTpsTokens(countBaseTokens(deltaText, activeModelKey), recordTs)
+              }
+            } else {
+              // 长度回退（快照/结构重置）：按当前全量重计
+              recordTpsTokens(countBaseTokens(fcBody, activeModelKey), recordTs)
+            }
+            fcSeenBodies.set(fcKey, fcBody)
+            if (fcSeenBodies.size > MAX_FC_SEEN_TRACKED) {
+              fcSeenBodies.clear()
+            }
+          } else {
+            // 无稳定 call id（罕见）：按完整长度计一次
+            recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
+          }
           handleFunctionCallPart(part, message)
         }
       }
@@ -374,6 +448,23 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     // 如果是最后一个 chunk（done=true），更新 token 信息
     // 注意：modelVersion 保持创建时的值，不从 API 响应更新
     if (chunk.chunk.done) {
+      // 本轮流输出结束：所有工具参数已到达，清空增量计数跟踪
+      fcSeenBodies.clear()
+      // 校准：用本次 API 调用的最终 usage 真值对比本轮 base 估算。
+      // 口径说明：candidatesTokenCount 在 Anthropic（output_tokens）与多数 OAI 兼容渠道
+      // （completion_tokens）中已包含思考 token（tokenRate.ts 同口径），而估算端
+      // countBaseTokens 同样计入 thought 文本——两边都含思考，直接对齐，不再减
+      // thoughtsTokenCount（剔除会让真值偏小、校准因子被压低，TPS 显示反而偏低）。
+      const finalUsage = chunk.chunk.usage
+      if (finalUsage && turnBaseTokens > 0) {
+        const realTokens = typeof finalUsage.candidatesTokenCount === 'number'
+          ? finalUsage.candidatesTokenCount
+          : 0
+        if (realTokens > 0) {
+          calibrate(activeModelKey, turnBaseTokens, realTokens)
+        }
+      }
+      turnBaseTokens = 0
       // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
       if (message.tools) {
         for (const tool of message.tools) {
