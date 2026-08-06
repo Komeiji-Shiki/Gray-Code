@@ -5,7 +5,7 @@
       <p class="section-desc">{{ t('components.settings.dependencySettings.description') }}</p>
     </div>
     
-    <div class="install-path" v-if="installPath">
+    <div class="install-path" v-if="installPath" data-search-anchor="install-path">
       <span class="label">{{ t('components.settings.dependencySettings.installPath') }}</span>
       <code>{{ installPath }}</code>
     </div>
@@ -17,7 +17,7 @@
     </div>
     
     <!-- 按工具分组的依赖面板 -->
-    <div class="tool-panels">
+    <div class="tool-panels" data-search-anchor="dependency-tools">
       <div
         v-for="panel in toolPanels"
         :key="panel.toolName"

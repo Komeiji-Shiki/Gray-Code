@@ -2042,6 +2042,12 @@ const zhCN = {
                 backToChat: '返回对话',
                 sidebarCollapse: '收起边栏',
                 sidebarExpand: '展开边栏',
+                search: {
+                    placeholder: '搜索设置项…',
+                    clear: '清除搜索',
+                    noResults: '未找到匹配的设置项',
+                    hint: '输入关键词查找设置，回车打开第一个结果'
+                },
                 sections: {
                     channel: {
                         title: '渠道设置',
@@ -2086,6 +2092,10 @@ const zhCN = {
                     subagents: {
                         title: '子代理',
                         description: '配置可由 AI 调用的专业子代理'
+                    },
+                    dependencies: {
+                        title: '扩展依赖',
+                        description: '安装和管理 Python/Node 等扩展依赖工具'
                     },
                     sound: {
                         title: '通知系统',
