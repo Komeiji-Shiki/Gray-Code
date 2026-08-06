@@ -68,6 +68,9 @@ import './progress/validate_progress_document'
 // History 工具
 import './history/history_search'
 
+// Activity 工具
+import './activity/get_activity_stats'
+
 // Memory 工具
 import './memory/memory_wake'
 import './memory/memory_note'

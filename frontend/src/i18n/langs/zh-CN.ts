@@ -272,7 +272,9 @@ const zhCN = {
             shortMinute: 'm',
             dailyTitle: '每日使用时长',
             monthlyTitle: '每月使用时长（点击月份查看每日明细）',
+            monthlyTitleShort: '每月使用时长',
             monthActiveDays: '{days} 天活跃',
+            onlyShowLatest: '仅显示最近 {days} 天',
             expandMonth: '展开该月每日明细',
             heatmapTitle: '最近 7 天作息热力（悬停查看详情）'
         },
@@ -321,6 +323,8 @@ const zhCN = {
             skills: 'Skills',
             summarizeContext: '总结上下文',
             tpsTooltip: 'TPS（tokens per second）',
+            tpsTokenizerReal: '模型 tokenizer 精确计数',
+            tpsTokenizerEstimate: 'tokenizer 未就绪，按字符估算',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',

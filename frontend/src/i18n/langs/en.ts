@@ -271,7 +271,9 @@ const en: LanguageMessages = {
             shortMinute: 'm',
             dailyTitle: 'Daily usage',
             monthlyTitle: 'Monthly usage (click a month for daily details)',
+            monthlyTitleShort: 'Monthly usage',
             monthActiveDays: '{days} active days',
+            onlyShowLatest: 'Showing latest {days} days only',
             expandMonth: 'Expand daily details for this month',
             heatmapTitle: 'Activity heatmap (last 7 days, hover for details)'
         },
@@ -320,6 +322,8 @@ const en: LanguageMessages = {
             skills: 'Skills',
             summarizeContext: 'Summarize context',
             tpsTooltip: 'TPS (tokens per second)',
+            tpsTokenizerReal: 'Accurate model tokenizer counting',
+            tpsTokenizerEstimate: 'Tokenizer not ready, estimating by characters',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
