@@ -2224,7 +2224,12 @@ const zhCN = {
                         addTooLong: '内容超过单条记忆上限（{limit} 字节）。',
                         truncatedNotice: '记忆超过 {limit} 条，列表仅展示前 {limit} 条（其余可在对话中通过 memory_recall 检索）。',
                         deleteConfirmTitle: '删除记忆条目',
-                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
+                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
+                        selectAll: '全选',
+                        deleteSelected: '删除所选（{count}）',
+                        deletedBatch: '已删除 {count} 条记忆。',
+                        batchDeleteConfirmTitle: '批量删除记忆条目',
+                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。'
                     }
                 },
 
@@ -2527,7 +2532,7 @@ const zhCN = {
                     memory_recall: '搜索全部永久记忆，支持正则表达式匹配。',
                     memory_compress: '执行待处理的记忆压缩合并，优化记忆存储。',
                     memory_zoom: '展开记忆树节点查看详细内容。',
-                    memory_forget: '丢弃错误的记忆树摘要（不删除原始记忆）。',
+                    memory_forget: '丢弃错误的记忆树摘要；或删除单条/闭区间原始记忆（如 "5" 删单条、"1,3" 删 1 到 3）。',
                     memory_config: '查看或修改永久记忆系统的配置参数。',
                     insert_code: '在指定行前插入代码，可用「最后一行 + 1」追加到文件末尾。',
                     delete_code: '删除文件中指定行范围内的代码。',

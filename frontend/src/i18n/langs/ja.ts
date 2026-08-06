@@ -2223,7 +2223,12 @@ const ja: LanguageMessages = {
                         addTooLong: '内容が 1 件あたりの上限（{limit} バイト）を超えています。',
                         truncatedNotice: '記憶が {limit} 件を超えています。リストには最初の {limit} 件のみ表示されます（残りはチャットで memory_recall を使って検索できます）。',
                         deleteConfirmTitle: '記憶エントリを削除',
-                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
+                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
+                        selectAll: 'すべて選択',
+                        deleteSelected: '選択した {count} 件を削除',
+                        deletedBatch: '{count} 件の記憶を削除しました。',
+                        batchDeleteConfirmTitle: '記憶エントリを一括削除',
+                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。'
                     }
                 },
 
@@ -2526,7 +2531,7 @@ const ja: LanguageMessages = {
                     memory_recall: 'すべての永続記憶を正規表現で検索します。',
                     memory_compress: '保留中の記憶の圧縮とマージを実行します。',
                     memory_zoom: '記憶ツリーノードを展開して詳細を表示します。',
-                    memory_forget: '誤った記憶ツリーのサマリーを破棄します（元の記憶は保持）。',
+                    memory_forget: '誤った記憶ツリーのサマリーを破棄します。または単一 ID／閉区間で元の記憶を削除します（例: "5" で 1 件削除、"1,3" で ID 1〜3 を削除）。',
                     memory_config: '永続記憶システムの設定パラメータを表示または変更します。',
                     insert_code: '指定行の前にコードを挿入します。「最終行 + 1」で末尾に追加できます。',
                     delete_code: 'ファイル内の指定行範囲のコードを削除します。',

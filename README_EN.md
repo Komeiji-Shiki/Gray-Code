@@ -141,7 +141,7 @@ Tool availability depends on settings, dependencies, channel capabilities, and w
 | Sub-Agents | subagents | Delegate work to specialized agents in the foreground or background, continue from `continueFromRunId`, and inspect runs in SubAgent Monitor |
 | History, skills, notifications | history_search, read_skill, show_windows_notification | Search conversation history, load Skill content, and show Windows notifications |
 | Usage time | get_activity_stats | Query IDE usage time statistics (daily usage minutes, recent schedule heatmap, continuous working duration); timestamps only |
-| Memory | memory_wake, memory_note, memory_recall, memory_compress, memory_zoom, memory_forget, memory_config | OptMem permanent memory: wake, record, search, compress, expand, discard, and configure |
+| Memory | memory_wake, memory_note, memory_recall, memory_compress, memory_zoom, memory_forget, memory_config | OptMem permanent memory: wake, record, search, compress, expand, discard summaries or delete single/closed-range entries, and configure |
 
 ## Settings Pages
 
