@@ -104,7 +104,27 @@ export class MementoStorageAdapter implements ConfigStorageAdapter {
         private memento: any,  // vscode.Memento
         private key: string = 'limcode.configs'
     ) {}
-    
+
+    /**
+     * 写队列：把「读 → 改 → 整体写回」串行化。Memento 没有 per-key 原子更新，
+     * 并发 save/delete（如 SettingsExporter.importChannelConfigs 循环导入与设置页
+     * 并发编辑）基于同一旧 map 整体写回时，后写会覆盖先写，渠道配置静默丢失。
+     */
+    private writeQueue: Promise<void> = Promise.resolve();
+
+    private serializeMutation<T>(mutator: (all: Record<string, ChannelConfig>) => T | Promise<T>): Promise<T> {
+        const run = this.writeQueue.then(async () => {
+            const all = await this.getAll();
+            return await mutator(all);
+        });
+        // 链尾吞掉本次错误（调用方仍从 run 拿到真实结果），防止单次失败阻塞后续写
+        this.writeQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
+    }
+
     private async getAll(): Promise<Record<string, ChannelConfig>> {
         return this.memento.get(this.key, {});
     }
@@ -114,9 +134,10 @@ export class MementoStorageAdapter implements ConfigStorageAdapter {
     }
     
     async save(config: ChannelConfig): Promise<void> {
-        const all = await this.getAll();
-        all[config.id] = config;
-        await this.setAll(all);
+        return this.serializeMutation(async all => {
+            all[config.id] = config;
+            await this.setAll(all);
+        });
     }
     
     async load(configId: string): Promise<ChannelConfig | null> {
@@ -125,9 +146,10 @@ export class MementoStorageAdapter implements ConfigStorageAdapter {
     }
     
     async delete(configId: string): Promise<void> {
-        const all = await this.getAll();
-        delete all[configId];
-        await this.setAll(all);
+        return this.serializeMutation(async all => {
+            delete all[configId];
+            await this.setAll(all);
+        });
     }
     
     async list(): Promise<string[]> {

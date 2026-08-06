@@ -90,13 +90,19 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
   /**
    * 竞速等待一组信号，超时兜底（避免等待方永久挂起）。
+   *
+   * @returns true = 超时胜出（信号未全部落定）；false = 信号先落定
    */
-  private async raceWithTimeout(signals: Array<Promise<void> | undefined>, timeoutMs: number): Promise<void> {
+  private async raceWithTimeout(signals: Array<Promise<void> | undefined>, timeoutMs: number): Promise<boolean> {
     const pending = signals.filter((signal): signal is Promise<void> => !!signal);
-    if (pending.length === 0) return;
+    if (pending.length === 0) return false;
+    let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, Math.max(0, timeoutMs));
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, Math.max(0, timeoutMs));
     });
     try {
       await Promise.race([Promise.all(pending), timeoutPromise]);
@@ -104,6 +110,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       // 信号先落定时清理 timer，避免残留 open handle
       if (timer) clearTimeout(timer);
     }
+    return timedOut;
   }
 
   /**
@@ -175,6 +182,11 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       // 被替换的旧流已不在 controllers 中：记录其退出信号，供「停止后立即重发」的
       // abortAndWaitForCompletion / waitForOldStreamCompletion 等待其 finally 完成。
       this.trackRetiredExit(conversationId, existing);
+      // 同时释放 waitForIdle 的当前代等待者：旧流 finally 的 delete() 因引用不匹配
+      // 只释放退休信号、不会释放 idleWaiters，若这里不放行，等待者会错过唤醒窗口，
+      // 只能等到新流也结束后才在重检中醒来（新流挂起时即永久挂起）。释放后等待者
+      // 会重检并针对新控制器重新注册，语义不变。
+      this.releaseIdleWaiters(conversationId);
     }
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
@@ -317,7 +329,23 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
 
       const retired = this.retiredExits.get(conversationId);
       if (!retired) return;
-      await retired.chain;
+      // 超时兜底：退休旧流的 finally 可能因工具挂死/网络挂起长期不执行，其退出信号链
+      // 永不 resolve。与 abortAndWaitForCompletion 的退出等待同一超时口径；**超时后必须
+      // 返回**（而不是 continue 循环重试）——否则 waitForIdle 会每 6s 重试一次、
+      // 永不返回，chat.awaitConversationIdle → backgroundTaskStore.flushReports 依旧
+      // 永久挂起。超时视同「旧流已退出」：调用方按既有语义继续。
+      // 顺带移除该代退出记录：晚到的 finally 由 releaseRetiredExit 按 resolver 释放，
+      // 条目残留会让后续 waitForIdle 再白等 6s。
+      const timedOut = await this.raceWithTimeout(
+        [retired.chain],
+        OLD_STREAM_EXIT_WAIT_TIMEOUT_MS
+      );
+      if (timedOut) {
+        if (this.retiredExits.get(conversationId) === retired) {
+          this.retiredExits.delete(conversationId);
+        }
+        return;
+      }
     }
   }
 

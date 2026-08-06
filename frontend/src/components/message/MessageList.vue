@@ -19,7 +19,8 @@ export {
 
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
-import MessageItem, { pruneBackgroundTaskViewModes } from './MessageItem.vue'
+import MessageItem, { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './MessageItem.vue'
+import { pruneMediumTrimmedByMessageId } from './MessageRenderBlock.vue'
 import SummaryMessage from './SummaryMessage.vue'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import { useChatStore } from '../../stores'
@@ -762,7 +763,10 @@ watch(() => props.tabId, (newTabId, oldTabId) => {
   if (oldTabId && oldTabId !== newTabId) {
     saveCurrentUiState(oldTabId)
     // M1-1：对话/标签页切换时清理已不存在的消息视图模式（非渲染热路径，仅切换时执行）
-    pruneBackgroundTaskViewModes(collectActiveBackgroundTaskMessageIds())
+    const activeIds = collectActiveBackgroundTaskMessageIds()
+    pruneBackgroundTaskViewModes(activeIds)
+    pruneThoughtViewModes(activeIds)
+    pruneMediumTrimmedByMessageId(activeIds)
   }
   restoreUiState(newTabId)
 }, { immediate: true })

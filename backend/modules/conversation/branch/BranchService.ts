@@ -54,6 +54,7 @@ import {
     findUnsyncedFunctionResponses,
     importLinearHistory,
     insertNode,
+    isActiveEmptyPlaceholder,
     isFunctionResponseMessage,
     pruneDeletedNodes,
     rebaseActivePathFromHistory,
@@ -71,6 +72,7 @@ import {
 } from './BranchGraph';
 import { BranchGraphRepository, type BranchGraphReadResult } from './BranchGraphRepository';
 import {
+    BranchContentMetadata,
     BranchError,
     BranchNodeKind,
     BranchExportRecord,
@@ -708,17 +710,34 @@ export class BranchService {
             }
 
             const tail = graph.activeTailNodeId ? graph.nodes[graph.activeTailNodeId] : undefined;
-            if (tail
-                && tail.parts.length === 0
-                && (tail.kind === 'reroll' || tail.kind === 'edit')) {
+            if (isActiveEmptyPlaceholder(tail)) {
                 // 进行中的分支流以空占位锁定活跃路径；总结可能发生在模型请求前，不能在此抢占
                 // activeTail。finishReroll 会处理本次流的尾部，下一次分支操作仍有完整对账兜底。
+                // 超龄空占位（进程崩溃/被杀遗留）不再视为活跃流，直接收敛，避免图永久冻结。
                 this.deferredStructuralSyncConversationIds.add(conversationId);
                 return { synced: false, deferred: true };
             }
 
             const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const next = rebaseActivePathFromHistory(graph, history);
+            let next = rebaseActivePathFromHistory(graph, history);
+            // 收敛被移出活跃路径的空占位幽灵（超龄占位经 isActiveEmptyPlaceholder 放行后
+            // rebase 会把它们降级为非活跃节点）：空内容、非软删的 reroll/edit 节点没有其它
+            // 回收路径，会永久占用候选上限（每父节点 10 个）并在面板显示空条目。软删后可被
+            // prune 清理，且不破坏候选归档语义。进行中的流不会产生非活跃空节点（其占位是
+            // 活跃尾），此处只会命中崩溃/被杀遗留的幽灵。
+            const reconciledPathIds = new Set(activePath(next));
+            for (const node of Object.values(next.nodes)) {
+                if (node.deleted || (node.parts?.length ?? 0) !== 0) {
+                    continue;
+                }
+                if (node.kind !== 'reroll' && node.kind !== 'edit') {
+                    continue;
+                }
+                if (reconciledPathIds.has(node.id)) {
+                    continue;
+                }
+                next = softDeleteNode(next, node.id);
+            }
             await this.validateAndSave(conversationId, next);
             this.deferredStructuralSyncConversationIds.delete(conversationId);
             log.info('branch_structural_history_synced', { conversationId, reason });
@@ -780,6 +799,27 @@ export class BranchService {
         });
     }
 
+    /**
+     * 原地更新指定节点的 contentMetadata（保留分支的编辑的往返元数据）。
+     *
+     * 用途：edit 流程的 branch 模式——editCandidate 新建用户节点时拿不到主历史侧元数据
+     * （isUserInput / tokenCountByChannel 等），待 addContent 落盘后按持久化内容补写；
+     * 不补写则切分支重写主历史时这些字段丢失（动态提示词插入点、前端用户图标、裁剪统计口径）。
+     */
+    async updateNodeMetadata(
+        conversationId: string,
+        nodeId: string,
+        contentMetadata: BranchContentMetadata | undefined
+    ): Promise<void> {
+        return await this.mutateGraph(conversationId, graph => {
+            const node = graph.nodes[nodeId];
+            if (!node) {
+                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
+            }
+            const next = updateNodeContent(graph, nodeId, { contentMetadata });
+            return { next, result: undefined };
+        });
+    }
     /**
      * 创建编辑分支候选（TREE-03 底座）：在旧用户节点的父节点下新增 edit 候选并切换 activeChildId，
      * 旧子树完整保留。无分支图时同样先建线性基线图。

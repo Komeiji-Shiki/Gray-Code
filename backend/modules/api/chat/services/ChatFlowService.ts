@@ -62,6 +62,7 @@ import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 import {
   BranchError,
   activePath,
+  extractBranchContentMetadata,
   getGlobalBranchService,
   isFunctionResponseMessage,
 } from '../../../conversation/branch';
@@ -1732,6 +1733,29 @@ export class ChatFlowService {
           isUserInput: true,
         });
 
+        // 3.11b 把持久化后的用户消息元数据补写进图节点——editCandidate 建节点时只有
+        // parts/role/kind，没有主历史侧元数据（isUserInput/tokenCountByChannel 等）；
+        // 不补写则切分支重写主历史时这些字段丢失（动态提示词插入点、前端用户图标、裁剪统计口径）。
+        try {
+          const persistedHistory = await this.conversationManager.getMessagesRaw(conversationId);
+          const persistedUserMessage = persistedHistory.find(message => message.id === newUserNodeId);
+          if (persistedUserMessage) {
+            await branchService.updateNodeMetadata(
+              conversationId,
+              newUserNodeId,
+              extractBranchContentMetadata(persistedUserMessage),
+            );
+          }
+        } catch (metadataError) {
+          // 元数据补写失败不阻断编辑主流程：切分支时的完整对账（rewriteHistoryFromBranchGraph）
+          // 会按图节点内容重建，缺少数个非拓扑字段只影响展示/裁剪口径，下次分支操作可再修复。
+          this.log.warn('edit_node_metadata_sync_failed', {
+            conversationId,
+            newUserNodeId,
+            error: (metadataError as Error)?.message ?? String(metadataError),
+          });
+        }
+
         // branch 模式：parentNodeId 必非 null（根节点已在 resolveEditTargetNode 拒绝）
         editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId! };
       }
@@ -2589,9 +2613,19 @@ export class ChatFlowService {
       try {
         const branchService = getGlobalBranchService();
         if (branchService) {
-          await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
-            lastKeptMessageId,
-          });
+          // 截断区间内含总结消息：原文的 isSummarized 标记已恢复，必须按当前主历史重建
+          // 活跃路径与消息元数据（summary_deleted），否则切分支后已恢复的原文会被图中
+          // 陈旧的 isSummarized 元数据重新压缩；否则走常规「软删被删节点及其后续子树」。
+          const deletedWasSummary = historyBeforeDelete
+            .slice(targetIndex)
+            .some(message => message.isSummary === true);
+          if (deletedWasSummary) {
+            await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+          } else {
+            await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
+              lastKeptMessageId,
+            });
+          }
         }
       } catch (error) {
         this.log.warn('branch_delete_to_sync_failed', {

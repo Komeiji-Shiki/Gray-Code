@@ -45,6 +45,10 @@ export class FileSettingsStorage implements SettingsStorage {
     
     /**
      * 保存设置
+     *
+     * 原子写：先写同目录临时文件再 rename 覆盖——直接 writeFile 线上文件在进程崩溃时
+     * 会留下半截 JSON（load 抛错，设置整体不可用）。生产走 VSCodeSettingsStorage，
+     * 本实现用于 legacy/测试路径，同样保证崩溃安全性。
      */
     async save(settings: GlobalSettings): Promise<void> {
         try {
@@ -54,7 +58,9 @@ export class FileSettingsStorage implements SettingsStorage {
             
             // 格式化 JSON（缩进 2 空格）
             const content = JSON.stringify(settings, null, 2);
-            await fs.writeFile(this.filePath, content, 'utf-8');
+            const tmpPath = `${this.filePath}.tmp`;
+            await fs.writeFile(tmpPath, content, 'utf-8');
+            await fs.rename(tmpPath, this.filePath);
         } catch (error) {
             console.error('Failed to save settings:', error);
             throw error;

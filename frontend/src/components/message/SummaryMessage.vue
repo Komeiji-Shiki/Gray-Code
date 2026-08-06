@@ -78,8 +78,8 @@ const tokenModeLabel = computed(() => summaryTokenStats.value
 
 // 删除总结消息（后端会自动恢复其覆盖的原文，避免上下文真空）
 async function handleDelete() {
-  if (isDeleting.value) return
-  
+  if (isDeleting.value || isRestoring.value) return  // 与恢复互斥，防并发双 IPC + 双次历史重载
+
   isDeleting.value = true
   try {
     await chatStore.deleteSingleMessage(props.messageIndex)
@@ -93,7 +93,7 @@ async function handleDelete() {
 
 // 恢复原文：取消该总结覆盖消息的 isSummarized 标记并删除总结消息，原文重新参与发送
 async function handleRestore() {
-  if (isRestoring.value) return
+  if (isRestoring.value || isDeleting.value) return  // 与删除互斥
   if (!props.message.id) return
 
   isRestoring.value = true
