@@ -1921,7 +1921,9 @@ ${descriptionSuffix}`,
                     const finalFailedCount = isPartial ? failedCount + rejectedBlockIndices.length : failedCount;
                     const message = wasAccepted
                         ? isPartial
-                            ? `Partially applied hunks to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} rejected. Saved successfully.`
+                            ? rejectedBlockIndices.length > 0
+                              ? `Partially applied hunks to ${filePath}: ${finalAppliedCount} succeeded, ${rejectedBlockIndices.length} rejected, ${failedCount} skipped (unmatched). Saved successfully.`
+                              : `Applied hunks to ${filePath}: ${finalAppliedCount} succeeded (content edited by user), ${failedCount} skipped (unmatched). Saved successfully.`
                             : finalFailedCount > 0
                               ? `Applied hunks to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} failed (unmatched hunks skipped). Saved successfully.`
                               : `Diff applied and saved to ${filePath}`
@@ -2116,7 +2118,9 @@ ${descriptionSuffix}`,
                 let message: string;
                 if (wasAccepted) {
                     if (isPartial) {
-                        message = `Partially applied diffs to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} rejected. Saved successfully.`;
+                        message = rejectedBlockIndices.length > 0
+                            ? `Partially applied diffs to ${filePath}: ${finalAppliedCount} succeeded, ${rejectedBlockIndices.length} rejected, ${failedCount} skipped (unmatched). Saved successfully.`
+                            : `Applied diffs to ${filePath}: ${finalAppliedCount} succeeded (content edited by user), ${failedCount} skipped (unmatched). Saved successfully.`;
                     } else if (finalFailedCount > 0) {
                         message = `Applied diffs to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} failed (unmatched diffs skipped). Saved successfully.`;
                     } else {

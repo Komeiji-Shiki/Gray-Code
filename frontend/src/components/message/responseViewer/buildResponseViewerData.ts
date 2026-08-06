@@ -653,11 +653,16 @@ function deriveToolStatusFromResult(
       return 'warning'
     }
 
-    // 部分接受（apply_diff 返回 partial:true 或 status:'partial'）→ warning
+    // 部分接受（apply_diff 返回 partial:true 或 status:'partial'，或混合成败计数）→ warning
     const data = record.data
     if (data && typeof data === 'object') {
       const d = data as Record<string, unknown>
       if (d.partial === true || d.status === 'partial') {
+        return 'warning'
+      }
+      const appliedCount = d.appliedCount
+      const failedCount = d.failedCount
+      if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {
         return 'warning'
       }
     }

@@ -780,17 +780,6 @@ export class DiffManager {
         // 部分接受标记必须写回 PendingDiff：session.accept 只把 outcome 存进 DiffReviewSession，
         // 工具 handler 读的是 PendingDiff（getDiff），不记录 partial 就无法区分"全部接受"与"部分接受"。
         const isPartial = options?.partial ?? !!diff.userEditedContent;
-        if (isPartial) {
-            diff.partial = true;
-            // 记录被拒绝的块索引（cleanup 会移除 CodeLens session，必须在此前统计）
-            const provider = getDiffCodeLensProvider();
-            const lensSession = provider.getSession(diff.id);
-            if (lensSession) {
-                diff.rejectedBlockIndices = lensSession.blocks
-                    .filter((b) => b.rejected)
-                    .map((b) => b.index);
-            }
-        }
 
         const session = this.diffSessions.get(diff.id);
         const finalized = session
@@ -799,6 +788,24 @@ export class DiffManager {
         if (!finalized) {
             return;
         }
+
+        if (isPartial) {
+            diff.partial = true;
+            // 记录被拒绝的块索引（cleanup 会移除 CodeLens session，必须在此前统计）
+            const provider = getDiffCodeLensProvider();
+            const lensSession = provider.getSession(diff.id);
+            // lensSession 为 null（如 skip-diff-view 路径）时显式写空数组，保证
+            // partial=true 时 rejectedBlockIndices 恒为数组，消费端 ?? [] 兜底一致
+            diff.rejectedBlockIndices = lensSession
+                ? lensSession.blocks.filter((b) => b.rejected).map((b) => b.index)
+                : [];
+        } else {
+            // 显式清除可能残留的 partial 字段：若此前一次终结（如防御性早退）曾写入，
+            // 后续"全部接受"再终结时必须清掉，避免把全接受误报为 partial
+            delete diff.partial;
+            delete diff.rejectedBlockIndices;
+        }
+
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
         this.evictOldFinalizedDiffs(diff.id);

@@ -229,6 +229,21 @@ function deriveToolResultStatus(
 ): ToolUsage['status'] {
   if (typeof error === 'string' && error.trim()) return 'error'
   if (result && result.success === false) return 'error'
+
+  // 部分接受（apply_diff 返回 partial:true 或 status:'partial'，或混合成败计数）→ warning
+  if (result) {
+    const data = result.data
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>
+      if (d.partial === true || d.status === 'partial') return 'warning'
+      const appliedCount = d.appliedCount
+      const failedCount = d.failedCount
+      if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {
+        return 'warning'
+      }
+    }
+  }
+
   return 'success'
 }
 
