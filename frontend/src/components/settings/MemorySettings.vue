@@ -61,6 +61,8 @@ interface LogEntry {
   date: string
   text: string
 }
+// 设置页一次性最多加载/展示的原始记忆条目数（与后端 getMemoryEntries 默认 limit 对齐）
+const ENTRIES_LIMIT = 5000
 const entries = ref<LogEntry[]>([])
 const entriesLoading = ref(false)
 const entriesTotal = ref(0)
@@ -107,6 +109,7 @@ async function addEntry() {
     })
     statusError.value = false
     await loadEntries()
+    setTimeout(() => { statusMessage.value = '' }, 3000)
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to add entry'
     statusError.value = true
@@ -174,7 +177,7 @@ async function loadConfig() {
 async function loadEntries() {
   entriesLoading.value = true
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', { limit: 5000 })
+    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT })
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
@@ -442,7 +445,7 @@ onMounted(() => {
         <!-- 截断提示：条目超过展示上限时提示，避免误以为数据丢失 -->
         <div v-if="entriesTruncated" class="truncated-notice">
           <i class="codicon codicon-info"></i>
-          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: 5000 }) }}
+          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: ENTRIES_LIMIT }) }}
         </div>
 
         <!-- 空状态 -->
