@@ -6,12 +6,15 @@
  * 1. 提示词 & 运行时参数配置
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除）
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
 const { t } = useI18n()
+
+/** 条目列表展示上限（与后端 getMemoryEntries 默认 limit 一致） */
+const ENTRIES_LIMIT = 5000
 
 // 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）
 const DEFAULT_SYSTEM_PROMPT = [
@@ -73,6 +76,32 @@ const deleteCandidate = ref<LogEntry | null>(null)
 const showDeleteConfirm = ref(false)
 const deleteSaving = ref(false)
 
+// ─── 记忆作用域（全局 / 工作区） ───
+interface WorkspaceMemoryScope {
+  uri: string
+  name: string
+  fsPath: string
+  hasData: boolean
+}
+const memoryScope = ref<'global' | 'workspace'>('global')
+const workspaceScopes = ref<WorkspaceMemoryScope[]>([])
+const selectedWorkspaceUri = ref('')
+const scopesLoading = ref(false)
+
+/** 批量删除选中项（上限与后端 MAX_BATCH_DELETE_IDS 一致） */
+const selectedIds = ref<Set<number>>(new Set())
+const showBatchDeleteConfirm = ref(false)
+const batchDeleteSaving = ref(false)
+const batchDeleteCount = computed(() => selectedIds.value.size)
+const isAllSelected = computed(() => entries.value.length > 0 && selectedIds.value.size === entries.value.length)
+
+/** 当前作用域的 workspaceUri 参数（全局为空对象，工作区带上 uri） */
+function scopeParams(): { workspaceUri?: string } {
+  return memoryScope.value === 'workspace' && selectedWorkspaceUri.value
+    ? { workspaceUri: selectedWorkspaceUri.value }
+    : {}
+}
+
 // ─── 手动新增记忆 ───
 const newEntryText = ref('')
 const addingEntry = ref(false)
@@ -100,7 +129,7 @@ async function addEntry() {
   }
   addingEntry.value = true
   try {
-    const result = await sendToExtension<any>('addMemoryEntry', { text })
+    const result = await sendToExtension<any>('addMemoryEntry', { text, ...scopeParams() })
     newEntryText.value = ''
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.added', {
       id: result?.id ?? '',
@@ -127,7 +156,7 @@ async function confirmDeleteEntry() {
   if (!entry) return
   deleteSaving.value = true
   try {
-    await sendToExtension('deleteMemoryEntry', { id: entry.id })
+    await sendToExtension('deleteMemoryEntry', { id: entry.id, ...scopeParams() })
     deleteCandidate.value = null
     showDeleteConfirm.value = false
     // 删除后 id 重编号：整表重载（不能只按 id 过滤本地列表）
@@ -146,12 +175,73 @@ function cancelDeleteEntry() {
   showDeleteConfirm.value = false
 }
 
+// ─── 批量删除 ───
+function toggleSelectEntry(id: number) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function toggleSelectAll() {
+  if (isAllSelected.value) selectedIds.value = new Set()
+  else selectedIds.value = new Set(entries.value.map(e => e.id))
+}
+
+function requestDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  showBatchDeleteConfirm.value = true
+}
+
+async function confirmDeleteSelected() {
+  if (selectedIds.value.size === 0) return
+  batchDeleteSaving.value = true
+  const count = selectedIds.value.size
+  try {
+    await sendToExtension('deleteMemoryEntries', { ids: [...selectedIds.value], ...scopeParams() })
+    statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', { count })
+    statusError.value = false
+    setTimeout(() => { statusMessage.value = '' }, 3000)
+    selectedIds.value = new Set()
+    showBatchDeleteConfirm.value = false
+    await loadEntries()
+  } catch (e: any) {
+    statusMessage.value = e?.message || 'Failed to delete entries'
+    statusError.value = true
+  } finally {
+    batchDeleteSaving.value = false
+  }
+}
+
+function cancelDeleteSelected() {
+  showBatchDeleteConfirm.value = false
+}
+
+// 加载工作区记忆 scope 列表
+async function loadWorkspaceScopes() {
+  scopesLoading.value = true
+  try {
+    const resp = await sendToExtension<any>('listMemoryScopes', {})
+    if (Array.isArray(resp?.scopes)) {
+      workspaceScopes.value = resp.scopes
+      // 保持已选工作区有效；无效时默认选第一个（若有）
+      if (!selectedWorkspaceUri.value || !resp.scopes.some((s: WorkspaceMemoryScope) => s.uri === selectedWorkspaceUri.value)) {
+        selectedWorkspaceUri.value = resp.scopes[0]?.uri ?? ''
+      }
+    }
+  } catch {
+    workspaceScopes.value = []
+  } finally {
+    scopesLoading.value = false
+  }
+}
+
 // 加载配置
 async function loadConfig() {
   isLoading.value = true
   statusMessage.value = ''
   try {
-    const config = await sendToExtension<any>('getMemoryConfig', {})
+    const config = await sendToExtension<any>('getMemoryConfig', scopeParams())
     if (config) {
       if (typeof config.enabled === 'boolean') enabled.value = config.enabled
       if (typeof config.systemPrompt === 'string' && config.systemPrompt.trim()) {
@@ -174,7 +264,7 @@ async function loadConfig() {
 async function loadEntries() {
   entriesLoading.value = true
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', { limit: 5000 })
+    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT, ...scopeParams() })
     if (result?.entries) {
       entries.value = result.entries
       entriesTotal.value = result.total ?? result.entries.length
@@ -184,6 +274,10 @@ async function loadEntries() {
       entriesTotal.value = 0
       entriesTruncated.value = false
     }
+    // 作用域/数据变化后清理残留选中与编辑态（防旧 id 错位静默删错）
+    selectedIds.value = new Set()
+    editingId.value = null
+    editingText.value = ''
   } catch {
     entries.value = []
     entriesTotal.value = 0
@@ -225,6 +319,7 @@ async function saveEdit() {
     await sendToExtension('updateMemoryEntry', {
       id: editingId.value,
       text: editingText.value,
+      ...scopeParams(),
     })
     // 更新本地缓存
     const idx = entries.value.findIndex(e => e.id === editingId.value)
@@ -255,6 +350,7 @@ async function saveConfig() {
         partChars: partChars.value,
         partLines: partLines.value,
       },
+      ...scopeParams(),
     })
     statusMessage.value = t('components.settings.settingsPanel.memory.saved')
     statusError.value = false
@@ -280,6 +376,19 @@ function resetToDefault() {
 onMounted(() => {
   loadConfig()
   loadEntries()
+  loadWorkspaceScopes()
+})
+
+// 作用域或工作区切换：重新加载配置与条目
+watch(memoryScope, () => {
+  loadConfig()
+  loadEntries()
+})
+watch(selectedWorkspaceUri, (next, prev) => {
+  if (next !== prev && memoryScope.value === 'workspace') {
+    loadConfig()
+    loadEntries()
+  }
 })
 </script>
 
@@ -416,6 +525,48 @@ onMounted(() => {
           {{ t('components.settings.settingsPanel.memory.rawEntries.description') }}
         </p>
 
+        <!-- 记忆作用域切换（全局 / 工作区） -->
+        <div class="scope-switcher">
+          <button
+            class="scope-tab"
+            :class="{ active: memoryScope === 'global' }"
+            :title="t('components.settings.settingsPanel.memory.rawEntries.scopeGlobalHint')"
+            @click="memoryScope = 'global'"
+          >
+            <i class="codicon codicon-globe"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.scopeGlobal') }}
+          </button>
+          <button
+            class="scope-tab"
+            :class="{ active: memoryScope === 'workspace' }"
+            :title="t('components.settings.settingsPanel.memory.rawEntries.scopeWorkspaceHint')"
+            @click="memoryScope = 'workspace'"
+          >
+            <i class="codicon codicon-folder"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.scopeWorkspace') }}
+          </button>
+        </div>
+
+        <!-- 工作区记忆分区：选择已打开的工作区 -->
+        <div v-if="memoryScope === 'workspace'" class="scope-workspace-picker">
+          <label class="param-label">
+            {{ t('components.settings.settingsPanel.memory.rawEntries.selectScopeWorkspace') }}
+          </label>
+          <select
+            v-model="selectedWorkspaceUri"
+            class="scope-workspace-select"
+            :disabled="scopesLoading || workspaceScopes.length === 0"
+          >
+            <option v-if="scopesLoading" value="" disabled>
+              {{ t('common.loading') }}
+            </option>
+            <option v-for="ws in workspaceScopes" :key="ws.uri" :value="ws.uri">{{ ws.name }}</option>
+          </select>
+          <p v-if="!scopesLoading && workspaceScopes.length === 0" class="field-description">
+            {{ t('components.settings.settingsPanel.memory.rawEntries.workspaceMemoryEmpty') }}
+          </p>
+        </div>
+
         <!-- 手动新增记忆 -->
         <div class="add-entry-box">
           <textarea
@@ -423,7 +574,7 @@ onMounted(() => {
             class="form-textarea add-entry-textarea"
             rows="3"
             :placeholder="t('components.settings.settingsPanel.memory.rawEntries.addPlaceholder')"
-            :disabled="addingEntry"
+            :disabled="addingEntry || (memoryScope === 'workspace' && !selectedWorkspaceUri)"
             @keydown.ctrl.enter.prevent="addEntry"
             @keydown.meta.enter.prevent="addEntry"
           ></textarea>
@@ -431,7 +582,7 @@ onMounted(() => {
             <span class="char-count" :class="{ 'char-overflow': newEntryBytes > entryChars }">
               {{ newEntryBytes }}/{{ entryChars }} {{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}
             </span>
-            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry">
+            <button class="btn btn-sm btn-primary" @click="addEntry" :disabled="addingEntry || (memoryScope === 'workspace' && !selectedWorkspaceUri)">
               <i v-if="addingEntry" class="codicon codicon-loading codicon-modifier-spin"></i>
               <i v-else class="codicon codicon-add"></i>
               {{ t('components.settings.settingsPanel.memory.rawEntries.add') }}
@@ -442,7 +593,30 @@ onMounted(() => {
         <!-- 截断提示：条目超过展示上限时提示，避免误以为数据丢失 -->
         <div v-if="entriesTruncated" class="truncated-notice">
           <i class="codicon codicon-info"></i>
-          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: 5000 }) }}
+          {{ t('components.settings.settingsPanel.memory.rawEntries.truncatedNotice', { limit: ENTRIES_LIMIT }) }}
+        </div>
+
+        <!-- 条目工具栏：全选 + 批量删除 -->
+        <div v-if="entries.length > 0" class="entries-toolbar">
+          <label class="select-all-label">
+            <input
+              type="checkbox"
+              class="entry-checkbox"
+              :checked="isAllSelected"
+              :disabled="entriesLoading"
+              @change="toggleSelectAll"
+            />
+            {{ t('components.settings.settingsPanel.memory.rawEntries.selectAll') }}
+          </label>
+          <button
+            class="btn btn-sm btn-danger"
+            :disabled="batchDeleteCount === 0 || entriesLoading || batchDeleteSaving"
+            @click="requestDeleteSelected"
+          >
+            <i v-if="batchDeleteSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
+            <i v-else class="codicon codicon-trash"></i>
+            {{ t('components.settings.settingsPanel.memory.rawEntries.deleteSelected', { count: batchDeleteCount }) }}
+          </button>
         </div>
 
         <!-- 空状态 -->
@@ -454,6 +628,14 @@ onMounted(() => {
         <!-- 条目列表 -->
         <div v-else class="entries-list">
           <div v-for="entry in entries" :key="entry.id" class="entry-row">
+            <input
+              v-if="editingId !== entry.id"
+              type="checkbox"
+              class="entry-checkbox"
+              :checked="selectedIds.has(entry.id)"
+              :disabled="entriesLoading || batchDeleteSaving"
+              @change="toggleSelectEntry(entry.id)"
+            />
             <span class="entry-id">#{{ entry.id }}</span>
             <span class="entry-date">{{ entry.date }}</span>
             <div class="entry-text-wrap">
@@ -480,7 +662,7 @@ onMounted(() => {
               <button class="btn-icon" :title="t('common.edit')" @click="startEdit(entry)">
                 <i class="codicon codicon-edit"></i>
               </button>
-              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving" @click="requestDeleteEntry(entry)">
+              <button class="btn-icon danger" :title="t('common.delete')" :disabled="deleteSaving || entriesLoading" @click="requestDeleteEntry(entry)">
                 <i class="codicon codicon-trash"></i>
               </button>
             </div>
@@ -497,6 +679,17 @@ onMounted(() => {
         is-danger
         @confirm="confirmDeleteEntry"
         @cancel="cancelDeleteEntry"
+      />
+
+      <!-- 批量删除记忆确认 -->
+      <ConfirmDialog
+        v-model="showBatchDeleteConfirm"
+        :title="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmTitle')"
+        :message="t('components.settings.settingsPanel.memory.rawEntries.batchDeleteConfirmMessage', { count: batchDeleteCount })"
+        :confirm-text="t('common.delete')"
+        is-danger
+        @confirm="confirmDeleteSelected"
+        @cancel="cancelDeleteSelected"
       />
 
       <!-- 提示 -->
@@ -747,6 +940,15 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.btn-danger {
+  background: var(--vscode-errorForeground, #f14c4c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
 .status-message {
   font-size: 12px;
   padding: 6px 10px;
@@ -796,6 +998,94 @@ onMounted(() => {
   font-size: 13px;
   color: var(--vscode-descriptionForeground);
   justify-content: center;
+}
+
+/* ─── 记忆作用域切换 ─── */
+.scope-switcher {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.scope-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.scope-tab:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.scope-tab.active {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.scope-tab i {
+  font-size: 13px;
+}
+
+.scope-workspace-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scope-workspace-select {
+  flex: 1;
+  max-width: 320px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+}
+
+.scope-workspace-select:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+}
+
+/* ─── 批量删除工具栏 ─── */
+.entries-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.entry-checkbox {
+  accent-color: var(--vscode-focusBorder);
+  flex-shrink: 0;
+  margin: 2px 0 0 0;
 }
 
 /* ─── 条目列表 ─── */

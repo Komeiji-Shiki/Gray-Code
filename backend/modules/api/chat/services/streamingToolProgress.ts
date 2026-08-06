@@ -21,6 +21,12 @@ export function deriveChatToolStatusFromResult(result: unknown): ChatStreamToolS
             return 'awaiting_apply';
         }
 
+        // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；
+        // 与 apply_diff 返回的 status:'partial' / partial:true 对齐
+        if ((data as any).partial === true || (data as any).status === 'partial') {
+            return 'warning';
+        }
+
         const appliedCount = (data as any).appliedCount;
         const failedCount = (data as any).failedCount;
         if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {

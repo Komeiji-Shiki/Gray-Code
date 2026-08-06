@@ -70,6 +70,16 @@ export interface PendingDiff {
     timestamp: number;
     /** 状态*/
     status: 'pending' | 'accepted' | 'rejected';
+    /**
+     * 是否为部分接受（用户拒绝了部分块或手动编辑了内容）。
+     *
+     * 为什么需要：DiffReviewSession 的 outcome 把 partial 映射为 public status 'accepted'，
+     * 工具 handler（apply_diff 等）从 PendingDiff 读不到 partial，会把"部分接受"误报成"全部接受"。
+     * 怎么改：finalizeAcceptedDiff 在终结时把 partial 标记写到 PendingDiff 上，工具结果据此返回 partial 状态。
+     */
+    partial?: boolean;
+    /** 被用户拒绝的块索引（部分接受时有效；供前端标记块级状态） */
+    rejectedBlockIndices?: number[];
     /** 关联的diff 块（用于 CodeLens）*/
     blocks?: Array<{
         index: number;
@@ -786,13 +796,36 @@ export class DiffManager {
         if (diff.status !== 'pending') {
             return;
         }
+
+        // 部分接受标记必须写回 PendingDiff：session.accept 只把 outcome 存进 DiffReviewSession，
+        // 工具 handler 读的是 PendingDiff（getDiff），不记录 partial 就无法区分"全部接受"与"部分接受"。
+        const isPartial = options?.partial ?? !!diff.userEditedContent;
+
         const session = this.diffSessions.get(diff.id);
         const finalized = session
-            ? session.accept({ partial: options?.partial ?? !!diff.userEditedContent })
+            ? session.accept({ partial: isPartial })
             : this.finalizeLegacyPendingDiff(diff, 'accepted');
         if (!finalized) {
             return;
         }
+
+        if (isPartial) {
+            diff.partial = true;
+            // 记录被拒绝的块索引（cleanup 会移除 CodeLens session，必须在此前统计）
+            const provider = getDiffCodeLensProvider();
+            const lensSession = provider.getSession(diff.id);
+            // lensSession 为 null（如 skip-diff-view 路径）时显式写空数组，保证
+            // partial=true 时 rejectedBlockIndices 恒为数组，消费端 ?? [] 兜底一致
+            diff.rejectedBlockIndices = lensSession
+                ? lensSession.blocks.filter((b) => b.rejected).map((b) => b.index)
+                : [];
+        } else {
+            // 显式清除可能残留的 partial 字段：若此前一次终结（如防御性早退）曾写入，
+            // 后续"全部接受"再终结时必须清掉，避免把全接受误报为 partial
+            delete diff.partial;
+            delete diff.rejectedBlockIndices;
+        }
+
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
         this.evictOldFinalizedDiffs(diff.id);

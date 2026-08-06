@@ -10,9 +10,26 @@ import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
 import { getSkillsManager } from '../../backend/modules/skills';
-import { getGlobalMemoryManager } from '../../backend/modules/memory';
+import { getGlobalMemoryManager, getMemoryManagerForWorkspace, listWorkspaceMemoryScopes } from '../../backend/modules/memory';
 import { getProductMetadata } from '../../backend/core/productMetadata';
 import { getExtensionVersion } from '../utils/extensionInfo';
+
+/** 批量删除的 ids 数量上限：防御超大数组触发 O(n·T) 全量 LOG 重建 */
+const MAX_BATCH_DELETE_IDS = 10000;
+
+/**
+ * 记忆 handler 解析目标 MemoryManager：
+ * - data.workspaceUri（string）→ 该工作区专属记忆实例
+ * - 未传 → 全局记忆实例（旧行为）
+ * 设置页分区明确传递作用域，不隐式使用当前激活工作区。
+ */
+async function resolveMemoryManager(data?: any): Promise<import('../../backend/modules/memory').MemoryManager | null> {
+  const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
+  if (wsUri) {
+    return getMemoryManagerForWorkspace(wsUri);
+  }
+  return getGlobalMemoryManager();
+}
 
 /**
  * 获取设置
@@ -128,12 +145,13 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
 /**
  * 获取记忆配置
  * 合并 SettingsManager 中的用户设置和 MemoryManager 的运行时配置。
+ * data.workspaceUri 可选：指定时读取该工作区记忆实例的配置。
  */
 export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const config = ctx.settingsManager.getMemoryConfig();
     // 合并 MemoryManager 的运行时配置（如果已初始化）
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (mgr) {
       const runtimeConfig = mgr.getConfig();
       return ctx.sendResponse(requestId, {
@@ -159,7 +177,7 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
     const { config } = data;
     await ctx.settingsManager.updateMemoryConfig(config);
     // 同步运行时参数到 MemoryManager（如果已初始化）
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (mgr) {
       const runtimeUpdates: Record<string, number> = {};
       if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
@@ -184,7 +202,7 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
  */
 export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendResponse(requestId, { entries: [], total: 0, initialized: false });
     }
@@ -209,7 +227,7 @@ export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => 
  */
 export const addMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -229,7 +247,7 @@ export const addMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
  */
 export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -250,7 +268,7 @@ export const updateMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
  */
 export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const mgr = getGlobalMemoryManager();
+    const mgr = await resolveMemoryManager(data);
     if (!mgr) {
       return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
     }
@@ -259,9 +277,47 @@ export const deleteMemoryEntry: MessageHandler = async (data, requestId, ctx) =>
       return ctx.sendError(requestId, 'INVALID_PARAMS', 'id (non-negative integer) is required.');
     }
     await mgr.deleteEntry(id);
-    ctx.sendResponse(requestId, { success: true });
+    ctx.sendResponse(requestId, { success: true, removed: 1 });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_MEMORY_ENTRY_ERROR', error.message || 'Failed to delete memory entry');
+  }
+};
+
+/**
+ * 批量删除多条原始记忆（按闭区间聚合后逐个删除，id 可乱序/重复）
+ */
+export const deleteMemoryEntries: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const mgr = await resolveMemoryManager(data);
+    if (!mgr) {
+      return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');
+    }
+    const { ids } = data ?? {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'ids (non-empty array) is required.');
+    }
+    if (ids.length > MAX_BATCH_DELETE_IDS) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', `ids length exceeds limit (${MAX_BATCH_DELETE_IDS}).`);
+    }
+    if (!ids.every((id) => typeof id === 'number' && Number.isInteger(id) && id >= 0)) {
+      return ctx.sendError(requestId, 'INVALID_PARAMS', 'ids must be non-negative integers.');
+    }
+    const result = await mgr.deleteEntries(ids);
+    ctx.sendResponse(requestId, { success: true, removed: result.removed });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_MEMORY_ENTRIES_ERROR', error.message || 'Failed to delete memory entries');
+  }
+};
+
+/**
+ * 枚举全部已存在的工作区记忆 scope（设置页记忆分区下拉用）
+ */
+export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    const scopes = await listWorkspaceMemoryScopes();
+    ctx.sendResponse(requestId, { scopes });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'LIST_MEMORY_SCOPES_ERROR', error.message || 'Failed to list memory scopes');
   }
 };
 
@@ -426,6 +482,8 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('addMemoryEntry', addMemoryEntry);
   registry.set('updateMemoryEntry', updateMemoryEntry);
   registry.set('deleteMemoryEntry', deleteMemoryEntry);
+  registry.set('deleteMemoryEntries', deleteMemoryEntries);
+  registry.set('listMemoryScopes', listMemoryScopes);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);

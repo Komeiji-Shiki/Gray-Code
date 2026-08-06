@@ -1942,10 +1942,22 @@ ${descriptionSuffix}`,
                     }
 
                     const autoSaveError = finalDiff?.autoSaveError;
+                    const rejectedBlockIndices = finalDiff?.rejectedBlockIndices ?? [];
+                    // 部分接受：用户拒绝了部分块（或手动编辑内容），不能把初始全量匹配统计当作"全部接受"返回。
+                    // 实际接受数 = 初始成功块 - 被拒绝块；实际失败数 = 初始失败块 + 被拒绝块。
+                    const isPartial = wasAccepted && (!!finalDiff?.partial || rejectedBlockIndices.length > 0);
+                    const finalAppliedCount = isPartial
+                        ? Math.max(0, appliedCount - rejectedBlockIndices.length)
+                        : appliedCount;
+                    const finalFailedCount = isPartial ? failedCount + rejectedBlockIndices.length : failedCount;
                     const message = wasAccepted
-                        ? failedCount > 0
-                            ? `Partially applied hunks to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`
-                            : `Diff applied and saved to ${filePath}`
+                        ? isPartial
+                            ? rejectedBlockIndices.length > 0
+                              ? `Partially applied hunks to ${filePath}: ${finalAppliedCount} succeeded, ${rejectedBlockIndices.length} rejected, ${failedCount} skipped (unmatched). Saved successfully.`
+                              : `Applied hunks to ${filePath}: ${finalAppliedCount} succeeded (content edited by user), ${failedCount} skipped (unmatched). Saved successfully.`
+                            : finalFailedCount > 0
+                              ? `Applied hunks to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} failed (unmatched hunks skipped). Saved successfully.`
+                              : `Diff applied and saved to ${filePath}`
                         : autoSaveError
                           ? `Auto-save failed for ${filePath}: ${autoSaveError}`
                           : finalDiff?.status === 'rejected'
@@ -1958,11 +1970,13 @@ ${descriptionSuffix}`,
                         data: {
                             file: filePath,
                             message,
-                            status: wasAccepted ? 'accepted' : 'rejected',
+                            status: wasAccepted ? (isPartial ? 'partial' : 'accepted') : 'rejected',
+                            partial: isPartial,
+                            rejectedBlockIndices,
                             diffCount,
                             totalCount: diffCount,
-                            appliedCount,
-                            failedCount,
+                            appliedCount: finalAppliedCount,
+                            failedCount: finalFailedCount,
                             results,
                             userEditedContent,
                             diffContentId,
@@ -2125,11 +2139,23 @@ ${descriptionSuffix}`,
                 }
 
                 const autoSaveError = finalDiff?.autoSaveError;
+                const rejectedBlockIndices = finalDiff?.rejectedBlockIndices ?? [];
+                // 部分接受：用户拒绝了部分块（或手动编辑内容），返回 partial 状态与修正后的计数。
+                const isPartial = wasAccepted && (!!finalDiff?.partial || rejectedBlockIndices.length > 0);
+                const finalAppliedCount = isPartial
+                    ? Math.max(0, appliedCount - rejectedBlockIndices.length)
+                    : appliedCount;
+                const finalFailedCount = isPartial ? failedCount + rejectedBlockIndices.length : failedCount;
                 let message: string;
                 if (wasAccepted) {
-                    message = `Diff applied and saved to ${filePath}`;
-                    if (failedCount > 0) {
-                        message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
+                    if (isPartial) {
+                        message = rejectedBlockIndices.length > 0
+                            ? `Partially applied diffs to ${filePath}: ${finalAppliedCount} succeeded, ${rejectedBlockIndices.length} rejected, ${failedCount} skipped (unmatched). Saved successfully.`
+                            : `Applied diffs to ${filePath}: ${finalAppliedCount} succeeded (content edited by user), ${failedCount} skipped (unmatched). Saved successfully.`;
+                    } else if (finalFailedCount > 0) {
+                        message = `Applied diffs to ${filePath}: ${finalAppliedCount} succeeded, ${finalFailedCount} failed (unmatched diffs skipped). Saved successfully.`;
+                    } else {
+                        message = `Diff applied and saved to ${filePath}`;
                     }
                 } else {
                     message = autoSaveError
@@ -2145,10 +2171,12 @@ ${descriptionSuffix}`,
                     data: {
                         file: filePath,
                         message,
-                        status: wasAccepted ? 'accepted' : 'rejected',
+                        status: wasAccepted ? (isPartial ? 'partial' : 'accepted') : 'rejected',
+                        partial: isPartial,
+                        rejectedBlockIndices,
                         diffCount: diffs.length,
-                        appliedCount,
-                        failedCount,
+                        appliedCount: finalAppliedCount,
+                        failedCount: finalFailedCount,
                         results: diffResults,
                         userEditedContent,
                         diffContentId,

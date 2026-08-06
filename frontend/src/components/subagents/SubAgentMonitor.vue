@@ -604,7 +604,17 @@ function getFunctionResponseMap(contents: Content[]): Map<string, NonNullable<Co
 function deriveToolStatus(result: unknown): ToolUsage['status'] {
   const r = result as any
   if (r?.success === false || r?.error || r?.cancelled || r?.rejected) return 'error'
-  if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) return 'warning'
+  const data = r?.data
+  if (data && typeof data === 'object') {
+    if ((data as any).status === 'pending') return 'awaiting_apply'
+    // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；与主聊天状态推导一致
+    if ((data as any).partial === true || (data as any).status === 'partial') return 'warning'
+    const appliedCount = (data as any).appliedCount
+    const failedCount = (data as any).failedCount
+    if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {
+      return 'warning'
+    }
+  }
   return 'success'
 }
 

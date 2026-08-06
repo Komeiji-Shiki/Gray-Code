@@ -229,6 +229,7 @@ const en: LanguageMessages = {
                 saveWorkspaceHint: 'Add the current workspace to the saved list',
                 saveWorkspaceSaved: 'The current workspace is already in the saved list',
                 removeWorkspace: 'Remove from saved',
+                openTag: 'Open',
                 noSavedWorkspaces: 'No saved workspaces'
             }
         },
@@ -2240,7 +2241,18 @@ const en: LanguageMessages = {
                         addTooLong: 'Content exceeds the per-entry limit ({limit} bytes).',
                         truncatedNotice: 'More than {limit} memories: only the first {limit} are shown here (use memory_recall in chat to search the rest).',
                         deleteConfirmTitle: 'Delete memory entry',
-                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).'
+                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).',
+                        selectAll: 'Select All',
+                        deleteSelected: 'Delete Selected ({count})',
+                        deletedBatch: 'Deleted {count} memories.',
+                        batchDeleteConfirmTitle: 'Delete memory entries',
+                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).',
+                        scopeGlobal: 'Global Memory',
+                        scopeGlobalHint: 'Default memory shared by all workspaces. The AI uses global memory when there is no workspace context.',
+                        scopeWorkspace: 'Workspace Memory',
+                        scopeWorkspaceHint: 'Memory stored independently per workspace; it does not affect other workspaces or global memory.',
+                        selectScopeWorkspace: 'Select a workspace…',
+                        workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible in this workspace.'
                     }
                 },
 
@@ -2543,7 +2555,7 @@ const en: LanguageMessages = {
                     memory_recall: 'Search all permanent memories with regex support.',
                     memory_compress: 'Execute pending memory compression and merging.',
                     memory_zoom: 'Expand a memory tree node to view details.',
-                    memory_forget: 'Delete raw memories: a single numeric ID means truncation mode, removing that ID and all memories after it; IDs are listed in the Raw Memory Entries section of the settings page.',
+                    memory_forget: 'Discard an incorrect memory tree summary; or delete raw memories by single id or closed range (e.g. "5" deletes one, "1,3" deletes ids 1-3).',
                     memory_config: 'View or modify the permanent memory system configuration parameters.',
                     insert_code: 'Insert code before a specified line. Use "last line + 1" to append at the end.',
                     delete_code: 'Delete code within a specified line range in files.',
@@ -3125,6 +3137,8 @@ const en: LanguageMessages = {
                     pending: 'Pending review',
                     accepted: 'Accepted',
                     rejected: 'Rejected',
+                    partial: 'Partially accepted',
+                    rejectedBlock: 'This block was rejected by the user',
                     line: 'From line',
                     diffNumber: '#',
                     collapse: 'Collapse',

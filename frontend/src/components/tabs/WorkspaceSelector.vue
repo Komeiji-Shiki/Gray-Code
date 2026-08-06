@@ -54,10 +54,18 @@ const displayTooltip = computed(() => {
   return t('components.tabs.workspaceSelector.auto')
 })
 
-/** 收藏中且未在当前窗口打开的工作区（避免与上方「已打开」列表重复展示） */
+/** 已打开的工作区 URI 集合（大小写不敏感归一，收藏条目据此区分展示/点击行为） */
+const openUriSet = computed(() => {
+  const norm = (u: string) => u.toLowerCase()
+  return new Set(chatStore.workspaceList.map(ws => norm(ws.uri)))
+})
+
+/** 收藏工作区：完整展示全部收藏（含已打开条目，标注状态而非过滤掉，避免收藏「缺失」的观感） */
 const savedWorkspaces = computed(() => {
-  const openUris = new Set(chatStore.workspaceList.map(ws => ws.uri))
-  return chatStore.savedWorkspaces.filter(ws => !openUris.has(ws.uri))
+  return chatStore.savedWorkspaces.map(ws => ({
+    ...ws,
+    isOpen: openUriSet.value.has(ws.uri.toLowerCase())
+  }))
 })
 
 function updatePosition() {
@@ -217,10 +225,18 @@ onUnmounted(() => {
             v-for="ws in savedWorkspaces"
             :key="ws.uri"
             class="ws-menu-item"
+            :class="{ active: selectedValue === ws.uri }"
             :title="ws.fsPath"
-            @click="onOpenSaved(ws)"
+            @click="ws.isOpen ? selectWorkspace(ws.uri) : onOpenSaved(ws)"
           >
+            <i
+              v-if="selectedValue === ws.uri"
+              class="codicon codicon-check ws-item-check"
+            ></i>
             <span class="ws-item-label">{{ ws.name }}</span>
+            <span v-if="ws.isOpen" class="ws-item-open-tag">
+              {{ t('components.tabs.workspaceSelector.openTag') }}
+            </span>
             <button
               class="ws-item-remove"
               :title="t('components.tabs.workspaceSelector.removeWorkspace')"
@@ -378,6 +394,17 @@ onUnmounted(() => {
 
 .ws-item-remove .codicon {
   font-size: 11px;
+}
+
+.ws-item-open-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  background: rgba(127, 127, 127, 0.15);
+  user-select: none;
 }
 
 .ws-item-plus {

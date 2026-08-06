@@ -40,6 +40,11 @@
   - `ConversationManager` nodeIdCache epoch 改全局单调计数器 + LRU 容量淘汰（审查后优化）：
     计数器不归零、淘汰只删最旧条目，消除「整体清空后 0===0」与在途读盘回填的碰撞窗口。
   - `modelList` 缓存读写改浅拷贝一层（原 JSON 序列化深拷贝会丢失 undefined 字段且有全量序列化开销）；`FileSettingsStorage` tmp 文件名加随机后缀（并发 save 不再互相踩）+ rename 失败清理残留；`handleAutoSummary` 标记起点下界钳制 `Math.max(0, insertIndex - markedCount)`（负起点会把窗口外消息全部误标记）。
+  - 合入上游 7489a9c..70ecbb3（PR #19 记忆删除 + 审查收尾 + diff partial 修复）：
+    - memory_forget 语义变更：单个数字 ID 由「截断删除 ID ≥ N 的全部记忆」改为「只删除这一条原始记忆」；新增闭区间模式（`"1,3"` 逗号分隔删除 1 到 3）；MemoryManager 新增 `deleteRange` / `deleteEntries`（去重排序 + 相邻闭区间聚合、从大到小逐个删），`deleteEntry` 委托 `deleteRange`；删除采用「先清树摘要、后原子换 LOG」顺序（崩溃窗口最多摘要缺失、自愈安全，修复此前「新 LOG + 旧摘要」崩溃窗口内已删记忆在 wake 中复活的中危问题）；`logAppend` 锁内按真实 id 精确校验记录容量（消除估算竞态），`MAX_HEADER_BYTES` 常量替换 23 魔术数；设置页新增批量删除（全选/复选/危险确认，`deleteMemoryEntries` IPC，上限 10000），单删/批量删除响应带 `removed`，加载中禁用勾选/删除、残留选中与编辑态清理（防旧 id 错位删错）；三语 i18n 与前端 `memory_forget` 描述（单条/闭区间/摘要三态）同步；新增 deleteRange / memoryForgetTool 回归测试（含 NaN/非整数/lo>hi 等非法参数防御）。
+    - diff 部分接受/部分拒绝状态修复：`PendingDiff` 新增 `partial` / `rejectedBlockIndices`，`finalizeAcceptedDiff` 终结时写回 partial 标记（含被拒绝块索引统计），apply_diff 工具结果按「初始成功 - 被拒块 / 初始失败 + 被拒块」修正计数并返回 `status: 'partial'`；`DiffCodeLensProvider.updateBlockStatus` 改按业务下标 `find(b => b.index === blockIndex)`（修复混合成败时稀疏下标静默 no-op 导致会话永不 complete）；前端 apply_diff 面板 partial 徽标与 rejected 块标记、ToolMessage / responseViewer / agentRun reducer / streamChunkHandlers / SubAgentMonitor 状态派生全部识别 partial；三语 i18n 新增 `partial` / `rejectedBlock` 键。
+    - 工作区绑定记忆（fork 新增，桌面版/插件版双端生效）：记忆系统新增作用域——全局记忆（`<dataPath>/memory`，旧行为不变）与工作区记忆（`<dataPath>/memory-workspaces/<hash>/`，每个工作区独立 LOG/TREE/config）；工具层经 `ToolContext.activeWorkspaceUri` 路由到对应实例（无工作区回退全局）；设置页「原始记忆条目」分区编辑：全局 / 工作区两分区切换，工作区分区下拉选择已打开工作区后展示该工作区记忆，条目增删改与运行时参数按作用域读写（enabled/systemPrompt 保持全局）；新增 `listMemoryScopes` IPC 枚举全部工作区记忆 scope。
+    - 保存工作区显示修复（fork）：工作区下拉「已保存的工作区」完整展示全部收藏（此前过滤掉已打开的收藏条目，导致对话绑定的多个工作区中已打开者不显示），已打开的条目标注「已打开」并可点击直接固定，未打开者点击打开；三语 i18n 同步。
 
 
 ### Added

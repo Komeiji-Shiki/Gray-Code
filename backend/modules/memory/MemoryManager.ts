@@ -70,6 +70,13 @@ function assertRecordFits(id: number, date: string, text: string): void {
     }
 }
 
+/**
+ * 固定宽度记录头部 "#<id> <date> " 的最大字节开销：
+ * "#"(1) + id(最多 10 位) + " "(1) + date(ISO 日期恒 10 位) + " "(1) = 23。
+ * id 超过 10 位（99 亿+ 条记忆）时 assertRecordFits 仍会精确兜底。
+ */
+const MAX_HEADER_BYTES = 1 + 10 + 1 + 10 + 1;
+
 /** 从字节缓冲区解析多条记录 */
 function records(buf: Buffer): LogEntry[] {
     const out: LogEntry[] = [];
@@ -88,14 +95,14 @@ function records(buf: Buffer): LogEntry[] {
 
 /**
  * 各配置项的合法范围（与固定宽度记录/分页逻辑配套）：
- * - entryChars 上限须留出 "#<id> <date> " 记录头部空间（约 23 字节），否则
+ * - entryChars 上限须留出 "#<id> <date> " 记录头部空间（MAX_HEADER_BYTES），否则
  *   note/updateEntry 会在 assertRecordFits/pad 处抛 Too long——上限取
- *   LOG_REC - 1 - 23（id 增长到 10 位仍有余量），runtime 层仍有精确校验兜底；
+ *   LOG_REC - 1 - MAX_HEADER_BYTES（id 增长到 10 位仍有余量），runtime 层仍有精确校验兜底；
  * - 其余项要求为正整数，避免 0/负数导致分页、cover 或 recall 窗口行为异常。
  */
 const MEMORY_CONFIG_BOUNDS: Array<[keyof MemoryConfig, number, number]> = [
     ['wakeLines', 1, 10000],
-    ['entryChars', 1, LOG_REC - 1 - 23],
+    ['entryChars', 1, LOG_REC - 1 - MAX_HEADER_BYTES],
     ['partChars', 1, 1000000],
     ['partLines', 1, 100000],
 ];
@@ -210,6 +217,10 @@ export class MemoryManager {
             const chunks: Buffer[] = [];
             for (let k = 0; k < items.length; k++) {
                 const { date, text } = items[k];
+                // 锁内用真实分配的 id 精确校验整条记录容量（含 "#<id> <date> " 头部开销）：
+                // id 由本方法在锁内分配，此处校验与实际写入完全一致，不存在估算竞态
+                // （锁外按 logLen 估算可能低估 id 位数，并发追加时仍会在 pad() 抛晦涩 Too long）。
+                assertRecordFits(base + k, date, text);
                 chunks.push(pad(`#${base + k} ${date} ${text}`, LOG_REC));
             }
             await fs.appendFile(this.logPath(), Buffer.concat(chunks));
@@ -612,11 +623,7 @@ export class MemoryManager {
         }
 
         const today = new Date().toISOString().slice(0, 10);
-        // 整条固定宽度记录校验（含 "#<id> <date> " 头部开销）：id 由 logAppend
-        // 在锁内分配，此处用当前日志长度估算 id 位数；并发追加只可能让 id 更大、
-        // 头部更长——若当前能通过，实际写入时也必然在预算内。
-        await assertRecordFits(await this.logLen(), today, trimmed);
-
+        // 整条固定宽度记录容量校验（含头部开销）在 logAppend 锁内按真实 id 执行
         const id = await this.logAppend([{ date: today, text: trimmed }]);
 
         const nap = await this.nextNap(id + 1);
@@ -823,71 +830,62 @@ export class MemoryManager {
     }
 
     /**
-     * deleteEntry: 删除单条原始记忆（真·单条删除，不连坐 truncateLog）。
+     * deleteRange: 删除闭区间 [lo, hi] 内的所有原始记忆（真·单条/批量删除，不连坐 truncateLog）。
      *
      * LOG 记录 id = 物理序号（内嵌于记录头 "#id date text"），删除中间某条后其后的
      * 记录 id 整体前移一格，所有树摘要（按 [lo,hi) 块寻址）随之失效，一并清空
      * （下次 recall/compress 按需重建，与 updateEntry/truncateLog 的摘要清理语义一致）。
      * 采用「读全量 → 过滤 → 重编号 → tmp+rename 原子写回」，崩溃安全；
      * 与 truncateLog 的物理截断不同，本方法不会误删目标之后的记忆。
-     * 仅删除最后一条时后续 id 不变，但覆盖被删记录的尾部树摘要（如 size=2 的
+     * 仅删除尾部的区间时后续 id 不变，但覆盖被删记录的尾部树摘要（如 size=2 的
      * [T-2,T) 块、size=4 的 [0,4) 块）仍引用已删内容：若不清除，T 回升后
      * wake/zoom 会重现已删除的记忆且 pending() 认为该块已压缩而永不重建。
      */
-    async deleteEntry(id: number): Promise<{ removed: number }> {
+    async deleteRange(lo: number, hi: number): Promise<{ removed: number }> {
         const release = await this.lock.acquire();
         let T = 0;
         try {
+            // 输入校验：非整数/NaN 不得进入，避免 NaN 比较恒 false 导致静默全量重写；
+            // 负数属于“越界”，交给下方 lo < 0 检查抛 “No memory at index”，语义更准确
+            if (!Number.isInteger(lo) || !Number.isInteger(hi)) {
+                die(`Invalid delete range: lo=${lo}, hi=${hi}.`);
+            }
             const logPath = this.logPath();
             await this.repair(logPath, LOG_REC);
             T = await this.logLen();
-            if (id < 0 || id >= T) {
-                die(`No memory at index ${id}.`);
+            if (lo < 0 || lo >= T) {
+                die(`No memory at index ${lo}.`);
+            }
+            if (hi < lo || hi >= T) {
+                die(`No memory at index ${hi}.`);
             }
 
-            if (T === 1) {
-                // 唯一一条：直接清空
-                const handle = await fs.open(logPath, 'r+');
-                try {
-                    await handle.truncate(0);
-                } finally {
-                    await handle.close();
+            const rebuilt: Buffer[] = [];
+            const handle = await fs.open(logPath, 'r');
+            try {
+                const rec = Buffer.alloc(LOG_REC);
+                for (let i = 0; i < T; i++) {
+                    const { bytesRead } = await handle.read(rec, 0, LOG_REC, i * LOG_REC);
+                    if (bytesRead <= 0) break;
+                    const str = rec.subarray(0, bytesRead).toString('utf-8').trimEnd();
+                    // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
+                    if (!str) continue;
+                    if (i >= lo && i <= hi) continue;
+                    const parsed = parse(str);
+                    rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
                 }
-            } else {
-                let rebuilt: Buffer[] = [];
-                const handle = await fs.open(logPath, 'r');
-                try {
-                    const rec = Buffer.alloc(LOG_REC);
-                    for (let i = 0; i < T; i++) {
-                        const { bytesRead } = await handle.read(rec, 0, LOG_REC, i * LOG_REC);
-                        if (bytesRead <= 0) break;
-                        const str = rec.subarray(0, bytesRead).toString('utf-8').trimEnd();
-                        // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
-                        if (!str) continue;
-                        if (i === id) continue;
-                        const parsed = parse(str);
-                        rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
-                    }
-                } finally {
-                    await handle.close();
-                }
-                // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
-                // tmp+rename 原子替换，崩溃不损坏线上文件。
-                const tmpPath = `${logPath}.tmp`;
-                await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
-                await fs.rename(tmpPath, logPath);
+            } finally {
+                await handle.close();
             }
 
-            // 删除后记录编号变化（中间删除整段重编号、尾部删除长度收缩），旧树摘要
-            // 的块寻址随之失效——中间删除清空全部；尾部删除按新长度截断（与 truncateLog
-            // 同口径），清除覆盖被删记录的尾部块，保留完全位于保留区内的块。
-            // 直接用文件操作清空而不调用 treeDrop：treeDrop 内部会重新 acquire 锁（AsyncLock
-            // 不可重入，持锁调用会死锁），且其循环以当前 logLen 为界，无法清理 size > 当前
-            // 长度的旧树文件。此处仍在锁内：与并发 treePut/logAppend 串行，无交错写风险。
-            const newT = T - 1;
+            // 先清树摘要、后原子换 LOG：树是缓存，缺失只触发重建（安全）；
+            // 陈旧摘要会被 wake/zoom 当作权威数据展示（危险）。若先 rename LOG 再截断树，
+            // 崩溃窗口内新 LOG + 旧摘要共存，已删记忆会在 wake 中“复活”且 pending() 认为
+            // 已压缩永不重建。顺序反之后，崩溃窗口最多是“摘要缺失”，自愈安全。
+            const newT = T - (hi - lo + 1);
             for (let size = 2; size <= T; size *= 2) {
                 const p = this.treePath(size);
-                const keep = id < newT ? 0 : Math.floor(newT / size);
+                const keep = hi < T - 1 ? 0 : Math.floor(newT / size);
                 const n = await this.count(p, TREE_REC);
                 if (n > keep) {
                     await this.repair(p, TREE_REC);
@@ -899,11 +897,56 @@ export class MemoryManager {
                     }
                 }
             }
+
+            // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
+            // tmp+rename 原子替换，崩溃不损坏线上文件。
+            const tmpPath = `${logPath}.tmp`;
+            await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
+            await fs.rename(tmpPath, logPath);
         } finally {
             release();
         }
 
-        return { removed: 1 };
+        return { removed: hi - lo + 1 };
+    }
+
+    /**
+     * deleteEntry: 删除单条原始记忆（真·单条删除，不连坐 truncateLog）。
+     */
+    async deleteEntry(id: number): Promise<{ removed: number }> {
+        return this.deleteRange(id, id);
+    }
+
+    /**
+     * deleteEntries: 批量删除多条原始记忆（按闭区间聚合）。
+     *
+     * 接收非负整数 id 数组（可乱序、可重复），内部排序后合并相邻 id 为闭区间，
+     * 从大到小逐个 deleteRange（删除大 id 不影响小 id 的索引），
+     * 返回实际删除条数。删除后相关树摘要随 deleteRange 一并清空。
+     */
+    async deleteEntries(ids: number[]): Promise<{ removed: number }> {
+        if (!Array.isArray(ids)) {
+            die('deleteEntries: ids must be an array.');
+        }
+        const sorted = Array.from(new Set(ids)).sort((a, b) => a - b);
+        if (sorted.length === 0) {
+            return { removed: 0 };
+        }
+        // 防御：非负整数校验（调用方已校验，这里是 API 层兜底，防止 NaN/负数/浮点进入 deleteRange）
+        if (sorted.some(id => !Number.isInteger(id) || id < 0)) {
+            die('deleteEntries: ids must be non-negative integers.');
+        }
+        let removed = 0;
+        for (let i = sorted.length - 1; i >= 0; ) {
+            let j = i;
+            while (j > 0 && sorted[j] - sorted[j - 1] === 1) {
+                j--;
+            }
+            const r = await this.deleteRange(sorted[j], sorted[i]);
+            removed += r.removed;
+            i = j - 1;
+        }
+        return { removed };
     }
 
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */

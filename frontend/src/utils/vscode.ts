@@ -53,7 +53,9 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'summarizeContext',
   'checkpoint.restore',
   'checkpoint.deleteBatch',
-  'checkpoint.previewRestore'
+  'checkpoint.previewRestore',
+  // 批量删除记忆可能对交错 id 触发多次 O(n·T) 全量 LOG 重建，超 180s 会被前端误判失败
+  'deleteMemoryEntries'
 ])
 
 /**

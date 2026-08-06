@@ -274,6 +274,9 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
     // diff 等工具可能返回 data.status=pending 表示等待用户应用/审阅
     if ((data as any).status === 'pending') return 'awaiting_apply'
 
+    // 部分接受（用户拒绝了部分块或手动编辑内容）→ warning；与 apply_diff 返回的 partial 标记对齐
+    if ((data as any).partial === true || (data as any).status === 'partial') return 'warning'
+
     const appliedCount = (data as any).appliedCount
     const failedCount = (data as any).failedCount
     if (typeof appliedCount === 'number' && typeof failedCount === 'number' && appliedCount > 0 && failedCount > 0) {
