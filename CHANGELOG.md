@@ -15,6 +15,7 @@
   - 新增回归测试：`addMemory.test.ts`（note/updateEntry 记录容量校验、`listEntries(limit)` 截断语义、撕裂尾部容错、wake 批量读取一致性）、`deleteEntry.test.ts`（中间/尾部/唯一条删除、非法 id、树摘要清理与重编号连续性）。
 
 ### Changed
+  - 记忆容量校验落位优化（审查 PR #18 后）：`note` 的整条记录容量校验从锁外按 `logLen` 估算 id 改为在 `logAppend` 锁内按真实分配 id 执行（消除并发追加时 id 位数增长导致的估算偏差，彻底杜绝 `pad()` 处晦涩的 Too long）；`entryChars` 配置上限的头部开销魔数 23 提炼为 `MAX_HEADER_BYTES` 常量（附推导注释）；设置页条目列表加载上限 5000 抽为 `ENTRIES_LIMIT` 常量（与后端默认 limit 对齐），手动添加成功提示对齐 `saveConfig` 的 3 秒自动清除。
   - 思维链（思考块）视图从两态升级为三段式（对齐后台任务回流消息）：**折叠**（只保留头部标题行）/ **中展开**（默认，固定约 10 行滚动查看）/ **完全展开**；头部单击三档循环切换，头部右侧新增三个精确模式按钮（chevron-up / list-flat / chevron-down，`@click.stop` 防冒泡）；`ThoughtViewMode` 类型与 `getRenderBlockMemoDeps` 签名同步更新（`isThoughtExpanded` → `thoughtViewMode`），清理 MessageItem 中遗留的 thought 样式死代码；三语 i18n 同步；MessageRenderBlock 测试重写为三态覆盖。
   - 思维链中展开（medium）模式完善：**中展开与完全展开同源 markdown 渲染**（流式时渐进 markdown 即时渲染已定型完整段落 + 未完成尾巴 CharFlow 托管，非流式 MarkdownRenderer 直接渲染，不再显示纯文本）；**可中断自动吸底**——内容更新自动贴底跟随最新，用户向上滚动超过 40px 阈值即暂停跟随不打扰，滚回底部附近自动恢复（CharFlow 新增 `scrollContainer` / `stickBottom` 回调，贴底写在滚动容器上）；**裁剪提示**——单段超长内容触发 tailWindow 裁剪时，内容区顶部显示「内容过长，仅显示最近部分，请使用完全展开查看」提示条（CharFlow 新增 `onTrimmed` 回调，仅流式期间显示）；三语 i18n 同步。
   - 思维链中展开吸底稳定性修复：① promote 剥离内容时 CharFlow host 同步变矮、MarkdownRenderer 下一 tick 才渲染变高（两段式高度变化），原同步校正停在中间——改为 `nextTick` 后按最终 `scrollHeight` 校正；② scroll 事件由浏览器合帧派发、滞后于实际滚动，用户刚滚离底部时 append 可能误拉回——`shouldStickBottom` 增加实时位置复验（距底 ≥40px 即同步置 false 不贴底）；③ 新增 `userScrolled` 标志：未滚动/重新进入中展开时无条件贴底（避免初始 scrollTop=0 被复验误判），滚动后按位置复验；注册中展开时重置吸底状态；新增 3 个回归测试（滞后复验 / nextTick 最终高度校正 / 原有恢复路径）。
