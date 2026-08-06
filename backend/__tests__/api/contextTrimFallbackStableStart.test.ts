@@ -74,9 +74,10 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
         expect(first.trimStartIndex).toBe(3);
         expect(first.contextManagementDecision?.action).toBe('fallback_trim_applied');
-        // model（fc-a）开头 → 前置临时 user 占位 + preserved user inputs
-        expect(first.history[0]).toMatchObject({ role: 'user', isSummary: true });
-        expect(first.history[1].parts[0].functionCall?.id).toBe('a');
+        // 首条用户消息永远发送（任务锚点）+ preserved 用户输入档案 + 从切点开始的 suffix
+        expect(first.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'old' }] });
+        expect(first.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(first.history[2].parts[0].functionCall?.id).toBe('a');
 
         // 工具结果小幅增长 100 tokens（成对追加 fc-c + fr-c），总输入仍在安全预算内。
         history = [
@@ -101,12 +102,12 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
         expect(first.trimStartIndex).toBe(3);
 
-        // 工具结果暴涨 1200 tokens：加上 preserved 输入后恰好等于 1300 的完整窗口。
-        // 95% 预留不能把它提前升级成硬拒绝，应退到完整窗口边界继续。
+        // 工具结果暴涨 1100 tokens：加上 preserved 输入与首条用户消息（任务锚点，100 tokens）后
+        // 恰好等于 1300 的完整窗口。95% 预留不能把它提前升级成硬拒绝，应退到完整窗口边界继续。
         history = [
             ...history,
-            { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 600 } },
-            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 600 } }
+            { role: 'model', parts: [{ functionCall: { id: 'c', name: 'tool', args: {} } }], tokenCountByChannel: { custom: 550 } },
+            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: 'c', name: 'tool', response: { ok: true } } }], tokenCountByChannel: { custom: 550 } }
         ];
 
         const result = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
@@ -135,8 +136,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         const { service: s2 } = createHarness(() => summarizedHistory);
         const result = await s2.getHistoryWithGranularFallback('c2', config, {}, undefined, 'single', 1);
         expect(result.trimStartIndex).toBe(2);
-        // history[0] 是 preserved 用户输入档案（goal），history[1] 才是总结消息
-        expect(result.history[1].parts[0].text).toContain('summary');
+        // history[0] 是首条用户消息（任务锚点），history[1] 是 preserved 用户输入档案（goal），history[2] 才是总结消息
+        expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'goal' }] });
+        expect(result.history[2].parts[0].text).toContain('summary');
     });
 
     it('稳定起点落在 model 消息上时同样补临时 user 占位保证角色顺序', async () => {
@@ -154,8 +156,10 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         ];
 
         const second = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 3);
-        expect(second.history[0]).toMatchObject({ role: 'user', isSummary: true });
-        expect(second.history[1].parts[0].functionCall?.id).toBe('a');
+        // 首条用户消息永远发送：history[0] = old，history[1] = preserved 档案，history[2] 起为 suffix
+        expect(second.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'old' }] });
+        expect(second.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(second.history[2].parts[0].functionCall?.id).toBe('a');
         expect(second.trimStartIndex).toBe(3);
     });
 
@@ -175,7 +179,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
             400
         );
 
-        expect(result.trimStartIndex).toBe(5);
+        expect(result.trimStartIndex).toBe(7);
         expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
     });
 
@@ -215,7 +219,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
             )
         ).rejects.toMatchObject({
             code: 'CONTEXT_OVERFLOW',
-            estimatedInputTokens: 1_301,
+            estimatedInputTokens: 1_401,
             inputTokenLimit: 1_300
         });
     });
