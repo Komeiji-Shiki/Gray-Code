@@ -194,7 +194,8 @@ export class CheckpointRetentionService {
         successor.changes = mergedChanges;
 
         // 4. 新格式存档：changes 的权威副本在 manifest，同步更新后继 manifest
-        const successorManifest = await this.manifestRepository.loadManifest(successor.id, successor);
+        //    （合并需读写 files 映射，走 loadManifestWithFiles 懒加载完整数据）
+        const successorManifest = await this.manifestRepository.loadManifestWithFiles(successor.id, successor);
         if (successorManifest) {
             const manifestPaths = new Set(successorManifest.changes.map(c => c.path));
             const deletedInManifest = new Set(
@@ -233,14 +234,14 @@ export class CheckpointRetentionService {
     /**
      * 读取被删节点的“磁盘相对路径键 → 文件信息”映射（跨格式合并的哈希来源）。
      *
-     * - 优先用 manifest.files（新格式；legacy 缺失时由 loadManifest 迁移生成，键为相对路径）；
+     * - 优先用 manifest.files（新格式；legacy 缺失时由 loadManifestWithFiles 迁移生成，键为相对路径）；
      * - 无 manifest 时退回 record.fileHashes；
      * - 都没有（真正 legacy 无哈希）→ undefined，调用方退回整目录复制（旧行为）。
      */
     private async loadRemovedFileEntries(
         removed: CheckpointRecord
     ): Promise<Record<string, { hash: string; size: number; mtimeMs: number; mtimeNs?: string }> | undefined> {
-        const manifest = await this.manifestRepository.loadManifest(removed.id, removed);
+        const manifest = await this.manifestRepository.loadManifestWithFiles(removed.id, removed);
         if (manifest) {
             return manifest.files;
         }
@@ -254,7 +255,8 @@ export class CheckpointRetentionService {
 
     /**
      * 判断后继是否使用 scoped 布局，并取出用于 legacy 路径重写的根 id。
-     * 优先取后继 manifest 的 workspaceRoots[0]；退化路径从 scoped 键前缀推导。
+     * 优先取后继 manifest 元数据视图的 workspaceRoots[0]（CPF-LAZY-1：无需加载 files）；
+     * 退化路径（旧格式无 workspaceRoots）才懒加载完整 manifest，从 scoped 键前缀推导。
      * 后继为 legacy（无 scoped 布局）时返回 undefined（不做路径重写）。
      */
     private async resolveSuccessorRootId(successor: CheckpointRecord): Promise<string | undefined> {
@@ -262,8 +264,13 @@ export class CheckpointRetentionService {
         if (manifest && (manifest.workspaceRoots?.length ?? 0) > 0) {
             return manifest.workspaceRoots[0].id;
         }
+        // 退化路径：无 workspaceRoots（旧格式/迁移生成），需要看 files 键是否 scoped——
+        // 此时才触发 files 懒加载，避免常规合并路径加载重量级映射
+        const fullManifest = manifest
+            ? await this.manifestRepository.loadManifestWithFiles(successor.id, successor)
+            : null;
         const candidates: Array<Record<string, unknown>> = [];
-        if (manifest) candidates.push(manifest.files);
+        if (fullManifest) candidates.push(fullManifest.files);
         if (successor.fileHashes) candidates.push(successor.fileHashes);
         for (const files of candidates) {
             const scopedKey = Object.keys(files).find(key => isWorkspaceScopedKey(key));
@@ -285,7 +292,8 @@ export class CheckpointRetentionService {
                 return;
             }
             for (const entry of entries) {
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name.endsWith('.tmp')) {
+                // CPF-LAZY-1: manifest.json 与 files.json 均为元数据文件，不属备份内容
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === 'files.json' || entry.name.endsWith('.tmp')) {
                     continue;
                 }
                 const relative = prefix ? `${prefix}/${entry.name}` : entry.name;

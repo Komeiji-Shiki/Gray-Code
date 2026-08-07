@@ -368,6 +368,95 @@ describe('checkCheckpointIntegrity', () => {
         // 两个记录各自沿链检测都会发现环
         expect(report.byCode.CHECKPOINT_CHAIN_CYCLE).toBeGreaterThanOrEqual(1);
     });
+
+    // ==================== CPF-LAZY-1：v2 拆分格式（manifest.json 轻量 + files.json 重量映射） ====================
+
+    /** 写入 v2 拆分布局：manifest.json（无 files）+ files.json（重量映射） */
+    async function writeSplitCheckpointDir(
+        id: string,
+        filesPayload: { checkpointId?: string; files?: unknown } = {}
+    ): Promise<void> {
+        const dir = path.join(checkpointsDir, id);
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(
+            path.join(dir, 'manifest.json'),
+            JSON.stringify({ version: 2, checkpointId: id, workspaceRoots: [], emptyDirs: [], changes: [], excluded: [] }, null, 2),
+            'utf8'
+        );
+        await fsp.writeFile(
+            path.join(dir, 'files.json'),
+            JSON.stringify({ checkpointId: id, files: { 'ws_a/a.txt': { hash: 'h', size: 1, mtimeMs: 1 } }, ...filesPayload }, null, 2),
+            'utf8'
+        );
+    }
+
+    test('v2 拆分格式健康：manifest.json（轻量）+ files.json 齐全 → 无问题', async () => {
+        await writeSplitCheckpointDir('cp_split');
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_split', backupDir: 'cp_split', manifestVersion: 2 }),
+        ]);
+        expect(report.issues).toEqual([]);
+    });
+
+    test('v2 拆分格式缺 files.json → CHECKPOINT_MANIFEST_FILES_MISSING（error）', async () => {
+        const dir = path.join(checkpointsDir, 'cp_missing');
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(
+            path.join(dir, 'manifest.json'),
+            JSON.stringify({ version: 2, checkpointId: 'cp_missing', workspaceRoots: [], emptyDirs: [], changes: [], excluded: [] }, null, 2),
+            'utf8'
+        );
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_missing', backupDir: 'cp_missing', manifestVersion: 2 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_FILES_MISSING).toBe(1);
+        expect(report.issues[0].severity).toBe('error');
+    });
+
+    test('v2 拆分格式 files.json 损坏 → CHECKPOINT_MANIFEST_FILES_CORRUPT', async () => {
+        const dir = path.join(checkpointsDir, 'cp_corrupt');
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(
+            path.join(dir, 'manifest.json'),
+            JSON.stringify({ version: 2, checkpointId: 'cp_corrupt', workspaceRoots: [], emptyDirs: [], changes: [], excluded: [] }, null, 2),
+            'utf8'
+        );
+        await fsp.writeFile(path.join(dir, 'files.json'), '{ broken', 'utf8');
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_corrupt', backupDir: 'cp_corrupt', manifestVersion: 2 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_FILES_CORRUPT).toBe(1);
+    });
+
+    test('v2 拆分格式 files.json.checkpointId 与记录不一致 → CHECKPOINT_MANIFEST_FILES_ID_MISMATCH', async () => {
+        await writeSplitCheckpointDir('cp_idmismatch', { checkpointId: 'cp_OTHER' });
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_idmismatch', backupDir: 'cp_idmismatch', manifestVersion: 2 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_FILES_ID_MISMATCH).toBe(1);
+    });
+
+    test('v2 拆分格式 files.json 缺少合法 files 映射 → CHECKPOINT_MANIFEST_FILES_INVALID_SHAPE', async () => {
+        await writeSplitCheckpointDir('cp_shape', { files: 'not-a-map' });
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_shape', backupDir: 'cp_shape', manifestVersion: 2 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_FILES_INVALID_SHAPE).toBe(1);
+    });
+
+    test('v1 布局（version=1）但缺内联 files → CHECKPOINT_MANIFEST_INVALID_SHAPE', async () => {
+        const dir = path.join(checkpointsDir, 'cp_v1_bad');
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(
+            path.join(dir, 'manifest.json'),
+            JSON.stringify({ version: 1, checkpointId: 'cp_v1_bad', workspaceRoots: [] }, null, 2),
+            'utf8'
+        );
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_v1_bad', backupDir: 'cp_v1_bad', manifestVersion: 1 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_INVALID_SHAPE).toBe(1);
+    });
 });
 
 // ==================== 分支 ====================
