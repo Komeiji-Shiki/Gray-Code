@@ -2171,6 +2171,7 @@ const zhCN = {
                 },
                 memory: {
                     loading: '正在加载记忆配置...',
+                    globalOnlyHint: '全局设置，仅「全局记忆」tab 可修改。',
                     enabled: {
                         label: '启用长期记忆',
                         description: '允许 AI 跨会话回忆和记录长期信息。',

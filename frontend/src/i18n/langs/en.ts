@@ -2170,6 +2170,7 @@ const en: LanguageMessages = {
                 },
                 memory: {
                     loading: 'Loading memory config...',
+                    globalOnlyHint: 'Global setting. Only editable in the "Global Memory" tab.',
                     enabled: {
                         label: 'Enable Permanent Memory',
                         description: 'Allow the AI to recall and record long-term information across sessions.',
