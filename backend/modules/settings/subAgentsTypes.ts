@@ -4,6 +4,8 @@
  * 从 types.ts 拆分而来：types.ts 通过 `export *` 重导出，旧引用路径保持兼容。
  */
 
+import { DEFAULT_MAX_RUNTIME_S } from '../../tools/subagents/types';
+
 /**
  * 子代理工具配置
  */
@@ -69,7 +71,7 @@ export interface SubAgentConfigItem {
     
     /**
      * 最大运行时间（秒，-1 表示无限制）
-     * 默认: 300 (5分钟)
+     * 默认: 1800（30 分钟，同 DEFAULT_MAX_RUNTIME_S）
      */
     maxRuntime?: number;
 
@@ -113,6 +115,14 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     defaultMaxIterations?: number;
 
     /**
+     * 全局默认最大运行时间（秒，-1 表示无限制）。
+     *
+     * 未单独配置 maxRuntime 的 agent（含 General Worker）继承该默认值；
+     * 单独配置的 agent 优先使用自己的 maxRuntime。默认 1800（30 分钟）。
+     */
+    defaultMaxRuntime?: number;
+
+    /**
      * 是否启用通用 Worker（傻瓜式多 agent 模式）。
      *
      * 启用后主模型可直接派发零配置的 "General Worker"：
@@ -130,5 +140,6 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     maxConcurrentAgents: 3,
     failureModeAfterRetries: 'fail_parent_tool',
     generalWorkerEnabled: true,
-    defaultMaxIterations: 80
+    defaultMaxIterations: 80,
+    defaultMaxRuntime: DEFAULT_MAX_RUNTIME_S
 };

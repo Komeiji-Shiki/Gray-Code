@@ -2215,16 +2215,6 @@ const zhCN = {
                             label: '单条记忆最大字节',
                             description: '每条记忆的最大字节数。超过此限制的文本将被截断。',
                             unit: '字节'
-                        },
-                        partChars: {
-                            label: '分页最大字符数',
-                            description: '每页输出的最大字符数。超限时自动分页。',
-                            unit: '字符'
-                        },
-                        partLines: {
-                            label: '分页最大行数',
-                            description: '每页输出的最大行数。超限时自动分页。',
-                            unit: '行'
                         }
                     },
                     info: {

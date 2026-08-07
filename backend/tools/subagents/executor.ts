@@ -14,6 +14,7 @@ import type {
     SubAgentExecutorFactory,
     SubAgentToolsConfig
 } from './types';
+import { DEFAULT_MAX_RUNTIME_S } from './types';
 import type { ToolDeclaration } from '../types';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
 import { WRITE_TOOLS } from './presets';
@@ -954,7 +955,11 @@ export function createDefaultExecutor(
         const maxIterations = config.maxIterations
             ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxIterations
             ?? 50;
-        const maxRuntime = config.maxRuntime ?? 1800; // 默认 30 分钟
+        // 与 maxIterations 同构：优先取 per-agent maxRuntime，其次取全局 defaultMaxRuntime，
+        // 最后回退 DEFAULT_MAX_RUNTIME_S（默认 30 分钟）。
+        const maxRuntime = config.maxRuntime
+            ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxRuntime
+            ?? DEFAULT_MAX_RUNTIME_S;
         const startTime = Date.now();
         const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         

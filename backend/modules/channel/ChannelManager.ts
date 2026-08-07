@@ -593,8 +593,6 @@ export class ChannelManager {
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
-        // 是否已向调用方产出过 chunk：已产出内容后流中途出错不再重试
-        let yieldedAny = false;
         for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             // 缓存保活定时器（每次重试都重新计时）
             let keepAliveTimer: NodeJS.Timeout | undefined;
@@ -605,6 +603,10 @@ export class ChannelManager {
             // 保活请求成功 = 上游连接仍然活跃 → 同步刷新流的空闲超时，
             // 让「LLM 模块自己的保活」成为流的活性信号（上游不回传心跳的静默期也能续命）。
             const idleTimeoutHandle: { reset: () => void } = { reset: () => {} };
+            // 本轮尝试是否已产出可见内容（文本/思考/工具调用）：已产出可见内容后流中途出错
+            // 不再重试（重播会与已显示内容重复、早启动的工具副作用无法撤回）；
+            // usage/元数据等非内容 chunk 不计入，仅产出这些 chunk 时仍可安全重试。
+            let yieldedContent = false;
             
             try {
                 const stream = await this.executeStreamRequest(httpRequest, request.abortSignal, idleTimeoutHandle);
@@ -661,7 +663,6 @@ export class ChannelManager {
 
                 // 逐块解析和产出
                 let sawDone = false;
-                let yieldedContent = false;
                 for await (const rawChunk of stream) {
                     try {
                         const chunk = formatter.parseStreamChunk(rawChunk);
@@ -671,7 +672,6 @@ export class ChannelManager {
                         }
                         if (chunk.done) sawDone = true;
                         if (streamChunkHasContent(chunk)) yieldedContent = true;
-                        yieldedAny = true;
                         yield chunk;
                     } catch (error) {
                         // formatter 主动抛出的 ChannelError（如上游在 SSE 流里内联的 error 事件）
@@ -697,8 +697,8 @@ export class ChannelManager {
                 //   且流式早启动的工具副作用无法撤回），错误透传给调用方/前端。
                 if (!sawDone) {
                     if (!yieldedContent) {
-                        // 空响应：未产出任何内容（前端无显示、无已启动的工具副作用），
-                        // 用专门的错误类型标记为可重试（不受 yieldedAny 阻止）。
+                        // 空响应：未产出可见内容（前端无显示、无已启动的工具副作用），
+                        // 用专门的错误类型标记为可重试（产出可见内容前才会抛出，重试不会重播可见内容）。
                         throw new ChannelError(
                             ErrorType.EMPTY_RESPONSE_ERROR,
                             t('modules.channel.errors.emptyResponse')
@@ -744,13 +744,14 @@ export class ChannelManager {
             } catch (error) {
                 lastError = error;
                 
-                // 已产出内容后不再重试：流中途出错（网络闪断等）时重试会从头重播，
+                // 已产出可见内容后不再重试：流中途出错（网络闪断等）时重试会从头重播，
                 // 已 yield 的内容无法撤回（累加器跨重试不重置），导致内容重复、
-                // 历史写入重复内容。请求建立阶段（尚未产出任何 chunk）仍可重试。
+                // 历史写入重复内容。尚未产出可见内容（含仅产出 usage/元数据等非内容
+                // chunk）仍可重试——重播的只是无显示、无副作用的事件。
                 // 例外：EMPTY_RESPONSE_ERROR（从未产出内容）可安全重试。
                 const isRetryableEmpty = error instanceof ChannelError
                     && error.type === ErrorType.EMPTY_RESPONSE_ERROR;
-                if (yieldedAny && !isRetryableEmpty) {
+                if (yieldedContent && !isRetryableEmpty) {
                     break;
                 }
                 

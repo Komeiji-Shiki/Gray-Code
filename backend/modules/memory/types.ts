@@ -45,15 +45,11 @@ export interface WakeBlock {
 
 /** wake 的结果 */
 export interface WakeResult {
-    /** 当前部分的块列表 */
+    /** 唤醒到的块列表（一次输出全部可用记忆） */
     blocks: WakeBlock[];
-    /** 当前部分号（1-based） */
-    part: number;
-    /** 总部分数 */
-    totalParts: number;
     /** 总记忆数 */
     totalMemories: number;
-    /** 是否已完成唤醒 */
+    /** 是否已完成唤醒（单次输出后恒为 true） */
     awake: boolean;
     /** 待处理的压缩提示（如果有） */
     pendingCompression?: NapPrompt;
@@ -113,18 +109,12 @@ export interface MemoryConfig {
     wakeLines: number;
     /** ENTRY_CHARS: 单条记忆最大字节数 */
     entryChars: number;
-    /** PART_CHARS: 输出分页的最大字符数 */
-    partChars: number;
-    /** PART_LINES: 输出分页的最大行数 */
-    partLines: number;
 }
 
 /** 默认配置 */
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     wakeLines: 96,
     entryChars: 280,
-    partChars: 20000,
-    partLines: 500,
 };
 
 /** 固定宽度记录大小 */

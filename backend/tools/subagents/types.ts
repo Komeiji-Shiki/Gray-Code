@@ -38,6 +38,14 @@ export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_mon
 export const MAX_SUBAGENT_NESTING_DEPTH = 2;
 
 /**
+ * 子代理默认最大运行时间（秒）。
+ *
+ * executor 的 maxRuntime 回退默认、General Worker 的运行时配置/描述文案
+ * 与 DEFAULT_SUBAGENTS_CONFIG 的全局默认值共用，避免多处数值漂移。
+ */
+export const DEFAULT_MAX_RUNTIME_S = 1800;
+
+/**
  * 子代理渠道配置
  * 
  * 指定子代理使用的 AI 渠道和模型

@@ -277,6 +277,8 @@ const zhCN = {
                     configNotFound: '配置不存在: {configId}',
                     configDisabled: '配置已禁用: {configId}',
                     maxToolIterations: '达到最大工具调用次数限制 ({maxIterations})',
+                    maxToolIterationsHardCap: '工具调用循环超过硬性迭代上限 ({maxIterations})，已终止请求（无限制模式的防呆兜底）',
+                    maxToolIterationsWallclock: '工具调用循环执行超过 {minutes} 分钟硬性时限，已终止请求（无限制模式的防呆兜底）',
                     unknownError: '未知错误',
                     toolExecutionSuccess: '工具执行成功',
                     mcpToolCallFailed: 'MCP 工具调用失败',

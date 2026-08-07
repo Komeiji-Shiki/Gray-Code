@@ -12,7 +12,7 @@
  * 7. delete() 引用不匹配不会误删新流控制器（保留新流可取消能力）。
  */
 
-import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
+import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../webview/stream/StreamAbortManager';
 
 describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
     afterEach(() => {
@@ -149,5 +149,22 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
 
         manager.delete('conv-post-cancel', controller);
         await expect(waiting).resolves.toBeUndefined();
+    });
+
+    it('waitForIdle 活跃控制器分支超时兜底：活跃流 finally 永不执行时也能返回', async () => {
+        const manager = new StreamAbortManager();
+        manager.create('conv-idle-hang');
+
+        const start = Date.now();
+        await manager.waitForIdle('conv-idle-hang');
+        const elapsed = Date.now() - start;
+        // 与退休链等待同一超时口径（真实计时器，6s 窗口 + 调度余量）
+        expect(elapsed).toBeGreaterThanOrEqual(OLD_STREAM_EXIT_WAIT_TIMEOUT_MS - 1000);
+        expect(elapsed).toBeLessThan(OLD_STREAM_EXIT_WAIT_TIMEOUT_MS + 3000);
+
+        // 超时视同「流已退出」：控制器不被误删，后续仍可取消
+        const controller = manager.get('conv-idle-hang');
+        expect(controller).toBeDefined();
+        expect(controller?.signal.aborted).toBe(false);
     });
 });

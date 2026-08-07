@@ -853,7 +853,7 @@ async function searchAndReplaceInDirectory(
                     originalContent: originalText,
                     newContent: newText,
                     filePath: relativePath
-                });
+                }, undefined, conversationId);
                 diffContentId = diffRef.diffId;
             } catch (e) {
                 console.warn('Failed to save diff content:', e);

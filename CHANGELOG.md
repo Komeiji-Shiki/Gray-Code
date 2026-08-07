@@ -123,6 +123,27 @@
 ### Tests
   - 全量回归：backend jest 225 套件 / 2291 用例、frontend vitest 63 文件 / 610 用例、tsc --noEmit 全绿；新增 `memoryWakeScopes.test.ts`（跨作用域 snapshotT 重试 / nextPart 合并推进 / 压缩提示作用域标注 / 只读不建目录）、`subagentPartialResponse.test.ts`（5 例）、`formatterMixedToolMessage.test.ts`（混合形态 3 例 + 日常形态回归 2 例）、`MemorySettings.test.ts`（作用域缓存防闪烁等）
 
+### Added（1.6.9 迭代二）
+  - **子代理界面可选择模型**：设置 → 子代理的「模型」下拉框此前选项恒为空（只读渠道配置里已持久化的 `models` 数组，默认 `[]`），表现为「只能选渠道、不能选模型」，运行时子代理永远跑渠道默认模型。现模型选项改为「本地持久化列表优先，缺失时经 `models.getModels` 实时拉取 provider 模型列表，并始终把渠道默认 `model` 兜底进选项」（与主聊天 write_file/MessageTaskCards 的 `loadModelsForChannel` 口径一致）；渠道切换时自动选中新渠道默认模型（不再强制清空 modelId）；新建子代理对话框补齐模型选择（渠道联动 + 默认模型预填，创建 payload 携带 modelId）
+  - **全局 diff 文件绑定对话 + 无损压缩**：
+    - 此前 apply_diff/write_file/insert_code/delete_code/search_in_files 每次工具调用都把完整 original/new 内容写入 `diffs/__global__/` 且永无删除路径，磁盘无限增长（`cleanupOrphanedDiffs` 显式跳过 `__global__`）。现 `saveGlobalDiff`/`saveGlobalDiffDeferred` 支持传入 `conversationId`：落盘到 `diffs/{conversationId}/` 对话目录并写入 `diffs/index.json` 归属索引（tmp+rename 原子写、写队列串行化）——删除对话时 `deleteConversationDiffs` 一键清理对应目录 + 索引 + 内存缓存；`cleanupOrphanedDiffs` 同步清理孤儿目录的索引条目；已删除对话墓碑拦截 deferred 后台落盘复活目录
+    - **gzip 无损压缩**：diff 文件内容经 zlib gzip（level 6）压缩后落盘，JSON 文本（代码内容）通常可压缩 3-5 倍，磁盘增长速率大幅减缓；读取时按 gzip 魔数自动识别，旧版明文 JSON 完全兼容；`loadGlobalDiff` 查找顺序：内存缓存 → 索引定位对话目录 → `__global__` 回退（旧数据）
+    - 迁移路径（`migrateTo`）覆盖 index.json 并重置索引缓存
+
+### Fixed（1.6.9 迭代二）
+  - **`memory_wake` 分页/续读历史残留移除**：wake 一次输出双作用域全部可用记忆（近期原文 + 远期摘要），不再按 PART_CHARS/PART_LINES 分页、不再输出 "part N of M" 段头、不再要求模型连调 `memory_wake part=2,3...` 续读到 "You are awake."——所有相关历史残留（`part`/`snapshotT` 参数、`wakeScope` 续读重试、`paginate()`、`totalParts` 字段、`Not awake yet` 提示）全部移除；`partChars`/`partLines` 运行时配置项从类型/工具声明/设置页/三语 i18n/README 全链路删除，存量 config 文件中的 PART_* 行自动忽略；`recall` 输出上限改用独立常量（不再借用已删除的分页配置）
+  - **StreamChunkProcessor 视图缺失时终结事件静默丢弃**：视图重建/销毁窗口期 `processChunk` 对 `complete`/`cancelled`/`error` 终结 chunk 整块丢弃且不 flush 缓冲，前端永远收不到旧流终结 → 占位消息永久「生成中」、isStreaming 无法复位、缓冲滞留内存。现终结类 chunk 暂存待视图恢复后补发（`pendingTerminalBuffer`），无 view 时 `flush()` 清空缓冲防滞留，error 仍返回 true 供调用方中断循环（新增 `streamChunkProcessor.test.ts` 8 例）
+  - **`StreamAbortManager.waitForIdle` 活跃控制器分支无超时**：活跃流 finally 永不执行时 `waitForIdle` 永久挂起（后台回执通道挂死）；现复用 `OLD_STREAM_EXIT_WAIT_TIMEOUT_MS` 为活跃分支加超时兜底（新增回归用例）
+  - **会话删除后 fire-and-forget 分支图同步复活已删除会话（幽灵 branches.json）**：`appendContents` 锁外分支图同步闭包不检查 `deletedConversationIds`，会话删除后闭包仍创建/写入分支文件；现闭包内「读图前 + 写图前」两道删除守卫（与 BranchService BS-4 互为兜底）
+  - **`isFirstMessageHistory` 把隐藏 functionResponse 误判为「首条用户消息」**：隐藏续接（Plan 执行确认）场景动态系统提示词被错误当作首条消息刷新，多余 token 消耗；现增加 `!isFunctionResponseMessage(active[0])` 条件（与文件内其它判断口径一致）
+  - **工具循环 `maxIterations === -1` 无终止保障**：-1 无限制模式下唯一退出保障是可选 abortSignal，模型持续返回工具调用时请求永久挂起（占会话写锁与内存）；现新增硬性兜底：迭代硬上限 10000（`MAX_ITERATIONS_HARD_CAP`）+ 墙钟 30 分钟上限（`MAX_TOOL_LOOP_WALLCLOCK_MS`），触发时报错 `MAX_TOOL_ITERATIONS_HARD_CAP`/`TOOL_LOOP_WALLCLOCK_LIMIT` 走上层错误通道（仅作用于 -1 模式，有限模式语义零变化；三语 i18n 同步）
+  - **流式早启动工具 `.catch` 吞掉全部异常伪装成工具失败**：编程错误/系统错误被包装成 `{ success: false, error }` 写入历史，错误分类失真；现仅 `ChannelError`（可预期执行失败）保持原包装，其余系统异常记录 `log.error` 并以空占位沉降（进度队列正常落定、不重复执行），抛出走上层统一错误通道
+  - **`ChannelManager.generateStream` 重试时非内容 chunk 重复产出**：`yieldedAny` 在收到 usage/元数据等无内容 chunk 时已置 true，空响应重试会把这些 chunk 再 yield 一遍（token 统计可能双计）；重试界限改为「已产出可见内容」`yieldedContent`
+  - **子代理默认运行时长硬编码不一致**：General Worker 描述写 2400s、实际默认 1800s、预设/文档数值不一；现统一为单一常量 `DEFAULT_MAX_RUNTIME_S = 1800`（executor 默认 + 工具描述 + General Worker 配置 + 类型默认全部引用）
+
+### Tests（1.6.9 迭代二）
+  - 全量回归：backend jest 226 套件 / 2302 用例、frontend vitest 63 文件 / 610 用例、tsc --noEmit 与生产构建全绿；新增 `diffStorageDeferred.test.ts`（gzip 压缩写盘 / 旧版明文兼容 / 对话绑定落盘 + 删除清理 + 索引定位）、`streamChunkProcessor.test.ts`（8 例）、`streamAbortWait.test.ts` 增补（waitForIdle 活跃分支超时）；`memoryWakeScopes.test.ts` 分页续读用例改写为单次全量输出断言
+
 ## [1.6.8] - 2026-08-06
 
 ### Fixed

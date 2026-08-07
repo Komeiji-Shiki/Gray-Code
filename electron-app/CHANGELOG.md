@@ -21,6 +21,15 @@ are tracked in the root `CHANGELOG.md`.
   - 修复子代理失败/空响应时 partialResponse 携带幻觉预生成文本
   - 修复混合形态消息（同消息 call+response）转换时 functionResponse 被吞（80e9de7 修正版）
 
+### Changed（1.6.9 迭代二，公共部分详见根 `CHANGELOG.md`）
+  - **子代理界面可选择模型**：设置 → 子代理「模型」下拉框实时拉取 provider 模型列表 + 渠道默认模型兜底（此前选项恒为空，只能选渠道）；新建子代理对话框补齐模型选择
+  - **全局 diff 绑定对话 + gzip 无损压缩**：diff 内容落盘到对话目录并写入归属索引（删除对话即可清理），不再无限写入 `__global__`；gzip 压缩后磁盘占用降低 3-5 倍；旧版明文文件读取兼容
+  - **`memory_wake` 分页/续读历史残留移除**：单次输出双作用域全部可用记忆，移除 part/snapshotT 续读机制与 partChars/partLines 配置项
+  - **稳定性修复**：流式终结事件视图缺失不丢（占位消息不再永久「生成中」）、waitForIdle 超时兜底、会话删除后幽灵分支文件拦截、`maxIterations=-1` 工具循环硬性兜底（迭代/墙钟上限）、早启动工具系统异常不再伪装成工具失败、流式重试非内容 chunk 不再重复产出、子代理默认运行时长常量统一
+
+### Tests（1.6.9 迭代二）
+  - backend jest 226 套件 / 2302 用例、frontend vitest 63 文件 / 610 用例、tsc 与生产构建全绿
+
 ## [1.6.8] - 2026-08-06
 
 ### Fixed

@@ -6,7 +6,7 @@
  */
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
-import { MAX_SUBAGENT_NESTING_DEPTH } from './types';
+import { DEFAULT_MAX_RUNTIME_S, MAX_SUBAGENT_NESTING_DEPTH } from './types';
 import type { SubAgentConfig, SubAgentExecutor } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools, agentLacksWriteCapability } from './executor';
@@ -229,7 +229,7 @@ function generateAgentNameDescription(): string {
         const tools = getAgentAvailableTools(config);
         const toolsStr = formatToolsList(tools, 8);
         const maxIterStr = formatLimit(config.maxIterations, getGlobalDefaultMaxIterations());
-        const maxRuntimeStr = formatLimit(config.maxRuntime, 1800);
+        const maxRuntimeStr = formatLimit(config.maxRuntime, DEFAULT_MAX_RUNTIME_S);
         entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
     }
 
@@ -240,7 +240,7 @@ function generateAgentNameDescription(): string {
         const allTools = [...builtinToolNames, ...mcpToolNames];
         const toolsStr = formatToolsList(allTools, 8);
         const globalMaxIterations = getGlobalDefaultMaxIterations();
-        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions; when invoked from another sub-agent its tools are limited to the dispatching agent's own tool set\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max 2400s runtime`);
+        entries.push(`  - "${GENERAL_WORKER_NAME}": Zero-config general-purpose worker that inherits the current session's channel and all available non-memory tool permissions; when invoked from another sub-agent its tools are limited to the dispatching agent's own tool set\n    Tools (${allTools.length}): ${toolsStr}\n    Limits: max ${globalMaxIterations} iterations, max ${DEFAULT_MAX_RUNTIME_S}s runtime`);
     }
 
     return `The name of sub-agent to invoke. Available options:\n${entries.join('\n')}`;
@@ -425,7 +425,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             tools: { mode: 'all' },
             // P2：General Worker 是零配置虚拟代理，迭代次数跟随全局默认配置（executor 会再回退到 50）
             maxIterations: getGlobalDefaultMaxIterations(),
-            maxRuntime: 2400,
+            maxRuntime: DEFAULT_MAX_RUNTIME_S,
             enabled: true
         };
 

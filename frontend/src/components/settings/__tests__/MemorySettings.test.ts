@@ -70,9 +70,7 @@ const BASE_CONFIG = {
   enabled: true,
   systemPrompt: '',
   wakeLines: 96,
-  entryChars: 280,
-  partChars: 20000,
-  partLines: 500
+  entryChars: 280
 }
 
 /** 默认 IPC 路由：全局记忆（mount 时加载）+ 工作区记忆 */

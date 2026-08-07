@@ -276,6 +276,8 @@ const ja: BackendLanguageMessages = {
                     configNotFound: '設定が見つかりません: {configId}',
                     configDisabled: '設定が無効です: {configId}',
                     maxToolIterations: '最大ツール呼び出し回数に達しました ({maxIterations})',
+                    maxToolIterationsHardCap: 'ツール呼び出しループがハード上限 ({maxIterations}) を超えたため、リクエストを終了しました（無制限モードの安全装置）',
+                    maxToolIterationsWallclock: 'ツール呼び出しループが {minutes} 分のハード制限を超えたため、リクエストを終了しました（無制限モードの安全装置）',
                     unknownError: '不明なエラー',
                     toolExecutionSuccess: 'ツールの実行に成功しました',
                     mcpToolCallFailed: 'MCP ツール呼び出しに失敗しました',

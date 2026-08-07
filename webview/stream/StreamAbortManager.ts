@@ -316,14 +316,15 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   async waitForIdle(conversationId: string): Promise<void> {
     while (true) {
       if (this.controllers.has(conversationId)) {
-        await new Promise<void>(resolve => {
-          let waiters = this.idleWaiters.get(conversationId);
-          if (!waiters) {
-            waiters = new Set();
-            this.idleWaiters.set(conversationId, waiters);
-          }
-          waiters.add(resolve);
-        });
+        // 等待当前活跃流 finally 执行 delete() 唤醒，带超时兜底：活跃流的 finally 可能
+        // 因工具挂死/网络挂起长期不执行（delete() 永不触发），不加超时会让 waitForIdle
+        // 永久挂起（chat.awaitConversationIdle → backgroundTaskStore.flushReports 挂死）。
+        // 与退休链等待同一超时口径（OLD_STREAM_EXIT_WAIT_TIMEOUT_MS）；**超时后必须
+        // 返回**（而不是 continue 循环重试）——否则活跃流挂死时 waitForIdle 每 6s 醒一次、
+        // 永不返回。超时视同「流已退出」：调用方按既有语义继续，晚到的 delete() 由
+        // idleWaiters 引用释放，不会残留。
+        const timedOut = await this.waitForActiveStreamExit(conversationId);
+        if (timedOut) return;
         continue;
       }
 
@@ -347,6 +348,38 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         return;
       }
     }
+  }
+
+  /**
+   * 等待当前活跃流退出（其 finally 执行 delete() 时由 idleWaiters 唤醒），带超时兜底。
+   *
+   * @returns true = 超时胜出（活跃流未退出）；false = 活跃流已退出（delete() 唤醒）
+   */
+  private waitForActiveStreamExit(conversationId: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // 注册到 idleWaiters：delete()（releaseIdleWaiters / cancel / create / cancelAll）
+      // 会统一唤醒；唤醒即代表该代控制器已移出 controllers，等待方可重检。
+      const waiter = () => {
+        if (timer) clearTimeout(timer);
+        resolve(false);
+      };
+      let waiters = this.idleWaiters.get(conversationId);
+      if (!waiters) {
+        waiters = new Set();
+        this.idleWaiters.set(conversationId, waiters);
+      }
+      waiters.add(waiter);
+      timer = setTimeout(() => {
+        // 超时：从等待者集合中移除自己，避免残留引用使集合随重复调用膨胀；
+        // 集合清空时一并删除条目（带引用校验，防止误删并发新注册的等待集合）。
+        waiters.delete(waiter);
+        if (this.idleWaiters.get(conversationId) === waiters && waiters.size === 0) {
+          this.idleWaiters.delete(conversationId);
+        }
+        resolve(true);
+      }, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+    });
   }
 
   /**

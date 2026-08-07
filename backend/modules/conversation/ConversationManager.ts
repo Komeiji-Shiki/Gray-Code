@@ -383,9 +383,17 @@ export class ConversationManager {
      */
     private readonly conversationCreations = new Map<string, Promise<void>>();
 
+    /**
+     * 会话是否已被标记删除（供锁外 fire-and-forget 异步任务在写分支图前复查，
+     * 避免删除后迟到的图同步重建 sidecar——“幽灵分支文件”）。
+     */
+    private isDeletedConversation(conversationId: string): boolean {
+        return this.deletedConversationIds.has(conversationId);
+    }
+
     /** append/mutate 入口短路：会话已被删除时拒绝写入（正常删除后不应再有写入） */
     private assertNotDeleted(conversationId: string): void {
-        if (this.deletedConversationIds.has(conversationId)) {
+        if (this.isDeletedConversation(conversationId)) {
             throw new Error(`Conversation ${conversationId} has been deleted; refusing to write history`);
         }
     }
@@ -475,6 +483,11 @@ export class ConversationManager {
                     if (branchService) {
                         void (async () => {
                             try {
+                                // 会话删除竞态：闭包在写锁外执行，删除可滑入「断言 → 入队」的异步窗口。
+                                // 已删除会话直接 return，不再读/写分支图，防止幽灵 sidecar 复活。
+                                if (this.isDeletedConversation(conversationId)) {
+                                    return;
+                                }
                                 const loaded = await branchService.getBranchGraph(conversationId);
                                 const graph = loaded.graph;
                                 if (!graph) {
@@ -493,6 +506,11 @@ export class ConversationManager {
                                         conversationId,
                                         'branch_finished'
                                     );
+                                }
+                                // 读图期间会话可能刚被删除（删除会清掉分支图目录）：写前再复查一次，
+                                // 删除后迟到的写不得重建 sidecar（与 BranchService BS-4 检查互为兜底）。
+                                if (this.isDeletedConversation(conversationId)) {
+                                    return;
                                 }
                                 await branchService.appendHistoryToGraph(conversationId, withNodeIds);
                             } catch (error) {

@@ -205,7 +205,7 @@ async function writeSingleFile(
                     originalContent,
                     newContent: content,
                     filePath
-                });
+                }, undefined, conversationId);
                 diffContentId = diffRef.diffId;
             } catch (e) {
                 console.warn('Failed to save diff content to storage:', e);

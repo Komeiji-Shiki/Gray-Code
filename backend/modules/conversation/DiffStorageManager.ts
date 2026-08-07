@@ -7,24 +7,32 @@
  * 存储结构：
  * {dataPath}/diffs/{conversationId}/{diffId}.json
  * 
- * 每个 diff 文件内容：
+ * 每个 diff 文件内容（gzip 无损压缩后的 JSON）：
  * {
  *   originalContent: string,
  *   newContent: string,
  *   filePath: string,
  *   createdAt: number
  * }
+ * 
+ * 绑定关系：saveGlobalDiff 支持传入 conversationId，把 diff 落盘到对应对话目录，
+ * 删除对话时 deleteConversationDiffs 会一并清理，避免 __global__ 无限增长；
+ * 为兼容旧数据，loadGlobalDiff 先查索引，再回退 __global__ 目录。
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { isSafeId, isSafeRelativePath } from '../../core/idValidation';
+import * as zlib from 'zlib';
+import { isSafeId } from '../../core/idValidation';
 import { Logger } from '../../core/logger';
 
 const log = Logger.get('DiffStorageManager');
 const MAX_GLOBAL_DIFF_CACHE_ENTRIES = 16;
 const MAX_GLOBAL_DIFF_CACHE_BYTES = 32 * 1024 * 1024;
+
+// gzip 魔数（0x1f 0x8b）：读取时用于识别压缩文件，兼容旧版明文 JSON
+const GZIP_MAGIC = [0x1f, 0x8b];
 
 /**
  * Diff 内容记录
@@ -63,6 +71,12 @@ export class DiffStorageManager {
     /** apply_diff 最近内容的有界内存缓存：预览无需等待 JSON 落盘后再读回。 */
     private readonly globalDiffCache = new Map<string, { content: DiffContent; bytes: number }>();
     private globalDiffCacheBytes = 0;
+    /** diffId -> conversationId 索引（懒加载，从 diffs/index.json 读入） */
+    private diffIndex: Map<string, string> | null = null;
+    /** 索引写入串行化（防并发写互相覆盖） */
+    private indexWriteChain: Promise<void> = Promise.resolve();
+    /** 已删除对话墓碑：对话 ID 永不复用，deferred 落盘在删除后不再写回 */
+    private readonly deletedConversationTombstones = new Set<string>();
     
     private constructor(basePath: string) {
         this.basePath = basePath;
@@ -140,7 +154,103 @@ export class DiffStorageManager {
     public generateDiffId(): string {
         return `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
-    
+
+    // ─── 无损压缩（gzip） ─────────────────────────
+
+    /** 无损压缩内容为 Buffer（gzip） */
+    private async compressDiff(content: DiffContent): Promise<Buffer> {
+        const json = Buffer.from(JSON.stringify(content), 'utf8');
+        return await new Promise<Buffer>((resolve, reject) => {
+            zlib.gzip(json, { level: 6 }, (err, result) => {
+                if (err) reject(err);
+                else resolve(result);
+            });
+        });
+    }
+
+    /** 读取 Buffer 并解压/解析：识别 gzip 魔数，兼容旧版明文 JSON */
+    private async decompressDiff(data: Buffer): Promise<DiffContent> {
+        if (data.length >= 2 && data[0] === GZIP_MAGIC[0] && data[1] === GZIP_MAGIC[1]) {
+            const raw = await new Promise<Buffer>((resolve, reject) => {
+                zlib.gunzip(data, (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                });
+            });
+            return JSON.parse(raw.toString('utf8')) as DiffContent;
+        }
+        return JSON.parse(data.toString('utf8')) as DiffContent;
+    }
+
+    private async readDiffFile(filePath: string): Promise<DiffContent | null> {
+        try {
+            const data = await fs.promises.readFile(filePath);
+            return await this.decompressDiff(data);
+        } catch (error) {
+            console.warn(`[DiffStorageManager] Failed to load diff ${path.basename(filePath)}: ${error}`);
+            return null;
+        }
+    }
+
+    // ─── diffId -> conversationId 索引 ─────────────────
+
+    private get diffIndexPath(): string {
+        return path.join(this.basePath, 'diffs', 'index.json');
+    }
+
+    private async loadDiffIndex(): Promise<Map<string, string>> {
+        if (this.diffIndex) return this.diffIndex;
+        this.diffIndex = new Map();
+        try {
+            const raw = await fs.promises.readFile(this.diffIndexPath, 'utf8');
+            const parsed = JSON.parse(raw) as Record<string, string>;
+            for (const [diffId, conversationId] of Object.entries(parsed)) {
+                if (/^[a-zA-Z0-9_-]+$/.test(diffId) && /^[a-zA-Z0-9_-]+$/.test(conversationId)) {
+                    this.diffIndex.set(diffId, conversationId);
+                }
+            }
+        } catch {
+            // 索引不存在（首次使用或旧版本数据）：视为空索引
+        }
+        return this.diffIndex;
+    }
+
+    private async persistDiffIndex(): Promise<void> {
+        const index = this.diffIndex ?? new Map<string, string>();
+        const diffsDir = path.join(this.basePath, 'diffs');
+        const payload = Buffer.from(JSON.stringify(Object.fromEntries(index.entries())), 'utf8');
+        // 串行化写入 + tmp/rename 原子落盘：并发 save/delete 不互相踩
+        this.indexWriteChain = this.indexWriteChain.then(async () => {
+            await this.ensureDir(diffsDir);
+            const tmp = `${this.diffIndexPath}.${Date.now()}.tmp`;
+            await fs.promises.writeFile(tmp, payload, 'utf8');
+            await fs.promises.rename(tmp, this.diffIndexPath);
+        });
+        await this.indexWriteChain;
+    }
+
+    /** 记录 diff 归属（conversationId 非空时写入索引） */
+    private async rememberDiffOwner(diffId: string, conversationId: string | undefined): Promise<void> {
+        if (!conversationId) return;
+        if (this.deletedConversationTombstones.has(conversationId)) return;
+        const index = await this.loadDiffIndex();
+        index.set(diffId, conversationId);
+        await this.persistDiffIndex();
+    }
+
+    /** 移除某对话全部索引条目（对话删除时调用） */
+    private async forgetConversationDiffs(conversationId: string): Promise<void> {
+        const index = await this.loadDiffIndex();
+        let changed = false;
+        for (const [diffId, owner] of index) {
+            if (owner === conversationId) {
+                index.delete(diffId);
+                changed = true;
+            }
+        }
+        if (changed) await this.persistDiffIndex();
+    }
+
     /**
      * 保存 diff 内容到单独文件
      *
@@ -171,7 +281,7 @@ export class DiffStorageManager {
         };
         
         const filePath = this.getDiffFilePath(conversationId, id);
-        await fs.promises.writeFile(filePath, JSON.stringify(diffContent, null, 2), 'utf8');
+        await fs.promises.writeFile(filePath, await this.compressDiff(diffContent));
         
         log.debug('diff_saved', { diffId: id, conversationId });
         
@@ -183,11 +293,12 @@ export class DiffStorageManager {
     }
     
     /**
-     * 保存全局 diff 内容（不依赖 conversationId）
+     * 保存 diff 内容（优先绑定到对话目录，未传对话时回退 __global__）
      * 用于 apply_diff 工具调用时保存
      *
      * @param content Diff 内容
      * @param diffId Diff ID（如果不提供则自动生成）
+     * @param conversationId 对话 ID（可空；非空时落盘到对话目录，删除对话即可清理）
      * @returns Diff 引用
      */
     public async saveGlobalDiff(
@@ -196,13 +307,15 @@ export class DiffStorageManager {
             newContent: string;
             filePath: string;
         },
-        diffId?: string
+        diffId?: string,
+        conversationId?: string
     ): Promise<DiffReference> {
         const id = diffId || this.generateDiffId();
         this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
-        await this.persistGlobalDiff(id, diffContent);
+        await this.persistGlobalDiff(id, diffContent, conversationId);
+        await this.rememberDiffOwner(id, conversationId);
         return this.buildGlobalDiffReference(id, content.filePath);
     }
 
@@ -216,18 +329,24 @@ export class DiffStorageManager {
             newContent: string;
             filePath: string;
         },
-        diffId?: string
+        diffId?: string,
+        conversationId?: string
     ): DiffReference {
         const id = diffId || this.generateDiffId();
         this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
-        void this.persistGlobalDiff(id, diffContent).catch(error => {
-            log.warn('global_diff_background_save_failed', {
-                diffId: id,
-                error: error instanceof Error ? error.message : String(error)
-            });
-        });
+        void (async () => {
+            try {
+                await this.persistGlobalDiff(id, diffContent, conversationId);
+                await this.rememberDiffOwner(id, conversationId);
+            } catch (error) {
+                log.warn('global_diff_background_save_failed', {
+                    diffId: id,
+                    error: error instanceof Error ? error.message : String(error)
+                });
+            }
+        })();
         return this.buildGlobalDiffReference(id, content.filePath);
     }
 
@@ -248,12 +367,19 @@ export class DiffStorageManager {
         return { diffId: id, filePath, hasDiffContent: true };
     }
 
-    private async persistGlobalDiff(id: string, content: DiffContent): Promise<void> {
+    private async persistGlobalDiff(id: string, content: DiffContent, conversationId?: string): Promise<void> {
         this.assertSafeDiffId(id);
-        const diffsDir = path.join(this.basePath, 'diffs', '__global__');
+        const dirName = conversationId && /^[a-zA-Z0-9_-]+$/.test(conversationId)
+            ? conversationId
+            : '__global__';
+        // 对话已删除：墓碑拦截，避免 deferred 落盘把已清理目录复活
+        if (dirName !== '__global__' && this.deletedConversationTombstones.has(dirName)) {
+            return;
+        }
+        const diffsDir = path.join(this.basePath, 'diffs', dirName);
         await this.ensureDir(diffsDir);
-        await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content), 'utf8');
-        log.debug('global_diff_saved', { diffId: id });
+        await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), await this.compressDiff(content));
+        log.debug('global_diff_saved', { diffId: id, conversationId: conversationId || '__global__' });
     }
 
     private cacheGlobalDiff(id: string, content: DiffContent): void {
@@ -281,7 +407,9 @@ export class DiffStorageManager {
     }
     
     /**
-     * 加载全局 diff 内容
+     * 加载 diff 内容
+     *
+     * 查找顺序：内存缓存 → 对话目录（索引定位）→ __global__（旧版数据兼容）。
      *
      * @param diffId Diff ID
      * @returns Diff 内容，如果不存在返回 null
@@ -300,19 +428,21 @@ export class DiffStorageManager {
             return cached.content;
         }
 
-        const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);
-        
-        try {
-            const data = await fs.promises.readFile(filePath, 'utf8');
-            return JSON.parse(data) as DiffContent;
-        } catch (error) {
-            console.warn(`[DiffStorageManager] Failed to load global diff ${diffId}: ${error}`);
-            return null;
+        // 1) 索引定位对话目录
+        const index = await this.loadDiffIndex();
+        const owner = index.get(diffId);
+        if (owner) {
+            const content = await this.readDiffFile(this.getDiffFilePath(owner, diffId));
+            if (content) return content;
         }
+
+        // 2) 回退 __global__（旧版数据 / 未绑定对话的 diff）
+        const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);
+        return await this.readDiffFile(filePath);
     }
     
     /**
-     * 加载 diff 内容
+     * 加载对话级 diff 内容
      * 
      * @param conversationId 对话 ID
      * @param diffId Diff ID
@@ -323,14 +453,7 @@ export class DiffStorageManager {
         diffId: string
     ): Promise<DiffContent | null> {
         const filePath = this.getDiffFilePath(conversationId, diffId);
-        
-        try {
-            const data = await fs.promises.readFile(filePath, 'utf8');
-            return JSON.parse(data) as DiffContent;
-        } catch (error) {
-            console.warn(`[DiffStorageManager] Failed to load diff ${diffId}: ${error}`);
-            return null;
-        }
+        return await this.readDiffFile(filePath);
     }
     
     /**
@@ -363,8 +486,25 @@ export class DiffStorageManager {
         const diffsDir = this.getDiffsDir(conversationId);
         
         try {
+            // 先收集该对话的 diff ID（随后索引会清空，需先记住）
+            const index = await this.loadDiffIndex();
+            const ownedIds = new Set<string>();
+            for (const [diffId, owner] of index) {
+                if (owner === conversationId) ownedIds.add(diffId);
+            }
+            // 标记墓碑：对话 ID 永不复用，拦截 deferred 落盘复活目录
+            this.deletedConversationTombstones.add(conversationId);
             // 递归删除目录
             await fs.promises.rm(diffsDir, { recursive: true, force: true });
+            // 清理索引条目与内存缓存，避免幽灵引用
+            await this.forgetConversationDiffs(conversationId);
+            for (const id of ownedIds) {
+                const cached = this.globalDiffCache.get(id);
+                if (cached) {
+                    this.globalDiffCacheBytes -= cached.bytes;
+                    this.globalDiffCache.delete(id);
+                }
+            }
             log.debug('conversation_diffs_deleted', { conversationId });
         } catch (error) {
             // 目录可能不存在
@@ -464,20 +604,30 @@ export class DiffStorageManager {
         
         try {
             const convDirs = await fs.promises.readdir(diffsBaseDir);
+            const index = await this.loadDiffIndex();
+            let indexChanged = false;
             
             for (const convDir of convDirs) {
-                // __global__ 是全局 diff 目录（非对话，saveGlobalDiff 写入），
-                // 不能按孤儿对话清理——否则全局 diff 会被连带删除。
-                if (convDir === '__global__') {
+                // __global__ 是未绑定对话的 diff 目录（旧版数据），
+                // 不按孤儿对话清理——防止历史 diff 被连带删除。
+                if (convDir === '__global__' || convDir === 'index.json') {
                     continue;
                 }
                 if (!validConversationIds.has(convDir)) {
                     const convDirPath = path.join(diffsBaseDir, convDir);
                     await fs.promises.rm(convDirPath, { recursive: true, force: true });
+                    // 同步清理索引条目
+                    for (const [diffId, owner] of index) {
+                        if (owner === convDir) {
+                            index.delete(diffId);
+                            indexChanged = true;
+                        }
+                    }
                     cleaned++;
                     log.debug('orphaned_diffs_cleaned', { conversationDir: convDir });
                 }
             }
+            if (indexChanged) await this.persistDiffIndex();
         } catch (error) {
             // 目录可能不存在
         }
@@ -505,7 +655,7 @@ export class DiffStorageManager {
             // 创建新目录
             await fs.promises.mkdir(newDiffsDir, { recursive: true });
             
-            // 复制所有 diff 数据
+            // 复制所有 diff 数据（含 index.json）
             const convDirs = await fs.promises.readdir(oldDiffsDir);
             const total = convDirs.length;
             let processed = 0;
@@ -525,6 +675,9 @@ export class DiffStorageManager {
                             path.join(newConvDir, file)
                         );
                     }
+                } else {
+                    // index.json 等文件直接复制
+                    await fs.promises.copyFile(oldConvDir, newConvDir);
                 }
                 
                 processed++;
@@ -534,8 +687,9 @@ export class DiffStorageManager {
                 });
             }
             
-            // 更新基础路径
+            // 更新基础路径并重置索引缓存（新路径下的索引由新 basePath 懒加载）
             this.basePath = newBasePath;
+            this.diffIndex = null;
             
             log.info('diffs_migrated', { processed, newBasePath });
         } catch (error) {

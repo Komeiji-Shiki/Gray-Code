@@ -276,6 +276,8 @@ const en: BackendLanguageMessages = {
                     configNotFound: 'Configuration not found: {configId}',
                     configDisabled: 'Configuration disabled: {configId}',
                     maxToolIterations: 'Maximum tool call iterations reached ({maxIterations})',
+                    maxToolIterationsHardCap: 'Tool call loop exceeded the hard iteration cap ({maxIterations}); request terminated (fail-safe guard for unlimited mode)',
+                    maxToolIterationsWallclock: 'Tool call loop exceeded the hard wall-clock limit of {minutes} minutes; request terminated (fail-safe guard for unlimited mode)',
                     unknownError: 'Unknown error',
                     toolExecutionSuccess: 'Tool execution successful',
                     mcpToolCallFailed: 'MCP tool call failed',

@@ -84,8 +84,38 @@ export const MAIN_LOOP_ABORT_DRAIN_GRACE_MS = 2000;
  */
 export const GEN_RETURN_RECOVERY_GRACE_MS = 500;
 
+/**
+ * -1 无限制模式（graycode.maxToolIterations = -1）的墙钟时间硬性兜底上限（毫秒）。
+ *
+ * -1 是用户显式配置的「无限制」，兜底不改其正常语义；仅在极端失控时触发：模型持续
+ * 返回工具调用、且 abortSignal 缺失或未触发（否则请求永久挂起，占用会话写锁与内存）。
+ * 触发时工具循环立即终止并报错（错误码 TOOL_LOOP_WALLCLOCK_LIMIT）。
+ */
+export const MAX_TOOL_LOOP_WALLCLOCK_MS = 30 * 60 * 1000;
+
+/**
+ * -1 无限制模式的迭代硬上限（防呆）。
+ *
+ * 即使墙钟时间未到，迭代超过该上限也立即终止（错误码 MAX_TOOL_ITERATIONS_HARD_CAP），
+ * 与墙钟上限构成双保险，保证请求有界。
+ */
+export const MAX_ITERATIONS_HARD_CAP = 10000;
+
 /** drain 收尾日志（模块级，供 drainToolExecutionGeneratorAfterAbort 使用） */
 const drainLog = Logger.get('ToolLoopDrain');
+
+/**
+ * 判断工具执行拒绝是否属于「可预期的执行失败」。
+ *
+ * 与文件内其它工具执行路径（主循环 gen.next() / 非流式 await）的传播语义对齐：
+ * 渠道层错误（ChannelError：网络/API/超时等）属于可预期执行失败，保持既有包装
+ * （success:false + error.message）写入历史；其余异常（编程错误、检查点/信箱等
+ * 基础设施错误）视为系统异常，由调用方重新抛出走上层统一错误通道，
+ * 不再伪装成"工具业务失败"。
+ */
+function isExpectedToolExecutionError(err: unknown): err is ChannelError {
+    return err instanceof ChannelError;
+}
 
 /**
  * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
@@ -233,6 +263,12 @@ export interface NonStreamToolLoopResult {
     exceededMaxIterations: boolean;
     /** 是否因主请求取消（abortSignal.aborted）提前终止（与流式路径的 cancelled 输出对齐） */
     cancelled?: boolean;
+    /**
+     * maxToolIterations=-1 无限制模式的硬性兜底保障触发时的错误信息
+     * （迭代硬上限 / 墙钟时间上限）。存在时调用方应优先返回该错误，
+     * 让用户看到明确的硬性保障提示而不是通用的 MAX_TOOL_ITERATIONS。
+     */
+    guardError?: { code: string; message: string };
 }
 
 /**
@@ -736,7 +772,11 @@ export class ToolIterationLoopService {
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
-        // -1 表示无限制
+        // -1 表示无限制（graycode.maxToolIterations）。无限制模式叠加硬性兜底保障
+        // （墙钟时间 + 迭代硬上限，见循环内 1.5 检查）：-1 是用户显式配置的「无限制」，
+        // 兜底不改其正常语义，仅在极端失控（模型持续返回工具调用且 abortSignal 缺失/
+        // 未触发）时终止循环，避免请求永久挂起占用会话写锁与内存。
+        const unlimitedLoopDeadline = maxIterations === -1 ? Date.now() + MAX_TOOL_LOOP_WALLCLOCK_MS : 0;
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
 
@@ -747,6 +787,41 @@ export class ToolIterationLoopService {
                     cancelled: true as const
                 } as any;
                 return;
+            }
+
+            // 1.5 -1 无限制模式的硬性兜底（防呆）：迭代硬上限与墙钟时间上限，
+            // 任一触发立即终止并报错，错误信息标明触发的硬性保障。
+            if (maxIterations === -1) {
+                if (iteration > MAX_ITERATIONS_HARD_CAP) {
+                    this.log.error('stream.tool_loop_hard_cap', {
+                        conversationId,
+                        iteration: iteration - 1,
+                        hardCap: MAX_ITERATIONS_HARD_CAP
+                    });
+                    yield {
+                        conversationId,
+                        error: {
+                            code: 'MAX_TOOL_ITERATIONS_HARD_CAP',
+                            message: t('modules.api.chat.errors.maxToolIterationsHardCap', { maxIterations: MAX_ITERATIONS_HARD_CAP })
+                        }
+                    };
+                    return;
+                }
+                if (Date.now() > unlimitedLoopDeadline) {
+                    this.log.error('stream.tool_loop_wallclock_cap', {
+                        conversationId,
+                        iteration: iteration - 1,
+                        wallclockMs: MAX_TOOL_LOOP_WALLCLOCK_MS
+                    });
+                    yield {
+                        conversationId,
+                        error: {
+                            code: 'TOOL_LOOP_WALLCLOCK_LIMIT',
+                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: MAX_TOOL_LOOP_WALLCLOCK_MS / 60000 })
+                        }
+                    };
+                    return;
+                }
             }
 
             // 2. 创建模型消息前的检查点（如果配置了）
@@ -943,6 +1018,10 @@ export class ToolIterationLoopService {
             // 也包含 toolResults（通知前端，result 字段是工具本身的业务返回值）。
             const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
+            // 早启动工具的系统级异常（非可预期的渠道/业务失败）：
+            // 记录后由下方流循环检查点重新抛出，走上层统一错误通道，
+            // 避免被 .catch 伪装成"工具业务失败"写入历史。
+            let earlyToolSystemError: unknown = undefined;
             const earlyToolProgressQueue = new EarlyStreamingToolProgressQueue();
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
@@ -1011,8 +1090,32 @@ export class ToolIterationLoopService {
                                     // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                                     runtimeContext?.workspaceUri
                                 ).catch(err => {
-                                    // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
-                                    // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
+                                    // 执行异常分类：可预期的执行失败（渠道层 ChannelError）
+                                    // 保持既有包装写入历史，toolResults.result 仍是工具业务
+                                    // 返回值格式，前端能正确渲染；系统异常（编程错误、检查点/
+                                    // 信箱等基础设施错误）不伪装成工具失败——记录到
+                                    // earlyToolSystemError，由下方流循环检查点重新抛出，
+                                    // 走上层统一错误通道（与主循环/非流式路径传播语义对齐）。
+                                    if (!isExpectedToolExecutionError(err)) {
+                                        earlyToolSystemError = err;
+                                        this.log.error('stream.early_tool_system_error', {
+                                            conversationId,
+                                            toolName: fc.name,
+                                            toolId: fc.id,
+                                            error: (err as Error)?.message ?? String(err),
+                                            stack: (err as Error)?.stack
+                                        });
+                                        // 返回空占位结果：保证进度队列/结果去重机制正常落定
+                                        // （无未处理拒绝），streamingToolResults.has(fc.id) 成立
+                                        // 使该调用不会在主循环被重复执行；空 responseParts 确保
+                                        // 取消结算时回退为标准"已取消"占位，系统异常本身只经
+                                        // 日志与上层错误通道暴露，不写入历史。
+                                        return {
+                                            responseParts: [],
+                                            toolResults: [],
+                                            checkpoints: []
+                                        } as ToolExecutionFullResult;
+                                    }
                                     const errorResponse: Record<string, unknown> = {
                                         success: false,
                                         error: (err as Error).message
@@ -1035,6 +1138,11 @@ export class ToolIterationLoopService {
 
                     for (const statusChunk of drainSettledEarlyToolStatuses()) {
                         yield statusChunk;
+                    }
+
+                    // 早启动工具发生系统异常：立即终止请求，走上层统一错误通道
+                    if (earlyToolSystemError !== undefined) {
+                        throw earlyToolSystemError;
                     }
                 }
 
@@ -1119,6 +1227,12 @@ export class ToolIterationLoopService {
                         ...(partialContent.parts.length > 0 ? { content: partialContent } : {})
                     } as any;
                     return;
+                }
+
+                // 流循环自然结束（未取消）后仍有早启动系统异常落定：此时抛出走上层
+                // 统一错误通道（取消路径已在上方分支优先返回，不覆盖取消语义）。
+                if (earlyToolSystemError !== undefined) {
+                    throw earlyToolSystemError;
                 }
 
                 finalContent = processor.getContent();
@@ -1277,6 +1391,14 @@ export class ToolIterationLoopService {
 
                 autoPrefix.length = 0;
                 autoPrefix.push(...remainingAutoPrefix);
+            }
+
+            // 早启动系统异常可能在此前的等待循环期间才落定：写入历史前最后检查一次，
+            // 抛出走上层统一错误通道，避免把系统异常作为工具失败写入历史。
+            // 同 id 去重已由上方 streamingToolResults.has(call.id) 机制保证：
+            // 系统异常工具只记录空占位（无 responseParts），不会与后续真实结果并存。
+            if (earlyToolSystemError !== undefined) {
+                throw earlyToolSystemError;
             }
 
             const earlyFullResults = Array.from(streamingToolResults.values());
@@ -1701,6 +1823,11 @@ export class ToolIterationLoopService {
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
+        // -1 表示无限制（graycode.maxToolIterations）。无限制模式叠加硬性兜底保障
+        // （墙钟时间 + 迭代硬上限，见循环内检查）：-1 是用户显式配置的「无限制」，
+        // 兜底不改其正常语义，仅在极端失控（模型持续返回工具调用且 abortSignal 缺失/
+        // 未触发）时终止循环，避免请求永久挂起占用会话写锁与内存。
+        const unlimitedLoopDeadline = maxIterations === -1 ? Date.now() + MAX_TOOL_LOOP_WALLCLOCK_MS : 0;
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
@@ -1709,6 +1836,40 @@ export class ToolIterationLoopService {
             // 不再发起新一轮 API 请求（此前会继续调 generate，取消语义依赖 provider 侧）。
             if (abortSignal?.aborted) {
                 return { exceededMaxIterations: false, cancelled: true };
+            }
+
+            // -1 无限制模式的硬性兜底（防呆）：迭代硬上限与墙钟时间上限，
+            // 任一触发立即终止并返回 guardError（调用方优先透出），
+            // 错误信息标明触发的硬性保障。
+            if (maxIterations === -1) {
+                if (iteration > MAX_ITERATIONS_HARD_CAP) {
+                    this.log.error('nonstream.tool_loop_hard_cap', {
+                        conversationId,
+                        iteration: iteration - 1,
+                        hardCap: MAX_ITERATIONS_HARD_CAP
+                    });
+                    return {
+                        exceededMaxIterations: true,
+                        guardError: {
+                            code: 'MAX_TOOL_ITERATIONS_HARD_CAP',
+                            message: t('modules.api.chat.errors.maxToolIterationsHardCap', { maxIterations: MAX_ITERATIONS_HARD_CAP })
+                        }
+                    };
+                }
+                if (Date.now() > unlimitedLoopDeadline) {
+                    this.log.error('nonstream.tool_loop_wallclock_cap', {
+                        conversationId,
+                        iteration: iteration - 1,
+                        wallclockMs: MAX_TOOL_LOOP_WALLCLOCK_MS
+                    });
+                    return {
+                        exceededMaxIterations: true,
+                        guardError: {
+                            code: 'TOOL_LOOP_WALLCLOCK_LIMIT',
+                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: MAX_TOOL_LOOP_WALLCLOCK_MS / 60000 })
+                        }
+                    };
+                }
             }
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）

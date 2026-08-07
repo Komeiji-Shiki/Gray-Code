@@ -103,9 +103,10 @@ function records(buf: Buffer): LogEntry[] {
 const MEMORY_CONFIG_BOUNDS: Array<[keyof MemoryConfig, number, number]> = [
     ['wakeLines', 1, 10000],
     ['entryChars', 1, LOG_REC - 1 - MAX_HEADER_BYTES],
-    ['partChars', 1, 1000000],
-    ['partLines', 1, 100000],
 ];
+
+/** recall 输出字节上限（保持最新匹配；取代已移除的 PART_CHARS 分页配置） */
+const RECALL_MAX_BYTES = 20000;
 
 // ─── 异步锁（保证操作串行化） ─────────────────────
 
@@ -474,46 +475,17 @@ export class MemoryManager {
         return this.napPrompt(lo, hi, await this.pendingCount(T) - 1);
     }
 
-    // ─── 分页 ──────────────────────────────────
-
-    /** 将行列表按 PART_CHARS / PART_LINES 分页 */
-    paginate(lines: string[]): string[][] {
-        const parts: string[][] = [];
-        let cur: string[] = [];
-        let size = 0;
-        for (const line of lines) {
-            const n = Buffer.byteLength(line, 'utf-8') + 1;
-            if (cur.length > 0 && (cur.length >= this.config.partLines || size + n > this.config.partChars)) {
-                parts.push(cur);
-                cur = [];
-                size = 0;
-            }
-            cur.push(line);
-            size += n;
-        }
-        if (cur.length > 0) parts.push(cur);
-        return parts;
-    }
-
     // ─── 公共 API ─────────────────────────────
 
     /**
-     * wake: 读取记忆。
-     * @param part 要读取的部分号（1-based），不传则读第 1 部分
-     * @param T 快照时的记忆总数（不传则用当前总数）
+     * wake: 唤醒全部可用记忆（单次输出，不再分页）。
+     * 输出受 WAKE_LINES 行预算约束：近期记忆保持原文，远期记忆以摘要形式覆盖。
      */
-    async wake(part?: number, T?: number): Promise<WakeResult> {
+    async wake(): Promise<WakeResult> {
         const now = await this.logLen();
-        const snapshotT = T ?? now;
-        if (snapshotT > now) {
-            die(`T=${snapshotT}, but the log holds ${plural(now, 'memory')}. Run memory_wake.`);
-        }
-
-        if (snapshotT === 0) {
+        if (now === 0) {
             return {
                 blocks: [],
-                part: 1,
-                totalParts: 1,
                 totalMemories: 0,
                 awake: true,
             };
@@ -536,7 +508,7 @@ export class MemoryManager {
                 lines.push(`#${e.id} ${e.date} ${e.text}`);
             }
         };
-        for (const [lo, hi] of this.cover(snapshotT, this.config.wakeLines)) {
+        for (const [lo, hi] of this.cover(now, this.config.wakeLines)) {
             if (hi - lo === 1) {
                 if (runLo < 0) runLo = lo;
                 runHi = hi;
@@ -548,7 +520,7 @@ export class MemoryManager {
             }
             let s = await this.treeGet(lo, hi);
             if (s === null) {
-                const pc = await this.pendingCount(snapshotT);
+                const pc = await this.pendingCount(now);
                 if (pc > 0) {
                     // 直接用实际缺失的块构造提示，而不是 nextNap 返回的
                     // "第一个待压缩块"（可能不是 wake 实际缺失的那个块）。
@@ -570,27 +542,16 @@ export class MemoryManager {
             await flushRawRun(runLo, runHi);
         }
 
-        const parts = this.paginate(lines);
-        const k = part ?? 1;
-        if (k < 1 || k > parts.length) {
-            die(`No part ${k}: the memory has ${plural(parts.length, 'part')}. Run memory_wake.`);
-        }
-
-        const awake = k >= parts.length;
-        const blocks = this.parseWakeBlocks(parts[k - 1]);
+        const blocks = this.parseWakeBlocks(lines);
 
         let pendingCompression: NapPrompt | undefined;
-        if (awake) {
-            const nap = await this.nextNap(snapshotT);
-            if (nap) pendingCompression = nap;
-        }
+        const nap = await this.nextNap(now);
+        if (nap) pendingCompression = nap;
 
         return {
             blocks,
-            part: k,
-            totalParts: parts.length,
-            totalMemories: snapshotT,
-            awake,
+            totalMemories: now,
+            awake: true,
             pendingCompression,
         };
     }
@@ -656,7 +617,7 @@ export class MemoryManager {
             matches.push(line);
             size += Buffer.byteLength(line, 'utf-8') + 1;
             // 保持最新的匹配，丢弃最旧的
-            while (size > this.config.partChars && head < matches.length) {
+            while (size > RECALL_MAX_BYTES && head < matches.length) {
                 size -= Buffer.byteLength(matches[head], 'utf-8') + 1;
                 head++;
             }
@@ -1045,8 +1006,6 @@ export class MemoryManager {
             '',
             `WAKE_LINES   = ${cfg.wakeLines}   # how many lines wake prints`,
             `ENTRY_CHARS  = ${cfg.entryChars}  # max bytes per memory`,
-            `PART_CHARS   = ${cfg.partChars}   # max chars per output part`,
-            `PART_LINES   = ${cfg.partLines}   # max lines per output part`,
             '',
         ];
         await fs.writeFile(path.join(this.dir, 'config'), lines.join('\n'), 'utf-8');
@@ -1068,8 +1027,6 @@ export class MemoryManager {
                 const val = trimmed.substring(eqIdx + 1).trim();
                 if (key === 'WAKE_LINES') cfg.wakeLines = parseInt(val, 10) || cfg.wakeLines;
                 if (key === 'ENTRY_CHARS') cfg.entryChars = parseInt(val, 10) || cfg.entryChars;
-                if (key === 'PART_CHARS') cfg.partChars = parseInt(val, 10) || cfg.partChars;
-                if (key === 'PART_LINES') cfg.partLines = parseInt(val, 10) || cfg.partLines;
             }
             this.config = cfg;
             return cfg;

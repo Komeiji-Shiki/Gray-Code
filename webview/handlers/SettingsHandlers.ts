@@ -147,9 +147,9 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
  * 获取记忆配置
  * 合并 SettingsManager 中的用户设置和 MemoryManager 的运行时配置。
  *
- * 数值项（wakeLines/entryChars/partChars/partLines）以目标作用域 MemoryManager 的
+ * 数值项（wakeLines/entryChars）以目标作用域 MemoryManager 的
  * 运行时配置为权威来源：settings 配置的数值项经 getToolsConfigEntry 深合并默认值后
- * 永远有值（96/280/20000/500），?? 兜底恒不生效，会掩盖工作区各自的运行时配置——
+ * 永远有值（96/280），?? 兜底恒不生效，会掩盖工作区各自的运行时配置——
  * 记忆隔离下每个工作区的 config 独立持久化，这里必须按 data.workspaceUri 读对应实例。
  * enabled/systemPrompt 属于全局设置段，仍取 settings 配置。
  */
@@ -165,8 +165,6 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
         ...config,
         wakeLines: runtimeConfig.wakeLines,
         entryChars: runtimeConfig.entryChars,
-        partChars: runtimeConfig.partChars,
-        partLines: runtimeConfig.partLines,
       });
     }
     ctx.sendResponse(requestId, config);
@@ -196,8 +194,6 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
       const runtimeUpdates: Record<string, number> = {};
       if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
       if (typeof config.entryChars === 'number') runtimeUpdates.entryChars = config.entryChars;
-      if (typeof config.partChars === 'number') runtimeUpdates.partChars = config.partChars;
-      if (typeof config.partLines === 'number') runtimeUpdates.partLines = config.partLines;
       if (Object.keys(runtimeUpdates).length > 0) {
         await mgr.updateConfig(runtimeUpdates);
       }
@@ -211,8 +207,6 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
       const runtimeUpdates: Record<string, number> = {};
       if (typeof config.wakeLines === 'number') runtimeUpdates.wakeLines = config.wakeLines;
       if (typeof config.entryChars === 'number') runtimeUpdates.entryChars = config.entryChars;
-      if (typeof config.partChars === 'number') runtimeUpdates.partChars = config.partChars;
-      if (typeof config.partLines === 'number') runtimeUpdates.partLines = config.partLines;
       if (Object.keys(runtimeUpdates).length > 0) {
         await mgr.updateConfig(runtimeUpdates);
       }

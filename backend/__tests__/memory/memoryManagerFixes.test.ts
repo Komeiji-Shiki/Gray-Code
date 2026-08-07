@@ -117,7 +117,7 @@ describe('MemoryManager.wake', () => {
             // 只压缩 0-1：pending 的第一个是 [2,4)，但 wake 缺失的块是 [0,4)
             await mm.compress('0-1', 'ab');
 
-            const error = await mm.wake(undefined, 8).catch(e => e);
+            const error = await mm.wake().catch(e => e);
             expect(error.message).toContain('needs #0-3');
             // 提示必须指向实际缺失的块 0-3，而不是第一个待压缩块 2-3
             expect(error.message).toContain('Compress memories #0-3');

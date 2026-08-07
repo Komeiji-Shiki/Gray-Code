@@ -312,7 +312,10 @@ const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig';
  */
 function isFirstMessageHistory(history: Content[]): boolean {
   const active = history.filter(message => !message.isSummarized);
-  return active.length === 1 && active[0].role === 'user';
+  // 决策 8 口径：functionResponse 是隐藏回复（不独立成消息），upsertHiddenFunctionResponse
+  // 追加的 user+functionResponse 回复不能算作「首条用户消息」，否则隐藏续接场景下
+  // 动态系统提示词会被当作首条消息错误刷新（多余 token 消耗）。
+  return active.length === 1 && active[0].role === 'user' && !isFunctionResponseMessage(active[0]);
 }
 
 export class ChatFlowService {
@@ -951,7 +954,9 @@ export class ChatFlowService {
     if (loopResult.exceededMaxIterations) {
       return {
         success: false,
-        error: {
+        // maxToolIterations=-1 无限制模式的硬性兜底保障触发时，优先透出明确的
+        // 硬性保障错误（迭代硬上限/墙钟时间上限）；否则走通用最大迭代次数错误。
+        error: loopResult.guardError ?? {
           code: 'MAX_TOOL_ITERATIONS',
           message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations }),
         },
@@ -1025,7 +1030,9 @@ export class ChatFlowService {
     if (loopResult.exceededMaxIterations) {
       return {
         success: false,
-        error: {
+        // maxToolIterations=-1 无限制模式的硬性兜底保障触发时，优先透出明确的
+        // 硬性保障错误（迭代硬上限/墙钟时间上限）；否则走通用最大迭代次数错误。
+        error: loopResult.guardError ?? {
           code: 'MAX_TOOL_ITERATIONS',
           message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations }),
         },
@@ -1155,7 +1162,9 @@ export class ChatFlowService {
     if (loopResult.exceededMaxIterations) {
       return {
         success: false,
-        error: {
+        // maxToolIterations=-1 无限制模式的硬性兜底保障触发时，优先透出明确的
+        // 硬性保障错误（迭代硬上限/墙钟时间上限）；否则走通用最大迭代次数错误。
+        error: loopResult.guardError ?? {
           code: 'MAX_TOOL_ITERATIONS',
           message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations }),
         },

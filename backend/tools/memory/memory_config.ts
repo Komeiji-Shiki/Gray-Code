@@ -16,8 +16,6 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
             '可配置项：\n' +
             '- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n' +
             '- entryChars: 单条记忆最大字节数（默认 280）\n' +
-            '- partChars: 输出分页最大字符数（默认 20000）\n' +
-            '- partLines: 输出分页最大行数（默认 500）\n' +
             '不传参数时显示当前配置。传参数时修改对应项。\n' +
             '修改只影响输出格式，不需要重新计算任何东西。',
         category: 'memory',
@@ -31,14 +29,6 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
                 entryChars: {
                     type: 'number',
                     description: '单条记忆最大字节数。默认 280，上限受固定宽度记录约束（含记录头部开销）。',
-                },
-                partChars: {
-                    type: 'number',
-                    description: '输出分页最大字符数。',
-                },
-                partLines: {
-                    type: 'number',
-                    description: '输出分页最大行数。',
                 },
             },
         },
@@ -59,8 +49,6 @@ async function memoryConfigHandler(args: Record<string, unknown>, context?: Tool
         const updates: Partial<MemoryConfig> = {};
         if (typeof args.wakeLines === 'number') updates.wakeLines = args.wakeLines;
         if (typeof args.entryChars === 'number') updates.entryChars = args.entryChars;
-        if (typeof args.partChars === 'number') updates.partChars = args.partChars;
-        if (typeof args.partLines === 'number') updates.partLines = args.partLines;
 
         let config: MemoryConfig;
         if (Object.keys(updates).length > 0) {

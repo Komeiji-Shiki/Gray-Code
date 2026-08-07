@@ -62,8 +62,6 @@ const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
 // 运行时参数
 const wakeLines = ref(96)
 const entryChars = ref(280)
-const partChars = ref(20000)
-const partLines = ref(500)
 
 // ─── 记忆条目管理 ───
 interface LogEntry {
@@ -109,8 +107,6 @@ interface ScopeCache {
     systemPrompt: string
     wakeLines: number
     entryChars: number
-    partChars: number
-    partLines: number
   }
   entriesLoaded: boolean
   configLoaded: boolean
@@ -170,8 +166,6 @@ function applyCachedScope(): void {
     systemPrompt.value = cached.config.systemPrompt
     wakeLines.value = cached.config.wakeLines
     entryChars.value = cached.config.entryChars
-    partChars.value = cached.config.partChars
-    partLines.value = cached.config.partLines
     configLoadedOnce.value = true
   }
 }
@@ -365,8 +359,6 @@ async function loadConfig(silent = false) {
       }
       if (typeof config.wakeLines === 'number') wakeLines.value = config.wakeLines
       if (typeof config.entryChars === 'number') entryChars.value = config.entryChars
-      if (typeof config.partChars === 'number') partChars.value = config.partChars
-      if (typeof config.partLines === 'number') partLines.value = config.partLines
       configLoadedOnce.value = true
       // 写回缓存：切换回来时可立即渲染，无需重新等待
       const key = scopeKey()
@@ -377,8 +369,6 @@ async function loadConfig(silent = false) {
           systemPrompt: systemPrompt.value,
           wakeLines: wakeLines.value,
           entryChars: entryChars.value,
-          partChars: partChars.value,
-          partLines: partLines.value,
         }
         cached.configLoaded = true
       }
@@ -514,8 +504,6 @@ async function saveConfig() {
         systemPrompt: promptToSave,
         wakeLines: wakeLines.value,
         entryChars: entryChars.value,
-        partChars: partChars.value,
-        partLines: partLines.value,
       },
       ...scopeParams(),
     })
@@ -536,8 +524,6 @@ function resetToDefault() {
   systemPrompt.value = DEFAULT_SYSTEM_PROMPT
   wakeLines.value = 96
   entryChars.value = 280
-  partChars.value = 20000
-  partLines.value = 500
 }
 
 onMounted(() => {
@@ -628,30 +614,6 @@ watch(selectedWorkspaceUri, (next, prev) => {
             <div class="number-input-row">
               <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="param-label">
-              {{ t('components.settings.settingsPanel.memory.runtime.partChars.label') }}
-            </label>
-            <p class="field-description">
-              {{ t('components.settings.settingsPanel.memory.runtime.partChars.description') }}
-            </p>
-            <div class="number-input-row">
-              <input type="number" v-model.number="partChars" min="100" max="100000" step="100" class="form-input-number" :disabled="!enabled" />
-              <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partChars.unit') }}</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="param-label">
-              {{ t('components.settings.settingsPanel.memory.runtime.partLines.label') }}
-            </label>
-            <p class="field-description">
-              {{ t('components.settings.settingsPanel.memory.runtime.partLines.description') }}
-            </p>
-            <div class="number-input-row">
-              <input type="number" v-model.number="partLines" min="10" max="2000" step="10" class="form-input-number" :disabled="!enabled" />
-              <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.partLines.unit') }}</span>
             </div>
           </div>
         </div>

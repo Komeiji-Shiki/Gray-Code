@@ -44,9 +44,6 @@ const stats = computed(() => {
   if (d.totalMemories !== undefined) s.push({ label: 'Memories', value: String(d.totalMemories) })
   if (d.totalHits !== undefined) s.push({ label: 'Hits', value: String(d.totalHits) })
   if (d.truncated) s.push({ label: 'Truncated', value: '⚠' })
-  if (d.part !== undefined && d.totalParts !== undefined && Number(d.totalParts) > 1) {
-    s.push({ label: 'Part', value: `${d.part}/${d.totalParts}` })
-  }
   if (d.id !== undefined) s.push({ label: 'ID', value: `#${d.id}` })
   if (d.awake !== undefined) s.push({ label: 'Awake', value: d.awake ? '✓' : '✗' })
   if (d.removed !== undefined) s.push({ label: 'Removed', value: String(d.removed) })

@@ -1912,7 +1912,7 @@ ${descriptionSuffix}`,
                                 originalContent,
                                 newContent,
                                 filePath
-                            });
+                            }, undefined, context?.conversationId);
                             diffContentId = diffRef.diffId;
                         } catch (e) {
                             console.warn('Failed to save diff content to storage:', e);
@@ -2111,7 +2111,7 @@ ${descriptionSuffix}`,
                             originalContent,
                             newContent: currentContent,
                             filePath
-                        });
+                        }, undefined, context?.conversationId);
                         diffContentId = diffRef.diffId;
                     } catch (e) {
                         console.warn('Failed to save diff content to storage:', e);

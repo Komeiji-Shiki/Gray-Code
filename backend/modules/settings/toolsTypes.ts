@@ -233,18 +233,6 @@ export interface MemoryToolConfig {
      */
     entryChars?: number;
 
-    /**
-     * 输出分页的最大字符数（默认 20000）。
-     * 当 wake 输出超过此值时自动分页。
-     */
-    partChars?: number;
-
-    /**
-     * 输出分页的最大行数（默认 500）。
-     * 当 wake 输出行数超过此值时自动分页。
-     */
-    partLines?: number;
-
     [key: string]: unknown;
 }
 
@@ -256,8 +244,6 @@ export const DEFAULT_MEMORY_TOOL_CONFIG: MemoryToolConfig = {
     // systemPrompt 为空时，PromptManager 使用内置默认值
     wakeLines: 96,
     entryChars: 280,
-    partChars: 20000,
-    partLines: 500,
 };
 
 

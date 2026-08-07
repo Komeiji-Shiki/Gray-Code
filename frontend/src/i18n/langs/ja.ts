@@ -2214,16 +2214,6 @@ const ja: LanguageMessages = {
                             label: 'エントリ最大バイト',
                             description: '1 エントリあたりの最大バイト数。制限を超えると切り詰められます。',
                             unit: 'バイト'
-                        },
-                        partChars: {
-                            label: 'ページ最大文字数',
-                            description: '出力 1 ページあたりの最大文字数。超過時は自動的に分割されます。',
-                            unit: '文字'
-                        },
-                        partLines: {
-                            label: 'ページ最大行数',
-                            description: '出力 1 ページあたりの最大行数。超過時は自動的に分割されます。',
-                            unit: '行'
                         }
                     },
                     info: {

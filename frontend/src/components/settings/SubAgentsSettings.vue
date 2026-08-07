@@ -9,11 +9,12 @@
  * 4. 配置子代理可用的工具列表
  */
 
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { CustomSelect, CustomCheckbox, ConfirmDialog, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
+import { getChannelModels } from '@/services/config'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
 import { isMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
@@ -107,6 +108,37 @@ const createError = ref('')
 const presets = ref<SubAgentPreset[]>([])
 const selectedPresetId = ref('')
 const newAgentChannelId = ref('')
+const newAgentModelId = ref('')
+
+// 新建对话框的模型选项（与编辑区共用 modelOptions，渠道变化时重新加载）
+const createDialogModelOptions = ref<SelectOption[]>([])
+
+// 新建对话框渠道切换：重新加载模型列表并自动选中渠道默认模型
+watch(newAgentChannelId, async (channelId) => {
+  newAgentModelId.value = ''
+  createDialogModelOptions.value = []
+  if (!channelId) return
+  try {
+    const cfg = channels.value.find(c => c.id === channelId) as any
+    const localModels = Array.isArray(cfg?.models) ? (cfg.models as ModelInfo[]) : []
+    let models = localModels.length > 0 ? localModels : await getChannelModels(channelId)
+    const current = (cfg?.model || '').trim()
+    if (current && !models.some(m => m.id === current)) {
+      models = [{ id: current, name: current }, ...models]
+    }
+    createDialogModelOptions.value = models.map(m => ({
+      value: m.id,
+      label: m.name || m.id,
+      description: m.description
+    }))
+    newAgentModelId.value = current || models[0]?.id || ''
+  } catch (error) {
+    console.error('Failed to load create dialog models:', error)
+    const current = (channels.value.find(c => c.id === channelId) as any)?.model?.trim() || ''
+    createDialogModelOptions.value = current ? [{ value: current, label: current }] : []
+    newAgentModelId.value = current
+  }
+})
 
 // 删除确认
 const showDeleteConfirm = ref(false)
@@ -155,15 +187,62 @@ const selectedChannel = computed(() =>
   channels.value.find(c => c.id === currentAgent.value?.channel.channelId)
 )
 
-// 当前渠道的模型选项
-const modelOptions = computed<SelectOption[]>(() => {
-  if (!selectedChannel.value?.models) return []
-  return selectedChannel.value.models.map(m => ({
-    value: m.id,
-    label: m.name || m.id,
-    description: m.description
-  }))
-})
+// 当前渠道的模型选项（本地持久化列表优先，缺失时实时拉取 + 渠道默认模型兜底）
+const modelOptions = ref<SelectOption[]>([])
+
+// 加载指定渠道的模型选项：优先使用渠道配置中已保存的模型列表，
+// 为空时实时拉取 provider 模型列表，并保证渠道默认模型始终在选项中
+async function loadModelsForChannel(configId: string) {
+  if (!configId) {
+    modelOptions.value = []
+    return
+  }
+
+  try {
+    const cfg = channels.value.find(c => c.id === configId)
+    const localModels = Array.isArray((cfg as any)?.models) ? ((cfg as any).models as ModelInfo[]) : []
+    let models = localModels.length > 0 ? localModels : await getChannelModels(configId)
+
+    const current = ((cfg as any)?.model || '').trim()
+    if (current && !models.some(m => m.id === current)) {
+      models = [{ id: current, name: current }, ...models]
+    }
+
+    modelOptions.value = models.map(m => ({
+      value: m.id,
+      label: m.name || m.id,
+      description: m.description
+    }))
+  } catch (error) {
+    console.error('Failed to load models:', error)
+    // 实时拉取失败时回退到渠道默认模型，保证用户仍可为子代理指定模型
+    const current = (channels.value.find(c => c.id === configId) as any)?.model?.trim() || ''
+    modelOptions.value = current ? [{ value: current, label: current }] : []
+  }
+}
+
+// 当前代理的渠道切换后重新加载模型选项（渠道列表加载完成时同样触发一次）
+watch(
+  [() => currentAgent.value?.channel.channelId, () => channels.value.length],
+  ([channelId]) => {
+    if (channelId) {
+      loadModelsForChannel(channelId)
+    } else {
+      modelOptions.value = []
+    }
+  }
+)
+
+// 渠道切换：自动选中新渠道的默认模型（不再强制清空 modelId）
+async function handleChannelChange(channelId: string) {
+  const cfg = channels.value.find(c => c.id === channelId) as any
+  const defaultModel = (cfg?.model || '').trim()
+  await updateAgentField('channel', {
+    ...currentAgent.value?.channel,
+    channelId,
+    modelId: defaultModel || ''
+  })
+}
 
 // 工具模式选项
 const toolModeOptions = computed<SelectOption[]>(() => [
@@ -363,6 +442,8 @@ function openCreateDialog() {
   newAgentName.value = ''
   createError.value = ''
   selectedPresetId.value = ''
+  newAgentModelId.value = ''
+  createDialogModelOptions.value = []
   // 默认选中第一个可用渠道，创建后可在编辑界面调整
   newAgentChannelId.value = channelOptions.value[0]?.value || ''
   showNewDialog.value = true
@@ -456,7 +537,7 @@ async function createAgent() {
       name: trimmedName,
       description: preset?.defaultDescription || '',
       systemPrompt: preset?.systemPrompt || '',
-      channel: { channelId: newAgentChannelId.value || '' },
+      channel: { channelId: newAgentChannelId.value || '', modelId: newAgentModelId.value || '' },
       tools: preset ? preset.tools : { mode: 'all' },
       maxIterations: preset?.maxIterations,
       maxRuntime: preset?.maxRuntime,
@@ -730,7 +811,7 @@ onMounted(async () => {
                 :modelValue="currentAgent.channel.channelId"
                 :options="channelOptions"
                 :placeholder="t('components.settings.subagents.selectChannel')"
-                @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, channelId: $event, modelId: '' })"
+                @update:modelValue="handleChannelChange"
               />
             </div>
             
@@ -880,6 +961,16 @@ onMounted(async () => {
               v-model="newAgentChannelId"
               :options="channelOptions"
               :placeholder="t('components.settings.subagents.selectChannel')"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>{{ t('components.settings.subagents.model') }}</label>
+            <CustomSelect
+              v-model="newAgentModelId"
+              :options="createDialogModelOptions"
+              :placeholder="t('components.settings.subagents.selectModel')"
+              :disabled="!newAgentChannelId"
             />
           </div>
           

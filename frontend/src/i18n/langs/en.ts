@@ -2214,16 +2214,6 @@ const en: LanguageMessages = {
                             label: 'Max Entry Bytes',
                             description: 'Maximum bytes per single memory entry. Entries exceeding this limit will be truncated.',
                             unit: 'bytes'
-                        },
-                        partChars: {
-                            label: 'Part Max Characters',
-                            description: 'Maximum characters per output page. Output is split into parts when this limit is exceeded.',
-                            unit: 'chars'
-                        },
-                        partLines: {
-                            label: 'Part Max Lines',
-                            description: 'Maximum lines per output page. Output is split into parts when this limit is exceeded.',
-                            unit: 'lines'
                         }
                     },
                     info: {
