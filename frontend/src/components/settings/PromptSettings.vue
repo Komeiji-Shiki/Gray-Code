@@ -1090,8 +1090,9 @@ async function saveConfig() {
 
     showToast(t('components.settings.promptSettings.saveSuccess'), true)
 
-    // 保存成功后自动更新 token 计数
-    await countTokens()
+    // 保存成功后自动更新 token 计数（辅助操作：不阻塞保存成功反馈，
+    // token 计数走渠道 API 可能较慢，等待它会让保存响应延迟）
+    void countTokens()
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
     showToast(t('components.settings.promptSettings.saveFailed'), false)

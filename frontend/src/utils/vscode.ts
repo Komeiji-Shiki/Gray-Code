@@ -52,7 +52,17 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   'checkpoint.previewRestore',
   // deleteMemoryEntries：批量删除记忆可能对交错 id 触发多次全量 LOG 重建（O(n·T)），
   // 大选择量下可能超过 180s；超时会让前端误判失败而后端已删，重试又因 id 失效报错（memory-review）
-  'deleteMemoryEntries'
+  'deleteMemoryEntries',
+  // 模态对话框类：对话框打开期间 promise 一直挂起，超时会让前端误报失败而对话框关闭后操作实际生效
+  'exportPromptModes',
+  'settings.export',
+  'settings.import',
+  'storagePath.selectFolder',
+  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
+  'tokenizer.getResource',
+  'countSystemPromptTokens',
+  // 目录统计：大目录统计可达数十秒
+  'storagePath.getStats'
 ])
 
 /**
