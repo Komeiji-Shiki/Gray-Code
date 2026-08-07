@@ -67,7 +67,6 @@ import {
   loadSavedWorkspaces,
   removeSavedWorkspace,
   openWorkspaceFolderAction,
-  openSavedWorkspace,
   saveCurrentWorkspace,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
@@ -132,7 +131,9 @@ import {
   findTabByConversationId,
   updateTabTitle,
   updateTabConversationId,
-  reorderTab as reorderTabAction
+  reorderTab as reorderTabAction,
+  openWorkspaceInNewConversation,
+  sameWorkspaceUri
 } from './chat/tabActions'
 
 import type { StreamHandlerContext } from './chat/streamHandler'
@@ -893,6 +894,45 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 切换工作区（1.7.3 修复）：对话内禁止重绑定——切换工作区 = 打开绑定该
+   * 工作区的新对话（空白标签页），首个消息才持久化，不会造成对话堆积。
+   */
+  async function switchWorkspace(workspaceUri: string | null): Promise<void> {
+    await openWorkspaceInNewConversation(state, workspaceUri, {
+      switchTab: switchTabWrapped,
+      sendWorkspaceSetActive: (uri: string | null) => setActiveWorkspaceAction(state, uri)
+    })
+  }
+
+  /**
+   * 打开工作区文件夹：目录打开完成后，把工作区上下文切换到新打开的工作区
+   * （空白标签页直接重定位；已有对话则打开绑定新工作区的新对话）。
+   */
+  async function openWorkspaceFolder(fsPath?: string): Promise<any> {
+    const resp = await openWorkspaceFolderAction(state, fsPath)
+    if (!resp || resp?.canceled) return resp
+    await openWorkspaceInNewConversation(state, resp?.activeWorkspaceUri ?? null, {
+      switchTab: switchTabWrapped,
+      // 目录已由 openFolder 流程打开：无需再发 setActive IPC，直接回传规范 URI
+      sendWorkspaceSetActive: async () => ({ activeWorkspaceUri: resp?.activeWorkspaceUri ?? null })
+    })
+    return resp
+  }
+
+  /**
+   * 打开收藏的工作区：已打开 → 按切换工作区语义打开绑定该工作区的新对话；
+   * 未打开 → 走目录打开流程。
+   */
+  async function openSavedWorkspace(entry: WorkspaceFolderInfo): Promise<any> {
+    const isOpen = state.workspaceList.value.some(ws => sameWorkspaceUri(state, ws.uri, entry.uri))
+    if (isOpen) {
+      await switchWorkspace(entry.uri)
+      return
+    }
+    return openWorkspaceFolder(entry.fsPath)
+  }
+
+  /**
    * 从历史打开对话（在新标签页或当前空白标签页中）
    */
   async function openConversationInTab(conversationId: string): Promise<void> {
@@ -1106,12 +1146,12 @@ export const useChatStore = defineStore('chat', () => {
     workspaceFilter: state.workspaceFilter,
     setCurrentWorkspaceUri: (uri: string | null) => setCurrentWorkspaceUri(state, uri),
     setWorkspaceList: (list: WorkspaceFolderInfo[]) => setWorkspaceList(state, list),
-    setActiveWorkspace: (workspaceUri: string | null) => setActiveWorkspaceAction(state, workspaceUri),
+    setActiveWorkspace: (workspaceUri: string | null) => switchWorkspace(workspaceUri),
     setWorkspaceFilter,
     loadSavedWorkspaces: () => loadSavedWorkspaces(state),
     removeSavedWorkspace: (fsPath: string) => removeSavedWorkspace(state, fsPath),
-    openWorkspaceFolder: (fsPath?: string) => openWorkspaceFolderAction(state, fsPath),
-    openSavedWorkspace: (entry: WorkspaceFolderInfo) => openSavedWorkspace(state, entry),
+    openWorkspaceFolder: (fsPath?: string) => openWorkspaceFolder(fsPath),
+    openSavedWorkspace: (entry: WorkspaceFolderInfo) => openSavedWorkspace(entry),
     saveCurrentWorkspace: () => saveCurrentWorkspace(state),
     
     // 输入框

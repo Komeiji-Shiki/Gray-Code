@@ -244,56 +244,22 @@ export function setWorkspaceList(state: ChatStoreState, list: WorkspaceFolderInf
 /**
  * 设置活动工作区（null = 取消固定，跟随活动编辑器）
  *
- * 多工作区支持：
- * - 固定到具体工作区时，同时把当前对话重新绑定到该工作区；
- * - 选择 Auto（null）时，若当前对话已绑定工作区则解绑，使其恢复跟随活动编辑器。
+ * 1.7.3 修复：对话内禁止切换/重绑定工作区——本函数只固定扩展端激活工作区并
+ * 返回规范 URI，**不再改写当前对话绑定**（此前下拉切换会把当前对话重绑定到
+ * 新工作区，导致「对话内强行切换后绑定失效/标题与绑定错位」）。
+ * 切换工作区 = 打开绑定新工作区的新对话，由 chatStore 层
+ * `openWorkspaceInNewConversation`（tabActions）统一处理标签页与工作区上下文。
+ *
+ * 注意：本函数不修改 state.currentWorkspaceUri——切换后的工作区上下文由
+ * 标签页流程在快照/恢复之后设置，避免把旧对话标签页的快照写成新工作区。
  */
 export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: string | null): Promise<any> {
-  // 提前捕获目标对话：await 期间用户可能切换对话，防止把工作区绑定到错误的对话上
-  const conversationId = state.currentConversationId.value
-  const prevActiveUri = state.currentWorkspaceUri.value
-  let resp: any
   try {
-    resp = await sendToExtension<any>('workspace.setActive', { workspaceUri })
+    return await sendToExtension<any>('workspace.setActive', { workspaceUri })
   } catch (error) {
     console.warn('[configActions] Failed to set active workspace:', error)
     return null
   }
-
-  if (resp?.activeWorkspaceUri !== undefined) {
-    setCurrentWorkspaceUri(state, resp.activeWorkspaceUri)
-  }
-
-  if (conversationId && state.currentConversationId.value === conversationId) {
-    const conv = state.conversations.value.find(c => c.id === conversationId)
-    const isBound = !!conv?.workspaceUri
-    // 固定：绑定到所选工作区；Auto 且已绑定：解绑跟随活动编辑器
-    if (workspaceUri || isBound) {
-      // 用扩展端返回的规范 URI 重绑定（Windows 大小写漂移时以列表里的规范 URI 为准），
-      // 避免把大小写漂移的 URI 写回对话绑定造成前后端不一致
-      const nextUri = workspaceUri ? (resp?.activeWorkspaceUri ?? workspaceUri) : undefined
-      try {
-        await sendToExtension('conversation.setWorkspaceUri', {
-          conversationId,
-          workspaceUri: nextUri
-        })
-        if (conv) {
-          conv.workspaceUri = nextUri
-        }
-      } catch (error) {
-        console.warn('[configActions] Failed to rebind conversation workspace URI:', error)
-        // 回滚激活工作区，保持前后端一致
-        try {
-          await sendToExtension('workspace.setActive', { workspaceUri: prevActiveUri })
-          setCurrentWorkspaceUri(state, prevActiveUri)
-        } catch (rollbackError) {
-          console.warn('[configActions] Failed to rollback active workspace:', rollbackError)
-        }
-      }
-    }
-  }
-
-  return resp
 }
 
 /**
@@ -349,39 +315,15 @@ export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: 
       // 用户在对话框里取消：不是错误，不打扰
       return resp
     }
-    if (resp?.activeWorkspaceUri !== undefined) {
-      setCurrentWorkspaceUri(state, resp.activeWorkspaceUri)
-    }
     if (Array.isArray(resp?.workspaces)) {
       setWorkspaceList(state, resp.workspaces)
     }
     if (Array.isArray(resp?.saved)) {
       setSavedWorkspaces(state, resp.saved)
     }
-    // 打开/切换工作区后，把当前对话重新绑定到新打开的工作区——
-    // 让「下拉切换工作区」真正生效：对话绑定跟随切换，而不是停留在旧工作区
-    // （旧工作区已从列表移除后绑定会悬空，记忆/文件工具与显示不一致）。
-    // 无当前对话（空白标签页）时跳过；当前对话未持久化时跳过。
-    const conversationId = state.currentConversationId.value
-    const newUri = resp?.activeWorkspaceUri
-    if (
-      conversationId &&
-      state.currentConversationId.value === conversationId &&
-      typeof newUri === 'string' && newUri
-    ) {
-      const conv = state.conversations.value.find(c => c.id === conversationId)
-      if (conv && conv.isPersisted && conv.workspaceUri !== newUri) {
-        try {
-          await sendToExtension('conversation.setWorkspaceUri', {
-            conversationId,
-            workspaceUri: newUri
-          })
-          conv.workspaceUri = newUri
-        } catch (error) {
-          console.warn('[configActions] Failed to rebind conversation to opened workspace:', error)
-        }
-      }
-    }
+    // 1.7.3 修复：打开工作区后**不**改写当前对话绑定——对话内禁止切换工作区，
+    // 打开新工作区 = 打开绑定该工作区的新对话，由 chatStore 层
+    // openWorkspaceInNewConversation（tabActions）负责标签页与工作区上下文切换。
     return resp
   } catch (error: any) {
     // 打开失败（收藏目录已被删除/移动、超时等）不能静默吞掉：
@@ -412,17 +354,13 @@ export async function saveCurrentWorkspace(state: ChatStoreState): Promise<any> 
 }
 
 /**
- * 打开收藏的工作区：
- * - 已在当前窗口打开：直接固定（复用 setActiveWorkspace 的对话重绑定逻辑）
- * - 未打开：走 workspace.openFolder 由宿主打开
+ * 打开收藏的工作区（未打开时走目录打开流程）
+ *
+ * 1.7.3 修复：已在当前窗口打开的收藏工作区由 chatStore 层按「切换工作区」语义处理
+ * （打开绑定该工作区的新对话，见 tabActions.openWorkspaceInNewConversation）；
+ * 本函数只负责未打开收藏的目录打开流程。
  */
 export async function openSavedWorkspace(state: ChatStoreState, entry: WorkspaceFolderInfo): Promise<any> {
-  // Windows 大小写不敏感：同一目录以不同大小写路径打开时 URI 可能漂移
-  const norm = (u: string) => u.toLowerCase()
-  const isOpen = state.workspaceList.value.some(ws => norm(ws.uri) === norm(entry.uri))
-  if (isOpen) {
-    return setActiveWorkspace(state, entry.uri)
-  }
   return openWorkspaceFolderAction(state, entry.fsPath)
 }
 

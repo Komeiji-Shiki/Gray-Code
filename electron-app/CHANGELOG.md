@@ -11,6 +11,11 @@ are tracked in the root `CHANGELOG.md`.
 ## [Unreleased]
 
 ### Fixed
+  - **对话内禁止切换工作区——切换工作区 = 打开绑定新工作区的新对话**（详见根目录 CHANGELOG [Unreleased]）：
+    - 移除下拉切换/打开文件夹对当前对话的重绑定（对话绑定不再被强行切换改写，修复标题与绑定错位）；
+    - 切换工作区打开绑定新工作区的新对话（空白标签页），同工作区空白标签复用、首个消息前不持久化——不产生对话堆积；
+    - 历史页「当前工作区」筛选展示新工作区下的对话列表；
+    - 新增 `workspaceSwitch.test.ts` 回归测试（7 例）。
   - **对话绑定工作区健壮性修复**（详见根目录 CHANGELOG [Unreleased]）：
     - `setWorkspaceUri`/`createConversation` workspaceUri 归一化（null/空白 → 解绑，防字面 null 与脏 URI 持久化）；
     - 后端 H4 自动建会话保留已存在元数据（标题/绑定/自定义字段），已绑定对话不被调用方 hint 覆盖；

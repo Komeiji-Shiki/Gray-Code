@@ -9,6 +9,13 @@
 ## [Unreleased]
 
 ### Fixed
+  - **对话内禁止切换工作区——切换工作区 = 打开绑定新工作区的新对话**：
+    - 移除下拉切换/打开文件夹对当前对话的重绑定逻辑（`setActiveWorkspace`/`openWorkspaceFolderAction` 不再调用 `conversation.setWorkspaceUri`）——此前在对话内强行切换工作区会把当前对话重绑定到新工作区，导致标题与绑定错位、绑定失效（本地便携版数据实测：`conv_..._2zrlyy` 标题为「新建文件夹」项目但绑定被改写为另一工作区）。
+    - 切换工作区统一走 `openWorkspaceInNewConversation`（tabActions）：目标与当前工作区相同 → no-op；当前标签页为空白（未创建对话）→ 直接重定位工作区上下文；已有同工作区空白标签页 → 复用；否则新建空白标签页并切换过去。
+    - **不堆积保证**：切换产生的空白标签页在首个消息前不持久化（后端无对话记录），且同工作区空白标签页复用（每个工作区最多一个）；对话列表只显示已持久化对话，切换操作本身不会产生对话堆积。
+    - 顺序保证：先固定扩展端激活工作区（IPC 不动 store），再切换标签页（快照记录旧工作区上下文），最后设置当前工作区 URI——旧对话标签页快照不会污染为新工作区。
+    - 历史页/首页「当前工作区」筛选天然展示新工作区下的对话列表（`filteredConversations` 按 `currentWorkspaceUri` 过滤，默认 `current`）。
+    - 新增回归测试：`workspaceSwitch.test.ts`（同工作区 no-op/空白重定位/新建绑定标签/复用防堆积/Auto/IPC 失败/config 层不改写绑定，7 例）。
   - **对话绑定工作区健壮性修复**：
     - `conversation.setWorkspaceUri` 与 `ConversationManager.setWorkspaceUri`/`createConversation` 增加 workspaceUri 归一化：null/空/空白串 → undefined（解绑 = 跟随活动编辑器），去除首尾空白——此前字面 `null`/脏 URI 会被 JSON.stringify 持久化，破坏下游 `typeof string` 判定（记忆隔离、工具工作区路由、checkpoint 裁剪、前端筛选全部失配）。
     - 后端 H4 自动建会话不再重建已存在的元数据：历史文件缺失但 `{id}.meta.json` 存在时（创建后历史被清理/损坏），保留原标题/绑定工作区/自定义字段，仅补建空历史与用量索引；原元数据未绑定时按 H4 语义补绑当前工作区，已绑定时不被调用方 hint 覆盖（绑定即终身）。此前重建会丢失自定义配置并把绑定改写为扩展端激活工作区，与前端锁定展示不一致。

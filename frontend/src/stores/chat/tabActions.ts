@@ -566,6 +566,86 @@ export function updateTabConversationId(
 }
 
 /**
+ * 工作区 URI 等价判断：与扩展端 WorkspaceManager 匹配口径一致——
+ * 仅 Windows（fsCaseSensitive=false）大小写不敏感。
+ */
+export function sameWorkspaceUri(
+  state: ChatStoreState,
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  if (state.fsCaseSensitive.value) return false
+  return a.toLowerCase() === b.toLowerCase()
+}
+
+/**
+ * 切换工作区（1.7.3 对话绑定健壮性修复）
+ *
+ * 语义：**对话内禁止切换/重绑定工作区**——切换工作区 = 打开一个绑定到目标
+ * 工作区的新对话（空白标签页），首个消息才持久化，不会造成对话堆积。
+ *
+ * 规则：
+ * - 目标与当前工作区相同：no-op（不重复创建标签页）；
+ * - 当前标签页为空白（尚未创建对话）：直接重定位其工作区上下文；
+ * - 已打开的同工作区空白标签页：复用（每个工作区最多一个空白标签页）；
+ * - 否则新建空白标签页并切换过去；
+ * - 顺序保证：先固定扩展端激活工作区（IPC 不动 store），再切换标签页
+ *   （快照记录的是旧工作区上下文），最后设置当前工作区 URI。
+ *
+ * @param targetUri 目标工作区 URI；null = 跟随活动编辑器（Auto）
+ */
+export async function openWorkspaceInNewConversation(
+  state: ChatStoreState,
+  targetUri: string | null,
+  deps: {
+    switchTab: (tabId: string) => void
+    sendWorkspaceSetActive: (uri: string | null) => Promise<{ activeWorkspaceUri?: string | null } | null>
+  }
+): Promise<void> {
+  const current = state.currentWorkspaceUri.value
+  if (targetUri && current && sameWorkspaceUri(state, targetUri, current)) {
+    return
+  }
+
+  const startTabId = state.activeTabId.value
+  const resp = await deps.sendWorkspaceSetActive(targetUri)
+  if (resp === null) return
+  // await 期间用户可能已切换标签页：不扰动其工作区上下文
+  if (state.activeTabId.value !== startTabId) return
+  const canonical = resp?.activeWorkspaceUri ?? targetUri
+
+  const isBlankTab = !state.currentConversationId.value && state.allMessages.value.length === 0
+  if (isBlankTab) {
+    state.currentWorkspaceUri.value = canonical
+    return
+  }
+
+  // 复用绑定同一工作区的空白标签页，避免切换产生标签页堆积
+  const reuse = findBlankTabForWorkspace(state, canonical)
+  if (reuse) {
+    deps.switchTab(reuse.id)
+  } else {
+    const tabId = createTab(state, { title: 'New Chat' })
+    if (!tabId) return
+    deps.switchTab(tabId)
+  }
+  state.currentWorkspaceUri.value = canonical
+}
+
+/** 查找已打开且绑定指定工作区的空白标签页（当前标签页除外） */
+function findBlankTabForWorkspace(state: ChatStoreState, uri: string | null): TabInfo | undefined {
+  if (!uri) return undefined
+  return state.openTabs.value.find(t => {
+    if (t.id === state.activeTabId.value) return false
+    if (t.conversationId) return false
+    const snap = state.sessionSnapshots.value.get(t.id)
+    return !!snap?.workspaceUri && sameWorkspaceUri(state, snap.workspaceUri, uri)
+  })
+}
+
+/**
  * 重新排列标签页顺序（拖拽排序）
  *
  * 将 fromIndex 处的标签页移动到 toIndex 位置
