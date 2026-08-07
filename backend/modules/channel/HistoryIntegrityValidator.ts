@@ -47,6 +47,9 @@ export function validateHistoryIntegrity(
     // rejected 的 functionCall（中断/取消/超时后由 ConversationManager 标记）：
     // 表示"无对应响应是有意的"，formatter 发送时已过滤，不构成孤儿。
     const rejectedFunctionCallIds = new Set<string>();
+    // 非 rejected 的 functionCall id：同一 id 可能同时存在 rejected 与非 rejected 实例，
+    // 只有"全部实例都 rejected"才可跳过孤儿检测，否则非 rejected 实例仍应被检出
+    const nonRejectedCallIds = new Set<string>();
 
     for (let messageIndex = 0; messageIndex < history.length; messageIndex++) {
         const message = history[messageIndex];
@@ -69,6 +72,8 @@ export function validateHistoryIntegrity(
                 }
                 if (part.functionCall?.rejected) {
                     rejectedFunctionCallIds.add(functionCallId);
+                } else {
+                    nonRejectedCallIds.add(functionCallId);
                 }
             }
 
@@ -106,8 +111,9 @@ export function validateHistoryIntegrity(
     // 这种悬空调用会导致 Anthropic / OpenAI 直接 400，比 orphan_function_response 更危险。
     if (options.detectOrphanFunctionCall) {
         for (const callId of seenFunctionCallIds) {
-            // 跳过 rejected：无响应是设计语义（中断/取消残留），且 formatter 已过滤不会发送
-            if (!seenFunctionResponseIds.has(callId) && !rejectedFunctionCallIds.has(callId)) {
+            // 跳过"全部实例都 rejected"：无响应是设计语义（中断/取消残留），且 formatter 已过滤不会发送；
+            // 但只要存在非 rejected 实例（nonRejectedCallIds），该实例仍按孤儿检出
+            if (!seenFunctionResponseIds.has(callId) && nonRejectedCallIds.has(callId)) {
                 issues.push({
                     kind: 'orphan_function_call',
                     callId,
