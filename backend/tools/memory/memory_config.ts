@@ -46,7 +46,10 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
 }
 
 async function memoryConfigHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
-    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri);
+    // 纯读（无更新参数）时传 createIfMissing=false：不创建缺失的工作区记忆目录，
+    // 与 wake/recall/zoom 的只读无副作用策略一致；有更新参数才允许创建。
+    const hasUpdates = ['wakeLines', 'entryChars', 'partChars', 'partLines'].some(k => typeof args[k] === 'number');
+    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri, undefined, hasUpdates);
     if (!mgr) {
         // 调用方传了 workspaceUri 说明意图是工作区：解析失败不要静默回退全局
         if (context?.activeWorkspaceUri) {

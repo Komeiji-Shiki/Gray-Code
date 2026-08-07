@@ -88,6 +88,9 @@ const _workspaceInitPromises = new Map<string, Promise<import('./MemoryManager')
 /** 设置工作区记忆存储根目录（由 initMemoryManager 调用） */
 export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceBaseDir = dir;
+    // 存储根目录变更后旧实例仍指向旧路径：全部失效，下次访问按新路径重建
+    _workspaceInstances.clear();
+    _workspaceInitPromises.clear();
 }
 
 /** 规范化工作区 key：Windows 大小写不敏感 + 统一正斜杠 */
@@ -167,17 +170,26 @@ export async function getMemoryManagerForWorkspace(
         const dir = workspaceMemoryDir(scopeKey);
         if (!dir) return null;
         await fs.promises.mkdir(dir, { recursive: true });
-        // 持久化 scope 元信息：供设置页枚举工作区记忆时展示名称
-        const metaPath = path.join(dir, 'scope.json');
-        const meta = { fsPath: uriToFsPathForMeta(scopeKey), name: path.basename(uriToFsPathForMeta(scopeKey)) };
-        try {
-            const raw = await fs.promises.readFile(metaPath, 'utf-8');
-            const existingMeta = JSON.parse(raw);
-            if (existingMeta.fsPath !== meta.fsPath) {
+        // 持久化 scope 元信息：供设置页枚举工作区记忆时展示名称。
+        // 只读访问（createIfMissing=false）不写 meta，保持无磁盘副作用。
+        if (createIfMissing) {
+            const metaPath = path.join(dir, 'scope.json');
+            // uri 存原始 workspaceUri：非 file:// 形态（如 vscode-remote://）时
+            // 无法从 fsPath 无损还原 URI（file:// 重建会损坏），故原样持久化
+            const meta = {
+                fsPath: uriToFsPathForMeta(scopeKey),
+                name: path.basename(uriToFsPathForMeta(scopeKey)),
+                uri: workspaceUri,
+            };
+            try {
+                const raw = await fs.promises.readFile(metaPath, 'utf-8');
+                const existingMeta = JSON.parse(raw);
+                if (existingMeta.fsPath !== meta.fsPath || existingMeta.uri !== meta.uri) {
+                    await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+                }
+            } catch {
                 await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
             }
-        } catch {
-            await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
         }
         const manager = new MemoryManager(dir);
         await manager.init();
@@ -259,12 +271,15 @@ export async function listWorkspaceMemoryScopes(): Promise<WorkspaceMemoryScope[
             const dir = path.join(_workspaceBaseDir, entry.name);
             let fsPath = '';
             let name = entry.name;
+            // meta 里的原始 URI 需在 try 外使用（只读 path 用，非 file 形态时优先）
+            let metaUri: string | undefined;
             try {
                 const meta = JSON.parse(await fs.promises.readFile(path.join(dir, 'scope.json'), 'utf-8'));
                 if (typeof meta?.fsPath === 'string' && meta.fsPath) {
                     fsPath = meta.fsPath;
                     name = meta.name || path.basename(fsPath);
                 }
+                if (typeof meta?.uri === 'string' && meta.uri) metaUri = meta.uri;
             } catch {
                 continue; // 无元信息的目录不是工作区记忆 scope
             }
@@ -272,7 +287,8 @@ export async function listWorkspaceMemoryScopes(): Promise<WorkspaceMemoryScope[
             const hasLog = await fs.promises.stat(path.join(dir, 'LOG.txt')).then(() => true).catch(() => false);
             const hasTree = await fs.promises.stat(path.join(dir, 'TREE')).then(() => true).catch(() => false);
             out.push({
-                uri: uriFromFsPath(fsPath),
+                // 优先用持久化的原始 URI（无损）；老目录无 uri 字段时回退 fsPath 重建
+                uri: metaUri ?? uriFromFsPath(fsPath),
                 name,
                 fsPath,
                 hasData: hasLog || hasTree
@@ -284,8 +300,13 @@ export async function listWorkspaceMemoryScopes(): Promise<WorkspaceMemoryScope[
     return out;
 }
 
-/** 由 fsPath 构造 file:/// URI（与 vscode.Uri.file().toString() 同构） */
+/** 由 fsPath 构造 file:/// URI（与 vscode.Uri.file().toString() 同构）；非 file 形态原样返回 */
 function uriFromFsPath(fsPath: string): string {
+    // 非 file 形态的 scope key（如 vscode-remote://ssh-remote+host/a/b）：
+    // 直接作为 URI 返回，不做 file:// 重建——重建会产生损坏的
+    // file:///vscode-remote%3A/... URI，导致设置页与工具层解析出不同的 scope key
+    const isFileLike = fsPath.startsWith('/') || /^[a-z]:[\\/]/i.test(fsPath);
+    if (!isFileLike) return fsPath;
     const withSlashes = fsPath.replace(/\\/g, '/');
     const encoded = withSlashes.split('/').map(seg => encodeURIComponent(seg)).join('/');
     return `file://${encoded.startsWith('/') ? encoded : '/' + encoded}`;
