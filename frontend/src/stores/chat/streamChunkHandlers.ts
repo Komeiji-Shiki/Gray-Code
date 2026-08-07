@@ -1440,7 +1440,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     
     // 如果消息为空且没有工具调用，删除它
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
-    const hasPartsContent = message.parts && message.parts.some(p => p.text || p.functionCall)
+    // 多模态附件（inlineData/fileData）也是有效内容，不能按空消息删除
+    const hasPartsContent = message.parts && message.parts.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
     if (!message.content && !message.tools && !hasPartsContent) {
       removeMessageAt(state, messageIndex)
     } else {
@@ -1577,7 +1578,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     
     // 删除空的占位消息（不依赖 streaming 标记；网络中断等场景可能已被提前置为非 streaming）
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
-    const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall)
+    // 多模态附件（inlineData/fileData）也是有效内容，不能按空消息删除
+    const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
       const removeIndex = getMessageIndexById(state, state.streamingMessageId.value)
       removeMessageAt(state, removeIndex)

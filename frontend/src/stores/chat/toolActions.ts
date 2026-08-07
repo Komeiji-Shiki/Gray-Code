@@ -165,7 +165,7 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
   const msg = all[targetIndex]
   if (msg.role !== 'assistant') return
 
-  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall)
+  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
   const hasTools = !!(msg.tools && msg.tools.length > 0)
   const hasContent = !!(msg.content && msg.content.trim())
 
