@@ -55,7 +55,18 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   // 用户看到按钮可点却迟迟没有任何效果。
   'subagents.pauseRun',
   'subagents.resumeRun',
-  'subagents.exitRun'
+  'subagents.exitRun',
+  // 模态对话框类（showSaveDialog/showOpenDialog/showQuickPick）：对话框打开期间 handler 一直 await，
+  // 若占住串行队列，后续保存/取消/新消息全部排队，前端 180s 超时误报失败（保存实际已生效）。
+  'exportPromptModes',
+  'settings.export',
+  'settings.import',
+  'storagePath.selectFolder',
+  // 网络/下载类：耗时取决于网络状况，不应阻塞队列中的其它请求。
+  'countSystemPromptTokens', // token 计数调用渠道 API
+  'tokenizer.getResource',   // 首次下载 tokenizer 词表（分钟级）
+  // 目录统计类：大目录统计可达数十秒。
+  'storagePath.getStats'
 ]);
 
 /**
