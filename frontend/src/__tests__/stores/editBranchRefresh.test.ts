@@ -377,4 +377,151 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     // 旧候选 id 不再命中（对齐前 buildCandidateGroupForNode(msg_u1) 返回 null 是 bug 根源）
     expect(buildCandidateGroupForNode(state.branchGraph.value, 'msg_u1')).toBeNull()
   })
+
+  it('分支流第一个输出到达即提前刷新分支图（标记不消费），终结时再刷新一次（主人实测回归）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    vi.mocked(sendToExtension).mockImplementation((type: string) => {
+      if (type === 'conversation.getBranchGraph') {
+        return Promise.resolve({ graph: makeEditedGraph() })
+      }
+      return Promise.resolve({ success: true })
+    })
+
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {}, 'branch')
+    const streamId = state.activeStreamId.value
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(0)
+
+    // 第一个输出：checkpoints（后端在 generate 前 yield；候选 editCandidate 在工具循环前已落盘）
+    handleStreamChunk({
+      conversationId: 'conv_1',
+      streamId,
+      type: 'checkpoints',
+      checkpoints: []
+    } as any, {
+      state,
+      currentModelName: () => 'test-model',
+      addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(),
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
+    })
+
+    // 提前刷新已发生（切换器立即显示），但终结标记保留——终结时还需再刷新更新模型候选内容/摘要
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(1)
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+
+    // complete 终结：消费标记 + 再刷新一次（模型候选内容已由 finishReroll 回填）
+    handleStreamChunk({
+      conversationId: 'conv_1',
+      streamId,
+      type: 'complete',
+      content: {
+        id: 'msg_m2',
+        role: 'model',
+        timestamp: Date.now(),
+        parts: [{ text: '模型新回答' }]
+      }
+    } as any, {
+      state,
+      currentModelName: () => 'test-model',
+      addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(),
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
+    })
+
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(2)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
+  })
+
+  it('终结后同一会话再次编辑：新流仍能触发提前刷新（streamId 隔离 + 重置）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    vi.mocked(sendToExtension).mockImplementation((type: string) => {
+      if (type === 'conversation.getBranchGraph') {
+        return Promise.resolve({ graph: makeEditedGraph() })
+      }
+      return Promise.resolve({ success: true })
+    })
+
+    // 第一次编辑：早期刷新 + 终结消费
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {}, 'branch')
+    const streamId1 = state.activeStreamId.value
+    handleStreamChunk({ conversationId: 'conv_1', streamId: streamId1, type: 'checkpoints', checkpoints: [] } as any, {
+      state, currentModelName: () => 'test-model', addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(), processQueue: vi.fn(), processQueueAfterAction: vi.fn()
+    })
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(1)
+    handleStreamChunk({ conversationId: 'conv_1', streamId: streamId1, type: 'complete', content: {
+      id: 'msg_m2', role: 'model', timestamp: Date.now(), parts: [{ text: '模型新回答' }]
+    } } as any, {
+      state, currentModelName: () => 'test-model', addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(), processQueue: vi.fn(), processQueueAfterAction: vi.fn()
+    })
+    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
+
+    // 第二次编辑（窗口已含新候选消息）：新流的第一个输出必须再次提前刷新
+    const edited = createMessage({ id: 'msg_u2', role: 'user', content: '新回答', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    state.allMessages.value = [user, edited]
+    await editAndRetry(state, createComputed(), 1, '再改一次', undefined, async () => {}, 'branch')
+    const streamId2 = state.activeStreamId.value
+    expect(streamId2).not.toBe(streamId1)
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+
+    handleStreamChunk({ conversationId: 'conv_1', streamId: streamId2, type: 'checkpoints', checkpoints: [] } as any, {
+      state, currentModelName: () => 'test-model', addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(), processQueue: vi.fn(), processQueueAfterAction: vi.fn()
+    })
+
+    // 第二次提前刷新已触发：第一次编辑（早期 1 + 终结 2）+ 第二次编辑（早期 3）
+    // 未被第一次的 streamId 记录挡住（终结时已重置）
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(3)
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+  })
+
+  it('当前会话与标记会话不一致时不提前刷新（会话隔离）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    vi.mocked(sendToExtension).mockImplementation((type: string) => {
+      if (type === 'conversation.getBranchGraph') {
+        return Promise.resolve({ graph: makeEditedGraph() })
+      }
+      return Promise.resolve({ success: true })
+    })
+
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {}, 'branch')
+    const streamId = state.activeStreamId.value
+
+    // 会话已切走：标记仍属于 conv_1，但当前会话是 conv_2——不提前刷新
+    state.currentConversationId.value = 'conv_2'
+    handleStreamChunk({ conversationId: 'conv_2', streamId, type: 'checkpoints', checkpoints: [] } as any, {
+      state, currentModelName: () => 'test-model', addCheckpoint: vi.fn(),
+      updateConversationAfterMessage: vi.fn(), processQueue: vi.fn(), processQueueAfterAction: vi.fn()
+    })
+    expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(0)
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+  })
 })
