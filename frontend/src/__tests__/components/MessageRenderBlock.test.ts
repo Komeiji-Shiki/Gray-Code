@@ -285,4 +285,62 @@ describe('MessageRenderBlock thought 三段式视图', () => {
 
     wrapper.unmount()
   })
+
+  it('中展开：wheel 滚动期间内容增长不拉回（高 tps 抵消滚动距离）', async () => {
+    pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
+
+    const wrapper = mountBlock({ thoughtViewMode: 'medium' })
+
+    await nextTick()
+    const el = wrapper.get('.thought-medium').element
+    Object.defineProperty(el, 'scrollHeight', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 100 })
+    el.scrollTop = 480 // 距底 20px（贴底附近）
+    await wrapper.get('.thought-medium').trigger('scroll') // 吸底状态就位
+
+    // 用户滚轮向上滚动 50px：wheel 输入事件标记冷静期；scrollTop 同步生效
+    await wrapper.get('.thought-medium').trigger('wheel')
+    el.scrollTop = 430
+    // 高 tps：内容同步增长 40px（scrollHeight 500 → 540），抵消大部分滚动距离
+    Object.defineProperty(el, 'scrollHeight', { value: 540, configurable: true })
+
+    finishSmoothStream('thought-message')
+    // 冷静期内不贴底：用户位置保持（旧实现按距底 10px < 40 判定贴底拉回）
+    expect(el.scrollTop).toBe(430)
+
+    wrapper.unmount()
+  })
+
+  it('中展开：贴底写入后代码块异步渲染高度骤增不丢吸底', async () => {
+    pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
+
+    const wrapper = mountBlock({ thoughtViewMode: 'medium' })
+
+    await nextTick()
+    const el = wrapper.get('.thought-medium').element
+    Object.defineProperty(el, 'scrollHeight', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 100 })
+    el.scrollTop = 0
+    await wrapper.get('.thought-medium').trigger('scroll') // 暂停吸底
+    el.scrollTop = 480 // 距底 20px → 恢复吸底
+    await wrapper.get('.thought-medium').trigger('scroll')
+
+    // 第一次内容更新：CharFlow 贴底写入（scrollTop → 500）
+    pushSmoothText('thought-message', 'thought:0', 'def', 'balanced', 'abc', () => {})
+    finishSmoothStream('thought-message')
+    // 等微任务读回程序写入位置
+    await nextTick()
+    expect(el.scrollTop).toBe(500)
+
+    // 模拟代码块异步渲染（hljs 高亮）：scrollHeight 骤增 500 → 1500，用户没动
+    Object.defineProperty(el, 'scrollHeight', { value: 1500, configurable: true })
+
+    // 又一段内容更新：吸底必须保持（旧实现把程序写入误判为用户滚动 →
+    // 距底 900px ≥ 40 → 丢吸底，scrollTop 停在 500）
+    pushSmoothText('thought-message', 'thought:0', 'ghi', 'balanced', 'abcdef', () => {})
+    finishSmoothStream('thought-message')
+    expect(el.scrollTop).toBe(1500)
+
+    wrapper.unmount()
+  })
 })
