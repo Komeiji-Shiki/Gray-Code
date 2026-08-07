@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Fixed
+  - 修复 `memory_config` 只读调用在工作区记忆目录尚未初始化时误报「workspace URI could not be resolved」：此前纯读走 `createIfMissing=false`，工作区目录不存在时返回 null，被笼统报成 URI 解析失败；现区分「URI 不可解析」与「工作区记忆目录未初始化」两种失败——前者才报解析错误，后者纯读时回退显示全局配置并标注 `workspaceNotInitialized`（保持无磁盘副作用，不创建目录），带更新参数时仍正常创建目录并写工作区独立配置；`memory_zoom` 只读调用同样区分两种失败，工作区未初始化时改报明确的 `Workspace memory is not initialized for this workspace`；新增 `memoryConfigTool.test.ts` 回归测试（6 用例：无工作区读全局、工作区独立配置隔离、未初始化纯读回退标注且无副作用、未初始化带更新参数建目录、URI 不可解析报错、全局未初始化报错）。
+
 ## [1.4.4] - 2026-08-07
 
 ### Added
