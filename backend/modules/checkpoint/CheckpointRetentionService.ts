@@ -16,7 +16,7 @@ import { Logger } from '../../core/logger';
 import type { CheckpointConfig } from '../settings/types';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import type { CheckpointRecord } from './CheckpointManager';
-import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { isWorkspaceScopedKey } from './CheckpointRestoreEngine';
 
 const log = Logger.get('CheckpointRetentionService');
@@ -293,7 +293,7 @@ export class CheckpointRetentionService {
             }
             for (const entry of entries) {
                 // CPF-LAZY-1: manifest.json 与 files.json 均为元数据文件，不属备份内容
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === 'files.json' || entry.name.endsWith('.tmp')) {
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME || entry.name.endsWith('.tmp')) {
                     continue;
                 }
                 const relative = prefix ? `${prefix}/${entry.name}` : entry.name;

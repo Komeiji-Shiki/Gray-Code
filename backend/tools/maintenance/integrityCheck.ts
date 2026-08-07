@@ -45,7 +45,7 @@ import { activePath, isFunctionResponseMessage, validate } from '../../modules/c
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import type { BranchPathConsistencyResult } from '../../modules/conversation/branch/BranchService';
 import type { ConversationBranchGraph } from '../../modules/conversation/branch/types';
-import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointManifestRepository';
+import { isSafeCheckpointDirName, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import { assertSafeStorageId } from '../../modules/conversation/storage';
 
@@ -306,7 +306,7 @@ export async function checkCheckpointIntegrity(
         }
 
         // manifest 可解析且 checkpointId 匹配
-        const manifestPath = path.join(backupPath, 'manifest.json');
+        const manifestPath = path.join(backupPath, CHECKPOINT_MANIFEST_FILENAME);
         let manifestRaw: string | null = null;
         try {
             manifestRaw = await fsp.readFile(manifestPath, 'utf8');
@@ -347,7 +347,7 @@ export async function checkCheckpointIntegrity(
                     // v1 旧格式：files 内联于 manifest.json，形状合法
                 } else if (isSplitLayout) {
                     // CPF-LAZY-1: v2 拆分格式：files 独立存放于 files.json，校验其存在与形状
-                    const filesPath = path.join(backupPath, 'files.json');
+                    const filesPath = path.join(backupPath, CHECKPOINT_MANIFEST_FILES_FILENAME);
                     let filesRaw: string | null = null;
                     try {
                         filesRaw = await fsp.readFile(filesPath, 'utf8');
