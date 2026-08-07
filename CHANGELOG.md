@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+  - GitHub Releases 自动更新：扩展启动后延迟 10s 检查 `Komeiji-Shiki/Gray-Code` 最新 Release（距上次检查不足 24 小时跳过，时间戳存 globalState；设置页「立即检查」忽略节流），有新版本时前端弹窗展示 Release 说明，用户确认后自动下载 vsix 并调用 `workbench.extensions.installExtension` 安装、提示 reload 窗口生效；设置页「通用」新增「自动更新」区块（启用开关 + 立即检查 + **一键更新**按钮——一键更新自动完成「检查 → 下载 vsix → 安装」，安装后提示重启窗口即可生效）；请求复用渠道代理配置（createProxyFetch），版本检查超时 10s / 下载 120s，失败静默不打扰；新增 `checkForUpdates` 设置项（默认 true，可关闭，随 Settings Sync）；三语 i18n + 设置搜索索引；新增 webview 消息 `getUpdateStatus` / `checkUpdateNow` / `installUpdate` / `updateNow` / `openUpdatePage` 与 `UpdateHandlers`（`updateNow` 为检查安装一条龙）；后端新增 `UpdateChecker` 模块（版本比较 / 节流判断 / API 响应解析为纯函数，`update` 状态机覆盖 disabled / idle / checking / upToDate / updateAvailable / error）及 33 个单元测试（含下载安装 mock、handler 安装/重启流程）。
+  - GitHub Actions 发布流程 `.github/workflows/release.yml`：推送 `v*` tag 时自动 `npm ci` + 构建 + `vsce package` 生成 `graycode-<tag>.vsix` 并发布到 GitHub Releases（自动生成 release notes），替代手动打包上传，为自动更新提供稳定 vsix 资产。
+
 ### Fixed
   - 修复 `memory_config` 只读调用在工作区记忆目录尚未初始化时误报「workspace URI could not be resolved」：此前纯读走 `createIfMissing=false`，工作区目录不存在时返回 null，被笼统报成 URI 解析失败；现区分「URI 不可解析」与「工作区记忆目录未初始化」两种失败——前者才报解析错误，后者纯读时回退显示全局配置并标注 `workspaceNotInitialized`（保持无磁盘副作用，不创建目录），带更新参数时仍正常创建目录并写工作区独立配置；`memory_zoom` 只读调用同样区分两种失败，工作区未初始化时改报明确的 `Workspace memory is not initialized for this workspace`；新增 `memoryConfigTool.test.ts` 回归测试（6 用例：无工作区读全局、工作区独立配置隔离、未初始化纯读回退标注且无副作用、未初始化带更新参数建目录、URI 不可解析报错、全局未初始化报错）。
 

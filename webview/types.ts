@@ -17,6 +17,7 @@ import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import type { WebviewClientId } from './runtime/WebviewClientRegistry';
+import type { UpdateChecker } from '../backend/modules/update';
 
 /**
  * 消息处理器上下文
@@ -43,6 +44,7 @@ export interface HandlerContext {
   diffStorageManager: DiffStorageManager;
   toolRegistry?: ToolRegistry;
   windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
+  updateChecker?: UpdateChecker;
   
   // 流式请求控制
   streamAbortControllers: Map<string, AbortController>;

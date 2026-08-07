@@ -70,6 +70,7 @@ export const window = {
     showOpenDialog: jest.fn(),
     showWarningMessage: jest.fn(),
     showErrorMessage: jest.fn(),
+    showInformationMessage: jest.fn(),
     showTextDocument: jest.fn(),
     setStatusBarMessage: jest.fn(),
     tabGroups: { all: [], close: jest.fn() },
