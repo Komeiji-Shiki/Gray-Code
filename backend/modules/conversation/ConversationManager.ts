@@ -311,12 +311,16 @@ export class ConversationManager {
 
     private async withConversationWriteLock<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
         const previous = this.conversationWriteQueues.get(conversationId) ?? Promise.resolve();
-        // R5b-2.1：挂起超时与其余队列对齐（usage 60s / 分段历史 60s / metadata 链 30s）。
-        // 任务长时间不结束视为挂起，按失败处理并让链继续前进，防止卡死任务永久阻塞该会话所有写入。
-        const current = previous.catch(() => undefined).then(() =>
-            withHangTimeout(task(), `conversationWriteLock(${conversationId})`, CONVERSATION_WRITE_LOCK_HANG_TIMEOUT_MS)
+        const start = previous.catch(() => undefined);
+        // 队列链尾挂在底层任务（underlying）上：挂起超时（R5b-2.1）只让调用方 fail-fast，
+        // 链不前进——超时后旧任务仍在读写同一会话的历史/元数据文件，新任务并发启动会
+        // 互相覆盖（真实执行成功的工具结果被拒绝占位覆盖、checkpoint 元数据整体覆盖丢失）。
+        // 挂起超时从任务真正启动时开始计时（排队等待时间不计入）。
+        const underlying = start.then(() => task());
+        const current = start.then(() =>
+            withHangTimeout(underlying, `conversationWriteLock(${conversationId})`, CONVERSATION_WRITE_LOCK_HANG_TIMEOUT_MS)
         );
-        const tail = current.then(() => undefined, () => undefined);
+        const tail = underlying.then(() => undefined, () => undefined);
         this.conversationWriteQueues.set(conversationId, tail);
         void tail.then(() => {
             if (this.conversationWriteQueues.get(conversationId) === tail) {
