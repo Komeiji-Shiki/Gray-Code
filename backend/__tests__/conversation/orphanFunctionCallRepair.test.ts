@@ -53,6 +53,18 @@ function expectValidToolHistory(history: Content[]): void {
     });
 }
 
+/**
+ * 桌面端 fork 的 ConversationManager 带历史 LRU 内存缓存（historyCache）：
+ * createConversation 会以空历史种子回填缓存，测试若绕过 manager 直写 storage，
+ * 后续 manager 读取将命中陈旧空缓存。本地测试惯例：一律经 manager 写路径
+ * （addContent）播种，保证缓存与存储一致（与上游直写 storage 的写法不同，语义等价）。
+ */
+async function seedHistory(manager: ConversationManager, conversationId: string, history: Content[]): Promise<void> {
+    for (const content of history) {
+        await manager.addContent(conversationId, content);
+    }
+}
+
 describe('删除历史后的 functionCall/functionResponse 配对修复', () => {
     test('truncateFrom 删除后缀中的响应时，将保留的调用标记 rejected 且不伪造用户拒绝响应', () => {
         // 真实编辑分支形态：目标 user 的 parentId 指向 functionCall 消息，真实响应稍后落在目标消息之后。
@@ -76,7 +88,7 @@ describe('删除历史后的 functionCall/functionResponse 配对修复', () => 
         const manager = new ConversationManager(storage);
         const conversationId = 'conv-orphan-edit-branch';
         await manager.createConversation(conversationId, 'orphan regression');
-        await storage.saveHistory(conversationId, [
+        await seedHistory(manager, conversationId, [
             { id: 'u1', parentId: null, role: 'user', parts: [{ text: 'run tool' }] } as Content,
             functionCallMessage('call-1', { messageId: 'fc1', parentId: 'u1' }),
             { id: 'u2', parentId: 'fc1', role: 'user', parts: [{ text: 'old prompt' }] } as Content,
@@ -139,7 +151,7 @@ describe('settleFunctionResponses 截断时序加固', () => {
         const manager = new ConversationManager(storage);
         const conversationId = 'conv-settle-after-truncate';
         await manager.createConversation(conversationId, 'settle regression');
-        await storage.saveHistory(conversationId, [
+        await seedHistory(manager, conversationId, [
             { id: 'u1', parentId: null, role: 'user', parts: [{ text: 'run tool' }] } as Content,
             functionCallMessage('call-1', { messageId: 'fc1', parentId: 'u1', rejected: true }),
         ]);
@@ -160,7 +172,7 @@ describe('settleFunctionResponses 截断时序加固', () => {
         const manager = new ConversationManager(storage);
         const conversationId = 'conv-settle-after-call-deleted';
         await manager.createConversation(conversationId, 'stale settle');
-        await storage.saveHistory(conversationId, [
+        await seedHistory(manager, conversationId, [
             { id: 'u1', parentId: null, role: 'user', parts: [{ text: 'kept history' }] } as Content,
         ]);
 
