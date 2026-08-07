@@ -55,7 +55,7 @@ function cleanupFailedSendPlaceholder(state: ChatStoreState, placeholderId: stri
   if (state.streamingMessageId.value !== placeholderId) return
   const placeholder = state.allMessages.value.find(m => m.id === placeholderId)
   // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
-  const hasPartsContent = !!placeholder?.parts?.some(p => p.text || p.functionCall)
+  const hasPartsContent = !!placeholder?.parts?.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
   if (placeholder && placeholder.localOnly && !placeholder.content && !placeholder.tools && !hasPartsContent) {
     removeMessageAt(state, getMessageIndexById(state, placeholderId))
     state._failedStreamMessageId.value = null
