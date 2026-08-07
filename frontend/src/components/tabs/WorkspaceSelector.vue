@@ -25,10 +25,14 @@ const menuPosition = ref({ left: '0px', top: '0px' })
 const isEmpty = computed(() => chatStore.workspaceList.length === 0)
 
 /**
- * Windows 路径大小写不敏感：同一目录以不同大小写路径打开/收藏时 URI 字符串
- * 可能漂移，比较时统一小写归一（与扩展端 WorkspaceManager 的匹配口径一致）。
+ * 工作区 URI 等价判断：与扩展端 WorkspaceManager 的匹配口径一致——
+ * 仅 Windows 大小写不敏感（同一目录以不同大小写路径打开/收藏时 URI 字符串
+ * 可能漂移，统一小写归一）；其他平台大小写敏感文件系统上不同大小写的
+ * 目录是不同工作区，不得归一（大小写敏感性由扩展端 getWorkspaceList 下发）。
  */
 function sameUri(a: string, b: string): boolean {
+  if (a === b) return true
+  if (chatStore.fsCaseSensitive) return false
   return a.toLowerCase() === b.toLowerCase()
 }
 
@@ -97,9 +101,9 @@ const displayTooltip = computed(() => {
   return t('components.tabs.workspaceSelector.auto')
 })
 
-/** 已打开的工作区 URI 集合（大小写不敏感归一，收藏条目据此区分展示/点击行为） */
+/** 已打开的工作区 URI 集合（按文件系统大小写口径归一，收藏条目据此区分展示/点击行为） */
 const openUriSet = computed(() => {
-  const norm = (u: string) => u.toLowerCase()
+  const norm = (u: string) => (chatStore.fsCaseSensitive ? u : u.toLowerCase())
   return new Set(chatStore.workspaceList.map(ws => norm(ws.uri)))
 })
 
@@ -107,7 +111,9 @@ const openUriSet = computed(() => {
 const savedWorkspaces = computed(() => {
   return chatStore.savedWorkspaces.map(ws => ({
     ...ws,
-    isOpen: openUriSet.value.has(ws.uri.toLowerCase())
+    isOpen: chatStore.fsCaseSensitive
+      ? openUriSet.value.has(ws.uri)
+      : openUriSet.value.has(ws.uri.toLowerCase())
   }))
 })
 

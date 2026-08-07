@@ -22,6 +22,7 @@ const chatStoreMock = {
   workspaceList: [] as WorkspaceFolderInfo[],
   currentWorkspaceUri: null as string | null,
   savedWorkspaces: [] as WorkspaceFolderInfo[],
+  fsCaseSensitive: false,
   setActiveWorkspace: vi.fn().mockResolvedValue(undefined),
   removeSavedWorkspace: vi.fn().mockResolvedValue(undefined),
   openSavedWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +58,7 @@ beforeEach(() => {
   chatStoreMock.workspaceList = []
   chatStoreMock.currentWorkspaceUri = null
   chatStoreMock.savedWorkspaces = []
+  chatStoreMock.fsCaseSensitive = false
   chatStoreMock.setActiveWorkspace.mockClear()
   chatStoreMock.removeSavedWorkspace.mockClear()
   chatStoreMock.openSavedWorkspace.mockClear()
@@ -139,6 +141,21 @@ describe('下拉菜单内容', () => {
     const checked = items.filter(i => i.find('.codicon-check').exists())
     expect(checked.length).toBe(1)
     expect(checked[0].text()).toContain('ProjectA')
+    wrapper.unmount()
+  })
+
+  it('大小写敏感平台（fsCaseSensitive=true）：漂移 URI 不算同一工作区，展示锁定', async () => {
+    chatStoreMock.fsCaseSensitive = true
+    chatStoreMock.workspaceList = [makeWs(URI_A, 'ProjectA', 'c:\\Users\\foo\\ProjectA')]
+    chatStoreMock.currentWorkspaceUri = URI_A_DRIFT
+    const wrapper = mountSelector()
+    // 绑定 URI 不在打开列表 → 锁定条目 + 「未打开」标签，且打开列表项不被勾选
+    expect(wrapper.find('.ws-label').text()).toBe('ProjectA')
+    await openMenu(wrapper)
+    expect(wrapper.find('.ws-locked-item').exists()).toBe(true)
+    expect(wrapper.find('.ws-locked-item').text()).toContain('components.tabs.workspaceSelector.notOpen')
+    const checked = wrapper.findAll('.ws-menu-item').filter(i => i.find('.codicon-check').exists())
+    expect(checked.length).toBe(0)
     wrapper.unmount()
   })
 

@@ -960,6 +960,8 @@ export const useChatStore = defineStore('chat', () => {
       const wsData = await sendToExtension<any>('getWorkspaceList', {})
       setCurrentWorkspaceUri(state, wsData?.activeWorkspaceUri ?? null)
       setWorkspaceList(state, wsData?.workspaces ?? [])
+      // 扩展端下发的文件系统大小写敏感性（Windows 不敏感）：决定前端 URI 匹配口径
+      state.fsCaseSensitive.value = wsData?.fsCaseSensitive === true
     } catch {
       // 忽略错误
     }
@@ -1100,6 +1102,7 @@ export const useChatStore = defineStore('chat', () => {
     currentWorkspaceUri: state.currentWorkspaceUri,
     workspaceList: state.workspaceList,
     savedWorkspaces: state.savedWorkspaces,
+    fsCaseSensitive: state.fsCaseSensitive,
     workspaceFilter: state.workspaceFilter,
     setCurrentWorkspaceUri: (uri: string | null) => setCurrentWorkspaceUri(state, uri),
     setWorkspaceList: (list: WorkspaceFolderInfo[]) => setWorkspaceList(state, list),

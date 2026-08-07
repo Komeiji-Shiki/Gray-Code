@@ -286,29 +286,36 @@ export async function syncConversationWorkspaceUri(
   state: ChatStoreState,
   conversationId: string
 ): Promise<void> {
+  // 记忆隔离（PR #20 审查 M5 + LOW-17 修正 + 1.7.3 锁定语义）：
+  // - 已绑定：保持"绑定即终身"语义，**不**因绑定工作区暂时未打开（已关闭/
+  //   切换到其它文件夹）而静默重绑定——打开对话时锁定到对话绑定的工作区，
+  //   避免显示与绑定漂移造成混淆；需要换绑时由用户通过顶部下拉显式切换
+  //   （setActiveWorkspace / openWorkspaceFolderAction 会重绑定）。
+  // - 已绑定校验必须在任何异步读取**之前**完成：绑定工作区未打开时扩展端
+  //   激活工作区仍是旧值（workspace.setActive 对未打开 URI 静默忽略），
+  //   若先 fetch 再校验，fetch 结果会覆盖 store 的锁定展示与筛选口径。
+  const conv = state.conversations.value.find(c => c.id === conversationId)
+  if (!conv || !conv.isPersisted || conv.workspaceUri) return
+
   let workspaceUri = state.currentWorkspaceUri.value
   try {
     const latestWorkspaceUri = await sendToExtension<string | null>('getWorkspaceUri', {})
     if (latestWorkspaceUri) {
       workspaceUri = latestWorkspaceUri
-      state.currentWorkspaceUri.value = latestWorkspaceUri
     }
   } catch {
     // ignore and fallback to store value
   }
   if (!workspaceUri) return
 
-  const conv = state.conversations.value.find(c => c.id === conversationId)
-  if (!conv || !conv.isPersisted) return
-  // 记忆隔离（PR #20 审查 M5 + LOW-17 修正 + 1.7.3 锁定语义）：
-  // - 未绑定/为空：用当前活动工作区补齐——保留"新会话自动绑定"，
-  //   也不破坏后端 createBranchConversation 的工作区继承；
-  // - 已绑定：保持"绑定即终身"语义，**不**因绑定工作区暂时未打开（已关闭/
-  //   切换到其它文件夹）而静默重绑定——打开对话时锁定到对话绑定的工作区，
-  //   避免显示与绑定漂移造成混淆；需要换绑时由用户通过顶部下拉显式切换
-  //   （setActiveWorkspace / openWorkspaceFolderAction 会重绑定）。
-  if (conv.workspaceUri) {
-    return
+  // await 期间目标会话可能已被绑定/删除：重新校验后再同步 store 与写入（TOCTOU 修正）
+  const convNow = state.conversations.value.find(c => c.id === conversationId)
+  if (!convNow || !convNow.isPersisted || convNow.workspaceUri) return
+
+  // 仅当目标会话仍是当前会话时同步 store：await 期间用户可能已切换到
+  // 锁定工作区的对话，store 值应以该对话锁定的绑定工作区为准。
+  if (state.currentConversationId.value === conversationId) {
+    state.currentWorkspaceUri.value = workspaceUri
   }
 
   try {
@@ -316,7 +323,7 @@ export async function syncConversationWorkspaceUri(
       conversationId,
       workspaceUri
     })
-    conv.workspaceUri = workspaceUri
+    convNow.workspaceUri = workspaceUri
   } catch (error) {
     console.warn('[conversationActions] Failed to sync conversation workspace URI:', error)
   }

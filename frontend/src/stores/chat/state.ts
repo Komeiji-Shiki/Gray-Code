@@ -351,6 +351,9 @@ export function createChatState(): ChatStoreState {
 
   /** 收藏的工作区文件夹列表（持久化，可跨窗口/重启保留） */
   const savedWorkspaces = ref<WorkspaceFolderInfo[]>([])
+
+  /** 文件系统大小写敏感（扩展端下发：仅 Windows 大小写不敏感），工作区 URI 匹配口径依据 */
+  const fsCaseSensitive = ref(false)
   
   /** 输入框内容（跨视图保持） */
   const inputValue = ref('')
@@ -461,6 +464,7 @@ export function createChatState(): ChatStoreState {
     currentWorkspaceUri,
     workspaceList,
     savedWorkspaces,
+    fsCaseSensitive,
     inputValue,
     workspaceFilter,
     activeBuild,

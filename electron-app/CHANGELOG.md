@@ -11,6 +11,12 @@ are tracked in the root `CHANGELOG.md`.
 ## [Unreleased]
 
 ### Fixed
+  - **对话绑定工作区健壮性修复**（详见根目录 CHANGELOG [Unreleased]）：
+    - `setWorkspaceUri`/`createConversation` workspaceUri 归一化（null/空白 → 解绑，防字面 null 与脏 URI 持久化）；
+    - 后端 H4 自动建会话保留已存在元数据（标题/绑定/自定义字段），已绑定对话不被调用方 hint 覆盖；
+    - `syncConversationWorkspaceUri` 锁定展示修复 + TOCTOU 竞态修正；
+    - 工作区 URI 匹配口径跨平台对齐（fsCaseSensitive 由扩展端下发，仅 Windows 大小写不敏感）；
+    - 新增回归测试（workspaceBindRepair / workspaceSync / WorkspaceSelector 大小写敏感）。
   - **对话绑定工作区锁定 + 下拉切换工作区修复**（详见根目录 CHANGELOG [Unreleased]）：
     - 打开对话/切换标签页锁定工作区到对话绑定工作区，不再因绑定工作区未打开而静默重绑定；
     - 顶部工作区下拉切换修复：Windows 大小写不敏感匹配（规范 URI 固定）、未打开工作区不再误解除固定、打开收藏工作区后重绑定当前对话、绑定未打开工作区以锁定条目展示；

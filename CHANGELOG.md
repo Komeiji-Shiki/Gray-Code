@@ -9,6 +9,12 @@
 ## [Unreleased]
 
 ### Fixed
+  - **对话绑定工作区健壮性修复**：
+    - `conversation.setWorkspaceUri` 与 `ConversationManager.setWorkspaceUri`/`createConversation` 增加 workspaceUri 归一化：null/空/空白串 → undefined（解绑 = 跟随活动编辑器），去除首尾空白——此前字面 `null`/脏 URI 会被 JSON.stringify 持久化，破坏下游 `typeof string` 判定（记忆隔离、工具工作区路由、checkpoint 裁剪、前端筛选全部失配）。
+    - 后端 H4 自动建会话不再重建已存在的元数据：历史文件缺失但 `{id}.meta.json` 存在时（创建后历史被清理/损坏），保留原标题/绑定工作区/自定义字段，仅补建空历史与用量索引；原元数据未绑定时按 H4 语义补绑当前工作区，已绑定时不被调用方 hint 覆盖（绑定即终身）。此前重建会丢失自定义配置并把绑定改写为扩展端激活工作区，与前端锁定展示不一致。
+    - `syncConversationWorkspaceUri` 修复锁定展示被覆盖 + TOCTOU 竞态：已绑定对话在发起任何异步读取前直接返回（此前先 fetch 扩展端激活工作区再校验，扩展端旧值会覆盖 store 的锁定展示与筛选口径）；await 期间会话可能被绑定/删除，写前重新校验；仅当目标会话仍是当前会话时同步 store。
+    - 工作区 URI 匹配口径跨平台对齐：前端 `WorkspaceSelector` 与对话筛选改为按扩展端下发的 `fsCaseSensitive`（仅 Windows 大小写不敏感）归一——此前无条件小写归一在 macOS/Linux 大小写敏感文件系统上会把不同大小的目录误判为同一工作区。
+    - 新增回归测试：`workspaceBindRepair.test.ts`（H4 元数据保留 + 归一化 7 例）、`workspaceSync.test.ts`（锁定/补绑/回退/竞态 4 例）、WorkspaceSelector 大小写敏感用例。
   - **对话绑定工作区锁定 + 下拉切换工作区修复**：
     - 打开对话必须锁定工作区到对话绑定的工作区：`syncConversationWorkspaceUri` 不再因绑定工作区暂时未打开（已关闭/切换到其它文件夹）而静默重绑定——「绑定即终身」，避免显示与绑定漂移造成混淆；需要换绑时通过顶部下拉显式切换。
     - 切换标签页恢复会话时同步扩展端激活工作区（`restoreSessionFromSnapshot` 与 `switchConversation` 对齐）：绑定工作区的对话切回标签页后文件树/工具不再指向不一致；未绑定对话不发送，保持「跟随活动编辑器」不被标签页切换意外固定。

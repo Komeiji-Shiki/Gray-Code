@@ -82,9 +82,16 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     if (state.workspaceFilter.value === 'all' || !state.currentWorkspaceUri.value) {
       return sortedConversations.value
     }
-    // 筛选当前工作区的对话；未绑定工作区的对话视为跟随当前工作区
+    // 筛选当前工作区的对话（未绑定工作区的对话视为跟随当前工作区）。
+    // 大小写匹配口径与扩展端 WorkspaceManager 一致：仅 Windows 大小写不敏感，
+    // 其他平台（大小写敏感文件系统）不同大小写的目录是不同工作区。
+    const sameWorkspaceUri = (a: string, b: string): boolean =>
+      state.fsCaseSensitive.value
+        ? a === b
+        : a.toLowerCase() === b.toLowerCase()
     return sortedConversations.value.filter(c => {
-      if (!c.workspaceUri || c.workspaceUri === state.currentWorkspaceUri.value) return true
+      if (!c.workspaceUri) return true
+      if (sameWorkspaceUri(c.workspaceUri, state.currentWorkspaceUri.value!)) return true
       return !!c.integrityStatus && c.integrityStatus !== 'ok'
     })
   })

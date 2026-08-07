@@ -102,7 +102,10 @@ export const getWorkspaceList: MessageHandler = async (data, requestId, ctx) => 
     const manager = getWorkspaceManager();
     ctx.sendResponse(requestId, {
         activeWorkspaceUri: ctx.getCurrentWorkspaceUri(),
-        workspaces: manager ? manager.getWorkspaceList() : []
+        workspaces: manager ? manager.getWorkspaceList() : [],
+        // 文件系统大小写敏感性（Windows 大小写不敏感）：前端工作区 URI 匹配口径与
+        // 扩展端 WorkspaceManager 保持一致——仅 win32 允许大小写漂移归一。
+        fsCaseSensitive: process.platform !== 'win32'
     });
 };
 

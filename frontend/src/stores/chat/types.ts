@@ -284,6 +284,8 @@ export interface ChatStoreState {
   workspaceList: Ref<WorkspaceFolderInfo[]>
   /** 收藏的工作区文件夹列表（持久化，可跨窗口/重启保留） */
   savedWorkspaces: Ref<WorkspaceFolderInfo[]>
+  /** 文件系统大小写敏感（扩展端下发：仅 Windows 大小写不敏感），工作区 URI 匹配口径依据 */
+  fsCaseSensitive: Ref<boolean>
   /** 输入框内容 */
   inputValue: Ref<string>
   /** 工作区筛选模式 */

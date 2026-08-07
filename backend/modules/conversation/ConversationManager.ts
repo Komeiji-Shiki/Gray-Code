@@ -1195,13 +1195,18 @@ export class ConversationManager {
      * @param workspaceUri 工作区 URI（可选）
      */
     async createConversation(conversationId: string, title?: string, workspaceUri?: string): Promise<void> {
+        // 归一化：非字符串/空白 workspaceUri 视为未绑定，避免脏 URI（尾随空格/字面 null）
+        // 持久化后与工作区列表精确匹配失配（筛选、虚拟解析、checkpoint 裁剪）。
+        const normalizedWorkspaceUri = typeof workspaceUri === 'string' && workspaceUri.trim()
+            ? workspaceUri.trim()
+            : undefined;
         const inFlight = this.conversationCreations.get(conversationId);
         if (inFlight) {
             await inFlight;
             return;
         }
 
-        const creation = this.createConversationInternal(conversationId, title, workspaceUri);
+        const creation = this.createConversationInternal(conversationId, title, normalizedWorkspaceUri);
         this.conversationCreations.set(conversationId, creation);
         try {
             await creation;
@@ -1487,7 +1492,31 @@ export class ConversationManager {
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
             // 自动创建会话时可选绑定 workspaceUri（H4 记忆隔离，见上方 @param 说明）
-            await this.createConversation(conversationId, undefined, workspaceUri);
+            //
+            // 修复：历史缺失但元数据已存在（创建后历史文件被清理/损坏）时不得重建元数据——
+            // createConversationInternal 会以默认标题/空 custom 重建并覆盖 workspaceUri，
+            // 丢失原标题、自定义字段（模型/提示词配置）与原绑定工作区，且会把绑定改写为
+            // 调用方传入的 workspaceUri（可能是扩展端激活工作区，与前端锁定展示不一致）。
+            // 此时仅补建空历史与用量索引，保留原元数据；原元数据无绑定时按 H4 语义补绑。
+            const existingMeta = await this.getMetadata(conversationId);
+            if (existingMeta) {
+                // 并发创建可能已完成历史写入（本路径先读到 not_found 但写路径随后落盘）：
+                // 重新确认历史仍缺失再补建，避免覆盖刚写入的历史/重复 seed。
+                const recheck = await this.storage.loadHistoryWithStatus(conversationId);
+                if (recheck.value) {
+                    this.cacheHistory(conversationId, recheck.value);
+                    return recheck.value;
+                }
+                this.deletedConversationIds.delete(conversationId);
+                await this.storage.saveHistory(conversationId, []);
+                await this.updateUsageIndex(conversationId, []);
+                this.cacheHistory(conversationId, [], true);
+                if (typeof existingMeta.workspaceUri !== 'string' && workspaceUri) {
+                    await this.setWorkspaceUri(conversationId, workspaceUri);
+                }
+            } else {
+                await this.createConversation(conversationId, undefined, workspaceUri);
+            }
             return [];
         }
         throw new Error(
@@ -2919,8 +2948,15 @@ export class ConversationManager {
      *
      * 多工作区支持：workspaceUri 传 undefined 表示解绑对话（恢复"跟随活动编辑器"），
      * 持久化时该字段从元数据中移除。
+     *
+     * 归一化：非字符串/空白值一律视为解绑（undefined）。RPC 层可能传入字面 null 或脏 URI
+     * （尾随空格等），若直接持久化会被 JSON.stringify 写为字面 null/脏串，破坏下游
+     * typeof string 判定（记忆隔离、工具工作区路由、checkpoint 裁剪、前端筛选）。
      */
     async setWorkspaceUri(conversationId: string, workspaceUri?: string): Promise<void> {
+        const normalizedUri = typeof workspaceUri === 'string' && workspaceUri.trim()
+            ? workspaceUri.trim()
+            : undefined;
         // 同 setTitle：整对象读改写必须与 setCustomMetadata 共用同一条元数据写链。
         await withMetadataWriteSerialized(conversationId, async () => {
             let meta = await this.loadMetadataForWrite(conversationId);
@@ -2930,11 +2966,11 @@ export class ConversationManager {
                     title: t('modules.conversation.defaultTitle', { conversationId }),
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
-                    workspaceUri,
+                    workspaceUri: normalizedUri,
                     custom: {}
                 };
             } else {
-                meta.workspaceUri = workspaceUri;
+                meta.workspaceUri = normalizedUri;
                 meta.updatedAt = Date.now();
             }
             await this.persistMetadata(meta);

@@ -99,7 +99,10 @@ export const setTitle: MessageHandler = async (data, requestId, ctx) => {
 
 export const setWorkspaceUri: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, workspaceUri } = data;
-  await ctx.conversationManager.setWorkspaceUri(validateConversationId(conversationId), workspaceUri);
+  // 与 createConversation 同归一：null/空值 → undefined（解绑 = 跟随活动编辑器），
+  // 避免字面 null 被 JSON.stringify 持久化，破坏下游 typeof string 判定（L-2 记忆隔离等）。
+  const wsUri = workspaceUri || undefined;
+  await ctx.conversationManager.setWorkspaceUri(validateConversationId(conversationId), wsUri);
   ctx.sendResponse(requestId, { success: true });
 };
 
