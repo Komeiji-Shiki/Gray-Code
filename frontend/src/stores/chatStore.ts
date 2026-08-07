@@ -32,6 +32,7 @@ import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
 import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
+import { useBackgroundTaskStore } from './backgroundTaskStore'
 
 // 导入模块
 import { createChatState } from './chat/state'
@@ -591,7 +592,21 @@ export const useChatStore = defineStore('chat', () => {
     // 用取消息时的会话 ID 做归属校验（跨会话跳过逻辑与 processQueue 一致）
     const currentId = state.currentConversationId.value
     const taken = takeNextForConversation(state.messageQueue.value, currentId)
-    if (!taken) return
+    if (!taken) {
+      // P2 回执完成即插入：无排队消息可投递时，动作边界提前投递已完成后台
+      // 任务（后台子代理/后台命令）的回执——与排队消息同构（cancelStream 替换
+      // 当前回合 + 新 chatStream），不再等待整个回合完整结束。
+      // 队列非空时排队消息优先，回执等下一个动作边界或回合结束补发。
+      // 回执投递窗口同样受 queueAfterActionDraining 保护（cancelStream 的 IPC
+      // 往返期间不与其他动作边界投递交叠），内部另有 flushing 防重复回流。
+      queueAfterActionDraining = true
+      try {
+        await useBackgroundTaskStore().flushReportsAfterAction()
+      } finally {
+        queueAfterActionDraining = false
+      }
+      return
+    }
     const { next, rest } = taken
     state.messageQueue.value = rest
 
