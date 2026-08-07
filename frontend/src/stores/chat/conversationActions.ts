@@ -300,10 +300,18 @@ export async function syncConversationWorkspaceUri(
 
   const conv = state.conversations.value.find(c => c.id === conversationId)
   if (!conv || !conv.isPersisted) return
-  // 记忆隔离（PR #20 审查 M5）：目标会话已有非空 workspaceUri（如分支继承自源对话）时不覆盖，
-  // 仅当未绑定/为空时才用当前活动工作区补齐——既保留“新会话自动绑定”，
-  // 又不破坏后端 createBranchConversation 的工作区继承。
-  if (conv.workspaceUri) return
+  // 记忆隔离（PR #20 审查 M5 + LOW-17 修正）：
+  // - 未绑定/为空：用当前活动工作区补齐——保留“新会话自动绑定”，
+  //   也不破坏后端 createBranchConversation 的工作区继承；
+  // - 已绑定且绑定仍有效（绑定 URI 就是当前活动工作区）：保持“首次绑定即终身”语义，不重绑；
+  // - 已绑定但绑定失效（当前活动工作区已不是绑定 URI——原工作区已关闭或切换了项目）：
+  //   重新绑定到当前活动工作区，让存量误绑自愈（LOW-17），
+  //   记忆工具不再被错误路由到已关闭/已离开的旧工作区。
+  // 注：前端可获取的是“当前活动工作区”URI（getWorkspaceUri 返回第一个打开的文件夹），
+  // 多根工作区下对话跟随活动文件夹；未打开任何工作区时上面已提前 return，保持不重绑。
+  if (conv.workspaceUri) {
+    if (conv.workspaceUri === workspaceUri) return
+  }
 
   try {
     await sendToExtension('conversation.setWorkspaceUri', {
