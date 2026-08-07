@@ -480,6 +480,35 @@ function cancelNew() {
   newConfigNameError.value = false
 }
 
+// 更改渠道类型（切换后类型特有参数会重置为新类型默认值，需整体重载配置）
+function onChangeType(newType: string) {
+  if (!currentConfig.value || newType === currentConfig.value.type) return
+  // 快照 configId：确认回调异步执行期间用户可能切换/删除配置
+  const configId = currentConfig.value.id
+
+  showConfirm(
+    t('components.settings.channelSettings.dialog.changeType.title'),
+    formatMessage(t('components.settings.channelSettings.dialog.changeType.message'), getTypeName(newType)),
+    async () => {
+      try {
+        await sendToExtension('config.updateConfig', {
+          configId,
+          updates: { type: newType }
+        })
+        await loadConfigs()
+        if (configId === chatStore.configId) {
+          await chatStore.loadCurrentConfig()
+          // 类型变更后后端已重置模型列表/当前模型：清掉会话级模型覆盖，
+          // 避免残留旧类型模型 ID 被当作显式模型发送（报 404/参数错误）
+          await chatStore.setSelectedModelId(chatStore.currentConfig?.model || '')
+        }
+      } catch (error) {
+        console.error('Failed to update channel type:', error)
+      }
+    }
+  )
+}
+
 // 更新多个配置字段（单个请求，避免竞态条件）
 async function updateConfigFields(updates: Record<string, any>) {
   if (!currentConfig.value) return
@@ -784,12 +813,18 @@ onMounted(async () => {
         </label>
       </div>
       
-      <!-- 渠道类型显示 -->
+      <!-- 渠道类型（可更改，切换后类型特有参数重置为新类型默认值） -->
       <div class="form-group" data-search-anchor="channel-type">
         <label>{{ t('components.settings.channelSettings.form.channelType.label') }}</label>
-        <div class="type-display">
-          <span class="type-badge">{{ getTypeName(currentConfig.type) }}</span>
-        </div>
+        <CustomSelect
+          :model-value="currentConfig.type"
+          :options="typeOptions"
+          :placeholder="t('components.settings.channelSettings.dialog.new.typePlaceholder')"
+          @update:model-value="onChangeType"
+        />
+        <span class="field-hint">
+          {{ t('components.settings.channelSettings.form.channelType.changeHint') }}
+        </span>
       </div>
       
       <!-- 工具调用格式 -->
@@ -1542,20 +1577,6 @@ input[type="text"].config-name-input.input-error {
 
 .checkbox-text {
   margin-left: 4px;
-}
-
-/* 类型显示 */
-.type-display {
-  padding: 6px 10px;
-  background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
-}
-
-.type-badge {
-  font-size: 12px;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-foreground);
-  opacity: 0.8;
 }
 
 /* 高级选项 */
