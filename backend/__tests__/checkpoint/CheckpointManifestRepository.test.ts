@@ -162,6 +162,35 @@ describe('CheckpointManifestRepository', () => {
         expect(await repo.loadManifestWithFiles('cp-1')).toBeNull();
     });
 
+    test('v1 内联存档：files 缓存淘汰且 files.json 不存在时兜底回读内联 files，不误判数据丢失（CPF-LAZY-1 回归）', async () => {
+        // 构造 v1 旧格式：files 内联于 manifest.json，且 files.json 不存在
+        // （模拟拆分迁移写失败/未发生：只读介质、磁盘满等场景）
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-v1-orphan');
+        await fs.mkdir(dir, { recursive: true });
+        const v1: CheckpointManifest = {
+            ...makeManifest('cp-v1-orphan', ['ws_a/legacy.txt']),
+            version: 1
+        };
+        await fs.writeFile(path.join(dir, CHECKPOINT_MANIFEST_FILENAME), JSON.stringify(v1, null, 2), 'utf-8');
+
+        // 确定性构造「meta 缓存命中、files 缓存被淘汰」的分离状态：
+        // 直接以 v1 元数据预热 meta 缓存，files 缓存保持为空（不触发拆分迁移写盘）
+        repo['metaCache'].set('cp-v1-orphan', {
+            version: 1,
+            checkpointId: 'cp-v1-orphan',
+            workspaceRoots: v1.workspaceRoots,
+            emptyDirs: v1.emptyDirs,
+            changes: v1.changes,
+            excluded: v1.excluded,
+            ignoreSnapshot: v1.ignoreSnapshot
+        });
+
+        // 完整数据读取：files.json 缺失 → 兜底从 manifest.json 回读内联 files
+        const full = await repo.loadManifestWithFiles('cp-v1-orphan');
+        expect(full).not.toBeNull();
+        expect(full!.files['ws_a/legacy.txt'].hash).toBe('h-0');
+    });
+
     test('旧格式 v1（files 内联）：读取后 best-effort 拆分为新格式落盘（CPF-LAZY-1 迁移）', async () => {
         const dir = path.join(storageRoot, 'checkpoints', 'cp-v1');
         await fs.mkdir(dir, { recursive: true });

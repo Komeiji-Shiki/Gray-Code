@@ -291,7 +291,9 @@ export class CheckpointManifestRepository {
      *
      * - 缓存命中（旧格式内联解析 / 本方法先前加载）直接返回；
      * - 否则读取 files.json 并缓存；
-     * - files.json 缺失/损坏 → 返回 null（数据丢失场景，由调用方显式报错，不假空）。
+     * - files.json 缺失/损坏 → 兜底回读 manifest.json 内联 files（v1 旧格式在拆分迁移
+     *   失败/未发生时的数据仍在原处）；v2 布局 manifest.json 无内联 files → 返回 null
+     *   （数据丢失场景，由调用方显式报错，不假空）。
      */
     async loadManifestFiles(checkpointId: string): Promise<CheckpointManifest['files'] | null> {
         assertSafeCheckpointDirName(checkpointId);
@@ -312,9 +314,28 @@ export class CheckpointManifestRepository {
                 this.cacheSet(this.filesCache, checkpointId, parsed.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
                 return parsed.files;
             }
-            // 损坏的 files.json：不缓存（读取方按数据丢失处理）
+            // 损坏的 files.json：不缓存（继续走内联兜底）
         } catch {
-            // 文件不存在或不可读：读取方按数据丢失处理
+            // 文件不存在或不可读：继续走内联兜底
+        }
+        // 兜底：v1 旧格式（拆分迁移失败/未发生）——files 仍内联于 manifest.json。
+        // 否则 meta 缓存命中而 files 缓存被淘汰时，会把仍在盘上的数据误判为丢失。
+        try {
+            const raw = await fs.readFile(this.getManifestPath(checkpointId), 'utf-8');
+            const parsed = JSON.parse(raw) as { checkpointId?: unknown; files?: unknown };
+            if (
+                parsed &&
+                typeof parsed === 'object' &&
+                parsed.checkpointId === checkpointId &&
+                parsed.files &&
+                typeof parsed.files === 'object'
+            ) {
+                const files = parsed.files as CheckpointManifest['files'];
+                this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+                return files;
+            }
+        } catch {
+            // manifest.json 也不可读：按数据丢失处理
         }
         return null;
     }
