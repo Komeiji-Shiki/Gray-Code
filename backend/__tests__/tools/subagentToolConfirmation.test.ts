@@ -93,6 +93,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         subAgentConcurrencyLimiter.release('sec_confirm_blocked');
         subAgentConcurrencyLimiter.release('sec_confirm_allowed');
         subAgentConcurrencyLimiter.release('sec_confirm_fail_closed');
+        subAgentConcurrencyLimiter.release('sec_confirm_this_binding');
         jest.clearAllMocks();
     });
 
@@ -163,6 +164,50 @@ describe('子代理危险工具确认门（SEC）', () => {
             runId: 'sec_confirm_allowed'
         });
 
+        expect(executeMock).toHaveBeenCalledTimes(1);
+        expect(result.toolCalls![0].tool).toBe('read_file');
+        expect(result.toolCalls![0].success).toBe(true);
+        expect(result.success).toBe(true);
+    });
+
+    it('确认门实现依赖 this（真实 ToolExecutionService 形态）：成员调用保留 this 绑定，不抛 TypeError', async () => {
+        mockResolveTools(['read_file']);
+        const executeMock = jest.fn().mockResolvedValue({
+            toolResults: [{ result: { success: true, result: 'file content' } }],
+            responseParts: [],
+            multimodalAttachments: undefined
+        });
+        const generateMock = jest.fn()
+            .mockResolvedValueOnce(toolCallResponse('read_file', { path: 'a.txt' }))
+            .mockResolvedValueOnce(textResponse());
+        // 回归测试：真实 ToolExecutionService.toolNeedsConfirmation 是依赖 this 的实例方法
+        //（内部调用 this.getToolRejectionReason）。若 executor 先解构方法再调用，this 丢失
+        // 会直接抛 TypeError，导致子代理所有工具调用全部失败（PR #24 回归 bug）。
+        const toolExecutionService = {
+            rejectionReason: null,
+            getToolRejectionReason(this: any, toolName: string) {
+                return this.rejectionReason; // 依赖 this 的私有辅助方法
+            },
+            toolNeedsConfirmation(this: any, toolName: string) {
+                if (this.getToolRejectionReason(toolName) !== null) {
+                    return false;
+                }
+                return false; // read_file 自动执行
+            },
+            executeFunctionCallsWithResults: executeMock
+        };
+        const executor = createDefaultExecutor(createConfig(), createContext({
+            channelManager: { generate: generateMock } as any,
+            toolExecutionService: toolExecutionService as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'read the file',
+            runId: 'sec_confirm_this_binding'
+        });
+
+        // 工具正常执行：确认门以成员访问形式调用，this 绑定未丢失
         expect(executeMock).toHaveBeenCalledTimes(1);
         expect(result.toolCalls![0].tool).toBe('read_file');
         expect(result.toolCalls![0].success).toBe(true);

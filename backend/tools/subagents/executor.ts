@@ -466,9 +466,12 @@ async function executeToolCall(
         // fail-closed：共享执行服务缺少确认门（异常注入/不完整实现）时同样拒绝执行，
         // 不允许静默放行造成安全门缺失。
         // 修改目的：子代理不再能绕过用户的危险工具确认设置。
-        const confirmationGate = context.toolExecutionService.toolNeedsConfirmation;
-        const confirmationRefusal = typeof confirmationGate === 'function'
-            ? (confirmationGate(toolName, args, context.promptModeSnapshot)
+        // 注意：必须以成员访问形式调用（toolExecutionService.toolNeedsConfirmation(...)），
+        // 不能先解构出方法再调用——该方法内部依赖 this（this.getToolRejectionReason），
+        // 解构调用会丢失 this 绑定直接抛 TypeError，导致子代理所有工具调用全部失败。
+        const toolExecutionService = context.toolExecutionService;
+        const confirmationRefusal = typeof toolExecutionService.toolNeedsConfirmation === 'function'
+            ? (toolExecutionService.toolNeedsConfirmation(toolName, args, context.promptModeSnapshot)
                 ? `Tool "${toolName}" requires user confirmation and cannot be executed automatically by a sub-agent. `
                 + `Ask the main model to perform this action.`
                 : undefined)
