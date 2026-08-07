@@ -2965,7 +2965,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: Not used | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
+                    effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
                     effortNone: 'None',
                     effortMinimal: 'Minimal',
                     effortLow: 'Low',

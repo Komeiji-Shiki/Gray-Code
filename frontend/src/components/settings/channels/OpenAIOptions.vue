@@ -18,6 +18,7 @@ const emit = defineEmits<{
 // 思考强度选项
 const effortOptions = computed<SelectOption[]>(() => [
   { value: 'none', label: t('components.channels.openai.thinking.effortNone'), description: '' },
+  { value: 'minimal', label: t('components.channels.openai.thinking.effortMinimal'), description: '' },
   { value: 'low', label: t('components.channels.openai.thinking.effortLow'), description: '' },
   { value: 'medium', label: t('components.channels.openai.thinking.effortMedium'), description: '' },
   { value: 'high', label: t('components.channels.openai.thinking.effortHigh'), description: '' },
