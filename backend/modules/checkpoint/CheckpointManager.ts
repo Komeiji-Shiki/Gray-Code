@@ -264,6 +264,8 @@ export class CheckpointManager {
      * @param phase 阶段（执行前/执行后）
      * @param options.messageNodeId BCP-01：消息节点 ID（树状分支定位预留）。
      *   仅附加写入，不改变按 messageIndex 的定位语义；缺省时记录不带该字段（旧存档兼容）。
+     * @param options.forceCreate 手动创建（用户显式请求）：跳过 enabled 开关与工具/消息类型
+     *   过滤，无条件创建；仍尊重排除规则（自定义忽略 / 默认类别 / 文件大小上限等安全边界）。
      * @returns 检查点记录，如果创建失败返回 null
      */
     async createCheckpoint(
@@ -274,42 +276,45 @@ export class CheckpointManager {
         options?: {
             progress?: (progress: CheckpointOperationProgress) => void;
             messageNodeId?: string;
+            forceCreate?: boolean;
         }
     ): Promise<CheckpointRecord | null> {
         // 检查是否应该创建检查点
         const config = this.settingsManager.getCheckpointConfig();
-        if (!config.enabled) {
+        const forceCreate = options?.forceCreate === true;
+        if (!forceCreate && !config.enabled) {
             return null;
         }
         
-        let shouldCreate = false;
-        
-        // 检查是否是消息类型
-        if (toolName === 'user_message' || toolName === 'model_message') {
-            // 使用消息类型配置
-            const messageType = toolName === 'user_message' ? 'user' : 'model';
-            if (phase === 'before') {
-                shouldCreate = config.messageCheckpoint?.beforeMessages?.includes(messageType) ?? false;
+        let shouldCreate = true;
+        if (!forceCreate) {
+            // 检查是否是消息类型
+            if (toolName === 'user_message' || toolName === 'model_message') {
+                // 使用消息类型配置
+                const messageType = toolName === 'user_message' ? 'user' : 'model';
+                if (phase === 'before') {
+                    shouldCreate = config.messageCheckpoint?.beforeMessages?.includes(messageType) ?? false;
+                } else {
+                    shouldCreate = config.messageCheckpoint?.afterMessages?.includes(messageType) ?? false;
+                }
+            } else if (toolName === 'tool_batch') {
+                // 批量工具：只要配置了任何工具的检查点，就创建
+                // tool_batch 表示多个工具调用被批量处理
+                if (phase === 'before') {
+                    shouldCreate = config.beforeTools.length > 0;
+                } else {
+                    shouldCreate = config.afterTools.length > 0;
+                }
             } else {
-                shouldCreate = config.messageCheckpoint?.afterMessages?.includes(messageType) ?? false;
+                // 使用工具配置
+                shouldCreate = phase === 'before'
+                    ? config.beforeTools.includes(toolName)
+                    : config.afterTools.includes(toolName);
             }
-        } else if (toolName === 'tool_batch') {
-            // 批量工具：只要配置了任何工具的检查点，就创建
-            // tool_batch 表示多个工具调用被批量处理
-            if (phase === 'before') {
-                shouldCreate = config.beforeTools.length > 0;
-            } else {
-                shouldCreate = config.afterTools.length > 0;
+                
+            if (!shouldCreate) {
+                return null;
             }
-        } else {
-            // 使用工具配置
-            shouldCreate = phase === 'before'
-                ? config.beforeTools.includes(toolName)
-                : config.afterTools.includes(toolName);
-        }
-            
-        if (!shouldCreate) {
-            return null;
         }
 
         // CPF-11: 注册进度与取消句柄（等待锁 / 扫描 / 复制全程可查询、可取消）
