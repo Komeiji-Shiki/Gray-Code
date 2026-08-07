@@ -173,7 +173,9 @@ describe('SubAgent executor - 转后台（detach）', () => {
                 toolResults: [{ result: { success: true, result: 'ok' } }],
                 responseParts: [],
                 multimodalAttachments: undefined
-            })
+            }),
+            // SEC：executor 现在会先查询确认门（确认需求返回 false = 直接放行）
+            toolNeedsConfirmation: () => false
         };
         const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
         const parentAbort = new AbortController();
@@ -224,7 +226,9 @@ describe('SubAgent executor - 转后台（detach）', () => {
             }]
         };
         (context as any).toolExecutionService = {
-            executeFunctionCallsWithResults: executeToolMock
+            executeFunctionCallsWithResults: executeToolMock,
+            // SEC：executor 现在会先查询确认门（确认需求返回 false = 直接放行）
+            toolNeedsConfirmation: () => false
         };
         const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
         const runPromise = executor({
