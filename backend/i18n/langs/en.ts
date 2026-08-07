@@ -198,7 +198,8 @@ const en: BackendLanguageMessages = {
                 requestAborted: 'Request aborted',
                 noResponseBody: 'No response body',
                 emptyResponse: 'The model returned an empty response',
-                streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption'
+                streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption',
+                streamBufferOverflow: 'Stream buffer exceeded the size limit: upstream data could not be parsed (buffer kept growing without being consumed)'
             },
             modelList: {
                 errors: {
