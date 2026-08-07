@@ -38,6 +38,37 @@ export function isRealUserMessage(message: {
 }
 
 /**
+ * 后台任务回执的展示层归一化（读取时补 source，不写盘）。
+ *
+ * 背景：早期 chatStream 链路在 webview 层丢失了 source 字段（StreamRequestHandler
+ * 未透传），已落盘的后台任务回执消息没有 source='background_task'。前端依赖该字段
+ * 渲染折叠卡片；缺失时回执会以完整正文显示成普通用户消息。
+ *
+ * 识别依据：回执由前端 reportBuilder 以固定前缀 "[Background task completed]" 生成，
+ * 且 role='user'、非 functionResponse——三者齐备即可可靠识别。
+ *
+ * 只补内存不写盘：避免为旧数据重写历史文件（分段存储迁移有额外风险），
+ * 新数据已由根因修复保证落盘带 source。
+ */
+export function ensureBackgroundTaskSourceForDisplay(message: Content): Content {
+    if (
+        message.role === 'user'
+        && message.source === undefined
+        && !message.isFunctionResponse
+        && Array.isArray(message.parts)
+    ) {
+        const text = message.parts
+            .filter(part => part.text && !part.thought)
+            .map(part => part.text)
+            .join('');
+        if (text.startsWith('[Background task completed]')) {
+            return { ...message, source: 'background_task' };
+        }
+    }
+    return message;
+}
+
+/**
  * 构建包含多个 parts 的消息
  * 
  * Gemini 允许一个消息包含多个 parts，可以混合文本和多模态内容

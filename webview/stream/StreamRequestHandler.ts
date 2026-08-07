@@ -160,6 +160,7 @@ export class StreamRequestHandler {
       hiddenFunctionResponse,
       promptModeId,
       dynamicContextStrategyOverride,
+      source,
       streamId: clientStreamId
     } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
@@ -181,6 +182,7 @@ export class StreamRequestHandler {
         hiddenFunctionResponse,
         promptModeId: this.normalizePromptModeId(promptModeId),
         dynamicContextStrategyOverride,
+        source,
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });
