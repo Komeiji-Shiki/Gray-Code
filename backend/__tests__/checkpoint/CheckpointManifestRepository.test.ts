@@ -231,6 +231,39 @@ describe('CheckpointManifestRepository', () => {
         expect(fullAgain?.files['ws_a/old.txt'].hash).toBe('h-0');
     });
 
+    test('v1 拆分迁移后 metaCache 同步为 v2，后续 loadManifestWithFiles 不重复触发迁移（CPF-LAZY-1 回归）', async () => {
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-v1-cache');
+        await fs.mkdir(dir, { recursive: true });
+        const v1: CheckpointManifest = {
+            ...makeManifest('cp-v1-cache', ['ws_a/old.txt']),
+            version: 1
+        };
+        await fs.writeFile(path.join(dir, CHECKPOINT_MANIFEST_FILENAME), JSON.stringify(v1, null, 2), 'utf-8');
+
+        // 首次完整读：触发 v1 -> v2 拆分迁移
+        const full = await repo.loadManifestWithFiles('cp-v1-cache');
+        expect(full).not.toBeNull();
+        // 返回值版本应为 v2（迁移成功后 stamp），而非残留的 v1
+        expect(full!.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+
+        // metaCache 应已同步为 v2（不残留 v1 导致后续重复迁移）
+        const cachedMeta = repo['metaCache'].get('cp-v1-cache');
+        expect(cachedMeta?.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+
+        // 轻量读命中缓存：返回 v2 元数据
+        const meta = await repo.loadManifest('cp-v1-cache');
+        expect(meta?.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+
+        // 删除 files.json 后再次完整读（缓存命中，不触碰磁盘）：
+        // 若 metaCache 残留 v1（bug），loadManifestWithFiles 会再次触发 splitMigrateOnDisk
+        // -> writeManifestFiles 重建 files.json；修复后 metaCache 为 v2 -> 不触发迁移
+        await fs.rm(path.join(dir, CHECKPOINT_MANIFEST_FILES_FILENAME));
+        const fullAgain = await repo.loadManifestWithFiles('cp-v1-cache');
+        expect(fullAgain?.files['ws_a/old.txt'].hash).toBe('h-0');
+        // files.json 不应被重建（未触发迁移）
+        await expect(fs.access(path.join(dir, CHECKPOINT_MANIFEST_FILES_FILENAME))).rejects.toThrow();
+    });
+
     test('v1 布局但缺内联 files → 视为损坏，走迁移/回退路径', async () => {
         const dir = path.join(storageRoot, 'checkpoints', 'cp-bad-v1');
         await fs.mkdir(dir, { recursive: true });

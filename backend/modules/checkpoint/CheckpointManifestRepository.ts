@@ -282,6 +282,7 @@ export class CheckpointManifestRepository {
                 // 迁移落盘失败（只读介质等）不影响本次使用：缓存仍生效
             }
             const { meta, files } = CheckpointManifestRepository.splitManifest(migrated);
+            this.cacheSet(this.metaCache, checkpointId, meta, CheckpointManifestRepository.META_CACHE_LIMIT);
             this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
             return meta;
         }
@@ -366,30 +367,40 @@ export class CheckpointManifestRepository {
         if (!files) {
             return null;
         }
+        let resultMeta = meta;
         if (meta.version === CHECKPOINT_MANIFEST_VERSION - 1) {
-            await this.splitMigrateOnDisk(checkpointId, meta, files);
+            const stampedMeta: CheckpointManifestMeta = { ...meta, version: CHECKPOINT_MANIFEST_VERSION };
+            if (await this.splitMigrateOnDisk(checkpointId, stampedMeta, files)) {
+                resultMeta = stampedMeta;
+            }
         }
-        return { ...meta, files };
+        return { ...resultMeta, files };
     }
 
     /**
      * CPF-LAZY-1: 旧格式（v1，files 内联）best-effort 拆分为新格式（v2 布局）。
      *
-     * 仅在**完整数据读取路径**（loadManifestFiles 内联兜底）触发：轻量读取（列表摘要/
+     * 仅在**完整数据读取路径**（loadManifestWithFiles）触发：轻量读取（列表摘要/
      * 排除清单等）不承担 10-20MB 级拆分写盘；完整读取为恢复/增量比较/合并等重量级
      * 操作，一次拆分写后后续读取全部走轻量路径。失败（只读介质等）保留旧格式，
      * 数据由内联兜底继续提供。
+     *
+     * 写入成功后同步更新 metaCache（stamp 为 v2），避免缓存残留 v1 导致后续
+     * loadManifestWithFiles 重复触发迁移写盘；返回 true 表示迁移成功、调用方应
+     * 使用 stampedMeta 作为返回值版本。
      */
     private async splitMigrateOnDisk(
         checkpointId: string,
-        meta: CheckpointManifestMeta,
+        stampedMeta: CheckpointManifestMeta,
         files: CheckpointManifest['files']
-    ): Promise<void> {
+    ): Promise<boolean> {
         try {
-            const stampedMeta: CheckpointManifestMeta = { ...meta, version: CHECKPOINT_MANIFEST_VERSION };
             await this.writeManifestFiles(checkpointId, stampedMeta, files);
+            this.cacheSet(this.metaCache, checkpointId, stampedMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
+            return true;
         } catch {
             // best-effort：失败不影响本次读取（旧格式仍可继续被解析读取）
+            return false;
         }
     }
 

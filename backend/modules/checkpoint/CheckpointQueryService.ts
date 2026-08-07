@@ -17,7 +17,7 @@ import type { ConversationManager } from '../conversation/ConversationManager';
 import { Logger } from '../../core/logger';
 import type { CheckpointRecord } from './CheckpointManager';
 import type { CheckpointSummary } from './types';
-import { CheckpointManifestRepository, isSafeCheckpointDirName } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 
 const log = Logger.get('CheckpointQueryService');
@@ -224,7 +224,7 @@ export class CheckpointQueryService {
             for (const entry of entries) {
                 // CPF-01: manifest 是元数据，不计入备份占用；
                 // CPF-LAZY-1: files.json 同样是元数据（重量级文件映射独立存储），不计入
-                if (entry.name === 'manifest.json' || entry.name === 'files.json' || entry.name.endsWith('.tmp')) {
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME || entry.name.endsWith('.tmp')) {
                     continue;
                 }
                 const fullPath = path.join(dirPath, entry.name);
