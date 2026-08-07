@@ -31,12 +31,29 @@ function normalizeIndexes(contents: Content[]): Content[] {
     } as Content));
 }
 
+function normalizeFunctionId(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
 function getFunctionCallIds(content: Content | undefined): Set<string> {
     const ids = new Set<string>();
     for (const part of content?.parts || []) {
-        const id = part.functionCall?.id;
-        if (typeof id === 'string' && id.trim()) {
+        const id = normalizeFunctionId(part.functionCall?.id);
+        if (id) {
             ids.add(id);
+        }
+    }
+    return ids;
+}
+
+function getFunctionResponseIds(contents: ReadonlyArray<Content>): Set<string> {
+    const ids = new Set<string>();
+    for (const content of contents) {
+        for (const part of content?.parts || []) {
+            const id = normalizeFunctionId(part.functionResponse?.id);
+            if (id) {
+                ids.add(id);
+            }
         }
     }
     return ids;
@@ -45,12 +62,50 @@ function getFunctionCallIds(content: Content | undefined): Set<string> {
 function hasMatchingFunctionResponse(content: Content | undefined, functionCallIds: Set<string>): boolean {
     if (!content || functionCallIds.size === 0) return false;
     for (const part of content.parts || []) {
-        const id = part.functionResponse?.id;
-        if (typeof id === 'string' && functionCallIds.has(id)) {
+        const id = normalizeFunctionId(part.functionResponse?.id);
+        if (id && functionCallIds.has(id)) {
             return true;
         }
     }
     return false;
+}
+
+/**
+ * 删除消息后修复被本次删除拆开的 functionCall/functionResponse 配对。
+ *
+ * 只处理“响应原本存在、但被本次删除移除”的调用：若同 id 的其它响应仍保留，则不修改；
+ * 原本就处于 pending 的调用也不在这里自动取消。失去响应的保留调用标记为 rejected，
+ * 请求格式化时会整体过滤该调用，从而不会产生 orphan_function_call。
+ *
+ * 不插入“用户拒绝”占位响应：截断是历史变更，不等同于用户拒绝执行工具。
+ *
+ * @returns 本次新标记为 rejected 的 functionCall 数量
+ */
+export function repairFunctionCallPairsAfterDelete(
+    remaining: Content[],
+    deletedMessages: ReadonlyArray<Content>
+): number {
+    const deletedResponseIds = getFunctionResponseIds(deletedMessages);
+    if (deletedResponseIds.size === 0) {
+        return 0;
+    }
+
+    const remainingResponseIds = getFunctionResponseIds(remaining);
+    let repairedCount = 0;
+    for (const message of remaining) {
+        for (const part of message?.parts || []) {
+            const id = normalizeFunctionId(part.functionCall?.id);
+            if (!id
+                || !deletedResponseIds.has(id)
+                || remainingResponseIds.has(id)
+                || part.functionCall?.rejected) {
+                continue;
+            }
+            part.functionCall!.rejected = true;
+            repairedCount++;
+        }
+    }
+    return repairedCount;
 }
 
 export function truncateFrom(contents: Content[], contentIndex: number): Content[] {
@@ -59,10 +114,12 @@ export function truncateFrom(contents: Content[], contentIndex: number): Content
         throw new Error(`Transcript content index out of bounds: ${contentIndex}`);
     }
 
-    // 修改原因：重试语义是从目标楼开始删除后续上下文，主窗口和 Monitor 必须一致。
-    // 修改方式：直接保留目标索引之前的 Content，并统一重建 index。
-    // 修改目的：避免留下目标楼之后的 functionResponse 或工具结果污染下一次模型请求。
-    return normalizeIndexes(cloned.slice(0, contentIndex));
+    // 重试语义是从目标位置开始删除后续上下文。若被删后缀包含保留区间中某个
+    // functionCall 的响应，则把该调用标记为 rejected，避免截断制造孤儿调用。
+    const remaining = cloned.slice(0, contentIndex);
+    const deleted = cloned.slice(contentIndex);
+    repairFunctionCallPairsAfterDelete(remaining, deleted);
+    return normalizeIndexes(remaining);
 }
 
 /**
@@ -170,6 +227,8 @@ export function deleteLogicalMessage(contents: Content[], contentIndex: number):
 
     const deletedMessages = cloned.filter((_, index) => indexesToDelete.has(index));
     const next = cloned.filter((_, index) => !indexesToDelete.has(index));
+    // 删除 functionResponse 本身时，其 functionCall 可能仍保留；统一修复配对，避免孤儿调用。
+    repairFunctionCallPairsAfterDelete(next, deletedMessages);
     // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继重链到被删消息的 parent）
     repairParentChainAfterDelete(next, deletedMessages);
     return normalizeIndexes(next);
