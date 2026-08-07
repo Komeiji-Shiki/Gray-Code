@@ -1,16 +1,17 @@
 /**
  * SubAgent executor 幻觉预生成回归测试
  *
- * 覆盖 bug：xml/json prompt 模式下模型在同一轮里"抢跑"，
- * 先输出一段看似完整的分析文本（基于文件名/提示词编造），再发起工具调用；
- * 工具结果尚未返回，这段文本是幻觉。若后续轮次遇到空响应（上游返回空内容/失败），
- * 旧逻辑会把这段幻觉文本作为 partialResponse 返回给主模型，主模型误以为
- * 代理已经完成了分析。
+ * 覆盖 bug：xml/json prompt 模式下模型在发起工具调用后继续输出文本——
+ * 工具结果尚未返回，工具调用之后的文本没有依据，是幻觉（基于文件名/提示词编造）。
+ * 若后续轮次遇到空响应（上游返回空内容/失败），旧逻辑会把这段幻觉文本作为
+ * partialResponse 返回给主模型，主模型误以为代理已经完成了分析。
  *
  * 修复：
- * 1. 无工具结果前，工具轮文本 parts 被剥离（只保留 functionCall），幻觉不进 history；
- * 2. lastResponse 只在"本轮没有工具调用（代理即将完成）"时更新，
- *    工具调用轮次的文本一律视为中间产物，不进入最终/partial 响应。
+ * 1. 仅忽略"第一个工具调用 part 之后"的非 thought 文本（幻觉尾巴），不进 history；
+ *    工具调用之前的分析/计划文本完整保留（基于用户消息与既有工具结果的有效推理）。
+ * 2. lastResponse 只在"本轮没有工具调用（代理即将完成）或已有工具结果后"更新，
+ *    且使用剥离尾巴后的文本；首个工具结果前的文本不进最终/partial 响应。
+ * 3. 提示词纪律（SUBAGENT_TOOL_DISCIPLINE_NOTICE）从源头约束模型。
  */
 
 /// <reference types="jest" />
@@ -78,13 +79,27 @@ function emptyResponseError(): never {
     throw err;
 }
 
+/** 本 describe 内所有用例使用的 runId（LOW-18：afterEach 按此清单兜底释放信号量席位） */
+const TEST_RUN_IDS = [
+    'partial_hallucination',
+    'partial_normal_finish',
+    'partial_two_tool_turns',
+    'strip_tool_turn_text',
+    'keep_mid_tool_text',
+];
+
 describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialResponse', () => {
     afterEach(() => {
-        subAgentConcurrencyLimiter.release('partial_hallucination');
-        subAgentConcurrencyLimiter.release('partial_normal_finish');
-        subAgentConcurrencyLimiter.release('partial_two_tool_turns');
-        subAgentConcurrencyLimiter.release('strip_tool_turn_text');
-        subAgentConcurrencyLimiter.release('keep_mid_tool_text');
+        // LOW-18：executor 在最外层 finally 已释放本 run 的席位（幂等）；
+        // 此处对全部已知 runId 再兜底释放一次——用例在 acquire 后、finally 前失败
+        // （断言前置失败/异常中断）时补释放，避免信号量占用泄漏影响后续用例。
+        // release 幂等且不抛错：未持有（正常释放/从未 acquire）时为安全空操作，无需区分返回值。
+        for (const runId of TEST_RUN_IDS) {
+            subAgentConcurrencyLimiter.release(runId);
+        }
+        // 防御性校验：若仍有席位残留（如用例派生了未登记 runId 且未释放），
+        // 立即暴露为失败，而不是让泄漏静默污染后续用例。
+        expect(subAgentConcurrencyLimiter.getRunningCount()).toBe(0);
     });
 
     it('第一轮幻觉文本+工具调用、第二轮空响应失败时，partialResponse 不包含第一轮幻觉文本', async () => {
@@ -113,11 +128,21 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(result.response).toBe('');
     });
 
-    it('工具轮带文本（首次工具调用前）时，文本被剥离不进 history；后续轮次基于真实工具结果作答', async () => {
-        // 第一轮：幻觉文本 + read_file 工具调用（同轮抢跑）
+    it('工具调用后的尾巴文本被剥离不进 history；工具调用前的分析文本保留', async () => {
+        // 第一轮：分析文本 + read_file 工具调用 + 工具调用后的尾巴文本（无依据，应剥离）
         // 第二轮：真实工具结果返回后，模型输出正确分析（无工具调用）→ 正常完成
         const generateMock = jest.fn()
-            .mockImplementationOnce(async () => hallucinationTurnResponse())
+            .mockImplementationOnce(async () => ({
+                content: {
+                    role: 'model',
+                    parts: [
+                        { text: '我先分析一下这张图片的结构。' },
+                        { functionCall: { id: 'call_1', name: 'read_file', args: { path: 'page-15.png' } } },
+                        { text: '这段台词是：角色A「こんな風に……っ」' }
+                    ]
+                } as any,
+                model: 'model-x'
+            }))
             .mockImplementationOnce(async () => ({
                 content: {
                     role: 'model',
@@ -139,15 +164,16 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(result.success).toBe(true);
         // 最终回答正确返回
         expect(result.response).toContain('基于图片的正确分析内容');
-        // 幻觉文本不进入最终响应
-        expect(result.response).not.toContain('こんな風に');
 
-        // 第二轮请求的 history 中，工具轮 model 消息不得包含幻觉文本 parts
+        // 第二轮请求的 history 中，工具轮 model 消息：
         const secondRequest = generateMock.mock.calls[1][0];
         const modelMsg = secondRequest.history.find((m: any) => m.role === 'model');
+        // 工具调用前的分析文本保留（有效推理，不剥离）
+        expect(JSON.stringify(modelMsg)).toContain('我先分析一下这张图片的结构。');
+        // 工具调用后的尾巴文本被剥离（无工具结果支撑，不进 history）
         expect(JSON.stringify(modelMsg)).not.toContain('こんな風に');
-        expect(JSON.stringify(modelMsg)).not.toContain('我已经成功读取并分析');
-        // 工具调用仍被保留（functionCall 存在），文本被剥离
+        expect(JSON.stringify(modelMsg)).not.toContain('这段台词是');
+        // 工具调用仍被保留（functionCall 存在）
         expect(JSON.stringify(modelMsg)).toContain('read_file');
     });
 
@@ -227,7 +253,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(result.response).not.toContain('こんな風に');
     });
 
-    it('多轮工具调用后失败：lastResponse 保持初始空值，不携带任何工具轮中间产物', async () => {
+    it('多轮工具调用后失败：保留基于真实工具结果的中间分析，仍排除首个工具结果前的幻觉', async () => {
         const generateMock = jest.fn()
             .mockImplementationOnce(async () => hallucinationTurnResponse())
             .mockImplementationOnce(async () => ({
@@ -254,9 +280,9 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         });
 
         expect(result.success).toBe(false);
-        // 所有工具调用轮的文本都是中间产物，都不应进入响应
+        // 首个工具结果之前的幻觉预生成仍不进入响应
         expect(result.response).not.toContain('こんな風に');
-        expect(result.response).not.toContain('第二轮的中间文本');
-        expect(result.response).toBe('');
+        // 已有真实工具结果后的中间分析（基于真实结果，非幻觉）进入响应，不再被丢弃
+        expect(result.response).toContain('第二轮的中间文本');
     });
 });

@@ -106,6 +106,18 @@ const SUBAGENT_NESTING_PROMPT_NOTICE = [
 ].join('\n');
 
 /**
+ * 工具调用纪律（一句话提示，无条件追加到所有子代理 systemPrompt）。
+ *
+ * 修改原因：模型可能在工具结果返回前输出基于猜测的内容断言（幻觉预生成），
+ * 代码层已忽略"工具调用之后的尾巴文本"兜底；提示词从源头约束降低触发概率。
+ * 修改目的：一句话轻量引导，不越俎代庖——详细的工具纪律交给用户自定义 systemPrompt。
+ */
+const SUBAGENT_TOOL_DISCIPLINE_NOTICE = [
+    '',
+    'Before tool results return, do not state content facts you have not verified — plan first, call tools, then describe what the results actually show.'
+].join('\n');
+
+/**
  * 写/执行类工具集合（H-1 / M-7 共享口径）。
  *
  * subagents 工具派发的 General Worker 是 mode='all'（全量非 memory 工具），
@@ -1142,9 +1154,8 @@ export function createDefaultExecutor(
             // F2：当本次 run 的工具集实际包含 subagents 工具时，追加中文嵌套说明，
             // 引导模型只在确实需要独立复查或主模型明确指示时才派生子子 agent。
             // L-9（R4 复查）：config.systemPrompt 可能为 undefined，拼接前兜底为空串。
-            const systemPrompt = allowedToolNames.has('subagents')
-                ? `${config.systemPrompt ?? ''}${SUBAGENT_NESTING_PROMPT_NOTICE}`
-                : config.systemPrompt;
+            // 工具纪律一句话提示无条件追加；详细约束由用户自定义 systemPrompt 补充。
+            const systemPrompt = `${config.systemPrompt ?? ''}${SUBAGENT_TOOL_DISCIPLINE_NOTICE}${allowedToolNames.has('subagents') ? SUBAGENT_NESTING_PROMPT_NOTICE : ''}`;
             
             // 构建用户提示词
             let userPrompt = request.prompt;
@@ -1411,25 +1422,30 @@ export function createDefaultExecutor(
                     : [];
                 const textContent = extractTextContent(response);
 
-                // 修改原因：xml/json prompt tool mode 下模型经常在发起工具调用的同一轮
-                // "抢跑"输出一段看似完整的分析文本——此时工具结果尚未返回，文本是模型基于文件名
-                // 与提示词编造的幻觉（实测：模型在 read_file 前先编出整页不存在的台词内容）。
-                // 旧逻辑把这段文本原样写入 history（污染后续轮次与续跑上下文），失败时还会作为
-                // partialResponse 返回给主模型。
-                // 修改方式：在"本轮之前没有任何工具结果"的前提下，若本轮同时包含文本与工具调用，
-                //          将该轮文本 parts 剥离，只保留 functionCall parts；工具照常执行，
-                //          模型下一轮只能基于真实工具结果作答，幻觉文本不进 history/lastResponse。
-                // 修改目的：从源头杜绝幻觉预生成进入子代理上下文与最终响应。
-                // 注：已有工具结果后的"文本+工具调用"可能是基于真实结果的中间分析，不剥离。
+                // 修改原因：xml/json prompt tool mode 下模型可能在发出工具调用后继续输出文本——
+                // 此时工具结果尚未返回，工具调用之后的文本没有依据，属于幻觉尾巴
+                // （实测：模型在 read_file 前先编出整页不存在的台词内容）。
+                // 修改方式：仅忽略"第一个工具调用 part 之后"的非 thought 文本；工具调用之前的
+                //          分析/计划文本完整保留（模型基于用户消息与既有工具结果的分析是有效推理），
+                //          工具照常执行，后续轮次基于真实工具结果作答；
+                //          幻觉的源头约束由提示词纪律承担（SUBAGENT_TOOL_DISCIPLINE_NOTICE）。
+                // 修改目的：只裁真正无依据的输出尾巴，保留模型的分析过程。
+                const hasPriorToolResult = history.some(
+                    msg => msg.role === 'user' && (msg.parts || []).some(p => (p as any).functionResponse)
+                );
                 if (textContent && currentToolCalls.length > 0 && toolMode !== 'function_call') {
-                    const hasPriorToolResult = history.some(
-                        msg => msg.role === 'user' && (msg.parts || []).some(p => (p as any).functionResponse || (p as any).inlineData)
-                    );
-                    if (!hasPriorToolResult) {
-                        const parts = (response as any)?.content?.parts;
-                        if (Array.isArray(parts)) {
-                            (response as any).content.parts = parts.filter((p: any) => !(p.text && !p.thought));
-                        }
+                    const parts = (response as any)?.content?.parts;
+                    if (Array.isArray(parts)) {
+                        let seenToolCall = false;
+                        (response as any).content.parts = parts.filter((p: any) => {
+                            if (p.functionCall) {
+                                seenToolCall = true;
+                                return true;
+                            }
+                            // 第一个工具调用之后的非 thought 文本：无工具结果支撑，忽略
+                            if (p.text && !p.thought && seenToolCall) return false;
+                            return true;
+                        });
                     }
                 }
 
@@ -1442,19 +1458,22 @@ export function createDefaultExecutor(
                     modelVersion = mvCandidate.trim();
                 }
                 
-                // 修改原因：xml/json prompt 模式下模型经常在同一轮里"抢跑"——
-                // 先输出一段看似完整的分析文本，再（或同时）发起工具调用；此时图片/文件
+                // 修改原因：xml/json prompt 模式下模型可能在发起工具调用后继续输出文本——
                 // 工具结果尚未返回，这段文本是模型基于文件名与提示词编造的幻觉内容。
                 // 旧逻辑无条件把 textContent 写入 lastResponse，一旦后续轮次遇到空响应
                 // （上游返回空内容 / 超时 / API 失败），finalizeRun 会把这份幻觉文本
                 // 作为 partialResponse 返回给主模型（实测：主模型因此读到全部编造的
                 // 台词内容，误判页面内容）。
-                // 修改方式：只有本轮没有工具调用（即代理即将完成、文本才是最终答案）时
-                //          才更新 lastResponse；工具调用轮次的文本一律视为中间产物。
-                // 修改目的：失败/空响应时 partialResponse 不再携带工具调用前的幻觉预生成，
-                //          主模型只会看到空内容或上一次真正完成的回答。
-                if (textContent && currentToolCalls.length === 0) {
-                    lastResponse = textContent;
+                // 修改方式：无工具调用轮（代理即将完成、文本才是最终答案）以及
+                //          已有工具结果后的中间分析轮（基于真实结果，非幻觉）才更新
+                //          lastResponse；首个工具结果之前的"文本+工具调用"轮不更新。
+                //          且 lastResponse 使用剥离幻觉尾巴后的文本（cleanedTextContent），
+                //          与写入 history 的口径一致。
+                // 修改目的：失败/空响应时 partialResponse 不再携带幻觉预生成，
+                //          主模型只会看到空内容、上一次真正完成的回答或真实中间分析。
+                const cleanedTextContent = extractTextContent(response);
+                if (cleanedTextContent && (currentToolCalls.length === 0 || hasPriorToolResult)) {
+                    lastResponse = cleanedTextContent;
                 }
                 
                 // 将 AI 响应完整添加到历史（保留思维链）
