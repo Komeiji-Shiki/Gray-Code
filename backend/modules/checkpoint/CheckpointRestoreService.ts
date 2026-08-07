@@ -20,7 +20,7 @@ import type { SettingsManager } from '../settings/SettingsManager';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, DEFAULT_ENABLED_PROFILES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
-import type { CheckpointIgnoreSnapshot, CheckpointManifest } from './types';
+import type { CheckpointIgnoreSnapshot, CheckpointManifestMeta } from './types';
 import {
     isWorkspaceScopedKey,
     restoreWorkspaceSnapshot,
@@ -74,8 +74,9 @@ interface RestorePreparedContext {
     autoPrunedCheckpointCount: number;
     /** undefined = 旧版无 fileHashes 存档（legacy 恢复语义：不删除任何文件） */
     targetState?: RestoreTargetState;
-    /** EX-11: 目标存档的 manifest（含排除规则快照；旧存档无 manifest 时为 undefined） */
-    manifest?: CheckpointManifest;
+    /** EX-11: 目标存档的 manifest 元数据视图（含排除规则快照；旧存档无 manifest 时为 undefined）。
+     *  完整 files 映射按需懒加载（CPF-LAZY-1），恢复准备路径只消费元数据字段。 */
+    manifest?: CheckpointManifestMeta;
     chain: CheckpointRecord[];
     chainEntries: RestoreChainEntry[];
     currentHashes: Record<string, string>;
@@ -687,7 +688,7 @@ export class CheckpointRestoreService {
      *   当前明确忽略的文件。
      */
     public buildExcludedNote(
-        manifest: CheckpointManifest | undefined,
+        manifest: CheckpointManifestMeta | undefined,
         _record: CheckpointRecord
     ): CheckpointExcludedNote | undefined {
         if (!manifest) {

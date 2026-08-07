@@ -11,8 +11,9 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { CheckpointRetentionService } from '../../modules/checkpoint/CheckpointRetentionService';
-import { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint/CheckpointManifestRepository';
 import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointManifestRepository';
+import type { CheckpointManifest } from '../../modules/checkpoint/types';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 
 async function createTempDirectory(prefix: string): Promise<string> {
@@ -50,6 +51,7 @@ interface Harness {
     storageRoot: string;
     stored: () => CheckpointRecord[];
     deletedIds: () => string[];
+    manifestRepository: CheckpointManifestRepository;
 }
 
 /**
@@ -128,7 +130,8 @@ async function createHarness(seed: CheckpointRecord[], maxCheckpoints: number): 
         checkpointsDir,
         storageRoot,
         stored: () => metadata.custom.checkpoints,
-        deletedIds: () => deletedIds
+        deletedIds: () => deletedIds,
+        manifestRepository
     };
 }
 
@@ -285,6 +288,72 @@ describe('CheckpointRetentionService', () => {
             // cp-evil 删除被拒绝 → 保留；cp-mid 正常删除；cp-late 因 max=1 保留
             expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-evil', 'cp-late']);
             expect(harness.deletedIds()).toEqual(['cp-mid']);
+        } finally {
+            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('新格式（v2 拆分 manifest）合并：被删节点文件并入后继 manifest/files.json 与磁盘（CPF-LAZY-1）', async () => {
+        const baseContent = 'base only\n';
+        // 新格式记录：不含 fileHashes，完整数据存于 v2 拆分 manifest（files.json 独立存放）
+        const baseCp = makeRecord({ id: 'cp-base', timestamp: 1000, type: 'full' });
+        const s2 = makeRecord({ id: 'cp-s2', timestamp: 3000, type: 'incremental', baseCheckpointId: 'cp-base' });
+
+        const harness = await createHarness([baseCp, s2], 1);
+        try {
+            const baseManifest: CheckpointManifest = {
+                version: CHECKPOINT_MANIFEST_VERSION,
+                checkpointId: 'cp-base',
+                workspaceRoots: [],
+                files: {
+                    'a.txt': { hash: md5('a v1\n'), size: 5, mtimeMs: 1000 },
+                    'b.txt': { hash: md5(baseContent), size: baseContent.length, mtimeMs: 1000 }
+                },
+                emptyDirs: [],
+                changes: [],
+                excluded: [],
+                ignoreSnapshot: {
+                    version: 1, forcedRulesVersion: 1, defaultProfileVersion: 1,
+                    enabledProfiles: {}, maxFileSizeBytes: 0, customPatterns: []
+                }
+            };
+            const s2Manifest: CheckpointManifest = {
+                ...baseManifest,
+                checkpointId: 'cp-s2',
+                files: { 'a.txt': { hash: md5('a v2\n'), size: 5, mtimeMs: 2000 } },
+                changes: [{ path: 'a.txt', type: 'modified', hash: md5('a v2\n') }]
+            };
+            await harness.manifestRepository.writeManifest('cp-base', baseManifest);
+            await harness.manifestRepository.writeManifest('cp-s2', s2Manifest);
+
+            // 磁盘备份：base 独有 b.txt；后继有更新的 a.txt
+            await writeFile(path.join(harness.checkpointsDir, 'cp-base'), 'a.txt', 'a v1\n');
+            await writeFile(path.join(harness.checkpointsDir, 'cp-base'), 'b.txt', baseContent);
+            await writeFile(path.join(harness.checkpointsDir, 'cp-s2'), 'a.txt', 'a v2\n');
+
+            await harness.service.cleanupOldCheckpoints('conv');
+
+            // 链重挂：base 被删，只剩 s2 且不再引用 base
+            const list = harness.stored();
+            expect(list.map(c => c.id)).toEqual(['cp-s2']);
+            expect(list[0].baseCheckpointId).toBeUndefined();
+
+            // 合并结果：s2 的 files 映射（懒加载自 files.json）包含被删节点的 b.txt
+            const merged = await harness.manifestRepository.loadManifestWithFiles('cp-s2');
+            expect(Object.keys(merged!.files).sort()).toEqual(['a.txt', 'b.txt']);
+            expect(merged!.files['b.txt']).toMatchObject({ hash: md5(baseContent) });
+            expect(merged!.changes.map(c => c.path).sort()).toEqual(['a.txt', 'b.txt']);
+            // files.json 磁盘载荷同步更新
+            const filesOnDisk = JSON.parse(
+                await fs.readFile(path.join(harness.checkpointsDir, 'cp-s2', 'files.json'), 'utf-8')
+            ) as { files: CheckpointManifest['files'] };
+            expect(Object.keys(filesOnDisk.files).sort()).toEqual(['a.txt', 'b.txt']);
+
+            // 被删节点独有文件 b.txt 已并入 s2 备份目录；base 目录已删除
+            await expect(
+                fs.readFile(path.join(harness.checkpointsDir, 'cp-s2', 'b.txt'), 'utf-8')
+            ).resolves.toBe(baseContent);
+            await expect(fs.access(path.join(harness.checkpointsDir, 'cp-base'))).rejects.toThrow();
         } finally {
             await fs.rm(harness.storageRoot, { recursive: true, force: true });
         }

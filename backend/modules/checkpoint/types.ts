@@ -86,15 +86,33 @@ export interface CheckpointFileChange {
 }
 
 /**
- * 独立存档 manifest（CPF-01）。
+ * manifest 轻量元数据视图（CPF-LAZY-1）。
  *
- * 从会话元数据迁出完整 fileHashes / fileStats / excluded / ignoreSnapshot，
- * 按存档 ID 独立存放于 `checkpoints/cp_xxx/manifest.json`。
+ * 不含 `files` 映射（全工作区哈希表，大工作区可达 10-20MB）：
+ * - 新格式（schema version 2）下 `files` 独立存放于 `checkpoints/cp_xxx/files.json`，
+ *   仅需要完整文件数据时按需懒加载（loadManifestWithFiles）；
+ * - 列表摘要 / 排除清单 / 排除说明等读取路径只消费本视图，避免解析重量级文件映射。
  */
-export interface CheckpointManifest {
+export interface CheckpointManifestMeta {
     version: number;
     checkpointId: string;
     workspaceRoots: CheckpointWorkspaceRoot[];
+    emptyDirs: string[];
+    changes: CheckpointFileChange[];
+    /** 被排除路径的完整清单（样本之外的全部） */
+    excluded: CheckpointExcludedEntry[];
+    ignoreSnapshot: CheckpointIgnoreSnapshot;
+}
+
+/**
+ * 独立存档 manifest（CPF-01 / CPF-LAZY-1）。
+ *
+ * 从会话元数据迁出完整 fileHashes / fileStats / excluded / ignoreSnapshot，
+ * 按存档 ID 独立存放于 `checkpoints/cp_xxx/manifest.json`。
+ * schema version 1：`files` 内联在 manifest.json 中（旧格式，仍可读取）；
+ * schema version 2：`files` 独立存放于同目录 `files.json`（懒加载读取路径）。
+ */
+export interface CheckpointManifest extends CheckpointManifestMeta {
     /** scopedPath -> 文件信息 */
     files: Record<string, {
         hash: string;
@@ -104,11 +122,6 @@ export interface CheckpointManifest {
         /** 增量节点中该文件实际备份所在的前置节点（缺省 = 本节点） */
         backupSourceCheckpointId?: string;
     }>;
-    emptyDirs: string[];
-    changes: CheckpointFileChange[];
-    /** 被排除路径的完整清单（样本之外的全部） */
-    excluded: CheckpointExcludedEntry[];
-    ignoreSnapshot: CheckpointIgnoreSnapshot;
 }
 
 /**
