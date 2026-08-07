@@ -826,6 +826,13 @@ function createWindow(): void {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
+          // 测试钩子：GRAYCODE_UISMOKE_WORKSPACE=<dir> 在 smoke 开始前打开一个工作区，
+          // 让 workspaceSelector 步骤能验证「点击打开的工作区 → 激活工作区跟随」。
+          const smokeWs = process.env.GRAYCODE_UISMOKE_WORKSPACE;
+          if (smokeWs && mainWindow && !mainWindow.isDestroyed()) {
+            await setWorkspaceFolders([smokeWs]);
+            await new Promise((r) => setTimeout(r, 1500));
+          }
           const report = await mainWindow!.webContents.executeJavaScript(`(async function(){
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
             const results = {};
@@ -994,6 +1001,69 @@ function createWindow(): void {
               await sleep(300);
               const stillOpen = !!document.querySelector('.monitor-panel:not([style*="display: none"])');
               return { found: true, header: !!(monitorRoot.querySelector('.monitor-header') || monitorRoot.querySelector('h1')), closedAfterCloseBtn: !stillOpen };
+            });
+
+            // workspace selector dropdown (top-right): open the menu, click an
+            // open-workspace item (or auto when none), then verify the store's
+            // active workspace follows the click. Regression guard for the
+            // 1.7.3 "dropdown cannot switch workspace" fix.
+            await step('workspaceSelector', async () => {
+              const back = document.querySelector('.settings-close-btn');
+              if (back) back.click();
+              await sleep(300);
+              const storeProbe = () => {
+                const app = document.querySelector('#app')?.__vue_app__;
+                const pinia = app?.config?.globalProperties?.$pinia;
+                const chat = pinia?._s?.get('chat');
+                if (!chat) return null;
+                return {
+                  currentWorkspaceUri: chat.currentWorkspaceUri,
+                  workspaceCount: chat.workspaceList?.length ?? -1,
+                  savedCount: chat.savedWorkspaces?.length ?? -1,
+                  currentConversationId: chat.currentConversationId
+                };
+              };
+              const before = storeProbe();
+              const trigger = document.querySelector('.ws-selector');
+              if (!trigger) return { found: false, reason: 'no .ws-selector trigger', before };
+              trigger.click();
+              await sleep(250);
+              const menu = document.querySelector('.ws-menu');
+              if (!menu) return { found: true, menu: 'menu did not open', before };
+              const itemTexts = [...menu.querySelectorAll('.ws-menu-item')].map((e) => (e.innerText || '').trim().slice(0, 40));
+              // click the first open-workspace item; fall back to auto when none.
+              // 排除底部动作条目（打开文件夹/保存当前工作区）与收藏（带移除按钮）
+              const isAuto = (e) => /auto|跟随/i.test(e.innerText || '');
+              const isAction = (e) => e.classList.contains('ws-menu-action');
+              const isSaved = (e) => !!e.querySelector('.ws-item-remove');
+              const isLocked = (e) => !!e.querySelector('.ws-locked-item') || e.classList.contains('ws-locked-item');
+              const target = [...menu.querySelectorAll('.ws-menu-item')].find((e) => !isAuto(e) && !isAction(e) && !isSaved(e) && !isLocked(e));
+              const targetLabel = target ? (target.innerText || '').trim().slice(0, 40) : '(auto)';
+              if (target) {
+                target.click();
+              } else {
+                const auto = [...menu.querySelectorAll('.ws-menu-item')].find(isAuto);
+                if (auto) auto.click();
+              }
+              await sleep(500);
+              const after = storeProbe();
+              const expectedUri = before && before.workspaceCount > 0
+                ? (() => {
+                    const app = document.querySelector('#app')?.__vue_app__;
+                    const pinia = app?.config?.globalProperties?.$pinia;
+                    return pinia?._s?.get('chat')?.workspaceList?.[0]?.uri ?? null;
+                  })()
+                : null;
+              return {
+                found: true,
+                menuItems: itemTexts.slice(0, 12),
+                clicked: targetLabel,
+                menuClosedAfterClick: !document.querySelector('.ws-menu'),
+                // 点击打开的工作区条目后，激活工作区应跟随到该条目（非 null）
+                followedOpenItem: expectedUri ? after.currentWorkspaceUri === expectedUri : null,
+                before,
+                after
+              };
             });
 
             // send from empty state: with the welcome panel (recent conversations

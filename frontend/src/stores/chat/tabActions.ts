@@ -11,6 +11,7 @@ import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
 import { clearAllSmoothForState } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
+import { sendToExtension } from '../../utils/vscode'
 
 /** 最大标签页数量 */
 const MAX_TABS = 100
@@ -82,6 +83,16 @@ export function restoreSessionFromSnapshot(
   const targetWorkspaceUri = snapshot.workspaceUri ?? conv?.workspaceUri ?? state.currentWorkspaceUri.value
   if (targetWorkspaceUri) {
     state.currentWorkspaceUri.value = targetWorkspaceUri
+    // 锁定语义：恢复标签页时若对话绑定了工作区，同步扩展端激活工作区
+    // （与 switchConversation 打开对话时一致），避免文件树/工具指向不一致；
+    // 未绑定对话不发送——保持"跟随活动编辑器"不被标签页切换意外固定。
+    if (typeof conv?.workspaceUri === 'string' && conv.workspaceUri) {
+      void sendToExtension('workspace.setActive', {
+        workspaceUri: conv.workspaceUri
+      }).catch((err) => {
+        console.warn('[tabActions] Failed to sync active workspace on tab restore:', err)
+      })
+    }
   }
   state.allMessages.value = [...snapshot.allMessages]
   rebuildMessageIndexById(state)

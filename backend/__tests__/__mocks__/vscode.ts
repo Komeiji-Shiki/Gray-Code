@@ -20,6 +20,8 @@ export const workspace = {
     onDidSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidCloseTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidChangeTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+    // WorkspaceManager（多工作区支持）订阅工作区列表变化
+    onDidChangeWorkspaceFolders: jest.fn(() => ({ dispose: jest.fn() })),
 };
 
 function createFileUri(inputPath: string) {

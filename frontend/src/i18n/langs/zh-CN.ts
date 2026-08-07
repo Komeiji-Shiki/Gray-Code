@@ -244,6 +244,7 @@ const zhCN = {
                 saveWorkspaceSaved: '当前工作区已在已保存列表中',
                 removeWorkspace: '从收藏中移除',
                 openTag: '已打开',
+                notOpen: '未打开',
                 noSavedWorkspaces: '暂无已保存的工作区'
             }
         },

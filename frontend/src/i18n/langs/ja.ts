@@ -243,6 +243,7 @@ const ja: LanguageMessages = {
                 saveWorkspaceSaved: '現在のワークスペースは保存済みリストにあります',
                 removeWorkspace: '保存済みから削除',
                 openTag: '開く',
+                notOpen: '未オープン',
                 noSavedWorkspaces: '保存済みワークスペースはありません'
             }
         },

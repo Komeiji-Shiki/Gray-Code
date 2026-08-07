@@ -33,6 +33,14 @@ export interface WorkspaceManagerOptions {
     onWorkspaceListChanged?: (list: WorkspaceFolderInfo[]) => void;
 }
 
+/** Windows 路径大小写不敏感：Uri.file(fsPath).toString() 保留 fsPath 大小写， */
+/** 同一目录以不同大小写路径打开/收藏时 URI 字符串不同但指向同一工作区。 */
+const WIN32 = process.platform === 'win32';
+
+function normalizeWorkspaceUri(uri: string): string {
+    return WIN32 ? uri.toLowerCase() : uri;
+}
+
 export class WorkspaceManager {
     private pinnedWorkspaceUri: string | null = null;
     private lastEditorWorkspaceUri: string | null = null;
@@ -85,14 +93,22 @@ export class WorkspaceManager {
 
     private computeActiveWorkspaceUri(list: WorkspaceFolderInfo[]): string | null {
         if (this.pinnedWorkspaceUri) {
-            if (list.some((w) => w.uri === this.pinnedWorkspaceUri)) {
+            const pinnedMatch = list.find(
+                (w) => normalizeWorkspaceUri(w.uri) === normalizeWorkspaceUri(this.pinnedWorkspaceUri!)
+            );
+            if (pinnedMatch) {
+                // 列表 URI 大小写漂移（同一目录以不同大小写路径重新打开）：
+                // 采用列表里的规范 URI，保持广播与列表一致
+                if (pinnedMatch.uri !== this.pinnedWorkspaceUri) {
+                    this.pinnedWorkspaceUri = pinnedMatch.uri;
+                }
                 return this.pinnedWorkspaceUri;
             }
             // 被固定的工作区已关闭：解除固定，回退自动跟随
             this.pinnedWorkspaceUri = null;
         }
         // 最近活动编辑器所在的工作区也可能已从窗口中移除：失效则回退
-        if (this.lastEditorWorkspaceUri && !list.some((w) => w.uri === this.lastEditorWorkspaceUri)) {
+        if (this.lastEditorWorkspaceUri && !list.some((w) => normalizeWorkspaceUri(w.uri) === normalizeWorkspaceUri(this.lastEditorWorkspaceUri!))) {
             this.lastEditorWorkspaceUri = null;
         }
         return this.lastEditorWorkspaceUri ?? list[0]?.uri ?? null;
@@ -102,13 +118,33 @@ export class WorkspaceManager {
      * 设置/解除激活工作区固定
      *
      * @param uri 工作区 URI；传 null 解除固定并恢复"跟随活动编辑器"
+     *
+     * 说明：
+     * - Windows 下按大小写不敏感匹配（同一目录不同大小写路径视为同一工作区），
+     *   命中时固定列表里的规范 URI，避免前端传来的大小写漂移 URI 静默失败；
+     * - 请求的工作区未打开时不解除现有固定（对话锁定时绑定工作区可能已关闭，
+     *   不应把用户当前的固定/跟随状态清掉），由调用方展示绑定状态。
      */
     setActiveWorkspaceUri(uri: string | null): void {
-        const next = uri && this.getWorkspaceList().some((w) => w.uri === uri) ? uri : null;
-        if (next === this.pinnedWorkspaceUri) {
+        if (!uri) {
+            if (this.pinnedWorkspaceUri === null) {
+                return;
+            }
+            this.pinnedWorkspaceUri = null;
+            this.handleChange();
             return;
         }
-        this.pinnedWorkspaceUri = next;
+        const normalized = normalizeWorkspaceUri(uri);
+        const match = this.getWorkspaceList().find(
+            (w) => normalizeWorkspaceUri(w.uri) === normalized
+        );
+        if (!match) {
+            return;
+        }
+        if (this.pinnedWorkspaceUri === match.uri) {
+            return;
+        }
+        this.pinnedWorkspaceUri = match.uri;
         this.handleChange();
     }
 

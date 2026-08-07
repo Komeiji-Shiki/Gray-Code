@@ -10,6 +10,12 @@ are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
 
+### Fixed
+  - **对话绑定工作区锁定 + 下拉切换工作区修复**（详见根目录 CHANGELOG [Unreleased]）：
+    - 打开对话/切换标签页锁定工作区到对话绑定工作区，不再因绑定工作区未打开而静默重绑定；
+    - 顶部工作区下拉切换修复：Windows 大小写不敏感匹配（规范 URI 固定）、未打开工作区不再误解除固定、打开收藏工作区后重绑定当前对话、绑定未打开工作区以锁定条目展示；
+    - UI smoke 新增 workspaceSelector 步骤。
+
 ### Changed
   - 沙箱功能完整化批次（详见根目录 CHANGELOG [Unreleased]）：声明缓存指纹纳入沙箱开关、空白名单语义统一、超时杀进程 SIGKILL 升级、输出内存护栏、GBK 解码降级、设置页 i18n 键路径修正与搜索索引补齐等。
 

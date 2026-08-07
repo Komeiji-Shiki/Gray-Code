@@ -24,20 +24,63 @@ const menuPosition = ref({ left: '0px', top: '0px' })
 /** 无工作区打开时仅禁用固定操作，菜单仍可打开（提供「打开工作区文件夹」入口） */
 const isEmpty = computed(() => chatStore.workspaceList.length === 0)
 
+/**
+ * Windows 路径大小写不敏感：同一目录以不同大小写路径打开/收藏时 URI 字符串
+ * 可能漂移，比较时统一小写归一（与扩展端 WorkspaceManager 的匹配口径一致）。
+ */
+function sameUri(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase()
+}
+
 /** 当前选中值：空字符串 = auto（跟随活动编辑器） */
 const selectedValue = computed<string>(() => {
-  const current = chatStore.currentWorkspaceUri
-  if (current && chatStore.workspaceList.some(ws => ws.uri === current)) {
-    return current
-  }
-  return ''
+  return chatStore.currentWorkspaceUri ?? ''
 })
 
-/** 当前固定选中的工作区 */
+/** 解析绑定工作区：优先打开列表，其次收藏列表，找不到时按 URI 生成占位信息 */
+const boundWorkspace = computed<WorkspaceFolderInfo | null>(() => {
+  const current = chatStore.currentWorkspaceUri
+  if (!current) return null
+  return (
+    chatStore.workspaceList.find(ws => sameUri(ws.uri, current)) ??
+    chatStore.savedWorkspaces.find(ws => sameUri(ws.uri, current)) ??
+    null
+  )
+})
+
+/** 从 URI 反解目录名（绑定工作区已关闭且不在收藏时兜底展示） */
+function workspaceNameFromUri(uri: string): string {
+  try {
+    const u = new URL(uri)
+    if (u.protocol === 'file:') {
+      const parts = decodeURIComponent(u.pathname).split('/').filter(Boolean)
+      if (parts.length > 0) return parts[parts.length - 1] ?? uri
+    }
+  } catch {
+    // fallthrough
+  }
+  return uri
+}
+
+/** 当前固定选中的工作区（含绑定但未打开的场景，用于标题/菜单展示） */
 const selectedWorkspace = computed(() => {
   const current = chatStore.currentWorkspaceUri
   if (!current) return null
-  return chatStore.workspaceList.find(ws => ws.uri === current) ?? null
+  const resolved = boundWorkspace.value
+  if (resolved) return resolved
+  return {
+    name: workspaceNameFromUri(current),
+    uri: current,
+    fsPath: current,
+    index: -1
+  } as WorkspaceFolderInfo
+})
+
+/** 绑定工作区已不在当前打开列表（桌面版打开新文件夹会替换旧文件夹） */
+const boundWorkspaceClosed = computed(() => {
+  const current = chatStore.currentWorkspaceUri
+  if (!current) return false
+  return !chatStore.workspaceList.some(ws => sameUri(ws.uri, current))
 })
 
 /** 触发按钮显示的文本 */
@@ -197,20 +240,32 @@ onUnmounted(() => {
           <span class="ws-item-label">{{ t('components.tabs.workspaceSelector.auto') }}</span>
         </div>
 
-        <template v-if="chatStore.workspaceList.length > 0">
+        <template v-if="chatStore.workspaceList.length > 0 || boundWorkspaceClosed">
           <div class="ws-menu-header">
             {{ t('components.tabs.workspaceSelector.openWorkspaces') }}
+          </div>
+          <div
+            v-if="boundWorkspaceClosed"
+            class="ws-menu-item ws-locked-item"
+            :class="{ active: !!selectedValue }"
+            :title="selectedWorkspace?.fsPath"
+          >
+            <i class="codicon codicon-lock ws-item-check"></i>
+            <span class="ws-item-label">{{ selectedWorkspace?.name }}</span>
+            <span class="ws-item-open-tag ws-locked-tag">
+              {{ t('components.tabs.workspaceSelector.notOpen') }}
+            </span>
           </div>
           <div
             v-for="ws in chatStore.workspaceList"
             :key="ws.uri"
             class="ws-menu-item"
-            :class="{ active: selectedValue === ws.uri }"
+            :class="{ active: !!selectedValue && sameUri(selectedValue, ws.uri) }"
             :title="ws.fsPath"
             @click="selectWorkspace(ws.uri)"
           >
             <i
-              v-if="selectedValue === ws.uri"
+              v-if="selectedValue && sameUri(selectedValue, ws.uri)"
               class="codicon codicon-check ws-item-check"
             ></i>
             <span class="ws-item-label">{{ ws.name }}</span>
@@ -225,12 +280,12 @@ onUnmounted(() => {
             v-for="ws in savedWorkspaces"
             :key="ws.uri"
             class="ws-menu-item"
-            :class="{ active: selectedValue === ws.uri }"
+            :class="{ active: !!selectedValue && sameUri(selectedValue, ws.uri) }"
             :title="ws.fsPath"
             @click="ws.isOpen ? selectWorkspace(ws.uri) : onOpenSaved(ws)"
           >
             <i
-              v-if="selectedValue === ws.uri"
+              v-if="selectedValue && sameUri(selectedValue, ws.uri)"
               class="codicon codicon-check ws-item-check"
             ></i>
             <span class="ws-item-label">{{ ws.name }}</span>
@@ -254,7 +309,7 @@ onUnmounted(() => {
         <div class="ws-menu-divider"></div>
 
         <div
-          v-if="selectedWorkspace"
+          v-if="selectedWorkspace && !boundWorkspaceClosed"
           class="ws-menu-item ws-menu-action"
           :class="{ 'ws-menu-disabled': isCurrentSaved }"
           :title="isCurrentSaved ? t('components.tabs.workspaceSelector.saveWorkspaceSaved') : t('components.tabs.workspaceSelector.saveWorkspaceHint')"
@@ -405,6 +460,20 @@ onUnmounted(() => {
   color: var(--vscode-descriptionForeground, #9d9d9d);
   background: rgba(127, 127, 127, 0.15);
   user-select: none;
+}
+
+/* 绑定但未打开的工作区条目：锁定图标 + 未打开标签，展示「对话锁定」状态 */
+.ws-locked-item {
+  cursor: default;
+}
+
+.ws-locked-item .ws-item-check {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.ws-locked-tag {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  background: rgba(204, 167, 0, 0.12);
 }
 
 .ws-item-plus {

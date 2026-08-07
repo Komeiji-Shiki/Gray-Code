@@ -243,6 +243,7 @@ const en: LanguageMessages = {
                 saveWorkspaceSaved: 'The current workspace is already in the saved list',
                 removeWorkspace: 'Remove from saved',
                 openTag: 'Open',
+                notOpen: 'Not open',
                 noSavedWorkspaces: 'No saved workspaces'
             }
         },

@@ -269,7 +269,9 @@ export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: st
     const isBound = !!conv?.workspaceUri
     // 固定：绑定到所选工作区；Auto 且已绑定：解绑跟随活动编辑器
     if (workspaceUri || isBound) {
-      const nextUri = workspaceUri || undefined
+      // 用扩展端返回的规范 URI 重绑定（Windows 大小写漂移时以列表里的规范 URI 为准），
+      // 避免把大小写漂移的 URI 写回对话绑定造成前后端不一致
+      const nextUri = workspaceUri ? (resp?.activeWorkspaceUri ?? workspaceUri) : undefined
       try {
         await sendToExtension('conversation.setWorkspaceUri', {
           conversationId,
@@ -356,6 +358,30 @@ export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: 
     if (Array.isArray(resp?.saved)) {
       setSavedWorkspaces(state, resp.saved)
     }
+    // 打开/切换工作区后，把当前对话重新绑定到新打开的工作区——
+    // 让「下拉切换工作区」真正生效：对话绑定跟随切换，而不是停留在旧工作区
+    // （旧工作区已从列表移除后绑定会悬空，记忆/文件工具与显示不一致）。
+    // 无当前对话（空白标签页）时跳过；当前对话未持久化时跳过。
+    const conversationId = state.currentConversationId.value
+    const newUri = resp?.activeWorkspaceUri
+    if (
+      conversationId &&
+      state.currentConversationId.value === conversationId &&
+      typeof newUri === 'string' && newUri
+    ) {
+      const conv = state.conversations.value.find(c => c.id === conversationId)
+      if (conv && conv.isPersisted && conv.workspaceUri !== newUri) {
+        try {
+          await sendToExtension('conversation.setWorkspaceUri', {
+            conversationId,
+            workspaceUri: newUri
+          })
+          conv.workspaceUri = newUri
+        } catch (error) {
+          console.warn('[configActions] Failed to rebind conversation to opened workspace:', error)
+        }
+      }
+    }
     return resp
   } catch (error: any) {
     // 打开失败（收藏目录已被删除/移动、超时等）不能静默吞掉：
@@ -391,7 +417,9 @@ export async function saveCurrentWorkspace(state: ChatStoreState): Promise<any> 
  * - 未打开：走 workspace.openFolder 由宿主打开
  */
 export async function openSavedWorkspace(state: ChatStoreState, entry: WorkspaceFolderInfo): Promise<any> {
-  const isOpen = state.workspaceList.value.some(ws => ws.uri === entry.uri)
+  // Windows 大小写不敏感：同一目录以不同大小写路径打开时 URI 可能漂移
+  const norm = (u: string) => u.toLowerCase()
+  const isOpen = state.workspaceList.value.some(ws => norm(ws.uri) === norm(entry.uri))
   if (isOpen) {
     return setActiveWorkspace(state, entry.uri)
   }

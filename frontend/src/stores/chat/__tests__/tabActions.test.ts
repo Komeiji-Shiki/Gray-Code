@@ -9,6 +9,12 @@ import {
 } from '../tabActions'
 import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 
+vi.mock('@/utils/vscode', () => ({
+  sendToExtension: vi.fn().mockResolvedValue(undefined)
+}))
+import { sendToExtension } from '@/utils/vscode'
+const mockSendToExtension = vi.mocked(sendToExtension)
+
 /** Creates a minimal mock state with all fields used by tabActions */
 function mockState(): ChatStoreState {
   return {
@@ -265,5 +271,41 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(state.branchGraph.value).toBeNull()
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
     expect(state._pendingBranchReplayContext.value).toBeNull()
+  })
+})
+
+describe('tabActions 工作区锁定（1.7.3）', () => {
+  beforeEach(() => {
+    mockSendToExtension.mockClear()
+  })
+
+  it('restoreSessionFromSnapshot：对话绑定工作区时同步扩展端激活工作区', async () => {
+    const state = mockState()
+    state.conversations.value = [
+      { id: 'conv-1', workspaceUri: 'file:///c%3A/Users/foo/ProjectA' } as any
+    ]
+    state.currentConversationId.value = 'conv-1'
+    state.currentWorkspaceUri.value = null
+    const snapshot = snapshotCurrentSession(state)
+    snapshot.workspaceUri = 'file:///c%3A/Users/foo/ProjectA'
+
+    restoreSessionFromSnapshot(state, snapshot)
+
+    expect(state.currentWorkspaceUri.value).toBe('file:///c%3A/Users/foo/ProjectA')
+    expect(mockSendToExtension).toHaveBeenCalledWith('workspace.setActive', {
+      workspaceUri: 'file:///c%3A/Users/foo/ProjectA'
+    })
+  })
+
+  it('restoreSessionFromSnapshot：未绑定对话不发送 setActive（不把标签页切换变成意外固定）', () => {
+    const state = mockState()
+    state.conversations.value = [{ id: 'conv-1' } as any]
+    state.currentWorkspaceUri.value = null
+    const snapshot = snapshotCurrentSession(state)
+    snapshot.workspaceUri = null
+
+    restoreSessionFromSnapshot(state, snapshot)
+
+    expect(mockSendToExtension).not.toHaveBeenCalled()
   })
 })
