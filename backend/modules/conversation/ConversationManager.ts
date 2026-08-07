@@ -29,7 +29,7 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, History
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
 import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
-import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange } from './TranscriptMutation';
+import { deleteLogicalMessage, truncateFrom, repairFunctionCallPairsAfterDelete, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
@@ -2022,6 +2022,9 @@ export class ConversationManager {
             }
             const deleted = next.slice(start, end);
             next.splice(start, end - start);
+            // 删除区间可能只移除了 functionResponse、却保留其 functionCall。写锁内立即把
+            // 失去响应的调用标记为 rejected，避免后续请求命中 orphan_function_call 校验错误。
+            repairFunctionCallPairsAfterDelete(next, deleted);
             // R5b-2.4：删除中间消息后修复线性 parentId 链（被删消息的直系后继
             // parentId===被删id 的消息重链到被删消息的 parent；分支跨链不受影响）
             repairParentChainAfterDelete(next, deleted);
@@ -2043,8 +2046,8 @@ export class ConversationManager {
      * // 删除最后 3 条消息（假设历史有 10 条）
      * await manager.deleteToMessage('chat-001', 7); // 删除索引 7, 8, 9
      *
-     * 注意：删除后可能留下孤立的 functionCall（没有对应的 functionResponse）
-     * ChatHandler 在重试时会检测并重新执行这些孤立的函数调用
+     * 注意：若截断删除了保留区间中 functionCall 的配对 functionResponse，
+     * truncateFrom 会在同一次仓储变更中将该调用标记为 rejected，避免产生孤儿调用。
      */
     async deleteToMessage(
         conversationId: string,
@@ -3522,13 +3525,19 @@ export class ConversationManager {
         // 与 rejectAllPendingToolCalls 共用同一互斥执行器，整个 get→修改→replace 串行化，
         // 避免并发时真实结果被“用户拒绝”占位覆盖。
         await repository.mutateContents((history) => {
-            // 索引现有响应 & 拒绝占位的位置
+            // 索引现有调用、响应与拒绝/取消占位的位置。真实响应只允许结算到当前历史中
+            // 仍存在的 functionCall；调用已被截断时丢弃迟到结果，避免制造 orphan_function_response。
+            const functionCallIds = new Set<string>();
             const responseIdx = new Map<string, number>();     // id → historyIndex
-            const placeholderIds = new Set<string>();           // id 是占位
+            const placeholderIds = new Set<string>();          // id 是占位
             for (let i = 0; i < history.length; i++) {
                 const msg = history[i];
                 if (!msg.parts) continue;
                 for (const part of msg.parts) {
+                    const callId = part.functionCall?.id;
+                    if (callId) {
+                        functionCallIds.add(callId);
+                    }
                     const fr = part.functionResponse;
                     if (!fr?.id) continue;
                     responseIdx.set(fr.id, i);
@@ -3539,12 +3548,18 @@ export class ConversationManager {
             }
 
             const newParts: ContentPart[] = [];
+            const settledResponseIds = new Set<string>();
 
             for (const part of parts) {
                 const id = part.functionResponse?.id;
                 if (!id) {
                     // 无 id 的 part（如多模态附件）一律走追加
                     newParts.push(part);
+                    continue;
+                }
+
+                // 工具调用所属旧分支已被截断：真实副作用虽已发生，但结果不能再写回当前分支。
+                if (!functionCallIds.has(id)) {
                     continue;
                 }
 
@@ -3558,23 +3573,18 @@ export class ConversationManager {
                     );
                     if (partIdx !== -1) {
                         msg.parts![partIdx] = part;
+                        settledResponseIds.add(id);
+                        placeholderIds.delete(id);
+                        changed = true;
                     }
-                    // 清除 model 消息上对应 functionCall 的 rejected 标记
-                    for (const hmsg of history) {
-                        if (!hmsg.parts) continue;
-                        for (const hp of hmsg.parts) {
-                            if (hp.functionCall && hp.functionCall.id === id) {
-                                hp.functionCall.rejected = false;
-                            }
-                        }
-                    }
-                    placeholderIds.delete(id);
-                    changed = true;
                 } else if (existingIdx === undefined) {
                     // 全新响应 → 收集后追加
                     newParts.push(part);
+                    settledResponseIds.add(id);
+                } else {
+                    // 已有真实响应：保持幂等，但仍借此修复可能残留的 rejected 标记。
+                    settledResponseIds.add(id);
                 }
-                // else: 已有真实响应 → 跳过（幂等）
             }
 
             if (newParts.length > 0) {
@@ -3586,7 +3596,22 @@ export class ConversationManager {
                 changed = true;
             }
 
-            // 有变更（占位替换或新追加）：返回新引用触发写回；无变更返回原引用跳过写回
+            // 只有真实响应已经存在或将在本次变更中追加时才清除 rejected。
+            // 这同时覆盖“截断先把调用标记 rejected，随后工具结果在写锁后结算”的时序。
+            if (settledResponseIds.size > 0) {
+                for (const message of history) {
+                    if (!message.parts) continue;
+                    for (const part of message.parts) {
+                        const call = part.functionCall;
+                        if (call?.id && settledResponseIds.has(call.id) && call.rejected) {
+                            call.rejected = false;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            // 有变更（占位替换、新追加或 rejected 清理）：返回新引用触发写回；无变更返回原引用
             // （mutateContents 契约：返回原引用=跳过写回）
             return changed ? history.slice() : history;
         });
