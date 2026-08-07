@@ -21,9 +21,9 @@ export interface StreamBufferParseResult {
 }
 
 /** 流式缓冲硬上限：超过即丢弃并报错，防止失控上游/恶意代理把扩展宿主内存打爆 */
-export const MAX_STREAM_BUFFER_CHARS = 20 * 1024 * 1024;
+export const MAX_STREAM_BUFFER_CHARS = 64 * 1024 * 1024;
 /** 单条 SSE data 行的硬上限 */
-export const MAX_SSE_LINE_CHARS = 5 * 1024 * 1024;
+export const MAX_SSE_LINE_CHARS = 64 * 1024 * 1024;
 
 /**
  * SSE 心跳/保活载荷识别。

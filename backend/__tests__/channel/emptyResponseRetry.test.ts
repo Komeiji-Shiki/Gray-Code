@@ -66,6 +66,7 @@ describe('非流式空响应自动重试', () => {
     it('HTTP 200 但内容为空：重试 totalAttempts 次后抛 EMPTY_RESPONSE_ERROR', async () => {
         const fetchMock = jest.fn(async () => ({
             status: 200,
+            text: async () => JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] }),
             json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] }),
             headers: new Map()
         }));
@@ -82,6 +83,7 @@ describe('非流式空响应自动重试', () => {
     it('内容正常：不重试，直接成功', async () => {
         const fetchMock = jest.fn(async () => ({
             status: 200,
+            text: async () => JSON.stringify({ choices: [{ message: { content: '你好！' }, finish_reason: 'stop' }] }),
             json: async () => ({ choices: [{ message: { content: '你好！' }, finish_reason: 'stop' }] }),
             headers: new Map()
         }));

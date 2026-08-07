@@ -194,12 +194,12 @@ const ja: BackendLanguageMessages = {
                 streamRequestFailed: 'ストリームリクエストに失敗しました: {error}',
                 requestTimeout: 'リクエストがタイムアウトしました ({timeout}ms)',
                 requestTimeoutNoResponse: 'リクエストがタイムアウトしました ({timeout}ms 内に応答なし)',
-                streamBufferTooLarge: 'ストリーム応答バッファが上限 ({limit} 文字) を超えたため、リクエストを中止しました',
                 requestCancelled: 'リクエストがキャンセルされました',
                 requestAborted: 'リクエストが中止されました',
                 noResponseBody: 'レスポンスボディがありません',
                 emptyResponse: 'モデルが空の応答を返しました',
-                streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります'
+                streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります',
+                streamBufferOverflow: 'ストリームバッファがサイズ上限を超えました：上流データを解析できませんでした（バッファが消費されず増加し続けました）'
             },
             modelList: {
                 errors: {

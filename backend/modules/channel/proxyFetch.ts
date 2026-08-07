@@ -689,11 +689,15 @@ export async function* proxyStreamFetch(
         });
         
         if (!response.ok) {
-            let errorBody: any;
+            // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费
+            // 响应体，纯文本/HTML 错误体（网关 502 页面等）在 json() 失败后再读
+            // text() 只能拿到空串，上游给出的真实错误正文会丢失（body used already）。
+            const rawErrorBody = await response.text();
+            let errorBody: unknown = rawErrorBody;
             try {
-                errorBody = await response.json();
+                errorBody = JSON.parse(rawErrorBody);
             } catch {
-                errorBody = await response.text();
+                // 非 JSON：保留原文（extractUpstreamErrorMessage 直接返回文本）
             }
             const upstreamMessage = extractUpstreamErrorMessage(errorBody);
             throw new ChannelError(
