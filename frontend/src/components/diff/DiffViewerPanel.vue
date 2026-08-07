@@ -27,6 +27,36 @@ function basename(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
 }
 
+/**
+ * 语法检查结果缓存（纯函数，按 语言+内容 指纹命中）：
+ * issuesByIndex 对全部条目无条件 checkSyntax，面板可见期间 diffStore.entries
+ * 每次推送都会全量重算；同一内容的检查结果稳定，指纹缓存直接跳过重复扫描。
+ */
+const syntaxCheckCache = new Map<string, SyntaxIssue[]>()
+const MAX_SYNTAX_CHECK_CACHE_ENTRIES = 64
+/** 超大内容不进缓存（key 含原文，防止撑爆内存；checkSyntax 本身对超大内容直接跳过） */
+const MAX_SYNTAX_CHECK_CACHE_BYTES = 128 * 1024
+
+function cachedSyntaxCheck(content: string, lang: string): SyntaxIssue[] {
+  if (content.length > MAX_SYNTAX_CHECK_CACHE_BYTES) return checkSyntax(content, lang)
+  const key = lang + '\u0000' + content.length + '\u0000' + content
+  const hit = syntaxCheckCache.get(key)
+  if (hit) {
+    syntaxCheckCache.delete(key)
+    syntaxCheckCache.set(key, hit)
+    return hit
+  }
+  const issues = checkSyntax(content, lang)
+  if (syntaxCheckCache.size >= MAX_SYNTAX_CHECK_CACHE_ENTRIES) {
+    const oldest = syntaxCheckCache.keys().next().value
+    if (oldest !== undefined) {
+      syntaxCheckCache.delete(oldest)
+    }
+  }
+  syntaxCheckCache.set(key, issues)
+  return issues
+}
+
 const statsByIndex = computed(() => {
   const map: Record<number, { added: number; deleted: number }> = {}
   diffStore.entries.forEach((entry, index) => {
@@ -40,7 +70,7 @@ const issuesByIndex = computed(() => {
   const map: Record<number, SyntaxIssue[]> = {}
   diffStore.entries.forEach((entry, index) => {
     const lang = languageFromPath(entry.filePath)
-    map[index] = checkSyntax(entry.newContent, lang)
+    map[index] = cachedSyntaxCheck(entry.newContent, lang)
   })
   return map
 })

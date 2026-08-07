@@ -99,7 +99,9 @@ function getPatterns(filePath: string) {
   for (const lang of LANG_PATTERNS) {
     if (lang.exts.includes(ext)) return lang.patterns;
   }
-  return LANG_PATTERNS[0].patterns; // default: TS-like
+  // 未知扩展名不解析：旧实现回退 TS 风格正则，会从 .toml/.ini/.log/Dockerfile 等
+  // 非源码文件里提取伪符号（如 `foo = async (...) =>` 被误判为函数），污染结果
+  return [];
 }
 
 export async function getDocumentSymbols(uri: Uri): Promise<DocumentSymbol[]> {
@@ -184,7 +186,32 @@ function positionToOffset(content: string, line: number, character: number): num
   return offset + Math.max(0, Math.min(character, lines[target]?.length ?? 0));
 }
 
-const IDENT_RE = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+// 注意：不使用带 g 标志的共享正则（lastIndex 是可变全局状态，并发调用下脆弱），
+// 统一用 String.prototype.matchAll（内部独立迭代器，无共享状态）
+const IDENT_MATCH_RE = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+
+/** 找出 offset 处所在的标识符（调用方保证 content 非空） */
+function identifierAtOffset(content: string, offset: number): string | null {
+  for (const m of content.matchAll(IDENT_MATCH_RE)) {
+    const index = m.index;
+    if (index !== undefined && index <= offset && offset <= index + m[0].length) {
+      return m[0];
+    }
+    if (index !== undefined && index > offset) break;
+  }
+  return null;
+}
+
+/** 预计算每行的起始偏移，避免为每个匹配做 O(n) 的 slice+split（大文件多匹配时 O(n·m)） */
+function computeLineStarts(content: string): number[] {
+  const starts: number[] = [0];
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10 /* \n */) {
+      starts.push(i + 1);
+    }
+  }
+  return starts;
+}
 
 export async function getDefinitions(uri: Uri, position: Position): Promise<Location[]> {
   if (uri.scheme !== 'file') return [];
@@ -195,12 +222,9 @@ export async function getDefinitions(uri: Uri, position: Position): Promise<Loca
     return [];
   }
   const offset = positionToOffset(content, position.line, position.character);
-  const before = content.slice(0, offset);
-  IDENT_RE.lastIndex = before.length;
-  const m = IDENT_RE.exec(content);
-  if (!m) return [];
-  const word = m[0];
-  return findIdentifierLocations(uri, word);
+  const word = identifierAtOffset(content, offset);
+  if (!word) return [];
+  return findIdentifierLocations(uri, content, word);
 }
 
 export async function getReferences(uri: Uri, position: Position): Promise<Location[]> {
@@ -212,36 +236,30 @@ export async function getReferences(uri: Uri, position: Position): Promise<Locat
     return [];
   }
   const offset = positionToOffset(content, position.line, position.character);
-  IDENT_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  let word: string | null = null;
-  while ((m = IDENT_RE.exec(content)) !== null) {
-    if (m.index <= offset && offset <= m.index + m[0].length) {
-      word = m[0];
-      break;
-    }
-  }
+  const word = identifierAtOffset(content, offset);
   if (!word) return [];
-  return findIdentifierLocations(uri, word);
+  return findIdentifierLocations(uri, content, word);
 }
 
-async function findIdentifierLocations(uri: Uri, word: string): Promise<Location[]> {
-  // 1) current file occurrences
+async function findIdentifierLocations(uri: Uri, content: string, word: string): Promise<Location[]> {
+  // 1) current file occurrences（content 由调用方传入，避免重复读盘）
   const locations: Location[] = [];
-  try {
-    const content = await fsp.readFile(uri.fsPath, 'utf-8');
-    IDENT_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = IDENT_RE.exec(content)) !== null && locations.length < 50) {
-      if (m[0] === word) {
-        const line = content.slice(0, m.index).split('\n').length - 1;
-        const lineStart = content.lastIndexOf('\n', m.index - 1) + 1;
-        const character = m.index - lineStart;
-        locations.push(new Location(uri, new Range(new Position(line, character), new Position(line, character + word.length))));
-      }
+  const lineStarts = computeLineStarts(content);
+  for (const m of content.matchAll(IDENT_MATCH_RE)) {
+    if (m[0] !== word) continue;
+    const index = m.index;
+    if (index === undefined) continue;
+    // 二分/线性找行：lineStarts 递增，从最后一个 <= index 的位置推算行号
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= index) lo = mid;
+      else hi = mid - 1;
     }
-  } catch {
-    // ignore
+    const character = index - lineStarts[lo];
+    locations.push(new Location(uri, new Range(new Position(lo, character), new Position(lo, character + word.length))));
+    if (locations.length >= 50) break;
   }
   return locations;
 }

@@ -4,21 +4,14 @@
  * 使用Pinia store管理状态
  */
 
-import { onMounted, onBeforeUnmount, ref, watch, reactive, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch, reactive, computed, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
 import BackgroundTaskBar from './components/backgroundTasks/BackgroundTaskBar.vue'
 import { WelcomePanel } from './components/home'
-import { HistoryPage } from './components/history'
-import { UsagePage } from './components/usage'
-import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
-import UpdateModal from './components/common/UpdateModal.vue'
-import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
-import DiffViewerPanel from './components/diff/DiffViewerPanel.vue'
-import CodeViewPanel from './components/codeView/CodeViewPanel.vue'
 import Splash from './components/Splash.vue'
 import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore, useCodeViewStore } from './stores'
 import { useAttachments } from './composables'
@@ -30,6 +23,16 @@ import { configureSoundSettings } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
+
+// 大面板懒加载：历史/用量/设置/Monitor/Diff/代码查看/更新弹窗都改为异步组件，
+// 保留既有 visitedViews + v-show 惰性挂载逻辑不变，仅把代码拆到独立 chunk、首次使用时才解析执行
+const HistoryPage = defineAsyncComponent(() => import('./components/history/HistoryPage.vue'))
+const UsagePage = defineAsyncComponent(() => import('./components/usage/UsagePage.vue'))
+const SettingsPanel = defineAsyncComponent(() => import('./components/settings/SettingsPanel.vue'))
+const SubAgentMonitor = defineAsyncComponent(() => import('./components/subagents/SubAgentMonitor.vue'))
+const DiffViewerPanel = defineAsyncComponent(() => import('./components/diff/DiffViewerPanel.vue'))
+const CodeViewPanel = defineAsyncComponent(() => import('./components/codeView/CodeViewPanel.vue'))
+const UpdateModal = defineAsyncComponent(() => import('./components/common/UpdateModal.vue'))
 
 // i18n
 const { t } = useI18n()
@@ -574,7 +577,6 @@ onMounted(async () => {
         case 'windowFocusChanged':
           // 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播放）
           setVscodeWindowFocused(message.data?.focused === true)
-          break
           break
       }
     }

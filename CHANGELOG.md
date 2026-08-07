@@ -8,6 +8,37 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-08-07
+
+### Added
+  - 桌面端渲染层 native op 白名单（安全收口）：`graycode:native` IPC 仅放行前端实际使用的 `workspace:pickFolder`，剪贴板读写 / 任意路径探测 / shell 打开 / 对话框等其余 op 渲染层不再可达（仅主进程内 host.native 供 shim 使用）——渲染层渲染 AI 生成的 HTML，XSS 失守后不再拥有剪贴板与文件系统探测能力。
+  - 主进程 `unhandledRejection` 日志脱敏：错误对象可能携带请求体/配置（含 apiKey）上下文，现只输出 message + 截断堆栈，并遮蔽常见密钥字段（apiKey/authorization/password/token/secret/credential），超长字符串截断，敏感信息不再进入日志管道。
+
+### Changed
+  - 前端启动体积与首屏性能优化（桌面端专项）：
+    - 历史页 / 用量页 / 设置面板 / 子代理 Monitor / 变更查看 / 代码查看 / 更新弹窗改为 `defineAsyncComponent` 懒加载（保留既有 visitedViews + v-show 惰性挂载语义），设置面板（约 488KB）等大面板代码拆出主入口——入口 JS 由约 1.8MB 降至约 1.24MB（-31%），面板级 CSS 同步按需加载；
+    - 变更查看面板 diff 计算加内容指纹 LRU 缓存（`computeDiffLines` 模块级 memo，上限 64 条 / 超大文件跳过），`statsByIndex`/`selectedHunks` 与工具卡不再对同一内容反复跑 LCS；语法检查同样按 语言+内容 指纹缓存（上限 64 条 / 128KB 上限），面板可见期间 entries 推送不再全量重算；
+    - `chunkSizeWarningLimit` 由 2500KB 恢复至 1000KB 并开启压缩体积报告，入口体积回归可观测；
+    - 移除未使用的 `markdown-it-container` 依赖（仅 .d.ts 类型声明引用）。
+  - vscode-shim 稳定性修复：
+    - `vscode.diff` 预览路径双重 `decodeURIComponent` 修复：`Uri.parse` 已解码 path（DiffHandlers 构造时编码一次），二次解码遇字面 `%`（如 `report%final.md`）会抛 `URIError` 导致 diff 预览打开失败，现去除多余解码；
+    - `workspace.fs.copy` 遵守 overwrite 契约：`overwrite=false`（缺省）时目标已存在报错（`ERR_FS_CP_EEXIST`），不再静默覆盖用户文件；
+    - `Uri.parse` 清理空分支死代码。
+  - builtinLsp 优化与修正：
+    - 未知扩展名不再回退 TS 风格正则（原实现会从 .toml/.ini/.log/Dockerfile 等提取伪符号），未显式映射的语言默认不解析；
+    - `findIdentifierLocations` 预计算行起始偏移（原实现每匹配做 slice+split，大文件多匹配 O(n·m)），复用调用方已读内容消除重复读盘；
+    - 移除共享 `g` 标志正则的 `lastIndex` 全局可变状态（`getDefinitions`/`getReferences` 并发调用脆弱），统一改用 `matchAll`。
+  - BackendHost 资源清理：
+    - diffManager 状态监听退订函数入 `unsubscribers`（dispose 时移除，避免模块级单例持闭包引用泄漏）；dispose 清空 `previewToSessionId`/`toolDiffIds`/`diffPreviewContents` 映射；
+    - `require('events')` 改为标准 `import { EventEmitter }`。
+  - 自定义协议（graycode://local）请求热路径：缓存命中直接返回，省去每次 stat 系统调用（资源为打包产物运行时不变）。
+
+### Fixed
+  - 前端流式/高频路径小修正：`App.vue` 命令分发 switch 内重复 `break` 死代码清理。
+
+### Tests
+  - 后端 jest 235 套 / 2442 用例通过；前端 vitest 69 文件 / 648 用例通过；`tsc --noEmit` 全绿（根 + electron-app + frontend vue-tsc）；electron-app esbuild 生产构建通过。
+
 ## [1.7.0] - 2026-08-07
 
 ### Added

@@ -19,7 +19,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 2500,
+    // 还原默认警告阈值（旧值 2500KB 会掩盖入口体积膨胀），
+    // 懒加载面板拆包后入口应显著小于该阈值
+    chunkSizeWarningLimit: 1000,
+    reportCompressedSize: true,
     rollupOptions: {
       output: {
         entryFileNames: 'index.js',

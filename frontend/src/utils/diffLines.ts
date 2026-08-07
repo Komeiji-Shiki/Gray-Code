@@ -36,6 +36,26 @@ export interface DiffStats {
 /** LCS DP 表上限：n*m 超过后放弃逐行匹配 */
 export const MAX_DIFF_DP_CELLS = 2_000_000
 
+/**
+ * computeDiffLines 结果缓存（纯函数，按内容指纹命中）：
+ * 变更面板的 statsByIndex/selectedHunks 与工具卡 write_file/apply_diff 对同一组
+ * 内容会反复计算 LCS；流式/状态推送期间每 tick 全量重算成本高。
+ * 容量上限防长会话无界增长；内容变化时（内容指纹不同）自然不命中。
+ */
+const diffLinesCache = new Map<string, DiffLine[]>()
+const MAX_DIFF_LINES_CACHE_ENTRIES = 64
+/** 超大的内容不进缓存：缓存 key 含原文，超大文件（>256KB 合计）会撑爆内存，且其 LCS 已被 DP 上限兜底 */
+const MAX_DIFF_LINES_CACHE_TOTAL_BYTES = 256 * 1024
+
+function diffLinesCacheKey(originalContent: string, newContent: string): string | null {
+  if (originalContent.length + newContent.length > MAX_DIFF_LINES_CACHE_TOTAL_BYTES) return null
+  return originalContent.length + ':' + newContent.length + '\u0000' + originalContent + '\u0000' + newContent
+}
+
+export function clearDiffLinesCache(): void {
+  diffLinesCache.clear()
+}
+
 interface LCSMatch {
   oldIndex: number
   newIndex: number
@@ -81,6 +101,15 @@ function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
  * 行号从 1 开始；删除行只有 oldLineNum，新增行只有 newLineNum。
  */
 export function computeDiffLines(originalContent: string, newContent: string): DiffLine[] {
+  const cacheKey = diffLinesCacheKey(originalContent, newContent)
+  const hit = cacheKey !== null ? diffLinesCache.get(cacheKey) : undefined
+  if (hit) {
+    // LRU 刷新：命中项移到末尾
+    diffLinesCache.delete(cacheKey as string)
+    diffLinesCache.set(cacheKey as string, hit)
+    return hit
+  }
+
   const oldLines = originalContent.split('\n')
   const newLines = newContent.split('\n')
   const result: DiffLine[] = []
@@ -119,6 +148,16 @@ export function computeDiffLines(originalContent: string, newContent: string): D
     newIdx++
   }
 
+  // 写入缓存（超限淘汰最旧；超大内容不缓存）
+  if (cacheKey !== null) {
+    if (diffLinesCache.size >= MAX_DIFF_LINES_CACHE_ENTRIES) {
+      const oldest = diffLinesCache.keys().next().value
+      if (oldest !== undefined) {
+        diffLinesCache.delete(oldest)
+      }
+    }
+    diffLinesCache.set(cacheKey, result)
+  }
   return result
 }
 

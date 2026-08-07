@@ -40,8 +40,42 @@ installStdioEpipeGuard();
 // 未处理拒绝保护：Node 22 起 unhandledRejection 默认是致命错误，会让主进程直接退出。
 // 异步链上的偶发错误（插件/三方代码的 promise 泄漏等）不应拖垮整个应用，记录日志即可。
 // 日志经 console.error 走 stderr，管道断裂由 installStdioEpipeGuard 兜底，不会二次崩溃。
+// 脱敏：错误对象可能携带请求体/配置（含 apiKey 字段）上下文，只输出 message + 截断的堆栈，
+// 并遮蔽常见密钥字段，防止敏感信息进入日志管道。
+const SECRET_FIELD_RE = /(api[_-]?key|authorization|password|token|secret|credential)/i;
+
+function redactSecrets(value: unknown, depth = 0): unknown {
+  if (depth > 4) return '[depth-limit]';
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, stack: String(value.stack || '').split('\n').slice(0, 8).join('\n') };
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((v) => redactSecrets(v, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_FIELD_RE.test(k)) {
+      out[k] = typeof v === 'string' && v.length > 4 ? v.slice(0, 2) + '***' + v.slice(-1) : '[redacted]';
+    } else if (typeof v === 'string' && v.length > 500) {
+      out[k] = v.slice(0, 500) + '...';
+    } else {
+      out[k] = redactSecrets(v, depth + 1);
+    }
+  }
+  return out;
+}
+
+function formatUnhandledRejection(reason: unknown): string {
+  try {
+    return JSON.stringify(redactSecrets(reason), null, 2).slice(0, 2000);
+  } catch {
+    return typeof reason === 'string' ? reason.slice(0, 2000) : String(reason).slice(0, 2000);
+  }
+}
+
 process.on('unhandledRejection', (reason) => {
-  console.error('[main] unhandled rejection:', reason);
+  console.error('[main] unhandled rejection:', formatUnhandledRejection(reason));
 });
 
 // 未捕获异常保护：事件监听器内抛错、同步异常漏网之鱼等都会走这里，直接崩掉主进程
@@ -400,11 +434,9 @@ export function registerCustomProtocol(): void {
       if (!isPathAllowed(fsPath)) {
         return new Response('Forbidden', { status: 403 });
       }
-      const stat = await fs.promises.stat(fsPath);
-      if (!stat.isFile()) return new Response('Not found', { status: 404 });
-      const mime = MIME_BY_EXT[path.extname(fsPath).toLowerCase()];
+      // 缓存命中直接返回：资源为打包产物，运行时不变，省去每次请求的 stat 系统调用
       const cached = fileCache.get(fsPath);
-      if (cached && cached.mtimeMs === stat.mtimeMs) {
+      if (cached) {
         // LRU 刷新：命中项先删后设、移到 Map 末尾（最新位置），避免热点大 bundle
         // 被后续小资源挤到淘汰位反复读盘（与 BackendHost.diffPreviewContents 同策略）
         fileCache.delete(fsPath);
@@ -414,6 +446,9 @@ export function registerCustomProtocol(): void {
           headers: { 'Content-Type': cached.mime }
         });
       }
+      const stat = await fs.promises.stat(fsPath);
+      if (!stat.isFile()) return new Response('Not found', { status: 404 });
+      const mime = MIME_BY_EXT[path.extname(fsPath).toLowerCase()];
       const body = await fs.promises.readFile(fsPath);
       const contentType = mime || 'application/octet-stream';
       fileCache.set(fsPath, { body, mime: contentType, mtimeMs: stat.mtimeMs });
@@ -437,11 +472,24 @@ export function registerCustomProtocol(): void {
 // Native operations used by the vscode shim
 // ============================================================================
 
+/**
+ * 渲染层可调用的 native op 白名单（收口 attack surface）：
+ * 前端全仓库仅 overlay.js 使用 workspace:pickFolder；dialog/shell/clipboard/fs
+ * 等其余 op 只经主进程内 host.native（BackendHost 直连 runNative）被 shim 使用，
+ * 渲染层无需也不应触达——渲染层渲染 AI 生成的 HTML，一旦 XSS 失守，
+ * 白名单外的 op（剪贴板读写、任意路径探测、shell 打开）不可达。
+ */
+const RENDERER_ALLOWED_NATIVE_OPS = new Set<string>(['workspace:pickFolder']);
+
 function registerNativeOps(): void {
   ipcMain.handle('graycode:native', (event, op: string, payload: any) => {
     // 只接受主窗口主框架的调用：渲染层被 XSS 后无法借 iframe/其它 frame 调用
     if (!isTrustedSender(event)) {
       return { ok: false, error: 'Untrusted sender' };
+    }
+    // op 白名单：白名单外的 op 直接拒绝（返回错误，不抛异常，避免渲染层崩溃）
+    if (typeof op !== 'string' || !RENDERER_ALLOWED_NATIVE_OPS.has(op)) {
+      return { ok: false, error: 'Forbidden native op' };
     }
     return runNative(op, payload, mainWindow);
   });

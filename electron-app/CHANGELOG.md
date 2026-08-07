@@ -8,6 +8,21 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.7.1] - 2026-08-07
+
+### Added
+  - 渲染层 native op 白名单：`graycode:native` IPC 仅放行前端实际使用的 `workspace:pickFolder`（安全收口，防 XSS 失守后触达剪贴板/路径探测/shell）。
+  - 主进程 `unhandledRejection` 日志脱敏（遮蔽 apiKey/token 等密钥字段 + 截断）。
+
+### Changed
+  - vscode-shim 稳定性：`vscode.diff` 预览路径二次 `decodeURIComponent` 移除（含字面 `%` 路径不再抛 URIError）；`workspace.fs.copy` 遵守 overwrite 契约（缺省不再静默覆盖）；`Uri.parse` 死代码清理。
+  - builtinLsp：未知扩展名默认不解析（不再回退 TS 正则产出伪符号）；引用定位预计算行偏移 + 复用已读内容（大文件多匹配 O(n·m) → O(n)）；移除共享 `g` 正则 `lastIndex` 全局状态。
+  - BackendHost：diffManager 状态监听退订入 unsubscribers（dispose 移除，防泄漏）；dispose 清空 diff 映射缓存；`require('events')` → `import { EventEmitter }`。
+  - 自定义协议热路径缓存命中免 stat；前端入口体积 -31%（面板异步组件化，详见根 CHANGELOG [1.7.1]）。
+
+### Tests
+  - backend jest 235 套 / 2442 用例通过；frontend vitest 69 文件 / 648 用例通过；tsc --noEmit（根 + electron-app）与 vue-tsc 全绿；esbuild 生产构建通过。
+
 ## [1.7.0] - 2026-08-07
 
 ### Merged

@@ -217,12 +217,9 @@ export class Uri {
       }
     }
     // Handle file URIs that are not encoded (e.g. file:///c:/Users/x)
-    let decodedPath = decodePath(rest);
-    if (scheme === 'file' && WIN32 && /^\/[a-zA-Z]:/.test(decodedPath)) {
-      // already a drive path, keep as-is
-    } else if (scheme === 'file' && WIN32 && !/^\/[a-zA-Z]:/.test(decodedPath) && decodedPath && !decodedPath.startsWith('/')) {
-      // file:c:/... or file:///c:/... without leading slash for drive
-    }
+    // path 保持解码态原样透传：pathToFsPath 会按 WIN32 规则把 /c:/... 或 c:/...
+    // 统一转成盘符路径，这里无需特殊处理
+    const decodedPath = decodePath(rest);
     return new Uri({ scheme, authority, path: decodedPath, query, fragment });
   }
 
@@ -1079,6 +1076,8 @@ const workspaceFs = {
     const src = await uriToFsPath(source);
     const dst = await uriToFsPath(target);
     await fsp.mkdir(path.dirname(dst), { recursive: true });
+    // 与 VS Code 契约一致：overwrite=false（缺省）时目标已存在应报错，绝不静默覆盖；
+    // Node 的 fsp.cp 在 force:false 且目标存在时抛 ERR_FS_CP_EEXIST，符合该语义
     if (options?.overwrite) {
       try {
         await fsp.rm(dst, { recursive: true, force: true });
@@ -1086,7 +1085,7 @@ const workspaceFs = {
         // ignore
       }
     }
-    await fsp.cp(src, dst, { recursive: true, force: true });
+    await fsp.cp(src, dst, { recursive: true, force: options?.overwrite === true });
   },
   async isWritableFileSystem(_scheme: string): Promise<boolean> {
     return true;
@@ -1485,7 +1484,10 @@ export const commands = {
               const m = /(?:^|&)id=([^&]*)/.exec(originalUri.query);
               if (m) previewId = decodeURIComponent(m[1]);
             }
-            filePath = decodeURIComponent((originalUri?.path || '').replace(/^\/?original\//, ''));
+            // Uri.parse 已对 path 解码（DiffHandlers 构造时 encodeURIComponent 一次），
+            // 这里不再二次 decodeURIComponent：文件路径含字面 %（如 report%final.md）时
+            // 二次解码会抛 URIError 导致 diff 预览打开失败
+            filePath = (originalUri?.path || '').replace(/^\/?original\//, '');
           } else {
             // 后端 auto-open 路径（gemini-diff-original:<diffId>/<basename>）：
             // originalUri 是虚拟文档，newUri 是真实 file: URI——diffManager 已通过 WorkspaceEdit
@@ -1506,7 +1508,7 @@ export const commands = {
               const m = /(?:^|&)id=([^&]*)/.exec(newUri.query);
               if (m) previewId = decodeURIComponent(m[1]);
             }
-            filePath = newUri?.scheme === 'file' ? newUri.fsPath : decodeURIComponent((originalUri?.path || '').replace(/^\/?original\//, ''));
+            filePath = newUri?.scheme === 'file' ? newUri.fsPath : (originalUri?.path || '').replace(/^\/?original\//, '');
             if (!originalContent && h?.resolveOriginalContent) {
               // 桌面版没有为 gemini-diff-original 注册内容提供者，原始内容需要
               // 从宿主侧 diffManager 的 pending diff 获取，否则 diff 预览左栏恒为空。

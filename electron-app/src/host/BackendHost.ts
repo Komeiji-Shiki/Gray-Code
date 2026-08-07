@@ -15,6 +15,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { EventEmitter } from 'events';
 import { Logger } from '../../../backend/core/logger';
 import {
   ConversationManager,
@@ -53,7 +54,7 @@ import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAg
 import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
 import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
 import type { HandlerContext } from '../../../webview/types';
-import { getDiffManager } from '../../../backend/tools/file/diffManager';
+import { getDiffManager, type PendingDiff } from '../../../backend/tools/file/diffManager';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
 import {
@@ -115,7 +116,7 @@ export class BackendHost {
   /** diff 预览内容缓存条目数上限：完整文件内容可能数百 KB，超限按插入序淘汰最旧条目防无界增长 */
   private static readonly MAX_DIFF_PREVIEW_CONTENTS_ENTRIES = 50;
   private diffPreviewContents = new Map<string, string>();
-  private diffPreviewChangeEmitter = new (require('events').EventEmitter)();
+  private diffPreviewChangeEmitter = new EventEmitter();
   private diffPreviewProvider = {
     onDidChange: (listener: (uri: any) => void) => {
       this.diffPreviewChangeEmitter.on('change', listener);
@@ -325,6 +326,10 @@ export class BackendHost {
     }
     this.messageRouter?.cancelAllStreams();
     TaskManager.cancelAllTasks();
+    // 清空 diff 映射缓存：dispose 后不再引用旧条目（配合 diffManager 监听退订防泄漏）
+    this.previewToSessionId.clear();
+    this.toolDiffIds.clear();
+    this.diffPreviewContents.clear();
     for (const unsub of this.unsubscribers) {
       try {
         unsub();
@@ -506,7 +511,8 @@ export class BackendHost {
     );
 
     // Diff status changes -> frontend (pending diff bar / countdown)
-    getDiffManager().addStatusListener((pendingDiffs, allProcessed) => {
+    // 退订函数入 unsubscribers：dispose 时移除，避免模块级 diffManager 持闭包引用泄漏
+    const diffStatusListener = (pendingDiffs: PendingDiff[], allProcessed: boolean) => {
       // track toolId -> diff ids so the renderer diff modal can accept/reject
       this.toolDiffIds.clear();
       for (const d of pendingDiffs) {
@@ -530,7 +536,9 @@ export class BackendHost {
         })),
         allProcessed
       });
-    });
+    };
+    getDiffManager().addStatusListener(diffStatusListener);
+    this.unsubscribers.push(() => getDiffManager().removeStatusListener(diffStatusListener));
 
     this.messageRouter = new MessageRouter(
       this.chatHandler,
