@@ -324,6 +324,112 @@ describe('CheckpointManifestRepository', () => {
         expect(reparsed.files).toBeUndefined();
     });
 
+    test('files.json 为数组形状 → 视为损坏，完整数据读取返回 null（不假空，H1）', async () => {
+        await repo.writeManifest('cp-arr', makeManifest('cp-arr', ['ws_a/a.txt']));
+        repo.clearCache();
+        // 恶意/损坏的 files.json：files 是数组（typeof [] === 'object' 会骗过旧校验）
+        await fs.writeFile(
+            path.join(storageRoot, 'checkpoints', 'cp-arr', CHECKPOINT_MANIFEST_FILES_FILENAME),
+            JSON.stringify({ checkpointId: 'cp-arr', files: [] }),
+            'utf-8'
+        );
+
+        // 元数据视图仍可读；完整数据读取显式失败（不被当作「空工作区」）
+        expect((await repo.loadManifest('cp-arr'))?.checkpointId).toBe('cp-arr');
+        expect(await repo.loadManifestWithFiles('cp-arr')).toBeNull();
+    });
+
+    test('v1 内联 files 为数组形状 → 视为损坏，走迁移/回退路径（H1）', async () => {
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-v1-arr');
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+            path.join(dir, CHECKPOINT_MANIFEST_FILENAME),
+            JSON.stringify({ version: 1, checkpointId: 'cp-v1-arr', workspaceRoots: [], emptyDirs: [], changes: [], excluded: [], ignoreSnapshot: {}, files: [] }),
+            'utf-8'
+        );
+
+        const record = makeLegacyRecord({ id: 'cp-v1-arr', backupDir: 'cp-v1-arr' });
+        const manifest = await repo.loadManifest('cp-v1-arr', record);
+        expect(manifest).not.toBeNull();
+        expect(manifest!.checkpointId).toBe('cp-v1-arr');
+    });
+
+    test('v2 manifest 缺元数据字段（excluded）→ 视为损坏，走迁移/回退路径（M3）', async () => {
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-bad-meta');
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+            path.join(dir, CHECKPOINT_MANIFEST_FILENAME),
+            JSON.stringify({ version: 2, checkpointId: 'cp-bad-meta', workspaceRoots: [], emptyDirs: [], changes: [] }),
+            'utf-8'
+        );
+
+        const record = makeLegacyRecord({ id: 'cp-bad-meta', backupDir: 'cp-bad-meta' });
+        const manifest = await repo.loadManifest('cp-bad-meta', record);
+        expect(manifest).not.toBeNull();
+        expect(manifest!.checkpointId).toBe('cp-bad-meta');
+        // 迁移产物以当前版本落盘
+        const reparsed = JSON.parse(await fs.readFile(path.join(dir, CHECKPOINT_MANIFEST_FILENAME), 'utf-8'));
+        expect(reparsed.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+    });
+
+    test('真空工作区存档（fileCount=0）manifest 缺失 → 迁移返回空快照而非误判数据丢失（M2）', async () => {
+        const record = makeLegacyRecord({
+            id: 'cp-empty',
+            backupDir: 'cp-empty',
+            fileHashes: undefined,
+            fileStats: undefined,
+            changes: undefined,
+            fileCount: 0,
+            emptyDirs: ['ws_a/empty-dir']
+        });
+        await fs.mkdir(path.join(storageRoot, 'checkpoints', 'cp-empty'), { recursive: true });
+
+        const manifest = await repo.loadManifest('cp-empty', record);
+        expect(manifest).not.toBeNull();
+        expect(manifest!.checkpointId).toBe('cp-empty');
+        // 空快照可完整读取（files 为空映射，emptyDirs 保留）
+        const full = await repo.loadManifestWithFiles('cp-empty');
+        expect(full).not.toBeNull();
+        expect(Object.keys(full!.files)).toEqual([]);
+        expect(full!.emptyDirs).toEqual(['ws_a/empty-dir']);
+    });
+
+    test('writeManifest 的 manifest.checkpointId 与参数不一致 → 抛错（L2）', async () => {
+        await expect(repo.writeManifest('cp-a', makeManifest('cp-b'))).rejects.toThrow('checkpointId mismatch');
+    });
+
+    test('clearCache("") 只按指定键清理，不清空全部缓存（L6）', async () => {
+        const manifest = makeManifest('cp-1');
+        await repo.writeManifest('cp-1', manifest);
+        await repo.writeManifest('cp-2', makeManifest('cp-2'));
+
+        repo.clearCache('');
+        expect(repo['metaCache'].has('cp-1')).toBe(true);
+        expect(repo['metaCache'].has('cp-2')).toBe(true);
+        expect(repo['metaCache'].size).toBe(2);
+    });
+
+    test('同一存档并发 writeManifest 经单飞队列串行化，全部成功且最终状态一致（M1）', async () => {
+        const m1 = makeManifest('cp-conc', ['ws_a/a.txt']);
+        const m2 = makeManifest('cp-conc', ['ws_a/b.txt']);
+
+        await Promise.all([
+            repo.writeManifest('cp-conc', m1),
+            repo.writeManifest('cp-conc', m2)
+        ]);
+
+        // 两个写入都成功；磁盘 files.json 与 manifest.json 配对一致（checkpointId 同源）
+        const filesPath = path.join(storageRoot, 'checkpoints', 'cp-conc', CHECKPOINT_MANIFEST_FILES_FILENAME);
+        const filesPayload = JSON.parse(await fs.readFile(filesPath, 'utf-8')) as { checkpointId: string; files: CheckpointManifest['files'] };
+        expect(filesPayload.checkpointId).toBe('cp-conc');
+        const keys = Object.keys(filesPayload.files);
+        expect(keys.length).toBe(1);
+        expect(keys[0] === 'ws_a/a.txt' || keys[0] === 'ws_a/b.txt').toBe(true);
+        // 缓存与磁盘一致：清缓存后完整读取仍成功
+        repo.clearCache();
+        expect((await repo.loadManifestWithFiles('cp-conc'))).not.toBeNull();
+    });
+
     test('loadManifest 读取磁盘并缓存（删除磁盘后仍命中缓存）', async () => {
         const manifest = makeManifest('cp-1');
         await repo.writeManifest('cp-1', manifest);
@@ -410,7 +516,7 @@ describe('CheckpointManifestRepository', () => {
     test('clearCache 清理指定与全部缓存（meta 与 files 双缓存）', async () => {
         const manifest = makeManifest('cp-1');
         await repo.writeManifest('cp-1', manifest);
-        await repo.writeManifest('cp-2', manifest);
+        await repo.writeManifest('cp-2', makeManifest('cp-2'));
         await repo.loadManifestWithFiles('cp-1');
 
         repo.clearCache('cp-1');

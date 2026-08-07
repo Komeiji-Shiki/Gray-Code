@@ -45,7 +45,7 @@ import { activePath, isFunctionResponseMessage, validate } from '../../modules/c
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import type { BranchPathConsistencyResult } from '../../modules/conversation/branch/BranchService';
 import type { ConversationBranchGraph } from '../../modules/conversation/branch/types';
-import { isSafeCheckpointDirName, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from '../../modules/checkpoint/CheckpointManifestRepository';
+import { isSafeCheckpointDirName, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import { assertSafeStorageId } from '../../modules/conversation/storage';
 
@@ -340,12 +340,20 @@ export async function checkCheckpointIntegrity(
                         `manifest.checkpointId (${String(manifest.checkpointId)}) !== 记录 id (${checkpointId})`,
                         { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
                 }
+                // L4: 与运行期（CheckpointManifestRepository.isValidManifestJson）同口径——
+                // 仅已知版本（整数 1..当前）参与布局判定；未知版本（> 当前）报 warning 不深校验
+                const version = manifest.version;
+                const isKnownVersion = typeof version === 'number' && Number.isInteger(version)
+                    && version >= 1 && version <= CHECKPOINT_MANIFEST_VERSION;
                 const filesInline =
                     typeof manifest.files === 'object' && manifest.files !== null && !Array.isArray(manifest.files);
-                const isSplitLayout = typeof manifest.version === 'number' && manifest.version >= 2;
-                if (filesInline) {
+                if (!isKnownVersion) {
+                    issues.push(issue('checkpoint', 'warning', 'CHECKPOINT_MANIFEST_UNKNOWN_VERSION',
+                        `manifest.json 版本未知（v${String(version)}），跳过布局校验（运行期将按损坏走迁移/回退）`,
+                        { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
+                } else if (filesInline) {
                     // v1 旧格式：files 内联于 manifest.json，形状合法
-                } else if (isSplitLayout) {
+                } else if (version >= 2) {
                     // CPF-LAZY-1: v2 拆分格式：files 独立存放于 files.json，校验其存在与形状
                     const filesPath = path.join(backupPath, CHECKPOINT_MANIFEST_FILES_FILENAME);
                     let filesRaw: string | null = null;
