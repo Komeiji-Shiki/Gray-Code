@@ -10,6 +10,7 @@
 import { ref } from 'vue'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { ChatStoreState, TabInfo, ConversationSessionSnapshot } from '../types'
+import type { Message } from '../../../types'
 import { openWorkspaceInNewConversation } from '../tabActions'
 import { setActiveWorkspace as setActiveWorkspaceAction } from '../configActions'
 
@@ -119,7 +120,7 @@ describe('openWorkspaceInNewConversation（切换工作区 = 打开绑定新工�
   it('已有对话：新建空白标签并切换，当前对话绑定不被改写', async () => {
     const state = createState({
       currentConversationId: ref('conv-a'),
-      allMessages: ref([{ id: 'm1' }]),
+      allMessages: ref([{ id: 'm1' } as unknown as Message]),
       currentWorkspaceUri: ref(WS_A),
       openTabs: ref([{ id: 'tab-1', conversationId: 'conv-a', title: 'A', isStreaming: false }]),
       activeTabId: ref('tab-1')
@@ -143,7 +144,7 @@ describe('openWorkspaceInNewConversation（切换工作区 = 打开绑定新工�
   it('复用已打开的同工作区空白标签页：不新建标签（防标签堆积）', async () => {
     const state = createState({
       currentConversationId: ref('conv-a'),
-      allMessages: ref([{ id: 'm1' }]),
+      allMessages: ref([{ id: 'm1' } as unknown as Message]),
       currentWorkspaceUri: ref(WS_A),
       openTabs: ref([
         { id: 'tab-1', conversationId: 'conv-a', title: 'A', isStreaming: false },
@@ -169,7 +170,7 @@ describe('openWorkspaceInNewConversation（切换工作区 = 打开绑定新工�
   it('Auto（null）：已有对话时打开跟随活动编辑器的新空白标签', async () => {
     const state = createState({
       currentConversationId: ref('conv-a'),
-      allMessages: ref([{ id: 'm1' }]),
+      allMessages: ref([{ id: 'm1' } as unknown as Message]),
       currentWorkspaceUri: ref(WS_A),
       openTabs: ref([{ id: 'tab-1', conversationId: 'conv-a', title: 'A', isStreaming: false }]),
       activeTabId: ref('tab-1')
@@ -186,7 +187,7 @@ describe('openWorkspaceInNewConversation（切换工作区 = 打开绑定新工�
   it('IPC 失败（返回 null）：不新建标签、不动工作区上下文', async () => {
     const state = createState({
       currentConversationId: ref('conv-a'),
-      allMessages: ref([{ id: 'm1' }]),
+      allMessages: ref([{ id: 'm1' } as unknown as Message]),
       currentWorkspaceUri: ref(WS_A),
       openTabs: ref([{ id: 'tab-1', conversationId: 'conv-a', title: 'A', isStreaming: false }]),
       activeTabId: ref('tab-1')
@@ -221,7 +222,7 @@ describe('setActiveWorkspace（config 层）：不再改写对话绑定', () => 
     }) as ChatStoreState & { conversations: any }
     mockSend.mockResolvedValue({ success: true, activeWorkspaceUri: WS_B })
 
-    const resp = await setActiveWorkspaceAction(state, WS_B)
+    const resp = await setActiveWorkspaceAction(WS_B)
 
     expect(resp?.activeWorkspaceUri).toBe(WS_B)
     const rebindCalls = mockSend.mock.calls.filter(c => c[0] === 'conversation.setWorkspaceUri')

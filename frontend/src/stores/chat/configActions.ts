@@ -253,7 +253,7 @@ export function setWorkspaceList(state: ChatStoreState, list: WorkspaceFolderInf
  * 注意：本函数不修改 state.currentWorkspaceUri——切换后的工作区上下文由
  * 标签页流程在快照/恢复之后设置，避免把旧对话标签页的快照写成新工作区。
  */
-export async function setActiveWorkspace(state: ChatStoreState, workspaceUri: string | null): Promise<any> {
+export async function setActiveWorkspace(workspaceUri: string | null): Promise<any> {
   try {
     return await sendToExtension<any>('workspace.setActive', { workspaceUri })
   } catch (error) {

@@ -900,7 +900,7 @@ export const useChatStore = defineStore('chat', () => {
   async function switchWorkspace(workspaceUri: string | null): Promise<void> {
     await openWorkspaceInNewConversation(state, workspaceUri, {
       switchTab: switchTabWrapped,
-      sendWorkspaceSetActive: (uri: string | null) => setActiveWorkspaceAction(state, uri)
+      sendWorkspaceSetActive: (uri: string | null) => setActiveWorkspaceAction(uri)
     })
   }
 
