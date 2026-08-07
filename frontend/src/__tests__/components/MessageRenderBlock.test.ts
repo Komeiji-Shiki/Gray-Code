@@ -260,4 +260,29 @@ describe('MessageRenderBlock thought 三段式视图', () => {
 
     wrapper.unmount()
   })
+
+  it('中展开：用户滚回底部后内容大段增长不丢吸底', async () => {
+    pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
+
+    const wrapper = mountBlock({ thoughtViewMode: 'medium' })
+
+    await nextTick()
+    const el = wrapper.get('.thought-medium').element
+    Object.defineProperty(el, 'scrollHeight', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 100 })
+    el.scrollTop = 0
+    await wrapper.get('.thought-medium').trigger('scroll') // 暂停吸底
+
+    el.scrollTop = 480 // 距底 20px → 恢复吸底
+    await wrapper.get('.thought-medium').trigger('scroll')
+
+    // 大段输出/md 解析：内容暴涨但用户没动（scrollTop 未变）
+    Object.defineProperty(el, 'scrollHeight', { value: 1500, configurable: true })
+
+    finishSmoothStream('thought-message')
+    // 吸底状态保持：贴到最新底部（旧实现在此按 scrollHeight 复验误判「滚离」丢吸底）
+    expect(el.scrollTop).toBe(1500)
+
+    wrapper.unmount()
+  })
 })
