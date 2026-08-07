@@ -191,17 +191,24 @@ export class FileUsageIndexStore implements UsageIndexStore {
      * 把写操作串行化到该会话的队列尾；返回与队列中该操作对应的 Promise。
      * 前一个操作失败不影响后续操作执行（previous.then(task, task) 两个分支都跑 task）。
      * 挂起超时（R2 1.2）：复用 storage.ts 的 withHangTimeout 模式，任务超过 60s 未结束
-     * 视为挂起，按失败处理并让链继续前进（防止卡死的 fs 调用永久阻塞该会话后续写入）。
+     * 视为挂起，调用方按失败处理（fail-fast）。
+     * 注意：队列链尾挂在底层任务（underlying）上，超时不会让链前进——超时后的旧任务
+     * 仍在执行 writeFileAtomic（写 .tmp + rename），新任务并发启动会互相覆盖索引内容。
      */
     private enqueueWrite<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
         const previous = this.writeQueues.get(conversationId) ?? Promise.resolve();
-        const run = () => withHangTimeout(
-            task(),
+        const start = previous.then(() => undefined, () => undefined);
+        // 队列链尾挂在底层任务（underlying）上，超时不会让链前进——超时后的旧任务
+        // 仍在执行 writeFileAtomic（写 .tmp + rename），新任务并发启动会互相覆盖索引内容。
+        const underlying = start.then(() => task());
+        // 挂起超时（R2 1.2）：从任务真正启动时开始计时（排队等待时间不计入），
+        // 超时后调用方按失败处理（fail-fast），链尾仍等待底层任务真正结束
+        const current = start.then(() => withHangTimeout(
+            underlying,
             `usageIndexWrite(${conversationId})`,
             FileUsageIndexStore.USAGE_INDEX_WRITE_HANG_TIMEOUT_MS
-        );
-        const current = previous.then(run, run);
-        const tail = current.then(() => undefined, () => undefined);
+        ));
+        const tail = underlying.then(() => undefined, () => undefined);
         this.writeQueues.set(conversationId, tail);
         void tail.then(() => {
             if (this.writeQueues.get(conversationId) === tail) {

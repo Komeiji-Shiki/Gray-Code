@@ -21,6 +21,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { randomUUID } from 'node:crypto';
 import type { CheckpointManifest, CheckpointManifestMeta, CheckpointIgnoreSnapshot } from './types';
 import type { CheckpointRecord } from './CheckpointManager';
 import { CheckpointPathError } from './CheckpointWorkspace';
@@ -30,9 +31,15 @@ export const CHECKPOINT_MANIFEST_FILENAME = 'manifest.json';
 /** CPF-LAZY-1: 重量级 files 映射的独立存储文件名（schema version 2 起） */
 export const CHECKPOINT_MANIFEST_FILES_FILENAME = 'files.json';
 
-/** files.json 磁盘载荷：checkpointId 用于一致性校验，files 为完整文件映射 */
+/** files.json 磁盘载荷：checkpointId 与 filesRevision 用于与 manifest.json 配对一致性校验 */
 export interface CheckpointManifestFilesPayload {
     checkpointId: string;
+    /**
+     * 本次提交的配对版本号：与 manifest.json 的 filesRevision 一致才视为同一提交。
+     * 崩溃发生在 files.json 与 manifest.json 两次 rename 之间时，磁盘上会出现
+     * 「新 files.json + 旧 manifest.json」的混合配对——读取侧据此识别并拒绝。
+     */
+    filesRevision: string;
     files: CheckpointManifest['files'];
 }
 
@@ -182,30 +189,56 @@ export class CheckpointManifestRepository {
     }
 
     /**
-     * 原子写入 manifest 拆分文件（CPF-LAZY-1）。
+     * 原子写入 manifest 拆分文件（CPF-LAZY-1 / ATOMIC-PAIR）。
      *
-     * 写入顺序：先 files.json（tmp + rename），再 manifest.json（tmp + rename）——
-     * manifest.json 是提交点：崩溃发生在两次写入之间时，manifest.json 仍指向旧内容
-     * （旧格式含内联 files 或旧版本），读取路径保持一致；多写的 files.json 是孤儿
-     * 数据文件，被目录遍历/大小统计/恢复路径跳过（见 CheckpointQueryService /
-     * CheckpointRetentionService 的跳过清单），下次写入自然覆盖。
-     * 写入成功后双缓存更新；失败时清理两处残留 tmp 文件（L3）。
+     * 双文件提交一致性：files.json 与 manifest.json 是同一份快照的两个文件，两次独立
+     * rename 无法整体原子——崩溃发生在两次提交之间时，磁盘会出现「新 files.json +
+     * 旧 manifest.json」的混合配对，旧实现读取侧无法识别。修复采用双保险：
+     * 1. 版本绑定：每次提交生成随机 filesRevision，同时写入两个文件；读取时校验配对，
+     *    混合配对被识别并拒绝使用（见 loadManifestFiles）；
+     * 2. 旧配对备份：写新 files.json 前把旧 files.json 改名为 files.json.prev，崩溃后
+     *    读取路径用 .prev 恢复「manifest 对应」的完整配对（见 tryRestoreFilesBackup），
+     *    不产生版本混合、不误报数据丢失。
+     *
+     * 提交点仍是 manifest.json（最后 rename）：崩溃发生在两次 rename 之间时，恢复路径
+     * 以 manifest 的 filesRevision 为准，回滚未提交的 files.json 孤儿。
+     *
+     * @returns 实际落盘的 stampedMeta（含本次生成的 filesRevision，调用方按它更新缓存）
      */
-    private async writeManifestFiles(checkpointId: string, meta: CheckpointManifestMeta, files: CheckpointManifest['files']): Promise<void> {
+    private async writeManifestFiles(
+        checkpointId: string,
+        meta: CheckpointManifestMeta,
+        files: CheckpointManifest['files']
+    ): Promise<CheckpointManifestMeta> {
         const targetPath = this.getManifestPath(checkpointId);
         const filesPath = this.getManifestFilesPath(checkpointId);
         const filesTmpPath = `${filesPath}.tmp`;
         const metaTmpPath = `${targetPath}.tmp`;
+        const filesBackupPath = `${filesPath}.prev`;
+        const filesRevision = randomUUID();
+        const stampedMeta: CheckpointManifestMeta = { ...meta, filesRevision };
         await fs.mkdir(path.dirname(targetPath), { recursive: true });
         try {
-            const filesPayload: CheckpointManifestFilesPayload = { checkpointId, files };
+            const filesPayload: CheckpointManifestFilesPayload = { checkpointId, filesRevision, files };
+            // 两个 tmp 全部写完后再开始提交：任一 writeFile 失败都不会改变磁盘既有配对
             // 10-20MB 级大对象：紧凑序列化（无缩进）减小体积与序列化开销；files.json 是机器读数据，无需可读性
             await fs.writeFile(filesTmpPath, JSON.stringify(filesPayload), 'utf-8');
+            await fs.writeFile(metaTmpPath, JSON.stringify(stampedMeta, null, 2), 'utf-8');
+            // 旧配对暂存为 .prev：崩溃时读取路径可完整回滚到「manifest 对应的 files」
+            try {
+                await fs.rename(filesPath, filesBackupPath);
+            } catch (err: any) {
+                if (err?.code !== 'ENOENT') throw err; // 首次写入时无旧 files.json，跳过备份
+            }
             await fs.rename(filesTmpPath, filesPath);
-            await fs.writeFile(metaTmpPath, JSON.stringify(meta, null, 2), 'utf-8');
-            await fs.rename(metaTmpPath, targetPath);
+            await fs.rename(metaTmpPath, targetPath); // 提交点
         } catch (err) {
-            // L3: 原子写失败时回收 tmp 文件（只读介质/磁盘满等场景下避免残留垃圾）
+            // 失败时回滚：恢复被挪走的旧配对（rename 覆盖目标文件，原子），回收 tmp 残留
+            try {
+                await fs.rename(filesBackupPath, filesPath);
+            } catch {
+                // 无备份可恢复（首次写入失败）：本次提交前磁盘本就没有配对
+            }
             try {
                 await fs.rm(filesTmpPath, { force: true });
             } catch {
@@ -218,6 +251,13 @@ export class CheckpointManifestRepository {
             }
             throw err;
         }
+        // 提交成功后才清理备份（清理失败不影响已提交状态；残留的 .prev 在下次写入时被覆盖）
+        try {
+            await fs.rm(filesBackupPath, { force: true });
+        } catch {
+            // 忽略：残留备份无副作用
+        }
+        return stampedMeta;
     }
 
     /**
@@ -234,10 +274,13 @@ export class CheckpointManifestRepository {
         const { meta, files } = CheckpointManifestRepository.splitManifest(manifest);
         // 写出统一 stamp 当前版本：旧格式（v1）数据经任意写路径落盘即迁移为 v2 布局
         const stampedMeta: CheckpointManifestMeta = { ...meta, version: CHECKPOINT_MANIFEST_VERSION };
+        let writtenMeta = stampedMeta;
         try {
             // 同一存档的写入经单飞队列串行化，避免并发写者互踩 tmp 文件
             await this.chainWrite(checkpointId, async () => {
-                await this.writeManifestFiles(checkpointId, stampedMeta, files);
+                // writeManifestFiles 内部会再 stamp filesRevision；返回值含最终落盘版本，
+                // 缓存与磁盘保持一致（配对校验依赖该字段）
+                writtenMeta = await this.writeManifestFiles(checkpointId, stampedMeta, files);
             });
         } catch (err) {
             // 写失败（只读介质/磁盘满等）时磁盘未更新或部分更新：清掉该存档缓存，
@@ -246,7 +289,7 @@ export class CheckpointManifestRepository {
             this.clearCache(checkpointId);
             throw err;
         }
-        this.cacheSet(this.metaCache, checkpointId, stampedMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
+        this.cacheSet(this.metaCache, checkpointId, writtenMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
         this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
     }
 
@@ -264,6 +307,7 @@ export class CheckpointManifestRepository {
             excluded?: unknown;
             ignoreSnapshot?: unknown;
             files?: unknown;
+            filesRevision?: unknown;
         };
         if (typeof candidate.checkpointId !== 'string' || candidate.checkpointId !== checkpointId) {
             return false;
@@ -286,6 +330,10 @@ export class CheckpointManifestRepository {
         }
         // v1 布局必须内联 files（缺内联/形状非法视为损坏）；v2 布局 files 独立存放，此处不触碰
         if (candidate.version === CHECKPOINT_MANIFEST_VERSION - 1 && !isFilesMapping(candidate.files)) {
+            return false;
+        }
+        // ATOMIC-PAIR：filesRevision 若存在必须是字符串（损坏/手工篡改不进入配对校验路径）
+        if (candidate.filesRevision !== undefined && typeof candidate.filesRevision !== 'string') {
             return false;
         }
         return true;
@@ -370,31 +418,60 @@ export class CheckpointManifestRepository {
      *
      * - 缓存命中（旧格式内联解析 / 本方法先前加载）直接返回；
      * - 否则读取 files.json 并缓存；
+     * - 配对校验（ATOMIC-PAIR）：expectedRevision 传入 manifest 的 filesRevision，
+     *   files.json 的 filesRevision 不一致 = 崩溃窗口的未提交孤儿，拒绝使用并尝试从
+     *   files.json.prev 恢复「manifest 对应」的完整配对。
+     *   兼容限制：升级前的旧 v2 数据无 filesRevision → expectedRevision 为 undefined →
+     *   跳过配对校验（无戳可对），升级后第一次写入的崩溃窗口仍可能混合配对；
+     *   首个成功写入后窗口自然关闭。
      * - files.json 缺失/损坏 → 兜底回读 manifest.json 内联 files（v1 旧格式在拆分
      *   落盘未发生时数据仍在原处），并在此触发 best-effort 拆分落盘；v2 布局
      *   manifest.json 无内联 files → 返回 null（数据丢失场景，由调用方显式报错，不假空）。
      */
-    async loadManifestFiles(checkpointId: string): Promise<CheckpointManifest['files'] | null> {
+    async loadManifestFiles(checkpointId: string, expectedRevision?: string): Promise<CheckpointManifest['files'] | null> {
         assertSafeCheckpointDirName(checkpointId);
         const cached = this.cacheGet(this.filesCache, checkpointId);
         if (cached) {
             return cached;
         }
+        const filesPath = this.getManifestFilesPath(checkpointId);
+        const filesBackupPath = `${filesPath}.prev`;
+        let raw: string | null = null;
         try {
-            const raw = await fs.readFile(this.getManifestFilesPath(checkpointId), 'utf-8');
-            const parsed = JSON.parse(raw) as Partial<CheckpointManifestFilesPayload> | null;
+            raw = await fs.readFile(filesPath, 'utf-8');
+        } catch {
+            // 文件不存在或不可读：尝试从 .prev 恢复崩溃窗口的旧配对，否则走内联兜底
+        }
+        if (raw !== null) {
+            let parsed: Partial<CheckpointManifestFilesPayload> | null;
+            try {
+                parsed = JSON.parse(raw) as Partial<CheckpointManifestFilesPayload> | null;
+            } catch {
+                parsed = null; // 损坏的 files.json：不缓存（走 .prev 恢复 / 内联兜底）
+            }
             if (
                 parsed &&
                 typeof parsed === 'object' &&
                 parsed.checkpointId === checkpointId &&
-                isFilesMapping(parsed.files)
+                isFilesMapping(parsed.files) &&
+                // ATOMIC-PAIR：filesRevision 与 manifest 一致才视为同一提交；
+                // 缺省（旧数据无该字段）时跳过校验保持兼容
+                (expectedRevision === undefined || parsed.filesRevision === expectedRevision)
             ) {
                 this.cacheSet(this.filesCache, checkpointId, parsed.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
                 return parsed.files;
             }
-            // 损坏的 files.json：不缓存（继续走内联兜底）
-        } catch {
-            // 文件不存在或不可读：继续走内联兜底
+            // files.json 是未提交的孤儿或损坏文件：尝试从 .prev 恢复 manifest 对应配对
+            const restored = await this.tryRestoreFilesBackup(checkpointId, filesBackupPath, expectedRevision);
+            if (restored) {
+                return restored;
+            }
+            // 无法恢复：继续走内联兜底（v1）或按数据丢失处理（v2）
+        } else {
+            const restored = await this.tryRestoreFilesBackup(checkpointId, filesBackupPath, expectedRevision);
+            if (restored) {
+                return restored;
+            }
         }
         // 兜底：v1 旧格式（从未/尚未拆分落盘）——files 仍内联于 manifest.json。
         // 否则 meta 缓存命中而 files 缓存被淘汰时，会把仍在盘上的数据误判为丢失。
@@ -419,6 +496,71 @@ export class CheckpointManifestRepository {
     }
 
     /**
+     * 从 files.json.prev 恢复「manifest 对应」的完整配对（ATOMIC-PAIR 崩溃窗口回滚）。
+     *
+     * 场景：写新 files.json 前旧配对被暂存为 .prev，随后崩溃——
+     * - 崩溃发生在 .prev 暂存与 files.json rename 之间：files.json 缺失，.prev 持有完整旧配对；
+     * - 崩溃发生在 files.json rename 与 manifest.json（提交点）rename 之间：files.json 是
+     *   未提交孤儿，.prev 持有 manifest 对应的旧配对。
+     * 两种场景下 .prev 的 filesRevision 都等于 manifest 的 filesRevision，恢复（rename 原子）
+     * 后磁盘重新回到一致的已提交配对。恢复失败（只读介质等）返回 null，本次读取不采用。
+     */
+    private async tryRestoreFilesBackup(
+        checkpointId: string,
+        filesBackupPath: string,
+        expectedRevision?: string
+    ): Promise<CheckpointManifest['files'] | null> {
+        let raw: string;
+        try {
+            raw = await fs.readFile(filesBackupPath, 'utf-8');
+        } catch {
+            return null; // 无备份：非崩溃窗口，或首次写入失败
+        }
+        let parsed: Partial<CheckpointManifestFilesPayload> | null;
+        try {
+            parsed = JSON.parse(raw) as Partial<CheckpointManifestFilesPayload> | null;
+        } catch {
+            return null; // 备份损坏：不强行使用
+        }
+        if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            parsed.checkpointId !== checkpointId ||
+            !isFilesMapping(parsed.files) ||
+            // 备份也不是目标配对（旧提交已被更新的提交覆盖）：不强行使用
+            (expectedRevision !== undefined && parsed.filesRevision !== expectedRevision)
+        ) {
+            return null;
+        }
+        const filesPath = this.getManifestFilesPath(checkpointId);
+        // 竞态收敛（TOCTOU 缩窗）：恢复 rename 前复查 files.json——若并发写者恰好完成
+        // 提交（配对一致），放弃恢复直接采用新配对；否则恢复覆盖仍停留在崩溃窗口的孤儿。
+        try {
+            const currentRaw = await fs.readFile(filesPath, 'utf-8');
+            const current = JSON.parse(currentRaw) as Partial<CheckpointManifestFilesPayload> | null;
+            if (
+                current &&
+                typeof current === 'object' &&
+                current.checkpointId === checkpointId &&
+                isFilesMapping(current.files) &&
+                (expectedRevision === undefined || current.filesRevision === expectedRevision)
+            ) {
+                this.cacheSet(this.filesCache, checkpointId, current.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+                return current.files;
+            }
+        } catch {
+            // files.json 缺失/损坏：继续恢复
+        }
+        try {
+            await fs.rename(filesBackupPath, filesPath); // 恢复：覆盖未提交孤儿，rename 原子
+        } catch {
+            return null; // 恢复失败（只读介质等）：本次读取不采用
+        }
+        this.cacheSet(this.filesCache, checkpointId, parsed.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+        return parsed.files;
+    }
+
+    /**
      * 按 checkpointId 加载完整 manifest（元数据视图 + 懒加载 files 映射）。
      *
      * 与 loadManifest 的区别：需要完整文件映射的调用方（恢复链构建、增量比较、合并）
@@ -436,7 +578,7 @@ export class CheckpointManifestRepository {
         if (!meta) {
             return null;
         }
-        const files = await this.loadManifestFiles(checkpointId);
+        const files = await this.loadManifestFiles(checkpointId, meta.filesRevision);
         if (!files) {
             return null;
         }
@@ -469,10 +611,12 @@ export class CheckpointManifestRepository {
     ): Promise<boolean> {
         try {
             // 与 writeManifest 共用同一单飞写队列：并发完整读取只触发一次拆分写盘
+            // writeManifestFiles 返回含 filesRevision 的最终落盘版本，缓存与磁盘保持一致
+            let writtenMeta = stampedMeta;
             await this.chainWrite(checkpointId, async () => {
-                await this.writeManifestFiles(checkpointId, stampedMeta, files);
+                writtenMeta = await this.writeManifestFiles(checkpointId, stampedMeta, files);
             });
-            this.cacheSet(this.metaCache, checkpointId, stampedMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
+            this.cacheSet(this.metaCache, checkpointId, writtenMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
             return true;
         } catch {
             // best-effort：失败不影响本次读取（旧格式仍可继续被解析读取）

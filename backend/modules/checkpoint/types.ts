@@ -102,6 +102,12 @@ export interface CheckpointManifestMeta {
     /** 被排除路径的完整清单（样本之外的全部） */
     excluded: CheckpointExcludedEntry[];
     ignoreSnapshot: CheckpointIgnoreSnapshot;
+    /**
+     * files.json 配对版本号（schema version 2，每次提交随机生成，同时写入 manifest.json
+     * 与 files.json）：读取时校验两个文件属于同一提交，崩溃窗口产生的混合配对被识别并拒绝。
+     * 旧格式（v1 或未含该字段的 v2 历史数据）缺省 = 不校验（兼容读取）。
+     */
+    filesRevision?: string;
 }
 
 /**

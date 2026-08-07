@@ -300,8 +300,9 @@ describe('H-1 嵌套子代理权限隔离 - 父限制传播（executor 层）', 
             runId: 'm6_empty_run'
         });
 
-        // 本轮 LLM 调用请求未携带任何 toolOverrides（无工具可声明）
-        expect(generateMock.mock.calls[0][0].toolOverrides).toBeUndefined();
+        // 本轮 LLM 调用请求显式携带空 toolOverrides（空数组 = 声明无任何可用工具，
+        // 不能传 undefined 让 ChannelManager 回退成渠道全量工具声明）
+        expect(generateMock.mock.calls[0][0].toolOverrides).toEqual([]);
         // 工具调用被防御性拒绝（空集 = 无任何可用工具）
         expect(result.toolCalls).toHaveLength(1);
         expect(result.toolCalls![0].tool).toBe('write_file');

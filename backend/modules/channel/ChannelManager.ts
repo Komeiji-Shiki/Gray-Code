@@ -72,12 +72,41 @@ function isResponseContentEmpty(content: Content | undefined): boolean {
 }
 
 /**
- * 判断流式 chunk 的增量是否携带内容（文本/思考/工具调用）。
+ * 判断流式 chunk 的增量是否携带内容（文本/思考/工具调用/多模态附件）。
+ *
+ * 修改原因（SEC）：多模态流（Gemini inlineData/fileData）过去只查 text/functionCall，
+ * 连接中断时已有图片/文件数据的流被误判为「空响应」→ 整条流从头重播，附件重复、重复计费。
+ * 修改方式：与非流式 isResponseContentEmpty 同一口径，把 inlineData/fileData 纳入内容判定。
  */
 function streamChunkHasContent(chunk: StreamChunk): boolean {
     return chunk.delta.some(part =>
-        (part.text && part.text.length > 0) || !!part.functionCall
+        (part.text && part.text.length > 0)
+        || !!part.functionCall
+        || !!part.inlineData
+        || !!part.fileData
     );
+}
+
+/**
+ * 流式原始缓冲大小上限（字符）。
+ *
+ * 仅当「解析无进展」时生效（见两处调用点）：正常解析路径缓冲只保留未解析尾部（KB 级），
+ * 不会触发；无法识别的上游垃圾数据（非 SSE/JSON，parseStreamBuffer 整段保留为 remaining）
+ * 逐轮累积时触发终止，防止 Extension Host 内存耗尽。
+ * 阈值 64MB：合法巨型单事件（多模态 base64 附件、大工具载荷）按事件全长累积，
+ * 64MB 覆盖所有主流 provider 的单事件上限，同时把垃圾累积的内存占用封顶在可控范围。
+ */
+const MAX_STREAM_BUFFER_LENGTH = 64 * 1024 * 1024;
+
+/** 缓冲超限即按「上游数据无法解析」报错终止流（PARSE_ERROR 不可重试，避免无意义重试） */
+function assertStreamBufferWithinLimit(buffer: string): void {
+    if (buffer.length > MAX_STREAM_BUFFER_LENGTH) {
+        throw new ChannelError(
+            ErrorType.PARSE_ERROR,
+            t('modules.channel.errors.streamBufferOverflow'),
+            { bufferLength: buffer.length, maxBufferLength: MAX_STREAM_BUFFER_LENGTH }
+        );
+    }
 }
 
 /**
@@ -515,6 +544,18 @@ export class ChannelManager {
             );
         }
 
+        // 4. 验证配置（与非流式 generateNonStream 路径对齐）。
+        // 修改原因（SEC）：流式路径过去跳过 formatter.validateConfig，无效 API Key / URL /
+        // 模型配置不会在发起网络请求前被拦截，而是表现为网络错误、鉴权错误或解析错误。
+        // 修改方式：发起请求前与 generateNonStream 一致调用同一校验。
+        // 修改目的：无效配置提前失败，错误信息直达配置问题，且不浪费重试次数。
+        if (!formatter.validateConfig(config)) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                t('modules.channel.errors.configValidationFailed', { configId: request.configId })
+            );
+        }
+
         // 4. 请求发送前校验工具调用历史完整性
         this.validateHistoryBeforeRequest(request, config.type);
         
@@ -824,8 +865,17 @@ export class ChannelManager {
                 signal: controller.signal
             });
             
-            // 解析响应体
-            const responseBody = await response.json();
+            // 解析响应体：先读 text() 再尝试解析 JSON——response.json() 会消费响应体，
+            // 纯文本/HTML 错误体（网关 502 页等）在 json() 失败后无法再读正文（body used
+            // already），上游给出的真实错误内容会丢失；text 原文在解析失败时原样保留，
+            // 供 extractUpstreamErrorMessage 提取并进入错误信息。
+            const rawResponseBody = await response.text();
+            let responseBody: unknown = rawResponseBody;
+            try {
+                responseBody = JSON.parse(rawResponseBody);
+            } catch {
+                // 非 JSON（含非 2xx 的纯文本错误体）：保留原文
+            }
             const responseHeaders: Record<string, string> = {};
             response.headers.forEach((value, key) => {
                 responseHeaders[key] = value;
@@ -945,6 +995,11 @@ export class ChannelManager {
                     parsedChunkCount += result.chunks.length;
                     pendingWholeBuffer = result.remaining === buffer;
                     lastRemaining = result.remaining;
+                    // 仅当解析无进展（整段缓冲无法消费）时检查上限：合法巨型单事件
+                    // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止
+                    if (pendingWholeBuffer) {
+                        assertStreamBufferWithinLimit(buffer);
+                    }
 
                     
                     for (const parsed of result.chunks) {
@@ -993,12 +1048,15 @@ export class ChannelManager {
                 });
                 
                 if (!response.ok) {
-                    // 尝试获取错误详情
-                    let errorBody: any;
+                    // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费
+                    // 响应体，纯文本/HTML 错误体（网关 502 页面等）在 json() 失败后再读
+                    // text() 只能拿到空串，上游给出的真实错误正文会丢失（body used already）。
+                    const rawErrorBody = await response.text();
+                    let errorBody: unknown = rawErrorBody;
                     try {
-                        errorBody = await response.json();
+                        errorBody = JSON.parse(rawErrorBody);
                     } catch {
-                        errorBody = await response.text();
+                        // 非 JSON：保留原文（extractUpstreamErrorMessage 直接返回文本）
                     }
                     const upstreamMessage = extractUpstreamErrorMessage(errorBody);
                     throw new ChannelError(
@@ -1030,7 +1088,6 @@ export class ChannelManager {
                             buffer += decoder.decode();
                             break;
                         }
-                        
                         // 收到数据，重置超时计时器
                         resetTimeout();
                         
@@ -1038,6 +1095,12 @@ export class ChannelManager {
                         
                         // 处理流式响应
                         const result = parseStreamBuffer(buffer);
+                        const madeProgress = result.chunks.length > 0 || result.remaining !== buffer;
+                        // 仅当解析无进展（整段缓冲无法消费）时检查上限：合法巨型单事件
+                        // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止
+                        if (!madeProgress) {
+                            assertStreamBufferWithinLimit(buffer);
+                        }
                         buffer = result.remaining;
                         parsedChunkCount += result.chunks.length;
 
@@ -1046,6 +1109,9 @@ export class ChannelManager {
                             yield chunk;
                         }
                     }
+                    
+                    // 最终冲刷后的缓冲可能越过上限（末块多字节字符补齐），超限同样终止
+                    assertStreamBufferWithinLimit(buffer);
                     
                     // 处理剩余的 buffer
                     if (buffer.trim()) {
