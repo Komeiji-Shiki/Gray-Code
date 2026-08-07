@@ -137,4 +137,91 @@ describe('DiffStorageManager deferred global diff persistence', () => {
         await expect(manager.loadGlobalDiff(ref.diffId)).resolves.toBeNull();
         await expect(fsp.access(convPath)).rejects.toThrow();
     });
+
+    test('索引写链一次失败后不永久失效（后续索引写入仍可用）', async () => {
+        const blockedDir = path.join(tempDir, 'diffs');
+        // 桩替换私有 persistDiffIndex：第一次抛错（模拟索引写失败），随后恢复真实实现
+        const mgr = manager as any;
+        const origPersist = mgr.persistDiffIndex.bind(manager);
+        let failWrites = true;
+        mgr.persistDiffIndex = async () => {
+            if (failWrites) throw new Error('simulated index write failure');
+            return origPersist();
+        };
+        try {
+            // 第一次：索引写失败 → 回退 __global__ 仍可保存
+            const ref1 = manager.saveGlobalDiffDeferred({
+                originalContent: 'a1',
+                newContent: 'b1',
+                filePath: 'x.ts'
+            }, 'index_fail_diff', 'conv_if_1');
+            // 等后台落盘完成
+            for (let i = 0; i < 100; i++) {
+                try {
+                    await fsp.access(path.join(blockedDir, '__global__', 'index_fail_diff.json'));
+                    break;
+                } catch {
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+            }
+            // 内存缓存可用（进程内预览不受影响）
+            await expect(manager.loadGlobalDiff(ref1.diffId)).resolves.toMatchObject({ filePath: 'x.ts' });
+
+            // 解除故障：后续索引写必须恢复
+            failWrites = false;
+            const ref2 = manager.saveGlobalDiffDeferred({
+                originalContent: 'a2',
+                newContent: 'b2',
+                filePath: 'y.ts'
+            }, 'index_recover_diff', 'conv_if_2');
+            for (let i = 0; i < 100; i++) {
+                try {
+                    await fsp.access(path.join(blockedDir, 'conv_if_2', 'index_recover_diff.json'));
+                    break;
+                } catch {
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+            }
+            // 恢复后索引条目真实落盘：重启等价路径（直读 index.json）能查到归属
+            const indexRaw = await fsp.readFile(path.join(blockedDir, 'index.json'), 'utf8');
+            const parsed = JSON.parse(indexRaw);
+            expect(parsed['index_recover_diff']).toBe('conv_if_2');
+            // 故障期间的 diff 因索引失败回退 __global__，不在索引中
+            expect(parsed['index_fail_diff']).toBeUndefined();
+        } finally {
+            mgr.persistDiffIndex = origPersist;
+        }
+    });
+
+    test('索引指向缺失文件时自愈删除幽灵条目（写文件前崩溃的残留）', async () => {
+        // 构造「索引有、文件无」：先正常保存，再手动删文件，并清掉内存缓存强制走磁盘路径
+        await manager.saveGlobalDiff({
+            originalContent: 'ghost',
+            newContent: 'ghost-new',
+            filePath: 'ghost.ts'
+        }, 'ghost_diff', 'conv_ghost');
+        const ghostPath = path.join(tempDir, 'diffs', 'conv_ghost', 'ghost_diff.json');
+        await fsp.unlink(ghostPath);
+        (manager as any).globalDiffCache.clear();
+        (manager as any).globalDiffCacheBytes = 0;
+
+        // load 应返回 null（文件不存在）且索引条目被自愈删除
+        await expect(manager.loadGlobalDiff('ghost_diff')).resolves.toBeNull();
+        const indexRaw = await fsp.readFile(path.join(tempDir, 'diffs', 'index.json'), 'utf8');
+        expect(JSON.parse(indexRaw)['ghost_diff']).toBeUndefined();
+    });
+
+    test('getStorageStats 不把 index.json 当会话计数', async () => {
+        await manager.saveGlobalDiff({
+            originalContent: 's1',
+            newContent: 's2',
+            filePath: 's.ts'
+        }, 'stats_diff', 'conv_stats');
+
+        const stats = await manager.getStorageStats();
+        // 会话数 = 绑定对话目录数（__global__ 与 index.json 不计入）
+        expect(stats.conversations).toBe(1);
+        expect(stats.totalDiffs).toBe(1);
+        expect(stats.totalSize).toBeGreaterThan(0);
+    });
 });

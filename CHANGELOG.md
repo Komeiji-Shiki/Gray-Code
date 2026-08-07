@@ -140,9 +140,16 @@
   - **流式早启动工具 `.catch` 吞掉全部异常伪装成工具失败**：编程错误/系统错误被包装成 `{ success: false, error }` 写入历史，错误分类失真；现仅 `ChannelError`（可预期执行失败）保持原包装，其余系统异常记录 `log.error` 并以空占位沉降（进度队列正常落定、不重复执行），抛出走上层统一错误通道
   - **`ChannelManager.generateStream` 重试时非内容 chunk 重复产出**：`yieldedAny` 在收到 usage/元数据等无内容 chunk 时已置 true，空响应重试会把这些 chunk 再 yield 一遍（token 统计可能双计）；重试界限改为「已产出可见内容」`yieldedContent`
   - **子代理默认运行时长硬编码不一致**：General Worker 描述写 2400s、实际默认 1800s、预设/文档数值不一；现统一为单一常量 `DEFAULT_MAX_RUNTIME_S = 1800`（executor 默认 + 工具描述 + General Worker 配置 + 类型默认全部引用）
+  - **diff 存储压缩/索引层健壮性加固（复扫修复）**：
+    - 索引写链（`indexWriteChain`）一次失败后永久失效：旧实现 `chain.then(...)` 遇到一次 IO 错误后整条链变成 rejected，后续所有索引写入永久失败（文件写成功但永不入索引 → 重启后全部绑定 diff 不可达）；现链首 `.catch(() => {})` 自愈，单次失败只影响当次并上抛给调用方
+    - 写入顺序改为「先索引、后文件」：旧顺序崩溃窗口产生「文件有、索引无」的永久孤儿文件（load 永远找不到、cleanup 因对话仍有效不清理 → 磁盘增长以新形式回归）；新顺序崩溃窗口只留下「索引有、文件无」的陈旧条目，`loadGlobalDiff` 读到缺失文件时按 ENOENT 自愈删除（瞬时读错误不误删）
+    - `rememberDiffOwner` 磁盘写失败时回滚内存索引条目（防止内存与磁盘漂移、幽灵条目随下次成功落盘写进 index.json）
+    - 索引写失败时 diff 回退 `__global__` 存储（load 兜底路径仍可找到内容），不再写不可达文件
+    - `getStorageStats` 不再把 `index.json`/`__global__` 计入会话数；`migrateTo`/`initialize`/`updateBasePath` 路径变更时重置索引缓存（防旧路径条目跨路径污染）；`cleanupOrphanedDiffs` 清孤儿目录时同步标记墓碑（拦截在途 deferred 落盘复活目录）
+    - 新增回归测试 3 例：索引写链故障恢复 / 幽灵索引自愈删除 / 统计口径
 
 ### Tests（1.6.9 迭代二）
-  - 全量回归：backend jest 226 套件 / 2302 用例、frontend vitest 63 文件 / 610 用例、tsc --noEmit 与生产构建全绿；新增 `diffStorageDeferred.test.ts`（gzip 压缩写盘 / 旧版明文兼容 / 对话绑定落盘 + 删除清理 + 索引定位）、`streamChunkProcessor.test.ts`（8 例）、`streamAbortWait.test.ts` 增补（waitForIdle 活跃分支超时）；`memoryWakeScopes.test.ts` 分页续读用例改写为单次全量输出断言
+  - 全量回归：backend jest 226 套件 / 2305 用例、frontend vitest 63 文件 / 610 用例、tsc --noEmit 与生产构建全绿；新增 `diffStorageDeferred.test.ts`（gzip 压缩写盘 / 旧版明文兼容 / 对话绑定落盘 + 删除清理 + 索引定位 / 索引写链故障恢复 / 幽灵索引自愈 / 统计口径）、`streamChunkProcessor.test.ts`（8 例）、`streamAbortWait.test.ts` 增补（waitForIdle 活跃分支超时）；`memoryWakeScopes.test.ts` 分页续读用例改写为单次全量输出断言
 
 ## [1.6.8] - 2026-08-06
 

@@ -91,6 +91,9 @@ export class DiffStorageManager {
         } else {
             // 更新路径（可能因为存储路径迁移）
             DiffStorageManager.instance.basePath = basePath;
+            // 旧路径下加载的索引不得带入新路径（否则 persistDiffIndex 会把旧条目
+            // 写到新路径的 index.json，跨路径污染）；新路径索引由懒加载重新读入。
+            DiffStorageManager.instance.diffIndex = null;
         }
         return DiffStorageManager.instance;
     }
@@ -107,6 +110,8 @@ export class DiffStorageManager {
      */
     public updateBasePath(newBasePath: string): void {
         this.basePath = newBasePath;
+        // 同 initialize：路径变更必须重置索引缓存，防止旧条目写入新路径
+        this.diffIndex = null;
     }
     
     /**
@@ -192,6 +197,16 @@ export class DiffStorageManager {
         }
     }
 
+    /** 文件是否确定不存在（ENOENT）——自愈只处理真实缺失，避免瞬时读错误删索引 */
+    private async isFileMissing(filePath: string): Promise<boolean> {
+        try {
+            await fs.promises.access(filePath);
+            return false;
+        } catch (error: any) {
+            return error?.code === 'ENOENT';
+        }
+    }
+
     // ─── diffId -> conversationId 索引 ─────────────────
 
     private get diffIndexPath(): string {
@@ -219,13 +234,18 @@ export class DiffStorageManager {
         const index = this.diffIndex ?? new Map<string, string>();
         const diffsDir = path.join(this.basePath, 'diffs');
         const payload = Buffer.from(JSON.stringify(Object.fromEntries(index.entries())), 'utf8');
-        // 串行化写入 + tmp/rename 原子落盘：并发 save/delete 不互相踩
-        this.indexWriteChain = this.indexWriteChain.then(async () => {
-            await this.ensureDir(diffsDir);
-            const tmp = `${this.diffIndexPath}.${Date.now()}.tmp`;
-            await fs.promises.writeFile(tmp, payload, 'utf8');
-            await fs.promises.rename(tmp, this.diffIndexPath);
-        });
+        // 串行化写入 + tmp/rename 原子落盘：并发 save/delete 不互相踩。
+        // 前序失败不得永久阻断整条链（否则一次 IO 错误后所有索引写入全部失效）：
+        // catch 后链继续，本次失败仍会向调用方抛出（rememberDiffOwner 感知后降级）。
+        this.indexWriteChain = this.indexWriteChain
+            .catch(() => {})
+            .then(async () => {
+                await this.ensureDir(diffsDir);
+                // 同毫秒多次调用时 tmp 名必须唯一，避免互相覆盖（rename 前被第二次 write 截胡）
+                const tmp = `${this.diffIndexPath}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+                await fs.promises.writeFile(tmp, payload, 'utf8');
+                await fs.promises.rename(tmp, this.diffIndexPath);
+            });
         await this.indexWriteChain;
     }
 
@@ -235,7 +255,17 @@ export class DiffStorageManager {
         if (this.deletedConversationTombstones.has(conversationId)) return;
         const index = await this.loadDiffIndex();
         index.set(diffId, conversationId);
-        await this.persistDiffIndex();
+        try {
+            await this.persistDiffIndex();
+        } catch (error) {
+            // 磁盘写失败：回滚内存条目，保持内存索引与磁盘一致
+            // （调用方会回退 __global__ 存储；残留内存条目会在下次成功落盘时
+            //  把「指向不存在文件」的幽灵条目写进 index.json，load 时又要靠自愈兜底）
+            if (index.get(diffId) === conversationId) {
+                index.delete(diffId);
+            }
+            throw error;
+        }
     }
 
     /** 移除某对话全部索引条目（对话删除时调用） */
@@ -314,8 +344,22 @@ export class DiffStorageManager {
         this.assertSafeDiffId(id);
         const diffContent = this.buildGlobalDiffContent(content);
         this.cacheGlobalDiff(id, diffContent);
-        await this.persistGlobalDiff(id, diffContent, conversationId);
-        await this.rememberDiffOwner(id, conversationId);
+        // 先写索引、后写文件：崩溃窗口只会留下「索引有、文件无」的陈旧条目
+        // （load 时自愈删除），不会留下「文件有、索引无」的永久孤儿文件
+        // （旧顺序下 crash 会产生磁盘垃圾且 load 永远找不到）。
+        let indexed = true;
+        try {
+            await this.rememberDiffOwner(id, conversationId);
+        } catch (error) {
+            // 索引写入失败不阻塞文件保存：回退 __global__（load 路径可经
+            // 索引 miss → __global__ 兜底仍找到内容），仅记录告警。
+            indexed = false;
+            log.warn('global_diff_index_write_failed', {
+                diffId: id,
+                error: error instanceof Error ? error.message : String(error)
+            });
+        }
+        await this.persistGlobalDiff(id, diffContent, indexed ? conversationId : undefined);
         return this.buildGlobalDiffReference(id, content.filePath);
     }
 
@@ -338,8 +382,18 @@ export class DiffStorageManager {
         this.cacheGlobalDiff(id, diffContent);
         void (async () => {
             try {
-                await this.persistGlobalDiff(id, diffContent, conversationId);
-                await this.rememberDiffOwner(id, conversationId);
+                // 与 saveGlobalDiff 同序：先索引后文件，崩溃窗口不产生孤儿文件
+                let indexed = true;
+                try {
+                    await this.rememberDiffOwner(id, conversationId);
+                } catch (error) {
+                    indexed = false;
+                    log.warn('global_diff_index_write_failed', {
+                        diffId: id,
+                        error: error instanceof Error ? error.message : String(error)
+                    });
+                }
+                await this.persistGlobalDiff(id, diffContent, indexed ? conversationId : undefined);
             } catch (error) {
                 log.warn('global_diff_background_save_failed', {
                     diffId: id,
@@ -432,8 +486,24 @@ export class DiffStorageManager {
         const index = await this.loadDiffIndex();
         const owner = index.get(diffId);
         if (owner) {
-            const content = await this.readDiffFile(this.getDiffFilePath(owner, diffId));
+            const filePath = this.getDiffFilePath(owner, diffId);
+            const content = await this.readDiffFile(filePath);
             if (content) return content;
+            // 索引有、文件无：写文件前崩溃/文件被外部删除的残留——自愈删除该条目，
+            // 避免幽灵索引无限滞留（并让 __global__ 兜底有机会命中旧版数据）。
+            // 自愈的索引写失败不阻塞本次读取（预览仍可经 __global__ 兜底）。
+            // 仅当文件确定不存在（ENOENT）时自愈，瞬时读错误不删索引。
+            if (await this.isFileMissing(filePath)) {
+                index.delete(diffId);
+                try {
+                    await this.persistDiffIndex();
+                } catch (error) {
+                    log.warn('global_diff_index_selfheal_failed', {
+                        diffId,
+                        error: error instanceof Error ? error.message : String(error)
+                    });
+                }
+            }
         }
 
         // 2) 回退 __global__（旧版数据 / 未绑定对话的 diff）
@@ -564,13 +634,17 @@ export class DiffStorageManager {
                 // 统计所有对话
                 try {
                     const convDirs = await fs.promises.readdir(diffsBaseDir);
-                    conversations = convDirs.length;
                     
                     for (const convDir of convDirs) {
                         const convDirPath = path.join(diffsBaseDir, convDir);
                         const stat = await fs.promises.stat(convDirPath);
                         
                         if (stat.isDirectory()) {
+                            // index.json 是索引文件不是会话；__global__ 是未绑定 diff 桶，
+                            // 两者都不计入会话数（会话数 = 真实对话目录数）
+                            if (convDir !== '__global__' && convDir !== 'index.json') {
+                                conversations++;
+                            }
                             const files = await fs.promises.readdir(convDirPath);
                             
                             for (const file of files) {
@@ -616,6 +690,8 @@ export class DiffStorageManager {
                 if (!validConversationIds.has(convDir)) {
                     const convDirPath = path.join(diffsBaseDir, convDir);
                     await fs.promises.rm(convDirPath, { recursive: true, force: true });
+                    // 标记墓碑：拦截在途 deferred 落盘把孤儿目录复活
+                    this.deletedConversationTombstones.add(convDir);
                     // 同步清理索引条目
                     for (const [diffId, owner] of index) {
                         if (owner === convDir) {
@@ -655,7 +731,7 @@ export class DiffStorageManager {
             // 创建新目录
             await fs.promises.mkdir(newDiffsDir, { recursive: true });
             
-            // 复制所有 diff 数据（含 index.json）
+            // 复制所有 diff 数据（含 index.json；index.json 作为文件被 else 分支复制）
             const convDirs = await fs.promises.readdir(oldDiffsDir);
             const total = convDirs.length;
             let processed = 0;
