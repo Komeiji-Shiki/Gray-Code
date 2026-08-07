@@ -89,6 +89,17 @@ const en: LanguageMessages = {
             title: 'What\'s New',
             gotIt: 'Got it'
         },
+        update: {
+            title: 'Update Available',
+            intro: 'Gray Code v{version} is available. Download and install now?',
+            releaseNotes: 'What\'s New',
+            install: 'Download & Install',
+            later: 'Later',
+            viewPage: 'View on GitHub',
+            downloading: 'Downloading and installing…',
+            installed: 'Installed. Reload the window to apply.',
+            failed: 'Download or install failed'
+        },
         attachment: {
             preview: 'Preview',
             download: 'Download',
@@ -2150,6 +2161,19 @@ const en: LanguageMessages = {
                     version: 'Version: {version}',
                     repository: 'Repository',
                     developer: 'Developer'
+                },
+                update: {
+                    title: 'Auto Update',
+                    description: 'Check GitHub Releases for new versions at startup (at most once every 24 hours). New versions can be downloaded and installed automatically.',
+                    enableLabel: 'Enable automatic update checks',
+                    checkNow: 'Check Now',
+                    updateNow: 'Update Now',
+                    checking: 'Checking…',
+                    upToDate: 'Up to date',
+                    updateAvailable: 'Update available: v{version}',
+                    installedHint: 'v{version} installed. Reload the window to apply.',
+                    error: 'Check failed',
+                    disabledHint: 'Automatic check is disabled'
                 },
                 exportImport: {
                     title: 'Settings Export/Import',

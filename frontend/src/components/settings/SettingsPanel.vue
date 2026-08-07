@@ -720,6 +720,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     anchor: '[data-search-anchor="appInfo"]'
   },
   {
+    key: 'general-update', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.update.title',
+    keywords: ['更新', 'update', 'アップデート', '自动更新', '自动检查', '版本检查', 'github', 'release', 'リリース'],
+    anchor: '[data-search-anchor="update"]'
+  },
+  {
     key: 'usage', tab: 'usage',
     labelKey: 'components.settings.settingsPanel.sections.usage.title',
     keywords: ['用量', 'usage', '使用量', '统计', 'stats', '統計', 'token用量', '使用时间', 'activity', 'アクティビティ', '热力图']
@@ -903,6 +909,8 @@ async function loadSettings() {
       languageSetting.value = response.settings.ui.language
       setLanguage(response.settings.ui.language)
     }
+    // 加载自动更新检查开关（默认开启）
+    checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
     
     // 加载存储路径配置
     await loadStorageConfig()
@@ -1167,6 +1175,76 @@ async function saveProxySettings() {
     saveMessage.value = t('components.settings.settingsPanel.proxy.saveFailed')
   } finally {
     isSaving.value = false
+  }
+}
+
+// ========== 自动更新设置 ==========
+
+const checkUpdatesEnabled = ref(true)
+const isUpdateChecking = ref(false)
+const isUpdating = ref(false)
+const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
+
+// 保存自动检查开关
+async function saveCheckUpdates(value: boolean) {
+  checkUpdatesEnabled.value = value
+  try {
+    await sendToExtension('updateSettings', { settings: { checkForUpdates: value } })
+  } catch (error) {
+    console.error('Failed to save update check setting:', error)
+  }
+}
+
+// 立即检查更新（忽略 24h 节流）
+async function checkUpdateNow() {
+  if (isUpdateChecking.value) return
+  isUpdateChecking.value = true
+  updateCheckResult.value = null
+  try {
+    const response = await sendToExtension<any>('checkUpdateNow', {})
+    const status = response?.status
+    if (!status) {
+      updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
+    } else if (status.state === 'updateAvailable') {
+      updateCheckResult.value = {
+        type: 'success',
+        text: t('components.settings.settingsPanel.update.updateAvailable').replace('{version}', status.update?.version || '')
+      }
+    } else if (status.state === 'upToDate') {
+      updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
+    } else if (status.state === 'disabled') {
+      updateCheckResult.value = { type: 'info', text: t('components.settings.settingsPanel.update.disabledHint') }
+    } else if (status.state === 'error') {
+      updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
+    }
+  } catch (error) {
+    console.error('Failed to check update:', error)
+    updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
+  } finally {
+    isUpdateChecking.value = false
+  }
+}
+
+// 一键更新：立即检查，有新版本自动下载并安装（安装完成后后端提示重启窗口，用户只需重启）
+async function updateNow() {
+  if (isUpdating.value || isUpdateChecking.value) return
+  isUpdating.value = true
+  updateCheckResult.value = null
+  try {
+    const response = await sendToExtension<any>('updateNow', {})
+    if (response?.alreadyUpToDate) {
+      updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
+    } else if (response?.version) {
+      updateCheckResult.value = {
+        type: 'success',
+        text: t('components.settings.settingsPanel.update.installedHint').replace('{version}', response.version)
+      }
+    }
+  } catch (error: any) {
+    console.error('Failed to update now:', error)
+    updateCheckResult.value = { type: 'error', text: error?.message || t('components.settings.settingsPanel.update.error') }
+  } finally {
+    isUpdating.value = false
   }
 }
 
@@ -1608,6 +1686,37 @@ onMounted(() => {
               </div>
               
               <div class="divider"></div>
+
+              <!-- 更新设置 -->
+              <div class="form-group" data-search-anchor="update">
+                <label class="group-label">
+                  <i class="codicon codicon-cloud-download"></i>
+                  {{ t('components.settings.settingsPanel.update.title') }}
+                </label>
+                <p class="field-description">{{ t('components.settings.settingsPanel.update.description') }}</p>
+
+                <div class="update-settings">
+                  <CustomCheckbox
+                    v-model="checkUpdatesEnabled"
+                    :label="t('components.settings.settingsPanel.update.enableLabel')"
+                    @update:model-value="saveCheckUpdates"
+                  />
+
+                  <div class="update-check-row">
+                    <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="checkUpdateNow">
+                      <i v-if="isUpdateChecking" class="codicon codicon-loading codicon-modifier-spin"></i>
+                      <span v-else>{{ t('components.settings.settingsPanel.update.checkNow') }}</span>
+                    </button>
+                    <button class="update-now-btn" :disabled="isUpdateChecking || isUpdating" @click="updateNow">
+                      <i v-if="isUpdating" class="codicon codicon-loading codicon-modifier-spin"></i>
+                      <span v-else>{{ t('components.settings.settingsPanel.update.updateNow') }}</span>
+                    </button>
+                    <span v-if="updateCheckResult" class="save-message" :class="updateCheckResult.type">
+                      {{ updateCheckResult.text }}
+                    </span>
+                  </div>
+                </div>
+              </div>
               
               <!-- 存储路径设置 -->
               <div class="form-group" data-search-anchor="storage">
@@ -2255,6 +2364,44 @@ onMounted(() => {
 
 .save-message.success {
   color: var(--vscode-terminal-ansiGreen);
+}
+
+.save-message.info {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* 更新设置 */
+.update-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.update-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-now-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.update-now-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.update-now-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .divider {

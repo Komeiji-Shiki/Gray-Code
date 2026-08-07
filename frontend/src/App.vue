@@ -15,6 +15,7 @@ import { UsagePage } from './components/usage'
 import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
+import UpdateModal from './components/common/UpdateModal.vue'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import Splash from './components/Splash.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
@@ -660,6 +661,9 @@ onBeforeUnmount(() => {
 
     <!-- 设置面板（惰性挂载 + v-show 保活，保留表单状态） -->
     <SettingsPanel v-if="languageLoaded && visitedViews.settings" v-show="settingsStore.currentView === 'settings'" />
+
+    <!-- 更新弹窗（发现新版本时提示，全局挂载） -->
+    <UpdateModal />
   </div>
 </template>
 
