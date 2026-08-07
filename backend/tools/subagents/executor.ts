@@ -25,6 +25,7 @@ import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallP
 import type { Content, ContentPart } from '../../modules/conversation/types';
 import type { ToolExecutionResult } from '../../modules/api/chat/utils';
 import type { GenerateRequest } from '../../modules/channel/types';
+import type { BaseChannelConfig } from '../../modules/config/configs/base';
 import { extractMessageTokens, type UsageIndexMessage } from '../../modules/conversation/usageStats';
 import { subAgentRunEventBus } from './runEventBus';
 import type { SubAgentRunStatus } from './runEventBus';
@@ -473,6 +474,30 @@ async function executeToolCall(
             };
         }
 
+        // 修改原因（SEC）：子代理过去无条件执行工具，用户配置需要确认的工具（delete_file /
+        // execute_command 等 toolAutoExec=false）被直接执行，绕过主链路的确认门。
+        // 修改方式：与主链路共用 toolNeedsConfirmation 判定——子代理执行时没有与用户交互的
+        // 确认通道，需要确认的工具直接拒绝并把明确原因回给子模型（模型会转达主模型代为执行）。
+        // fail-closed：共享执行服务缺少确认门（异常注入/不完整实现）时同样拒绝执行，
+        // 不允许静默放行造成安全门缺失。
+        // 修改目的：子代理不再能绕过用户的危险工具确认设置。
+        const confirmationGate = context.toolExecutionService.toolNeedsConfirmation;
+        const confirmationRefusal = typeof confirmationGate === 'function'
+            ? (confirmationGate(toolName, args, context.promptModeSnapshot)
+                ? `Tool "${toolName}" requires user confirmation and cannot be executed automatically by a sub-agent. `
+                + `Ask the main model to perform this action.`
+                : undefined)
+            : `Tool "${toolName}" cannot be executed: the shared tool execution service does not provide a `
+            + `confirmation gate. Ask the main model to perform this action.`;
+        if (confirmationRefusal) {
+            emitToolFailure(confirmationRefusal);
+            return {
+                result: null,
+                success: false,
+                error: confirmationRefusal
+            };
+        }
+
         const channelConfig = await context.configManager.getConfig(agentConfig.channel.channelId);
         if (!channelConfig) {
             const error = `SubAgent channel config not found: ${agentConfig.channel.channelId}`;
@@ -665,9 +690,11 @@ async function reportUsageToMainConversation(
 /**
  * 识别「上下文超限」类错误。
  *
- * 子代理没有接主链路的 ContextTrimService，它的 history 只增不减：工具结果一大、迭代一多就会撞上
- * 模型的上下文上限。各家 provider 措辞不同但都认得出来。不做识别的话，用户只能看到一句原样透传的
- * `AI call failed: ...`，既不知道是撞了上下文，也不知道该去调哪个配置。
+ * 子代理没有接主链路的 ContextTrimService，历史上只增不减会撞上模型上下文上限。
+ * 现在发送前有请求级防御性裁剪（trimSubAgentHistoryForContext），但识别错误仍是
+ * 兜底防线（模型/上游措辞不同，裁剪不可能覆盖全部场景）。各家 provider 措辞不同
+ * 但都认得出来。不做识别的话，用户只能看到一句原样透传的 `AI call failed: ...`，
+ * 既不知道是撞了上下文，也不知道该去调哪个配置。
  */
 function isContextLengthError(error: unknown): boolean {
     const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
@@ -678,6 +705,168 @@ function isContextLengthError(error: unknown): boolean {
         || message.includes('too many tokens')
         || message.includes('prompt is too long')
         || message.includes('reduce the length of the messages');
+}
+
+/**
+ * 子代理请求级上下文裁剪（SEC：子代理无 ContextTrimService，history 只增不减，
+ * 长任务会撞上模型上下文上限直接失败；裁剪在发送前对本次请求生效，不改动
+ * run 内部持有的原 history，也不影响事件总线/续跑记录）。
+ *
+ * 策略：
+ * - 预算 = 渠道 maxContextTokens（缺省 128000）× 0.8，为模型输出与工具声明留余量；
+ * - 超预算时从最旧开始整轮丢弃：functionResponse 必须与其配对的 model 消息一起移除
+ *   （单独丢会留下孤儿 functionResponse，部分 provider 直接报错）；首条用户任务
+ *   消息与末尾两轮始终保留；
+ * - 仍超预算（单条巨型工具结果/文本）时，对超大字符串原地截断并标记截断，保留结构。
+ */
+const SUBAGENT_CONTEXT_BUDGET_DEFAULT_TOKENS = 128000;
+const SUBAGENT_CONTEXT_BUDGET_RATIO = 0.8;
+/** 单条字符串保留上限（约 5 万 token），超过即截断并标记 */
+const SUBAGENT_MAX_SINGLE_STRING_CHARS = 200000;
+
+function hasFunctionResponseParts(message: Content): boolean {
+    return (message.parts || []).some(part => !!part.functionResponse);
+}
+
+/**
+ * 本地 token 估算：口径与主链路对齐——
+ * - 文本按「4 字符 ≈ 1 token」计算（主链路 TokenEstimationService 同口径）；
+ * - 估算含 1.5× 安全系数（主链路 applyLocalEstimateSafetyFactor 同系数），
+ *   多模态 part 按主链路 estimateMultimodalTokens 的近似下界折算
+ *   （inlineData 图片 ≥500 token、fileData 引用按 300 token），避免图像/视频密集
+ *   的工具结果被低估导致裁剪触发过晚；
+ * - 序列化失败（工具结果含 BigInt 等不可 JSON 序列化对象）不抛错，按固定开销兜底——
+ *   估算只服务于裁剪决策，不能因估算失败打断整个 run。
+ */
+const SUBAGENT_TOKEN_SAFETY_FACTOR = 1.5;
+
+function estimateMessageTokens(message: Content): number {
+    let tokens = 4; // 消息级开销（role 等）
+    for (const part of message.parts || []) {
+        if (part.text) {
+            tokens += Math.ceil(part.text.length / 4) + 1;
+        } else if (part.functionResponse) {
+            tokens += safeStringifyTokens(part.functionResponse);
+        } else if (part.functionCall) {
+            tokens += safeStringifyTokens(part.functionCall);
+        } else if (part.inlineData?.data) {
+            tokens += 500 + Math.ceil(part.inlineData.data.length / 4); // base64 数据按 4 字符/token 折算
+        } else if (part.fileData?.fileUri) {
+            tokens += 300;
+        } else {
+            tokens += 8; // 未知 part 固定开销
+        }
+    }
+    return Math.ceil(tokens * SUBAGENT_TOKEN_SAFETY_FACTOR);
+}
+
+/** 序列化 part 估算 token；不可序列化（BigInt/循环引用等）按固定开销兜底，不抛错 */
+function safeStringifyTokens(value: unknown): number {
+    try {
+        return Math.ceil(JSON.stringify(value).length / 4) + 1;
+    } catch {
+        return 64; // 序列化失败兜底：按一条中等大小消息的开销估算
+    }
+}
+
+/** 深度截断超过上限的字符串（保留 JSON 结构，最大递归深度 3 层） */
+function truncateOversizedStrings(value: unknown, depth: number): unknown {
+    if (typeof value === 'string') {
+        if (value.length > SUBAGENT_MAX_SINGLE_STRING_CHARS) {
+            return value.slice(0, SUBAGENT_MAX_SINGLE_STRING_CHARS)
+                + `…[sub-agent context trim: truncated ${value.length} chars]`;
+        }
+        return value;
+    }
+    if (depth <= 0) return value;
+    if (Array.isArray(value)) {
+        return value.map(item => truncateOversizedStrings(item, depth - 1));
+    }
+    if (value && typeof value === 'object') {
+        const result: Record<string, unknown> = {};
+        for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+            result[key] = truncateOversizedStrings(item, depth - 1);
+        }
+        return result;
+    }
+    return value;
+}
+
+function truncateOversizedParts(history: Content[]): void {
+    for (const message of history) {
+        for (const part of message.parts || []) {
+            if (part.text) {
+                part.text = truncateOversizedStrings(part.text, 0) as string;
+            }
+            if (part.functionCall) {
+                part.functionCall = {
+                    ...part.functionCall,
+                    args: truncateOversizedStrings(part.functionCall.args, 3) as Record<string, unknown>
+                };
+            }
+            if (part.functionResponse) {
+                part.functionResponse = {
+                    ...part.functionResponse,
+                    response: truncateOversizedStrings(part.functionResponse.response, 3) as Record<string, unknown>
+                };
+            }
+        }
+    }
+}
+
+export function trimSubAgentHistoryForContext(history: Content[], channelConfig: BaseChannelConfig): Content[] {
+    const maxContextTokens = typeof channelConfig.maxContextTokens === 'number' && channelConfig.maxContextTokens > 0
+        ? channelConfig.maxContextTokens
+        : SUBAGENT_CONTEXT_BUDGET_DEFAULT_TOKENS;
+    const budget = Math.floor(maxContextTokens * SUBAGENT_CONTEXT_BUDGET_RATIO);
+    if (budget <= 0 || history.length <= 1) {
+        return history;
+    }
+    const perMessageTokens = history.map(estimateMessageTokens);
+    const total = perMessageTokens.reduce((sum, tokens) => sum + tokens, 0);
+    if (total <= budget) {
+        return history;
+    }
+
+    // 从最旧开始整轮丢弃：函数响应必须与其配对的 model 消息一起移除（不产生孤儿，
+    // 部分 provider 对孤立 functionResponse 直接报错）。前提：executor 的 history 形态
+    // 不变量是「model 调用消息与其 functionResponse 消息严格相邻」（见下方 push 逻辑），
+    // dropPair 只检查相邻下一条；若未来形态变化，防御性 break 会保守地停止丢弃。
+    // 循环从 index 1 开始，首条任务消息（index 0）在裁剪后重新前置、始终保留；
+    // 末尾两轮（含配对）由 i < history.length - 2 保证不进入丢弃范围。
+    // 停止条件：再丢一轮就会低于预算时停止（尽量保留内容），结果可能仍略超预算——
+    // 由超大字符串截断与 isContextLengthError 兜底文案继续收敛，不追求精确填满预算。
+    let keepFrom = 0;
+    let remaining = total;
+    for (let i = 1; i < history.length - 2 && remaining > budget; ) {
+        const message = history[i];
+        if (message.role === 'user' && hasFunctionResponseParts(message)) {
+            break; // 防御：函数响应不应单独出现在丢弃位（配对总是整轮消费）
+        }
+        const next = history[i + 1];
+        const dropPair = !!next && next.role === 'user' && hasFunctionResponseParts(next);
+        const cost = perMessageTokens[i] + (dropPair ? perMessageTokens[i + 1] : 0);
+        if (remaining - cost <= budget) {
+            break;
+        }
+        remaining -= cost;
+        i += dropPair ? 2 : 1;
+        keepFrom = i;
+    }
+
+    // 裁剪结果深拷贝后截断：不修改 run 内后续轮继续使用的原 history 引用。
+    // 深拷贝失败（工具结果含 BigInt 等不可序列化内容）时放弃截断、仅做引用裁剪：
+    // 裁剪决策与请求发送都不应被序列化能力限制打断。
+    let trimmed: Content[];
+    try {
+        trimmed = JSON.parse(JSON.stringify(
+            keepFrom > 0 ? [history[0], ...history.slice(keepFrom)] : history
+        )) as Content[];
+        truncateOversizedParts(trimmed);
+    } catch {
+        trimmed = keepFrom > 0 ? [history[0], ...history.slice(keepFrom)] : history;
+    }
+    return trimmed;
 }
 
 /**
@@ -1254,14 +1443,24 @@ export function createDefaultExecutor(
                 // 剥离结果就是本轮实际发送给 provider 的请求历史，随后立即记录到事件总线
                 // （lastSentHistory），供 continueFromRunId 续跑精确复用前缀（见 baseContents 选取逻辑）。
                 const sentHistory = stripReplayedAgentInboxForModel(history);
+                // 修改原因（SEC）：子代理 history 只增不减，长任务会撞上模型上下文上限直接失败。
+                // 修改方式：发送前做请求级上下文裁剪（保留首条任务消息与末尾配对，超长字符串截断），
+                //         裁剪结果即为本轮实际发送内容；updateLastSentHistory 同步记录裁剪结果，
+                //         保证 continueFromRunId 续跑前缀与实际发送历史一致。
+                // 修改目的：子代理长任务在撞上限前自动收敛上下文，不再直接失败。
+                const trimmedHistory = trimSubAgentHistoryForContext(sentHistory, channelConfig);
                 const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
-                    history: sentHistory,
+                    history: trimmedHistory,
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: operationSignal,
                     // H-1：toolOverrides 使用继承过滤后的 effectiveTools（子 run 不向模型暴露
                     // 父 run 不允许的工具），与 allowedToolNames 防御性校验口径一致。
-                    toolOverrides: effectiveTools.length > 0 ? effectiveTools : undefined,
+                    // 修改原因（M-6 加固）：空工具集过去被转成 undefined，ChannelManager 会把
+                    // undefined 当作「未指定覆盖」回退成渠道全量工具声明——模型反复调用不可用工具
+                    // 形成失败循环。空数组为真值，能穿透 ChannelManager 并让 formatter 不注入任何
+                    // 工具（formatter 只在 tools.length > 0 时声明），与 allowedToolNames 空集语义一致。
+                    toolOverrides: effectiveTools,
                     suppressRetryNotification: true,
                     // 修改原因：DeepSeek KVCache 按 user_id 隔离、Anthropic metadata.user_id 区分运行域都依赖请求携带稳定标识。
                     // 修改方式：SubAgent 用 runId 作为 conversationId，每个 run 拥有独立缓存域（formatter 会哈希，不泄露原始 ID）。
@@ -1293,7 +1492,7 @@ export function createDefaultExecutor(
                     promptModeSnapshot: currentPromptModeSnapshot
                 };
                 // 立即记录本轮实际发送给 provider 的 history：续跑时以此为前缀才能命中旧 run 的 provider 缓存
-                subAgentRunEventBus.updateLastSentHistory(runId, sentHistory);
+                subAgentRunEventBus.updateLastSentHistory(runId, trimmedHistory);
 
                 // 如果指定了模型，设置模型覆盖
                 if (config.channel.modelId) {
@@ -1415,7 +1614,8 @@ export function createDefaultExecutor(
                         toolCalls,
                         error: isContextLengthError(e)
                             ? `SubAgent ran out of context after ${steps} tool iteration(s) (${history.length} messages accumulated). `
-                            + `Sub-agents do not trim their context: lower this agent's maxIterations, narrow the task, `
+                            + `Requests are trimmed before sending, but the working set still exceeds the model limit: `
+                            + `lower this agent's maxIterations, narrow the task, `
                             + `avoid tools that return very large results, or split the work across several sub-agent calls. `
                             + `Original error: ${failureMessage}`
                             : `AI call failed: ${failureMessage}`
