@@ -591,6 +591,13 @@ export class DiffManager {
      * 只记录 rejected：accepted 按正常结算处理，不会误报。查询后即删除，防止无界增长。
      */
     private evictedRejectedDiffIds: Set<string> = new Set();
+    /**
+     * 被 FIFO 淘汰的 accepted+partial diff 墓碑（仅存最小状态信息）。
+     * 并发终结时，后终结的 diff 可能淘汰掉"已终结但等待者尚未 getDiff"的前一个 diff，
+     * 若直接删除，工具链路 getDiff 返回 undefined 会把"部分接受"误报成"全部接受"。
+     * 只对仍有活跃等待者的 partial diff 留痕；容量上限同 rejected 墓碑。
+     */
+    private evictedAcceptedPartialInfo: Map<string, { partial: boolean; rejectedBlockIndices?: number[] }> = new Map();
     /** 仍有活跃 waitForDiffResolution 等待者的 diff id：淘汰留痕只对它们生效 */
     private activeDiffWaiters: Set<string> = new Set();
 
@@ -885,6 +892,21 @@ export class DiffManager {
             // 淘汰后留痕永远无人查询，集合随会话无界增长。
             if (evicted && evicted.status === 'rejected' && this.activeDiffWaiters.has(oldest)) {
                 this.recordEvictedRejectedDiff(oldest);
+            } else if (
+                evicted && evicted.status === 'accepted'
+                && (evicted.partial || (evicted.rejectedBlockIndices?.length ?? 0) > 0)
+                && this.activeDiffWaiters.has(oldest)
+            ) {
+                // accepted+partial 留痕：并发终结时当前 diff 可能先被淘汰、等待者后 getDiff，
+                // 不记录会把"部分接受"误报为"全部接受"（与 rejected 墓碑同源问题）
+                this.evictedAcceptedPartialInfo.set(oldest, {
+                    partial: true,
+                    rejectedBlockIndices: evicted.rejectedBlockIndices,
+                });
+                if (this.evictedAcceptedPartialInfo.size > DiffManager.MAX_EVICTED_REJECTED_TOMBSTONES) {
+                    const oldestKey = this.evictedAcceptedPartialInfo.keys().next().value;
+                    if (oldestKey !== undefined) this.evictedAcceptedPartialInfo.delete(oldestKey);
+                }
             }
             this.pendingDiffs.delete(oldest);
             this.diffSessions.delete(oldest);
@@ -2430,7 +2452,25 @@ export class DiffManager {
      * 获取指定 ID 的diff
      */
     public getDiff(id: string): PendingDiff | undefined {
-        return this.pendingDiffs.get(id);
+        const diff = this.pendingDiffs.get(id);
+        if (diff) return diff;
+        // 被淘汰的 accepted+partial 墓碑：还原最小状态，
+        // 避免工具链路把"部分接受"误报为"全部接受"
+        const tombstone = this.evictedAcceptedPartialInfo.get(id);
+        if (tombstone) {
+            return {
+                id,
+                filePath: '',
+                absolutePath: '',
+                originalContent: '',
+                newContent: '',
+                timestamp: 0,
+                status: 'accepted',
+                partial: tombstone.partial,
+                rejectedBlockIndices: tombstone.rejectedBlockIndices,
+            };
+        }
+        return undefined;
     }
 
     /**
