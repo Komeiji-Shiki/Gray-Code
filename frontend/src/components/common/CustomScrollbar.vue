@@ -175,6 +175,16 @@ function isAtBottom(): boolean {
 // 记录是否在底部（内容变化前检查）
 let wasAtBottom = true
 
+/**
+ * 程序化贴底写入的目标 scrollTop：写入后紧随的 scroll 事件是程序触发的，
+ * 不能据此重算 wasAtBottom（写入后 scrollHeight 可能已因大段输出/md 解析继续增长，
+ * 实时复验会误判为「用户滚离」→ 永久丢吸底）。scroll 事件到达时比对实际 scrollTop：
+ * - 等于目标值 → 程序写入（或用户恰好滚回同一点，等价于贴底意图）→ 状态保持
+ * - 不等于 → 用户滚动 → 同步复验更新 wasAtBottom（不等 rAF，避免同帧稍后
+ *   执行的 updateLayout 用陈旧状态把用户拉回底部）
+ */
+let programmaticScrollTop: number | null = null
+
 /** 贴底跟随写入阈值（px）：与目标位置差值小于该值时跳过写 scrollTop，避免每帧赋值 */
 const STICKY_FOLLOW_THRESHOLD = 2
 
@@ -481,8 +491,11 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
     // 贴底跟随：与目标位置差值超过阈值才写 scrollTop（已贴底时每帧赋值是纯浪费）
     const targetTop = container.scrollHeight - container.clientHeight
     if (Math.abs(container.scrollTop - targetTop) > STICKY_FOLLOW_THRESHOLD) {
-      container.scrollTop = container.scrollHeight
+      programmaticScrollTop = targetTop
+      container.scrollTop = targetTop
     }
+    // 写入即贴底：不在此复验（scrollHeight 可能已因大段输出/md 解析继续增长，
+    // 复验会误判「不在底部」→ 永久丢吸底）。wasAtBottom 只由用户滚动更新。
   }
 
   updateScrollbar()
@@ -490,8 +503,6 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
   if (options.updateMarkers && props.markerSelector) {
     requestMarkerScan()
   }
-
-  wasAtBottom = isAtBottom()
 }
 
 function scheduleLayoutUpdate(options: { preserveBottom?: boolean; updateMarkers?: boolean } = {}) {
@@ -516,15 +527,22 @@ const markerBaseColor = computed(() => {
   return props.markerColor || 'rgba(100, 160, 255, 0.55)'
 })
 
-// 滚动事件处理：rAF 节流——一帧内的多次滚动事件合并为一次布局更新（含贴底判定）
+// 滚动事件处理：吸底状态同步更新（不等 rAF）——用户滚动意图立即生效，
+// 避免同帧稍后执行的 updateLayout 读到陈旧 wasAtBottom 把用户拉回底部；
+// 滚动条 UI 更新仍 rAF 合帧。
 let scrollRafId: number | null = null
 function handleScroll() {
+  const container = scrollContainer.value
+  if (container && programmaticScrollTop !== null && container.scrollTop === programmaticScrollTop) {
+    // 程序贴底写入触发的 scroll 事件：写入即贴底，状态保持（不因 scrollHeight 增长误判）
+    programmaticScrollTop = null
+  } else {
+    wasAtBottom = isAtBottom()
+  }
   if (scrollRafId !== null) return
   scrollRafId = requestAnimationFrame(() => {
     scrollRafId = null
     updateScrollbar()
-    // 更新底部状态
-    wasAtBottom = isAtBottom()
   })
 }
 
