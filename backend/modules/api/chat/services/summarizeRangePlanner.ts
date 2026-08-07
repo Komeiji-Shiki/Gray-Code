@@ -25,11 +25,12 @@ import { DEFAULT_KEEP_RECENT_TOKENS } from '../../../settings/types';
 /**
  * 将 token 预算配置解析为具体 token 数
  *
+ * @param baseTokens 百分比字符串的基数（当前为「本次总结规划范围内的活跃历史 token 总量」）
  * @returns 解析结果；配置缺失或非法时返回 undefined
  */
 function parseTokenBudget(
     raw: number | string | undefined,
-    maxContextTokens: number
+    baseTokens: number
 ): number | undefined {
     if (raw === undefined || raw === null) {
         return undefined;
@@ -47,7 +48,7 @@ function parseTokenBudget(
     if (text.endsWith('%')) {
         const percent = Number.parseFloat(text.slice(0, -1));
         if (Number.isFinite(percent) && percent > 0 && percent <= 100) {
-            return Math.floor(maxContextTokens * percent / 100);
+            return Math.floor(baseTokens * percent / 100);
         }
         return undefined;
     }
@@ -65,19 +66,23 @@ function parseTokenBudget(
  * 配置缺失或非法时，回落到设置系统的内置默认值 DEFAULT_KEEP_RECENT_TOKENS
  *（单一事实来源，实际生效值由用户在总结设置中配置）。
  *
- * @param raw 配置值：绝对 token 数（number 或数字字符串）或百分比字符串（如 '25%'）
- * @param maxContextTokens 主对话模型的最大上下文 token 数（百分比的基数）
+ * 百分比语义：基数为「本次总结规划范围内的活跃历史 token 总量」（上一次总结之后、
+ * 未被 isSummarized 覆盖的消息），不是主对话模型上下文窗口——'50%' 表示截断一半
+ * 历史、保留另一半，与模型窗口大小无关。
+ *
+ * @param raw 配置值：绝对 token 数（number 或数字字符串）或百分比字符串（如 '50%'）
+ * @param baseTokens 百分比基数（活跃历史 token 总量）
  */
 export function resolveKeepRecentTokenBudget(
     raw: number | string | undefined,
-    maxContextTokens: number
+    baseTokens: number
 ): number {
-    const parsed = parseTokenBudget(raw, maxContextTokens);
+    const parsed = parseTokenBudget(raw, baseTokens);
     if (parsed !== undefined) {
         return parsed;
     }
     // DEFAULT_KEEP_RECENT_TOKENS 是内置合法字面量，恒可解析（有单测守护）
-    return parseTokenBudget(DEFAULT_KEEP_RECENT_TOKENS, maxContextTokens) as number;
+    return parseTokenBudget(DEFAULT_KEEP_RECENT_TOKENS, baseTokens) as number;
 }
 
 /**

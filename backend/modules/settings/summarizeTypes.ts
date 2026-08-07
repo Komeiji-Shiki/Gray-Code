@@ -26,9 +26,12 @@ export interface SummarizeConfig {
     /**
      * 总结时保留最近内容的 token 预算
      *
-     * 支持绝对 token 数（number 或数字字符串）或相对主对话模型最大上下文的
-     * 百分比字符串（如 '25%'）。规划器先满足最近轮次保护，再允许在超长工具回合内部
-     * 选择不拆散 functionCall/functionResponse 的 model 边界，避免整轮过度总结。
+     * 支持绝对 token 数（number 或数字字符串）或相对「本次总结规划范围内活跃历史
+     * token 总量」的百分比字符串（如 '50%' = 截断一半、保留另一半）。百分比基数是
+     * 当前待总结的活跃历史（上一次总结之后、未被 isSummarized 覆盖的消息），不是主
+     * 模型上下文窗口——保证「保留一半」始终是历史的一半，与模型窗口大小无关。
+     * 规划器先满足最近轮次保护，再允许在超长工具回合内部选择不拆散
+     * functionCall/functionResponse 的 model 边界，避免整轮过度总结。
      */
     keepRecentTokens?: number | string;
 
@@ -69,10 +72,11 @@ export interface SummarizeConfig {
 /**
  * 内置默认的总结保留预算（keepRecentTokens 的默认值，单一事实来源）
  *
+ * 默认「截断一半、保留另一半」：保留最近 50% 的活跃历史，更早的一半纳入总结。
  * 用户可在总结设置中修改实际生效值；配置缺失或非法时，
  * 后端解析（summarizeRangePlanner）与前端展示都回落到该值。
  */
-export const DEFAULT_KEEP_RECENT_TOKENS = '25%';
+export const DEFAULT_KEEP_RECENT_TOKENS = '50%';
 
 /** 单个真实用户回合内自动总结的最大尝试次数（默认值，单一事实来源） */
 export const DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN = 2;

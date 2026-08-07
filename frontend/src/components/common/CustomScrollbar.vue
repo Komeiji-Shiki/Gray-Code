@@ -17,6 +17,10 @@ interface MarkerItem {
   element: HTMLElement
   /** marker 的索引序号（用于 tooltip 显示） */
   index: number
+  /** marker 颜色（从 data-marker-color 读取，缺省用 props.markerColor） */
+  color: string
+  /** tooltip 前缀（从 data-marker-tooltip-prefix 读取，缺省用 props.markerTooltipPrefix） */
+  tooltipPrefix: string
 }
 
 const props = defineProps({
@@ -150,6 +154,8 @@ let pendingMarkerScanTimer: ReturnType<typeof setTimeout> | null = null
 const tooltipVisible = ref(false)
 const tooltipContent = ref('')
 const tooltipIndex = ref(0)
+/** 当前 hover marker 的专属 tooltip 前缀（缺省回落 props.markerTooltipPrefix） */
+const tooltipMarkerPrefix = ref('')
 const tooltipTop = ref(0)
 let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
 const tooltipRef = ref<HTMLElement | null>(null)
@@ -335,9 +341,13 @@ function updateMarkers() {
     const htmlEl = el as HTMLElement
     const contentOffset = getContentOffset(htmlEl, container)
     const preview = htmlEl.getAttribute('data-preview') || ''
+    // 颜色与 tooltip 前缀支持按元素覆盖：如总结截断点用黄色 marker + 专属前缀，
+    // 与普通用户消息的蓝色 marker 区分（元素缺省时回落 props 默认值）
+    const color = htmlEl.getAttribute('data-marker-color') || ''
+    const tooltipPrefix = htmlEl.getAttribute('data-marker-tooltip-prefix') || ''
     // 映射到轨道位置：(元素在内容中的偏移 / 总内容高度) * 轨道高度
     const trackPos = (contentOffset / scrollHeight) * trackHeight
-    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1, contentPreview: preview })
+    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1, contentPreview: preview, color, tooltipPrefix })
   })
 
   markerPositions.value = newPositions
@@ -362,6 +372,7 @@ function handleMarkerMouseEnter(marker: MarkerItem, _e: MouseEvent) {
   }
   tooltipContent.value = marker.contentPreview
   tooltipIndex.value = marker.index
+  tooltipMarkerPrefix.value = marker.tooltipPrefix
   tooltipVisible.value = true
 
   // 需要在 DOM 渲染后再计算位置，保证 tooltipRef 已挂载并获取到真实高度
@@ -876,7 +887,7 @@ defineExpose({
           :style="{
             top: `${marker.top}px`,
             height: `${markerHeight}px`,
-            background: markerBaseColor,
+            background: marker.color || markerBaseColor,
             opacity: markerOpacity,
           }"
           @click.stop="handleMarkerClick(marker, $event)"
@@ -902,7 +913,7 @@ defineExpose({
             @wheel="handleTooltipWheel"
           >
             <div class="marker-tooltip-header">
-              {{ markerTooltipPrefix }} #{{ tooltipIndex }}
+              {{ tooltipMarkerPrefix || markerTooltipPrefix }} #{{ tooltipIndex }}
             </div>
             <div class="marker-tooltip-body">
               {{ tooltipContent }}
