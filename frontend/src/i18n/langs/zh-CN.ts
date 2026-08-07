@@ -1223,6 +1223,7 @@ const zhCN = {
                     notification: '通知',
                     agents: '代理',
                     activity: '使用时间',
+                    sandbox: '沙箱',
                     other: '其他'
                 },
                 badges: {
@@ -2321,7 +2322,9 @@ const zhCN = {
                     save: '保存配置',
                     reset: '恢复默认',
                     saved: '保存成功',
-                    saveFailed: '保存失败'
+                    saveFailed: '保存失败',
+                    loadFailed: '加载沙箱配置失败',
+                    noLanguage: '至少需要保留一种语言，否则沙箱将无法运行任何代码'
                 },
 
             },
@@ -2501,6 +2504,7 @@ const zhCN = {
                     enableAll: '全部启用',
                     disableAll: '全部禁用'
                 },
+                sandboxHint: '沙箱的详细参数请在「设置 → 沙箱」中配置',
                 loading: '加载工具列表...',
                 empty: '暂无可用工具',
                 categories: {
@@ -2539,6 +2543,7 @@ const zhCN = {
                     list_files: '列出文件',
                     apply_diff: '应用差异',
                     execute_command: '执行命令',
+                    sandbox: '沙箱',
                     find_files: '查找文件',
                     search_in_files: '在文件中搜索',
                     history_search: '历史搜索',

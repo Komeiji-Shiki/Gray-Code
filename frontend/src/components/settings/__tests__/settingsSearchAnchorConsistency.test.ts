@@ -48,6 +48,26 @@ describe('L-3: 设置搜索 SEARCH_INDEX 锚点一致性', () => {
     expect(missing).toEqual([])
   })
 
+  it('组件中每个 data-search-anchor 都有对应 SEARCH_INDEX 条目（反向防漏：新增锚点必须收录进搜索索引）', () => {
+    const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
+    const indexedAnchors = new Set(
+      Array.from(
+        panelSource.matchAll(/anchor:\s*'\[data-search-anchor="([^"]+)"\]'/g),
+        m => m[1]
+      )
+    )
+
+    const allAnchors: string[] = []
+    for (const { source } of sources) {
+      for (const match of source.matchAll(/data-search-anchor="([^"]+)"/g)) {
+        allAnchors.push(match[1])
+      }
+    }
+
+    const unindexed = [...new Set(allAnchors)].filter(anchor => !indexedAnchors.has(anchor))
+    expect(unindexed).toEqual([])
+  })
+
   it('锚点值不重复（同一选择器只应在索引中出现一次）', () => {
     const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
     const indexedAnchors = Array.from(

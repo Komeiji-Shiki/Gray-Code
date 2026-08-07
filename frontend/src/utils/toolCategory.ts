@@ -32,6 +32,7 @@ const CATEGORY_NAME_KEYS: Record<string, string> = {
   notification: `${CATEGORY_NAME_PREFIX}notification`,
   agents: `${CATEGORY_NAME_PREFIX}agents`,
   activity: `${CATEGORY_NAME_PREFIX}activity`,
+  sandbox: `${CATEGORY_NAME_PREFIX}sandbox`,
   mcp: `${CATEGORY_NAME_PREFIX}mcp`,
   other: `${CATEGORY_NAME_PREFIX}other`
 }
@@ -54,6 +55,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   notification: 'codicon-bell',
   agents: 'codicon-account',
   activity: 'codicon-watch',
+  sandbox: 'codicon-terminal',
   mcp: 'codicon-plug',
   other: 'codicon-extensions'
 }

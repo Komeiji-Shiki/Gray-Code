@@ -1222,6 +1222,7 @@ const en: LanguageMessages = {
                     notification: 'Notifications',
                     agents: 'Agents',
                     activity: 'Usage Time',
+                    sandbox: 'Sandbox',
                     other: 'Other'
                 },
                 badges: {
@@ -2320,7 +2321,9 @@ const en: LanguageMessages = {
                     save: 'Save',
                     reset: 'Reset Defaults',
                     saved: 'Saved successfully',
-                    saveFailed: 'Failed to save'
+                    saveFailed: 'Failed to save',
+                    loadFailed: 'Failed to load sandbox config',
+                    noLanguage: 'Keep at least one language, otherwise the sandbox cannot run any code'
                 },
 
             },
@@ -2500,6 +2503,7 @@ const en: LanguageMessages = {
                     enableAll: 'Enable All',
                     disableAll: 'Disable All'
                 },
+                sandboxHint: 'Detailed sandbox parameters can be configured in Settings → Sandbox',
                 loading: 'Loading tools list...',
                 empty: 'No tools available',
                 categories: {
@@ -2538,6 +2542,7 @@ const en: LanguageMessages = {
                     list_files: 'List Files',
                     apply_diff: 'Apply Diff',
                     execute_command: 'Execute Command',
+                    sandbox: 'Sandbox',
                     find_files: 'Find Files',
                     search_in_files: 'Search in Files',
                     history_search: 'History Search',

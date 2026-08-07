@@ -689,37 +689,43 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   {
     key: 'sandbox', tab: 'sandbox',
     labelKey: 'components.settings.settingsPanel.sections.sandbox.title',
-    keywords: ['沙箱', 'sandbox', 'サンドボックス', '运行代码', 'run code', '隔离', '代码执行', '安全运行']
+    keywords: ['沙箱', 'sandbox', 'サンドボックス', '运行代码', 'run code', '隔离', '代码执行', '安全运行', '安全', 'security', 'セキュリティ', '代码隔离']
   },
   {
     key: 'sandbox-toggle', tab: 'sandbox',
-    labelKey: 'components.settings.sandbox.enabled.label',
+    labelKey: 'components.settings.settingsPanel.sandbox.enabled.label',
     keywords: ['启用', 'enabled', '有効', '沙箱开关', '总开关'],
     anchor: '[data-search-anchor="sandbox-toggle"]'
   },
   {
     key: 'sandbox-languages', tab: 'sandbox',
-    labelKey: 'components.settings.sandbox.languages.title',
+    labelKey: 'components.settings.settingsPanel.sandbox.languages.title',
     keywords: ['语言', 'language', '言語', 'python', 'javascript', 'bash', 'powershell', 'sh', '白名单'],
     anchor: '[data-search-anchor="sandbox-languages"]'
   },
   {
     key: 'sandbox-timeout', tab: 'sandbox',
-    labelKey: 'components.settings.sandbox.timeout.title',
+    labelKey: 'components.settings.settingsPanel.sandbox.timeout.title',
     keywords: ['超时', 'timeout', 'タイムアウト', '时间限制'],
     anchor: '[data-search-anchor="sandbox-timeout"]'
   },
   {
     key: 'sandbox-output', tab: 'sandbox',
-    labelKey: 'components.settings.sandbox.output.title',
+    labelKey: 'components.settings.settingsPanel.sandbox.output.title',
     keywords: ['输出', 'output', '出力', '行数', '截断', 'lines'],
     anchor: '[data-search-anchor="sandbox-output"]'
   },
   {
     key: 'sandbox-cleanup', tab: 'sandbox',
-    labelKey: 'components.settings.sandbox.cleanup.title',
+    labelKey: 'components.settings.settingsPanel.sandbox.cleanup.title',
     keywords: ['清理', 'cleanup', 'クリーンアップ', '临时目录', 'temp', '删除'],
     anchor: '[data-search-anchor="sandbox-cleanup"]'
+  },
+  {
+    key: 'sandbox-info', tab: 'sandbox',
+    labelKey: 'components.settings.settingsPanel.sandbox.info.title',
+    keywords: ['安全', 'security', 'セキュリティ', '隔离', '隔离级别', 'isolation', '限制', '沙箱安全'],
+    anchor: '[data-search-anchor="sandbox-info"]'
   },
   {
     key: 'general', tab: 'general',

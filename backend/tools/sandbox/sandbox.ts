@@ -21,15 +21,12 @@ import { StringDecoder } from 'string_decoder';
 import { TextDecoder } from 'util';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
-import { getDefaultSandboxConfig } from '../../modules/settings';
+import { getDefaultSandboxConfig, SANDBOX_LANGUAGES } from '../../modules/settings';
 import type { SandboxToolConfig, SandboxLanguage } from '../../modules/settings';
 
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
-
-/** 支持的语言列表（顺序即枚举顺序） */
-export const SANDBOX_LANGUAGES: SandboxLanguage[] = ['python', 'javascript', 'bash', 'powershell', 'sh'];
 
 /** 语言运行信息 */
 interface LanguageRunner {
@@ -84,14 +81,22 @@ const LANGUAGE_RUNNERS: Record<SandboxLanguage, LanguageRunner> = {
 
 /** 获取沙箱配置：优先用注入的 context.config，其次读设置管理器，最后用默认值 */
 function resolveSandboxConfig(contextConfig?: unknown): SandboxToolConfig {
+    // 空列表语义：显式保存的空白名单 = 拒绝全部语言（不能回退到默认值，
+    // 否则"全部禁用"会变成"全部放行"）
+    const normalizeLanguages = (value: unknown): SandboxLanguage[] => {
+        if (!Array.isArray(value)) {
+            return getDefaultSandboxConfig().allowedLanguages;
+        }
+        return value.filter((l): l is SandboxLanguage => SANDBOX_LANGUAGES.includes(l as SandboxLanguage));
+    };
     if (contextConfig && typeof contextConfig === 'object') {
         const cfg = contextConfig as SandboxToolConfig;
         // 合并默认值，保证字段完整
         const defaults = getDefaultSandboxConfig();
         return {
             enabled: cfg.enabled !== undefined ? cfg.enabled : defaults.enabled,
-            allowedLanguages: Array.isArray(cfg.allowedLanguages) && cfg.allowedLanguages.length > 0
-                ? cfg.allowedLanguages as SandboxLanguage[]
+            allowedLanguages: Array.isArray(cfg.allowedLanguages)
+                ? normalizeLanguages(cfg.allowedLanguages)
                 : defaults.allowedLanguages,
             defaultTimeout: typeof cfg.defaultTimeout === 'number' && cfg.defaultTimeout > 0
                 ? cfg.defaultTimeout : defaults.defaultTimeout,
@@ -123,42 +128,101 @@ function safeRemoveDir(dir: string): void {
 }
 
 /**
- * 解码输出 Buffer：优先 UTF-8，Windows 下出现替换字符时回退 GBK
+ * 流式输出内存护栏：持续输出的进程（如 `print('x'*10**9)`）会在截断前无限累积，
+ * 超出上限的旧内容被丢弃并计数，最终按行截断时补充到总量提示中。
+ * 上限按字符计（约 16MB UTF-16 文本），足够承载 20 万行 × 80 字符的输出。
  */
-function decodeOutput(buffer: Buffer): string {
-    if (buffer.length === 0) return '';
-    const utf8 = buffer.toString('utf8');
-    // 含 U+FFFD 替换字符且在 Windows 上，尝试 GBK 解码
-    if (process.platform === 'win32' && utf8.includes('\uFFFD')) {
-        try {
-            const gbk = new TextDecoder('gbk');
-            const decoded = gbk.decode(buffer);
-            if (decoded && !decoded.includes('\uFFFD')) {
-                return decoded;
-            }
-        } catch {
-            // TextDecoder 不支持 gbk（未启用 full-ICU），忽略
+const MAX_RETAINED_OUTPUT_CHARS = 8_000_000;
+
+type StreamDecodeMode = 'utf8' | 'gbk';
+
+/**
+ * 统计 Unicode 替换字符数量
+ *
+ * 当字节流按错误编码解码时，通常会出现大量 U+FFFD（�）
+ */
+function countReplacementChars(text: string): number {
+    let count = 0;
+    for (const ch of text) {
+        if (ch === '\uFFFD') {
+            count += 1;
         }
     }
-    return utf8;
+    return count;
+}
+
+/**
+ * 判断是否应从 UTF-8 降级到 GBK 解码
+ */
+function shouldFallbackToGbk(utf8Text: string, gbkText: string, chunk: Buffer): boolean {
+    // 纯 ASCII 内容不需要降级
+    if (!chunk.some(byte => byte >= 0x80)) {
+        return false;
+    }
+
+    const utf8ReplacementCount = countReplacementChars(utf8Text);
+    if (utf8ReplacementCount === 0) {
+        return false;
+    }
+
+    const gbkReplacementCount = countReplacementChars(gbkText);
+    return gbkReplacementCount < utf8ReplacementCount;
+}
+
+/**
+ * 根据当前模式解码流式输出：Windows 下 UTF-8 出现替换字符时自动降级 GBK
+ * （与 execute_command 同一套机制；GBK 预览解码复用实例避免逐 chunk 重建）
+ */
+function decodeWithMode(
+    chunk: Buffer,
+    modeRef: { mode: StreamDecodeMode },
+    utf8Decoder: StringDecoder,
+    gbkDecoder?: TextDecoder,
+    gbkPreviewDecoder?: TextDecoder
+): string {
+    if (modeRef.mode === 'gbk' && gbkDecoder) {
+        return gbkDecoder.decode(chunk, { stream: true });
+    }
+
+    const utf8Text = utf8Decoder.write(chunk);
+    if (!gbkDecoder || !gbkPreviewDecoder) {
+        return utf8Text;
+    }
+
+    const gbkPreview = gbkPreviewDecoder.decode(chunk);
+    if (shouldFallbackToGbk(utf8Text, gbkPreview, chunk)) {
+        modeRef.mode = 'gbk';
+        return gbkDecoder.decode(chunk, { stream: true });
+    }
+
+    return utf8Text;
 }
 
 /**
  * 按行截断输出，保留最后 N 行
+ *
+ * 边界语义：
+ *  - maxLines < 0：不截断，返回真实行数
+ *  - maxLines === 0：全部丢弃（返回空串并标记截断）
+ *  - 其余：保留最后 maxLines 行
  */
 function truncateOutputLines(output: string, maxLines: number): { text: string; truncated: boolean; totalLines: number } {
+    const totalLines = output.split('\n').length;
     if (maxLines < 0) {
-        return { text: output, truncated: false, totalLines: 0 };
+        return { text: output, truncated: false, totalLines };
+    }
+    if (maxLines === 0) {
+        return { text: '', truncated: true, totalLines };
     }
     const lines = output.split('\n');
     if (lines.length <= maxLines) {
-        return { text: output, truncated: false, totalLines: lines.length };
+        return { text: output, truncated: false, totalLines };
     }
     const kept = lines.slice(lines.length - maxLines);
     return {
         text: kept.join('\n'),
         truncated: true,
-        totalLines: lines.length
+        totalLines
     };
 }
 
@@ -179,7 +243,10 @@ export function createSandboxTool(): Tool {
         'the corresponding interpreter. Optional `stdin` is piped to the program.',
         '',
         'NOTE: This is lightweight filesystem isolation, NOT OS-level sandboxing. It does not block',
-        'network access or limit CPU/memory. Do not use for truly malicious code.'
+        'network access or limit CPU/memory. Do not use for truly malicious code.',
+        '',
+        'By default this tool requires user confirmation before execution (same as execute_command);',
+        'it can be set to auto-execute in the tool auto-execution settings.'
     ].join('\n');
 
     return {
@@ -187,6 +254,7 @@ export function createSandboxTool(): Tool {
             name: 'sandbox',
             category: 'sandbox',
             description,
+            strict: true, // API 端强制 schema 校验
             parameters: {
                 type: 'object',
                 properties: {
@@ -269,7 +337,9 @@ export function createSandboxTool(): Tool {
             try {
                 fs.writeFileSync(scriptPath, code, { encoding: 'utf8' });
             } catch (error) {
-                safeRemoveDir(tempDir);
+                if (config.cleanupTempDir) {
+                    safeRemoveDir(tempDir);
+                }
                 return {
                     success: false,
                     error: `Failed to write script file: ${error instanceof Error ? error.message : String(error)}`
@@ -295,7 +365,9 @@ export function createSandboxTool(): Tool {
                         windowsHide: true
                     });
                 } catch (error) {
-                    safeRemoveDir(tempDir);
+                    if (config.cleanupTempDir) {
+                        safeRemoveDir(tempDir);
+                    }
                     resolve({
                         success: false,
                         error: `Failed to spawn "${cmdInfo.command}": ${error instanceof Error ? error.message : String(error)}`
@@ -303,20 +375,44 @@ export function createSandboxTool(): Tool {
                     return;
                 }
 
-                const stdoutChunks: Buffer[] = [];
-                const stderrChunks: Buffer[] = [];
-                const stdoutDecoder = new StringDecoder('utf8');
-                const stderrDecoder = new StringDecoder('utf8');
+                // Windows 上支持 UTF-8 -> GBK 自动降级（与 execute_command 同一套机制）
+                const isWindows = process.platform === 'win32';
+                const stdoutUtf8Decoder = new StringDecoder('utf8');
+                const stderrUtf8Decoder = new StringDecoder('utf8');
+                const stdoutGbkDecoder = isWindows ? new TextDecoder('gbk') : undefined;
+                const stderrGbkDecoder = isWindows ? new TextDecoder('gbk') : undefined;
+                const stdoutGbkPreviewDecoder = isWindows ? new TextDecoder('gbk') : undefined;
+                const stderrGbkPreviewDecoder = isWindows ? new TextDecoder('gbk') : undefined;
+                const stdoutDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
+                const stderrDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
                 let stdoutText = '';
                 let stderrText = '';
+                let stdoutOmittedChars = 0;
+                let stderrOmittedChars = 0;
+
+                // 有界追加：超出内存护栏时丢弃最旧内容并计数
+                const appendBounded = (current: string, incoming: string): { next: string; omitted: number } => {
+                    const combined = current + incoming;
+                    if (combined.length <= MAX_RETAINED_OUTPUT_CHARS) {
+                        return { next: combined, omitted: 0 };
+                    }
+                    return {
+                        next: combined.slice(combined.length - MAX_RETAINED_OUTPUT_CHARS),
+                        omitted: combined.length - MAX_RETAINED_OUTPUT_CHARS
+                    };
+                };
 
                 proc.stdout?.on('data', (chunk: Buffer) => {
-                    stdoutChunks.push(chunk);
-                    stdoutText += stdoutDecoder.write(chunk);
+                    const text = decodeWithMode(chunk, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder, stdoutGbkPreviewDecoder);
+                    const { next, omitted } = appendBounded(stdoutText, text);
+                    stdoutText = next;
+                    stdoutOmittedChars += omitted;
                 });
                 proc.stderr?.on('data', (chunk: Buffer) => {
-                    stderrChunks.push(chunk);
-                    stderrText += stderrDecoder.write(chunk);
+                    const text = decodeWithMode(chunk, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder, stderrGbkPreviewDecoder);
+                    const { next, omitted } = appendBounded(stderrText, text);
+                    stderrText = next;
+                    stderrOmittedChars += omitted;
                 });
 
                 // 写入 stdin（如果有）
@@ -330,11 +426,25 @@ export function createSandboxTool(): Tool {
                     try { proc.stdin.end(); } catch { /* ignore */ }
                 }
 
+                // 终止进程树：先 SIGTERM，回调报错（进程不存在等）时升级 SIGKILL，
+                // 避免忽略 SIGTERM 的进程导致 close 永不触发、Promise 永久挂起
+                const killProcessTree = (pid: number) => {
+                    treeKill(pid, 'SIGTERM', (err) => {
+                        if (err) {
+                            try {
+                                treeKill(pid, 'SIGKILL');
+                            } catch {
+                                try { proc.kill('SIGKILL'); } catch { /* 进程可能已退出 */ }
+                            }
+                        }
+                    });
+                };
+
                 // 超时定时器
                 const timer = setTimeout(() => {
                     timedOut = true;
                     if (proc.pid) {
-                        treeKill(proc.pid);
+                        killProcessTree(proc.pid);
                     } else {
                         try { proc.kill(); } catch { /* ignore */ }
                     }
@@ -345,7 +455,7 @@ export function createSandboxTool(): Tool {
                 const onAbort = () => {
                     aborted = true;
                     if (proc.pid) {
-                        treeKill(proc.pid);
+                        killProcessTree(proc.pid);
                     } else {
                         try { proc.kill(); } catch { /* ignore */ }
                     }
@@ -365,8 +475,12 @@ export function createSandboxTool(): Tool {
                     }
 
                     // flush 解码器残留
-                    stdoutText += stdoutDecoder.end();
-                    stderrText += stderrDecoder.end();
+                    stdoutText += stdoutDecodeModeRef.mode === 'gbk' && stdoutGbkDecoder
+                        ? stdoutGbkDecoder.decode()
+                        : stdoutUtf8Decoder.end();
+                    stderrText += stderrDecodeModeRef.mode === 'gbk' && stderrGbkDecoder
+                        ? stderrGbkDecoder.decode()
+                        : stderrUtf8Decoder.end();
 
                     // 合并输出
                     const rawOutput = (stdoutText + (stderrText ? '\n[stderr]\n' + stderrText : '')).trimEnd();
@@ -398,6 +512,7 @@ export function createSandboxTool(): Tool {
                         success = true;
                     }
 
+                    const omittedChars = stdoutOmittedChars + stderrOmittedChars;
                     resolve({
                         success,
                         data: {
@@ -406,9 +521,12 @@ export function createSandboxTool(): Tool {
                             signal: signal ?? undefined,
                             duration,
                             output: output || '(no output)',
-                            truncated,
-                            truncatedNote: truncated
-                                ? `Output truncated to last ${maxLines} lines (total ${totalLines} lines).`
+                            truncated: truncated || omittedChars > 0,
+                            truncatedNote: (truncated || omittedChars > 0)
+                                ? [
+                                    truncated ? `Output truncated to last ${maxLines} lines (total ${totalLines} lines).` : null,
+                                    omittedChars > 0 ? `Output overflow: oldest ${omittedChars} characters were dropped to bound memory.` : null
+                                ].filter(Boolean).join(' ')
                                 : undefined,
                             tempDir: config.cleanupTempDir ? undefined : tempDir
                         },
@@ -423,8 +541,12 @@ export function createSandboxTool(): Tool {
                         abortSignal.removeEventListener('abort', onAbort);
                     }
                     // flush
-                    stdoutText += stdoutDecoder.end();
-                    stderrText += stderrDecoder.end();
+                    stdoutText += stdoutDecodeModeRef.mode === 'gbk' && stdoutGbkDecoder
+                        ? stdoutGbkDecoder.decode()
+                        : stdoutUtf8Decoder.end();
+                    stderrText += stderrDecodeModeRef.mode === 'gbk' && stderrGbkDecoder
+                        ? stderrGbkDecoder.decode()
+                        : stderrUtf8Decoder.end();
 
                     if (config.cleanupTempDir) {
                         safeRemoveDir(tempDir);

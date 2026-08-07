@@ -20,7 +20,8 @@ import type {
     ExecuteCommandToolConfig,
     ShellConfig,
     HistorySearchToolConfig,
-    SandboxToolConfig
+    SandboxToolConfig,
+    SandboxLanguage
 } from './types';
 import {
     DEFAULT_LIST_FILES_CONFIG,
@@ -34,6 +35,7 @@ import {
     DEFAULT_HISTORY_SEARCH_CONFIG,
     getDefaultExecuteCommandConfig,
     getDefaultSandboxConfig,
+    SANDBOX_LANGUAGES,
     DEFAULT_MAX_TOOL_ITERATIONS
 } from './types';
 import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
@@ -463,11 +465,18 @@ export class ToolsSettingsService {
         const oldConfig = this.getSandboxConfig();
         const newConfig = { ...oldConfig, ...config };
         if (typeof newConfig.defaultTimeout === 'number' && Number.isFinite(newConfig.defaultTimeout)) {
-            newConfig.defaultTimeout = Math.max(1000, Math.floor(newConfig.defaultTimeout));
+            // 与前端输入范围一致（1000 ~ 600000ms）
+            newConfig.defaultTimeout = Math.min(600000, Math.max(1000, Math.floor(newConfig.defaultTimeout)));
         }
         if (typeof newConfig.maxOutputLines === 'number' && Number.isFinite(newConfig.maxOutputLines)) {
             // -1 表示无限制，否则至少 1
             newConfig.maxOutputLines = newConfig.maxOutputLines === -1 ? -1 : Math.max(1, Math.floor(newConfig.maxOutputLines));
+        }
+        if (Array.isArray(newConfig.allowedLanguages)) {
+            // 过滤未知语言；空数组合法（= 拒绝全部语言，不回退默认值）
+            newConfig.allowedLanguages = newConfig.allowedLanguages.filter((l): l is SandboxLanguage =>
+                SANDBOX_LANGUAGES.includes(l as SandboxLanguage)
+            );
         }
         await this.core.saveToolsConfigEntry('sandbox', oldConfig, newConfig);
     }

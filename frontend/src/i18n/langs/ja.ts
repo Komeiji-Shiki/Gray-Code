@@ -1222,6 +1222,7 @@ const ja: LanguageMessages = {
                     notification: '通知',
                     agents: 'エージェント',
                     activity: '使用時間',
+                    sandbox: 'サンドボックス',
                     other: 'その他'
                 },
                 badges: {
@@ -2320,7 +2321,9 @@ const ja: LanguageMessages = {
                     save: '保存',
                     reset: '既定値に戻す',
                     saved: '保存しました',
-                    saveFailed: '保存に失敗しました'
+                    saveFailed: '保存に失敗しました',
+                    loadFailed: 'サンドボックス設定の読み込みに失敗しました',
+                    noLanguage: '少なくとも 1 つの言語を残してください。さもないとサンドボックスはコードを実行できません'
                 },
 
             },
@@ -2500,6 +2503,7 @@ const ja: LanguageMessages = {
                     enableAll: 'すべて有効化',
                     disableAll: 'すべて無効化'
                 },
+                sandboxHint: 'サンドボックスの詳細設定は「設定 → サンドボックス」で行えます',
                 loading: 'ツールリストを読み込み中...',
                 empty: '利用可能なツールがありません',
                 categories: {
@@ -2538,6 +2542,7 @@ const ja: LanguageMessages = {
                     list_files: 'ファイル一覧',
                     apply_diff: '差分を適用',
                     execute_command: 'コマンドを実行',
+                    sandbox: 'サンドボックス',
                     find_files: 'ファイルを検索',
                     search_in_files: 'ファイル内を検索',
                     history_search: '履歴を検索',

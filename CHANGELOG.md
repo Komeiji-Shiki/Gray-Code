@@ -8,6 +8,23 @@
 
 ## [Unreleased]
 
+### Fixed
+  - **沙箱功能完整化**（修复 6ad6805 引入的断点与缺陷）：
+    - 工具声明缓存指纹纳入 `toolsConfig.sandbox`：在设置页开启/关闭沙箱总开关后，LLM 的工具列表立即生效，不再需要重载扩展（此前开关变更不失效声明缓存，沙箱工具对模型永远不可见）。
+    - 语言白名单空列表语义统一为「拒绝全部语言」：此前前端把空列表回退显示为全选、执行层回退为全允许，用户取消全部语言反而获得"全部放行"，存在安全语义反转；现前后端与执行层一致（空 = 全拒），且前端禁止保存空列表并提示至少保留一种语言。
+    - 超时/中止杀进程补 SIGTERM 失败升级 SIGKILL：忽略 SIGTERM 的进程不再导致工具调用永久挂起（对照 execute_command 同款兜底）。
+    - 输出流式累积增加内存护栏（上限 800 万字符，超出丢弃最旧内容并计数提示）：巨量输出（如单条 10^9 字符打印）不再在截断前撑爆内存。
+    - Windows 下输出解码接入 UTF-8 → GBK 自动降级（与 execute_command 同一机制），中文脚本输出不再乱码；清理原先从未被调用的死代码解码路径。
+    - `truncateOutputLines` 边界修复（`-1` 返回真实行数、`0` 全部截断）；写文件/spawn 失败路径的临时目录清理尊重 `cleanupTempDir` 配置；工具声明补 `strict: true` 并注明默认需确认。
+    - `updateSandboxConfig` 保存时过滤未知语言、钳制超时上限（1000~600000ms），与前端输入范围对齐。
+
+### Changed
+  - 沙箱设置页 i18n 键路径修正：此前组件引用 `components.settings.sandbox.*`，实际键位于 `components.settings.settingsPanel.sandbox.*`，导致全部文案渲染为原始 key；现已统一，搜索索引 labelKey 同步修正。
+  - 设置搜索补齐 `sandbox-info` 条目与 `security/安全` 等关键词；锚点一致性测试增加反向断言（组件锚点必须被搜索索引收录），防止再次漏收。
+  - 沙箱设置页「恢复默认」改为获取后端权威默认值（`getDefaultSandboxConfig`）并立即保存，消除默认值双源漂移；总开关与保存操作加并发防抖；加载失败文案 i18n 化。
+  - 工具管理页的沙箱开关接入真实总开关（`updateSandboxConfig.enabled`），并新增"详细参数请在设置页配置"提示徽标；三语 `categories.sandbox` / `toolDisplayNames.sandbox` / 工具页 `sandboxHint` 补齐。
+  - 新增 `SandboxSettings.test.ts`（加载/空白名单语义/开关回滚/保存校验/恢复默认/数值钳制）。
+
 ## [1.7.3] - 2026-08-07
 
 ### Added

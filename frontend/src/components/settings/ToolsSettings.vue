@@ -142,10 +142,21 @@ async function toggleTool(toolName: string, enabled: boolean) {
   savingTools.value.add(toolName)
   
   try {
-    await sendToExtension('tools.setToolEnabled', {
-      toolName,
-      enabled
-    })
+    if (toolName === 'sandbox') {
+      // 沙箱的真实总开关是「设置 → 沙箱」页的 toolsConfig.sandbox.enabled；
+      // toolsEnabled.sandbox 只是叠加门控，单独切换它没有任何可见效果。
+      // 这里直接写真实总开关，避免工具页的开关变成无效控件。
+      await sendToExtension('updateSandboxConfig', { config: { enabled } })
+      const tool = tools.value.find(t => t.name === toolName)
+      if (tool) {
+        tool.enabled = enabled
+      }
+    } else {
+      await sendToExtension('tools.setToolEnabled', {
+        toolName,
+        enabled
+      })
+    }
     
     // 更新本地状态
     const tool = tools.value.find(t => t.name === toolName)
@@ -304,6 +315,15 @@ onMounted(() => {
               <div class="tool-info">
                 <div class="tool-name-row">
                   <span class="tool-name">{{ getToolDisplayName(tool.name) }}</span>
+                  <!-- 沙箱详细配置入口提示 -->
+                  <span
+                    v-if="tool.name === 'sandbox'"
+                    class="sandbox-config-hint"
+                    :title="t('components.settings.toolsSettings.sandboxHint')"
+                  >
+                    <i class="codicon codicon-settings-gear"></i>
+                    {{ t('components.settings.toolsSettings.sandboxHint') }}
+                  </span>
                   <!-- 依赖缺失标记 -->
                   <span
                     v-if="hasToolDependencies(tool.name) && !areAllDependenciesInstalled(tool.name)"
@@ -718,6 +738,23 @@ onMounted(() => {
 }
 
 .dependency-badge .codicon {
+  font-size: 10px;
+}
+
+/* 沙箱详细配置提示徽标 */
+.sandbox-config-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
+  border-radius: 10px;
+  font-size: 10px;
+  color: var(--vscode-badge-foreground, inherit);
+  cursor: pointer;
+}
+
+.sandbox-config-hint .codicon {
   font-size: 10px;
 }
 

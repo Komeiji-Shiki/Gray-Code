@@ -838,7 +838,8 @@ function getCategoryDisplayName(category: string): string {
     mcp: 'MCP',
     todo: 'TODO',
     agents: 'Agents',
-    skills: 'Skills'
+    skills: 'Skills',
+    sandbox: t('components.settings.toolsSettings.categories.sandbox')
   }
   return mapping[category] || category
 }

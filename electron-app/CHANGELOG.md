@@ -8,6 +8,11 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [Unreleased]
+
+### Changed
+  - 沙箱功能完整化批次（详见根目录 CHANGELOG [Unreleased]）：声明缓存指纹纳入沙箱开关、空白名单语义统一、超时杀进程 SIGKILL 升级、输出内存护栏、GBK 解码降级、设置页 i18n 键路径修正与搜索索引补齐等。
+
 ## [1.7.3] - 2026-08-07
 
 ### Added

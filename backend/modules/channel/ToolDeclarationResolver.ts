@@ -123,6 +123,7 @@ export class ToolDeclarationResolver {
             toolsConfig.resize_image ?? null,
             toolsConfig.rotate_image ?? null,
             toolsConfig.subagents ?? null,
+            toolsConfig.sandbox ?? null,
         ]);
     }
 

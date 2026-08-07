@@ -7,7 +7,9 @@
 import type { Tool } from '../types';
 
 // 导出沙箱工具
-export { registerSandbox, createSandboxTool, SANDBOX_LANGUAGES } from './sandbox';
+export { registerSandbox, createSandboxTool } from './sandbox';
+// 语言白名单唯一权威来源在 settings 层（toolsTypes.ts），避免 tools -> settings 循环依赖
+export { SANDBOX_LANGUAGES } from '../../modules/settings';
 
 /**
  * 获取所有沙箱工具

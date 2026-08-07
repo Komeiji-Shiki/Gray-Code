@@ -21,10 +21,14 @@ interface SandboxConfig {
   cleanupTempDir: boolean
 }
 
+/** 后端权威默认值（getDefaultSandboxConfig），加载/重置时同步，避免双源漂移 */
+let backendDefaults: SandboxConfig | null = null
+
 const ALL_LANGUAGES = ['python', 'javascript', 'bash', 'powershell', 'sh']
 
 const isLoading = ref(false)
 const isSaving = ref(false)
+const isToggling = ref(false)
 const loadError = ref('')
 const saveMessage = ref('')
 const saveError = ref('')
@@ -46,23 +50,46 @@ const draft = reactive<SandboxConfig>({
   cleanupTempDir: true
 })
 
+async function fetchBackendDefaults(): Promise<SandboxConfig | null> {
+  try {
+    const response = await sendToExtension<SandboxConfig>('getDefaultSandboxConfig', {})
+    if (response && typeof response === 'object') {
+      backendDefaults = {
+        enabled: response.enabled !== false,
+        allowedLanguages: Array.isArray(response.allowedLanguages)
+          ? [...response.allowedLanguages]
+          : [...ALL_LANGUAGES],
+        defaultTimeout: typeof response.defaultTimeout === 'number' ? response.defaultTimeout : 30000,
+        maxOutputLines: typeof response.maxOutputLines === 'number' ? response.maxOutputLines : 200,
+        cleanupTempDir: response.cleanupTempDir !== false
+      }
+    }
+  } catch {
+    // 后端接口不可用时回退到本地默认值
+  }
+  return backendDefaults
+}
+
 async function loadConfig() {
   isLoading.value = true
   loadError.value = ''
   try {
+    await fetchBackendDefaults()
+    const defaults = backendDefaults
     const response = await sendToExtension<SandboxConfig>('getSandboxConfig', {})
     if (response) {
       config.enabled = response.enabled !== false
-      config.allowedLanguages = Array.isArray(response.allowedLanguages) && response.allowedLanguages.length > 0
+      // 空白名单是合法配置（= 拒绝全部语言），不回退到默认值
+      config.allowedLanguages = Array.isArray(response.allowedLanguages)
         ? [...response.allowedLanguages]
-        : [...ALL_LANGUAGES]
-      config.defaultTimeout = typeof response.defaultTimeout === 'number' ? response.defaultTimeout : 30000
-      config.maxOutputLines = typeof response.maxOutputLines === 'number' ? response.maxOutputLines : 200
+        : [...(defaults?.allowedLanguages ?? ALL_LANGUAGES)]
+      config.defaultTimeout = typeof response.defaultTimeout === 'number' ? response.defaultTimeout : (defaults?.defaultTimeout ?? 30000)
+      config.maxOutputLines = typeof response.maxOutputLines === 'number' ? response.maxOutputLines : (defaults?.maxOutputLines ?? 200)
       config.cleanupTempDir = response.cleanupTempDir !== false
       syncDraft()
     }
   } catch (error: any) {
-    loadError.value = error?.message || 'Failed to load sandbox config'
+    loadError.value = error?.message || t('components.settings.settingsPanel.sandbox.loadFailed')
   } finally {
     isLoading.value = false
   }
@@ -78,18 +105,22 @@ function syncDraft() {
 
 /** 总开关：立即保存 */
 async function toggleEnabled(val: boolean) {
+  if (isToggling.value) return
+  isToggling.value = true
   const prev = config.enabled
   config.enabled = val
   draft.enabled = val
   try {
     await sendToExtension('updateSandboxConfig', { config: { enabled: val } })
-    saveMessage.value = t('components.settings.sandbox.saved')
+    saveMessage.value = t('components.settings.settingsPanel.sandbox.saved')
     saveError.value = ''
     setTimeout(() => { saveMessage.value = '' }, 2000)
   } catch (error: any) {
     config.enabled = prev
     draft.enabled = prev
-    saveError.value = error?.message || t('components.settings.sandbox.saveFailed')
+    saveError.value = error?.message || t('components.settings.settingsPanel.sandbox.saveFailed')
+  } finally {
+    isToggling.value = false
   }
 }
 
@@ -107,10 +138,26 @@ function toggleLanguage(lang: string, checked: boolean) {
   }
 }
 
+function clampDraft() {
+  if (typeof draft.defaultTimeout === 'number' && Number.isFinite(draft.defaultTimeout)) {
+    draft.defaultTimeout = Math.min(600000, Math.max(1000, Math.floor(draft.defaultTimeout)))
+  }
+  if (typeof draft.maxOutputLines === 'number' && Number.isFinite(draft.maxOutputLines)) {
+    draft.maxOutputLines = draft.maxOutputLines === -1 ? -1 : Math.min(100000, Math.max(1, Math.floor(draft.maxOutputLines)))
+  }
+}
+
 async function saveConfig() {
-  isSaving.value = true
+  if (isSaving.value) return
   saveMessage.value = ''
   saveError.value = ''
+  // 语言白名单不能为空：空 = 拒绝全部语言，会导致沙箱无法使用任何语言
+  if (draft.allowedLanguages.length === 0) {
+    saveError.value = t('components.settings.settingsPanel.sandbox.noLanguage')
+    return
+  }
+  clampDraft()
+  isSaving.value = true
   try {
     const payload: Partial<SandboxConfig> = {
       allowedLanguages: [...draft.allowedLanguages],
@@ -123,20 +170,52 @@ async function saveConfig() {
     config.defaultTimeout = draft.defaultTimeout
     config.maxOutputLines = draft.maxOutputLines
     config.cleanupTempDir = draft.cleanupTempDir
-    saveMessage.value = t('components.settings.sandbox.saved')
+    saveMessage.value = t('components.settings.settingsPanel.sandbox.saved')
     setTimeout(() => { saveMessage.value = '' }, 2000)
   } catch (error: any) {
-    saveError.value = error?.message || t('components.settings.sandbox.saveFailed')
+    saveError.value = error?.message || t('components.settings.settingsPanel.sandbox.saveFailed')
   } finally {
     isSaving.value = false
   }
 }
 
-function resetDefaults() {
-  draft.allowedLanguages = [...ALL_LANGUAGES]
-  draft.defaultTimeout = 30000
-  draft.maxOutputLines = 200
-  draft.cleanupTempDir = true
+/** 恢复默认：从后端获取权威默认值并立即保存（与 AppearanceSettings 惯例一致） */
+async function resetDefaults() {
+  if (isSaving.value) return
+  isSaving.value = true
+  saveMessage.value = ''
+  saveError.value = ''
+  try {
+    const defaults = await fetchBackendDefaults() ?? {
+      enabled: config.enabled,
+      allowedLanguages: [...ALL_LANGUAGES],
+      defaultTimeout: 30000,
+      maxOutputLines: 200,
+      cleanupTempDir: true
+    }
+    draft.allowedLanguages = [...defaults.allowedLanguages]
+    draft.defaultTimeout = defaults.defaultTimeout
+    draft.maxOutputLines = defaults.maxOutputLines
+    draft.cleanupTempDir = defaults.cleanupTempDir
+    await sendToExtension('updateSandboxConfig', {
+      config: {
+        allowedLanguages: [...defaults.allowedLanguages],
+        defaultTimeout: defaults.defaultTimeout,
+        maxOutputLines: defaults.maxOutputLines,
+        cleanupTempDir: defaults.cleanupTempDir
+      }
+    })
+    config.allowedLanguages = [...defaults.allowedLanguages]
+    config.defaultTimeout = defaults.defaultTimeout
+    config.maxOutputLines = defaults.maxOutputLines
+    config.cleanupTempDir = defaults.cleanupTempDir
+    saveMessage.value = t('components.settings.settingsPanel.sandbox.saved')
+    setTimeout(() => { saveMessage.value = '' }, 2000)
+  } catch (error: any) {
+    saveError.value = error?.message || t('components.settings.settingsPanel.sandbox.saveFailed')
+  } finally {
+    isSaving.value = false
+  }
 }
 
 onMounted(() => {
@@ -156,14 +235,14 @@ onMounted(() => {
         <div class="section-header">
           <CustomCheckbox
             :modelValue="config.enabled"
-            :label="t('components.settings.sandbox.enabled.label')"
+            :label="t('components.settings.settingsPanel.sandbox.enabled.label')"
             @update:modelValue="(v: boolean) => toggleEnabled(v)"
           />
         </div>
-        <p class="field-description">{{ t('components.settings.sandbox.enabled.description') }}</p>
+        <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.enabled.description') }}</p>
         <p v-if="!config.enabled" class="disabled-notice">
           <i class="codicon codicon-info"></i>
-          {{ t('components.settings.sandbox.enabled.disabledNotice') }}
+          {{ t('components.settings.settingsPanel.sandbox.enabled.disabledNotice') }}
         </p>
       </div>
 
@@ -175,9 +254,9 @@ onMounted(() => {
         <div class="section" data-search-anchor="sandbox-languages">
           <label class="group-label">
             <i class="codicon codicon-code"></i>
-            {{ t('components.settings.sandbox.languages.title') }}
+            {{ t('components.settings.settingsPanel.sandbox.languages.title') }}
           </label>
-          <p class="field-description">{{ t('components.settings.sandbox.languages.description') }}</p>
+          <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.languages.description') }}</p>
 
           <div class="language-grid">
             <div
@@ -201,9 +280,9 @@ onMounted(() => {
         <div class="section" data-search-anchor="sandbox-timeout">
           <label class="group-label">
             <i class="codicon codicon-clock"></i>
-            {{ t('components.settings.sandbox.timeout.title') }}
+            {{ t('components.settings.settingsPanel.sandbox.timeout.title') }}
           </label>
-          <p class="field-description">{{ t('components.settings.sandbox.timeout.description') }}</p>
+          <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.timeout.description') }}</p>
 
           <div class="number-input-row">
             <input
@@ -225,9 +304,9 @@ onMounted(() => {
         <div class="section" data-search-anchor="sandbox-output">
           <label class="group-label">
             <i class="codicon codicon-output"></i>
-            {{ t('components.settings.sandbox.output.title') }}
+            {{ t('components.settings.settingsPanel.sandbox.output.title') }}
           </label>
-          <p class="field-description">{{ t('components.settings.sandbox.output.description') }}</p>
+          <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.output.description') }}</p>
 
           <div class="number-input-row">
             <input
@@ -239,9 +318,9 @@ onMounted(() => {
               :disabled="!config.enabled"
               class="number-input"
             />
-            <span class="unit">{{ t('components.settings.sandbox.output.unit') }}</span>
+            <span class="unit">{{ t('components.settings.settingsPanel.sandbox.output.unit') }}</span>
           </div>
-          <p class="field-hint">{{ t('components.settings.sandbox.output.hint') }}</p>
+          <p class="field-hint">{{ t('components.settings.settingsPanel.sandbox.output.hint') }}</p>
         </div>
 
         <div class="divider"></div>
@@ -250,14 +329,14 @@ onMounted(() => {
         <div class="section" data-search-anchor="sandbox-cleanup">
           <label class="group-label">
             <i class="codicon codicon-trash"></i>
-            {{ t('components.settings.sandbox.cleanup.title') }}
+            {{ t('components.settings.settingsPanel.sandbox.cleanup.title') }}
           </label>
-          <p class="field-description">{{ t('components.settings.sandbox.cleanup.description') }}</p>
+          <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.cleanup.description') }}</p>
 
           <CustomCheckbox
             v-model="draft.cleanupTempDir"
             :disabled="!config.enabled"
-            :label="t('components.settings.sandbox.cleanup.label')"
+            :label="t('components.settings.settingsPanel.sandbox.cleanup.label')"
           />
         </div>
 
@@ -267,9 +346,9 @@ onMounted(() => {
         <div class="section info-section" data-search-anchor="sandbox-info">
           <label class="group-label">
             <i class="codicon codicon-shield"></i>
-            {{ t('components.settings.sandbox.info.title') }}
+            {{ t('components.settings.settingsPanel.sandbox.info.title') }}
           </label>
-          <p class="field-description">{{ t('components.settings.sandbox.info.text') }}</p>
+          <p class="field-description">{{ t('components.settings.settingsPanel.sandbox.info.text') }}</p>
         </div>
 
         <!-- 保存按钮 -->
@@ -280,14 +359,14 @@ onMounted(() => {
             :disabled="isSaving || !config.enabled"
           >
             <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.sandbox.save') }}</span>
+            <span v-else>{{ t('components.settings.settingsPanel.sandbox.save') }}</span>
           </button>
           <button
             class="reset-btn"
             @click="resetDefaults"
             :disabled="isSaving || !config.enabled"
           >
-            {{ t('components.settings.sandbox.reset') }}
+            {{ t('components.settings.settingsPanel.sandbox.reset') }}
           </button>
           <span v-if="saveMessage" class="save-message success">{{ saveMessage }}</span>
           <span v-else-if="saveError" class="save-message error">{{ saveError }}</span>

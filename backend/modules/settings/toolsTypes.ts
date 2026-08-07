@@ -815,12 +815,20 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
 export const DEFAULT_EXECUTE_COMMAND_CONFIG: ExecuteCommandToolConfig = getDefaultExecuteCommandConfig();
 
 /**
+ * 沙箱支持的语言列表（唯一权威来源）
+ *
+ * 定义在 settings 层避免 tools -> settings 循环依赖；
+ * sandbox 工具模块从这里引用，设置服务校验也用它。
+ */
+export const SANDBOX_LANGUAGES: SandboxLanguage[] = ['python', 'javascript', 'bash', 'powershell', 'sh'];
+
+/**
  * 获取默认的 sandbox 配置
  */
 export function getDefaultSandboxConfig(): SandboxToolConfig {
     return {
         enabled: false,
-        allowedLanguages: ['python', 'javascript', 'bash', 'powershell', 'sh'],
+        allowedLanguages: [...SANDBOX_LANGUAGES],
         defaultTimeout: 30000,
         maxOutputLines: 200,
         cleanupTempDir: true

@@ -39,6 +39,7 @@ export {
     DEFAULT_APPLY_DIFF_CONFIG,
     getDefaultExecuteCommandConfig,
     getDefaultSandboxConfig,
+    SANDBOX_LANGUAGES,
     MACHINE_SCOPE_KEYS
 } from './types';
 export { BUILTIN_MODE_TOOL_POLICIES } from './promptModes';

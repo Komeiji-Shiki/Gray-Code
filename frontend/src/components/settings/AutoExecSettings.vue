@@ -84,6 +84,7 @@ const categoryIcons: Record<string, string> = {
   'design': 'codicon-paintcan',
   'notification': 'codicon-bell',
   'agents': 'codicon-account',
+  'sandbox': 'codicon-terminal',
   '其他': 'codicon-extensions',
   'other': 'codicon-extensions'
 }
