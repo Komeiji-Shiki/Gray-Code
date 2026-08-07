@@ -515,13 +515,15 @@ export class SummarizeService {
                 }
             };
 
-            // 原子标记 + 插入：并发写入导致范围失效（起点越界 / 会吞掉当前回合用户消息）时不落盘
+            // 原子标记 + 插入：并发写入导致范围失效（起点越界 / 会吞掉当前回合用户消息）时不落盘。
+            // 单轮对话（唯一真实用户消息被轮内截断范围覆盖）是手动总结的预期场景，放行不放弃。
             const markResult = await this.markAndInsertSummarizedAtomically(
                 conversationId,
                 historyStartIndex,
                 insertIndex,
                 summaryContent,
-                previousSummarizedCount
+                previousSummarizedCount,
+                true
             );
 
             if (!markResult.ok) {
@@ -1256,6 +1258,11 @@ export class SummarizeService {
      * @param insertIndex 被标记区间终点（开区间，基于旧快照计算；同时也是总结消息插入位置）
      * @param baseSummarizedCount 旧总结累计覆盖数（previousSummarizedCount），用于在锁内
      *                            以实际标记数为准回填插入消息的 summarizedMessageCount
+     * @param allowCoverLastRealUserRound 手动总结放行开关：整个历史只有一个真实用户回合
+     *        （单轮）时，轮内截断的切点必然位于轮首 user 消息之后，insertIndex 恒大于
+     *        lastRealUserMessageIndex。此时没有「当前回合」需要保护——用户主动总结就是要
+     *        覆盖这一轮的前半部分，允许落盘而不是放弃；自动总结保持严格 STALE（回合内
+     *        吞掉当前用户消息会毁掉回复上下文）。
      * @returns ok=true 时 markedCount = 实际标记的消息数，insertIndex = 总结消息的插入位置
      *          （= 入参 insertIndex，不因首条用户消息保护而改变）；
      *          ok=false 时 code='STALE_RANGE'（历史已变化，本次总结放弃，不落盘）
@@ -1265,7 +1272,8 @@ export class SummarizeService {
         historyStartIndex: number,
         insertIndex: number,
         summaryContent: Content,
-        baseSummarizedCount: number
+        baseSummarizedCount: number,
+        allowCoverLastRealUserRound = false
     ): Promise<
         | { ok: true; markedCount: number; insertIndex: number }
         | { ok: false; code: 'STALE_RANGE'; freshHistoryLength: number }
@@ -1300,9 +1308,24 @@ export class SummarizeService {
                     break;
                 }
             }
-            if (lastRealUserMessageIndex < 0 || insertIndex > lastRealUserMessageIndex) {
+            if (lastRealUserMessageIndex < 0) {
                 stale = true;
                 return history;
+            }
+            if (insertIndex > lastRealUserMessageIndex) {
+                // 手动总结 + 单轮（历史中仅一条真实用户消息）时放行：轮内截断（intra_round）
+                // 的切点必然在轮首 user 消息之后，覆盖它正是用户主动总结的预期行为（把这一轮
+                // 的前半部分拿去总结），不存在「当前回合」需要保护；首条用户消息保护仍生效
+                // （标记起点从该消息之后开始），总结文本由 AI 生成。
+                // 自动总结保持严格 STALE：回合内吞掉当前用户消息会毁掉回复上下文。
+                const realUserCount = history.reduce(
+                    (count, message) => count + (isRealUserMessage(message) ? 1 : 0),
+                    0
+                );
+                if (!allowCoverLastRealUserRound || realUserCount !== 1) {
+                    stale = true;
+                    return history;
+                }
             }
 
             // 首条用户消息保护：标记起点不早于它之后（i + 1），且不越过 insertIndex。
