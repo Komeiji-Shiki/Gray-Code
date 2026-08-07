@@ -89,6 +89,17 @@ const ja: LanguageMessages = {
             title: '更新情報',
             gotIt: '了解'
         },
+        update: {
+            title: '新バージョンがあります',
+            intro: 'Gray Code v{version} が公開されました。ダウンロードしてインストールしますか？',
+            releaseNotes: '更新内容',
+            install: 'ダウンロードしてインストール',
+            later: '後で',
+            viewPage: 'GitHub で見る',
+            downloading: 'ダウンロード中...',
+            installed: 'インストールが完了しました。ウィンドウをリロードしてください。',
+            failed: 'ダウンロードまたはインストールに失敗しました'
+        },
         attachment: {
             preview: 'プレビュー',
             download: 'ダウンロード',
@@ -2150,6 +2161,19 @@ const ja: LanguageMessages = {
                     version: 'バージョン：{version}',
                     repository: 'リポジトリ',
                     developer: '開発者'
+                },
+                update: {
+                    title: '自動更新',
+                    description: '起動時に GitHub Releases の新バージョンを確認します（24時間以内の再確認は行いません）。新しいバージョンは自動でダウンロード・インストールできます。',
+                    enableLabel: '自動更新チェックを有効にする',
+                    checkNow: '今すぐ確認',
+                    updateNow: '今すぐ更新',
+                    checking: '確認中...',
+                    upToDate: '最新バージョンです',
+                    updateAvailable: '新バージョン v{version} があります',
+                    installedHint: 'v{version} がインストールされました。ウィンドウをリロードしてください。',
+                    error: '確認に失敗しました',
+                    disabledHint: '自動チェックは無効です'
                 },
                 exportImport: {
                     title: '設定のエクスポート/インポート',
