@@ -113,6 +113,10 @@ describe('CheckpointManifestRepository', () => {
         expect(parsedFiles.checkpointId).toBe('cp-1');
         expect(Object.keys(parsedFiles.files)).toEqual(['ws_a/a.txt', 'ws_a/b.txt']);
         expect(parsedFiles.files['ws_a/a.txt'].hash).toBe('h-0');
+
+        // files.json 紧凑序列化（机器读数据，无缩进换行）：10-20MB 级大对象避免体积/序列化开销放大
+        const filesRaw = await fs.readFile(filesPath, 'utf-8');
+        expect(filesRaw.includes('\n')).toBe(false);
     });
 
     test('loadManifest 只读轻量元数据，不触碰 files.json（懒加载，CPF-LAZY-1）', async () => {
@@ -301,6 +305,25 @@ describe('CheckpointManifestRepository', () => {
         expect(reparsed.version).toBe(CHECKPOINT_MANIFEST_VERSION);
     });
 
+    test('version 非整数（如 1.5）→ 视为损坏，走迁移/回退路径而非按未知布局缓存', async () => {
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-frac-version');
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+            path.join(dir, CHECKPOINT_MANIFEST_FILENAME),
+            JSON.stringify({ version: 1.5, checkpointId: 'cp-frac-version', workspaceRoots: [] }),
+            'utf-8'
+        );
+
+        const record = makeLegacyRecord({ id: 'cp-frac-version', backupDir: 'cp-frac-version' });
+        const manifest = await repo.loadManifest('cp-frac-version', record);
+        expect(manifest).not.toBeNull();
+        expect(manifest!.checkpointId).toBe('cp-frac-version');
+        // 迁移产物以当前版本落盘（1.5 不被当作 v1/v2 布局缓存）
+        const reparsed = JSON.parse(await fs.readFile(path.join(dir, CHECKPOINT_MANIFEST_FILENAME), 'utf-8'));
+        expect(reparsed.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+        expect(reparsed.files).toBeUndefined();
+    });
+
     test('loadManifest 读取磁盘并缓存（删除磁盘后仍命中缓存）', async () => {
         const manifest = makeManifest('cp-1');
         await repo.writeManifest('cp-1', manifest);
@@ -398,6 +421,26 @@ describe('CheckpointManifestRepository', () => {
         repo.clearCache();
         expect(repo['metaCache'].size).toBe(0);
         expect(repo['filesCache'].size).toBe(0);
+    });
+
+    test('writeManifest 写盘失败时清空该存档缓存，避免内存与磁盘不一致残留', async () => {
+        const manifest = makeManifest('cp-fail', ['ws_a/a.txt']);
+        await repo.writeManifest('cp-fail', manifest);
+        // 预热双缓存并持有 files 引用（模拟链合并路径：写盘前直接修改缓存对象）
+        const full = await repo.loadManifestWithFiles('cp-fail');
+        full!.files['ws_a/dirty.txt'] = { hash: 'h-dirty', size: 1, mtimeMs: 1 };
+        expect(repo['metaCache'].has('cp-fail')).toBe(true);
+        expect(repo['filesCache'].has('cp-fail')).toBe(true);
+
+        // 破坏目录结构：删除存档目录并占位同名文件 → mkdir 失败 → writeManifest 抛错
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-fail');
+        await fs.rm(dir, { recursive: true, force: true });
+        await fs.writeFile(dir, 'not a directory', 'utf-8');
+
+        await expect(repo.writeManifest('cp-fail', manifest)).rejects.toThrow();
+        // 失败后双缓存被清理：下次读取回到磁盘真实状态（不会命中被污染的 files）
+        expect(repo['metaCache'].has('cp-fail')).toBe(false);
+        expect(repo['filesCache'].has('cp-fail')).toBe(false);
     });
 
     describe('CP-PATH-1 / CP-CACHE-1 / CPF-LAZY-1（路径校验与 LRU 缓存）', () => {
