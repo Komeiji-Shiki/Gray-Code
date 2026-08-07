@@ -20,10 +20,17 @@ export interface StreamBufferParseResult {
     unparsed?: string;
 }
 
-/** 流式缓冲硬上限：超过即丢弃并报错，防止失控上游/恶意代理把扩展宿主内存打爆 */
-export const MAX_STREAM_BUFFER_CHARS = 64 * 1024 * 1024;
-/** 单条 SSE data 行的硬上限 */
-export const MAX_SSE_LINE_CHARS = 64 * 1024 * 1024;
+/**
+ * 流式缓冲解析器内部兜底上限（字符）。
+ *
+ * 仅作为解析器独立调用的纯兜底：主防线在 ChannelManager（解析无进展时 64MB
+ * PARSE_ERROR 终止）。本上限必须严格大于主防线阈值，否则解析器会先于主防线
+ * 把超限缓冲"消费"（返回 remaining=''），使 ChannelManager 的 no-progress
+ * 检测失明、合法巨型单事件（40MB 级多模态附件）被静默丢弃。
+ */
+export const MAX_STREAM_BUFFER_CHARS = 128 * 1024 * 1024;
+/** 单条 SSE data 行的硬上限（同样必须大于主防线 64MB 阈值） */
+export const MAX_SSE_LINE_CHARS = 128 * 1024 * 1024;
 
 /**
  * SSE 心跳/保活载荷识别。

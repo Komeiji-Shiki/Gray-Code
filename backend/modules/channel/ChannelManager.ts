@@ -1005,7 +1005,6 @@ export class ChannelManager {
             } catch {
                 // 非 JSON（text/plain 等）：保留原文
             }
-            }
             const responseHeaders: Record<string, string> = {};
             response.headers.forEach((value, key) => {
                 responseHeaders[key] = value;
