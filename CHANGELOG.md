@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Changed
+  - Release notes 生成策略调整（scripts/extract-release-notes.mjs）：默认只携带当前版本的 CHANGELOG 小节；脚本通过 `GITHUB_TOKEN` 查询 GitHub 最新已发布 release，检测到当前版本与最新 release 之间存在未发布小节（版本被跳过，如最新 release 为 1.4.4 时发布 1.4.6，中间 1.4.5 从未发布）时自动补带这些跳过版本的内容，避免用户错过未发布版本；查询失败 / 无 token 时回退为只带当前版本（不阻塞发布）。
+
 ## [1.4.5] - 2026-08-07
 
 ### Added

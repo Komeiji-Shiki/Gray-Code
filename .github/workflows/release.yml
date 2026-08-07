@@ -39,9 +39,11 @@ jobs:
         run: npx vsce package --out "graycode-${{ github.ref_name }}.vsix"
 
       - name: Extract release notes from CHANGELOG
-        # 从 CHANGELOG.md 提取当前版本与上一个版本两个小节（如 1.4.5 + 1.4.4）
-        # 作为 release notes 正文，替代 GitHub 自动生成的 commit 分类简介
+        # 默认只携带当前版本小节；通过 GITHUB_TOKEN 查询最新已发布 release，
+        # 检测到中间版本未发布（被跳过）时自动补带跳过版本的内容
         run: node scripts/extract-release-notes.mjs "${{ github.ref_name }}" > release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
