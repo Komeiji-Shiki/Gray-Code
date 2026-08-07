@@ -6,7 +6,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { getMemoryManagerForTool } from '../../modules/memory';
+import { getMemoryManagerForTool, workspaceUriToScopeKey } from '../../modules/memory';
 
 export function createMemoryZoomDeclaration(): ToolDeclaration {
     return {
@@ -50,7 +50,11 @@ async function memoryZoomHandler(args: Record<string, unknown>, context?: ToolCo
         if (scope === 'workspace' && !context?.activeWorkspaceUri) {
             return { success: false, error: 'Workspace scope requires an active workspace.' };
         }
-        return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
+        // 有 workspaceUri 但只读拿不到实例：区分 URI 解析失败与工作区记忆目录尚未初始化
+        if (context?.activeWorkspaceUri && !workspaceUriToScopeKey(context.activeWorkspaceUri)) {
+            return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
+        }
+        return { success: false, error: 'Workspace memory is not initialized for this workspace. Write a memory_note first.' };
     }
 
     try {

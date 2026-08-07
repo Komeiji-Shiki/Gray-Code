@@ -35,6 +35,7 @@ import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, Tas
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../../../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../../../backend/modules/skills';
 import { initMemoryManager } from '../../../backend/modules/memory';
+import { UpdateChecker } from '../../../backend/modules/update';
 import { WindowsAgentStopNotificationService } from '../../../backend/modules/notifications/WindowsAgentStopNotificationService';
 import {
   setGlobalSettingsManager,
@@ -96,6 +97,8 @@ export class BackendHost {
   private storagePathManager!: StoragePathManager;
   private diffStorageManager!: DiffStorageManager;
   private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
+  private updateChecker?: UpdateChecker;
+  private updateCheckTimer?: NodeJS.Timeout;
 
   private messageRouter!: MessageRouter;
   private workspaceManager!: WorkspaceManager;
@@ -312,6 +315,10 @@ export class BackendHost {
       await this.initPromise;
     } catch {
       // ignore
+    }
+    if (this.updateCheckTimer) {
+      clearTimeout(this.updateCheckTimer);
+      this.updateCheckTimer = undefined;
     }
     this.messageRouter?.cancelAllStreams();
     TaskManager.cancelAllTasks();
@@ -533,6 +540,31 @@ export class BackendHost {
     // Sub-agents registry from persisted settings
     initializeSubAgentsFromSettings(this.createHandlerContext(''));
 
+    // 窗口焦点状态 → 前端音效控制器（聚焦时不播放提示音；失焦才播）
+    const pushWindowFocus = (focused: boolean) => {
+      this.postToRenderer('command', 'windowFocusChanged', { focused: !!focused });
+    };
+    pushWindowFocus(vscode.window.state.focused);
+    const focusDisposable = vscode.window.onDidChangeWindowState((state) => pushWindowFocus(state.focused));
+    this.unsubscribers.push(() => focusDisposable.dispose());
+
+    // GitHub Releases 自动更新检查（与 ChatViewProvider 对齐：设置项开关 + 代理 + 10s 延迟首查）
+    this.updateChecker = new UpdateChecker({
+      isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+      getProxyUrl: () => {
+        const proxy = this.settingsManager.getSettings().proxy;
+        return proxy?.enabled && proxy?.url ? proxy.url : undefined;
+      },
+      storage: {
+        get: (key) => this.context.globalState.get<number>(key),
+        update: (key, value) => Promise.resolve(this.context.globalState.update(key, value))
+      },
+      globalStoragePath: this.storagePathManager.getEffectiveDataPath()
+    });
+    this.updateCheckTimer = setTimeout(() => {
+      this.updateChecker?.check(false).catch(() => {});
+    }, 10_000);
+
     log.info('backend_initialized', { effectiveDataPath: this.storagePathManager.getEffectiveDataPath() });
   }
 
@@ -648,6 +680,7 @@ export class BackendHost {
       storagePathManager: this.storagePathManager,
       diffStorageManager: this.diffStorageManager,
       windowsAgentStopNotificationService: this.windowsAgentStopNotificationService,
+      updateChecker: this.updateChecker,
       streamAbortControllers: this.messageRouter.getAbortManager() as any,
       diffPreviewProvider: this.diffPreviewProvider,
       sendResponse: (id, data) => this.postToRenderer('response', id, data),

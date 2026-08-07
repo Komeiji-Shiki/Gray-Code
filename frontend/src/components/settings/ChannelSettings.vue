@@ -697,6 +697,19 @@ onMounted(async () => {
     
     <!-- 配置表单 -->
     <div v-if="currentConfig" class="config-form">
+      <!-- 启用此配置（置于表单顶部，一眼可见） -->
+      <div class="form-group checkbox-group" data-search-anchor="channel-enabled">
+        <label class="custom-checkbox">
+          <input
+            type="checkbox"
+            :checked="currentConfig.enabled"
+            @change="(e: any) => updateConfigField('enabled', e.target.checked)"
+          />
+          <span class="checkmark"></span>
+          <span class="checkbox-text">{{ t('components.settings.channelSettings.form.enabled.label') }}</span>
+        </label>
+      </div>
+
       <div class="form-group" data-search-anchor="api-url">
         <label>{{ t('components.settings.channelSettings.form.apiUrl.label') }}</label>
         <input
@@ -1228,18 +1241,6 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-      </div>
-      
-      <div class="form-group checkbox-group" data-search-anchor="channel-enabled">
-        <label class="custom-checkbox">
-          <input
-            type="checkbox"
-            :checked="currentConfig.enabled"
-            @change="(e: any) => updateConfigField('enabled', e.target.checked)"
-          />
-          <span class="checkmark"></span>
-          <span class="checkbox-text">{{ t('components.settings.channelSettings.form.enabled.label') }}</span>
-        </label>
       </div>
     </div>
   </div>

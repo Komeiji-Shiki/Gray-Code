@@ -24,6 +24,7 @@ import { registerUsageHandlers } from './UsageHandlers';
 import { registerWorkspaceHandlers } from './WorkspaceHandlers';
 import { registerActivityHandlers } from './ActivityHandlers';
 import { registerTokenizerHandlers } from './TokenizerHandlers';
+import { registerUpdateHandlers } from './UpdateHandlers';
 
 // 重新导出各个模块
 export * from './ConversationHandlers';
@@ -46,6 +47,7 @@ export * from './UsageHandlers';
 export * from './WorkspaceHandlers';
 export * from './ActivityHandlers';
 export * from './TokenizerHandlers';
+export * from './UpdateHandlers';
 
 /**
  * 创建并注册所有消息处理器
@@ -74,6 +76,7 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerWorkspaceHandlers(registry);
   registerActivityHandlers(registry);
   registerTokenizerHandlers(registry);
+  registerUpdateHandlers(registry);
   
   return registry;
 }

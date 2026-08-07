@@ -41,6 +41,7 @@ import { Logger } from '../../core/logger';
 import type {
     CheckpointSummary,
     CheckpointManifest,
+    CheckpointManifestMeta,
     CheckpointOperationProgress,
     CheckpointRecord,
     FileChange,
@@ -1634,9 +1635,10 @@ export class CheckpointManager {
     }
 
     /**
-     * 按 checkpointId 加载完整 manifest（CPF-03：前端按需取完整存档数据）。
+     * 按 checkpointId 加载 manifest 轻量元数据视图（CPF-03/CPF-LAZY-1）。
      *
-     * 新格式存档直接读取；旧存档（无 manifest 文件）时返回 null。
+     * 前端只消费排除清单 / 排除规则快照等元数据字段，完整 files 映射（10-20MB）
+     * 不再经 IPC 下发；新格式存档直接读取，旧存档（无 manifest 文件）时返回 null。
      *
      * L6 差异说明：本方法不带 fallbackRecord，legacy 存档的迁移路径（
      * buildManifestFromRecord）不会在此触发——如需读取 legacy 存档的完整数据，
@@ -1644,8 +1646,10 @@ export class CheckpointManager {
      * 或调用方先取得对应记录再自行迁移。消费场景：设置页查看某存档的排除清单时，
      * 应先确认存档为新格式（summary.manifestVersion > 0）再调用，避免 null 歧义。
      */
-    async getManifest(checkpointId: string): Promise<CheckpointManifest | null> {
-        return this.manifestRepository.loadManifest(checkpointId);
+    async getManifest(checkpointId: string): Promise<CheckpointManifestMeta | null> {
+        const meta = await this.manifestRepository.loadManifest(checkpointId);
+        // L6: 返回浅拷贝，避免经 IPC 下发的对象被外部消费方意外写入污染缓存
+        return meta ? { ...meta } : null;
     }
 
     /**

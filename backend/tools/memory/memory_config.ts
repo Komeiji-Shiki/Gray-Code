@@ -6,7 +6,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { getMemoryManagerForTool, DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../modules/memory';
+import { getMemoryManagerForTool, getGlobalMemoryManager, workspaceUriToScopeKey, DEFAULT_MEMORY_CONFIG, type MemoryConfig } from '../../modules/memory';
 
 export function createMemoryConfigDeclaration(): ToolDeclaration {
     return {
@@ -35,14 +35,52 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
     };
 }
 
+/** 格式化配置输出（与默认值对比标注） */
+function formatConfig(config: MemoryConfig): string {
+    const defaults = DEFAULT_MEMORY_CONFIG;
+    const lines: string[] = [];
+    for (const [key, value] of Object.entries(config)) {
+        const defVal = (defaults as any)[key];
+        const marker = value !== defVal ? ` (default ${defVal})` : '';
+        lines.push(`${key.padEnd(12)} ${String(value).padEnd(7)} ${marker}`);
+    }
+    return lines.join('\n');
+}
+
 async function memoryConfigHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
-    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri);
+    // 纯读（无更新参数）时传 createIfMissing=false：不创建缺失的工作区记忆目录，
+    // 与 wake/recall/zoom 的只读无副作用策略一致；有更新参数才允许创建。
+    const hasUpdates = ['wakeLines', 'entryChars'].some(k => typeof args[k] === 'number');
+    const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri, undefined, hasUpdates);
     if (!mgr) {
-        // 调用方传了 workspaceUri 说明意图是工作区：解析失败不要静默回退全局
-        if (context?.activeWorkspaceUri) {
+        // 无工作区上下文：全局实例未初始化
+        if (!context?.activeWorkspaceUri) {
+            return { success: false, error: 'MemoryManager is not initialized.' };
+        }
+        // 有 workspaceUri 但拿不到实例：先区分 URI 是否可解析
+        if (!workspaceUriToScopeKey(context.activeWorkspaceUri)) {
             return { success: false, error: 'Workspace memory is unavailable (workspace URI could not be resolved).' };
         }
-        return { success: false, error: 'MemoryManager is not initialized.' };
+        // URI 可解析但实例不可用：
+        // - 有更新参数时说明工作区目录创建失败（不应静默回退全局，否则会改错作用域的配置）
+        // - 纯读时说明工作区记忆目录尚未初始化：回退显示全局配置并明确标注（只读、无磁盘副作用），
+        //   避免误以为该工作区已有独立配置
+        if (hasUpdates) {
+            return { success: false, error: 'Workspace memory is unavailable (workspace memory directory could not be created).' };
+        }
+        const globalMgr = getGlobalMemoryManager();
+        if (!globalMgr) {
+            return { success: false, error: 'MemoryManager is not initialized.' };
+        }
+        const config = globalMgr.getConfig();
+        return {
+            success: true,
+            data: {
+                text: formatConfig(config) + '\n(workspace memory not initialized yet; showing global config)',
+                config,
+                workspaceNotInitialized: true,
+            },
+        };
     }
 
     try {
@@ -57,18 +95,10 @@ async function memoryConfigHandler(args: Record<string, unknown>, context?: Tool
             config = mgr.getConfig();
         }
 
-        const defaults = DEFAULT_MEMORY_CONFIG;
-        const lines: string[] = [];
-        for (const [key, value] of Object.entries(config)) {
-            const defVal = (defaults as any)[key];
-            const marker = value !== defVal ? ` (default ${defVal})` : '';
-            lines.push(`${key.padEnd(12)} ${String(value).padEnd(7)} ${marker}`);
-        }
-
         return {
             success: true,
             data: {
-                text: lines.join('\n'),
+                text: formatConfig(config),
                 config,
             },
         };

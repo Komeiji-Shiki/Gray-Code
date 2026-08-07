@@ -199,6 +199,62 @@ describe('OpenAIFormatter 回归：文本+调用同消息不重复推送（80e9d
         expect(messages[callIdx + 1]?.role).toBe('tool');
         expect(messages[callIdx + 1]?.tool_call_id).toBe('call_a');
     });
+
+    it('回归：text + functionCall 同消息（无 response，最普通形态）不得重复输出文本', () => {
+        const formatter = new OpenAIFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [
+                    { text: '我来处理这个任务' },
+                    { functionCall: { id: 'call_t1', name: 'read_file', args: { path: 'a.txt' } } }
+                ]
+            },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [
+                    { functionResponse: { id: 'call_t1', name: 'read_file', response: { success: true, data: '内容' } } }
+                ]
+            }
+        ];
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            dynamicSystemPrompt: 'system prompt',
+            history,
+            promptContext: { beforeHistoryMessages: [], afterHistoryMessages: [], historyPlacement: 'legacy' },
+            dynamicContextStrategy: 'single'
+        }, createOpenAIConfig());
+
+        const messages = request.body.messages as any[];
+        const assistantIdx = messages.findIndex((m: any) => m.role === 'assistant' && m.tool_calls);
+        expect(assistantIdx).toBeGreaterThanOrEqual(0);
+        expect(messages[assistantIdx].content).toBe('我来处理这个任务');
+        expect(messages[assistantIdx + 1]?.role).toBe('tool');
+        expect(messages[assistantIdx + 1]?.tool_call_id).toBe('call_t1');
+        // 全文只有一个带 tool_calls 的 assistant 消息，没有把文本重复输出成独立消息
+        const assistantTextMsgs = messages.filter((m: any) => m.role === 'assistant' && !m.tool_calls && typeof m.content === 'string' && m.content.includes('我来处理'));
+        expect(assistantTextMsgs).toHaveLength(0);
+    });
+
+    it('回归：纯文本消息不受影响', () => {
+        const formatter = new OpenAIFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '你好' }] },
+            { role: 'model', parts: [{ text: '你好' }] }
+        ];
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            dynamicSystemPrompt: 'system prompt',
+            history,
+            promptContext: { beforeHistoryMessages: [], afterHistoryMessages: [], historyPlacement: 'legacy' },
+            dynamicContextStrategy: 'single'
+        }, createOpenAIConfig());
+
+        const messages = request.body.messages as any[];
+        expect(messages.filter((m: any) => m.role === 'user')).toHaveLength(1);
+        expect(messages.filter((m: any) => m.role === 'assistant')).toHaveLength(1);
+    });
 });
 
 describe('AnthropicFormatter 回归：文本+调用同消息不重复推送（80e9de7 回归修复）', () => {

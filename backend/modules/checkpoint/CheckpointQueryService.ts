@@ -18,7 +18,7 @@ import { Logger } from '../../core/logger';
 import { isSafeRelativePath } from '../../core/idValidation';
 import type { CheckpointRecord } from './CheckpointManager';
 import type { CheckpointSummary } from './types';
-import { CheckpointManifestRepository, isSafeCheckpointDirName } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 
 const log = Logger.get('CheckpointQueryService');
@@ -139,7 +139,7 @@ export class CheckpointQueryService {
         }
     }
 
-    /** 把记录映射为摘要；excludedCount 优先读记录字段（Agent A 的 excludedCount），缺失时从 manifest 统计 */
+    /** 把记录映射为摘要；excludedCount 优先读记录字段（Agent A 的 excludedCount），缺失时从 manifest 元数据统计（CPF-LAZY-1：不加载 files 映射） */
     private async toSummary(record: CheckpointRecord): Promise<CheckpointSummary> {
         let excludedCount = (record as CheckpointRecord & { excludedCount?: number }).excludedCount;
         if (typeof excludedCount !== 'number') {
@@ -226,8 +226,10 @@ export class CheckpointQueryService {
             const entries = await fs.readdir(dirPath, { withFileTypes: true });
             const subDirs: string[] = [];
             for (const entry of entries) {
-                if (entry.name === 'manifest.json' || entry.name.endsWith('.tmp')) {
-                    continue; // CPF-01: manifest 是元数据，不计入备份占用
+                // CPF-01: manifest 是元数据，不计入备份占用；
+                // CPF-LAZY-1: files.json 同样是元数据（重量级文件映射独立存储），不计入
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME || entry.name.endsWith('.tmp')) {
+                    continue;
                 }
                 const fullPath = path.join(dirPath, entry.name);
                 if (entry.isDirectory()) {

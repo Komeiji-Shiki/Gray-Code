@@ -82,4 +82,23 @@ describe('SummarizeService.cleanMessagesForSummarize - no images to summarize mo
         // functionResponse：内部 diff 字段被移除
         expect(cleaned[2].parts[0].functionResponse.response).toEqual({ success: true });
     });
+
+    it('中断残留（rejected 且无配对响应）的 functionCall 整体丢弃', () => {
+        const service = createService();
+        const cleaned = (service as any).cleanMessagesForSummarize([
+            { role: 'user', parts: [{ text: '继续' }] },
+            {
+                role: 'model',
+                parts: [
+                    { text: '正在处理…' },
+                    { functionCall: { id: 'call-rej-orphan', name: 'subagents', args: {}, rejected: true } }
+                ]
+            }
+        ], config);
+
+        // model 消息只保留文本，rejected 孤儿调用被丢弃
+        expect(cleaned).toHaveLength(2);
+        expect(cleaned[1].parts).toEqual([{ text: '正在处理…' }]);
+        expect(JSON.stringify(cleaned)).not.toContain('call-rej-orphan');
+    });
 });

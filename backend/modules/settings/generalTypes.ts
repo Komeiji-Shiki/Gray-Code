@@ -271,6 +271,14 @@ export interface GlobalSettings {
      * 用于判断是否需要显示新版本的更新公告
      */
     lastReadAnnouncementVersion?: string;
+
+    /**
+     * 是否启用自动更新检查（GitHub Releases）
+     *
+     * - true（默认）: 启动时检查一次新版本（24 小时内不重复），有新版弹窗提示可自动安装
+     * - false: 关闭检查（用户可在设置页「通用」中关闭）
+     */
+    checkForUpdates?: boolean;
     
     /**
      * 最后更新时间戳
@@ -316,6 +324,7 @@ export type SettingsChangeListener = (event: SettingsChangeEvent) => void | Prom
  */
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    checkForUpdates: true,
     toolsEnabled: {
         // 默认所有工具启用
     },

@@ -556,6 +556,8 @@ async function executeSubAgent(
                 agentName,
                 response: result.response,
                 steps: result.steps,
+                // 与前台 L622 同口径：子代理实际调用的工具名列表（空数组 = 未调用任何工具）
+                toolsUsed: (result.toolCalls ?? []).map(tc => tc.tool),
                 ...(result.error ? { error: result.error } : {})
             });
         }).catch(error => {
@@ -600,19 +602,39 @@ async function executeSubAgent(
             inheritedToolFilter: inheritedToolFilterList
         }, abortSignal);
 
+        // channelName 仅供前端 UI 展示（cleanFunctionResponseForAPI 会过滤掉不发给 AI）；
+        // 查询失败不影响子代理结果本身，独立兜底。
+        let channelName = '';
+        try {
+            const configManager = getGlobalConfigManager();
+            const channelConfig = configManager && (await configManager.getConfig(config.channel.channelId));
+            channelName = channelConfig?.name || config.channel.channelId;
+        } catch {
+            // channelName 仅供 UI 展示，查询失败不阻断子代理结果
+        }
+
         if (result.cancelled || abortSignal?.aborted) {
-            return { success: false, error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
+            // 取消发生在运行之后：executor 已产出 toolCalls/steps，带上供主模型判断
+            // （空数组 = 取消前未调用任何工具；非空 = 已调用 N 个工具后被取消）。
+            return {
+                success: false,
+                error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.',
+                cancelled: true,
+                data: {
+                    agentName,
+                    runId: result.runId,
+                    partialResponse: result.response,
+                    channelName,
+                    modelId: config.channel.modelId,
+                    steps: result.steps,
+                    toolsUsed: (result.toolCalls ?? []).map(tc => tc.tool)
+                }
+            };
         }
 
         // 构建公共 data：子代理运行信息
-        // channelName / modelId / steps 仅供前端 UI 展示，cleanFunctionResponseForAPI 会将其过滤掉不发给 AI
-
-        let channelName = '';
-        const configManager = getGlobalConfigManager();
-        if (configManager) {
-            const channelConfig = await configManager.getConfig(config.channel.channelId);
-            channelName = channelConfig?.name || config.channel.channelId;
-        }
+        // channelName / modelId 仅供前端 UI 展示，cleanFunctionResponseForAPI 会将其过滤掉不发给 AI；
+        // steps / toolsUsed 保留给 AI（告知主模型子代理是否调用过工具及调用数量）。
 
         const data: Record<string, unknown> = {
             agentName,
@@ -620,7 +642,14 @@ async function executeSubAgent(
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
             modelId: config.channel.modelId,
-            steps: result.steps
+            steps: result.steps,
+            // 子代理发起并受理的工具调用名列表（发给 AI）：让主模型了解子代理是否调用过
+            // 工具及调用了哪些（空数组 = 未调用任何工具）。仅列名称，不包含参数/结果，
+            // 避免 prompt 膨胀与敏感信息泄漏。注意：toolsUsed 为"尝试调用"语义，包含被
+            // 白名单拒绝或执行失败的调用（名称相同，成功与否不区分）；steps 是模型迭代
+            // 轮数（每轮一次 AI 调用），与 toolsUsed.length 通常不相等（成功时 toolsUsed ≤ steps），
+            // 请勿以二者相等与否判断子代理是否异常。
+            toolsUsed: (result.toolCalls ?? []).map(tc => tc.tool)
         };
 
         return result.success

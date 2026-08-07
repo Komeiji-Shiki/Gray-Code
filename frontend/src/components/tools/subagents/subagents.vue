@@ -69,7 +69,17 @@ const runtimeBadge = computed(() => {
 const chips = computed(() => {
   const list: string[] = []
   const steps = resultData.value.steps ?? (isBackground.value ? backgroundTask.value?.steps : undefined)
-  if (typeof steps === 'number') list.push(`Steps: ${steps}`)
+  if (typeof steps === 'number' && steps > 0) list.push(t('components.tools.subagents.steps', { count: steps }))
+  // 子代理工具使用标记：同步调用取 result.data.toolsUsed，后台取任务回执
+  const toolsUsed = resultData.value.toolsUsed ?? (isBackground.value ? (backgroundTask.value as any)?.toolsUsed : undefined)
+  if (Array.isArray(toolsUsed)) {
+    if (toolsUsed.length > 0) {
+      list.push(t('components.tools.subagents.toolsUsed', { tools: toolsUsed.join(', ') }))
+    } else {
+      // 空数组 = 子代理未调用任何工具（中性陈述，不作任何定性判断）
+      list.push(t('components.tools.subagents.noTools'))
+    }
+  }
   // 后台派发的子代理在卡片上标明「后台」，避免与同步执行的调用混淆
   if (isBackground.value) list.push(t('components.tools.subagents.background'))
   return list

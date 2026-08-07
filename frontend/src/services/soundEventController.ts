@@ -37,6 +37,13 @@ let unlockInFlight: Promise<boolean> | null = null
 let unlockHooksCleanup: (() => void) | null = null
 let visibilityHooksCleanup: (() => void) | null = null
 
+/**
+ * VSCode 窗口是否聚焦（由扩展侧 windowFocusChanged 命令推送）。
+ * 默认 true（视为聚焦）：窗口聚焦时用户看得见界面，事件结果已可见，不播放提示音；
+ * 窗口失焦（切到其他应用）时才播放提醒。
+ */
+let vscodeWindowFocused = true
+
 function canUseDocument(): boolean {
   return typeof document !== 'undefined'
 }
@@ -52,6 +59,11 @@ function isEventExpired(createdAt: number, now: number = Date.now()): boolean {
 function isDocumentHidden(): boolean {
   if (!canUseDocument()) return false
   return document.hidden || document.visibilityState === 'hidden'
+}
+
+/** 更新 VSCode 窗口焦点状态（扩展侧 windowFocusChanged 命令推送） */
+export function setVscodeWindowFocused(focused: boolean): void {
+  vscodeWindowFocused = focused
 }
 
 function getCuePriority(cue: SoundCue): number {
@@ -150,6 +162,10 @@ export async function handleSoundEvent(event: SoundEventPayload): Promise<void> 
     return
   }
 
+  // VSCode 窗口聚焦（vscodeWindowFocused）：用户正看着界面，事件结果已可见，
+  // 不再播放提示音，避免「看着也要响」的打扰；窗口失焦（切到其他应用）时才播放提醒。
+  if (vscodeWindowFocused) return
+
   await playSoundEvent(normalizedEvent)
 }
 
@@ -229,6 +245,7 @@ export function resetSoundEventControllerForTests(): void {
   audioUnlockedThisSession = false
   unlockInFlight = null
   clearUnlockHooks()
+  vscodeWindowFocused = true
 
   if (visibilityHooksCleanup) {
     const cleanup = visibilityHooksCleanup

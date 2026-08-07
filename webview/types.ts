@@ -18,6 +18,7 @@ import type { ToolRegistry } from '../backend/tools';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import type { WebviewClientId } from './runtime/WebviewClientRegistry';
 import type { StreamAbortManager } from './stream/StreamAbortManager';
+import type { UpdateChecker } from '../backend/modules/update';
 
 /**
  * 消息处理器上下文
@@ -44,7 +45,8 @@ export interface HandlerContext {
   diffStorageManager: DiffStorageManager;
   toolRegistry?: ToolRegistry;
   windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
-  
+  updateChecker?: UpdateChecker;
+
   // 流式请求控制（实际注入的是 StreamAbortManager，具有 create/cancel/deleteSummary 等能力）
   streamAbortControllers: StreamAbortManager;
   

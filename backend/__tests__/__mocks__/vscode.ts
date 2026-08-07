@@ -65,9 +65,13 @@ export class TabInputText {
     constructor(public uri: any) {}
 }
 export const commands = { executeCommand: jest.fn() };
+export const env = {
+    openExternal: jest.fn(async () => true),
+};
 export const window = {
     showWarningMessage: jest.fn(),
     showErrorMessage: jest.fn(),
+    showInformationMessage: jest.fn(),
     showTextDocument: jest.fn(),
     setStatusBarMessage: jest.fn(),
     tabGroups: { all: [], close: jest.fn() },

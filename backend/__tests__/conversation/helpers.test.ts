@@ -4,13 +4,15 @@
  * 重点覆盖：
  * - agentInbox（A-COMM 信箱消息）在顶层与 data 子对象均被剥离 → 历史中的 functionResponse
  *   不会把信箱消息重放给模型（drain 一次性语义、prompt 不膨胀）；
- * - 既有内部字段剥离行为不回归（diffContentId / diffs / toolId / steps 等）；
+ * - 既有内部字段剥离行为不回归（diffContentId / diffs / toolId / channelName / modelId 等）；
+ * - subagents 的 steps / toolsUsed 保留给 AI（告知主模型子代理是否调用过工具及调用数量）；
  * - 模型需要保留的字段（success / error / duration / killed / data.output / data.message / data.results）不受影响。
  */
 
 import {
     cleanFunctionResponseForAPI,
     cleanContentForAPI,
+    ensureBackgroundTaskSourceForDisplay,
     isRealUserMessage
 } from '../../modules/conversation/helpers';
 import type { Content, ContentPart } from '../../modules/conversation/types';
@@ -25,6 +27,40 @@ describe('isRealUserMessage', () => {
         expect(isRealUserMessage({ role: 'user', isAutoSummary: true })).toBe(false);
         // 逻辑截断：被总结覆盖的原始消息不构成新回合边界
         expect(isRealUserMessage({ role: 'user', isSummarized: true })).toBe(false);
+    });
+});
+
+describe('ensureBackgroundTaskSourceForDisplay', () => {
+    const receipt = (extra: Partial<Content> = {}): Content => ({
+        role: 'user',
+        parts: [{ text: '[Background task completed]\n\nResult: ...' }],
+        ...extra
+    });
+
+    it('旧数据缺 source 的回执消息补 source=background_task（不写盘，仅内存）', () => {
+        const result = ensureBackgroundTaskSourceForDisplay(receipt());
+        expect(result.source).toBe('background_task');
+        // 原对象不被修改（纯函数）
+        expect(receipt().source).toBeUndefined();
+    });
+
+    it('已有 source 的消息保持原值，不重复覆盖', () => {
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'background_task' })).source).toBe('background_task');
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'user' })).source).toBe('user');
+    });
+
+    it('普通用户消息（非回执前缀）不被误判', () => {
+        const normal = receipt({ parts: [{ text: '帮我看看这段代码' }] });
+        expect(ensureBackgroundTaskSourceForDisplay(normal).source).toBeUndefined();
+    });
+
+    it('functionResponse / model 消息不被误判', () => {
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ isFunctionResponse: true })).source).toBeUndefined();
+        expect(ensureBackgroundTaskSourceForDisplay({ role: 'model', parts: [{ text: '[Background task completed] xxx' }] }).source).toBeUndefined();
+    });
+
+    it('无 parts 的消息安全跳过（不抛错）', () => {
+        expect(ensureBackgroundTaskSourceForDisplay({ role: 'user' } as Content)).toEqual({ role: 'user' } as Content);
     });
 });
 
@@ -83,6 +119,31 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(cleaned?.success).toBe(true);
     });
 
+    it('保留子代理工具使用信息：data.steps / data.toolsUsed 不被剥离（含非空列表）', () => {
+        const cleaned = cleanFunctionResponseForAPI({
+            success: true,
+            data: {
+                agentName: '漫画查看员',
+                runId: 'subagent_run_x',
+                response: '分析内容…',
+                channelName: 'ch',
+                modelId: 'm1',
+                steps: 3,
+                toolsUsed: ['read_file', 'get_symbols']
+            }
+        });
+        const data = cleaned?.data as any;
+        // 纯 UI 字段仍剥离
+        expect(data.channelName).toBeUndefined();
+        expect(data.modelId).toBeUndefined();
+        // 工具使用信息保留（非空列表，防止实现误剥离非空值）
+        expect(data.agentName).toBe('漫画查看员');
+        expect(data.runId).toBe('subagent_run_x');
+        expect(data.steps).toBe(3);
+        expect(data.toolsUsed).toEqual(['read_file', 'get_symbols']);
+        expect(data.response).toBe('分析内容…');
+    });
+
     it('既有剥离行为不回归：data 中 subagents/命令元数据被剥离，results 内容保留', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
@@ -111,7 +172,8 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(data.shell).toBeUndefined();
         expect(data.channelName).toBeUndefined();
         expect(data.modelId).toBeUndefined();
-        expect(data.steps).toBeUndefined();
+        // steps / toolsUsed 保留给 AI：告知子代理是否调用过工具及调用数量
+        expect(data.steps).toEqual([{ step: 1 }]);
         expect(data.results).toHaveLength(2);
         expect(data.results[0]).toEqual({ path: 'a.ts', lineCount: 2, success: true });
         expect(data.results[1]).toEqual({ path: 'b.ts', success: false });

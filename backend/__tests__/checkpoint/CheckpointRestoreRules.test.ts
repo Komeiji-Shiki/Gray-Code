@@ -129,11 +129,24 @@ async function createHarness(workspaceRoot: string, storageRoot: string): Promis
 
     const readManifest = async (checkpointId: string): Promise<CheckpointManifest | null> => {
         try {
-            const raw = await fs.readFile(
+            const metaRaw = await fs.readFile(
                 path.join(storageRoot, 'checkpoints', checkpointId, 'manifest.json'),
                 'utf-8'
             );
-            return JSON.parse(raw) as CheckpointManifest;
+            const manifest = JSON.parse(metaRaw) as CheckpointManifest;
+            // CPF-LAZY-1: v2 拆分布局下 files 独立存放于 files.json，按需合并读取
+            if (!manifest.files) {
+                try {
+                    const filesRaw = await fs.readFile(
+                        path.join(storageRoot, 'checkpoints', checkpointId, 'files.json'),
+                        'utf-8'
+                    );
+                    manifest.files = (JSON.parse(filesRaw) as { files?: CheckpointManifest['files'] }).files ?? {};
+                } catch {
+                    manifest.files = {};
+                }
+            }
+            return manifest;
         } catch {
             return null;
         }

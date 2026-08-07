@@ -90,6 +90,17 @@ const zhCN = {
             title: '版本更新',
             gotIt: '知道了'
         },
+        update: {
+            title: '发现新版本',
+            intro: 'Gray Code v{version} 已发布，是否下载并安装？',
+            releaseNotes: '更新内容',
+            install: '下载并安装',
+            later: '稍后再说',
+            viewPage: '前往 GitHub 查看',
+            downloading: '正在下载并安装，请稍候…',
+            installed: '安装完成，重新加载窗口后生效。',
+            failed: '下载或安装失败'
+        },
         attachment: {
             preview: '预览',
             download: '下载',
@@ -2170,6 +2181,19 @@ const zhCN = {
                     repository: '项目仓库',
                     developer: '开发者'
                 },
+                update: {
+                    title: '自动更新',
+                    description: '启动时检查 GitHub Releases 是否有新版本（24 小时内不重复检查），发现新版可自动下载安装。',
+                    enableLabel: '启用自动检查更新',
+                    checkNow: '立即检查',
+                    updateNow: '一键更新',
+                    checking: '检查中…',
+                    upToDate: '已是最新版本',
+                    updateAvailable: '发现新版本 v{version}',
+                    installedHint: 'v{version} 已安装，重启窗口后生效',
+                    error: '检查失败',
+                    disabledHint: '自动检查已关闭'
+                },
                 exportImport: {
                     title: '设置导入/导出',
                     description: '将所有插件设置（渠道配置、MCP 服务器、Skills 等）打包导出为 JSON 文件，或从文件导入恢复设置。不包含对话历史和检查点。',
@@ -2189,6 +2213,7 @@ const zhCN = {
                 },
                 memory: {
                     loading: '正在加载记忆配置...',
+                    globalOnlyHint: '全局设置，仅「全局记忆」tab 可修改。',
                     enabled: {
                         label: '启用长期记忆',
                         description: '允许 AI 跨会话回忆和记录长期信息。',
@@ -3538,7 +3563,10 @@ const zhCN = {
                 failed: '执行失败',
                 executing: '正在执行...',
                 partialResponse: '部分响应',
-                background: '后台'
+                background: '后台',
+                steps: '步骤 {count}',
+                noTools: '未调用工具',
+                toolsUsed: '工具: {tools}'
             }
         }
     },

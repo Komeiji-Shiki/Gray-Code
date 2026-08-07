@@ -89,6 +89,17 @@ const en: LanguageMessages = {
             title: 'What\'s New',
             gotIt: 'Got it'
         },
+        update: {
+            title: 'Update Available',
+            intro: 'Gray Code v{version} is available. Download and install now?',
+            releaseNotes: 'What\'s New',
+            install: 'Download & Install',
+            later: 'Later',
+            viewPage: 'View on GitHub',
+            downloading: 'Downloading and installing…',
+            installed: 'Installed. Reload the window to apply.',
+            failed: 'Download or install failed'
+        },
         attachment: {
             preview: 'Preview',
             download: 'Download',
@@ -2169,6 +2180,19 @@ const en: LanguageMessages = {
                     repository: 'Repository',
                     developer: 'Developer'
                 },
+                update: {
+                    title: 'Auto Update',
+                    description: 'Check GitHub Releases for new versions at startup (at most once every 24 hours). New versions can be downloaded and installed automatically.',
+                    enableLabel: 'Enable automatic update checks',
+                    checkNow: 'Check Now',
+                    updateNow: 'Update Now',
+                    checking: 'Checking…',
+                    upToDate: 'Up to date',
+                    updateAvailable: 'Update available: v{version}',
+                    installedHint: 'v{version} installed. Reload the window to apply.',
+                    error: 'Check failed',
+                    disabledHint: 'Automatic check is disabled'
+                },
                 exportImport: {
                     title: 'Settings Export/Import',
                     description: 'Export all plugin settings (channel configs, MCP servers, Skills, etc.) as a JSON file, or import to restore settings. Conversation history and checkpoints are excluded.',
@@ -2188,6 +2212,7 @@ const en: LanguageMessages = {
                 },
                 memory: {
                     loading: 'Loading memory config...',
+                    globalOnlyHint: 'Global setting. Only editable in the "Global Memory" tab.',
                     enabled: {
                         label: 'Enable Permanent Memory',
                         description: 'Allow the AI to recall and record long-term information across sessions.',
@@ -3346,7 +3371,10 @@ const en: LanguageMessages = {
                 failed: 'Failed',
                 executing: 'Executing...',
                 partialResponse: 'Partial Response',
-                background: 'Background'
+                background: 'Background',
+                steps: '{count} steps',
+                noTools: 'No tools called',
+                toolsUsed: 'Tools: {tools}'
             },
             media: {
                 generateImage: 'Generate Image',

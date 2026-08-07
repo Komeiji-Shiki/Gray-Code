@@ -37,7 +37,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
             error: '1 file failed to read',
             data: {
                 results: [
-                    { success: true, path: 'C:\\Users\\me\\a.txt', content: 'path = C:\\temp\\x.txt', lineCount: 1 },
+                    { success: true, path: 'C:\\repo\\a.txt', content: 'path = C:\\temp\\x.txt', lineCount: 1 },
                     { success: false, path: 'b.txt', error: 'ENOENT' }
                 ],
                 successCount: 1,
@@ -117,6 +117,42 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         });
 
         expect(result).toContain('Message: Deleted 2 of 3 files');
+    });
+
+    it('子代理失败路径（partialResponse）保留 steps/toolsUsed（HIGH-1）', () => {
+        const result = serializeToolResultForLLM('subagents', {
+            success: false,
+            error: 'SubAgent execution failed',
+            data: {
+                agentName: 'Reviewer',
+                runId: 'subagent_run_fail_1',
+                partialResponse: '已读完 2 页，发现 3 处问题…',
+                steps: 2,
+                toolsUsed: ['read_file', 'search_in_files']
+            }
+        });
+
+        expect(result).toContain('Error: SubAgent execution failed');
+        expect(result).toContain('Progress: steps=2, toolsUsed=["read_file","search_in_files"]');
+        expect(result).toContain('Partial response:');
+        expect(result).toContain('已读完 2 页，发现 3 处问题…');
+    });
+
+    it('子代理失败且未调用工具时输出 toolsUsed=[]（中性陈述）', () => {
+        const result = serializeToolResultForLLM('subagents', {
+            success: false,
+            error: 'SubAgent execution failed',
+            data: {
+                agentName: 'Reviewer',
+                runId: 'subagent_run_fail_2',
+                partialResponse: '未能完成',
+                steps: 0,
+                toolsUsed: []
+            }
+        });
+
+        expect(result).toContain('Progress: steps=0, toolsUsed=[]');
+        expect(result).toContain('Partial response:');
     });
 });
 

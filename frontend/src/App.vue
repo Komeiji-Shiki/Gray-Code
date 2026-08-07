@@ -15,6 +15,7 @@ import { UsagePage } from './components/usage'
 import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
+import UpdateModal from './components/common/UpdateModal.vue'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import DiffViewerPanel from './components/diff/DiffViewerPanel.vue'
 import CodeViewPanel from './components/codeView/CodeViewPanel.vue'
@@ -26,7 +27,7 @@ import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
-import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
+import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 
@@ -570,6 +571,11 @@ onMounted(async () => {
             newContent: message.data?.newContent ?? ''
           })
           break
+        case 'windowFocusChanged':
+          // 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播放）
+          setVscodeWindowFocused(message.data?.focused === true)
+          break
+          break
       }
     }
 
@@ -819,6 +825,9 @@ onBeforeUnmount(() => {
 
     <!-- 设置面板（惰性挂载 + v-show 保活，保留表单状态） -->
     <SettingsPanel v-if="languageLoaded && visitedViews.settings" v-show="settingsStore.currentView === 'settings'" />
+
+    <!-- 更新弹窗（发现新版本时提示，全局挂载） -->
+    <UpdateModal />
   </div>
 </template>
 

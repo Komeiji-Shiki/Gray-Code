@@ -18,7 +18,7 @@ import type { ConfigManager } from '../../../config/ConfigManager';
 import type {ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { SettingsManager } from '../../../settings/SettingsManager';
-import type { Content } from '../../../conversation/types';
+import type { Content, ContentPart } from '../../../conversation/types';
 import type { SummaryTokenStats } from '../../../conversation/types';
 import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
 import type { GenerateResponse, StreamChunk } from '../../../channel/types';
@@ -595,11 +595,29 @@ export class SummarizeService {
      * 清理消息中不应发送给 API 的内部字段
      */
     private cleanMessagesForSummarize(messages: Content[], config: BaseChannelConfig): Content[] {
+        // 已收到响应的 call id：rejected 且无配对的调用（中断/取消残留真孤儿）整体丢弃，
+        // 否则剥字段后变成孤儿 tool_calls 发给总结模型 → 400。有配对的 rejected 调用
+        // 保留（剥字段），其响应在下方改写为拒绝态，成对发送。
+        const respondedCallIds = new Set<string>();
+        for (const msg of messages) {
+            for (const part of msg.parts) {
+                if (part.functionResponse?.id) {
+                    respondedCallIds.add(part.functionResponse.id);
+                }
+            }
+        }
+
         return messages.map(msg => {
             const cleanedParts = msg.parts
                 // 过滤掉思考内容
                 .filter(part => !part.thought && !(part.thoughtSignatures && Object.keys(part).length === 1))
                 .map(part => {
+                    // 丢弃无配对响应的 rejected functionCall（中断残留孤儿）
+                    if (part.functionCall?.rejected && part.functionCall.id
+                        && !respondedCallIds.has(part.functionCall.id)) {
+                        return null as unknown as ContentPart;
+                    }
+
                     let cleanedPart = { ...part };
 
                     // 移除思考签名
@@ -634,7 +652,8 @@ export class SummarizeService {
                     // 与 conversation/helpers.cleanFunctionResponseForAPI 行为对齐：
                     // 顶层剥离 diffContentId/diffId/diffs/pendingDiffId/agentInbox（A-COMM 信箱消息，
                     // drain 一次性语义，禁止历史重放），data 层额外剥离 toolId/terminalId/multiRoot/
-                    // command/cwd/shell/channelName/modelId/steps 等运行时元数据（仅供前端 UI 展示）；
+                    // command/cwd/shell/channelName/modelId 等运行时元数据（仅供前端 UI 展示）；
+                    // steps / toolsUsed 保留给 AI（告知主模型子代理是否调用过工具）。
                     // response / data 为数组时没有内部字段语义，原样返回（防止把数组误当对象解构）
                     if (cleanedPart.functionResponse) {
                         const rawResponse = cleanedPart.functionResponse.response as Record<string, unknown> | undefined;
@@ -656,7 +675,8 @@ export class SummarizeService {
                                     shell: dataShell,
                                     channelName: dataChannelName,
                                     modelId: dataModelId,
-                                    steps: dataSteps,
+                                    // steps / toolsUsed 保留给 AI（与 helpers.cleanFunctionResponseForAPI 对齐）：
+                                    // 告知主模型子代理是否调用过工具及调用数量，不参与剥离。
                                     agentInbox: dataAgentInbox,
                                     ...dataRest
                                 } = rest.data as Record<string, unknown>;
@@ -689,6 +709,7 @@ export class SummarizeService {
                 })
                 // 过滤掉清理后变成空的 parts
                 .filter(part => {
+                    if (part === null) return false;
                     const keys = Object.keys(part);
                     if (keys.length === 0) return false;
                     // 仅剩 thought: true/false 的空壳 part

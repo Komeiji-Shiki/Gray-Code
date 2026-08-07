@@ -27,7 +27,7 @@ import {
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter, SubAgentTranscriptData } from './storage';
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
-import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
+import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange, collectRespondedToolCallIds, buildRejectedResponseParts, findFunctionResponseInsertIndex, rejectUnresolvedToolCalls } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
@@ -1710,12 +1710,15 @@ export class ConversationManager {
      * 也约定不原地修改（见 loadHistory 缓存契约），因此省略逐条 JSON 深拷贝。
      */
     private toFrontendMessage(message: Content, index: number): Content {
-        if ('turnDynamicContext' in message) {
-            const copy = { ...message } as Record<string, unknown>;
+        // 展示层归一化（只补内存不写盘）：历史遗留/旧版本落盘的后台任务回执缺少 source
+        // 标记时按固定前缀识别为 background_task，避免渲染成普通用户消息（上游 8753c15）。
+        const normalized = ensureBackgroundTaskSourceForDisplay(message);
+        if ('turnDynamicContext' in normalized) {
+            const copy = { ...normalized } as Record<string, unknown>;
             delete copy.turnDynamicContext;
             return { ...copy, index } as Content;
         }
-        return { ...message, index } as Content;
+        return { ...normalized, index } as Content;
     }
 
     /**
@@ -2675,10 +2678,17 @@ export class ConversationManager {
         
         // 首先收集所有被拒绝的工具调用 ID
         const rejectedToolCallIds = new Set<string>();
+        // 已收到响应的 call id：区分「用户显式拒绝（有占位响应，成对发送）」与
+        // 「中断/取消残留（真孤儿，无响应）」。后者若只剥离 rejected 字段再发送，
+        // 会变成普通 tool_calls 无对应 tool 消息 → OpenAI/Anthropic 400。
+        const respondedCallIds = new Set<string>();
         for (const message of history) {
             for (const part of message.parts) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedToolCallIds.add(part.functionCall.id);
+                }
+                if (part.functionResponse?.id) {
+                    respondedCallIds.add(part.functionResponse.id);
                 }
             }
         }
@@ -2694,10 +2704,20 @@ export class ConversationManager {
          *
          * rejected 字段是内部使用的，用于标记用户拒绝执行的工具
          * 不应该发送给 AI API，因为 API 不识别此字段
+         *
+         * rejected 且无配对响应的调用（中断/取消残留的真孤儿）：整体丢弃该 part。
+         * 否则剥离 rejected 后变成普通 tool_calls 但无 tool 消息 → 400。
+         * 有配对响应（用户显式拒绝，占位响应已写入）的调用：保留，仅剥字段，
+         * 由 processFunctionResponse 把响应改写为拒绝态，成对发送让 AI 感知拒绝。
          */
-        const cleanFunctionCall = (part: ContentPart): ContentPart => {
+        const cleanFunctionCall = (part: ContentPart): ContentPart | null => {
             if (!part.functionCall) {
                 return part;
+            }
+            
+            if (part.functionCall.rejected && part.functionCall.id
+                && !respondedCallIds.has(part.functionCall.id)) {
+                return null;
             }
             
             // 移除 rejected 字段

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * LimCode - Anthropic 格式转换器
  *
  * 将统一格式转换为 Anthropic Claude API 格式
@@ -325,6 +325,17 @@ export class AnthropicFormatter extends BaseFormatter {
      * - 加密思考使用 type: "redacted_thinking"，包含 data 字段
      */
     private convertHistoryFunctionCallMode(history: Content[], messages: any[]): void {
+        // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃，
+        // 避免「tool_use 被滤掉、tool_result 残留」的孤儿 tool_result 400。
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -333,8 +344,10 @@ export class AnthropicFormatter extends BaseFormatter {
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought);
             const redactedThinkingParts = content.parts.filter(p => p.redactedThinking);
             const signatureParts = content.parts.filter(p => (p as any).signature);
-            const functionCallParts = content.parts.filter(p => p.functionCall);
-            const functionResponseParts = content.parts.filter(p => p.functionResponse);
+            const functionCallParts = content.parts.filter(p => p.functionCall && !p.functionCall.rejected);
+            const functionResponseParts = content.parts.filter(
+                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
+            );
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
             if (functionCallParts.length > 0) {
@@ -524,11 +537,23 @@ export class AnthropicFormatter extends BaseFormatter {
      * - functionResponse 作为 user 消息发送
      */
     private convertHistoryTextMode(history: Content[], messages: any[], mode: 'xml' | 'json'): void {
+        // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃（与 function_call 模式注释同理）
+        const rejectedCallIds = new Set<string>();
+        for (const content of history) {
+            for (const part of content.parts) {
+                if (part.functionCall?.rejected && part.functionCall.id) {
+                    rejectedCallIds.add(part.functionCall.id);
+                }
+            }
+        }
+
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
             // 分离各种类型的 parts
-            const functionResponseParts = content.parts.filter(p => p.functionResponse);
+            const functionResponseParts = content.parts.filter(
+                p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
+            );
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
             if (functionResponseParts.length > 0) {
@@ -561,7 +586,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         continue;
                     }
                     
-                    if (part.functionCall) {
+                    if (part.functionCall && !part.functionCall.rejected) {
                         const callText = mode === 'xml'
                             ? convertFunctionCallToXML(part.functionCall.name, part.functionCall.args)
                             : convertFunctionCallToJSON(part.functionCall.name, part.functionCall.args);

@@ -38,6 +38,37 @@ export function isRealUserMessage(message: {
 }
 
 /**
+ * 后台任务回执的展示层归一化（读取时补 source，不写盘）。
+ *
+ * 背景：早期 chatStream 链路在 webview 层丢失了 source 字段（StreamRequestHandler
+ * 未透传），已落盘的后台任务回执消息没有 source='background_task'。前端依赖该字段
+ * 渲染折叠卡片；缺失时回执会以完整正文显示成普通用户消息。
+ *
+ * 识别依据：回执由前端 reportBuilder 以固定前缀 "[Background task completed]" 生成，
+ * 且 role='user'、非 functionResponse——三者齐备即可可靠识别。
+ *
+ * 只补内存不写盘：避免为旧数据重写历史文件（分段存储迁移有额外风险），
+ * 新数据已由根因修复保证落盘带 source。
+ */
+export function ensureBackgroundTaskSourceForDisplay(message: Content): Content {
+    if (
+        message.role === 'user'
+        && message.source === undefined
+        && !message.isFunctionResponse
+        && Array.isArray(message.parts)
+    ) {
+        const text = message.parts
+            .filter(part => part.text && !part.thought)
+            .map(part => part.text)
+            .join('');
+        if (text.startsWith('[Background task completed]')) {
+            return { ...message, source: 'background_task' };
+        }
+    }
+    return message;
+}
+
+/**
  * 构建包含多个 parts 的消息
  * 
  * Gemini 允许一个消息包含多个 parts，可以混合文本和多模态内容
@@ -327,10 +358,11 @@ export function createMultiTextMessage(
  * - 顶层：diffContentId, diffId, diffs, pendingDiffId,
  *          agentInbox（A-COMM 信箱消息，drain 一次性语义，仅当轮随工具结果返回给模型，禁止历史重放）
  * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
- *                   channelName, modelId, steps（subagents 运行时元数据，仅供 UI 展示）, agentInbox
+ *                   channelName, modelId（subagents 运行时元数据，仅供 UI 展示）, agentInbox
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
- * 保留的字段：killed, duration（AI 需要知道命令执行状态）
+ * 保留的字段：killed, duration（AI 需要知道命令执行状态）；
+ *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）
  *
  * @param response functionResponse.response 对象
  * @param isHistoryMessage 是否是历史消息（当前回合之前的消息）。默认 true：历史中的
@@ -374,8 +406,8 @@ export function cleanFunctionResponseForAPI(
             // subagents 运行时元数据（仅供前端 UI 展示，不发给 AI）
             channelName: dataChannelName,
             modelId: dataModelId,
-            steps: dataSteps,
-            // A-COMM 瞬态信箱消息（与顶层 agentInbox 同理，禁止历史重放）
+            // steps / toolsUsed 保留给 AI：用于告知子代理是否调用过工具及调用数量
+            // （空数组 = 未调用任何工具），不参与剥离。
             agentInbox: dataAgentInbox,
             ...dataRest
         } = rest.data as Record<string, unknown>;
