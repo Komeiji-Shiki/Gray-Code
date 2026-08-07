@@ -2170,6 +2170,7 @@ const ja: LanguageMessages = {
                 },
                 memory: {
                     loading: '記憶設定を読み込み中...',
+                    globalOnlyHint: 'グローバル設定です。「グローバル記憶」タブでのみ変更できます。',
                     enabled: {
                         label: '永久記憶を有効にする',
                         description: 'AI がセッションをまたいで長期情報を記憶・参照できるようにします。',

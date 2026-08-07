@@ -237,6 +237,8 @@ async function addEntry() {
       id: result?.id ?? '',
     })
     statusError.value = false
+    // 与 saveConfig/批量删除路径一致：成功提示 3s 后自动消失
+    setTimeout(() => { statusMessage.value = '' }, 3000)
     await loadEntries()
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to add entry'
@@ -346,7 +348,9 @@ async function loadConfig(silent = false) {
   // 同时递增序号使在途的全局配置响应过期，避免旧作用域配置覆盖表单
   if (!scopeKey()) {
     ++configLoadSeq
-    if (!silent) isLoading.value = false
+    // 无条件复位：silent 调用也可能介入在途的非静默加载（其 seq 已过期，
+    // 不会再复位 isLoading），否则页面会永久卡在 loading 态
+    isLoading.value = false
     return
   }
   const seq = ++configLoadSeq
@@ -393,7 +397,9 @@ async function loadConfig(silent = false) {
       statusError.value = true
     }
   } finally {
-    if (!silent && seq === configLoadSeq) isLoading.value = false
+    // seq 匹配时兜底复位（含 silent 路径）：静默加载可能作废了在途的非静默加载，
+    // 若只在 !silent 时复位，被作废的加载不会复位 isLoading，页面永久卡 loading
+    if (seq === configLoadSeq) isLoading.value = false
   }
 }
 
@@ -571,10 +577,17 @@ watch(selectedWorkspaceUri, (next, prev) => {
           v-model="enabled"
           :label="t('components.settings.settingsPanel.memory.enabled.label')"
           :hint="t('components.settings.settingsPanel.memory.enabled.description')"
+          :disabled="memoryScope === 'workspace'"
         />
         <p v-if="!enabled" class="disabled-notice">
           <i class="codicon codicon-info"></i>
           {{ t('components.settings.settingsPanel.memory.enabled.disabledNotice') }}
+        </p>
+        <!-- LOW-9：enabled 是全局配置，工作区 tab 下后端不持久化该字段——
+             禁用并说明，避免用户以为改动了实际被静默丢弃 -->
+        <p v-if="memoryScope === 'workspace'" class="disabled-notice">
+          <i class="codicon codicon-info"></i>
+          {{ t('components.settings.settingsPanel.memory.globalOnlyHint') }}
         </p>
       </div>
 
@@ -591,8 +604,13 @@ watch(selectedWorkspaceUri, (next, prev) => {
           v-model="systemPrompt"
           class="form-textarea"
           rows="16"
-          :disabled="!enabled"
+          :disabled="!enabled || memoryScope === 'workspace'"
         ></textarea>
+        <!-- LOW-9：systemPrompt 是全局配置，工作区 tab 下后端不持久化该字段 -->
+        <p v-if="memoryScope === 'workspace'" class="disabled-notice">
+          <i class="codicon codicon-info"></i>
+          {{ t('components.settings.settingsPanel.memory.globalOnlyHint') }}
+        </p>
       </div>
 
       <!-- 运行时参数 -->
