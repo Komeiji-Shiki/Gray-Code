@@ -161,7 +161,8 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       currentModelName: () => 'test-model',
       addCheckpoint: vi.fn(),
       updateConversationAfterMessage: vi.fn(),
-      processQueue: vi.fn()
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
     })
 
     // 标记已消费 → loadBranchGraph 被调用 → branchGraph 更新为新图
@@ -205,7 +206,8 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       currentModelName: () => 'test-model',
       addCheckpoint: vi.fn(),
       updateConversationAfterMessage: vi.fn(),
-      processQueue: vi.fn()
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
     })
 
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
@@ -254,7 +256,8 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       currentModelName: () => 'test-model',
       addCheckpoint: vi.fn(),
       updateConversationAfterMessage: vi.fn(),
-      processQueue: vi.fn()
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
     })
 
     expect(state.activeStreamId.value).toBeNull()
@@ -300,7 +303,8 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       currentModelName: () => 'test-model',
       addCheckpoint: vi.fn(),
       updateConversationAfterMessage: vi.fn(),
-      processQueue: vi.fn()
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
     })
 
     // 流终结：activeStreamId 已清空；刷新标记必须被消费并拉取分支图
@@ -349,7 +353,8 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       currentModelName: () => 'test-model',
       addCheckpoint: vi.fn(),
       updateConversationAfterMessage: vi.fn(),
-      processQueue: vi.fn()
+      processQueue: vi.fn(),
+      processQueueAfterAction: vi.fn()
     })
 
     await Promise.resolve()
