@@ -54,7 +54,8 @@ export function createMemoryWakeDeclaration(): ToolDeclaration {
  * - "T=" 快照不匹配：快照过期（记忆总数少于模型传入的快照数，常见于双作用域共用
  *   同一个 snapshotT，而该作用域记忆更少）。不能当作「已读完」跳过——那会静默丢失
  *   未读内容。记录 console.warn 后用该作用域自身当前总数重试（mgr.wake(part) 不传
- *   snapshotT），重试结果作为该段结果；重试仍失败则上抛。
+ *   snapshotT），重试结果作为该段结果；重试抛 "No part"（该作用域实际 part 数少于
+ *   请求值，与直接越界同义）按已读完跳过，其余错误上抛。
  * 首次读取（part 未传或 1）时这些错误说明快照参数有问题，仍按旧行为上抛，让模型重新 wake。
  */
 async function wakeScope(mgr: MemoryManager, part?: number, snapshotT?: number): Promise<WakeResult | null> {
@@ -70,7 +71,14 @@ async function wakeScope(mgr: MemoryManager, part?: number, snapshotT?: number):
             if (/^T=\d+, but the log holds/.test(msg)) {
                 // 快照过期：改用该作用域自身当前总数重试，避免误判为已读完而丢内容
                 console.warn(`[memory_wake] snapshotT=${snapshotT} 过期（${msg}），改用当前总数重试 part=${part}`);
-                return await mgr.wake(part);
+                try {
+                    return await mgr.wake(part);
+                } catch (e2: any) {
+                    // 重试仍越界：该作用域实际 part 数少于请求值（双作用域共用 part 参数，
+                    // 快照 T= 来自另一个更大的作用域）——与直接 "No part" 同义，按已读完跳过
+                    if (/^No part \d+:/.test(e2?.message ?? '')) return null;
+                    throw e2;
+                }
             }
         }
         throw e;
