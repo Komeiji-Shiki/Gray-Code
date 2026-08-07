@@ -25,7 +25,7 @@ import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
-import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
+import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 
@@ -475,6 +475,10 @@ onMounted(async () => {
           break
         case 'showSettings':
           handleShowSettings()
+          break
+        case 'windowFocusChanged':
+          // VSCode 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播）
+          setVscodeWindowFocused(message.data?.focused === true)
           break
       }
     }
