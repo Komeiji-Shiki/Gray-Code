@@ -39,9 +39,18 @@ describe('MessageRouter non-blocking message types', () => {
             'storagePath.migrate',
             'subagents.pauseRun',
             'subagents.resumeRun',
-            'subagents.exitRun'
+            'subagents.exitRun',
+            'exportPromptModes',
+            'settings.export',
+            'settings.import',
+            'storagePath.selectFolder',
+            'countSystemPromptTokens',
+            'tokenizer.getResource',
+            'storagePath.getStats',
+            'workspace.openFolder',
+            'chat.awaitConversationIdle'
         ];
-        expect(EXPECTED_NON_BLOCKING).toHaveLength(7);
+        expect(EXPECTED_NON_BLOCKING).toHaveLength(16);
         // 生产导出的非阻塞类型必须包含本地预期的全部关键条目
         for (const t of EXPECTED_NON_BLOCKING) {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);
@@ -62,5 +71,12 @@ describe('MessageRouter non-blocking message types', () => {
         for (const t of DIALOG_DRIVEN) {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);
         }
+    });
+
+    it('savePromptMode stays blocking (sequential saves must not race)', () => {
+        // 保存类操作必须保持串行队列语义：并发 fire-and-forget 会让两次保存
+        // 基于同一内存快照交错写盘，后写覆盖先写导致丢更新。
+        expect(NON_BLOCKING_MESSAGE_TYPES.has('savePromptMode')).toBe(false);
+        expect(NON_BLOCKING_MESSAGE_TYPES.has('updateSystemPromptConfig')).toBe(false);
     });
 });

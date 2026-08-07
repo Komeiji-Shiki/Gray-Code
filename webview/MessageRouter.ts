@@ -69,7 +69,15 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   // awaitConversationIdle 可能等待数秒到数十秒（等旧流真正退出），期间不应阻塞
   // 同一 webview 的其他 IPC（设置/删消息/切页面/cancelStream 都排在 messageHandlingQueue）：
   // fire-and-forget 后响应仍按 requestId 路由回发起方，语义不变。
-  'chat.awaitConversationIdle'
+  'chat.awaitConversationIdle',
+  // 模态对话框类（showSaveDialog/showOpenDialog/showQuickPick）：对话框打开期间 handler 一直 await，
+  // 若占住串行队列，后续保存/取消/新消息全部排队，前端 180s 超时误报失败（保存实际已生效）。
+  'exportPromptModes',
+  // 网络/下载类：耗时取决于网络状况，不应阻塞队列中的其它请求。
+  'countSystemPromptTokens', // token 计数调用渠道 API
+  'tokenizer.getResource',   // 首次下载 tokenizer 词表（分钟级）
+  // 目录统计类：大目录统计可达数十秒。
+  'storagePath.getStats'
 ]);
 
 /**
