@@ -842,6 +842,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 立即发送一次当前状态
         diffStatusListener(diffManager.getPendingDiffs(), diffManager.areAllProcessed());
 
+        // VSCode 窗口焦点状态推送：前端音效按「窗口是否聚焦」决定是否播放提示音——
+        // 焦点在 VSCode 窗口时用户看得见界面，不播；窗口失焦（切到其他应用）时才播提醒。
+        // 未就绪时 sendCommand 自动入队，webview ready 后统一 flush。
+        const pushWindowFocus = (focused: boolean) => {
+            this.sendCommand('windowFocusChanged', { focused: !!focused });
+        };
+        pushWindowFocus(vscode.window.state.focused);
+        this.viewDisposables.push(
+            vscode.window.onDidChangeWindowState((state) => {
+                pushWindowFocus(state.focused);
+            })
+        );
+
         // webview 面板关闭/销毁时清理视图级订阅
         this.viewDisposables.push(
             webviewView.onDidDispose(() => {
