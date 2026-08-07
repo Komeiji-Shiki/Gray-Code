@@ -19,6 +19,7 @@
 
 ### Performance
   - 存档点 manifest 懒加载（CPF-LAZY-1）：从 schema version 2 起，重量级 `files` 映射（全工作区哈希表，大工作区可达 10-20MB）从 manifest.json 拆出，独立存放于 `checkpoints/cp_xxx/files.json`——`manifest.json` 只保留轻量元数据（workspaceRoots/emptyDirs/changes/excluded/ignoreSnapshot）。读取路径分级：存档列表摘要、设置页排除清单详情、恢复排除说明等只消费元数据视图（`loadManifest`），不再为少量字段解析整张文件哈希表；完整文件映射仅在恢复链构建、增量比较、链合并等真正需要的路径按需懒加载（`loadManifestWithFiles` / `enrichRecord`），经 IPC 下发给前端的 `checkpoint.getManifest` 也同步改为轻量视图。旧格式（v1 内联 files）首次读取后 best-effort 自动拆分为新格式落盘，存量存档渐进迁移：轻量读取路径解析一次后 files 进缓存、**零写放大**，拆分落盘只在完整数据读取（恢复/增量比较/合并）时触发，一次 10-20MB 级写入后后续读取全部走轻量路径；拆分失败/未发生时的 v1 存档由内联兜底继续提供数据，不误判丢失；写入顺序保证 manifest.json 为提交点（先写 files.json 再写 manifest.json，中途崩溃不会出现「新布局指向缺失文件」的不一致）。双缓存隔离：轻量元数据缓存维持既有 LRU 上限（32 条），files 映射缓存按需加载并设独立 LRU 上限（8 条），避免长驻 32 份 10-20MB 大对象；`clearCache`/删除路径同步清理双缓存。完整性检查（integrityCheck）同步支持 v2 拆分布局（files.json 缺失/损坏/ID 不符/形状非法分别上报）。新增回归测试：拆分写入、懒加载不触碰 files.json、files.json 缺失时元数据可读而完整数据显式失败、v1 读取后拆分迁移、双 LRU 淘汰、完整性检查 v2 布局（10 用例）。
+  - 存档点 manifest 懒加载后续加固（CPF-LAZY-1 审查优化）：files.json（10-20MB 级）改为紧凑序列化（无缩进）落盘，减小磁盘体积与序列化开销（manifest.json 保持缩进可读）；manifest 版本校验要求整数（非整数如 1.5 一律视为损坏走迁移/回退，不再按未知布局缓存导致数据丢失误判）；`writeManifest` 写盘失败时清空该存档双缓存，避免链合并等路径在写盘前修改过缓存对象后残留「内存与磁盘不一致」状态。新增回归测试：紧凑序列化无换行、version=1.5 迁移落盘、写失败清缓存（3 用例）。
 
 ## [1.4.4] - 2026-08-07
 

@@ -164,7 +164,8 @@ export class CheckpointManifestRepository {
         await fs.mkdir(path.dirname(targetPath), { recursive: true });
         try {
             const filesPayload: CheckpointManifestFilesPayload = { checkpointId, files };
-            await fs.writeFile(filesTmpPath, JSON.stringify(filesPayload, null, 2), 'utf-8');
+            // 10-20MB 级大对象：紧凑序列化（无缩进）减小体积与序列化开销；files.json 是机器读数据，无需可读性
+            await fs.writeFile(filesTmpPath, JSON.stringify(filesPayload), 'utf-8');
             await fs.rename(filesTmpPath, filesPath);
             await fs.writeFile(metaTmpPath, JSON.stringify(meta, null, 2), 'utf-8');
             await fs.rename(metaTmpPath, targetPath);
@@ -193,7 +194,15 @@ export class CheckpointManifestRepository {
         const { meta, files } = CheckpointManifestRepository.splitManifest(manifest);
         // 写出统一 stamp 当前版本：旧格式（v1）数据经任意写路径落盘即迁移为 v2 布局
         const stampedMeta: CheckpointManifestMeta = { ...meta, version: CHECKPOINT_MANIFEST_VERSION };
-        await this.writeManifestFiles(checkpointId, stampedMeta, files);
+        try {
+            await this.writeManifestFiles(checkpointId, stampedMeta, files);
+        } catch (err) {
+            // 写失败（只读介质/磁盘满等）时磁盘未更新或部分更新：清掉该存档缓存，
+            // 避免调用方在写盘前修改过的缓存对象（如链合并路径对 files 的直接写入）
+            // 残留「内存与磁盘不一致」状态；迁移路径失败后由调用方自行重建缓存。
+            this.clearCache(checkpointId);
+            throw err;
+        }
         this.cacheSet(this.metaCache, checkpointId, stampedMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
         this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
     }
@@ -207,8 +216,8 @@ export class CheckpointManifestRepository {
         if (typeof candidate.checkpointId !== 'string' || candidate.checkpointId !== checkpointId) {
             return false;
         }
-        if (typeof candidate.version !== 'number' || candidate.version < 1) {
-            // 版本缺失/非法（0、负数）→ 视为损坏，落入迁移/回退路径（有机会从记录恢复），
+        if (typeof candidate.version !== 'number' || !Number.isInteger(candidate.version) || candidate.version < 1) {
+            // 版本缺失/非法（0、负数、非整数如 1.5）→ 视为损坏，落入迁移/回退路径（有机会从记录恢复），
             // 而不是按「未知布局」误判为数据丢失
             return false;
         }
