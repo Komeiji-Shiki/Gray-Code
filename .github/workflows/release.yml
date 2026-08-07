@@ -1,0 +1,42 @@
+name: Release vsix
+
+# 打 v* tag 时自动构建 vsix 并发布到 GitHub Releases：
+#   git tag v1.4.5 && git push origin v1.4.5
+# 产物文件名 graycode-<tag>.vsix（如 graycode-v1.4.5.vsix），
+# 扩展内置的「自动更新」功能从 Releases 的 vsix 资产下载安装。
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package vsix
+        run: npx vsce package --out "graycode-${{ github.ref_name }}.vsix"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "graycode-${{ github.ref_name }}.vsix"
+          generate_release_notes: true
