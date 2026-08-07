@@ -13,6 +13,7 @@
   - GitHub Actions 发布流程 `.github/workflows/release.yml`：推送 `v*` tag 时自动 `npm ci` + 构建 + `vsce package` 生成 `graycode-<tag>.vsix` 并发布到 GitHub Releases（自动生成 release notes），替代手动打包上传，为自动更新提供稳定 vsix 资产。
 
 ### Fixed
+  - 渠道设置「启用此配置」开关移至表单顶部：此前该开关位于配置表单最底部，用户进入设置时下意识以为没有启用功能；现置于 API URL 之前（配置选择器/新建按钮正下方），一眼可见，`data-search-anchor="channel-enabled"` 搜索锚点保留。
   - 修复 `memory_config` 只读调用在工作区记忆目录尚未初始化时误报「workspace URI could not be resolved」：此前纯读走 `createIfMissing=false`，工作区目录不存在时返回 null，被笼统报成 URI 解析失败；现区分「URI 不可解析」与「工作区记忆目录未初始化」两种失败——前者才报解析错误，后者纯读时回退显示全局配置并标注 `workspaceNotInitialized`（保持无磁盘副作用，不创建目录），带更新参数时仍正常创建目录并写工作区独立配置；`memory_zoom` 只读调用同样区分两种失败，工作区未初始化时改报明确的 `Workspace memory is not initialized for this workspace`；新增 `memoryConfigTool.test.ts` 回归测试（6 用例：无工作区读全局、工作区独立配置隔离、未初始化纯读回退标注且无副作用、未初始化带更新参数建目录、URI 不可解析报错、全局未初始化报错）。
 
 ## [1.4.4] - 2026-08-07
