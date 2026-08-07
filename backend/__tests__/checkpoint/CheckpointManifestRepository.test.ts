@@ -213,6 +213,24 @@ describe('CheckpointManifestRepository', () => {
         expect(reparsed.version).toBe(CHECKPOINT_MANIFEST_VERSION);
     });
 
+    test('version 非法（0/缺失）→ 视为损坏，走迁移/回退路径而非误判数据丢失', async () => {
+        const dir = path.join(storageRoot, 'checkpoints', 'cp-bad-version');
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+            path.join(dir, CHECKPOINT_MANIFEST_FILENAME),
+            JSON.stringify({ version: 0, checkpointId: 'cp-bad-version', workspaceRoots: [] }),
+            'utf-8'
+        );
+
+        const record = makeLegacyRecord({ id: 'cp-bad-version', backupDir: 'cp-bad-version' });
+        const manifest = await repo.loadManifest('cp-bad-version', record);
+        expect(manifest).not.toBeNull();
+        expect(manifest!.checkpointId).toBe('cp-bad-version');
+        // 迁移产物以当前版本落盘
+        const reparsed = JSON.parse(await fs.readFile(path.join(dir, CHECKPOINT_MANIFEST_FILENAME), 'utf-8'));
+        expect(reparsed.version).toBe(CHECKPOINT_MANIFEST_VERSION);
+    });
+
     test('loadManifest 读取磁盘并缓存（删除磁盘后仍命中缓存）', async () => {
         const manifest = makeManifest('cp-1');
         await repo.writeManifest('cp-1', manifest);

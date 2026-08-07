@@ -206,7 +206,9 @@ export class CheckpointManifestRepository {
         if (typeof candidate.checkpointId !== 'string' || candidate.checkpointId !== checkpointId) {
             return false;
         }
-        if (typeof candidate.version !== 'number') {
+        if (typeof candidate.version !== 'number' || candidate.version < 1) {
+            // 版本缺失/非法（0、负数）→ 视为损坏，落入迁移/回退路径（有机会从记录恢复），
+            // 而不是按「未知布局」误判为数据丢失
             return false;
         }
         // 版本未知（> 当前）不读取：布局可能不同，交给迁移/回退路径处理
