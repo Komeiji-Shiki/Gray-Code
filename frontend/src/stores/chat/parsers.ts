@@ -282,6 +282,7 @@ export function contentToMessage(content: Content, id?: string): Message {
       responseDuration: content.responseDuration,
       streamDuration: content.streamDuration,
       firstChunkTime: content.firstChunkTime,
+      ttft: content.ttft,
       chunkCount: content.chunkCount,
       // 保留向后兼容
       thoughtsTokenCount: content.usageMetadata?.thoughtsTokenCount ?? content.thoughtsTokenCount,
@@ -393,6 +394,7 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
       responseDuration: content.responseDuration,
       firstChunkTime: content.firstChunkTime,
       streamDuration: content.streamDuration,
+      ttft: content.ttft,
       chunkCount: content.chunkCount,
       thoughtsTokenCount: content.usageMetadata?.thoughtsTokenCount ?? content.thoughtsTokenCount,
       candidatesTokenCount: content.usageMetadata?.candidatesTokenCount ?? content.candidatesTokenCount

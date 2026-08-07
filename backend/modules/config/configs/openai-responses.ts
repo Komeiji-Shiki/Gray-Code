@@ -87,8 +87,18 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
              * - low: 较少的思考
              * - medium: 中等思考
              * - high: 较多思考
+             * - xhigh: 最高思考强度 (extra high)
+             * - max: 最大思考强度
+             * - ultra: 极限思考强度
+             * - custom: 自定义（使用 effortCustom 字段的值）
              */
-            effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+            effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'custom';
+            
+            /**
+             * 自定义思考强度
+             * 仅在 effort 为 'custom' 时使用，值会原样发送给 API
+             */
+            effortCustom?: string;
             
             /**
              * 是否启用输出详细程度

@@ -120,13 +120,21 @@ export interface AnthropicConfig extends BaseChannelConfig {
             /**
              * 思考努力级别
              * 仅在 type 为 'adaptive' 时使用
-             * - max: 最大努力（仅 Opus 4.6）
+             * - ultra: 极限努力（最高档）
+             * - max: 最大努力
              * - xhigh: 极高努力（Opus 4.7+）
              * - high: 高努力（默认）
              * - medium: 中等努力
              * - low: 低努力
+             * - custom: 自定义（使用 effortCustom 字段的值）
              */
-            effort?: 'max' | 'xhigh' | 'high' | 'medium' | 'low';
+            effort?: 'ultra' | 'max' | 'xhigh' | 'high' | 'medium' | 'low' | 'custom';
+            
+            /**
+             * 自定义思考努力级别
+             * 仅在 effort 为 'custom' 时使用，值会原样发送给 API
+             */
+            effortCustom?: string;
 
             /**
              * 思考内容显示模式

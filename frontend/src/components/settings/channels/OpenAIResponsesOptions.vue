@@ -22,7 +22,10 @@ const effortOptions = computed<SelectOption[]>(() => [
   { value: 'low', label: t('components.channels.openai-responses.thinking.effortLow'), description: '' },
   { value: 'medium', label: t('components.channels.openai-responses.thinking.effortMedium'), description: '' },
   { value: 'high', label: t('components.channels.openai-responses.thinking.effortHigh'), description: '' },
-  { value: 'xhigh', label: t('components.channels.openai-responses.thinking.effortXHigh'), description: '' }
+  { value: 'xhigh', label: t('components.channels.openai-responses.thinking.effortXHigh'), description: '' },
+  { value: 'max', label: t('components.channels.openai-responses.thinking.effortMax'), description: '' },
+  { value: 'ultra', label: t('components.channels.openai-responses.thinking.effortUltra'), description: '' },
+  { value: 'custom', label: t('components.channels.openai-responses.thinking.effortCustom'), description: '' }
 ])
 
 // 输出详细程度选项
@@ -188,6 +191,15 @@ function handleNumberChange(optionKey: string, event: any) {
             :disabled="!isOptionEnabled('reasoning')"
             placeholder="选择思考强度"
             @update:model-value="(v: string) => updateReasoning('effort', v)"
+          />
+          <input
+            v-if="getReasoningValue('effort') === 'custom'"
+            type="text"
+            :value="getReasoningValue('effortCustom', '')"
+            :placeholder="t('components.channels.openai-responses.thinking.effortCustomPlaceholder')"
+            :disabled="!isOptionEnabled('reasoning')"
+            :class="{ disabled: !isOptionEnabled('reasoning') }"
+            @input="(e: any) => updateReasoning('effortCustom', e.target.value)"
           />
           <span class="option-hint">
             {{ t('components.channels.openai-responses.thinking.effortHint') }}

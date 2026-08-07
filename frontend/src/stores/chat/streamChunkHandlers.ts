@@ -1436,6 +1436,9 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
         if (chunk.content.firstChunkTime !== undefined) {
           newMetadata.firstChunkTime = chunk.content.firstChunkTime
         }
+        if (chunk.content.ttft !== undefined) {
+          newMetadata.ttft = chunk.content.ttft
+        }
         if (chunk.content.chunkCount !== undefined) {
           newMetadata.chunkCount = chunk.content.chunkCount
         }

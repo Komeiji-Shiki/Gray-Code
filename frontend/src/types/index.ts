@@ -170,6 +170,13 @@ export interface Content {
    */
   firstChunkTime?: number
   /**
+   * 首字延迟（毫秒）
+   *
+   * 从请求发出到收到第一个流式块的时间（TTFT）
+   * 用于展示首字等待耗时；Token 速率计算会剥离该窗口
+   */
+  ttft?: number
+  /**
    * 流式响应持续时间（毫秒）
    *
    * 从收到第一个流式块到响应结束的时间
