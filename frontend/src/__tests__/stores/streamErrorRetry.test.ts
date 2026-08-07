@@ -873,7 +873,7 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
     expect(state.allMessages.value[2].streaming).toBe(true)
   })
 
-  it('编辑根节点（parentId=null）自动降级为 keep 模式（原地保存）', async () => {
+  it('编辑根节点（parentId=null）走 branch 模式：截断窗口 + 占位 + 重新生成（TREE-03-R）', async () => {
     const root = createMessage({ id: 'msg_root', role: 'user', content: '第一条消息', localOnly: false, backendIndex: 0, parentId: null })
     const answer = createMessage({ id: 'msg_answer', role: 'assistant', content: '回答', localOnly: false, backendIndex: 1 })
     const state = createState({
@@ -884,24 +884,29 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
 
     await editAndRetry(state, createComputed(), 0, '改过的第一条', undefined, async () => {})
 
-    // 根节点无父节点可挂编辑候选（BranchGraph 单根模型）：自动降级 keep（原地改写）
+    // 根节点（TREE-03-R）：不再降级 keep——branch 模式原样透传（后端原地改写根节点 +
+    // 截断其后 + 新建模型候选重新生成；旧回答保留为可切换候选）
     const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
     expect(editCall).toBeDefined()
     expect(editCall![1]).toMatchObject({
       conversationId: 'conv_1',
       userNodeId: 'msg_root',
       newText: '改过的第一条',
-      mode: 'keep'
+      mode: 'branch'
     })
-    // 真·原地保存：只改写目标消息，窗口不截断、不创建占位——后续消息（answer）保留
+    // 目标消息改写 + 截断其后 + 新流式占位（与普通编辑一致）
     expect(state.allMessages.value[0].content).toBe('改过的第一条')
-    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_root', 'msg_answer'])
-    // 不创建流式占位、不置 streamingMessageId（后端不重新生成，complete 仅复位状态）
-    expect(state.streamingMessageId.value).toBeNull()
-    // 分支图刷新标记不置位（keep 不产生候选）
-    expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
-    // 错误重放上下文携带 keep 模式（错误条重试保持同一语义）
-    expect(state._pendingBranchReplayContext.value).toMatchObject({ kind: 'editBranch', mode: 'keep' })
+    expect(state.allMessages.value.map(m => m.id)).toEqual(['msg_root', expect.any(String)])
+    expect(state.allMessages.value[1].streaming).toBe(true)
+    expect(state.streamingMessageId.value).toBe(state.allMessages.value[1].id)
+    // 分支图刷新标记置位（流结束后按会话消费，展示新候选切换器）
+    expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
+    // 错误重放上下文携带 branch 模式（错误条重试保持同一语义）
+    expect(state._pendingBranchReplayContext.value).toMatchObject({ kind: 'editBranch', mode: 'branch' })
+    // branch 模式进入流式等待状态
+    expect(state.isStreaming.value).toBe(true)
+    expect(state.isWaitingForResponse.value).toBe(true)
+    expect(state.activeStreamId.value).toBeTruthy()
   })
 
   it('编辑分支成功发起：不 deleteMessage/retryStream/editAndRetryStream，截断窗口 + 占位 + 置位刷新标记 + 携带 userNodeId/newText', async () => {

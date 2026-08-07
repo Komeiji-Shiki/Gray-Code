@@ -56,7 +56,7 @@ type MachineKey = typeof MACHINE_KEYS[number];
 type ConfigKey = SyncableKey | MachineKey;
 
 /** save 时需要同步的全部配置键（syncable + machine） */
-const ALL_CONFIG_KEYS: readonly ConfigKey[] = [...SYNCABLE_KEYS, ...MACHINE_KEYS];
+export const ALL_CONFIG_KEYS: readonly ConfigKey[] = [...SYNCABLE_KEYS, ...MACHINE_KEYS];
 
 /**
  * 深比较两个配置值（对象按键集合递归比较，数组按顺序比较）。

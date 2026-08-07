@@ -35,6 +35,8 @@ interface PromptEntry {
   enabled: boolean
   role: PromptEntryRole
   content: string
+  /** 伪造思考内容（仅 assistant 角色生效，随临时消息以 thought part 回传） */
+  fakeThought?: string
   order: number
 }
 
@@ -526,6 +528,7 @@ function normalizePromptEntries(entries: PromptEntry[] | undefined, assemblyMode
       enabled: entry.enabled !== false,
       role: entry.role === 'user' || entry.role === 'assistant' || entry.role === 'system' ? entry.role : 'system',
       content: typeof entry.content === 'string' ? entry.content : '',
+      fakeThought: typeof entry.fakeThought === 'string' ? entry.fakeThought : '',
       order: typeof entry.order === 'number' && Number.isFinite(entry.order) ? entry.order : index
     }))
 
@@ -779,6 +782,7 @@ function isSamePromptEntries(a: PromptEntry[], b: PromptEntry[]): boolean {
       entry.enabled === other.enabled &&
       entry.role === other.role &&
       entry.content === other.content &&
+      (entry.fakeThought ?? '') === (other.fakeThought ?? '') &&
       entry.order === other.order
   })
 }

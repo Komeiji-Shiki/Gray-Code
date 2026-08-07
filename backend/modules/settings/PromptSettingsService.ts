@@ -223,6 +223,7 @@ export class PromptSettingsService {
                 enabled: type === 'chat_history' ? true : raw.enabled !== false,
                 role,
                 content: type === 'chat_history' ? '' : typeof raw.content === 'string' ? raw.content : '',
+                fakeThought: type === 'chat_history' ? '' : typeof raw.fakeThought === 'string' ? raw.fakeThought : '',
                 order
             });
         });
@@ -242,6 +243,7 @@ export class PromptSettingsService {
             enabled: true,
             role: 'user',
             content: '',
+            fakeThought: '',
             order
         };
     }
@@ -268,7 +270,8 @@ export class PromptSettingsService {
                 type: 'chat_history',
                 enabled: true,
                 role: 'user',
-                content: ''
+                content: '',
+                fakeThought: ''
             });
         }
 
@@ -295,6 +298,7 @@ export class PromptSettingsService {
                 entry.enabled === other.enabled &&
                 entry.role === other.role &&
                 entry.content === other.content &&
+                (entry.fakeThought ?? '') === (other.fakeThought ?? '') &&
                 entry.order === other.order;
         });
     }

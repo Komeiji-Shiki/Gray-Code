@@ -804,6 +804,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       :checkpoints="checkpointsBeforeMessage"
       :original-content="message.content"
       :original-attachments="message.attachments || []"
+      :is-root-message="message.parentId == null"
       @edit="handleEdit"
       @restore-and-edit="handleRestoreAndEdit"
     />
