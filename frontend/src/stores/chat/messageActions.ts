@@ -247,7 +247,7 @@ function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
   if (msg.role !== 'assistant') return false
   const hasContent = !!(msg.content && msg.content.trim())
   const hasTools = !!(msg.tools && msg.tools.length > 0)
-  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall)
+  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
   return !hasContent && !hasTools && !hasPartsContent
 }
 

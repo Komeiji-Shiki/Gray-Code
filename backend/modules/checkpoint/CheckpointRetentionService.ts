@@ -292,8 +292,10 @@ export class CheckpointRetentionService {
                 return;
             }
             for (const entry of entries) {
-                // CPF-LAZY-1: manifest.json 与 files.json 均为元数据文件，不属备份内容
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME || entry.name.endsWith('.tmp')) {
+                // CPF-LAZY-1: manifest.json 与 files.json 均为元数据文件，不属备份内容；
+                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份，同样不属备份内容
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME
+                    || entry.name.endsWith('.tmp') || entry.name.endsWith('.prev')) {
                     continue;
                 }
                 const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
