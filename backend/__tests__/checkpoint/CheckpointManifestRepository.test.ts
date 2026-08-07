@@ -637,4 +637,136 @@ describe('CheckpointManifestRepository', () => {
             expect(repo['filesCache'].has('cp-clear')).toBe(false);
         });
     });
+
+    describe('双文件提交配对一致性（ATOMIC-PAIR）', () => {
+        let storageRoot: string;
+        let repo: CheckpointManifestRepository;
+
+        beforeEach(async () => {
+            storageRoot = await createTempDirectory('limcode-manifest-pair-');
+            repo = new CheckpointManifestRepository(path.join(storageRoot, 'checkpoints'));
+        });
+
+        afterEach(async () => {
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        });
+
+        const cpDir = () => path.join(storageRoot, 'checkpoints', 'cp-pair');
+        const manifestPath = () => path.join(cpDir(), CHECKPOINT_MANIFEST_FILENAME);
+        const filesPath = () => path.join(cpDir(), CHECKPOINT_MANIFEST_FILES_FILENAME);
+
+        test('writeManifest 把同一 filesRevision 写入 manifest.json 与 files.json（配对绑定）', async () => {
+            await repo.writeManifest('cp-pair', makeManifest('cp-pair', ['ws_a/a.txt']));
+
+            const meta = JSON.parse(await fs.readFile(manifestPath(), 'utf-8')) as CheckpointManifestMeta;
+            const filesPayload = JSON.parse(await fs.readFile(filesPath(), 'utf-8')) as {
+                checkpointId: string;
+                filesRevision: string;
+                files: CheckpointManifest['files'];
+            };
+            expect(meta.filesRevision).toBeDefined();
+            expect(filesPayload.filesRevision).toBe(meta.filesRevision);
+            // 正常写入不残留备份文件
+            await expect(fs.access(`${filesPath()}.prev`)).rejects.toThrow();
+        });
+
+        test('崩溃窗口（新 files.json + 旧 manifest.json，.prev 持旧配对）：恢复 manifest 对应配对，不混合版本', async () => {
+            await repo.writeManifest('cp-pair', makeManifest('cp-pair', ['ws_a/a.txt']));
+            repo.clearCache('cp-pair');
+            const meta1 = JSON.parse(await fs.readFile(manifestPath(), 'utf-8')) as CheckpointManifestMeta;
+
+            // 模拟第二次提交在 files.json rename 后、manifest.json（提交点）rename 前崩溃：
+            // files.json 是未提交孤儿（rev-2），.prev 是 manifest 对应的旧配对（rev-1）
+            const orphan = {
+                checkpointId: 'cp-pair',
+                filesRevision: 'rev-2',
+                files: { 'ws_a/orphan.txt': { hash: 'h-orphan', size: 1, mtimeMs: 1 } }
+            };
+            const oldPair = {
+                checkpointId: 'cp-pair',
+                filesRevision: meta1.filesRevision,
+                files: { 'ws_a/a.txt': { hash: 'h-0', size: 1, mtimeMs: 1 } }
+            };
+            await fs.writeFile(filesPath(), JSON.stringify(orphan), 'utf-8');
+            await fs.writeFile(`${filesPath()}.prev`, JSON.stringify(oldPair), 'utf-8');
+
+            const full = await repo.loadManifestWithFiles('cp-pair');
+            // 读取的是 manifest 对应的旧配对，而不是未提交的孤儿快照
+            expect(full).not.toBeNull();
+            expect(full!.files['ws_a/a.txt']?.hash).toBe('h-0');
+            expect(full!.files['ws_a/orphan.txt']).toBeUndefined();
+            // 恢复后磁盘配对一致：files.json 被回滚为 rev-1（孤儿被覆盖）
+            const restored = JSON.parse(await fs.readFile(filesPath(), 'utf-8')) as { filesRevision: string };
+            expect(restored.filesRevision).toBe(meta1.filesRevision);
+        });
+
+        test('崩溃窗口（files.json 缺失，.prev 持完整旧配对）：从 .prev 恢复，不误报数据丢失', async () => {
+            await repo.writeManifest('cp-pair', makeManifest('cp-pair', ['ws_a/a.txt']));
+            repo.clearCache('cp-pair');
+            // 模拟写流程第 3 步后崩溃：旧 files.json 已被挪为 .prev，新 files.json 未 rename 完成
+            await fs.rename(filesPath(), `${filesPath()}.prev`);
+
+            const full = await repo.loadManifestWithFiles('cp-pair');
+            expect(full?.files['ws_a/a.txt']?.hash).toBe('h-0');
+            // 恢复后 files.json 重新存在，备份被消费
+            await expect(fs.access(filesPath())).resolves.toBeUndefined();
+        });
+
+        test('孤儿 files.json 无 .prev 可恢复：混合配对被拒绝（返回 null，不假空）', async () => {
+            await repo.writeManifest('cp-pair', makeManifest('cp-pair', ['ws_a/a.txt']));
+            repo.clearCache('cp-pair');
+            // 模拟崩溃窗口且备份缺失（极端场景）：files.json 是 rev-2 孤儿，manifest 是 rev-1
+            const orphan = {
+                checkpointId: 'cp-pair',
+                filesRevision: 'rev-2',
+                files: { 'ws_a/orphan.txt': { hash: 'h-orphan', size: 1, mtimeMs: 1 } }
+            };
+            await fs.writeFile(filesPath(), JSON.stringify(orphan), 'utf-8');
+
+            const full = await repo.loadManifestWithFiles('cp-pair');
+            // 修复前：孤儿 files 会与旧 manifest 元数据混合返回（版本错配的快照被用于恢复）
+            expect(full).toBeNull();
+        });
+
+        test('filesRevision 形状非法（非字符串）：manifest 视为损坏，走回退路径', async () => {
+            const manifest = makeManifest('cp-pair', ['ws_a/a.txt']);
+            await repo.writeManifest('cp-pair', manifest);
+            repo.clearCache('cp-pair');
+            // 手工把 filesRevision 篡改为非字符串
+            const meta = JSON.parse(await fs.readFile(manifestPath(), 'utf-8')) as Record<string, unknown>;
+            meta.filesRevision = 123;
+            await fs.writeFile(manifestPath(), JSON.stringify(meta), 'utf-8');
+
+            const loaded = await repo.loadManifest('cp-pair');
+            expect(loaded).toBeNull(); // 损坏的 manifest 不进入配对校验路径
+        });
+
+        test('损坏的 files.json（非法 JSON）：不裸抛，走 .prev 恢复 / 内联兜底', async () => {
+            await repo.writeManifest('cp-pair', makeManifest('cp-pair', ['ws_a/a.txt']));
+            repo.clearCache('cp-pair');
+            // 磁盘位翻：files.json 变成非法 JSON
+            await fs.writeFile(filesPath(), '{ not valid json', 'utf-8');
+
+            // 修复前：loadManifestFiles 的 JSON.parse 在 try 外 → 裸抛 SyntaxError；
+            // 修复后：按损坏处理 → v2 无内联兜底 → 返回 null（不假空、不抛原始异常）
+            const full = await repo.loadManifestWithFiles('cp-pair');
+            expect(full).toBeNull();
+
+            // 若存在可恢复的 .prev 配对，则从 .prev 恢复而不是报数据丢失
+            const meta = JSON.parse(await fs.readFile(manifestPath(), 'utf-8')) as CheckpointManifestMeta;
+            const oldPair = {
+                checkpointId: 'cp-pair',
+                filesRevision: meta.filesRevision,
+                files: { 'ws_a/a.txt': { hash: 'h-0', size: 1, mtimeMs: 1 } }
+            };
+            await fs.writeFile(`${filesPath()}.prev`, JSON.stringify(oldPair), 'utf-8');
+            repo.clearCache('cp-pair');
+
+            const recovered = await repo.loadManifestWithFiles('cp-pair');
+            expect(recovered?.files['ws_a/a.txt']?.hash).toBe('h-0');
+            // 恢复后磁盘的 files.json 已是合法配对
+            const restored = JSON.parse(await fs.readFile(filesPath(), 'utf-8')) as { filesRevision: string };
+            expect(restored.filesRevision).toBe(meta.filesRevision);
+        });
+    });
 });
