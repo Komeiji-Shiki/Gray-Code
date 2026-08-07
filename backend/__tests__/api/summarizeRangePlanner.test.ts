@@ -16,51 +16,52 @@ import {
 import { DEFAULT_KEEP_RECENT_TOKENS } from '../../modules/settings/types';
 import type { Content } from '../../modules/conversation/types';
 
-const MAX_CONTEXT = 100000;
+const BASE_TOKENS = 100000;
 // 回落预算跟随设置系统的单一事实来源 DEFAULT_KEEP_RECENT_TOKENS 动态派生
-const FALLBACK_BUDGET = resolveKeepRecentTokenBudget(DEFAULT_KEEP_RECENT_TOKENS, MAX_CONTEXT);
+//（百分比基数为「本次总结规划范围内的活跃历史 token 总量」，此处用 100000 模拟）
+const FALLBACK_BUDGET = resolveKeepRecentTokenBudget(DEFAULT_KEEP_RECENT_TOKENS, BASE_TOKENS);
 
 describe('resolveKeepRecentTokenBudget', () => {
     it('内置默认值 DEFAULT_KEEP_RECENT_TOKENS 恒可解析且非退化', () => {
         expect(FALLBACK_BUDGET).toBeGreaterThan(0);
-        expect(FALLBACK_BUDGET).toBeLessThanOrEqual(MAX_CONTEXT);
+        expect(FALLBACK_BUDGET).toBeLessThanOrEqual(BASE_TOKENS);
     });
 
     it('未配置时回落到内置默认值', () => {
-        expect(resolveKeepRecentTokenBudget(undefined, MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget(undefined, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
     it('正数直接使用（向下取整）', () => {
-        expect(resolveKeepRecentTokenBudget(30000, MAX_CONTEXT)).toBe(30000);
-        expect(resolveKeepRecentTokenBudget(1234.7, MAX_CONTEXT)).toBe(1234);
+        expect(resolveKeepRecentTokenBudget(30000, BASE_TOKENS)).toBe(30000);
+        expect(resolveKeepRecentTokenBudget(1234.7, BASE_TOKENS)).toBe(1234);
     });
 
     it('非法数字回落默认', () => {
-        expect(resolveKeepRecentTokenBudget(0, MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget(-100, MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget(Number.NaN, MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget(0, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget(-100, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget(Number.NaN, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
-    it('百分比字符串按最大上下文换算', () => {
-        expect(resolveKeepRecentTokenBudget('25%', MAX_CONTEXT)).toBe(25000);
-        expect(resolveKeepRecentTokenBudget('50%', MAX_CONTEXT)).toBe(50000);
-        expect(resolveKeepRecentTokenBudget(' 10% ', MAX_CONTEXT)).toBe(10000);
+    it('百分比字符串按活跃历史总量换算（50% = 截断一半）', () => {
+        expect(resolveKeepRecentTokenBudget('25%', BASE_TOKENS)).toBe(25000);
+        expect(resolveKeepRecentTokenBudget('50%', BASE_TOKENS)).toBe(50000);
+        expect(resolveKeepRecentTokenBudget(' 10% ', BASE_TOKENS)).toBe(10000);
     });
 
     it('非法百分比回落默认', () => {
-        expect(resolveKeepRecentTokenBudget('0%', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget('150%', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget('abc%', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('0%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('150%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('abc%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
     it('数字字符串作为绝对 token 数', () => {
-        expect(resolveKeepRecentTokenBudget('30000', MAX_CONTEXT)).toBe(30000);
+        expect(resolveKeepRecentTokenBudget('30000', BASE_TOKENS)).toBe(30000);
     });
 
     it('空串与无法解析的字符串回落默认', () => {
-        expect(resolveKeepRecentTokenBudget('', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget('   ', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
-        expect(resolveKeepRecentTokenBudget('abc', MAX_CONTEXT)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('   ', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
+        expect(resolveKeepRecentTokenBudget('abc', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 });
 

@@ -343,25 +343,30 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
                 userMsg('r4', 100), fcMsg('fc4', 100), frMsg('fc4', 100)
             ],
             lastSummaryIndex: 2,
-            keepRecentTokens: '50%' // 500：轮内细切点落在 m3（保留 r4 轮 + m3）
+            // 80% × 活跃历史（r3 50 + m3 50 + r4 100 + fc4 100 + fr4 100 = 400）= 320：
+            // 轮级边界落在 r4 轮首（r4 轮 300 <= 320，细切点无需深入轮内），cutIndex=2 → insertIndex=5；
+            // ratio 0.9 保证总结输入预算（≈500）装得下 [sum2, r3, m3]（≈102 token）
+            keepRecentTokens: '80%',
+            summarizeMaxInputRatio: 0.9
         });
 
         const result = await service.handleAutoSummarize('conv1', 'cfg1');
 
         expect(result.success).toBe(true);
         if (result.success) {
-            // 旧累计 3（sum1）+ 本次实际删除 0（r3 是第一条真实用户消息，受保护不删除，
-            // 本次总结退化为纯插入）= 3；旧实现会回退到数组下标 2 得出 3
-            expect(result.summarizedMessageCount).toBe(3);
-            expect(result.insertIndex).toBe(4); // 总结插入到 r3 之后（原 insertIndex 位置）
-            expect(result.removedCount).toBe(0);
+            // 旧累计 3（sum1）+ 本次实际标记 1（m3 是 r3 之后的 model 消息，可被标记）= 4；
+            // 旧实现会回退到数组下标 2 得出 3
+            expect(result.summarizedMessageCount).toBe(4);
+            expect(result.insertIndex).toBe(5); // 总结插入到 m3 之后（r4 轮首，原 insertIndex 位置）
+            expect(result.removedCount).toBe(1);
         }
         expect(generate).toHaveBeenCalledTimes(1);
-        // 历史 = [sum1, m1, sum2, r3(首条用户消息,保留), 新总结, m3, r4, fc4, fc4]
+        // 历史 = [sum1, m1, sum2, r3(首条用户消息,保留), m3(isSummarized), 新总结, r4, fc4, fc4]
         expect(liveHistory).toHaveLength(8 + 1);
         expect(liveHistory[3].parts[0].text).toBe('r3');
-        expect(liveHistory[4]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 4 });
-        expect(liveHistory.slice(5).map(msgLabel)).toEqual(['m3', 'r4', 'fc4', 'fc4']);
+        expect(liveHistory[4]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[5]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 5 });
+        expect(liveHistory.slice(6).map(msgLabel)).toEqual(['r4', 'fc4', 'fc4']);
     });
 });
 

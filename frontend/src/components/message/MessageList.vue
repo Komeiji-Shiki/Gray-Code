@@ -1280,7 +1280,7 @@ function formatCheckpointTime(timestamp: number): string {
 <template>
   <div class="message-list">
     <div class="message-scroll-area">
-      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message" :width="10" :marker-height="10">
+      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summarize-divider" :width="10" :marker-height="10">
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
@@ -1419,8 +1419,17 @@ function formatCheckpointTime(timestamp: number): string {
             </template>
           </template>
 
-          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界） -->
-          <div v-else-if="row.kind === 'summarize-divider'" class="summarize-divider" aria-hidden="true">
+          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界）
+          滚动条 marker：黄色 + 专属 tooltip 前缀，与用户消息的蓝色 marker 区分，
+          便于在长对话中定位总结截断起始点（此线以下为发送给 AI 的活跃内容） -->
+          <div
+            v-else-if="row.kind === 'summarize-divider'"
+            class="summarize-divider"
+            aria-hidden="true"
+            :data-preview="t('components.message.summary.dividerMarker')"
+            data-marker-color="rgba(221, 185, 47, 0.85)"
+            :data-marker-tooltip-prefix="t('components.message.summary.dividerMarkerPrefix')"
+          >
             <div class="summarize-divider-line"></div>
           </div>
 

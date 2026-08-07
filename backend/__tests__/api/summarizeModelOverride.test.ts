@@ -73,7 +73,7 @@ function createHarness(
     const settingsManager = {
         getSummarizeConfig: jest.fn().mockReturnValue({
             keepRecentRounds: 1,
-            keepRecentTokens: '10%',
+            keepRecentTokens: 10000,
             useSeparateModel,
             summarizeChannelId: useSeparateModel ? 'dedicated' : '',
             summarizeModelId: useSeparateModel ? summarizeModelId : '',

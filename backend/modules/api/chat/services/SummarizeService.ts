@@ -26,7 +26,6 @@ import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import type { ContextTrimService } from './ContextTrimService';
 import {
-    DEFAULT_MAX_CONTEXT_TOKENS,
     resolveModelContextWindowForConfig,
     resolveMaxContextTokensForConfig
 } from './ContextTrimService';
@@ -1440,7 +1439,8 @@ export class SummarizeService {
      * 基于 token 预算解析总结范围
      *
      * 从最后一轮往前累计 token，能装进保留预算的轮保留，更早的轮纳入总结范围。
-     * keepRecentRounds 作为最少保留轮数下限；只有一个超大轮时回退到轮内截断。
+     * 保留预算百分比以「本次规划范围内的活跃历史 token 总量」为基数（'50%' = 截断一半、
+     * 保留另一半）；keepRecentRounds 作为最少保留轮数下限；只有一个超大轮时回退到轮内截断。
      *
      * @returns summarizeEndIndex 为总结范围结束索引（fullHistory 绝对索引，同时也是总结消息插入位置）
      */
@@ -1448,7 +1448,7 @@ export class SummarizeService {
         conversationId: string;
         fullHistory: Content[];
         lastSummaryIndex: number;
-        /** 主对话渠道 ID（保留预算的百分比基数与 token 口径都以主对话模型为准） */
+        /** 主对话渠道 ID（token 估算口径以主对话模型为准；保留预算百分比基数已是活跃历史总量，不再依赖主模型窗口） */
         mainConfigId: string;
         keepRecentRounds: number;
         keepRecentTokens?: number | string;
@@ -1463,18 +1463,18 @@ export class SummarizeService {
         const historyAfterSummary = fullHistory.slice(historyStartIndex);
         const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
 
-        // 保留预算以主对话模型的最大上下文为基数解析
         const mainConfig = await this.configManager.getConfig(options.mainConfigId);
-        const maxContextTokens = mainConfig
-            ? resolveMaxContextTokensForConfig(mainConfig, options.mainModelOverride).maxContextTokens
-            : DEFAULT_MAX_CONTEXT_TOKENS;
         const channelType = mainConfig?.type || 'custom';
-        const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, maxContextTokens);
 
         // 逐消息估算 token，再由规划器先建立轮级保护边界、随后在肥轮内部寻找安全 model 切点。
         const messageTokens = historyAfterSummary.map(message => (
             this.estimateMessageTokensForBudget(message, channelType)
         ));
+        // 保留预算百分比基数 = 本次总结规划范围内的活跃历史 token 总量（上一次总结之后、
+        // 未被 isSummarized 覆盖的消息）。'50%' 即「截断一半、保留另一半」，与主模型窗口无关；
+        // 绝对 token 数配置（如 30000）仍表示固定保留预算。
+        const totalActiveTokens = messageTokens.reduce((sum, tokens) => sum + tokens, 0);
+        const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, totalActiveTokens);
         const plan = planSummarizeMessages({
             messages: historyAfterSummary,
             messageTokens,
