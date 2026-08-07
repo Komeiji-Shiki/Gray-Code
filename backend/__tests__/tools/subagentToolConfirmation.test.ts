@@ -1,9 +1,14 @@
 /**
  * 子代理危险工具确认门测试（SEC）。
  *
- * 覆盖：用户设置需要确认的工具（delete_file / execute_command 等 toolAutoExec=false）
+ * 覆盖：用户设置需要确认的工具（search_in_files 替换模式等 toolAutoExec=false）
  * 在子代理内被拒绝执行（子代理没有与用户交互的确认通道，不得绕过主链路确认门）；
  * 自动执行的工具不受影响。
+ *
+ * 适配说明（fork）：本地 SUBAGENT_DEFAULT_BLOCKED_TOOLS 会把 execute_command /
+ * delete_file 在进入确认门之前就从子代理工具集剔除（更早更强的防护），
+ * 因此本测试用 search_in_files（replace 模式）验证确认门——它通过本地白名单、
+ * 且按本地 ToolExecutionService 语义需要用户确认。
  */
 
 import { createDefaultExecutor } from '../../tools/subagents/executor';
@@ -97,33 +102,42 @@ describe('子代理危险工具确认门（SEC）', () => {
     });
 
     it('需要确认的工具（toolNeedsConfirmation=true）被拒绝执行：不绕过确认门、不执行工具', async () => {
-        mockResolveTools(['read_file', 'delete_file', 'execute_command']);
+        mockResolveTools(['read_file', 'search_in_files']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'ok' } }],
             responseParts: [],
             multimodalAttachments: undefined
         });
         const generateMock = jest.fn()
-            .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
+            .mockResolvedValueOnce(toolCallResponse('search_in_files', { query: 'x', mode: 'replace', replace: 'y' }))
             .mockResolvedValueOnce(textResponse());
         const executor = createDefaultExecutor(createConfig(), createContext({
             channelManager: { generate: generateMock } as any,
             toolExecutionService: {
-                // 确认门：delete_file 需要用户确认
-                toolNeedsConfirmation: jest.fn().mockImplementation((toolName: string) => toolName === 'delete_file' || toolName === 'execute_command'),
+                // 确认门：search_in_files 替换模式需要用户确认（与本地 ToolExecutionService 语义一致）。
+                // 实现为依赖 this 的真实方法而非解绑箭头函数——回归防护：executor 必须以方法形式
+                // 调用（toolExecutionService.toolNeedsConfirmation(...)），解绑为裸函数调用时
+                // this 为 undefined，本方法内部 this.__gate 读不到 → 抛错暴露回归。
+                __gate: true,
+                toolNeedsConfirmation(toolName: string) {
+                    if (!this || this.__gate === undefined) {
+                        throw new Error('toolNeedsConfirmation lost this binding');
+                    }
+                    return this.__gate && toolName === 'search_in_files';
+                },
                 executeFunctionCallsWithResults: executeMock
             } as any
         }));
 
         const result = await executor({
             agentType: 'tester',
-            prompt: 'delete the file',
+            prompt: 'replace in the file',
             runId: 'sec_confirm_blocked'
         });
 
         // 工具调用被拒绝（未执行）
         expect(result.toolCalls).toHaveLength(1);
-        expect(result.toolCalls![0].tool).toBe('delete_file');
+        expect(result.toolCalls![0].tool).toBe('search_in_files');
         expect(result.toolCalls![0].success).toBe(false);
         // 拒绝原因以 functionResponse 形式回给子模型（下一轮请求的历史可见；
         // 注意：history 数组按引用被后续迭代继续 push，需在整个历史中查找拒绝响应）
@@ -170,14 +184,14 @@ describe('子代理危险工具确认门（SEC）', () => {
     });
 
     it('共享执行服务缺少确认门（fail-closed）：工具被拒绝执行，不静默放行', async () => {
-        mockResolveTools(['delete_file']);
+        mockResolveTools(['search_in_files']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'ok' } }],
             responseParts: [],
             multimodalAttachments: undefined
         });
         const generateMock = jest.fn()
-            .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
+            .mockResolvedValueOnce(toolCallResponse('search_in_files', { query: 'x', mode: 'replace', replace: 'y' }))
             .mockResolvedValueOnce(textResponse());
         const executor = createDefaultExecutor(createConfig(), createContext({
             channelManager: { generate: generateMock } as any,
@@ -189,7 +203,7 @@ describe('子代理危险工具确认门（SEC）', () => {
 
         const result = await executor({
             agentType: 'tester',
-            prompt: 'delete the file',
+            prompt: 'replace in the file',
             runId: 'sec_confirm_fail_closed'
         });
 
