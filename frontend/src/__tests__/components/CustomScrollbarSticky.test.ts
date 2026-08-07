@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import CustomScrollbar from '../../components/common/CustomScrollbar.vue'
 
@@ -19,6 +19,11 @@ import CustomScrollbar from '../../components/common/CustomScrollbar.vue'
 
 function raf(): Promise<void> {
   return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+}
+
+/** fake timers 版 rAF 等待：推进 20ms 触发 jsdom rAF（16ms 定时器实现） */
+async function advanceRaf(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(20)
 }
 
 /** 内容变化（MutationObserver 微任务）→ 布局更新（rAF）的完整两拍 */
@@ -113,5 +118,73 @@ describe('CustomScrollbar sticky-bottom', () => {
     expect(container.scrollTop).toBe(1100) // 1200 - 100
 
     wrapper.unmount()
+  })
+
+  it('wheel 滚动后冷静期内内容增长不拉回（高 tps 抵消滚动距离）', async () => {
+    const wrapper = mountSticky()
+    await nextTick()
+    const container = wrapper.get('.scroll-container').element as HTMLElement
+    Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true })
+    Object.defineProperty(container, 'clientHeight', { value: 100, configurable: true })
+    container.scrollTop = 400
+    container.dispatchEvent(new Event('scroll')) // 在底部
+    await raf()
+
+    // 用户滚轮向上滚动：wheel 输入事件（冷静期开始），scrollTop 同步生效；
+    // scroll 事件尚未派发（浏览器异步派发滞后，updateLayout 只能看到旧 wasAtBottom）
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: 120 }))
+    container.scrollTop = 300
+
+    // 高 tps：内容同步增长（scrollHeight 500 → 800），贴底目标远高于用户位置
+    Object.defineProperty(container, 'scrollHeight', { value: 800, configurable: true })
+    container.appendChild(document.createElement('div'))
+    await settleLayout()
+
+    // 冷静期内不贴底：用户位置保持（旧实现在此用陈旧 wasAtBottom 把用户拉回 700）
+    expect(container.scrollTop).toBe(300)
+
+    wrapper.unmount()
+  })
+
+  it('冷静期过后恢复贴底', async () => {
+    // 冷静期判断用 performance.now()：必须把 performance 也纳入 fake 范围
+    // （默认 toFake 不含 performance，advanceTimersByTimeAsync 推不动真实时钟）
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'Date', 'performance']
+    })
+    try {
+      const wrapper = mountSticky()
+      await nextTick()
+      const container = wrapper.get('.scroll-container').element as HTMLElement
+      Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true })
+      Object.defineProperty(container, 'clientHeight', { value: 100, configurable: true })
+      container.scrollTop = 400
+      container.dispatchEvent(new Event('scroll')) // 在底部
+      await advanceRaf()
+
+      // 用户滚轮滚动：冷静期开始（wasAtBottom 保持 true，scroll 事件未派发）
+      container.dispatchEvent(new WheelEvent('wheel', { deltaY: 120 }))
+      container.scrollTop = 300
+
+      // 冷静期内：内容增长不贴底
+      Object.defineProperty(container, 'scrollHeight', { value: 800, configurable: true })
+      container.appendChild(document.createElement('div'))
+      await nextTick()
+      await advanceRaf()
+      expect(container.scrollTop).toBe(300)
+
+      // 冷静期过后：先推进 300ms 让冷静期过期（advanceTimersByTimeAsync 是逐步推进，
+      // 过早触发的 rAF 仍会落在冷静期内），再触发新内容增长 → 恢复贴底
+      await vi.advanceTimersByTimeAsync(300)
+      Object.defineProperty(container, 'scrollHeight', { value: 900, configurable: true })
+      container.appendChild(document.createElement('div'))
+      await nextTick()
+      await advanceRaf()
+      expect(container.scrollTop).toBe(800) // 900 - 100
+
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

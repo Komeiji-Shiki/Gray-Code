@@ -185,6 +185,17 @@ let wasAtBottom = true
  */
 let programmaticScrollTop: number | null = null
 
+/**
+ * 用户滚动输入后的冷静期（ms）：期间不执行贴底跟随。
+ * 高 tps 下内容增长会抵消滚动距离（滚 100px 内容长 80px），无冷静期时
+ * 用户连续滚动也会被每帧贴底写入拉回——「使劲滚才能滚上去」。
+ * wheel 等输入事件在输入处理阶段同步派发（早于 scroll 事件与 rAF），
+ * 且程序写入 scrollTop 不会触发它，是可靠的「用户滚动意图」信号。
+ */
+const USER_SCROLL_COOLDOWN_MS = 250
+/** 最近一次用户滚动输入的时间（performance.now 时间轴） */
+let lastUserScrollInputAt = 0
+
 /** 贴底跟随写入阈值（px）：与目标位置差值小于该值时跳过写 scrollTop，避免每帧赋值 */
 const STICKY_FOLLOW_THRESHOLD = 2
 
@@ -453,14 +464,18 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
 
   const container = scrollContainer.value
   if (options.preserveBottom && props.stickyBottom && wasAtBottom) {
-    // 贴底跟随：与目标位置差值超过阈值才写 scrollTop（已贴底时每帧赋值是纯浪费）
-    const targetTop = container.scrollHeight - container.clientHeight
-    if (Math.abs(container.scrollTop - targetTop) > STICKY_FOLLOW_THRESHOLD) {
-      programmaticScrollTop = targetTop
-      container.scrollTop = targetTop
+    // 用户滚动输入冷静期内不贴底：让滚动真正生效（内容增长可能抵消滚动距离）
+    const inUserScrollCooldown = performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS
+    if (!inUserScrollCooldown) {
+      // 贴底跟随：与目标位置差值超过阈值才写 scrollTop（已贴底时每帧赋值是纯浪费）
+      const targetTop = container.scrollHeight - container.clientHeight
+      if (Math.abs(container.scrollTop - targetTop) > STICKY_FOLLOW_THRESHOLD) {
+        programmaticScrollTop = targetTop
+        container.scrollTop = targetTop
+      }
+      // 写入即贴底：不在此复验（scrollHeight 可能已因大段输出/md 解析继续增长，
+      // 复验会误判「不在底部」→ 永久丢吸底）。wasAtBottom 只由用户滚动更新。
     }
-    // 写入即贴底：不在此复验（scrollHeight 可能已因大段输出/md 解析继续增长，
-    // 复验会误判「不在底部」→ 永久丢吸底）。wasAtBottom 只由用户滚动更新。
   }
 
   updateScrollbar()
@@ -511,10 +526,17 @@ function handleScroll() {
   })
 }
 
+/** 用户滚动输入（wheel/触摸板）：标记冷静期。输入事件同步派发、早于 scroll 事件与 rAF */
+function handleUserScrollInput(): void {
+  lastUserScrollInputAt = performance.now()
+}
+
 // 垂直滚动 - 鼠标按下滑块
 function handleThumbMouseDown(e: MouseEvent) {
   if (!scrollContainer.value) return
   
+  // 滚动条拖动也是用户滚动意图：标记冷静期，避免拖动中被贴底拉回
+  lastUserScrollInputAt = performance.now()
   isDragging = true
   startY = e.clientY
   startScrollTop = scrollContainer.value.scrollTop
@@ -700,6 +722,7 @@ onMounted(() => {
     
     if (scrollContainer.value) {
       scrollContainer.value.addEventListener('scroll', handleScroll, { passive: true })
+      scrollContainer.value.addEventListener('wheel', handleUserScrollInput, { passive: true })
     }
     
     window.addEventListener('resize', updateScrollbar)
@@ -738,6 +761,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (scrollContainer.value) {
     scrollContainer.value.removeEventListener('scroll', handleScroll)
+    scrollContainer.value.removeEventListener('wheel', handleUserScrollInput)
   }
   window.removeEventListener('resize', updateScrollbar)
   if (resizeObserver) {

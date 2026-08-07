@@ -79,6 +79,12 @@ const stickToBottom = ref(true)
 const userScrolled = ref(false)
 // 距底部多少 px 内视为「贴底意图」（用户滚回底部即恢复自动吸底）
 const STICK_BOTTOM_THRESHOLD = 40
+// 用户滚动输入后的冷静期（ms）：期间不执行贴底跟随。高 tps 下内容增长会
+// 抵消滚动距离（滚 50px 内容长 40px），无冷静期时连续滚动也会被拉回。
+// wheel 输入事件同步派发、早于 scroll 事件，是可靠的「用户滚动意图」信号
+const USER_SCROLL_COOLDOWN_MS = 250
+/** 最近一次用户滚动输入的时间（performance.now 时间轴） */
+let lastUserScrollInputAt = 0
 // 上次复验时的 scrollTop：内容增长只改 scrollHeight 不改 scrollTop。
 // scrollTop 未变 = 用户没动 → 保持吸底状态（大段输出/md 解析不丢吸底）；
 // scrollTop 变化 = 用户滚动或程序贴底写入 → 按当前位置重新判定
@@ -90,19 +96,32 @@ const mediumTrimmed = ref(false)
  * 已滚离底部（事件未到）时同步置 false，避免 append 把用户拉回；
  * scrollTop 未变则用户没动，内容增长不改变吸底意图 */
 function shouldStickBottom(): boolean {
+  // 用户滚动输入冷静期内不贴底：让滚动真正生效（内容增长可能抵消滚动距离）。
+  // 不修改 stickToBottom：冷静期结束后用户若仍在底部可无缝恢复吸底
+  if (performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS) return false
   if (!stickToBottom.value) return false
   if (!userScrolled.value) return true
   const el = mediumScrollContainerRef.value
   if (!el) return true
   // 用户没滚动（scrollTop 未变）：内容增长/渲染不改变吸底意图
-  if (el.scrollTop === lastCheckedScrollTop) return true
-  lastCheckedScrollTop = el.scrollTop
-  // 用户滚动过（或程序贴底写入后）：按当前位置判定贴底意图
-  if (el.scrollHeight - el.scrollTop - el.clientHeight >= STICK_BOTTOM_THRESHOLD) {
-    stickToBottom.value = false
-    return false
+  if (el.scrollTop !== lastCheckedScrollTop) {
+    lastCheckedScrollTop = el.scrollTop
+    // 用户滚动过（或程序贴底写入后）：按当前位置判定贴底意图
+    if (el.scrollHeight - el.scrollTop - el.clientHeight >= STICK_BOTTOM_THRESHOLD) {
+      stickToBottom.value = false
+      return false
+    }
+    stickToBottom.value = true
   }
-  stickToBottom.value = true
+  // 即将返回 true：调用方（CharFlow scrollToEnd / promote 校正）会同步贴底写入
+  // scrollTop。程序写入会改变 scrollTop，若不记录，紧随其后的异步高度增长
+  // （代码块 hljs 高亮渲染）会让 scrollTop 变化检测把程序写入误判为「用户滚动」，
+  // 位置复验按涨量判定「不在底部」→ 丢吸底。微任务读回写入后的实际值
+  // （浏览器对 scrollTop 赋值有钳制，读回最准）
+  queueMicrotask(() => {
+    const el2 = mediumScrollContainerRef.value
+    if (el2) lastCheckedScrollTop = el2.scrollTop
+  })
   return true
 }
 /** 稳定引用：尾部窗口首次裁剪时置标志，显示「内容过长」提示（按 messageId 记忆） */
@@ -126,6 +145,10 @@ function onMediumScroll(): void {
   lastCheckedScrollTop = el.scrollTop
   stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_THRESHOLD
 }
+/** 滚动容器 wheel 输入：标记冷静期（输入事件早于 scroll 事件派发，高 tps 下防止拉回） */
+function onMediumWheel(): void {
+  lastUserScrollInputAt = performance.now()
+}
 /** 渐进 markdown 提升后校正贴底：promote 同步剥离 CharFlow 内容（host 立即变矮），
  * 而 MarkdownRenderer 在下一 tick 才渲染变高——两段式高度变化会让贴底位置
  * 停在中间。必须等 Vue 完成渲染（nextTick）后按最终 scrollHeight 校正 */
@@ -139,6 +162,9 @@ async function scrollMediumToBottomIfStuck(): Promise<void> {
   // 复验当前位置：用户已滚离（scroll 事件滞后）时不拉回
   if (!shouldStickBottom()) return
   el.scrollTop = el.scrollHeight
+  // 同步记录程序写入位置：避免下次 scrollTop 变化检测误判为用户滚动
+  // （代码块异步渲染导致 scrollHeight 骤增时，误判会丢吸底）
+  lastCheckedScrollTop = el.scrollTop
 }
 let registeredThoughtHost: HTMLElement | null = null
 let registeredThoughtMessageId: string | null = null
@@ -208,6 +234,7 @@ watch(
         mediumTrimmed.value = messageId ? mediumTrimmedByMessageId.get(messageId) ?? false : false
         stickToBottom.value = true
         userScrolled.value = false
+        lastUserScrollInputAt = 0 // 重置冷静期：重新进入中展开立即恢复贴底
         registerSmoothDisplay(messageId, host, {
           noFade: true,
           tailWindow: 4096,
@@ -292,6 +319,7 @@ onUnmounted(releaseThoughtDisplay)
       ref="mediumScrollContainerRef"
       class="thought-medium"
       @scroll="onMediumScroll"
+      @wheel="onMediumWheel"
     >
       <!-- 尾部窗口裁剪提示：内容过长仅显示最近部分 -->
       <div v-if="mediumTrimmed && smoothDisplayActive" class="thought-trim-hint">
