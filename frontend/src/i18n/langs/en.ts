@@ -991,6 +991,10 @@ const en: LanguageMessages = {
                         atLeastOne: 'At least one config must be kept',
                         cancel: 'Cancel',
                         confirm: 'Confirm'
+                    },
+                    changeType: {
+                        title: 'Change Channel Type',
+                        message: 'Are you sure you want to change the channel type to "{name}"? Type-specific settings (API URL, model list, advanced options, etc.) will be reset to the defaults for the new type; common settings (name, API Key, timeout, retry, etc.) will be kept.'
                     }
                 },
                 form: {
@@ -1016,7 +1020,8 @@ const en: LanguageMessages = {
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API'
+                        anthropic: 'Anthropic API',
+                        changeHint: 'Changing the channel type resets type-specific settings (API URL, model list, advanced options, etc.) to defaults; common settings are kept.'
                     },
                     toolMode: {
                         label: 'Tool Call Format',

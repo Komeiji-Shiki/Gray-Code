@@ -991,6 +991,10 @@ const ja: LanguageMessages = {
                         atLeastOne: '少なくとも 1 つの設定を保持する必要があります',
                         cancel: 'キャンセル',
                         confirm: '確認'
+                    },
+                    changeType: {
+                        title: 'チャンネルタイプの変更',
+                        message: 'チャンネルタイプを「{name}」に変更してもよろしいですか？このタイプ固有のパラメータ（API URL、モデル一覧、詳細オプションなど）は新しいタイプのデフォルトにリセットされます。共通設定（名前、API Key、タイムアウト、リトライなど）は保持されます。'
                     }
                 },
                 form: {
@@ -1016,7 +1020,8 @@ const ja: LanguageMessages = {
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API'
+                        anthropic: 'Anthropic API',
+                        changeHint: 'チャンネルタイプを変更すると、このタイプ固有のパラメータ（API URL、モデル一覧、詳細オプションなど）がデフォルトにリセットされます。共通設定は保持されます。'
                     },
                     toolMode: {
                         label: 'ツール呼び出し形式',
