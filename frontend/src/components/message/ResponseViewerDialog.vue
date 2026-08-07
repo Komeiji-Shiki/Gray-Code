@@ -18,7 +18,7 @@ import type {
 interface Props {
   modelValue?: boolean
   title?: string
-  value: ResponseViewerData
+  value?: ResponseViewerData | null
   width?: string
 }
 
@@ -62,15 +62,17 @@ watch(mode, nextMode => {
   persistMode(nextMode)
 })
 
-const answerText = computed(() => props.value.common.answerText || '')
-const thoughtText = computed(() => props.value.common.thoughtText || '')
-const tools = computed(() => props.value.common.tools)
-const parts = computed(() => props.value.advanced.parts)
-const attachments = computed(() => props.value.advanced.attachments)
-const metadata = computed(() => props.value.advanced.metadata)
+const answerText = computed(() => props.value?.common.answerText || '')
+const thoughtText = computed(() => props.value?.common.thoughtText || '')
+const tools = computed(() => props.value?.common.tools ?? [])
+const parts = computed(() => props.value?.advanced.parts ?? [])
+const attachments = computed(() => props.value?.advanced.attachments ?? [])
+const metadata = computed(() => props.value?.advanced.metadata)
 
 const responseInfoItems = computed(() => {
   const items: Array<{ label: string; value: string }> = []
+  // value 可能为 null（对话框打开前由调用方惰性构建）：避免渲染期空指针导致组件树失效
+  if (!props.value) return items
   const usage = props.value.common.usage
   const timing = props.value.common.timing
 
@@ -154,6 +156,7 @@ const responseInfoItems = computed(() => {
 })
 
 const basicInfoItems = computed(() => {
+  if (!props.value) return []
   const items: Array<{ label: string; value: string }> = [
     {
       label: t('components.message.responseViewer.id'),
@@ -205,6 +208,7 @@ const basicInfoItems = computed(() => {
 
 const metadataKnownItems = computed(() => {
   const items: Array<{ label: string; value: string }> = []
+  if (!props.value) return items
   const data = metadata.value
   const usage = props.value.common.usage
 
@@ -564,10 +568,10 @@ function formatJsonInline(value: unknown): string {
           <summary class="viewer-details-summary">
             <span>{{ t('components.message.responseViewer.thought') }}</span>
             <span
-              v-if="typeof props.value.common.timing.thinkingDuration === 'number' && props.value.common.timing.thinkingDuration > 0"
+              v-if="typeof props.value?.common.timing.thinkingDuration === 'number' && props.value.common.timing.thinkingDuration > 0"
               class="summary-badge"
             >
-              {{ formatDuration(props.value.common.timing.thinkingDuration) }}
+              {{ formatDuration(props.value?.common.timing.thinkingDuration) }}
             </span>
           </summary>
           <div class="details-body">
@@ -692,20 +696,20 @@ function formatJsonInline(value: unknown): string {
 
         <section class="viewer-section">
           <div class="section-title">{{ t('components.message.responseViewer.body') }}</div>
-          <div v-if="props.value.advanced.answerText" class="section-content">
+          <div v-if="props.value?.advanced.answerText" class="section-content">
             <div class="section-actions">
-              <button class="section-action-btn" type="button" @click="handleCopyBody(props.value.advanced.answerText)">
+              <button class="section-action-btn" type="button" @click="handleCopyBody(props.value?.advanced.answerText ?? '')">
                 {{ t('components.message.responseViewer.copyBody') }}
               </button>
             </div>
-            <MarkdownRenderer :content="props.value.advanced.answerText" class="viewer-markdown" />
+            <MarkdownRenderer :content="props.value?.advanced.answerText ?? ''" class="viewer-markdown" />
           </div>
           <div v-else class="empty-block">{{ t('components.message.emptyResponse') }}</div>
         </section>
 
         <section class="viewer-section">
           <div class="section-title">{{ t('components.message.responseViewer.thought') }}</div>
-          <div v-if="props.value.advanced.thoughtText" class="section-content">
+          <div v-if="props.value?.advanced.thoughtText" class="section-content">
             <MarkdownRenderer :content="props.value.advanced.thoughtText" class="viewer-markdown thought-markdown" />
           </div>
           <div v-else class="empty-block">{{ t('components.message.responseViewer.noThought') }}</div>
@@ -1091,7 +1095,7 @@ function formatJsonInline(value: unknown): string {
 
   <JsonViewerDialog
     v-model="showRawJsonDialog"
-    :value="props.value.rawJson"
+    :value="props.value?.rawJson"
     :title="t('components.message.responseViewer.rawJson')"
     width="860px"
   />

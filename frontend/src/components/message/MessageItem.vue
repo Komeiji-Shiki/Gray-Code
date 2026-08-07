@@ -965,7 +965,7 @@ function handleRestoreAndRetry(checkpointId: string) {
     <!-- 回复查看 -->
     <ResponseViewerDialog
       v-model="showResponseDialog"
-      :value="responseViewerData as ResponseViewerData"
+      :value="responseViewerData"
       :title="t('components.message.actions.viewResponse')"
       width="960px"
     />

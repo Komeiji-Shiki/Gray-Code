@@ -25,14 +25,36 @@ import { createAgentStopNotificationController, type AgentStopNotificationContro
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 
 // 大面板懒加载：历史/用量/设置/Monitor/Diff/代码查看/更新弹窗都改为异步组件，
-// 保留既有 visitedViews + v-show 惰性挂载逻辑不变，仅把代码拆到独立 chunk、首次使用时才解析执行
-const HistoryPage = defineAsyncComponent(() => import('./components/history/HistoryPage.vue'))
-const UsagePage = defineAsyncComponent(() => import('./components/usage/UsagePage.vue'))
-const SettingsPanel = defineAsyncComponent(() => import('./components/settings/SettingsPanel.vue'))
-const SubAgentMonitor = defineAsyncComponent(() => import('./components/subagents/SubAgentMonitor.vue'))
-const DiffViewerPanel = defineAsyncComponent(() => import('./components/diff/DiffViewerPanel.vue'))
-const CodeViewPanel = defineAsyncComponent(() => import('./components/codeView/CodeViewPanel.vue'))
-const UpdateModal = defineAsyncComponent(() => import('./components/common/UpdateModal.vue'))
+// 保留既有 visitedViews + v-show 惰性挂载逻辑不变，仅把代码拆到独立 chunk、首次使用时才解析执行。
+// 失败兜底：便携版/防病毒/临时目录清理可能让 chunk 加载偶发失败——onError 自动重试（最多 3 次，
+// 指数退避），仍失败则渲染降级占位而非静默空白，避免"UI 丢失"。
+const lazyRetryCounts = new Map<string, number>()
+const MAX_LAZY_RETRIES = 3
+
+function withLazyFallback(name: string, loader: () => Promise<{ default: unknown }>) {
+  return defineAsyncComponent({
+    loader,
+    delay: 0,
+    onError(_error, retry, fail) {
+      const count = (lazyRetryCounts.get(name) || 0) + 1
+      lazyRetryCounts.set(name, count)
+      if (count <= MAX_LAZY_RETRIES) {
+        setTimeout(retry, count * 400)
+      } else {
+        lazyRetryCounts.delete(name)
+        fail()
+      }
+    }
+  })
+}
+
+const HistoryPage = withLazyFallback('HistoryPage', () => import('./components/history/HistoryPage.vue'))
+const UsagePage = withLazyFallback('UsagePage', () => import('./components/usage/UsagePage.vue'))
+const SettingsPanel = withLazyFallback('SettingsPanel', () => import('./components/settings/SettingsPanel.vue'))
+const SubAgentMonitor = withLazyFallback('SubAgentMonitor', () => import('./components/subagents/SubAgentMonitor.vue'))
+const DiffViewerPanel = withLazyFallback('DiffViewerPanel', () => import('./components/diff/DiffViewerPanel.vue'))
+const CodeViewPanel = withLazyFallback('CodeViewPanel', () => import('./components/codeView/CodeViewPanel.vue'))
+const UpdateModal = withLazyFallback('UpdateModal', () => import('./components/common/UpdateModal.vue'))
 
 // i18n
 const { t } = useI18n()

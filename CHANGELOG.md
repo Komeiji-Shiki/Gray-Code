@@ -34,6 +34,8 @@
   - 自定义协议（graycode://local）请求热路径：缓存命中直接返回，省去每次 stat 系统调用（资源为打包产物运行时不变）。
 
 ### Fixed
+  - 修复回复查看器（ResponseViewerDialog）渲染期空指针导致消息列表 UI 丢失（偶发，便携版/长会话消息滚动渲染时触发）：`MessageItem` 仅在打开对话框时惰性构建 `responseViewerData`（初始为 null），而 `ResponseViewerDialog` 随每条消息常驻渲染，模板与 computed 对 `props.value` 无条件解引用（`:value="props.value.rawJson"` 等）——`props.value` 为 null 时抛 `TypeError: Cannot read properties of null`，Vue 渲染错误向上传播使该消息组件树渲染失败，表现为消息区 UI 缺失。现 `value` prop 改为可空（`value?: ResponseViewerData | null`），全部 computed / 模板访问加可选链与空值兜底（answerText/thoughtText/tools/parts/attachments/metadata/responseInfoItems/basicInfoItems/metadataKnownItems/rawJson），空值时渲染空态而非崩溃。
+  - 懒加载面板增加 chunk 加载失败自动重试兜底：便携版/防病毒扫描/临时目录清理等场景下异步 chunk 偶发加载失败会让面板静默空白（表现为 UI 丢失）——`defineAsyncComponent` 统一走 `withLazyFallback`（失败自动重试最多 3 次、指数退避 400ms 递增），仍失败才渲染降级，不再一次性静默失败。
   - 前端流式/高频路径小修正：`App.vue` 命令分发 switch 内重复 `break` 死代码清理。
 
 ### Tests

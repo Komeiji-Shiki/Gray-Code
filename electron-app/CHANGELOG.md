@@ -21,7 +21,11 @@ are tracked in the root `CHANGELOG.md`.
   - 自定义协议热路径缓存命中免 stat；前端入口体积 -31%（面板异步组件化，详见根 CHANGELOG [1.7.1]）。
 
 ### Tests
-  - backend jest 235 套 / 2442 用例通过；frontend vitest 69 文件 / 648 用例通过；tsc --noEmit（根 + electron-app）与 vue-tsc 全绿；esbuild 生产构建通过。
+  - backend jest 235 套 / 2442 用例通过；frontend vitest 69 文件 / 648 用例通过；tsc --noEmit（根 + electron-app）与 vue-tsc 全绿；esbuild 生产构建通过；GRAYCODE_UISMOKE 真实 UI 冒烟全绿（rendererErrors 为空）。
+
+### Fixed（1.7.1 补丁）
+  - 修复回复查看器渲染期空指针（`props.value.rawJson` 于 value 初始 null 时抛 TypeError）导致消息列表 UI 偶发丢失：`ResponseViewerDialog` value prop 改可空 + 全量可选链兜底（详见根 CHANGELOG [1.7.1] Fixed）。
+  - 懒加载面板 chunk 加载失败自动重试（便携版/杀软/临时目录清理场景不再静默空白）。
 
 ## [1.7.0] - 2026-08-07
 
