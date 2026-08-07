@@ -191,7 +191,7 @@ describe('CheckpointManifestRepository', () => {
         expect(full!.files['ws_a/legacy.txt'].hash).toBe('h-0');
     });
 
-    test('旧格式 v1（files 内联）：读取后 best-effort 拆分为新格式落盘（CPF-LAZY-1 迁移）', async () => {
+    test('旧格式 v1（files 内联）：轻量读零写放大，完整读取时 best-effort 拆分为新格式落盘（CPF-LAZY-1）', async () => {
         const dir = path.join(storageRoot, 'checkpoints', 'cp-v1');
         await fs.mkdir(dir, { recursive: true });
         // 手工构造 v1 布局：manifest.json 内联 files
@@ -207,7 +207,10 @@ describe('CheckpointManifestRepository', () => {
         expect(meta!.version).toBe(1);
         expect('files' in (meta as CheckpointManifestMeta & { files?: unknown })).toBe(false);
 
-        // 完整数据：files 由缓存提供（旧格式无需再读盘）
+        // 轻量读不写盘：拆分（files.json）推迟到完整数据读取时触发，列表加载零写放大
+        await expect(fs.access(path.join(dir, CHECKPOINT_MANIFEST_FILES_FILENAME))).rejects.toThrow();
+
+        // 完整数据：files 由缓存提供（旧格式无需再读盘）；此时触发拆分落盘
         const full = await repo.loadManifestWithFiles('cp-v1');
         expect(full?.files['ws_a/old.txt'].hash).toBe('h-0');
 
@@ -221,6 +224,11 @@ describe('CheckpointManifestRepository', () => {
             await fs.readFile(path.join(dir, CHECKPOINT_MANIFEST_FILES_FILENAME), 'utf-8')
         ) as { files: CheckpointManifest['files'] };
         expect(migratedFiles.files['ws_a/old.txt'].hash).toBe('h-0');
+
+        // 拆分后：轻量读直接命中缓存/磁盘新布局，再次完整读不再回读内联
+        repo.clearCache();
+        const fullAgain = await repo.loadManifestWithFiles('cp-v1');
+        expect(fullAgain?.files['ws_a/old.txt'].hash).toBe('h-0');
     });
 
     test('v1 布局但缺内联 files → 视为损坏，走迁移/回退路径', async () => {
