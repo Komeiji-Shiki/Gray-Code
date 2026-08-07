@@ -199,7 +199,8 @@ const zhCN = {
                 requestAborted: '请求已中止',
                 noResponseBody: '没有响应体',
                 emptyResponse: '模型返回了空内容',
-                streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致'
+                streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致',
+                streamBufferOverflow: '流式响应缓冲区超过大小上限：上游数据无法解析（缓冲持续累积未被消费）'
             },
             modelList: {
                 errors: {
