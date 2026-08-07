@@ -71,6 +71,7 @@ function createCtx(state: ChatStoreState, overrides: Partial<StreamHandlerContex
     addCheckpoint: vi.fn(),
     updateConversationAfterMessage: vi.fn(),
     processQueue: vi.fn(),
+    processQueueAfterAction: vi.fn(),
     ...overrides
   } as unknown as StreamHandlerContext
 }
