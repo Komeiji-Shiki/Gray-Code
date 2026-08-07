@@ -670,6 +670,15 @@ export class StreamAccumulator {
             content.firstChunkTime = this.firstChunkTime;
         }
 
+        // 首字延迟（TTFT）：第一个流式块到达时间 - 请求开始时间
+        // 用于前端展示首字等待耗时，并让 Token 速率分母剥离首字等待窗口（避免首字等待拉低速率）
+        if (this.firstChunkTime !== undefined && this.requestStartTime !== undefined) {
+            const ttft = this.firstChunkTime - this.requestStartTime;
+            if (ttft >= 0) {
+                content.ttft = ttft;
+            }
+        }
+
         // 修改原因：旧 streamDuration 只覆盖首块到末块窗口，上游攒包后会让 token 速度分母过小。
         // 修改方式：用同一个requestStartTime -> lastChunkTime / Date.now() 局部值同时写入responseDuration 与streamDuration。
         // 修改目的：字面修复streamDuration 为完整请求到流结束耗时，并避免两个字段因重复采样产生毫秒级抖动。

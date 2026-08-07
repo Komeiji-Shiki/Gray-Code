@@ -661,6 +661,15 @@ const responseDuration = computed(() => {
   return null
 })
 
+// 首字延迟（TTFT：从请求发送到第一个流式块到达，后端计算）
+const ttft = computed(() => {
+  const ms = props.message.metadata?.ttft
+  if (ms && ms > 0) {
+    return formatDuration(ms)
+  }
+  return null
+})
+
 // Token 速率计算
 // 修改原因：主聊天曾内联一份旧公式并以 streamDuration 作分母，会在上游攒包时出现畸高速度，且与详情页 / Monitor 口径分叉。
 // 修改方式：直接复用公共工具 calculateTokenRate（优先 responseDuration，回退 streamDuration）+ formatTokenRate。
@@ -981,6 +990,11 @@ function handleRestoreAndRetry(checkpointId: string) {
         <div class="message-footer">
           <div class="message-footer-left">
             <span v-if="formattedTime" class="message-time">{{ formattedTime }}</span>
+            
+            <!-- 首字延迟（TTFT） -->
+            <span v-if="ttft" class="ttft" :title="t('components.message.stats.ttft')">
+              <i class="codicon codicon-timer"></i>{{ ttft }}
+            </span>
             
             <!-- 响应持续时间 -->
             <span v-if="responseDuration" class="response-duration" :title="t('components.message.stats.responseDuration')">

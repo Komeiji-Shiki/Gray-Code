@@ -640,9 +640,14 @@ export class OpenAIFormatter extends BaseFormatter {
         if (reasoningEnabled && reasoning) {
             const reasoningConfig: any = {};
             
-            // 思考强度 (effort): none, low, medium, high, xhigh
-            if (reasoning.effort && reasoning.effort !== 'none') {
-                reasoningConfig.effort = reasoning.effort;
+            // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
+            let effort: string | undefined = reasoning.effort;
+            // 自定义模式：使用 effortCustom 的值原样透传
+            if (effort === 'custom') {
+                effort = reasoning.effortCustom?.trim() || undefined;
+            }
+            if (effort && effort !== 'none') {
+                reasoningConfig.effort = effort;
             }
             
             // 输出详细程度 (summary): auto, concise, detailed
