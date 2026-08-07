@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-08-07
+
 ### Added
   - 设置页新增设置项搜索：标题栏搜索框实时过滤（结果下拉 + 侧边栏命中页签高亮、未命中置灰），键盘上下选择/回车跳转，点击结果自动切换页签并滚动定位（节标题或精确锚点 + 1.6s 闪烁高亮）；内置中/英/日三语关键词索引（SEARCH_INDEX），17 个设置组件 93 个设置块加 `data-search-anchor` 精确锚点，具体设置项全部可搜可直达；空结果提示，三语 i18n 同步。
   - 记忆隔离（移植自下游桌面版）：永久记忆分为**全局记忆**（所有工作区共享）与**工作区记忆**（每个工作区独立存储，位于 `<dataPath>/memory-workspaces/<hash>/`，按 `sha256(工作区路径)` 前 16 位分目录，含 `scope.json` 元信息）；对话创建时绑定当前工作区（`createConversation` 既有 `workspaceUri` 参数生效），工具执行层经 `ToolContext.activeWorkspaceUri` 注入（`ToolExecutionService` 调用方传入或按会话元数据兜底解析，`ToolIterationLoopService` 每回合加载一次），记忆工具按工作区路由、无工作区一律回退全局记忆。
