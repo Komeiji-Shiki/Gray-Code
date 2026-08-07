@@ -12,6 +12,7 @@
 import {
     cleanFunctionResponseForAPI,
     cleanContentForAPI,
+    ensureBackgroundTaskSourceForDisplay,
     isRealUserMessage
 } from '../../modules/conversation/helpers';
 import type { Content, ContentPart } from '../../modules/conversation/types';
@@ -26,6 +27,40 @@ describe('isRealUserMessage', () => {
         expect(isRealUserMessage({ role: 'user', isAutoSummary: true })).toBe(false);
         // 逻辑截断：被总结覆盖的原始消息不构成新回合边界
         expect(isRealUserMessage({ role: 'user', isSummarized: true })).toBe(false);
+    });
+});
+
+describe('ensureBackgroundTaskSourceForDisplay', () => {
+    const receipt = (extra: Partial<Content> = {}): Content => ({
+        role: 'user',
+        parts: [{ text: '[Background task completed]\n\nResult: ...' }],
+        ...extra
+    });
+
+    it('旧数据缺 source 的回执消息补 source=background_task（不写盘，仅内存）', () => {
+        const result = ensureBackgroundTaskSourceForDisplay(receipt());
+        expect(result.source).toBe('background_task');
+        // 原对象不被修改（纯函数）
+        expect(receipt().source).toBeUndefined();
+    });
+
+    it('已有 source 的消息保持原值，不重复覆盖', () => {
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'background_task' })).source).toBe('background_task');
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'user' })).source).toBe('user');
+    });
+
+    it('普通用户消息（非回执前缀）不被误判', () => {
+        const normal = receipt({ parts: [{ text: '帮我看看这段代码' }] });
+        expect(ensureBackgroundTaskSourceForDisplay(normal).source).toBeUndefined();
+    });
+
+    it('functionResponse / model 消息不被误判', () => {
+        expect(ensureBackgroundTaskSourceForDisplay(receipt({ isFunctionResponse: true })).source).toBeUndefined();
+        expect(ensureBackgroundTaskSourceForDisplay({ role: 'model', parts: [{ text: '[Background task completed] xxx' }] }).source).toBeUndefined();
+    });
+
+    it('无 parts 的消息安全跳过（不抛错）', () => {
+        expect(ensureBackgroundTaskSourceForDisplay({ role: 'user' } as Content)).toEqual({ role: 'user' } as Content);
     });
 });
 

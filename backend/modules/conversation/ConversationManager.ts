@@ -27,7 +27,7 @@ import {
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, HistoryIndexInfo, IStorageAdapter, SubAgentTranscriptData } from './storage';
 import { withMetadataWriteSerialized, withHangTimeout } from './storage';
-import { cleanFunctionResponseForAPI, isRealUserMessage } from './helpers';
+import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRealUserMessage } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom, repairParentChainAfterDelete, repairParentChainAfterInsert, restoreSummarizedRange } from './TranscriptMutation';
 import { estimatePartialMessageTokens, buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexStore } from './usageStats';
@@ -1095,7 +1095,7 @@ export class ConversationManager {
     private toDisplayMessages(history: ConversationHistory): Content[] {
         return history.map((message, index) => {
             // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = message;
+            const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
             return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
         });
     }
@@ -1779,7 +1779,7 @@ export class ConversationManager {
                 total: pagedHistory.value.total,
                 messages: pagedHistory.value.messages.map((message, i) => {
                     const index = pagedHistory.value!.startIndex + i;
-                    const { turnDynamicContext, ...rest } = message;
+                    const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
                     return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
                 })
             };
@@ -1809,7 +1809,7 @@ export class ConversationManager {
         const messages = slice.map((message, i) => {
             const index = start + i;
             // 深拷贝并过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = message;
+            const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
             return {
                 ...JSON.parse(JSON.stringify(rest)),
                 index
