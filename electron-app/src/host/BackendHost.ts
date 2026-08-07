@@ -155,6 +155,8 @@ export class BackendHost {
   /** previewToSessionId 容量上限：键为每次 diff 的唯一 toolId/diffContentId，只增不删，
    *  长会话会无界增长；超出后淘汰最旧条目（旧预览早已不会再来 accept/reject） */
   private static readonly PREVIEW_SESSION_ID_MAX = 500;
+  /** toolDiffIds 容量上限：键为 toolId，与 previewToSessionId 同源，超出后淘汰最旧条目 */
+  private static readonly TOOL_DIFF_IDS_MAX = 500;
 
   private setPreviewSessionMapping(key: string, value: string): void {
     if (this.previewToSessionId.size >= BackendHost.PREVIEW_SESSION_ID_MAX) {
@@ -522,6 +524,11 @@ export class BackendHost {
           this.toolDiffIds.set(d.toolId, list);
         }
       }
+      while (this.toolDiffIds.size > BackendHost.TOOL_DIFF_IDS_MAX) {
+        const oldest = this.toolDiffIds.keys().next().value;
+        if (oldest === undefined) break;
+        this.toolDiffIds.delete(oldest);
+      }
       // 注意：前端经 onExtensionCommand / App.vue 只消费 { type: 'command', command: 'diff.statusChanged' }，
       // 必须用 'command' 类型推送（与 webview/ChatViewProvider.sendCommand 一致），
       // 否则桌面版变更面板的条目状态同步与删除警戒提示失效。
@@ -729,7 +736,7 @@ export class BackendHost {
    */
   async handleRendererMessage(message: any): Promise<void> {
     const { type, data, requestId, clientId } = message || {};
-    if (!type) return;
+    if (typeof type !== 'string') return;
 
     // 内嵌 SubAgent Monitor 面板的消息：带 subagent-monitor clientId（兼容不带 clientId
     // 但使用 monitor 专属协议类型的旧前端），统一交给桥处理（monitorReady/getRunWindow/

@@ -27,7 +27,8 @@ const common = {
   logLevel: 'info',
   legalComments: 'none',
   minify: !isDev,
-  sourcemap: isDev
+  sourcemap: isDev,
+  define: { 'process.env.NODE_ENV': isDev ? '"development"' : '"production"' }
 };
 
 async function buildOnce() {

@@ -40,6 +40,11 @@ fs.writeFileSync(
 
 let html = fs.readFileSync(indexHtml, 'utf-8');
 
+if (html.includes('<!-- graycode-patch-dist -->')) {
+  console.log('[patch-dist] already patched, skipping');
+  process.exit(0);
+}
+
 const headInject = [
   '<link href="../../resources/codicons/codicon.css" rel="stylesheet">',
   '<link href="./theme.css" rel="stylesheet">',
@@ -72,6 +77,8 @@ html = html.replace(/<script>window\.__GRAYCODE_BUILTIN_SOUND_ASSETS[^<]*<\/scri
 if (!html.includes('Content-Security-Policy')) {
   html = html.replace('</head>', `    <meta http-equiv="Content-Security-Policy" content="${CSP}">\n  </head>`);
 }
+
+html += '\n<!-- graycode-patch-dist -->';
 
 fs.writeFileSync(indexHtml, html, 'utf-8');
 console.log('[patch-dist] patched', indexHtml);

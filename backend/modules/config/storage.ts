@@ -5,6 +5,7 @@
  */
 
 import type { ChannelConfig } from './types';
+import { deepClone } from '../../core/deepClone';
 
 /**
  * 配置存储适配器接口
@@ -63,12 +64,12 @@ export class MemoryStorageAdapter implements ConfigStorageAdapter {
     private configs: Map<string, ChannelConfig> = new Map();
     
     async save(config: ChannelConfig): Promise<void> {
-        this.configs.set(config.id, JSON.parse(JSON.stringify(config)));
+        this.configs.set(config.id, deepClone(config));
     }
     
     async load(configId: string): Promise<ChannelConfig | null> {
         const config = this.configs.get(configId);
-        return config ? JSON.parse(JSON.stringify(config)) : null;
+        return config ? deepClone(config) : null;
     }
     
     async delete(configId: string): Promise<void> {

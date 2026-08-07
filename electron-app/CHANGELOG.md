@@ -16,6 +16,11 @@ are tracked in the root `CHANGELOG.md`.
     手动创建存档点、子代理确认门/上下文裁剪（含 this 绑定修复）、流式缓冲 64MB 无进展上限、
     checkpoint 双文件配对一致性、retry 截断、单轮手动总结放行、多模态占位判定统一、
     分支切换器提前刷新、run-logs.zip 忽略。
+  - 桌面端代码优化批次（详见根目录 CHANGELOG [1.7.2dev]）：
+    `graycode://` 协议缓存命中重 stat 比对 mtime（rebuild 不再返回旧 bundle）；
+    `pendingToasts` 100 上限 / `toolDiffIds` 500 上限驱逐；
+    build.mjs 补 `process.env.NODE_ENV` define；
+    未捕获异常 detail 脱敏、IPC type 校验、patch-dist marker 幂等、clipboard 错误日志。
 
 ## [1.7.1] - 2026-08-07
 

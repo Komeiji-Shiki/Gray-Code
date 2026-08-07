@@ -8,6 +8,7 @@
 
 import type { Content, ContentPart } from './types';
 import { t } from '../../i18n';
+import { deepClone } from '../../core/deepClone';
 
 export interface TranscriptAdapter {
     load(): Promise<Content[]>;
@@ -18,7 +19,7 @@ function cloneContents(contents: Content[]): Content[] {
     // 修改原因：调用方传入的 Content[] 可能来自内存快照或存储层，直接原地改会造成难以追踪的引用污染。
     // 修改方式：所有变更函数先做 JSON 深拷贝，再返回新的数组。
     // 修改目的：让 TranscriptMutation 成为纯变更入口，便于测试和复用。
-    return JSON.parse(JSON.stringify(contents || []));
+    return deepClone(contents || []);
 }
 
 function normalizeIndexes(contents: Content[]): Content[] {

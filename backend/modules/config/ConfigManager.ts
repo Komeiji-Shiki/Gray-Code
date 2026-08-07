@@ -5,6 +5,7 @@
  */
 
 import { t } from '../../i18n';
+import { deepClone } from '../../core/deepClone';
 import type {
     ChannelConfig,
     ChannelType,
@@ -403,7 +404,7 @@ export class ConfigManager {
         const config = this.configCache.get(configId);
         if (!config) return null;
         // 深拷贝后再解析模型，避免污染缓存（models[0] 回退只对读取方生效）
-        return this.resolveModel(JSON.parse(JSON.stringify(config)) as ChannelConfig);
+        return this.resolveModel(deepClone(config) as ChannelConfig);
     }
     
     /**
@@ -515,7 +516,7 @@ export class ConfigManager {
         }
         
         // 返回深拷贝
-        return JSON.parse(JSON.stringify(configs));
+        return deepClone(configs);
     }
     
     /**

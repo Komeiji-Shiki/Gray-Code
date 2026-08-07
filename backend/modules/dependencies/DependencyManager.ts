@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { t } from '../../i18n';
+import { Logger } from '../../core/logger';
 
 const execFile = promisify(childProcess.execFile);
 const mkdir = promisify(fs.mkdir);
@@ -303,10 +304,7 @@ export class DependencyManager {
                 }
             );
             
-            console.log('npm install stdout:', stdout);
-            if (stderr) {
-                console.log('npm install stderr:', stderr);
-            }
+            Logger.get('DependencyManager').debug('npm install output', { stdout: stdout?.slice(0, 2000), stderr: stderr?.slice(0, 2000) });
             
             // 移动安装的依赖到目标目录
             // 需要复制整个 node_modules 目录，因为 sharp 等原生模块有平台依赖包

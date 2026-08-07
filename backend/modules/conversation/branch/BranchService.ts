@@ -44,6 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import * as fsp from 'fs/promises';
 import { Logger } from '../../../core/logger';
+import { deepClone } from '../../../core/deepClone';
 import type { Content, ContentPart, UsageMetadata } from '../types';
 import {
     activePath,
@@ -1142,7 +1143,7 @@ export class BranchService {
                         id,
                         parentId: cursorNodeId,
                         role: 'model',
-                        parts: JSON.parse(JSON.stringify(message.parts ?? [])),
+                        parts: deepClone(message.parts ?? []),
                         kind: 'continue',
                         createdAt: typeof message.timestamp === 'number' ? message.timestamp : Date.now(),
                         timestamp: message.timestamp,
@@ -1867,7 +1868,7 @@ export class BranchService {
                     id,
                     parentId: cursor,
                     role: message.role,
-                    parts: JSON.parse(JSON.stringify(message.parts ?? [])),
+                    parts: deepClone(message.parts ?? []),
                     kind: 'normal',
                     createdAt,
                     timestamp: message.timestamp,
@@ -2098,7 +2099,7 @@ export class BranchService {
             id: randomUUID(),
             parentId: parentNodeId,
             role: input.role ?? defaultRole,
-            parts: JSON.parse(JSON.stringify(input.parts ?? [])),
+            parts: deepClone(input.parts ?? []),
             kind: 'normal',
             createdAt: input.createdAt ?? now,
             timestamp: input.createdAt ?? now,

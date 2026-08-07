@@ -32,6 +32,7 @@ import type { SubAgentRunStatus } from './runEventBus';
 import { subAgentRunController } from './runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from './concurrencyLimiter';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
+import { deepClone } from '../../core/deepClone';
 import { agentMailbox } from './agentMailbox';
 import { markAiActive } from '../../modules/activity';
 
@@ -862,9 +863,9 @@ export function trimSubAgentHistoryForContext(history: Content[], channelConfig:
     // 裁剪决策与请求发送都不应被序列化能力限制打断。
     let trimmed: Content[];
     try {
-        trimmed = JSON.parse(JSON.stringify(
+        trimmed = deepClone(
             keepFrom > 0 ? [history[0], ...history.slice(keepFrom)] : history
-        )) as Content[];
+        ) as Content[];
         truncateOversizedParts(trimmed);
     } catch {
         trimmed = keepFrom > 0 ? [history[0], ...history.slice(keepFrom)] : history;
@@ -961,15 +962,15 @@ export function createDefaultExecutor(
             //          初始卡片消息，其余保留（至少不再把卡片发给模型）。
             // 修改目的：continueFromRunId 续跑能命中旧 run 的 provider 前缀缓存，不浪费首轮 token。
             if (Array.isArray(oldSnapshot.lastSentHistory)) {
-                baseContents = JSON.parse(JSON.stringify(oldSnapshot.lastSentHistory)) as Content[];
+                baseContents = deepClone(oldSnapshot.lastSentHistory) as Content[];
             } else {
-                baseContents = JSON.parse(JSON.stringify(
+                baseContents = deepClone(
                     (oldSnapshot.contents || []).filter(
                         content => !(content.parts || []).some(
                             part => typeof part.text === 'string' && part.text.includes('# SubAgent Invocation')
                         )
                     )
-                )) as Content[];
+                ) as Content[];
             }
         }
 

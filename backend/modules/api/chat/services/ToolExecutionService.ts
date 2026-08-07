@@ -5,6 +5,7 @@
  */
 
 import { t } from '../../../../i18n';
+import { deepClone } from '../../../../core/deepClone';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore, ToolProgressEmitter } from '../../../../tools/types';
 import { normalizeToolArgs } from '../../../../tools/coerceToolArgs';
@@ -100,7 +101,7 @@ function cloneToolResponse(response: Record<string, unknown>): Record<string, un
     try {
         return structuredClone(response);
     } catch {
-        return JSON.parse(JSON.stringify(response));
+        return deepClone(response);
     }
 }
 

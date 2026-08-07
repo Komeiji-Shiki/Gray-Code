@@ -12,6 +12,7 @@ import type { SubAgentTranscriptData } from '../../modules/conversation/storage'
 import { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 import type { ToolProgressEvent } from '../types';
 import { Logger } from '../../core/logger';
+import { deepClone } from '../../core/deepClone';
 
 const logger = Logger.get('SubAgentRunEventBus');
 
@@ -191,7 +192,7 @@ function cloneContentsForWindow(contents: Content[]): Content[] {
     // 修改原因：按需 transcript window 会被前端本地流式 delta 临时修改，不能把事件总线内存对象引用直接交出去。
     // 修改方式：只对窗口切片做 JSON 深拷贝，而不是像旧 snapshots 首包那样复制所有 run 的完整 contents。
     // 修改目的：保持事件总线仍是唯一真源，同时把 Monitor 首屏和窗口请求的复制成本限定在窗口大小内。
-    return JSON.parse(JSON.stringify(contents || [])) as Content[];
+    return deepClone(contents || []) as Content[];
 }
 
 function extractContentPreview(content: Content | undefined): string | undefined {
@@ -329,7 +330,7 @@ function buildLastSentHistoryProjection(
             const consumed = consumedByKey.get(key) ?? 0;
             const contentIndex = indices[consumed];
             if (contentIndex === undefined) {
-                return { content: JSON.parse(JSON.stringify(content)) as Content };
+                return { content: deepClone(content) as Content };
             }
             consumedByKey.set(key, consumed + 1);
             return { contentIndex };
@@ -349,7 +350,7 @@ function restoreLastSentHistory(data: SubAgentTranscriptData): Content[] | undef
         if (!entry || typeof entry !== 'object') return undefined;
         if ('content' in entry) {
             if (!entry.content || typeof entry.content !== 'object') return undefined;
-            restored.push(JSON.parse(JSON.stringify(entry.content)) as Content);
+            restored.push(deepClone(entry.content) as Content);
             continue;
         }
         if (!('contentIndex' in entry) || !Number.isInteger(entry.contentIndex) || entry.contentIndex < 0) {
@@ -360,7 +361,7 @@ function restoreLastSentHistory(data: SubAgentTranscriptData): Content[] | undef
         // Provider formatter只消费 role/parts；显示层的 index/timestamp/isFunctionResponse 等字段不属于请求前缀。
         restored.push({
             role: source.role,
-            parts: JSON.parse(JSON.stringify(source.parts || []))
+            parts: deepClone(source.parts || [])
         } as Content);
     }
     return restored;
@@ -746,7 +747,7 @@ export class SubAgentRunEventBus {
         // 修改原因：SubAgent 子对话要复用 TranscriptMutation 这类纯变更函数，同时由事件总线负责保存结果。
         // 修改方式：复制当前 contents 后交给 mutator，再通过 replaceContents 统一落盘和广播。
         // 修改目的：让 Monitor 消息操作不绕过事件总线的持久化队列。
-        const nextContents = mutator(JSON.parse(JSON.stringify(snapshot.contents || [])) as Content[]);
+        const nextContents = mutator(deepClone(snapshot.contents || []) as Content[]);
         return this.replaceContents(runId, nextContents);
     }
 
@@ -768,7 +769,7 @@ export class SubAgentRunEventBus {
         }
         ensureSnapshotProtocolFields(snapshot);
         const now = Date.now();
-        snapshot.lastSentHistory = JSON.parse(JSON.stringify(history || [])) as Content[];
+        snapshot.lastSentHistory = deepClone(history || []) as Content[];
         snapshot.updatedAt = now;
         // 与内容类写入共用节流持久化窗口；不 bump contentRevision、不发 content_snapshot
         this.enqueuePersist(runId);
@@ -873,7 +874,7 @@ export class SubAgentRunEventBus {
             snapshot.contents = Array.isArray(external?.contents) ? external.contents : [];
             const lastSentHistory = external ? restoreLastSentHistory(external) : undefined;
             if (Array.isArray(lastSentHistory)) {
-                snapshot.lastSentHistory = JSON.parse(JSON.stringify(lastSentHistory)) as Content[];
+                snapshot.lastSentHistory = deepClone(lastSentHistory) as Content[];
             } else {
                 delete snapshot.lastSentHistory;
             }
@@ -975,7 +976,7 @@ export class SubAgentRunEventBus {
                 // 修改原因：lastSentHistory 是续跑复用 provider 前缀缓存的唯一依据，恢复时深拷贝避免与持久化对象共享引用。
                 // 修改方式：仅在字段为数组时显式重建；旧数据缺字段时保持 undefined，由 executor 降级处理。
                 ...(Array.isArray(legacyLastSentHistory)
-                    ? { lastSentHistory: JSON.parse(JSON.stringify(legacyLastSentHistory)) as Content[] }
+                    ? { lastSentHistory: deepClone(legacyLastSentHistory) as Content[] }
                     : {})
             };
             if (!record.transcriptRef && Array.isArray(record.contents) && store.saveSubAgentTranscript) {

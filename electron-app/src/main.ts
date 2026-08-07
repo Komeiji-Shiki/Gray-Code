@@ -90,7 +90,7 @@ process.on('uncaughtException', (error) => {
     type: 'error',
     title: 'GrayCode Crashed',
     message: 'An unexpected error occurred.',
-    detail: String(error?.stack || error?.message || error),
+    detail: redactSecrets(String(error?.stack || error?.message || error)) as string,
     buttons: ['Restart', 'Quit'],
     cancelId: 1
   };
@@ -434,17 +434,28 @@ export function registerCustomProtocol(): void {
       if (!isPathAllowed(fsPath)) {
         return new Response('Forbidden', { status: 403 });
       }
-      // 缓存命中直接返回：资源为打包产物，运行时不变，省去每次请求的 stat 系统调用
+      // 缓存命中校验 mtime：资源在运行期可能被替换（便携版覆盖更新、用户手动覆盖），
+      // 不一致则丢弃缓存条目并按 miss 重新读取，避免返回过期内容
       const cached = fileCache.get(fsPath);
       if (cached) {
-        // LRU 刷新：命中项先删后设、移到 Map 末尾（最新位置），避免热点大 bundle
-        // 被后续小资源挤到淘汰位反复读盘（与 BackendHost.diffPreviewContents 同策略）
+        let mtimeValid = false;
+        try {
+          const cachedStat = await fs.promises.stat(fsPath);
+          mtimeValid = cachedStat.mtimeMs === cached.mtimeMs;
+        } catch {
+          mtimeValid = false;
+        }
+        if (mtimeValid) {
+          // LRU 刷新：命中项先删后设、移到 Map 末尾（最新位置），避免热点大 bundle
+          // 被后续小资源挤到淘汰位反复读盘（与 BackendHost.diffPreviewContents 同策略）
+          fileCache.delete(fsPath);
+          fileCache.set(fsPath, cached);
+          return new Response(cached.body as unknown as BodyInit, {
+            status: 200,
+            headers: { 'Content-Type': cached.mime }
+          });
+        }
         fileCache.delete(fsPath);
-        fileCache.set(fsPath, cached);
-        return new Response(cached.body as unknown as BodyInit, {
-          status: 200,
-          headers: { 'Content-Type': cached.mime }
-        });
       }
       const stat = await fs.promises.stat(fsPath);
       if (!stat.isFile()) return new Response('Not found', { status: 404 });

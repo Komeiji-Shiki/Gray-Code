@@ -8,6 +8,7 @@
  */
 
 import type { Content } from './types';
+import { deepClone } from '../../core/deepClone';
 
 /**
  * transcript 内容变换函数。
@@ -60,7 +61,7 @@ export function cloneTranscriptContents(contents: ReadonlyArray<Content> = []): 
     // 修改原因：transcript 内容可能来自存储层、内存快照或测试数据，直接把引用泄漏给调用方会让“绕过仓储的原地修改”重新出现。
     // 修改方式：沿用 conversation 模块既有 JSON 深拷贝策略，仓储边界内外都只交换独立副本。
     // 修改目的：把 transcript 变更收敛到显式的 append/replace/mutate 调用，而不是靠调用方自觉不改数组引用。
-    return JSON.parse(JSON.stringify(contents || [])) as Content[];
+    return deepClone(contents || []) as Content[];
 }
 
 export class DelegatingTranscriptRepository implements ITranscriptRepository {

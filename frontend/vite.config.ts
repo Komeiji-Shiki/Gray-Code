@@ -35,6 +35,9 @@ export default defineConfig({
         // 大体积静态依赖拆出独立 chunk，缩小主入口（graycode:// 协议与 VS Code webview
         // 均按相对路径加载 assets/ 下的 chunk，mtime 缓存已覆盖）
         manualChunks(id) {
+          if (id.includes('node_modules/js-tiktoken') || id.includes('node_modules/tiktoken')) {
+            return 'vendor-tiktoken';
+          }
           if (id.includes('node_modules/vue') || id.includes('node_modules/@vue') || id.includes('node_modules/pinia')) {
             return 'vendor-vue';
           }

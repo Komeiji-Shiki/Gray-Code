@@ -1237,6 +1237,9 @@ const pendingToasts = new Map<number, PendingToast>();
 // 对应等待的 Promise 永远不 resolve，调用方（工具调用等）会永久挂起。
 // TTL 过期后按“未选择/取消”处理（resolve(undefined)），与渲染层返回 undefined 语义一致。
 const TOAST_TTL_MS = 5 * 60 * 1000;
+// pendingToasts 硬上限：渲染层异常或大量并发 toast 会让 Map 无界增长，
+// 超出后淘汰最旧条目（按“未选择/取消”处理），与 TTL 过期语义一致
+const PENDING_TOASTS_MAX = 100;
 
 function setToastTtl(id: number, pending: PendingToast): void {
   const ttl = setTimeout(() => {
@@ -1249,10 +1252,21 @@ function setToastTtl(id: number, pending: PendingToast): void {
   pending.clearTtl = () => clearTimeout(ttl);
 }
 
+function evictOldestToastIfFull(): void {
+  if (pendingToasts.size < PENDING_TOASTS_MAX) return;
+  const oldest = pendingToasts.keys().next().value;
+  if (oldest === undefined) return;
+  const p = pendingToasts.get(oldest);
+  pendingToasts.delete(oldest);
+  p?.clearTtl();
+  p?.resolve(undefined);
+}
+
 function showMessage(type: 'info' | 'warning' | 'error', message: string, options?: any, items: any[] = []): Promise<any> {
   return new Promise((resolve) => {
     const id = ++toastCounter;
     const pending: PendingToast = { resolve, clearTtl: () => undefined };
+    evictOldestToastIfFull();
     pendingToasts.set(id, pending);
     setToastTtl(id, pending);
     const h = host();
@@ -1294,6 +1308,7 @@ function showQuickPick(items: any[], options?: any): Promise<any> {
       },
       clearTtl: () => undefined
     };
+    evictOldestToastIfFull();
     pendingToasts.set(id, pending);
     setToastTtl(id, pending);
     const h = host();
@@ -1311,6 +1326,7 @@ function showInputBox(_options?: any): Promise<string | undefined> {
   return new Promise((resolve) => {
     const id = ++toastCounter;
     const pending: PendingToast = { resolve, clearTtl: () => undefined };
+    evictOldestToastIfFull();
     pendingToasts.set(id, pending);
     setToastTtl(id, pending);
     const h = host();
@@ -1651,7 +1667,7 @@ export const env = {
   clipboard: {
     writeText(text: string): void {
       const h = host();
-      h?.native('clipboard:write', { text }).catch(() => undefined);
+      h?.native('clipboard:write', { text }).catch(err => console.warn('[vscode-shim] clipboard.writeText failed:', err));
     },
     async readText(): Promise<string> {
       const h = host();

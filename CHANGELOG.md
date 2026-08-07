@@ -24,9 +24,19 @@
   - 前端多模态占位判定统一：`isEmptyAssistantPlaceholder`/toolActions/streamChunkHandlers 纳入 inlineData/fileData，仅含多模态附件的 assistant 消息不再被误删；本地独有 `cleanupFailedSendPlaceholder` 同步对齐口径
   - 编辑用户消息保存后分支切换器立即显示：分支流首输出 chunk 到达时提前刷新分支图（按 streamId 隔离只刷一次），终结时仍消费标记再刷新
   - `.gitignore` / `.vscodeignore` 忽略 `run-logs.zip`（本地调试日志不进 git / 不进 vsix）
+  - 代码优化批次（性能 / 质量 / 安全）：
+    - 新增 `backend/core/deepClone` 共享深拷贝工具（structuredClone 优先、JSON 回退），替换 BranchService / runEventBus / executor / ConfigManager / storage / TranscriptMutation / TranscriptRepository / ToolExecutionService 中 21 处 `JSON.parse(JSON.stringify())` 热路径深拷贝（消除全量字符串中间体与 undefined 丢失）
+    - `graycode://` 自定义协议缓存命中时重新 stat 比对 mtime，rebuild 后不再返回旧 bundle
+    - `pendingToasts`（vscode-shim）增加 100 上限驱逐、`toolDiffIds`（BackendHost）增加 500 上限驱逐，防无界增长
+    - DependencyManager npm install 调试日志改用结构化 Logger（截断 2000 字符），不再向 Extension Host console 输出全量 stdout/stderr
+    - electron 构建（build.mjs）补 `process.env.NODE_ENV` define，生产构建剔除 dev 代码路径；Vite `manualChunks` 拆分 `js-tiktoken` 为独立 vendor chunk，减小主入口体积
+    - 前端懒加载重试增加 jitter；`clipboard.writeText` 错误改为 console.warn 记录而非静默吞掉
 
 ### Fixed
   - 子代理执行任意工具报 `Cannot read properties of undefined (reading 'getToolRejectionReason')`：确认门以解绑函数形式调用导致 `toolNeedsConfirmation` 内部 `this` 为 undefined（上游 9644238 引入）；改为方法形式调用，并加 this 绑定回归测试
+  - 未捕获异常对话框 detail 未脱敏（现经 redactSecrets 处理，与 unhandledRejection 口径对齐）
+  - IPC `graycode:renderer-to-backend` 消息 type 字段未做类型校验（现要求 string，强化原有 `if (!type)` 守卫）
+  - `patch-dist.mjs` 幂等检查改用 `<!-- graycode-patch-dist -->` marker 注释，避免源 HTML 含同名字符串时跳过 CSP / codicons 注入
 
 ### Tests
   - backend jest 242 套件 / 2485 用例通过（含新增 retryTruncateIndex/writeChainHangTimeout/summarizeManualSingleRound/streamSecurity/proxyFetchErrorBody/subagentToolConfirmation/subagentContextTrim 与 ATOMIC-PAIR 用例）；frontend vitest 69 文件 / 655 用例通过；tsc --noEmit + frontend vue-tsc 全绿

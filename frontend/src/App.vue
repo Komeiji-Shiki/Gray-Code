@@ -39,7 +39,7 @@ function withLazyFallback(name: string, loader: () => Promise<{ default: unknown
       const count = (lazyRetryCounts.get(name) || 0) + 1
       lazyRetryCounts.set(name, count)
       if (count <= MAX_LAZY_RETRIES) {
-        setTimeout(retry, count * 400)
+        setTimeout(retry, count * 400 + Math.random() * 200)
       } else {
         lazyRetryCounts.delete(name)
         fail()
