@@ -21,19 +21,16 @@ import type {
     OpenAIConfig,
     AnthropicConfig
 } from './types';
+import { CHANNEL_TYPES } from './types';
 import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
-
-/**
- * 支持的渠道类型（运行时校验用，与 ChannelType 类型字面量保持一致）
- */
-const CHANNEL_TYPES: ReadonlyArray<ChannelType> = ['gemini', 'openai', 'anthropic', 'openai-responses'];
 
 /**
  * 运行时渠道类型守卫
  *
  * 配置来源可能绕过 TypeScript 类型（webview 消息、设置导入），
  * 非法 type 会让 getDefaultConfig 落入 default 分支、getStats 的 byType 计数产生 NaN。
+ * 类型列表与 ChannelType 同源（configs/base.ts 的 CHANNEL_TYPES）。
  */
 function isChannelType(value: unknown): value is ChannelType {
     return typeof value === 'string' && (CHANNEL_TYPES as ReadonlyArray<string>).includes(value);
