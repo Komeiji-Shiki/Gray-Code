@@ -8,6 +8,15 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.7.2dev] - 2026-08-07
+
+### Changed
+  - 版本号 1.7.1 → 1.7.2dev（package.json / package-lock.json）。
+  - 插件本体同步上游 9644238 安全加固与修复批次（详见根目录 CHANGELOG [1.7.2dev]）：
+    手动创建存档点、子代理确认门/上下文裁剪（含 this 绑定修复）、流式缓冲 64MB 无进展上限、
+    checkpoint 双文件配对一致性、retry 截断、单轮手动总结放行、多模态占位判定统一、
+    分支切换器提前刷新、run-logs.zip 忽略。
+
 ## [1.7.1] - 2026-08-07
 
 ### Added

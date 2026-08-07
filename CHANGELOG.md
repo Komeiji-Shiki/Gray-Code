@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+## [1.7.2dev] - 2026-08-07
+
+### Added
+  - 手动创建存档点按钮（输入区工具栏 codicon-save）：任意时刻保存当前工作区状态。后端 `createCheckpoint` 支持 `forceCreate`（跳过 enabled 开关与工具/消息类型过滤，仍尊重排除规则）；webview 新增 `checkpoint.createManual`（绑定当前最后一条消息 + BCP-02 绑定当前分支活跃尾节点）；成功/失败三语通知；CheckpointManager/checkpointActions 测试补齐（合入上游 20cad4e）。
+
+### Changed
+  - 同步上游安全加固批次（PR #24 系 + 后续修复，桌面端适配）：
+    - 子代理危险工具确认门：执行前与主链路共用 `toolNeedsConfirmation` 判定，需要确认的工具直接拒绝并把原因以 functionResponse 回流；共享执行服务缺少确认门时 fail-closed 拒绝；空工具集不再被转成 undefined 回退渠道全量工具声明；发送前按渠道 `maxContextTokens`（缺省 128000）×0.8 做请求级上下文裁剪（整轮配对丢弃保首条/末尾、超大字符串截断、lastSentHistory 同步裁剪结果）；修正确认门调用丢失 `this` 绑定问题（上游 d28adfc 的 `getToolRejectionReason` 空指针，本地以方法形式调用修复 + 回归测试）
+    - 流式缓冲上限改为「解析无进展时 64MB 终止（PARSE_ERROR 不可重试）」：合法巨型单事件（多模态 base64 附件 40MB 级）不再被 20MB 硬上限误杀；generateStream 补 `formatter.validateConfig`（无效配置提前 VALIDATION_ERROR）；纯文本错误正文先读 `text()` 再 `JSON.parse`（网关 502 HTML 正文不再丢失，本地 status 区间判断保留）；`streamChunkHasContent` 纳入 inlineData/fileData（多模态流连接中断不再误判空响应重播整条流）；本地单行防护（MAX_SSE_LINE_CHARS）同步抬升至 128MB 兜底语义
+    - 写队列挂起超时不再放行并发写：四个写队列（withConversationWriteLock / runSegmentedHistoryWriteSerialized / withMetadataWriteSerialized / UsageIndexStore.enqueueWrite）链尾挂在底层任务上，超时仅 fail-fast 调用方、链不前进；挂起计时从任务真正启动开始
+    - 双文件提交配对一致性：checkpoint files.json/manifest.json 写入带 filesRevision 绑定 + files.json.prev 崩溃恢复（崩溃窗口混合配对可识别并拒绝）
+    - retry 前截断主历史末尾 model 消息（DeepSeek prefill 400 / 重试接龙）：`resolveRetryTruncateIndex` 只删「最后一个非 model 消息之后的 model 尾巴」，失败流不误删正常回答
+    - 手动总结单轮对话 STALE_RANGE 放行（仅整个历史一个真实用户回合且为用户主动总结；自动总结保持严格 STALE，首条用户消息保护仍生效）
+  - 前端多模态占位判定统一：`isEmptyAssistantPlaceholder`/toolActions/streamChunkHandlers 纳入 inlineData/fileData，仅含多模态附件的 assistant 消息不再被误删；本地独有 `cleanupFailedSendPlaceholder` 同步对齐口径
+  - 编辑用户消息保存后分支切换器立即显示：分支流首输出 chunk 到达时提前刷新分支图（按 streamId 隔离只刷一次），终结时仍消费标记再刷新
+  - `.gitignore` / `.vscodeignore` 忽略 `run-logs.zip`（本地调试日志不进 git / 不进 vsix）
+
+### Fixed
+  - 子代理执行任意工具报 `Cannot read properties of undefined (reading 'getToolRejectionReason')`：确认门以解绑函数形式调用导致 `toolNeedsConfirmation` 内部 `this` 为 undefined（上游 9644238 引入）；改为方法形式调用，并加 this 绑定回归测试
+
+### Tests
+  - backend jest 242 套件 / 2485 用例通过（含新增 retryTruncateIndex/writeChainHangTimeout/summarizeManualSingleRound/streamSecurity/proxyFetchErrorBody/subagentToolConfirmation/subagentContextTrim 与 ATOMIC-PAIR 用例）；frontend vitest 69 文件 / 655 用例通过；tsc --noEmit + frontend vue-tsc 全绿
+  - fork 同步：上游 9644238 之后 0 commits behind（内容 commit 以适配 cherry-pick 合入，文档/merge commit 以 -s ours 记录 SHA）
+
 ## [1.7.1] - 2026-08-07
 
 ### Added
