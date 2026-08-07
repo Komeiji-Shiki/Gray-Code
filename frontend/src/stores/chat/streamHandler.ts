@@ -87,6 +87,18 @@ function warnLateApprovalGatedChunk(chunk: StreamChunk, state: ChatStoreState): 
 }
 
 /**
+ * 已做过「早期分支图刷新」的流 ID（模块级，跨会话存续但按 streamId 隔离）。
+ *
+ * 背景：编辑/reroll 分支流的候选节点在流开始时就已落盘（editCandidate /
+ * createRerollCandidate 先于工具循环），但分支图刷新此前只挂在终结 chunk 上——
+ * 流未结束时 BranchSwitcherBar 不显示新候选（主人实测：点「保存」后切换器不显示，
+ * 关掉对话重新打开才恢复）。本标记在该流的第一个输出 chunk 到达时提前刷新一次
+ * （候选必然已落盘），终结时仍由 maybeRefreshBranchAfterStream 消费标记再刷新一次
+ * （更新模型候选内容/摘要）。
+ */
+let earlyBranchGraphRefreshedStreamId: string | null = null
+
+/**
  * reroll / 编辑分支流终结后刷新分支图（TREE-01/TREE-03 前端接入）。
  *
  * retryFromMessage / editAndRetry / restoreAndRetry / restoreAndEdit 发起
@@ -104,7 +116,28 @@ function maybeRefreshBranchAfterStream(state: ChatStoreState): void {
   if (!pendingConversationId) return
   if (pendingConversationId !== state.currentConversationId.value) return
   state._pendingBranchRefreshAfterStream.value = null
+  // 终结后允许后续新流再次触发早期刷新（同一会话内连续编辑/重 roll）
+  earlyBranchGraphRefreshedStreamId = null
   // fire-and-forget：刷新不阻塞 chunk 处理；loadBranchGraph 内部按当前会话读取并校验归属
+  void loadBranchGraph(state)
+}
+
+/**
+ * 分支流「第一个输出」到达时提前刷新分支图（不消费终结标记）。
+ *
+ * 候选落盘时机先于流式输出：handleEditBranchStream / handleRerollStream 在工具循环
+ * 之前完成 editCandidate / createRerollCandidate（多次磁盘写），因此本函数被调用时
+ * 分支图里已包含新候选——立即刷新即可让 BranchSwitcherBar 显示切换器，不必等流终结。
+ * 只做一次（按 streamId 记录）；终结时 maybeRefreshBranchAfterStream 重置记录。
+ * 会话隔离与 maybeRefreshBranchAfterStream 一致：标记属于发起会话，不跨会话刷新。
+ */
+function maybeEarlyRefreshBranchAfterStream(state: ChatStoreState): void {
+  const pendingConversationId = state._pendingBranchRefreshAfterStream.value
+  const activeStreamId = state.activeStreamId.value
+  if (!pendingConversationId || !activeStreamId) return
+  if (pendingConversationId !== state.currentConversationId.value) return
+  if (earlyBranchGraphRefreshedStreamId === activeStreamId) return
+  earlyBranchGraphRefreshedStreamId = activeStreamId
   void loadBranchGraph(state)
 }
 
@@ -168,6 +201,12 @@ export function handleStreamChunk(
 
   // 更新当前活跃标签页的流式状态
   updateTabStreamingStatus(state, chunk)
+
+  // 编辑/reroll 分支流第一个输出到达：候选已落盘，提前刷新分支图，
+  // 让 BranchSwitcherBar 立即显示新候选（不必等流终结；终结时仍会再刷新一次）。
+  if (!isSummaryType) {
+    maybeEarlyRefreshBranchAfterStream(state)
+  }
   
   switch (chunk.type) {
     case 'chunk':

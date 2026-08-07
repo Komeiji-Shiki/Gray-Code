@@ -442,7 +442,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
   })
 
-  it('toolIteration 带内容但流继续（非终结）时不消费标记', async () => {
+  it('toolIteration 带内容但流继续（非终结）时提前刷新分支图但不消费标记', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
       activeStreamId: ref('stream_1'),
@@ -459,8 +459,9 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     })
     const ctx = createCtx(state)
 
-    // 工具结果无确认/取消要求：handleToolIteration 走继续路径（activeStreamId 保持），
-    // 标记不应被提前消费（后续 complete 才会刷新分支图）
+    // 工具结果无确认/取消要求：handleToolIteration 走继续路径（activeStreamId 保持）。
+    // 此输出属于分支流（候选已落盘）：提前刷新分支图让切换器立即显示，
+    // 但标记保留——后续 complete 终结时才消费并再次刷新（更新模型候选内容）。
     handleStreamChunk(
       {
         type: 'toolIteration',
@@ -474,7 +475,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     await nextTick()
 
     expect(state.activeStreamId.value).toBe('stream_1')
-    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeDefined()
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 })
