@@ -704,6 +704,7 @@ description: "简要描述该技能的功能及使用场景"
             getCheckpointConfigFailed: '获取存档点配置失败',
             updateCheckpointConfigFailed: '更新存档点配置失败',
             getCheckpointsFailed: '获取检查点列表失败',
+            createCheckpointFailed: '创建存档点失败',
             restoreCheckpointFailed: '恢复检查点失败',
             previewRestoreFailed: '预览恢复失败',
             deleteCheckpointFailed: '删除检查点失败',

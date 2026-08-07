@@ -703,6 +703,7 @@ description: "このスキルの機能と使用場面の簡単な説明"
             getCheckpointConfigFailed: 'チェックポイント設定の取得に失敗しました',
             updateCheckpointConfigFailed: 'チェックポイント設定の更新に失敗しました',
             getCheckpointsFailed: 'チェックポイント一覧の取得に失敗しました',
+            createCheckpointFailed: 'チェックポイントの作成に失敗しました',
             restoreCheckpointFailed: 'チェックポイントの復元に失敗しました',
             previewRestoreFailed: '復元のプレビューに失敗しました',
             deleteCheckpointFailed: 'チェックポイントの削除に失敗しました',

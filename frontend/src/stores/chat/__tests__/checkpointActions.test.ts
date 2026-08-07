@@ -19,6 +19,7 @@ import {
   restoreAndRetry,
   restoreAndDelete,
   restoreAndEdit,
+  createManualCheckpoint,
   // L-2: summarize 职责已迁至 messageActions，此处验证 checkpointActions 的 re-export 兼容路径
   summarizeContext,
   cancelSummarizeRequest,
@@ -785,5 +786,54 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     })
     expect(mockSend).toHaveBeenCalledWith('chat.rerollStream', expect.objectContaining({ conversationId: 'conv_1' }))
     expect(pendingDirtyConfirm.value).toBeNull()
+  })
+})
+
+describe('createManualCheckpoint', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('成功创建：调用 checkpoint.createManual 并把新存档加入列表', async () => {
+    const checkpoint = { id: 'cp_manual_1', messageIndex: 3, toolName: 'manual' }
+    mockSend.mockResolvedValue({ success: true, checkpoint })
+    const state = createState()
+
+    const result = await createManualCheckpoint(state)
+
+    expect(mockSend).toHaveBeenCalledWith('checkpoint.createManual', { conversationId: 'conv_1' })
+    expect(result).toEqual(checkpoint)
+    expect(state.checkpoints.value).toContainEqual(checkpoint)
+  })
+
+  it('后端拒绝（success=false）：返回 null 且不污染检查点列表', async () => {
+    mockSend.mockResolvedValue({ success: false, error: 'rejected' })
+    const state = createState()
+
+    const result = await createManualCheckpoint(state)
+
+    expect(result).toBeNull()
+    expect(state.checkpoints.value).toHaveLength(0)
+  })
+
+  it('无当前会话：直接返回 null 不发起请求', async () => {
+    const state = createState({ currentConversationId: ref(null) })
+
+    const result = await createManualCheckpoint(state)
+
+    expect(result).toBeNull()
+    expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  it('IPC 异常：返回 null 并记录 warn（不向上抛）', async () => {
+    mockSend.mockRejectedValue(new Error('ipc down'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const state = createState()
+
+    const result = await createManualCheckpoint(state)
+
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })

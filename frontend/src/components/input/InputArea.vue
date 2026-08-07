@@ -500,6 +500,34 @@ async function handleSummarize() {
   }
 }
 
+// ========== 手动创建存档点 ==========
+
+/** 手动存档进行中（按钮 loading 态，防重复点击） */
+const isCreatingCheckpoint = ref(false)
+
+async function handleCreateCheckpoint() {
+  if (isCreatingCheckpoint.value || chatStore.isWaitingForResponse) return
+  if (!chatStore.currentConversationId) return
+
+  isCreatingCheckpoint.value = true
+  try {
+    const checkpoint = await chatStore.createManualCheckpoint()
+    if (checkpoint) {
+      await showNotification(t('components.input.notifications.checkpointCreated'), 'info')
+    } else {
+      await showNotification(t('components.input.notifications.checkpointCreateFailed'), 'warning')
+    }
+  } catch (error: any) {
+    console.error('Create checkpoint error:', error)
+    await showNotification(
+      t('components.input.notifications.checkpointCreateError', { error: error.message || t('common.unknownError') }),
+      'error'
+    )
+  } finally {
+    isCreatingCheckpoint.value = false
+  }
+}
+
 const tokenRingColor = computed(() => {
   const percent = chatStore.tokenUsagePercent
   if (percent >= 90) return 'var(--vscode-charts-red)'
@@ -610,6 +638,17 @@ watch(() => settingsStore.promptModesVersion, () => {
         <PinnedFilesWidget />
         <SkillsWidget />
         <BranchTreePanel />
+
+        <Tooltip :content="t('components.input.createCheckpoint')" placement="top-left">
+          <IconButton
+            icon="codicon-save"
+            size="small"
+            :loading="isCreatingCheckpoint"
+            :disabled="!chatStore.currentConversationId || isCreatingCheckpoint || chatStore.isWaitingForResponse"
+            class="checkpoint-button"
+            @click="handleCreateCheckpoint"
+          />
+        </Tooltip>
       </div>
 
       <!-- TPS 实时可视化：总结上下文按钮左侧（最底部一行）；可在外观设置中关闭 -->

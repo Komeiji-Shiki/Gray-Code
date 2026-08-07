@@ -80,6 +80,7 @@ import {
   getCheckpointsForMessage as getCheckpointsFn,
   hasCheckpoint as hasCheckpointFn,
   addCheckpoint as addCheckpointFn,
+  createManualCheckpoint as createManualCheckpointFn,
   previewRestore as previewRestoreFn,
   restoreCheckpoint as restoreCheckpointFn,
   restoreAndRetry as restoreAndRetryFn,
@@ -821,6 +822,7 @@ export const useChatStore = defineStore('chat', () => {
   const getCheckpointsForMessage = (messageIndex: number) => getCheckpointsFn(state, messageIndex)
   const hasCheckpoint = (messageIndex: number) => hasCheckpointFn(state, messageIndex)
   const addCheckpoint = (checkpoint: any) => addCheckpointFn(state, checkpoint)
+  const createManualCheckpoint = () => createManualCheckpointFn(state)
   const previewRestore = (checkpointId: string) => previewRestoreFn(state, checkpointId)
   const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean, confirmedDiscardDirty?: boolean) =>
     restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty)
@@ -1088,6 +1090,7 @@ export const useChatStore = defineStore('chat', () => {
     loadCheckpointConfig: () => loadCheckpointConfig(state),
     setMergeUnchangedCheckpoints: (value: boolean) => setMergeUnchangedCheckpoints(state, value),
     addCheckpoint,
+    createManualCheckpoint,
     restoreCheckpoint,
     restoreAndRetry,
     restoreAndEdit,

@@ -703,6 +703,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             getCheckpointConfigFailed: 'Failed to get checkpoint config',
             updateCheckpointConfigFailed: 'Failed to update checkpoint config',
             getCheckpointsFailed: 'Failed to get checkpoints list',
+            createCheckpointFailed: 'Failed to create checkpoint',
             restoreCheckpointFailed: 'Failed to restore checkpoint',
             previewRestoreFailed: 'Failed to preview restore',
             deleteCheckpointFailed: 'Failed to delete checkpoint',

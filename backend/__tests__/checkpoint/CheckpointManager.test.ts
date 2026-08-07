@@ -1765,4 +1765,83 @@ describe('CheckpointManager path safety regressions', () => {
             }
         });
     });
+
+    // ==================== 手动创建（forceCreate）：用户显式存档 ====================
+
+    describe('createCheckpoint forceCreate（手动存档）', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+        });
+
+        test('enabled=false 且未配置任何工具：普通调用不创建，forceCreate 无条件创建', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-manual-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-manual-storage-');
+            try {
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+                // 完全关闭的配置：enabled=false、无任何工具/消息类型
+                ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                    enabled: false,
+                    beforeTools: [],
+                    afterTools: [],
+                    messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                    maxCheckpoints: -1,
+                    customIgnorePatterns: []
+                });
+
+                // 普通调用：enabled=false → 跳过
+                const skipped = await manager.createCheckpoint('conv-manual', 0, 'write_file', 'after');
+                expect(skipped).toBeNull();
+
+                // forceCreate：用户显式请求 → 无条件创建（仍走完整快照/增量链路）
+                const cp = await manager.createCheckpoint('conv-manual', 0, 'manual', 'before', {
+                    forceCreate: true
+                });
+                expect(cp).not.toBeNull();
+                expect(cp!.toolName).toBe('manual');
+                expect(cp!.phase).toBe('before');
+
+                const summaries = await manager.getCheckpoints('conv-manual');
+                expect(summaries).toHaveLength(1);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('forceCreate 存档可恢复工作区文件（手动存档 = 可回档的当前状态快照）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-checkpoint-manual-');
+            const storageRoot = await createTempDirectory('limcode-checkpoint-manual-storage-');
+            try {
+                await writeFile(workspaceRoot, 'src/app.ts', 'v1');
+                await writeFile(workspaceRoot, 'src/util.ts', 'u1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+                ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                    enabled: true,
+                    beforeTools: ['write_file'],
+                    afterTools: ['write_file'],
+                    messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                    maxCheckpoints: -1,
+                    customIgnorePatterns: []
+                });
+
+                // AI 改动后手动存档：绑定到最后一条消息（index 2）
+                const cp = await manager.createCheckpoint('conv-manual', 2, 'manual', 'before', {
+                    forceCreate: true
+                });
+                expect(cp).not.toBeNull();
+
+                // 之后工作区被回档/覆盖（模拟切到旧分支后文件变化）
+                await writeFile(workspaceRoot, 'src/app.ts', 'v2-old-branch');
+
+                // 恢复手动存档 → 回到存档时的状态
+                const result = await manager.restoreCheckpoint('conv-manual', cp!.id);
+                expect(result.success).toBe(true);
+                await expect(fs.readFile(path.join(workspaceRoot, 'src/app.ts'), 'utf-8')).resolves.toBe('v1');
+                await expect(fs.readFile(path.join(workspaceRoot, 'src/util.ts'), 'utf-8')).resolves.toBe('u1');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+    });
 });

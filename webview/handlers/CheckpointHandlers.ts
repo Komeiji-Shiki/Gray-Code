@@ -9,6 +9,7 @@ import { assertSafeId } from '../../backend/core/idValidation';
 import { previewExclusions as runExclusionPreview } from '../../backend/modules/checkpoint/CheckpointSnapshotBuilder';
 import { createRuntimeWorkspaceRoots } from '../../backend/modules/checkpoint/CheckpointWorkspace';
 import { cancelStreamAndSubAgents, detectDirtyFilesInWorkspace } from '../utils/WorkspaceRestoreGuard';
+import { getGlobalBranchService } from '../../backend/modules/conversation/branch';
 import {
     DEFAULT_ENABLED_PROFILES,
     DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
@@ -320,6 +321,60 @@ export const previewExclusions: MessageHandler = async (data, requestId, ctx) =>
 };
 
 /**
+ * 手动创建存档点（用户显式请求，绕过自动检查点开关与工具/消息类型过滤）。
+ *
+ * 用途：AI 执行一系列改动后（或任意时刻），用户主动保存当前工作区/对话状态，
+ * 之后可放心回档检查点 / 切换分支（恢复旧状态后，随时可恢复本存档回来）。
+ *
+ * 语义：
+ * - 绑定到当前最后一条消息（恢复时“回档到该消息前”= 回到现在）；
+ * - 额外绑定当前分支活跃尾节点（BCP-02，fire-and-forget）：分支切换
+ *   （chat-and-workspace）切走再切回时也能恢复本存档，往返无损。
+ */
+export const createManualCheckpoint: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId } = data ?? {};
+  if (!isValidId(conversationId)) {
+    ctx.sendError(requestId, 'CREATE_CHECKPOINT_ERROR', 'Invalid conversationId');
+    return;
+  }
+  try {
+    // 绑定当前最后一条消息：回档到该消息前 = 回到现在
+    const history = await ctx.conversationManager.getMessagesRaw(conversationId);
+    const messageIndex = Math.max(0, history.length - 1);
+    const checkpoint = await ctx.checkpointManager.createCheckpoint(
+      conversationId,
+      messageIndex,
+      'manual',
+      'before',
+      { forceCreate: true }
+    );
+    if (!checkpoint) {
+      ctx.sendError(requestId, 'CREATE_CHECKPOINT_ERROR', t('webview.errors.createCheckpointFailed'));
+      return;
+    }
+
+    // BCP-02：绑定当前分支活跃尾节点（fire-and-forget；失败不影响主流程，
+    // 存档本身已可在检查点列表恢复）
+    try {
+      const branchService = getGlobalBranchService();
+      const graphResult = branchService
+        ? await branchService.getBranchGraph(conversationId)
+        : null;
+      const activeTailNodeId = graphResult?.graph?.activeTailNodeId;
+      if (branchService && activeTailNodeId) {
+        await branchService.bindWorkspaceCheckpoint(conversationId, activeTailNodeId, checkpoint.id);
+      }
+    } catch (bindError) {
+      console.warn('[CheckpointHandlers] Failed to bind manual checkpoint to branch node:', bindError);
+    }
+
+    ctx.sendResponse(requestId, { success: true, checkpoint });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'CREATE_CHECKPOINT_ERROR', error.message || t('webview.errors.createCheckpointFailed'));
+  }
+};
+
+/**
  * 注册检查点管理处理器
  */
 export function registerCheckpointHandlers(registry: Map<string, MessageHandler>): void {
@@ -328,6 +383,7 @@ export function registerCheckpointHandlers(registry: Map<string, MessageHandler>
   registry.set('checkpoint.getExclusionProfiles', getExclusionProfiles);
   registry.set('checkpoint.previewExclusions', previewExclusions);
   registry.set('checkpoint.getCheckpoints', getCheckpoints);
+  registry.set('checkpoint.createManual', createManualCheckpoint);
   registry.set('checkpoint.previewRestore', previewRestore);
   registry.set('checkpoint.restore', restoreCheckpoint);
   registry.set('checkpoint.delete', deleteCheckpoint);

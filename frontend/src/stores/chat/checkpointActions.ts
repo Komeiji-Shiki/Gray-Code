@@ -56,6 +56,35 @@ export function clearCheckpointsFromIndex(state: ChatStoreState, fromBackendInde
 }
 
 /**
+ * 手动创建存档点：保存当前工作区/对话状态（用户显式请求，不受自动检查点开关限制）。
+ *
+ * 用途：AI 执行一系列改动后（或任意时刻）主动存档，之后可放心回档检查点 / 切换分支
+ * ——恢复旧状态后，随时可恢复本存档回到现在（检查点列表可见，且已绑定当前分支节点）。
+ *
+ * @returns 创建的检查点记录；无当前会话 / 创建失败返回 null
+ */
+export async function createManualCheckpoint(state: ChatStoreState): Promise<CheckpointRecord | null> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return null
+  try {
+    const result = await sendToExtension<{
+      success?: boolean
+      checkpoint?: CheckpointRecord
+      error?: string
+    }>('checkpoint.createManual', { conversationId })
+    if (result?.success && result.checkpoint) {
+      addCheckpoint(state, result.checkpoint)
+      return result.checkpoint
+    }
+    console.warn('[checkpointActions] Manual checkpoint creation rejected:', result?.error ?? 'unknown')
+    return null
+  } catch (err: any) {
+    console.warn('[checkpointActions] Failed to create manual checkpoint:', err)
+    return null
+  }
+}
+
+/**
  * 恢复预览（CP-09）：调用后端计算恢复计划（待删除文件清单），不执行任何写入。
  *
  * 前端在展示确认对话框（含待删除文件清单）后，再调用 restoreCheckpoint 真正执行。
