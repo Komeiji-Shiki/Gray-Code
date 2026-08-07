@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "file-icons-js": "^1.1.0",
+    "graycode": "file:..",
     "highlight.js": "^11.10.0",
     "js-tiktoken": "^1.0.21",
     "katex": "^0.16.11",
