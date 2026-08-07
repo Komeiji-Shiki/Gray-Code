@@ -326,9 +326,9 @@ export async function checkCheckpointIntegrity(
                     { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
             }
         } else {
-            let manifest: { checkpointId?: unknown; files?: unknown } | null = null;
+            let manifest: { checkpointId?: unknown; files?: unknown; version?: unknown } | null = null;
             try {
-                manifest = JSON.parse(manifestRaw) as { checkpointId?: unknown; files?: unknown };
+                manifest = JSON.parse(manifestRaw) as { checkpointId?: unknown; files?: unknown; version?: unknown };
             } catch (error) {
                 issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_CORRUPT',
                     `manifest.json 解析失败: ${(error as Error)?.message ?? String(error)}`,
@@ -340,7 +340,46 @@ export async function checkCheckpointIntegrity(
                         `manifest.checkpointId (${String(manifest.checkpointId)}) !== 记录 id (${checkpointId})`,
                         { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
                 }
-                if (typeof manifest.files !== 'object' || manifest.files === null || Array.isArray(manifest.files)) {
+                const filesInline =
+                    typeof manifest.files === 'object' && manifest.files !== null && !Array.isArray(manifest.files);
+                const isSplitLayout = typeof manifest.version === 'number' && manifest.version >= 2;
+                if (filesInline) {
+                    // v1 旧格式：files 内联于 manifest.json，形状合法
+                } else if (isSplitLayout) {
+                    // CPF-LAZY-1: v2 拆分格式：files 独立存放于 files.json，校验其存在与形状
+                    const filesPath = path.join(backupPath, 'files.json');
+                    let filesRaw: string | null = null;
+                    try {
+                        filesRaw = await fsp.readFile(filesPath, 'utf8');
+                    } catch {
+                        filesRaw = null;
+                    }
+                    if (filesRaw === null) {
+                        issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_FILES_MISSING',
+                            `新格式（v${String(manifest.version)}）拆分布局缺少 files.json（文件数据丢失）`,
+                            { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
+                    } else {
+                        let filesPayload: { checkpointId?: unknown; files?: unknown } | null = null;
+                        try {
+                            filesPayload = JSON.parse(filesRaw) as { checkpointId?: unknown; files?: unknown };
+                        } catch (error) {
+                            issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_FILES_CORRUPT',
+                                `files.json 解析失败: ${(error as Error)?.message ?? String(error)}`,
+                                { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
+                        }
+                        if (filesPayload) {
+                            if (filesPayload.checkpointId !== checkpointId) {
+                                issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_FILES_ID_MISMATCH',
+                                    `files.json.checkpointId (${String(filesPayload.checkpointId)}) !== 记录 id (${checkpointId})`,
+                                    { conversationId, checkpointId, detail: { backupDir: record.backupDir } }));
+                            }
+                            if (typeof filesPayload.files !== 'object' || filesPayload.files === null || Array.isArray(filesPayload.files)) {
+                                issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_FILES_INVALID_SHAPE',
+                                    'files.json 缺少合法的 files 映射', { conversationId, checkpointId }));
+                            }
+                        }
+                    }
+                } else {
                     issues.push(issue('checkpoint', 'error', 'CHECKPOINT_MANIFEST_INVALID_SHAPE',
                         'manifest.json 缺少合法的 files 映射', { conversationId, checkpointId }));
                 }

@@ -131,11 +131,24 @@ async function createHarness(
 
     const readManifest = async (checkpointId: string): Promise<CheckpointManifest | null> => {
         try {
-            const raw = await fs.readFile(
+            const metaRaw = await fs.readFile(
                 path.join(storageRoot, 'checkpoints', checkpointId, 'manifest.json'),
                 'utf-8'
             );
-            return JSON.parse(raw) as CheckpointManifest;
+            const manifest = JSON.parse(metaRaw) as CheckpointManifest;
+            // CPF-LAZY-1: v2 拆分布局下 files 独立存放于 files.json，按需合并读取
+            if (!manifest.files) {
+                try {
+                    const filesRaw = await fs.readFile(
+                        path.join(storageRoot, 'checkpoints', checkpointId, 'files.json'),
+                        'utf-8'
+                    );
+                    manifest.files = (JSON.parse(filesRaw) as { files?: CheckpointManifest['files'] }).files ?? {};
+                } catch {
+                    manifest.files = {};
+                }
+            }
+            return manifest;
         } catch {
             return null;
         }
@@ -470,7 +483,10 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             const manifest = await harness.manager.getManifest(cp!.id);
             expect(manifest).not.toBeNull();
             expect(manifest!.checkpointId).toBe(cp!.id);
-            expect(Object.keys(manifest!.files)).toHaveLength(1);
+            // CPF-LAZY-1: getManifest 返回轻量元数据视图（排除清单/规则快照），
+            // 不再携带重量级 files 映射经 IPC 下发
+            expect((manifest as CheckpointManifest & { files?: unknown }).files).toBeUndefined();
+            expect(Array.isArray(manifest!.excluded)).toBe(true);
 
             expect(await harness.manager.getManifest('cp-nonexistent')).toBeNull();
         } finally {
