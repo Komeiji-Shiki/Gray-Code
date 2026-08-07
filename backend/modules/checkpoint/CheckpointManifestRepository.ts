@@ -13,8 +13,9 @@
  * - `loadManifest` 只读轻量 manifest.json（元数据视图，绝不触碰 files.json）——
  *   列表摘要、排除清单、排除说明等读取路径不再为少量字段解析整张文件哈希表；
  * - `loadManifestWithFiles` / `enrichRecord` 才按需加载 files.json（恢复、增量比较、合并）；
- * - 旧格式（version 1，files 内联于 manifest.json）仍可读取：解析一次后 files 进缓存，
- *   并 best-effort 拆分为新格式落盘，后续读取直接走轻量路径。
+ * - 旧格式（version 1，files 内联于 manifest.json）仍可读取：轻量读取路径解析一次后
+ *   files 进缓存（零写放大），完整数据被请求时才 best-effort 拆分为新格式落盘，
+ *   失败/未迁移的 v1 存档由内联兜底继续提供数据。
  *
  * 路径语义：manifest 固定位于存档目录（`checkpointId` 即目录名）下的 manifest.json。
  */
@@ -221,7 +222,10 @@ export class CheckpointManifestRepository {
      * 本方法绝不读取 files.json：
      * - schema version 2：manifest.json 不含 files，直接返回元数据视图；
      * - schema version 1（旧格式）：files 内联于 manifest.json，解析一次后 files 进
-     *   独立缓存（供 loadManifestWithFiles 复用），并 best-effort 拆分为新格式落盘；
+     *   独立缓存（供 loadManifestWithFiles 复用）；**不在此拆分落盘**——轻量读取路径
+     *   （列表摘要/排除清单等）只消费元数据，拆分写盘推迟到完整数据读取时触发
+     *   （见 loadManifestFiles 内联兜底），避免列表加载为每条旧存档付出
+     *   10-20MB 级磁盘写放大；
      * - 磁盘不存在但提供了旧记录（fallbackRecord）→ 从记录生成 manifest（迁移），
      *   写入缓存并 best-effort 落盘；
      * - 都没有 → 返回 null。
@@ -252,9 +256,8 @@ export class CheckpointManifestRepository {
                     const meta: CheckpointManifestMeta = metaRest;
                     this.cacheSet(this.metaCache, checkpointId, meta, CheckpointManifestRepository.META_CACHE_LIMIT);
                     if (inlineFiles) {
-                        // 旧格式：files 已随解析在手，进缓存 + best-effort 拆分为新格式
+                        // 旧格式：files 已随解析在手，进缓存（拆分落盘由完整读取路径触发）
                         this.cacheSet(this.filesCache, checkpointId, inlineFiles, CheckpointManifestRepository.FILES_CACHE_LIMIT);
-                        await this.splitMigrateOnDisk(checkpointId, meta, inlineFiles);
                     }
                     return meta;
                 }
@@ -291,9 +294,9 @@ export class CheckpointManifestRepository {
      *
      * - 缓存命中（旧格式内联解析 / 本方法先前加载）直接返回；
      * - 否则读取 files.json 并缓存；
-     * - files.json 缺失/损坏 → 兜底回读 manifest.json 内联 files（v1 旧格式在拆分迁移
-     *   失败/未发生时的数据仍在原处）；v2 布局 manifest.json 无内联 files → 返回 null
-     *   （数据丢失场景，由调用方显式报错，不假空）。
+     * - files.json 缺失/损坏 → 兜底回读 manifest.json 内联 files（v1 旧格式在拆分
+     *   落盘未发生时数据仍在原处），并在此触发 best-effort 拆分落盘；v2 布局
+     *   manifest.json 无内联 files → 返回 null（数据丢失场景，由调用方显式报错，不假空）。
      */
     async loadManifestFiles(checkpointId: string): Promise<CheckpointManifest['files'] | null> {
         assertSafeCheckpointDirName(checkpointId);
@@ -318,8 +321,9 @@ export class CheckpointManifestRepository {
         } catch {
             // 文件不存在或不可读：继续走内联兜底
         }
-        // 兜底：v1 旧格式（拆分迁移失败/未发生）——files 仍内联于 manifest.json。
+        // 兜底：v1 旧格式（从未/尚未拆分落盘）——files 仍内联于 manifest.json。
         // 否则 meta 缓存命中而 files 缓存被淘汰时，会把仍在盘上的数据误判为丢失。
+        // （拆分落盘由 loadManifestWithFiles 在 v1 判定后触发，本方法只负责数据读取）
         try {
             const raw = await fs.readFile(this.getManifestPath(checkpointId), 'utf-8');
             const parsed = JSON.parse(raw) as { checkpointId?: unknown; files?: unknown };
@@ -345,6 +349,10 @@ export class CheckpointManifestRepository {
      *
      * 与 loadManifest 的区别：需要完整文件映射的调用方（恢复链构建、增量比较、合并）
      * 使用本方法；files.json 缺失/损坏时返回 null（由调用方按存档数据丢失处理）。
+     *
+     * v1 旧格式（meta.version === 1）在此触发 best-effort 拆分落盘：完整数据确实被
+     * 请求（恢复/增量比较/合并等重量级操作），一次 10-20MB 级拆分写换取后续读取走
+     * 轻量路径；幂等——拆分成功后磁盘为 v2，再次读取 meta.version 为 2 不再重复写。
      */
     async loadManifestWithFiles(
         checkpointId: string,
@@ -358,14 +366,19 @@ export class CheckpointManifestRepository {
         if (!files) {
             return null;
         }
+        if (meta.version === CHECKPOINT_MANIFEST_VERSION - 1) {
+            await this.splitMigrateOnDisk(checkpointId, meta, files);
+        }
         return { ...meta, files };
     }
 
     /**
      * CPF-LAZY-1: 旧格式（v1，files 内联）best-effort 拆分为新格式（v2 布局）。
      *
-     * 首次读取旧格式时执行：manifest.json 降为轻量元数据、files 落盘 files.json；
-     * 成功后后续读取全部走轻量路径。失败（只读介质等）保留旧格式，读路径仍可用。
+     * 仅在**完整数据读取路径**（loadManifestFiles 内联兜底）触发：轻量读取（列表摘要/
+     * 排除清单等）不承担 10-20MB 级拆分写盘；完整读取为恢复/增量比较/合并等重量级
+     * 操作，一次拆分写后后续读取全部走轻量路径。失败（只读介质等）保留旧格式，
+     * 数据由内联兜底继续提供。
      */
     private async splitMigrateOnDisk(
         checkpointId: string,
