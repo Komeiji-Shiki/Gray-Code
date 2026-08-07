@@ -17,6 +17,9 @@ export type {
     TokenCountApiConfig
 } from './configs';
 
+// 导出渠道类型运行时守卫常量（与 ChannelType 类型同源，见 configs/base.ts）
+export { CHANNEL_TYPES } from './configs';
+
 // 导入 ChannelConfig 以供内部使用
 import type { ChannelType, ChannelConfig } from './configs';
 
