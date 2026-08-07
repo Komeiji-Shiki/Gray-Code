@@ -58,8 +58,16 @@ export function sanitizeHtml(dirty: string): string {
         'input', 'button', 'select', 'textarea',
         'link', 'meta', 'base', 'style'
       ].includes(tagName)) {
-        el.remove()
-        return
+        // 例外：GrayCode 代码块工具栏按钮（fence 渲染器生成，class 受控：
+        // code-tool-btn + code-copy-btn/code-wrap-btn）。不放行则默认渲染路径下
+        // 复制/换行按钮被净化移除，代码块无法复制。其余 button 照旧移除。
+        const isCodeToolbarBtn =
+          tagName === 'button' &&
+          el.classList.contains('code-tool-btn')
+        if (!isCodeToolbarBtn) {
+          el.remove()
+          return
+        }
       }
 
       // 剥离危险属性：事件处理器、危险协议（javascript:/vbscript:/data:）、

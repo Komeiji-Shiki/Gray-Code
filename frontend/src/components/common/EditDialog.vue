@@ -30,13 +30,16 @@ interface Props {
   originalContent?: string
   /** 原始消息附件 */
   originalAttachments?: Attachment[]
+  /** 是否为会话首条消息（根节点）：无父节点可挂编辑候选，保存仅原地改写、不会重新生成 */
+  isRootMessage?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: false,
   checkpoints: () => [],
   originalContent: '',
-  originalAttachments: () => []
+  originalAttachments: () => [],
+  isRootMessage: false
 })
 
 const emit = defineEmits<{
@@ -512,6 +515,11 @@ function handleRemoveAttachment(id: string) {
               <i class="codicon codicon-info"></i>
               {{ t('components.common.editDialog.checkpointHint') }}
             </p>
+
+            <p v-if="isRootMessage" class="root-message-hint">
+              <i class="codicon codicon-info"></i>
+              {{ t('components.common.editDialog.rootMessageHint') }}
+            </p>
           </div>
 
           <div class="dialog-footer">
@@ -541,6 +549,7 @@ function handleRemoveAttachment(id: string) {
             <button
               class="dialog-btn confirm"
               :disabled="!canSubmit"
+              :title="isRootMessage ? t('components.common.editDialog.rootSaveHint') : undefined"
               @click="handleEdit('branch')"
             >
               <span class="btn-label">{{ t('components.common.editDialog.save') }}</span>
@@ -668,6 +677,23 @@ function handleRemoveAttachment(id: string) {
 }
 
 .dialog-body .checkpoint-hint .codicon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dialog-body .root-message-hint {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: var(--vscode-editorWarning-background, rgba(204, 122, 0, 0.12));
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-editorWarning-foreground, #cc7a00);
+}
+
+.dialog-body .root-message-hint .codicon {
   flex-shrink: 0;
   margin-top: 1px;
 }

@@ -15,7 +15,7 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { PromptConfig, PromptContext } from './types'
-import type { Content } from '../conversation/types'
+import type { Content, ContentPart } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceFolderByUri, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 import type { PinnedFileItem, PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings/types'
@@ -870,9 +870,17 @@ export class PromptManager {
                     continue
                 }
 
+                const parts: ContentPart[] = [{ text }]
+                // 伪造思考：assistant 条目配置了 fakeThought 时，在正文前附加 thought part。
+                // 是否随请求回传由渠道 sendHistoryThoughts（发送历史思考内容）在发送侧控制，
+                // 与真实历史思考的语义保持一致。
+                if (role === 'model' && entry.fakeThought?.trim()) {
+                    parts.unshift({ text: entry.fakeThought.trim(), thought: true })
+                }
+
                 const message: Content = {
                     role,
-                    parts: [{ text }]
+                    parts
                 }
                 const targetMessages = historyPlacement === 'entry' && index > chatHistoryIndex
                     ? afterHistoryMessages
@@ -880,10 +888,16 @@ export class PromptManager {
                 targetMessages.push(message)
 
                 if (this.hasDynamicPlaceholder(entry.content)) {
+                    // 快照消息用于 preserve 策略回插历史（formatter 层注入，不经过
+                    // formatHistoryForAPI 的渠道思考开关过滤），因此剥离伪造思考，
+                    // 避免渠道关闭「发送历史思考内容」时历史快照仍携带 thought part。
+                    const snapshotMessage: Content = parts.some(part => part.thought === true)
+                        ? { role, parts: parts.filter(part => part.thought !== true) }
+                        : message
                     const targetSnapshotMessages = historyPlacement === 'entry' && index > chatHistoryIndex
                         ? dynamicSnapshotAfterHistoryMessages
                         : dynamicSnapshotBeforeHistoryMessages
-                    targetSnapshotMessages.push(message)
+                    targetSnapshotMessages.push(snapshotMessage)
                 }
             }
 

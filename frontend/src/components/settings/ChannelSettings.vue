@@ -1794,14 +1794,6 @@ input[type="text"].config-name-input.input-error {
   color: var(--vscode-charts-yellow, #ddb92f);
 }
 
-.option-section-title .codicon-history {
-  color: var(--vscode-charts-blue, #3794ff);
-}
-
-.history-thought-section {
-  margin-top: 12px;
-}
-
 .option-section-content {
   display: flex;
   flex-direction: column;

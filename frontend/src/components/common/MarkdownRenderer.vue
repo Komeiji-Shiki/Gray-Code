@@ -129,6 +129,7 @@ import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import { hljs } from '@/utils/highlightSetup'
 import katex from 'katex'
 import { sendToExtension, showNotification } from '@/utils/vscode'
+import { copyToClipboard } from '@/utils/format'
 import { useI18n } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
 
@@ -1415,7 +1416,7 @@ function observeKeepExpandedBlocks(blocks: NodeListOf<HTMLElement>) {
 /**
  * 处理代码块工具栏点击（复制 / 换行切换）
  */
-function handleCodeToolbarClick(event: Event) {
+async function handleCodeToolbarClick(event: Event) {
   const target = event.target as HTMLElement
 
   const wrapBtn = target.closest('.code-wrap-btn') as HTMLButtonElement | null
@@ -1449,25 +1450,40 @@ function handleCodeToolbarClick(event: Event) {
   const encodedCode = copyBtn.getAttribute('data-code')
   if (!encodedCode) return
 
-  const code = decodeURIComponent(atob(encodedCode))
+  let code: string
+  try {
+    code = decodeURIComponent(atob(encodedCode))
+  } catch {
+    return
+  }
 
-  navigator.clipboard.writeText(code).then(() => {
-    const existingTimer = copyTimers.get(copyBtn)
-    if (existingTimer) {
-      window.clearTimeout(existingTimer)
-    }
-
-    copyBtn.classList.add('copied')
-
-    const timer = window.setTimeout(() => {
-      copyBtn.classList.remove('copied')
+  // 加固复制：clipboard API 不可用（Webview 非 secure context）时回退 execCommand；
+  // 失败给按钮短暂红色反馈，不再静默吞掉（原来失败只有 console.error，用户无感知）
+  const ok = await copyToClipboard(code)
+  if (!ok) {
+    copyBtn.classList.add('copy-failed')
+    const failedTimer = window.setTimeout(() => {
+      copyBtn.classList.remove('copy-failed')
       copyTimers.delete(copyBtn)
-    }, 1000)
+    }, 1200)
+    copyTimers.set(copyBtn, failedTimer)
+    console.error('复制失败:', code.slice(0, 80))
+    return
+  }
 
-    copyTimers.set(copyBtn, timer)
-  }).catch(err => {
-    console.error('复制失败:', err)
-  })
+  const existingTimer = copyTimers.get(copyBtn)
+  if (existingTimer) {
+    window.clearTimeout(existingTimer)
+  }
+
+  copyBtn.classList.add('copied')
+
+  const timer = window.setTimeout(() => {
+    copyBtn.classList.remove('copied')
+    copyTimers.delete(copyBtn)
+  }, 1000)
+
+  copyTimers.set(copyBtn, timer)
 }
 
 /**
@@ -1987,6 +2003,20 @@ onUnmounted(()=> {
 
 .markdown-content :deep(.code-copy-btn.copied .check-icon) {
   display: block;
+}
+
+/* 复制失败：按钮短暂变红提示（原实现失败只 console.error，用户无感知） */
+.markdown-content :deep(.code-copy-btn.copy-failed) {
+  opacity: 1 !important;
+}
+
+.markdown-content :deep(.code-copy-btn.copy-failed .copy-icon) {
+  display: none;
+}
+
+.markdown-content :deep(.code-copy-btn.copy-failed .check-icon) {
+  display: block;
+  color: var(--vscode-errorForeground, #f14c4c);
 }
 
 /* 代码块内的 pre（滚动容器） */

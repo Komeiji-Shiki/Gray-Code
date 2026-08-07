@@ -219,6 +219,11 @@
           "default": "",
           "description": "用户上次查看的公告版本（可同步）"
         },
+        "graycode.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动后自动检查更新（可同步）"
+        },
         "graycode.toolsConfig": {
           "type": "object",
           "default": {},

@@ -98,6 +98,16 @@ export interface PromptEntry {
     /** 提示词内容，支持 {{$MODULE}} 占位符 */
     content: string;
 
+    /**
+     * 伪造思考内容（仅 assistant 角色生效）。
+     *
+     * 非空时，组装请求会以 thought part（thought: true）附加在
+     * 该临时 assistant 消息的正文之前，模拟一轮带思考过程的 AI 回复。
+     * 是否随请求回传由渠道的 sendHistoryThoughts（发送历史思考内容）
+     * 开关决定，与真实历史思考的语义保持一致。
+     */
+    fakeThought?: string;
+
     /** 排序值，小的在前 */
     order: number;
 }

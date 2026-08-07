@@ -201,14 +201,9 @@ export function resolveEditTargetNode(
         );
       }
       if (node.parentId === null) {
-        if (mode === 'keep') {
-          // keep 模式（原地改写）：根节点无父节点可挂候选，但可以直接改写根节点内容并截断
-          return { nodeId: userNodeId, parentNodeId: null };
-        }
-        throw new BranchError(
-          'INVALID_BRANCH_RELATION',
-          `cannot edit the root node ${userNodeId} (no parent to branch under)`
-        );
+        // 根节点（无父节点可挂「新 user 编辑节点」）：keep 原地改写；
+        // branch（TREE-03-R）原地改写根节点 + 截断其后 + 新建模型候选重新生成。
+        return { nodeId: userNodeId, parentNodeId: null };
       }
       return { nodeId: userNodeId, parentNodeId: node.parentId };
     }
@@ -225,14 +220,8 @@ export function resolveEditTargetNode(
     }
     const parentId = findLinearParentId(history, idx);
     if (parentId === null) {
-      if (mode === 'keep') {
-        // keep 模式（原地改写）：线性模式根节点（首条消息）同样放行
-        return { nodeId: userNodeId, parentNodeId: null };
-      }
-      throw new BranchError(
-        'INVALID_BRANCH_RELATION',
-        `cannot edit the root node ${userNodeId} (no parent to branch under)`
-      );
+      // 线性模式根节点（首条消息）：语义同上方图模式根节点分支
+      return { nodeId: userNodeId, parentNodeId: null };
     }
     return { nodeId: userNodeId, parentNodeId: parentId };
   }
@@ -1616,13 +1605,13 @@ export class ChatFlowService {
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
-    let editStarted: { modelCandidateNodeId: string; parentNodeId: string } | undefined;
+    let editStarted: { modelCandidateNodeId: string; parentNodeId: string | null } | undefined;
     let editSetup: {
       branchService: BranchService;
       oldUserNodeId: string;
       newUserNodeId: string;
       modelCandidateNodeId: string;
-      parentNodeId: string;
+      parentNodeId: string | null; // 根节点编辑（TREE-03-R）为 null
     } | undefined;
     try {
       await this.diffInterruptService.cancelAllPending(conversationId);
@@ -1656,7 +1645,7 @@ export class ChatFlowService {
         );
       }
       const historyBefore = await this.conversationManager.getMessagesRaw(conversationId);
-      // mode：keep 模式放行根节点（原地改写）；branch 模式根节点拒绝（无父节点可挂候选）
+      // mode：keep 原地改写（不重新生成）；branch 根节点（TREE-03-R）原地改写 + 截断重生成
       const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId, request.mode);
 
       // 3.8 按编辑模式分流：
@@ -1697,83 +1686,139 @@ export class ChatFlowService {
         // editStarted 保持 undefined：无候选节点，流结束后无需 finishReroll
       } else {
         // —— branch 模式：创建编辑候选并切换分支 ——
-        // 根节点已在 resolveEditTargetNode 拒绝（branch 模式），此处 parentNodeId 必非 null
-        const created = await branchService.editCandidate(conversationId, target.parentNodeId!, {
-          role: 'user',
-          parts: [{ text: request.newText }],
-        });
-        const newUserNodeId = created.nodeId;
+        // 根节点（TREE-03-R，parentNodeId === null）：无父节点可挂「新 user 编辑节点」，
+        // 改为原地改写根节点文本 + 截断其后消息 + 新建模型候选重新生成（旧回答保留为
+        // 可切换候选，与 reroll 同语义）；非根节点走常规 editCandidate 流程。
+        const isRootEdit = target.parentNodeId === null;
 
-        // 3.9 创建模型候选占位（流式结果将写入此节点；createRerollCandidate 是当前唯一可用的
-        //     模型节点创建入口，kind 固定为 'reroll'——缺少 startEditBranch 公共方法，见设计说明）
-        const modelCreated = await branchService.createRerollCandidate(conversationId, newUserNodeId, {
-          parts: [],
-        });
-        const modelCandidateNodeId = modelCreated.nodeId;
-        editSetup = {
-          branchService,
-          oldUserNodeId: target.nodeId,
-          newUserNodeId,
-          modelCandidateNodeId,
-          parentNodeId: target.parentNodeId!,
-        };
-
-        // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
-        const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
-        const parentIndex = historyAfterGraph.findIndex(message => message.id === target.parentNodeId);
-        // H3：父节点不在主历史时快速失败——继续追加消息会让主历史与分支图分叉（静默降级
-        // 产生"幽灵"编辑候选：图侧激活了它，主历史却停在无关节点上）。父节点缺失通常意味着
-        // 它已被上下文压缩移除，给出可读错误让用户刷新。
-        if (parentIndex < 0) {
-          throw new BranchError(
-            'INVALID_BRANCH_RELATION',
-            t('modules.api.chat.errors.editTargetNotInHistory'),
-          );
-        }
-        // M1（R6a-FIX）：截断前清理截断点之后的旧检查点（与 handleEditAndRetryStream 对齐）——
-        // 旧回合检查点原样保留在相同索引会让新候选消息命中旧检查点（索引错位，回档/恢复错状态）
-        await this.checkpointService.deleteCheckpointsFromIndex(conversationId, parentIndex + 1);
-        if (parentIndex < historyAfterGraph.length - 1) {
-          await this.conversationManager.deleteMessagesInRange(
-            conversationId,
-            parentIndex + 1,
-            historyAfterGraph.length - 1,
-          );
-        }
-
-        // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
-        await this.conversationManager.addContent(conversationId, {
-          role: 'user',
-          parts: [{ text: request.newText }],
-          id: newUserNodeId,
-          isUserInput: true,
-        });
-
-        // 3.11b 把持久化后的用户消息元数据补写进图节点——editCandidate 建节点时只有
-        // parts/role/kind，没有主历史侧元数据（isUserInput/tokenCountByChannel 等）；
-        // 不补写则切分支重写主历史时这些字段丢失（动态提示词插入点、前端用户图标、裁剪统计口径）。
-        try {
-          const persistedHistory = await this.conversationManager.getMessagesRaw(conversationId);
-          const persistedUserMessage = persistedHistory.find(message => message.id === newUserNodeId);
-          if (persistedUserMessage) {
-            await branchService.updateNodeMetadata(
+        if (isRootEdit) {
+          // 3.8R 根节点编辑重生成：改写根节点（同 keep 3.8.2/3.8.3）+ 模型候选 + 截断
+          const targetIndex = historyBefore.findIndex(message => message.id === target.nodeId);
+          if (targetIndex === -1) {
+            yield {
               conversationId,
-              newUserNodeId,
-              extractBranchContentMetadata(persistedUserMessage),
+              error: {
+                code: 'NODE_NOT_FOUND',
+                message: `target user node ${target.nodeId} not found in main history`,
+              },
+            };
+            return;
+          }
+
+          // 建图（图节点内容同步需要；无图时建线性基线图）
+          await branchService.ensureBranchGraph(conversationId);
+
+          // 改写根节点（清除 token 计数，强制在裁剪评估中重新计算）
+          await this.conversationManager.updateMessage(conversationId, targetIndex, {
+            parts: [{ text: request.newText }],
+            isUserInput: true,
+            tokenCountByChannel: {},
+          });
+          await branchService.updateActiveNodeParts(conversationId, target.nodeId, [{ text: request.newText }]);
+
+          // 创建模型候选占位（流式结果写入此节点；根节点下挂候选与 reroll 同语义）
+          const modelCreated = await branchService.createRerollCandidate(conversationId, target.nodeId, {
+            parts: [],
+          });
+          const modelCandidateNodeId = modelCreated.nodeId;
+          editSetup = {
+            branchService,
+            oldUserNodeId: target.nodeId,
+            newUserNodeId: target.nodeId,
+            modelCandidateNodeId,
+            parentNodeId: null,
+          };
+
+          // 截断根节点之后的主历史（旧消息已由 3.7 ensureMainHistoryRepresentedInGraph 归档进图）
+          await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex + 1);
+          if (targetIndex < historyBefore.length - 1) {
+            await this.conversationManager.deleteMessagesInRange(
+              conversationId,
+              targetIndex + 1,
+              historyBefore.length - 1,
             );
           }
-        } catch (metadataError) {
-          // 元数据补写失败不阻断编辑主流程：切分支时的完整对账（rewriteHistoryFromBranchGraph）
-          // 会按图节点内容重建，缺少数个非拓扑字段只影响展示/裁剪口径，下次分支操作可再修复。
-          this.log.warn('edit_node_metadata_sync_failed', {
-            conversationId,
-            newUserNodeId,
-            error: (metadataError as Error)?.message ?? String(metadataError),
-          });
-        }
 
-        // branch 模式：parentNodeId 必非 null（根节点已在 resolveEditTargetNode 拒绝）
-        editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId! };
+          editStarted = { modelCandidateNodeId, parentNodeId: null };
+        } else {
+          // —— 非根节点：创建新 user 编辑候选（旧子树保留进 sidecar） ——
+          const created = await branchService.editCandidate(conversationId, target.parentNodeId!, {
+            role: 'user',
+            parts: [{ text: request.newText }],
+          });
+          const newUserNodeId = created.nodeId;
+
+          // 3.9 创建模型候选占位（流式结果将写入此节点；createRerollCandidate 是当前唯一可用的
+          //     模型节点创建入口，kind 固定为 'reroll'——缺少 startEditBranch 公共方法，见设计说明）
+          const modelCreated = await branchService.createRerollCandidate(conversationId, newUserNodeId, {
+            parts: [],
+          });
+          const modelCandidateNodeId = modelCreated.nodeId;
+          editSetup = {
+            branchService,
+            oldUserNodeId: target.nodeId,
+            newUserNodeId,
+            modelCandidateNodeId,
+            parentNodeId: target.parentNodeId!,
+          };
+
+          // 3.10 主历史截断到旧用户节点之前（父节点保留，旧子树整体移出主历史；图侧已保留）
+          const historyAfterGraph = await this.conversationManager.getMessagesRaw(conversationId);
+          const parentIndex = historyAfterGraph.findIndex(message => message.id === target.parentNodeId);
+          // H3：父节点不在主历史时快速失败——继续追加消息会让主历史与分支图分叉（静默降级
+          // 产生"幽灵"编辑候选：图侧激活了它，主历史却停在无关节点上）。父节点缺失通常意味着
+          // 它已被上下文压缩移除，给出可读错误让用户刷新。
+          if (parentIndex < 0) {
+            throw new BranchError(
+              'INVALID_BRANCH_RELATION',
+              t('modules.api.chat.errors.editTargetNotInHistory'),
+            );
+          }
+          // M1（R6a-FIX）：截断前清理截断点之后的旧检查点（与 handleEditAndRetryStream 对齐）——
+          // 旧回合检查点原样保留在相同索引会让新候选消息命中旧检查点（索引错位，回档/恢复错状态）
+          await this.checkpointService.deleteCheckpointsFromIndex(conversationId, parentIndex + 1);
+          if (parentIndex < historyAfterGraph.length - 1) {
+            await this.conversationManager.deleteMessagesInRange(
+              conversationId,
+              parentIndex + 1,
+              historyAfterGraph.length - 1,
+            );
+          }
+
+          // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
+          await this.conversationManager.addContent(conversationId, {
+            role: 'user',
+            parts: [{ text: request.newText }],
+            id: newUserNodeId,
+            isUserInput: true,
+          });
+
+          // 3.11b 把持久化后的用户消息元数据补写进图节点——editCandidate 建节点时只有
+          // parts/role/kind，没有主历史侧元数据（isUserInput/tokenCountByChannel 等）；
+          // 不补写则切分支重写主历史时这些字段丢失（动态提示词插入点、前端用户图标、裁剪统计口径）。
+          try {
+            const persistedHistory = await this.conversationManager.getMessagesRaw(conversationId);
+            const persistedUserMessage = persistedHistory.find(message => message.id === newUserNodeId);
+            if (persistedUserMessage) {
+              await branchService.updateNodeMetadata(
+                conversationId,
+                newUserNodeId,
+                extractBranchContentMetadata(persistedUserMessage),
+              );
+            }
+          } catch (metadataError) {
+            // 元数据补写失败不阻断编辑主流程：切分支时的完整对账（rewriteHistoryFromBranchGraph）
+            // 会按图节点内容重建，缺少数个非拓扑字段只影响展示/裁剪口径，下次分支操作可再修复。
+            this.log.warn('edit_node_metadata_sync_failed', {
+              conversationId,
+              newUserNodeId,
+              error: (metadataError as Error)?.message ?? String(metadataError),
+            });
+          }
+
+          // branch 模式：非根节点 parentNodeId 必非 null
+          editStarted = { modelCandidateNodeId, parentNodeId: target.parentNodeId! };
+        }
       }
     } catch (error) {
       if (editSetup && !editStarted) {
@@ -1785,9 +1830,11 @@ export class ChatFlowService {
           } else {
             // 截断前失败则恢复旧用户路径；截断已落盘则回退其父节点。两种情况都只允许
             // 删除本次 edit + 空 reroll 的精确临时子树。
+            // 根节点编辑（TREE-03-R）：parentNodeId 为 null，回退到根节点自身
+            // （newUserNodeId === oldUserNodeId === 根节点，此时必然命中 oldUserNodeId 分支）
             const fallbackNodeId = currentHistory.some(message => message.id === editSetup!.oldUserNodeId)
               ? editSetup.oldUserNodeId
-              : editSetup.parentNodeId;
+              : (editSetup!.parentNodeId ?? editSetup!.oldUserNodeId);
             await editSetup.branchService.abortEmptyCandidateSetup(conversationId, {
               setupRootNodeId: editSetup.newUserNodeId,
               emptyCandidateNodeId: editSetup.modelCandidateNodeId,
@@ -1823,8 +1870,9 @@ export class ChatFlowService {
         modelOverride,
         abortSignal: request.abortSignal,
         summarizeAbortSignal: request.summarizeAbortSignal,
-        // 编辑分支永不可能是会话首条消息（根节点不可编辑，编辑目标必有父节点）
-        isFirstMessage: false,
+        // 根节点编辑（TREE-03-R）后主历史只剩首条消息：动态判断 isFirstMessage 以刷新
+        // 系统提示词（与 send/retry/reroll 同口径）；非根节点编辑后必非首条，判断自然为 false
+        isFirstMessage: isFirstMessageHistory(await this.conversationManager.getHistoryRef(conversationId)),
         maxIterations: maxToolIterations,
         isNewTurn: true,
         promptModeSnapshot,
@@ -1862,16 +1910,14 @@ export class ChatFlowService {
       };
     }
     } else {
-      // keep 模式：不重新生成——直接结束流（complete 仅用于通知前端复位流状态，
-      // 前端无占位消息、不消费 content）
-      const tail = await this.conversationManager.getMessagesRaw(conversationId);
+      // keep 模式：不重新生成——直接结束流。complete **不带 content**：
+      // 前端 handleStreamChunk 对无 content 的终结 chunk 走 resetTerminalStreamState
+      // （纯状态复位，不替换消息）。此前携带 tail 最后一条消息（可能是 user 角色），
+      // 若前端残留 streamingMessageId（旧流占位未清理），handleComplete 会用 user
+      // 内容替换 assistant 消息，造成内容错乱；无 content 语义与 resetTerminalStreamState
+      // 的设计注释（后端可能发送 content 为 null/undefined 的终结 chunk）一致。
       yield {
         conversationId,
-        content: tail[tail.length - 1] ?? {
-          role: 'user',
-          parts: [{ text: request.newText }],
-          timestamp: Date.now(),
-        },
       } satisfies ChatStreamCompleteData;
     }
   }

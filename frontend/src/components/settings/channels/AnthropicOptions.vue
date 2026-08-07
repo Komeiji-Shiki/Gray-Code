@@ -353,16 +353,18 @@ function handleThinkingNumberChange(field: string, event: any) {
       </div>
     </div>
     
-    <!-- 当前轮次思考配置 -->
-    <div class="option-section">
+    <!-- 思考回传配置 -->
+    <div class="option-section thinking-backfill-section">
       <div class="option-section-header">
         <span class="option-section-title">
-          <i class="codicon codicon-zap"></i>
-          {{ t('components.channels.common.currentThinking.title') }}
+          <i class="codicon codicon-sync"></i>
+          {{ t('components.channels.common.thinkingBackfill.title') }}
         </span>
       </div>
       
       <div class="option-section-content">
+        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.currentGroup') }}</div>
+
         <div class="option-item checkbox-option">
           <label class="custom-checkbox">
             <input
@@ -371,9 +373,9 @@ function handleThinkingNumberChange(field: string, event: any) {
               @change="(e: any) => emit('update:field', 'sendCurrentThoughtSignatures', e.target.checked)"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.currentThinking.sendSignatures') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.currentSignatures') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.currentThinking.sendSignaturesHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.currentSignaturesHint') }}</span>
         </div>
         
         <div class="option-item checkbox-option">
@@ -384,23 +386,13 @@ function handleThinkingNumberChange(field: string, event: any) {
               @change="(e: any) => emit('update:field', 'sendCurrentThoughts', e.target.checked)"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.currentThinking.sendContent') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.currentContent') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.currentThinking.sendContentHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.currentContentHint') }}</span>
         </div>
-      </div>
-    </div>
 
-    <!-- 历史思考配置 -->
-    <div class="option-section history-thought-section">
-      <div class="option-section-header">
-        <span class="option-section-title">
-          <i class="codicon codicon-history"></i>
-          {{ t('components.channels.common.historyThinking.title') }}
-        </span>
-      </div>
-      
-      <div class="option-section-content">
+        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.historyGroup') }}</div>
+
         <div class="option-item checkbox-option">
           <label class="custom-checkbox">
             <input
@@ -409,9 +401,9 @@ function handleThinkingNumberChange(field: string, event: any) {
               @change="(e: any) => emit('update:field', 'sendHistoryThoughtSignatures', e.target.checked)"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.historyThinking.sendSignatures') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.historySignatures') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.historyThinking.sendSignaturesHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.historySignaturesHint') }}</span>
         </div>
         
         <div class="option-item checkbox-option">
@@ -422,9 +414,9 @@ function handleThinkingNumberChange(field: string, event: any) {
               @change="(e: any) => emit('update:field', 'sendHistoryThoughts', e.target.checked)"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.historyThinking.sendContent') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.historyContent') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.historyThinking.sendContentHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.historyContentHint') }}</span>
         </div>
         
         <!-- 历史思考回合数配置 - 条件展开 -->
@@ -432,7 +424,7 @@ function handleThinkingNumberChange(field: string, event: any) {
           v-if="(config.sendHistoryThoughtSignatures ?? false) || (config.sendHistoryThoughts ?? false)"
           class="option-item history-rounds-config"
         >
-          <label>{{ t('components.channels.common.historyThinking.roundsLabel') }}</label>
+          <label>{{ t('components.channels.common.thinkingBackfill.roundsLabel') }}</label>
           <input
             type="number"
             :value="config.historyThinkingRounds ?? -1"
@@ -440,7 +432,7 @@ function handleThinkingNumberChange(field: string, event: any) {
             min="-1"
             @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
           />
-          <span class="option-hint">{{ t('components.channels.common.historyThinking.roundsHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.roundsHint') }}</span>
         </div>
       </div>
     </div>
@@ -642,8 +634,21 @@ function handleThinkingNumberChange(field: string, event: any) {
   color: var(--vscode-charts-yellow, #ddb92f);
 }
 
-.history-thought-section {
+.thinking-backfill-section {
   margin-top: 12px;
+}
+
+.backfill-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  letter-spacing: 0.4px;
+}
+
+.backfill-group-label:not(:first-child) {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vscode-panel-border);
 }
 
 .option-section-content.disabled {

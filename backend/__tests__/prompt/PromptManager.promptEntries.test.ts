@@ -136,6 +136,77 @@ describe('PromptManager prompt entries', () => {
         expect(bundle.dynamicSnapshotText).not.toContain('Static user context');
     });
 
+    it('attaches fakeThought as a thought part on assistant entries', () => {
+        const fakeThoughtMode: ResolvedPromptModeSnapshot = {
+            ...mode,
+            promptEntries: mode.promptEntries!.map(entry =>
+                entry.id === 'assistant'
+                    ? { ...entry, fakeThought: 'Fake reasoning trace' }
+                    : entry
+            )
+        };
+        setGlobalSettingsManager(createSettingsManagerMock(fakeThoughtMode));
+        const manager = new PromptManager({ includeWorkspaceFiles: false });
+
+        const bundle = manager.getPromptContextBundle(fakeThoughtMode, { todoList: [] });
+
+        const assistantMessage = bundle.beforeHistoryMessages.find(message => message.role === 'model');
+        expect(assistantMessage).toBeDefined();
+        expect(assistantMessage!.parts).toHaveLength(2);
+        expect(assistantMessage!.parts[0]).toEqual({ text: 'Fake reasoning trace', thought: true });
+        expect(assistantMessage!.parts[1]).toEqual({ text: 'Assistant prelude' });
+    });
+
+    it('ignores fakeThought on non-assistant entries', () => {
+        const fakeThoughtOnUser: ResolvedPromptModeSnapshot = {
+            ...mode,
+            promptEntries: mode.promptEntries!.map(entry =>
+                entry.id === 'few-shot-user'
+                    ? { ...entry, fakeThought: 'should not appear' }
+                    : entry
+            )
+        };
+        setGlobalSettingsManager(createSettingsManagerMock(fakeThoughtOnUser));
+        const manager = new PromptManager({ includeWorkspaceFiles: false });
+
+        const bundle = manager.getPromptContextBundle(fakeThoughtOnUser, { todoList: [] });
+
+        const userMessage = bundle.beforeHistoryMessages.find(message => message.role === 'user');
+        expect(userMessage!.parts).toHaveLength(1);
+        expect(userMessage!.parts[0]).toEqual({ text: 'Static user context' });
+    });
+
+    it('strips fakeThought from dynamic snapshots used for preserve re-injection', () => {
+        const dynamicAssistantMode: ResolvedPromptModeSnapshot = {
+            ...mode,
+            promptEntries: mode.promptEntries!.map(entry =>
+                entry.id === 'assistant'
+                    ? { ...entry, fakeThought: 'Fake reasoning trace', content: 'Assistant prelude {{$TODO_LIST}}' }
+                    : entry
+            )
+        };
+        setGlobalSettingsManager(createSettingsManagerMock(dynamicAssistantMode));
+        const manager = new PromptManager({ includeWorkspaceFiles: false });
+        const runtime = {
+            todoList: [
+                { id: 'a', content: 'Do the thing', status: 'pending' }
+            ]
+        };
+
+        const bundle = manager.getPromptContextBundle(dynamicAssistantMode, runtime);
+
+        // 当前发送消息保留伪造思考
+        const assistantMessage = bundle.beforeHistoryMessages.find(message => message.role === 'model');
+        expect(assistantMessage!.parts[0]).toEqual({ text: 'Fake reasoning trace', thought: true });
+
+        // preserve 回插用的快照剥离伪造思考（回插路径不经过渠道思考开关过滤）
+        const snapshotAssistantMessage = bundle.dynamicSnapshotBeforeHistoryMessages.find(message => message.role === 'model');
+        expect(snapshotAssistantMessage).toBeDefined();
+        expect(snapshotAssistantMessage!.parts).toHaveLength(1);
+        expect(snapshotAssistantMessage!.parts[0].thought).toBeUndefined();
+        expect(snapshotAssistantMessage!.parts[0].text).toContain('Assistant prelude');
+    });
+
     it('keeps legacy mode on traditional templates even when promptEntries exists', () => {
         const legacyMode: ResolvedPromptModeSnapshot = {
             ...mode,

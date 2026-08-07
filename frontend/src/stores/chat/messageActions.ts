@@ -974,12 +974,13 @@ async function replayBranchStreamAfterError(
 
   state.error.value = null
   state.isLoading.value = true
-  state.isStreaming.value = true
-  state.isWaitingForResponse.value = true
 
-  // keep 模式（真·原地保存）重放：不创建占位（后端不重新生成，complete 仅复位状态）
+  // keep 模式（真·原地保存）重放：不创建占位（后端不重新生成，complete 仅复位状态），
+  // 同样不进入流式等待状态——否则终结事件丢失时 isStreaming 残留，后续发消息全部被拦截
   const isKeepReplay = context.kind === 'editBranch' && context.mode === 'keep'
   if (!isKeepReplay) {
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
     const assistantMessageId = generateId()
     appendMessage(state, {
       id: assistantMessageId,
@@ -1035,7 +1036,8 @@ async function replayBranchStreamAfterError(
       state._pendingBranchReplayContext.value = null
     }
     state._pendingBranchRefreshAfterStream.value = null
-    if (state.isStreaming.value) {
+    // keep 重放不设置 isStreaming：错误显示不能依赖该标志
+    if (state.isStreaming.value || isKeepReplay) {
       safeSetError(state, originConvId, {
         code: err.code || (context.kind === 'reroll' ? 'RETRY_ERROR' : 'EDIT_RETRY_ERROR'),
         message: err.message || (context.kind === 'reroll' ? 'Retry failed' : 'Edit and retry failed'),
@@ -1188,24 +1190,32 @@ export async function editAndRetry(
 
   state.error.value = null
   state.isLoading.value = true
-  state.isStreaming.value = true
-  state.isWaitingForResponse.value = true
 
   // 计算后端索引（在修改数组之前）
   const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
   const targetMessage = state.allMessages.value[messageIndex]
-  // 根节点（parentId 为 null/undefined）：无父节点可挂编辑候选（BranchGraph 单根模型），
-  // branch 模式自动降级为 keep（真·原地保存）
-  const effectiveMode = mode === 'branch' && targetMessage.parentId == null ? 'keep' : mode
+  // 根节点（parentId 为 null/undefined）：BranchGraph 单根模型下无父节点可挂「新 user 编辑
+  // 节点」候选，但后端支持根节点编辑重生成：原地改写根节点文本 + 截断其后消息 + 新建模型
+  // 候选重新生成（TREE-03-R：与普通编辑同一套 branch 语义，旧回答保留为可切换候选）。
+  // 因此 branch 模式不再降级 keep；「原地保存（keep）」由用户在编辑对话框显式选择。
+  const effectiveMode = mode
   targetMessage.content = newMessage
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
 
   if (effectiveMode === 'keep') {
     // 真·原地保存：只改写本条消息，后续消息 / 检查点 / 分支全部保留，
-    // 不截断窗口、不创建占位（后端不重新生成，流结束仅复位状态）
+    // 不截断窗口、不创建占位（后端不重新生成，complete 仅复位状态）。
+    // 关键：**不进入流式等待状态**——不设置 isStreaming / isWaitingForResponse /
+    // streamingMessageId。否则 complete 终结事件一旦丢失（视图重建 / IPC 抖动 /
+    // 后端异常），状态永久残留，sendMessage 会把后续所有新消息拦截成
+    // deliverInterruptMessage（投递到无人消费的主会话 inbox），表现为
+    // 「无论如何都不发消息」。activeStreamId 仍由下方 try 块设置：
+    // error chunk 按 streamId 路由到 handleError（错误条可见）。
   } else {
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
     // branch 模式：截断窗口到目标消息 + 创建流式占位
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
     rebuildMessageIndexById(state)
@@ -1272,7 +1282,8 @@ export async function editAndRetry(
       modelOverride,
       streamId,
       promptModeId: state.currentPromptModeId.value,
-      // 根节点自动降级为 keep（见上方 effectiveMode 注释）
+      // 根节点 branch：后端原地改写根节点 + 截断其后 + 重新生成（TREE-03-R），
+      // 与普通编辑同一套候选语义；keep 仅在用户显式选择「原地保存」时透传
       mode: effectiveMode
     })
   } catch (err: any) {
@@ -1286,7 +1297,8 @@ export async function editAndRetry(
     // 错误条仍显示 EDIT_RETRY_ERROR（可重试），但重试基于重载后的真实后端历史。
     // 注意：无论会话是否切换，本次编辑分支流都已中止，分支图刷新标记必须复位，避免残留误消费。
     state._pendingBranchRefreshAfterStream.value = null
-    if (state.isStreaming.value) {
+    // keep 模式不设置 isStreaming：错误显示不能依赖该标志，否则 IPC 层失败时错误静默丢失
+    if (state.isStreaming.value || effectiveMode === 'keep') {
       // MESSAGE_CHANGED：目标消息已被其他操作改动（索引漂移校验失败），提示用户刷新历史，
       // 不附带 branchReplayContext（重放已无意义）
       const isMessageChanged = err?.code === 'MESSAGE_CHANGED'

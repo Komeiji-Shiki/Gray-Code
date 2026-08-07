@@ -130,6 +130,25 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
+  it('default 路径经 sanitizeHtml 后复制/换行按钮仍保留（sanitize 放行 code-tool-btn）', async () => {
+    // 回归：sanitizeHtml 黑名单含 button，会把代码块工具栏按钮一并移除，
+    // 导致默认渲染路径下代码块无法复制。sanitize 需放行 class 受控的工具栏按钮。
+    const wrapper = mountRenderer({ content: LONG_CODE })
+    await tick()
+    await tick()
+
+    const container = wrapper.find('.code-block-container')
+    expect(container.exists()).toBe(true)
+    const copyBtn = container.find('.code-copy-btn')
+    expect(copyBtn.exists()).toBe(true)
+    // data-code 保留（base64 编码的原始代码），点击时可解码出原文
+    const encoded = copyBtn.attributes('data-code')
+    expect(encoded).toBeTruthy()
+    expect(decodeURIComponent(atob(encoded!))).toContain('// line 1')
+    expect(container.find('.code-wrap-btn').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('流式内容追加后 DOM 同步渲染新增行', async () => {
     // markdown-it fence 内容带尾部换行，splitHighlightedHtmlByNewline 会产生尾随空行
     const part1 = '```typescript\nconst a = 1;\n```'
