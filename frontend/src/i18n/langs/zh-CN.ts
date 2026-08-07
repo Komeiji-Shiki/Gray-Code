@@ -990,6 +990,10 @@ const zhCN = {
                         atLeastOne: '至少需要保留一个配置',
                         cancel: '取消',
                         confirm: '确定'
+                    },
+                    changeType: {
+                        title: '更改渠道类型',
+                        message: '确定要将渠道类型更改为「{name}」吗？该类型特有的参数（API URL、模型列表、高级选项等）将重置为该类型默认值，通用设置（名称、API Key、超时、重试等）保持不变。'
                     }
                 },
                 form: {
@@ -1015,7 +1019,8 @@ const zhCN = {
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
-                        anthropic: 'Anthropic API'
+                        anthropic: 'Anthropic API',
+                        changeHint: '更改渠道类型会将该类型特有的参数（API URL、模型列表、高级选项等）重置为默认值，通用设置保持不变。'
                     },
                     toolMode: {
                         label: '工具调用格式',
