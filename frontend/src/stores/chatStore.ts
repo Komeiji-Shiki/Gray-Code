@@ -689,6 +689,79 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 自动投递进行中标记：防止 toolIteration 边界的连续触发重入
+   * （cancelStream 的 IPC 往返是异步的，在 sendMessage 完成前禁止再次投递）。
+   */
+  let queueAfterActionDraining = false
+
+  /**
+   * 处理队列（动作边界，P1）：LLM 执行完当前动作（非终结 toolIteration，流继续）后
+   * 立即自动取出下一条排队消息发送，不再等待整个回合完整结束。
+   *
+   * 与 sendQueuedMessageNow 完全同构（取消旧流替换当前回合 + 发送新回合），
+   * 因此复用其全部安全保证：
+   * 1. 动作彻底结束：toolIteration 由后端在工具结果 settleFunctionResponses/addContent
+   *    全部落盘后才发出，当前动作已完整持久化，不存在半截动作；
+   * 2. 历史不丢序：cancelStream({ preserveSubAgents: true }) 替换当前回合后，新流由
+   *    webview 层 awaitOldStreamCompletion 与后端 waitForOldStreamExit 保证在旧流
+   *    finally 完全退出（含工具结算落盘）后才写入新用户消息（H1 写序竞态防护），
+   *    插入点之前的完整历史保持原样、不会丢失；
+   * 3. 发送失败时把消息放回队首（保持原顺序），避免排队消息静默丢失；
+   * 4. 跨会话防护与 processQueue 一致：只投递属于当前会话的消息；
+   * 5. 投递窗口（cancelStream/sendMessage 的 IPC 往返）内会话切换或并发发送者
+   *    抢先开启新流时，放弃本次投递并放回队列，杜绝「发错会话」与「排队消息
+   *    降级为 inbox 中断（乱序且可能滞留不被送达）」。
+   */
+  async function processQueueAfterAction(): Promise<void> {
+    // 投递进行中（cancelStream/sendMessage 未完成）不重入
+    if (queueAfterActionDraining) return
+
+    const queue = state.messageQueue.value
+    if (queue.length === 0) return
+    const currentId = state.currentConversationId.value
+    const matchIndex = queue.findIndex(m =>
+      typeof m.conversationId !== 'string' || m.conversationId === currentId
+    )
+    if (matchIndex === -1) return
+    const [next] = queue.splice(matchIndex, 1)
+    state.messageQueue.value = queue
+
+    queueAfterActionDraining = true
+    try {
+      // 当前回合仍在响应中（动作边界必然如此，防御性判断以兼容迟到的调度）：
+      // 替换当前回合前先把前台 SubAgent 转为后台，再取消旧流。
+      if (state.isWaitingForResponse.value) {
+        await cancelStream({ preserveSubAgents: true })
+      }
+
+      // 投递窗口内会话已切换（tab 切换）：放回队列——消息保留自身 conversationId，
+      // 由跨会话跳过逻辑保护，绝不投递到错误会话。
+      if (state.currentConversationId.value !== currentId) {
+        state.messageQueue.value = [next, ...state.messageQueue.value]
+        return
+      }
+
+      // 投递窗口内已有其他发送者（手动发送/后台任务回执/立即发送等）抢先开启新流：
+      // 放回队列等下一个动作边界或回合终结时再试——此时 sendMessage 的忙时分支会把
+      // 消息降级为 inbox 中断（乱序投递、4000 字符上限、回合无工具调用时可能滞留），
+      // 不符合排队消息「成为真实新回合」的语义。
+      if (state.isStreaming.value || state.isWaitingForResponse.value) {
+        state.messageQueue.value = [next, ...state.messageQueue.value]
+        return
+      }
+
+      const sent = await sendMessage(next.content, next.attachments, next.sendOptions)
+      if (!sent) {
+        // 发送未成功（IPC 失败 / 会话切换校验未过等）：放回队首保持原顺序，
+        // 由下一个动作边界或回合终结时再次尝试，不静默丢弃排队消息。
+        state.messageQueue.value = [next, ...state.messageQueue.value]
+      }
+    } finally {
+      queueAfterActionDraining = false
+    }
+  }
+
   // ============ Build（Plan 执行）============
 
   async function setActiveBuild(
@@ -756,7 +829,8 @@ export const useChatStore = defineStore('chat', () => {
     currentModelName: () => computed.currentModelName.value,
     addCheckpoint,
     updateConversationAfterMessage: () => updateConversationAfterMessage(state),
-    processQueue
+    processQueue,
+    processQueueAfterAction
   }
   
   function handleStreamChunkWrapper(chunk: StreamChunk): void {
@@ -1046,6 +1120,7 @@ export const useChatStore = defineStore('chat', () => {
     moveQueuedMessage,
     updateQueuedMessage,
     processQueue,
+    processQueueAfterAction,
 
     // Build（Plan 执行）
     activeBuild: state.activeBuild,

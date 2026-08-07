@@ -47,6 +47,11 @@ export interface StreamHandlerContext {
   updateConversationAfterMessage: () => Promise<void>
   /** AI 响应结束后处理消息队列 */
   processQueue: () => Promise<void>
+  /**
+   * 动作边界处理消息队列：LLM 执行完当前动作（非终结 toolIteration）后立即投递，
+   * 不再等待整个回合完整结束（P1 排队消息提前发出）。
+   */
+  processQueueAfterAction: () => Promise<void>
 }
 
 /**
@@ -134,7 +139,7 @@ export function handleStreamChunk(
   chunk: StreamChunk,
   ctx: StreamHandlerContext
 ): void {
-  const { state, currentModelName, addCheckpoint, updateConversationAfterMessage, processQueue } = ctx
+  const { state, currentModelName, addCheckpoint, updateConversationAfterMessage, processQueue, processQueueAfterAction } = ctx
   
   // 非当前活跃对话的流式响应 -> 缓冲到后台并更新标签页状态
   if (chunk.conversationId !== state.currentConversationId.value) {
@@ -201,6 +206,12 @@ export function handleStreamChunk(
           // 终结路径与 complete/cancelled/error 一致：调度 processQueue，
           // 否则审批门闸终止的回合后排队队列永不触发（卡死）
           nextTick(() => processQueue())
+        } else {
+          // P1 排队消息提前投递：当前动作已彻底结束——后端在 yield toolIteration 之前
+          // 已把工具结果 settleFunctionResponses/addContent 落盘，此处即是“执行完当前动作”
+          // 的安全边界。仍有排队消息时替换当前回合立即发送，不再等待整个回合结束。
+          // nextTick 延迟到本批 chunk 处理完（batch 中后续 chunk 不再改动本轮状态）。
+          nextTick(() => processQueueAfterAction())
         }
       } else {
         // 无 content 的终结 chunk：仅复位流式状态，跳过消息内容替换
