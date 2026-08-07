@@ -538,6 +538,12 @@ export class GeminiFormatter extends BaseFormatter {
                             }
                         }
                     } else {
+                        // rejected 调用的配对 response：与 functionCall 对称，一并丢弃。
+                        // 落入 else 会原样回推为原生 part（不转 XML 也不丢弃），
+                        // prompt 模式请求体出现孤儿 functionResponse → Gemini 400 风险
+                        if (part.functionResponse?.id && rejectedCallIds.has(part.functionResponse.id)) {
+                            continue;
+                        }
                         // 其他类型的 part 保持不变
                         newParts.push(part);
                     }
@@ -606,6 +612,12 @@ export class GeminiFormatter extends BaseFormatter {
                             }
                         }
                     } else {
+                        // rejected 调用的配对 response：与 functionCall 对称，一并丢弃。
+                        // 落入 else 会原样回推为原生 part（不转 JSON 也不丢弃），
+                        // prompt 模式请求体出现孤儿 functionResponse → Gemini 400 风险
+                        if (part.functionResponse?.id && rejectedCallIds.has(part.functionResponse.id)) {
+                            continue;
+                        }
                         // 其他类型的 part 保持不变
                         newParts.push(part);
                     }
