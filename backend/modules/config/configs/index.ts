@@ -5,6 +5,8 @@
  */
 
 // 导出基础类型
+import { CHANNEL_TYPES } from './base';
+export { CHANNEL_TYPES };
 export type { ChannelType, BaseChannelConfig, ModelInfo, TokenCountMethod, TokenCountApiConfig } from './base';
 
 // 导出各渠道配置
