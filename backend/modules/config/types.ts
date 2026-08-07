@@ -31,10 +31,10 @@ export type CreateConfigInput<T extends ChannelConfig = ChannelConfig> =
 /**
  * 更新配置时的输入类型
  *
- * 所有字段都是可选的，除了 type（类型不可更改）
+ * 所有字段都是可选的；type 显式传入时可更改渠道类型（类型特有字段将重置为新类型默认值）
  */
 export type UpdateConfigInput<T extends ChannelConfig = ChannelConfig> =
-    Partial<Omit<T, 'id' | 'type' | 'createdAt' | 'updatedAt'>>;
+    Partial<Omit<T, 'id' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * 配置统计信息

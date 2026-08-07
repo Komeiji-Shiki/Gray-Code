@@ -8,6 +8,7 @@ import { t } from '../../i18n';
 import type {
     ChannelConfig,
     ChannelType,
+    BaseChannelConfig,
     CreateConfigInput,
     UpdateConfigInput,
     ConfigStats,
@@ -22,6 +23,81 @@ import type {
 } from './types';
 import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
+
+/**
+ * 支持的渠道类型（运行时校验用，与 ChannelType 类型字面量保持一致）
+ */
+const CHANNEL_TYPES: ReadonlyArray<ChannelType> = ['gemini', 'openai', 'anthropic', 'openai-responses'];
+
+/**
+ * 运行时渠道类型守卫
+ *
+ * 配置来源可能绕过 TypeScript 类型（webview 消息、设置导入），
+ * 非法 type 会让 getDefaultConfig 落入 default 分支、getStats 的 byType 计数产生 NaN。
+ */
+function isChannelType(value: unknown): value is ChannelType {
+    return typeof value === 'string' && (CHANNEL_TYPES as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * 渠道类型变更时保留的跨类型通用字段（白名单）
+ *
+ * 切换渠道类型时，配置以新类型的默认配置为基底重建，仅保留此列表中的通用字段；
+ * 类型特有字段（url、models、model、options、optionsEnabled、useAuthorizationHeader、
+ * deepSeekUserIdEnabled、pdfAttachmentEnabled 等）重置为新类型默认值，避免旧类型字段残留
+ * 污染新类型请求（例如 Gemini 的 thinkingConfig 残留到 Anthropic 配置上）。
+ */
+const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey'> = [
+    'name',
+    'enabled',
+    'description',
+    'tags',
+    'systemInstruction',
+    'timeout',
+    'maxContextTokens',
+    'preferStream',
+    'toolMode',
+    'customHeaders',
+    'customHeadersEnabled',
+    'customBody',
+    'customBodyEnabled',
+    'sendHistoryThoughtSignatures',
+    'sendCurrentThoughtSignatures',
+    'sendHistoryThoughts',
+    'historyThinkingRounds',
+    'sendCurrentThoughts',
+    'retryEnabled',
+    'retryCount',
+    'retryInterval',
+    'contextManagementEnabled',
+    'contextManagementMode',
+    'contextThresholdEnabled',
+    'contextThreshold',
+    'contextTrimExtraCut',
+    'autoSummarizeEnabled',
+    'multimodalToolsEnabled',
+    'toolOptions',
+    'tokenCountMethod',
+    'tokenCountApiConfig',
+    'strictToolsEnabled',
+    // apiKey 跨类型保留：OpenAI 与 OpenAI Responses 等转换场景下密钥通常仍有效，
+    // 无效时用户可在表单中直接覆盖
+    'apiKey'
+];
+
+/**
+ * 从配置中抽取跨类型通用字段（仅保留存在且非 undefined 的字段）
+ */
+function pickCommonFields(config: BaseChannelConfig): Record<string, unknown> {
+    const common: Record<string, unknown> = {};
+    const source = config as unknown as Record<string, unknown>;
+    for (const field of COMMON_CHANNEL_FIELDS) {
+        if (source[field] !== undefined) {
+            common[field] = source[field];
+        }
+    }
+    return common;
+}
 
 /**
  * 判断字段名是否属于敏感字段（API Key、Token、密钥等）
@@ -288,6 +364,11 @@ export class ConfigManager {
     async createConfig(input: CreateConfigInput, idOverride?: string): Promise<string> {
         await this.ensureLoaded();
 
+        // 运行时校验渠道类型（webview / 导入等来源不受 TypeScript 约束）
+        if (!isChannelType(input.type)) {
+            throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(input.type) }));
+        }
+
         // 生成唯一 ID（允许调用方覆盖，用于导入场景保留原始 id）
         const id = idOverride || randomBytes(16).toString('hex');
         const now = Date.now();
@@ -352,17 +433,42 @@ export class ConfigManager {
             throw new Error(t('modules.config.errors.configNotFound', { configId }));
         }
         
-        // 合并更新
-        const updated: ChannelConfig = {
-            ...existing,
-            ...updates,
-            id: configId,  // 保持 ID 不变
-            type: existing.type,  // 保持类型不变
-            createdAt: existing.createdAt,  // 保持创建时间
-            updatedAt: Date.now()  // 更新时间
-        } as ChannelConfig;
+        const newType = updates.type;
+        const typeChanged = newType !== undefined && newType !== existing.type;
+        
+        // 运行时校验渠道类型（webview / 导入等来源不受 TypeScript 约束）
+        if (typeChanged && !isChannelType(newType)) {
+            throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(newType) }));
+        }
+        
+        let updated: ChannelConfig;
+        if (typeChanged) {
+            // 渠道类型变更：以新类型默认配置为基底重建，仅保留跨类型通用字段，
+            // 类型特有字段（url、options、models 等）重置为新类型默认值；
+            // 显式传入的 updates 优先级最高
+            const defaults = this.getDefaultConfig(newType);
+            updated = {
+                ...defaults,
+                ...pickCommonFields(existing),
+                ...updates,
+                id: configId,  // 保持 ID 不变
+                createdAt: existing.createdAt,  // 保持创建时间
+                updatedAt: Date.now()  // 更新时间
+            } as ChannelConfig;
+        } else {
+            // 普通合并更新
+            updated = {
+                ...existing,
+                ...updates,
+                id: configId,  // 保持 ID 不变
+                type: existing.type,  // 防御性兜底：防止显式传 undefined 覆盖 type
+                createdAt: existing.createdAt,  // 保持创建时间
+                updatedAt: Date.now()  // 更新时间
+            } as ChannelConfig;
+        }
 
-        // 模型回退：model 为空但 models 非空时自动选中列表第一个（自我修复历史坏数据）
+        // 模型回退：model 为空但 models 非空时自动选中列表第一个（自我修复历史坏数据；
+        // 类型重建后同样生效，保证「仅配 models 列表」的渠道切换类型后仍有可用模型）
         this.resolveModel(updated);
         
         // 保存（不验证配置）
