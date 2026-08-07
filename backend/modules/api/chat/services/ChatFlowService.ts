@@ -288,6 +288,26 @@ export function resolveRerollTruncateIndex(
   return targetIndex > 0 ? targetIndex : -1;
 }
 
+/**
+ * 解析 retry 主历史截断起始索引（最后一条 model 消息）。
+ *
+ * retry 是“重新生成最后一条 AI 回复”：必须先把主历史末尾的 model 消息删掉再让模型重新生成。
+ * 若保留，请求 messages 的最后一条会是 assistant——
+ * - 带 tool_calls 时，DeepSeek 等 API 会把最后一条 assistant 当作 prefill 前缀，
+ *   直接 400 "Function call should not be used with prefix"（被重试的消息原样被预填）；
+ * - 纯文本时也会被当作 prefill 续写，重试变成接龙，语义错误。
+ *
+ * 历史中没有 model 消息时返回 -1（例如失败流从未写出内容，最后一条仍是 user，无需截断）。
+ */
+export function resolveRetryTruncateIndex(history: ReadonlyArray<Content>): number {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'model' && !isFunctionResponseMessage(history[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
 
@@ -1000,6 +1020,18 @@ export class ChatFlowService {
     await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
+    // 2.6 重试截断：删除主历史末尾的 model 消息（重新生成最后一条 AI 回复）。
+    // 不删的话请求 messages 最后一条是 assistant——带 tool_calls 时 DeepSeek 等 API
+    // 会把它当作 prefill 前缀直接 400（"Function call should not be used with prefix"），
+    // 纯文本时也会被 prefill 续写（重试变接龙）。放在 prepareConversationForRequest 之后：
+    // 拒绝悬空工具调用补充的 functionResponse 一并落在删除范围内，避免残留孤儿 tool 消息。
+    const retryHistory = await this.conversationManager.getMessagesRaw(conversationId);
+    const retryTruncateIndex = resolveRetryTruncateIndex(retryHistory);
+    if (retryTruncateIndex >= 0) {
+      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, retryTruncateIndex);
+      await this.conversationManager.deleteMessagesInRange(conversationId, retryTruncateIndex, retryHistory.length - 1);
+    }
+
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
     const loopResult = await this.toolIterationLoopService.runNonStreamLoop(
@@ -1347,6 +1379,19 @@ export class ChatFlowService {
     // H1：先等旧流完全退出（webview 层已等待过一遍，这里对直接调用入口兜底）
     await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
+
+    // 3.5 重试截断：删除主历史末尾的 model 消息（重新生成最后一条 AI 回复）。
+    // 不删的话请求 messages 最后一条是 assistant——带 tool_calls 时 DeepSeek 等 API
+    // 会把它当作 prefill 前缀直接 400（"Function call should not be used with prefix"），
+    // 纯文本时也会被 prefill 续写（重试变接龙）。放在 prepareConversationForRequest 之后：
+    // 拒绝悬空工具调用补充的 functionResponse 一并落在删除范围内，避免残留孤儿 tool 消息。
+    // 注意：截断必须先于下方 isFirstMessageHistory 判断——截断后历史可能回到"仅首条用户消息"。
+    const retryHistory = await this.conversationManager.getMessagesRaw(conversationId);
+    const retryTruncateIndex = resolveRetryTruncateIndex(retryHistory);
+    if (retryTruncateIndex >= 0) {
+      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, retryTruncateIndex);
+      await this.conversationManager.deleteMessagesInRange(conversationId, retryTruncateIndex, retryHistory.length - 1);
+    }
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
