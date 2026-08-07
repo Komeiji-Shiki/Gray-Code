@@ -149,6 +149,8 @@ const ja: LanguageMessages = {
                 cancel: 'キャンセル',
                 save: '保存',
                 saveInPlace: 'その場で保存（ブランチを維持）',
+                rootMessageHint: 'これは会話の最初のメッセージです：「保存」はテキストを更新し、続く返信を再生成します（元の回答は切り替え可能なバージョンとして保持）；「その場で保存」はテキストのみ更新し、再生成しません。',
+                rootSaveHint: '保存して続く返信を再生成',
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',
@@ -2837,19 +2839,18 @@ const ja: LanguageMessages = {
                     title: '思考設定',
                     toggleHint: '有効にすると、思考パラメータが API に送信されます'
                 },
-                currentThinking: {
-                    title: '最新ターンの思考設定',
-                    sendSignatures: '最新の思考署名を送信',
-                    sendSignaturesHint: '現在のステップの思考継続性を維持',
-                    sendContent: '最新の思考内容を送信',
-                    sendContentHint: '最新ターンの推論プロセスを送信',
-                },
-                historyThinking: {
-                    title: '履歴ターンの思考設定',
-                    sendSignatures: '履歴思考署名を送信',
-                    sendSignaturesHint: '以前のターンの思考署名を送信',
-                    sendContent: '履歴思考内容を送信',
-                    sendContentHint: '完了した履歴ターンの思考プロセスを AI に送信',
+                thinkingBackfill: {
+                    title: '思考回伝設定',
+                    currentGroup: '最新ターン',
+                    currentSignatures: '最新の思考署名を送信',
+                    currentSignaturesHint: '現在のステップの思考継続性を維持',
+                    currentContent: '最新の思考内容を送信',
+                    currentContentHint: '最新ターンの推論プロセスを送信',
+                    historyGroup: '履歴ターン',
+                    historySignatures: '履歴思考署名を送信',
+                    historySignaturesHint: '以前のターンの思考署名を送信',
+                    historyContent: '履歴思考内容を送信',
+                    historyContentHint: '完了した履歴ターンの思考プロセスを AI に送信',
                     roundsLabel: '履歴思考ラウンド数',
                     roundsHint: '最新以外のラウンドをいくつ送信するか。-1 ですべて、0 で送信なし、正の N で最近の N ラウンド（例：1 は最後から 2 番目のラウンドのみ）'
                 }
@@ -2922,7 +2923,7 @@ const ja: LanguageMessages = {
                     budgetPlaceholder: '1024',
                     budgetHint: '思考プロセスに許可されるカスタムトークン数'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendContentHint: '有効にすると、履歴会話の思考内容（要約を含む）が送信されます。これによりコンテキスト長が大幅に増加する可能性があります'
                 }
             },
@@ -2962,7 +2963,7 @@ const ja: LanguageMessages = {
                     summaryConcise: '簡潔',
                     summaryDetailed: '詳細'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: '有効にすると、履歴会話の思考署名が送信されます（OpenAI 未対応）。非推奨であり、最新以外のターンの署名が送信されます。',
                     sendContentHint: '有効にすると、履歴会話の reasoning_content（要約を含む）が送信されます。これによりコンテキスト長が大幅に増加する可能性があります。'
                 }
@@ -2988,7 +2989,7 @@ const ja: LanguageMessages = {
                     summaryConcise: '簡潔',
                     summaryDetailed: '詳細'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: '以前のターンの思考署名を送信',
                     sendContentHint: '有効にすると、履歴会話の reasoning_content が送信されます。これによりコンテキスト長が増加します'
                 }

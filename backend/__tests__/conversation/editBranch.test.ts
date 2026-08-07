@@ -56,9 +56,10 @@ function branchedHistory(): ConversationHistory {
 }
 
 /**
- * 复刻 ChatFlowService.handleEditBranchStream 的编排（TREE-03 流程）：
- * 解析目标 → editCandidate（新 user 节点）→ createRerollCandidate（模型候选占位）→
- * 主历史截断到旧用户节点之前 → 追加编辑后用户消息（id 对齐新用户节点）。
+ * 复刻 ChatFlowService.handleEditBranchStream 的编排（TREE-03 / TREE-03-R 流程）：
+ * 解析目标 → 非根节点：editCandidate（新 user 节点）→ createRerollCandidate（模型候选占位）→
+ * 主历史截断到旧用户节点之前 → 追加编辑后用户消息（id 对齐新用户节点）；
+ * 根节点（TREE-03-R）：原地改写根节点 + 截断其后 + 模型候选。
  * 返回 { newUserNodeId, modelCandidateNodeId, parentNodeId }。
  */
 async function runEditBranchFlow(
@@ -73,11 +74,30 @@ async function runEditBranchFlow(
     const history = await manager.getMessagesRaw(conversationId);
     const target = resolveEditTargetNode(graphResult.graph, history, userNodeId);
 
-    // 测试复刻 branch 流程：根节点在 resolveEditTargetNode 已被拒绝（branch 模式），
-    // 此处的 parentNodeId 在运行时必非 null（类型上为 null 时拒绝编辑根节点）
+    // TREE-03-R：根节点（parentNodeId === null）编辑重生成——改写根节点 + 截断其后 + 模型候选
     if (target.parentNodeId === null) {
-        throw new Error('branch-mode edit of root node should have been rejected');
+        const targetIndex = history.findIndex(message => message.id === target.nodeId);
+        if (targetIndex >= 0) {
+            await manager.updateMessage(conversationId, targetIndex, {
+                parts: [{ text: newText }],
+                isUserInput: true,
+                tokenCountByChannel: {},
+            } as any);
+            await service.updateActiveNodeParts(conversationId, target.nodeId, [{ text: newText }]);
+        }
+        const modelCreated = await service.createRerollCandidate(conversationId, target.nodeId, {
+            parts: [],
+        });
+        if (targetIndex >= 0 && targetIndex < history.length - 1) {
+            await manager.deleteMessagesInRange(conversationId, targetIndex + 1, history.length - 1);
+        }
+        return {
+            newUserNodeId: target.nodeId,
+            modelCandidateNodeId: modelCreated.nodeId,
+            parentNodeId: null,
+        };
     }
+
     const created = await service.editCandidate(conversationId, target.parentNodeId, {
         role: 'user',
         parts: [{ text: newText }],
@@ -199,6 +219,70 @@ describe('TREE-03 编辑用户消息分支（编排组合）', () => {
         expect(history[2].id).toBe(result.newUserNodeId);
         expect(history[2].parts).toEqual([{ text: 'edited q2' }]);
         expect(history[2].isUserInput).toBe(true);
+    });
+
+    test('TREE-03-R：根节点编辑重生成——改写根节点 + 截断其后 + 模型候选（旧回答保留可切换）', async () => {
+        const [u1, m1, u2, m2] = await seedConversation('c1');
+
+        // 编辑根节点 U1（branch 模式，TREE-03-R：不再降级 keep/拒绝）
+        const result = await runEditBranchFlow(service, manager, 'c1', 'edited q1', u1);
+
+        // 主历史截断到只剩根节点，且文本已改写（首条消息 = 新问题）
+        const history = await manager.getMessagesRaw('c1');
+        expect(history.map(m => m.id)).toEqual([u1]);
+        expect(history[0].parts).toEqual([{ text: 'edited q1' }]);
+        expect(history[0].isUserInput).toBe(true);
+
+        const graph = (await service.getBranchGraph('c1')).graph!;
+        expect(validate(graph).valid).toBe(true);
+        // 根节点内容同步改写（BR-01 同源：节点 id == Content.id）
+        expect(graph.nodes[u1]!.parts).toEqual([{ text: 'edited q1' }]);
+        // 模型候选占位挂在根节点下并激活；旧回答 M1 保留为非活跃候选（可切回）
+        const modelCandidate = graph.nodes[result.modelCandidateNodeId]!;
+        expect(modelCandidate.role).toBe('model');
+        expect(modelCandidate.parentId).toBe(u1);
+        expect(graph.nodes[u1]!.activeChildId).toBe(result.modelCandidateNodeId);
+        expect(graph.activeTailNodeId).toBe(result.modelCandidateNodeId);
+        expect(activePath(graph)).toEqual([u1, result.modelCandidateNodeId]);
+        // 旧回答及其子树仍完整保留在图中（决策 7 语义延续）
+        expect(graph.nodes[m1]!.parts).toEqual([{ text: 'a1' }]);
+        expect(graph.nodes[m1]!.parentId).toBe(u1);
+        expect(graph.nodes[u2]).toBeTruthy();
+        expect(graph.nodes[m2]).toBeTruthy();
+        // 注：BR-05（主历史 == 图活跃路径）在流式回填前不成立——模型候选占位只存在于图侧，
+        // 主历史要等工具循环输出 + finishReroll 重命名对齐后才一致（见下一个测试）。
+    });
+
+    test('TREE-03-R：根节点编辑后 finishReroll 回填新回答，旧回答可切回', async () => {
+        const [u1, m1, u2, m2] = await seedConversation('c1');
+        const result = await runEditBranchFlow(service, manager, 'c1', 'edited q1', u1);
+
+        // 模拟工具循环输出后回填
+        await manager.addContent('c1', { role: 'model', parts: [{ text: 'new answer' }] } as any);
+        const finished = await service.finishReroll('c1', result.modelCandidateNodeId);
+        expect(finished.syncedMessageCount).toBe(1);
+        // 候选节点重命名对齐主历史消息 id（与 TREE-03 非根节点同语义）
+        const newAnswerId = finished.candidateNodeId;
+
+        const graph = (await service.getBranchGraph('c1')).graph!;
+        expect(validate(graph).valid).toBe(true);
+        expect(graph.nodes[newAnswerId]!.parts).toEqual([{ text: 'new answer' }]);
+
+        // 主历史 = 根节点（新文本）+ 新回答
+        const history = await manager.getMessagesRaw('c1');
+        expect(history.map(m => m.id)).toEqual([u1, newAnswerId]);
+        expect(history[0].parts).toEqual([{ text: 'edited q1' }]);
+        expect(history[1].parts).toEqual([{ text: 'new answer' }]);
+
+        // BR-05：回填后主历史非 functionResponse id 链 == 图活跃路径
+        const consistency = await service.validateActivePathMatchesHistory('c1');
+        expect(consistency.valid).toBe(true);
+        expect(consistency.historyIds).toEqual([u1, newAnswerId]);
+
+        // 旧回答 M1 仍在图中，可切回（switchBranchCandidate 接受旧 model 节点）
+        const switched = await service.switchBranchCandidate('c1', m1);
+        expect(switched.activePathIds).toContain(m1);
+        expect(switched.activePathIds[0]).toBe(u1);
     });
 
     test('回归：遗留空占位冻结 sidecar 后，编辑新消息不再 NODE_NOT_FOUND，旧图有备份', async () => {
@@ -335,9 +419,10 @@ describe('TREE-03 编辑用户消息分支（编排组合）', () => {
         expectBranchError(() => resolveEditTargetNode(graph, history, 'no-such-node'), 'NODE_NOT_FOUND');
         // 非 user（M2）→ INVALID_BRANCH_RELATION
         expectBranchError(() => resolveEditTargetNode(graph, history, m2), 'INVALID_BRANCH_RELATION', /not a user node/);
-        // 根节点 U1（无父节点可挂编辑候选）→ INVALID_BRANCH_RELATION（branch 模式）
-        expectBranchError(() => resolveEditTargetNode(graph, history, u1), 'INVALID_BRANCH_RELATION', /root node/);
-        // keep 模式（原地改写）放行根节点：parentNodeId=null（不创建候选，不使用父节点）
+        // 根节点 U1（无父节点可挂「新 user 编辑节点」）：branch 模式放行（TREE-03-R：
+        // 原地改写根节点 + 截断其后 + 新建模型候选重新生成），parentNodeId=null
+        expect(resolveEditTargetNode(graph, history, u1)).toEqual({ nodeId: u1, parentNodeId: null });
+        // keep 模式（原地改写）同样放行根节点
         expect(resolveEditTargetNode(graph, history, u1, 'keep')).toEqual({ nodeId: u1, parentNodeId: null });
 
         // 缺省：活跃路径最后一条可编辑用户消息 = U2
@@ -357,8 +442,9 @@ describe('TREE-03 编辑用户消息分支（编排组合）', () => {
 
         // 线性模式：显式目标 U2 的父节点 = 前一个非 FR 消息 M1
         expect(resolveEditTargetNode(null, history, u2)).toEqual({ nodeId: u2, parentNodeId: history[1].id! });
-        // 根节点拒绝
-        expectBranchError(() => resolveEditTargetNode(null, history, history[0].id!), 'INVALID_BRANCH_RELATION', /root node/);
+        // 根节点（首条消息）：branch/keep 均放行（TREE-03-R）
+        expect(resolveEditTargetNode(null, history, history[0].id!)).toEqual({ nodeId: history[0].id!, parentNodeId: null });
+        expect(resolveEditTargetNode(null, history, history[0].id!, 'keep')).toEqual({ nodeId: history[0].id!, parentNodeId: null });
         // 缺省 = 最后一条可编辑用户消息 U2
         expect(resolveEditTargetNode(null, history).nodeId).toBe(u2);
 

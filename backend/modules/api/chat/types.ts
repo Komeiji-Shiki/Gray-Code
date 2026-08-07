@@ -158,8 +158,8 @@ export interface ChatStreamChunkData {
 export interface ChatStreamCompleteData {
     /** 对话 ID */
     conversationId: string;
-    /** 完整的 AI 回复 */
-    content: Content;
+    /** 完整的 AI 回复（keep 等无生成场景可省略：前端对无 content 的终结 chunk 仅复位流状态） */
+    content?: Content;
 }
 
 /**

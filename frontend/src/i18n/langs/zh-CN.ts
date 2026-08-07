@@ -150,6 +150,8 @@ const zhCN = {
                 cancel: '取消',
                 save: '保存',
                 saveInPlace: '原地保存（保持当前分支）',
+                rootMessageHint: '该消息是会话首条消息：「保存」将更新文本并重新生成后续回复（原回答保留为可切换版本）；「原地保存」仅更新文本，不重新生成。',
+                rootSaveHint: '保存并重新生成后续回复',
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',
@@ -2838,19 +2840,18 @@ const zhCN = {
                     title: '思考配置',
                     toggleHint: '启用后思考参数将发送到 API'
                 },
-                currentThinking: {
-                    title: '当前轮次回传配置',
-                    sendSignatures: '发送最新思考签名',
-                    sendSignaturesHint: '保持当前步骤的思考衔接',
-                    sendContent: '发送最新思考内容',
-                    sendContentHint: '回传当前轮次的推理过程',
-                },
-                historyThinking: {
-                    title: '历史回合回传配置',
-                    sendSignatures: '发送历史思考签名',
-                    sendSignaturesHint: '保持跨多轮交互的思考上下文',
-                    sendContent: '发送历史思考内容',
-                    sendContentHint: '让 AI 看到之前已完成回合的思考过程',
+                thinkingBackfill: {
+                    title: '思考回传配置',
+                    currentGroup: '当前轮次',
+                    currentSignatures: '发送最新思考签名',
+                    currentSignaturesHint: '保持当前步骤的思考衔接',
+                    currentContent: '发送最新思考内容',
+                    currentContentHint: '回传当前轮次的推理过程',
+                    historyGroup: '历史回合',
+                    historySignatures: '发送历史思考签名',
+                    historySignaturesHint: '保持跨多轮交互的思考上下文',
+                    historyContent: '发送历史思考内容',
+                    historyContentHint: '让 AI 看到之前已完成回合的思考过程',
                     roundsLabel: '发送历史思考回合数',
                     roundsHint: '控制发送多少轮非最新回合的历史对话思考。-1 表示全部，0 表示不发送历史对话，正数 N 表示发送最近 N 轮（如 1 表示只发送倒数第二回合）'
                 }
@@ -2923,7 +2924,7 @@ const zhCN = {
                     budgetPlaceholder: '1024',
                     budgetHint: '自定义思考过程允许使用的 token 数量'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendContentHint: '启用后，将发送历史对话中的思考内容（包括摘要），这可能会显著增加上下文长度'
                 }
             },
@@ -2963,7 +2964,7 @@ const zhCN = {
                     summaryConcise: '简洁',
                     summaryDetailed: '详细'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: '启用后，将发送历史对话中的思考签名（OpenAI 暂不支持）。不建议开启，且发送的是非最新一轮对话的签名',
                     sendContentHint: '启用后，将发送历史对话中的 reasoning_content（包括摘要），这可能会显著增加上下文长度'
                 }
@@ -2989,7 +2990,7 @@ const zhCN = {
                     summaryConcise: '简洁',
                     summaryDetailed: '详细'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: '保持跨多轮交互的思考上下文',
                     sendContentHint: '启用后，将发送历史对话中的 reasoning_content，这将增加上下文长度'
                 }

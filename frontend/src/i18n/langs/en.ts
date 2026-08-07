@@ -149,6 +149,8 @@ const en: LanguageMessages = {
                 cancel: 'Cancel',
                 save: 'Save',
                 saveInPlace: 'Save In Place (Keep Branch)',
+                rootMessageHint: 'This is the first message of the conversation: Save will update the text and regenerate the follow-up reply (the previous answer is kept as a switchable version); "Save In Place" only updates the text without regenerating.',
+                rootSaveHint: 'Save and regenerate the follow-up reply',
                 restoreToUserMessage: 'Restore to before user message',
                 restoreToAssistantMessage: 'Restore to before assistant message',
                 restoreToToolBatch: 'Restore to before batch tool execution',
@@ -2837,19 +2839,18 @@ const en: LanguageMessages = {
                     title: 'Thinking Configuration',
                     toggleHint: 'When enabled, thinking parameters will be sent to API'
                 },
-                currentThinking: {
-                    title: 'Current Round Config',
-                    sendSignatures: 'Send Current Signatures',
-                    sendSignaturesHint: 'Maintain reasoning context for current step',
-                    sendContent: 'Send Current Thoughts',
-                    sendContentHint: 'Send reasoning content of the current turn',
-                },
-                historyThinking: {
-                    title: 'History Rounds Config',
-                    sendSignatures: 'Send History Signatures',
-                    sendSignaturesHint: 'Maintain reasoning context across turns',
-                    sendContent: 'Send History Thoughts',
-                    sendContentHint: 'Let AI see thought processes of completed rounds',
+                thinkingBackfill: {
+                    title: 'Thought Backfill Config',
+                    currentGroup: 'Current Round',
+                    currentSignatures: 'Send Current Signatures',
+                    currentSignaturesHint: 'Maintain reasoning context for current step',
+                    currentContent: 'Send Current Thoughts',
+                    currentContentHint: 'Send reasoning content of the current turn',
+                    historyGroup: 'History Rounds',
+                    historySignatures: 'Send History Signatures',
+                    historySignaturesHint: 'Maintain reasoning context across turns',
+                    historyContent: 'Send History Thoughts',
+                    historyContentHint: 'Let AI see thought processes of completed rounds',
                     roundsLabel: 'History Thinking Rounds',
                     roundsHint: 'How many non-latest rounds to send. -1 for all, 0 for none, positive N for last N rounds (e.g., 1 for only the second-to-last round)'
                 }
@@ -2922,7 +2923,7 @@ const en: LanguageMessages = {
                     budgetPlaceholder: '1024',
                     budgetHint: 'Custom token count allowed for thinking process'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendContentHint: 'When enabled, thought content (including summaries) from historical conversations will be sent, which may significantly increase context length'
                 }
             },
@@ -2962,7 +2963,7 @@ const en: LanguageMessages = {
                     summaryConcise: 'Concise',
                     summaryDetailed: 'Detailed'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: 'When enabled, thought signatures from historical conversations will be sent (OpenAI not supported). Not recommended, and only signatures from non-latest turns are sent.',
                     sendContentHint: 'When enabled, reasoning_content (including summaries) from historical conversations will be sent, which may significantly increase context length'
                 }
@@ -2988,7 +2989,7 @@ const en: LanguageMessages = {
                     summaryConcise: 'Concise',
                     summaryDetailed: 'Detailed'
                 },
-                historyThinking: {
+                thinkingBackfill: {
                     sendSignaturesHint: 'Maintain reasoning context across turns',
                     sendContentHint: 'When enabled, reasoning_content from historical conversations will be sent'
                 }

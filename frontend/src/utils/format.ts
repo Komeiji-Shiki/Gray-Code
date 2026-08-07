@@ -112,14 +112,46 @@ export function generateColor(seed: string): string {
 }
 
 // 复制到剪贴板
+// 优先 navigator.clipboard（secure context 可用时）；VSCode Webview（vscode-webview://
+// 非 secure context）中 clipboard API 可能缺失/被拒，回退 textarea + execCommand('copy')。
 export async function copyToClipboard(text: string): Promise<boolean> {
+  // 1) 现代剪贴板 API（用户手势下通常可用）
   try {
-    await navigator.clipboard.writeText(text)
-    return true
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
   } catch (error) {
-    console.error('复制失败:', error)
-    return false
+    console.warn('clipboard API 复制失败，尝试 execCommand 回退:', error)
   }
+
+  // 2) execCommand 回退：临时 textarea 选中后执行 copy 命令
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    // 移出可视区域（避免页面跳动），但保留可选中状态
+    textarea.style.position = 'fixed'
+    textarea.style.top = '-9999px'
+    textarea.style.left = '-9999px'
+    textarea.setAttribute('readonly', '')
+    document.body.appendChild(textarea)
+    const selection = document.getSelection()
+    const prevRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+    textarea.select()
+    textarea.setSelectionRange(0, textarea.value.length)
+    const ok = document.execCommand('copy')
+    // 恢复原选区（若有），避免破坏用户正在进行的文本选择
+    if (prevRange && selection) {
+      selection.removeAllRanges()
+      selection.addRange(prevRange)
+    }
+    document.body.removeChild(textarea)
+    if (ok) return true
+  } catch (error) {
+    console.error('execCommand 复制失败:', error)
+  }
+
+  return false
 }
 
 // 防抖函数

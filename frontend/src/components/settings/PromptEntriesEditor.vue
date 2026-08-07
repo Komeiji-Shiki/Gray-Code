@@ -19,6 +19,8 @@ interface PromptEntry {
   enabled: boolean
   role: PromptEntryRole
   content: string
+  /** 伪造思考内容（仅 assistant 角色生效，随临时消息以 thought part 回传） */
+  fakeThought?: string
   order: number
 }
 
@@ -60,6 +62,7 @@ function createChatHistoryEntry(order = 1000): PromptEntry {
     enabled: true,
     role: 'user',
     content: '',
+    fakeThought: '',
     order
   }
 }
@@ -92,6 +95,7 @@ function normalizePromptEntry(raw: PromptEntry, index: number, usedIds: Set<stri
     enabled: raw.enabled !== false,
     role: raw.role === 'user' || raw.role === 'assistant' || raw.role === 'system' ? raw.role : 'system',
     content: typeof raw.content === 'string' ? raw.content : '',
+    fakeThought: typeof raw.fakeThought === 'string' ? raw.fakeThought : '',
     order: typeof raw.order === 'number' && Number.isFinite(raw.order) ? raw.order : index
   }
 }
@@ -143,6 +147,7 @@ function createEntry(role: PromptEntryRole = 'system'): PromptEntry {
     enabled: true,
     role,
     content: '',
+    fakeThought: '',
     order: nextOrder
   }
 }
@@ -198,7 +203,8 @@ function updateEntry(id: string, patch: Partial<PromptEntry>) {
         type: 'chat_history',
         enabled: true,
         role: 'user',
-        content: ''
+        content: '',
+        fakeThought: ''
       }
     }
 
@@ -452,6 +458,20 @@ function handleDragEnd() {
             rows="8"
             @input="updateEntry(entry.id, { content: readInputValue($event) })"
           ></textarea>
+
+          <div v-if="entry.role === 'assistant'" class="entry-fake-thought">
+            <label class="fake-thought-label" title="仅 assistant（临时助手消息）可伪造思考过程">
+              伪造思考过程
+              <span class="fake-thought-hint">可选，随该条 assistant 消息以思考内容回传；渠道关闭「发送历史思考内容」时不发送</span>
+            </label>
+            <textarea
+              class="fake-thought-textarea"
+              :value="entry.fakeThought ?? ''"
+              placeholder="输入伪造的 AI 思考过程，留空则不伪造"
+              rows="3"
+              @input="updateEntry(entry.id, { fakeThought: readInputValue($event) })"
+            ></textarea>
+          </div>
 
           <details class="entry-modules">
             <summary>插入变量</summary>
@@ -755,6 +775,51 @@ function handleDragEnd() {
 .entry-modules {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
+}
+
+.entry-fake-thought {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px dashed var(--vscode-charts-purple, var(--vscode-panel-border));
+  border-radius: 6px;
+}
+
+.fake-thought-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.fake-thought-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+.fake-thought-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 56px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  outline: none;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family), monospace;
+  line-height: 1.5;
+}
+
+.fake-thought-textarea:focus {
+  border-color: var(--vscode-focusBorder);
 }
 
 .entry-modules summary {

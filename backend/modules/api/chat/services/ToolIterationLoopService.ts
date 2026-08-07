@@ -736,6 +736,10 @@ export class ToolIterationLoopService {
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
+        // 预设临时消息中的伪造思考（fakeThought）受渠道「发送历史思考内容」开关控制：
+        // 显式关闭时不回传。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
+        promptContext = applyPromptContextThoughtPolicy(promptContext, config);
+
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
@@ -1701,6 +1705,10 @@ export class ToolIterationLoopService {
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
         }
 
+        // 预设临时消息中的伪造思考（fakeThought）受渠道「发送历史思考内容」开关控制：
+        // 显式关闭时不回传。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
+        promptContext = applyPromptContextThoughtPolicy(promptContext, config);
+
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
@@ -1954,4 +1962,36 @@ export class ToolIterationLoopService {
             checkpointOnly: true as const
         };
     }
+}
+
+
+/**
+ * 按渠道的「发送历史思考内容」（sendHistoryThoughts）开关处理预设临时消息中的伪造思考。
+ *
+ * 预设 assistant 条目配置 fakeThought 后，PromptManager 会以 thought part 附加在消息正文前。
+ * 伪造思考与真实历史思考语义一致：渠道显式关闭 sendHistoryThoughts 时不回传（剥离 thought part，
+ * 正文照发）；开启或未配置（默认开启）时原样保留。
+ *
+ * 该过滤必须在发送侧执行，不能写进 turnDynamicContext 缓存：
+ * 同一回合缓存可能被不同渠道复用，开关是渠道级的。
+ */
+export function applyPromptContextThoughtPolicy(
+    promptContext: RequestPromptContext,
+    config: Pick<BaseChannelConfig, 'sendHistoryThoughts'>
+): RequestPromptContext {
+    if (config.sendHistoryThoughts !== false) {
+        return promptContext;
+    }
+
+    const stripThoughtParts = (messages: Content[]): Content[] =>
+        messages.map(message => ({
+            ...message,
+            parts: message.parts.filter(part => part.thought !== true)
+        }));
+
+    return {
+        ...promptContext,
+        beforeHistoryMessages: stripThoughtParts(promptContext.beforeHistoryMessages),
+        afterHistoryMessages: stripThoughtParts(promptContext.afterHistoryMessages)
+    };
 }
