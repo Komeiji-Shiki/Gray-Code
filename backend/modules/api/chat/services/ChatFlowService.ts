@@ -282,23 +282,29 @@ export function resolveRerollTruncateIndex(
 }
 
 /**
- * 解析 retry 主历史截断起始索引（最后一条 model 消息）。
+ * 解析 retry 主历史截断起始索引（最后一段 AI 回复的起点）。
  *
- * retry 是“重新生成最后一条 AI 回复”：必须先把主历史末尾的 model 消息删掉再让模型重新生成。
- * 若保留，请求 messages 的最后一条会是 assistant——
+ * retry 语义是“重新生成最后一段 AI 回复”：只删除最后一个非 model 消息（user /
+ * functionResponse）之后的 model 尾巴。若历史末尾本来就不是 model（例如失败流从未
+ * 写出内容，最后一条仍是 user），则返回 -1 不截断——此时重试 = 继续生成，绝不能
+ * 误删更早已经正常完成的 AI 回复。
+ *
+ * 若末尾 model 保留，请求 messages 的最后一条会是 assistant——
  * - 带 tool_calls 时，DeepSeek 等 API 会把最后一条 assistant 当作 prefill 前缀，
  *   直接 400 "Function call should not be used with prefix"（被重试的消息原样被预填）；
  * - 纯文本时也会被当作 prefill 续写，重试变成接龙，语义错误。
- *
- * 历史中没有 model 消息时返回 -1（例如失败流从未写出内容，最后一条仍是 user，无需截断）。
  */
 export function resolveRetryTruncateIndex(history: ReadonlyArray<Content>): number {
+  // 从末尾往前找最后一个「非 model 消息」（user / functionResponse / system 等）。
+  // 它之后的所有 model 消息就是需要重试的 AI 回复尾巴。
   for (let i = history.length - 1; i >= 0; i -= 1) {
-    if (history[i].role === 'model' && !isFunctionResponseMessage(history[i])) {
-      return i;
+    const message = history[i];
+    if (message.role !== 'model' || isFunctionResponseMessage(message)) {
+      return i + 1 < history.length ? i + 1 : -1;
     }
   }
-  return -1;
+  // 历史全部是 model（异常状态）：从 0 开始删，保证请求不再以 assistant 结尾。
+  return history.length > 0 ? 0 : -1;
 }
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';

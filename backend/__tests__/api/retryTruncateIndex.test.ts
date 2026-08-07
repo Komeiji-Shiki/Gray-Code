@@ -40,14 +40,38 @@ describe('resolveRetryTruncateIndex', () => {
         expect(resolveRetryTruncateIndex(toolLoopHistory)).toBe(3);
     });
 
-    test('最后一条 model 是工具调用消息时从该消息截断，后续 functionResponse 一并清理', () => {
+    test('工具调用后 functionResponse 是最后一条：不截断（请求以 tool 结尾，继续生成）', () => {
         const history = toolLoopHistory.slice(0, 3); // [user, model(tool_call), fr]
 
-        expect(resolveRetryTruncateIndex(history)).toBe(1);
+        // fr 消息 role=user，历史末尾不是 model → 无 AI 回复尾巴可删；
+        // formatter 会把 fr 转成 tool 消息，请求不触发 prefill。
+        expect(resolveRetryTruncateIndex(history)).toBe(-1);
     });
 
     test('工具调用后无续接（fr 仍未返回）时从工具调用消息截断', () => {
         const history = [message('user-1', 'user', 'question'), toolLoopHistory[1]];
+
+        expect(resolveRetryTruncateIndex(history)).toBe(1);
+    });
+
+    test('失败流未写出内容（末尾是 user）时不截断，不误删更早的正常回答', () => {
+        const history = [
+            message('user-1', 'user', 'question'),
+            message('model-1', 'model', 'normal answer'),
+            message('user-2', 'user', 'question 2'),
+        ];
+
+        // 重试的是 user-2 的失败流（从未生成内容）→ 继续生成即可，
+        // 绝不能把 model-1 也删掉。
+        expect(resolveRetryTruncateIndex(history)).toBe(-1);
+    });
+
+    test('末尾连续多条 model（异常状态）时整段删除，保证请求不以 assistant 结尾', () => {
+        const history = [
+            message('user-1', 'user', 'question'),
+            message('model-1', 'model', 'answer 1'),
+            message('model-2', 'model', 'answer 2'),
+        ];
 
         expect(resolveRetryTruncateIndex(history)).toBe(1);
     });
