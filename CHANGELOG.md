@@ -8,8 +8,15 @@
 
 ## [Unreleased]
 
+### Added
+  - 新增「手动创建存档点」：检查点此前完全由 AI 工具执行时自动创建（受 enabled 开关与工具/消息类型配置过滤），用户没有主动存档入口——AI 做了一系列改动后想回档检查点 / 切分支时，无法先保存当前状态（用户自己手动改过的文件更是从未被存档保护）。现输入区底部工具栏新增存档按钮（codicon-save，BranchTreePanel 旁）：后端 `CheckpointManager.createCheckpoint` 支持 `forceCreate`（跳过 enabled 开关与工具/消息类型过滤，无条件创建；仍尊重排除规则——自定义忽略 / 默认类别 / 文件大小上限等安全边界不变），新 webview 消息 `checkpoint.createManual` 把存档绑定到当前最后一条消息（恢复时「回档到该消息前」= 回到现在）并绑定当前分支活跃尾节点（BCP-02，分支切换 chat-and-workspace 切走再切回也能恢复，往返无损）；前端 `createManualCheckpoint` action + chatStore 接线 + 三语 i18n（按钮提示 / 创建成功 / 失败）。新增测试：CheckpointManager forceCreate 无条件创建（enabled=false 且未配置工具时普通调用仍跳过）+ 手动存档可恢复工作区文件（核心价值）；checkpointActions 成功入列 / 后端拒绝 / 无会话短路 / IPC 异常兜底（4 用例）。
+
 ### Changed
   - Release notes 生成策略调整（scripts/extract-release-notes.mjs）：默认只携带当前版本的 CHANGELOG 小节；脚本通过 `GITHUB_TOKEN` 查询 GitHub 最新已发布 release，检测到当前版本与最新 release 之间存在未发布小节（版本被跳过，如最新 release 为 1.4.4 时发布 1.4.6，中间 1.4.5 从未发布）时自动补带这些跳过版本的内容，避免用户错过未发布版本；查询失败 / 无 token 时回退为只带当前版本（不阻塞发布）。
+
+### Fixed
+  - 修复手动总结单轮对话（历史中仅一个真实用户回合）必然失败报「对话历史在总结期间发生变化，本次总结的范围已失效」：单轮时总结范围规划走轮内截断（intra_round），切点必然位于轮首 user 消息之后，`insertIndex` 恒大于最后一条真实用户消息下标 → `markAndInsertSummarizedAtomically` 一律判 `STALE_RANGE` 放弃落盘。现手动总结对「整个历史仅一条真实用户消息」放行（用户主动总结就是把这一轮的前半部分拿去总结，不存在「当前回合」需要保护）；首条用户消息保护仍生效（锚点不标记、原样保留并持续发送，且总结模型输入始终包含首条用户消息）；自动总结保持严格 STALE（回合内吞掉当前用户消息会毁掉回复上下文）；越界（并发删除把历史缩短到区间之外）与多轮场景同样保持 STALE。新增 `summarizeManualSingleRound.test.ts`（5 用例：单超大轮轮内截断成功、总结期间历史并发变长仍成功、并发缩短越界仍 STALE、多轮范围覆盖第二轮仍 STALE、多轮正常路径不回归）。
+  - 修复编辑用户消息保存后候选切换器（‹ 2/2 ›）不立即显示，关掉对话重新打开才恢复：编辑 / reroll 分支流的候选节点在流开始时就已落盘（`editCandidate` / `createRerollCandidate` 先于工具循环），但前端分支图刷新此前只挂在终结 chunk（complete / error / cancelled / awaitingConfirmation / 终结性 toolIteration）上——流未结束时 BranchSwitcherBar 永远不刷新（与已修复的「停在工具确认不显示」同类，覆盖流进行中的任何阶段）。现 `streamHandler` 在分支流**第一个输出 chunk** 到达时提前刷新一次分支图（此时候选必然已落盘，切换器立即显示；按 streamId 隔离只刷一次），终结时仍消费标记再刷新一次（更新模型候选内容 / 摘要，支持同一会话连续编辑 / 重 roll）；会话隔离与既有终结刷新一致（标记属于发起会话，不跨会话刷新）。新增/更新测试：editBranchRefresh.test.ts 首输出提前刷新 + 终结再刷新、连续编辑再次触发（streamId 重置）、会话不匹配不提前刷新（3 用例）；streamHandlerTerminalCleanup.test.ts 非终结 toolIteration 提前刷新但不消费标记（断言对齐新语义）。
 
 ## [1.4.5] - 2026-08-07
 
