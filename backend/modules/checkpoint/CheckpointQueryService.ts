@@ -227,8 +227,10 @@ export class CheckpointQueryService {
             const subDirs: string[] = [];
             for (const entry of entries) {
                 // CPF-01: manifest 是元数据，不计入备份占用；
-                // CPF-LAZY-1: files.json 同样是元数据（重量级文件映射独立存储），不计入
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME || entry.name.endsWith('.tmp')) {
+                // CPF-LAZY-1: files.json 同样是元数据（重量级文件映射独立存储），不计入；
+                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份（或写失败残留），同样不计入
+                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME
+                    || entry.name.endsWith('.tmp') || entry.name.endsWith('.prev')) {
                     continue;
                 }
                 const fullPath = path.join(dirPath, entry.name);
