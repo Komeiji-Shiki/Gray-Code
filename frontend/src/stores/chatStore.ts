@@ -463,6 +463,25 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 取出队列中第一条属于指定会话的消息（无 conversationId 视为本会话消息）。
+   *
+   * 跨会话投递防护：跳过不属于当前会话的消息，取第一条属于当前会话的，
+   * 避免跨会话消息卡死队头阻塞后续消息。processQueue 与 processQueueAfterAction
+   * 共用此逻辑，返回剩余队列供调用方重新赋值。
+   */
+  function takeNextForConversation(
+    queue: QueuedMessage[],
+    conversationId: string | null
+  ): { next: QueuedMessage; rest: QueuedMessage[] } | null {
+    const matchIndex = queue.findIndex(m =>
+      typeof m.conversationId !== 'string' || m.conversationId === conversationId
+    )
+    if (matchIndex === -1) return null
+    const [next] = queue.splice(matchIndex, 1)
+    return { next, rest: queue }
+  }
+
+  /**
    * 移除队列中指定消息
    */
   function removeQueuedMessage(id: string): void {
@@ -524,16 +543,12 @@ export const useChatStore = defineStore('chat', () => {
     // 如果仍在响应中，不处理
     if (state.isWaitingForResponse.value) return
 
-    const queue = state.messageQueue.value
-    const currentId = state.currentConversationId.value
-    // 跨会话投递防护：跳过不属于当前会话的消息，取第一条属于当前会话的
-    // （无 conversationId 视为本会话消息），避免跨会话消息卡死队头阻塞后续消息
-    const matchIndex = queue.findIndex(m =>
-      typeof m.conversationId !== 'string' || m.conversationId === currentId
-    )
-    if (matchIndex === -1) return
-    const [next] = queue.splice(matchIndex, 1)
-    state.messageQueue.value = queue
+    // 跨会话投递防护：只投递属于当前会话的消息（无 conversationId 视为本会话），
+    // 避免跨会话消息卡死队头阻塞后续消息
+    const taken = takeNextForConversation(state.messageQueue.value, state.currentConversationId.value)
+    if (!taken) return
+    const { next, rest } = taken
+    state.messageQueue.value = rest
 
     // 发送下一条排队消息；发送失败（IPC 异常等）时放回队首保持原顺序，
     // 由下一个投递时机再次尝试，不静默丢弃排队消息
@@ -571,15 +586,13 @@ export const useChatStore = defineStore('chat', () => {
     // 投递进行中（cancelStream/sendMessage 未完成）不重入
     if (queueAfterActionDraining) return
 
-    const queue = state.messageQueue.value
-    if (queue.length === 0) return
+    // 记录投递目标会话：cancelStream 往返期间用户可能切换会话，
+    // 用取消息时的会话 ID 做归属校验（跨会话跳过逻辑与 processQueue 一致）
     const currentId = state.currentConversationId.value
-    const matchIndex = queue.findIndex(m =>
-      typeof m.conversationId !== 'string' || m.conversationId === currentId
-    )
-    if (matchIndex === -1) return
-    const [next] = queue.splice(matchIndex, 1)
-    state.messageQueue.value = queue
+    const taken = takeNextForConversation(state.messageQueue.value, currentId)
+    if (!taken) return
+    const { next, rest } = taken
+    state.messageQueue.value = rest
 
     queueAfterActionDraining = true
     try {
