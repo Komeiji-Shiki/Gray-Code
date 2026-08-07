@@ -44,6 +44,7 @@ report.md
 *.log
 *.log.*
 logs/**
+run-logs.zip
 
 # 后端源文件和文档（esbuild 已打包到 dist/extension.js）
 backend/**
