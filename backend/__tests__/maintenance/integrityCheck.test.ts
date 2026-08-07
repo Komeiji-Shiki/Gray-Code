@@ -457,6 +457,23 @@ describe('checkCheckpointIntegrity', () => {
         ]);
         expect(report.byCode.CHECKPOINT_MANIFEST_INVALID_SHAPE).toBe(1);
     });
+
+    test('未知版本（v3）→ CHECKPOINT_MANIFEST_UNKNOWN_VERSION（warning），跳过布局深校验（L4）', async () => {
+        const dir = path.join(checkpointsDir, 'cp_v3');
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(
+            path.join(dir, 'manifest.json'),
+            JSON.stringify({ version: 3, checkpointId: 'cp_v3', workspaceRoots: [], emptyDirs: [], changes: [], excluded: [], files: {} }, null, 2),
+            'utf8'
+        );
+        // 未知版本布局不可知：只报 warning，不按 v2 拆分布局深校验 files.json
+        const report = await checkCheckpointIntegrity(checkpointsDir, [
+            checkpointRecord({ id: 'cp_v3', backupDir: 'cp_v3', manifestVersion: 3 }),
+        ]);
+        expect(report.byCode.CHECKPOINT_MANIFEST_UNKNOWN_VERSION).toBe(1);
+        expect(report.byCode.CHECKPOINT_MANIFEST_FILES_MISSING).toBeUndefined();
+        expect(report.issues[0].severity).toBe('warning');
+    });
 });
 
 // ==================== 分支 ====================

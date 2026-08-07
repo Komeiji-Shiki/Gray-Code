@@ -20,6 +20,7 @@ import type { SettingsManager } from '../settings/SettingsManager';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, DEFAULT_ENABLED_PROFILES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
+import { CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from './CheckpointManifestRepository';
 import type { CheckpointIgnoreSnapshot, CheckpointManifestMeta } from './types';
 import {
     isWorkspaceScopedKey,
@@ -554,6 +555,18 @@ export class CheckpointRestoreService {
             console.error('[CheckpointManager] Failed to scan legacy checkpoint backup:', err);
             return { success: false, restored: 0, deleted: 0, skipped: 0, error: 'Failed to scan checkpoint backup' };
         }
+
+        // CPF-LAZY-1: 备份目录内的元数据文件（manifest.json / files.json / *.tmp）不是备份内容——
+        // 崩溃窗口（files.json 已 rename、manifest.json 未 rename）或写失败残留时会留在目录里，
+        // legacy 恢复不得把它们当作用户文件恢复进工作区（与目录遍历/大小统计的跳过清单同一口径）。
+        const isCheckpointMetadataPath = (p: string): boolean => {
+            const name = path.basename(p);
+            return name === CHECKPOINT_MANIFEST_FILENAME
+                || name === CHECKPOINT_MANIFEST_FILES_FILENAME
+                || name.endsWith('.tmp');
+        };
+        backupFiles = backupFiles.filter(f => !isCheckpointMetadataPath(path.relative(backupPath, f)));
+        backupDirs = backupDirs.filter(d => !isCheckpointMetadataPath(path.relative(backupPath, d)));
 
         // 以备份目录内容构造目标状态（相对路径键，引擎内自动包装为 scoped）
         const rawHashes: Record<string, string> = {};

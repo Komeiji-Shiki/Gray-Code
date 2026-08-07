@@ -1582,7 +1582,9 @@ export class CheckpointManager {
      * 应先确认存档为新格式（summary.manifestVersion > 0）再调用，避免 null 歧义。
      */
     async getManifest(checkpointId: string): Promise<CheckpointManifestMeta | null> {
-        return this.manifestRepository.loadManifest(checkpointId);
+        const meta = await this.manifestRepository.loadManifest(checkpointId);
+        // L6: 返回浅拷贝，避免经 IPC 下发的对象被外部消费方意外写入污染缓存
+        return meta ? { ...meta } : null;
     }
 
     /**
