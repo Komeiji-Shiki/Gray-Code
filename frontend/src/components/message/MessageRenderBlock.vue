@@ -79,19 +79,30 @@ const stickToBottom = ref(true)
 const userScrolled = ref(false)
 // 距底部多少 px 内视为「贴底意图」（用户滚回底部即恢复自动吸底）
 const STICK_BOTTOM_THRESHOLD = 40
+// 上次复验时的 scrollTop：内容增长只改 scrollHeight 不改 scrollTop。
+// scrollTop 未变 = 用户没动 → 保持吸底状态（大段输出/md 解析不丢吸底）；
+// scrollTop 变化 = 用户滚动或程序贴底写入 → 按当前位置重新判定
+let lastCheckedScrollTop = -1
 // 中展开是否发生过尾部窗口裁剪（内容过长，显示提示条）
 const mediumTrimmed = ref(false)
 /** 稳定引用（CharFlow 注册幂等比较依赖函数身份）：内容更新时是否应贴底。
- * 用户滚动事件可能滞后：在此实时复验当前位置，已滚离底部（事件未到）时
- * 同步置 false，避免 append 把用户拉回 */
+ * 用户滚动事件可能滞后：scrollTop 变化能立即反映用户意图（浏览器同步更新），
+ * 已滚离底部（事件未到）时同步置 false，避免 append 把用户拉回；
+ * scrollTop 未变则用户没动，内容增长不改变吸底意图 */
 function shouldStickBottom(): boolean {
   if (!stickToBottom.value) return false
   if (!userScrolled.value) return true
   const el = mediumScrollContainerRef.value
-  if (el && el.scrollHeight - el.scrollTop - el.clientHeight >= STICK_BOTTOM_THRESHOLD) {
+  if (!el) return true
+  // 用户没滚动（scrollTop 未变）：内容增长/渲染不改变吸底意图
+  if (el.scrollTop === lastCheckedScrollTop) return true
+  lastCheckedScrollTop = el.scrollTop
+  // 用户滚动过（或程序贴底写入后）：按当前位置判定贴底意图
+  if (el.scrollHeight - el.scrollTop - el.clientHeight >= STICK_BOTTOM_THRESHOLD) {
     stickToBottom.value = false
     return false
   }
+  stickToBottom.value = true
   return true
 }
 /** 稳定引用：尾部窗口首次裁剪时置标志，显示「内容过长」提示（按 messageId 记忆） */
@@ -112,6 +123,7 @@ function onMediumScroll(): void {
   userScrolled.value = true
   const el = mediumScrollContainerRef.value
   if (!el) return
+  lastCheckedScrollTop = el.scrollTop
   stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_THRESHOLD
 }
 /** 渐进 markdown 提升后校正贴底：promote 同步剥离 CharFlow 内容（host 立即变矮），
@@ -122,11 +134,11 @@ async function scrollMediumToBottomIfStuck(): Promise<void> {
   const el = mediumScrollContainerRef.value
   if (!el) return
   await nextTick()
-  if (!stickToBottom.value) return
   // 组件可能已重建（虚拟列表）：只写仍挂载的同一容器
-  if (mediumScrollContainerRef.value === el) {
-    el.scrollTop = el.scrollHeight
-  }
+  if (mediumScrollContainerRef.value !== el) return
+  // 复验当前位置：用户已滚离（scroll 事件滞后）时不拉回
+  if (!shouldStickBottom()) return
+  el.scrollTop = el.scrollHeight
 }
 let registeredThoughtHost: HTMLElement | null = null
 let registeredThoughtMessageId: string | null = null
