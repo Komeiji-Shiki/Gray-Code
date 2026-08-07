@@ -1214,6 +1214,8 @@ const windowOnDidWriteTerminalData = new EventEmitter<any>();
 const windowOnDidOpenTerminal = new EventEmitter<any>();
 const windowOnDidChangeActiveTerminal = new EventEmitter<any>();
 const windowOnDidChangeVisibleTextEditors = new EventEmitter<any>();
+const windowOnDidChangeTextEditorSelection = new EventEmitter<any>();
+const windowOnDidChangeTextEditorVisibleRanges = new EventEmitter<any>();
 const windowOnDidChangeWindowState = new EventEmitter<{ focused: boolean }>();
 
 let windowFocused = true;
@@ -1431,6 +1433,8 @@ export const window = {
   },
   onDidChangeActiveTextEditor: windowOnDidChangeActiveTextEditor.event,
   onDidChangeVisibleTextEditors: windowOnDidChangeVisibleTextEditors.event,
+  onDidChangeTextEditorSelection: windowOnDidChangeTextEditorSelection.event,
+  onDidChangeTextEditorVisibleRanges: windowOnDidChangeTextEditorVisibleRanges.event,
   onDidChangeWindowState: windowOnDidChangeWindowState.event,
   onDidOpenTerminal: windowOnDidOpenTerminal.event,
   onDidCloseTerminal: windowOnDidCloseTerminal.event,

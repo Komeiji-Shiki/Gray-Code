@@ -35,7 +35,9 @@ import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, Tas
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../../../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../../../backend/modules/skills';
 import { initMemoryManager } from '../../../backend/modules/memory';
+import { ActivityTracker, setGlobalActivityTracker } from '../../../backend/modules/activity';
 import { UpdateChecker } from '../../../backend/modules/update';
+import { disposeActivityStatsCache } from '../../../webview/handlers/ActivityHandlers';
 import { WindowsAgentStopNotificationService } from '../../../backend/modules/notifications/WindowsAgentStopNotificationService';
 import {
   setGlobalSettingsManager,
@@ -97,6 +99,7 @@ export class BackendHost {
   private storagePathManager!: StoragePathManager;
   private diffStorageManager!: DiffStorageManager;
   private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
+  private activityTracker?: ActivityTracker;
   private updateChecker?: UpdateChecker;
   private updateCheckTimer?: NodeJS.Timeout;
 
@@ -347,6 +350,11 @@ export class BackendHost {
       // ignore
     }
     this.windowsAgentStopNotificationService?.dispose();
+    // 释放使用时间统计：停止采样并落盘，清理全局引用与结果缓存（与 ChatViewProvider dispose 对齐）
+    this.activityTracker?.dispose();
+    this.activityTracker = undefined;
+    setGlobalActivityTracker(null);
+    disposeActivityStatsCache();
     // 排空 globalState/workspaceState 写队列：收藏工作区等 fire-and-forget 写入
     // 由调用方 await，这里兜底等待仍在队列中的落盘完成，退出后不丢数据。
     try {
@@ -470,6 +478,14 @@ export class BackendHost {
     setGlobalMcpManager(this.mcpManager);
 
     await initMemoryManager(this.storagePathManager.getEffectiveDataPath());
+
+    // 使用时间统计追踪器（与 ChatViewProvider 25.65 对齐）：心跳 + 用户活动事件按天采样落盘。
+    // 桌面端无编辑器事件，采样依赖窗口焦点桥接（main.ts focus/blur → __setWindowFocused）与心跳。
+    this.activityTracker = new ActivityTracker(
+      path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
+    );
+    this.activityTracker.start();
+    setGlobalActivityTracker(this.activityTracker);
 
     setSubAgentExecutorContext({
       channelManager: this.channelManager,
