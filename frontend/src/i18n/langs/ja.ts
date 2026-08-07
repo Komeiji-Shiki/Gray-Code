@@ -984,6 +984,7 @@ const ja: LanguageMessages = {
                 sound: '通知システム',
                 appearance: '外観',
                 memory: '記憶',
+                sandbox: 'サンドボックス',
                 general: '一般',
                 usage: '使用量統計'
             },
@@ -2157,6 +2158,10 @@ const ja: LanguageMessages = {
                         title: '永久記憶',
                         description: 'セッションを超えた AI 記憶システム（OptMem）の設定'
                     },
+                    sandbox: {
+                        title: 'サンドボックス',
+                        description: '隔離された一時ディレクトリでコードを安全に実行'
+                    },
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
@@ -2282,6 +2287,40 @@ const ja: LanguageMessages = {
                         workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶はこのワークスペースでのみ表示されます。',
                         newlineNotAllowed: '記憶は 1 行で記述する必要があります。改行を削除して再試行してください。'
                     }
+                },
+                sandbox: {
+                    enabled: {
+                        label: 'サンドボックスを有効化',
+                        description: 'AI が隔離された一時ディレクトリでコードを実行できるようにします。無効にすると sandbox ツールはモデルに提供されません。',
+                        disabledNotice: 'サンドボックスは無効です。AI は sandbox ツールでコードを実行できません。'
+                    },
+                    languages: {
+                        title: '許可する言語',
+                        description: 'チェックした言語のみサンドボックスで実行できます。不要な言語はチェックを外してください。'
+                    },
+                    timeout: {
+                        title: '既定のタイムアウト',
+                        description: 'コード実行の最大時間（ミリ秒）。タイムアウトするとプロセスツリーが強制終了されます。'
+                    },
+                    output: {
+                        title: '最大出力行数',
+                        description: 'AI に返す最大出力行数。超過時は最後の N 行のみ保持します。',
+                        unit: '行',
+                        hint: '-1 で無制限（推奨されません。出力が大きくなりすぎる可能性があります）。'
+                    },
+                    cleanup: {
+                        title: '一時ディレクトリのクリーンアップ',
+                        description: '実行後に一時ディレクトリを自動削除します。無効にするとデバッグ用に成果物を残せます。',
+                        label: '実行後に一時ディレクトリをクリーンアップ'
+                    },
+                    info: {
+                        title: 'サンドボックスのセキュリティについて',
+                        text: 'サンドボックスはファイルシステム隔離（一時ディレクトリ）、タイムアウト、出力上限を提供しますが、OS レベルの強力な隔離ではありません。ネットワークアクセス、CPU、メモリは制限しません。信頼できない悪意のあるコードの実行には使用しないでください。'
+                    },
+                    save: '保存',
+                    reset: '既定値に戻す',
+                    saved: '保存しました',
+                    saveFailed: '保存に失敗しました'
                 },
 
             },

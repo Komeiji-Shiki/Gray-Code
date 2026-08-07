@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
-import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
+import { DEFAULT_SUMMARIZE_CONFIG, getDefaultSandboxConfig } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
 import { getSkillsManager } from '../../backend/modules/skills';
@@ -140,6 +140,42 @@ export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId,
     ctx.sendResponse(requestId, DEFAULT_SUMMARIZE_CONFIG);
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_DEFAULT_SUMMARIZE_CONFIG_ERROR', error.message || t('webview.errors.getSummarizeConfigFailed'));
+  }
+};
+
+/**
+ * 获取沙箱配置
+ */
+export const getSandboxConfig: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    const config = ctx.settingsManager.getSandboxConfig();
+    ctx.sendResponse(requestId, config);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_SANDBOX_CONFIG_ERROR', error.message || 'Failed to get sandbox config');
+  }
+};
+
+/**
+ * 更新沙箱配置
+ */
+export const updateSandboxConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { config } = data;
+    await ctx.settingsManager.updateSandboxConfig(config);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_SANDBOX_CONFIG_ERROR', error.message || 'Failed to update sandbox config');
+  }
+};
+
+/**
+ * 获取内置默认沙箱配置
+ */
+export const getDefaultSandboxConfigHandler: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    ctx.sendResponse(requestId, getDefaultSandboxConfig());
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_DEFAULT_SANDBOX_CONFIG_ERROR', error.message || 'Failed to get default sandbox config');
   }
 };
 
@@ -578,6 +614,9 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getSummarizeConfig', getSummarizeConfig);
   registry.set('getDefaultSummarizeConfig', getDefaultSummarizeConfig);
   registry.set('updateSummarizeConfig', updateSummarizeConfig);
+  registry.set('getSandboxConfig', getSandboxConfig);
+  registry.set('getDefaultSandboxConfig', getDefaultSandboxConfigHandler);
+  registry.set('updateSandboxConfig', updateSandboxConfig);
   registry.set('getMemoryConfig', getMemoryConfig);
   registry.set('updateMemoryConfig', updateMemoryConfig);
   registry.set('getMemoryEntries', getMemoryEntries);

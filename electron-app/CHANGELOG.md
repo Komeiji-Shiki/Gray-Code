@@ -8,6 +8,14 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.7.3] - 2026-08-07
+
+### Added
+  - 新增沙箱（Sandbox）工具与设置栏目（详见根目录 CHANGELOG [1.7.3]）：LLM 可在隔离临时目录中安全运行代码片段，支持 Python/JavaScript/Bash/PowerShell/sh，含超时、输出上限与语言白名单。
+
+### Changed
+  - 版本号 1.7.2dev -> 1.7.3（package.json / package-lock.json）。
+
 ## [1.7.2dev] - 2026-08-07
 
 ### Changed

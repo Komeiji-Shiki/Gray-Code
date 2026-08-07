@@ -984,6 +984,7 @@ const en: LanguageMessages = {
                 sound: 'Notification System',
                 appearance: 'Appearance',
                 memory: 'Memory',
+                sandbox: 'Sandbox',
                 general: 'General',
                 usage: 'Usage Statistics'
             },
@@ -2157,6 +2158,10 @@ const en: LanguageMessages = {
                         title: 'Permanent Memory',
                         description: 'Configure cross-session AI memory system (OptMem)'
                     },
+                    sandbox: {
+                        title: 'Sandbox',
+                        description: 'Run code snippets safely in an isolated temporary directory'
+                    },
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
@@ -2282,6 +2287,40 @@ const en: LanguageMessages = {
                         workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible in this workspace.',
                         newlineNotAllowed: 'A memory must be a single line. Remove line breaks and try again.'
                     }
+                },
+                sandbox: {
+                    enabled: {
+                        label: 'Enable Sandbox',
+                        description: 'Allow the AI to run code snippets in an isolated temporary directory. When disabled, the sandbox tool is not provided to the model.',
+                        disabledNotice: 'Sandbox is disabled. The AI cannot use the sandbox tool to run code.'
+                    },
+                    languages: {
+                        title: 'Allowed Languages',
+                        description: 'Only checked languages can be executed in the sandbox. Uncheck to disable languages you do not need.'
+                    },
+                    timeout: {
+                        title: 'Default Timeout',
+                        description: 'Maximum execution duration in milliseconds. The process tree is force-killed on timeout.'
+                    },
+                    output: {
+                        title: 'Max Output Lines',
+                        description: 'Maximum output lines returned to the AI. Only the last N lines are kept when exceeded.',
+                        unit: 'lines',
+                        hint: 'Set to -1 for unlimited (not recommended; may produce very large output).'
+                    },
+                    cleanup: {
+                        title: 'Cleanup Temp Directory',
+                        description: 'Automatically delete the temporary directory after execution. Disable to keep artifacts for debugging.',
+                        label: 'Clean up temp directory after run'
+                    },
+                    info: {
+                        title: 'About Sandbox Security',
+                        text: 'The sandbox provides filesystem isolation (temp directory), timeout, and output limits, but it is NOT OS-level sandboxing. It does not restrict network access, CPU, or memory. Do not use it to run untrusted malicious code.'
+                    },
+                    save: 'Save',
+                    reset: 'Reset Defaults',
+                    saved: 'Saved successfully',
+                    saveFailed: 'Failed to save'
                 },
 
             },

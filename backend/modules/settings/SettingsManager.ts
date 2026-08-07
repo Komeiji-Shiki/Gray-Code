@@ -66,7 +66,8 @@ import type {
     SubAgentsConfig,
     SubAgentConfigItem,
     HistorySearchToolConfig,
-    MemoryToolConfig
+    MemoryToolConfig,
+    SandboxToolConfig
 } from './types';
 import { DEFAULT_GLOBAL_SETTINGS } from './types';
 import {
@@ -429,6 +430,27 @@ export class SettingsManager {
      */
     updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
         return this.tools.updateExecuteCommandConfig(config);
+    }
+
+    /**
+     * 沙箱总开关
+     */
+    isSandboxEnabled(): boolean {
+        return this.tools.isSandboxEnabled();
+    }
+
+    /**
+     * 获取 sandbox 工具配置
+     */
+    getSandboxConfig(): Readonly<SandboxToolConfig> {
+        return this.tools.getSandboxConfig();
+    }
+
+    /**
+     * 更新 sandbox 工具配置
+     */
+    updateSandboxConfig(config: Partial<SandboxToolConfig>): Promise<void> {
+        return this.tools.updateSandboxConfig(config);
     }
 
     /**

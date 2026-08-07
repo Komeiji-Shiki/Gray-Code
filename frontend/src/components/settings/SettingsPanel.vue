@@ -14,6 +14,7 @@ import PromptSettings from './PromptSettings.vue'
 import TokenCountSettings from './TokenCountSettings.vue'
 import SubAgentsSettings from './SubAgentsSettings.vue'
 import MemorySettings from './MemorySettings.vue'
+import SandboxSettings from './SandboxSettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import UsageTimeSection from '../usage/UsageTimeSection.vue'
@@ -58,6 +59,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
+  { id: 'sandbox', label: t('components.settings.tabs.sandbox'), icon: 'codicon-terminal' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
   { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
 ])
@@ -683,6 +685,41 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     labelKey: 'components.settings.settingsPanel.memory.rawEntries.title',
     keywords: ['原始记忆', 'entries', '条目', '编辑', '删除', '记忆记录', '添加记忆', 'add memory', '手動', '追加', '记住', 'remember'],
     anchor: '[data-search-anchor="memory-raw-entries"]'
+  },
+  {
+    key: 'sandbox', tab: 'sandbox',
+    labelKey: 'components.settings.settingsPanel.sections.sandbox.title',
+    keywords: ['沙箱', 'sandbox', 'サンドボックス', '运行代码', 'run code', '隔离', '代码执行', '安全运行']
+  },
+  {
+    key: 'sandbox-toggle', tab: 'sandbox',
+    labelKey: 'components.settings.sandbox.enabled.label',
+    keywords: ['启用', 'enabled', '有効', '沙箱开关', '总开关'],
+    anchor: '[data-search-anchor="sandbox-toggle"]'
+  },
+  {
+    key: 'sandbox-languages', tab: 'sandbox',
+    labelKey: 'components.settings.sandbox.languages.title',
+    keywords: ['语言', 'language', '言語', 'python', 'javascript', 'bash', 'powershell', 'sh', '白名单'],
+    anchor: '[data-search-anchor="sandbox-languages"]'
+  },
+  {
+    key: 'sandbox-timeout', tab: 'sandbox',
+    labelKey: 'components.settings.sandbox.timeout.title',
+    keywords: ['超时', 'timeout', 'タイムアウト', '时间限制'],
+    anchor: '[data-search-anchor="sandbox-timeout"]'
+  },
+  {
+    key: 'sandbox-output', tab: 'sandbox',
+    labelKey: 'components.settings.sandbox.output.title',
+    keywords: ['输出', 'output', '出力', '行数', '截断', 'lines'],
+    anchor: '[data-search-anchor="sandbox-output"]'
+  },
+  {
+    key: 'sandbox-cleanup', tab: 'sandbox',
+    labelKey: 'components.settings.sandbox.cleanup.title',
+    keywords: ['清理', 'cleanup', 'クリーンアップ', '临时目录', 'temp', '删除'],
+    anchor: '[data-search-anchor="sandbox-cleanup"]'
   },
   {
     key: 'general', tab: 'general',
@@ -1610,6 +1647,14 @@ onMounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.memory.description') }}</p>
 
             <MemorySettings />
+          </div>
+
+          <!-- 沙箱设置 -->
+          <div v-if="settingsStore.activeTab === 'sandbox'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.sandbox.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.sandbox.description') }}</p>
+
+            <SandboxSettings />
           </div>
           
           <!-- 通用设置 -->

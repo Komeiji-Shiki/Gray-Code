@@ -1356,6 +1356,11 @@ export class ToolExecutionService {
             return;
         }
 
+        // sandbox 工具配置
+        if (toolName === 'sandbox') {
+            toolContext.config = this.settingsManager.getSandboxConfig();
+        }
+
         // generate_image 工具配置
         if (toolName === 'generate_image') {
             const imageConfig = this.settingsManager.getGenerateImageConfig();

@@ -19,7 +19,8 @@ import type {
     DeleteFileToolConfig,
     ExecuteCommandToolConfig,
     ShellConfig,
-    HistorySearchToolConfig
+    HistorySearchToolConfig,
+    SandboxToolConfig
 } from './types';
 import {
     DEFAULT_LIST_FILES_CONFIG,
@@ -32,6 +33,7 @@ import {
     DEFAULT_TOOL_AUTO_EXEC_CONFIG,
     DEFAULT_HISTORY_SEARCH_CONFIG,
     getDefaultExecuteCommandConfig,
+    getDefaultSandboxConfig,
     DEFAULT_MAX_TOOL_ITERATIONS
 } from './types';
 import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
@@ -130,6 +132,9 @@ export class ToolsSettingsService {
      */
     isToolEnabled(toolName: string): boolean {
         if (isMemoryToolName(toolName) && !this.memory.isMemoryEnabled()) {
+            return false;
+        }
+        if (toolName === 'sandbox' && !this.isSandboxEnabled()) {
             return false;
         }
         // 如果未配置，默认启用
@@ -435,6 +440,36 @@ export class ToolsSettingsService {
     async updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
         const oldConfig = this.getExecuteCommandConfig();
         await this.core.saveToolsConfigEntry('execute_command', oldConfig, { ...oldConfig, ...config });
+    }
+
+    /**
+     * 沙箱总开关
+     */
+    isSandboxEnabled(): boolean {
+        return this.getSandboxConfig().enabled !== false;
+    }
+
+    /**
+     * 获取 sandbox 工具配置
+     */
+    getSandboxConfig(): Readonly<SandboxToolConfig> {
+        return this.core.getToolsConfigEntry('sandbox', getDefaultSandboxConfig());
+    }
+
+    /**
+     * 更新 sandbox 工具配置
+     */
+    async updateSandboxConfig(config: Partial<SandboxToolConfig>): Promise<void> {
+        const oldConfig = this.getSandboxConfig();
+        const newConfig = { ...oldConfig, ...config };
+        if (typeof newConfig.defaultTimeout === 'number' && Number.isFinite(newConfig.defaultTimeout)) {
+            newConfig.defaultTimeout = Math.max(1000, Math.floor(newConfig.defaultTimeout));
+        }
+        if (typeof newConfig.maxOutputLines === 'number' && Number.isFinite(newConfig.maxOutputLines)) {
+            // -1 表示无限制，否则至少 1
+            newConfig.maxOutputLines = newConfig.maxOutputLines === -1 ? -1 : Math.max(1, Math.floor(newConfig.maxOutputLines));
+        }
+        await this.core.saveToolsConfigEntry('sandbox', oldConfig, newConfig);
     }
     
     /**

@@ -27,7 +27,9 @@ export type {
     ExecuteCommandToolConfig,
     ShellConfig,
     StoragePathConfig,
-    StorageStats
+    StorageStats,
+    SandboxToolConfig,
+    SandboxLanguage
 } from './types';
 export {
     DEFAULT_GLOBAL_SETTINGS,
@@ -36,6 +38,7 @@ export {
     DEFAULT_LIST_FILES_CONFIG,
     DEFAULT_APPLY_DIFF_CONFIG,
     getDefaultExecuteCommandConfig,
+    getDefaultSandboxConfig,
     MACHINE_SCOPE_KEYS
 } from './types';
 export { BUILTIN_MODE_TOOL_POLICIES } from './promptModes';

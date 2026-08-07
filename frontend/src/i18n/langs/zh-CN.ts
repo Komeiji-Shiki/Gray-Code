@@ -985,6 +985,7 @@ const zhCN = {
                 sound: '通知系统',
                 appearance: '外观',
                 memory: '记忆',
+                sandbox: '沙箱',
                 general: '通用',
                 usage: '用量统计'
             },
@@ -2158,6 +2159,10 @@ const zhCN = {
                         title: '永久记忆',
                         description: '配置 AI 跨会话永久记忆系统（OptMem）'
                     },
+                    sandbox: {
+                        title: '沙箱',
+                        description: '在隔离的临时目录中安全运行代码片段'
+                    },
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
@@ -2283,6 +2288,40 @@ const zhCN = {
                         workspaceMemoryEmpty: '该工作区还没有记忆。在此分区添加的记忆仅对该工作区可见。',
                         newlineNotAllowed: '记忆必须为单行文本。请删除换行后重试。'
                     }
+                },
+                sandbox: {
+                    enabled: {
+                        label: '启用沙箱',
+                        description: '允许 AI 在隔离的临时目录中运行代码片段。关闭后不向模型提供 sandbox 工具。',
+                        disabledNotice: '沙箱已关闭。AI 将无法使用 sandbox 工具运行代码。'
+                    },
+                    languages: {
+                        title: '允许的语言',
+                        description: '仅勾选的语言可在沙箱中执行。取消勾选可禁用不需要的语言。'
+                    },
+                    timeout: {
+                        title: '默认超时时间',
+                        description: '代码运行的最大时长（毫秒）。超时后进程树将被强制终止。'
+                    },
+                    output: {
+                        title: '最大输出行数',
+                        description: '返回给 AI 的最大输出行数，超出时仅保留最后 N 行。',
+                        unit: '行',
+                        hint: '设为 -1 表示无限制（不推荐，可能导致输出过大）。'
+                    },
+                    cleanup: {
+                        title: '清理临时目录',
+                        description: '运行结束后自动删除临时目录。关闭后可保留运行产物用于调试。',
+                        label: '运行后清理临时目录'
+                    },
+                    info: {
+                        title: '关于沙箱安全',
+                        text: '沙箱提供文件系统隔离（临时目录）、超时与输出上限，但并非操作系统级强隔离。它不限制网络访问、CPU 或内存用量。请勿用于运行来源不明的恶意代码。'
+                    },
+                    save: '保存配置',
+                    reset: '恢复默认',
+                    saved: '保存成功',
+                    saveFailed: '保存失败'
                 },
 
             },

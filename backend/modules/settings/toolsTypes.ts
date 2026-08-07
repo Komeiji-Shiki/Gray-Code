@@ -378,6 +378,54 @@ export interface ExecuteCommandToolConfig {
 }
 
 /**
+ * 沙箱工具支持的语言
+ */
+export type SandboxLanguage = 'python' | 'javascript' | 'bash' | 'powershell' | 'sh';
+
+/**
+ * Sandbox 工具配置
+ *
+ * 沙箱在隔离的临时目录中运行代码片段，提供文件系统隔离、超时与输出上限。
+ */
+export interface SandboxToolConfig {
+    /**
+     * 是否启用沙箱工具。
+     *
+     * 关闭后不向模型提供 sandbox 工具。默认关闭（opt-in）。
+     */
+    enabled?: boolean;
+
+    /**
+     * 允许运行的语言白名单。
+     * 仅这些语言可在沙箱中执行。
+     */
+    allowedLanguages: SandboxLanguage[];
+
+    /**
+     * 默认超时时间（毫秒），硬上限。
+     * 用户在工具调用中传入的 timeout 不能超过此值。
+     * 默认: 30000
+     */
+    defaultTimeout: number;
+
+    /**
+     * 返回给 AI 的最大输出行数。
+     * 超出时仅保留最后 N 行并标记 truncated。
+     * -1 表示无限制。
+     * 默认: 200
+     */
+    maxOutputLines: number;
+
+    /**
+     * 运行结束后是否清理临时目录。
+     * 默认: true
+     */
+    cleanupTempDir: boolean;
+
+    [key: string]: unknown;
+}
+
+/**
  * 图像生成工具配置
  */
 export interface GenerateImageToolConfig {
@@ -538,6 +586,7 @@ export interface ToolsConfig {
     apply_diff?: ApplyDiffToolConfig;
     delete_file?: DeleteFileToolConfig;
     execute_command?: ExecuteCommandToolConfig;
+    sandbox?: SandboxToolConfig;
     checkpoint?: CheckpointConfig;
     summarize?: SummarizeConfig;
     generate_image?: GenerateImageToolConfig;
@@ -766,15 +815,35 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
 export const DEFAULT_EXECUTE_COMMAND_CONFIG: ExecuteCommandToolConfig = getDefaultExecuteCommandConfig();
 
 /**
+ * 获取默认的 sandbox 配置
+ */
+export function getDefaultSandboxConfig(): SandboxToolConfig {
+    return {
+        enabled: false,
+        allowedLanguages: ['python', 'javascript', 'bash', 'powershell', 'sh'],
+        defaultTimeout: 30000,
+        maxOutputLines: 200,
+        cleanupTempDir: true
+    };
+}
+
+/**
+ * 默认 sandbox 配置（运行时生成）
+ */
+export const DEFAULT_SANDBOX_CONFIG: SandboxToolConfig = getDefaultSandboxConfig();
+
+/**
  * 默认工具自动执行配置
  *
  * 默认情况下，以下危险工具需要确认后才能执行：
  * - delete_file: 删除文件
  * - execute_command: 执行终端命令
+ * - sandbox: 沙箱运行代码
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-  execute_command: false   // 需要确认
+  execute_command: false,  // 需要确认
+  sandbox: false           // 需要确认
 };
 
 /**

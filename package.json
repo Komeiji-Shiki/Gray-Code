@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.7.2dev",
+  "version": "1.7.3",
   "publisher": "czocelot",
   "icon": "resources/icon.png",
   "engines": {
