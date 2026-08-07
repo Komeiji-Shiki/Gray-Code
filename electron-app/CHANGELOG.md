@@ -8,6 +8,15 @@ This file tracks changes to the GrayCode Desktop (standalone Electron edition).
 Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
+## [1.7.0] - 2026-08-07
+
+### Merged
+  - 增量合入上游 `b968953..2f3155d`（11 提交，fork 保持；backend/webview/frontend 公共部分，详见根 `CHANGELOG.md` [1.7.0]）：高 tps/代码块渲染吸底优化（wheel 冷静期 + 微任务读回）、设置页保存提示词误报失败修复（慢 handler 非阻塞化）、排队消息提前投递（P1，动作边界立即投递）、历史截断后孤儿 functionCall 修复（写时根治，与桌面端 BR-07 读时过滤互补）、渠道设置支持更改渠道类型（下拉框 + 后端按新类型重建）、fakeThought 伪造思考过程 + 思考回传配置合并、根消息编辑重生成（TREE-03-R）+ keep 模式修复、代码块复制按钮修复、`checkForUpdates` contribution 注册；未单独应用上游 CHANGELOG/docs 提交（本地 fork 版自维护）
+  - 适配说明：`processQueue` 保留桌面端去重回队首与终结 toolIteration 投递（防审批门闸卡死）；`ConfigManager.updateConfig` 类型重建路径保留桌面端 `resolveModel` 模型回退；`MessageRouter` 非阻塞集合保留桌面端独有条目（workspace.openFolder / chat.awaitConversationIdle 等）；`orphanFunctionCallRepair.test.ts` 播种改为经 manager 写路径（桌面端 historyCache 缓存一致性）
+
+### Tests（1.7.0）
+  - backend jest 235 套件 / 2442 用例、frontend vitest 69 文件 / 648 用例、三仓 tsc --noEmit 全绿；新增 `queuedMessageEarlyEmit.test.ts`（12）、`orphanFunctionCallRepair.test.ts`（7）、`ConfigManager.updateConfig.test.ts`（11）、`messageRouterNonBlockingBehavior.test.ts`、`promptSaveChain.test.ts`、`toolIterationThoughtPolicy.test.ts`、`vscodeSettingsStorageRegisteredKeys.test.ts` 等
+
 ## [1.6.9] - 2026-08-07
 
 ### Merged
