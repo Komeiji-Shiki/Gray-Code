@@ -262,9 +262,9 @@ const userEditedContent = computed(() => {
   return resultData.value?.userEditedContent as string | undefined
 })
 
-// 是否为全失败
+// 是否为全失败（含全部拒绝：rejected 路径 appliedCount 仍为初始成功数，需显式判定）
 const isFailed = computed(() => {
-  return !!props.error || (resultData.value && resultData.value.appliedCount === 0)
+  return !!props.error || (resultData.value && (resultData.value.appliedCount === 0 || resultData.value.status === 'rejected'))
 })
 
 // 是否为部分成功（有成功也有失败，或后端显式标记 partial）
@@ -275,14 +275,6 @@ const isPartial = computed(() => {
     data.status === 'partial' ||
     (data.appliedCount > 0 && data.failedCount > 0)
   )
-})
-
-// 是否后端显式标记 partial（status='partial' 或 partial=true）。
-// 与 isPartial 的区别：isPartial 还包含“接受但初始有未匹配块”的计数兜底，
-// 那种场景 status-badge 显示 accepted，图标应显示成功而非 partial，避免双轨。
-const isExplicitPartial = computed(() => {
-  const data = resultData.value
-  return !!data && (data.partial === true || data.status === 'partial')
 })
 
 // 获取文件名
@@ -447,8 +439,8 @@ onBeforeUnmount(() => {
     
     <!-- 结果状态 -->
     <div v-if="resultData" class="result-status" :class="{ 'is-error': isFailed && !isPartial, 'is-partial': isPartial }">
-      <span v-if="!isFailed && !isExplicitPartial" class="codicon codicon-check status-icon success"></span>
-      <span v-else-if="isExplicitPartial" class="codicon codicon-check status-icon partial"></span>
+      <span v-if="!isFailed && !isPartial" class="codicon codicon-check status-icon success"></span>
+      <span v-else-if="isPartial" class="codicon codicon-check status-icon partial"></span>
       <span v-else class="codicon codicon-error status-icon error"></span>
       <span class="status-text">
         <template v-if="error">{{ error }}</template>
