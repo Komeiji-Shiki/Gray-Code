@@ -37,6 +37,7 @@ import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, Tas
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import { initMemoryManager } from '../backend/modules/memory';
+import { UpdateChecker } from '../backend/modules/update';
 import { ActivityTracker, setGlobalActivityTracker } from '../backend/modules/activity';
 import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../backend/modules/tokenizer';
 import type { SettingsExportData } from '../backend/modules/settings';
@@ -140,6 +141,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
     private activityTracker?: ActivityTracker;
+    private updateChecker?: UpdateChecker;
+    private updateCheckTimer?: NodeJS.Timeout;
     private mainChatClientDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
     
@@ -414,6 +417,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             usageIndexAppend: (conversationId, messages) =>
                 this.conversationManager.appendUsageIndexMessages(conversationId, messages)
         });
+
+        // 25.75. 初始化更新检查器（GitHub Releases 自动更新）
+        this.updateChecker = new UpdateChecker({
+            // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
+            isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+            // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
+            getProxyUrl: () => {
+                const proxy = this.settingsManager.getSettings().proxy;
+                return proxy?.enabled && proxy?.url ? proxy.url : undefined;
+            },
+            // 上次检查时间戳存扩展 globalState（内部状态，不参与 Settings Sync）
+            storage: {
+                get: (key) => this.context.globalState.get<number>(key),
+                update: (key, value) => Promise.resolve(this.context.globalState.update(key, value)),
+            },
+            globalStoragePath: this.context.globalStorageUri.fsPath,
+        });
         
         // 26. 初始化依赖管理器（使用自定义路径）
         this.dependencyManager = DependencyManager.getInstance(
@@ -445,6 +465,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 30. 初始化子代理（从持久化存储加载）
         this.initializeSubAgents();
+
+        // 30.5. 启动延迟更新检查（避开启动竞态；24h 节流在 UpdateChecker 内部处理，失败静默）
+        this.updateCheckTimer = setTimeout(() => {
+            this.updateChecker?.check(false).catch(() => {});
+        }, 10_000);
 
         this.subAgentMonitorPanel = new SubAgentMonitorPanel(
             this.context,
@@ -630,6 +655,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             dependencyManager: this.dependencyManager,
             storagePathManager: this.storagePathManager,
             diffStorageManager: this.diffStorageManager,
+            updateChecker: this.updateChecker,
             streamAbortControllers: this.messageRouter.getAbortManager() as any,
             diffPreviewProvider: this.diffPreviewProvider,
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
@@ -852,6 +878,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             dependencyManager: this.dependencyManager,
             storagePathManager: this.storagePathManager,
             diffStorageManager: this.diffStorageManager,
+            updateChecker: this.updateChecker,
             windowsAgentStopNotificationService: this.windowsAgentStopNotificationService,
             streamAbortControllers: this.messageRouter.getAbortManager() as any,
             diffPreviewProvider: this.diffPreviewProvider,
@@ -1004,6 +1031,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.branchService = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
+
+        // 清理更新检查延迟任务
+        if (this.updateCheckTimer) {
+            clearTimeout(this.updateCheckTimer);
+            this.updateCheckTimer = undefined;
+        }
 
         // 释放用量统计的目录监听与内存缓存
         disposeUsageCache();

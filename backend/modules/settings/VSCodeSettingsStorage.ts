@@ -43,7 +43,8 @@ const SYNCABLE_KEYS = [
     'maxToolIterations',
     'defaultToolMode',
     'activeChannelId',
-    'lastReadAnnouncementVersion'
+    'lastReadAnnouncementVersion',
+    'checkForUpdates'
 ] as const;
 
 // 这些 key 应在 package.json 中声明 scope: "machine"
@@ -218,6 +219,11 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             settings.lastReadAnnouncementVersion = lastReadAnnouncementVersion && lastReadAnnouncementVersion.trim()
                 ? lastReadAnnouncementVersion
                 : undefined;
+
+            const checkForUpdates = config.get<boolean>('checkForUpdates');
+            if (typeof checkForUpdates === 'boolean') {
+                settings.checkForUpdates = checkForUpdates;
+            }
         }
 
         if (opts.includeMachine) {
