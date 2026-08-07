@@ -304,28 +304,41 @@ describe('FileUsageIndexStore 原子写（tmp + rename）', () => {
     });
 });
 
-describe('FileUsageIndexStore 写队列挂起超时（R2 1.2）', () => {
-    test('挂起任务超时按失败处理，队列继续前进、后续写正常', async () => {
+describe('FileUsageIndexStore 写队列挂起超时（R2 1.2 / SEC）', () => {
+    test('挂起任务超时调用方 fail-fast，但链不前进：后续写等待底层任务真正结束', async () => {
         jest.useFakeTimers();
         try {
             const { store } = createStore();
             const id = 'conv-hang';
             await store.write(id, seedIndex(id, [entry(1)]));
 
-            // build 永不 resolve：任务挂起（复用 storage.ts 的 withHangTimeout 模式，60s）
-            const hangPromise = store.rebuild(id, () => new Promise<UsageIndex>(() => {}));
+            // build 挂起：任务长时间不结束（复用 storage.ts 的 withHangTimeout 模式，60s）
+            let releaseHang: (() => void) | undefined;
+            const hangPromise = store.rebuild(id, () => new Promise<UsageIndex>(resolve => {
+                releaseHang = () => resolve(seedIndex(id, [entry(1), entry(2)]));
+            }));
             // 先挂上断言再推进时钟：避免计时器触发 reject 时被当作未处理拒绝
             const rejection = expect(hangPromise).rejects.toThrow(/usageIndexWrite\(conv-hang\) hung for 60000ms/);
             await jest.advanceTimersByTimeAsync(60000);
 
-            // 超时按失败处理（调用方静默降级），链继续前进
+            // 超时按失败处理（调用方 fail-fast，不无限等待）
             await rejection;
 
-            // 队列未被挂起任务阻塞：后续写正常执行
-            const ok = await store.appendUsageMessages(id, [entry(2)]);
-            expect(ok).toBe(true);
+            // 修复语义（SEC）：链尾挂在底层任务上，挂起期间后续写不得并发启动——
+            // 否则超时后的旧任务仍在 writeFileAtomic（.tmp + rename），新任务并发写会互相覆盖索引
+            let queuedDone = false;
+            const queued = store.appendUsageMessages(id, [entry(3)]).then(value => {
+                queuedDone = true;
+                return value;
+            });
+            await jest.advanceTimersByTimeAsync(5000);
+            expect(queuedDone).toBe(false);
+
+            // 底层任务真正结束后，队列才放行后续写
+            releaseHang!();
+            expect(await queued).toBe(true);
             const index = await store.read(id);
-            expect(index?.messages).toHaveLength(2);
+            expect(index?.messages).toHaveLength(3);
             // 队列 Map 已回收（任务完成后不再驻留）
             expect((store as any).writeQueues.has(id)).toBe(false);
         } finally {
