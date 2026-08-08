@@ -129,7 +129,8 @@ describe('prompt assembly mode settings', () => {
     })
 
     const savedModes = manager.getSystemPromptConfig().modes
-    expect(Object.keys(savedModes).filter(id => id === mode.id)).toHaveLength(1)
+    expect(savedModes[mode.id]).toBeDefined()
+    expect(Object.values(savedModes).filter(saved => saved.id === mode.id)).toHaveLength(1)
     expect(savedModes[mode.id].name).toBe('Renamed Mode')
     expect(savedModes[mode.id].promptEntries?.filter(entry => entry.type === 'chat_history')).toHaveLength(1)
   })

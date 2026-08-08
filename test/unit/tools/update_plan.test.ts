@@ -177,10 +177,20 @@ describe('update_plan tool', () => {
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
   })
 
-  it('uses strict schema to reduce unexpected continuation carry-over fields', () => {
+  it('rejects continuation carry-over fields at runtime', async () => {
     const tool = createUpdatePlanTool()
+    const result = await tool.handler({
+      path: '.graycode/plans/api.plan.md',
+      plan: '# Plan',
+      todos: [],
+      continuationPrompt: 'stale payload'
+    })
 
     expect(tool.declaration.strict).toBe(true)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('continuationPrompt')
+    expect(mockReadFile).not.toHaveBeenCalled()
+    expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
   it('rejects paths outside .graycode/plans', async () => {
