@@ -15,14 +15,30 @@
   - 消息左下角统计新增首字延迟（TTFT）显示：后端 `StreamAccumulator` 基于请求开始时间与首个流式块到达时间计算 TTFT（`content.ttft`，随消息 metadata 下发），前端每条模型消息的统计区展示「首字 x.x s」；Token 速率计算同步剥离首字等待窗口——速率分母从完整响应耗时改为「响应耗时 − TTFT」，只反映生成阶段吞吐，不再被首字等待拉低（旧数据无 ttft 字段时退化为原分母，历史展示不变）；三语 i18n 新增文案。
 
 ### Changed
+  - 完成 bug-hunt round 1 的前端与 Webview 稳定性收敛：消息处理器统一补齐入参校验、异常边界和请求路由清理；`HandlerContext.streamAbortControllers` 收敛为真实 `StreamAbortManager` 契约，移除旧 Map 鸭子类型分支；设置导出键提取为共享常量，子代理数值参数增加有界校验。
+  - 弹层组件（Modal / Drawer / ConfirmDialog）改用引用计数的 body 滚动锁，支持多弹层叠加，并补齐 dialog 语义、焦点陷阱、Esc 关闭和焦点恢复；会话历史与标签页增加键盘操作和 ARIA 状态。
+  - 界面语言选项按当前语言本地化显示并同步页面 `lang` 属性；移除重复注册的废弃 `toggle_skills` 前端工具实现，历史消息继续由 `read_skill` 兼容渲染。
+  - 前端公共工具增强：`debounce.cancel`、`throttle` trailing 调用、Date/Map/Set 空值判断、Firefox 兼容的延迟 Object URL 回收；流式平滑输出统一按 Unicode 字素计数，避免拆分 emoji 等组合字符。
   - 总结保留预算 `keepRecentTokens` 的百分比基数从「主对话模型上下文窗口」改为「本次总结规划范围内的活跃历史 token 总量」（上一次总结之后、未被 `isSummarized` 覆盖的消息）：`'50%'` 即「截断一半、保留另一半」，与模型窗口大小无关；内置默认值从 `'25%'` 调整为 `'50%'`（截断一半）；绝对 token 数配置（如 `30000`）语义不变。修复单次对话总结后上下文几乎被压光的问题（如 369928 token 总结后只剩约 30000 预算 + 首条用户消息，而非历史的一半）。
   - Release notes 生成策略调整（scripts/extract-release-notes.mjs）：默认只携带当前版本的 CHANGELOG 小节；脚本通过 `GITHUB_TOKEN` 查询 GitHub 最新已发布 release，检测到当前版本与最新 release 之间存在未发布小节（版本被跳过，如最新 release 为 1.4.4 时发布 1.4.6，中间 1.4.5 从未发布）时自动补带这些跳过版本的内容，避免用户错过未发布版本；查询失败 / 无 token 时回退为只带当前版本（不阻塞发布）。
 
 ### Fixed
+  - 修复 Webview 消息路由与流式任务异常路径：阻塞 handler 返回但未响应、流式 handler 抛错、未知 clientId 回退等场景不再泄漏请求映射或错投其他面板；流式错误统一回传并清理状态。
+  - 修复分支与流控制竞态：分支切换在真正切图前再次检查活跃流，`StreamAbortManager.waitForIdle` 超时后正确释放退休链等待者；无 content 的终结性 `toolIteration` 也会调度排队消息，避免消息永久滞留。
+  - 修复异步界面操作的未处理异常：分支切换/删除/恢复、checkpoint 回档、渠道与模型切换、排队发送、历史页与用量页打开会话等失败时给出可见提示，已成功的主操作不再因派生元数据刷新失败而误报失败。
+  - 修复渠道与设置边界：Gemini 默认配置幂等初始化，新建渠道仍可仅传类型与名称并由后端补齐默认值；MCP env/headers 非法 JSON 不再静默丢弃，数字输入空值或非有限值不再保存为 0；设置导出默认路径与 reload 响应时序得到修正。
+  - 修复上下文与附件处理：上下文标签属性/正文正确转义和还原引号、尖括号与闭合标签；文本、图片和 base64 附件增加读取前大小限制；临时预览使用唯一文件名并定时清理；FileReader、canvas、视频缩略图和附件取消等异常路径补齐。
+  - 修复多项前端可用性问题：回复查看器仅在数据存在时渲染；删除会话改为确认后执行；内部删除/关闭按钮的键盘事件不再误触父级选择；多弹层、后台任务监听、diff 倒计时和文件跳转高亮资源在卸载时正确释放。
+  - 修复 `update_plan` 接收 schema 外遗留字段的问题，运行时现在明确拒绝 continuation/source-artifact carry-over 参数；修复 checkpoint 配置失败响应缺少错误对象时的二次异常。
   - 修复子代理执行任意工具必然报错「Cannot read properties of undefined (reading 'getToolRejectionReason')」：P1 安全加固（子代理危险工具确认门）把 `toolNeedsConfirmation` 解构为独立函数后调用，该实例方法内部依赖 `this`（真实实现调用 `this.getToolRejectionReason`），解构调用丢失绑定直接 TypeError，子代理的确认门判定完全不可用。现改为经 service 实例 `bind` 调用（行为与主链路一致，确认门恢复生效），fail-closed 兜底保留（确认门缺失时仍拒绝执行）。新增回归测试 `subagentToolConfirmation.test.ts`「确认门方法依赖 this（真实 ToolExecutionService 形态）：不因解构丢失绑定而 TypeError」——用真实依赖 this 的类方法形态复现，断言拒绝原因正常回流且底层工具未执行。
   - 修复总结截断起始点在长对话中难以定位：滚动条 marker 选择器从 `.user-message` 扩展为 `.user-message, .summarize-divider`，已总结 / 未总结分隔线在右侧滚动条上显示**黄色 marker**（区别于用户消息的蓝色 marker，点击可跳转），悬停 tooltip 显示专属前缀与「此线以下为发送给 AI 的活跃内容」说明（`CustomScrollbar` marker 新增 `data-marker-color` / `data-marker-tooltip-prefix` 元素级覆盖，缺省回落全局 props）；三语 i18n 新增文案。
   - 修复手动总结单轮对话（历史中仅一个真实用户回合）必然失败报「对话历史在总结期间发生变化，本次总结的范围已失效」：单轮时总结范围规划走轮内截断（intra_round），切点必然位于轮首 user 消息之后，`insertIndex` 恒大于最后一条真实用户消息下标 → `markAndInsertSummarizedAtomically` 一律判 `STALE_RANGE` 放弃落盘。现手动总结对「整个历史仅一条真实用户消息」放行（用户主动总结就是把这一轮的前半部分拿去总结，不存在「当前回合」需要保护）；首条用户消息保护仍生效（锚点不标记、原样保留并持续发送，且总结模型输入始终包含首条用户消息）；自动总结保持严格 STALE（回合内吞掉当前用户消息会毁掉回复上下文）；越界（并发删除把历史缩短到区间之外）与多轮场景同样保持 STALE。新增 `summarizeManualSingleRound.test.ts`（5 用例：单超大轮轮内截断成功、总结期间历史并发变长仍成功、并发缩短越界仍 STALE、多轮范围覆盖第二轮仍 STALE、多轮正常路径不回归）。
   - 修复编辑用户消息保存后候选切换器（‹ 2/2 ›）不立即显示，关掉对话重新打开才恢复：编辑 / reroll 分支流的候选节点在流开始时就已落盘（`editCandidate` / `createRerollCandidate` 先于工具循环），但前端分支图刷新此前只挂在终结 chunk（complete / error / cancelled / awaitingConfirmation / 终结性 toolIteration）上——流未结束时 BranchSwitcherBar 永远不刷新（与已修复的「停在工具确认不显示」同类，覆盖流进行中的任何阶段）。现 `streamHandler` 在分支流**第一个输出 chunk** 到达时提前刷新一次分支图（此时候选必然已落盘，切换器立即显示；按 streamId 隔离只刷一次），终结时仍消费标记再刷新一次（更新模型候选内容 / 摘要，支持同一会话连续编辑 / 重 roll）；会话隔离与既有终结刷新一致（标记属于发起会话，不跨会话刷新）。新增/更新测试：editBranchRefresh.test.ts 首输出提前刷新 + 终结再刷新、连续编辑再次触发（streamId 重置）、会话不匹配不提前刷新（3 用例）；streamHandlerTerminalCleanup.test.ts 非终结 toolIteration 提前刷新但不消费标记（断言对齐新语义）。
+
+### Performance
+  - 工作区多路径解析改为并行处理；分支切换器滚动/缩放定位由 rAF 合并布局计算；工具消息预览改为精确监听增量长度，减少高频流式更新中的无效深度监听。
+  - 文件与 Usage 热路径增加资源上限：读取前按 10MB 文本 / 50MB 附件限制拒绝超大输入，base64 在解码前预判；Usage 缓存增加 TTL 清理与 32 条容量淘汰；Skills 配置仅在启用状态实际变化时写盘和刷新工具声明。
+  - Webview 工作区搜索与路径判断优化：工作区归属改用 `getWorkspaceFolder` 精确匹配，目录搜索避免对明显无关路径做深层遍历；临时预览文件自动回收。
 
 ### Security
   - 子代理不再绕过危险工具确认（P1）：主链路对 `delete_file` / `execute_command` 等被用户配置为「需确认」的工具的确认门（`toolNeedsConfirmation`，与 `isToolAutoExec` 设置同源）此前只在主会话的两个循环控制器生效，子代理（subagent）独立工具循环直接调用共享执行器、绕过了确认门；现子代理执行工具前同样查询确认门——需要确认的工具直接拒绝并把明确原因（「Ask the main model to perform this action」）以 functionResponse 回给子模型，共享执行服务缺少确认门时 fail-closed 拒绝（不静默放行）；自动执行（autoExec）与 diff 审阅类工具不受影响。新增 `subagentToolConfirmation.test.ts`（拒绝含原因回流、放行、fail-closed 三用例）。
