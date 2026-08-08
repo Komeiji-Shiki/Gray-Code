@@ -204,6 +204,6 @@ export class StreamResponseProcessor {
 /**
  * 检查响应是否是 AsyncGenerator
  */
-export function isAsyncGenerator<T = unknown>(obj: any): obj is AsyncGenerator<T> {
-    return obj && typeof obj[Symbol.asyncIterator] === 'function';
+export function isAsyncGenerator<T = unknown>(obj: unknown): obj is AsyncGenerator<T> {
+    return !!obj && typeof (obj as AsyncGenerator<T>)[Symbol.asyncIterator] === 'function';
 }

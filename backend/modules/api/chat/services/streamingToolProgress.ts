@@ -10,7 +10,14 @@ import type { ToolExecutionFullResult } from './ToolExecutionService';
  * 修改目的：单个工具一旦产生业务结果，就能独立进入最终状态，不再被同批其他工具的生命周期拖住。
  */
 export function deriveChatToolStatusFromResult(result: unknown): ChatStreamToolStatusData['tool']['status'] {
-    const r = result as any;
+    // C-19：按宽松形状窄化（unknown 收窄），替代裸 as any
+    const r = result as {
+        success?: boolean;
+        error?: string;
+        cancelled?: boolean;
+        rejected?: boolean;
+        data?: { status?: string; partial?: boolean; appliedCount?: number; failedCount?: number };
+    } | null | undefined;
     if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
         return 'error';
     }
@@ -76,13 +83,22 @@ export class EarlyStreamingToolProgressQueue {
 
     track(call: FunctionCallInfo, promise: Promise<ToolExecutionFullResult>): Promise<ToolExecutionFullResult> {
         this.pendingToolIds.add(call.id);
-        return promise.then(fullResult => {
+        const tracked = promise.then(fullResult => {
             this.settled.push({ call, fullResult });
             const waiter = this.waiter;
             this.waiter = undefined;
             waiter?.();
             return fullResult;
         });
+        // 防御：调用方传入的 promise 意外 reject 时阻止 unhandled rejection，
+        // 并把它从 pending 集合移除、唤醒等待者，避免 waitForNextSettlement 永久挂起。
+        tracked.catch(() => {
+            this.pendingToolIds.delete(call.id);
+            const waiter = this.waiter;
+            this.waiter = undefined;
+            waiter?.();
+        });
+        return tracked;
     }
 
     drainSettled(): EarlyStreamingToolSettlement[] {

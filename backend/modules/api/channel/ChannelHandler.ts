@@ -106,16 +106,25 @@ export class ChannelHandler {
                 };
             }
             
-            // 创建配置（从 request.config 提取创建所需的字段）
+            // 创建配置：透传客户端传入的 id（契约上 id 允许由客户端指定；未传时由 createConfig 内部生成）
             const { id, createdAt, updatedAt, ...createInput } = request.config;
-            const newId = await this.configManager.createConfig(createInput);
+            const newId = await this.configManager.createConfig(createInput, id);
             
-            // 获取创建后的配置
+            // 获取创建后的配置（并发删除窗口内可能查不到：判空返回明确错误）
             const channel = await this.configManager.getConfig(newId);
+            if (!channel) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'CHANNEL_NOT_FOUND',
+                        message: t('modules.api.channel.errors.channelNotFound', { channelId: newId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
-                channel: channel!
+                channel
             };
         } catch (error) {
             const err = error as any;
@@ -146,15 +155,12 @@ export class ChannelHandler {
                 };
             }
             
-            // 更新配置
-            await this.configManager.updateConfig(request.channelId, request.updates);
-            
-            // 获取更新后的配置
-            const channel = await this.configManager.getConfig(request.channelId);
+            // 更新配置（返回更新后的配置，直接消费，无需再读一次）
+            const channel = await this.configManager.updateConfig(request.channelId, request.updates);
             
             return {
                 success: true,
-                channel: channel!
+                channel
             };
         } catch (error) {
             const err = error as any;
@@ -220,17 +226,14 @@ export class ChannelHandler {
                 };
             }
             
-            // 更新启用状态
-            await this.configManager.updateConfig(request.channelId, {
+            // 更新启用状态（返回更新后的配置，直接消费，无需再读一次）
+            const channel = await this.configManager.updateConfig(request.channelId, {
                 enabled: request.enabled
             });
             
-            // 获取更新后的配置
-            const channel = await this.configManager.getConfig(request.channelId);
-            
             return {
                 success: true,
-                channel: channel!
+                channel
             };
         } catch (error) {
             const err = error as any;

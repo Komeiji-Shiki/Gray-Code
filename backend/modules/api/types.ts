@@ -204,7 +204,7 @@ export class APIError extends Error {
     constructor(
         public code: APIErrorCode,
         message: string,
-        public details?: any
+        public details?: unknown
     ) {
         super(message);
         this.name = 'APIError';

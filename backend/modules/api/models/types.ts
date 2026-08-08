@@ -4,6 +4,12 @@
 
 import type { ModelInfo } from '../../channel/modelList';
 
+/** 统一错误结构（与其他 handler 的 {code, message} 契约一致） */
+export interface ApiErrorInfo {
+    code: string;
+    message: string;
+}
+
 // ========== 获取可用模型列表 ==========
 
 export interface GetModelsRequest {
@@ -13,7 +19,7 @@ export interface GetModelsRequest {
 export interface GetModelsResponse {
     success: boolean;
     models?: ModelInfo[];
-    error?: string;
+    error?: ApiErrorInfo;
 }
 
 // ========== 添加模型到配置 ==========
@@ -25,7 +31,7 @@ export interface AddModelsRequest {
 
 export interface AddModelsResponse {
     success: boolean;
-    error?: string;
+    error?: ApiErrorInfo;
 }
 
 // ========== 从配置移除模型 ==========
@@ -37,7 +43,7 @@ export interface RemoveModelRequest {
 
 export interface RemoveModelResponse {
     success: boolean;
-    error?: string;
+    error?: ApiErrorInfo;
 }
 
 // ========== 设置当前激活模型 ==========
@@ -49,5 +55,5 @@ export interface SetActiveModelRequest {
 
 export interface SetActiveModelResponse {
     success: boolean;
-    error?: string;
+    error?: ApiErrorInfo;
 }

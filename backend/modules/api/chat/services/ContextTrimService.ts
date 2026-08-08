@@ -49,7 +49,6 @@ export const PRESERVED_USER_INPUT_MAX_CHARS = 64_000;
 const PRESERVED_USER_INPUT_OMISSION_MARKER =
     '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n';
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
-const CONTEXT_TRIM_DEBUG_ENABLED = true;
 const FALLBACK_PROVIDER_RESERVE_RATIO = 0.1;
 const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
 const MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 256;
@@ -289,7 +288,7 @@ export class ContextTrimService {
     }
 
     private logDebug(message: string, details?: Record<string, unknown>): void {
-        if (!CONTEXT_TRIM_DEBUG_ENABLED) return;
+        // C-8：debug 级别日志由 Logger 全局级别（默认 INFO）过滤，无需恒真开关
         this.log.debug(message, details);
     }
 
@@ -817,7 +816,12 @@ export class ContextTrimService {
         const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
         return messages.map(({ index }) => {
             const msg = updatedHistory[index];
-            return msg?.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
+            // C-14：并发删除/裁剪后该索引处消息可能已不存在，缺失时按 0 计，
+            // 避免 estimateMessageTokens(undefined) 抛错中断整批计数。
+            if (!msg) {
+                return 0;
+            }
+            return msg.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
         });
     }
 
@@ -1750,9 +1754,9 @@ export class ContextTrimService {
         channelType: string,
         promptTokens: number,  // 系统提示词 + 当前动态上下文的总 token 数
         preservedDynamicContextTokenByIndex: Map<number, number> = new Map()
-    ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[]; usageStats: AccumulateUsageStats } {
+    ): { estimatedTotalTokens: number; roundTokenInfos: RoundTokenInfo[]; usageStats: AccumulateUsageStats } {
+        // C-8：hasEstimatedTokens 无调用方消费，从返回结构中移除
         let estimatedTotalTokens = promptTokens;
-        let hasEstimatedTokens = promptTokens > 0;
         const roundTokenInfos: RoundTokenInfo[] = [];
         let currentRoundStartIndex = -1;
         const usageStats: AccumulateUsageStats = {
@@ -1790,7 +1794,6 @@ export class ContextTrimService {
                 if (preservedDynamicContextTokens > 0) {
                     estimatedTotalTokens += preservedDynamicContextTokens;
                     usageStats.userTokensTotal += preservedDynamicContextTokens;
-                    hasEstimatedTokens = true;
                 }
                 
                 // 用户消息：优先使用当前渠道的 tokenCountByChannel，其次 estimatedTokenCount，最后回退估算
@@ -1813,13 +1816,11 @@ export class ContextTrimService {
 
                 estimatedTotalTokens += tokenCount;
                 usageStats.userTokensTotal += tokenCount;
-                hasEstimatedTokens = true;
             } else if (message.role === 'model' && message.usageMetadata) {
                 usageStats.modelMessagesWithUsage++;
                 // model 消息：根据用户配置、消息内容和回合位置决定是否计算思考 token
                 const isCurrentRound = i >= lastNonFunctionResponseUserIndex;
                 const hasThought = this.messageBuilderService.hasThoughtContent(message.parts);
-                const hasSignatures = this.messageBuilderService.hasThoughtSignatures(message.parts);
                 
                 let includeThoughtsToken = false;
                 
@@ -1838,13 +1839,6 @@ export class ContextTrimService {
                     }
                 }
 
-                const signaturesOnlyMode = isCurrentRound
-                    ? (!sendCurrentThoughts && sendCurrentThoughtSignatures && hasSignatures)
-                    : ((i >= historyThoughtMinIndex && i < historyThoughtMaxIndex) && !sendHistoryThoughts && sendHistoryThoughtSignatures && hasSignatures);
-                if (signaturesOnlyMode) {
-                    // 保留分支变量用于可读性和后续调试扩展
-                }
-                
                 const usage = message.usageMetadata;
                 const rawCandidatesTokens = Math.max(0, usage.candidatesTokenCount ?? 0);
                 const rawThoughtsTokens = Math.max(0, usage.thoughtsTokenCount ?? 0);
@@ -1870,7 +1864,6 @@ export class ContextTrimService {
                 if (modelTokens > 0) {
                     usageStats.modelTokensTotal += modelTokens;
                     estimatedTotalTokens += modelTokens;
-                    hasEstimatedTokens = true;
                 }
             } else if (message.role === 'model') {
                 usageStats.modelMessagesWithoutUsage++;
@@ -1878,7 +1871,6 @@ export class ContextTrimService {
                 const modelTokens = this.tokenEstimationService.estimateMessageTokens(message);
                 usageStats.modelTokensTotal += modelTokens;
                 estimatedTotalTokens += modelTokens;
-                hasEstimatedTokens = true;
             }
         }
         
@@ -1891,7 +1883,7 @@ export class ContextTrimService {
             });
         }
         
-        return { estimatedTotalTokens, hasEstimatedTokens, roundTokenInfos, usageStats };
+        return { estimatedTotalTokens, roundTokenInfos, usageStats };
     }
 
     /**

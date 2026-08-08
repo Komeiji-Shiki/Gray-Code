@@ -42,6 +42,10 @@ function getResultData(result: unknown): LooseRecord | null {
   return asRecord(record?.data);
 }
 
+/**
+ * 归一化 update_plan 的 mode：progress_sync 优先级 data > result > args（与 getSourcePath 同优先级链）。
+ * 注意：update_plan 成功结果通常把 updateMode 放在 data 里，result 顶层与 args 是兼容旧版本的回退位。
+ */
 function normalizePlanUpdateMode(result: unknown, args: unknown): 'revision' | 'progress_sync' {
   const resultRecord = asRecord(result);
   const data = getResultData(result);
