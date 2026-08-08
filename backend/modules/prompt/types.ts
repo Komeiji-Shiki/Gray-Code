@@ -52,11 +52,3 @@ export interface PromptSection {
     /** 优先级（数字越小优先级越高） */
     priority?: number
 }
-
-/**
- * 默认配置
- */
-export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
-    includeWorkspaceFiles: true,
-    maxDepth: 2
-}

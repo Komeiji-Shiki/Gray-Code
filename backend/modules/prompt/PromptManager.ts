@@ -1044,14 +1044,6 @@ export class PromptManager {
     }
     
     /**
-     * @deprecated 使用 generateStaticEnvironmentSection 代替
-     * 保留用于向后兼容
-     */
-    private generateEnvironmentSection(): string {
-        return this.generateStaticEnvironmentSection()
-    }
-    
-    /**
      * 获取用户语言环境
      *
      * 根据设置返回用户当前使用的语言
@@ -1486,15 +1478,6 @@ export class PromptManager {
         }
     }
     
-    /**
-     * 检查是否需要刷新（用于首条消息判断）
-     * 
-     * @param isFirstMessage 是否是对话的第一条用户消息
-     * @returns 是否需要刷新系统提示词
-     */
-    shouldRefresh(isFirstMessage: boolean): boolean {
-        return isFirstMessage
-    }
 }
 
 // 导出单例创建函数

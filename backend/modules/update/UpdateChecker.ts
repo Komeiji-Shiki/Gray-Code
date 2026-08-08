@@ -60,16 +60,27 @@ export function stripVersionPrefix(version: string): string {
 
 /**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
+ * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
-    const ap = stripVersionPrefix(a).split('.').map(n => parseInt(n, 10) || 0);
-    const bp = stripVersionPrefix(b).split('.').map(n => parseInt(n, 10) || 0);
-    const len = Math.max(ap.length, bp.length);
+    const parse = (v: string): { nums: number[]; prerelease: boolean } => {
+        const main = stripVersionPrefix(v).split('-')[0];
+        return {
+            nums: main.split('.').map(n => parseInt(n, 10) || 0),
+            prerelease: stripVersionPrefix(v).includes('-')
+        };
+    };
+    const ap = parse(a);
+    const bp = parse(b);
+    const len = Math.max(ap.nums.length, bp.nums.length);
     for (let i = 0; i < len; i++) {
-        const x = ap[i] ?? 0;
-        const y = bp[i] ?? 0;
+        const x = ap.nums[i] ?? 0;
+        const y = bp.nums[i] ?? 0;
         if (x !== y) return x < y ? -1 : 1;
+    }
+    if (ap.prerelease !== bp.prerelease) {
+        return ap.prerelease ? -1 : 1;
     }
     return 0;
 }
@@ -175,14 +186,22 @@ export class UpdateChecker {
             } else {
                 this.status = { state: 'upToDate', checkedAt: now };
             }
-        } catch (e: any) {
-            this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
-        } finally {
-            // 无论成功失败都记录检查时间：失败也进入节流窗口，避免网络异常时每次启动都重试
+            // 成功：记录检查时间进入节流窗口
             try {
                 await this.options.storage.update(this.lastCheckKey, now);
             } catch {
                 // 存储失败不影响检查状态
+            }
+        } catch (e: any) {
+            this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
+            // 非 force 的自动检查失败也记录（进入节流窗口，避免网络异常时每次启动都重试）；
+            // force 手动检查失败不记录——不吞掉下一次自动检查的机会
+            if (!force) {
+                try {
+                    await this.options.storage.update(this.lastCheckKey, now);
+                } catch {
+                    // 存储失败不影响检查状态
+                }
             }
         }
         return this.status;
@@ -200,13 +219,14 @@ export class UpdateChecker {
         const dir = path.join(this.options.globalStoragePath, 'update');
         await fs.mkdir(dir, { recursive: true });
         // 安全校验：tag 名可能来自远端 Release（受仓库控制），净化后才允许拼入文件路径，
-        // 防止路径穿越（如 v1.0.0/../../evil）把安装包写到 update 目录之外。
+        // 防止路径穿越如 v1.0.0/../../evil）把安装包写到 update 目录之外。
         // 允许 semver 合法字符（含 + 构建元数据，如 v1.6.0+build5）。
         if (!/^[0-9A-Za-z._+-]+$/.test(update.version)) {
             throw new Error(`非法版本号格式：${update.version}`);
         }
         const ext = update.installerAssetUrl.endsWith('.zip') ? '.zip' : '.exe';
         const target = path.join(dir, `graycode-${update.version}-setup${ext}`);
+        const tmpTarget = `${target}.tmp`;
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPDATE_DOWNLOAD_TIMEOUT_MS);
@@ -219,9 +239,12 @@ export class UpdateChecker {
             if (buf.length === 0) {
                 throw new Error('下载内容为空，安装包可能已损坏。');
             }
-            await fs.writeFile(target, buf);
+            // 先写 .tmp 再 rename：中断/失败不残留半成品 .vsix（防旧版本文件被当成可用包）
+            await fs.writeFile(tmpTarget, buf);
+            await fs.rename(tmpTarget, target);
         } finally {
             clearTimeout(timer);
+            await fs.rm(tmpTarget, { force: true }).catch(() => undefined);
         }
 
         await vscode.env.openExternal(vscode.Uri.file(target));
