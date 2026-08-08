@@ -421,10 +421,14 @@ export class BackendHost {
     setGlobalConfigManager(this.configManager);
     setGlobalToolRegistry(toolRegistry);
 
-    // 多工作区支持：激活工作区/列表变化广播到渲染进程
+    // 多工作区支持：激活工作区/列表变化广播到渲染进程（列表广播携带文件系统
+    // 大小写口径：列表为空时前端只有平台默认值，列表就绪后口径随探测完成可能变化）
     this.workspaceManager = new WorkspaceManager({
         onActiveWorkspaceChanged: (uri) => this.postToRenderer('message', 'workspaceUri', uri),
-        onWorkspaceListChanged: (list) => this.postToRenderer('message', 'workspaceList', list)
+        onWorkspaceListChanged: (list) => this.postToRenderer('message', 'workspaceList', {
+            workspaces: list,
+            fsCaseSensitive: this.workspaceManager.getFsCaseSensitivity()
+        })
     });
     setWorkspaceManager(this.workspaceManager);
     // 新增的工作区文件夹：项目技能立即重新扫描

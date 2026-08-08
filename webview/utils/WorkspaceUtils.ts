@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { t } from '../../backend/i18n';
 import { getWorkspaceManager } from './WorkspaceManager';
+import { getFsCaseSensitivity } from './fsCaseSensitivity';
 
 /**
  * 检查路径是否应该被忽略
@@ -35,6 +36,20 @@ export function matchGlobPattern(filePath: string, pattern: string): boolean {
   
   const regex = new RegExp(`^${regexPattern}$|[/\\\\]${regexPattern}$|^${regexPattern}[/\\\\]|[/\\\\]${regexPattern}[/\\\\]`, 'i');
   return regex.test(filePath.replace(/\\/g, '/'));
+}
+
+/**
+ * 路径等价比对：大小写不敏感文件系统上同一目录以不同大小写路径打开/绑定时
+ * 仍视为同一路径（否则绑定 URI 与打开文件夹 URI 大小写漂移时，合法文件会被
+ * 误判为「属于其他工作区」）。口径与 WorkspaceManager 一致：运行时探测，
+ * 而非仅看平台（macOS APFS / WSL drvfs 默认大小写不敏感）。
+ */
+function pathsEqual(a: string, b: string): boolean {
+  if (a === b) return true;
+  const caseSensitive = getWorkspaceManager()?.getFsCaseSensitivity()
+    ?? getFsCaseSensitivity(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+  if (caseSensitive) return false;
+  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
 }
 
 /**
@@ -289,7 +304,7 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
         // 解析失败：跳过归属比对，不误杀合法文件
         providedWorkspacePath = belongingWorkspace.uri.path;
       }
-      if (providedWorkspacePath !== undefined && belongingWorkspace.uri.path !== providedWorkspacePath) {
+      if (providedWorkspacePath !== undefined && !pathsEqual(belongingWorkspace.uri.path, providedWorkspacePath)) {
         const belongingWorkspaceName = belongingWorkspace.name;
         return {
           valid: false,

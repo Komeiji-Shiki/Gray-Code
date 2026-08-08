@@ -212,9 +212,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 }, this._view?.webview);
             },
             onWorkspaceListChanged: (list: WorkspaceFolderInfo[]) => {
+                // 广播携带文件系统大小写口径：列表为空时前端只能拿到平台默认值，
+                // 列表就绪后口径可能变化（探测完成），必须随广播同步
                 this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
                     type: 'workspaceList',
-                    data: list
+                    data: {
+                        workspaces: list,
+                        fsCaseSensitive: this.workspaceManager.getFsCaseSensitivity()
+                    }
                 }, this._view?.webview);
             }
         });

@@ -14,6 +14,7 @@
  */
 
 import * as vscode from 'vscode';
+import { getFsCaseSensitivity } from './fsCaseSensitivity';
 
 export interface WorkspaceFolderInfo {
     /** 文件夹名称 */
@@ -33,14 +34,12 @@ export interface WorkspaceManagerOptions {
     onWorkspaceListChanged?: (list: WorkspaceFolderInfo[]) => void;
 }
 
-/** Windows 路径大小写不敏感：Uri.file(fsPath).toString() 保留 fsPath 大小写， */
-/** 同一目录以不同大小写路径打开/收藏时 URI 字符串不同但指向同一工作区。 */
-const WIN32 = process.platform === 'win32';
-
-function normalizeWorkspaceUri(uri: string): string {
-    return WIN32 ? uri.toLowerCase() : uri;
-}
-
+/**
+ * 大小写匹配口径说明：文件系统大小写敏感性由运行时探测决定（fsCaseSensitivity.ts），
+ * 而非只看平台——macOS APFS 默认不敏感、Linux 上 WSL drvfs 挂载不敏感，
+ * 仅按 process.platform 判断会把 macOS 误判为大小写敏感，导致同一目录以不同
+ * 大小写路径打开/收藏时固定匹配静默失败。探测不到时回退平台默认值。
+ */
 export class WorkspaceManager {
     private pinnedWorkspaceUri: string | null = null;
     private lastEditorWorkspaceUri: string | null = null;
@@ -48,6 +47,19 @@ export class WorkspaceManager {
     private lastWorkspaceListKey: string | null = null;
     private disposables: vscode.Disposable[] = [];
     private options: WorkspaceManagerOptions;
+
+    /**
+     * 文件系统大小写敏感性（进程级共享口径，见 fsCaseSensitivity.getFsCaseSensitivity）。
+     * 样本取当前列表首个文件夹；列表为空时返回平台默认且不缓存，
+     * 列表就绪后首次调用会完成探测并固定口径（惰性、单次 stat）。
+     */
+    getFsCaseSensitivity(): boolean {
+        return getFsCaseSensitivity(this.getWorkspaceList()[0]?.fsPath);
+    }
+
+    private normalizeWorkspaceUri(uri: string): string {
+        return this.getFsCaseSensitivity() ? uri : uri.toLowerCase();
+    }
 
     constructor(options: WorkspaceManagerOptions = {}) {
         this.options = options;
@@ -94,7 +106,7 @@ export class WorkspaceManager {
     private computeActiveWorkspaceUri(list: WorkspaceFolderInfo[]): string | null {
         if (this.pinnedWorkspaceUri) {
             const pinnedMatch = list.find(
-                (w) => normalizeWorkspaceUri(w.uri) === normalizeWorkspaceUri(this.pinnedWorkspaceUri!)
+                (w) => this.normalizeWorkspaceUri(w.uri) === this.normalizeWorkspaceUri(this.pinnedWorkspaceUri!)
             );
             if (pinnedMatch) {
                 // 列表 URI 大小写漂移（同一目录以不同大小写路径重新打开）：
@@ -108,7 +120,7 @@ export class WorkspaceManager {
             this.pinnedWorkspaceUri = null;
         }
         // 最近活动编辑器所在的工作区也可能已从窗口中移除：失效则回退
-        if (this.lastEditorWorkspaceUri && !list.some((w) => normalizeWorkspaceUri(w.uri) === normalizeWorkspaceUri(this.lastEditorWorkspaceUri!))) {
+        if (this.lastEditorWorkspaceUri && !list.some((w) => this.normalizeWorkspaceUri(w.uri) === this.normalizeWorkspaceUri(this.lastEditorWorkspaceUri!))) {
             this.lastEditorWorkspaceUri = null;
         }
         return this.lastEditorWorkspaceUri ?? list[0]?.uri ?? null;
@@ -120,8 +132,9 @@ export class WorkspaceManager {
      * @param uri 工作区 URI；传 null 解除固定并恢复"跟随活动编辑器"
      *
      * 说明：
-     * - Windows 下按大小写不敏感匹配（同一目录不同大小写路径视为同一工作区），
-     *   命中时固定列表里的规范 URI，避免前端传来的大小写漂移 URI 静默失败；
+     * - 大小写不敏感文件系统（按运行时探测）上按大小写不敏感匹配（同一目录以
+     *   不同大小写路径视为同一工作区），命中时固定列表里的规范 URI，避免前端
+     *   传来的大小写漂移 URI 静默失败；
      * - 请求的工作区未打开时不解除现有固定（对话锁定时绑定工作区可能已关闭，
      *   不应把用户当前的固定/跟随状态清掉），由调用方展示绑定状态。
      */
@@ -134,9 +147,9 @@ export class WorkspaceManager {
             this.handleChange();
             return;
         }
-        const normalized = normalizeWorkspaceUri(uri);
+        const normalized = this.normalizeWorkspaceUri(uri);
         const match = this.getWorkspaceList().find(
-            (w) => normalizeWorkspaceUri(w.uri) === normalized
+            (w) => this.normalizeWorkspaceUri(w.uri) === normalized
         );
         if (!match) {
             return;

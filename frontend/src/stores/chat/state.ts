@@ -352,8 +352,26 @@ export function createChatState(): ChatStoreState {
   /** 收藏的工作区文件夹列表（持久化，可跨窗口/重启保留） */
   const savedWorkspaces = ref<WorkspaceFolderInfo[]>([])
 
-  /** 文件系统大小写敏感（扩展端下发：仅 Windows 大小写不敏感），工作区 URI 匹配口径依据 */
-  const fsCaseSensitive = ref(false)
+  /**
+   * 文件系统大小写敏感（扩展端 getWorkspaceList 下发：运行时探测）。
+   *
+   * 默认值按 webview 宿主平台兜底（初始化 IPC 失败时）：Windows/macOS 默认
+   * 大小写不敏感，其他平台（Linux 常见文件系统）敏感——大小写敏感文件系统上
+   * 避免把不同大小写的两个真实目录误合并；大小写不敏感系统上同一目录不同
+   * 大小写路径极少同时出现。
+   */
+  function detectPlatformCaseSensitivity(): boolean {
+    try {
+      const platform = (typeof navigator !== 'undefined' ? navigator.platform : '') || ''
+      const p = platform.toLowerCase()
+      if (p.includes('win') || p.includes('mac')) return false
+    } catch {
+      // 忽略，按大小写敏感兜底
+    }
+    return true
+  }
+
+  const fsCaseSensitive = ref(detectPlatformCaseSensitivity())
   
   /** 输入框内容（跨视图保持） */
   const inputValue = ref('')

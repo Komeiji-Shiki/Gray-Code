@@ -336,24 +336,6 @@ export async function openWorkspaceFolderAction(state: ChatStoreState, fsPath?: 
 }
 
 /**
- * 显式保存当前工作区到收藏（多工作区「保存工作区」入口）
- */
-export async function saveCurrentWorkspace(state: ChatStoreState): Promise<any> {
-  try {
-    const resp = await sendToExtension<any>('workspace.saveCurrent', {})
-    if (Array.isArray(resp?.saved)) {
-      setSavedWorkspaces(state, resp.saved)
-    }
-    return resp
-  } catch (error: any) {
-    const message = error?.message || String(error)
-    console.warn('[configActions] Failed to save current workspace:', error)
-    void showNotification(message, 'error')
-    return null
-  }
-}
-
-/**
  * 打开收藏的工作区（未打开时走目录打开流程）
  *
  * 1.7.3 修复：已在当前窗口打开的收藏工作区由 chatStore 层按「切换工作区」语义处理

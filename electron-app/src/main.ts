@@ -1032,7 +1032,7 @@ function createWindow(): void {
               if (!menu) return { found: true, menu: 'menu did not open', before };
               const itemTexts = [...menu.querySelectorAll('.ws-menu-item')].map((e) => (e.innerText || '').trim().slice(0, 40));
               // click the first open-workspace item; fall back to auto when none.
-              // 排除底部动作条目（打开文件夹/保存当前工作区）与收藏（带移除按钮）
+              // 排除底部动作条目（打开工作区文件夹）与收藏（带移除按钮）
               const isAuto = (e) => /auto|跟随/i.test(e.innerText || '');
               const isAction = (e) => e.classList.contains('ws-menu-action');
               const isSaved = (e) => !!e.querySelector('.ws-item-remove');

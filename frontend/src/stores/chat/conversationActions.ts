@@ -312,11 +312,16 @@ export async function syncConversationWorkspaceUri(
   const convNow = state.conversations.value.find(c => c.id === conversationId)
   if (!convNow || !convNow.isPersisted || convNow.workspaceUri) return
 
+  // await 期间用户可能已切换到其他对话（其 switchConversation 会把扩展端激活
+  // 工作区改为目标对话的绑定值）：此时继续写入会把本会话错误绑定到别的对话的
+  // 工作区。直接放弃本次同步——返回本会话标签页时 switchConversation 会再次
+  // 触发同步，用当时的激活工作区补绑，语义与「绑定即终身」一致。
+  if (state.currentConversationId.value !== conversationId) return
+
   // 仅当目标会话仍是当前会话时同步 store：await 期间用户可能已切换到
   // 锁定工作区的对话，store 值应以该对话锁定的绑定工作区为准。
-  if (state.currentConversationId.value === conversationId) {
-    state.currentWorkspaceUri.value = workspaceUri
-  }
+  const prevWorkspaceUri = state.currentWorkspaceUri.value
+  state.currentWorkspaceUri.value = workspaceUri
 
   try {
     await sendToExtension('conversation.setWorkspaceUri', {
@@ -325,6 +330,13 @@ export async function syncConversationWorkspaceUri(
     })
     convNow.workspaceUri = workspaceUri
   } catch (error) {
+    // 写入失败：回滚 store 展示（保持"未绑定跟随"语义），避免 store 与后端
+    // 短暂不一致——下次进入该对话时 switchConversation 会再次触发同步重试。
+    // 仅当目标仍是当前会话时回滚：写入失败瞬间用户可能已切到已绑定对话 B，
+    // 用旧值回滚会覆盖 B 的锁定展示（且 B 未失败，无需回滚）。
+    if (state.currentConversationId.value === conversationId) {
+      state.currentWorkspaceUri.value = prevWorkspaceUri
+    }
     console.warn('[conversationActions] Failed to sync conversation workspace URI:', error)
   }
 }

@@ -26,8 +26,7 @@ const chatStoreMock = {
   setActiveWorkspace: vi.fn().mockResolvedValue(undefined),
   removeSavedWorkspace: vi.fn().mockResolvedValue(undefined),
   openSavedWorkspace: vi.fn().mockResolvedValue(undefined),
-  openWorkspaceFolder: vi.fn().mockResolvedValue(undefined),
-  saveCurrentWorkspace: vi.fn().mockResolvedValue(undefined)
+  openWorkspaceFolder: vi.fn().mockResolvedValue(undefined)
 }
 
 vi.mock('@/stores/chatStore', () => ({
@@ -63,7 +62,6 @@ beforeEach(() => {
   chatStoreMock.removeSavedWorkspace.mockClear()
   chatStoreMock.openSavedWorkspace.mockClear()
   chatStoreMock.openWorkspaceFolder.mockClear()
-  chatStoreMock.saveCurrentWorkspace.mockClear()
 })
 
 describe('触发按钮文案', () => {
@@ -159,12 +157,13 @@ describe('下拉菜单内容', () => {
     wrapper.unmount()
   })
 
-  it('绑定未打开时不显示「保存当前工作区」入口', async () => {
-    chatStoreMock.workspaceList = [makeWs(URI_B, 'ProjectB', 'c:\\Users\\foo\\ProjectB')]
+  it('不再提供「保存当前工作区」入口（打开工作区即自动保存）', async () => {
+    chatStoreMock.workspaceList = [makeWs(URI_A, 'ProjectA', 'c:\\Users\\foo\\ProjectA')]
     chatStoreMock.currentWorkspaceUri = URI_A
     const wrapper = mountSelector()
     await openMenu(wrapper)
     expect(wrapper.text()).not.toContain('components.tabs.workspaceSelector.saveWorkspace')
+    expect(wrapper.findAll('.ws-menu-item').some(i => i.find('.codicon-save').exists())).toBe(false)
     wrapper.unmount()
   })
 })

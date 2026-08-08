@@ -67,7 +67,6 @@ import {
   loadSavedWorkspaces,
   removeSavedWorkspace,
   openWorkspaceFolderAction,
-  saveCurrentWorkspace,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
   handleRetryStatus,
@@ -990,7 +989,13 @@ export const useChatStore = defineStore('chat', () => {
           setCurrentWorkspaceUri(state, message.data)
         }
       } else if (message.type === 'workspaceList') {
-        setWorkspaceList(state, message.data)
+        // 广播载荷 { workspaces, fsCaseSensitive }：列表就绪后大小写口径可能
+        // 随探测完成而变化（初始化时列表为空只有平台默认值），必须随广播同步
+        const payload = message.data as { workspaces?: unknown[]; fsCaseSensitive?: boolean }
+        setWorkspaceList(state, Array.isArray(payload) ? payload : (payload?.workspaces as any[] ?? []))
+        if (typeof payload?.fsCaseSensitive === 'boolean') {
+          state.fsCaseSensitive.value = payload.fsCaseSensitive
+        }
       } else if (message.type === 'retryStatus') {
         handleRetryStatus(state, message.data)
       }
@@ -1152,7 +1157,6 @@ export const useChatStore = defineStore('chat', () => {
     removeSavedWorkspace: (fsPath: string) => removeSavedWorkspace(state, fsPath),
     openWorkspaceFolder: (fsPath?: string) => openWorkspaceFolder(fsPath),
     openSavedWorkspace: (entry: WorkspaceFolderInfo) => openSavedWorkspace(entry),
-    saveCurrentWorkspace: () => saveCurrentWorkspace(state),
     
     // 输入框
     inputValue: state.inputValue,

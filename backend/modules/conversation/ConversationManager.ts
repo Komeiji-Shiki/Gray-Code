@@ -1203,6 +1203,22 @@ export class ConversationManager {
         const inFlight = this.conversationCreations.get(conversationId);
         if (inFlight) {
             await inFlight;
+            // 并发去重：第二个调用等待首个创建完成后，若其携带了绑定而首个创建
+            // 未带（H4 自动建会话与用户建会话并发时，用户侧的绑定不应丢失），
+            // 补绑；失败不阻塞创建（补绑是兜底，后续前端 sync 路径仍会补）。
+            if (normalizedWorkspaceUri) {
+                try {
+                    const meta = await this.loadStoredMetadata(conversationId);
+                    if (!meta?.workspaceUri) {
+                        await this.setWorkspaceUri(conversationId, normalizedWorkspaceUri);
+                    }
+                } catch (error: any) {
+                    log.warn('create_conversation_merge_bind_failed', {
+                        conversationId,
+                        error: error?.message ?? String(error)
+                    });
+                }
+            }
             return;
         }
 

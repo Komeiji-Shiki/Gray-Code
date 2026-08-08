@@ -83,7 +83,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
       return sortedConversations.value
     }
     // 筛选当前工作区的对话（未绑定工作区的对话视为跟随当前工作区）。
-    // 大小写匹配口径与扩展端 WorkspaceManager 一致：仅 Windows 大小写不敏感，
+    // 大小写匹配口径与扩展端 WorkspaceManager 一致：按运行时探测的大小写敏感性，
     // 其他平台（大小写敏感文件系统）不同大小写的目录是不同工作区。
     const sameWorkspaceUri = (a: string, b: string): boolean =>
       state.fsCaseSensitive.value

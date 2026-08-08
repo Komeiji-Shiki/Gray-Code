@@ -26,9 +26,10 @@ const isEmpty = computed(() => chatStore.workspaceList.length === 0)
 
 /**
  * 工作区 URI 等价判断：与扩展端 WorkspaceManager 的匹配口径一致——
- * 仅 Windows 大小写不敏感（同一目录以不同大小写路径打开/收藏时 URI 字符串
- * 可能漂移，统一小写归一）；其他平台大小写敏感文件系统上不同大小写的
- * 目录是不同工作区，不得归一（大小写敏感性由扩展端 getWorkspaceList 下发）。
+ * 按运行时探测的文件系统大小写敏感性（fsCaseSensitive=false 时大小写不敏感，
+ * 同一目录以不同大小写路径打开/收藏时 URI 字符串可能漂移，统一小写归一）；
+ * 大小写敏感文件系统上不同大小写的目录是不同工作区，不得归一（大小写敏感性
+ * 由扩展端 getWorkspaceList 下发）。
  */
 function sameUri(a: string, b: string): boolean {
   if (a === b) return true
@@ -179,23 +180,6 @@ function onOpenWorkspaceFolder() {
   void chatStore.openWorkspaceFolder()
 }
 
-/** 保存当前工作区到收藏（显式「保存工作区」入口） */
-function onSaveCurrentWorkspace() {
-  closeMenu()
-  void chatStore.saveCurrentWorkspace()
-}
-
-/** 当前激活的工作区是否已在收藏中（避免重复保存） */
-const isCurrentSaved = computed(() => {
-  const current = chatStore.currentWorkspaceUri
-  if (!current) return false
-  const norm = (p: string) => (p || '').replace(/\\/g, '/').toLowerCase()
-  const currentFs = chatStore.workspaceList.find(ws => ws.uri === current)?.fsPath
-  return currentFs
-    ? chatStore.savedWorkspaces.some(ws => norm(ws.fsPath) === norm(currentFs))
-    : false
-})
-
 onMounted(() => {
   document.addEventListener('click', handleOutsideClick)
   document.addEventListener('keydown', handleKeydown)
@@ -313,17 +297,6 @@ onUnmounted(() => {
         </div>
 
         <div class="ws-menu-divider"></div>
-
-        <div
-          v-if="selectedWorkspace && !boundWorkspaceClosed"
-          class="ws-menu-item ws-menu-action"
-          :class="{ 'ws-menu-disabled': isCurrentSaved }"
-          :title="isCurrentSaved ? t('components.tabs.workspaceSelector.saveWorkspaceSaved') : t('components.tabs.workspaceSelector.saveWorkspaceHint')"
-          @click="isCurrentSaved ? undefined : onSaveCurrentWorkspace()"
-        >
-          <i class="codicon codicon-save ws-item-plus"></i>
-          <span class="ws-item-label">{{ t('components.tabs.workspaceSelector.saveWorkspace') }}</span>
-        </div>
 
         <div class="ws-menu-item ws-menu-action" @click="onOpenWorkspaceFolder">
           <i class="codicon codicon-add ws-item-plus"></i>

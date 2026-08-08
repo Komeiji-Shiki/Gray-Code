@@ -567,7 +567,7 @@ export function updateTabConversationId(
 
 /**
  * 工作区 URI 等价判断：与扩展端 WorkspaceManager 匹配口径一致——
- * 仅 Windows（fsCaseSensitive=false）大小写不敏感。
+ * 按运行时探测的文件系统大小写敏感性（fsCaseSensitive=false 时大小写不敏感）。
  */
 export function sameWorkspaceUri(
   state: ChatStoreState,

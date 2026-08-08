@@ -134,4 +134,34 @@ describe('syncConversationWorkspaceUri（绑定锁定修复）', () => {
     expect(state.conversations.value[0].workspaceUri).toBe(WS_B)
     expect(state.currentWorkspaceUri.value).toBeNull()
   })
+
+  it('await 期间用户切到其他对话：不写后端、不同步 store（避免绑到别的对话的工作区）', async () => {
+    const state = createState({
+      currentConversationId: ref('conv-switch'),
+      conversations: ref([makeConv('conv-switch')]),
+      currentWorkspaceUri: ref(null)
+    })
+    let resolveFetch!: (v: string | null) => void
+    mockSend.mockImplementation((command: string) => {
+      if (command === 'getWorkspaceUri') {
+        return new Promise<string | null>((res) => {
+          resolveFetch = res
+        })
+      }
+      if (command === 'conversation.setWorkspaceUri') return Promise.resolve({ success: true })
+      return Promise.resolve(null)
+    })
+
+    const pending = syncConversationWorkspaceUri(state, 'conv-switch')
+    // await 期间用户切换到绑定 WS_B 的对话：其 switchConversation 会把扩展端
+    // 激活工作区改成 WS_B，此时若继续写入会把本会话错误绑定到 WS_B
+    state.currentConversationId.value = 'other-conv'
+    resolveFetch(WS_B)
+    await pending
+
+    const setCalls = mockSend.mock.calls.filter(c => c[0] === 'conversation.setWorkspaceUri')
+    expect(setCalls).toHaveLength(0)
+    expect(state.conversations.value[0].workspaceUri).toBeUndefined()
+    expect(state.currentWorkspaceUri.value).toBeNull()
+  })
 })

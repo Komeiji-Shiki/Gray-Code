@@ -15,16 +15,20 @@ import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { getWorkspaceManager } from '../utils/WorkspaceManager';
+import type { WorkspaceManager as WorkspaceManagerType } from '../utils/WorkspaceManager';
 import type { WorkspaceFolderInfo } from '../utils/WorkspaceManager';
+import { getFsCaseSensitivity } from '../utils/fsCaseSensitivity';
 
 /** globalState 中收藏工作区列表的键 */
 export const SAVED_WORKSPACES_KEY = 'graycode.savedWorkspaces';
 
-/** 桌面版 File 菜单等宿主侧入口复用收藏键时，与主进程共享的常量 */
-const WIN32 = process.platform === 'win32';
-
+/**
+ * 收藏/路径去重的归一化口径：与工作区 URI 匹配一致，采用进程级探测的大小写
+ * 敏感性（仅 win32 的静态判断会把 macOS APFS / WSL drvfs 误判为大小写敏感，
+ * 同一目录大小写漂移的收藏/已打开路径无法去重或重复触发宿主打开）。
+ */
 function normalizeFsPath(p: string): string {
-  return WIN32 ? p.replace(/\\/g, '/').toLowerCase() : p;
+  return getFsCaseSensitivity(undefined) ? p : p.replace(/\\/g, '/').toLowerCase();
 }
 
 function isDirectory(fsPath: string): boolean {
@@ -80,22 +84,20 @@ function fsPathToUriString(fsPath: string): string {
   return vscode.Uri.file(fsPath).toString();
 }
 
-/** 判断收藏中是否已存在某路径（Windows 大小写不敏感） */
-function isSavedFsPath(ctx: HandlerContext, fsPath: string): boolean {
-  const norm = normalizeFsPath(fsPath);
-  return loadSavedFsPaths(ctx).some((p) => normalizeFsPath(p) === norm);
-}
-
 /** 等待工作区列表出现指定文件夹（vscode.openFolder 在宿主侧异步生效，最多等 3s） */
-async function waitForWorkspaceOpened(uriString: string, manager: { getWorkspaceList(): WorkspaceFolderInfo[] }): Promise<boolean> {
+async function waitForWorkspaceOpened(uriString: string, manager: WorkspaceManagerType): Promise<boolean> {
+  // 大小写不敏感文件系统上宿主可能以不同大小写的路径生效（路径大小写漂移），
+  // 按探测口径（与 WorkspaceManager 匹配一致）归一后比对，避免误超时返回过期状态
+  const caseSensitive = manager.getFsCaseSensitivity();
+  const norm = (u: string) => (caseSensitive ? u : u.toLowerCase());
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    if (manager.getWorkspaceList().some((w) => w.uri === uriString)) {
+    if (manager.getWorkspaceList().some((w) => norm(w.uri) === norm(uriString))) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return manager.getWorkspaceList().some((w) => w.uri === uriString);
+  return manager.getWorkspaceList().some((w) => norm(w.uri) === norm(uriString));
 }
 
 export const getWorkspaceList: MessageHandler = async (data, requestId, ctx) => {
@@ -103,9 +105,10 @@ export const getWorkspaceList: MessageHandler = async (data, requestId, ctx) => 
     ctx.sendResponse(requestId, {
         activeWorkspaceUri: ctx.getCurrentWorkspaceUri(),
         workspaces: manager ? manager.getWorkspaceList() : [],
-        // 文件系统大小写敏感性（Windows 大小写不敏感）：前端工作区 URI 匹配口径与
-        // 扩展端 WorkspaceManager 保持一致——仅 win32 允许大小写漂移归一。
-        fsCaseSensitive: process.platform !== 'win32'
+        // 文件系统大小写敏感性（前端工作区 URI 匹配口径）：运行时探测，而非
+        // 仅按平台判断——macOS APFS 默认不敏感、Linux 的 WSL drvfs 挂载不敏感，
+        // 按平台粗判会把 macOS 误判为大小写敏感（固定匹配静默失败）。
+        fsCaseSensitive: getFsCaseSensitivity(manager?.getWorkspaceList()[0]?.fsPath)
     });
 };
 
@@ -151,48 +154,10 @@ export const removeSavedWorkspace: MessageHandler = async (data, requestId, ctx)
 };
 
 /**
- * 把当前激活的工作区保存到收藏（显式「保存工作区」入口）
- *
- * - 无激活工作区：报错（前端提示先打开工作区）
- * - 已在收藏：幂等返回
- * - 持久化完成（await 写队列）后才响应，避免立即退出丢收藏
- */
-export const saveCurrentWorkspace: MessageHandler = async (data, requestId, ctx) => {
-    try {
-        const manager = getWorkspaceManager();
-        if (!manager) {
-            ctx.sendError(requestId, 'WORKSPACE_MANAGER_NOT_INITIALIZED', 'WorkspaceManager is not initialized.');
-            return;
-        }
-        const activeUri = manager.getActiveWorkspaceUri();
-        if (!activeUri) {
-            ctx.sendError(requestId, 'NO_ACTIVE_WORKSPACE', t('errors.noActiveWorkspace'));
-            return;
-        }
-        // 激活工作区 URI 可能来自 shim（file:/// 编码形式），与收藏存储口径（纯路径）不同：
-        // 先按 URI 反解出 fsPath，取不到时回退为列表项里的 fsPath。
-        const list = manager.getWorkspaceList();
-        const entry = list.find((w) => w.uri === activeUri);
-        const fsPath = entry?.fsPath || (activeUri.startsWith('file://') ? vscode.Uri.parse(activeUri).fsPath : '');
-        if (!fsPath || !isDirectory(fsPath)) {
-            ctx.sendError(requestId, 'WORKSPACE_FOLDER_NOT_FOUND', t('errors.workspaceFolderNotFound'));
-            return;
-        }
-        const next = await addSavedFsPath(ctx, fsPath);
-        ctx.sendResponse(requestId, {
-            success: true,
-            saved: buildSavedInfos(next)
-        });
-    } catch (error: any) {
-        ctx.sendError(requestId, 'SAVE_CURRENT_WORKSPACE_ERROR', error?.message || t('errors.unknown'));
-    }
-};
-
-/**
  * 打开工作区文件夹
  *
  * - 不传 fsPath 时弹出文件夹选择对话框
- * - 选中的文件夹自动加入收藏（await 持久化完成）
+ * - 选中的文件夹自动加入收藏（await 持久化完成；「打开即保存」，无需显式保存入口）
  * - 已在当前窗口打开：直接固定为活动工作区
  * - 未打开：通过宿主打开（Electron 走 vscode.openFolder shim，VS Code 走原生命令），
  *   等待列表生效后再响应，避免返回过期的工作区状态
@@ -227,11 +192,11 @@ export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) 
         await addSavedFsPath(ctx, fsPath);
 
         const uri = fsPathToUriString(fsPath);
-        // Windows 大小写不敏感：同一目录以不同大小写路径打开时不再重复触发宿主替换，
+        // 大小写不敏感文件系统：同一目录以不同大小写路径打开时不再重复触发宿主替换，
         // 且固定时用列表里已存在的 URI（Uri.file 保留路径大小写，用新串会匹配失败静默解除固定）
         const existing = manager.getWorkspaceList().find((w) => {
             if (w.uri === uri) return true;
-            return WIN32 && normalizeFsPath(w.fsPath) === normalizeFsPath(fsPath);
+            return normalizeFsPath(w.fsPath) === normalizeFsPath(fsPath);
         });
         if (existing) {
             // 已打开：直接固定，不重复触发宿主打开
@@ -257,6 +222,5 @@ export function registerWorkspaceHandlers(registry: Map<string, MessageHandler>)
     registry.set('workspace.setActive', setActiveWorkspace);
     registry.set('workspace.getSaved', getSavedWorkspaces);
     registry.set('workspace.removeSaved', removeSavedWorkspace);
-    registry.set('workspace.saveCurrent', saveCurrentWorkspace);
     registry.set('workspace.openFolder', openWorkspaceFolder);
 }

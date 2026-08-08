@@ -2,7 +2,6 @@
  * 工作区保存/打开（多工作区收藏）处理器 单元测试
  *
  * 覆盖修复后的关键行为：
- * - saveCurrentWorkspace：无激活工作区报错；有激活工作区加入收藏（await 持久化）
  * - openWorkspaceFolder：目录不存在报错；已打开的工作区直接固定（不重复触发宿主）
  * - openWorkspaceFolder：未打开时经宿主打开并等待列表生效后再响应（避免过期状态）
  * - 收藏持久化在响应前完成（不再 fire-and-forget 丢收藏）
@@ -15,7 +14,6 @@ import * as vscode from 'vscode';
 import {
     getSavedWorkspaces,
     removeSavedWorkspace,
-    saveCurrentWorkspace,
     openWorkspaceFolder,
     SAVED_WORKSPACES_KEY,
 } from '../../../webview/handlers/WorkspaceHandlers';
@@ -26,6 +24,7 @@ import type { HandlerContext } from '../../../webview/types';
 interface FakeManager {
     getActiveWorkspaceUri: jest.Mock;
     getWorkspaceList: jest.Mock;
+    getFsCaseSensitivity: jest.Mock;
     setActiveWorkspaceUri: jest.Mock;
 }
 
@@ -33,6 +32,7 @@ function createFakeManager(active: string | null, list: WorkspaceFolderInfo[]): 
     return {
         getActiveWorkspaceUri: jest.fn(() => active),
         getWorkspaceList: jest.fn(() => list),
+        getFsCaseSensitivity: jest.fn(() => process.platform !== 'win32'),
         setActiveWorkspaceUri: jest.fn(),
     };
 }
@@ -85,42 +85,6 @@ describe('WorkspaceHandlers（多工作区保存/打开）', () => {
         });
     });
 
-    describe('saveCurrentWorkspace（显式保存工作区）', () => {
-        it('无激活工作区时返回 NO_ACTIVE_WORKSPACE 错误', async () => {
-            const manager = createFakeManager(null, []);
-            setWorkspaceManager(manager as any);
-            const { ctx, errors } = createCtx(store);
-            await saveCurrentWorkspace({}, 'r1', ctx);
-            expect(errors[0].code).toBe('NO_ACTIVE_WORKSPACE');
-        });
-
-        it('有激活工作区时加入收藏，且在响应前完成持久化（await）', async () => {
-            const fsPath = tmpDir;
-            const uri = vscode.Uri.file(fsPath).toString();
-            const manager = createFakeManager(uri, [{ name: path.basename(fsPath), uri, fsPath, index: 0 }]);
-            setWorkspaceManager(manager as any);
-            const { ctx, responses } = createCtx(store);
-            await saveCurrentWorkspace({}, 'r1', ctx);
-            expect(responses[0].data.success).toBe(true);
-            expect(responses[0].data.saved.map((w: WorkspaceFolderInfo) => w.fsPath)).toContain(fsPath);
-            // 持久化已完成（update 被调用且值已写入 store）
-            expect(store[SAVED_WORKSPACES_KEY]).toContain(fsPath);
-        });
-
-        it('重复保存幂等（不产生重复条目）', async () => {
-            const fsPath = tmpDir;
-            const uri = vscode.Uri.file(fsPath).toString();
-            const manager = createFakeManager(uri, [{ name: path.basename(fsPath), uri, fsPath, index: 0 }]);
-            setWorkspaceManager(manager as any);
-            const { ctx, responses } = createCtx(store);
-            await saveCurrentWorkspace({}, 'r1', ctx);
-            await saveCurrentWorkspace({}, 'r2', ctx);
-            const saved = responses[1].data.saved.map((w: WorkspaceFolderInfo) => w.fsPath);
-            expect(saved).toHaveLength(1);
-            expect(saved[0]).toBe(fsPath);
-        });
-    });
-
     describe('removeSavedWorkspace', () => {
         it('移除指定收藏路径', async () => {
             store[SAVED_WORKSPACES_KEY] = [path.join(tmpDir, 'a'), path.join(tmpDir, 'b')];
@@ -167,6 +131,7 @@ describe('WorkspaceHandlers（多工作区保存/打开）', () => {
                         ? [{ name: path.basename(fsPath), uri, fsPath, index: 0 }]
                         : []
                 ),
+                getFsCaseSensitivity: jest.fn(() => process.platform !== 'win32'),
                 setActiveWorkspaceUri: jest.fn(),
             };
             (vscode.commands.executeCommand as jest.Mock).mockImplementation(async () => {
@@ -192,6 +157,7 @@ describe('WorkspaceHandlers（多工作区保存/打开）', () => {
                 getWorkspaceList: jest.fn(() =>
                     opened ? [{ name: path.basename(fsPath), uri, fsPath, index: 0 }] : []
                 ),
+                getFsCaseSensitivity: jest.fn(() => process.platform !== 'win32'),
                 setActiveWorkspaceUri: jest.fn(),
             };
             (vscode.commands.executeCommand as jest.Mock).mockImplementation(async () => {

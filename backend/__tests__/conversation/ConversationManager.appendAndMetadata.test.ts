@@ -45,6 +45,35 @@ describe('ConversationManager 会话创建并发', () => {
         await expect(manager.createConversation('conv-existing', 'Second'))
             .rejects.toThrow(/已存在|already exists/i);
     });
+
+    test('并发去重：首个未带绑定、第二个带绑定时补绑，用户侧绑定不丢失', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const wsUri = 'file:///c%3A/Users/foo/ProjectA';
+
+        await expect(Promise.all([
+            // H4 自动建会话（无绑定 hint）
+            manager.createConversation('conv-create-bind', 'H4'),
+            // 用户建会话（带当前工作区绑定），与 H4 并发去重合并
+            manager.createConversation('conv-create-bind', 'User', wsUri),
+        ])).resolves.toBeDefined();
+
+        const meta = await manager.getMetadata('conv-create-bind');
+        expect(meta?.workspaceUri).toBe(wsUri);
+    });
+
+    test('并发去重：首个已带绑定时，第二个绑定不覆盖（绑定即终身）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+
+        await expect(Promise.all([
+            manager.createConversation('conv-create-bind2', 'User', 'file:///c%3A/Users/foo/ProjectA'),
+            manager.createConversation('conv-create-bind2', 'H4', 'file:///c%3A/Users/foo/ProjectB'),
+        ])).resolves.toBeDefined();
+
+        const meta = await manager.getMetadata('conv-create-bind2');
+        expect(meta?.workspaceUri).toBe('file:///c%3A/Users/foo/ProjectA');
+    });
 });
 
 describe('ConversationManager 追加路径（HIS-01/HIS-02）', () => {
