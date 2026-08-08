@@ -7,7 +7,6 @@
 import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
 import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
-import type { SettingsManager } from '../../backend/modules/settings/SettingsManager';
 import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
@@ -23,7 +22,6 @@ export interface StreamHandlerDeps {
   getClientView: (clientId?: string) => { webview: vscode.Webview } | undefined;
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
-  settingsManager?: SettingsManager;
   /** 请求结束时清理 requestId → clientId 路由映射，防止 requestClients 泄漏 */
   finalizeRequest: (requestId: string) => void;
 }
@@ -190,14 +188,15 @@ export class StreamRequestHandler {
       // 消息来源：background_task 时后端不把回执当作真实用户新回合（isUserInput 判定）
       source
     } = data;
-    
-    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在新用户消息之后）
-    await this.awaitOldStreamCompletion(conversationId);
-    const controller = this.deps.abortManager.create(conversationId);
-    const summarizeController = this.deps.abortManager.createSummary(conversationId);
+
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
-    
+    let controller: AbortController | undefined;
+    let summarizeController: AbortController | undefined;
+
     try {
+      await this.awaitOldStreamCompletion(conversationId);
+      controller = this.deps.abortManager.create(conversationId);
+      summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
         message,
@@ -225,7 +224,7 @@ export class StreamRequestHandler {
     } catch (error: any) {
       // AbortError 可能来自：用户点击中断 / 网络抖动 / 上游直接抛 abort
       // 关键：无论哪种情况，都必须给前端一个明确的 stream 结尾事件，避免残留空占位消息。
-      if (controller.signal.aborted) {
+      if (controller?.signal.aborted) {
         this.reportCancelled(processor)
         return
       }
@@ -235,8 +234,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
+      if (controller) this.deps.abortManager.delete(conversationId, controller);
+      if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
       this.deps.finalizeRequest(requestId);
     }
   }
@@ -257,14 +256,14 @@ export class StreamRequestHandler {
       return;
     }
     const { configId, modelOverride, promptModeId } = data;
-    
-    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在重试截断/新消息之后）
-    await this.awaitOldStreamCompletion(conversationId);
-    const controller = this.deps.abortManager.create(conversationId);
-    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
-    
+    let controller: AbortController | undefined;
+    let summarizeController: AbortController | undefined;
+
     try {
+      await this.awaitOldStreamCompletion(conversationId);
+      controller = this.deps.abortManager.create(conversationId);
+      summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleRetryStream({
         conversationId,
         configId,
@@ -283,7 +282,7 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller.signal.aborted) {
+      if (controller?.signal.aborted) {
         this.reportCancelled(processor)
         return
       }
@@ -293,8 +292,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
+      if (controller) this.deps.abortManager.delete(conversationId, controller);
+      if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
       this.deps.finalizeRequest(requestId);
     }
   }
@@ -315,14 +314,14 @@ export class StreamRequestHandler {
       return;
     }
     const { messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, messageId } = data;
-    
-    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算落在编辑截断之后）
-    await this.awaitOldStreamCompletion(conversationId);
-    const controller = this.deps.abortManager.create(conversationId);
-    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
-    
+    let controller: AbortController | undefined;
+    let summarizeController: AbortController | undefined;
+
     try {
+      await this.awaitOldStreamCompletion(conversationId);
+      controller = this.deps.abortManager.create(conversationId);
+      summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
         conversationId,
         messageIndex,
@@ -347,7 +346,7 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller.signal.aborted) {
+      if (controller?.signal.aborted) {
         this.reportCancelled(processor)
         return
       }
@@ -357,8 +356,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
+      if (controller) this.deps.abortManager.delete(conversationId, controller);
+      if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
       this.deps.finalizeRequest(requestId);
     }
   }
@@ -379,14 +378,14 @@ export class StreamRequestHandler {
       return;
     }
     const { toolResponses, annotation, annotationMessageId, configId, modelOverride, promptModeId } = data;
-    
-    // H1：等待旧流完全退出后再登记新控制器（避免旧流结算与工具确认结算交错写历史）
-    await this.awaitOldStreamCompletion(conversationId);
-    const controller = this.deps.abortManager.create(conversationId);
-    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
-    
+    let controller: AbortController | undefined;
+    let summarizeController: AbortController | undefined;
+
     try {
+      await this.awaitOldStreamCompletion(conversationId);
+      controller = this.deps.abortManager.create(conversationId);
+      summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,
         toolResponses,
@@ -408,7 +407,7 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller.signal.aborted) {
+      if (controller?.signal.aborted) {
         this.reportCancelled(processor)
         return
       }
@@ -418,8 +417,8 @@ export class StreamRequestHandler {
       }
       this.handleStreamError(error, processor, requestId);
     } finally {
-      this.deps.abortManager.delete(conversationId, controller);
-      this.deps.abortManager.deleteSummary(conversationId, summarizeController);
+      if (controller) this.deps.abortManager.delete(conversationId, controller);
+      if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
       this.deps.finalizeRequest(requestId);
     }
   }

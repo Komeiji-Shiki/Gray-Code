@@ -16,17 +16,31 @@ import {
     DEFAULT_EXCLUSION_PROFILES
 } from '../../backend/modules/checkpoint/CheckpointExclusionProfiles';
 import type { HandlerContext, MessageHandler } from '../types';
+import type { CheckpointConfig } from '../../backend/modules/settings/types';
+import type { CheckpointExclusionConfig } from '../../backend/modules/checkpoint/types';
+
+interface HandlerError {
+  code?: string;
+  message?: string;
+}
+
+type CheckpointConfigResult =
+  | { success: true; config: Readonly<CheckpointConfig> }
+  | { success: false; error: HandlerError };
+
+type UpdateCheckpointConfigResult =
+  | { success: true; settings: { toolsConfig?: { checkpoint?: CheckpointConfig } } }
+  | { success: false; error: HandlerError };
 
 /**
  * 获取检查点配置
  */
 export const getCheckpointConfig: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.settingsHandler.getCheckpointConfig();
+  const result = await ctx.settingsHandler.getCheckpointConfig() as CheckpointConfigResult;
   if (result.success) {
     ctx.sendResponse(requestId, { config: result.config });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'GET_CHECKPOINT_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.getCheckpointConfigFailed'));
+    ctx.sendError(requestId, 'GET_CHECKPOINT_CONFIG_ERROR', result.error?.message || t('webview.errors.getCheckpointConfigFailed'));
   }
 };
 
@@ -34,15 +48,22 @@ export const getCheckpointConfig: MessageHandler = async (data, requestId, ctx) 
  * 更新检查点配置
  */
 export const updateCheckpointConfig: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.settingsHandler.updateCheckpointConfig({ config: data.config });
+  const config = data?.config;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    ctx.sendError(requestId, 'UPDATE_CHECKPOINT_CONFIG_ERROR', 'Invalid checkpoint config');
+    return;
+  }
+  const result = await ctx.settingsHandler.updateCheckpointConfig({ config }) as UpdateCheckpointConfigResult;
   if (result.success) {
-    // M-10: 返回后端归一化后的配置（后端会合并默认启用类别、把非法值（如 maxFileSizeBytes 负数）归零等）。
-    // 前端保存成功后以返回值覆盖本地值，避免本地 UI 与后端权威值长期脱节。
-    const settings = (result as { settings?: { toolsConfig?: { checkpoint?: unknown } } }).settings;
-    ctx.sendResponse(requestId, { success: true, config: settings?.toolsConfig?.checkpoint ?? null });
+    // 返回后端归一化后的配置，且成功响应必须携带配置，不用 null 掩盖异常返回形状。
+    const normalizedConfig = result.settings.toolsConfig?.checkpoint;
+    if (!normalizedConfig) {
+      ctx.sendError(requestId, 'UPDATE_CHECKPOINT_CONFIG_ERROR', t('webview.errors.updateCheckpointConfigFailed'));
+      return;
+    }
+    ctx.sendResponse(requestId, { success: true, config: normalizedConfig });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'UPDATE_CHECKPOINT_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.updateCheckpointConfigFailed'));
+    ctx.sendError(requestId, 'UPDATE_CHECKPOINT_CONFIG_ERROR', result.error?.message || t('webview.errors.updateCheckpointConfigFailed'));
   }
 };
 
@@ -116,9 +137,13 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
       }
     );
 
-    // 回退后刷新派生元数据（todoList / activeBuild），确保后续发给模型的 TODO_LIST 不过期。
+    // 回退本身已经成功，派生元数据刷新失败只记录告警，不能误报恢复失败。
     if (result?.success && ctx.chatHandler) {
-      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+      try {
+        await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+      } catch (refreshError) {
+        console.warn('[CheckpointHandlers] Failed to refresh derived metadata after restore:', refreshError);
+      }
     }
 
     ctx.sendResponse(requestId, result);
@@ -286,7 +311,8 @@ export const previewExclusions: MessageHandler = async (data, requestId, ctx) =>
       ctx.sendError(requestId, 'PREVIEW_EXCLUSIONS_ERROR', t('webview.errors.previewExclusionsFailed'));
       return;
     }
-    const config = result.config as any;
+    const config = result.config as CheckpointConfig;
+    const exclusion = config.exclusion as CheckpointExclusionConfig | undefined;
 
     const folders = vscode.workspace.workspaceFolders ?? [];
     const roots = createRuntimeWorkspaceRoots(
@@ -307,10 +333,10 @@ export const previewExclusions: MessageHandler = async (data, requestId, ctx) =>
       roots,
       customIgnorePatterns: [
         ...(config.customIgnorePatterns ?? []),
-        ...(config.exclusion?.customPatterns ?? [])
+        ...(exclusion?.customPatterns ?? [])
       ],
-      enabledProfiles: config.exclusion?.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
-      maxFileSizeBytes: config.exclusion?.maxFileSizeBytes ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
+      enabledProfiles: exclusion?.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
+      maxFileSizeBytes: exclusion?.maxFileSizeBytes ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
       excludeAbsolutePaths: [path.dirname(checkpointsDir)]
     });
 

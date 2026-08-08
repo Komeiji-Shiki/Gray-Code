@@ -36,6 +36,21 @@ function validateCustomMetadataKey(key: unknown): string {
   return key;
 }
 
+function withConversationBoundary(name: string, handler: MessageHandler): MessageHandler {
+  return async (data, requestId, ctx) => {
+    if (data !== undefined && data !== null && (typeof data !== 'object' || Array.isArray(data))) {
+      ctx.sendError(requestId, 'CONVERSATION_INVALID_PARAMS', `Invalid parameters for ${name}`);
+      return;
+    }
+    try {
+      await handler(data || {}, requestId, ctx);
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : `Failed to handle ${name}`;
+      ctx.sendError(requestId, 'CONVERSATION_HANDLER_ERROR', message);
+    }
+  };
+}
+
 /**
  * 创建对话
  */
@@ -128,49 +143,60 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
     return;
   }
 
-  // 先停止主流并等 finally/工具结算完成，不能让迟到写入跨过删除边界。
-  const abortManager = ctx.streamAbortControllers as any;
-  if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
-    await abortManager.abortAndWaitForCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
-  } else {
-    abortManager?.get?.(conversationId)?.abort?.();
-  }
-
-  // 前台和后台 SubAgent 都属于该会话；删除时全部退出，并有界等待 executor 注销。
-  const runIds = subAgentRunEventBus.getSnapshots()
-    .filter(snapshot => snapshot.conversationId === conversationId && subAgentRunController.isActive(snapshot.runId))
-    .map(snapshot => snapshot.runId);
-  for (const runId of runIds) {
-    subAgentRunController.exit(runId, 'Conversation deleted');
-  }
-  await subAgentRunController.waitForInactive(runIds, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
-  await subAgentRunEventBus.flushConversation(conversationId);
-
-  // 先删除该对话的所有检查点（包括备份目录）
-  const checkpointDeleteResult = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
-  if (!checkpointDeleteResult?.success) {
-    ctx.sendError(
-      requestId,
-      'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
-      t('webview.errors.deleteAllCheckpointsFailed')
-    );
-    return;
-  }
-  await ctx.conversationManager.deleteConversation(conversationId);
-  // E-2：删除会话时同步清理 ToolExecutionService 的 mailbox drain epoch 条目，
-  // 防止会话 ID 复用后残留 epoch 影响新会话的 drain 权收敛（尽力而为，失败不影响删除结果）。
-  ctx.chatHandler?.getToolExecutionService?.().clearMailboxDrainEpochsForConversation(conversationId);
-  subAgentRunEventBus.forgetConversation(conversationId);
-  // 清理回合内 fallback 切点缓存与持久化 trimState（不阻断删除，失败仅告警）
   try {
-    await ctx.chatHandler.handleConversationDeleted(conversationId);
+    // 先停止主流并等 finally/工具结算完成，不能让迟到写入跨过删除边界。
+    const abortManager = ctx.streamAbortControllers;
+    await abortManager.abortAndWaitForCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+
+    // 前台和后台 SubAgent 都属于该会话；删除时全部退出，并有界等待 executor 注销。
+    const runIds = subAgentRunEventBus.getSnapshots()
+      .filter(snapshot => snapshot.conversationId === conversationId && subAgentRunController.isActive(snapshot.runId))
+      .map(snapshot => snapshot.runId);
+    for (const runId of runIds) {
+      subAgentRunController.exit(runId, 'Conversation deleted');
+    }
+    await subAgentRunController.waitForInactive(runIds, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+    await subAgentRunEventBus.flushConversation(conversationId);
+
+    // 先删除该对话的所有检查点（包括备份目录）
+    const checkpointDeleteResult = await ctx.checkpointManager.deleteAllCheckpoints(conversationId);
+    if (!checkpointDeleteResult?.success) {
+      ctx.sendError(
+        requestId,
+        'DELETE_CONVERSATION_CHECKPOINT_CLEANUP_FAILED',
+        t('webview.errors.deleteAllCheckpointsFailed')
+      );
+      return;
+    }
+    await ctx.conversationManager.deleteConversation(conversationId);
+    // E-2：删除会话时同步清理 ToolExecutionService 的 mailbox drain epoch 条目，
+    // 防止会话 ID 复用后残留 epoch 影响新会话的 drain 权收敛（尽力而为，失败不影响删除结果）。
+    try {
+      ctx.chatHandler?.getToolExecutionService?.().clearMailboxDrainEpochsForConversation(conversationId);
+    } catch (cleanupError) {
+      console.warn('[ConversationHandlers] Failed to clear mailbox drain epochs:', cleanupError);
+    }
+    try {
+      subAgentRunEventBus.forgetConversation(conversationId);
+    } catch (cleanupError) {
+      console.warn('[ConversationHandlers] Failed to forget sub-agent conversation:', cleanupError);
+    }
+    // 清理回合内 fallback 切点缓存与持久化 trimState（不阻断删除，失败仅告警）
+    try {
+      await ctx.chatHandler.handleConversationDeleted(conversationId);
+    } catch (error) {
+      log.warn('conversation_delete_trim_cleanup_failed', {
+        conversationId,
+        error: String(error)
+      });
+    }
+    ctx.sendResponse(requestId, { success: true });
   } catch (error) {
-    log.warn('conversation_delete_trim_cleanup_failed', {
-      conversationId,
-      error: String(error)
-    });
+    const message = error instanceof Error && error.message
+      ? error.message
+      : 'Failed to delete conversation';
+    ctx.sendError(requestId, 'DELETE_CONVERSATION_ERROR', message);
   }
-  ctx.sendResponse(requestId, { success: true });
 };
 
 
@@ -289,19 +315,21 @@ export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
  * 注册对话管理处理器
  */
 export function registerConversationHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('conversation.createConversation', createConversation);
-  registry.set('conversation.listConversations', listConversations);
-  registry.set('conversation.getConversationMetadata', getConversationMetadata);
-  registry.set('conversation.getConversationMetadataBatch', getConversationMetadataBatch);
-  registry.set('conversation.updateSummary', updateSummary);
-  registry.set('conversation.setTitle', setTitle);
-  registry.set('conversation.setWorkspaceUri', setWorkspaceUri);
-  registry.set('conversation.setCustomMetadata', setCustomMetadata);
-  registry.set('conversation.deleteConversation', deleteConversation);
-  registry.set('conversation.createBranchConversation', createBranchConversation);
-
-  registry.set('conversation.getMessages', getMessages);
-  registry.set('conversation.getMessagesPaged', getMessagesPaged);
-  registry.set('conversation.loadConversationForView', loadConversationForView);
-  registry.set('conversation.rejectToolCalls', rejectToolCalls);
+  const register = (name: string, handler: MessageHandler): void => {
+    registry.set(name, withConversationBoundary(name, handler));
+  };
+  register('conversation.createConversation', createConversation);
+  register('conversation.listConversations', listConversations);
+  register('conversation.getConversationMetadata', getConversationMetadata);
+  register('conversation.getConversationMetadataBatch', getConversationMetadataBatch);
+  register('conversation.updateSummary', updateSummary);
+  register('conversation.setTitle', setTitle);
+  register('conversation.setWorkspaceUri', setWorkspaceUri);
+  register('conversation.setCustomMetadata', setCustomMetadata);
+  register('conversation.deleteConversation', deleteConversation);
+  register('conversation.createBranchConversation', createBranchConversation);
+  register('conversation.getMessages', getMessages);
+  register('conversation.getMessagesPaged', getMessagesPaged);
+  register('conversation.loadConversationForView', loadConversationForView);
+  register('conversation.rejectToolCalls', rejectToolCalls);
 }

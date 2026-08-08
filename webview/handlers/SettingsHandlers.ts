@@ -17,6 +17,17 @@ import { SAVED_WORKSPACES_KEY } from './WorkspaceHandlers';
 
 /** 批量删除的 ids 数量上限：防御超大数组触发 O(n·T) 全量 LOG 重建 */
 const MAX_BATCH_DELETE_IDS = 10000;
+const MAX_MEMORY_ENTRIES_LIMIT = 10000;
+
+function settingsHandlerBoundary(errorCode: string, fallback: string, handler: MessageHandler): MessageHandler {
+  return async (data, requestId, ctx) => {
+    try {
+      await handler(data || {}, requestId, ctx);
+    } catch (error) {
+      ctx.sendError(requestId, errorCode, error instanceof Error && error.message ? error.message : fallback);
+    }
+  };
+}
 
 /**
  * 记忆 handler 解析目标 MemoryManager：
@@ -266,8 +277,10 @@ export const getMemoryEntries: MessageHandler = async (data, requestId, ctx) => 
       return ctx.sendResponse(requestId, { entries: [], total: 0, initialized: false });
     }
     const limit = data?.limit;
-    const effectiveLimit =
-      typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? limit : 5000;
+    const effectiveLimit = Math.min(
+      typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? limit : 5000,
+      MAX_MEMORY_ENTRIES_LIMIT
+    );
     const total = await mgr.totalEntries();
     const entries = await mgr.listEntries(effectiveLimit);
     ctx.sendResponse(requestId, {
@@ -550,6 +563,36 @@ export const savePromptMode: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /**
+ * 导出提示词模式
+ */
+export const exportPromptModes: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const filename = typeof data?.filename === 'string' && data.filename.trim()
+      ? data.filename.trim()
+      : 'graycode-prompt-modes.json';
+    const content = typeof data?.content === 'string' ? data.content : '';
+    const result = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.resolve(filename)),
+      filters: {
+        'JSON Files': ['json'],
+        'All Files': ['*']
+      },
+      title: '导出 GrayCode 提示词模式'
+    });
+
+    if (!result) {
+      ctx.sendResponse(requestId, { success: false, cancelled: true });
+      return;
+    }
+
+    await fs.writeFile(result.fsPath, content, 'utf-8');
+    ctx.sendResponse(requestId, { success: true, filePath: result.fsPath });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'EXPORT_PROMPT_MODES_ERROR', error.message || 'Failed to export prompt modes');
+  }
+};
+
+/**
  * 重命名提示词模式
  */
 export const renamePromptMode: MessageHandler = async (data, requestId, ctx) => {
@@ -593,10 +636,10 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
         dynamicTokens: result.dynamicTokens
       });
     } else {
-      ctx.sendResponse(requestId, { success: false, error: result.error?.message });
+      ctx.sendError(requestId, 'COUNT_SYSTEM_PROMPT_TOKENS_ERROR', result.error?.message || 'Token count failed');
     }
   } catch (error: any) {
-    ctx.sendResponse(requestId, { success: false, error: error.message || 'Token count failed' });
+    ctx.sendError(requestId, 'COUNT_SYSTEM_PROMPT_TOKENS_ERROR', error.message || 'Token count failed');
   }
 };
 
@@ -604,10 +647,10 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
  * 注册设置管理处理器
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('getSettings', getSettings);
+  registry.set('getSettings', settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
   registry.set('getAppInfo', getAppInfo);
-  registry.set('updateSettings', updateSettings);
-  registry.set('updateProxySettings', updateProxySettings);
+  registry.set('updateSettings', settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
+  registry.set('updateProxySettings', settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
   registry.set('updateUISettings', updateUISettings);
   registry.set('settings.getActiveChannelId', getActiveChannelId);
   registry.set('settings.setActiveChannelId', setActiveChannelId);
@@ -707,7 +750,7 @@ export const exportSettings: MessageHandler = async (data, requestId, ctx) => {
 
         // 弹出保存对话框
         const result = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file('graycode-settings.json'),
+            defaultUri: vscode.Uri.file(path.resolve('graycode-settings.json')),
             filters: {
                 'JSON Files': ['json'],
                 'All Files': ['*']

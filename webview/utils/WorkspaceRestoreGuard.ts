@@ -62,24 +62,11 @@ function isPathInsideRoots(fsPath: string, roots: string[]): boolean {
  * 取消失败不应阻断主流程，独立 try/catch 仅告警。
  */
 export async function cancelStreamAndSubAgents(ctx: HandlerContext, conversationId: string): Promise<void> {
-    // streamAbortControllers 实际上是 StreamAbortManager（类型声明为 Map，
-    // ChatViewProvider 以 messageRouter.getAbortManager() as any 注入）
     try {
-        const abortManager = ctx.streamAbortControllers as any;
-        if (abortManager?.abortAndWaitForCompletion) {
-            // 等旧流完全退出（工具结算落盘、finally 注销控制器）再返回：
-            // 恢复/切换写入历史若与旧流结算 addContent 交错，会产生半截回答/错位结算。
-            // 与主流入口（StreamRequestHandler）的写序保护同一口径；超时兜底防挂死。
-            await abortManager.abortAndWaitForCompletion(conversationId);
-        } else if (abortManager?.cancel) {
-            abortManager.cancel(conversationId);
-        } else if (abortManager?.get) {
-            const controller = abortManager.get(conversationId);
-            if (controller) {
-                controller.abort();
-                abortManager.delete(conversationId);
-            }
-        }
+        // 等旧流完全退出（工具结算落盘、finally 注销控制器）再返回：
+        // 恢复/切换写入历史若与旧流结算 addContent 交错，会产生半截回答/错位结算。
+        // 与主流入口（StreamRequestHandler）的写序保护同一口径；超时兜底防挂死。
+        await ctx.streamAbortControllers.abortAndWaitForCompletion(conversationId);
     } catch (err) {
         console.warn('[WorkspaceRestoreGuard] Failed to cancel stream before restore:', err);
     }

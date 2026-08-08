@@ -4,102 +4,169 @@
 
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
+import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config/types';
+import type {
+  AddModelsRequest,
+  GetModelsRequest,
+  RemoveModelRequest,
+  SetActiveModelRequest,
+} from '../../backend/modules/api/models/types';
 
-/**
- * 列出所有配置
- */
-export const listConfigs: MessageHandler = async (data, requestId, ctx) => {
-  const configs = await ctx.configManager.listConfigs();
-  const configIds = configs.map(c => c.id);
-  ctx.sendResponse(requestId, configIds);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCreateConfigInput(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return typeof value.name === 'string' && value.name.trim().length > 0
+    && typeof value.type === 'string';
+}
+
+function isAddModelsRequest(value: unknown): value is AddModelsRequest {
+  return isRecord(value)
+    && typeof value.configId === 'string' && !!value.configId.trim()
+    && Array.isArray(value.models);
+}
+
+function isModelSelectionRequest(value: unknown): value is RemoveModelRequest | SetActiveModelRequest {
+  return isRecord(value)
+    && typeof value.configId === 'string' && !!value.configId.trim()
+    && typeof value.modelId === 'string' && !!value.modelId.trim();
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function requireString(
+  value: unknown,
+  requestId: string,
+  ctx: HandlerContext,
+  errorCode: string,
+  fieldName: string
+): value is string {
+  if (typeof value === 'string' && value.trim().length > 0) return true;
+  ctx.sendError(requestId, errorCode, `Invalid ${fieldName}`);
+  return false;
+}
+
+export const listConfigs: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    const configs = await ctx.configManager.listConfigs();
+    ctx.sendResponse(requestId, configs.map(config => config.id));
+  } catch (error) {
+    ctx.sendError(requestId, 'LIST_CONFIGS_ERROR', getErrorMessage(error, 'Failed to list configs'));
+  }
 };
 
-/**
- * 获取配置
- */
 export const getConfig: MessageHandler = async (data, requestId, ctx) => {
-  const { configId } = data;
-  const config = await ctx.configManager.getConfig(configId);
-  ctx.sendResponse(requestId, config);
+  const configId = data?.configId;
+  if (!requireString(configId, requestId, ctx, 'GET_CONFIG_ERROR', 'configId')) return;
+  try {
+    ctx.sendResponse(requestId, await ctx.configManager.getConfig(configId));
+  } catch (error) {
+    ctx.sendError(requestId, 'GET_CONFIG_ERROR', getErrorMessage(error, 'Failed to get config'));
+  }
 };
 
-/**
- * 创建配置
- */
 export const createConfig: MessageHandler = async (data, requestId, ctx) => {
-  const configId = await ctx.configManager.createConfig(data);
-  ctx.sendResponse(requestId, configId);
+  if (!isCreateConfigInput(data)) {
+    ctx.sendError(requestId, 'CREATE_CONFIG_ERROR', 'Invalid config data');
+    return;
+  }
+  try {
+    ctx.sendResponse(requestId, await ctx.configManager.createConfig(data as CreateConfigInput));
+  } catch (error) {
+    ctx.sendError(requestId, 'CREATE_CONFIG_ERROR', getErrorMessage(error, 'Failed to create config'));
+  }
 };
 
-/**
- * 更新配置
- */
 export const updateConfig: MessageHandler = async (data, requestId, ctx) => {
-  const { configId, updates } = data;
-  await ctx.configManager.updateConfig(configId, updates);
-  ctx.sendResponse(requestId, { success: true });
+  const configId = data?.configId;
+  const updates = data?.updates;
+  if (!requireString(configId, requestId, ctx, 'UPDATE_CONFIG_ERROR', 'configId') || !isRecord(updates)) {
+    if (!isRecord(updates) && typeof configId === 'string' && configId.trim()) {
+      ctx.sendError(requestId, 'UPDATE_CONFIG_ERROR', 'Invalid updates');
+    }
+    return;
+  }
+  try {
+    await ctx.configManager.updateConfig(configId, updates as UpdateConfigInput);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error) {
+    ctx.sendError(requestId, 'UPDATE_CONFIG_ERROR', getErrorMessage(error, 'Failed to update config'));
+  }
 };
 
-/**
- * 删除配置
- */
 export const deleteConfig: MessageHandler = async (data, requestId, ctx) => {
-  const { configId } = data;
-  await ctx.configManager.deleteConfig(configId);
-  ctx.sendResponse(requestId, { success: true });
+  const configId = data?.configId;
+  if (!requireString(configId, requestId, ctx, 'DELETE_CONFIG_ERROR', 'configId')) return;
+  try {
+    await ctx.configManager.deleteConfig(configId);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error) {
+    ctx.sendError(requestId, 'DELETE_CONFIG_ERROR', getErrorMessage(error, 'Failed to delete config'));
+  }
 };
 
-/**
- * 获取模型列表
- */
+async function handleModelOperation(
+  requestId: string,
+  ctx: HandlerContext,
+  errorCode: string,
+  fallback: string,
+  operation: () => Promise<any>,
+  successData: (result: any) => unknown
+): Promise<void> {
+  try {
+    const result = await operation();
+    if (result?.success) {
+      ctx.sendResponse(requestId, successData(result));
+      return;
+    }
+    const message = typeof result?.error === 'string'
+      ? result.error
+      : result?.error?.message || fallback;
+    ctx.sendError(requestId, errorCode, message);
+  } catch (error) {
+    ctx.sendError(requestId, errorCode, getErrorMessage(error, fallback));
+  }
+}
+
 export const getModels: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.modelsHandler.getModels(data);
-  if (result.success) {
-    ctx.sendResponse(requestId, result.models);
-  } else {
-    ctx.sendError(requestId, 'GET_MODELS_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.getModelsFailed')));
-  }
+  const configId = data?.configId;
+  if (!requireString(configId, requestId, ctx, 'GET_MODELS_ERROR', 'configId')) return;
+  const request: GetModelsRequest = { configId };
+  await handleModelOperation(requestId, ctx, 'GET_MODELS_ERROR', t('webview.errors.getModelsFailed'),
+    () => ctx.modelsHandler.getModels(request), result => result.models);
 };
 
-/**
- * 添加模型
- */
 export const addModels: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.modelsHandler.addModels(data);
-  if (result.success) {
-    ctx.sendResponse(requestId, { success: true });
-  } else {
-    ctx.sendError(requestId, 'ADD_MODELS_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.addModelsFailed')));
+  if (!isAddModelsRequest(data)) {
+    ctx.sendError(requestId, 'ADD_MODELS_ERROR', 'Invalid model data');
+    return;
   }
+  await handleModelOperation(requestId, ctx, 'ADD_MODELS_ERROR', t('webview.errors.addModelsFailed'),
+    () => ctx.modelsHandler.addModels(data), () => ({ success: true }));
 };
 
-/**
- * 移除模型
- */
 export const removeModel: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.modelsHandler.removeModel(data);
-  if (result.success) {
-    ctx.sendResponse(requestId, { success: true });
-  } else {
-    ctx.sendError(requestId, 'REMOVE_MODEL_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.removeModelFailed')));
+  if (!isModelSelectionRequest(data)) {
+    ctx.sendError(requestId, 'REMOVE_MODEL_ERROR', 'Invalid model data');
+    return;
   }
+  await handleModelOperation(requestId, ctx, 'REMOVE_MODEL_ERROR', t('webview.errors.removeModelFailed'),
+    () => ctx.modelsHandler.removeModel(data as RemoveModelRequest), () => ({ success: true }));
 };
 
-/**
- * 设置活动模型
- */
 export const setActiveModel: MessageHandler = async (data, requestId, ctx) => {
-  const result = await ctx.modelsHandler.setActiveModel(data);
-  if (result.success) {
-    ctx.sendResponse(requestId, { success: true });
-  } else {
-    ctx.sendError(requestId, 'SET_ACTIVE_MODEL_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.setActiveModelFailed')));
+  if (!isModelSelectionRequest(data)) {
+    ctx.sendError(requestId, 'SET_ACTIVE_MODEL_ERROR', 'Invalid model data');
+    return;
   }
+  await handleModelOperation(requestId, ctx, 'SET_ACTIVE_MODEL_ERROR', t('webview.errors.setActiveModelFailed'),
+    () => ctx.modelsHandler.setActiveModel(data as SetActiveModelRequest), () => ({ success: true }));
 };
 
-/**
- * 注册配置管理处理器
- */
 export function registerConfigHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('config.listConfigs', listConfigs);
   registry.set('config.getConfig', getConfig);

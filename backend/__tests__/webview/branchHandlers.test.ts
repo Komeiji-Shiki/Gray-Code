@@ -491,22 +491,6 @@ describe('TREE-13 流式期间分支互斥（StreamAbortManager.isActive）', ()
         expect(errors[0]).toMatchObject({ requestId: 'req-b8', code: 'BRANCH_BUSY' });
     });
 
-    test('StreamAbortManager 兜底：streamAbortControllers 为活跃 StreamAbortManager 且含该会话 controller → 同样拒绝', async () => {
-        const abortMgr = new StreamAbortManager();
-        abortMgr.create('c1');
-        const ctx = makeCtx({ streamAbortControllers: abortMgr as unknown as Map<string, AbortController> });
-
-        await createRerollCandidate(
-            { conversationId: 'c1', parentNodeId: 'parent', parts: [{ text: 'x' }] },
-            'req-b9',
-            ctx
-        );
-
-        expect(responses).toHaveLength(0);
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-b9', code: 'BRANCH_BUSY' });
-    });
-
     test('入参校验优先：流式中缺失 conversationId 仍返回 BRANCH_OPERATION_CONFLICT（而非 BRANCH_BUSY）', async () => {
         abortManager.create('c1');
         await switchBranchCandidate({ nodeId: 'n1' }, 'req-b10', makeCtx());

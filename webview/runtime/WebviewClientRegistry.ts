@@ -75,10 +75,14 @@ export class WebviewClientRegistry {
     if (fallback && this.clients.has(fallback)) {
       return fallback;
     }
-    // 注意：requested 未注册时不再返回 requested——返回无效 id 会让下游
-    // requestClients 记录无效条目，响应永远错投。回退到任一已注册客户端。
-    const first = this.clients.keys().next().value;
-    return first as WebviewClientId | undefined;
+    if (requested) {
+      return requested;
+    }
+    if (fallback) {
+      return fallback;
+    }
+
+    return undefined;
   }
 
   postMessage(clientId: unknown, message: Record<string, unknown>): boolean {
@@ -99,10 +103,19 @@ export class WebviewClientRegistry {
     };
 
     try {
-      void Promise.resolve(client.postMessage(routedMessage)).catch(error => {
-        console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
-      });
-      return true;
+      const delivery = client.postMessage(routedMessage);
+      if (typeof delivery !== 'boolean') {
+        void Promise.resolve(delivery).then(delivered => {
+          if (delivered === false) {
+            console.warn('[WebviewClientRegistry] Routed webview rejected message delivery:', client.clientId);
+          }
+        }, error => {
+          console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
+        });
+        // VS Code 的异步 transport 无法同步等待；isAlive 已完成同步存活判断，异步 false 记录为失败证据。
+        return true;
+      }
+      return delivery;
     } catch (error) {
       console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
       return false;

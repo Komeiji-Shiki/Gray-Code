@@ -112,7 +112,6 @@ export class MessageRouter {
       getClientView: this.getClientView,
       sendResponse: (requestId, data) => this.sendRoutedResponse(requestId, data),
       sendError: (requestId, code, message) => this.sendRoutedError(requestId, code, message),
-      settingsManager: this.settingsManager,
       finalizeRequest: (requestId) => this.requestClients.delete(requestId)
     });
   }
@@ -195,6 +194,8 @@ export class MessageRouter {
     const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
     try {
       await handler(data, requestId, routedCtx);
+      // 阻塞 handler 正常返回却没有响应时也必须释放路由映射。
+      this.requestClients.delete(requestId);
     } catch (error) {
       // handler 抛出时没有任何一方会回复，映射必须就地清理
       this.requestClients.delete(requestId);
@@ -268,6 +269,17 @@ export class MessageRouter {
   /**
    * 处理流式消息
    */
+  private runStreamTask(task: Promise<void>, requestId: string, type: string): void {
+    task.catch((error: any) => {
+      console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
+      try {
+        this.sendRoutedError(requestId, 'STREAM_HANDLER_ERROR', error?.message || String(error));
+      } finally {
+        this.requestClients.delete(requestId);
+      }
+    });
+  }
+
   private async handleStreamMessage(
     type: StreamMessageType,
     data: any,
@@ -278,19 +290,19 @@ export class MessageRouter {
     switch (type) {
       case 'chatStream':
         // 不阻塞消息循环，流式处理在后台进行
-        this.streamHandler.handleChatStream(data, requestId, clientId).catch(console.error);
+        this.runStreamTask(this.streamHandler.handleChatStream(data, requestId, clientId), requestId, type);
         break;
         
       case 'retryStream':
-        this.streamHandler.handleRetryStream(data, requestId, clientId).catch(console.error);
+        this.runStreamTask(this.streamHandler.handleRetryStream(data, requestId, clientId), requestId, type);
         break;
         
       case 'editAndRetryStream':
-        this.streamHandler.handleEditAndRetryStream(data, requestId, clientId).catch(console.error);
+        this.runStreamTask(this.streamHandler.handleEditAndRetryStream(data, requestId, clientId), requestId, type);
         break;
         
       case 'toolConfirmation':
-        this.streamHandler.handleToolConfirmationStream(data, requestId, clientId).catch(console.error);
+        this.runStreamTask(this.streamHandler.handleToolConfirmationStream(data, requestId, clientId), requestId, type);
         break;
         
       case 'cancelStream':
@@ -306,9 +318,9 @@ export class MessageRouter {
           break;
         }
         const { conversationId } = data;
-        this.streamHandler.cancelStream(conversationId, requestId, {
+        this.runStreamTask(this.streamHandler.cancelStream(conversationId, requestId, {
           preserveSubAgents: data.preserveSubAgents === true
-        }).catch(console.error);
+        }), requestId, type);
         break;
 
       // H2（R6a-FIX）：reroll/editBranch 长流按 fire-and-forget 处理（与 chatStream/retryStream 同），
@@ -339,8 +351,8 @@ export class MessageRouter {
     const handler = this.registry.get(type);
     if (!handler) {
       // 理论上不可能（注册表与 STREAM_MESSAGE_TYPES 同步维护）；兜底回传错误防挂起
-      this.requestClients.delete(requestId);
       this.sendRoutedError(requestId, 'HANDLER_ERROR', `stream handler not registered: ${type}`);
+      this.requestClients.delete(requestId);
       return;
     }
     const routedCtx = this.createRoutedContext(ctx, clientId);
@@ -360,7 +372,7 @@ export class MessageRouter {
    * 取消所有活跃的流
    */
   cancelAllStreams(): void {
-    this.streamHandler.cancelAllStreams().catch(console.error);
+    this.runStreamTask(this.streamHandler.cancelAllStreams(), '', 'cancelAllStreams');
   }
 
   /**

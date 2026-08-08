@@ -17,6 +17,7 @@ import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modul
 
 /** 结果缓存 TTL（毫秒）：5 分钟内重复打开直接命中，手动刷新强制重算 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_STATS_CACHE_ENTRIES = 32;
 
 interface CachedStats {
     result: UsageStatsResult;
@@ -25,7 +26,6 @@ interface CachedStats {
 
 /** 缓存 key 只由时间范围组成（全部/今天/近7天/近30天）；条目数加 LRU 上限（客户端可控 key，无上限会撑爆内存） */
 const statsCache = new Map<string, CachedStats>();
-const MAX_CACHE_ENTRIES = 20;
 
 /** 内存明细缓存与目录监听（懒初始化，宿主 dispose 时释放） */
 let usageCache: UsageStatsCache | undefined;
@@ -33,17 +33,6 @@ let disposeUsageWatcher: (() => void) | undefined;
 
 function cacheKey(startTime?: number, endTime?: number): string {
     return `${startTime ?? ''}:${endTime ?? ''}`;
-}
-
-/** 写入结果缓存并淘汰最旧条目（Map 迭代序 = 插入序），保证缓存大小有界 */
-function setCachedStats(key: string, entry: CachedStats): void {
-    statsCache.delete(key);
-    statsCache.set(key, entry);
-    while (statsCache.size > MAX_CACHE_ENTRIES) {
-        const oldest = statsCache.keys().next().value;
-        if (oldest === undefined) break;
-        statsCache.delete(oldest);
-    }
 }
 
 /**
@@ -54,9 +43,18 @@ function getOrInitUsageCache(ctx: HandlerContext): UsageStatsCache | undefined {
     if (usageCache) return usageCache;
     const conversationsDir = ctx.conversationManager.getConversationsDirFsPath?.();
     if (!conversationsDir) return undefined;
-    usageCache = new UsageStatsCache();
-    disposeUsageWatcher = startUsageDirectoryWatcher(conversationsDir, usageCache);
-    return usageCache;
+    const candidate = new UsageStatsCache();
+    try {
+        const disposeWatcher = startUsageDirectoryWatcher(conversationsDir, candidate);
+        usageCache = candidate;
+        disposeUsageWatcher = disposeWatcher;
+        return usageCache;
+    } catch (error) {
+        usageCache = undefined;
+        disposeUsageWatcher = undefined;
+        console.warn('[UsageHandlers] Failed to initialize usage directory watcher:', error);
+        return undefined;
+    }
 }
 
 /** 释放目录监听与内存缓存（宿主 dispose 时调用） */
@@ -91,7 +89,15 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
       indexStore: ctx.conversationManager.getUsageIndexStore(),
       cache: getOrInitUsageCache(ctx)
     });
-    setCachedStats(key, { result: stats, cachedAt: Date.now() });
+    const now = Date.now();
+    for (const [cacheKey_, entry] of statsCache) {
+      if (now - entry.cachedAt >= CACHE_TTL_MS) statsCache.delete(cacheKey_);
+    }
+    if (!statsCache.has(key) && statsCache.size >= MAX_STATS_CACHE_ENTRIES) {
+      const oldestKey = [...statsCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0]?.[0];
+      if (oldestKey) statsCache.delete(oldestKey);
+    }
+    statsCache.set(key, { result: stats, cachedAt: now });
     ctx.sendResponse(requestId, stats);
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_USAGE_STATS_ERROR', error?.message || 'Failed to aggregate usage stats');

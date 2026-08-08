@@ -3,8 +3,28 @@
  */
 
 import { t } from '../../backend/i18n';
-import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
+import { checkAllShellsAvailability, checkShellAvailability as probeShellAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
+
+function getResultError(result: unknown, fallback: string): string {
+  if (!result || typeof result !== 'object') return fallback;
+  const error = (result as { error?: unknown }).error;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return fallback;
+}
+
+function withToolBoundary(errorCode: string, fallback: string, handler: MessageHandler): MessageHandler {
+  return async (data, requestId, ctx) => {
+    try {
+      await handler(data || {}, requestId, ctx);
+    } catch (error) {
+      ctx.sendError(requestId, errorCode, error instanceof Error && error.message ? error.message : fallback);
+    }
+  };
+}
 
 // ========== 工具列表和配置 ==========
 
@@ -13,8 +33,7 @@ export const getTools: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { tools: result.tools });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'GET_TOOLS_ERROR', errorResult.error?.message || t('webview.errors.getToolsFailed'));
+    ctx.sendError(requestId, 'GET_TOOLS_ERROR', getResultError(result, t('webview.errors.getToolsFailed')));
   }
 };
 
@@ -24,8 +43,7 @@ export const setToolEnabled: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'SET_TOOL_ENABLED_ERROR', errorResult.error?.message || t('webview.errors.setToolEnabledFailed'));
+    ctx.sendError(requestId, 'SET_TOOL_ENABLED_ERROR', getResultError(result, t('webview.errors.setToolEnabledFailed')));
   }
 };
 
@@ -35,8 +53,7 @@ export const getToolConfig: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { config: result.config });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'GET_TOOL_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.getToolConfigFailed'));
+    ctx.sendError(requestId, 'GET_TOOL_CONFIG_ERROR', getResultError(result, t('webview.errors.getToolConfigFailed')));
   }
 };
 
@@ -46,8 +63,7 @@ export const updateToolConfig: MessageHandler = async (data, requestId, ctx) => 
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'UPDATE_TOOL_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.updateToolConfigFailed'));
+    ctx.sendError(requestId, 'UPDATE_TOOL_CONFIG_ERROR', getResultError(result, t('webview.errors.updateToolConfigFailed')));
   }
 };
 
@@ -128,8 +144,7 @@ export const updateListFilesConfig: MessageHandler = async (data, requestId, ctx
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'UPDATE_LIST_FILES_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.updateListFilesConfigFailed'));
+    ctx.sendError(requestId, 'UPDATE_LIST_FILES_CONFIG_ERROR', getResultError(result, t('webview.errors.updateListFilesConfigFailed')));
   }
 };
 
@@ -174,12 +189,11 @@ export const updateApplyDiffConfig: MessageHandler = async (data, requestId, ctx
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    const errorResult = result as { success: false; error: { code: string; message: string } };
-    ctx.sendError(requestId, 'UPDATE_APPLY_DIFF_CONFIG_ERROR', errorResult.error?.message || t('webview.errors.updateApplyDiffConfigFailed'));
+    ctx.sendError(requestId, 'UPDATE_APPLY_DIFF_CONFIG_ERROR', getResultError(result, t('webview.errors.updateApplyDiffConfigFailed')));
   }
 };
 
-export const getExecuteCommandConfig: MessageHandler = async (data, requestId, ctx) => {
+export const getExecuteCommandConfig: MessageHandler = async (_data, requestId, ctx) => {
   const config = ctx.settingsManager.getExecuteCommandConfig();
   
   const availabilityMap = await checkAllShellsAvailability(
@@ -218,10 +232,12 @@ export const updateExecuteCommandConfig: MessageHandler = async (data, requestId
 
 export const checkShellAvailability: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { shellType, path } = data;
-    // 静态导入替代运行时 require：类型安全且不破坏 ESM 打包（L2）
-    const { checkShellAvailability: checkShell } = await import('../../backend/tools/terminal');
-    const result = await checkShell(shellType, path);
+    const { shellType, path } = data || {};
+    if (typeof shellType !== 'string' || !shellType.trim()) {
+      ctx.sendError(requestId, 'CHECK_SHELL_ERROR', 'Invalid shell type');
+      return;
+    }
+    const result = await probeShellAvailability(shellType, typeof path === 'string' ? path : undefined);
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'CHECK_SHELL_ERROR', error.message || t('webview.errors.checkShellFailed'));
@@ -351,11 +367,14 @@ export const taskGetByType: MessageHandler = async (data, requestId, ctx) => {
  * 注册工具管理处理器
  */
 export function registerToolHandlers(registry: Map<string, MessageHandler>): void {
+  const register = (name: string, errorCode: string, fallback: string, handler: MessageHandler): void => {
+    registry.set(name, withToolBoundary(errorCode, fallback, handler));
+  };
   // 工具列表和配置
-  registry.set('tools.getTools', getTools);
-  registry.set('tools.setToolEnabled', setToolEnabled);
-  registry.set('tools.getToolConfig', getToolConfig);
-  registry.set('tools.updateToolConfig', updateToolConfig);
+  register('tools.getTools', 'GET_TOOLS_ERROR', t('webview.errors.getToolsFailed'), getTools);
+  register('tools.setToolEnabled', 'SET_TOOL_ENABLED_ERROR', t('webview.errors.setToolEnabledFailed'), setToolEnabled);
+  register('tools.getToolConfig', 'GET_TOOL_CONFIG_ERROR', t('webview.errors.getToolConfigFailed'), getToolConfig);
+  register('tools.updateToolConfig', 'UPDATE_TOOL_CONFIG_ERROR', t('webview.errors.updateToolConfigFailed'), updateToolConfig);
   registry.set('tools.getAutoExecConfig', getAutoExecConfig);
   registry.set('tools.getMcpTools', getMcpTools);
   registry.set('tools.setToolAutoExec', setToolAutoExec);
@@ -363,13 +382,13 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('tools.updateMaxToolIterations', updateMaxToolIterations);
   
   // 工具特定配置
-  registry.set('tools.updateListFilesConfig', updateListFilesConfig);
+  register('tools.updateListFilesConfig', 'UPDATE_LIST_FILES_CONFIG_ERROR', t('webview.errors.updateListFilesConfigFailed'), updateListFilesConfig);
   registry.set('tools.getFindFilesConfig', getFindFilesConfig);
   registry.set('tools.updateFindFilesConfig', updateFindFilesConfig);
   registry.set('tools.getSearchInFilesConfig', getSearchInFilesConfig);
   registry.set('tools.updateSearchInFilesConfig', updateSearchInFilesConfig);
-  registry.set('tools.updateApplyDiffConfig', updateApplyDiffConfig);
-  registry.set('tools.getExecuteCommandConfig', getExecuteCommandConfig);
+  register('tools.updateApplyDiffConfig', 'UPDATE_APPLY_DIFF_CONFIG_ERROR', t('webview.errors.updateApplyDiffConfigFailed'), updateApplyDiffConfig);
+  register('tools.getExecuteCommandConfig', 'GET_EXECUTE_COMMAND_CONFIG_ERROR', 'Failed to get execute command config', getExecuteCommandConfig);
   registry.set('tools.updateExecuteCommandConfig', updateExecuteCommandConfig);
   registry.set('tools.checkShellAvailability', checkShellAvailability);
   registry.set('tools.getHistorySearchConfig', getHistorySearchConfig);

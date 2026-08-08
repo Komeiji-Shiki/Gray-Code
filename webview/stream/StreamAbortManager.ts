@@ -78,6 +78,18 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     for (const resolve of resolvers) resolve();
   }
 
+  private clearRetiredChain(conversationId: string, retired: { chain: Promise<void>; resolveTail: () => void }): void {
+    if (this.retiredExits.get(conversationId) === retired) {
+      this.retiredExits.delete(conversationId);
+    }
+    for (const [controller, resolve] of this.retiredResolvers) {
+      if (resolve === retired.resolveTail) {
+        this.retiredResolvers.delete(controller);
+        resolve();
+      }
+    }
+  }
+
   private releaseRetiredExit(conversationId: string, controller: AbortController): void {
     const resolver = this.retiredResolvers.get(controller);
     if (!resolver) return;
@@ -345,9 +357,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         OLD_STREAM_EXIT_WAIT_TIMEOUT_MS
       );
       if (timedOut) {
-        if (this.retiredExits.get(conversationId) === retired) {
-          this.retiredExits.delete(conversationId);
-        }
+        this.clearRetiredChain(conversationId, retired);
         return;
       }
     }
@@ -491,23 +501,10 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   /**
    * 取消所有活跃的流式请求
    */
-  cancelAll(view?: { webview: vscode.Webview }): void {
+  cancelAll(_view?: { webview: vscode.Webview }): void {
     for (const [conversationId, controller] of this.controllers) {
       controller.abort();
-      // 与 cancel() 一致：记录退出信号，供停止后的新流等待旧流 finally（H1 写序竞态）
       this.trackRetiredExit(conversationId, controller);
-      try {
-        view?.webview.postMessage({
-          type: 'streamChunk',
-          data: {
-            createdAt: Date.now(),
-            conversationId,
-            type: 'cancelled'
-          }
-        });
-      } catch {
-        // 忽略发送失败
-      }
     }
     this.controllers.clear();
     // cancelAll 仅用于视图/扩展整体销毁，不会有后续写入；直接终结所有退休链，避免销毁等待者挂起。
