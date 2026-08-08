@@ -84,9 +84,6 @@ export interface ValidationResult {
 export interface ExportOptions {
     /** 是否包含敏感信息（API Key 等） */
     includeSensitive?: boolean;
-    
-    /** 是否美化 JSON */
-    pretty?: boolean;
 }
 
 /**
@@ -95,9 +92,6 @@ export interface ExportOptions {
 export interface ImportOptions {
     /** 如果配置已存在，是否覆盖 */
     overwrite?: boolean;
-    
-    /** 是否在导入前验证 */
-    validate?: boolean;
 }
 
 /**

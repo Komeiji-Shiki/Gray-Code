@@ -69,7 +69,10 @@ export class ToolsSettingsService {
      */
     async setMaxToolIterations(value: number): Promise<void> {
         // -1 表示无限制，正整数表示具体次数，最小为 1
-        const safeValue = value === -1 ? -1 : Math.max(1, value);
+        // NaN/Infinity 等非法输入回退默认值，避免 Math.max(1, NaN) = NaN 被持久化
+        const safeValue = value === -1
+            ? -1
+            : (Number.isFinite(value) ? Math.max(1, Math.floor(value)) : DEFAULT_MAX_TOOL_ITERATIONS);
         const oldValue = this.core.settings.maxToolIterations;
         this.core.settings.maxToolIterations = safeValue;
         this.core.settings.lastUpdated = Date.now();
@@ -213,7 +216,10 @@ export class ToolsSettingsService {
      * 获取工具自动执行配置
      */
     getToolAutoExecConfig(): Readonly<ToolAutoExecConfig> {
-        return this.core.settings.toolAutoExec || DEFAULT_TOOL_AUTO_EXEC_CONFIG;
+        // 拷贝返回：未配置时直接返回模块级 DEFAULT_TOOL_AUTO_EXEC_CONFIG 活引用，
+        // 调用方原地修改会污染全局默认值。
+        const config = this.core.settings.toolAutoExec;
+        return config ? { ...config } : { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG };
     }
 
     /**

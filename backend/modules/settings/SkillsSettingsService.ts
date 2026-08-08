@@ -47,33 +47,52 @@ export class SkillsSettingsService {
      * 设置 Skill 启用状态
      */
     async setSkillEnabled(id: string, enabled: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
-        const skills = [...this.getSkills()];
-        const skill = skills.find(s => s.id === id);
-        
-        if (skill) {
-            skill.enabled = enabled;
-            if (metadata?.name) skill.name = metadata.name;
-            if (metadata?.description) skill.description = metadata.description;
-        } else {
-            // 如果 skill 不存在，创建新的配置项
-            skills.push({
-                id,
-                name: metadata?.name || id,
-                description: metadata?.description || '',
-                enabled,
-                sendContent: true
-            });
-        }
-        
-        await this.updateSkillsConfig({ skills });
+        await this.core.serializeMutation(async () => {
+            const current = this.getSkills();
+            const index = current.findIndex(s => s.id === id);
+
+            let skills: SkillConfigItem[];
+            if (index === -1) {
+                // 如果 skill 不存在，创建新的配置项
+                skills = [
+                    ...current,
+                    {
+                        id,
+                        name: metadata?.name || id,
+                        description: metadata?.description || '',
+                        enabled,
+                        sendContent: true
+                    }
+                ];
+            } else {
+                // 全程不可变更新：只替换目标项，其余项复用旧引用。
+                // 原地修改活对象会让 updateSkillsConfig 内部取到的 oldConfig 已是修改后
+                // 的状态（变更事件 old/new 深度相等），且 save 失败时内存已被污染。
+                skills = current.map((s, i) => {
+                    if (i !== index) {
+                        return s;
+                    }
+                    return {
+                        ...s,
+                        enabled,
+                        ...(metadata?.name ? { name: metadata.name } : {}),
+                        ...(metadata?.description ? { description: metadata.description } : {})
+                    };
+                });
+            }
+
+            await this.updateSkillsConfig({ skills });
+        });
     }
 
     /**
      * 移除 Skill 配置
      */
     async removeSkillConfig(id: string): Promise<void> {
-        const skills = this.getSkills().filter(s => s.id !== id);
-        await this.updateSkillsConfig({ skills });
+        await this.core.serializeMutation(async () => {
+            const skills = this.getSkills().filter(s => s.id !== id);
+            await this.updateSkillsConfig({ skills });
+        });
     }
 
     /**

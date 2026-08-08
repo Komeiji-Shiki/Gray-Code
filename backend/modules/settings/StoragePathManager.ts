@@ -32,14 +32,15 @@ export class StoragePathManager {
     
     /**
      * 获取有效的数据存储路径
-     * 如果设置了自定义路径且迁移完成，返回自定义路径
+     * 如果配置了自定义路径且该路径当前有效（迁移完成，或失败后已回滚到原路径），返回自定义路径
      * 否则返回默认路径
      */
     getEffectiveDataPath(): string {
         const config = this.settingsManager.getStoragePathConfig();
         
-        // 只有迁移完成后才使用自定义路径
-        if (config.customDataPath && config.migrationStatus === 'completed') {
+        // 迁移失败路径会把 customDataPath 回写为迁移前的原值；该目录仍是有效数据源。
+        // 若原来使用默认目录，customDataPath 为空，仍自然回退默认路径。
+        if (config.customDataPath && (config.migrationStatus === 'completed' || config.migrationStatus === 'failed')) {
             return config.customDataPath;
         }
         
@@ -276,12 +277,31 @@ export class StoragePathManager {
             const srcPath = path.join(src, entry.name);
             const destPath = path.join(dest, entry.name);
 
-            if (entry.isDirectory()) {
+            // 符号链接的 isDirectory()/isFile() 恒为 false，会被旧逻辑静默跳过，
+            // 迁移丢失符号链接数据。用 fs.stat（跟随链接）判断真实类型后按目标复制。
+            let isDir = entry.isDirectory();
+            let isFile = entry.isFile();
+            if (!isDir && !isFile) {
+                try {
+                    const stat = await fs.stat(srcPath);
+                    isDir = stat.isDirectory();
+                    isFile = stat.isFile();
+                } catch {
+                    // 悬空符号链接等无法 stat：跳过并告警，不静默丢失
+                    console.warn(`[StoragePathManager] Skipping unreadable entry during copy: ${srcPath}`);
+                    continue;
+                }
+            }
+
+            if (isDir) {
                 copiedCount += await this.copyDirectory(srcPath, destPath, onProgress);
-            } else if (entry.isFile()) {
+            } else if (isFile) {
                 await fs.copyFile(srcPath, destPath);
                 copiedCount++;
                 onProgress?.(copiedCount, -1);
+            } else {
+                // 其它特殊文件类型（socket/fifo 等）无法复制：跳过并告警
+                console.warn(`[StoragePathManager] Skipping special file during copy: ${srcPath}`);
             }
         }
 
@@ -451,12 +471,21 @@ export class StoragePathManager {
                 }
             }
 
-            await this.settingsManager.updateStoragePathConfig({
-                customDataPath: originalConfig.customDataPath,
-                migrationStatus: originalConfig.migrationStatus || 'none',
-                lastMigrationAt: originalConfig.lastMigrationAt,
-                migrationError: errorMessage
-            });
+            // 恢复失败状态时 updateStoragePathConfig 再次失败会替换原始错误，且配置卡在
+            // markMigrationStarted 写入的 'in_progress' 永远回退默认路径。
+            // 这里保留 'failed' 终态并把恢复失败原因拼进原始错误。
+            try {
+                await this.settingsManager.updateStoragePathConfig({
+                    customDataPath: originalConfig.customDataPath,
+                    migrationStatus: 'failed',
+                    lastMigrationAt: originalConfig.lastMigrationAt,
+                    migrationError: errorMessage
+                });
+            } catch (configSaveError: any) {
+                const reason = configSaveError?.message || String(configSaveError);
+                errorMessage += `; failed to persist recovery status: ${reason}`;
+                console.error('[StoragePathManager] Failed to persist migration failure status:', configSaveError);
+            }
             return { success: false, error: errorMessage, copiedFiles: 0 };
         } finally {
             if (stagingRoot && !preserveStaging) {

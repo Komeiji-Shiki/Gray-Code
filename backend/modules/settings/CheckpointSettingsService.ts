@@ -204,28 +204,27 @@ export class CheckpointSettingsService {
      * 设置工具的备份阶段
      */
     async setToolCheckpointPhase(toolName: string, before: boolean, after: boolean): Promise<void> {
-        const config = this.getCheckpointConfig();
-        
-        const beforeTools = [...config.beforeTools];
-        const afterTools = [...config.afterTools];
-        
-        // 更新 beforeTools
-        const beforeIndex = beforeTools.indexOf(toolName);
-        if (before && beforeIndex === -1) {
-            beforeTools.push(toolName);
-        } else if (!before && beforeIndex !== -1) {
-            beforeTools.splice(beforeIndex, 1);
-        }
-        
-        // 更新 afterTools
-        const afterIndex = afterTools.indexOf(toolName);
-        if (after && afterIndex === -1) {
-            afterTools.push(toolName);
-        } else if (!after && afterIndex !== -1) {
-            afterTools.splice(afterIndex, 1);
-        }
-        
-        await this.updateCheckpointConfig({ beforeTools, afterTools });
+        await this.core.serializeMutation(async () => {
+            const config = this.getCheckpointConfig();
+            const beforeTools = [...config.beforeTools];
+            const afterTools = [...config.afterTools];
+
+            const beforeIndex = beforeTools.indexOf(toolName);
+            if (before && beforeIndex === -1) {
+                beforeTools.push(toolName);
+            } else if (!before && beforeIndex !== -1) {
+                beforeTools.splice(beforeIndex, 1);
+            }
+
+            const afterIndex = afterTools.indexOf(toolName);
+            if (after && afterIndex === -1) {
+                afterTools.push(toolName);
+            } else if (!after && afterIndex !== -1) {
+                afterTools.splice(afterIndex, 1);
+            }
+
+            await this.updateCheckpointConfig({ beforeTools, afterTools });
+        });
     }
 
     /**
