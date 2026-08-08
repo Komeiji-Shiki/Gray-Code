@@ -233,9 +233,9 @@ export class McpManager {
         
         // 如果启用了自动连接，立即尝试连接
         if (config.enabled && config.autoConnect) {
-            // 异步连接，不阻塞创建流程
-            this.connect(config.id).catch(() => {
-                // 忽略自动连接失败
+            // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
+            this.connect(config.id).catch(e => {
+                console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
             });
         }
         
@@ -248,16 +248,15 @@ export class McpManager {
     private async generateReadableId(name: string): Promise<string> {
         const slug = slugifyServerName(name);
         if (slug) {
-            // slug 未被占用时直接使用
-            const direct = await this.validateServerId(slug);
-            if (direct.valid) {
+            // 一次读全量配置建内存查重集合：避免循环内逐次全量读存储（C-16）
+            const existingIds = new Set((await this.storageAdapter.getAllConfigs()).map(c => c.id));
+            if (!existingIds.has(slug)) {
                 return slug;
             }
             // slug 被占用时追加数字后缀（_2、_3 …），最多尝试 100 次
             for (let i = 2; i <= 100; i++) {
                 const candidate = `${slug}_${i}`;
-                const validation = await this.validateServerId(candidate);
-                if (validation.valid) {
+                if (!existingIds.has(candidate)) {
                     return candidate;
                 }
             }
@@ -388,9 +387,18 @@ export class McpManager {
      * - 每次连接分配递增代际号，旧连接的 catch/exit/error 回调不会影响新连接
      */
     async connect(serverId: string): Promise<void> {
-        // 先尝试从存储重新加载（支持手动编辑配置文件的情况）
-        await this.reloadFromStorage();
-        
+        // 只读目标服务器配置（支持手动编辑配置文件的情况）：
+        // 不再全量 reloadFromStorage（多服务器时避免每次连接都枚举全部配置）
+        const storedConfig = await this.storageAdapter.getConfig(serverId);
+        if (storedConfig) {
+            const existing = this.servers.get(serverId);
+            if (existing) {
+                existing.config = storedConfig;
+            } else {
+                this.servers.set(serverId, { config: storedConfig, status: 'disconnected' });
+            }
+        }
+
         let info = this.servers.get(serverId);
         if (!info) {
             // 列出所有可用的服务器 ID
@@ -698,6 +706,8 @@ export class McpManager {
                 return;
             }
 
+            // 连接成功清除过期错误，避免 UI 一直展示上次失败的 lastError
+            info.lastError = undefined;
             this.updateServerStatus(serverId, 'connected');
             info.connectedAt = Date.now();
 
@@ -889,6 +899,12 @@ export class McpManager {
                     info.serverVersion = sseServerInfo.version;
                     info.serverDescription = sseServerInfo.name;
                 }
+                sseClient.on('notification', (method: string, params?: unknown) => {
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    void this.handleServerNotification(info, sseClient, generation, method, params);
+                });
                 break;
             }
 
@@ -943,6 +959,12 @@ export class McpManager {
                     info.serverVersion = httpServerInfo.version;
                     info.serverDescription = httpServerInfo.name;
                 }
+                httpClient.on('notification', (method: string, params?: unknown) => {
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    void this.handleServerNotification(info, httpClient, generation, method, params);
+                });
                 break;
             }
         }
@@ -978,10 +1000,10 @@ export class McpManager {
      */
     private async handleServerNotification(
         info: McpServerInfo,
-        client: StdioMcpClient,
+        client: StdioMcpClient | HttpMcpClient,
         generation: number,
         method: string,
-        params?: any
+        params?: unknown
     ): Promise<void> {
         if (method !== 'notifications/tools/list_changed'
             && method !== 'notifications/resources/list_changed'
