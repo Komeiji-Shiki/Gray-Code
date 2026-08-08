@@ -316,10 +316,11 @@ export function validateFunctionResponseRefs(part: ContentPart): {
         
         if (p.fileData?.displayName) {
             displayName = p.fileData.displayName;
-        } else if (p.inlineData) {
-            // inlineData 没有 displayName 字段，需要从其他地方推断
-            // 这里我们跳过，因为 inlineData 通常不需要 displayName
-            continue;
+        } else if (p.inlineData?.displayName) {
+            // inlineData 同样支持 displayName（Gemini API 字段），带 displayName 的
+            // inlineData 也可被 response 的 $ref 引用，必须像 fileData 一样收集，
+            // 否则会被误报为 missingRefs。
+            displayName = p.inlineData.displayName;
         }
         
         if (displayName) {

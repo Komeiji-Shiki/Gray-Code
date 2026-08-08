@@ -789,6 +789,8 @@ export interface ConversationStats {
     userMessages: number;
     /** 模型消息数 */
     modelMessages: number;
+    /** 系统消息数（system 角色单独统计，不计入 modelMessages） */
+    systemMessages: number;
     /** 函数调用次数 */
     functionCalls: number;
     /** 是否包含思考签名 */

@@ -126,6 +126,9 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         // 修改方式：优先采用委托 saveContents 返回的落盘形态（省去写后全量回读 + 深拷贝）；
         //          委托返回 void（既有适配器）时回退“写后 getContents 回读”，语义保持不变。
         // 修改目的：调用方拿到的结果与真实 transcript 状态一致，避免主聊天与 SubAgent 对返回值语义产生分叉。
+        // 契约：以 Array.isArray 判定落盘形态，不用真值判定——空数组（如 clearHistory 保存空 transcript）
+        // 是合法的落盘结果，必须走「直接采用 + 深拷贝」分支；只有委托返回 void（未实现落盘形态）
+        // 时才回退“写后 getContents 回读”。
         const persisted = await this.delegate.saveContents(cloneTranscriptContents(contents));
         if (Array.isArray(persisted)) {
             return cloneTranscriptContents(persisted);
