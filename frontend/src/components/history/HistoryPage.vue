@@ -15,9 +15,13 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 
 // 滚动容器（用于分页加载）
-const scrollbarRef = ref<any>(null)
+const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 let scrollEl: HTMLElement | null = null
 let scrollTicking = false
+
+// 连续空页计数：加载后高度无增长时停止自调度，避免空页每帧空转烧 CPU
+let emptyLoadCount = 0
+const MAX_EMPTY_LOADS = 3
 
 function checkShouldLoadMore() {
   if (!scrollEl) return
@@ -26,10 +30,19 @@ function checkShouldLoadMore() {
   const remaining = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight
   // 提前 400px 触发预加载，做到无感
   if (remaining <= 400) {
-    chatStore.loadMoreConversations().then(() => {
-      // 如果加载后仍然不足以产生滚动条，继续补齐下一页（直到有足够内容或没有更多）
-      requestAnimationFrame(() => checkShouldLoadMore())
-    })
+    const heightBefore = scrollEl.scrollHeight
+    chatStore.loadMoreConversations()
+      .then(() => {
+        const heightAfter = scrollEl?.scrollHeight ?? heightBefore
+        // 连续多次加载后高度无增长（空页/数据异常）：停止自调度
+        emptyLoadCount = heightAfter > heightBefore ? 0 : emptyLoadCount + 1
+        if (emptyLoadCount >= MAX_EMPTY_LOADS) return
+        // 如果加载后仍然不足以产生滚动条，继续补齐下一页（直到有足够内容或没有更多）
+        requestAnimationFrame(() => checkShouldLoadMore())
+      })
+      .catch((error) => {
+        console.error('[HistoryPage] Failed to load more conversations:', error)
+      })
   }
 }
 
@@ -74,7 +87,7 @@ const filteredConversations = computed(() => {
   if (searchKeyword.value.trim()) {
     const keyword = searchKeyword.value.toLowerCase().trim()
     conversations = conversations.filter(conversation =>
-      conversation.title.toLowerCase().includes(keyword)
+      (conversation.title || '').toLowerCase().includes(keyword)
     )
   }
   return conversations
@@ -98,7 +111,11 @@ async function handleSelect(id: string) {
 
 // 处理删除对话
 async function handleDelete(id: string) {
-  await chatStore.deleteConversation(id)
+  try {
+    await chatStore.deleteConversation(id)
+  } catch (error) {
+    console.error('Failed to delete conversation from history page:', error)
+  }
 }
 </script>
 

@@ -252,14 +252,6 @@ const thoughtViewMode = computed<ThoughtViewMode>({
 const thoughtViewTouched = ref(false)
 
 
-const todoDebugPrinted = new Set<string>()
-function debugTodoOnce(key: string, data: Record<string, unknown>) {
-  if (!isPerfEnabled()) return
-  if (todoDebugPrinted.has(key)) return
-  todoDebugPrinted.add(key)
-  console.debug('[todo-debug][MessageItem]', data)
-}
-
 // 实时思考时间（用于动态更新显示）
 const elapsedThinkingTime = ref(0)
 let thinkingTimer: ReturnType<typeof setInterval> | null = null
@@ -448,18 +440,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         messageTools,
         functionCallOrdinal
       })
-      const toolIdFromPart = typeof part.functionCall.id === 'string' ? part.functionCall.id : ''
       
-      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${renderTool.id}`, {
-        messageId: props.message.id,
-        messageBackendIndex: props.message.backendIndex,
-        functionCallOrdinal,
-        functionCallName: part.functionCall.name,
-        functionCallIdFromPart: toolIdFromPart || null,
-        resolvedToolId: renderTool.id,
-        existingToolId: renderTool.id || null
-      })
-
       upsertToolAcrossRenderedBlocks(renderTool)
 
       functionCallOrdinal += 1
@@ -571,10 +552,17 @@ watch(isThinking, (thinking) => {
 
 // 思考视图自动模式：思考中默认中展开；思考与输出都结束后自动折叠为第一行预览。
 // 用户手动切换过视图模式后不再自动干预；无思考块的消息不处理。
+// immediate 首次触发只做“恢复”：Map 中已有该消息的持久化选择时直接返回，不写回覆盖
+// （虚拟滚动重建组件时 immediate 会重新执行，写回会把用户展开的思考块折叠掉）。
+let isInitialThoughtViewSync = true
 watch([isThinking, isStreaming], ([thinking, streaming]) => {
   if (thoughtViewTouched.value) return
   const hasThought = renderBlocks.value.some(block => block.type === 'thought')
   if (!hasThought) return
+  if (isInitialThoughtViewSync) {
+    isInitialThoughtViewSync = false
+    if (thoughtViewModeByMessageId.has(props.message.id)) return
+  }
   if (thinking) {
     thoughtViewMode.value = 'medium'
   } else if (!streaming) {
@@ -818,8 +806,10 @@ function handleRestoreAndRetry(checkpointId: string) {
       @restore-and-edit="handleRestoreAndEdit"
     />
 
-    <!-- 回复查看 -->
+    <!-- 回复查看（仅在打开时渲染：关闭状态下 responseViewerData 为 null，
+         传值会触发 ResponseViewerDialog 的 computed 求值 TypeError） -->
     <ResponseViewerDialog
+      v-if="showResponseDialog"
       v-model="showResponseDialog"
       :value="responseViewerData as ResponseViewerData"
       :title="t('components.message.actions.viewResponse')"
@@ -993,7 +983,7 @@ function handleRestoreAndRetry(checkpointId: string) {
             
             <!-- 首字延迟（TTFT） -->
             <span v-if="ttft" class="ttft" :title="t('components.message.stats.ttft')">
-              <i class="codicon codicon-timer"></i>{{ ttft }}
+              <i class="codicon codicon-pulse" aria-hidden="true"></i>{{ ttft }}
             </span>
             
             <!-- 响应持续时间 -->
@@ -1132,6 +1122,22 @@ function handleRestoreAndRetry(checkpointId: string) {
 .response-duration .codicon {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* 首字延迟（TTFT） */
+.ttft {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+}
+
+/* 首字延迟图标用主题蓝点缀，与其他统计项区分，一眼可辨 */
+.ttft .codicon {
+  font-size: 10px;
+  color: var(--vscode-charts-blue);
 }
 
 /* Token 速率 */

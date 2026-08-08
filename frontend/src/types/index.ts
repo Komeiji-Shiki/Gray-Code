@@ -376,9 +376,9 @@ export interface ToolUsage {
    * - awaiting_approval: 等待用户批准后才可执行
    * - executing: 正在执行（工具 handler 运行中，可能持续较久）
    * - awaiting_apply: 已生成变更，等待用户审阅/应用（如 diff）
-   * - success/error/warning: 最终结果
+   * - background: 父回合被替换后，SubAgent 已转后台继续执行
    */
-  status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
+  status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'background' | 'success' | 'error' | 'warning'
   
   /** 流式响应中的原始参数片段（streaming 状态时可用） */
   partialArgs?: string

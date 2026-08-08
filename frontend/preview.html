@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gray Code - Constructivist Preview</title>
+    <style>
+        /* --- 核心变量：构成主义工业风 --- */
+        :root {
+            --c-bg: #121212;           /* 深黑背景 */
+            --c-panel: #1E1E1E;        /* 面板深灰 */
+            --c-ink: #FFFFFF;          /* 纯白文字 */
+            --c-accent: #D6242D;       /* 构成主义红 */
+            --c-border: #FFFFFF;       /* 硬朗白线 */
+            --c-dim: #888888;          /* 次要文字 */
+            
+            --border-w: 2px;
+            --shadow-hard: 4px 4px 0px var(--c-ink);
+            --font-main: 'Inter', 'Helvetica Neue', 'Arial Black', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--c-bg);
+            color: var(--c-ink);
+            font-family: var(--font-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- 启动动画 (Splash) --- */
+        #splash {
+            position: fixed;
+            inset: 0;
+            background: var(--c-bg);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.4s cubic-bezier(0.8, 0, 0.2, 1);
+        }
+
+        #splash.hidden {
+            transform: translateY(-100%);
+        }
+
+        /* 构成主义灰魂头像 */
+        .avatar-container {
+            position: relative;
+            width: 140px;
+            height: 140px;
+            margin-bottom: 20px;
+        }
+
+        .avatar-svg {
+            width: 100%;
+            height: 100%;
+            overflow: visible;
+        }
+
+        .avatar-part {
+            opacity: 0;
+            transform-origin: center;
+            animation: part-assemble 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+
+        .part-cap { fill: var(--c-accent); animation-delay: 0.1s; }
+        .part-hair { fill: var(--c-ink); animation-delay: 0.3s; }
+        .part-face { fill: var(--c-dim); animation-delay: 0.4s; }
+        .part-body { fill: var(--c-bg); stroke: var(--c-ink); stroke-width: 2; animation-delay: 0.5s; }
+        
+        /* 装饰斜线 */
+        .deco-line {
+            stroke: var(--c-accent);
+            stroke-width: 4;
+            stroke-dasharray: 200;
+            stroke-dashoffset: 200;
+            animation: line-draw 0.5s ease-out 0.8s forwards;
+        }
+
+        @keyframes part-assemble {
+            from { opacity: 0; transform: scale(0) translateY(20px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        @keyframes line-draw {
+            to { stroke-dashoffset: 0; }
+        }
+
+        .splash-title {
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: -2px;
+            text-transform: uppercase;
+            line-height: 0.9;
+            text-align: center;
+            opacity: 0;
+            animation: text-slam 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) 0.9s both;
+        }
+
+        .splash-subtitle {
+            margin-top: 8px;
+            font-size: 14px;
+            letter-spacing: 4px;
+            color: var(--c-accent);
+            font-weight: 700;
+            text-transform: uppercase;
+            opacity: 0;
+            animation: text-slam 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) 1.0s both;
+        }
+
+        /* 格雷码数字显示 */
+        .gray-code-display {
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: 900;
+            color: var(--c-ink);
+            letter-spacing: 8px;
+            border: 2px solid var(--c-panel);
+            padding: 4px 12px;
+            background: var(--c-panel);
+            opacity: 0;
+            animation: text-slam 0.3s ease-out 1.1s both;
+        }
+        
+        .gray-bit {
+            display: inline-block;
+            width: 20px;
+            text-align: center;
+            transition: color 0.1s;
+        }
+        
+        .gray-bit.active {
+            color: var(--c-accent);
+            text-shadow: 0 0 8px var(--c-accent);
+        }
+
+        @keyframes text-slam {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .enter-btn {
+            margin-top: 50px;
+            padding: 12px 32px;
+            background: transparent;
+            border: var(--border-w) solid var(--c-ink);
+            color: var(--c-ink);
+            font-family: var(--font-main);
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.1s;
+            opacity: 0;
+            animation: text-slam 0.3s ease-out 1s forwards;
+        }
+
+        .enter-btn:hover {
+            background: var(--c-accent);
+            border-color: var(--c-accent);
+            color: #fff;
+            box-shadow: var(--shadow-hard);
+            transform: translate(-2px, -2px);
+        }
+
+        /* --- 主界面布局 --- */
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        
+        .app-container.visible {
+            opacity: 1;
+        }
+
+        /* 顶部栏 */
+        .header {
+            height: 40px;
+            border-bottom: var(--border-w) solid var(--c-ink);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            background: var(--c-bg);
+            justify-content: space-between;
+        }
+
+        .header-title {
+            font-weight: 900;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .control-box {
+            width: 12px;
+            height: 12px;
+            border: 1px solid var(--c-ink);
+        }
+
+        /* 聊天区域 */
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            background-image: 
+                linear-gradient(var(--c-panel) 1px, transparent 1px),
+                linear-gradient(90deg, var(--c-panel) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        /* 消息气泡：硬朗块状 */
+        .message {
+            max-width: 80%;
+            padding: 16px;
+            border: var(--border-w) solid var(--c-ink);
+            position: relative;
+            background: var(--c-bg);
+            box-shadow: 6px 6px 0px rgba(255,255,255,0.1);
+        }
+
+        .message.ai {
+            align-self: flex-start;
+            border-left: 8px solid var(--c-accent); /* 红色粗侧边 */
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--c-ink);
+            color: var(--c-bg);
+            box-shadow: 6px 6px 0px var(--c-accent);
+        }
+
+        .msg-header {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            color: var(--c-dim);
+            font-weight: 700;
+        }
+        
+        .message.user .msg-header {
+            color: var(--c-bg);
+            opacity: 0.7;
+        }
+
+        .msg-content {
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 500;
+        }
+
+        /* 代码块样式 */
+        .code-block {
+            margin-top: 12px;
+            background: #000;
+            border: 1px solid var(--c-dim);
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #0f0;
+            position: relative;
+        }
+        
+        .code-block::before {
+            content: 'TERMINAL';
+            position: absolute;
+            top: -6px;
+            left: 8px;
+            background: var(--c-accent);
+            color: white;
+            font-size: 8px;
+            padding: 0 4px;
+            font-weight: bold;
+        }
+
+        /* 输入区域 */
+        .input-area {
+            border-top: var(--border-w) solid var(--c-ink);
+            padding: 16px;
+            background: var(--c-bg);
+            display: flex;
+            gap: 16px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            border: var(--border-w) solid var(--c-ink);
+            background: var(--c-panel);
+            padding: 12px;
+            position: relative;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: var(--c-accent);
+            box-shadow: 4px 4px 0px var(--c-accent);
+        }
+
+        textarea {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: var(--c-ink);
+            font-family: var(--font-main);
+            font-size: 14px;
+            resize: none;
+            outline: none;
+            font-weight: 500;
+        }
+
+        .send-btn {
+            width: 48px;
+            height: 48px;
+            background: var(--c-accent);
+            border: var(--border-w) solid var(--c-accent);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s;
+        }
+
+        .send-btn:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 4px 4px 0px var(--c-ink);
+        }
+        
+        .send-btn:active {
+            transform: translate(0, 0);
+            box-shadow: none;
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--c-bg); border-left: 1px solid var(--c-panel); }
+        ::-webkit-scrollbar-thumb { background: var(--c-ink); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--c-accent); }
+
+    </style>
+</head>
+<body>
+
+    <!-- 启动画面 -->
+    <div id="splash">
+        <div class="avatar-container">
+            <svg class="avatar-svg" viewBox="0 0 200 200">
+                <!-- 装饰斜线（背景） -->
+                <line class="deco-line" x1="0" y1="160" x2="160" y2="0" />
+                
+                <!-- 帽子（红色块面） -->
+                <path class="avatar-part part-cap" d="M40,70 L160,60 L150,20 L50,30 Z" />
+                <path class="avatar-part part-cap" d="M30,80 L170,70 L170,85 L30,95 Z" />
+                
+                <!-- 头发（白色几何块） -->
+                <path class="avatar-part part-hair" d="M40,95 L60,95 L60,150 L40,140 Z" />
+                <path class="avatar-part part-hair" d="M140,90 L160,85 L160,130 L140,135 Z" />
+                <path class="avatar-part part-hair" d="M60,95 L140,85 L140,100 L60,110 Z" /> <!-- 刘海 -->
+                
+                <!-- 脸部轮廓（下巴，深色/背景色，用线条勾勒） -->
+                <path class="avatar-part part-face" d="M70,110 L130,105 L120,150 L80,150 Z" />
+                
+                <!-- 脖子/肩膀 -->
+                <path class="avatar-part part-body" d="M80,150 L120,150 L130,180 L70,180 Z" />
+            </svg>
+        </div>
+        
+        <h1 class="splash-title">Gray<br>Code</h1>
+        <div class="splash-subtitle">AI Construct</div>
+        
+        <!-- 格雷码显示 -->
+        <div class="gray-code-display" id="grayCode">
+            <span class="gray-bit">0</span><span class="gray-bit">0</span><span class="gray-bit">0</span>
+        </div>
+
+        <button class="enter-btn" onclick="enterApp()">Initialize System</button>
+    </div>
+
+    <!-- 主界面 -->
+    <div class="app-container" id="app">
+        <header class="header">
+            <div class="header-title">GRAY CODE // V.2.0</div>
+            <div class="header-controls">
+                <div class="control-box"></div>
+                <div class="control-box" style="background: var(--c-accent); border-color: var(--c-accent);"></div>
+                <div class="control-box"></div>
+            </div>
+        </header>
+
+        <main class="chat-area">
+            <!-- AI 消息 -->
+            <div class="message ai">
+                <div class="msg-header">System :: GrayWill</div>
+                <div class="msg-content">
+                    收到，主人。已切换至构成主义工作模式。界面几何重构完成，视觉对比度提升至最大值。
+                    <div class="code-block">
+                        > loading modules...<br>
+                        > geometry_engine: ONLINE<br>
+                        > color_contrast: MAXIMUM<br>
+                        > style: CONSTRUCTIVIST
+                    </div>
+                </div>
+            </div>
+
+            <!-- 用户消息 -->
+            <div class="message user">
+                <div class="msg-header">User :: Master</div>
+                <div class="msg-content">
+                    这个风格看起来够硬朗吗？边框再粗一点试试？
+                </div>
+            </div>
+
+            <!-- AI 消息 -->
+            <div class="message ai">
+                <div class="msg-header">System :: GrayWill</div>
+                <div class="msg-content">
+                    已调整边框参数至 3px。阴影偏移量增加。工业感显著增强。请查阅右侧几何结构。
+                </div>
+            </div>
+        </main>
+
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <textarea rows="1" placeholder="INPUT COMMAND..."></textarea>
+            </div>
+            <button class="send-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+            </button>
+        </footer>
+    </div>
+
+    <script>
+        function enterApp() {
+            document.getElementById('splash').classList.add('hidden');
+            document.getElementById('app').classList.add('visible');
+        }
+
+        // 格雷码逻辑
+        const graySequence = ['000', '001', '011', '010', '110', '111', '101', '100'];
+        let grayIndex = 0;
+        const grayDisplay = document.getElementById('grayCode');
+        const bits = grayDisplay.querySelectorAll('.gray-bit');
+
+        function updateGrayCode() {
+            const code = graySequence[grayIndex];
+            bits.forEach((bitEl, index) => {
+                const val = code[index];
+                bitEl.textContent = val;
+                if (val === '1') {
+                    bitEl.classList.add('active');
+                } else {
+                    bitEl.classList.remove('active');
+                }
+            });
+            grayIndex = (grayIndex + 1) % graySequence.length;
+        }
+
+        // 启动格雷码循环
+        setInterval(updateGrayCode, 200);
+        
+        // 自动进入（演示用）
+        setTimeout(() => {
+            // document.getElementById('splash').classList.add('hidden');
+            // document.getElementById('app').classList.add('visible');
+        }, 3000);
+    </script>
+</body>
+</html>

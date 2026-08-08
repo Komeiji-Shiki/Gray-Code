@@ -118,7 +118,7 @@ describe('ActivityStatsResult', () => {
   })
 
   it('每日数据超过 31 天时截断并显示提示', () => {
-    const daily = []
+    const daily: ReturnType<typeof makeDay>[] = []
     for (let i = 0; i < 40; i++) {
       const date = new Date(Date.UTC(2026, 6, 1) + i * 86400000)
       daily.push(makeDay(date.toISOString().slice(0, 10), i === 39 ? 120 : 0))
@@ -136,7 +136,7 @@ describe('ActivityStatsResult', () => {
   })
 
   it('长范围且存在月度数据时显示月度概览', () => {
-    const daily = []
+    const daily: ReturnType<typeof makeDay>[] = []
     for (let i = 0; i < 45; i++) {
       const date = new Date(Date.UTC(2026, 5, 1) + i * 86400000)
       daily.push(makeDay(date.toISOString().slice(0, 10), i === 44 ? 90 : 0))

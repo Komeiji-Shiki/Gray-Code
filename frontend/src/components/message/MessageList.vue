@@ -480,6 +480,8 @@ function toggleTodoExpanded() {
 
 // 消息分页显示逻辑：解决消息过多导致的输入卡顿
 const VISIBLE_INCREMENT = 40
+// 连续空页上限：后端返回 loaded=true 但无新增消息时停止继续拉取，避免死循环
+const MAX_EMPTY_LOAD_PAGES = 3
 const visibleCount = ref(VISIBLE_INCREMENT)
 
 // 是否还有更多“未加载到窗口”的历史消息
@@ -541,7 +543,7 @@ type RenderRow =
   | { kind: 'build'; key: 'build-bar' }
   | { kind: 'message'; key: string; item: EnhancedMessage }
   | { kind: 'todo'; key: 'todo-bar' }
-  | { kind: 'summarize-divider'; key: 'summarize-divider' }
+  | { kind: 'summarize-divider'; key: string }
 
 function shouldInsertSticky(anchor: number | null, idx: number): boolean {
   return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
@@ -581,7 +583,7 @@ const messageRenderRows = computed<RenderRow[]>(() => {
 
     // 在最后一个总结消息之后插入分隔线（已总结 / 未总结分界）
     if (lastSummaryBackendIndex !== null && idx === lastSummaryBackendIndex) {
-      rows.push({ kind: 'summarize-divider', key: 'summarize-divider' })
+      rows.push({ kind: 'summarize-divider', key: `summarize-divider:${idx}` })
     }
   }
 
@@ -637,7 +639,9 @@ async function loadMore() {
 
       if (props.messages.length <= prevLen) {
         // 如果这一页没有新增可见消息，继续尝试下一页
-        while (hasMoreHistory.value && props.tabId === originTabId) {
+        // 连续空页上限：后端返回 loaded=true 但无新增（空页）时停止，避免死循环
+        let emptyPages = 0
+        while (hasMoreHistory.value && props.tabId === originTabId && emptyPages < MAX_EMPTY_LOAD_PAGES) {
           const currentLen = props.messages.length
           const loaded = await chatStore.loadOlderMessagesPage()
           await nextTick()
@@ -647,9 +651,13 @@ async function loadMore() {
           if (!loaded || props.messages.length > currentLen) {
             break
           }
+          emptyPages++
         }
       }
     }
+  } catch (error) {
+    // 拉取失败：记录日志，加载标记在 finally 中复位
+    console.error('[MessageList] Failed to load older messages:', error)
   } finally {
     // 无条件复位加载标记，避免切走标签页后该标签页上拉加载永久禁用（H4）
     isLoadingMore.value = false
@@ -1280,7 +1288,7 @@ function formatCheckpointTime(timestamp: number): string {
 <template>
   <div class="message-list">
     <div class="message-scroll-area">
-      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summarize-divider" :width="10" :marker-height="10">
+      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summary-message" :width="10" :marker-height="10">
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
@@ -1419,16 +1427,12 @@ function formatCheckpointTime(timestamp: number): string {
             </template>
           </template>
 
-          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界）
-          滚动条 marker：黄色 + 专属 tooltip 前缀，与用户消息的蓝色 marker 区分，
-          便于在长对话中定位总结截断起始点（此线以下为发送给 AI 的活跃内容） -->
+          <!-- 已总结区域 / 未总结区域分隔线（逻辑截断：原文保留，仅视觉分界）。
+          滚动条黄色标记由每条 SummaryMessage 自身提供，使多次总结都能独立定位。 -->
           <div
             v-else-if="row.kind === 'summarize-divider'"
             class="summarize-divider"
             aria-hidden="true"
-            :data-preview="t('components.message.summary.dividerMarker')"
-            data-marker-color="rgba(221, 185, 47, 0.85)"
-            :data-marker-tooltip-prefix="t('components.message.summary.dividerMarkerPrefix')"
           >
             <div class="summarize-divider-line"></div>
           </div>

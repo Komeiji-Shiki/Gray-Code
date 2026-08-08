@@ -34,6 +34,8 @@ export interface BackgroundTaskRecord {
   output?: string
   exitCode?: number | null
   error?: string
+  /** 子代理归属（子代理内部执行的后台命令，不回流主会话） */
+  subagentRunId?: string
   /** 回执是否已发送给主模型 */
   reported: boolean
 }
@@ -95,6 +97,8 @@ export function taskRecordFromStartEvent(event: TaskEventLike): BackgroundTaskRe
     status: 'running',
     startedAt,
     terminalId: event.taskId,
+    // 子代理归属：execute_command 在子代理 run 内执行时带上 mailboxRunId，主会话为 undefined
+    subagentRunId: typeof data.subagentRunId === 'string' && data.subagentRunId ? data.subagentRunId : undefined,
     reported: false
   }
 }

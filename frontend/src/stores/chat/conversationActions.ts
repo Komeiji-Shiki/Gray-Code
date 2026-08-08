@@ -19,6 +19,7 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
+import { resetConversationState } from './tabActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -338,27 +339,9 @@ export async function createNewConversation(
     await cancelStreamAndRejectTools()
   }
   
-  state.currentConversationId.value = null
-  state.allMessages.value = []  // 清空消息
-  state.windowStartIndex.value = 0
-  state.totalMessages.value = 0
-  state.isLoadingMoreMessages.value = false
-  state.historyFolded.value = false
-  state.foldedMessageCount.value = 0
-  state.checkpoints.value = []  // 清空检查点
-  state.toolResponseCache.value = new Map()  // 清空工具响应缓存
-  state.error.value = null
-  state.activeBuild.value = null
-  
-  // 清除所有加载和流式状态
-  state.isLoading.value = false
-  state.isStreaming.value = false
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state._lastCancelledStreamId.value = null
-  state._pendingBranchRefreshAfterStream.value = null
-  state._pendingBranchReplayContext.value = null
-  state.isWaitingForResponse.value = false
+  // 复用 resetConversationState 清理全部会话状态：手工清理此前遗漏了
+  // attachments/editorNodes/messageQueue/currentPromptModeId 以及平滑流/重试/自动总结残留
+  resetConversationState(state)
 }
 
 /**
@@ -494,7 +477,7 @@ export async function loadConversations(state: ChatStoreState): Promise<void> {
     const ids = await sendToExtension<string[]>('conversation.listConversations', {})
 
     // 重置分页游标
-    state.persistedConversationIds.value = sortConversationIds(ids)
+    state.persistedConversationIds.value = sortConversationIds(Array.isArray(ids) ? ids : [])
     state.persistedConversationsLoaded.value = 0
 
     // 保留未持久化的对话
@@ -588,6 +571,9 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
 
     const page = result?.messages || []
     const total = result?.total ?? page.length
+
+    // 校验归属：await 后当前会话可能已切换，迟到的旧会话响应不能覆盖新会话窗口
+    if (!validateSessionIdentity(state, conversationId)) return
 
     // HIS-13：先渲染最后一页（首屏即时显示），再异步补拉更早历史
     renderMessageWindow(state, page, total)
