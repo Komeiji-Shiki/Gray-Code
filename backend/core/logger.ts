@@ -67,6 +67,13 @@ export class Logger {
     }
 
     /**
+     * 清空所有日志器实例缓存（测试、热重载或动态模块卸载时释放实例）
+     */
+    static clear(): void {
+        Logger.instances.clear();
+    }
+
+    /**
      * 设置全局最低日志级别
      */
     static setLevel(level: LogLevel): void {
