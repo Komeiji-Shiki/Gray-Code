@@ -623,7 +623,9 @@ const en: LanguageMessages = {
                 compressionTokens: 'Replaced history → new summary (estimated {saved} tokens saved; actual context updates after the next response)',
                 legacyRequestTokens: 'Legacy record: summarizer request input → output, not main-context before/after',
                 historyTokenLabel: 'History',
-                requestTokenLabel: 'Request'
+                requestTokenLabel: 'Request',
+                dividerMarker: 'Context summary truncation point: above this line is summarized history (original messages still viewable), below is the active content sent to the AI',
+                dividerMarkerPrefix: 'Summary Cut'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',

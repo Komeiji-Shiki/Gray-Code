@@ -624,7 +624,9 @@ const zhCN = {
                 compressionTokens: '被替换历史 → 新摘要（估算节省 {saved} Token；下一次回复后以真实上下文为准）',
                 legacyRequestTokens: '旧记录：总结模型请求输入 → 输出，不代表主上下文前后大小',
                 historyTokenLabel: '历史',
-                requestTokenLabel: '请求'
+                requestTokenLabel: '请求',
+                dividerMarker: '上下文总结截断点：此线以上为已总结的历史（原文仍可查看），以下为发送给 AI 的活跃内容',
+                dividerMarkerPrefix: '总结截断'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',

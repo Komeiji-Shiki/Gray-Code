@@ -266,9 +266,8 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
     });
 
     it('多轮 + 预算充足（正常路径）：照常成功，放行逻辑不介入', async () => {
-        // 预算 500 时 planner 在轮级边界（r2 轮首 index 3）基础上向前找更细的安全切点：
-        // 最早满足保留预算的是 fc1（index 1，suffix 240 <= 500）→ cutIndex=1。
-        // insertIndex=1 <= lastRealUserMessageIndex=3，不触发 STALE 分支，走正常路径。
+        // 预算 300（绝对数）：最早满足保留预算的候选切点是 fc1（index 1，suffix 240 <= 300）
+        // → cutIndex=1。insertIndex=1 <= lastRealUserMessageIndex=3，不触发 STALE 分支，走正常路径。
         const twoRounds: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             userMsg('r2', 40), fcMsg('fc2', 40), frMsg('fc2', 40),
@@ -277,7 +276,7 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
 
         const { service, liveHistory } = createHarness({
             fullHistory: twoRounds,
-            keepRecentTokens: '50%' // 500
+            keepRecentTokens: 300 // 绝对预算：保留 suffix <= 300 的最早切点（fc1）
         });
 
         const result = await service.handleSummarizeContext({ conversationId: 'conv1', configId: 'cfg1' });

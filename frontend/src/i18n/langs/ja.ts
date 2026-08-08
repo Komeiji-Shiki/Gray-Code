@@ -623,7 +623,9 @@ const ja: LanguageMessages = {
                 compressionTokens: '置換された履歴 → 新しい要約（推定 {saved} トークン削減。実際のコンテキストは次の応答後に更新）',
                 legacyRequestTokens: '旧形式：要約モデルの入力 → 出力。メインコンテキストの前後サイズではありません',
                 historyTokenLabel: '履歴',
-                requestTokenLabel: 'リクエスト'
+                requestTokenLabel: 'リクエスト',
+                dividerMarker: 'コンテキスト要約の切れ目：この線より上が要約済みの履歴（原文は引き続き閲覧可能）、下が AI に送信されるアクティブな内容です',
+                dividerMarkerPrefix: '要約切れ目'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',

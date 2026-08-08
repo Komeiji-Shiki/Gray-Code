@@ -34,7 +34,7 @@ const summarizeConfig = reactive({
   autoSummarizePrompt: '',
   // 最少保留最近 N 轮不总结（保留预算的下限保护）
   keepRecentRounds: 2,
-  // 总结时保留最近内容的 token 预算（token 数或百分比字符串），默认值由后端下发
+  // 总结时保留最近内容的 token 预算（绝对 token 数或百分比；百分比基数为待总结活跃历史总量，'50%' = 截断一半保留一半），默认值由后端下发
   keepRecentTokens: '' as string | number,
   // 使用专门的总结模型
   useSeparateModel: false,
