@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "publisher": "Komeiji-Shiki",
   "icon": "resources/icon.png",
   "engines": {
