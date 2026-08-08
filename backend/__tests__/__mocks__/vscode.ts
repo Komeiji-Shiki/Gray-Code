@@ -35,7 +35,10 @@ export const Uri = {
     parse: (value: string) => {
         const decoded = decodeURIComponent(value);
         if (/^file:\/\//i.test(decoded)) {
-            let filePath = decoded.replace(/^file:\/\/\/?/i, '');
+            // 只去掉 scheme 的 `file://`（两个斜杠），`file:///abs/path` 中属于路径本身的前导
+            // 斜杠必须保留——原正则 `\/?` 会把第三个斜杠一起吃掉，Linux 上绝对路径被
+            // 解析成相对路径（Windows 的 file://C:/ 形式只有两个斜杠，恰好不触发）。
+            let filePath = decoded.replace(/^file:\/\//i, '');
             if (process.platform !== 'win32' && /^[a-zA-Z]:\//.test(filePath)) {
                 filePath = `/${filePath}`;
             }
