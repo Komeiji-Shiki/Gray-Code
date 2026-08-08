@@ -210,16 +210,16 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
         // 显式 drain：主会话 inbox 已清空（消息只投递一次）
         expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
 
-        // 最终落盘的 functionResponse（最后一次 addContent）携带 agentInbox
-        const addContentCalls = conversationManager.addContent.mock.calls;
-        expect(addContentCalls.length).toBeGreaterThanOrEqual(2);
-        const frCall = addContentCalls[addContentCalls.length - 1];
-        expect(frCall[0]).toBe(convId);
-        expect(frCall[1].isFunctionResponse).toBe(true);
-        const frPart = frCall[1].parts.find((p: { functionResponse?: unknown }) => !!p.functionResponse);
-        expect(frPart.functionResponse.response.agentInbox).toHaveLength(1);
-        expect(frPart.functionResponse.response.agentInbox[0].text).toBe('deliver-me');
-        expect(frPart.functionResponse.response.data.agentInbox).toHaveLength(1);
+        // 最终落盘的 functionResponse（最后一次 settleFunctionResponses）携带 agentInbox
+        const settleCalls = conversationManager.settleFunctionResponses.mock.calls as Array<
+            [string, Array<{ functionResponse?: { response?: Record<string, unknown> } }>]
+        >;
+        expect(settleCalls.length).toBeGreaterThanOrEqual(1);
+        const frParts = settleCalls[settleCalls.length - 1][1];
+        const frPart = frParts.find((p: { functionResponse?: unknown }) => !!p.functionResponse)!;
+        expect((frPart.functionResponse!.response as any).agentInbox).toHaveLength(1);
+        expect((frPart.functionResponse!.response as any).agentInbox[0].text).toBe('deliver-me');
+        expect((frPart.functionResponse!.response as any).data.agentInbox).toHaveLength(1);
     });
 
     it('主循环接管：早启动不 drain，消息由主循环执行结果投递', async () => {
@@ -271,14 +271,15 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
         // 主循环 drain：inbox 清空
         expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
 
-        // 主循环执行后的 merged addContent 携带 agentInbox
-        const addContentCalls = conversationManager.addContent.mock.calls;
-        expect(addContentCalls.length).toBeGreaterThanOrEqual(2);
-        const frCall = addContentCalls[addContentCalls.length - 1];
-        expect(frCall[1].isFunctionResponse).toBe(true);
-        const frPart = frCall[1].parts.find((p: { functionResponse?: unknown }) => !!p.functionResponse);
-        expect(frPart.functionResponse.response.agentInbox).toHaveLength(1);
-        expect(frPart.functionResponse.response.agentInbox[0].text).toBe('main-takes-over');
+        // 最终落盘的 functionResponse（最后一次 settleFunctionResponses）携带 agentInbox
+        const settleCalls = conversationManager.settleFunctionResponses.mock.calls as Array<
+            [string, Array<{ functionResponse?: { response?: Record<string, unknown> } }>]
+        >;
+        expect(settleCalls.length).toBeGreaterThanOrEqual(1);
+        const frParts = settleCalls[settleCalls.length - 1][1];
+        const frPart = frParts.find((p: { functionResponse?: unknown }) => !!p.functionResponse)!;
+        expect((frPart.functionResponse!.response as any).agentInbox).toHaveLength(1);
+        expect((frPart.functionResponse!.response as any).agentInbox[0].text).toBe('main-takes-over');
 
         // 同一真实用户回合只有第一次主模型请求允许推进裁剪状态；工具结果返回后的第二次请求只复用起点。
         const trimCalls = contextTrimService.getHistoryWithContextTrimInfo.mock.calls;

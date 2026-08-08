@@ -507,15 +507,6 @@ export interface ToolConfirmationResponseData {
         confirmed: boolean;
     }>;
 
-    /** 用户批注（可选，会作为用户消息发送给 AI） */
-    annotation?: string;
-
-    /**
-     * 批注用户消息的稳定节点 ID（BR-01 对齐，语义同 ChatRequestData.messageId）。
-     * 前端窗口中的批注消息 id 需与后端落库 id 一致，编辑/重试才能定位。
-     */
-    annotationMessageId?: string;
-
     /** 取消信号 */
     abortSignal?: AbortSignal;
 

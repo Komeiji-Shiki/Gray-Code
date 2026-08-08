@@ -2689,17 +2689,41 @@ export class ConversationManager {
         
         // 首先收集所有被拒绝的工具调用 ID
         const rejectedToolCallIds = new Set<string>();
-        // 已收到响应的 call id：区分「用户显式拒绝（有占位响应，成对发送）」与
-        // 「中断/取消残留（真孤儿，无响应）」。后者若只剥离 rejected 字段再发送，
-        // 会变成普通 tool_calls 无对应 tool 消息 → OpenAI/Anthropic 400。
-        const respondedCallIds = new Set<string>();
         for (const message of history) {
             for (const part of message.parts ?? []) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedToolCallIds.add(part.functionCall.id);
                 }
-                if (part.functionResponse?.id) {
-                    respondedCallIds.add(part.functionResponse.id);
+            }
+        }
+
+        // BR-08：不可随请求发送的 call id。
+        // functionCall 必须在其所属消息的「紧随其后的连续 functionResponse 块」内
+        // （或同一条消息内）存在配对响应，否则整体剔除：
+        // - 中断/取消残留的孤儿调用（无任何响应，含 rejected 与未标记 rejected 两种）
+        // - 迟到结算把响应追加到用户消息之后的错位形态（响应存在但不在块内）
+        // 两种形态都会产生「assistant tool_calls 无配对 tool 消息」→ OpenAI/Anthropic 400。
+        // 被剔除调用的配对 functionResponse 一并剔除（否则变成孤儿 tool 消息 400）。
+        const droppedCallIds = new Set<string>();
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+            const blockIds = new Set<string>();
+            // 同一条消息内携带的 functionResponse（中断残留/修复数据的混合形态）
+            for (const part of message.parts ?? []) {
+                const id = part.functionResponse?.id;
+                if (id) blockIds.add(id);
+            }
+            // 紧随其后的连续 functionResponse 消息块
+            for (let j = i + 1; j < history.length && history[j]?.isFunctionResponse; j++) {
+                for (const part of history[j].parts ?? []) {
+                    const id = part.functionResponse?.id;
+                    if (id) blockIds.add(id);
+                }
+            }
+            for (const part of message.parts ?? []) {
+                const callId = part.functionCall?.id;
+                if (callId && !blockIds.has(callId)) {
+                    droppedCallIds.add(callId);
                 }
             }
         }
@@ -2716,7 +2740,7 @@ export class ConversationManager {
          * rejected 字段是内部使用的，用于标记用户拒绝执行的工具
          * 不应该发送给 AI API，因为 API 不识别此字段
          *
-         * rejected 且无配对响应的调用（中断/取消残留的真孤儿）：整体丢弃该 part。
+         * BR-08：无配对响应（或响应不在紧随 FR 块内）的调用整体丢弃该 part。
          * 否则剥离 rejected 后变成普通 tool_calls 但无 tool 消息 → 400。
          * 有配对响应（用户显式拒绝，占位响应已写入）的调用：保留，仅剥字段，
          * 由 processFunctionResponse 把响应改写为拒绝态，成对发送让 AI 感知拒绝。
@@ -2726,8 +2750,7 @@ export class ConversationManager {
                 return part;
             }
             
-            if (part.functionCall.rejected && part.functionCall.id
-                && !respondedCallIds.has(part.functionCall.id)) {
+            if (part.functionCall.id && droppedCallIds.has(part.functionCall.id)) {
                 return null;
             }
             
@@ -2848,8 +2871,11 @@ export class ConversationManager {
                     // BR-07：孤儿 functionResponse 过滤——functionResponse.id 必须匹配
                     // 已见的 functionCall id（见 processMessage 开头的登记）。无 id 的
                     // functionResponse（Gemini 等按顺序配对的渠道）保守保留，不做激进过滤。
+                    // BR-08：被剔除调用（droppedCallIds）的配对 functionResponse 一并剔除，
+                    // 避免留下孤儿 tool 消息再次触发 400。
                     if (part.functionResponse && part.functionResponse.id
-                        && !seenFunctionCallIds.has(part.functionResponse.id)) {
+                        && (droppedCallIds.has(part.functionResponse.id)
+                            || !seenFunctionCallIds.has(part.functionResponse.id))) {
                         return false;
                     }
                     const keys = Object.keys(part);
@@ -3671,11 +3697,32 @@ export class ConversationManager {
             }
 
             if (newParts.length > 0) {
-                history.push(this.ensureNodeId({
+                // BR-08：新响应插到「所属 functionCall 消息的紧后 FR 块」之后，而不是追加到
+                // 历史末尾。正常路径下（assistant 消息就是历史末条）两者位置相同；竞态路径下
+                // （用户消息已追加、旧流迟到结算）末尾追加会形成 [assistant(tool_calls), user,
+                // tool] 的非法交替顺序，触发 OpenAI/Anthropic 400。插回 FR 块保证 assistant
+                // 的 tool_calls 永远紧随其 tool 消息，且与前端窗口（按 FR 块顺序渲染）对齐。
+                let ownerMessageIndex = -1;
+                for (let i = 0; i < history.length; i++) {
+                    const msg = history[i];
+                    if (!msg.parts) continue;
+                    for (const part of msg.parts) {
+                        if (part.functionCall?.id && settledResponseIds.has(part.functionCall.id)) {
+                            ownerMessageIndex = i;
+                        }
+                    }
+                }
+                // 找不到归属消息时回退到历史末尾（保持与旧行为一致，不应实际发生：
+                // 上方已按 functionCallIds 过滤过无归属的迟到结果）
+                const insertAt = ownerMessageIndex !== -1
+                    ? this.findFunctionResponseInsertIndex(history, ownerMessageIndex)
+                    : history.length;
+                const parent = insertAt > 0 ? history[insertAt - 1] : null;
+                history.splice(insertAt, 0, this.ensureNodeId({
                     role: 'user',
                     parts: newParts,
                     isFunctionResponse: true,
-                }, history[history.length - 1] ?? null));
+                }, parent));
                 changed = true;
             }
 
