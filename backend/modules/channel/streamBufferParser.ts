@@ -47,6 +47,13 @@ export const MAX_SSE_LINE_CHARS = 128 * 1024 * 1024;
  */
 const KEEPALIVE_RE = /^(keep[_-]?alive|keepalive|ping|heartbeat)$/i;
 
+/**
+ * 巨型单事件重复解析守卫：currentData 超过该长度后，仅当末尾字符是对象/数组/
+ * 字符串收尾符才尝试 JSON.parse（base64/增量文本以字母数字结尾直接跳过）。
+ * 真实 provider 的完成事件必以 } / ] / " 结尾（顶层标量除外，不产生）。
+ */
+const LARGE_JSON_PARSE_GUARD_BYTES = 4 * 1024;
+
 function isKeepAlivePayload(text: string): boolean {
     const trimmed = text.trim();
     if (!trimmed) return true;
@@ -130,13 +137,20 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                     currentData = piece;
                 }
 
-                // 尝试立即解析
+                // 尝试立即解析。巨型单事件（如 40MB base64 附件）跨多个包到达时，
+                // 每个包都对逐渐变长的 currentData 做一次完整 JSON.parse 是 O(n²) 纯浪费：
+                // 不完整时必然失败。超过阈值后仅当末尾字符是对象/数组/字符串的合法
+                // 收尾符才尝试解析（base64 增量以字母/数字/+/= 结尾直接跳过）。
                 if (currentData) {
-                    try {
-                        chunks.push(JSON.parse(currentData));
-                        currentData = '';
-                    } catch (e) {
-                        // 不完整，需要继续累积（或保持为可替换的心跳内容）
+                    const canBeComplete = currentData.length <= LARGE_JSON_PARSE_GUARD_BYTES
+                        || currentData.trimEnd().endsWith('}') || currentData.trimEnd().endsWith(']') || currentData.trimEnd().endsWith('"');
+                    if (canBeComplete) {
+                        try {
+                            chunks.push(JSON.parse(currentData));
+                            currentData = '';
+                        } catch (e) {
+                            // 不完整，需要继续累积（或保持为可替换的心跳内容）
+                        }
                     }
                 }
             } else if (currentData && line.trim()) {
@@ -150,11 +164,15 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                 if (!isChunkedSize && looksLikeJsonPrefix(currentData)) {
                     currentData += line;
 
-                    try {
-                        chunks.push(JSON.parse(currentData));
-                        currentData = '';
-                    } catch (e) {
-                        // 继续累积
+                    const canBeComplete = currentData.length <= LARGE_JSON_PARSE_GUARD_BYTES
+                        || currentData.trimEnd().endsWith('}') || currentData.trimEnd().endsWith(']') || currentData.trimEnd().endsWith('"');
+                    if (canBeComplete) {
+                        try {
+                            chunks.push(JSON.parse(currentData));
+                            currentData = '';
+                        } catch (e) {
+                            // 继续累积
+                        }
                     }
                 }
             }

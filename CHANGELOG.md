@@ -8,7 +8,19 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### Fixed
+  - **安全加固批次**：
+    - **更新器安装包路径注入修复**（`UpdateChecker.downloadAndInstall`）：远端 Release 的版本号此前直接拼入本地文件名（`path.join` 后 `writeFile` + 系统打开执行），tag 名含路径穿越序列（如 `v1.0.0/../../evil`）时安装包可被写到更新目录之外并被执行；现下载前校验版本号仅允许 `[0-9A-Za-z._+-]`（含 semver 构建元数据 `+`），非法即抛错并走 Release 页兜底。
+    - **终端工具 cwd 越界守卫**（`execute_command.ts`）：相对 cwd（含工作区前缀解析路径）折叠 `..` 后校验必须仍落在工作区内，`cwd: '../..'` 不再把命令工作目录带出工作区（与 write 类工具的工作区外审批策略对齐）；盘根工作区（`C:\`）尾分隔符不再误伤合法相对路径。
+    - **API key 不再明文驻留缓存键**（`modelList.ts`）：模型列表缓存键改为 apiKey/customHeaders 的 sha256 短摘要，明文密钥不再长期停留进程内存（碰撞仅多一次网络请求，无正确性影响）。
+  - **健壮性修复批次**：
+    - **上下文预览文件复用过期展示**（`FileHandlers.showContextContent`）：预览文件名带时间戳，同标题二次预览不再覆盖已打开编辑器标签的磁盘文件导致旧内容不重载（与 `previewAttachment` 一致）。
+    - **代理非流式响应 chunked 结束判定 O(n²) 修复**（`proxyFetch.ts`）：每个 data 事件对全部已收 chunks 全量 `Buffer.concat` 改为有界 4KB 滚动尾窗（仅含 body，header 解析后初始化），大响应（默认非流式路径 + 本地代理）下不再二次方复制；结束标记判定语义不变（仍只查响应体末尾）。
+    - **巨型单事件重复 JSON.parse 守卫**（`streamBufferParser.ts`）：单条 SSE 事件（40MB 级 base64 附件）跨包到达时不再对逐渐变长的 currentData 反复全量 parse——超过 4KB 后仅当末尾字符为 `}`/`]`/`"` 才尝试解析（完成事件必以此收尾，不产生遗漏）；`final` 时无条件解析兜底保留。
+    - **上游错误提取函数消重**（`ChannelManager.ts`）：删除本地私有 `extractUpstreamErrorMessage`，统一复用 `proxyFetch` 导出实现（两处此前逐字相同，防止未来一处修复漏同步）。
+    - **mtime 兜底扫描器 dispose 竞态**（`usageCache.ts`）：dispose 后 in-flight 异步扫描不再写已释放缓存对象；`reader.cancel()` 未 await/catch 的潜在 unhandled rejection 修复（`proxyFetch.ts`）。
+    - **过时注释修正**（`conversationActions.ts`）：同步工作区注释与「对话内禁止切换工作区」实际语义一致（`setActiveWorkspace`/`openWorkspaceFolderAction` 不再重绑定）。
+  - **回归测试**：`streamSecurity.test.ts` mock 补充 `extractUpstreamErrorMessage` 真实实现（ChannelManager 消重后保持错误正文提取语义验证）。
 
 ## [1.7.4] - 2026-08-08
 

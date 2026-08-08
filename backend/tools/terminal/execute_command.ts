@@ -30,6 +30,19 @@ import { t } from '../../i18n';
 const TASK_TYPE_TERMINAL = 'terminal';
 
 /**
+ * 判定解析后的目录是否仍落在工作区内（cwd 越界守卫）。
+ * - 折叠 `..` 段后的结果与工作区根相等或在根下 → 在工作区内；
+ * - 工作区根本身可能带尾分隔符（盘根 `C:\` / `/`），此时根 + 分隔符判定仍成立；
+ * - Windows 大小写不敏感：实际用途是拒绝 `../..` 越界（大小写翻转属理论误伤，fail-closed 可接受）。
+ */
+function isWithinWorkspace(resolvedPath: string, workspaceRoot: string): boolean {
+    const normalizedRoot = path.normalize(workspaceRoot);
+    if (resolvedPath === normalizedRoot) return true;
+    const rootWithSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
+    return resolvedPath.startsWith(rootWithSep);
+}
+
+/**
  * Shell 类型定义
  */
 type ShellType = 'default' | 'powershell' | 'cmd' | 'bash' | 'zsh' | 'sh' | 'gitbash' | 'wsl';
@@ -1150,12 +1163,28 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     // 解析带工作区前缀的路径
                     const { workspace, relativePath } = parseWorkspacePath(cwd, context?.activeWorkspaceUri);
                     if (workspace) {
-                        workingDir = path.join(workspace.fsPath, relativePath);
+                        // 折叠 .. 段后校验仍落在工作区内：防止 `../..` 之类的相对路径
+                        // 把命令工作目录带出工作区（与 write 类工具的工作区外审批策略对齐）
+                        const resolved = path.normalize(path.join(workspace.fsPath, relativePath));
+                        if (!isWithinWorkspace(resolved, workspace.fsPath)) {
+                            return {
+                                success: false,
+                                error: `Working directory escapes the workspace: ${cwd}. Please use a path inside the workspace.`
+                            };
+                        }
+                        workingDir = resolved;
                         workspaceName = workspaces.length > 1 ? workspace.name : undefined;
                     } else {
                         // 使用默认工作区（会话绑定工作区优先）
                         const base = preferredWorkspace?.fsPath || workspaces[0].fsPath;
-                        workingDir = path.join(base, cwd);
+                        const resolved = path.normalize(path.join(base, cwd));
+                        if (!isWithinWorkspace(resolved, base)) {
+                            return {
+                                success: false,
+                                error: `Working directory escapes the workspace: ${cwd}. Please use a path inside the workspace.`
+                            };
+                        }
+                        workingDir = resolved;
                     }
                 }
             } else {

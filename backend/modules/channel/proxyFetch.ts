@@ -441,6 +441,10 @@ function sendRequestOverSocket(
     // 收集响应数据（#38 修复：延迟 concat，用 receivedLength 做快速判定）
     const chunks: Buffer[] = [];
     let receivedLength = 0;
+    // chunked 结束判定用滚动尾窗（仅保留最近 4KB 的响应体）：结束标记只可能出现在
+    // 响应体末尾，避免每个 data 事件对全部已收 chunks 做全量 concat（大响应下 O(n²) 复制）。
+    // 尾窗在 header 解析完成后才初始化（只含 body），防止 header 内容混入误判。
+    let tailWindow: Buffer | null = null;
     let headersParsed = false;
     let responseFinished = false;
     let statusCode = 0;
@@ -495,12 +499,8 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            const fullBuffer = Buffer.concat(chunks);
-            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-            const endMarker = Buffer.from('0\r\n\r\n');
-            const hasEnd = bodyBuffer.includes(endMarker);
-            const hasEndAlt = bodyBuffer.toString('utf8').includes('\r\n0\r\n');
-            return hasEnd || hasEndAlt;
+            // 结束标记只可能出现在响应体末尾，检查有界尾窗即可（O(1)，不再全量 concat）
+            return !!tailWindow && hasChunkedEndMarker(tailWindow);
         }
 
         return false;
@@ -519,10 +519,7 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            const fullBuffer = Buffer.concat(chunks);
-            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-            const endMarker = Buffer.from('0\r\n\r\n');
-            return bodyBuffer.includes(endMarker) || bodyBuffer.toString('utf8').includes('\r\n0\r\n');
+            return !!tailWindow && hasChunkedEndMarker(tailWindow);
         }
 
         // 未声明 content-length 也非 chunked —— 假定连接断开时即为完整
@@ -568,12 +565,21 @@ function sendRequestOverSocket(
 
         if (!headersParsed) {
             const fullBuffer = Buffer.concat(chunks);
-            if (tryParseHeaders(fullBuffer) && isResponseComplete()) {
-                // 使用 end() 进行优雅关闭，避免 ECONNRESET
-                socket.end();
-                finishResponse();
+            if (tryParseHeaders(fullBuffer)) {
+                // header 解析成功：尾窗只保留 body 部分（结束标记判定不混入 header）
+                tailWindow = fullBuffer.subarray(headerEndIndex + 4);
+                if (tailWindow.length > TAIL_WINDOW_MAX_BYTES) {
+                    tailWindow = tailWindow.subarray(tailWindow.length - TAIL_WINDOW_MAX_BYTES);
+                }
+                if (isResponseComplete()) {
+                    // 使用 end() 进行优雅关闭，避免 ECONNRESET
+                    socket.end();
+                    finishResponse();
+                }
             }
         } else {
+            // 滚动尾窗：仅保留最近 4KB body，供 chunked 结束判定使用（有界内存，O(1) 更新）
+            tailWindow = Buffer.concat([tailWindow ?? Buffer.alloc(0), chunk]).subarray(-TAIL_WINDOW_MAX_BYTES);
             if (isResponseComplete()) {
                 // 使用 end() 进行优雅关闭，避免 ECONNRESET
                 socket.end();
@@ -615,6 +621,20 @@ function sendRequestOverSocket(
         cleanup();
         reject(err);
     });
+}
+
+/** chunked 结束标记（0\r\n\r\n）与旧式换行变体 */
+const CHUNKED_END_MARKER = Buffer.from('0\r\n\r\n');
+const CHUNKED_END_MARKER_ALT = '\r\n0\r\n';
+
+/** 滚动尾窗最大字节数：结束标记序列仅 5 字节，4KB 足以覆盖任意跨包切分 */
+const TAIL_WINDOW_MAX_BYTES = 4 * 1024;
+
+/** 判定尾窗中是否含 chunked 结束标记（仅检查末尾 64 字节即可命中 0\r\n\r\n 完整序列） */
+function hasChunkedEndMarker(tailWindow: Buffer): boolean {
+    if (tailWindow.length === 0) return false;
+    const probe = tailWindow.length > 64 ? tailWindow.subarray(tailWindow.length - 64) : tailWindow;
+    return probe.includes(CHUNKED_END_MARKER) || probe.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
 }
 
 /**
@@ -720,7 +740,8 @@ export async function* proxyStreamFetch(
             while (true) {
                 // 检查是否已取消
                 if (init.signal?.aborted) {
-                    reader.cancel();
+                    // cancel() 在底层连接已损坏时可能 reject，忽略该异步失败
+                    void reader.cancel().catch(() => {});
                     break;
                 }
                 const { done, value } = await reader.read();

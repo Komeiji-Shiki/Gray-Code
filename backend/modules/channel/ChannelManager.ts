@@ -22,40 +22,10 @@ import type {
 } from './types';
 import type { Content } from '../conversation/types';
 import { ChannelError, ErrorType } from './types';
-import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
+import { createProxyFetch, extractUpstreamErrorMessage, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
 import { parseStreamBuffer } from './streamBufferParser';
-
-/**
- * 从上游 API 的非 2xx 响应体中提取人类可读的错误消息。
- *
- * 支持格式：
- * - Anthropic:         { error: { message: "..." } }
- * - OpenAI/OpenRouter: { error: { message: "...", code: 429, metadata: {...} } }
- * - 简化 JSON:         { message: "..." } / { error: "..." }
- * - 纯文本:            直接返回文本
- */
-function extractUpstreamErrorMessage(body: unknown): string | undefined {
-    if (!body || typeof body !== 'object') {
-        if (typeof body === 'string' && body.trim()) return body.trim();
-        return undefined;
-    }
-    const obj = body as Record<string, any>;
-    // Anthropic/OpenAI/OpenRouter 的 { error: { message: "..." } }
-    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
-        return obj.error.message.trim();
-    }
-    // { error: "..." }
-    if (typeof obj.error === 'string') {
-        return obj.error.trim();
-    }
-    // { message: "..." }
-    if (typeof obj.message === 'string') {
-        return obj.message.trim();
-    }
-    return undefined;
-}
 
 /**
  * 判断模型响应内容是否为空（无文本/思考/工具调用/附件）。

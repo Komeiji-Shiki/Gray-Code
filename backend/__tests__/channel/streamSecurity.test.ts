@@ -13,10 +13,12 @@ import { createProxyFetch, proxyStreamFetch } from '../../modules/channel/proxyF
 import { ChannelError, ErrorType } from '../../modules/channel/types';
 import type { GenerateRequest } from '../../modules/channel/types';
 
-// mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出
+// mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出；
+// extractUpstreamErrorMessage 保留真实实现（纯函数，错误正文提取语义需与生产一致）
 jest.mock('../../modules/channel/proxyFetch', () => ({
     createProxyFetch: jest.fn(() => jest.fn()),
-    proxyStreamFetch: jest.fn()
+    proxyStreamFetch: jest.fn(),
+    extractUpstreamErrorMessage: jest.requireActual('../../modules/channel/proxyFetch').extractUpstreamErrorMessage
 }));
 
 const mockCreateProxyFetch = createProxyFetch as jest.Mock;

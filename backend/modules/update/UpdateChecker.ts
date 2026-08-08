@@ -199,6 +199,12 @@ export class UpdateChecker {
         }
         const dir = path.join(this.options.globalStoragePath, 'update');
         await fs.mkdir(dir, { recursive: true });
+        // 安全校验：tag 名可能来自远端 Release（受仓库控制），净化后才允许拼入文件路径，
+        // 防止路径穿越（如 v1.0.0/../../evil）把安装包写到 update 目录之外。
+        // 允许 semver 合法字符（含 + 构建元数据，如 v1.6.0+build5）。
+        if (!/^[0-9A-Za-z._+-]+$/.test(update.version)) {
+            throw new Error(`非法版本号格式：${update.version}`);
+        }
         const ext = update.installerAssetUrl.endsWith('.zip') ? '.zip' : '.exe';
         const target = path.join(dir, `graycode-${update.version}-setup${ext}`);
 

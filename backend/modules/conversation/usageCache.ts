@@ -251,11 +251,13 @@ export function startMtimeFallbackScanner(
     let baseline: Map<string, number> | null = null;
     let timer: NodeJS.Timeout | null = null;
     let scanning = false;
+    let stopped = false;
     const scan = (): void => {
-        if (scanning) return; // 上一轮异步扫描未完成：跳过本轮，避免重叠扫描
+        if (scanning || stopped) return; // 上一轮异步扫描未完成或已 dispose：跳过本轮
         scanning = true;
         void scanConversationMtimes(conversationsDirPath)
             .then(current => {
+                if (stopped) return; // dispose 后停止写缓存，避免对已释放对象写入状态
                 if (baseline) {
                     for (const id of diffMtimeSnapshots(baseline, current)) {
                         cache.markDirty(id);
@@ -270,6 +272,7 @@ export function startMtimeFallbackScanner(
     scan();
     timer = setInterval(scan, intervalMs);
     return () => {
+        stopped = true;
         if (timer) {
             clearInterval(timer);
             timer = null;

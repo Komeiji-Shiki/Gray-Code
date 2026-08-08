@@ -290,7 +290,8 @@ export async function syncConversationWorkspaceUri(
   // - 已绑定：保持"绑定即终身"语义，**不**因绑定工作区暂时未打开（已关闭/
   //   切换到其它文件夹）而静默重绑定——打开对话时锁定到对话绑定的工作区，
   //   避免显示与绑定漂移造成混淆；需要换绑时由用户通过顶部下拉显式切换
-  //   （setActiveWorkspace / openWorkspaceFolderAction 会重绑定）。
+  //   （setActiveWorkspace / openWorkspaceFolderAction 不重绑定，切换工作区 = 打开
+  //   绑定新工作区的新对话；本函数是唯一的 conversation.setWorkspaceUri 调用点）。
   // - 已绑定校验必须在任何异步读取**之前**完成：绑定工作区未打开时扩展端
   //   激活工作区仍是旧值（workspace.setActive 对未打开 URI 静默忽略），
   //   若先 fetch 再校验，fetch 结果会覆盖 store 的锁定展示与筛选口径。

@@ -743,9 +743,9 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     };
     const ext = extMap[language || ''] || '.txt';
     
-    // 使用固定文件名，这样每次都会复用同一个文件
+    // 文件名带时间戳，避免同标题复用同名文件导致已打开编辑器标签不重载、展示过期内容
     const safeTitle = (title || 'context').replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
-    const tempFilePath = path.join(tempDir, `preview_${safeTitle}${ext}`);
+    const tempFilePath = path.join(tempDir, `${Date.now()}_preview_${safeTitle}${ext}`);
     
     // 写入内容
     await fs.promises.writeFile(tempFilePath, content, 'utf-8');

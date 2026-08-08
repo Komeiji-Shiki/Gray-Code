@@ -6,6 +6,7 @@
  */
 
 import { t } from '../../i18n';
+import { createHash } from 'crypto';
 import type { ChannelConfig } from '../config/types';
 import { applyCustomHeaders } from '../config/configs/base';
 import { createProxyFetch } from './proxyFetch';
@@ -63,7 +64,13 @@ function touchModelListCache(key: string): void {
 function buildModelListCacheKey(type: string, url: string, config: ChannelConfig, proxyUrl?: string): string {
   const cfg = config as any;
   const customHeaders = cfg.customHeadersEnabled ? JSON.stringify(cfg.customHeaders ?? '') : '';
-  return `${type}|${url}|${String(cfg.apiKey ?? '')}|${String(cfg.useAuthorizationHeader ?? '')}|${customHeaders}|${proxyUrl ?? ''}`;
+  // apiKey（含 customHeaders 值）原样拼进缓存键会让明文密钥长期驻留进程内存；
+  // 改用短摘要作缓存键，碰撞概率可忽略（冲突只会导致多一次网络请求，无正确性影响）。
+  const secretPart = createHash('sha256')
+    .update(`${String(cfg.apiKey ?? '')}|${String(cfg.useAuthorizationHeader ?? '')}|${customHeaders}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `${type}|${url}|${secretPart}|${proxyUrl ?? ''}`;
 }
 
 /** 命中返回克隆（调用方可能修改返回值，克隆避免污染缓存条目） */
