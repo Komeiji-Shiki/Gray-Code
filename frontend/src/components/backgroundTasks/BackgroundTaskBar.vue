@@ -51,12 +51,16 @@ watch(() => store.runningCount, count => {
   else stopTicker()
 }, { immediate: true })
 
+let stopStoreListeners: (() => void) | undefined
+
 onMounted(() => {
-  store.initialize()
+  stopStoreListeners = store.initialize()
 })
 
 onUnmounted(() => {
   stopTicker()
+  stopStoreListeners?.()
+  stopStoreListeners = undefined
 })
 
 const visibleTasks = computed(() => store.taskList)

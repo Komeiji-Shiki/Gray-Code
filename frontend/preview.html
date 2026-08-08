@@ -452,6 +452,7 @@
 
     <script>
         function enterApp() {
+            clearInterval(grayTimer);
             document.getElementById('splash').classList.add('hidden');
             document.getElementById('app').classList.add('visible');
         }
@@ -477,13 +478,7 @@
         }
 
         // 启动格雷码循环
-        setInterval(updateGrayCode, 200);
-        
-        // 自动进入（演示用）
-        setTimeout(() => {
-            // document.getElementById('splash').classList.add('hidden');
-            // document.getElementById('app').classList.add('visible');
-        }, 3000);
+        const grayTimer = setInterval(updateGrayCode, 200);
     </script>
 </body>
 </html>

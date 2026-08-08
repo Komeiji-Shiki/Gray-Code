@@ -154,22 +154,28 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   return false
 }
 
+type DebouncedFunction<T extends (...args: any[]) => any> = ((...args: Parameters<T>) => void) & { cancel: () => void }
+
 // 防抖函数
 export function debounce<T extends (...args: any[]) => any>(
   fn: T,
   delay: number
-): (...args: Parameters<T>) => void {
-  let timeoutId: number | undefined
-  
-  return function (...args: Parameters<T>) {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-    }
-    
+): DebouncedFunction<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+  const debounced = function (...args: Parameters<T>) {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
     timeoutId = setTimeout(() => {
+      timeoutId = undefined
       fn(...args)
-    }, delay) as unknown as number
+    }, delay)
+  } as DebouncedFunction<T>
+
+  debounced.cancel = () => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    timeoutId = undefined
   }
+  return debounced
 }
 
 // 节流函数
@@ -178,14 +184,31 @@ export function throttle<T extends (...args: any[]) => any>(
   delay: number
 ): (...args: Parameters<T>) => void {
   let lastCall = 0
-  
+  let trailingTimer: ReturnType<typeof setTimeout> | undefined
+  let trailingArgs: Parameters<T> | undefined
+
   return function (...args: Parameters<T>) {
     const now = Date.now()
-    
-    if (now - lastCall >= delay) {
+    const remaining = delay - (now - lastCall)
+
+    if (remaining <= 0) {
+      if (trailingTimer !== undefined) clearTimeout(trailingTimer)
+      trailingTimer = undefined
+      trailingArgs = undefined
       lastCall = now
       fn(...args)
+      return
     }
+
+    trailingArgs = args
+    if (trailingTimer !== undefined) return
+    trailingTimer = setTimeout(() => {
+      trailingTimer = undefined
+      lastCall = Date.now()
+      const pending = trailingArgs
+      trailingArgs = undefined
+      if (pending) fn(...pending)
+    }, remaining)
   }
 }
 
@@ -204,6 +227,8 @@ export function isEmpty(value: any): boolean {
   if (value === null || value === undefined) return true
   if (typeof value === 'string') return value.trim() === ''
   if (Array.isArray(value)) return value.length === 0
+  if (value instanceof Date) return false
+  if (value instanceof Map || value instanceof Set) return value.size === 0
   if (typeof value === 'object') return Object.keys(value).length === 0
   return false
 }
@@ -227,6 +252,7 @@ export function deepClone<T>(obj: T): T {
 
 // 格式化数字（添加千分位分隔符，始终保留一位小数）
 export function formatNumber(num: number): string {
+  if (!Number.isFinite(num)) return '0'
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + 'M'
   }

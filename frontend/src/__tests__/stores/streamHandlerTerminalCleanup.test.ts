@@ -115,7 +115,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(processQueue).toHaveBeenCalled()
   })
 
-  it('content-less toolIteration 无条件复位流式状态', () => {
+  it('content-less toolIteration 无条件复位流式状态并调度 processQueue', async () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -123,15 +123,19 @@ describe('streamHandler 终结事件状态复位', () => {
       activeStreamId: ref('stream_1')
     })
 
+    const processQueue = vi.fn()
     handleStreamChunk(
       { type: 'toolIteration', conversationId: 'conv_1', streamId: 'stream_1' } as any,
-      createCtx(state)
+      createCtx(state, { processQueue })
     )
 
     expect(state.isStreaming.value).toBe(false)
     expect(state.isWaitingForResponse.value).toBe(false)
     expect(state.streamingMessageId.value).toBeNull()
     expect(state.activeStreamId.value).toBeNull()
+
+    await nextTick()
+    expect(processQueue).toHaveBeenCalledOnce()
   })
 
   it('携带 content 的 complete 保持原有行为（消息替换 + 状态复位）', async () => {

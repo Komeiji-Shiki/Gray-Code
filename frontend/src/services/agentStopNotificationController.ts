@@ -100,7 +100,9 @@ export class AgentStopNotificationController {
         }
 
         if (wasRunning) {
-          void this.handleAgentStopped()
+          void this.handleAgentStopped().catch(error => {
+            console.error('[agent-stop-notification] Failed to handle stopped agent:', error)
+          })
         }
       },
       {

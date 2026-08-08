@@ -51,6 +51,14 @@ const LIST_MAX_WIDTH = 420
 const LIST_MAX_HEIGHT = 320
 const LIST_MIN_VISIBLE_HEIGHT = 80
 let positionListenersAttached = false
+let positionFrame = 0
+function scheduleListPositionUpdate(): void {
+  if (positionFrame) return
+  positionFrame = requestAnimationFrame(() => {
+    positionFrame = 0
+    updateListPosition()
+  })
+}
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
@@ -136,15 +144,19 @@ function updateListPosition(): void {
 
 function attachPositionListeners(): void {
   if (positionListenersAttached) return
-  window.addEventListener('resize', updateListPosition)
-  window.addEventListener('scroll', updateListPosition, true)
+  window.addEventListener('resize', scheduleListPositionUpdate)
+  window.addEventListener('scroll', scheduleListPositionUpdate, true)
   positionListenersAttached = true
 }
 
 function detachPositionListeners(): void {
   if (!positionListenersAttached) return
-  window.removeEventListener('resize', updateListPosition)
-  window.removeEventListener('scroll', updateListPosition, true)
+  window.removeEventListener('resize', scheduleListPositionUpdate)
+  window.removeEventListener('scroll', scheduleListPositionUpdate, true)
+  if (positionFrame) {
+    cancelAnimationFrame(positionFrame)
+    positionFrame = 0
+  }
   positionListenersAttached = false
 }
 
@@ -173,6 +185,14 @@ watch(visible, value => {
 
 onBeforeUnmount(detachPositionListeners)
 
+async function handleBranchAction(action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action()
+  } catch (error) {
+    console.error('[BranchSwitcherBar] Branch operation failed:', error)
+  }
+}
+
 function switchTo(nodeId: string): void {
   closeList()
   pendingDeleteNodeId.value = null
@@ -183,7 +203,7 @@ function switchTo(nodeId: string): void {
     showWorkspaceConfirm.value = true
     return
   }
-  void chatStore.switchBranchCandidate(nodeId)
+  void handleBranchAction(() => chatStore.switchBranchCandidate(nodeId))
 }
 
 /** BCP-04：按用户选择执行切换（chat-only / chat-and-workspace） */
@@ -192,7 +212,7 @@ function confirmSwitchMode(mode: SwitchBranchWorkspaceMode): void {
   pendingWorkspaceSwitchNodeId.value = null
   showWorkspaceConfirm.value = false
   if (!nodeId) return
-  void chatStore.switchBranchCandidate(nodeId, { mode })
+  void handleBranchAction(() => chatStore.switchBranchCandidate(nodeId, { mode }))
 }
 
 /** 上 / 下一个候选（循环） */
@@ -208,7 +228,7 @@ function step(delta: number): void {
 function toggleDelete(nodeId: string): void {
   if (pendingDeleteNodeId.value === nodeId) {
     pendingDeleteNodeId.value = null
-    void chatStore.deleteBranchCandidate(nodeId)
+    void handleBranchAction(() => chatStore.deleteBranchCandidate(nodeId))
     return
   }
   pendingDeleteNodeId.value = nodeId

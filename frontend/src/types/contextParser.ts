@@ -25,6 +25,18 @@ export interface ParsedMessageNodes {
   contexts: PromptContextItem[]
 }
 
+function decodeContextAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+}
+
+function decodeContextContent(value: string): string {
+  return value.replace(/&lt;\/lim-context&gt;/gi, '</lim-context>')
+}
+
 /**
  * 从消息内容中解析 <lim-context> 块（支持出现在任意位置）
  */
@@ -54,14 +66,15 @@ export function parseMessageToNodes(content: string): ParsedMessageNodes {
     const innerContent = match[2]
     const attrs = parseAttributes(attrsStr)
 
+    const isBinary = attrs.binary?.toLowerCase() === 'true'
     const contextItem: PromptContextItem = {
       id: `parsed-${idCounter++}`,
       type: (attrs.type as PromptContextItem['type']) || 'text',
-      title: attrs.title || attrs.path || 'Context',
-      content: attrs.binary === 'true' ? '' : (innerContent || '').trim(),
-      filePath: attrs.path,
-      language: attrs.language,
-      isTextContent: attrs.binary === 'true' ? false : true,
+      title: decodeContextAttribute(attrs.title || attrs.path || 'Context'),
+      content: isBinary ? '' : decodeContextContent((innerContent || '').trim()),
+      filePath: attrs.path ? decodeContextAttribute(attrs.path) : undefined,
+      language: attrs.language ? decodeContextAttribute(attrs.language) : undefined,
+      isTextContent: !isBinary,
       enabled: true,
       addedAt: Date.now()
     }

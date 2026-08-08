@@ -459,10 +459,12 @@ const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: 
 })
 
 onBeforeUnmount(() => {
-  // 只注销本组件注册的事件监听器
-  // 注意：模块级 applyDiffTimers 不在此清理，由 diff.statusChanged 统一维护
-  unregisterApplyDiffConfigChanged()
-  unregisterStatusChanged()
+    // 只注销本组件注册的事件监听器。
+    // 若当前实例卸载时已没有任何 pending diff，会同步释放模块级倒计时；
+    // 仍有 pending 时保留单例计时器，由后续 diff.statusChanged 或新的实例接管。
+    unregisterApplyDiffConfigChanged()
+    unregisterStatusChanged()
+    if (getAllPendingDiffSessions().length === 0) clearAllDiffTimers()
 })
 
 // 异步初始化：获取 diff 工具配置（仅此一步需要 await，留在 onMounted 内）
@@ -487,6 +489,8 @@ watchEffect(() => {
     ensureMcpToolRegistered(tool.name)
   }
 })
+
+const processingToolIds = ref<Set<string>>(new Set())
 
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
@@ -662,8 +666,6 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 })
 
 // 正在处理确认的工具 ID 集合
-// eslint-disable-next-line no-undef
-const processingToolIds = ref<Set<string>>(new Set())
 
 function addProcessingToolId(toolId: string) {
   if (!toolId || processingToolIds.value.has(toolId)) return
@@ -1077,8 +1079,7 @@ watch(
         }
       }
     })
-  },
-  { deep: true }
+  }
 )
 
 // 渲染工具内容

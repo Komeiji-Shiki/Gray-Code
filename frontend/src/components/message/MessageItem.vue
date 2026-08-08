@@ -808,9 +808,9 @@ function handleRestoreAndRetry(checkpointId: string) {
     <!-- 回复查看（仅在打开时渲染：关闭状态下 responseViewerData 为 null，
          传值会触发 ResponseViewerDialog 的 computed 求值 TypeError） -->
     <ResponseViewerDialog
-      v-if="showResponseDialog"
+      v-if="showResponseDialog && responseViewerData"
       v-model="showResponseDialog"
-      :value="responseViewerData as ResponseViewerData"
+      :value="responseViewerData"
       :title="t('components.message.actions.viewResponse')"
       width="960px"
     />

@@ -424,7 +424,9 @@ watch(
   () => chatStore.isWaitingForResponse,
   (waiting) => {
     if (!waiting && chatStore.activeBuild && chatStore.activeBuild.status === 'running') {
-      void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
+      void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' }).catch(error => {
+        console.error('[MessageList] Failed to finalize active build:', error)
+      })
     }
   }
 )
@@ -436,13 +438,17 @@ watch(
     const sync = activeBuildPlanSync.value
     if (!build || !sync) return
 
-    if (sync.kind === 'revision') {
-      await chatStore.setActiveBuild(null)
-      return
-    }
+    try {
+      if (sync.kind === 'revision') {
+        await chatStore.setActiveBuild(null)
+        return
+      }
 
-    if (sync.kind === 'progress_sync' && sync.content && sync.content !== build.planContent) {
-      await chatStore.setActiveBuild({ ...build, planContent: sync.content })
+      if (sync.kind === 'progress_sync' && sync.content && sync.content !== build.planContent) {
+        await chatStore.setActiveBuild({ ...build, planContent: sync.content })
+      }
+    } catch (error) {
+      console.error('[MessageList] Failed to synchronize active build:', error)
     }
   },
   { immediate: true }
@@ -1036,7 +1042,12 @@ async function handleBranch(messageId: string) {
   if (typeof backendIndex !== 'number' || !Number.isFinite(backendIndex)) {
     return
   }
-  await chatStore.branchFromMessage(backendIndex)
+  try {
+    await chatStore.branchFromMessage(backendIndex)
+  } catch (error) {
+    console.error('[MessageList] Failed to create branch:', error)
+    showRestoreNotice('error', error instanceof Error ? error.message : t('components.message.checkpoint.restoreResultFailed'))
+  }
 }
 
 // 处理复制
@@ -1135,49 +1146,54 @@ async function confirmRestore() {
 
   const { kind, checkpointId } = action
 
-  if (kind === 'restore') {
-    // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
-    const result = await chatStore.restoreCheckpoint(checkpointId, true)
+  try {
+    if (kind === 'restore') {
+      // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
+      const result = await chatStore.restoreCheckpoint(checkpointId, true)
 
-    // CP-10 / H-3: 恢复结果用独立提示分级展示（成功/部分成功/警告/失败），
-    // 不再塞入 chatStore.error，避免错误条“重试”误触发 LLM 重新生成。
-    if (result && !result.success) {
-      showRestoreNotice('error', result.error || t('components.message.checkpoint.restoreResultFailed'))
-    } else if (result?.failures && result.failures.length > 0) {
-      const shown = result.failures.slice(0, 5).map(f => `${f.path}: ${f.reason}`).join('；')
-      showRestoreNotice('partial', result.failures.length > 5
-        ? t('components.message.checkpoint.restoreResultPartialMore', { files: shown, count: result.failures.length })
-        : t('components.message.checkpoint.restoreResultPartial', { files: shown }))
-    } else if (result?.unbackedPaths && result.unbackedPaths.length > 0) {
-      // 快照时未备份（超限/不可读）的文件不会被本次恢复删除或恢复，明确告知
-      const shown = result.unbackedPaths.slice(0, 5).join('、')
-      showRestoreNotice('warning', result.unbackedPaths.length > 5
-        ? t('components.message.checkpoint.restoreResultUnbackedMore', { paths: shown, count: result.unbackedPaths.length })
-        : t('components.message.checkpoint.restoreResultUnbacked', { paths: shown }))
-    } else {
-      const pruned = result?.autoPrunedCheckpointCount || 0
-      showRestoreNotice('success', pruned > 0
-        ? t('components.message.checkpoint.restoreResultSuccessWithPrune', { count: result?.restored ?? 0, pruned })
-        : t('components.message.checkpoint.restoreResultSuccess', { count: result?.restored ?? 0 }))
+      // CP-10 / H-3: 恢复结果用独立提示分级展示（成功/部分成功/警告/失败），
+      // 不再塞入 chatStore.error，避免错误条“重试”误触发 LLM 重新生成。
+      if (result && !result.success) {
+        showRestoreNotice('error', result.error || t('components.message.checkpoint.restoreResultFailed'))
+      } else if (result?.failures && result.failures.length > 0) {
+        const shown = result.failures.slice(0, 5).map(f => `${f.path}: ${f.reason}`).join('；')
+        showRestoreNotice('partial', result.failures.length > 5
+          ? t('components.message.checkpoint.restoreResultPartialMore', { files: shown, count: result.failures.length })
+          : t('components.message.checkpoint.restoreResultPartial', { files: shown }))
+      } else if (result?.unbackedPaths && result.unbackedPaths.length > 0) {
+        // 快照时未备份（超限/不可读）的文件不会被本次恢复删除或恢复，明确告知
+        const shown = result.unbackedPaths.slice(0, 5).join('、')
+        showRestoreNotice('warning', result.unbackedPaths.length > 5
+          ? t('components.message.checkpoint.restoreResultUnbackedMore', { paths: shown, count: result.unbackedPaths.length })
+          : t('components.message.checkpoint.restoreResultUnbacked', { paths: shown }))
+      } else {
+        const pruned = result?.autoPrunedCheckpointCount || 0
+        showRestoreNotice('success', pruned > 0
+          ? t('components.message.checkpoint.restoreResultSuccessWithPrune', { count: result?.restored ?? 0, pruned })
+          : t('components.message.checkpoint.restoreResultSuccess', { count: result?.restored ?? 0 }))
+      }
+      return
     }
-    return
-  }
 
-  if (action.messageId === undefined) return
-  const actualIndex = chatStore.allMessages.findIndex(m => m.id === action.messageId)
-  if (actualIndex === -1) return
+    if (action.messageId === undefined) return
+    const actualIndex = chatStore.allMessages.findIndex(m => m.id === action.messageId)
+    if (actualIndex === -1) return
 
-  if (kind === 'retry') {
-    // 用户在确认框中已确认待删除文件清单 → 允许删除快照后新建文件
-    await chatStore.restoreAndRetry(actualIndex, checkpointId, true)
-  } else if (kind === 'delete') {
-    await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
-    pendingDeleteMessageId.value = null
-    pendingDeleteBackendIndex.value = null
-    // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
-    showDeleteConfirm.value = false
-  } else if (kind === 'edit') {
-    await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
+    if (kind === 'retry') {
+      // 用户在确认框中已确认待删除文件清单 → 允许删除快照后新建文件
+      await chatStore.restoreAndRetry(actualIndex, checkpointId, true)
+    } else if (kind === 'delete') {
+      await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
+      pendingDeleteMessageId.value = null
+      pendingDeleteBackendIndex.value = null
+      // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
+      showDeleteConfirm.value = false
+    } else if (kind === 'edit') {
+      await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
+    }
+  } catch (error) {
+    console.error('[MessageList] Restore operation failed:', error)
+    showRestoreNotice('error', error instanceof Error ? error.message : t('components.message.checkpoint.restoreResultFailed'))
   }
 }
 
@@ -1294,7 +1310,7 @@ function formatCheckpointTime(timestamp: number): string {
         <div v-if="hasMore" class="load-more-container">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-if="chatStore.historyFolded" class="load-more-text">
-            更早消息已折叠（已丢弃 {{ chatStore.foldedMessageCount }} 条），继续上拉可加载
+            {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
           </span>
         </div>
 

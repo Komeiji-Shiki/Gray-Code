@@ -89,26 +89,12 @@ export class SmoothStreamer {
   /** 收到一段流式增量文本（真实内容已由调用方累加，这里只进显示池） */
   push(chunk: string): void {
     if (!chunk) return
-    // M2：超长 chunk 预判——按 panic 阈值先把超出部分直通提交，再对剩余部分做字素分割，
-    // 避免"先全量分割成数组、再截断"的峰值内存浪费。
-    const backlogAfterPush = this.queue.length + chunk.length
-    if (backlogAfterPush > this.opts.panic) {
-      const overflow = backlogAfterPush - this.opts.panic
-      if (overflow > 0 && overflow <= chunk.length) {
-        let cut = overflow
-        // 避免在 UTF-16 代理对中间截断（低位代理在前即处于半截状态）
-        const low = chunk.charCodeAt(cut)
-        if (low >= 0xDC00 && low <= 0xDFFF) cut -= 1
-        this.emitDirect(chunk.slice(0, cut))
-        chunk = chunk.slice(cut)
-      }
-    }
-    if (seg) {
-      for (const s of seg.segment(chunk)) this.queue.push(s.segment)
-    } else {
-      this.queue.push(...Array.from(chunk))
-    }
-    // 常规兜底：chunk 快进后 queue 仍超限（如多次连续大 push）时按旧逻辑截断
+    const graphemes = seg
+      ? Array.from(seg.segment(chunk), item => item.segment)
+      : Array.from(chunk)
+    for (const grapheme of graphemes) this.queue.push(grapheme)
+
+    // queue 与 panic 都以字素为单位，避免 emoji 等代理对按 UTF-16 码元预判后被过早直通。
     if (this.queue.length > this.opts.panic) {
       this.emitDirect(this.queue.splice(0, this.queue.length - this.opts.panic).join(''))
     }

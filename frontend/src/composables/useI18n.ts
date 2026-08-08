@@ -25,6 +25,10 @@ export { messages }
  * @param key 翻译键
  * @param params 参数对象
  */
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export function translate(lang: string, key: string, params?: Record<string, any>): string {
     const message = messages[lang] || messages['zh-CN']
     
@@ -49,7 +53,7 @@ export function translate(lang: string, key: string, params?: Record<string, any
     // 替换参数
     if (params) {
         return Object.keys(params).reduce((result, paramKey) => {
-            return result.replace(new RegExp(`\\{${paramKey}\\}`, 'g'), String(params[paramKey]))
+            return result.replace(new RegExp(`\\{${escapeRegExp(paramKey)}\\}`, 'g'), String(params[paramKey]))
         }, value)
     }
     
