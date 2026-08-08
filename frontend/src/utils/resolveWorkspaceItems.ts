@@ -10,19 +10,16 @@ export interface ResolvedWorkspaceItem {
  * Kept outside InputBox to avoid coupling the editor to VSCode extension APIs.
  */
 export async function resolveWorkspaceItems(inputs: string[]): Promise<ResolvedWorkspaceItem[]> {
-  const results: ResolvedWorkspaceItem[] = []
-
-  for (const raw of inputs) {
+  const resolved = await Promise.all(inputs.map(async (raw): Promise<ResolvedWorkspaceItem | null> => {
     const input = (raw || '').trim()
-    if (!input) continue
+    if (!input) return null
 
     try {
       const r = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
         absolutePath: input
       })
       if (r?.relativePath) {
-        results.push({ path: r.relativePath, isDirectory: !!r.isDirectory })
-        continue
+        return { path: r.relativePath, isDirectory: !!r.isDirectory }
       }
     } catch {
       // fallback below
@@ -34,20 +31,15 @@ export async function resolveWorkspaceItems(inputs: string[]): Promise<ResolvedW
         const url = new URL(input)
         const pathName = decodeURIComponent(url.pathname)
         const fileName = pathName.split('/').pop()
-        if (fileName) {
-          results.push({ path: fileName, isDirectory: false })
-          continue
-        }
+        if (fileName) return { path: fileName, isDirectory: false }
       }
     } catch {
       // ignore
     }
 
     const fileName = input.split(/[/\\]/).pop()
-    if (fileName) {
-      results.push({ path: fileName, isDirectory: false })
-    }
-  }
+    return fileName ? { path: fileName, isDirectory: false } : null
+  }))
 
-  return results
+  return resolved.filter((item): item is ResolvedWorkspaceItem => item !== null)
 }

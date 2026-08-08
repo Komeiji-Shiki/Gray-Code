@@ -18,6 +18,7 @@ export type SupportedLanguage = 'auto' | 'zh-CN' | 'en' | 'ja';
  */
 export interface LanguageOption {
     value: SupportedLanguage;
+    labelKey?: string;
     label: string;
     nativeLabel: string;
 }

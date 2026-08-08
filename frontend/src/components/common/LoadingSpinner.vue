@@ -13,7 +13,7 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="loading-spinner">
+  <div class="loading-spinner" role="status" :aria-label="text || 'Loading'">
     <div :class="['spinner', size]">
       <div class="spinner-line"></div>
     </div>

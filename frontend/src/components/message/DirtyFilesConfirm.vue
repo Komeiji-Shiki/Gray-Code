@@ -35,6 +35,14 @@ const message = computed(() =>
   t('components.message.checkpoint.dirtyConfirmMessage', { count: files.value.length })
 )
 
+async function runDirtyContinuation(action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action()
+  } catch (error) {
+    console.error('[DirtyFilesConfirm] Failed to continue operation:', error)
+  }
+}
+
 /** 确认丢弃未保存更改：按待确认动作的 kind 分发续作（confirmedDiscardDirty=true） */
 function confirmDiscard(): void {
   const pending = pendingDirtyConfirm.value
@@ -42,27 +50,27 @@ function confirmDiscard(): void {
   if (!pending) return
 
   if (pending.kind === 'switch' && pending.switch) {
-    void chatStore.switchBranchCandidate(pending.switch.nodeId, {
+    void runDirtyContinuation(() => chatStore.switchBranchCandidate(pending.switch!.nodeId, {
       mode: 'chat-and-workspace',
       confirmedDiscardDirty: true
-    })
+    }))
     return
   }
 
   if (pending.kind === 'restore' && pending.restore) {
     const r = pending.restore
     if (r.entry === 'restore') {
-      void chatStore.restoreCheckpoint(r.checkpointId, r.deleteUntrackedFiles, true)
+      void runDirtyContinuation(() => chatStore.restoreCheckpoint(r.checkpointId, r.deleteUntrackedFiles, true))
       return
     }
     const index = r.messageId ? chatStore.allMessages.findIndex(m => m.id === r.messageId) : -1
     if (index === -1) return
     if (r.entry === 'retry') {
-      void chatStore.restoreAndRetry(index, r.checkpointId, r.deleteUntrackedFiles, true)
+      void runDirtyContinuation(() => chatStore.restoreAndRetry(index, r.checkpointId, r.deleteUntrackedFiles, true))
     } else if (r.entry === 'delete') {
-      void chatStore.restoreAndDelete(index, r.checkpointId, r.deleteUntrackedFiles, true)
+      void runDirtyContinuation(() => chatStore.restoreAndDelete(index, r.checkpointId, r.deleteUntrackedFiles, true))
     } else if (r.entry === 'edit') {
-      void chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true)
+      void runDirtyContinuation(() => chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true))
     }
   }
 }

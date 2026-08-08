@@ -60,29 +60,36 @@ const activeRange = ref<RangeId>('7d')
 /** 展开查看每日明细的月份（YYYY-MM，空表示未展开） */
 const expandedMonth = ref('')
 
-const rangeOptions: Array<{ id: RangeId; label: string }> = [
+const rangeOptions = computed<Array<{ id: RangeId; label: string }>>(() => [
   { id: '7d', label: t('components.usageTime.range7d') },
   { id: '30d', label: t('components.usageTime.range30d') },
   { id: '90d', label: t('components.usageTime.range90d') },
   { id: '365d', label: t('components.usageTime.range1y') },
   { id: 'all', label: t('components.usageTime.rangeAll') }
-]
+])
+
+let loadRequestId = 0
 
 async function loadStats(force = false) {
+  const requestId = ++loadRequestId
   isLoading.value = true
   loadError.value = ''
   try {
+    const range = activeRange.value
     const query: Record<string, unknown> = {
-      range: activeRange.value,
+      range,
       includeHourly: true,
       includeMonthly: true
     }
     if (force) query.force = true
-    stats.value = await sendToExtension<ActivityStatsResult>('activity.getStats', query)
+    const result = await sendToExtension<ActivityStatsResult>('activity.getStats', query)
+    if (requestId === loadRequestId) stats.value = result
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : String(error)
+    if (requestId === loadRequestId) {
+      loadError.value = error instanceof Error ? error.message : String(error)
+    }
   } finally {
-    isLoading.value = false
+    if (requestId === loadRequestId) isLoading.value = false
   }
 }
 

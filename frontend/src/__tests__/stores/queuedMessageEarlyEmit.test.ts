@@ -156,15 +156,16 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     expect(processQueueAfterAction).not.toHaveBeenCalled()
   })
 
-  it('content-less 终结 toolIteration 不触发提前投递', async () => {
+  it('content-less 终结 toolIteration 调度普通队列而不触发提前投递', async () => {
     const state = createState({
       streamingMessageId: ref('msg_1'),
       activeStreamId: ref('stream_1'),
       isStreaming: ref(true),
       isWaitingForResponse: ref(true)
     })
+    const processQueue = vi.fn()
     const processQueueAfterAction = vi.fn()
-    const ctx = createCtx(state, { processQueueAfterAction })
+    const ctx = createCtx(state, { processQueue, processQueueAfterAction })
 
     handleStreamChunk(
       { type: 'toolIteration', conversationId: 'conv_1', streamId: 'stream_1' } as any,
@@ -173,6 +174,7 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     await nextTick()
 
     expect(state.activeStreamId.value).toBeNull()
+    expect(processQueue).toHaveBeenCalledOnce()
     expect(processQueueAfterAction).not.toHaveBeenCalled()
   })
 

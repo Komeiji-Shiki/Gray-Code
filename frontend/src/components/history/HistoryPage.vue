@@ -108,10 +108,9 @@ function handleFilterChange(value: string) {
 async function handleSelect(id: string) {
   try {
     await chatStore.switchConversation(id)
+    settingsStore.showChat()
   } catch (error) {
     console.error('Failed to switch conversation from history page:', error)
-  } finally {
-    settingsStore.showChat()
   }
 }
 

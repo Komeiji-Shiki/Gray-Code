@@ -5,7 +5,7 @@
  */
 
 import { ref } from 'vue'
-import { IconButton, InputDialog } from '../common'
+import { IconButton, ConfirmDialog, InputDialog } from '../common'
 import { useChatStore } from '../../stores'
 import { sendToExtension } from '../../utils/vscode'
 import type { Conversation } from '../../stores'
@@ -62,13 +62,19 @@ function handleRenameCancel() {
   renamingConversationId.value = null
 }
 
-// 处理删除
+// 删除确认对话框状态（上游 89c64c9：防误触）
+const pendingDeleteId = ref<string | null>(null)
+
+// 处理删除：先确认，避免误触直接删除整段对话历史。
 function handleDelete(id: string) {
-  // 如果正在删除，不重复触发
-  if (chatStore.isDeletingConversation(id)) {
-    return
-  }
-  emit('delete', id)
+  if (chatStore.isDeletingConversation(id)) return
+  pendingDeleteId.value = id
+}
+
+function confirmDelete(): void {
+  const id = pendingDeleteId.value
+  pendingDeleteId.value = null
+  if (id) emit('delete', id)
 }
 
 // 处理在文件管理器中显示
@@ -115,6 +121,10 @@ function getIntegrityTooltip(conversation: Conversation): string {
         :key="conversation.id"
         :class="['conversation-item', { active: conversation.id === currentId }]"
         @click="emit('select', conversation.id)"
+        @keydown.enter.self.prevent="emit('select', conversation.id)"
+        @keydown.space.self.prevent="emit('select', conversation.id)"
+        tabindex="0"
+        role="button"
         @mouseenter="hoverItemId = conversation.id"
         @mouseleave="hoverItemId = null"
       >
@@ -185,6 +195,17 @@ function getIntegrityTooltip(conversation: Conversation): string {
       :cancel-text="t('components.history.renameCancel')"
       @confirm="handleRenameConfirm"
       @cancel="handleRenameCancel"
+    />
+    <!-- 删除确认对话框（上游 89c64c9：防误触） -->
+    <ConfirmDialog
+      :model-value="pendingDeleteId !== null"
+      :title="t('components.history.deleteConversation')"
+      :message="t('components.history.deleteConversationConfirm')"
+      :confirm-text="t('common.delete')"
+      is-danger
+      @update:model-value="value => { if (!value) pendingDeleteId = null }"
+      @confirm="confirmDelete"
+      @cancel="pendingDeleteId = null"
     />
   </div>
 </template>
@@ -321,6 +342,15 @@ function getIntegrityTooltip(conversation: Conversation): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 240px;
+}
+
+.conversation-item:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.conversation-item:focus-within .item-actions {
+  display: flex !important;
 }
 
 .item-actions {

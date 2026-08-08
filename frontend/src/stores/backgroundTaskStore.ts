@@ -296,11 +296,13 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
   // ============ 初始化 ============
 
+  let cleanup: (() => void) | undefined
+
   function initialize(): () => void {
-    if (initialized.value) return () => undefined
+    if (cleanup) return cleanup
     initialized.value = true
 
-    onMessageFromExtension(message => {
+    const unsubscribeMessages = onMessageFromExtension(message => {
       if (message.type === 'taskEvent') {
         handleTaskEvent(message.data as TaskEventLike)
       }
@@ -328,12 +330,15 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
     void restoreActiveTasks()
 
-    // 返回清理函数：调用方（组件卸载/HMR）应调用以销毁 watch
-    return () => {
+    cleanup = () => {
+      unsubscribeMessages()
       stopWatchStreaming()
       stopWatchWaiting()
       stopWatchConversation()
+      initialized.value = false
+      cleanup = undefined
     }
+    return cleanup
   }
 
   return {

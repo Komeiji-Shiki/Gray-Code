@@ -549,6 +549,8 @@ watchEffect(() => {
   }
 })
 
+const processingToolIds = ref<Set<string>>(new Set())
+
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
   // 读取孤儿重估触发器（#59 修复），确保宽限期届满时 computed 重新求值
@@ -723,8 +725,6 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 })
 
 // 正在处理确认的工具 ID 集合
-// eslint-disable-next-line no-undef
-const processingToolIds = ref<Set<string>>(new Set())
 
 function addProcessingToolId(toolId: string) {
   if (!toolId || processingToolIds.value.has(toolId)) return
@@ -1138,8 +1138,7 @@ watch(
         }
       }
     })
-  },
-  { deep: true }
+  }
 )
 
 // 渲染工具内容

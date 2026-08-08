@@ -96,7 +96,11 @@ function handleEditDone(newContent: string, attachments: Attachment[]) {
 
 /** 立即发送指定消息 */
 async function handleSendNow(id: string) {
-  await chatStore.sendQueuedMessageNow(id)
+  try {
+    await chatStore.sendQueuedMessageNow(id)
+  } catch (error) {
+    console.error('[MessageQueue] Failed to send queued message:', error)
+  }
 }
 
 /** 移除指定消息 */

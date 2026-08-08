@@ -4,7 +4,7 @@
  * 参考 gemini-go-sandbox 样式
  */
 
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { t } from '../../i18n'
 
 interface Props {
@@ -52,6 +52,41 @@ function handleCancel() {
   emit('cancel')
 }
 
+const dialogRef = ref<HTMLElement | null>(null)
+const confirmButtonRef = ref<HTMLButtonElement | null>(null)
+let previouslyFocused: HTMLElement | null = null
+
+watch(visible, async (shown) => {
+  if (shown) {
+    previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    await nextTick()
+    confirmButtonRef.value?.focus()
+  } else {
+    previouslyFocused?.focus()
+    previouslyFocused = null
+  }
+})
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    handleCancel()
+    return
+  }
+  if (event.key !== 'Tab' || !dialogRef.value) return
+  const focusables = Array.from(dialogRef.value.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+  if (focusables.length === 0) return
+  const first = focusables[0]
+  const last = focusables[focusables.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 const iconClass = computed(() => {
   return props.isDanger ? 'codicon-warning' : 'codicon-info'
 })
@@ -67,7 +102,7 @@ const iconColor = computed(() => {
   <Teleport to="body">
     <Transition name="dialog-fade">
       <div v-if="visible" class="dialog-overlay" @click.self="handleCancel">
-        <div class="dialog">
+        <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" :aria-label="displayTitle" @keydown="handleKeydown">
           <div class="dialog-header">
             <i :class="['codicon', iconClass, 'dialog-icon']" :style="{ color: iconColor }"></i>
             <span class="dialog-title">{{ displayTitle }}</span>
@@ -81,7 +116,7 @@ const iconColor = computed(() => {
             <button class="dialog-btn cancel" @click="handleCancel">
               {{ displayCancelText }}
             </button>
-            <button :class="['dialog-btn', 'confirm', { 'danger': props.isDanger }]" @click="handleConfirm">
+            <button ref="confirmButtonRef" :class="['dialog-btn', 'confirm', { 'danger': props.isDanger }]" @click="handleConfirm">
               {{ displayConfirmText }}
             </button>
           </div>

@@ -63,18 +63,33 @@ export function getContexts(nodes: EditorNode[]): PromptContextItem[] {
  * 将节点数组序列化为发送格式
  * 格式：文本部分保持原样，上下文以 <lim-context> 标签包裹并就地插入
  */
+function escapeContextAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function escapeContextContent(value: string): string {
+  // 正文会原样发送给模型，只处理会提前闭合当前徽章的标签序列，避免改变普通代码中的 <、>、&。
+  return value.replace(/<\/lim-context>/gi, '&lt;/lim-context&gt;')
+}
+
 export function serializeNodes(nodes: EditorNode[]): string {
   return nodes.map(node => {
     if (node.type === 'text') {
       return node.text
     } else {
       const ctx = node.context
-      const attrs: string[] = [`type="${ctx.type}"`]
-      if (ctx.filePath) attrs.push(`path="${ctx.filePath}"`)
-      if (ctx.language) attrs.push(`language="${ctx.language}"`)
+      const attrs: string[] = [`type="${escapeContextAttribute(ctx.type)}"`]
+      if (ctx.filePath) attrs.push(`path="${escapeContextAttribute(ctx.filePath)}"`)
+      if (ctx.language) attrs.push(`language="${escapeContextAttribute(ctx.language)}"`)
       const isBinaryContext = ctx.isTextContent === false
       if (isBinaryContext) attrs.push('binary="true"')
-      return `<lim-context ${attrs.join(' ')} title="${ctx.title}">\n${isBinaryContext ? '' : ctx.content}\n</lim-context>`
+      const title = escapeContextAttribute(ctx.title)
+      const content = isBinaryContext ? '' : escapeContextContent(ctx.content)
+      return `<lim-context ${attrs.join(' ')} title="${title}">\n${content}\n</lim-context>`
     }
   }).join('')
 }

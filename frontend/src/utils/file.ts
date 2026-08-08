@@ -212,52 +212,76 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')!
-    
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      reject(new Error('无法创建缩略图画布'))
+      return
+    }
+
+    let settled = false
+    const finishReject = (message: string) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeoutId)
+      reject(new Error(message))
+    }
+    const timeoutId = window.setTimeout(() => finishReject('生成缩略图超时'), 10000)
+    const finishResolve = (value: string) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeoutId)
+      resolve(value)
+    }
+
     img.onload = () => {
-      // 计算缩略图尺寸
-      let width = img.width
-      let height = img.height
-      
-      if (width > height) {
-        if (width > maxSize) {
-          height = height * (maxSize / width)
-          width = maxSize
-        }
-      } else {
-        if (height > maxSize) {
+      try {
+        // 计算缩略图尺寸
+        let width = img.width
+        let height = img.height
+
+        if (width > height) {
+          if (width > maxSize) {
+            height = height * (maxSize / width)
+            width = maxSize
+          }
+        } else if (height > maxSize) {
           width = width * (maxSize / height)
           height = maxSize
         }
+
+        canvas.width = width
+        canvas.height = height
+        ctx.drawImage(img, 0, 0, width, height)
+        finishResolve(canvas.toDataURL(file.type))
+      } catch {
+        finishReject('生成缩略图失败')
       }
-      
-      canvas.width = width
-      canvas.height = height
-      
-      ctx.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL(file.type))
     }
     
-    img.onerror = () => {
-      reject(new Error('生成缩略图失败'))
-    }
+    img.onerror = () => finishReject('生成缩略图失败')
     
     const reader = new FileReader()
-    reader.onload = (e) => {
-      img.src = e.target?.result as string
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        finishReject('读取缩略图源文件失败')
+        return
+      }
+      img.src = reader.result
     }
+    reader.onerror = () => finishReject('读取缩略图源文件失败')
+    reader.onabort = () => finishReject('读取缩略图源文件已取消')
     reader.readAsDataURL(file)
   })
 }
 
 // 格式化文件大小
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+
   const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)))
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
@@ -273,8 +297,12 @@ export function downloadFile(data: string, filename: string, mimeType: string) {
   const link = document.createElement('a')
   link.href = url
   link.download = filename
+  link.style.display = 'none'
+  document.body.appendChild(link)
   link.click()
-  URL.revokeObjectURL(url)
+  link.remove()
+  // Firefox 需要让点击导航先消费 object URL，再执行回收。
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 // Base64 转 Blob

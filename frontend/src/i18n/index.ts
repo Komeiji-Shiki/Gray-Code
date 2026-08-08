@@ -14,7 +14,7 @@ import ja from './langs/ja';
  * 支持的语言列表
  */
 export const SUPPORTED_LANGUAGES: LanguageOption[] = [
-    { value: 'auto', label: '跟随系统', nativeLabel: 'Auto' },
+    { value: 'auto', labelKey: 'components.settings.settingsPanel.language.followSystem', label: 'Auto', nativeLabel: 'Auto' },
     { value: 'zh-CN', label: '简体中文', nativeLabel: '简体中文' },
     { value: 'en', label: 'English', nativeLabel: 'English' },
     { value: 'ja', label: '日本語', nativeLabel: '日本語' }
@@ -37,7 +37,9 @@ const currentLanguage = ref<SupportedLanguage>('auto');
 /**
  * VS Code 检测到的语言
  */
-const detectedLanguage = ref<string>('zh-CN');
+const detectedLanguage = ref<string>(
+    typeof navigator === 'undefined' ? 'zh-CN' : (navigator.language || 'zh-CN')
+);
 
 /**
  * 获取实际使用的语言
@@ -89,6 +91,9 @@ export function setLanguage(lang: SupportedLanguage) {
         translationCache.clear();
     }
     currentLanguage.value = lang;
+    if (typeof document !== 'undefined') {
+        document.documentElement.lang = actualLanguage.value;
+    }
 }
 
 /**
@@ -106,6 +111,9 @@ export function setDetectedLanguage(lang: string) {
         translationCache.clear();
     }
     detectedLanguage.value = lang;
+    if (currentLanguage.value === 'auto' && typeof document !== 'undefined') {
+        document.documentElement.lang = actualLanguage.value;
+    }
 }
 
 /**

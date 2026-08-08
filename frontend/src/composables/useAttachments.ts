@@ -222,7 +222,11 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video')
       const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')!
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error(t('composables.useAttachments.errors.loadVideoFailed')))
+        return
+      }
       
       // 设置预加载
       video.preload = 'metadata'
@@ -261,7 +265,7 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         }
         // 使用视频时长的 10% 或第一个时间点
         const targetTime = Math.min(video.duration * 0.1, timePoints[0])
-        video.currentTime = Math.max(0.1, targetTime)
+        video.currentTime = Math.min(video.duration, Math.max(0, targetTime))
       }
       
       video.onseeked = () => {
@@ -299,7 +303,13 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         // 如果帧太暗且还有其他时间点可尝试
         if (brightness < 10 && currentTimeIndex < timePoints.length - 1) {
           currentTimeIndex++
-          const nextTime = Math.min(timePoints[currentTimeIndex], video.duration - 0.1)
+          const nextTime = Math.min(timePoints[currentTimeIndex], Math.max(0, video.duration - 0.1))
+          if (nextTime <= video.currentTime && video.currentTime >= video.duration) {
+            settled = true
+            cleanup()
+            resolve(canvas.toDataURL('image/jpeg', 0.8))
+            return
+          }
           video.currentTime = nextTime
           return
         }
@@ -345,7 +355,8 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         }
       }
       
-      reader.onerror = () => reject(reader.error)
+      reader.onerror = () => reject(reader.error || new Error(t('composables.useAttachments.errors.readFileFailed')))
+      reader.onabort = () => reject(new Error(t('composables.useAttachments.errors.readFileFailed')))
       reader.readAsDataURL(file)
     })
   }
@@ -370,7 +381,9 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     }
 
     attachments.value.forEach(att => {
-      stats[att.type]++
+      if (att.type in stats) {
+        stats[att.type] = (stats[att.type] || 0) + 1
+      }
     })
 
     return stats

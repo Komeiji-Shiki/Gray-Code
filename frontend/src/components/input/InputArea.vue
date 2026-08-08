@@ -141,12 +141,22 @@ function openModeSettings() {
 }
 
 async function handleChannelChange(channelId: string) {
-  await chatStore.setConfigId(channelId)
+  try {
+    await chatStore.setConfigId(channelId)
+  } catch (error) {
+    console.error('Failed to change channel:', error)
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
 }
 
 async function handleModelChange(modelId: string) {
   if (!chatStore.configId) return
-  await chatStore.setSelectedModelId(modelId)
+  try {
+    await chatStore.setSelectedModelId(modelId)
+  } catch (error) {
+    console.error('Failed to change model:', error)
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
 }
 
 // ========== Send / Cancel ==========

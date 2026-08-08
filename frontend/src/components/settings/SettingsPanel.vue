@@ -36,7 +36,7 @@ interface TabItem {
 // 语言选项（使用 computed 以便语言切换时自动更新）
 const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(lang => ({
   value: lang.value,
-  label: lang.label,
+  label: lang.labelKey ? t(lang.labelKey) : lang.label,
   description: lang.value === 'auto' ? t('components.settings.settingsPanel.language.autoDescription') : lang.nativeLabel
 })))
 

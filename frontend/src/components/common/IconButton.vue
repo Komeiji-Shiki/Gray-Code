@@ -55,6 +55,7 @@ function handleClick(event: MouseEvent) {
     :class="buttonClass"
     :disabled="disabled || loading"
     :title="tooltip"
+    :aria-label="tooltip || icon || 'button'"
     type="button"
     @click="handleClick"
   >
