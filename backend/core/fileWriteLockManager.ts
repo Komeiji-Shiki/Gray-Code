@@ -157,12 +157,14 @@ function extractFilesArrayPaths(files: unknown): string[] {
         .map(item => (item && typeof item === 'object' && typeof (item as Record<string, unknown>).path === 'string')
             ? (item as Record<string, unknown>).path as string
             : null)
-        .filter((p): p is string => !!p);
+        // 过滤空/空白串：'' 会被归一为整个 workspace 根锁，与所有写路径互斥
+        .filter((p): p is string => !!p && p.trim() !== '');
 }
 
 function extractStringArray(paths: unknown): string[] {
     if (!Array.isArray(paths)) return [];
-    return paths.filter((p): p is string => typeof p === 'string');
+    // 过滤空/空白串：'' 会被归一为整个 workspace 根锁，与所有写路径互斥
+    return paths.filter((p): p is string => typeof p === 'string' && p.trim() !== '');
 }
 
 /**
@@ -175,7 +177,9 @@ export function getWritePathsForCall(toolName: string, args: Record<string, unkn
     if (!extractor) return null;
     try {
         return extractor(args || {});
-    } catch {
+    } catch (error) {
+        // 提取失败不再静默吞掉：告警提示（含异常），同时保持空数组兜底，避免单次提取失败阻断整个写流程
+        console.warn(`[fileWriteLockManager] extract write paths failed for tool "${toolName}"`, error);
         return [];
     }
 }
@@ -190,6 +194,9 @@ export function getWritePathsForCall(toolName: string, args: Record<string, unkn
  */
 export class FileWriteLockManager {
     private readonly locks = new Map<string, LockEntry>();
+
+    /** holderId -> (原始路径 -> acquire 时解析出的锁 key)；release 复用，避免工作区变化导致 key 漂移 */
+    private readonly acquiredKeysByHolder = new Map<string, Map<string, string>>();
 
     /** 锁集合变化代际：release / releaseAllByHolder 真正释放锁时自增，用于唤醒等待 acquire 的调用方 */
     private lockGeneration = 0;
@@ -249,7 +256,31 @@ export class FileWriteLockManager {
                 this.locks.set(key, { holder, displayPath: display, count: 1 });
             }
         }
+        // 记录本次 acquire 实际解析出的锁 key，供 release 复用
+        this.recordAcquiredKeys(holder.id, keys);
         return { acquired: true };
+    }
+
+    /** 记录持有者各原始路径对应的锁 key（release 时直接复用） */
+    private recordAcquiredKeys(holderId: string, keys: Array<{ key: string; display: string }>): void {
+        let map = this.acquiredKeysByHolder.get(holderId);
+        if (!map) {
+            map = new Map();
+            this.acquiredKeysByHolder.set(holderId, map);
+        }
+        for (const { key, display } of keys) {
+            map.set(display, key);
+        }
+    }
+
+    /** 持有者是否仍持有至少一把锁 */
+    private holderHasLocks(holderId: string): boolean {
+        for (const entry of this.locks.values()) {
+            if (entry.holder.id === holderId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     async acquire(paths: string[], holder: LockHolder, abortSignal?: AbortSignal): Promise<void> {
@@ -306,9 +337,11 @@ export class FileWriteLockManager {
 
     release(paths: string[], holder: LockHolder): void {
         let released = false;
+        // 复用 tryAcquire 时记录的锁 key，release 不再重新 resolve：
+        // 避免 acquire 之后工作区变化导致同一路径解析出不同 key 而无法释放。
+        const holderKeys = this.acquiredKeysByHolder.get(holder.id);
         for (const p of paths) {
-            // 与 tryAcquire 使用同一解析结果，保证等价写法能正确释放
-            const key = normalizeLockPath(resolveLockPath(p));
+            const key = holderKeys?.get(p) ?? normalizeLockPath(resolveLockPath(p));
             const entry = this.locks.get(key);
             if (!entry || entry.holder.id !== holder.id) {
                 continue;
@@ -318,6 +351,10 @@ export class FileWriteLockManager {
                 this.locks.delete(key);
                 released = true;
             }
+        }
+        // 持有者已无任何锁时清掉其 path->key 记录，避免无界增长
+        if (!this.holderHasLocks(holder.id)) {
+            this.acquiredKeysByHolder.delete(holder.id);
         }
         // 只有锁被真正释放（从集合删除）才唤醒等待者：重入计数减少不产生新的获取机会
         if (released) {
@@ -336,6 +373,8 @@ export class FileWriteLockManager {
                 released = true;
             }
         }
+        // 持有者锁已全部清理，一并删除其 path->key 记录
+        this.acquiredKeysByHolder.delete(holderId);
         if (released) {
             this.bumpLockGeneration();
         }

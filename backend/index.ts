@@ -13,6 +13,61 @@ export type {
     IModuleRegistry
 } from './core/registry';
 
+// 核心公共件：业务代码仍可按需直连相对路径，此处提供统一导出入口（避免命名冲突，未做 export *）
+export { Logger, LogLevel } from './core/logger';
+export {
+    initializeProductMetadata,
+    getProductMetadata,
+    getProductVersion,
+    createGrayCodeMcpClientInfo
+} from './core/productMetadata';
+export type { ProductMetadata } from './core/productMetadata';
+export {
+    setChatInputFocused,
+    addChatFocusRestoreNotifier,
+    shouldRestoreChatInputFocus,
+    restoreChatInputFocus
+} from './core/chatFocusGuard';
+export {
+    FileWriteLockManager,
+    fileWriteLockManager,
+    normalizeLockPath,
+    resolveLockPath,
+    getWritePathsForCall
+} from './core/fileWriteLockManager';
+export type {
+    LockHolder,
+    LockConflict,
+    TryAcquireResult
+} from './core/fileWriteLockManager';
+export {
+    setGlobalSettingsManager,
+    getGlobalSettingsManager,
+    setGlobalConfigManager,
+    getGlobalConfigManager,
+    setGlobalChannelManager,
+    getGlobalChannelManager,
+    setGlobalToolRegistry,
+    getGlobalToolRegistry,
+    setGlobalDiffStorageManager,
+    getGlobalDiffStorageManager,
+    setGlobalMcpManager,
+    getGlobalMcpManager,
+    getGlobalContext,
+    initGlobalContext,
+    clearGlobalContext
+} from './core/settingsContext';
+export type { GlobalContext } from './core/settingsContext';
+export type {
+    ConversationRunScope,
+    SubAgentRunScope,
+    RunScope,
+    RunControllerStatus,
+    RunControllerCapabilities,
+    RunControllerSnapshot,
+    IRunController
+} from './core/RunController';
+
 // 对话管理模块
 export {
     ConversationManager,

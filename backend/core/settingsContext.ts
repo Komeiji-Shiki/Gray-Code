@@ -144,7 +144,8 @@ export function getGlobalMcpManager(): McpManager | null {
  * 获取完整的全局上下文
  */
 export function getGlobalContext(): Readonly<GlobalContext> {
-    return globalContext;
+    // 返回浅冻结副本：调用方不能改写返回对象的内部字段，避免绕过 setter 篡改全局状态
+    return Object.freeze({ ...globalContext });
 }
 
 /**

@@ -245,7 +245,11 @@ const ja: BackendLanguageMessages = {
                     getSummarizeConfigFailed: '要約設定の取得に失敗しました',
                     updateSummarizeConfigFailed: '要約設定の更新に失敗しました',
                     getGenerateImageConfigFailed: '画像生成設定の取得に失敗しました',
-                    updateGenerateImageConfigFailed: '画像生成設定の更新に失敗しました'
+                    updateGenerateImageConfigFailed: '画像生成設定の更新に失敗しました',
+                    tokenCountFailed: 'トークン数カウントに失敗しました',
+                    toolNotFound: 'ツールが見つかりません: {toolName}',
+                    memoryConfigFailed: 'メモリ設定の取得に失敗しました',
+                    updateMemoryConfigFailed: 'メモリ設定の更新に失敗しました'
                 }
             },
             models: {
@@ -299,6 +303,7 @@ const ja: BackendLanguageMessages = {
                     messageNotFound: 'メッセージが見つかりません: インデックス {messageIndex}',
                     canOnlyEditUserMessage: 'ユーザーメッセージのみ編集できます。現在のメッセージロール: {role}',
                     messageChanged: 'メッセージが変更されました。更新後に再試行してください',
+                    invalidTargetIndex: '削除対象のインデックスが無効です: {targetIndex}',
                     editTargetNotInHistory: '選択したメッセージは現在の会話履歴にありません。コンテキスト圧縮で削除された可能性があります',
                     contextOverflow: 'モデルのコンテキストウィンドウ内で有効なリクエストを構築できません: 最小候補は約 {estimatedInputTokens} 入力トークン必要で、{inputTokenLimit} トークンのウィンドウを超えています。モデルのコンテキストウィンドウを増やすか、履歴/保持予算を調整してください',
                     summarizeContextOverflow: '要約対象の内容と要約プロンプトが要約モデルのコンテキスト上限を超えています。要約モデルのコンテキストウィンドウを増やすか、保持予算を調整してください'
@@ -435,7 +440,6 @@ const ja: BackendLanguageMessages = {
         },
         
         skills: {
-            description: 'Skills のオン/オフを切り替えます。Skills はユーザー定義のナレッジモジュールで、専門的なコンテキストと指示を提供します。各パラメータは skill 名です - true で有効、false で無効にします。',
             exampleSkill: {
                 description: 'Skill 作成前に必読！正しい形式、命名規則、よくある間違いについて。',
                 content: `# Skill 作成前に必読
@@ -443,21 +447,21 @@ const ja: BackendLanguageMessages = {
 ## ⚠️ よくある間違い
 
 1. **name はフォルダ名と完全に一致する必要があります**
-   - フォルダ名が \\\`my-tool\\\` の場合、frontmatter には \\\`name: my-tool\\\` と書く必要があります
+   - フォルダ名が \`my-tool\` の場合、frontmatter には \`name: my-tool\` と書く必要があります
    - 不一致の場合、Skill はサイレントにスキップされ、パネルに表示されません
 
 2. **name に使用できるのは小文字、数字、ハイフンのみ**
-   - ✅ \\\`my-skill-name\\\`、\\\`tool2\\\`
-   - ❌ \\\`My_Skill\\\`、\\\`ツール\\\`、\\\`my--skill\\\`（連続ハイフン不可）
+   - ✅ \`my-skill-name\`、\`tool2\`
+   - ❌ \`My_Skill\`、\`ツール\`、\`my--skill\`（連続ハイフン不可）
    - 長さ：1〜64 文字
 
 3. **frontmatter は必須です**
-   - ファイルは \\\`---\\\` で始まり、\\\`name\\\` と \\\`description\\\` の両フィールドが必要です
+   - ファイルは \`---\` で始まり、\`name\` と \`description\` の両フィールドが必要です
    - frontmatter のない SKILL.md は無視されます
 
 ## Skill ファイル形式
 
-\\\`\\\`\\\`markdown
+\`\`\`markdown
 ---
 name: your-skill-name
 description: "このスキルの機能と使用場面の簡単な説明"
@@ -470,26 +474,26 @@ description: "このスキルの機能と使用場面の簡単な説明"
 
 ## 例
 [このスキルの具体的な使用例]
-\\\`\\\`\\\`
+\`\`\`
 
 ## 作成手順
 
 1. skills ディレクトリにフォルダを作成（フォルダ名がスキル名）
-2. フォルダ内に \\\`SKILL.md\\\` ファイルを作成
-3. ファイル先頭に frontmatter を記述（\\\`name\\\` + \\\`description\\\`）
+2. フォルダ内に \`SKILL.md\` ファイルを作成
+3. ファイル先頭に frontmatter を記述（\`name\` + \`description\`）
 4. frontmatter の後にスキル内容を記述
 
 ## Skills ディレクトリの場所
 
-- プロジェクトレベル：\\\`.graycode/skills/\\\` または \\\`.agents/skills/\\\`
-- ユーザーレベル：\\\`~/.graycode/skills/\\\` または \\\`~/.agents/skills/\\\`
+- プロジェクトレベル：\`.graycode/skills/\` または \`.agents/skills/\`
+- ユーザーレベル：\`~/.graycode/skills/\` または \`~/.agents/skills/\`
 
 プロジェクトレベルが優先されます。同名の Skill は優先度が最も高いもののみ読み込まれます。
 
 ## 仕組み
 
 1. AI はツール説明で有効な全 Skill の名前と説明を確認できます
-2. AI が必要と判断すると \\\`read_skill\\\` ツールで全文を読み込みます
+2. AI が必要と判断すると \`read_skill\` ツールで全文を読み込みます
 3. このオンデマンド読み込みにより token を節約し、タスクに応じて最適なナレッジモジュールを動的に選択できます`
             },
             errors: {

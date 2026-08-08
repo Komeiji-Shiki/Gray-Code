@@ -82,11 +82,11 @@ export interface ApiResponse {
  * 模块注册表接口
  */
 export interface IModuleRegistry {
-    /** 注册模块 */
-    registerModule(module: ModuleDefinition): void;
+    /** 注册模块（执行 initialize 生命周期） */
+    registerModule(module: ModuleDefinition): Promise<void>;
     
-    /** 取消注册模块 */
-    unregisterModule(moduleId: string): void;
+    /** 取消注册模块（执行 dispose 生命周期） */
+    unregisterModule(moduleId: string): Promise<void>;
     
     /** 调用 API */
     callApi(request: ApiRequest): Promise<ApiResponse>;

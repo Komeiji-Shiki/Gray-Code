@@ -13,7 +13,7 @@ import ja from './langs/ja';
 /**
  * 语言包
  */
-const messages: Record<string, BackendLanguageMessages> = {
+const messages: Record<Exclude<SupportedLanguage, 'auto'>, BackendLanguageMessages> = {
     'zh-CN': zhCN,
     'en': en,
     'ja': ja
@@ -59,10 +59,10 @@ let detectedLanguage: string = 'zh-CN';
 /**
  * 获取实际使用的语言
  */
-export function getActualLanguage(): string {
+export function getActualLanguage(): Exclude<SupportedLanguage, 'auto'> {
     if (currentLanguage === 'auto') {
         // 尝试匹配检测到的语言
-        if (detectedLanguage && messages[detectedLanguage]) {
+        if (detectedLanguage === 'zh-CN' || detectedLanguage === 'en' || detectedLanguage === 'ja') {
             return detectedLanguage;
         }
         // 如果检测的语言包含 zh，使用中文
@@ -101,7 +101,9 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
         return getCurrentMessages();
     }
 
-    if (typeof lang === 'string' && messages[lang]) return messages[lang];
+    if (lang === 'zh-CN' || lang === 'en' || lang === 'ja') {
+        return messages[lang];
+    }
     if (typeof lang === 'string' && lang.startsWith('zh')) return messages['zh-CN'];
     if (typeof lang === 'string' && lang.startsWith('en')) return messages['en'];
     if (typeof lang === 'string' && lang.startsWith('ja')) return messages['ja'];
@@ -168,5 +170,6 @@ export default {
     setLanguage,
     getLanguage,
     setDetectedLanguage,
-    getMessagesForLanguage
+    getMessagesForLanguage,
+    getActualLanguage
 };

@@ -33,12 +33,18 @@ const RECENT_BLUR_GRACE_MS = 1500;
 
 let chatInputFocused = false;
 let lastBlurAt = 0;
-let focusRestoreNotifier: (() => void) | undefined;
+/** 最近一次 restoreChatInputFocus 强制归还焦点的时间：用于消歧「主动 blur」与「恢复动作引发的 blur」 */
+let lastForcedRestoreAt = 0;
+/** 多窗口/多视图各自注册的焦点归还通知器：dispose 只移除自己的，互不覆盖 */
+const focusRestoreNotifiers = new Set<() => void>();
 
 /** 由 webview 消息处理器调用：更新聊天输入框的焦点状态 */
 export function setChatInputFocused(focused: boolean): void {
     if (chatInputFocused && !focused) {
-        lastBlurAt = Date.now();
+        // 只有「距上次强制归还焦点很近」的 blur 才进入宽限期：
+        // 用户主动 blur（点编辑器/终端）说明焦点是被用户拿走的，不应在宽限期内被强行拉回；
+        // 同时把 lastBlurAt 清零，避免上一轮残留时间戳污染后续判断。
+        lastBlurAt = (Date.now() - lastForcedRestoreAt < RECENT_BLUR_GRACE_MS) ? Date.now() : 0;
     }
     chatInputFocused = focused;
 }
@@ -46,9 +52,13 @@ export function setChatInputFocused(focused: boolean): void {
 /**
  * 由 ChatViewProvider 注入：归还 workbench 焦点后，
  * 通知前端把 DOM 光标放回输入框。
+ * 返回移除函数；视图销毁时调用它只摘除自己的通知器，不影响其他窗口。
  */
-export function setChatFocusRestoreNotifier(notifier: (() => void) | undefined): void {
-    focusRestoreNotifier = notifier;
+export function addChatFocusRestoreNotifier(notifier: () => void): () => void {
+    focusRestoreNotifiers.add(notifier);
+    return () => {
+        focusRestoreNotifiers.delete(notifier);
+    };
 }
 
 /**
@@ -66,7 +76,11 @@ export async function restoreChatInputFocus(shouldRestore: boolean): Promise<voi
     }
     try {
         await vscode.commands.executeCommand(CHAT_VIEW_FOCUS_COMMAND);
-        focusRestoreNotifier?.();
+        for (const notifier of focusRestoreNotifiers) {
+            notifier();
+        }
+        // 记录强制归还时间：随后的 blur 上报会被视为「恢复动作的副作用」而非用户主动离开
+        lastForcedRestoreAt = Date.now();
     } catch {
         // 聊天视图未注册/不可见等场景：静默忽略，不影响 diff 主流程
     }

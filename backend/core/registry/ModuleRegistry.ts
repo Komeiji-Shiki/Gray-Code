@@ -22,20 +22,22 @@ export class ModuleRegistry implements IModuleRegistry {
     /**
      * 注册模块
      */
-    registerModule(module: ModuleDefinition): void {
+    async registerModule(module: ModuleDefinition): Promise<void> {
         if (this.modules.has(module.id)) {
             throw new Error(t('core.registry.moduleAlreadyRegistered', { moduleId: module.id }));
         }
 
-        // 验证 API 名称唯一性
+        // 验证 API 名称唯一性（module.apis 缺省时按空列表处理）
         const apiNames = new Set<string>();
-        for (const api of module.apis) {
+        for (const api of module?.apis ?? []) {
             if (apiNames.has(api.name)) {
                 throw new Error(t('core.registry.duplicateApiName', { moduleId: module.id, apiName: api.name }));
             }
             apiNames.add(api.name);
         }
 
+        // 接线生命周期：注册时执行模块 initialize（可选）；失败则不把模块写入注册表
+        await module.initialize?.();
         this.modules.set(module.id, module);
         // 注册/注销是启动期与热加载期的常规操作，console.log 会刷屏；降为 debug 级
         log.debug('module.registered', { moduleId: module.id, moduleName: module.name, version: module.version });
@@ -44,13 +46,16 @@ export class ModuleRegistry implements IModuleRegistry {
     /**
      * 取消注册模块
      */
-    unregisterModule(moduleId: string): void {
+    async unregisterModule(moduleId: string): Promise<void> {
         if (!this.modules.has(moduleId)) {
             console.warn(t('core.registry.moduleNotRegistered', { moduleId }));
             return;
         }
 
+        const module = this.modules.get(moduleId);
         this.modules.delete(moduleId);
+        // 接线生命周期：注销时执行模块 dispose（可选，上游 2a37702）
+        await module?.dispose?.();
         log.debug('module.unregistered', { moduleId });
     }
 
@@ -77,9 +82,9 @@ export class ModuleRegistry implements IModuleRegistry {
                 };
             }
 
-            // 验证参数
+            // 验证参数：required 且值为 undefined/null 才算缺失（不再用 in 判断，避免显式传 undefined/null 也被放行）
             const missingParams = api.parameters
-                .filter(p => p.required && !(p.name in request.params))
+                .filter(p => p.required && (request.params[p.name] === undefined || request.params[p.name] === null))
                 .map(p => p.name);
 
             if (missingParams.length > 0) {
