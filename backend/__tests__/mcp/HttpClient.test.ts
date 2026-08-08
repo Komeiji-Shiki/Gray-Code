@@ -51,7 +51,10 @@ describe('HttpMcpClient', () => {
     });
 
     function makeClient(timeout = 1000): HttpMcpClient {
-        return new HttpMcpClient('http://example.test/mcp', 'streamable-http', {}, timeout);
+        const client = new HttpMcpClient('http://example.test/mcp', 'streamable-http', {}, timeout);
+        // 这些用例直接验证已连接客户端的请求/超时/取消行为；初始化握手另有专门测试。
+        (client as any).connected = true;
+        return client;
     }
 
     // ==================== JSON 响应 ====================
@@ -177,7 +180,7 @@ describe('HttpMcpClient', () => {
         await client.disconnect();
 
         expect(signal?.aborted).toBe(true);
-        await expect(pending).rejects.toThrow(/(请求超时|timeout)/i);
+        await expect(pending).rejects.toThrow(/disconnected/i);
     });
 
     it('should cancel an in-flight SSE read stream on disconnect', async () => {

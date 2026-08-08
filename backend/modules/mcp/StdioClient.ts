@@ -6,6 +6,7 @@
 
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
+import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -200,10 +201,7 @@ export class StdioMcpClient extends EventEmitter {
             capabilities: {
                 roots: { listChanged: true }
             },
-            clientInfo: {
-                name: 'GrayCode',
-                version: '1.0.5'
-            }
+            clientInfo: createGrayCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;
@@ -253,20 +251,40 @@ export class StdioMcpClient extends EventEmitter {
     async disconnect(): Promise<void> {
         if (this.process && this.process.pid) {
             const pid = this.process.pid;
-            const exitOrTimeout = Promise.race([
-                new Promise<void>((resolve) => {
-                    this.process!.once('exit', () => resolve());
-                }),
-                new Promise<void>((resolve) => {
-                    setTimeout(resolve, 10000);
-                })
-            ]);
+            // 进程已退出（exit 事件可能已错过）：无需再杀，直接清理
+            if (this.process.exitCode !== null || this.process.signalCode !== null) {
+                this.cleanup();
+                return;
+            }
+            const exited = new Promise<void>((resolve) => {
+                this.process!.once('exit', () => resolve());
+            });
+            const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
             treeKill(pid, 'SIGTERM', (err?: Error) => {
                 if (err) {
                     try { treeKill(pid, 'SIGKILL'); } catch {}
                 }
             });
-            await exitOrTimeout;
+            await Promise.race([exited, wait(5000)]);
+            const processAfterSigterm = this.process;
+            if (processAfterSigterm && processAfterSigterm.exitCode === null && processAfterSigterm.signalCode === null) {
+                // SIGTERM 未生效：SIGKILL 强制终止并再等待退出，仍超时则告警
+                await new Promise<void>((resolve) => {
+                    try { treeKill(pid, 'SIGKILL'); } catch {}
+                    const timer = setTimeout(resolve, 5000);
+                    const activeProcess = this.process;
+                    if (!activeProcess) {
+                        clearTimeout(timer);
+                        resolve();
+                        return;
+                    }
+                    activeProcess.once('exit', () => { clearTimeout(timer); resolve(); });
+                });
+                const processAfterSigkill = this.process;
+                if (processAfterSigkill && processAfterSigkill.exitCode === null && processAfterSigkill.signalCode === null) {
+                    console.warn(`[MCP] stdio process ${pid} did not exit after SIGKILL`);
+                }
+            }
             this.cleanup();
         } else {
             this.cleanup();
@@ -502,6 +520,16 @@ export class StdioMcpClient extends EventEmitter {
         });
     }
     
+    /** 直接向 stdin 写入一条 JSON-RPC 消息（带换行）；进程已退出时忽略 */
+    private writeRaw(payload: Record<string, unknown>): void {
+        if (!this.process || !this.process.stdin) return;
+        try {
+            this.process.stdin.write(JSON.stringify(payload) + '\n');
+        } catch {
+            // 进程刚退出，忽略
+        }
+    }
+
     /**
      * 发送 JSON-RPC 通知（无需响应）
      */
@@ -586,7 +614,17 @@ export class StdioMcpClient extends EventEmitter {
                 }
             }
         } else if ('method' in message) {
-            // 这是通知或请求
+            // 服务器发来的 JSON-RPC 请求（带 id）：客户端不支持服务器发起的请求，
+            // 回 method-not-found 错误，避免服务器等待响应而挂起
+            if (message.id !== undefined && message.id !== null) {
+                this.writeRaw({
+                    jsonrpc: '2.0',
+                    id: message.id,
+                    error: { code: -32601, message: `Method not found: ${String(message.method)}` }
+                });
+                return;
+            }
+            // 无 id 的通知：按 method 派发
             this.emit('notification', message.method, message.params);
         }
     }
