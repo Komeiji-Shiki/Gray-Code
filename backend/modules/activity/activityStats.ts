@@ -57,19 +57,26 @@ function makeSession(start: number, end: number): ActivitySession {
 export function hourlyHeatmap(sessions: ActivitySession[]): number[] {
     const hours = new Array<number>(24).fill(0);
     for (const session of sessions) {
-        // 会话起点所在整分钟开始，逐分钟展开
+        // 会话起点所在整分钟开始，按小时边界切块累加（每块最多 60 分钟），
+        // 替代逐分钟展开：长会话从 O(分钟数) 降到 O(小时数)
         const startMinute = Math.floor(session.start / 60_000) * 60_000;
         const endMinute = Math.floor(session.end / 60_000) * 60_000;
-        for (let m = startMinute; m <= endMinute; m += 60_000) {
-            const d = new Date(m);
-            hours[d.getHours()] += 1;
+        let m = startMinute;
+        while (m <= endMinute) {
+            const hourStart = Math.floor(m / 3_600_000) * 3_600_000;
+            const hourEnd = hourStart + 3_600_000;
+            // +1 分钟：endMinute 本身那一分钟也计入（与逐分钟展开语义一致）
+            const blockEnd = Math.min(hourEnd, endMinute + 60_000);
+            const minutes = Math.round((blockEnd - m) / 60_000);
+            hours[new Date(m).getHours()] += minutes;
+            m = hourEnd;
         }
     }
     return hours;
 }
 
-/** 单日统计（samples 应为该日升序采样） */
-export function dayStats(date: string, samples: number[]): DayActivityStats {
+/** 单日统计（samples 应为该日升序采样；includeHourly=false 时惰性跳过热力计算） */
+export function dayStats(date: string, samples: number[], includeHourly: boolean = true): DayActivityStats {
     const sessions = buildSessions(samples);
     return {
         date,
@@ -78,7 +85,7 @@ export function dayStats(date: string, samples: number[]): DayActivityStats {
         sessions,
         firstActiveAt: samples.length > 0 ? samples[0] : null,
         lastActiveAt: samples.length > 0 ? samples[samples.length - 1] : null,
-        hourly: hourlyHeatmap(sessions)
+        hourly: includeHourly ? hourlyHeatmap(sessions) : []
     };
 }
 
@@ -171,17 +178,22 @@ export async function getActivityStats(
         : await store.loadRecentDays(days);
     const todayStr = recent.length > 0 ? recent[recent.length - 1].date : '';
 
-    // 最近 14 天采样拼接，用于当前连续会话判断（跨午夜不中断）
-    const recentAll = recent.flatMap((day) => day.samples);
+    // 当前连续会话判断只取最近 2 天采样拼接（跨午夜不中断）；
+    // range='all' 时不把数年采样全量复制进内存（只用到最后一段）
+    const recentAll = recent.slice(-2).flatMap((day) => day.samples);
 
     const daily: DayActivityStats[] = [];
     for (const day of recent) {
-        daily.push(dayStats(day.date, day.samples));
+        // daily 统计自身不需要热力（hourlyHeatmap 单独按需计算），惰性跳过
+        daily.push(dayStats(day.date, day.samples, false));
     }
     // 倒序：最新在前
     daily.reverse();
 
-    const today = todayStr ? daily.find((d) => d.date === todayStr) ?? null : null;
+    // today 语义：今日无活跃会话时返回 null（与类型注释一致），
+    // 而非全零对象——前端据此区分「今天没数据」与「今天活跃 0 分钟」
+    const todayEntry = todayStr ? daily.find((d) => d.date === todayStr) ?? null : null;
+    const today = todayEntry && todayEntry.sessions.length > 0 ? todayEntry : null;
 
     const includeHourly = query.includeHourly === true;
     const hourlyHeatmap = includeHourly
@@ -207,9 +219,10 @@ export function statsFromFiles(files: DayActivityFile[], now: number = Date.now(
     const daily = [...recent].reverse().map((f) => dayStats(f.date, f.samples));
     const todayStr = recent.length > 0 ? recent[recent.length - 1].date : '';
 
+    const todayEntry = todayStr ? daily.find((d) => d.date === todayStr) ?? null : null;
     return {
         generatedAt: now,
-        today: todayStr ? daily.find((d) => d.date === todayStr) ?? null : null,
+        today: todayEntry && todayEntry.sessions.length > 0 ? todayEntry : null,
         currentSession: currentSessionInfo(recentAll, now),
         daily,
         hourlyHeatmap: recent.map((f) => ({ date: f.date, hours: dayStats(f.date, f.samples).hourly })),

@@ -237,7 +237,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
         const { checker } = createChecker();
         await expect(checker.downloadAndInstall({
             version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '',
-        })).rejects.toThrow(/未附带 vsix/);
+        })).rejects.toThrow(/非法下载地址/);
     });
 
     it('下载成功并调用 installExtension 命令', async () => {
@@ -251,7 +251,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
             name: '',
             body: '',
             publishedAt: '',
-            vsixAssetUrl: 'https://example.com/graycode-1.5.0.vsix',
+            vsixAssetUrl: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/v1.5.0/graycode-1.5.0.vsix',
         });
         expect(target).toContain('graycode-1.5.0.vsix');
         expect(fs.existsSync(target)).toBe(true);
@@ -268,7 +268,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
             fetchImpl: async () => new Response('Not Found', { status: 404 }),
         });
         await expect(checker.downloadAndInstall({
-            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', vsixAssetUrl: 'https://example.com/x.vsix',
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', vsixAssetUrl: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/v1.5.0/graycode-1.5.0.vsix',
         })).rejects.toThrow(/404/);
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     });
@@ -279,7 +279,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
             fetchImpl: async () => new Response('', { status: 200 }),
         });
         await expect(checker.downloadAndInstall({
-            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', vsixAssetUrl: 'https://example.com/x.vsix',
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', vsixAssetUrl: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/v1.5.0/graycode-1.5.0.vsix',
         })).rejects.toThrow(/空/);
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     });

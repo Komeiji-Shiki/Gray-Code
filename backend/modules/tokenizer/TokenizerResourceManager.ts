@@ -65,6 +65,8 @@ const RESOURCES: Record<TokenizerResourceName, ResourceSpec> = {
 
 /** 下载超时（词表最大 ~2MB，120s 足够覆盖慢网络） */
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+/** 下载体积上限（字节）：词表正常 ~2MB，超过 50MB 视为异常响应，拒绝载入内存 */
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 export class TokenizerResourceManager {
     private inflight = new Map<TokenizerResourceName, Promise<TokenizerResource>>();
@@ -125,7 +127,15 @@ export class TokenizerResourceManager {
         if (!response.ok) {
             throw new Error(`Tokenizer download failed: ${spec.url} (HTTP ${response.status})`);
         }
+        // 下载大小上限：Content-Length 已知时先拒绝；缺失时以实际大小兜底
+        const contentLength = Number(response.headers?.get('Content-Length') ?? 0);
+        if (contentLength > MAX_DOWNLOAD_BYTES) {
+            throw new Error(`Tokenizer download too large: ${contentLength} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
+        }
         const buf = Buffer.from(await response.arrayBuffer());
+        if (buf.length > MAX_DOWNLOAD_BYTES) {
+            throw new Error(`Tokenizer download too large: ${buf.length} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
+        }
 
         if (spec.archive) {
             // DeepSeek：zip → tokenizer.json → 转换

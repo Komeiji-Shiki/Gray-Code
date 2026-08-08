@@ -16,7 +16,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { PromptConfig, PromptContext } from './types'
 import type { Content, ContentPart } from '../conversation/types'
-import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
+import { getWorkspaceFileTree, getWorkspaceRoot, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 import type { PinnedFileItem, PromptEntry, PromptEntryRole, ResolvedPromptModeSnapshot } from '../settings/types'
 import { promptContextMessagesToText } from './promptContextCache'
@@ -34,6 +34,9 @@ export type DynamicRuntimeContext = {
 
     /** ConversationMetadata.custom['inputSkills'] */
     skills?: unknown
+
+    /** 会话绑定的工作区 URI（记忆隔离：工具执行按工作区路由记忆存储） */
+    workspaceUri?: string
 }
 
 export interface PromptContextBundle {
@@ -323,7 +326,16 @@ export class PromptManager {
         const memoryConfig = settingsManager?.getMemoryConfig?.()
         const memoryEnabled = memoryConfig?.enabled !== false
         const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}`
+        // 环境输入纳入缓存键：ENVIRONMENT 段含工作区集合与 VS Code 语言，
+        // 切换工作区/语言后若键不变，60s TTL 内会返回旧 ENVIRONMENT。
+        const workspaceFingerprint = fingerprint(
+            (vscode.workspace.workspaceFolders || [])
+                .map(f => f.uri.fsPath)
+                .sort()
+                .join('\u0000')
+        )
+        const language = vscode.env?.language || 'en'
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspaceFingerprint}::lang=${language}`
     }
     
     /**
@@ -1004,14 +1016,6 @@ export class PromptManager {
     }
     
     /**
-     * @deprecated 使用 generateStaticEnvironmentSection 代替
-     * 保留用于向后兼容
-     */
-    private generateEnvironmentSection(): string {
-        return this.generateStaticEnvironmentSection()
-    }
-    
-    /**
      * 获取用户语言环境
      *
      * 根据设置返回用户当前使用的语言
@@ -1419,15 +1423,6 @@ export class PromptManager {
         }
     }
     
-    /**
-     * 检查是否需要刷新（用于首条消息判断）
-     * 
-     * @param isFirstMessage 是否是对话的第一条用户消息
-     * @returns 是否需要刷新系统提示词
-     */
-    shouldRefresh(isFirstMessage: boolean): boolean {
-        return isFirstMessage
-    }
 }
 
 // 导出单例创建函数
