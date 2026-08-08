@@ -8,6 +8,21 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+## [1.7.4] - 2026-08-08
+
+### Added
+  - **对话绑定工作区检查修复批次（1.7.4）**：
+    - **文件系统大小写敏感性统一为运行时探测**（`webview/utils/fsCaseSensitivity.ts` 新增）：`detectFsCaseSensitivity` 对样本路径做大小写变体探测（变体存在且同 dev+ino → 不敏感），win32 短路不敏感，探测不到时回退平台默认（darwin 不敏感 / 其他敏感）。此前扩展端仅按 `process.platform !== 'win32'` 下发 `fsCaseSensitive`，macOS APFS（默认大小写不敏感）被误判为敏感，同一目录以不同大小写路径打开/收藏时固定匹配静默失败。
+    - `WorkspaceManager` / `WorkspaceHandlers`（收藏去重、`waitForWorkspaceOpened`、已打开判定）/ `WorkspaceUtils.pathsEqual`（绑定归属比对）统一使用同一探测口径，消除「运行时探测 vs win32 常量」两套口径互相矛盾的遗留问题（macOS / WSL drvfs 上 URI 漂移误判 `NOT_IN_CURRENT_WORKSPACE`、3s 误超时返回过期状态）。
+    - 进程级共享缓存 `getFsCaseSensitivity`：首个有效样本探测后固定口径；空列表（Electron 启动早期）返回平台默认且不缓存，列表就绪后自动重探——修复「空列表→平台默认→终身缓存」口径漂移窗口；`workspaceList` 广播携带 `fsCaseSensitive`（前端初始化时列表为空只能拿到平台默认，口径随列表就绪变化时必须随广播同步）。
+    - 前端 `fsCaseSensitive` 默认值按 webview 宿主平台兜底（win/mac → 不敏感，其他 → 敏感）：`getWorkspaceList` IPC 失败时 Linux 上不再把不同大小写的两个真实目录误合并。
+    - `syncConversationWorkspaceUri` TOCTOU 补完：await 后「目标会话仍是当前会话」门禁覆盖**后端写入**——此前仅门禁 store 同步，await 期间用户切换到已绑定对话 B（其激活工作区为 B 的绑定值）时，A 会被错误绑定到 B 的工作区并持久化；现在直接放弃本次同步，切回 A 时重新补绑。写入失败时仅当目标仍是当前会话才回滚展示值，避免覆盖新会话的锁定展示。
+    - `ConversationManager.createConversation` 并发去重补绑：并发对同一 ID 建会话时，第二个调用携带的绑定在首个创建完成后补绑（H4 自动建会话与用户建会话并发时用户侧绑定不再丢失），已绑定不覆盖（绑定即终身）。
+    - 新增回归测试：`fsCaseSensitivity.test.ts`（平台短路/真实目录探测/共享缓存语义 6 例）、`workspaceSync.test.ts` 切走不写后端用例、`ConversationManager.appendAndMetadata` 并发补绑 2 例。
+  - **移除工作区选择器「保存当前工作区」入口**（打开工作区即自动收藏保存，无需显式入口）：删除 `WorkspaceSelector.vue` 保存菜单项、前端 `saveCurrentWorkspace` action、`workspace.saveCurrent` handler 与注册、三语 i18n 键；「打开即保存」逻辑保持不变。
+
 ### Fixed
   - **对话内禁止切换工作区——切换工作区 = 打开绑定新工作区的新对话**：
     - 移除下拉切换/打开文件夹对当前对话的重绑定逻辑（`setActiveWorkspace`/`openWorkspaceFolderAction` 不再调用 `conversation.setWorkspaceUri`）——此前在对话内强行切换工作区会把当前对话重绑定到新工作区，导致标题与绑定错位、绑定失效（本地便携版数据实测：`conv_..._2zrlyy` 标题为「新建文件夹」项目但绑定被改写为另一工作区）。
