@@ -322,6 +322,9 @@ export function startUsageDirectoryWatcher(
     const handleEvent = (_event: string, filename: string | Buffer | null): void => {
         const raw = typeof filename === 'string' ? filename : filename?.toString();
         if (!raw) return;
+        // 跳过递归能力探测的探针目录：探针事件会被 parseConversationIdFromPath
+        // 解析成假会话 ID 标记 dirty，探测承诺不污染调用方事件处理
+        if (raw.replace(/\\/g, '/').startsWith(PROBE_DIR_PREFIX)) return;
         const conversationId = parseConversationIdFromPath(raw);
         if (!conversationId) return;
         cache.markDirty(conversationId);

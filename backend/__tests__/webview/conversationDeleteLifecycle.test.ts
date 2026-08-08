@@ -3,6 +3,8 @@ const lifecycle: string[] = [];
 jest.mock('../../../backend/tools/subagents/runEventBus', () => ({
     subAgentRunEventBus: {
         getSnapshots: jest.fn(() => [{ runId: 'run-1', conversationId: 'conv-1' }]),
+        getSnapshot: jest.fn(() => undefined),
+        subscribe: jest.fn(() => () => undefined),
         flushConversation: jest.fn(async () => { lifecycle.push('flush-subagents'); }),
         forgetConversation: jest.fn(() => { lifecycle.push('forget-subagents'); })
     }

@@ -137,7 +137,7 @@ export class DiffStorageManager {
      * 生成唯一的 Diff ID
      */
     public generateDiffId(): string {
-        return `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `diff_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     }
     
     /**
@@ -292,7 +292,9 @@ export class DiffStorageManager {
             // Map 重新插入保持最近访问项在尾部，容量淘汰按 LRU 近似执行。
             this.globalDiffCache.delete(diffId);
             this.globalDiffCache.set(diffId, cached);
-            return cached.content;
+            // 命中缓存返回深拷贝：直接返回原始引用会让调用方修改污染缓存
+            //（与未命中路径每次解析出新对象同一语义）。
+            return JSON.parse(JSON.stringify(cached.content)) as DiffContent;
         }
 
         const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);
@@ -301,7 +303,7 @@ export class DiffStorageManager {
             const data = await fs.promises.readFile(filePath, 'utf8');
             return JSON.parse(data) as DiffContent;
         } catch (error) {
-            console.warn(`[DiffStorageManager] Failed to load global diff ${diffId}: ${error}`);
+            log.warn('global_diff_load_failed', { diffId, error: String(error) });
             return null;
         }
     }
@@ -323,7 +325,7 @@ export class DiffStorageManager {
             const data = await fs.promises.readFile(filePath, 'utf8');
             return JSON.parse(data) as DiffContent;
         } catch (error) {
-            console.warn(`[DiffStorageManager] Failed to load diff ${diffId}: ${error}`);
+            log.warn('diff_load_failed', { diffId, error: String(error) });
             return null;
         }
     }

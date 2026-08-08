@@ -35,6 +35,9 @@ import type { Content, ConversationMetadata } from './types';
 import type { UsageStatsCache } from './usageCache';
 import { activePath } from './branch/BranchGraph';
 import type { ConversationBranchGraph } from './branch/types';
+import { Logger } from '../../core/logger';
+
+const log = Logger.get('usageStats');
 
 /** 单个维度桶的 token 计数 */
 export interface UsageBucket {
@@ -579,7 +582,7 @@ async function mergeBranchUsageIntoLoaded(
     }
     if (!historyIdsComplete) {
         // 混合态索引/历史（部分主历史条目缺 id）：id 权威不可用，整体回退活跃路径兜底去重
-        console.warn(
+        log.warn(
             `mergeBranchUsageIntoLoaded(${conversationId}): main-history usage entries have missing stable ids; `
             + `falling back to active-path dedup for branch merge`
         );
