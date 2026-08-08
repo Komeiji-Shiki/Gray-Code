@@ -672,10 +672,10 @@ export class SubAgentRunEventBus {
         }
     }
 
-    appendContent(runId: string, content: Content): void {
+    appendContent(runId: string, content: Content): SubAgentRunSnapshot | undefined {
         const snapshot = this.snapshots.get(runId);
         if (!snapshot) {
-            return;
+            return undefined;
         }
         ensureSnapshotProtocolFields(snapshot);
         const now = Date.now();
@@ -685,6 +685,7 @@ export class SubAgentRunEventBus {
             index: snapshot.contents.length
         } as Content);
         this.commitContentChange(snapshot, now);
+        return snapshot;
     }
 
     updateLastModelContent(runId: string, content: Content): void {
