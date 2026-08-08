@@ -29,8 +29,13 @@ function extractDurValues(content: string): string[] {
   return [...content.matchAll(/\bdur="([^"]+)"/g)].map((m) => m[1])
 }
 
+/** 只取 <style> 块内的 CSS 时间 token（排除注释/文案里的数字，避免误报） */
+function extractStyleBlocks(content: string): string {
+  return [...content.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+}
+
 function extractCssTimeTokens(content: string): Set<string> {
-  return new Set([...content.matchAll(/\b\d+(?:\.\d+)?s\b/g)].map((m) => m[1]))
+  return new Set([...content.matchAll(/\b\d+(?:\.\d+)?s\b/g)].map((m) => m[0]))
 }
 
 describe('bootSplash 与 Splash.vue 一致性', () => {
@@ -45,8 +50,9 @@ describe('bootSplash 与 Splash.vue 一致性', () => {
   })
 
   it('Splash.vue 的全部动画时间常量都存在于 boot 样式（负延迟接管前提）', () => {
-    const bootTokens = extractCssTimeTokens(bootHtml)
-    const vueTokens = extractCssTimeTokens(splashVue)
+    const bootTokens = extractCssTimeTokens(extractStyleBlocks(bootHtml))
+    const vueTokens = extractCssTimeTokens(extractStyleBlocks(splashVue))
+    expect(vueTokens.size).toBeGreaterThan(0)
     for (const token of vueTokens) {
       expect(bootTokens.has(token), `boot-splash.html 缺少时间常量 ${token}`).toBe(true)
     }

@@ -9,17 +9,17 @@
  * - 最短展示 minDisplayMs，ready 后淡出（FADE_MS，blur+scale 消散）并 emit('done')
  * - 支持 prefers-reduced-motion（动画即时完成/静止，淡出无过渡）
  *
- * 时间轴（相对挂载，与 CSS 动画严格对齐，1.4s 速播版）：
- *   0.00s  点阵背景淡入          0.05~0.50s  帽子描线 + 笔尖光点
- *   0.30~0.95s 身体描线 + 光点   0.45s       标题浮现
- *   0.50s  副标题 + 格雷码线起跳（周期 0.8s，相位 001 起始）
- *   0.80s  光标闪烁              0.90s       色块渗入 + 线稿退位细描边（0.3s）
- *   1.00s  帽子色块渗入          1.05s       完稿定影（0.35s）
- *   1.40s  DRAW_TOTAL_MS → drawDone → 呼吸待机
+ * 时间轴（相对挂载，与 CSS 动画严格对齐，1.8s 叙事版）：
+ *   0.00s  点阵背景淡入          0.05~0.60s  帽子描线 + 笔尖光点
+ *   0.40~1.20s 身体描线 + 光点   0.55s       标题浮现
+ *   0.65s  副标题 + 格雷码线起跳（周期 1.0s，相位 001 起始）
+ *   1.00s  光标闪烁              1.15s       色块渗入 + 线稿退位细描边（0.35s）
+ *   1.25s  帽子色块渗入          1.35s       完稿定影（0.45s）
+ *   1.80s  DRAW_TOTAL_MS → drawDone → 呼吸待机
  *
  * 退场（ready 后两拍）：先归一（MERGE_MS，蓝线合并 + 光标定格）再淡出（FADE_MS）
- * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 0.5s+0.8s=1.3s）再归一，
- * 保证每次启动都能看到完整 8 步循环（最短总展示 ≈ max(DRAW_TOTAL_MS, 1.3s)）
+ * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 0.65s+1.0s=1.65s）再归一，
+ * 保证每次启动都能看到完整 8 步循环（最短总展示 ≈ max(DRAW_TOTAL_MS, 1.65s)）
  *
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
@@ -32,7 +32,7 @@ const props = withDefaults(defineProps<{
   minDisplayMs?: number
 }>(), {
   ready: false,
-  minDisplayMs: 1400
+  minDisplayMs: 1800
 })
 
 const emit = defineEmits<{
@@ -40,15 +40,15 @@ const emit = defineEmits<{
 }>()
 
 /** 淡出时长（与 CSS transition 一致） */
-const FADE_MS = 300
+const FADE_MS = 350
 /** 归一演出时长：ready 后先蓝线归一 + 光标定格，再淡出 */
-const MERGE_MS = 300
-/** 全部绘制动画完成（描线 0.05~0.95s + 上色 0.9~1.3s + 定影 1.05s 起） */
-const DRAW_TOTAL_MS = 1400
-/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 0.5s 对齐） */
-const GRAY_LINE_DELAY = 500
-/** 格雷码等待线：单周期 0.8s（8 步 × 100ms，与 CSS 0.8s linear 对齐） */
-const GRAY_LINE_PERIOD = 800
+const MERGE_MS = 350
+/** 全部绘制动画完成（描线 0.05~1.20s + 上色 1.15~1.60s + 定影 1.35s 起） */
+const DRAW_TOTAL_MS = 1800
+/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 0.65s 对齐） */
+const GRAY_LINE_DELAY = 650
+/** 格雷码等待线：单周期 1.0s（8 步 × 125ms，与 CSS 1.0s linear 对齐） */
+const GRAY_LINE_PERIOD = 1000
 
 function prefersReducedMotion(): boolean {
   return (
@@ -73,7 +73,7 @@ const bootOffset = typeof bootStartedAt === 'number'
   : 0
 /** SMIL 笔尖光点 begin：随 boot 偏移负向回拨（bootOffset=0 时保持原值） */
 const capPenBegin = `${0.05 - bootOffset / 1000}s`
-const bodyPenBegin = `${0.3 - bootOffset / 1000}s`
+const bodyPenBegin = `${0.4 - bootOffset / 1000}s`
 
 const fading = ref(false)
 const merging = ref(false)
@@ -188,7 +188,7 @@ onBeforeUnmount(() => {
         width="150"
         aria-hidden="true"
       >
-        <!-- 色块层：body 按 M…Z 拆块（身体→头发→脸镂空→帽檐→帽身，后画的覆盖重叠区），1.6s 起错峰渗入 -->
+        <!-- 色块层：body 按 M…Z 拆块（身体→头发→脸镂空→帽檐→帽身，后画的覆盖重叠区），1.15s 起错峰渗入 -->
         <g class="fills">
           <path class="fill-body" d="M 744.0 758.0 L 724.0 723.0 L 704.0 706.0 L 687.0 698.0 L 630.0 684.0 L 625.0 684.0 L 583.0 725.0 L 582.0 719.0 L 517.0 750.0 L 497.0 754.0 L 476.0 753.0 L 455.0 743.0 L 438.0 724.0 L 432.0 697.0 L 436.0 688.0 L 396.0 700.0 L 393.0 720.0 L 382.0 708.0 L 373.0 706.0 L 377.0 742.0 L 345.0 715.0 L 319.0 745.0 L 302.0 784.0 L 751.0 784.0 Z" />
           <path class="fill-body" d="M 588.0 600.0 L 544.0 631.0 L 485.0 655.0 L 485.0 679.0 L 447.0 696.0 L 443.0 701.0 L 446.0 716.0 L 454.0 728.0 L 471.0 740.0 L 482.0 743.0 L 512.0 740.0 L 572.0 714.0 L 585.0 706.0 L 590.0 688.0 L 592.0 653.0 L 588.0 616.0 Z" />
@@ -217,7 +217,7 @@ onBeforeUnmount(() => {
         <!-- 笔尖光点：沿描线路径移动，先帽后身（SMIL animateMotion + mpath，与描线同曲线同节奏） -->
         <circle class="pen pen-cap" r="13" fill="currentColor">
           <animateMotion
-            dur="0.45s"
+            dur="0.55s"
             :begin="capPenBegin"
             fill="freeze"
             calcMode="spline"
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
         </circle>
         <circle class="pen pen-body" r="13" fill="currentColor">
           <animateMotion
-            dur="0.65s"
+            dur="0.8s"
             :begin="bodyPenBegin"
             fill="freeze"
             calcMode="spline"
@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
-  transition: opacity 0.3s ease;
+  transition: opacity 0.35s ease;
 }
 
 /* 蓝图点阵背景 + 晕影：极淡网格点，径向遮罩聚焦中心 */
@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
   -webkit-mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   opacity: 0;
-  animation: bg-in 0.6s ease calc(var(--gc-boot-offset, 0ms) + 0.15s) both;
+  animation: bg-in 0.75s ease calc(var(--gc-boot-offset, 0ms) + 0.2s) both;
 }
 
 @keyframes bg-in {
@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 14px;
   padding: 24px;
-  transition: transform 0.3s ease, filter 0.3s ease;
+  transition: transform 0.35s ease, filter 0.35s ease;
 }
 
 .girl {
@@ -314,8 +314,8 @@ onBeforeUnmount(() => {
   --ink-cap: color-mix(in srgb, var(--vscode-foreground) 45%, var(--vscode-editor-background));
   --ink-body: color-mix(in srgb, var(--vscode-foreground) 30%, var(--vscode-editor-background));
   --paper: var(--vscode-editor-background);
-  /* 完稿定影：1.05s 起轻微提亮再回落（0% 帧在 delay 期间压低透明度） */
-  animation: girl-settle 0.35s ease-out calc(var(--gc-boot-offset, 0ms) + 1.05s) both;
+  /* 完稿定影：1.35s 起轻微提亮再回落（0% 帧在 delay 期间压低透明度） */
+  animation: girl-settle 0.45s ease-out calc(var(--gc-boot-offset, 0ms) + 1.35s) both;
 }
 
 @keyframes girl-settle {
@@ -332,30 +332,30 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 色块层（草稿→上色）：body 0.9s 渗入（下层），cap 1.0s 渗入（错峰分层上色） */
+/* 色块层（草稿→上色）：body 1.15s 渗入（下层），cap 1.25s 渗入（错峰分层上色） */
 .fills path {
   opacity: 0;
-  animation: ink-in 0.3s ease-out both;
+  animation: ink-in 0.35s ease-out both;
 }
 
 .fill-body {
   fill: var(--ink-body);
-  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1.15s);
 }
 
 .fill-hair {
   fill: var(--ink-hair);
-  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1.15s);
 }
 
 .fill-face {
   fill: var(--paper);
-  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1.15s);
 }
 
 .fill-cap {
   fill: var(--ink-cap);
-  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1s);
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1.25s);
 }
 
 @keyframes ink-in {
@@ -374,21 +374,21 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
 }
 
-/* 双动画：先描线（dashoffset），0.9s 起同步退位为细描边（line-retire 的 delay 自元素插入起算，与色块渗入同刻） */
+/* 双动画：先描线（dashoffset），1.15s 起同步退位为细描边（line-retire 的 delay 自元素插入起算，与色块渗入同刻） */
 .draw-cap {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    draw-stroke 0.45s ease-out calc(var(--gc-boot-offset, 0ms) + 0.05s) both,
-    line-retire 0.3s ease-out calc(var(--gc-boot-offset, 0ms) + 0.9s) both;
+    draw-stroke 0.55s ease-out calc(var(--gc-boot-offset, 0ms) + 0.05s) both,
+    line-retire 0.35s ease-out calc(var(--gc-boot-offset, 0ms) + 1.15s) both;
 }
 
 .draw-body {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    draw-stroke 0.65s ease-out calc(var(--gc-boot-offset, 0ms) + 0.3s) both,
-    line-retire 0.3s ease-out calc(var(--gc-boot-offset, 0ms) + 0.9s) both;
+    draw-stroke 0.8s ease-out calc(var(--gc-boot-offset, 0ms) + 0.4s) both,
+    line-retire 0.35s ease-out calc(var(--gc-boot-offset, 0ms) + 1.15s) both;
 }
 
 @keyframes draw-stroke {
@@ -411,11 +411,11 @@ onBeforeUnmount(() => {
 }
 
 .pen-cap {
-  animation: pen-life 0.45s linear calc(var(--gc-boot-offset, 0ms) + 0.05s) both;
+  animation: pen-life 0.55s linear calc(var(--gc-boot-offset, 0ms) + 0.05s) both;
 }
 
 .pen-body {
-  animation: pen-life 0.65s linear calc(var(--gc-boot-offset, 0ms) + 0.3s) both;
+  animation: pen-life 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.4s) both;
 }
 
 @keyframes pen-life {
@@ -450,7 +450,7 @@ onBeforeUnmount(() => {
   font-size: 26px;
   letter-spacing: 0.08em;
   opacity: 0;
-  animation: title-in 0.45s ease-out calc(var(--gc-boot-offset, 0ms) + 0.45s) both;
+  animation: title-in 0.55s ease-out calc(var(--gc-boot-offset, 0ms) + 0.55s) both;
 }
 
 .t-gray {
@@ -465,7 +465,7 @@ onBeforeUnmount(() => {
 .caret {
   color: var(--vscode-charts-blue, #0050b3);
   font-weight: 300;
-  animation: caret-blink 0.8s steps(1, end) calc(var(--gc-boot-offset, 0ms) + 0.8s) infinite;
+  animation: caret-blink 1.0s steps(1, end) calc(var(--gc-boot-offset, 0ms) + 1.0s) infinite;
 }
 
 @keyframes caret-blink {
@@ -501,7 +501,7 @@ onBeforeUnmount(() => {
   text-indent: 0.42em;
   color: var(--vscode-descriptionForeground);
   opacity: 0;
-  animation: fade-up 0.4s ease-out calc(var(--gc-boot-offset, 0ms) + 0.5s) both;
+  animation: fade-up 0.5s ease-out calc(var(--gc-boot-offset, 0ms) + 0.65s) both;
 }
 
 @keyframes fade-up {
@@ -515,13 +515,13 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 格雷码等待线：3-bit 序列周期 0.8s（8 步 × 100ms），每步恰好只变一位；0.5s 与副标题同刻入场 */
+/* 格雷码等待线：3-bit 序列周期 1.0s（8 步 × 125ms），每步恰好只变一位；0.65s 与副标题同刻入场 */
 .gray-line {
   display: flex;
   gap: 5px;
   margin-top: 4px;
   opacity: 0;
-  animation: fade-up 0.4s ease-out calc(var(--gc-boot-offset, 0ms) + 0.5s) both;
+  animation: fade-up 0.5s ease-out calc(var(--gc-boot-offset, 0ms) + 0.65s) both;
 }
 
 .bit {
@@ -530,20 +530,20 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   background: currentColor;
   opacity: 0.12;
-  transition: opacity 0.3s ease, background 0.3s ease, width 0.3s ease;
+  transition: opacity 0.35s ease, background 0.35s ease, width 0.35s ease;
 }
 
 /* 001→011→010→110→111→101→100→000 循环（相位旋转：第一帧即有一条亮着，杜绝开场全灭） */
 .b0 {
-  animation: g0 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
+  animation: g0 1.0s linear calc(var(--gc-boot-offset, 0ms) + 0.65s) infinite;
 }
 
 .b1 {
-  animation: g1 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
+  animation: g1 1.0s linear calc(var(--gc-boot-offset, 0ms) + 0.65s) infinite;
 }
 
 .b2 {
-  animation: g2 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
+  animation: g2 1.0s linear calc(var(--gc-boot-offset, 0ms) + 0.65s) infinite;
 }
 
 @keyframes g0 {
@@ -568,7 +568,7 @@ onBeforeUnmount(() => {
 /* ready：三位归一，合并为蓝色实线（一次性闪光，覆盖 fade-up 入场动画） */
 .gray-line.is-ready {
   gap: 0;
-  animation: line-flash 0.3s ease;
+  animation: line-flash 0.35s ease;
 }
 .gray-line.is-ready .bit {
   animation: none;

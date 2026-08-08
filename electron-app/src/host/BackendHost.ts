@@ -832,19 +832,29 @@ export class BackendHost {
     // 启动画面；其余消息仍走下方队列等 initPromise。响应形状与
     // SettingsHandlers.getSettings（{ success, settings }）完全一致。
     if (type === 'getSettings') {
+      const respond = (): void => {
+        try {
+          const settings = this.settingsManager.getSettings();
+          this.postToRenderer('response', requestId || 'getSettings', { success: true, settings });
+        } catch (error: any) {
+          // 与 webview 路径（settingsHandlerBoundary → ctx.sendError）同一错误形态：
+          // 外层 { type:'error', success:false, error:{ code, message } }，前端走 catch
+          this.postToRenderer('error', requestId || 'getSettings', error?.code || 'GET_SETTINGS_ERROR', error?.message || String(error));
+        }
+      };
+      // settingsManager 初始化异常（损坏设置文件等）时 settingsReadyPromise 永不 resolve：
+      // 给 30s 兜底超时按错误应答，避免前端挂到 180s sendToExtension 兜底（F-4 失败路径退化）
+      const timeout = setTimeout(respond, 30_000);
       void this.settingsReadyPromise
         .then(() => {
-          try {
-            const settings = this.settingsManager.getSettings();
-            this.postToRenderer('response', requestId || 'getSettings', { success: true, settings });
-          } catch (error: any) {
-            this.postToRenderer('response', requestId || 'getSettings', {
-              success: false,
-              error: { code: error?.code || 'GET_SETTINGS_ERROR', message: error?.message || String(error) }
-            });
-          }
+          clearTimeout(timeout);
+          respond();
         })
-        .catch((err) => console.error('[BackendHost] getSettings fast-path error:', err));
+        .catch((err) => {
+          clearTimeout(timeout);
+          console.error('[BackendHost] getSettings fast-path error:', err);
+          this.postToRenderer('error', requestId || 'getSettings', 'GET_SETTINGS_ERROR', err?.message || String(err));
+        });
       return;
     }
 

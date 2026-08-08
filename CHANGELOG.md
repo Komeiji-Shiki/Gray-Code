@@ -15,11 +15,13 @@
 ### Performance
   - **启动提速批次 ②（便携版 exe 启动 3s+ → ~2s，加载链路全面提速）**：
     - **首帧启动画面（`boot-splash.html` + `patch-dist.mjs`）**：纯静态 HTML+CSS（无 JS）注入 index.html `<body>` 开头，窗口第一帧即显示 Splash 同款动画，消灭「纯色背景等待 ~1.3MB index.js 解析挂载」的空窗；Vue 挂载后按 `__GC_BOOT_TS` 以负延迟（`--gc-boot-offset` CSS var + SMIL begin 回拨）无缝续播并移除静态画面，动画时间轴无跳变；`bootSplash.test.ts` 比对双份路径/时长/文案防漂移。
-    - **Splash 时间轴 2.3s 速播压缩至 1.4s**（`Splash.vue`）：描线/上色/定影/标题/格雷码线全部按比例压缩（格雷码线周期 1.2s→0.8s、延迟 0.8s→0.5s），归一并淡出 0.87s→0.6s，最短总展示 2.3s→1.4s（加退场两拍共约 2.0s）；CSS 动画、SMIL 笔尖光点与 JS 常量严格同步，`Splash.test.ts` 常量同步更新。
-    - **getSettings 快速通道（`BackendHost.ts`）**：启动画面 ready 信号（前端 `languageLoaded`）原本要等完整后端初始化（checkpoint/MCP/memory/activity/dependency + 工具注册），现 settingsManager 第一步就绪即应答（响应形状与 `SettingsHandlers.getSettings` 完全一致），UI 提前数百 ms 退出启动画面；其余消息仍排队等完整初始化，行为不变。
+    - **关闭启动画面时首帧不再闪现动画**：`splashEnabled=false` 时 `settingsStore.setSplashEnabled` 写入 localStorage 标记 `gc-splash-disabled`，`boot-splash.js` 在 `<head>`（早于 body 解析）读取并给 `<html>` 加 `gc-no-splash` 类，CSS 直接不渲染 `#gc-boot`——关闭动画的用户窗口第一帧直接进主界面，不再被静态动画覆盖到 Vue 挂载。
+    - **Splash 时间轴 1.8s 叙事版**（`Splash.vue`，曾尝试 1.4s 速播，节奏过赶已回退）：描线/上色/定影/标题/格雷码线全时间轴按 1.8s 编排（格雷码线周期 1.0s、延迟 0.65s），归一并淡出 0.7s，最短总展示 1.8s（加退场两拍共约 2.5s）；CSS 动画、SMIL 笔尖光点与 JS 常量严格同步，`Splash.test.ts` 常量同步更新。
+    - **getSettings 快速通道（`BackendHost.ts`）**：启动画面 ready 信号（前端 `languageLoaded`）原本要等完整后端初始化（checkpoint/MCP/memory/activity/dependency + 工具注册），现 settingsManager 第一步就绪即应答（响应形状与 `SettingsHandlers.getSettings` 完全一致），UI 提前数百 ms 退出启动画面；其余消息仍排队等完整初始化，行为不变。加固：settingsReady 异常时 30s 兜底超时按错误应答（避免前端挂到 180s 兜底），错误形态与 webview 路径统一（外层 error，前端走 catch）。
     - **打包产物裁剪 locales**（`electron-app/package.json`）：`electronLanguages` 限定 en-US/zh-CN/ja，未打包产物 locales 48.9MB→1.9MB，便携版 exe 98.4MB→81.5MB，每次启动解压负载下降（此前 48.9MB locales 全部打进产物但从未使用）。
     - **冷缓存同步探测超时 3s→1.5s**（`execute_command.ts`）：磁盘缓存失效（>24h）时 wsl --status / where / which 单次探测最坏阻塞减半；缓存命中路径不受影响。
     - **启动阶段计时诊断**（`main.ts`/`BackendHost.ts`）：`GRAYCODE_DIAG=1` 时输出 when-ready/window-shown/did-finish-load/backend-ready/settings-loaded/tools-registered/backend-initialized 各里程碑耗时到 stdout，便于后续定位启动热点。
+    - **bootSplash 一致性测试修复**：时间 token 子集校验原取 `matchAll` 的 `m[1]`（无捕获组恒为 undefined，校验空转），改为 `m[0]` 且只扫 `<style>` 块（注释/文案里的数字不再误报），双份时间轴漂移防线恢复生效。
 
 ## [1.7.5dev] - 2026-08-08
 

@@ -132,6 +132,18 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function setSplashEnabled(enabled: boolean) {
     splashEnabled.value = enabled
+    // 同步首帧静态启动画面开关标记：boot-splash.js 在 <head> 读取 localStorage
+    // 决定是否渲染 #gc-boot（关闭动画后窗口第一帧直接进主界面，不再闪现启动画面）。
+    // localStorage 不可用（隐私模式等）时忽略，仅影响下一次启动的首帧表现。
+    try {
+      if (enabled) {
+        localStorage.removeItem('gc-splash-disabled')
+      } else {
+        localStorage.setItem('gc-splash-disabled', '1')
+      }
+    } catch {
+      // ignore
+    }
   }
   
   // 通知模式列表刷新

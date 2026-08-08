@@ -17,6 +17,12 @@
   在 did-finish-load 后才注入，首帧还没有 --vscode-* 变量）。
 -->
 <style>
+/* 关闭启动画面（appearance.splashEnabled=false）时首帧不显示静态画面：
+   boot-splash.js 读取 localStorage 标记 gc-splash-disabled 后在 <html> 上加
+   gc-no-splash 类（head 脚本，早于 body 解析），此规则使 #gc-boot 直接不渲染 */
+html.gc-no-splash #gc-boot {
+  display: none;
+}
 #gc-boot {
   position: fixed;
   inset: 0;
@@ -50,7 +56,7 @@
   -webkit-mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   opacity: 0;
-  animation: gc-boot-bg-in 0.6s ease 0.15s both;
+  animation: gc-boot-bg-in 0.75s ease 0.2s both;
 }
 @keyframes gc-boot-bg-in {
   to {
@@ -80,7 +86,7 @@
   --ink-cap: color-mix(in srgb, currentColor 45%, var(--gc-boot-bg));
   --ink-body: color-mix(in srgb, currentColor 30%, var(--gc-boot-bg));
   --paper: var(--gc-boot-bg);
-  animation: gc-boot-settle 0.35s ease-out 1.05s both;
+  animation: gc-boot-settle 0.45s ease-out 1.35s both;
 }
 @keyframes gc-boot-settle {
   0% {
@@ -98,15 +104,15 @@
 
 #gc-boot .fills path {
   opacity: 0;
-  animation: gc-boot-ink-in 0.3s ease-out both;
+  animation: gc-boot-ink-in 0.35s ease-out both;
 }
 #gc-boot .fill-body,
 #gc-boot .fill-hair,
 #gc-boot .fill-face {
-  animation-delay: 0.9s;
+  animation-delay: 1.15s;
 }
 #gc-boot .fill-cap {
-  animation-delay: 1s;
+  animation-delay: 1.25s;
 }
 @keyframes gc-boot-ink-in {
   to {
@@ -126,15 +132,15 @@
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    gc-boot-draw 0.45s ease-out 0.05s both,
-    gc-boot-retire 0.3s ease-out 0.9s both;
+    gc-boot-draw 0.55s ease-out 0.05s both,
+    gc-boot-retire 0.35s ease-out 1.15s both;
 }
 #gc-boot .draw-body {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    gc-boot-draw 0.65s ease-out 0.3s both,
-    gc-boot-retire 0.3s ease-out 0.9s both;
+    gc-boot-draw 0.8s ease-out 0.4s both,
+    gc-boot-retire 0.35s ease-out 1.15s both;
 }
 @keyframes gc-boot-draw {
   to {
@@ -153,10 +159,10 @@
   filter: drop-shadow(0 0 8px currentColor);
 }
 #gc-boot .pen-cap {
-  animation: gc-boot-pen 0.45s linear 0.05s both;
+  animation: gc-boot-pen 0.55s linear 0.05s both;
 }
 #gc-boot .pen-body {
-  animation: gc-boot-pen 0.65s linear 0.3s both;
+  animation: gc-boot-pen 0.8s linear 0.4s both;
 }
 @keyframes gc-boot-pen {
   0% {
@@ -178,7 +184,7 @@
   font-size: 26px;
   letter-spacing: 0.08em;
   opacity: 0;
-  animation: gc-boot-title-in 0.45s ease-out 0.45s both;
+  animation: gc-boot-title-in 0.55s ease-out 0.55s both;
 }
 @keyframes gc-boot-title-in {
   from {
@@ -201,7 +207,7 @@
 #gc-boot .caret {
   color: var(--gc-boot-blue);
   font-weight: 300;
-  animation: gc-boot-caret 0.8s steps(1, end) 0.8s infinite;
+  animation: gc-boot-caret 1.0s steps(1, end) 1.0s infinite;
 }
 @keyframes gc-boot-caret {
   0%,
@@ -221,7 +227,7 @@
   text-indent: 0.42em;
   color: var(--gc-boot-fg);
   opacity: 0;
-  animation: gc-boot-fade-up 0.4s ease-out 0.5s both;
+  animation: gc-boot-fade-up 0.5s ease-out 0.65s both;
 }
 @keyframes gc-boot-fade-up {
   from {
@@ -239,7 +245,7 @@
   gap: 5px;
   margin-top: 4px;
   opacity: 0;
-  animation: gc-boot-fade-up 0.4s ease-out 0.5s both;
+  animation: gc-boot-fade-up 0.5s ease-out 0.65s both;
 }
 #gc-boot .bit {
   width: 22px;
@@ -249,13 +255,13 @@
   opacity: 0.12;
 }
 #gc-boot .b0 {
-  animation: gc-boot-g0 0.8s linear 0.5s infinite;
+  animation: gc-boot-g0 1.0s linear 0.65s infinite;
 }
 #gc-boot .b1 {
-  animation: gc-boot-g1 0.8s linear 0.5s infinite;
+  animation: gc-boot-g1 1.0s linear 0.65s infinite;
 }
 #gc-boot .b2 {
-  animation: gc-boot-g2 0.8s linear 0.5s infinite;
+  animation: gc-boot-g2 1.0s linear 0.65s infinite;
 }
 @keyframes gc-boot-g0 {
   0%,
@@ -375,7 +381,7 @@
       />
       <circle class="pen pen-cap" r="13" fill="currentColor">
         <animateMotion
-          dur="0.45s"
+          dur="0.55s"
           begin="0.05s"
           fill="freeze"
           calcMode="spline"
@@ -388,8 +394,8 @@
       </circle>
       <circle class="pen pen-body" r="13" fill="currentColor">
         <animateMotion
-          dur="0.65s"
-          begin="0.3s"
+          dur="0.8s"
+          begin="0.4s"
           fill="freeze"
           calcMode="spline"
           keySplines="0 0 .58 1"

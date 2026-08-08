@@ -25,6 +25,14 @@ describe('settingsStore appearance', () => {
     expect(store.splashEnabled).toBe(true)
   })
 
+  it('splashEnabled 关闭时写入首帧画面开关标记（gc-splash-disabled），重开时清除', () => {
+    const store = useSettingsStore()
+    store.setSplashEnabled(false)
+    expect(localStorage.getItem('gc-splash-disabled')).toBe('1')
+    store.setSplashEnabled(true)
+    expect(localStorage.getItem('gc-splash-disabled')).toBeNull()
+  })
+
   it('appearance fields coexist independently (tpsBar toggle does not touch others)', () => {
     const store = useSettingsStore()
     store.setSmoothStreaming('silky')
