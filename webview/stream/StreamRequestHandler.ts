@@ -111,7 +111,7 @@ export class StreamRequestHandler {
 
   private async cleanupAbortedConversations(
     conversationIds: string[],
-    options: { cancelAllPendingDiffs?: boolean } = {}
+    options: { cancelAllPendingDiffs?: boolean; preserveDetachedSubAgents?: boolean } = {}
   ): Promise<void> {
     if (options.cancelAllPendingDiffs) {
       // 扩展整体关闭/停止全部必须清理所有未决 diff，包括已没有活跃主流但仍在等确认的会话。
@@ -133,7 +133,13 @@ export class StreamRequestHandler {
         }
       }
       try {
-        await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
+        if (options.preserveDetachedSubAgents === true) {
+          await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId, {
+            preserveDetachedSubAgents: true
+          });
+        } else {
+          await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
+        }
       } catch (err) {
         console.error(`Failed to reject pending tool calls for conversation ${conversationId}:`, err);
       }
@@ -384,7 +390,9 @@ export class StreamRequestHandler {
       this.deps.abortManager.cancel(conversationId);
     }
 
-    await this.cleanupAbortedConversations([conversationId]);
+    await this.cleanupAbortedConversations([conversationId], {
+      preserveDetachedSubAgents: options.preserveSubAgents === true
+    });
 
     this.deps.sendResponse(requestId, { cancelled: true });
     this.deps.finalizeRequest(requestId);

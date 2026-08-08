@@ -8,6 +8,7 @@ import type * as vscode from 'vscode';
 import type { ConversationRunScope, IRunController, RunControllerSnapshot } from '../../backend/core/RunController';
 import { subAgentRunController } from '../../backend/tools/subagents/runController';
 import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
+import { registerDetachedSubAgentTask } from '../../backend/tools/subagents/detachedTaskBridge';
 
 /**
  * 旧流退出等待超时（毫秒）。
@@ -207,7 +208,9 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         if (snapshot.conversationId !== conversationId) continue;
         if (!subAgentRunController.isActive(snapshot.runId)) continue;
         if (subAgentRunController.isDetached(snapshot.runId)) continue;
-        subAgentRunController.detachFromParent(snapshot.runId);
+        if (subAgentRunController.detachFromParent(snapshot.runId)) {
+          registerDetachedSubAgentTask(snapshot);
+        }
       }
     } catch (err) {
       console.warn('[StreamAbortManager] Failed to detach active subagents before starting new stream:', err);
