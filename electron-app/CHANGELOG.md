@@ -10,6 +10,12 @@ are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+## [1.7.5dev] - 2026-08-08
+
+### 同步上游
+  - **同步上游 Gray-Code 25 个提交（962d496..8ed8739）**：20 个本地适配 commit 按模块合入（checkpoint/mcp/settings/conversation/memory/chat/subagents/modules 健壮性、总结保留预算、思考强度档位 + TTFT、后台回执提前投递、formatter/regexGuard 修复、webview 处理器加固、前端缺陷批次）；其余本地已有等价实现保留本地，上游 SHA 经 -s ours 记录消除 fork behind 计数。详见根目录 CHANGELOG [1.7.5dev]。
 ### Added
   - **用户可修改对话标题**（1.7.4，详见根目录 CHANGELOG [Unreleased]）：历史页/首页对话列表悬停新增「重命名对话」按钮（InputDialog 弹窗），走 `conversation.setTitle` 持久化到 meta.json，成功后同步列表与已打开标签页标题；新增 store 回归测试 4 例。
   - **设置页「自动执行」给 Diff 审阅类工具提供「自动批准」开关**（1.7.4）：write_file / apply_diff / insert_code / delete_code 徽标旁新增真实开关，读写「应用diff 设置」的 autoSave（四工具共用），显示「自动批准 / 需确认」状态。

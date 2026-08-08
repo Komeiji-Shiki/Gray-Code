@@ -8,6 +8,18 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+## [1.7.5dev] - 2026-08-08
+
+### 同步上游
+  - **同步上游 Komeiji-Shiki/Gray-Code 25 个提交（962d496..8ed8739）**：20 个本地适配 commit 按模块合入（checkpoint 并发锁/mcp 客户端健壮性/settings 持久化/conversation 分支去重/memory 覆盖块语义/chat 工具执行健壮性/subagents 模型继承与重试/模块健壮性/总结保留预算/配置导出键/思考强度档位/后台回执提前投递/formatter 与 regexGuard 修复/webview 处理器加固/前端缺陷批次），其余（确认门 this 绑定/CI 构建体系/未用导入/文档）本地已有等价或更优实现保留本地；上游 SHA 经 -s ours 记录消除 fork behind 计数。
+  - **思考强度档位扩展 + 消息统计 TTFT**（上游 15125ef/2e0704a）：anthropic/openai/openai-responses 渠道支持 max/ultra/custom/minimal 档位，custom 原样透传；StreamAccumulator 计算首字延迟 TTFT 写入 Content，TPS 计算剥离首字时延，MessageItem 展示。
+  - **后台任务回执动作边界提前投递**（上游 d9d6369）：LLM 动作边界（取消回合/换回合）立即投递回执，不再硬等模型回合结束。
+  - **总结保留预算修复**（上游 962d496）：keepRecentTokens 基数改为规划范围内活跃历史 token 总量（默认 50%），修复长对话总结后上下文被压光；滚动条新增总结截断点标记。
+  - **checkpoint / mcp / settings / conversation / memory / chat / subagents / modules 健壮性修复批次**（上游 6cd1330/cddf515/fc2c855/e57a657/c713154/5e8f666/63676f2/858e624/2a37702/6d4bb95/c0cf55f/171dc86）：并发锁唯一化与孤儿保护/协议头优先与绝对 deadline/写队列串行化与深合并/分支并发去重与 detached 保留/覆盖块语义与损坏容错/abort 竞态与模型继承/告警节流与导出键修复等，详见各适配 commit。
+  - **webview 处理器加固与前端缺陷修复批次**（上游 05550ca/b0fb1f5/89c64c9/2a4f222）：handler 鸭子分支清理与输入校验/删除二次确认与重命名并存/标签页快照绑定/历史分页空页上限/formatNumber 非有限数防护/CHANGELOG 解析支持字母预发布（1.7.2dev 格式）。
+
 ### Added
   - **用户可修改对话标题**（1.7.4）：
     - 历史页/首页对话列表悬停新增「重命名对话」按钮（`ConversationList.vue`），复用 `InputDialog` 弹窗；支持 Enter 确认、Escape 取消。
